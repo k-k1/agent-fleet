@@ -81,6 +81,44 @@ func sessionDriveAllowed(name string) error {
 	return nil
 }
 
+// listModelsArgs is list_models'.
+type listModelsArgs struct {
+	Kind string `json:"kind"`
+}
+
+// renameChildSessionArgs is rename_child_session's.
+type renameChildSessionArgs struct {
+	Name  string `json:"name"`
+	Title string `json:"title"`
+}
+
+// createSessionArgs is create_session's.
+type createSessionArgs struct {
+	Dir           string `json:"dir"`
+	Title         string `json:"title"`
+	Kind          string `json:"kind"`
+	Model         string `json:"model"`
+	Effort        string `json:"effort"`
+	InitialPrompt string `json:"initial_prompt"`
+	// Worktree is a POINTER because the default differs by surface: false for the
+	// operator, true for a session (ADR 0073 decision 7). A plain bool cannot tell
+	// "worktree=false, work right here" from "not mentioned".
+	Worktree *bool `json:"worktree"`
+	// AllowSharedWorkingCopy is a session's explicit opt-in to share its own working copy
+	// with the child (needs worktree=false; the Agent enforces which directory).
+	AllowSharedWorkingCopy bool   `json:"allow_shared_working_copy"`
+	Branch                 string `json:"branch"`
+	NewBranch              string `json:"new_branch"`
+	Subdir                 string `json:"subdir"`
+	// ReportBack asks a spawned child to send one intent=answer peer message home when it
+	// finishes (ADR 0073 decision 9). A pointer: omitted means on, and a plain bool would
+	// silently turn the report off for every caller that did not think about it.
+	ReportBack *bool `json:"report_back"`
+	// SpendCapUSD is the child's per-child budget (#1054). A pointer: omitted means the
+	// user's default, which the Agent applies; an explicit 0 means none.
+	SpendCapUSD *float64 `json:"spend_cap_usd"`
+}
+
 // fleetSpawnTools are the tools that start sessions, and the two only a session's own children
 // can be steered with. create_session is the operator's under --write and a session's under
 // --fleet-spawn, one handler for both.
@@ -128,7 +166,7 @@ func fleetSpawnTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *listModelsArgs) []byte {
 				if !slices.Contains(kindNames(modelKinds()), a.Kind) {
 					return mcpToolErr(req.ID, "kind には "+joinKinds(modelKinds(), " / ", "")+" のいずれかを指定してください")
 				}
@@ -137,7 +175,7 @@ func fleetSpawnTools() []toolSpec {
 					return mcpToolErr(req.ID, "モデル一覧の取得に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "create_session",
@@ -221,7 +259,7 @@ func fleetSpawnTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *createSessionArgs) []byte {
 				// Before the shell approval gate, the effort check and the idempotency key: an unknown
 				// kind is refused here rather than after those have treated it as something it is not.
 				if err := validateCreateKind(a.Kind); err != nil {
@@ -338,7 +376,7 @@ func fleetSpawnTools() []toolSpec {
 					out = withNoTaskWarning(out)
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "list_child_sessions",
@@ -367,13 +405,13 @@ func fleetSpawnTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				self, err := mcpOwningSession()
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpListChildSessions(req.ID, self)
-			},
+			}),
 		},
 		{
 			name: "rename_child_session",
@@ -403,7 +441,7 @@ func fleetSpawnTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *renameChildSessionArgs) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -428,7 +466,7 @@ func fleetSpawnTools() []toolSpec {
 					return mcpToolErr(req.ID, "題名の変更に失敗しました: "+agentErrDetail(err))
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 	}
 }

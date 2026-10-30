@@ -46,6 +46,24 @@ const peerBlockedNote = "相手は利用者の回答（質問・プラン承認�
 const peerStartingNote = "相手は起動したばかりです。メッセージは相手の CLI が入力を受け付けられる状態になってから、" +
 	"次のターンとして届きます（まだ読まれていません）。再送しないでください。"
 
+// sendToPeerArgs is send_to_peer_session's (docs/log/58 §58.14).
+type sendToPeerArgs struct {
+	Name    string `json:"name"`
+	Message string `json:"message"`
+	// Intent is the message kind. The Agent derives the reply policy from it, so this layer
+	// passes it through untouched.
+	Intent string `json:"intent"`
+}
+
+// peekSessionOutputArgs is peek_session_output's.
+type peekSessionOutputArgs struct {
+	Name string `json:"name"`
+	// Lines is the trailing-line count (the Agent clamps it).
+	Lines int `json:"lines"`
+	// Since is a pointer: an explicit since:0 has to be distinguished from an omitted one.
+	Since *int64 `json:"since"`
+}
+
 // peerTools are refused on the call side too, for the same reason as the mutating Chromium
 // ones: a guessed name in tools/call must not reach the Agent REST.
 func peerTools() []toolSpec {
@@ -70,7 +88,7 @@ func peerTools() []toolSpec {
 				}
 			},
 			refuse: refuse,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				self, err := mcpOwningSession()
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
@@ -91,7 +109,7 @@ func peerTools() []toolSpec {
 					out = append(out, row)
 				}
 				return mcpStructuredResult(req.ID, map[string]any{"sessions": out})
-			},
+			}),
 		},
 		{
 			name: "send_to_peer_session",
@@ -137,7 +155,7 @@ func peerTools() []toolSpec {
 				}
 			},
 			refuse: refuse,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *sendToPeerArgs) []byte {
 				self, err := mcpOwningSession()
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
@@ -198,7 +216,7 @@ func peerTools() []toolSpec {
 				}
 				b, _ := json.Marshal(result)
 				return mcpTextResult(req.ID, string(b))
-			},
+			}),
 		},
 		{
 			name: "peek_session_output",
@@ -222,7 +240,7 @@ func peerTools() []toolSpec {
 				}
 			},
 			refuse: refuse,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *peekSessionOutputArgs) []byte {
 				// The reader is the session this server serves, never an argument: the Agent applies
 				// the peer policy, the caps, the rate limit and the audit to that name.
 				self, err := mcpOwningSession()
@@ -244,7 +262,7 @@ func peerTools() []toolSpec {
 					return mcpToolErr(req.ID, "出力を読めませんでした: "+err.Error())
 				}
 				return mcpTextResult(req.ID, body)
-			},
+			}),
 		},
 	}
 }

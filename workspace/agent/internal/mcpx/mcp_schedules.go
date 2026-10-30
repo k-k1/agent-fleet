@@ -19,13 +19,13 @@ func scheduleTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				out, err := CPScheduleDo(http.MethodGet, "/internal/schedules", nil)
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "get_schedule_runs",
@@ -40,7 +40,7 @@ func scheduleTools() []toolSpec {
 					},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 				}
@@ -49,7 +49,7 @@ func scheduleTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "create_schedule",
@@ -99,7 +99,7 @@ func scheduleTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				// Route completion reports back to THIS operator conversation (docs/log/30): stamp
 				// owner_conv = the operator's own conv id, overriding any client-supplied value.
 				out, err := CPScheduleDo(http.MethodPost, "/internal/schedules", WithOwnerConv(p.Args, convID()))
@@ -107,7 +107,7 @@ func scheduleTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "update_schedule",
@@ -150,7 +150,7 @@ func scheduleTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 				}
@@ -159,7 +159,7 @@ func scheduleTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "delete_schedule",
@@ -181,7 +181,7 @@ func scheduleTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 				}
@@ -190,7 +190,7 @@ func scheduleTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{name: "pause_schedule", operator: func() map[string]any {
 			return map[string]any{
@@ -202,7 +202,7 @@ func scheduleTools() []toolSpec {
 					"required":   []string{"id"},
 				},
 			}
-		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: mcpScheduleAction},
+		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: handler(mcpScheduleAction)},
 		{name: "resume_schedule", operator: func() map[string]any {
 			return map[string]any{
 				"name":        "resume_schedule",
@@ -213,7 +213,7 @@ func scheduleTools() []toolSpec {
 					"required":   []string{"id"},
 				},
 			}
-		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: mcpScheduleAction},
+		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: handler(mcpScheduleAction)},
 		{name: "run_schedule_now", operator: func() map[string]any {
 			return map[string]any{
 				"name":        "run_schedule_now",
@@ -224,7 +224,7 @@ func scheduleTools() []toolSpec {
 					"required":   []string{"id"},
 				},
 			}
-		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: mcpScheduleAction},
+		}, operatorWrite: true, refuse: refuseScheduleDrive, handle: handler(mcpScheduleAction)},
 	}
 }
 
@@ -236,7 +236,7 @@ func refuseScheduleDrive() string {
 }
 
 // mcpScheduleAction is pause_schedule, resume_schedule and run_schedule_now.
-func mcpScheduleAction(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+func mcpScheduleAction(req mcpReq, p toolCallParams, a *idArg) []byte {
 	if a.ID == "" {
 		return mcpToolErr(req.ID, "id（スケジュール id）が必要です")
 	}

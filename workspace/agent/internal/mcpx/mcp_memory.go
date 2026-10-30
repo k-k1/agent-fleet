@@ -322,9 +322,9 @@ func memoryScopeArg() map[string]any {
 
 // agentMemoryTools are the memory shared by every agent kind, under --agent-memory (ADR 0108).
 func agentMemoryTools() []toolSpec {
-	handle := func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+	handle := handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 		return mcpMemoryCall(req.ID, p.Name, p.Args)
-	}
+	})
 	return []toolSpec{
 		{name: mcpToolMemoryIndex, session: func() map[string]any {
 			return map[string]any{

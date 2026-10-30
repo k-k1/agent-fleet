@@ -52,10 +52,14 @@ func (e *RPCError) Error() string {
 //   - Respond: answers to server-initiated requests (session/request_permission,
 //     cursor/ask_question)
 //
-// readLoop routes responses, notifications and server-initiated requests. OnRequest and
-// OnNotify are called synchronously on the readLoop goroutine, so they must never block:
-// the permission handler records an Interaction and returns immediately, answering later
-// through Respond(), and OnNotify only appends to the transcript buffer.
+// readLoop routes responses, notifications and server-initiated requests. The callbacks are
+// called synchronously on the readLoop goroutine, so they must never block: the permission
+// handler records an Interaction and returns immediately, answering later through Respond(),
+// and OnNotify only appends to the transcript buffer.
+//
+// NewClient does not read; Start does, with the callbacks fixed for the client's lifetime. A
+// line read before the callbacks were set would be dropped, and the late assignment would race
+// with readLoop.
 //
 // kiro also emits its own notifications in the `_kiro.dev/*` namespace. They arrive without an
 // id, so OnNotify receives them and the driver keeps the ones it needs and drops the rest.
@@ -64,20 +68,29 @@ type Client struct {
 
 	mu      sync.Mutex
 	stdin   io.Writer
+	stdout  io.Reader
 	pending map[int64]chan rpcResult
 	nextID  int64
 
-	OnNotify  func(method string, params json.RawMessage)
-	OnRequest func(id json.RawMessage, method string, params json.RawMessage)
+	cb Callbacks
 
 	errClosed error
 
+	startOnce sync.Once
 	closeOnce sync.Once
 	closed    chan struct{} // closed when the readLoop exits (child gone)
 }
 
-// NewClient starts reading the child's stdout. Set OnNotify and OnRequest before the first
-// call: readLoop reads them without a lock.
+// Callbacks are the handlers readLoop invokes. Either may be nil (the line is dropped). They
+// run on the readLoop goroutine and must never block.
+type Callbacks struct {
+	// OnRequest receives a server-initiated request that must be answered through Respond;
+	// c is the receiving client, so a handler need not capture it.
+	OnRequest func(c *Client, id json.RawMessage, method string, params json.RawMessage)
+	OnNotify  func(method string, params json.RawMessage)
+}
+
+// NewClient builds a client without reading the child's stdout; call Start to begin.
 func NewClient(cfg Config, stdin io.Writer, stdout io.Reader) *Client {
 	c := &Client{
 		cfg:       cfg,
@@ -86,8 +99,17 @@ func NewClient(cfg Config, stdin io.Writer, stdout io.Reader) *Client {
 		errClosed: errors.New(cfg.Runtime + " runtime との接続が切れました"),
 		closed:    make(chan struct{}),
 	}
-	go c.readLoop(stdout)
+	c.stdout = stdout
 	return c
+}
+
+// Start begins reading the child's stdout and dispatching to cb. Only the first call has an
+// effect. Until it runs nothing is read, so no line can reach a handler that is not yet set.
+func (c *Client) Start(cb Callbacks) {
+	c.startOnce.Do(func() {
+		c.cb = cb
+		go c.readLoop(c.stdout)
+	})
 }
 
 // readLoop dispatches incoming lines until the child's stdout closes. cursor's
@@ -111,13 +133,13 @@ func (c *Client) readLoop(stdout io.Reader) {
 		switch {
 		case msg.Method != "" && len(msg.ID) > 0:
 			// server-initiated request (session/request_permission and the like)
-			if c.OnRequest != nil {
-				c.OnRequest(msg.ID, msg.Method, msg.Params)
+			if c.cb.OnRequest != nil {
+				c.cb.OnRequest(c, msg.ID, msg.Method, msg.Params)
 			}
 		case msg.Method != "":
 			// notification (session/update, _kiro.dev/*, …)
-			if c.OnNotify != nil {
-				c.OnNotify(msg.Method, msg.Params)
+			if c.cb.OnNotify != nil {
+				c.cb.OnNotify(msg.Method, msg.Params)
 			}
 		default:
 			var id int64

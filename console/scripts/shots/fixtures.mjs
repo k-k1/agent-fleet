@@ -950,13 +950,13 @@ export function workItems(locale) {
   });
   const bbRows = ja
     ? [
-        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda", { checks: CI_GREEN }),
-        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
+        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda", { checks: CI_GREEN, commentCount: 3 }),
+        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING, commentCount: 7 }),
         bb(3, "acme/gateway#88", "レート制限のヘッダを返す", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ]
     : [
-        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda", { checks: CI_GREEN }),
-        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
+        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda", { checks: CI_GREEN, commentCount: 3 }),
+        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING, commentCount: 7 }),
         bb(3, "acme/gateway#88", "Return the rate limit headers", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ];
   // 38 items = 5 projects mixed, same assignee on every row. With the 3 GitHub ones, 41 in all.
@@ -970,6 +970,9 @@ export function workItems(locale) {
       it("wi1", "demo/webshop#312", ja ? "クーポン併用時に税額がずれる" : "Tax is off when coupons stack", {
         labels: ["bug", "checkout"],
         updatedAt: ago(35),
+        // Unread on the rail: capture.mjs seeds a baseline with fewer comments, so the count grew
+        // (new-activity dot, bold title).
+        commentCount: 5,
       }),
       it("wi2", "demo/webshop#308", ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form", {
         state: "in_progress",
@@ -980,12 +983,25 @@ export function workItems(locale) {
         // two marks that make a PR worth opening before starting a review on it.
         checks: CI_RED,
         mergeable: "conflict",
+        commentCount: 4,
+      }),
+      // The pull request the features-page still opens (workItemDetail): green CI, no conflict,
+      // so the detail panel offers Merge.
+      it("wi4", "demo/webshop#315", ja ? "注文履歴の並び順を安定させる" : "Keep the order history sort stable", {
+        state: "in_progress",
+        kind: "pr",
+        labels: ["bug"],
+        updatedAt: ago(70),
+        checks: CI_GREEN,
+        mergeable: "clean",
+        commentCount: 2,
       }),
       // Keep one row with no labels. While the CP emitted a nil slice (null in JSON), this shape
       // turned the whole Console blank (docs/log/80 §80.17.5). Do not remove it.
       it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
         labels: null,
         updatedAt: ago(400),
+        commentCount: 0,
       }),
       ...jiraRows,
       ...bbRows,
@@ -2028,25 +2044,54 @@ const FILES = {
 // red CI and a conflict, one approval and one change request — the state that makes a reviewer
 // want to look before starting a session on the head branch.
 export function workItemDetail(locale, key) {
-  if (key !== "demo/webshop#308") return { error: { code: "not_found", message: "no such item" } };
   const ja = locale === "ja";
-  return {
+  const base = {
     provider: "github",
     key,
     kind: "pr",
-    title: ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form",
     state: "open",
-    url: "https://github.com/demo/webshop/pull/308",
     author: "Kai Morgan",
     assignee: "demo",
-    labels: ["ui"],
-    labelColors: { ui: "1d76db" },
     repo: "demo/webshop",
-    updatedAt: ago(150),
     draft: false,
     merged: false,
-    mergeable: "conflict",
     baseBranch: "develop",
+    mergeMethods: ["merge", "squash", "rebase"],
+    defaultMergeMethod: "squash",
+    canMerge: true,
+  };
+  if (key === "demo/webshop#315") {
+    // Clean and green with one approval: the shape that draws an enabled Merge button.
+    return {
+      ...base,
+      title: ja ? "注文履歴の並び順を安定させる" : "Keep the order history sort stable",
+      url: "https://github.com/demo/webshop/pull/315",
+      labels: ["bug"],
+      labelColors: { bug: "d73a4a" },
+      updatedAt: ago(70),
+      mergeable: "clean",
+      mergeableState: "clean",
+      headSha: "9f3c1e07a4b25d86c0e1f7a39b8d24c65e0a1b73",
+      headBranch: "fix/order-history-sort",
+      additions: 42,
+      deletions: 11,
+      changedFiles: 3,
+      comments: 2,
+      reviews: [{ name: "Sora Nishida", state: "approved" }],
+      checks: CI_GREEN,
+    };
+  }
+  if (key !== "demo/webshop#308") return { error: { code: "not_found", message: "no such item" } };
+  return {
+    ...base,
+    title: ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form",
+    url: "https://github.com/demo/webshop/pull/308",
+    labels: ["ui"],
+    labelColors: { ui: "1d76db" },
+    updatedAt: ago(150),
+    mergeable: "conflict",
+    mergeableState: "dirty",
+    headSha: "5b8e2d41c7f093a6e1d4b0c82f7a9e3d16c54a08",
     headBranch: "feat/postcode-autofill",
     additions: 214,
     deletions: 37,

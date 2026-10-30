@@ -5,60 +5,37 @@
 //   layout/splitRight/splitDown/resetToTerminal/activePaneId → layout/store
 //   openNewSession               → features/sessions/store (tick signal)
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../core/api/client.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../../core/store/workspace.ts";
-import { useLayoutStore } from "../../layout/store.ts";
-import { openSessionsOverview } from "../../features/overview/open.ts";
-import { openHome } from "../../features/home/open.ts";
-import { openImagegen } from "../../features/imagegen/open.ts";
-import { useImagegenAvailable } from "../../features/imagegen/available.ts";
-import { isBlankPane, MAX_TAB_COLS } from "../../layout/ops.ts";
-import { useSessionsStore } from "../../features/sessions/store.ts";
-import { hintSuffix } from "../../features/keys/keyHint.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
-import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../../lib/device.ts";
 import { useWsBarFold, useWsBarPhoneFold } from "../wsBarFold.ts";
 import { machineSummary } from "../../lib/machine.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
-import { listBrowserAttachments } from "../../features/browser/attachmentService.ts";
-import { openBrowserAttachment } from "../../features/browser/attachmentAction.ts";
-import type { BrowserAttachmentStatus } from "../../features/browser/attachmentController.ts";
+import { hintSuffix } from "../../features/keys/keyHint.ts";
 import { useOpenSignal } from "../../core/store/uiOpen.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { fmtGiB as fg } from "../../lib/bytes.ts";
-import { PortOpen, useDefaultPortOpen } from "../../features/preview/PortOpen.tsx";
-import { useCurrentPreviewInfo, usePreviewStore } from "../../features/preview/previewState.ts";
-import { useBrowserUnavailable } from "../../features/browser/availability.ts";
 import { AwsProfilesChip } from "../../features/awslogin/AwsProfilesChip.tsx";
 import { GcpProfilesChip } from "../../features/gcplogin/GcpProfilesChip.tsx";
 import { RemainingUsageChip } from "./RemainingUsageChip.tsx";
 import { SlotMoveNotice } from "./SlotMoveNotice.tsx";
 import { UsageChip } from "./UsageChip.tsx";
 import { MachineDetailsLink, useWsMachine } from "./machine.tsx";
+import { DesktopMore, MobileMore } from "./MoreMenu.tsx";
+import { StaleBadge } from "./StaleBadge.tsx";
+import { useLayoutButtons } from "./useLayoutButtons.tsx";
+import { usePortPreview } from "./usePortPreview.tsx";
+import { useWsPower } from "./useWsPower.ts";
 import { useWsResourceChips } from "./resourceStats.ts";
 import { UsageChipFold } from "./usageFold.tsx";
 import { REMAINING_SOURCES, USAGE_SOURCES } from "./usageSources.ts";
 
-// A stable empty list: a selector returning a fresh [] each time re-renders forever.
-const NO_PORTS: number[] = [];
-
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "recreate" lives deep in Settings > Environment (warning-gated), off this bar.
-// SharedPreview is one row of GET /api/preview/shared (docs/log/81 §14.6). `running` means
-// "a preview URL exists right now", not the container's own state.
-type SharedPreview = {
-  ownerUserKey: string;
-  ownerEmail: string;
-  ports: number[];
-  urls: Record<string, string>;
-  shareLinks: Record<string, string>;
-  running: boolean;
-};
 
 // On desktop the resource chips / opencode web / port-preview sit inline at the
 // right; on a phone they'd wrap to a second line, so they fold into a single ⋯
@@ -132,10 +109,6 @@ function tile({
 
 export function WsBar() {
   const wsState = useWorkspaceStore((s) => s.state);
-  const imagegenAvailable = useImagegenAvailable();
-  const startWs = useWorkspaceStore((s) => s.start);
-  const stopWs = useWorkspaceStore((s) => s.stop);
-  const restartWs = useWorkspaceStore((s) => s.restart);
   const wsStale = useWorkspaceStore((s) => s.stale);
   const wsSlotReplace = useWorkspaceStore((s) => s.slotReplace);
   const wsReason = useWorkspaceStore((s) => s.reason);
@@ -145,41 +118,13 @@ export function WsBar() {
   // not been invited yet reaches this (everyone else lands on NotProvisioned), so the
   // right guidance is to add themselves to a tenant from Admin.
   const noTenant = wsState === "unknown" && wsReason === "not_provisioned";
-  const layout = useLayoutStore((s) => s.layout);
-  const splitRight = useLayoutStore((s) => s.splitRight);
-  const splitDown = useLayoutStore((s) => s.splitDown);
-  const resetToTerminal = useLayoutStore((s) => s.resetToTerminal);
-  const activePaneId = layout.activeCellId;
-  const openStart = useSessionsStore((s) => s.openStart);
-  const askConfirm = useConfirm();
   const tr = useT();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
   const barRef = useRef<HTMLDivElement>(null);
   const { foldUsage, foldMore, noteUsageLayout } = useWsBarFold(barRef, !isMobile);
   const phoneFold = useWsBarPhoneFold(barRef, isMobile);
-  // Unlisted ports the owner has open right now (control-plane/preview_grant.go).
-  const tempPorts = useCurrentPreviewInfo()?.tempPorts ?? NO_PORTS;
-  const [port, setPort] = useState("");
-  const [previewPath, setPreviewPath] = useState("/");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
-  // Live Chromium attachments, read when the popover opens (no polling: this is
-  // a recovery entry, and the authoritative state is the pane's own socket).
-  const [attachments, setAttachments] = useState<BrowserAttachmentStatus[]>([]);
-  // The issued preview subdomain (docs/log/81). It changes on every start, so re-read it
-  // the moment the popover opens. On a deployment without host-based previews
-  // previewDomain is empty and nothing is shown.
-  const [pvHosts, setPvHosts] = useState<{
-    domain: string;
-    urls: Record<string, string>;
-    // A pasteable link that survives restarts (docs/log/81 §14.6); present while stopped too.
-    shareLinks: Record<string, string>;
-    public: boolean;
-    tenantShare: boolean;
-  } | null>(null);
-  // Previews shared by other people in the same tenant (docs/log/81 §14.6).
-  const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
-  const [staleOpen, setStaleOpen] = useState(false); // "restart required" badge popover
   const [moreOpen, setMoreOpen] = useState(false); // ⋯ overflow popover (phone, or a full desktop bar)
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop). While the bar has
@@ -198,11 +143,8 @@ export function WsBar() {
   const machine = useWsMachine(resOpen, tenant, wsState === "running");
   const machineLine = machine ? machineSummary(machine) : "";
   const pvRef = useRef<HTMLDivElement>(null);
-  const staleRef = useRef<HTMLDivElement>(null);
-  const moreRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
-  const browserUnavailable = useBrowserUnavailable();
   // Toggle inert while a transition is in flight: the optimistic "…" states AND the
   // server-reported "starting" (ECS cold pull — a second Start click must not
   // re-drive the deployment; the 4s poll flips the bar to "running" on its own).
@@ -213,73 +155,8 @@ export function WsBar() {
   const inFlight = wsBusy(wsState);
   const powerStops = wsPowerStops(wsState);
 
-  // "Close all panes" collapses the split layout back to one empty terminal pane.
-  // Disabled when there's already just a single empty pane (nothing to close).
-  const totalPanes = layout.cols.reduce((n, c) => n + c.cells.length, 0);
-  const onlyPane = totalPanes === 1 ? layout.cols[0].cells[0] : null;
-  const canCloseAll = !(onlyPane && isBlankPane(onlyPane));
-
-  // Split (moved here from the per-pane header): split-right appends a column (global);
-  // split-down splits the ACTIVE pane's column into rows. Same limits as before — up to
-  // 4 columns (desktop only), each column up to 2 panes. Mobile: one top/bottom split.
-  const activeCol = layout.cols.find((c) => c.cells.some((p) => p.id === activePaneId));
-  const canSplitRight = !isMobile && layout.cols.length < (layout.mode === "tabs" ? MAX_TAB_COLS : 4);
-  const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.cells.length : totalPanes) < 2;
-
-  // The "start" entry while stopped: don't dead-end (launch flow Ph3) — confirm, start the
-  // workspace, and open the hub once the 4s poll reports running. startQueued
-  // survives the whole starting window; a second click while queued re-confirms
-  // harmlessly (startWs is only re-fired from a genuinely stopped state).
-  const [startQueued, setStartQueued] = useState(false);
-  useEffect(() => {
-    if (!startQueued) return;
-    if (running) {
-      setStartQueued(false);
-      openStart();
-    } else if (!busy) {
-      // Settled on stopped/none/unknown (start failed, stopped externally, …): it will
-      // never reach running now, so without clearing here the start button sticks on its
-      // spinner. Right after the click start() queues "starting…" in the same batch, so
-      // this cannot clear it early.
-      setStartQueued(false);
-    }
-  }, [startQueued, running, busy, openStart]);
-  const onStart = async () => {
-    if (running) {
-      openStart();
-      return;
-    }
-    const ok = await askConfirm({
-      title: tr("wsbar.confirm.start.title"),
-      body: tr("wsbar.confirm.start.body"),
-      confirmLabel: busy ? tr("wsbar.confirm.start.wait") : tr("wsbar.confirm.start.go"),
-      danger: false,
-    });
-    if (!ok) return;
-    setStartQueued(true);
-    if (!busy) void startWs();
-  };
-
-  // Start is immediate; Stop is confirmed — it docker-removes the container, so
-  // running sessions drop to "stopped" (resumable) and opencode web / preview disconnect.
-  // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
-  // not a red destructive action.
-  const onToggle = async () => {
-    if (!powerStops) {
-      void startWs();
-      return;
-    }
-    const ok = await askConfirm({
-      title: tr("wsbar.stop_ws"),
-      // Stopping a start that has not landed yet loses nothing — there are no sessions
-      // to drop and no preview to disconnect — so it gets its own body rather than the
-      // running one's warning about both.
-      body: tr(running ? "wsbar.confirm.stop.body" : "wsbar.confirm.stop.starting_body"),
-      confirmLabel: tr("wsbar.confirm.stop.go"),
-      danger: false,
-    });
-    if (ok) void stopWs();
-  };
+  const { startQueued, onStart, onToggle, onRestart } = useWsPower(running, busy, powerStops);
+  const { splitRightBtn, splitDownBtn, closeAllBtn, homeBtn, overviewBtn, imagegenBtn } = useLayoutButtons(isMobile);
 
   // Backend drift (CP-detected): the running container predates the deployed build,
   // so a stop→start would pick up the new backend. Shown only while genuinely
@@ -287,96 +164,13 @@ export function WsBar() {
   // state, not an event: it clears itself once the workspace is back on the current
   // build, so there is no dismiss.
   const staleShown = wsStale && running && !busy;
-  useEffect(() => {
-    if (!staleShown) setStaleOpen(false);
-  }, [staleShown]);
   // ecs-ec2: an administrator retired the machine this workspace sits on (#1473). Shown
   // whether running or stopped, hidden while a start (the move itself) runs.
   const slotMoveShown = wsSlotReplace && !busy;
-
-  // Apply the backend update: stop→start, keeping repos and everything on disk
-  // (NOT recreate). Sessions stop and are resumable, so name the count up front —
-  // that's the whole cost of the action.
-  const onRestart = async () => {
-    setStaleOpen(false);
-    const live = useSessionsStore.getState().sessions.filter((s) => s.alive).length;
-    const ok = await askConfirm({
-      title: tr("wsbar.confirm.restart.title"),
-      body: live > 0 ? tr("wsbar.confirm.restart.body_live", { n: live }) : tr("wsbar.confirm.restart.body"),
-      confirmLabel: tr("wsbar.confirm.restart.go"),
-      danger: false,
-    });
-    if (ok) void restartWs();
-  };
-
-  // Enter in the port field does what a plain click on the primary button does: the default
-  // target (subdomain, else browser pane, else lightweight preview — features/preview).
-  const openDefaultPort = useDefaultPortOpen(Number(port.trim()), running, previewPath.trim() || "/");
-  const closePortPops = () => {
-    setPvOpen(false);
-    setMoreOpen(false);
-  };
-
-  // Read the live Chromium attachments when a popover that shows them opens.
-  // Deliberately not polled: the pane's own socket is the authoritative state,
-  // and this list only has to be right at the moment the user looks at it.
-  useEffect(() => {
-    if (!pvOpen && !moreOpen) return;
-    if (!running) {
-      setAttachments((prev) => (prev.length ? [] : prev));
-      return;
-    }
-    let cancelled = false;
-    // No attachment can exist where the runtime has no browser features; asking would only
-    // collect a browser_unavailable refusal.
-    if (browserUnavailable) setAttachments((prev) => (prev.length ? [] : prev));
-    else
-      void listBrowserAttachments().then(
-        (list) => !cancelled && setAttachments(list),
-        () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
-      );
-    void usePreviewStore.getState().refresh({ force: true });
-    void api("api/env/ws-settings").then(
-      (res: any) => {
-        if (cancelled) return;
-        setPvHosts(
-          res && !res.error && res.previewDomain
-            ? {
-                domain: res.previewDomain,
-                urls: res.previewUrls || {},
-                shareLinks: res.previewShareLinks || {},
-                public: !!res.previewPublic,
-                tenantShare: !!res.previewTenantShare,
-              }
-            : null,
-        );
-      },
-      () => !cancelled && setPvHosts(null),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [pvOpen, moreOpen, running, browserUnavailable]);
-
-  // Previews shared within this tenant (docs/log/81 §14.6). Not conditioned on running:
-  // what appears here belongs to OTHER people's workspaces, so whether ours is stopped is
-  // irrelevant.
-  useEffect(() => {
-    if (!pvOpen && !moreOpen) return;
-    let cancelled = false;
-    void api("api/preview/shared").then(
-      (res: any) => !cancelled && setPvShared(res && !res.error ? res.items || [] : []),
-      () => !cancelled && setPvShared([]),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [pvOpen, moreOpen]);
+  const previewPop = usePortPreview(pvOpen, moreOpen, running, setPvOpen, setMoreOpen);
 
   // Close each popover on an outside click / Escape.
   useDismiss(pvRef, pvOpen, () => setPvOpen(false));
-  useDismiss(staleRef, staleOpen, () => setStaleOpen(false));
-  useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
   useDismiss(resRef, resOpen, () => setResOpen(false));
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
@@ -519,241 +313,6 @@ export function WsBar() {
     </>
   );
 
-  const previewPop = (
-    <>
-      <div className="pv-section">
-        <label className="pv-label">{tr("wsbar.preview.port_label")}</label>
-        <div className="pv-row">
-          <input
-            className="preview-port"
-            type="number"
-            min="1"
-            max="65535"
-            placeholder={tr("wsbar.preview.port_ph")}
-            value={port}
-            onChange={(e) => setPort(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              openDefaultPort();
-              closePortPops();
-            }}
-            title={tr("wsbar.preview.port_hint")}
-          />
-          <input
-            className="preview-path"
-            value={previewPath}
-            onChange={(e) => setPreviewPath(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              openDefaultPort();
-              closePortPops();
-            }}
-            aria-label={tr("browser.path")}
-            title={tr("wsbar.preview.path_hint")}
-          />
-        </div>
-        <PortOpen
-          variant="buttons"
-          port={Number(port.trim())}
-          path={previewPath.trim() || "/"}
-          running={!!running}
-          onOpened={closePortPops}
-        />
-        <div className="pv-hint">
-          {browserUnavailable
-            ? tr("wsbar.preview.hint_unavailable", { runtime: browserUnavailable })
-            : tr("wsbar.preview.hint")}
-        </div>
-      </div>
-      {/* The issued preview subdomain (docs/log/81). No URL is shown while stopped: the
-          slug is issued per start and expires on stop, so the link would only 404 — and a
-          404 comes back as a report that the feature is broken. */}
-      {pvHosts && Object.keys(pvHosts.urls).length > 0 && (
-        <div className="pv-section">
-          <label className="pv-label">
-            {tr("wsbar.preview.hosts_label")}
-            {pvHosts.public && <span className="pv-public"> {tr("wsbar.preview.public_badge")}</span>}
-          </label>
-          {Object.keys(pvHosts.urls)
-            .sort((a, b) => Number(a) - Number(b))
-            .map((p) => (
-              <div className="pv-row pv-actions" key={p}>
-                <Button
-                  className="pv-host"
-                  title={pvHosts.urls[p]}
-                  onClick={() => {
-                    window.open(pvHosts.urls[p], "_blank", "noopener");
-                    setPvOpen(false);
-                    setMoreOpen(false);
-                  }}
-                >
-                  <Icon name="globe" /> :{p}
-                </Button>
-                <Button
-                  variant="ghost"
-                  title={tr("wsbar.preview.copy_url")}
-                  onClick={() => void navigator.clipboard?.writeText(pvHosts.urls[p])}
-                >
-                  {tr("wsbar.preview.copy")}
-                </Button>
-                {/* Shown only while sharing: the link that survives restarts (docs/log/81
-                    §14.6). The raw URL rots on every start, so this is the one to hand
-                    to someone. */}
-                {pvHosts.tenantShare && pvHosts.shareLinks[p] && (
-                  <Button
-                    variant="ghost"
-                    title={tr("wsbar.preview.copy_share_url")}
-                    onClick={() =>
-                      void navigator.clipboard?.writeText(window.location.origin + pvHosts.shareLinks[p])
-                    }
-                  >
-                    {tr("wsbar.preview.copy_share")}
-                  </Button>
-                )}
-              </div>
-            ))}
-          <div className="pv-hint">{tr("wsbar.preview.hosts_hint")}</div>
-        </div>
-      )}
-      {/* Unlisted ports the owner has opened for this start. They are the owner's alone and
-          end with the listener, so they are listed apart from the issued URLs above. */}
-      {tempPorts.length > 0 && (
-        <div className="pv-section">
-          <label className="pv-label">{tr("portopen.temp_badge")}</label>
-          <div className="pv-row pv-actions">
-            {tempPorts.map((p) => (
-              <PortOpen key={p} variant="pill" port={p} running={!!running} />
-            ))}
-          </div>
-          <div className="pv-hint">{tr("portopen.temp_hint")}</div>
-        </div>
-      )}
-      {/* Previews shared by other people in the same tenant (docs/log/81 §14.6). What opens
-          is a stable link on the Console origin that resolves the current slug; carrying the
-          raw URL around 404s the moment its owner restarts. */}
-      {pvShared.length > 0 && (
-        <div className="pv-section">
-          <label className="pv-label">{tr("wsbar.preview.shared_label")}</label>
-          {pvShared.map((s) => (
-            <div className="pv-row pv-actions pv-row-shared" key={s.ownerUserKey}>
-              <span className="pv-shared-owner" title={s.ownerEmail || s.ownerUserKey}>
-                {s.ownerEmail || s.ownerUserKey}
-              </span>
-              {s.running ? (
-                s.ports.map((p) => (
-                  <Button
-                    className="pv-host"
-                    key={p}
-                    title={s.shareLinks[String(p)]}
-                    onClick={() => {
-                      window.open(window.location.origin + s.shareLinks[String(p)], "_blank", "noopener");
-                      setPvOpen(false);
-                      setMoreOpen(false);
-                    }}
-                  >
-                    <Icon name="globe" /> :{p}
-                  </Button>
-                ))
-              ) : (
-                // Keep the row while stopped; removing it would read as "not shared".
-                <span className="muted">{tr("wsbar.preview.shared_stopped")}</span>
-              )}
-            </div>
-          ))}
-          <div className="pv-hint">{tr("wsbar.preview.shared_hint")}</div>
-        </div>
-      )}
-      {/* Way back to an existing Chromium an agent attached to (docs/log/53 §53.7). The
-          intended entry is the action link in the mirror; this keeps a live attachment
-          reachable after the conversation scrolls past it or the pane is closed. */}
-      {attachments.length > 0 && (
-        <div className="pv-section">
-          <label className="pv-label">{tr("wsbar.preview.attachments_label")}</label>
-          {attachments.map((a) => (
-            <div className="pv-row pv-actions" key={a.id}>
-              <Button
-                className="pv-attachment"
-                onClick={() => {
-                  setPvOpen(false);
-                  setMoreOpen(false);
-                  void openBrowserAttachment(a.id);
-                }}
-                title={a.url || a.title}
-              >
-                {a.title || tr("browser.attach.canvas")}
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </>
-  );
-
-  // The pane buttons that fold into ⋯ on a narrow phone (wsBarFold.ts, useWsBarPhoneFold) are
-  // rendered from these in both places, so the bar's copy and the popover's copy cannot drift.
-  const splitDownBtn = (
-    <Button
-      variant="ghost"
-      className="ws-split"
-      title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
-      aria-label={tr("wsbar.split_down")}
-      disabled={!canSplitDown}
-      onClick={() => activePaneId && splitDown(activePaneId)}
-    >
-      <Icon name="split-vertical" />
-      <span className="lbl">{tr("wsbar.split_down")}</span>
-    </Button>
-  );
-  const closeAllBtn = (
-    <Button
-      variant="ghost"
-      className="ws-closeall"
-      title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
-      aria-label={tr("wsbar.close_all")}
-      disabled={!canCloseAll}
-      onClick={() => resetToTerminal()}
-    >
-      <Icon name="close-all" />
-      <span className="lbl">{tr("wsbar.close_all")}</span>
-    </Button>
-  );
-  const homeBtn = (
-    <Button
-      variant="ghost"
-      className="ws-split ws-home"
-      title={tr("wsbar.home_title") + hintSuffix("open.home")}
-      aria-label={tr("wsbar.home")}
-      onClick={() => openHome()}
-    >
-      <Icon name="home" />
-      <span className="lbl">{tr("wsbar.home")}</span>
-    </Button>
-  );
-  const overviewBtn = (
-    <Button
-      variant="ghost"
-      className="ws-split ws-overview"
-      title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
-      aria-label={tr("wsbar.overview")}
-      onClick={() => openSessionsOverview()}
-    >
-      <Icon name="dashboard" />
-      <span className="lbl">{tr("wsbar.overview")}</span>
-    </Button>
-  );
-  const imagegenBtn = imagegenAvailable && (
-    <Button
-      variant="ghost"
-      className="ws-split ws-imagegen"
-      title={tr("wsbar.imagegen_title") + hintSuffix("open.imagegen")}
-      aria-label={tr("wsbar.imagegen")}
-      onClick={() => void openImagegen()}
-    >
-      <Icon name="wand" />
-      <span className="lbl">{tr("wsbar.imagegen")}</span>
-    </Button>
-  );
-
   return (
     <div className="wsbar" ref={barRef}>
       <span className="ws-label">
@@ -823,36 +382,7 @@ export function WsBar() {
       >
         {wsLabel(wsState, wsReason)}
       </span>
-      {/* "Restart required" — the backend moved on while this container kept running. Sits
-          right of the state chip (and dots the power button next to it) because the
-          fix IS the power toggle; the popover explains the cost and offers the
-          stop→start in one click. Label folds away on a phone, tap target stays. */}
-      {staleShown && (
-        <div className="ws-stale" ref={staleRef}>
-          <Button
-            className="ws-stale-pill"
-            onClick={() => setStaleOpen((o) => !o)}
-            aria-expanded={staleOpen}
-            title={tr("wsbar.stale.title")}
-          >
-            <Icon name="refresh" />
-            <span className="lbl">{tr("wsbar.stale.badge")}</span>
-          </Button>
-          {staleOpen && (
-            <div className="ws-stale-pop">
-              <div className="ws-stale-txt">{tr("wsbar.stale.body")}</div>
-              <div className="ws-stale-actions">
-                <Button className="ws-stale-go" onClick={() => void onRestart()}>
-                  {tr("wsbar.stale.restart")}
-                </Button>
-                <Button variant="ghost" onClick={() => setStaleOpen(false)}>
-                  {tr("wsbar.stale.later")}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {staleShown && <StaleBadge onRestart={onRestart} />}
       {slotMoveShown && <SlotMoveNotice />}
       {/* The single "start anything" entry (launch flow Ph2): opens the StartModal hub
           (chat / repo / clone / home / other). While the workspace
@@ -873,23 +403,7 @@ export function WsBar() {
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
         <span className="lbl">{tr("wsbar.start_here")}</span>
       </Button>
-      {/* Columns are a desktop layout: canSplitRight is false for the whole phone width, so
-          the button could only ever sit there disabled — and the bar has no room to spare
-          (an overflowing bar widens the page, see wsbar.css). Dropped rather than disabled;
-          it returns with the width, since useIsMobile tracks the media query. */}
-      {!isMobile && (
-        <Button
-          variant="ghost"
-          className="ws-split"
-          title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
-          aria-label={tr("wsbar.split_right")}
-          disabled={!canSplitRight}
-          onClick={() => splitRight()}
-        >
-          <Icon name="split-horizontal" />
-          <span className="lbl">{tr("wsbar.split_right")}</span>
-        </Button>
-      )}
+      {splitRightBtn}
       {splitDownBtn}
       {closeAllBtn}
       {/* The sessions overview (ADR 0078). It sits with the pane buttons because it IS a
@@ -908,47 +422,18 @@ export function WsBar() {
       <span className="ws-spacer" />
 
       {isMobile ? (
-        <div className="ws-more" ref={moreRef}>
-          <Button
-            variant="ghost"
-            className="ws-more-btn"
-            title={tr("wsbar.more_title")}
-            onClick={() => setMoreOpen((o) => !o)}
-          >
-            <Icon name="ellipsis" />
-          </Button>
-          {moreOpen && (
-            <div className="ws-more-pop">
-              {/* The pane buttons the bar had no room for (the phone fold); a tap runs the action
-                  and closes the popover. In bar order, so the popover reads like the bar did. */}
-              {phoneFold > 0 && (
-                <div
-                  className="ws-more-actions"
-                  onClick={(e) => {
-                    // Closing unmounts the focused button; hand focus back to the trigger so a
-                    // keyboard user is not dropped on <body>. Only when focus is still here: an
-                    // action that moved it elsewhere (a pane) keeps it.
-                    if (e.currentTarget.contains(document.activeElement)) {
-                      moreRef.current?.querySelector<HTMLElement>(".ws-more-btn")?.focus();
-                    }
-                    setMoreOpen(false);
-                  }}
-                >
-                  {phoneFold > 1 && splitDownBtn}
-                  {phoneFold > 1 && closeAllBtn}
-                  {homeBtn}
-                  {overviewBtn}
-                  {imagegenBtn}
-                </div>
-              )}
-              {/* statsBlock is always a truthy Fragment (each chip hides itself by returning
-                  null), so emptiness cannot be tested here; the padding of an empty block is
-                  folded away by CSS :empty (wsbar.css). */}
-              <div className="ws-more-stats">{statsBlock}</div>
-              {previewPop}
-            </div>
-          )}
-        </div>
+        <MobileMore
+          open={moreOpen}
+          setOpen={setMoreOpen}
+          phoneFold={phoneFold}
+          splitDownBtn={splitDownBtn}
+          closeAllBtn={closeAllBtn}
+          homeBtn={homeBtn}
+          overviewBtn={overviewBtn}
+          imagegenBtn={imagegenBtn}
+          statsBlock={statsBlock}
+          previewPop={previewPop}
+        />
       ) : (
         <>
           {/* Desktop only: on a phone these already sit in the ⋯ overflow, a vertical list
@@ -976,30 +461,16 @@ export function WsBar() {
           {/* The same four, folded behind ⋯ once the bar runs out of width (wsBarFold.ts).
               The chips above stay mounted, hidden by CSS, so nothing re-fetches as the
               window crosses the boundary; the popover mounts its copies only while open. */}
-          <div className="ws-more ws-more-desk" ref={moreRef}>
-            <Button
-              variant="ghost"
-              className="ws-more-btn"
-              title={tr("wsbar.more_title")}
-              aria-label={tr("wsbar.more_title")}
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((o) => !o)}
-            >
-              <Icon name="ellipsis" />
-            </Button>
-            {moreOpen && foldMore && (
-              <div className="ws-more-pop">
-                {/* statsBlock without the usage chips: those keep their own +N group. */}
-                <div className="ws-more-stats">
-                  {graphs}
-                  {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
-                  <AwsProfilesChip passive />
-                  <GcpProfilesChip passive />
-                </div>
-                {previewPop}
-              </div>
-            )}
-          </div>
+          <DesktopMore open={moreOpen} setOpen={setMoreOpen} foldMore={foldMore}>
+            {/* statsBlock without the usage chips: those keep their own +N group. */}
+            <div className="ws-more-stats">
+              {graphs}
+              {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
+              <AwsProfilesChip passive />
+              <GcpProfilesChip passive />
+            </div>
+            {previewPop}
+          </DesktopMore>
         </>
       )}
     </div>

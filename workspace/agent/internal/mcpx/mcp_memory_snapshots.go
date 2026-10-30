@@ -6,6 +6,27 @@ import (
 	"strconv"
 )
 
+// listMemorySnapshotsArgs is list_memory_snapshots' (docs/log/39 P4).
+type listMemorySnapshotsArgs struct {
+	Limit int `json:"limit"`
+}
+
+// getMemorySnapshotArgs: Rev/At pick the snapshot, Path narrows the read.
+type getMemorySnapshotArgs struct {
+	Rev  string `json:"rev"`
+	At   string `json:"at"`
+	Path string `json:"path"`
+}
+
+// restoreMemorySnapshotArgs: Rev/At pick the snapshot, All/Kinds/Projects are the restore scope.
+type restoreMemorySnapshotArgs struct {
+	Rev      string   `json:"rev"`
+	At       string   `json:"at"`
+	All      bool     `json:"all"`
+	Kinds    []string `json:"kinds"`
+	Projects []string `json:"projects"`
+}
+
 // memorySnapshotTools read and restore the history of claude's and codex's own memories
 // (docs/log/39). Restoring is --write's.
 func memorySnapshotTools() []toolSpec {
@@ -29,7 +50,7 @@ func memorySnapshotTools() []toolSpec {
 					},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *listMemorySnapshotsArgs) []byte {
 				var path string
 				limit := a.Limit
 				if limit <= 0 {
@@ -39,7 +60,7 @@ func memorySnapshotTools() []toolSpec {
 				// nothing but the AF memory are left out before the limit applies (ADR 0108).
 				path = "/agents/memory/snapshots?native=1&limit=" + strconv.Itoa(limit)
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 		{
 			name: "get_memory_snapshot",
@@ -58,7 +79,7 @@ func memorySnapshotTools() []toolSpec {
 					},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *getMemorySnapshotArgs) []byte {
 				// Return the tree (what was there at that point) and the diff (what that snapshot
 				// changed) in one call. A restore scope can only be built from the tree: offering
 				// the CURRENT roots as the choices makes an already-deleted project unselectable,
@@ -96,7 +117,7 @@ func memorySnapshotTools() []toolSpec {
 					"tree": json.RawMessage(tree), "diff": json.RawMessage(diff),
 				})
 				return mcpTextResult(req.ID, string(out))
-			},
+			}),
 		},
 		{
 			name: "restore_memory_snapshot",
@@ -129,7 +150,7 @@ func memorySnapshotTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *restoreMemorySnapshotArgs) []byte {
 				if a.Rev == "" && a.At == "" {
 					return mcpToolErr(req.ID, "rev（snapshot id）か at（日時）のどちらかが必要です")
 				}
@@ -149,7 +170,7 @@ func memorySnapshotTools() []toolSpec {
 					return mcpToolErr(req.ID, "メモリの復元に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 	}
 }

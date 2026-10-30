@@ -419,6 +419,39 @@ func chromiumUnavailableTextFor(msg string) string {
 		"and tell the user the browser pane is unavailable on this workspace."
 }
 
+// Chromium Attach View arguments (docs/log/53). MCP is snake_case while the Agent REST is
+// camelCase, so the conversion is explicit at this boundary. Neither a host nor a CDP WebSocket
+// URL is accepted as input.
+
+// attachmentIDArg is the attachment a Chromium tool acts on.
+type attachmentIDArg struct {
+	AttachmentID string `json:"attachment_id"`
+}
+
+type chromiumTargetsArgs struct {
+	Port int `json:"port"`
+}
+
+type chromiumAttachArgs struct {
+	Port              int    `json:"port"`
+	TargetID          string `json:"target_id"`
+	ExpectedBrowserID string `json:"expected_browser_id"`
+	Label             string `json:"label"`
+}
+
+type chromiumActionArgs struct {
+	AttachmentID    string `json:"attachment_id"`
+	Message         string `json:"message"`
+	CompletionLabel string `json:"completion_label"`
+	AllowCancel     *bool  `json:"allow_cancel"`
+	ControlMode     string `json:"control_mode"`
+}
+
+type chromiumControlModeArgs struct {
+	AttachmentID string `json:"attachment_id"`
+	ControlMode  string `json:"control_mode"`
+}
+
 // chromiumTools is the Chromium Attach View family (docs/log/53). A session under
 // --chromium-attach is offered the same entries as the operator, which is why they are English.
 // The mutating five are refused on the call side too: a read-only client that guesses a name
@@ -580,45 +613,45 @@ func chromiumTools() []toolSpec {
 	return []toolSpec{
 		{
 			name: "list_chromium_targets", operator: listTargets, session: listTargets,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *chromiumTargetsArgs) []byte {
 				return mcpListChromiumTargets(req.ID, a.Port)
-			},
+			}),
 		},
 		{
 			name: "get_chromium_attachment", operator: getAttachment, session: getAttachment,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *attachmentIDArg) []byte {
 				return mcpGetChromiumAttachment(req.ID, a.AttachmentID)
-			},
+			}),
 		},
 		{
 			name: "attach_chromium", operator: attach, operatorWrite: true, session: attach, refuse: refuseWrite,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *chromiumAttachArgs) []byte {
 				return mcpAttachChromium(req.ID, a.Port, a.TargetID, a.ExpectedBrowserID, a.Label)
-			},
+			}),
 		},
 		{
 			name: "detach_chromium", operator: detach, operatorWrite: true, session: detach, refuse: refuseWrite,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *attachmentIDArg) []byte {
 				return mcpDetachChromium(req.ID, a.AttachmentID)
-			},
+			}),
 		},
 		{
 			name: "request_browser_action", operator: requestAction, operatorWrite: true, session: requestAction, refuse: refuseWrite,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *chromiumActionArgs) []byte {
 				return mcpRequestBrowserAction(req.ID, a.AttachmentID, a.Message, a.CompletionLabel, a.AllowCancel, a.ControlMode)
-			},
+			}),
 		},
 		{
 			name: "get_browser_action_result", operator: getActionResult, operatorWrite: true, session: getActionResult, refuse: refuseWrite,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *attachmentIDArg) []byte {
 				return mcpGetBrowserActionResult(req.ID, a.AttachmentID)
-			},
+			}),
 		},
 		{
 			name: "set_chromium_control_mode", operator: setControlMode, operatorWrite: true, session: setControlMode, refuse: refuseWrite,
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *chromiumControlModeArgs) []byte {
 				return mcpSetChromiumControlMode(req.ID, a.AttachmentID, a.ControlMode)
-			},
+			}),
 		},
 	}
 }

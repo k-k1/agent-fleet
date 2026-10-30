@@ -64,7 +64,9 @@ session. You can view, list, create, edit, comment on and transition issues:
   paragraph, and a table (a `| a | b |` header row followed by a `|---|---|` delimiter row) show as
   written; a table inside a list or a quote shows as a line per row, as Jira allows none there. When the issue is created but its description cannot be set, `jira`
   says so and exits with status 3: the issue exists, so do not create it again; set the
-  description with `jira issue edit PROJ-1 --no-input -b "…"`. If the issue type requires a
+  description with `jira issue edit PROJ-1 --no-input -b "…"`. `issue edit -b` also exits with
+  status 3 when only the description could not be set; the other changes were applied, so run just
+  that `issue edit` again. If the issue type requires a
   description when an issue is created, `create` sends it through the Jira CLI's own conversion and
   says so. In an interactive terminal without `--no-input`, with `--help`, `--web`, `--debug` or a
   configuration of your own, the Jira CLI is used as before. To turn the conversion off entirely,
