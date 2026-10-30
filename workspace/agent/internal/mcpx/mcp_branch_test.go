@@ -25,15 +25,9 @@ func branchTestEnv(t *testing.T, status int, answer string) *[]string {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	oldSource := mcpSourceSession
 	mcpSourceSession = "owner01"
-	mcpAdvertised.mu.Lock()
-	oldNames := mcpAdvertised.names
-	mcpAdvertised.names = nil
-	mcpAdvertised.mu.Unlock()
+	isolateAdvertised(t)
 	t.Cleanup(func() {
 		mcpSourceSession = oldSource
-		mcpAdvertised.mu.Lock()
-		mcpAdvertised.names = oldNames
-		mcpAdvertised.mu.Unlock()
 	})
 	session.WriteMeta(session.Meta{Name: "owner01", Dir: filepath.Join(home, "repos", "proj@wt"), Subdir: "console", Kind: "claude"})
 
