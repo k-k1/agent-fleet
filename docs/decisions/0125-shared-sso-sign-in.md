@@ -4,6 +4,10 @@ English | [日本語](0125-shared-sso-sign-in.ja.md)
 
 - Status: **proposed** (2026-10-30). Nothing is built yet. The open decisions are listed at the end.
 - Issue: #3014
+- Prerequisite: [0126](0126-aws-runs-in-the-mirror-and-confirm-before-use.md) (#3050): runs shown in the
+  session's mirror and per-profile "confirm before use". A shared sign-in removes the per-profile device code
+  that worked as an approval, so this ADR does not ship before 0126's run rows, and the gate ships with or
+  before it (0126 decision 7).
 - Related: [0102](0102-aws-login-through-the-console.md) (the Console login, its requests, attempts, status,
   expiry warning and logout, all keyed by the sso-session) / [0060](0060-settings-export-import.md) (the
   settings bundle, which carries `ssmProfileDTO`) / #3010 (import from `~/.aws/config`, Phase 1 in PR #3018) /
@@ -137,6 +141,8 @@ profiles stand behind it.
 - **Expiry.** `warnExpiringSSO` warns once per sso-session and end, for an sso-session with at least one
   exported member (key `aws-sso-expiring:<sso-session>:<end>`). The payload keeps `profile` (the first
   exported member, so an older Console still opens a modal) and adds `signIn`.
+- **Confirmation (ADR 0126).** A login to the sign-in confirms no member that asks for confirmation before
+  use. The gate stays per profile.
 - **Logout.** The token is shared, so logging out of a member logs out the sign-in. The existing route
   `POST /aws-login/profiles/{name}/logout` stays and acts on the member's sso-session. It deletes the role
   credentials cached for **every** member (`roleCachePaths` per member), not only the named one: a
@@ -169,8 +175,8 @@ before.
 
 ### 7. Migration and existing logins
 
-- **No data migration.** Migrations `0116_ssm_sign_in.sql` (SQLite) and `0101_ssm_sign_in.sql` (Postgres)
-  add the table, the column (default `''`) and the index. They are forward compatible: an older binary
+- **No data migration.** Migrations `0117_ssm_sign_in.sql` (SQLite) and `0102_ssm_sign_in.sql` (Postgres),
+  the numbers after ADR 0126's `confirm_use` column, add the table, the column (default `''`) and the index. They are forward compatible: an older binary
   ignores both, and the copied coordinates keep its output correct. The numbers are re-checked against
   `main` when the change is opened.
 - **Nothing changes for a member until they group.** Every existing login keeps working.
@@ -225,10 +231,10 @@ request can name a sign-in rather than a single profile.
 
 ## Open decisions
 
-- **A. Delivery.** Recommended: three PRs in order. CP (migration, store invariant, DTO, routes, bridge,
-  contract); then Agent (render, shadowing, `ssoSessionOf`, requests, status, expiry, logout); then Console
-  (grouped list, form, grouping action, import default). Every new field is omitted when empty, so each PR
-  is safe on its own.
+- **A. Delivery.** Recommended: three PRs in order, after ADR 0126's two (0126 decision 7). CP (migration, store
+  invariant, DTO, routes, bridge, contract); then Agent (render, shadowing, `ssoSessionOf`, requests, status,
+  expiry, logout); then Console (grouped list, form, grouping action, import default). Every new field is
+  omitted when empty, so each PR is safe on its own.
 - **B. Legacy laptop profiles on import** (`sso_start_url` on the profile, no `sso_session`; the laptop shares
   one login per start URL). Recommended: propose one sign-in per start URL and SSO region in the preview,
   named after the portal's host label (`d-1234567890`, editable, can be cleared). The alternative is to
