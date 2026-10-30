@@ -649,6 +649,10 @@ your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and you
 - Agent instructions are the one exception: they **replace** the text you have now (you are asked to
   confirm first).
 - The result stays on screen as counts, and **what did not go in is on the same line**.
+- If the current AWS profiles cannot be read, nothing AWS-related is added (otherwise everything would be
+  created a second time); try again.
+- **Coming from your own machine's `~/.aws/config` rather than another Agent Fleet?** The AWS profiles/SSM tab
+  reads that file directly (the link is on this tab too). → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-awsconfig)
 
 ### Danger zone
 

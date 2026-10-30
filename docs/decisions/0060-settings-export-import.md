@@ -87,3 +87,28 @@ judged idempotency to be enough.
   transfer tool.
 - **PUT ui-prefs as they are (the most straightforward implementation).** A re-run of the incident
   (decision 5).
+
+## Addendum (2026-10-30) — reading a laptop's `~/.aws/config` (#3010)
+
+Members named retyping their AWS profiles one by one as what kept them from moving to Agent Fleet. This bundle reads
+only what Agent Fleet wrote, so it does nothing for someone coming from their own machine. **The native format is
+added as a source; the sink stays the existing import planner (`planSsmImport`).**
+
+1. **Read the file as the AWS CLI does**: configparser's strict mode (a repeated section or key fails the whole file,
+   an indented line continues the previous value, `[DEFAULT]` applies to every section) and botocore's section
+   mapping. Read differently, a setup that works on the laptop becomes a different one in Settings.
+2. **Create nothing that runs as someone else.** Only complete SSO profiles and one-hop role chains from them are
+   created. A profile that also carries keys or a `credential_process` is not importable; it is never turned into
+   an SSO profile by dropping the keys.
+3. **Check values against the Agent's allowlists**, which are stricter than the CP's minimum. The Agent quotes a
+   refused value in its sync log, so a key on a continuation line could leak there. Reasons name keys and lines only.
+4. **Join an existing row only when the sign-in is shown to be the same**: the source is in the file with equal
+   coordinates, or the member picked it in the preview (labelled as not verified). Never by name alone.
+5. **Re-read the current list before writing, and send nothing if it cannot be read.** `api()` returns a failure as
+   an error body and the CP has no unique constraint on labels, so going on would create everything twice. The
+   bundle import now uses the same executor (`ssmImportExec.ts`).
+
+Decision 6 (no server change) holds: the file is read in the browser and only per-row fields go to the existing
+`POST api/ssm/profiles`. Concurrent imports from two places are not de-duplicated (that would need a CP unique
+constraint). Procedure and the remaining phases (`~/.ssh/config`, gcloud, export):
+[docs/79 §9](../log/79-settings-export-import.md#9-手元の-awsconfig-を読む3010).
