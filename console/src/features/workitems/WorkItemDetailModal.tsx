@@ -182,7 +182,10 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
       current = false;
       clearTimeout(timer);
     };
-  }, [pending, polls, provider, key, kind, reference]);
+    // `attempt` too: a fresh read (after a merge attempt) must cancel a poll in flight. Its own
+    // setDetail(null) does not reliably do it — batched with a fast answer that is again
+    // "unknown", `pending` never changes, and the old poll would land on top of the newer read.
+  }, [pending, polls, provider, key, kind, reference, attempt]);
 
   return {
     detail,
@@ -589,14 +592,18 @@ export function WorkItemDetailModal({
             <>
               <dt>{tr("wi.detail_merge")}</dt>
               <dd className={"wi-dmerge" + (d.mergeable === "conflict" && !d.merged ? " tone-bad" : "")}>
-                {live.rechecking ? (
-                  <>
-                    <Icon name="sync" spin />
-                    {tr("wi.detail_merge_checking")}
-                  </>
-                ) : (
-                  mergeText(d)
-                )}
+                {/* A status region that stays mounted, so "checking" turning into the answer is
+                    announced: the footer's note disappears at that moment and cannot say it. */}
+                <span role="status">
+                  {live.rechecking ? (
+                    <>
+                      <Icon name="sync" spin />
+                      {tr("wi.detail_merge_checking")}
+                    </>
+                  ) : (
+                    mergeText(d)
+                  )}
+                </span>
                 {live.recheckSpent && (
                   <button type="button" className="linklike" onClick={live.recheck}>
                     {tr("wi.detail_merge_recheck")}

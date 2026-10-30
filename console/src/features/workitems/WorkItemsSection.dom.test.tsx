@@ -1499,10 +1499,14 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       expect(modal.textContent).toContain("feature/x");
       expect(modal.querySelector(".wi-dskel")).toBeNull();
 
+      const status = modal.querySelector(".wi-dmerge [role=status]")!;
+      expect(status.textContent).toBe(t("wi.detail_merge_checking"));
       await act(async () => release(mergeable));
       await settle();
       expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
-      expect(modal.textContent).toContain(t("wi.detail_merge_clean"));
+      // The same live region carries the answer, so it is announced.
+      expect(modal.querySelector(".wi-dmerge [role=status]")).toBe(status);
+      expect(status.textContent).toBe(t("wi.detail_merge_clean"));
       expect(mergeBtn(modal)?.disabled).toBe(false);
       await tick(60000);
       expect(workItemDetail).toHaveBeenCalledTimes(2); // decided: no more reads
@@ -1522,6 +1526,41 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       await tick(0);
       expect(workItemDetail).toHaveBeenCalledTimes(7);
       expect(mergeBtn(modal)?.disabled).toBe(false);
+    });
+
+    it("drops a poll in flight when a fresh read starts, even if both answers are unknown", async () => {
+      // The merge dialog stays open after a plain failure, so a second press re-reads the pull
+      // request while a poll from the first re-read may still be out.
+      // Under act() the fresh read's blanking commits on its own, so this pins the flow but not
+      // the batched case (blank + fast "unknown" in one commit); the poll effect's `attempt`
+      // dependency is what covers that one.
+      workItemDetail.mockResolvedValue(mergeable);
+      workItemMerge.mockResolvedValue({ error: { code: "provider_error", message: "boom" } });
+      const modal = await open();
+      await act(async () => mergeBtn(modal)!.click());
+      // The read after the failure: GitHub is recomputing.
+      workItemDetail.mockResolvedValue(unknown);
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(dialog()).not.toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
+      // The first poll goes out and hangs.
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await tick(2000);
+      const calls = workItemDetail.mock.calls.length;
+      // A second failed press re-reads; the answer is unknown again, with a newer head.
+      const NEW = "f".repeat(40);
+      workItemDetail.mockResolvedValue({ ...unknown, headSha: NEW, additions: 99 });
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(workItemDetail.mock.calls.length).toBe(calls + 1);
+      expect(modal.textContent).toContain("+99");
+      // The stale poll answers last: it must not paint the older pull request back.
+      await act(async () => release({ ...mergeable, additions: 1 }));
+      await settle();
+      expect(modal.textContent).toContain("+99");
+      expect(mergeBtn(modal)?.disabled).toBe(true);
     });
 
     it("stops re-reading when the panel closes", async () => {
