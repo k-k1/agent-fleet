@@ -23,7 +23,7 @@
 //
 // Pure: no fetch, no React.
 
-import { effectiveOptions, nestedPairs, sectionRole, type IniFile, type IniValue } from "./awsConfigIni.ts";
+import { botocoreValue, effectiveOptions, sectionRole, type IniFile, type IniValue } from "./awsConfigIni.ts";
 import { awsProfileName, validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
 import { ssoKey, type SsmProfileEntry, type SsmSection } from "./settingsBundle.ts";
 
@@ -230,8 +230,8 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
       merged = new Map(o);
       for (const [k, v] of sess) {
         const mine = o.get(k);
-        // Compared as botocore sees them: a nested block by its pairs, not its spelling.
-        if (mine && String(nestedPairs(mine.value) ?? mine.value) !== String(nestedPairs(v.value) ?? v.value)) {
+        // Compared as botocore sees them: a nested block as a dict, never equal to a string.
+        if (mine && botocoreValue(mine.value) !== botocoreValue(v.value)) {
           return fail({ code: "sso_conflict", key: safeKey(k) });
         }
         merged.set(k, v);

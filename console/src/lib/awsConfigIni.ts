@@ -123,26 +123,34 @@ export function parseAwsIni(text: string): { ok: true; file: IniFile } | { ok: f
   const file: IniFile = { sections, defaults, bomStripped };
   for (const sec of sections) {
     for (const v of effectiveOptions(file, sec).values()) {
-      if (nestedPairs(v.value) === null) return { ok: false, error: { code: "bad_nested", line: v.line } };
+      if (nestedDict(v.value) === null) return { ok: false, error: { code: "bad_nested", line: v.line } };
     }
   }
   return { ok: true, file };
 }
 
-/** A nested value (one that starts on the next line) as botocore reads it: `k = v` pairs,
- *  sorted, so two spellings of the same block compare equal. Null when a line has no "=";
- *  undefined for a plain value. */
-export function nestedPairs(value: string): string[] | null | undefined {
+/** A nested value (one that starts on the next line) as botocore reads it: a dict filled line
+ *  by line, so a repeated key keeps its last value (configloader._parse_nested). Null when a
+ *  line has no "="; undefined for a plain value. */
+export function nestedDict(value: string): Map<string, string> | null | undefined {
   if (!value.startsWith("\n")) return undefined;
-  const out: string[] = [];
+  const out = new Map<string, string>();
   for (const l of value.split("\n")) {
     const t = l.trim();
     if (!t) continue;
     const i = t.indexOf("=");
     if (i < 0) return null;
-    out.push(t.slice(0, i).trim() + "=" + t.slice(i + 1).trim());
+    out.set(t.slice(0, i).trim(), t.slice(i + 1).trim());
   }
-  return out.sort();
+  return out;
+}
+
+/** A value in a form that is equal exactly when botocore's values are: a string and a dict
+ *  never match, and a dict compares by its pairs whatever their order or spelling. */
+export function botocoreValue(value: string): string {
+  const d = nestedDict(value);
+  if (!d) return JSON.stringify(["s", value]);
+  return JSON.stringify(["d", [...d].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
 }
 
 /** Effective options of a section: its own keys over [DEFAULT]'s, as configparser's

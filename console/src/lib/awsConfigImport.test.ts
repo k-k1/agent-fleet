@@ -81,6 +81,21 @@ describe("readAwsConfig / resolveImport — SSO", () => {
     expect(row(q, "a").reason).toEqual({ code: "sso_conflict", key: "s3" });
   });
 
+  it("compares nested blocks as botocore's dicts: type, last value wins, values with delimiters", () => {
+    const status = (sess: string, prof: string) => {
+      const r = row(preview(SESSION + sess + ssoProfile("a") + prof), "a");
+      return r.reason?.code ?? r.status;
+    };
+    // A string never equals a dict, even when their text matches.
+    const p = preview(SESSION.replace("sso_region", "sso_role_name = Admin=\nsso_region") + "[profile a]\nsso_session = corp\nsso_account_id = 1\nsso_role_name =\n  Admin=\n");
+    expect(row(p, "a").reason).toEqual({ code: "sso_conflict", key: "sso_role_name" });
+    // A repeated key keeps its last value.
+    expect(status("s3 =\n  x=1\n  x=2\n", "s3 =\n  x=2\n")).toBe("create");
+    expect(status("s3 =\n  x=1\n  x=2\n", "s3 =\n  x=2\n  x=1\n")).toBe("sso_conflict");
+    // Delimiters inside a value do not make two different dicts look alike.
+    expect(status("s3 =\n  a=1,b=2\n", "s3 =\n  a=1\n  b=2\n")).toBe("sso_conflict");
+  });
+
   it("does not take a region only the sso-session sets", () => {
     const p = preview(SESSION + "region = eu-west-1\n" + ssoProfile("a"));
     expect(row(p, "a")).toMatchObject({ status: "create", entry: { region: "" }, effectiveRegion: "us-east-1" });
