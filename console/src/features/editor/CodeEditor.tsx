@@ -11,6 +11,8 @@ import {
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap } from "@codemirror/search";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { loadLanguageExtension } from "./languages.ts";
 import { validateEditorBuffer, type BufferValidationError } from "./buffer.ts";
 import { lineStartOf, selectionRangeOf, type EditorSelectionReport } from "./selection.ts";
@@ -170,6 +172,56 @@ export const editorTheme = EditorView.theme({
   },
 });
 
+/** Syntax colours from the same `--hl-*` tokens, and the same tag groups, as the
+ *  highlight.js stylesheet behind the read-only viewer (viewer/parts/highlight.css),
+ *  so edit and read views match. `basicSetup` installs `defaultHighlightStyle` as a
+ *  fallback, a light-only palette (a Markdown URL is #219): it is dropped only because
+ *  this one is installed as a regular highlighter. Colours are var() strings, so they
+ *  follow a nested data-theme region. A tag left out renders in plain --fg. */
+export const editorHighlightStyle = HighlightStyle.define([
+  { tag: [tags.keyword, tags.typeName, tags.namespace], color: "var(--hl-keyword)" },
+  {
+    tag: [
+      tags.meta,
+      tags.atom,
+      tags.bool,
+      tags.literal,
+      tags.url,
+      tags.contentSeparator,
+      tags.labelName,
+      tags.local(tags.variableName),
+    ],
+    color: "var(--hl-attr)",
+  },
+  {
+    tag: [tags.definition(tags.variableName), tags.definition(tags.propertyName), tags.className],
+    color: "var(--hl-title)",
+  },
+  { tag: [tags.string, tags.regexp], color: "var(--hl-string)" },
+  {
+    tag: [tags.escape, tags.special(tags.string), tags.special(tags.variableName), tags.macroName, tags.list],
+    color: "var(--hl-built)",
+  },
+  // processingInstruction (Markdown `#`, `*`, brackets) is a child of meta, so it needs its own
+  // rule to be the muted punctuation rather than the meta colour.
+  { tag: [tags.comment, tags.monospace, tags.processingInstruction], color: "var(--hl-comment)" },
+  { tag: tags.quote, color: "var(--hl-name)" },
+  { tag: tags.inserted, color: "var(--hl-add-fg)" },
+  { tag: [tags.deleted, tags.invalid], color: "var(--hl-del-fg)" },
+  { tag: tags.link, color: "var(--hl-attr)", textDecoration: "underline" },
+  {
+    tag: tags.heading,
+    color: "var(--hl-attr)",
+    textDecoration: "underline",
+    fontWeight: "bold",
+  },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "bold" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+]);
+
+export const editorHighlighting: Extension = syntaxHighlighting(editorHighlightStyle);
+
 /** Scroll a 1-based line into view and put the cursor on it. The cursor is what
  *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
  *  editing surface's equivalent of CodeView's target-line row. */
@@ -250,6 +302,7 @@ export function CodeEditor({
         ...searchKeymap,
       ]),
       editorTheme,
+      editorHighlighting,
     ];
     extensionsRef.current = extensions;
     // A fresh mount starts a fresh model, so its follow epoch is the baseline —

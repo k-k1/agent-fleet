@@ -194,7 +194,36 @@ AF へ移る妨げとして「作り込んだ AWS プロファイルを設定画
 - ログインの共有（同じ sso-session の 20 個が 20 回のログインになる）：#3014。
 - `~/.ssh/config` の SSM ホスト・gcloud の構成・`~/.aws/config` への書き出し：#3017。
 
-### 9.4 `~/.ssh/config` から SSM ホストを読む（#3017 第 1 部、2026-10-30 追記）
+### 9.4 gcloud の構成を読む（#3017 第 2 部、2026-10-30）
+
+`~/.config/gcloud/configurations/config_<名前>` を、AWS タブの取り込みと同じ型で Google Cloud タブに足した
+（`GcpConfigImport.tsx`）。ファイルはブラウザの中だけで読み、送るのは既存の `POST api/gcp/profiles` へ
+プロファイルの 6 項目（project / quotaProject / account / region / zone / impersonateServiceAccount）と label だけ。
+新しい REST は足していない。
+
+| 段 | 置き場 | 役割 |
+|----|--------|------|
+| 読む | `awsConfigIni.ts` `parseIni(text, false)` | gcloud も `configparser.ConfigParser()`（`core/configurations/properties_file.py`）なので同じ読み方。AWS 専用の「入れ子の値」検査だけを外す。`parseAwsIni` の挙動は変えていない |
+| 意味づけ・検証 | `console/src/lib/gcloudConfigImport.ts` `readGcloudConfig` | 対応する 6 項目の取り出し、対象外の判定、CP の `validateGCPProfile` と同じ正規表現での事前検証 |
+| 解決 | 同 `resolveGcpImport` | 既存行（label か CP が返す `name` が同じ）と突き合わせ、新規 / 登録済み / 取り込めない（理由つき）に分ける |
+| 実行 | `gcpImportExec.ts` | 一覧を読めなければ送らない・CP が断った行は 1 行だけの失敗・応答が来なければ止める（ssmImportExec と同じ規則） |
+
+- **対象外にして理由を出すもの**：`auth/` の空でないキー（`credential_file_override`・`access_token_file`・独自の
+  OAuth クライアントやホスト、未知のキー。`disable_credentials = false` と空の値は通す）、`impersonate_service_account`
+  のカンマ区切り（委任チェーン）、`[proxy]`・`[api_endpoint_overrides]`、`core/universe_domain`（既定以外）、
+  `core/custom_ca_certs_file`、`core/account` がサービスアカウント（鍵なしではログインできない。CP は通すが
+  取り込むと動かない行になる）、project 無し。`[DEFAULT]` から継がれたものも同じ。
+- 理由に出すのはキー名（既知のものだけ。未知は `?`）と行番号。値、パス、トークンファイルは表示も送信もしない。
+  DOM テストが `credential_file_override`・`access_token_file`・未知のキーと値・`[proxy]` に歩哨文字列を置いて確かめる。
+- label は gcloud の構成名。取り込みが作る label は `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` に絞った。CP の `gcpProfileName`
+  が label そのものを返す範囲なので、Console が名前を計算し直さずに衝突を見られる（Console は CP の `name` を
+  導出しない、という GcpTab の規則を保つ）。
+- 変異確認：一覧の GET のガードと `auth/` の拒否を 1 つずつ壊し、新しいテストが落ちるのを見た。
+- gcloud は `ConfigParser()` の既定（BasicInterpolation）で読むので、値に `%` を含むファイルは展開結果が読めない。補間は実装せず、ファイル全体を理由つきで断る（誤ったアカウントを取り込まないため）。`disable_credentials` は gcloud の真偽値の綴りだけ通し、不明な綴りは断る。構成名は gcloud の規則（末尾 `-` も有効）に合わせ、label の段階で直させる。5xx は作成結果不明として止める（CP は INSERT 後の一覧再読込で 500 を返しうる）。
+
+残り：実機での目視（#3017 は第 1 部 ssh-config が別 PR）。この PR は実フリートでは未確認。
+
+### 9.5 `~/.ssh/config` から SSM ホストを読む（#3017 第 1 部、2026-10-30 追記）
 
 決定は ADR 0060 の同日付の追記（`~/.ssh/config`）。
 

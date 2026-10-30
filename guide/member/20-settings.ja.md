@@ -613,6 +613,8 @@ Client ID（**コピー**ボタン付き。client secret は表示しません�
   できるため）。もう一度試してください。
 - **別の Agent Fleet ではなく、手元の PC の `~/.aws/config` から移るとき**は、AWS プロファイル/SSM のタブで
   そのファイルを直接読めます（このタブにも入口があります）。→ [16 クラウドのアカウント](16-cloud-accounts.ja.md#awsconfig-からプロファイルを取り込む)
+- **手元の PC の gcloud の構成から Google Cloud プロファイルを作るとき**は、Google Cloud のタブで
+  `~/.config/gcloud/configurations/config_<名前>` を直接読めます。→ [16 クラウドのアカウント](16-cloud-accounts.ja.md#gcloud-の構成から取り込む)
 
 ### 危険な操作
 
