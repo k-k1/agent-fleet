@@ -36,7 +36,7 @@ import (
 // Only auth is raised today: the other causes (usage limit, prompt overflow, server side) have
 // no corresponding action in the Console, so more marks would have no use. Add them here when
 // they do.
-const causeAuth = "auth"
+const causeAuth = transcript.CauseAuth
 
 // apiError is one synthetic API-error record, normalized to the same label+detail shape
 // codex/opencode use so all three render identically downstream.

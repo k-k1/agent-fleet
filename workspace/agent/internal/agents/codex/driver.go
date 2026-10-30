@@ -1293,16 +1293,30 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	// console/src/features/mirror/pendingEcho.ts) and the Console (ErrorBlock, same Kind
 	// opencode's errors.go targets) something to show. Cleared by clearLastError the moment
 	// the next turn starts (runTurn), so it never lingers past a successful retry.
-	if ce := h.turnError(); ce != nil {
-		idx := 0
-		if n := len(td.Turns); n > 0 {
-			idx = td.Turns[n-1].Idx + 1
-		}
-		td.Turns = append(td.Turns, transcript.Turn{
-			Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
-			Idx: idx, TS: time.Now().Format(time.RFC3339),
-		})
+	//
+	td.Turns = withLastError(td.Turns, h.turnError())
+}
+
+// withLastError appends ce as the synthetic trailing error turn (see managedEnrich), for a
+// turn/start rejection only.
+//
+// A turn that did start and then failed (ce.turnID set) is left to the rollout: codex writes
+// the same failure on its task_complete record (the app-server builds turn/completed's error
+// from that field), and the parser renders it there. A copy would take a slot in the Console's
+// turn-count cursor from a snapshot read before the record landed; when it lands among turns
+// that arrived in between, the copy stays beside it and the cursor skips a real turn.
+func withLastError(turns []transcript.Turn, ce *codexError) []transcript.Turn {
+	if ce == nil || ce.turnID != "" {
+		return turns
 	}
+	idx := 0
+	if n := len(turns); n > 0 {
+		idx = turns[n-1].Idx + 1
+	}
+	return append(turns, transcript.Turn{
+		Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
+		Idx: idx, TS: time.Now().Format(time.RFC3339),
+	})
 }
 
 // buildInput assembles the turn/start and turn/steer input items: prompt text plus
@@ -1459,6 +1473,7 @@ func dispatchNotification(msg rpcMsg) {
 			case "failed":
 				st = agents.TurnFailed
 				if ce, ok := decodeCodexError(p.Turn.Error); ok {
+					ce.turnID = p.Turn.ID
 					failure = ce.summary()
 					h.setLastError(ce)
 					if ce.retryable() {

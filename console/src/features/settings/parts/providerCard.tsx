@@ -74,7 +74,7 @@ export function CopyCode({ children }: { children: ReactNode }) {
 // DisconnectButton: the per-provider disconnect action shown when a connection is live.
 // Confirms first (styled useConfirm — the same dialog SSM/token deletes use), so every
 // destructive action in the settings modal asks before it acts.
-export function DisconnectButton({ onClick }: { onClick: () => void }) {
+export function DisconnectButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   const tr = useT();
   const askConfirm = useConfirm();
   const handle = async () => {
@@ -87,7 +87,12 @@ export function DisconnectButton({ onClick }: { onClick: () => void }) {
     if (ok) onClick();
   };
   return (
-    <button className="ghost danger conn-disconnect" title={tr("provider.disconnect")} onClick={handle}>
+    <button
+      className="ghost danger conn-disconnect"
+      title={tr("provider.disconnect")}
+      disabled={disabled}
+      onClick={handle}
+    >
       {tr("provider.disconnect")}
     </button>
   );
@@ -103,7 +108,7 @@ export function DisconnectButton({ onClick }: { onClick: () => void }) {
 // so it asks before acting the way disconnect does — but it is not framed as destructive: the
 // OAuth flow opens immediately afterwards, and abandoning it leaves the card in its ordinary
 // disconnected state with connect available.
-export function ReauthButton({ onClick }: { onClick: () => void }) {
+export function ReauthButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   const tr = useT();
   const askConfirm = useConfirm();
   const handle = async () => {
@@ -116,7 +121,7 @@ export function ReauthButton({ onClick }: { onClick: () => void }) {
     if (ok) onClick();
   };
   return (
-    <button className="ghost conn-reauth" title={tr("provider.reauth_title")} onClick={handle}>
+    <button className="ghost conn-reauth" title={tr("provider.reauth_title")} disabled={disabled} onClick={handle}>
       {tr("provider.reauth")}
     </button>
   );
