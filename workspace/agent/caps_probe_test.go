@@ -283,8 +283,9 @@ func TestObserveModelOverrideEmptyRecordSaysWhy(t *testing.T) {
 func TestModelOverrideIgnoredFlagIsDriftRefusedIsProbeError(t *testing.T) {
 	models := []agents.ModelChoice{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	turns := []transcript.Turn{{Role: "assistant", Model: "stamped"}}
-	run := func(rec modelRecord) probeResult {
-		env := &fakeProbeEnv{modelFn: func(m string) probeObservation { return observeModelOverride(turns, rec, m) }}
+	// recFor builds the CLI's record per requested model, as the live probe does.
+	run := func(recFor func(model string) modelRecord) probeResult {
+		env := &fakeProbeEnv{modelFn: func(m string) probeObservation { return observeModelOverride(turns, recFor(m), m) }}
 		for _, r := range runCapsProbes(agents.Caps{}, models, "", env) {
 			if r.ID == probeModelOverride {
 				return r
@@ -293,19 +294,37 @@ func TestModelOverrideIgnoredFlagIsDriftRefusedIsProbeError(t *testing.T) {
 		t.Fatal("no model-override result")
 		return probeResult{}
 	}
-	if r := run(modelRecord{Have: true, Model: "auto"}); r.Verdict != verdictDrift {
+	refusal := func(m string) string {
+		return fmt.Sprintf("Model %q from --model flag is not available. Using \"auto\" instead.", m)
+	}
+	if r := run(func(string) modelRecord { return modelRecord{Have: true, Model: "auto"} }); r.Verdict != verdictDrift {
 		t.Errorf("flag ignored without a refusal = %s, want DRIFT: %s", r.Verdict, r)
 	}
-	msg := `Model "a" from --model flag is not available. Using "auto" instead.`
-	r := run(modelRecord{Have: true, Model: "auto", Refusal: msg})
-	if r.Verdict != verdictBroken || !strings.Contains(r.String(), "not available") {
-		t.Errorf("every model refused = %s, want PROBE-ERROR with the CLI message: %s", r.Verdict, r)
+	r := run(func(m string) modelRecord { return modelRecord{Have: true, Model: "auto", Refusal: refusal(m)} })
+	if r.Verdict != verdictBroken || !strings.Contains(r.String(), `Model "c" from --model flag`) {
+		t.Errorf("every model refused = %s, want PROBE-ERROR naming each refusal: %s", r.Verdict, r)
+	}
+	// a is refused, then b is silently run as auto with nothing on record for b: DRIFT, not
+	// an error excused by a's refusal.
+	r = run(func(m string) modelRecord {
+		if m == "a" {
+			return modelRecord{Have: true, Model: "auto", Refusal: refusal(m)}
+		}
+		return modelRecord{Have: true, Model: "auto"}
+	})
+	if r.Verdict != verdictDrift {
+		t.Errorf("partial refusal then an unrefused mismatch = %s, want DRIFT: %s", r.Verdict, r)
 	}
 }
 
 func TestWaitRecordedModel(t *testing.T) {
-	sleeps := 0
-	sleep := func(time.Duration) { sleeps++ }
+	// A fake clock that only sleep and read advance, so the bound is observable.
+	var clock time.Duration
+	base := time.Unix(0, 0)
+	now := func() time.Time { return base.Add(clock) }
+	sleep := func(d time.Duration) { clock += d }
+	reset := func() { clock = 0 }
+
 	reads := 0
 	late := func() string {
 		reads++
@@ -314,17 +333,24 @@ func TestWaitRecordedModel(t *testing.T) {
 		}
 		return ""
 	}
-	if got := waitRecordedModel(late, 10*time.Second, time.Second, sleep); got != "composer-2.5" || sleeps != 3 {
-		t.Errorf("late write: got %q after %d sleeps, want composer-2.5 after 3", got, sleeps)
+	if got := waitRecordedModel(late, 10*time.Second, time.Second, now, sleep); got != "composer-2.5" || clock != 3*time.Second {
+		t.Errorf("late write: got %q at %v, want composer-2.5 at 3s", got, clock)
 	}
-	sleeps = 0
-	if got := waitRecordedModel(func() string { return "" }, 5*time.Second, time.Second, sleep); got != "" || sleeps != 5 {
-		t.Errorf("never written: got %q after %d sleeps, want an empty answer after the bounded 5", got, sleeps)
+	reset()
+	if got := waitRecordedModel(func() string { return "" }, 5*time.Second, time.Second, now, sleep); got != "" || clock != 5*time.Second {
+		t.Errorf("never written: got %q at %v, want an empty answer at the 5s bound", got, clock)
+	}
+	// A read that itself takes time (a locked SQLite store) counts against the bound.
+	reset()
+	reads = 0
+	slow := func() string { reads++; clock += 3 * time.Second; return "" }
+	if got := waitRecordedModel(slow, 5*time.Second, time.Second, now, sleep); got != "" || reads != 2 || clock > 8*time.Second {
+		t.Errorf("slow read: got %q after %d reads at %v, want at most 2 reads within 8s", got, reads, clock)
 	}
 	// A non-empty record is final even when it is the wrong one.
-	sleeps = 0
-	if got := waitRecordedModel(func() string { return "auto" }, 5*time.Second, time.Second, sleep); got != "auto" || sleeps != 0 {
-		t.Errorf("a recorded model must not be waited on: got %q after %d sleeps", got, sleeps)
+	reset()
+	if got := waitRecordedModel(func() string { return "auto" }, 5*time.Second, time.Second, now, sleep); got != "auto" || clock != 0 {
+		t.Errorf("a recorded model must not be waited on: got %q at %v", got, clock)
 	}
 }
 

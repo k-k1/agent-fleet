@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -91,11 +92,12 @@ func setModel(r *agents.RecalledSettings, model string, effort *string) {
 	}
 }
 
-// ModelRefusal returns the message copilot recorded when it would not launch the model asked
-// for with --model ("Model \"X\" from --model flag is not available. Using \"auto\" instead."),
+// ModelRefusal returns the message copilot recorded when it would not launch `model`, the one
+// asked for with --model; a refusal of any other model, or another error quoting the phrase, is
+// not it ("Model \"X\" from --model flag is not available. Using \"auto\" instead."),
 // or "" when there is none. That is the only evidence that a fallback to auto was a refusal
 // (the account or plan does not enable the model) and not a silently ignored flag.
-func (agentImpl) ModelRefusal(m session.Meta) string {
+func (agentImpl) ModelRefusal(m session.Meta, model string) string {
 	sid := resolveSid(m)
 	if sid == "" {
 		return ""
@@ -105,10 +107,11 @@ func (agentImpl) ModelRefusal(m session.Meta) string {
 		return ""
 	}
 	defer f.Close()
-	return refusalFrom(f)
+	return refusalFrom(f, model)
 }
 
-func refusalFrom(rd io.Reader) string {
+func refusalFrom(rd io.Reader, model string) string {
+	prefix := fmt.Sprintf("Model %q from --model flag is not available.", model)
 	br := bufio.NewReader(rd)
 	for {
 		line, err := br.ReadBytes('\n')
@@ -121,7 +124,7 @@ func refusalFrom(rd io.Reader) string {
 				} `json:"data"`
 			}
 			if json.Unmarshal(line, &ev) == nil && ev.Type == "session.error" && ev.Data.ErrorType == "model" &&
-				strings.Contains(ev.Data.Message, "from --model flag is not available") {
+				strings.HasPrefix(ev.Data.Message, prefix) {
 				return ev.Data.Message
 			}
 		}

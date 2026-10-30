@@ -357,12 +357,15 @@ const (
 	recordedModelEvery = 500 * time.Millisecond
 )
 
-// waitRecordedModel polls read until it returns a non-empty model or wait runs out. Only an
-// empty record is waited for: a non-empty one is final, so a wrong model is never given time
-// to "become" the right one.
-func waitRecordedModel(read func() string, wait, every time.Duration, sleep func(time.Duration)) string {
-	for waited := time.Duration(0); ; waited += every {
-		if m := read(); m != "" || waited >= wait {
+// waitRecordedModel polls read until it returns a non-empty model or wait of real time has
+// passed. The deadline is the clock's, not a count of sleeps: a read can itself block (cursor's
+// SQLite read waits up to 3 s on a lock the running CLI holds), so it may overrun the bound by
+// one read but never by one read per poll. Only an empty record is waited for: a non-empty one
+// is final, so a wrong model is never given time to "become" the right one.
+func waitRecordedModel(read func() string, wait, every time.Duration, now func() time.Time, sleep func(time.Duration)) string {
+	deadline := now().Add(wait)
+	for {
+		if m := read(); m != "" || !now().Before(deadline) {
 			return m
 		}
 		sleep(every)

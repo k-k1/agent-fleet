@@ -172,12 +172,14 @@ func (e *liveProbeEnv) ModelOverride(model string) probeObservation {
 		} else if recaller, ok := e.spec.agent.(agents.SettingsRecaller); ok {
 			rec.Have, read = true, func() string { return recaller.RecallSettings(asked).Model }
 		}
-		rec.Model = waitRecordedModel(read, recordedModelWait, recordedModelEvery, time.Sleep)
+		rec.Model = waitRecordedModel(read, recordedModelWait, recordedModelEvery, time.Now, time.Sleep)
 		if why, ok := e.spec.agent.(interface{ RecordedModelMissing(session.Meta) string }); ok && rec.Model == "" {
 			rec.Missing = why.RecordedModelMissing(asked)
 		}
-		if r, ok := e.spec.agent.(interface{ ModelRefusal(session.Meta) string }); ok {
-			rec.Refusal = r.ModelRefusal(asked)
+		if r, ok := e.spec.agent.(interface {
+			ModelRefusal(session.Meta, string) string
+		}); ok {
+			rec.Refusal = r.ModelRefusal(asked, model)
 		}
 	})
 	if err != nil {

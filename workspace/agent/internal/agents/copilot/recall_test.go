@@ -47,10 +47,26 @@ func TestRecallFrom(t *testing.T) {
 func TestRefusalFrom(t *testing.T) {
 	refusal := `{"type":"session.error","data":{"message":"Model \"gpt-5-mini\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"}}`
 	other := `{"type":"session.error","data":{"message":"rate limited","errorType":"rate_limit"}}`
-	if got := refusalFrom(strings.NewReader(other + "\n" + refusal)); !strings.Contains(got, `"gpt-5-mini" from --model flag is not available`) {
+	if got := refusalFrom(strings.NewReader(other+"\n"+refusal), "gpt-5-mini"); !strings.Contains(got, `"gpt-5-mini" from --model flag is not available`) {
 		t.Errorf("the launch refusal was not recognised, got %q", got)
 	}
-	if got := refusalFrom(strings.NewReader(other + "\n" + `{"type":"session.model_change","data":{"newModel":"auto"}}`)); got != "" {
+	if got := refusalFrom(strings.NewReader(other+"\n"+`{"type":"session.model_change","data":{"newModel":"auto"}}`), "gpt-5-mini"); got != "" {
 		t.Error("an unrelated error or a bare switch to auto is not a refusal")
+	}
+}
+
+// A refusal belongs to the model it names: another model's refusal, or a different model error
+// that merely quotes the phrase, must not excuse a --model that was silently ignored.
+func TestRefusalFromIsPerModel(t *testing.T) {
+	refusalOfA := `{"type":"session.error","data":{"message":"Model \"a\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"}}`
+	quoting := `{"type":"session.error","data":{"message":"upstream said: Model \"b\" from --model flag is not available.","errorType":"model"}}`
+	if got := refusalFrom(strings.NewReader(refusalOfA), "b"); got != "" {
+		t.Errorf("a's refusal read as b's: %q", got)
+	}
+	if got := refusalFrom(strings.NewReader(quoting), "b"); got != "" {
+		t.Errorf("a quoting error read as b's refusal: %q", got)
+	}
+	if got := refusalFrom(strings.NewReader(refusalOfA), "a"); got == "" {
+		t.Error("a's own refusal was not recognised")
 	}
 }
