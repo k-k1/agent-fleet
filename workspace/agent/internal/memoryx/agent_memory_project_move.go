@@ -33,7 +33,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/projcfg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -117,14 +116,24 @@ var (
 	// Past either the answer is "incomplete" and nothing is called orphaned.
 	agentMemLiveBudget  = 100000
 	agentMemLiveTimeout = 20 * time.Second
+	// agentMemNestedDepth: below a working copy's root the walk reads this many directory levels
+	// beyond the root's own (1 = its subdirectories are read, their children only checked for a
+	// marker).
+	agentMemNestedDepth = 1
 )
 
 // agentMemLiveProjects maps the working copies to their projects, by id: every directory under
-// ~/repos with a .git or .svn entry, found at any depth, inside other working copies and behind
+// ~/repos with a .git or .svn entry, found at any depth outside other working copies and behind
 // symlinks included, and every session's working directory. A project with a live working copy
 // is never orphaned, whatever its recorded root says. complete=false says something could not be
 // ruled out: a directory that could not be read, a repository whose identity could not be
 // resolved, or the budget or time of the search ran out.
+//
+// Inside a working copy the walk looks only agentMemNestedDepth directory levels down, for a
+// worktree or clone placed below another one (repo/.worktrees/x, repo/build/live); a repository
+// deeper than that is found only when it is also a session's directory. Walking whole
+// node_modules trees timed out on a large workspace, and an empty answer from a timeout reads as
+// "nothing is live" (#3045).
 func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 	type result struct {
 		live     map[string]*agentMemProject
@@ -143,29 +152,49 @@ func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 	}
 }
 
+// agentMemLiveRunner is the git runner of the live search, replaceable by a test that counts calls.
+var agentMemLiveRunner = func(dir string) agentMemGitRunner {
+	return func(args ...string) (string, error) { return gitx.Run(dir, args...) }
+}
+
 func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 	live = map[string]*agentMemProject{}
 	complete = true
+	// resolved holds the directories whose identity was computed, by real path: a session's
+	// directory the walk already found costs nothing.
+	resolved := map[string]bool{}
 	add := func(dir string) {
-		p := agentMemProjectFor(dir)
+		real := dir
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			real = r
+		}
+		if resolved[real] {
+			return
+		}
+		resolved[real] = true
+		p, identified := agentMemProjectIdent(dir, dir, agentMemLiveRunner(dir))
 		if p == nil {
 			return
 		}
-		if p.VCS == projcfg.VCSGit {
-			if _, key := agentMemGitIdentity(dir); key == "" {
-				// The id would be derived from the path, not the repository: it cannot be compared.
-				complete = false
-			}
+		if !identified {
+			// The id would be derived from the path, not the repository: it cannot be compared.
+			complete = false
 		}
 		if live[p.ID] == nil {
 			live[p.ID] = p
 		}
 	}
+	// left is how many more levels may be read below dir: -1 outside any working copy
+	// (unbounded, the budget limits it), counting down inside one.
+	type item struct {
+		dir  string
+		left int
+	}
 	visited := map[string]bool{}
-	queue := []string{gitx.ReposRoot()}
+	queue := []item{{gitx.ReposRoot(), -1}}
 	reads := 0
 	for len(queue) > 0 {
-		dir := queue[0]
+		dir, left := queue[0].dir, queue[0].left
 		queue = queue[1:]
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
 			if visited[real] {
@@ -188,23 +217,39 @@ func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 				continue // git's own directory holds no working copy; a .git entry is the marker below
 			}
 			d := filepath.Join(dir, e.Name())
-			st, err := os.Stat(d)
-			switch {
-			case err != nil && !errors.Is(err, fs.ErrNotExist):
-				complete = false
+			if e.Type()&fs.ModeSymlink != 0 {
+				st, err := os.Stat(d)
+				switch {
+				case err != nil && !errors.Is(err, fs.ErrNotExist):
+					complete = false
+					continue
+				case err != nil || !st.IsDir():
+					continue // a dangling link or a file
+				}
+			} else if !e.IsDir() {
 				continue
-			case err != nil || !st.IsDir():
-				continue // a dangling link or a file
 			}
+			isCopy := false
 			for _, marker := range []string{".git", ".svn"} {
 				if _, err := os.Lstat(filepath.Join(d, marker)); err == nil {
-					add(d)
+					isCopy = true
 					break
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					complete = false
 				}
 			}
-			queue = append(queue, d)
+			switch {
+			case isCopy:
+				add(d)
+				if left < 0 {
+					// Its content is not walked whole: only agentMemNestedDepth levels.
+					queue = append(queue, item{d, agentMemNestedDepth})
+				} // a copy inside a copy is a leaf
+			case left < 0:
+				queue = append(queue, item{d, -1})
+			case left > 0:
+				queue = append(queue, item{d, left - 1})
+			}
 		}
 	}
 	for _, m := range session.ListMetas() {
