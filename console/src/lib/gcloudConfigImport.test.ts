@@ -108,6 +108,20 @@ describe("readGcloudSource: refusals", () => {
     });
   }
 
+  it("refuses a file that needs interpolation, without echoing any value", () => {
+    for (const t of ["[core]\nproject = my-project-123\naccount = %(project)s@example.com\n", "[core]\nproject = %(base)s\n[x]\nk = 100%%\n", "[core]\nproject = my-project-123\n[x]\nk = SECRETSENTINEL%\n"]) {
+      const c = read("a", t);
+      expect(c.reason).toEqual({ code: "interpolation" });
+      expect(JSON.stringify(c)).not.toContain("SECRETSENTINEL");
+    }
+  });
+
+  it("allows only the spellings gcloud accepts for a false disable_credentials", () => {
+    for (const v of ["false", "False", "0", "off", "no", "n", "none"]) expect(read("a", `${BASE}[auth]\ndisable_credentials = ${v}\n`).reason, v).toBeNull();
+    for (const v of ["true", "1", "on", "yes", "y"]) expect(read("a", `${BASE}[auth]\ndisable_credentials = ${v}\n`).reason, v).toEqual({ code: "auth_override", key: "auth/disable_credentials" });
+    for (const v of ["garbage", "treu", "t"]) expect(read("a", `${BASE}[auth]\ndisable_credentials = ${v}\n`).reason, v).toEqual({ code: "invalid", key: "auth/disable_credentials" });
+  });
+
   it("lets harmless values through: empty overrides, disable_credentials = false, the default universe", () => {
     const c = read("a", `${BASE}universe_domain = googleapis.com\n[auth]\nimpersonate_service_account =\naccess_token_file =\ndisable_credentials = false\n[proxy]\ntype =\n`);
     expect(c.reason).toBeNull();
@@ -125,7 +139,12 @@ describe("readGcloudSource: refusals", () => {
     expect(configNameOfFile("active_config")).toBeNull();
     expect(read(configNameOfFile("active_config"), BASE).reason).toEqual({ code: "not_config" });
     expect(read("Prod", BASE).reason).toEqual({ code: "bad_name" });
-    expect(read("a-", BASE).reason).toEqual({ code: "bad_name" });
+    expect(read("1a", BASE).reason).toEqual({ code: "bad_name" });
+    expect(read("a_b", BASE).reason).toEqual({ code: "bad_name" });
+    // a trailing hyphen is a valid gcloud name; it is the label that has to change
+    expect(read("prod-", BASE).reason).toBeNull();
+    expect(resolveGcpImport([read("prod-", BASE)], [], {}).rows[0].reason).toEqual({ code: "label_bad" });
+    expect(resolveGcpImport([read("prod-", BASE)], [], { 0: { label: "prod" } }).rows[0].status).toBe("create");
   });
 });
 
@@ -166,6 +185,17 @@ describe("resolveGcpImport", () => {
   it("matches an existing row by its derived name too, and ignores case in its label", () => {
     const rows = resolveGcpImport([ok("prod")], [existingRow({ label: "Prod", name: "prod" })], {}).rows;
     expect(rows[0].status).toBe("exists");
+  });
+
+  it("blocks a label whose name collides among existing rows, even when the first row matches", () => {
+    const rows = resolveGcpImport(
+      [ok("prod")],
+      [existingRow({ label: "Prod", name: "prod" }), existingRow({ label: "prod!", name: "prod" })],
+      {},
+    ).rows;
+    expect(rows[0].reason).toEqual({ code: "label_conflict" });
+    const one = resolveGcpImport([ok("prod")], [existingRow({ label: "prod", name: "prod", conflict: { reason: "collision", labels: [] } })], {}).rows;
+    expect(one[0].reason).toEqual({ code: "label_conflict" });
   });
 
   it("honours unticking and a renamed label, and refuses a duplicate or bad label", () => {

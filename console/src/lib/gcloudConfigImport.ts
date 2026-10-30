@@ -37,8 +37,9 @@ const LABEL_MAX = 100;
  *  derived profile name (gcpProfileName) is the label itself: no collision can hide behind a
  *  case or punctuation difference that the Console would have to re-derive. */
 export const GCP_IMPORT_LABEL_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-// gcloud's own rule for a configuration name.
-const CONFIG_NAME_RE = /^[a-z][-a-z0-9]*[a-z0-9]$|^[a-z]$/;
+// gcloud's own rule for a configuration name (named_configs.py _VALID_CONFIG_NAME_REGEX): a
+// trailing hyphen is valid there, and is fixed at the label step instead.
+const CONFIG_NAME_RE = /^[a-z][-a-z0-9]*$/;
 
 // Keys a reason may name: file text is never echoed, so a key not listed here shows as "?".
 const SAFE_KEYS = new Set([
@@ -68,7 +69,9 @@ export function safeGcpKey(k: string): string {
 // an access token file, a custom OAuth client or host change who signs in or where, and a
 // setting this importer has not looked at cannot be judged harmless. disable_credentials is
 // the one switch that is harmless when false.
-const TRUE_RE = /^(?:true|1|yes|on|y|t)$/i;
+// gcloud's boolean validator: these spell true, these false, and anything else is an error there.
+const TRUE_RE = /^(?:true|1|on|yes|y)$/i;
+const FALSE_RE = /^(?:false|0|off|no|n|none)$/i;
 
 export type GcpReason =
   | { code: "not_config" }
@@ -85,7 +88,9 @@ export type GcpReason =
   | { code: "universe"; key: string }
   | { code: "label_empty" }
   | { code: "label_bad" }
+  | { code: "interpolation" }
   | { code: "label_taken"; other: string }
+  | { code: "label_conflict" }
   | { code: "label_dup"; other: string };
 
 export interface GcpFields {
@@ -121,11 +126,22 @@ export function readGcloudConfig(file: IniFile, index: number, name: string): Na
   for (const s of file.sections) sec.set(s.header, effectiveOptions(file, s));
   const get = (section: string, key: string) => val(sec.get(section) ?? new Map(), key);
 
+  // gcloud reads with ConfigParser's BasicInterpolation: `%(name)s` and `%%` in a value are
+  // expanded (or are an error), so the text is not the value gcloud uses. Not reimplemented:
+  // a file that relies on it is refused as a whole rather than imported as something else.
+  for (const o of sec.values()) {
+    for (const v of o.values()) if (v.value.includes("%")) return refuse({ code: "interpolation" });
+  }
+
   // Refusals first, in the order a member would fix them: what the file does to sign-in, then
   // where requests go, then the values themselves.
   for (const [k, v] of sec.get("auth") ?? []) {
     if (k === "impersonate_service_account" || v.value.trim() === "") continue;
-    if (k === "disable_credentials" && !TRUE_RE.test(v.value.trim())) continue;
+    if (k === "disable_credentials") {
+      const b = v.value.trim();
+      if (FALSE_RE.test(b)) continue;
+      if (!TRUE_RE.test(b)) return refuse({ code: "invalid", key: "auth/disable_credentials" });
+    }
     return refuse({ code: "auth_override", key: safeGcpKey("auth/" + k) || "?" });
   }
   const imp = get("auth", "impersonate_service_account");
@@ -226,6 +242,8 @@ export interface ExistingGcpProfile {
   region?: unknown;
   zone?: unknown;
   impersonateServiceAccount?: unknown;
+  /** Set by the CP when the row's name collides with another's. */
+  conflict?: unknown;
 }
 
 const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
@@ -265,9 +283,15 @@ export function resolveGcpImport(cfgs: NativeGcpConfig[], existing: ExistingGcpP
       row.reason = { code: "label_bad" };
       continue;
     }
-    const hit = existing.find((p) => s(p.label).toLowerCase() === label || s(p.name) === label);
+    const hits = existing.filter((p) => s(p.label).toLowerCase() === label || s(p.name) === label);
+    const hit = hits[0];
     if (hit) {
-      if (sameFields(hit, c.fields)) row.status = "exists";
+      // Two rows with one name are both left out of the workspace by the CP: neither is a usable
+      // registered row, so the label has to change.
+      if (hits.length > 1 || hits.some((h) => h.conflict)) {
+        row.status = "blocked";
+        row.reason = { code: "label_conflict" };
+      } else if (sameFields(hit, c.fields)) row.status = "exists";
       else {
         row.status = "blocked";
         row.reason = { code: "label_taken", other: s(hit.label) };

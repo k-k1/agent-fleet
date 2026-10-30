@@ -70,6 +70,13 @@ describe("executeGcpPlan", () => {
     expect((await executeGcpPlan([create("a"), create("b")])).map((r) => r.outcome)).toEqual(["unknown", "not_run"]);
   });
 
+  it("treats a 5xx as an unknown result and stops, since the row may exist", async () => {
+    rawJSON.mockResolvedValue(new Response(JSON.stringify({ error: { code: "internal" } }), { status: 500 }));
+    const rows = await executeGcpPlan([create("a"), create("b")]);
+    expect(rows.map((r) => r.outcome)).toEqual(["unknown", "not_run"]);
+    expect(rawJSON).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send once cancelled", async () => {
     rawJSON.mockResolvedValue(ok());
     let n = 0;

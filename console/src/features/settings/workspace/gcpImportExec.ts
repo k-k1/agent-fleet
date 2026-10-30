@@ -59,6 +59,13 @@ export async function executeGcpPlan(
       out.push({ label: p.label, outcome: "unknown" });
       continue;
     }
+    // A 5xx may come after the row was inserted (the CP answers from a re-read of the list), so
+    // it is an unknown result, not a refusal: stop instead of going on.
+    if (res.status >= 500) {
+      stopped = true;
+      out.push({ label: p.label, outcome: "unknown" });
+      continue;
+    }
     if (!res.ok) {
       const j = await res.json().catch(() => null);
       out.push({ label: p.label, outcome: "failed", code: typeof j?.error?.code === "string" ? j.error.code : String(res.status) });

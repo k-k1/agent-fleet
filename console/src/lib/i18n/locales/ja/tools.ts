@@ -1118,6 +1118,8 @@ export const tools = {
   "gcp.imp_r_endpoint_override": "API エンドポイントを上書きしています。設定画面では表せません",
   "gcp.imp_r_proxy": "プロキシを設定しています。設定画面では表せません",
   "gcp.imp_r_universe": "{key} が設定されています。設定画面では表せません",
+  "gcp.imp_r_interpolation": "% 補間（%(name)s や %%）を使っています。gcloud は展開しますが、設定画面は読みません",
+  "gcp.imp_r_label_conflict": "複数回登録されているか、名前が別のプロファイルと衝突しています。ラベルを変えてください",
   "gcp.imp_r_label_empty": "ラベルが空です",
   "gcp.imp_r_label_bad": "ラベルは英小文字・数字・単独のハイフンで、英字から始めてください",
   "gcp.imp_r_label_taken": "「{name}」は別の内容で登録済みです。ラベルを変えてください",

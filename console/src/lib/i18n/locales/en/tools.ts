@@ -1117,6 +1117,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "gcp.imp_r_endpoint_override": "it overrides API endpoints, which Settings cannot express",
   "gcp.imp_r_proxy": "it sets a proxy, which Settings cannot express",
   "gcp.imp_r_universe": "{key} is set, which Settings cannot express",
+  "gcp.imp_r_interpolation": "it uses % interpolation (%(name)s or %%), which gcloud expands and Settings does not read",
+  "gcp.imp_r_label_conflict": "it is registered more than once or its name collides with another profile; change the label",
   "gcp.imp_r_label_empty": "the label is empty",
   "gcp.imp_r_label_bad": "the label must be lowercase letters, digits and single hyphens, starting with a letter",
   "gcp.imp_r_label_taken": "\"{name}\" is already registered with other settings; change the label",

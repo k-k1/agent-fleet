@@ -44,7 +44,7 @@ export function gcpReasonText(tr: Tr, r: GcpReason): string {
 }
 
 // Reasons that come from the file itself; renaming cannot fix them.
-const FILE_REASONS = new Set(["not_config", "bad_name", "parse", "no_project", "invalid", "key_material", "sa_account", "delegation", "auth_override", "endpoint_override", "proxy", "universe"]);
+const FILE_REASONS = new Set(["not_config", "bad_name", "parse", "no_project", "invalid", "key_material", "sa_account", "delegation", "auth_override", "endpoint_override", "proxy", "universe", "interpolation"]);
 
 export function GcpConfigImport({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
   const tr = useT();
