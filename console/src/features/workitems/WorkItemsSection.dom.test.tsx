@@ -1375,7 +1375,8 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     ["behind", "wi.merge_why_behind"],
     ["dirty", "wi.merge_why_dirty"],
     ["unstable", "wi.merge_why_unstable"],
-    ["unknown", "wi.merge_why_unknown"],
+    // While the panel re-reads by itself (#3012); the spent-budget wording is tested below.
+    ["unknown", "wi.merge_why_checking"],
     ["something_new", "wi.merge_why_other"],
   ] as const)("disables Merge for %s and says why next to it", async (state, why) => {
     workItemDetail.mockResolvedValue({ ...mergeable, mergeableState: state });
@@ -1467,6 +1468,71 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     await act(async () => release({ ...mergeable, canMerge: false }));
     expect(footer(modal).querySelectorAll("button, a").length).toBe(before);
     expect(footer(modal).querySelector(".wi-dmergehold")).not.toBeNull();
+  });
+
+  // Right after another pull request merges into the same base, GitHub answers "unknown" until it
+  // has recomputed (#3012). The panel re-reads by itself instead of waiting to be reopened.
+  describe("while GitHub is still computing mergeability", () => {
+    const unknown = { ...mergeable, mergeable: "unknown", mergeableState: "unknown" };
+    beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+    afterEach(() => vi.useRealTimers());
+    const tick = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+      await settle();
+    };
+
+    it("shows a spinner, re-reads without blanking the panel, and enables Merge once GitHub decides", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).not.toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_checking"));
+      expect(mergeBtn(modal)?.disabled).toBe(true);
+
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await tick(2000);
+      expect(workItemDetail).toHaveBeenCalledTimes(2);
+      // In flight: the facts stay on screen, no skeletons.
+      expect(modal.textContent).toContain("feature/x");
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+
+      await act(async () => release(mergeable));
+      await settle();
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_clean"));
+      expect(mergeBtn(modal)?.disabled).toBe(false);
+      await tick(60000);
+      expect(workItemDetail).toHaveBeenCalledTimes(2); // decided: no more reads
+    });
+
+    it("stops after its budget and offers a manual re-check", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      for (let i = 0; i < 10; i++) await tick(10000);
+      expect(workItemDetail).toHaveBeenCalledTimes(6); // the open + five re-reads
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_unknown"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_unknown"));
+      const again = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dmerge button")].find((b) => b.textContent === t("wi.detail_merge_recheck"))!;
+      workItemDetail.mockResolvedValue(mergeable);
+      await act(async () => again.click());
+      await tick(0);
+      expect(workItemDetail).toHaveBeenCalledTimes(7);
+      expect(mergeBtn(modal)?.disabled).toBe(false);
+    });
+
+    it("stops re-reading when the panel closes", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      const cancel = [...footer(modal).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("common.cancel"))!;
+      await act(async () => cancel.click());
+      expect(document.querySelector(".wi-dmodal")).toBeNull();
+      await tick(60000);
+      expect(workItemDetail).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
