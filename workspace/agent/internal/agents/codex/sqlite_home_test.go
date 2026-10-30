@@ -261,6 +261,41 @@ func TestRelocateSQLiteResumeSkipsAnotherGeneration(t *testing.T) {
 	}
 }
 
+// A commit by a codex without the variable can leave the body exactly as copied and put the
+// new transactions in a WAL alone. The group is then another generation: neither the body nor
+// the WAL is retired, so the WAL is never cut from the body it needs.
+func TestRelocateSQLiteResumeKeepsAGroupWhoseWALChanged(t *testing.T) {
+	for name, arrange := range map[string]func(t *testing.T, src string){
+		"WAL appeared": func(t *testing.T, src string) {
+			writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "committed")
+		},
+		"WAL changed": func(t *testing.T, src string) {
+			writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "committed, longer")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, dst := sqliteHomeFixture(t)
+			writeFile(t, filepath.Join(src, "state_5.sqlite"), "body")
+			if name == "WAL changed" {
+				writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "w")
+			}
+			parentSync = func(string) error { return errors.New("EIO") }
+			if dir, _ := RelocateSQLite(); dir != dst {
+				t.Fatal("first boot did not move")
+			}
+			parentSync = syncDir
+			arrange(t, src)
+			dir, note := RelocateSQLite()
+			if dir != dst || !strings.Contains(note, "changed since the copy: state_5.sqlite") {
+				t.Fatalf("dir = %q, note = %q", dir, note)
+			}
+			if got := strings.Join(dirNames(t, src), ","); got != "state_5.sqlite,state_5.sqlite-wal" {
+				t.Fatalf("keep side = %s, want body and WAL together under their names", got)
+			}
+		})
+	}
+}
+
 // A codex whose npm launcher was still node at the first probe and started during the copy
 // may have written the source: the staged copy is thrown away, the keep side untouched.
 func TestRelocateSQLiteDiscardsACopyRacedByCodex(t *testing.T) {

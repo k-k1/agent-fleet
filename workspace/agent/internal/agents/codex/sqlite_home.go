@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -331,10 +332,13 @@ func syncDir(dir string) error {
 //
 // Nothing on the keep side changes until dst's rename is known to be durable: seeing dst on a
 // later boot proves nothing after an Agent-only restart, and retiring the originals of a rename
-// a host crash then undoes would leave only retired copies. An entry whose retired name exists
-// is done, and one whose file is no longer the copied one (fileID) was recreated at that name
-// by a codex without SQLiteHomeEnv; neither is renamed, so a retired copy is never overwritten
-// or paired with another generation's WAL.
+// a host crash then undoes would leave only retired copies.
+//
+// The unit is a database group (body, -wal, -shm, -journal), never a file: a commit by a codex
+// without SQLiteHomeEnv can leave the body's identity unchanged and put the new transactions in
+// a WAL alone (measured with SQLite), so retiring the body would cut it from that WAL. A group
+// is retired only when every file it has now is one the manifest recorded, unchanged (fileID),
+// and no recorded member has vanished or reappeared beside its retired name.
 func retirePending(src, dst string) string {
 	manifest := filepath.Join(dst, retireManifest)
 	b, err := os.ReadFile(manifest)
@@ -349,29 +353,49 @@ func retirePending(src, dst string) string {
 	}
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	suffix := retiredSuffix + lines[0]
-	retired := 0
-	var changed []string
+	recorded := map[string]map[string]string{} // group -> name -> fileID at copy time
 	for _, line := range lines[1:] {
 		name, id, _ := strings.Cut(line, "\t")
 		if name == "" || strings.ContainsRune(name, '/') {
 			continue
 		}
-		from := filepath.Join(src, name)
-		fi, err := os.Lstat(from)
-		if os.IsNotExist(err) {
-			continue // renamed by an earlier, interrupted boot
+		g := dbGroup(name)
+		if recorded[g] == nil {
+			recorded[g] = map[string]string{}
 		}
-		if _, err := os.Lstat(from + suffix); err == nil {
-			continue // already retired; what sits at the old name is newer
+		recorded[g][name] = id
+	}
+	present := map[string][]os.FileInfo{} // group -> its files at the old path now
+	if entries, err := os.ReadDir(src); err == nil {
+		for _, e := range entries {
+			if _, rt := dbFile(e.Name()); !rt || !e.Type().IsRegular() {
+				continue
+			}
+			if fi, err := e.Info(); err == nil {
+				present[dbGroup(e.Name())] = append(present[dbGroup(e.Name())], fi)
+			}
 		}
-		if err != nil || fileID(fi) != id {
-			changed = append(changed, name)
+	}
+	groups := make([]string, 0, len(recorded))
+	for g := range recorded {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+	retired := 0
+	var changed []string
+	for _, g := range groups {
+		todo, ok := retirable(src, suffix, recorded[g], present[g])
+		if !ok {
+			changed = append(changed, g)
 			continue
 		}
-		if err := os.Rename(from, from+suffix); err != nil {
-			return fmt.Sprintf("codex sqlite: retired %d keep-side file(s), stopped at %s (resumes next start): %v", retired, name, err)
+		for _, name := range todo {
+			from := filepath.Join(src, name)
+			if err := os.Rename(from, from+suffix); err != nil {
+				return fmt.Sprintf("codex sqlite: retired %d keep-side file(s), stopped at %s (resumes next start): %v", retired, name, err)
+			}
+			retired++
 		}
-		retired++
 	}
 	if err := os.Remove(manifest); err != nil {
 		return "codex sqlite: removing the retire manifest: " + err.Error()
@@ -393,6 +417,39 @@ func retirePending(src, dst string) string {
 		note += s
 	}
 	return note
+}
+
+// retirable checks one group against what the manifest recorded and returns the files still to
+// rename, or ok=false when the group is no longer the copied generation.
+func retirable(src, suffix string, recorded map[string]string, present []os.FileInfo) (todo []string, ok bool) {
+	for _, fi := range present {
+		id, listed := recorded[fi.Name()]
+		if !listed || fileID(fi) != id {
+			return nil, false // a sidecar that appeared, or a file that changed
+		}
+		if _, err := os.Lstat(filepath.Join(src, fi.Name()+suffix)); err == nil {
+			return nil, false // recreated beside its retired copy
+		}
+		todo = append(todo, fi.Name())
+	}
+	for name := range recorded {
+		if _, err := os.Lstat(filepath.Join(src, name)); err == nil {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(src, name+suffix)); err != nil {
+			return nil, false // gone without being retired: someone else moved it
+		}
+	}
+	sort.Strings(todo)
+	return todo, true
+}
+
+// dbGroup is the database a file belongs to: its name up to and including ".sqlite".
+func dbGroup(name string) string {
+	if i := strings.LastIndex(name, ".sqlite"); i >= 0 {
+		return name[:i+len(".sqlite")]
+	}
+	return name
 }
 
 // strangers names database files at the keep-side path that the move did not put there.
