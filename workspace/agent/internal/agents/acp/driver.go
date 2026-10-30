@@ -137,6 +137,9 @@ type Handle struct {
 	// stopping marks the turn in flight as one a stop was aimed at, so it lands as cancelled.
 	// The displayed state cannot carry this: accept overwrites it with queued.
 	stopping bool
+	// stopAsked is the child a Detach or Down aimed a stop at, set before StopChild so watch
+	// can tell our stop from a crash by intent rather than by how the CLI chose to exit.
+	stopAsked *exec.Cmd
 	// beforeCommit, when set, runs between the pump's Take and its Commit with mu released: the
 	// window in which a stop or a removal can still cancel the taken entry. Tests only.
 	beforeCommit func()
@@ -448,6 +451,9 @@ func (h *Handle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *Client, exite
 			code = ws.ExitStatus()
 		}
 	}
+	h.mu.Lock()
+	asked := cmd != nil && h.stopAsked == cmd
+	h.mu.Unlock()
 	oom := false
 	base := uint64(0)
 	if prev, ok := status.ReadExit(h.name); ok {
@@ -457,7 +463,7 @@ func (h *Handle) watch(cmd *exec.Cmd, tail *agents.StderrTail, cl *Client, exite
 		oom = true
 	}
 	status.PersistExit(h.name, status.ExitInfo{
-		Reason: status.ExitReasonFor(code, sig, oom),
+		Reason: status.ExitReasonAfterStop(code, sig, oom, asked),
 		Code:   code, Signal: sig,
 		At:      time.Now().Format(time.RFC3339),
 		OOMBase: base,
@@ -566,6 +572,7 @@ func (h *Handle) Detach() <-chan struct{} {
 	h.alive = false
 	h.q.DropAll()
 	cmd, cl, stdin, sid, running, exited := h.cmd, h.cl, h.stdin, h.sid, h.running, h.exited
+	h.stopAsked = cmd
 	h.mu.Unlock()
 	if running && cl != nil && sid != "" {
 		_ = cl.NotifyPeer("session/cancel", map[string]any{"sessionId": sid})
@@ -580,6 +587,7 @@ func (h *Handle) Down() (stop func()) {
 	h.mu.Lock()
 	h.alive = false
 	cmd, stdin := h.cmd, h.stdin
+	h.stopAsked = cmd
 	h.mu.Unlock()
 	return func() { h.kind.StopChild(cmd, stdin) }
 }
