@@ -184,7 +184,7 @@ export function renderAwsConfig(rows: any[]): AwsConfigExport {
     if (str(r.externalId)) put(`external_id = ${str(r.externalId)}`);
     if (str(r.sessionName)) put(`role_session_name = ${str(r.sessionName)}`);
     if (r.durationSeconds) put(`duration_seconds = ${Number(r.durationSeconds)}`);
-    put(`region = ${str(r.region) || str(src.row.ssoRegion)}`);
+    put(`region = ${str(r.region) || str(src.row.region) || str(src.row.ssoRegion)}`);
     included.push({ label: p.label, name: p.name, kind: "assume_role" });
   }
   const text = out.join("\n") + "\n";

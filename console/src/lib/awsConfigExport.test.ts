@@ -39,6 +39,15 @@ describe("renderAwsConfig", () => {
     expect(r.included.map((x) => x.name)).toEqual(["prod", "deploy"]);
     expect(r.excluded).toEqual([]);
   });
+  it("a role's region is its own, else its source's region, else the source's SSO region (the Agent's chainRegion)", () => {
+    const at = (srcRegion: string, roleRegion: string) => {
+      const t = renderAwsConfig([sso("a", "prod", { region: srcRegion }), role("b", "deploy", "a", { region: roleRegion })]).text;
+      return /\[profile deploy\][^[]*region = (\S+)/.exec(t)![1];
+    };
+    expect(at("eu-west-1", "ap-northeast-1")).toBe("ap-northeast-1");
+    expect(at("eu-west-1", "")).toBe("eu-west-1");
+    expect(at("", "")).toBe("us-east-1");
+  });
   it("round-trips through the Phase 1 reader: nothing is lost that Settings holds", () => {
     const rows = [sso("a", "prod", { region: "eu-west-1" }), role("b", "deploy", "a", { region: "ap-northeast-1" })];
     const parsed = parseAwsIni(renderAwsConfig(rows).text);
