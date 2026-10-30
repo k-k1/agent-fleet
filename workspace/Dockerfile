@@ -361,13 +361,13 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.312
-ARG OPENCODE_VERSION=2.2.2
+ARG CLAUDE_CODE_VERSION=2.1.314
+ARG OPENCODE_VERSION=2.2.3
 # The opencode 2 release `workspace-agent install-opencode2` installs while OPENCODE_VERSION is
 # 1.x (a rollback). It is not installed here; it is only recorded in versions.json. Keep it equal
 # to OPENCODE_VERSION while that is 2.x: cli-pin-bump.sh moves both, so a rollback (set
 # OPENCODE_VERSION=1.19.0, nothing else) leaves it at the last 2.x the contracts passed on.
-ARG OPENCODE_V2_VERSION=2.2.2
+ARG OPENCODE_V2_VERSION=2.2.3
 ARG CODEX_VERSION=0.166.0
 ARG COPILOT_VERSION=1.0.105
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
@@ -401,10 +401,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.4.10
-ARG AGY_RELEASE_BUILD=5501573669978112
-ARG AGY_SHA256_X64=ed0526231e3916b6cc1b025cf356862e88cc036e27c3c5eae5a580495fc79773
-ARG AGY_SHA256_ARM64=107b7499ca90018ab2b6c1b636cdec4251dfd836656526845e354be1bfe05eba
+ARG AGY_VERSION=1.4.11
+ARG AGY_RELEASE_BUILD=5180209989812224
+ARG AGY_SHA256_X64=d17c426977326361f3d81f3ea22820e967164285923de020247e460dcb9d15c3
+ARG AGY_SHA256_ARM64=debb2c056e387be63fdf86d48dfcc99ed1f523e51c5067abd119d78bd36e8a18
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
