@@ -202,7 +202,8 @@ say), see "could not be found" below.
 
 **Every run shows in the session's conversation.** Each `af-aws-exec` run leaves one line in the conversation of
 the session that ran it, at the time it started: the profile, the account and role it ran as, the region, the
-command (`aws s3 ls`, or just the program's name), and how it ended. Settings > AWS profiles/SSM lists the latest
+command (`aws s3 ls`, or just the program's name), or why af-aws-exec refused to run it. The line does not say how
+the command ended: af-aws-exec becomes the command, so its exit status is the one your shell sees. Settings > AWS profiles/SSM lists the latest
 runs of every session under "Recent runs". The line never holds the command's arguments, which can carry secrets.
 It is there so you can see what ran, and it is not an audit: the session is the one the run reported, which the
 command can change, and a command run with plain `aws` leaves no line.

@@ -460,8 +460,6 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.queue_attach_only": "(attachments only)",
   "cloudruns.title": "A command run with af-aws-exec, and the identity it ran as. The session is the one the run reported; its arguments are never recorded.",
   "cloudruns.via": "via {source}",
-  "cloudruns.exit": "exit {code}",
-  "cloudruns.running": "running",
   "cloudruns.refused_login_required": "not run: login required",
   "cloudruns.refused_usage": "not run: usage error",
   "cloudruns.refused_refused": "not run: refused",

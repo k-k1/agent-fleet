@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -54,21 +55,20 @@ type Row struct {
 	// Session is the session the run reported, when its name is a valid one.
 	Session   string `json:"session,omitempty"`
 	StartedAt string `json:"startedAt"`
-	EndedAt   string `json:"endedAt,omitempty"`
-	Profile   string `json:"profile,omitempty"`
-	Account   string `json:"account,omitempty"`
-	Role      string `json:"role,omitempty"`
-	Region    string `json:"region,omitempty"`
+	// EndedAt is set for a refused run. A run that started has no end here: the wrapper
+	// becomes the command, so nothing is left to see how it ended.
+	EndedAt string `json:"endedAt,omitempty"`
+	Profile string `json:"profile,omitempty"`
+	Account string `json:"account,omitempty"`
+	Role    string `json:"role,omitempty"`
+	Region  string `json:"region,omitempty"`
 	// Source is the profile a chained profile authenticates through; Account and Role are
 	// then the chain's target role.
 	Source    string `json:"source,omitempty"`
 	Program   string `json:"program,omitempty"`
 	Service   string `json:"service,omitempty"`
 	Operation string `json:"operation,omitempty"`
-	// ExitCode and DurationMs are set when the command has ended.
-	ExitCode   *int   `json:"exitCode,omitempty"`
-	DurationMs *int64 `json:"durationMs,omitempty"`
-	// Refused is set instead when the wrapper refused the run before the command started.
+	// Refused is set when the wrapper refused the run before the command started.
 	Refused string `json:"refused,omitempty"`
 }
 
@@ -96,9 +96,8 @@ type Identity struct {
 
 // Run is one row being written.
 type Run struct {
-	path  string
-	row   Row
-	start time.Time
+	path string
+	row  Row
 }
 
 // root is the spool's root; a variable so tests can move it.
@@ -133,15 +132,49 @@ func Begin(provider, sessionName, profile string, argv []string) *Run {
 	_, _ = rand.Read(b[:])
 	row.ID = fmt.Sprintf("%019d-%s", t.UnixNano(), hex.EncodeToString(b[:]))
 	dir := dirFor(sessionName)
-	r := &Run{path: filepath.Join(dir, row.ID+".json"), row: row, start: t}
+	r := &Run{path: filepath.Join(dir, row.ID+".json"), row: row}
 	if err := os.MkdirAll(dir, 0o700); err == nil {
-		r.write()
-		prune(dir, dir == filepath.Join(root(), workspaceDir), t)
+		withLock(dir, func() {
+			r.writeLocked(true)
+			prune(dir, dir == workspacePath(), t)
+		})
+	}
+	// The workspace's spool keeps its age limit even while only sessions' runs are written.
+	if dir != workspacePath() {
+		pruneWorkspace(t)
 	}
 	return r
 }
 
-// Resolved records the identity the wrapper resolved; it is written with the row's end.
+func workspacePath() string { return filepath.Join(root(), workspaceDir) }
+
+// pruneWorkspace applies the workspace spool's limits now.
+func pruneWorkspace(t time.Time) {
+	dir := workspacePath()
+	if _, err := os.Stat(dir); err != nil {
+		return
+	}
+	withLock(dir, func() { prune(dir, true, t) })
+}
+
+// withLock runs fn under the spool directory's lock. Every writer takes it, so a prune and
+// the update of a row it evicts cannot interleave: an evicted row is never written back.
+// Without the lock (it cannot be taken) fn runs anyway; the row is visibility, and the
+// command must not wait on it.
+func withLock(dir string, fn func()) {
+	f, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		fn()
+		return
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX) == nil {
+		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	}
+	fn()
+}
+
+// Resolved records the identity the wrapper resolved, just before the command starts.
 func (r *Run) Resolved(id Identity) {
 	if r == nil {
 		return
@@ -150,18 +183,6 @@ func (r *Run) Resolved(id Identity) {
 	r.row.Role = keep(id.Role, roleRe)
 	r.row.Region = keep(id.Region, regionRe)
 	r.row.Source = keep(id.Source, profileRe)
-	r.write()
-}
-
-// Finish records how the command ended.
-func (r *Run) Finish(code int) {
-	if r == nil {
-		return
-	}
-	t := now()
-	d := t.Sub(r.start).Milliseconds()
-	r.row.EndedAt = t.UTC().Format(time.RFC3339Nano)
-	r.row.ExitCode, r.row.DurationMs = &code, &d
 	r.write()
 }
 
@@ -175,7 +196,20 @@ func (r *Run) Refuse(reason string) {
 	r.write()
 }
 
+// write updates the row's file, unless a prune has evicted it meanwhile: a run that outlives
+// its place in the spool stays out, so the spool never holds more than its limit.
 func (r *Run) write() {
+	withLock(filepath.Dir(r.path), func() { r.writeLocked(false) })
+}
+
+// writeLocked writes the row; create is true for the first write only. The caller holds
+// the directory's lock.
+func (r *Run) writeLocked(create bool) {
+	if !create {
+		if _, err := os.Stat(r.path); err != nil {
+			return
+		}
+	}
 	b, err := json.Marshal(r.row)
 	if err != nil {
 		return
@@ -279,8 +313,10 @@ func ForSession(sessionName string) []Row {
 }
 
 // Recent returns the newest n rows across every session and the workspace's spool, newest
-// first.
+// first. The workspace spool's age limit is applied first, so a row past it is never listed
+// even when nothing has been written since.
 func Recent(n int) []Row {
+	pruneWorkspace(now())
 	ents, err := os.ReadDir(root())
 	if err != nil {
 		return nil

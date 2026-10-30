@@ -297,3 +297,20 @@ Two more details the decisions left open:
 - The workspace spool also keeps at most 500 rows, so a burst within the 7 days stays bounded.
 - A session's spool is removed when the session is purged from the trash, not when it is moved there,
   so a restored session keeps its rows.
+
+## Note — a row records no exit status (2026-10-31)
+
+Implementation of decision 1 (#3050, PR 1, review of #3063). Decision 1 says the row is completed "when the command
+ends", with the exit status and the duration. To see the end, af-aws-exec would have to run the command as its
+child instead of becoming it. Measured in review, that changes what the caller's signals do:
+
+- a signal sent to the process group (an agent's shell tool, `timeout`) reaches the command twice, once directly
+  and once forwarded by the wrapper, when there is no terminal;
+- a command that ignores SIGTERM outlives a SIGKILL of the wrapper, holding the credentials. Moving the command
+  to a process group of its own fixes the first point but lets a group SIGKILL miss the command's children.
+
+No supervising design keeps exec's behaviour exactly, and af-aws-exec runs deployments. It therefore still
+becomes the command, and **a row records the start and the identity, or why the run was refused; it has no exit
+status and no duration**. The wrapper's exit status, which the caller already sees, is unchanged. A test runs the
+real wrapper and asserts that the command has the wrapper's PID, that one group SIGINT arrives once, and that a
+SIGKILL of that PID ends the command.

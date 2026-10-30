@@ -11,7 +11,7 @@ export { parseCloudRuns, type CloudRun } from "./cloudRunsModel.ts";
 /** CloudRunLine is one run as a single line: the mirror draws it between the turns, Settings
  *  lists it with its session. */
 export function CloudRunLine({ run, session }: { run: CloudRun; session?: boolean }) {
-  const failed = !!run.refused || (typeof run.exitCode === "number" && run.exitCode !== 0);
+  const failed = !!run.refused;
   return (
     <div className={"cloud-run" + (failed ? " failed" : "")} role="note" title={tr("cloudruns.title")}>
       <Icon name="cloud" />
@@ -21,9 +21,16 @@ export function CloudRunLine({ run, session }: { run: CloudRun; session?: boolea
   );
 }
 
-/** cloudRunCards places each run at its start time among the mirror's turns. */
-export function cloudRunCards(runs: CloudRun[]): Array<{ at: number; node: ReactNode }> {
-  return runs.map((r) => ({ at: Date.parse(r.startedAt), node: <CloudRunLine key={"cloud-run-" + r.id} run={r} /> }));
+/** cloudRunCards places each run at its start time among the mirror's turns. A conversation
+ *  whose turns carry no timestamp at all (some kinds record none) cannot place a run in time;
+ *  its runs go after the last turn, in the order they started. A finite time would land them at
+ *  the top instead, because the placement reads a turn without a time as a just-sent echo. */
+export function cloudRunCards(runs: CloudRun[], turnTimes: Array<string | undefined>): Array<{ at: number; node: ReactNode }> {
+  const timed = turnTimes.some((t) => !!t && !Number.isNaN(Date.parse(t)));
+  return runs.map((r) => ({
+    at: timed ? Date.parse(r.startedAt) : Number.POSITIVE_INFINITY,
+    node: <CloudRunLine key={"cloud-run-" + r.id} run={r} />,
+  }));
 }
 
 /** RecentCloudRuns is Settings' "Recent runs": the newest runs of every session, so a run

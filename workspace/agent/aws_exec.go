@@ -53,7 +53,8 @@ credential_source, web identity and mfa_serial are refused.
 
 Each run leaves one line in the calling session's conversation (Settings > AWS
 profiles/SSM lists them all under "Recent runs"): the profile, account, role, region,
-the program and, for aws, the service and operation. Never the arguments.
+the program and, for aws, the service and operation, or why the run was refused. Never
+the arguments.
 
 Exit status: the command's own on success; 2 usage error; 3 SSO login required but not
 started (--no-login, no Console
@@ -189,15 +190,12 @@ func runAWSExec(args []string) {
 		}
 		awsExec.FailPlan(err, awsx.ErrLoginRequired)
 	}
-	// The command runs as this process's child, not in its place, so the row can record how
-	// it ended.
-	out, err := cloudexec.Supervise(cloudexec.Supervision{Prog: prog, Argv: argv, Env: env})
-	if err != nil {
-		run.Refuse(cloudruns.RefusedOther)
-		awsExec.Fail(cloudexec.ExitRefused, "run "+prog+": "+err.Error())
-	}
-	run.Finish(out.Code)
-	out.Exit()
+	// The wrapper becomes the command, so signals, process groups and a parent's SIGKILL reach
+	// it exactly as before. Supervising it as a child would let the row record the exit
+	// status, but a signal sent to the process group then reaches the command twice, once
+	// directly and once forwarded, and a child that ignores SIGTERM outlives a killed wrapper
+	// with the credentials (ADR 0126 note of 2026-10-31).
+	awsExec.Exec(prog, argv, env)
 }
 
 // consoleLoginWaits is how long af-aws-exec waits for a Console login, per agent kind,

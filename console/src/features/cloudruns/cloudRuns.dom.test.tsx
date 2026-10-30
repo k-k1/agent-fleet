@@ -43,8 +43,6 @@ const run = (id: string, startedAt: string, extra: Record<string, unknown> = {})
   profile: "prod",
   account: "123456789012",
   role: "Dev",
-  exitCode: 0,
-  durationMs: 10,
   ...extra,
 });
 
@@ -78,11 +76,30 @@ describe("cloudRunCards in the mirror", () => {
     ];
     const caps = { session: "s1" } as never;
     await render(
-      <TranscriptView groups={groups as never} caps={caps} inlineCards={cloudRunCards([run("r1", "2026-10-30T12:05:00Z") as never])} />,
+      <TranscriptView
+        groups={groups as never}
+        caps={caps}
+        inlineCards={cloudRunCards([run("r1", "2026-10-30T12:05:00Z") as never], groups.map((g) => g.ts))}
+      />,
     );
     const text = host.textContent ?? "";
     const at = text.indexOf("123456789012 / Dev");
     expect(at).toBeGreaterThan(text.indexOf("first"));
     expect(at).toBeLessThan(text.indexOf("second"));
+  });
+
+  it("puts runs after the last turn when no turn has a time, in the order they started", async () => {
+    const groups = [
+      { role: "user", text: "first", idx: 0 },
+      { role: "user", text: "second", idx: 1 },
+    ];
+    const caps = { session: "s1" } as never;
+    const runs = [run("r1", "2026-10-30T12:05:00Z", { profile: "alpha" }), run("r2", "2026-10-30T12:06:00Z", { profile: "beta" })];
+    await render(
+      <TranscriptView groups={groups as never} caps={caps} inlineCards={cloudRunCards(runs as never, groups.map(() => undefined))} />,
+    );
+    const text = host.textContent ?? "";
+    expect(text.indexOf("alpha")).toBeGreaterThan(text.indexOf("second"));
+    expect(text.indexOf("beta")).toBeGreaterThan(text.indexOf("alpha"));
   });
 });

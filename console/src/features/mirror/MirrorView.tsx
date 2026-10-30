@@ -669,7 +669,7 @@ function MirrorViewBody({
             caps={caps}
             working={busy}
             autoCollapseWork={atBottomRef.current}
-            inlineCards={[...restoreNoteCards(restoredAt), ...cloudRunCards(cloudRuns), ...handoffs.map((h) => ({
+            inlineCards={[...restoreNoteCards(restoredAt), ...cloudRunCards(cloudRuns, groups.map((g) => g.ts)), ...handoffs.map((h) => ({
               at: h.created_at,
               node: (
                 <HandoffProposal

@@ -489,8 +489,6 @@ export const mirror = {
   "mirror.queue_attach_only": "（添付のみ）",
   "cloudruns.title": "af-aws-exec で実行したコマンドと、その実行に使われた身元。セッションは実行が申告したもので、引数は記録しません。",
   "cloudruns.via": "{source} 経由",
-  "cloudruns.exit": "終了コード {code}",
-  "cloudruns.running": "実行中",
   "cloudruns.refused_login_required": "未実行: ログインが必要",
   "cloudruns.refused_usage": "未実行: 使い方の誤り",
   "cloudruns.refused_refused": "未実行: 拒否",

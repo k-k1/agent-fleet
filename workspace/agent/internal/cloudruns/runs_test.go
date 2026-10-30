@@ -60,10 +60,10 @@ func TestDescribeKeepsOnlyKnownServiceAndOperation(t *testing.T) {
 func TestRowGoesToItsSessionOrToTheWorkspace(t *testing.T) {
 	dir := useRoot(t)
 	liveSession(t, "cr-live")
-	Begin("aws", "cr-live", "prod", []string{"aws", "s3", "ls"}).Finish(0)
-	Begin("aws", "cr-unknown", "prod", []string{"aws", "s3", "ls"}).Finish(0)
-	Begin("aws", "", "prod", []string{"aws", "s3", "ls"}).Finish(0)
-	Begin("aws", "../x", "prod", []string{"aws", "s3", "ls"}).Finish(0)
+	Begin("aws", "cr-live", "prod", []string{"aws", "s3", "ls"})
+	Begin("aws", "cr-unknown", "prod", []string{"aws", "s3", "ls"})
+	Begin("aws", "", "prod", []string{"aws", "s3", "ls"})
+	Begin("aws", "../x", "prod", []string{"aws", "s3", "ls"})
 
 	if got := ForSession("cr-live"); len(got) != 1 || got[0].Session != "cr-live" {
 		t.Fatalf("live session rows = %+v", got)
@@ -94,7 +94,6 @@ func TestRowLifecycle(t *testing.T) {
 	liveSession(t, "cr-life")
 	r := Begin("aws", "cr-life", "prod-admin", []string{"aws", "s3", "ls"})
 	r.Resolved(Identity{Account: "123456789012", Role: "AdministratorAccess", Region: "ap-northeast-1", Source: "base"})
-	r.Finish(3)
 	got := ForSession("cr-life")
 	if len(got) != 1 {
 		t.Fatalf("rows = %+v", got)
@@ -104,13 +103,13 @@ func TestRowLifecycle(t *testing.T) {
 		g.Region != "ap-northeast-1" || g.Source != "base" || g.Service != "s3" || g.Operation != "ls" {
 		t.Fatalf("row = %+v", g)
 	}
-	if g.ExitCode == nil || *g.ExitCode != 3 || g.DurationMs == nil || g.EndedAt == "" || g.Refused != "" {
-		t.Fatalf("end not recorded: %+v", g)
+	if g.EndedAt != "" || g.Refused != "" {
+		t.Fatalf("a started run has an end: %+v", g)
 	}
 
 	Begin("aws", "cr-life", "prod", []string{"aws", "s3", "ls"}).Refuse(RefusedLogin)
 	got = ForSession("cr-life")
-	if len(got) != 2 || got[1].Refused != RefusedLogin || got[1].ExitCode != nil {
+	if len(got) != 2 || got[1].Refused != RefusedLogin || got[1].EndedAt == "" {
 		t.Fatalf("refused row = %+v", got[len(got)-1])
 	}
 }
@@ -120,7 +119,6 @@ func TestIdentityOutsideTheAllowlistIsDropped(t *testing.T) {
 	liveSession(t, "cr-allow")
 	r := Begin("aws", "cr-allow", "bad profile\n", []string{"aws"})
 	r.Resolved(Identity{Account: "12x", Role: "a\nb", Region: "Not A Region", Source: "s p"})
-	r.Finish(0)
 	g := ForSession("cr-allow")[0]
 	if g.Profile != "" || g.Account != "" || g.Role != "" || g.Region != "" || g.Source != "" {
 		t.Fatalf("values outside the allowlist were kept: %+v", g)
@@ -131,7 +129,7 @@ func TestPruneKeepsTheNewest(t *testing.T) {
 	dir := useRoot(t)
 	liveSession(t, "cr-prune")
 	for i := 0; i < perSession+5; i++ {
-		Begin("aws", "cr-prune", "p", []string{"aws"}).Finish(0)
+		Begin("aws", "cr-prune", "p", []string{"aws"})
 	}
 	if n := len(rowFiles(filepath.Join(dir, "cr-prune"))); n != perSession {
 		t.Fatalf("session spool holds %d rows, want %d", n, perSession)
@@ -139,10 +137,9 @@ func TestPruneKeepsTheNewest(t *testing.T) {
 
 	// A workspace row older than workspaceKeep goes at the next write.
 	old := Begin("aws", "", "p", []string{"aws"})
-	old.Finish(0)
 	clock := now()
 	now = func() time.Time { clock = clock.Add(workspaceKeep + time.Hour); return clock }
-	Begin("aws", "", "p", []string{"aws"}).Finish(0)
+	Begin("aws", "", "p", []string{"aws"})
 	ws := rowFiles(filepath.Join(dir, workspaceDir))
 	if len(ws) != 1 || ws[0] == filepath.Base(old.path) {
 		t.Fatalf("workspace spool after a week = %v", ws)
@@ -152,7 +149,7 @@ func TestPruneKeepsTheNewest(t *testing.T) {
 func TestDropRemovesTheSessionSpool(t *testing.T) {
 	dir := useRoot(t)
 	liveSession(t, "cr-drop")
-	Begin("aws", "cr-drop", "p", []string{"aws"}).Finish(0)
+	Begin("aws", "cr-drop", "p", []string{"aws"})
 	Drop("cr-drop")
 	if _, err := os.Stat(filepath.Join(dir, "cr-drop")); !os.IsNotExist(err) {
 		t.Fatalf("spool still there: %v", err)
@@ -183,7 +180,6 @@ func TestSentinelNeverReachesARowOrTheWire(t *testing.T) {
 	} {
 		r := Begin("aws", "cr-sentinel", "prod", argv)
 		r.Resolved(Identity{Account: "123456789012", Role: "Admin", Region: "us-east-1"})
-		r.Finish(0)
 	}
 	err := filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() {
