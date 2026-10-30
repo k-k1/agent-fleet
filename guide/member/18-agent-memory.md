@@ -388,3 +388,61 @@ link back.
 - **Saves** go through the same revision check, secret scan and limits as an agent's save inside the workspace.
 - **A stopped workspace** answers that it must be started first; start it in the Console and ask again.
 - A deployment that does not serve `/mcp` has no outside access at all, `/mcp/memory` included.
+
+### Bringing your own Claude Code's memory into Agent Fleet
+
+**Import from Claude Code** (under Import & export) reads only the Claude Code inside your workspace. The memory
+Claude Code keeps on your own computer can come across through `/mcp` instead: the Claude there reads its memory
+files and saves each one with `memory_save`. Every save goes through the secret scan and shows in **Changes**, so
+each one can be reverted.
+
+Before you start:
+
+1. In **⚙ Settings → Agent memory → Settings**, turn on "Let sessions use Agent Fleet memory", so the sessions in
+   your workspace read what you bring in.
+2. In the same view, set "Use Agent Fleet memory from outside Agent Fleet" to **Read and write**.
+3. Connect Claude Code on your computer to `/mcp` with the `write` scope
+   ([19 Using it from outside](19-outside-access.md#moving-work-from-your-own-claude-code-into-the-workspace)
+   shows the commands). If the memory tools do not appear, your tenant administrator has blocked them.
+4. The repository has a project in Agent Fleet memory. A project starts from inside the workspace: if
+   `memory_projects` does not list it, ask a session working in that repository to save one memory first.
+
+Then save this skill once on your computer, at
+
+```
+~/.claude/skills/af-memory-import/SKILL.md
+```
+
+````markdown
+---
+name: af-memory-import
+description: Copy this project's Claude Code memory into Agent Fleet memory
+disable-model-invocation: true
+---
+Copy the memory you keep for this project into Agent Fleet memory. Change nothing in your own memory files.
+
+1. Run `git remote get-url origin`; that is `repository` for every call below. Call agent-fleet
+   `memory_projects` and check that it lists this repository. If it does not, stop and tell me.
+2. List the files in your memory directory, except the index `MEMORY.md`. For each file, show me its name,
+   type and description in one table, and propose a scope: `project` for anything about this repository,
+   `user` only for a fact that holds in every project. Wait for my OK on the table.
+3. For each file I approved:
+   - Call `memory_search` with its name. If a memory of that name exists, `memory_read` it; when the text is
+     the same, skip it; when it differs, show me both and ask which to keep. To replace it, pass the
+     `revision` you read.
+   - Call `memory_save` with `scope`, `repository`, `name` (lower case; letters, digits, `-`, `_`, `.`;
+     at most 64 characters), `description` (one line), `type` (`user`, `feedback`, `project` or `reference`)
+     and `body` (the file's text without its frontmatter).
+   - If a save is refused, for example as a possible secret, do not retry it in other words. Note the reason.
+4. Report what was saved, skipped and refused.
+````
+
+In the Claude Code session of that repository, type `/af-memory-import`. Afterwards, look at **Changes** in Agent
+memory: the saves are listed with author kind `external` and can be reverted there.
+
+Good to know:
+
+- Instruction files (`CLAUDE.md`) are not memory. Put what they say in Settings → Agent instructions, or keep the
+  repository's own file in the repository.
+- Your own memory files are not changed. If you keep using Claude Code on your computer, what it learns later
+  stays there until you run the skill again; a memory you already brought in is skipped when its text is the same.

@@ -6,7 +6,7 @@ audience: "anyone using the workspace from an external agent or app"
 
 English | [日本語](19-outside-access.ja.md)
 
-This chapter is for using your workspace from outside the Console: driving it from an external Claude or another MCP client, connecting a remote MCP client by signing in (OAuth), and using Agent Fleet memory from an external agent.
+This chapter is for using your workspace from outside the Console: driving it from an external Claude or another MCP client, moving work from your own Claude Code into it, connecting a remote MCP client by signing in (OAuth), and using Agent Fleet memory from an external agent.
 
 ## Using your workspace from an external agent (MCP)
 
@@ -34,6 +34,13 @@ next instruction". Issue the token for this in **⚙ Settings → Outside access
    "Copy .mcp.json" and save it at the project root (or add `agent-fleet` to an existing file). The endpoint is
    `/mcp` (`/mcp/memory`, under the name `agent-fleet-memory`, for a memory-only token), with
    `Authorization: Bearer <token>` in the header.
+   A `.mcp.json` at a project root holds the token in plain text and is easy to commit by accident. To keep
+   it out of every project, register it for your user instead:
+
+   ```sh
+   claude mcp add --transport http --scope user agent-fleet https://<your Console address>/mcp \
+     --header "Authorization: Bearer <token>"
+   ```
 
 **What the session sees.** A prompt sent with `send_to_session` does not look like your own typing. The session
 receives it behind a one-line header, `[agent-fleet:mcp via=<connection name> connection=<id> reply=none]`,
@@ -94,6 +101,95 @@ Your tenant administrator can disable MCP OAuth for the tenant. This revokes its
 Under each connected app, and under each Personal Access Token, choose **Recent calls** to see the last 50 requests made with it: time, HTTP method and status, the JSON-RPC methods (each item of a batch), the protocol era and version, the client name, which `Mcp-Method` / `Mcp-Name` headers were sent, the error returned and, for `tools/list`, how many tools came back. Tokens, authorization headers, tool arguments and results are never recorded.
 
 The list is kept in memory by the Control Plane only. It disappears when the Control Plane restarts, and with several Control Plane replicas each one keeps its own list, so you see only the requests that replica served — press **Refresh** a few times, or ask your operator to read the Control Plane log, where every request is recorded, including those refused before sign-in.
+
+### Moving work from your own Claude Code into the workspace
+
+A task you started in Claude Code on your own computer can continue in the workspace, for example to keep it
+running after you close the laptop. The Claude on your computer pushes its work and starts a session here with a
+hand-off note it writes. What moves is the pushed code and that note. The conversation itself, earlier tool
+output and anything you did not push stay behind.
+
+Before you start:
+
+- Claude Code is connected to `/mcp` with the `write` scope, by [signing in](#connecting-a-remote-mcp-client-by-signing-in-oauth)
+  or with a [token](#driving-your-workspace-from-an-external-claude-mcp). To sign in, register the server for your
+  user and authenticate from Claude Code's MCP menu:
+
+  ```sh
+  claude mcp add --transport http --scope user agent-fleet https://<your Console address>/mcp
+  # then, inside Claude Code: /mcp → agent-fleet → Authenticate, and choose write on the consent page
+  ```
+
+- The repository is already in your workspace, and the workspace is running.
+
+1. Save this skill once on your computer, at
+
+   ```
+   ~/.claude/skills/af-move/SKILL.md
+   ```
+
+   ````markdown
+   ---
+   name: af-move
+   description: Move this task into an Agent Fleet session, handing over a summary
+   disable-model-invocation: true
+   argument-hint: "[anything the next session should know]"
+   ---
+   Move this task to Agent Fleet. Go step by step and report each step briefly.
+
+   1. Show `git status` and the current branch. If anything is uncommitted, list what you would commit and wait
+      for my OK; then make a WIP commit and push the current branch. Never commit `.env` files, keys, tokens or
+      other secrets. Note `git rev-parse HEAD` after the push.
+   2. Split `git remote get-url origin` into its host and its `owner/name` path (without `.git`). Call agent-fleet
+      `list_repos` and keep the entries whose `remote` is that host and whose `remotePath` is that path. Worktrees
+      share their clone's values; prefer the entry whose `name` has no `@`. If none is left, stop and tell me; if
+      more than one is, show them and let me choose. Use its `path`.
+   3. Write the hand-off note from the template below (at most about 4000 characters). Leave out any token,
+      password or confidential value that came up in the conversation.
+   4. Call agent-fleet `create_session` with `dir` = the path from step 2, `worktree` = true,
+      `branch` = the branch you pushed, `title` = a short name for the task, `initial_prompt` = the note.
+   5. Tell me the session name it returns. From then on, change no code in this session.
+
+   Also from me: $ARGUMENTS
+
+   --- hand-off note template ---
+   This continues a Claude Code session that ran outside Agent Fleet.
+
+   - Branch: <branch>, commit at hand-off: <sha>
+   - First run `git rev-parse HEAD`. If it is not <sha>, run `git fetch origin`, then
+     `git merge --ff-only <sha>`, and check `git rev-parse HEAD` again. Do no work until HEAD is <sha>; if the
+     fast-forward fails or HEAD still differs, stop and report it.
+   - Original working folder: <absolute path>. Paths in this note are relative to it; read them as relative
+     to the root of your working copy.
+
+   ## Goal
+   ## Done so far
+   ## Where it stopped (the last request word for word, open problems, failing tests)
+   ## Next steps
+   ## Decisions and things not to do
+
+   Read the above, summarize it in three lines, propose the next step, and wait for instructions.
+   ````
+
+2. In the Claude Code session you want to move, type `/af-move`, optionally followed by anything the next
+   session should know.
+3. Claude lists what it would commit and waits for your OK, then pushes, writes the note, starts the session and
+   tells you its name.
+4. Open that session in the Console. It checks that it starts at the commit that was pushed, summarizes the note,
+   proposes a next step and waits for you.
+
+Good to know:
+
+- The session works in a new worktree, on a temporary branch based on the one you pushed. When you want the work
+  back on the original branch, ask the session to push there.
+- The session fast-forwards itself to the pushed commit before it starts. If it still reports that it does not
+  start at that commit, the branch you pushed and the workspace's copy have diverged. Check what you pushed, then
+  run `/af-move` again.
+- If Claude stops because the repository is not in the workspace, clone it from the Console and run `/af-move`
+  again.
+- The note appears in the session as the first instruction. Answer permission prompts and plans in the Console as
+  usual.
+- Close the session on your computer afterwards. Two sessions working on one branch get in each other's way.
 
 ### A memory-only connector (for claude.ai)
 
