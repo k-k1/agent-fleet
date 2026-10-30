@@ -193,3 +193,37 @@ AF へ移る妨げとして「作り込んだ AWS プロファイルを設定画
 - 実機での目視（実フリート反映後）。
 - ログインの共有（同じ sso-session の 20 個が 20 回のログインになる）：#3014。
 - `~/.ssh/config` の SSM ホスト・gcloud の構成・`~/.aws/config` への書き出し：#3017。
+
+### 9.4 `~/.ssh/config` から SSM ホストを読む（#3017 第 1 部、2026-10-30 追記）
+
+決定は ADR 0060 の同日付の追記（`~/.ssh/config`）。
+
+| 段 | 置き場 | 役割 |
+|----|--------|------|
+| 読む | `console/src/lib/sshConfigIni.ts` | ssh_config(5) の行形式（`Keyword args` / `Keyword=args`、`Host` / `Match` がブロックを開く、継続行なし）。AWS の INI とは別の読み手。ブロックはファイル順のまま持つ |
+| 意味づけ | `console/src/lib/sshConfigImport.ts` `readSshConfig` | ホスト名ごとに、当てはまるブロックを順に通して最初の値を取り（OpenSSH と同じ）、`ProxyCommand` を固定文法で検証して**捨てる**。残るのはインスタンス ID・プロファイル名・リージョンだけ |
+| 解決 | 同 `resolveSshImport` | Settings のプロファイルと AWS 名（`awsProfileName`）で突き合わせ、別名の重複・既存を見る。編集のたびに走り直す |
+| 計画・実行 | `planSsmImport` / `ssmImportExec.ts` | 第 1 段と共用。ホストだけのプランを流す |
+| 画面 | `SshConfigImport.tsx`（`AwsConfigImport.tsx` には触れず別部品） | AWS タブのボタン |
+
+**受け付ける形（これだけ）。** 具体的な 1 名の `Host`、`ProxyCommand` が `aws ssm start-session`
+（`sh -c "…"` で包んだ形も可）で、`--target`（`i-…` / `mi-…`、または `%h` = `HostName` の値、なければ `Host` 名）・
+`--document-name AWS-StartSSHSession`・`--parameters portNumber=%p`（または 22）・`--profile`・`--region` を各 1 回まで。
+拒否して理由を出すもの：他のドキュメント、他のオプション、他の `%`、シェル構文、`ProxyJump`、
+`CanonicalizeHostname`、ワイルドカード・否定（行として 1 つずつ表示）、`Match`・`Include`。
+
+**first-match-wins の扱い。** 上にある `Host *` やパターンから来た値は拒否（`inherited`）。`ProxyCommand` / `ProxyJump` /
+`HostName` / `CanonicalizeHostname` を設定する `Match` や、`Include` より後ろの値も拒否（`barrier`、中身が見えないため
+先に決められた可能性が消せない）。これらを設定しない `Match` と、値より後ろの `Match` / `Include` は影響しない。
+ホスト名の比較は大文字小文字を区別しない（当てはまるブロックを多めに見積もる＝拒否側に倒す）。
+
+**接続方式の変更。** トンネル（`AWS-StartSSHSession`）をシェルのブックマークにするので、作る行すべてに
+「SSH トンネルではなく SSM シェル」と表示し、プレビューの下に注意を出す。`User` / `IdentityFile` / `Port` などは名前だけ出す（値は出さない）。
+
+**値を出さない・送らない。** ProxyCommand は実行しない。読み取り部で捨て、プレビュー・リクエスト・ログのどこにも
+出ない（DOM テストで、ProxyCommand 内のトークン・IdentityFile のパス・`SetEnv` の鍵がどこにも現れないのを確かめた）。
+
+変異確認：`inherited` の判定と未知オプションの拒否を外すと、該当するテストが落ちるのを見た。
+実機では未確認（実フリートでの目視は残り）。
+
+残り：gcloud の構成の取り込み（第 2 部）、`~/.aws/config` への書き出し（第 3 部）：#3017。
