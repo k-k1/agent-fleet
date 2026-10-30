@@ -347,47 +347,47 @@
 -> AGENT ["POST","/sessions/v/archive",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session absent
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for create_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","subdir":"v","title":"v","worktree":true}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"v\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write create_session kind= {"kind":""}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=claude {"kind":"claude"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"claude\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"claude\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=codex {"kind":"codex"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"codex\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"codex\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=opencode {"kind":"opencode"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"opencode\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"opencode\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=agy {"kind":"agy"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"agy\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"agy\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=copilot {"kind":"copilot"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"copilot\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"copilot\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=cursor {"kind":"cursor"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"cursor\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"cursor\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=kiro {"kind":"kiro"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"kiro\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"kiro\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=lcpp {"kind":"lcpp"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"lcpp\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"lcpp\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=muse {"kind":"muse"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"muse\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"muse\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=shell {"kind":"shell"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"shell\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"shell\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=ssm {"kind":"ssm"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"ssm\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"ssm\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session kind=Codex {"kind":"Codex"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"Codex\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -608,11 +608,13 @@
 -> AGENT ["POST","/sessions/v/start",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write send_to_session absent
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
+-> AGENT ["POST","/sessions//mcp-input","{\"connection\":\"pat1\",\"impl\":\"golden\",\"prompt\":\"\",\"via\":\"Claude\"}"]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write send_to_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for send_to_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write send_to_session full {"name":"v","prompt":"v"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
+-> AGENT ["POST","/sessions/v/mcp-input","{\"connection\":\"pat1\",\"impl\":\"golden\",\"prompt\":\"v\",\"via\":\"Claude\"}"]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write stop_session absent
 -> AGENT ["POST","/sessions//halt",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
@@ -696,47 +698,47 @@
 -> AGENT ["POST","/sessions/v/archive",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session absent
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for create_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","subdir":"v","title":"v","worktree":true}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"v\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous create_session kind= {"kind":""}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=claude {"kind":"claude"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"claude\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"claude\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=codex {"kind":"codex"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"codex\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"codex\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=opencode {"kind":"opencode"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"opencode\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"opencode\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=agy {"kind":"agy"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"agy\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"agy\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=copilot {"kind":"copilot"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"copilot\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"copilot\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=cursor {"kind":"cursor"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"cursor\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"cursor\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=kiro {"kind":"kiro"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"kiro\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"kiro\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=lcpp {"kind":"lcpp"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"lcpp\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"lcpp\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=muse {"kind":"muse"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"managed\",\"initial_prompt\":\"\",\"kind\":\"muse\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"managed\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"muse\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=shell {"kind":"shell"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"shell\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"shell\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=ssm {"kind":"ssm"}
--> AGENT ["POST","/sessions","{\"branch\":\"\",\"dir\":\"\",\"driver\":\"\",\"initial_prompt\":\"\",\"kind\":\"ssm\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"worktree\":false}"]
+-> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"ssm\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session kind=Codex {"kind":"Codex"}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"Codex\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -957,11 +959,13 @@
 -> AGENT ["POST","/sessions/v/start",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous send_to_session absent
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
+-> AGENT ["POST","/sessions//mcp-input","{\"connection\":\"pat1\",\"impl\":\"golden\",\"prompt\":\"\",\"via\":\"Claude\"}"]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous send_to_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for send_to_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous send_to_session full {"name":"v","prompt":"v"}
-<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"send_to_session needs an authenticated connection","type":"text"}],"isError":true,"resultType":"complete"}}
+-> AGENT ["POST","/sessions/v/mcp-input","{\"connection\":\"pat1\",\"impl\":\"golden\",\"prompt\":\"v\",\"via\":\"Claude\"}"]
+<- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous stop_session absent
 -> AGENT ["POST","/sessions//halt",""]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}

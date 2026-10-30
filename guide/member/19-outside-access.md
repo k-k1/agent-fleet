@@ -35,7 +35,8 @@ next instruction". Issue the token for this in **⚙ Settings → Outside access
    `/mcp` (`/mcp/memory`, under the name `agent-fleet-memory`, for a memory-only token), with
    `Authorization: Bearer <token>` in the header.
 
-**What the session sees.** A prompt sent with `send_to_session` does not look like your own typing. The session
+**What the session sees.** A prompt sent with `send_to_session`, or the `initial_prompt` of a session
+started with `create_session`, does not look like your own typing. The session
 receives it behind a one-line header, `[agent-fleet:mcp via=<connection name> connection=<id> reply=none]`,
 and the Console shows that message as its own bubble with a **"Via MCP: <name>"** badge. The name is the
 connection's: the app name of an OAuth connection or the name you gave the token. It names the connection,
@@ -44,7 +45,9 @@ another session: as a teammate's request that it carries out within its own perm
 approval. It will not answer a question card, a permission prompt or a plan approval on your behalf, will not
 change permissions or configuration because the message asked, and will not run commands just because they
 are quoted in it. A prompt that itself begins with `[agent-fleet:` is refused. Raw terminal sessions
-(shell / SSM) refuse input over MCP, so an outside assistant can never type into them.
+(shell / SSM) refuse input over MCP, so an outside assistant can never type into them; that includes
+a `create_session` of one with an `initial_prompt`. For a session your outside assistant started, this
+means its first instruction is a teammate's request, not your approval.
 
 Tokens you no longer need can be **revoked** ("Revoke") on the same screen (once revoked, connections using
 that token are rejected from the next attempt).

@@ -703,13 +703,13 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "create_session", minScope: scopeWrite,
-			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; " + managedKindsSentence() + " If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; " + managedKindsSentence() + " If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed); like send_to_session it arrives with a header naming this connection, so the session knows it came through MCP and not from the member typing, and a prompt that itself starts with \"[agent-fleet:\" is refused — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — a shell session takes no initial_prompt over MCP (it would run as a command), and send_to_session does not reach it either."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
@@ -731,7 +731,7 @@ func memberTools() []mcpTool {
 				if mcpManagedDefaultKinds[kind] {
 					driver = "managed"
 				}
-				body, _ := json.Marshal(map[string]any{
+				body, err := createSessionBody(ctx, map[string]any{
 					"dir":            argStr(args, "dir"),
 					"subdir":         argStr(args, "subdir"),
 					"title":          argStr(args, "title"),
@@ -743,7 +743,10 @@ func memberTools() []mcpTool {
 					"new_branch":     argStr(args, "new_branch"),
 					"driver":         driver,
 				})
-				return a.cp.AgentText(ctx, res.RT, "POST", "/sessions", body)
+				if err != nil {
+					return "", err
+				}
+				return a.cp.AgentText(ctx, res.RT, "POST", "/sessions-mcp", body)
 			},
 		},
 		// Memo queue (docs/log/21). The queue lives in the CP store (membership-scoped), so

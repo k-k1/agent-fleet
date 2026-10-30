@@ -71,6 +71,11 @@ func (c *createRun) validateKind() bool {
 // duplicate. A duplicate is answered here from the ledger. When claim returns true and owns a
 // key, the caller defers settleClaim.
 func (c *createRun) claim() bool {
+	// A create from /mcp: the first prompt gets the same envelope a send_to_session does.
+	// Applied before the idempotency key is derived, like the spawn envelope below.
+	if c.req.mcp != nil && strings.TrimSpace(c.req.InitialPrompt) != "" {
+		c.req.InitialPrompt = mcpEnvelope(*c.req.mcp, c.req.InitialPrompt)
+	}
 	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
 	// spawn regime hangs off it. Resolved here; the refusals run further down.
 	if origin, _, parent := CreateOrigin(c.req); origin == session.OriginSession {

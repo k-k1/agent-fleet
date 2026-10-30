@@ -82,6 +82,7 @@ func spawnServer(t *testing.T) *spawnEnv {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sessions", HandleCreateSession)
+	mux.HandleFunc("POST /sessions-mcp", HandleMCPCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/recreate", HandleRecreateSession)
 	mux.HandleFunc("POST /sessions/{name}/fork", HandleForkSession)
 	env := &spawnEnv{srv: httptest.NewServer(mux), home: home, t: t, planted: map[string]bool{}}

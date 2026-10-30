@@ -87,7 +87,8 @@ func createSessionDriver(t *testing.T, kind string) string {
 	t.Helper()
 	var raw []byte
 	a := API{cp: bodyCP{body: &raw}}
-	if _, err := memberTool(t, "create_session").run(context.Background(), a, &Resolved{}, map[string]any{"kind": kind}); err != nil {
+	ctx := withMCPCall(context.Background(), mcpCallInfo{patID: "grant_k"})
+	if _, err := memberTool(t, "create_session").run(ctx, a, &Resolved{}, map[string]any{"kind": kind}); err != nil {
 		t.Fatalf("create_session(kind=%q) = %v", kind, err)
 	}
 	var m map[string]any
@@ -143,7 +144,8 @@ func TestCreateSessionRefusesUnregisteredKind(t *testing.T) {
 	for _, k := range []string{"", "claude", "codex"} {
 		var raw []byte
 		a := API{cp: bodyCP{body: &raw}}
-		if _, err := memberTool(t, "create_session").run(context.Background(), a, &Resolved{}, map[string]any{"kind": k}); err != nil || raw == nil {
+		ctx := withMCPCall(context.Background(), mcpCallInfo{patID: "grant_k"})
+		if _, err := memberTool(t, "create_session").run(ctx, a, &Resolved{}, map[string]any{"kind": k}); err != nil || raw == nil {
 			t.Errorf("create_session(kind=%q) = %v (sent %q), want it forwarded", k, err, raw)
 		}
 	}

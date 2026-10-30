@@ -317,3 +317,11 @@ and a revoke button.
   outside Agent Fleet" setting (off by default; Read only or Read and write). A tenant Block hides
   the tools from OAuth connections and tokens alike. Copy only (consent page, Console and guide, en
   and ja); what a scope grants is unchanged and no decision above changes.
+
+- 2026-10-30, #3027: `create_session`'s `initial_prompt` now carries the same origin as
+  `send_to_session` (note 2026-10-22). The CP posts the create to a separate Agent route,
+  `/sessions-mcp`, which the Console's `/sessions` does not reach, with the connection taken from
+  the authenticated principal (a call with none is refused); the Agent wraps the first prompt in
+  `[agent-fleet:mcp …]`, records the same "Via MCP" badge source, and refuses a prompt starting
+  with `[agent-fleet:`. A shell / ssm session takes no `initial_prompt` over MCP, as it takes no
+  `send_to_session`. No decision above changes. Guide: `guide/member/19-outside-access.md`.
