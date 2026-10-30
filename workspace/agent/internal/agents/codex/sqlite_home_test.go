@@ -296,6 +296,54 @@ func TestRelocateSQLiteResumeKeepsAGroupWhoseWALChanged(t *testing.T) {
 	}
 }
 
+// An unreadable old path stops the retire with the keep side and the manifest as they are:
+// a partial listing would let a changed WAL that could not be examined pass as checked.
+func TestRelocateSQLiteResumeStopsOnAnUnreadableKeepSide(t *testing.T) {
+	src, dst := sqliteHomeFixture(t)
+	writeFile(t, filepath.Join(src, "state_5.sqlite"), "body")
+	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "w")
+	parentSync = func(string) error { return errors.New("EIO") }
+	if dir, _ := RelocateSQLite(); dir != dst {
+		t.Fatal("first boot did not move")
+	}
+	parentSync = syncDir
+	// Listing denied, lookups allowed: ReadDir fails while every Lstat by name succeeds.
+	if err := os.Chmod(src, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(src, 0o700) })
+	if _, err := os.ReadDir(src); err == nil {
+		t.Skip("directory listing is not denied here (running as root?)")
+	}
+	dir, note := RelocateSQLite()
+	if dir != dst || !strings.Contains(note, "left until the next start") {
+		t.Fatalf("dir = %q, note = %q", dir, note)
+	}
+	_ = os.Chmod(src, 0o700)
+	if got := strings.Join(dirNames(t, src), ","); got != "state_5.sqlite,state_5.sqlite-wal" {
+		t.Fatalf("keep side = %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dst, retireManifest)); err != nil {
+		t.Fatalf("manifest lost: %v", err)
+	}
+}
+
+// A recorded member that exists at the old path but was not among the verified files (its
+// metadata could not be read) makes the whole group unretirable.
+func TestRetirableRequiresEveryPresentMemberVerified(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "state_5.sqlite"), "body")
+	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "changed")
+	body, err := os.Lstat(filepath.Join(src, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := map[string]string{"state_5.sqlite": fileID(body), "state_5.sqlite-wal": "stale"}
+	if todo, ok := retirable(src, ".moved-to-local-1", recorded, []os.FileInfo{body}); ok {
+		t.Fatalf("retirable with the WAL unverified: todo = %v", todo)
+	}
+}
+
 // A codex whose npm launcher was still node at the first probe and started during the copy
 // may have written the source: the staged copy is thrown away, the keep side untouched.
 func TestRelocateSQLiteDiscardsACopyRacedByCodex(t *testing.T) {

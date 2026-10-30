@@ -365,16 +365,22 @@ func retirePending(src, dst string) string {
 		}
 		recorded[g][name] = id
 	}
+	// A partial view of the old path would let an unreadable, changed WAL pass as checked, so
+	// any error here stops the step with the keep side and the manifest as they are.
 	present := map[string][]os.FileInfo{} // group -> its files at the old path now
-	if entries, err := os.ReadDir(src); err == nil {
-		for _, e := range entries {
-			if _, rt := dbFile(e.Name()); !rt || !e.Type().IsRegular() {
-				continue
-			}
-			if fi, err := e.Info(); err == nil {
-				present[dbGroup(e.Name())] = append(present[dbGroup(e.Name())], fi)
-			}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return "codex sqlite: keep-side files left until the next start (reading " + src + ": " + err.Error() + ")"
+	}
+	for _, e := range entries {
+		if _, rt := dbFile(e.Name()); !rt || !e.Type().IsRegular() {
+			continue
 		}
+		fi, err := e.Info()
+		if err != nil {
+			return "codex sqlite: keep-side files left until the next start (" + err.Error() + ")"
+		}
+		present[dbGroup(e.Name())] = append(present[dbGroup(e.Name())], fi)
 	}
 	groups := make([]string, 0, len(recorded))
 	for g := range recorded {
@@ -422,7 +428,9 @@ func retirePending(src, dst string) string {
 // retirable checks one group against what the manifest recorded and returns the files still to
 // rename, or ok=false when the group is no longer the copied generation.
 func retirable(src, suffix string, recorded map[string]string, present []os.FileInfo) (todo []string, ok bool) {
+	checked := map[string]bool{}
 	for _, fi := range present {
+		checked[fi.Name()] = true
 		id, listed := recorded[fi.Name()]
 		if !listed || fileID(fi) != id {
 			return nil, false // a sidecar that appeared, or a file that changed
@@ -434,6 +442,9 @@ func retirable(src, suffix string, recorded map[string]string, present []os.File
 	}
 	for name := range recorded {
 		if _, err := os.Lstat(filepath.Join(src, name)); err == nil {
+			if !checked[name] {
+				return nil, false // there, but not among the files just verified
+			}
 			continue
 		}
 		if _, err := os.Lstat(filepath.Join(src, name+suffix)); err != nil {
