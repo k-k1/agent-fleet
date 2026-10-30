@@ -12,7 +12,7 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
-## [0.37.0](0.37.0.ja.md) — 2026-10-29
+## [0.37.0](0.37.0.ja.md) — 2026-10-30
 
 **CLI ピン** — Antigravity 1.4.10 / OpenCode 2.2.1
 

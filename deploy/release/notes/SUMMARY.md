@@ -13,7 +13,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
-## [0.37.0](0.37.0.md) — 2026-10-29
+## [0.37.0](0.37.0.md) — 2026-10-30
 
 **CLI pins** — Antigravity 1.4.10, OpenCode 2.2.1
 
