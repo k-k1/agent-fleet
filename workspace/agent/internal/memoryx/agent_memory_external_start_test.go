@@ -146,3 +146,24 @@ func TestAgentMemoryExternalStartRace(t *testing.T) {
 		t.Fatalf("memories: %d %v", len(es), err)
 	}
 }
+
+// A save by project id that fails after creating the project directory (a stale revision) must not
+// leave a project the retry saves into without its record.
+func TestAgentMemoryExternalRetryAfterRefusedStartKeepsRecord(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	want := agentMemProjectFor(remoteRepo(t, home, "fresh", "https://github.com/k-k1/fresh.git"))
+	externalMode(t, ExternalMemoryWrite)
+	if code, out := extSave(t, map[string]any{"scope": "project", "project": want.ID, "revision": 7}); code == 200 {
+		t.Fatalf("stale revision accepted: %s", out)
+	}
+	if code, out := extSave(t, map[string]any{"scope": "project", "project": want.ID}); code != 200 {
+		t.Fatalf("retry: %d %s", code, out)
+	}
+	var got agentMemProject
+	if err := json.Unmarshal([]byte(projectJSON(t, want.ID)), &got); err != nil || got != *want {
+		t.Fatalf("record %+v %v, want %+v", got, err, *want)
+	}
+	if out, err := memoryGitRun("show", "--stat", "--format=", "HEAD"); err != nil || !strings.Contains(out, "project.json") || !strings.Contains(out, "fact.md") {
+		t.Fatalf("commit should hold record and memory: %q %v", out, err)
+	}
+}

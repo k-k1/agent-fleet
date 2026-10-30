@@ -404,8 +404,9 @@ Before you start:
 3. Connect Claude Code on your computer to `/mcp` with the `write` scope
    ([19 Using it from outside](19-outside-access.md#moving-work-from-your-own-claude-code-into-the-workspace)
    shows the commands). If the memory tools do not appear, your tenant administrator has blocked them.
-4. The repository has a project in Agent Fleet memory. A project starts from inside the workspace: if
-   `memory_projects` does not list it, ask a session working in that repository to save one memory first.
+4. The repository is cloned in the workspace, under `~/repos`. A clone that holds no memory yet is started by the
+   first save, so no session has to save one first. If the workspace holds several clones of the same remote,
+   the save is refused with their ids: pass `project` (an id from `memory_projects`) to choose one.
 
 Then save this skill once on your computer, at
 
@@ -422,7 +423,8 @@ disable-model-invocation: true
 Copy the memory you keep for this project into Agent Fleet memory. Change nothing in your own memory files.
 
 1. Run `git remote get-url origin`; that is `repository` for every call below. Call agent-fleet
-   `memory_projects` and check that it lists this repository. If it does not, stop and tell me.
+   `memory_projects` and check that it lists this repository (a repository cloned in the workspace is listed even before it holds any
+   memory, with a count of 0). If it does not, the repository is not cloned in the workspace: stop and tell me.
 2. List the files in your memory directory, except the index `MEMORY.md`. For each file, show me its name,
    type and description in one table, and propose a scope: `project` for anything about this repository,
    `user` only for a fact that holds in every project. Wait for my OK on the table.

@@ -9,6 +9,8 @@ package memoryx
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -97,8 +99,21 @@ func agentMemExternalCaller(t agentMemExternalTarget, start bool) (agentMemCalle
 	m, err := agentMemMemberCaller(agentMemScopeProject, t.ID)
 	if err == nil {
 		c.Project = m.Project
-		if t.Live != nil && start {
-			c.Project, c.startProject = t.Live, true
+		if !start {
+			return c, nil
+		}
+		// A directory without a record is what a save that failed after creating it leaves behind
+		// (a stale revision, a scan failure): the retry still starts the project from its working
+		// copy, so the record lands with the first memory that is actually written.
+		live := t.Live
+		if live == nil {
+			if _, err := os.Stat(filepath.Join(agentMemDir(), "projects", t.ID, "project.json")); err == nil || !os.IsNotExist(err) {
+				return c, nil
+			}
+			live = agentMemExternalLive(t.ID)
+		}
+		if live != nil && live.ID == t.ID {
+			c.Project, c.startProject = live, true
 		}
 		return c, nil
 	}
