@@ -198,14 +198,27 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 		n := ssmProfileName(p.Label)
 		labels[n] = append(labels[n], p.Label)
 	}
+	collided := sessionCollisions(rows)
 	out := make([]awsProfileWire, 0, len(rows))
 	var conflicts []awsProfileConflict
+	reported := map[string]bool{}
+	report := func(name string, ls []string) {
+		if !reported[name] {
+			reported[name] = true
+			conflicts = append(conflicts, awsProfileConflict{Name: name, Labels: ls})
+		}
+	}
 	for _, p := range rows {
 		name := ssmProfileName(p.Label)
 		if ls := labels[name]; len(ls) > 1 {
-			if ls[0] == p.Label {
-				conflicts = append(conflicts, awsProfileConflict{Name: name, Labels: ls})
-			}
+			report(name, ls)
+			continue
+		}
+		// Every profile left out for an sso-session collision is reported under its own name:
+		// an Agent refuses a run of a name in conflicts (checkAmbiguous), also one that predates
+		// sign-ins or runs from a block an earlier sync left.
+		if ls, ok := collided[p.ID]; ok {
+			report(name, ls)
 			continue
 		}
 		if ssmKindOf(p) == store.SSMKindAssumeRole {
@@ -214,6 +227,10 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 			// rather than written with a source_profile that names something else.
 			src, ok := byID[p.SourceProfileID]
 			if !ok || ssmKindOf(src) != store.SSMKindSSO {
+				continue
+			}
+			if ls, gone := collided[src.ID]; gone {
+				report(name, append([]string{p.Label}, ls...))
 				continue
 			}
 			out = append(out, awsProfileWire{
@@ -230,28 +247,31 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 			SignIn: p.SignInName, SignInID: p.SignInID,
 		})
 	}
-	return withoutSessionCollisions(out, conflicts)
+	return out, conflicts
 }
 
-// withoutSessionCollisions leaves out every SSO profile whose sso-session name another owner
-// renders too (ADR 0125 decision 2): a sign-in named like a profile with a sign-in of its own.
-// The store refuses that state, but rows an older binary wrote after a rollback can hold it.
-// It holds whatever the portals: two equal portals under one name would share a login nobody
-// asked to share. Members of one sign-in render one name by design and are no collision. A
-// chain whose source is left out goes too.
-func withoutSessionCollisions(ps []awsProfileWire, conflicts []awsProfileConflict) ([]awsProfileWire, []awsProfileConflict) {
+// sessionCollisions finds the SSO profiles whose sso-session name another owner renders too
+// (ADR 0125 decision 2): a sign-in named like a profile with a sign-in of its own. The store
+// refuses that state, but rows an older binary wrote after a rollback can hold it. It is worked
+// out over every SSO row, before any other exclusion, so a collision is never hidden by a row
+// that is left out for another reason; and it holds whatever the portals, since two equal
+// portals under one name would share a login nobody asked to share. Members of one sign-in
+// render one name by design and are no collision. It returns, by profile id, the labels of
+// every profile on that sso-session.
+func sessionCollisions(rows []store.SSMProfile) map[string][]string {
 	type owners struct {
 		ids    map[string]bool
 		labels []string
+		rows   []string
 	}
 	bySession := map[string]*owners{}
-	for _, p := range ps {
-		if p.Kind == store.SSMKindAssumeRole {
+	for _, p := range rows {
+		if ssmKindOf(p) != store.SSMKindSSO {
 			continue
 		}
-		session, owner := p.Name, "profile:"+p.ID
-		if p.SignIn != "" {
-			session, owner = p.SignIn, "sign-in:"+p.SignInID
+		session, owner := ssmProfileName(p.Label), "profile:"+p.ID
+		if p.SignInID != "" {
+			session, owner = p.SignInName, "sign-in:"+p.SignInID
 		}
 		o := bySession[session]
 		if o == nil {
@@ -260,37 +280,18 @@ func withoutSessionCollisions(ps []awsProfileWire, conflicts []awsProfileConflic
 		}
 		o.ids[owner] = true
 		o.labels = append(o.labels, p.Label)
+		o.rows = append(o.rows, p.ID)
 	}
-	drop := map[string]bool{}
-	for session, o := range bySession {
-		if len(o.ids) > 1 {
-			drop[session] = true
-			conflicts = append(conflicts, awsProfileConflict{Name: session, Labels: o.labels})
-		}
-	}
-	if len(drop) == 0 {
-		return ps, conflicts
-	}
-	gone := map[string]bool{}
-	out := ps[:0:0]
-	for _, p := range ps {
-		session := p.Name
-		if p.SignIn != "" {
-			session = p.SignIn
-		}
-		if p.Kind != store.SSMKindAssumeRole && drop[session] {
-			gone[p.Name] = true
+	out := map[string][]string{}
+	for _, o := range bySession {
+		if len(o.ids) < 2 {
 			continue
 		}
-		out = append(out, p)
-	}
-	final := out[:0:0]
-	for _, p := range out {
-		if p.Kind == store.SSMKindAssumeRole && gone[p.SourceProfile] {
-			continue
+		ls := append([]string{}, o.labels...)
+		sort.Strings(ls)
+		for _, id := range o.rows {
+			out[id] = ls
 		}
-		final = append(final, p)
 	}
-	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].Name < conflicts[j].Name })
-	return final, conflicts
+	return out
 }

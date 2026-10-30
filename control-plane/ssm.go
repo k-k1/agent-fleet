@@ -226,18 +226,19 @@ func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfil
 		if in.SourceProfileID != "" || in.RoleARN != "" || in.ExternalID != "" || in.SessionName != "" || in.DurationSeconds != 0 {
 			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "sourceProfileId, roleArn, externalId, sessionName and durationSeconds belong to kind assume_role"}
 		}
-		// A profile that joins a sign-in may leave the portal to it; one it gives must be whole.
+		// Only the form of what is given is checked here. Whether the portal may be left out
+		// depends on where the profile ends up (a sign-in it joins or keeps supplies it, one of
+		// its own needs both), and that is decided by the store under the member's lock, from the
+		// row as it is then (ErrSSMPortalRequired).
 		joining := in.SignIn != nil && strings.TrimSpace(*in.SignIn) != ""
-		if (!joining || p.StartURL != "") && !httpsURLRe.MatchString(p.StartURL) {
+		if p.StartURL != "" && !httpsURLRe.MatchString(p.StartURL) {
 			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
-		}
-		if p.SSORegion == "" && (!joining || p.StartURL != "") {
-			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
 		}
 		if joining && !store.SignInNameRe.MatchString(strings.TrimSpace(*in.SignIn)) {
 			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_sign_in", "signIn must be 1-61 characters of letters, digits and ._@-"}
 		}
 		p.SignIn = signInWrite(in)
+		p.CheckPortal = true
 		return p, nil
 	case store.SSMKindAssumeRole:
 	default:
@@ -286,6 +287,10 @@ func profileWriteErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.As(err, new(*store.SignInNameTakenError)):
 		writeAPIErr(w, &apiError{http.StatusConflict, "sign_in_name_taken", err.Error() + "; rename the sign-in or that profile"})
+	case errors.Is(err, store.ErrSSMPortalRequired) && strings.Contains(err.Error(), "ssoRegion"):
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"})
+	case errors.Is(err, store.ErrSSMPortalRequired):
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"})
 	case errors.Is(err, store.ErrSignInMismatch):
 		writeAPIErr(w, &apiError{http.StatusConflict, "sign_in_mismatch", "the sign-in has another start URL or SSO region; change the sign-in's portal instead"})
 	case errors.Is(err, store.ErrSignInExists):
@@ -703,10 +708,23 @@ func (a ssmConfigAPI) listSignIns(w http.ResponseWriter, r *http.Request, _ stor
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	ps, err := a.store.ListSSMProfiles(r.Context(), mv.MembershipID)
+	members, err := a.signInMembers(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
+	}
+	out := make([]ssmSignInDTO, 0, len(sis))
+	for _, si := range sis {
+		out = append(out, signInToDTO(si, members))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// signInMembers maps each of the member's sign-ins to the ids of the profiles in it.
+func (a ssmConfigAPI) signInMembers(ctx context.Context, membershipID string) (map[string][]string, error) {
+	ps, err := a.store.ListSSMProfiles(ctx, membershipID)
+	if err != nil {
+		return nil, err
 	}
 	members := map[string][]string{}
 	for _, p := range ps {
@@ -714,16 +732,16 @@ func (a ssmConfigAPI) listSignIns(w http.ResponseWriter, r *http.Request, _ stor
 			members[p.SignInID] = append(members[p.SignInID], p.ID)
 		}
 	}
-	out := make([]ssmSignInDTO, 0, len(sis))
-	for _, si := range sis {
-		ids := members[si.ID]
-		if ids == nil {
-			ids = []string{}
-		}
-		out = append(out, ssmSignInDTO{ID: si.ID, Name: si.Name, StartURL: si.StartURL, SSORegion: si.SSORegion,
-			CreatedAt: si.CreatedAt, Profiles: ids})
+	return members, nil
+}
+
+// signInToDTO is one sign-in as both routes answer it, with the profiles in it.
+func signInToDTO(si store.SSMSignIn, members map[string][]string) ssmSignInDTO {
+	ids := members[si.ID]
+	if ids == nil {
+		ids = []string{}
 	}
-	writeJSON(w, http.StatusOK, out)
+	return ssmSignInDTO{ID: si.ID, Name: si.Name, StartURL: si.StartURL, SSORegion: si.SSORegion, CreatedAt: si.CreatedAt, Profiles: ids}
 }
 
 // updateSignIn (PUT /api/ssm/sign-ins/{id}) renames a sign-in or changes its portal; its
@@ -755,8 +773,12 @@ func (a ssmConfigAPI) updateSignIn(w http.ResponseWriter, r *http.Request, _ sto
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, ssmSignInDTO{ID: saved.ID, Name: saved.Name, StartURL: saved.StartURL, SSORegion: saved.SSORegion,
-		CreatedAt: saved.CreatedAt, Profiles: []string{}})
+	members, err := a.signInMembers(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, signInToDTO(saved, members))
 }
 
 // reconcileSSMSignIns repairs, once at start, what an older binary can leave after a rollback

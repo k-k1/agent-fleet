@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -319,8 +320,86 @@ func TestAWSProfilesWireSignIns(t *testing.T) {
 	if strings.Join(names, ",") != "a,b" {
 		t.Fatalf("exported %v, want a,b", names)
 	}
-	if len(conflicts) != 1 || conflicts[0].Name != "x" {
-		t.Fatalf("conflicts = %+v", conflicts)
+	// S1: every profile left out is in conflicts under its own name, so an Agent refuses a run
+	// of it (checkAmbiguous matches the profile name); the chain on a left-out source too.
+	var got []string
+	for _, c := range conflicts {
+		got = append(got, c.Name)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != "chain-on-d,d,x" {
+		t.Fatalf("conflict names = %v, want every left-out profile", got)
+	}
+}
+
+// S2: an sso-session collision is found over every SSO row, also when one side is left out
+// for another reason first. Here the sign-in "g" has one member labelled "dup", whose label
+// another profile shares (a label collision), and an older binary made an ungrouped "g": the
+// ungrouped "g" must not be exported.
+func TestAWSProfilesWireCollisionBehindALabelCollision(t *testing.T) {
+	rows := []store.SSMProfile{
+		{ID: "m", Label: "dup", StartURL: chainSSOStart, SSORegion: "us-east-1", AccountID: "1", RoleName: "R", Kind: "sso", SignInID: "g1", SignInName: "g"},
+		{ID: "o", Label: "dup", StartURL: chainSSOStart, SSORegion: "us-east-1", AccountID: "1", RoleName: "R", Kind: "sso"},
+		{ID: "u", Label: "g", StartURL: chainSSOStart, SSORegion: "us-east-1", AccountID: "1", RoleName: "R", Kind: "sso"},
+	}
+	ps, conflicts := awsProfilesWire(rows)
+	if len(ps) != 0 {
+		t.Fatalf("exported %+v, want nothing", ps)
+	}
+	var got []string
+	for _, c := range conflicts {
+		got = append(got, c.Name)
+	}
+	sort.Strings(got)
+	if strings.Join(got, ",") != "dup,g" {
+		t.Fatalf("conflict names = %v", got)
+	}
+}
+
+// S3: a profile that joins or keeps a sign-in may leave out either part of the portal (the
+// sign-in supplies it); one that ends up with a sign-in of its own needs both. S4: the sign-in
+// update answers with its members, as the list does.
+func TestSSMSignInPartialPortalAndUpdateAnswer(t *testing.T) {
+	for name, st := range ssmAPIStores(t) {
+		t.Run(name, func(t *testing.T) {
+			e := newSignInEnv(t, st)
+			a, c := e.create(t, "a", strp("grp"), chainSSOStart, "us-east-1")
+			if c != http.StatusCreated {
+				t.Fatal(c)
+			}
+			if _, c := e.create(t, "b", strp("grp"), chainSSOStart, ""); c != http.StatusCreated {
+				t.Fatalf("join with the start URL and no region = %d", c)
+			}
+			if _, c := e.create(t, "c", strp("grp"), "", "us-east-1"); c != http.StatusCreated {
+				t.Fatalf("join with the region and no start URL = %d", c)
+			}
+			var got ssmProfileDTO
+			if c := e.do(t, "PUT", "/api/ssm/profiles/"+a.ID, map[string]any{"label": "a", "accountId": "1", "roleName": "R", "region": "eu-west-1"}, &got); c != http.StatusOK || got.SignIn == nil || got.StartURL != chainSSOStart {
+				t.Fatalf("absent signIn and no portal on a member = %d %+v", c, got)
+			}
+			if c, code := signInErr(t, e, "POST", "/api/ssm/profiles", ssmProfileDTO{Label: "own", SSORegion: "us-east-1", AccountID: "1", RoleName: "R"}); c != http.StatusBadRequest || code != "bad_start_url" {
+				t.Fatalf("own sign-in without a start URL = %d %s", c, code)
+			}
+			if c, code := signInErr(t, e, "POST", "/api/ssm/profiles", ssmProfileDTO{Label: "own", StartURL: chainSSOStart, AccountID: "1", RoleName: "R"}); c != http.StatusBadRequest || code != "bad_region" {
+				t.Fatalf("own sign-in without a region = %d %s", c, code)
+			}
+			if c, code := signInErr(t, e, "PUT", "/api/ssm/profiles/"+a.ID, map[string]any{"label": "a", "accountId": "1", "roleName": "R", "signIn": ""}); c != http.StatusBadRequest || code != "bad_start_url" {
+				t.Fatalf("leaving without a portal = %d %s", c, code)
+			}
+			var grp ssmSignInDTO
+			for _, si := range e.signIns(t) {
+				if si.Name == "grp" {
+					grp = si
+				}
+			}
+			var answer ssmSignInDTO
+			if c := e.do(t, "PUT", "/api/ssm/sign-ins/"+grp.ID, ssmSignInDTO{Name: "grp2", StartURL: chainSSOStart, SSORegion: "us-east-1"}, &answer); c != http.StatusOK {
+				t.Fatalf("rename = %d", c)
+			}
+			if len(answer.Profiles) != 3 || answer.Name != "grp2" {
+				t.Fatalf("update answer = %+v, want its 3 members", answer)
+			}
+		})
 	}
 }
 

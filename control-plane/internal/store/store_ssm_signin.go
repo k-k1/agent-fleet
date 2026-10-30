@@ -62,7 +62,25 @@ var (
 	ErrSignInKind = errors.New("only an sso profile joins a sign-in")
 	// ErrSignInExists: a rename to a name another of the member's sign-ins has.
 	ErrSignInExists = errors.New("the member has a sign-in of that name")
+	// ErrSSMPortalRequired: an SSO profile with a sign-in of its own needs both its start URL
+	// and its SSO region; the error names the missing one (startUrl or ssoRegion).
+	ErrSSMPortalRequired = errors.New("an sso profile with a sign-in of its own needs its portal")
 )
+
+// requirePortal refuses an SSO profile that ends up with a sign-in of its own and lacks part
+// of its portal. A profile in a shared sign-in has the sign-in's.
+func requirePortal(p SSMProfile) error {
+	if !p.CheckPortal || ssmKindOrDefault(p.Kind) != SSMKindSSO || p.SignInID != "" {
+		return nil
+	}
+	switch {
+	case p.StartURL == "":
+		return fmt.Errorf("%w: startUrl", ErrSSMPortalRequired)
+	case p.SSORegion == "":
+		return fmt.Errorf("%w: ssoRegion", ErrSSMPortalRequired)
+	}
+	return nil
+}
 
 // lockSSMMember takes the member's row lock for the rest of tx: an UPDATE that changes nothing,
 // which every profile and sign-in write of the member takes first, so their checks run one

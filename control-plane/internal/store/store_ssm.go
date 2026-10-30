@@ -37,6 +37,11 @@ type SSMProfile struct {
 	SignInID, SignInName string
 	// SignIn is what a create or an update does with the profile's sign-in. Never stored.
 	SignIn SignInWrite
+	// CheckPortal makes the write refuse an SSO profile that ends up with a sign-in of its own
+	// and lacks part of its portal (ErrSSMPortalRequired). The API's writes set it: they may
+	// leave the portal to a sign-in, and only the store, under the member's lock, knows whether
+	// the profile ends up in one. Never stored.
+	CheckPortal bool
 }
 
 // SignInWrite is a write's instruction for the profile's sign-in. The zero value keeps the
@@ -195,6 +200,9 @@ func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 			return err
 		}
 	}
+	if err := requirePortal(p); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
 			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, sign_in_id)
@@ -253,6 +261,9 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 		}
 	} else {
 		p.SignInID = ""
+	}
+	if err := requirePortal(p); err != nil {
+		return err
 	}
 	if p.Kind == SSMKindAssumeRole {
 		found, err := lockSSMProfile(ctx, tx, p.ID, p.MembershipID)
