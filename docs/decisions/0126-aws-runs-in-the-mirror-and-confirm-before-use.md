@@ -221,9 +221,12 @@ Migrations: the gate's column takes the next numbers (SQLite `0116`, Postgres `0
 **Contracts, per PR.**
 - PR 1: `cloudRuns` in the `/messages` wire and the `/aws-runs` row, in the Agent's `contract_wire_test.go`
   families, with the Console types bound in the same PR.
-- PR 2: `confirmBeforeUse` on `ssmProfileDTO` (the CP's `TestContractFamilies`), the bridge field, and the
-  `/aws-confirm` request and answer in the Agent's families, with their Console types.
-- PRs 3 to 5: as ADR 0125 decision 3 lists.
+- PR 2: `confirmBeforeUse` on `ssmProfileDTO` (the CP's `TestContractFamilies`). On the bridge, `confirmBeforeUse`
+  and the profile's stable `id`, which the grants of decision 5 are keyed by, with the CP and Agent sides of
+  that wire. The `/aws-confirm` request and answer go in the Agent's families. Their Console types are bound in
+  the same PR.
+- PRs 3 to 5: as ADR 0125 decision 3 lists. Each PR binds its Console types in the same PR, so no contract
+  test waits on a later one.
 
 ### 8. Older writers and older readers
 
@@ -234,11 +237,16 @@ Migrations: the gate's column takes the next numbers (SQLite `0116`, Postgres `0
   CP answering a pull without it leaves every gated profile, and every chain whose source is gated, out of
   the list. They are then unusable on that Agent, not ungated.
 - **Rollback of the CP across PR 2.** An older CP does not know the column. It leaves the stored value alone,
-  but the bridge it serves has no `confirmBeforeUse`. The newer CP answers with `X-AF-AWS-Profiles: 2`, and
-  the Agent remembers, with the Settings cache, the profile ids the last such answer marked gated. A pull
-  answered without the header is from an older CP. The Agent keeps those ids gated and logs that the gate's
-  source is stale. The gate fails closed, not open. A profile gated for the first time during the rollback
-  cannot be gated until the upgrade, and the release notes say so.
+  but the bridge it serves has neither `confirmBeforeUse` nor `id`. Gated ids therefore cannot be mapped onto
+  its rows: a profile renamed, deleted or recreated through the older Console would lose the gate. The rule is
+  instead about whole answers. The newer CP answers with `X-AF-AWS-Profiles: 2`. **An Agent that has once
+  received such an answer never applies an unversioned one.** It keeps the last versioned list, which is the
+  block, the usable set and the gates, exactly as it does today when the CP cannot be reached. It logs that
+  Settings from an older Control Plane are not applied, and `af-aws-exec --list` says so. Edits made during a
+  rollback reach the workspace only after the upgrade. Every gate stays as it was, and nothing ungated
+  appears. An Agent that has never seen a versioned answer has no gate to keep and applies answers as
+  today. Tests: after a versioned answer, an unversioned one that renames, deletes and recreates a gated
+  profile changes nothing on disk, and a gated run still asks.
 - **Older Console.** It shows no card. A gated run then waits its time and exits 4. That is safe, and the
   pending request is visible to the newer Console once it loads.
 

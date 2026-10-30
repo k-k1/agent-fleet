@@ -92,8 +92,10 @@ after it joins. That is how an existing login survives grouping (decision 7).
 Neither the bridge nor the Agent trusts the invariant. Rows written by an older CP after a rollback can break
 it (decision 11). `awsProfilesWire` exports none of the profiles whose sso-session names collide and reports
 them as conflicts, the way it already treats two labels with one name. This holds **whatever their
-coordinates**: two equal portals under one name would share a login nobody asked to share. The Agent applies
-the same rule to what it receives (`SyncResult.SessionConflict`).
+coordinates**: two equal portals under one name would share a login nobody asked to share. Members of one
+sign-in (the same `signInId`) render the same name by design and are not a collision; a collision is the same
+name under two different owners. The Agent applies the same rule to what it receives
+(`SyncResult.SessionConflict`).
 
 ### 3. API: the profile names its sign-in; the sign-in's own edits have their own route
 
@@ -111,16 +113,17 @@ the same rule to what it receives (`SyncResult.SessionConflict`).
   `PUT /api/ssm/sign-ins/{id}` renames the sign-in or changes its portal, and rewrites the members' copies in
   the same transaction. A rename moves the login to a new cache key, so the member signs in again. A portal
   change makes the old token unusable (decision 10). The Console says both before saving.
-- The bridge's `awsProfileWire` (`GET /internal/aws-profiles`) gains `id` (the profile's stable id),
-  `signIn` and `signInId` (omitted when empty). The SSM session rewrite (`rewriteSSMCreate`) and the SSM
+- The bridge's `awsProfileWire` (`GET /internal/aws-profiles`) gains `signIn` and `signInId` (omitted when
+  empty). The profile's stable `id` arrives earlier, with ADR 0126's PR 2, whose grants need it. The SSM session rewrite (`rewriteSSMCreate`) and the SSM
   discovery request (`ssmInstancesReq`, the instance list of the start modal, which writes its own
   `WriteSSMConfig`) both gain `sso_session` and the owner id. The Agent's `SSMMeta` gains `SSOSession`, checked
   against the same allowlist. When it is absent the Agent renders `af-<profile>`, so an older CP keeps
   working.
-- **Contracts, per PR.** PR 3 (CP) adds `signIn` to `ssmProfileDTO`, the `ssmSignInDTO` family and the bridge
-  fields to the CP's `TestContractFamilies`. PR 4 (Agent) adds `signIn`, `signIns`, the waiters' profiles and
-  the logout's `profiles` to the Agent's `contract_wire_test.go` families for `/aws-login*`. PR 5 binds the
-  Console's types to all of them.
+- **Contracts, per PR.** PR 3 (CP) adds `signIn` to `ssmProfileDTO`, the `ssmSignInDTO` family and the bridge's
+  `signIn` and `signInId` to the CP's `TestContractFamilies`. PR 4 (Agent) adds `signIn`, `signIns`, the
+  waiters' profiles and the logout's `profiles` to the Agent's `contract_wire_test.go` families for
+  `/aws-login*`. **Each PR declares its Console types and bindings in the same PR**, so a contract test never
+  goes red waiting for a later PR. PR 5 adds the UI that uses them.
 
 ### 4. Rendering
 
@@ -178,8 +181,11 @@ profiles stand behind it.
 - **SSM forced re-login** (`ssmForgetLogin`) drops the shared token, which signs every member out. The
   Console's "log in again" on an SSM host of a grouped profile says so. The shell snippet removes only the
   pane profile's role credentials. With a shared token the other members' role credentials would keep
-  working, so the Agent deletes every member's role credentials (the logout's list) in Go, under the
-  exclusive lock, before it starts the pane.
+  working. The forced re-login therefore moves out of the shell: before it starts the pane, the Agent deletes
+  the token **and** every member's role credentials (the logout's list) in Go, within one exclusive section
+  of the key's lock, and the pane then only runs `aws sso login`. An export cannot slip in between the two
+  deletes and recreate a member's cache. A test races a forced re-login against concurrent exports of other
+  members, and asserts that no role cache of the sign-in survives it.
 
 No CP route changes for the login: the Agent routes stay keyed by profile name, and the CP relays them as
 before.
@@ -252,13 +258,29 @@ sit on the paths that use the cache.
   the start URL and the SSO region. A Fleet login that lands writes it. So does the first sight of a token
   that has no record yet, when the token's `startUrl` and `region` equal the current owner's: that adopts
   every login that exists before this change.
-- **Use.** `PlanExec` (before `exportSSOCreds`), the resolution of a login request and of an attempt, the
-  status and the expiry warning all accept a key only when three things hold: the binding's owner id equals
-  the current owner's, its coordinates equal Settings', and the token file's `startUrl` and `region` do too.
-  Otherwise the key is **unusable**, and the run deletes the role credentials of every current member for
-  that key under the exclusive lock. The CLI would otherwise serve them without looking at the token. The run
-  then proceeds as "login required" (a request, ADR 0102). A new Fleet login rebinds the key to the current
-  owner.
+- **One legitimate hand-over: a member that becomes its own sign-in** (decision D). When the binding names
+  profile `P` and Settings now shows `P` as a member of sign-in `S`, the binding moves to `S` under the key's
+  exclusive lock. `S` renders the same key (`S` took `P`'s name), and the binding's coordinates and the
+  token's equal `S`'s. This is a transfer that Settings itself states. It is not "another owner with the same
+  portal and name", which stays unusable: a profile that was deleted, renamed away or never in `S` does not
+  hand anything over. A test groups an already-bound, signed-in profile under its own name and asserts that
+  no login is asked for.
+- **Vetting.** One function, `vetKey`, decides under the key's exclusive lock whether a key is usable: the
+  binding's owner id equals the current owner's (after the hand-over above), its coordinates equal
+  Settings', and the token file's `startUrl` and `region` do too. When a key fails, the Agent **retires the
+  token**: it renames the cache file to `<sha1>.json.af-retired`, keeping it for decision C's revoke, and
+  deletes the role credentials of every current member for that key, all in the same section. A retired token
+  is not where any reader looks, so this protects every path, not only the ones that call `vetKey`. That
+  includes the SSM pane's `aws sts get-caller-identity`, the instance discovery's direct CLI calls and a
+  plain `aws`. A new Fleet login writes a fresh token and binds it to the current owner.
+- **Where it runs.** After every Settings sync, for each rendered key, so a portal change or a rename is acted on
+  within one poll even when nothing runs. Before every use that Agent Fleet starts: `PlanExec` (before
+  `exportSSOCreds`), the resolution of a login request and of an attempt, the SSM pane's launch
+  (`buildSSMProgram`, before the pane starts) and `POST /ssm/instances` (before the CLI runs). The status
+  and the expiry warning read the same verdict without retiring (a read must not move files) and show
+  `none`. An SSM pane that is already running keeps the credentials its process holds. Its later calls are
+  outside this guarantee. Tests change a portal and assert on the normal paths (`af-aws-exec`, SSM launch,
+  discovery) that the old token and role credentials are not used.
 - **Attempts carry their target.** A login attempt records the owner id and the coordinates it started for.
   When the Agent's Settings sync sees those change for a running attempt, it ends the attempt. When an attempt
   ends successfully, it binds only if Settings still names the same owner and coordinates. Otherwise it
@@ -266,7 +288,8 @@ sit on the paths that use the cache.
   waiters record the same pair, and a request whose pair no longer matches Settings is dropped and refiled.
 - **Lock order.** The Agent's `Gate` comes first, then the key's file lock, then the binding write. That is
   the order a logout already uses.
-- **What it does not cover.** A token for the same owner and the same portal is accepted, whoever approved it:
+- **What it does not cover.** A long-running SSM pane, as above. A token for the same owner and the same
+  portal is accepted, whoever approved it:
   the member's own `aws sso login` in a terminal is a valid login. A key reused within one Settings sync by an
   owner whose binding was never written (a token written outside Agent Fleet and never seen) can be adopted
   by the new owner when the portal matches. The window is a few minutes, and only the member's own token is
