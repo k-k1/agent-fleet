@@ -58,6 +58,10 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [existing, setExisting] = useState<any[]>([]);
   const [edits, setEdits] = useState<Record<string, RowEdit>>({});
   const [busy, setBusy] = useState(false);
+  // True while read() waits for the current profile lists. The raw text is already dropped by
+  // then, so the input form must not show (it would look as if the paste was thrown away).
+  const [reading, setReading] = useState(false);
+  const readingRef = useRef(false);
   const [progress, setProgress] = useState<[number, number] | null>(null);
   const [results, setResults] = useState<ExecRow[] | null>(null);
   // Logins the last run implied, kept with its results: once the rows exist the preview counts
@@ -72,6 +76,8 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const edit = (name: string, e: RowEdit) => setEdits((all) => ({ ...all, [name]: { ...all[name], ...e } }));
 
   const read = async (source: string) => {
+    // A second Read (or a file pick) while the lists load must not start another load.
+    if (readingRef.current) return;
     setErr("");
     setResults(null);
     setRanLogins(null);
@@ -94,14 +100,21 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
       setErr(tr("ssm.imp_too_many", { max: MAX_PROFILES }));
       return;
     }
-    const lists = await loadSsmLists();
-    if (!lists) {
-      setErr(tr("ssm.imp_unread"));
-      return;
+    readingRef.current = true;
+    setReading(true);
+    try {
+      const lists = await loadSsmLists();
+      if (!lists) {
+        setErr(tr("ssm.imp_unread"));
+        return;
+      }
+      setExisting(lists.profiles);
+      setEdits({});
+      setCfg(native);
+    } finally {
+      readingRef.current = false;
+      setReading(false);
     }
-    setExisting(lists.profiles);
-    setEdits({});
-    setCfg(native);
   };
 
   const apply = async () => {
@@ -154,7 +167,17 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
     <Modal title={tr("ssm.imp_title")} onClose={close} className="aws-import">
       <div className="ui-modal-body">
         <p className="field-help">{tr("ssm.imp_intro")}</p>
-        {!cfg && (
+        {!cfg && reading && (
+          <div className="flow">
+            <p className="field-help" role="status">
+              {tr("ssm.imp_reading")}
+            </p>
+            <button type="button" className="primary" disabled>
+              {tr("ssm.imp_read")}
+            </button>
+          </div>
+        )}
+        {!cfg && !reading && (
           <div className="aws-import-input">
             <input
               ref={fileRef}
