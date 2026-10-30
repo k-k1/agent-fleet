@@ -124,3 +124,50 @@ func TestRolloutShowsError(t *testing.T) {
 		t.Fatal("a turn/start rejection (no turn id) must keep its synthetic turn")
 	}
 }
+
+// A Managed poll can run between turn/completed and the rollout write of task_complete: it
+// shows the synthetic copy, the next poll the rollout's record. The turn count is the same, so
+// the Console gets the record as a resent tail and replaces by Idx. A record hidden lines
+// further down than the copy must still land on the copy's Idx, or both stay on screen.
+func TestManagedErrorCopyIsReplacedByTheRolloutRecord(t *testing.T) {
+	p := newRolloutParser()
+	for _, ln := range [][]byte{
+		taskStarted("2026-10-30T02:01:00.000Z", "t2"),
+		userSays("2026-10-30T02:01:00.100Z", "again"),
+	} {
+		p.feed(ln)
+	}
+	ce := codexError{label: "unauthorized", message: revokedLoginMsg, turnID: "t2"}
+	snap := func() []transcript.Turn {
+		turns, _, _, _ := p.snapshot(time.Time{})
+		return withLastError(turns, &ce)
+	}
+	first := snap()
+	// Lines nothing renders, then the record itself.
+	p.feed([]byte(`{"timestamp":"2026-10-30T02:01:00.500Z","type":"event_msg","payload":{"type":"token_count","info":null}}`))
+	p.feed([]byte(`{"timestamp":"2026-10-30T02:01:00.600Z","type":"turn_context","payload":{"turn_id":"t2","model":"gpt-5.5"}}`))
+	p.feed(taskFailed("2026-10-30T02:01:00.900Z", "t2", `{"message":"`+revokedLoginMsg+`","codex_error_info":"unauthorized"}`))
+	second := snap()
+	if len(second) != len(first) {
+		t.Fatalf("turn count %d -> %d; the record must take the copy's place", len(first), len(second))
+	}
+	// The Console's merge: a resent turn replaces the one with its Idx, any other is added.
+	shown := map[int]transcript.Turn{}
+	for _, tn := range first {
+		shown[tn.Idx] = tn
+	}
+	last := second[len(second)-1]
+	shown[last.Idx] = last
+	errs := 0
+	for _, tn := range shown {
+		if len(tn.Parts) == 1 && tn.Parts[0].Kind == "error" {
+			errs++
+		}
+	}
+	if errs != 1 {
+		t.Fatalf("error blocks on screen = %d, want 1 (copy Idx %d, record Idx %d)", errs, first[len(first)-1].Idx, last.Idx)
+	}
+	if last.AnchorID != "t2" || last.Parts[0].Cause != transcript.CauseAuth {
+		t.Fatalf("record = %+v, want the rollout's auth error turn", last)
+	}
+}

@@ -96,6 +96,54 @@ describe("CodexCard re-authenticate", () => {
     });
     expect(calls).toEqual(["DELETE api/connections/codex", "POST api/connections/codex/device/start"]);
     expect(reload).toHaveBeenCalled();
+    // st is still connected here (the refetch has not landed, or failed): the code must show anyway.
+    expect(host?.textContent).toContain("ABCD-EFGHI");
+  });
+
+  // The device poll answers from the global login state, so a revoked login left behind by a
+  // failed sign-out would close the new flow at once and read as success.
+  it("stops with a message when the sign-out fails or errors", async () => {
+    for (const fail of [
+      () => Promise.resolve(new Response("{}", { status: 502 })),
+      () => Promise.reject(new Error("network down")),
+    ]) {
+      calls.length = 0;
+      raw.mockImplementationOnce((path: string, init?: { method?: string }) => {
+        calls.push(`${init?.method || "GET"} ${path}`);
+        return fail();
+      });
+      const reload = vi.fn();
+      await mount({ connected: true, method: "chatgpt", email: "c@example.com" }, reload);
+      await act(async () => {
+        reauthButton()!.click();
+      });
+      expect(calls).toEqual(["DELETE api/connections/codex"]);
+      expect(reload).not.toHaveBeenCalled();
+      expect(toast).toHaveBeenCalledTimes(1);
+      toast.mockClear();
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
+  it("runs one re-authentication at a time", async () => {
+    let release: (r: Response) => void = () => {};
+    raw.mockImplementationOnce((path: string, init?: { method?: string }) => {
+      calls.push(`${init?.method || "GET"} ${path}`);
+      return new Promise<Response>((res) => (release = res));
+    });
+    await mount({ connected: true, method: "chatgpt", email: "c@example.com" });
+    await act(async () => {
+      reauthButton()!.click();
+    });
+    expect(reauthButton()!.disabled).toBe(true);
+    await act(async () => {
+      reauthButton()!.click(); // a disabled button ignores this; the in-flight guard is the backstop
+    });
+    await act(async () => {
+      release(new Response("{}"));
+    });
+    expect(calls).toEqual(["DELETE api/connections/codex", "POST api/connections/codex/device/start"]);
   });
 
   // The device flow would switch an API-key workspace to a ChatGPT subscription.
@@ -107,20 +155,7 @@ describe("CodexCard re-authenticate", () => {
     });
     expect(calls).toEqual(["DELETE api/connections/codex"]);
     expect(reload).toHaveBeenCalled();
-    // reload has flipped the status to signed out by the time the card renders again.
-    await act(async () => {
-      root!.render(
-        <CodexCard
-          running
-          st={{ connected: false }}
-          reload={reload}
-          codex={null}
-          updateCodex={() => {}}
-          agents={false}
-          updateAgents={() => {}}
-        />,
-      );
-    });
+    // The key form shows without waiting for the refetch that clears "connected".
     expect(host?.querySelector('input[type="password"]')).toBeTruthy();
   });
 });

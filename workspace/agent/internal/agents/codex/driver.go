@@ -1294,19 +1294,23 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	// opencode's errors.go targets) something to show. Cleared by clearLastError the moment
 	// the next turn starts (runTurn), so it never lingers past a successful retry.
 	//
-	// A turn that did start and then failed also has the failure on its task_complete record,
-	// which the rollout parser renders on its own; once that has landed the synthetic copy
-	// would draw the same error twice.
-	if ce := h.turnError(); ce != nil && !rolloutShowsError(td.Turns, ce.turnID) {
-		idx := 0
-		if n := len(td.Turns); n > 0 {
-			idx = td.Turns[n-1].Idx + 1
-		}
-		td.Turns = append(td.Turns, transcript.Turn{
-			Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
-			Idx: idx, TS: time.Now().Format(time.RFC3339),
-		})
+	td.Turns = withLastError(td.Turns, h.turnError())
+}
+
+// withLastError appends ce as the synthetic trailing error turn (see managedEnrich).
+//
+// A turn that did start and then failed also has the failure on its task_complete record,
+// which the rollout parser renders on its own; once that has landed the copy is left out, or
+// the same error would be drawn twice. Both take errorTurnIdx, so in a Console that already
+// showed the copy the record arrives as its replacement rather than beside it.
+func withLastError(turns []transcript.Turn, ce *codexError) []transcript.Turn {
+	if ce == nil || rolloutShowsError(turns, ce.turnID) {
+		return turns
 	}
+	return append(turns, transcript.Turn{
+		Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
+		Idx: errorTurnIdx(turns), TS: time.Now().Format(time.RFC3339),
+	})
 }
 
 // rolloutShowsError reports whether turns already hold the error record of turn turnID.
