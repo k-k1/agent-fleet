@@ -14,6 +14,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { GCP_REGION_CODES, gcpZonesOf } from "../../../lib/gcpRegions.ts";
+import { GcpConfigImport } from "./GcpConfigImport.tsx";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
@@ -58,6 +59,7 @@ export function GcpTab() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<GcpProfile | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   // "Log in" / "Log in again" (ADR 0107 decision 3): the row's modal, and each row's login
   // state from the Agent (absent while the workspace is stopped), asked on open and after the
   // modal closes; nothing polls.
@@ -324,10 +326,16 @@ export function GcpTab() {
         {open
           ? form
           : !editing && (
-              <button className="ghost ssm-add-toggle" onClick={startAdd}>
-                <Icon name="add" /> {tr("gcp.add_profile")}
-              </button>
+              <div className="flow">
+                <button className="ghost ssm-add-toggle" onClick={startAdd}>
+                  <Icon name="add" /> {tr("gcp.add_profile")}
+                </button>
+                <button className="ghost ssm-import-toggle" onClick={() => setImportOpen(true)}>
+                  <Icon name="cloud-upload" /> {tr("gcp.imp_open")}
+                </button>
+              </div>
             )}
+        {importOpen && <GcpConfigImport onClose={() => setImportOpen(false)} onImported={reload} />}
       </section>
       {loginFor && (
         <GcpProfileLoginModal
