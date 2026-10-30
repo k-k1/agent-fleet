@@ -80,28 +80,34 @@ type usageFoldState struct {
 
 // usageAgentMark is the watermark of one subagent transcript. It is identity-based, not a
 // count: the copies of an agent are merged by timestamp, so a later copy can put an older turn
-// in front and shift every ordinal, and a turn that is still being written grows after it was
-// recorded. A turn is told apart by its first event's uuid (usageTurnRow.ID).
+// in front, or fill in events of a turn already recorded, and the newest turn grows after it
+// was recorded. A turn is told apart by the uuid of its first or last event, and what was
+// written for it is kept, so every fold writes exactly the difference.
 type usageAgentMark struct {
 	// Seq numbers the rows written for this agent: the Idx of the next row is Seq+1. It is the
 	// ledger's own replay guard (usage_dedup.go), unrelated to the transcript's order.
 	Seq int `json:"seq"`
-	// Closed holds usageAgentID-short hashes of the turns recorded in full.
-	Closed []string `json:"closed,omitempty"`
-	// Open is the newest turn as last recorded. It may still be growing, so each fold writes
-	// only the difference from these totals, and it joins Closed once a later turn exists.
-	Open *usageAgentOpen `json:"open,omitempty"`
+	// Turns is every turn recorded so far, with the totals written for it.
+	Turns []usageAgentTurn `json:"turns,omitempty"`
+	// Pending is the batch being written: it is saved before the append, so a crash or a failed
+	// save in between replays the identical rows (same Idx, same time), which the ledger's
+	// dedup drops when they had already landed. Recomputing the difference instead would pick
+	// up growth in between and write a different row under the same Idx.
+	Pending []usagex.Record `json:"pending,omitempty"`
 	// Stamp is the transcript's size and mtime at the last fold: while it is unchanged the file
 	// is not read again.
 	Stamp string `json:"stamp,omitempty"`
 }
 
-type usageAgentOpen struct {
-	ID          string  `json:"id"`
-	In          int     `json:"in"`
-	Out         int     `json:"out"`
-	CacheRead   int     `json:"cread"`
-	CacheCreate int     `json:"ccreate"`
+// usageAgentTurn is one recorded turn: the hashes of its first and last event ids and the
+// totals written for it so far.
+type usageAgentTurn struct {
+	First       string  `json:"f"`
+	Last        string  `json:"l,omitempty"`
+	In          int     `json:"in,omitempty"`
+	Out         int     `json:"out,omitempty"`
+	CacheRead   int     `json:"cr,omitempty"`
+	CacheCreate int     `json:"cc,omitempty"`
 	CostUSD     float64 `json:"cost,omitempty"`
 }
 
@@ -176,6 +182,9 @@ type usageTurnRow struct {
 	// ID is the uuid of the turn's first event: what tells one turn from another when the
 	// transcript is read again with a different set of lines (subagent copies merged).
 	ID string
+	// LastID is the uuid of its last event. A copy found later can add events at either end, so
+	// a turn is recognised by either id.
+	LastID string
 	// Orphan marks a cost-only row: the reported cost of CostOnly turns that no logical turn on
 	// their side took in before the next boundary. It is outside the logical turn sequence (Idx
 	// stays 0, so the watermark's Groups never moves) and is identified by OrphanKey, the
@@ -287,6 +296,12 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			cur.Model = t.Model
 		}
 		cur.LastIdx = t.Idx
+		if cur.ID == "" {
+			cur.ID = t.AnchorID
+		}
+		if t.AnchorID != "" {
+			cur.LastID = t.AnchorID
+		}
 	}
 	if includeTrailing {
 		fold()
@@ -374,18 +389,29 @@ func subagentMarkKey(m session.Meta, id string) string { return m.Name + "\x00" 
 // Rows stay Ref = session name and Sidechain, so the per-session figure is the one the budget
 // prices (spendOfRows).
 //
-// A turn is recorded by identity, not by position, for two reasons. The newest turn is folded
-// while it may still be written (nothing in the file says an agent is done), so it is written
-// as it stands and later growth adds only the difference. And the copies of an agent are merged
-// by timestamp, so a copy found later can put an older turn first: positions shift, identities
-// do not. An agent with no mark folds from its first turn, which is exact for a session that
-// predates this change; an orphan (cost-only) row never occurs in a claude subagent file and is
-// not folded here. dirty reports a change to st even when no row was written.
+// A turn is recorded by identity, not by position, and with the totals written for it, so each
+// fold writes exactly the difference. Nothing in an agent's file says it is finished, so the
+// newest turn is folded as it stands and its growth is added later; the copies of an agent are
+// merged by timestamp, so a copy found later can put an older turn first, or fill events into a
+// turn already recorded; positions shift, event uuids do not. A turn is matched by its first or
+// its last event id, so events added at one end do not make it a new turn. The batch is saved
+// as Pending before it is appended (see usageAgentMark). An agent with no mark folds from its
+// first turn, which is exact for a session that predates this change; an orphan (cost-only) row
+// never occurs in a claude subagent file and is not folded here. dirty reports a change to st
+// even when no row was written.
 func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.SubagentSource) (total int, dirty bool, err error) {
 	for _, src := range srcs {
 		key := subagentMarkKey(m, src.ID)
 		mark, seen := st.Subagents[key]
-		if seen && mark.Stamp == src.Stamp {
+		if len(mark.Pending) > 0 {
+			// An earlier pass saved this batch and did not finish it.
+			if err := usagex.AppendRows(mark.Pending); err != nil {
+				return total, dirty, err
+			}
+			mark.Pending = nil
+			st.Subagents[key] = mark
+			dirty = true
+		} else if seen && mark.Stamp == src.Stamp {
 			continue // untouched since the last fold
 		}
 		turns, rerr := src.Turns()
@@ -395,53 +421,74 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 			log.Printf("usage: fold %s subagent: %v", m.Name, rerr)
 			continue
 		}
-		var rows []usageTurnRow
-		for _, r := range foldTurnRows(turns, true) {
-			if !r.Orphan {
-				rows = append(rows, r)
+		next := usageAgentMark{Seq: mark.Seq, Turns: slices.Clone(mark.Turns), Stamp: src.Stamp}
+		at := map[string]int{} // event id hash -> index in next.Turns
+		for i, t := range next.Turns {
+			at[t.First] = i
+			if t.Last != "" {
+				at[t.Last] = i
 			}
 		}
-		closed := make(map[string]bool, len(mark.Closed))
-		for _, c := range mark.Closed {
-			closed[c] = true
-		}
-		next := usageAgentMark{Seq: mark.Seq, Closed: slices.Clone(mark.Closed), Open: mark.Open, Stamp: src.Stamp}
+		agent := usageAgentID(src.ID)
 		var out []usagex.Record
-		for i, r := range rows {
-			id := rowIdentity(r)
-			h := usageAgentID(id)[:12]
-			if closed[h] {
+		for _, r := range foldTurnRows(turns, true) {
+			if r.Orphan {
 				continue
 			}
-			full := r
-			if mark.Open != nil && mark.Open.ID == id {
-				full.Tokens.In -= mark.Open.In
-				full.Tokens.Out -= mark.Open.Out
-				full.Tokens.CacheRead -= mark.Open.CacheRead
-				full.Tokens.CacheCreate -= mark.Open.CacheCreate
-				full.CostUSD -= mark.Open.CostUSD
+			first, last := usageAgentID(rowIdentity(r))[:12], ""
+			if r.LastID != "" {
+				last = usageAgentID(r.LastID)[:12]
 			}
-			if full.Tokens != (usagex.Tokens{}) || full.CostUSD != 0 {
+			i, known := at[first]
+			if !known && last != "" {
+				i, known = at[last]
+			}
+			var was usageAgentTurn
+			if known {
+				was = next.Turns[i]
+			}
+			delta := r
+			delta.Tokens.In -= was.In
+			delta.Tokens.Out -= was.Out
+			delta.Tokens.CacheRead -= was.CacheRead
+			delta.Tokens.CacheCreate -= was.CacheCreate
+			delta.CostUSD -= was.CostUSD
+			if delta.Tokens != (usagex.Tokens{}) || delta.CostUSD != 0 {
 				next.Seq++
-				full.Idx = next.Seq
-				out = append(out, usageRecordOf(m, full, usageAgentID(src.ID)))
+				delta.Idx = next.Seq
+				out = append(out, usageRecordOf(m, delta, agent))
 			}
-			if i == len(rows)-1 {
-				next.Open = &usageAgentOpen{ID: id, In: r.Tokens.In, Out: r.Tokens.Out,
-					CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD}
+			now := usageAgentTurn{First: first, Last: last, In: r.Tokens.In, Out: r.Tokens.Out,
+				CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD}
+			if !known {
+				i = len(next.Turns)
+				next.Turns = append(next.Turns, now)
 			} else {
-				next.Closed = append(next.Closed, h)
+				next.Turns[i] = now
+			}
+			at[first] = i
+			if last != "" {
+				at[last] = i
 			}
 		}
-		if len(out) > 0 {
-			// Written before the mark moves: a failed write leaves the delta to the next pass,
-			// and a crash in between is dropped by the dedup (same Idx, same time).
-			if err := usagex.AppendRows(out); err != nil {
-				return total, dirty, err
-			}
-			total += len(out)
+		if len(out) == 0 {
+			st.Subagents[key] = next
+			dirty = true
+			continue
+		}
+		// Save the batch before it is appended, then append, then drop it from the mark.
+		saved := next
+		saved.Pending = out
+		st.Subagents[key] = saved
+		if err := writeUsageFoldState(*st); err != nil {
+			st.Subagents[key] = mark
+			return total, dirty, err
+		}
+		if err := usagex.AppendRows(out); err != nil {
+			return total, true, err // Pending stays: the next pass replays it
 		}
 		st.Subagents[key] = next
+		total += len(out)
 		dirty = true
 	}
 	return total, dirty, nil

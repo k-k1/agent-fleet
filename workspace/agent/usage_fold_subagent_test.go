@@ -237,3 +237,107 @@ func TestFoldSubagentOlderTurnFromALaterCopy(t *testing.T) {
 		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 3000 / 30", rows, in, out)
 	}
 }
+
+// A batch whose append landed but whose clearing did not (a crash, a failed save) is replayed
+// as it was: the turn grew in between, and a recomputed difference under the same Idx would
+// have been accepted next to the first one.
+func TestFoldSubagentReplaysAnInterruptedBatchAsItWas(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "crash3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
+	b := transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: 2600, OutTok: 30,
+		TS: "2026-10-30T09:06:00Z", Sidechain: true, AnchorID: "b"}
+	c := transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: 3000, OutTok: 5,
+		TS: "2026-10-30T09:12:00Z", Sidechain: true, AnchorID: "c"}
+	foldAgent(t, m, "s1", a)
+	grown := append(append([]transcript.Turn{}, a...), b)
+	if n := foldAgent(t, m, "s2", grown); n != 1 {
+		t.Fatalf("growth fold = %d rows", n)
+	}
+	// The append landed but the batch was never cleared from the saved mark.
+	rows := usagex.ReadRows()
+	last := rows[len(rows)-1]
+	usageFoldMu.Lock()
+	st := readUsageFoldState()
+	for k, mk := range st.Subagents {
+		mk.Pending = []usagex.Record{last}
+		st.Subagents[k] = mk
+	}
+	if err := writeUsageFoldState(st); err != nil {
+		t.Fatal(err)
+	}
+	usageFoldMu.Unlock()
+	// The turn grows again before the next pass.
+	if n := foldAgent(t, m, "s3", append(append([]transcript.Turn{}, grown...), c)); n != 1 {
+		t.Fatalf("fold after the interruption = %d rows, want the 1 new difference", n)
+	}
+	idx := usageDedupIndex{}
+	in, out := 0, 0
+	for _, r := range usagex.ReadRows() {
+		if r.Ref == m.Name && idx.accept(r, rowEnd(r.TS)) {
+			in += r.In
+			out += r.Out
+		}
+	}
+	if in != 3000 || out != 55 {
+		t.Fatalf("counted in=%d out=%d, want 3000 / 55 (the whole turn once)", in, out)
+	}
+}
+
+// A later copy that fills events into a turn already recorded, at either end, adds only what
+// was missing and does not make a second turn.
+func TestFoldSubagentLaterCopyFillsARecordedTurn(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "fill3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	ev := func(id string, in, out int) transcript.Turn {
+		return transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: in, OutTok: out,
+			TS: "2026-10-30T09:00:00Z", Sidechain: true, AnchorID: id}
+	}
+	user := transcript.Turn{Role: "user", TS: "2026-10-30T09:00:00Z", Sidechain: true}
+	// First copy: turn a holds one event, turn c one.
+	first := []transcript.Turn{user, ev("a", 2000, 20), user, ev("c", 3000, 5)}
+	if n := foldAgent(t, m, "s1", first); n != 2 {
+		t.Fatalf("first fold = %d rows", n)
+	}
+	// Another copy adds an event inside a (after its first) and one in front of c.
+	filled := []transcript.Turn{user, ev("a", 2000, 20), ev("b", 0, 30), user, ev("c0", 0, 7), ev("c", 3000, 5)}
+	if n := foldAgent(t, m, "s2", filled); n != 2 {
+		t.Fatalf("fold with the filled copy = %d rows, want 2 differences", n)
+	}
+	if n := foldAgent(t, m, "s2", filled); n != 0 {
+		t.Fatalf("re-fold = %d rows", n)
+	}
+	// a: out 20+30; c: out 7+5 and the same input snapshot.
+	if rows, in, out := sidechainSums(m); rows != 4 || in != 5000 || out != 62 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 4 / 5000 / 62", rows, in, out)
+	}
+}
+
+// A batch saved before its append, where the append never happened, is written on the next pass
+// instead of being lost with the totals already advanced.
+func TestFoldSubagentWritesABatchSavedBeforeAnAppendThatFailed(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "wal3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
+	foldAgent(t, m, "s1", a)
+	grown := append(append([]transcript.Turn{}, a...), transcript.Turn{Role: "assistant", Model: "claude-opus-5",
+		InTok: 2600, OutTok: 30, TS: "2026-10-30T09:06:00Z", Sidechain: true, AnchorID: "b"})
+	lost := usageRecordOf(m, usageTurnRow{Idx: 2, TS: "2026-10-30T09:06:00Z", Sidechain: true,
+		Tokens: usagex.Tokens{In: 600, Out: 30}}, usageAgentID("/subagents/agent-a.jsonl"))
+	usageFoldMu.Lock()
+	st := readUsageFoldState()
+	for k, mk := range st.Subagents {
+		mk.Seq = 2
+		mk.Turns = []usageAgentTurn{{First: usageAgentID("a")[:12], In: 2600, Out: 50}}
+		mk.Pending = []usagex.Record{lost}
+		st.Subagents[k] = mk
+	}
+	if err := writeUsageFoldState(st); err != nil {
+		t.Fatal(err)
+	}
+	usageFoldMu.Unlock()
+	foldAgent(t, m, "s2", grown)
+	if rows, in, out := sidechainSums(m); rows != 2 || in != 2600 || out != 50 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 2600 / 50", rows, in, out)
+	}
+}
