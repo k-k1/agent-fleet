@@ -101,3 +101,34 @@ func TestAggregateUsageSkipsCLIWarnings(t *testing.T) {
 		t.Fatalf("warning mid-reply: turns = %d, outTok = %d, want 1 and 50", u.Cumulative.Turns, u.Cumulative.OutTok)
 	}
 }
+
+// Subagent transcripts add to the cumulative figure and are reported on their own too, each
+// agent folded alone: folding two agents together would keep one agent's input snapshot.
+// The context fill stays the main thread's (#3051).
+func TestAddSubagentUsage(t *testing.T) {
+	u := AggregateUsage([]transcript.Turn{
+		{Role: "user"},
+		{Role: "assistant", Model: "claude-fable-5", InTok: 10, CacheCreate: 5, OutTok: 20},
+	})
+	ctx := *u.Context
+	addSubagentUsage(&u, [][]transcript.Turn{
+		{{Role: "assistant", Sidechain: true, InTok: 100, CacheRead: 7, OutTok: 1}},
+		{{Role: "assistant", Sidechain: true, InTok: 200, CacheCreate: 3, OutTok: 2}},
+	})
+	want := cumulativeUsage{Turns: 2, InTok: 300, OutTok: 3, CacheRead: 7, CacheCreate: 3, Spend: 306}
+	if u.Subagents == nil || *u.Subagents != want {
+		t.Fatalf("subagents = %+v, want %+v", u.Subagents, want)
+	}
+	if c := u.Cumulative; c.Turns != 3 || c.InTok != 310 || c.OutTok != 23 || c.Spend != 35+306 {
+		t.Fatalf("cumulative = %+v, want the main thread plus every agent", c)
+	}
+	if *u.Context != ctx {
+		t.Fatalf("context = %+v, want the main thread's %+v", *u.Context, ctx)
+	}
+
+	none := AggregateUsage(nil)
+	addSubagentUsage(&none, nil)
+	if none.Subagents != nil {
+		t.Fatalf("a session that delegated nothing must not report a subagents field: %+v", none.Subagents)
+	}
+}
