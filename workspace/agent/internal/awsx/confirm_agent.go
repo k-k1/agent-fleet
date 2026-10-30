@@ -19,6 +19,9 @@ import (
 // hashes, and a request whose identity no longer matches Settings is dropped, so the card
 // and what a grant covers cannot drift apart.
 
+// confirmLockWait bounds how long a route waits for the requests' lock.
+const confirmLockWait = 5 * time.Second
+
 // confirmSettings is the Settings list the routes check requests against: the last poll's (a
 // read must not pull from the CP). A variable so tests can give their own.
 var confirmSettings = loginSettings
@@ -98,6 +101,9 @@ func confirmRequests(settings map[string]Profile, now time.Time) []confirmReques
 			continue
 		}
 		_, matches := currentTargets(r, settings)
+		// A request of a session that ended, or that is another of the same name now, can no
+		// longer be answered: its run is gone or will end itself.
+		matches = matches && liveIncarnation(r.Session) == r.Incarnation
 		switch {
 		case r.State == "pending" && within(r.LastAt, now, confirmPendingTTL) && matches:
 			out = append(out, r)
@@ -110,7 +116,7 @@ func confirmRequests(settings map[string]Profile, now time.Time) []confirmReques
 	return out
 }
 
-// sweepGrants removes expired grants.
+// sweepGrants removes expired grants, those of sessions that ended, and old denial markers.
 func sweepGrants(now time.Time) {
 	dir := confirmDir("grants")
 	ents, _ := os.ReadDir(dir)
@@ -121,7 +127,16 @@ func sweepGrants(now time.Time) {
 			os.Remove(path)
 			continue
 		}
-		if exp, err := time.Parse(time.RFC3339, g.Expires); err != nil || !now.Before(exp) {
+		if exp, err := time.Parse(time.RFC3339, g.Expires); err != nil || !now.Before(exp) || liveIncarnation(g.Session) != g.Incarnation {
+			os.Remove(path)
+		}
+	}
+	dir = confirmDir("denied")
+	ents, _ = os.ReadDir(dir)
+	for _, e := range ents {
+		var d denyMarker
+		path := filepath.Join(dir, e.Name())
+		if !readJSON(path, &d) || !within(d.DecidedAt, now, confirmDenyHold) {
 			os.Remove(path)
 		}
 	}
@@ -131,9 +146,9 @@ func sweepGrants(now time.Time) {
 func HandleConfirmList(w http.ResponseWriter, r *http.Request) {
 	settings := confirmSettings()
 	out := []ConfirmRequestWire{}
-	unlock, err := lockConfirm()
+	unlock, err := lockConfirm(time.Now().Add(confirmLockWait))
 	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "lock_failed", err.Error())
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "busy", err.Error())
 		return
 	}
 	now := time.Now()
@@ -161,9 +176,9 @@ func HandleConfirmDeny(w http.ResponseWriter, r *http.Request) { answerConfirm(w
 func answerConfirm(w http.ResponseWriter, r *http.Request, approve bool) {
 	id := r.PathValue("id")
 	settings := confirmSettings()
-	unlock, err := lockConfirm()
+	unlock, err := lockConfirm(time.Now().Add(confirmLockWait))
 	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "lock_failed", err.Error())
+		httpx.WriteErr(w, http.StatusServiceUnavailable, "busy", err.Error())
 		return
 	}
 	defer unlock()
@@ -183,7 +198,7 @@ func answerConfirm(w http.ResponseWriter, r *http.Request, approve bool) {
 	req.DecidedAt = now.UTC().Format(time.RFC3339)
 	if approve {
 		for _, t := range req.Targets {
-			g := confirmGrant{Incarnation: req.Incarnation, ProfileID: t.ProfileID, Identity: t.Identity,
+			g := confirmGrant{Session: req.Session, Incarnation: req.Incarnation, ProfileID: t.ProfileID, Identity: t.Identity,
 				Expires: now.Add(confirmGrantTTL).UTC().Format(time.RFC3339), Relayed: cloudlogin.RelayedByCP(r)}
 			if err := writeJSONAtomic(grantPath(req.Incarnation, t.ProfileID), g); err != nil {
 				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
@@ -193,6 +208,14 @@ func answerConfirm(w http.ResponseWriter, r *http.Request, approve bool) {
 		// The grants answer the waiters; the request is done.
 		os.Remove(path)
 	} else {
+		// One marker per profile: the hold applies whatever set of profiles a later run asks
+		// about. The request is kept so its waiters see the answer too.
+		for _, t := range req.Targets {
+			if err := writeJSONAtomic(denyPath(req.Incarnation, t.ProfileID), denyMarker{DecidedAt: req.DecidedAt}); err != nil {
+				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+				return
+			}
+		}
 		req.State = "denied"
 		if err := writeJSONAtomic(path, req); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())

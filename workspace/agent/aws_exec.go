@@ -227,6 +227,18 @@ func runAWSExec(args []string) {
 		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
 		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0])}
 	}
+	if gated {
+		// The wait for the member's confirmation can be long: the member's own files may define
+		// the profile, its sso-session or its source by now, and theirs wins (ADR 0126 decision
+		// 6). Checked once more right before the credentials are fetched.
+		usable := awsx.UsableNow()
+		if !slices.Contains(usable, o.Profile) {
+			run.Refuse(cloudruns.RefusedOther)
+			awsExec.Fail(cloudexec.ExitRefused, fmt.Sprintf("profile %q is no longer usable from Settings: your own ~/.aws files define it, "+
+				"its sso-session or its source now, or [DEFAULT] conflicts with it (`af-aws-exec --list` says why)", o.Profile))
+		}
+		o.Exported = usable
+	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
 	if err != nil {
 		if errors.Is(err, awsx.ErrLoginRequired) {
@@ -235,11 +247,6 @@ func runAWSExec(args []string) {
 			run.Refuse(cloudruns.RefusedOther)
 		}
 		awsExec.FailPlan(err, awsx.ErrLoginRequired)
-	}
-	if gated {
-		// No role credentials of a withheld profile stay on disk for a plain aws to pick up
-		// (ADR 0126 decision 6): the child has them in its environment.
-		awsx.ForgetRoleCredentials(o.Settings, o.Profile)
 	}
 	// The wrapper becomes the command, so signals, process groups and a parent's SIGKILL reach
 	// it exactly as before. Supervising it as a child would let the row record the exit

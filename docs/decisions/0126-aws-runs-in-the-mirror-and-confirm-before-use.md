@@ -314,3 +314,20 @@ becomes the command, and **a row records the start and the identity, or why the 
 status and no duration**. The wrapper's exit status, which the caller already sees, is unchanged. A test runs the
 real wrapper and asserts that the command has the wrapper's PID, that one group SIGINT arrives once, and that a
 SIGKILL of that PID ends the command.
+
+## Note — a waiting run ends when what it waits for changes (2026-10-31)
+
+Implementation of decision 5 (#3050, PR 2, review of #3072). Decision 5 says that a Settings change drops a pending
+request and that "the waiting run files a new one for the new identity". A run cannot do that safely: its plan
+(which profile, through which source, from which config) was made from the Settings it read at its start, and
+asking about a new identity while running the old plan would let the card and the export drift apart. So **a run
+whose session ended, or whose profile Settings changed while it waited, ends with exit 4**, saying which, and the
+agent runs the command again, which plans and asks afresh. A request expiring unanswered is still re-filed by a
+run that keeps waiting.
+
+Three related details:
+- A request or a grant counts only while its session incarnation is live: the Agent neither lists nor accepts an
+  answer for an ended session's request, and drops its grants.
+- A denial holds each profile it named for a minute, whatever set of profiles the next run asks about.
+- Right before credentials are fetched, after the wait, af-aws-exec checks again that the member's own files have
+  not taken the profile, its sso-session or its source.

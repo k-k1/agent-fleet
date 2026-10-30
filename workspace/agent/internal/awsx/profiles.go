@@ -756,7 +756,11 @@ func ExportedIn(path string) []string {
 	if err != nil {
 		return nil
 	}
-	s := string(b)
+	return exportedInText(string(b))
+}
+
+// exportedInText is ExportedIn of a config's text.
+func exportedInText(s string) []string {
 	i := strings.Index(s, blockBegin)
 	if i < 0 {
 		return nil

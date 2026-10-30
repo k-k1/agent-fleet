@@ -171,10 +171,13 @@ func TestAWSExecConfirmBeforeUse(t *testing.T) {
 	}
 
 	// After the one-minute hold a new run asks again; allowed, the command runs.
-	grants := filepath.Join(home, ".local", "state", "agent-fleet", "aws-confirm", "requests")
-	ents, _ := os.ReadDir(grants)
-	for _, e := range ents {
-		os.Remove(filepath.Join(grants, e.Name())) // end the hold without waiting a minute
+	// End the hold without waiting a minute: the denial markers and the answered request.
+	for _, sub := range []string{"requests", "denied"} {
+		dir := filepath.Join(home, ".local", "state", "agent-fleet", "aws-confirm", sub)
+		ents, _ := os.ReadDir(dir)
+		for _, e := range ents {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
 	}
 	wait = startWrapper(t, env, args...)
 	answerAs(t, pendingID(t), "approve")
@@ -196,5 +199,27 @@ func TestAWSExecConfirmBeforeUse(t *testing.T) {
 	code, stderr = startWrapper(t, env, args...)()
 	if code != 7 {
 		t.Fatalf("second run asked again or failed: exit %d\n%s", code, stderr)
+	}
+}
+
+// G4: the member's own definition added while a run waits for confirmation wins: the run
+// refuses after the approval instead of running the withheld profile from its own config, and
+// the CLI is never started for it.
+func TestAWSExecRechecksTheMembersFilesAfterTheWait(t *testing.T) {
+	home, env := gatedHome(t)
+	wait := startWrapper(t, env, "--profile", "prod-admin", "-q", "--no-login", "--", "sh", "-c", "exit 7")
+	id := pendingID(t)
+	cfg := filepath.Join(home, ".aws", "config")
+	b, _ := os.ReadFile(cfg)
+	if err := os.WriteFile(cfg, append([]byte("[profile prod-admin]\nregion = us-east-1\n\n"), b...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	answerAs(t, id, "approve")
+	code, stderr := wait()
+	if code != 1 || !strings.Contains(stderr, "no longer usable") {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if b, err := os.ReadFile(filepath.Join(home, "aws-calls")); err == nil {
+		t.Fatalf("the CLI ran for a profile the member now defines: %s", b)
 	}
 }

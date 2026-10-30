@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -73,6 +74,8 @@ type confirmRequest struct {
 
 // confirmGrant is one approval, written only by the Agent.
 type confirmGrant struct {
+	// Session and Incarnation tie the grant to one life of one session: it ends with it.
+	Session     string `json:"session"`
 	Incarnation string `json:"incarnation"`
 	ProfileID   string `json:"profileId"`
 	Identity    string `json:"identity"`
@@ -157,8 +160,9 @@ func granted(inc string, t confirmTarget, now time.Time) (ok, relayed bool) {
 	return err == nil && now.Before(exp), g.Relayed
 }
 
-// lockConfirm takes the requests' lock across processes.
-func lockConfirm() (func(), error) {
+// lockConfirm takes the requests' lock across processes, waiting until deadline at most: a
+// wrapper stopped while it holds the lock must not hold every other run past its own wait.
+func lockConfirm(deadline time.Time) (func(), error) {
 	dir := confirmDir("requests")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -167,11 +171,67 @@ func lockConfirm() (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := cloudlogin.FlockEx(f, nil, deadline); err != nil {
 		f.Close()
 		return nil, err
 	}
 	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+}
+
+// denyPath is the denial marker of one profile in one session incarnation. A denial holds
+// that profile for confirmDenyHold whatever set of profiles the next run asks about.
+func denyPath(inc, profileID string) string {
+	return filepath.Join(confirmDir("denied"), hashParts(inc, profileID)[:40]+".json")
+}
+
+type denyMarker struct {
+	DecidedAt string `json:"decidedAt"`
+}
+
+// deniedNow reports whether one of ts was denied in inc within confirmDenyHold.
+func deniedNow(inc string, ts []confirmTarget, now time.Time) bool {
+	for _, t := range ts {
+		var d denyMarker
+		if readJSON(denyPath(inc, t.ProfileID), &d) && within(d.DecidedAt, now, confirmDenyHold) {
+			return true
+		}
+	}
+	return false
+}
+
+// liveIncarnation is the incarnation of the session named name now, "" when there is none.
+func liveIncarnation(name string) string {
+	if !session.ValidName(name) {
+		return ""
+	}
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return ""
+	}
+	return incarnation(m)
+}
+
+// currentSettings is the latest Settings list this process can read while it waits: the one
+// the Agent's poll keeps saving. A variable so tests can give their own.
+var currentSettings = func() map[string]Profile {
+	m, _, ok := CachedSettings()
+	if !ok {
+		return nil
+	}
+	return m
+}
+
+// sameTargets reports whether a and b ask about the same profiles with the same identities.
+func sameTargets(a, b []confirmTarget) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ProfileID != b[i].ProfileID || a[i].Identity != b[i].Identity {
+			return false
+		}
+	}
+	return true
 }
 
 // ConfirmOptions is what the gate needs from af-aws-exec.
@@ -200,9 +260,6 @@ func ConfirmGate(o ConfirmOptions) (ConfirmResult, error) {
 	if len(targets) == 0 {
 		return ConfirmResult{}, nil
 	}
-	done := func(relayed bool) (ConfirmResult, error) {
-		return ConfirmResult{Confirmed: true, OutsideConsole: !relayed}, nil
-	}
 	m, ok := session.Meta{}, false
 	if session.ValidName(o.Session) {
 		m, ok = session.ReadMeta(o.Session)
@@ -212,20 +269,55 @@ func ConfirmGate(o ConfirmOptions) (ConfirmResult, error) {
 	}
 	inc := incarnation(m)
 	deadline := time.Now().Add(o.Wait)
+	waiting := func() error {
+		return fmt.Errorf("%w: profile %q is waiting for confirmation in the Agent Fleet Console; run the command again after it is allowed",
+			ErrConfirmRequired, o.Profile)
+	}
+	denied := func() error {
+		return fmt.Errorf("%w: use of profile %q was denied in the Console", ErrConfirmRequired, o.Profile)
+	}
+	// stale says why this run can no longer be answered, or nil: its session ended (or is
+	// another of the same name now), or Settings changed what it would run as. Then the run
+	// ends instead of re-asking with what it read at its start (ADR 0126 note of 2026-10-31).
+	stale := func() error {
+		if liveIncarnation(m.Name) != inc {
+			return fmt.Errorf("%w: session %q ended while profile %q was waiting for confirmation", ErrConfirmRequired, m.Name, o.Profile)
+		}
+		if cur := currentSettings(); cur != nil && !sameTargets(confirmTargets(cur, o.Profile), targets) {
+			return fmt.Errorf("%w: profile %q changed in Settings while it was waiting for confirmation; run the command again",
+				ErrConfirmRequired, o.Profile)
+		}
+		return nil
+	}
+	granted := func() (ConfirmResult, bool) {
+		if ok, relayed := allGranted(inc, targets, time.Now()); ok && liveIncarnation(m.Name) == inc {
+			return ConfirmResult{Confirmed: true, OutsideConsole: !relayed}, true
+		}
+		return ConfirmResult{}, false
+	}
 	announced := false
 	for {
-		now := time.Now()
-		if ok, relayed := allGranted(inc, targets, now); ok {
-			return done(relayed)
+		if res, ok := granted(); ok {
+			return res, nil
 		}
+		if err := stale(); err != nil {
+			return ConfirmResult{}, err
+		}
+		now := time.Now()
 		// Ask only for what is not granted yet: an approved source is not asked about again.
 		ask := missingGrants(inc, targets, now)
-		r, err := fileConfirm(m.Name, inc, ask, o.Command, now)
+		if deniedNow(inc, ask, now) {
+			return ConfirmResult{}, denied()
+		}
+		r, err := fileConfirm(m.Name, inc, ask, o.Command, now, deadline)
 		if err != nil {
+			if errors.Is(err, cloudlogin.ErrLockTimeout) {
+				return ConfirmResult{}, waiting()
+			}
 			return ConfirmResult{}, err
 		}
 		if r.State == "denied" {
-			return ConfirmResult{}, fmt.Errorf("%w: use of profile %q was denied in the Console", ErrConfirmRequired, o.Profile)
+			return ConfirmResult{}, denied()
 		}
 		if !announced && o.Stderr != nil {
 			fmt.Fprintf(o.Stderr, "af-aws-exec: profile %q asks for confirmation before use; it is waiting in the Agent Fleet Console (up to %s)\n",
@@ -235,19 +327,21 @@ func ConfirmGate(o ConfirmOptions) (ConfirmResult, error) {
 		// Wait on this request until it is answered, dropped, or the time is up.
 		for {
 			if time.Now().After(deadline) {
-				return ConfirmResult{}, fmt.Errorf("%w: profile %q is waiting for confirmation in the Agent Fleet Console; run the command again after it is allowed",
-					ErrConfirmRequired, o.Profile)
+				return ConfirmResult{}, waiting()
 			}
 			time.Sleep(confirmPoll)
-			if ok, relayed := allGranted(inc, targets, time.Now()); ok {
-				return done(relayed)
+			if res, ok := granted(); ok {
+				return res, nil
+			}
+			if err := stale(); err != nil {
+				return ConfirmResult{}, err
+			}
+			if deniedNow(inc, ask, time.Now()) {
+				return ConfirmResult{}, denied()
 			}
 			var cur confirmRequest
 			if !readJSON(requestPath(requestKey(inc, ask)), &cur) || cur.ID != r.ID {
-				break // dropped (Settings changed) or replaced: file again
-			}
-			if cur.State == "denied" {
-				return ConfirmResult{}, fmt.Errorf("%w: use of profile %q was denied in the Console", ErrConfirmRequired, o.Profile)
+				break // dropped or replaced for another reason (expired): file again
 			}
 		}
 	}
@@ -281,8 +375,8 @@ func allGranted(inc string, ts []confirmTarget, now time.Time) (ok, relayed bool
 // fileConfirm files the request for (inc, targets), or joins the pending one. A denial within
 // confirmDenyHold is returned as it is; an older answer or an expired request is replaced by a
 // new request with a new id and its own notification.
-func fileConfirm(sessionName, inc string, targets []confirmTarget, command string, now time.Time) (confirmRequest, error) {
-	unlock, err := lockConfirm()
+func fileConfirm(sessionName, inc string, targets []confirmTarget, command string, now, deadline time.Time) (confirmRequest, error) {
+	unlock, err := lockConfirm(deadline)
 	if err != nil {
 		return confirmRequest{}, err
 	}
@@ -291,7 +385,8 @@ func fileConfirm(sessionName, inc string, targets []confirmTarget, command strin
 	var r confirmRequest
 	have := readJSON(path, &r)
 	switch {
-	case have && r.State == "denied" && within(r.DecidedAt, now, confirmDenyHold):
+	case deniedNow(inc, targets, now):
+		r.State = "denied"
 		return r, nil
 	case have && r.State == "pending" && within(r.LastAt, now, confirmPendingTTL):
 		r.LastAt = now.UTC().Format(time.RFC3339)
@@ -376,28 +471,36 @@ func RoleNameOf(arn string) string { return roleNameOf(arn) }
 // a withheld profile's (ADR 0126 decision 6): the SSO role's, under the key the CLI uses, and a
 // chain's assumed role's, found by the role the cached credentials belong to. The command gets
 // them in its environment; nothing is left for a plain aws to read.
-func ForgetRoleCredentials(settings map[string]Profile, profile string) {
+func ForgetRoleCredentials(settings map[string]Profile, profile string) error {
 	p, ok := settings[profile]
 	if !ok {
-		return
+		return nil
 	}
+	var errs []error
 	sso := p
 	if p.Chained() {
 		sso = settings[p.SourceProfile]
 		if acct, role, ok := roleARNParts(p.RoleARN); ok {
-			forgetAssumedRole(acct, role)
+			errs = append(errs, forgetAssumedRole(acct, role))
 		}
 	}
 	if sso.Name != "" {
-		os.Remove(ssoRoleCachePath(sso.AccountID, sso.RoleName, "af-"+sso.Name))
+		if err := os.Remove(ssoRoleCachePath(sso.AccountID, sso.RoleName, "af-"+sso.Name)); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // forgetAssumedRole removes the CLI's cached AssumeRole credentials of role in account. Their
 // key hashes the call's arguments, so the files are found by what they hold instead.
-func forgetAssumedRole(account, role string) {
+func forgetAssumedRole(account, role string) error {
 	dir := filepath.Join(paths.HomeDir(), ".aws", "cli", "cache")
-	ents, _ := os.ReadDir(dir)
+	ents, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var errs []error
 	prefix := ":sts::" + account + ":assumed-role/" + role + "/"
 	for _, e := range ents {
 		if !strings.HasSuffix(e.Name(), ".json") {
@@ -410,7 +513,10 @@ func forgetAssumedRole(account, role string) {
 		}
 		path := filepath.Join(dir, e.Name())
 		if readJSON(path, &doc) && strings.Contains(doc.AssumedRoleUser.Arn, prefix) {
-			os.Remove(path)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
 		}
 	}
+	return errors.Join(errs...)
 }

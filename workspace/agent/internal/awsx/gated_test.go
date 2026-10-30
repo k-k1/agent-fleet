@@ -29,6 +29,11 @@ func TestGatedProfilesAreUsableButNotWritten(t *testing.T) {
 	chain := chainProf() // assumes from "src"
 	shadowed := prof("mine-gated")
 	shadowed.ConfirmBeforeUse = true
+	// A sync saves the Settings list before it applies it; UsableNow checks against that list.
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "tok")
+	if err := saveSettingsCache([]Profile{gated, prof("sandbox"), src, chain, shadowed}, nil); err != nil {
+		t.Fatal(err)
+	}
 	res, err := Apply(path, []Profile{gated, prof("sandbox"), src, chain, shadowed})
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +156,10 @@ func TestUsableNowFollowsTheMembersFiles(t *testing.T) {
 	}
 	gated := prof("prod-admin")
 	gated.ConfirmBeforeUse = true
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "tok")
+	if err := saveSettingsCache([]Profile{gated, prof("sandbox")}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Apply(path, []Profile{gated, prof("sandbox")}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,5 +195,103 @@ func TestUsableNowFollowsTheMembersFiles(t *testing.T) {
 		}
 		os.WriteFile(path, nil, 0o600)
 		os.Remove(filepath.Join(filepath.Dir(path), "credentials"))
+	}
+}
+
+// G3: the role credentials the CLI cached while exporting a withheld profile are gone after
+// PlanExec whatever the outcome: success, STS refusing the identity, the command not found.
+func TestPlanExecClearsAWithheldProfilesCacheOnEveryPath(t *testing.T) {
+	for name, c := range map[string]struct {
+		arn    string
+		argv   []string
+		wantOK bool
+	}{
+		"success":           {"", []string{"true"}, true},
+		"sts refuses":       {"arn:aws:sts::999999999999:assumed-role/Other/me", []string{"true"}, false},
+		"command not found": {"", []string{"no-such-command-af"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin, state := fakeAWS(t, ssoProfile)
+			os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
+			os.WriteFile(ConfigPath(), []byte("[default]\nregion = eu-west-1\n"), 0o600)
+			os.WriteFile(filepath.Join(filepath.Dir(ConfigPath()), "credentials"), nil, 0o600)
+			gated := prodSettings["prod"]
+			gated.ConfirmBeforeUse = true
+			sp := map[string]Profile{"prod": gated}
+			if _, err := Apply(ConfigPath(), []Profile{gated}); err != nil {
+				t.Fatal(err)
+			}
+			cache := ssoRoleCachePath(gated.AccountID, gated.RoleName, "af-prod")
+			os.MkdirAll(filepath.Dir(cache), 0o700)
+			// The fake CLI caches the role credentials as the real one does on export.
+			os.WriteFile(filepath.Join(state, "onExport"), []byte("echo '{}' > '"+cache+"'\n"), 0o600)
+			if c.arn != "" {
+				os.WriteFile(filepath.Join(state, "arn"), []byte(c.arn+"\n"), 0o600)
+			}
+			_, _, _, err := PlanExec(bin, workloadEnv, ExecOptions{Profile: "prod", Settings: sp, Login: "never",
+				Argv: c.argv, Quiet: true, GatedConfig: GatedConfigPath("prod")})
+			if (err == nil) != c.wantOK {
+				t.Fatalf("PlanExec = %v", err)
+			}
+			if b, _ := os.ReadFile(filepath.Join(state, "calls")); len(b) == 0 {
+				t.Fatal("the export never ran (no positive control)")
+			}
+			if _, err := os.Stat(cache); !os.IsNotExist(err) {
+				t.Fatalf("the role credentials stayed in the CLI cache: %v", err)
+			}
+		})
+	}
+}
+
+// G4: UsableNow fails closed on a config it cannot read, and re-checks a withheld chain's
+// source and [DEFAULT] against the files as they are now.
+func TestUsableNowRechecksSourcesDefaultsAndUnreadableFiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_AWS_PROFILES_TOKEN", "tok")
+	path := ConfigPath()
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	src := prof("src")
+	src.ConfirmBeforeUse = true
+	chain := chainProf()
+	gated := prof("prod-admin")
+	gated.ConfirmBeforeUse = true
+	ps := []Profile{src, chain, gated}
+	if err := saveSettingsCache(ps, nil); err != nil {
+		t.Fatal(err)
+	}
+	reset := func() {
+		os.WriteFile(path, nil, 0o600)
+		os.Remove(filepath.Join(filepath.Dir(path), "credentials"))
+		if _, err := Apply(path, ps); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reset()
+	if u := UsableNow(); !slices.Contains(u, "deploy") || !slices.Contains(u, "prod-admin") {
+		t.Fatalf("control: UsableNow = %v", u)
+	}
+
+	// The member defines the chain's source: the chain is theirs to break, not ours to run.
+	b, _ := os.ReadFile(path)
+	os.WriteFile(path, append([]byte("[profile src]\nregion = us-east-1\n\n"), b...), 0o600)
+	if slices.Contains(UsableNow(), "deploy") {
+		t.Error("a withheld chain stays usable after its source was shadowed")
+	}
+
+	reset()
+	b, _ = os.ReadFile(path)
+	os.WriteFile(path, append([]byte("[DEFAULT]\nrole_arn = arn:aws:iam::1:role/x\n\n"), b...), 0o600)
+	if slices.Contains(UsableNow(), "prod-admin") {
+		t.Error("a [DEFAULT] role_arn added since did not take the withheld profile away")
+	}
+
+	reset()
+	os.Chmod(path, 0o000)
+	defer os.Chmod(path, 0o600)
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("the config is readable despite mode 000 (running as root)")
+	}
+	if u := UsableNow(); len(u) != 0 {
+		t.Errorf("an unreadable config left %v usable", u)
 	}
 }

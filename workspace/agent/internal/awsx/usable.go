@@ -90,36 +90,46 @@ func writeIfChanged(path string, data []byte) error {
 }
 
 // UsableNow lists the profiles af-aws-exec may run now, for the Agent's routes (login, logout,
-// state, the expiry warning) that must not pull from the CP: the managed block as it is on
-// disk, and the profiles the last sync withheld that the member's own files do not define
-// now. It reads the files on every call, as reading the block did: a profile the member has
-// since defined themselves is theirs, and its af-<name> token with it.
+// state, the expiry warning) and for af-aws-exec right before it fetches credentials. It is
+// worked out from the files as they are now, not from the last sync: the last Settings list is
+// rendered again against the member's current ~/.aws/config and credentials (render writes
+// nothing), so a profile, sso-session or [DEFAULT] line they added since takes a profile away,
+// a chain's source included. An exported profile must also still be in the block on disk, and a
+// withheld one must have its config. A file that exists but cannot be read makes nothing usable:
+// it may define any of these names, and the af-<name> token would then be theirs.
 func UsableNow() []string {
-	out := ExportedIn(ConfigPath())
-	withheld := WithheldNow()
-	if len(withheld) == 0 {
-		return out
+	b, err := os.ReadFile(ConfigPath())
+	if err != nil && !os.IsNotExist(err) {
+		return nil
 	}
-	b, _ := os.ReadFile(ConfigPath())
-	user, err := stripBlock(string(b))
-	if err != nil {
-		return out
-	}
-	profiles, ssoSessions := configNames(user)
 	creds, cerr := os.ReadFile(filepath.Join(filepath.Dir(ConfigPath()), "credentials"))
 	if cerr != nil && !os.IsNotExist(cerr) {
-		// Unreadable: it may define any of them (applyLocked's rule).
-		return out
+		return nil
 	}
-	credProfiles := credentialsNames(string(creds))
-	for _, n := range withheld {
-		if profiles[n] || credProfiles[n] || ssoSessions["af-"+n] {
+	inBlock := exportedInText(string(b))
+	ps, _, ok := cachedList()
+	if !ok {
+		// No Settings list to check against (before the first sync of this membership): the
+		// block is what was usable, as before this change.
+		return inBlock
+	}
+	_, res, err := render(string(b), string(creds), ps)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, n := range res.Exported {
+		if slices.Contains(inBlock, n) {
+			out = append(out, n)
+		}
+	}
+	for _, n := range res.Withheld {
+		if !profileFileName(n) {
 			continue
 		}
-		if _, err := os.Stat(GatedConfigPath(n)); err != nil {
-			continue
+		if _, err := os.Stat(GatedConfigPath(n)); err == nil {
+			out = append(out, n)
 		}
-		out = append(out, n)
 	}
 	return out
 }

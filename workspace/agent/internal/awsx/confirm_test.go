@@ -36,9 +36,11 @@ func gateEnv(t *testing.T) map[string]Profile {
 	settings := map[string]Profile{"prod-admin": admin, "base": base, "deploy": deploy, "admin-src": adminSrc, "via-admin": via}
 	old := confirmSettings
 	confirmSettings = func() map[string]Profile { return settings }
-	oldPoll := confirmPoll
+	oldPoll, oldCur := confirmPoll, currentSettings
 	confirmPoll = 10 * time.Millisecond
-	t.Cleanup(func() { confirmSettings, confirmPoll = old, oldPoll })
+	// The waiting run reads the same Settings the Agent's routes do, as both read the poll's.
+	currentSettings = func() map[string]Profile { return confirmSettings() }
+	t.Cleanup(func() { confirmSettings, confirmPoll, currentSettings = old, oldPoll, oldCur })
 	return settings
 }
 
@@ -260,5 +262,102 @@ func mustJSON(t *testing.T, b []byte, v any) {
 	t.Helper()
 	if err := json.Unmarshal(b, v); err != nil {
 		t.Fatalf("%v: %s", err, b)
+	}
+}
+
+// G1: Settings changing what a waiting run would run as ends the run with exit 4 at once,
+// instead of re-asking forever with what it read at its start.
+func TestConfirmGateEndsWhenSettingsChangeWhileWaiting(t *testing.T) {
+	s := gateEnv(t)
+	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	pending(t, 1)
+	edited := map[string]Profile{}
+	for k, v := range s {
+		edited[k] = v
+	}
+	p := edited["prod-admin"]
+	p.RoleName = "AdministratorAccess"
+	edited["prod-admin"] = p
+	confirmSettings = func() map[string]Profile { return edited }
+	select {
+	case err := <-ch:
+		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
+			t.Fatalf("run = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the run kept waiting on what it read at its start")
+	}
+}
+
+// G2: a request of a session that ended, or that is another of the same name now, is not
+// listed and cannot be approved, and its waiting run ends.
+func TestConfirmStaleSessionCannotBeApproved(t *testing.T) {
+	s := gateEnv(t)
+	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	id := pending(t, 1)[0].ID
+	session.WriteMeta(session.Meta{Name: "s1", Kind: session.KindShell, Dir: "/w", CreatedAt: "2026-10-31T12:00:00Z"})
+	if c := answer(t, id, "approve", true); c != http.StatusNotFound {
+		t.Fatalf("approving the old session's request = %d", c)
+	}
+	pending(t, 0)
+	select {
+	case err := <-ch:
+		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "ended") {
+			t.Fatalf("run = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the old session's run kept waiting")
+	}
+	if ents, _ := os.ReadDir(confirmDir("grants")); len(ents) != 0 {
+		t.Fatalf("a grant was written for the ended session: %v", ents)
+	}
+}
+
+// G5: a held requests lock never keeps a run past its own wait; it ends with exit 4 and files
+// nothing.
+func TestConfirmGateBoundsTheLockWait(t *testing.T) {
+	s := gateEnv(t)
+	unlock, err := lockConfirm(time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	start := time.Now()
+	_, gerr := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: 100 * time.Millisecond})
+	if !errors.Is(gerr, ErrConfirmRequired) || time.Since(start) > time.Second {
+		t.Fatalf("gate = %v after %s", gerr, time.Since(start))
+	}
+	ents, _ := os.ReadDir(confirmDir("requests"))
+	for _, e := range ents {
+		if strings.HasSuffix(e.Name(), ".json") {
+			t.Fatalf("a request was filed past the wait: %s", e.Name())
+		}
+	}
+}
+
+// G6: a denial holds each profile it named, whatever set of profiles the next run asks about.
+func TestDenyHoldIsPerProfile(t *testing.T) {
+	s := gateEnv(t)
+	both := map[string]Profile{}
+	for k, v := range s {
+		both[k] = v
+	}
+	d := both["deploy"]
+	d.SourceProfile = "admin-src"
+	both["deploy"] = d
+	confirmSettings = func() map[string]Profile { return both }
+	ch := gate(both, "deploy", "s1", 5*time.Second)
+	reqs := pending(t, 1)
+	if len(reqs[0].Targets) != 2 {
+		t.Fatalf("targets = %+v", reqs[0].Targets)
+	}
+	answer(t, reqs[0].ID, "deny", true)
+	if err := <-ch; !errors.Is(err, ErrConfirmRequired) {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_, err := ConfirmGate(ConfirmOptions{Settings: both, Profile: "admin-src", Session: "s1", Wait: 5 * time.Second})
+	if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "denied") || time.Since(start) > time.Second {
+		t.Fatalf("the source alone = %v after %s", err, time.Since(start))
 	}
 }
