@@ -97,14 +97,19 @@ func addRole(roles [][2]string, account, role string) [][2]string {
 
 // tokenPortal is the start URL and region the cached token of session says it is for.
 func tokenPortal(session string) (url, region string, present bool) {
+	return tokenPortalAt(ssoCachePath(session))
+}
+
+// tokenPortalAt is tokenPortal for the token file at path.
+func tokenPortalAt(path string) (url, region string, present bool) {
 	var doc struct {
 		StartURL string `json:"startUrl"`
 		Region   string `json:"region"`
 	}
-	if _, err := os.Stat(ssoCachePath(session)); err != nil {
+	if _, err := os.Stat(path); err != nil {
 		return "", "", false
 	}
-	readJSON(ssoCachePath(session), &doc)
+	readJSON(path, &doc)
 	return strings.TrimRight(doc.StartURL, "/"), doc.Region, true
 }
 
@@ -117,7 +122,6 @@ const (
 	keyUsable                  // bound to the current owner and portal
 	keyAdopt                   // unbound, and the token is for the current owner's portal
 	keyHandOver                // bound to a profile that is now a member of the sign-in owning the key
-	keyLanding                 // a login attempt for this key is under way: not adoptable yet
 	keyUnusable                // another owner, another portal, or a token for another portal
 )
 
@@ -142,8 +146,6 @@ func judgeKey(settings map[string]Profile, usable []string, session string) (ver
 		return keyUnusable, want, got
 	}
 	switch {
-	case !bound && landingFor(session):
-		return keyLanding, want, got
 	case !bound:
 		return keyAdopt, want, got
 	case got.Owner == want.Owner:
@@ -198,7 +200,20 @@ func vetKey(settings map[string]Profile, usable []string, session string) error 
 func vetLocked(settings map[string]Profile, usable []string, session string) error {
 	v, want, got := judgeKey(settings, usable, session)
 	switch v {
-	case keyNotOurs, keyLanding, keyNoToken:
+	case keyNotOurs:
+		return nil
+	case keyNoToken:
+		if got.Session != "" {
+			return nil // bound to the current owner and portal: its role credentials are theirs
+		}
+		// Role credentials with neither a token nor a binding carry no evidence of the portal
+		// they were taken from, and botocore serves them without reading a token: they go, and
+		// the next run logs in.
+		for _, r := range want.Roles {
+			if err := os.Remove(ssoRoleCachePath(r[0], r[1], session)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("%w: %v", ErrKeyRetireFailed, err)
+			}
+		}
 		return nil
 	case keyUsable, keyAdopt, keyHandOver:
 		for _, r := range got.Roles {
@@ -291,8 +306,9 @@ type runningAttempt struct {
 }
 
 // attempts holds the running login attempts by a registration number of their own, taken before
-// the process starts so a landing is never adoptable unseen: a landing binds only its target,
-// and a sync that sees the target change ends it, a key Settings dropped included.
+// the process starts: a sync that sees an attempt's target change ends it and drops the
+// registration, a key Settings dropped included, and a landing whose registration is gone is
+// never published (bindLanding).
 var (
 	attemptsMu sync.Mutex
 	attempts   = map[uint64]*runningAttempt{}
@@ -325,17 +341,12 @@ func attachAttempt(id uint64, a *cloudlogin.Attempt) bool {
 	return ok
 }
 
-// landingFor reports whether a login attempt for session is under way: its token is not to be
-// adopted before the attempt binds it.
-func landingFor(session string) bool {
+// registered reports whether registration id is still running for its target.
+func registered(id uint64) bool {
 	attemptsMu.Lock()
 	defer attemptsMu.Unlock()
-	for _, ra := range attempts {
-		if ra.target.Session == session {
-			return true
-		}
-	}
-	return false
+	_, ok := attempts[id]
+	return ok
 }
 
 // endStaleAttempts ends each running attempt whose target the current Settings does not name,
@@ -365,28 +376,55 @@ func endStaleAttempts(settings map[string]Profile) {
 // settingsChangedLogin is what an attempt ended by a change of its target says.
 const settingsChangedLogin = "Settings changed during the login; log in again"
 
-// bindLanding binds session's freshly written token to target, if Settings still names the
-// same owner and portal and the token is for that portal. Otherwise the token it wrote is
-// retired at once, in the same exclusive section: it is known to be for another owner or
-// portal, and must never be adopted by the key's next owner.
-func bindLanding(session string, target keyBinding) bool {
+// bindLanding publishes the token a login attempt wrote to its staging cache (staged) as
+// session's token, bound to target, inside the key's exclusive lock: only while the attempt is
+// still registered (a sync or a replace did not end it), Settings still gives the key that owner
+// and portal, and the token is for that portal. Anything else leaves the real cache as it was;
+// the staged token goes with the attempt's directory. An attempt's CLI therefore never writes
+// where a reader, af-aws-exec or a plain aws, could take its token before it is bound.
+func bindLanding(reg uint64, session string, target keyBinding, staged string) error {
 	unlock, err := logins.LockKey(session, false)
 	if err != nil {
-		return false
+		return err
 	}
 	defer unlock()
+	if !registered(reg) {
+		return errors.New(settingsChangedLogin)
+	}
 	settings := loginSettings()
 	want, ok := settingsOwner(settings, session)
 	if settings == nil {
 		// No Settings list on this Agent yet: the attempt's own target is all there is.
 		want, ok = target, true
 	}
-	url, region, present := tokenPortal(session)
-	if ok && want.sameTarget(target) && present && url == target.StartURL && region == target.SSORegion {
-		return writeJSONAtomic(bindingPath(session), want) == nil
+	url, region, present := tokenPortalAt(staged)
+	if !ok || !want.sameTarget(target) || !present || url != target.StartURL || region != target.SSORegion {
+		return errors.New(settingsChangedLogin)
 	}
-	_ = retireKey(session, append(target.Roles, want.Roles...))
-	return false
+	b, err := os.ReadFile(staged)
+	if err != nil {
+		return err
+	}
+	var got keyBinding
+	if readJSON(bindingPath(session), &got) && !got.sameTarget(want) {
+		// Role credentials a former owner took through this key are not this login's.
+		for _, r := range got.Roles {
+			if err := os.Remove(ssoRoleCachePath(r[0], r[1], session)); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		got.Roles = nil
+	}
+	for _, r := range got.Roles {
+		want.Roles = addRole(want.Roles, r[0], r[1])
+	}
+	if err := os.MkdirAll(filepath.Dir(ssoCachePath(session)), 0o700); err != nil {
+		return err
+	}
+	if err := writeAtomic(ssoCachePath(session), b, 0o600); err != nil {
+		return err
+	}
+	return writeJSONAtomic(bindingPath(session), want)
 }
 
 // forgetLeftovers revokes and deletes the per-profile tokens the members of session kept from
@@ -411,11 +449,14 @@ func forgetLeftover(m Profile, key string) {
 		return
 	}
 	defer unlock()
+	// Any current Settings owner of the key, usable or not, keeps it: a profile or sign-in that
+	// [DEFAULT] or a collision holds back for now still owns its name. No list keeps it too.
 	settings := loginSettings()
-	for _, n := range UsableNow() {
-		if p, ok := settings[n]; ok && !p.Chained() && p.SSOSession() == key {
-			return
-		}
+	if settings == nil {
+		return
+	}
+	if _, owned := settingsOwner(settings, key); owned {
+		return
 	}
 	b, err := os.ReadFile(ConfigPath())
 	if err != nil && !os.IsNotExist(err) {
@@ -456,8 +497,9 @@ func (b keyBinding) id() string { return b.Owner + "|" + b.StartURL + "|" + b.SS
 var ErrSettingsChangedRun = errors.New("the AWS profile's sign-in changed in Settings while this command ran; run it again")
 
 // plannedTarget is the check exportLocked runs under session's lock: Settings still gives the
-// key the owner and portal it gave at plan time, and the key is usable for it. Nil when the key
-// was not Agent Fleet's at plan time (a profile of the member's own).
+// key the owner and portal it gave at plan time and, when Agent Fleet used the key at plan time,
+// still uses it (not the member's own sso-session now, not held back by a collision) and its
+// cache holds nothing vetting would retire. Nil when no Settings profile renders the key.
 func plannedTarget(planSettings map[string]Profile, session string) (func(string) error, string) {
 	if planSettings == nil {
 		return nil, ""
@@ -466,6 +508,7 @@ func plannedTarget(planSettings map[string]Profile, session string) (func(string
 	if !ok {
 		return nil, ""
 	}
+	_, fleetUsed := keyOwner(planSettings, UsableNow(), session)
 	return func(key string) error {
 		settings := loginSettings()
 		if settings == nil {
@@ -475,7 +518,12 @@ func plannedTarget(planSettings map[string]Profile, session string) (func(string
 		if !ok || !want.sameTarget(planned) {
 			return ErrSettingsChangedRun
 		}
-		if v, _, _ := judgeKey(settings, UsableNow(), key); !usableVerdict(v) && v != keyLanding {
+		if !fleetUsed {
+			// A profile the member's own files define as Settings does: the files are theirs.
+			return nil
+		}
+		v, _, _ := judgeKey(settings, UsableNow(), key)
+		if v == keyNotOurs || !usableVerdict(v) {
 			return ErrSettingsChangedRun
 		}
 		return nil

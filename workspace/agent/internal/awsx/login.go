@@ -46,9 +46,12 @@ func (c CacheState) Unexpired(now time.Time) bool {
 
 // ssoCachePath is where botocore keeps the token of an sso-session: the SHA-1 of the
 // session name, under ~/.aws/sso/cache.
-func ssoCachePath(ssoSession string) string {
+func ssoCachePath(ssoSession string) string { return ssoCacheIn(paths.HomeDir(), ssoSession) }
+
+// ssoCacheIn is ssoCachePath for a CLI run with HOME=home.
+func ssoCacheIn(home, ssoSession string) string {
 	sum := sha1.Sum([]byte(ssoSession))
-	return filepath.Join(paths.HomeDir(), ".aws", "sso", "cache", hex.EncodeToString(sum[:])+".json")
+	return filepath.Join(home, ".aws", "sso", "cache", hex.EncodeToString(sum[:])+".json")
 }
 
 // refreshWindow is botocore's: SSOTokenProvider renews a token this close to its expiry.
@@ -66,8 +69,11 @@ func nearRefresh(ssoSession string, now time.Time) bool {
 }
 
 // ReadCacheState reads the token cache of ssoSession. It never returns the token itself.
-func ReadCacheState(ssoSession string) CacheState {
-	b, err := os.ReadFile(ssoCachePath(ssoSession))
+func ReadCacheState(ssoSession string) CacheState { return readCacheStateAt(ssoCachePath(ssoSession)) }
+
+// readCacheStateAt is ReadCacheState for the token file at path.
+func readCacheStateAt(path string) CacheState {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return CacheState{}
 	}

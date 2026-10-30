@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -436,10 +437,12 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 	}
 	allowed := allowedDeviceHosts(sp)
 	a, err := logins.Start(ssoSession, requestID, sp.Name, cloudlogin.Process{
-		Name:    "aws sso login",
-		Path:    bin,
-		Args:    []string{"sso", "login", "--profile", ssoOnlyProfile, "--use-device-code", "--no-browser"},
-		Env:     verifierEnv(baseEnv(os.Environ()), cfg),
+		Name: "aws sso login",
+		Path: bin,
+		Args: []string{"sso", "login", "--profile", ssoOnlyProfile, "--use-device-code", "--no-browser"},
+		// HOME is the attempt's own directory, so the CLI writes its token to a staging cache
+		// that bindLanding publishes only once Settings is checked under the key's lock.
+		Env:     cloudexec.SetEnv(verifierEnv(baseEnv(os.Environ()), cfg), "HOME="+dir),
 		Timeout: loginAttemptTimeout,
 		Parse: func(out string) (string, string, error) {
 			url, code := sessionx.DeviceAuthorization(out)
@@ -450,11 +453,10 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		},
 		Exited: func(err error) (bool, string) {
 			defer unregister()
-			if err == nil && ReadCacheState(ssoSession).Unexpired(time.Now()) {
-				if !bindLanding(ssoSession, target) {
-					// bindLanding retired what it wrote: it is for an owner or portal Settings
-					// no longer gives this key.
-					return false, settingsChangedLogin
+			staged := ssoCacheIn(dir, ssoSession)
+			if err == nil && readCacheStateAt(staged).Unexpired(time.Now()) {
+				if berr := bindLanding(reg, ssoSession, target, staged); berr != nil {
+					return false, berr.Error()
 				}
 				return true, ""
 			}

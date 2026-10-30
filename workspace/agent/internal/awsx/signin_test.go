@@ -202,24 +202,32 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 	}
 }
 
-// A login attempt binds only the owner and portal it started for: Settings changing during
-// the login fails the attempt and retires what it wrote, so the key's next owner cannot adopt it.
+// A login attempt publishes only for the owner and portal it started for: Settings changing
+// during the login fails the attempt and leaves the real cache as it was.
 func TestLandingBindsOnlyItsTarget(t *testing.T) {
 	s := teamSettings(t)
 	sp := s["a"]
-	target := keyBinding{Session: "af-team", Owner: sp.TokenOwner(), StartURL: sp.StartURL, SSORegion: sp.SSORegion}
-	token(t, "af-team", sp.StartURL, sp.SSORegion, "tok")
-	if !bindLanding("af-team", target) {
-		t.Fatal("control: an unchanged target binds")
+	target := teamTarget(sp)
+	stage := t.TempDir()
+	staged := ssoCacheIn(stage, "af-team")
+	os.MkdirAll(filepath.Dir(staged), 0o700)
+	b, _ := json.Marshal(map[string]string{"accessToken": "tok", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"startUrl": sp.StartURL, "region": sp.SSORegion})
+	os.WriteFile(staged, b, 0o600)
+	reg, unregister := registerAttempt(target)
+	defer unregister()
+	if err := bindLanding(reg, "af-team", target, staged); err != nil || !exists(ssoCachePath("af-team")) {
+		t.Fatalf("control: an unchanged target publishes: %v", err)
 	}
 	os.Remove(bindingPath("af-team"))
+	os.Remove(ssoCachePath("af-team"))
 	moved := sp
 	moved.StartURL = "https://other.awsapps.com/start"
 	if err := saveSettingsCache([]Profile{moved, s["b"]}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if bindLanding("af-team", target) || exists(bindingPath("af-team")) {
-		t.Fatal("a landing bound after Settings changed its portal")
+	if bindLanding(reg, "af-team", target, staged) == nil || exists(bindingPath("af-team")) || exists(ssoCachePath("af-team")) {
+		t.Fatal("a landing was published after Settings changed its portal")
 	}
 }
 

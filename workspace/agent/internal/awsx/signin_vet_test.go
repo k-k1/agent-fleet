@@ -67,35 +67,6 @@ func TestSyncRetiresAChangedPortalBeforeReturning(t *testing.T) {
 	}
 }
 
-// A landing for an owner Settings no longer gives the key is retired at once, so the key's new
-// owner cannot adopt it; a landing still under way is not adopted either.
-func TestFailedLandingCannotBeAdoptedForAnotherOwner(t *testing.T) {
-	s := teamSettings(t)
-	sp := s["a"]
-	old := teamTarget(sp)
-	old.Owner = "sign-in:old"
-	token(t, "af-team", sp.StartURL, sp.SSORegion, "for-old")
-	if bindLanding("af-team", old) {
-		t.Fatal("a landing for another owner bound")
-	}
-	if accepted(t, s, "af-team") {
-		t.Fatal("the new owner adopted a token written for another")
-	}
-
-	token(t, "af-team", sp.StartURL, sp.SSORegion, "landing")
-	_, unregister := registerAttempt(teamTarget(sp))
-	if err := vetKey(s, names(s), "af-team"); err != nil {
-		t.Fatal(err)
-	}
-	if exists(bindingPath("af-team")) {
-		t.Fatal("a token was adopted while its login attempt was still landing")
-	}
-	unregister()
-	if !accepted(t, s, "af-team") || !exists(bindingPath("af-team")) {
-		t.Fatal("control: an unbound token is adopted once no attempt lands it")
-	}
-}
-
 // A sync ends the attempts whose target Settings no longer names, a renamed (dropped) key's
 // included, and leaves the others running.
 func TestRenamedAttemptIsEndedBySyncVetting(t *testing.T) {
@@ -119,7 +90,7 @@ func TestRenamedAttemptIsEndedBySyncVetting(t *testing.T) {
 	if !keep.Live() {
 		t.Fatal("an attempt whose target still holds was ended")
 	}
-	if landingFor("af-gone") {
+	if registered(r2) {
 		t.Fatal("the ended attempt is still registered")
 	}
 }
@@ -347,5 +318,197 @@ func TestRefreshWindowIsRecheckedAfterWaitingForTheLock(t *testing.T) {
 	<-done
 	if len(got) != 1 || got[0] {
 		t.Fatalf("holds taken = %v, want one exclusive", got)
+	}
+}
+
+// fakeLoginCLI is an aws whose `sso login` writes a token for sp's portal where the CLI's HOME
+// says, touches written, and exits 0 once approve exists.
+func fakeLoginCLI(t *testing.T, session string, sp Profile, access string) (bin, state string) {
+	t.Helper()
+	dir := t.TempDir()
+	state = filepath.Join(dir, "state")
+	os.MkdirAll(state, 0o700)
+	tok, _ := json.Marshal(map[string]string{"accessToken": access, "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"startUrl": sp.StartURL, "region": sp.SSORegion})
+	base := filepath.Base(ssoCachePath(session))
+	script := `#!/bin/sh
+S="` + state + `"
+[ "$1 $2" = "sso login" ] || exit 1
+echo "Open https://device.sso.` + sp.SSORegion + `.amazonaws.com/?user_code=ABCD-EFGH"
+mkdir -p "$HOME/.aws/sso/cache"
+printf '%s' '` + string(tok) + `' > "$HOME/.aws/sso/cache/` + base + `"
+touch "$S/written"
+while [ ! -f "$S/approve" ]; do sleep 0.02; done
+exit 0
+`
+	bin = filepath.Join(dir, "aws")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, state
+}
+
+func waitFile(t *testing.T, path string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !exists(path); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never appeared", path)
+		}
+	}
+}
+
+func waitExited(t *testing.T, a *cloudlogin.Attempt) {
+	t.Helper()
+	select {
+	case <-a.Exited():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the login CLI did not exit")
+	}
+}
+
+// B1: an attempt's CLI writes its token where no reader looks; only the attempt's own check under
+// the key lock publishes it. A token written for an owner Settings dropped meanwhile is never
+// published, however the CLI ends.
+func TestAttemptTokenIsStagedUntilBound(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	bin, state := fakeLoginCLI(t, "af-team", sp, "first")
+	a, err := startLoginAttempt(bin, "af-team", "", sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFile(t, filepath.Join(state, "written"))
+	if exists(ssoCachePath("af-team")) {
+		t.Fatal("the attempt's token was readable before it was bound")
+	}
+	os.WriteFile(filepath.Join(state, "approve"), nil, 0o600)
+	waitExited(t, a)
+	var b keyBinding
+	if !exists(ssoCachePath("af-team")) || !readJSON(bindingPath("af-team"), &b) || b.Owner != "sign-in:g1" {
+		t.Fatalf("control: an approved login is published and bound (%+v)", b)
+	}
+
+	// The key changes hands while a second login waits; the sync ends it.
+	bin, state = fakeLoginCLI(t, "af-team", sp, "second")
+	a, err = startLoginAttempt(bin, "af-team", "", sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFile(t, filepath.Join(state, "written"))
+	ps := []Profile{s["a"], s["b"]}
+	for i := range ps {
+		ps[i].SignInID = "g2"
+	}
+	saveSettingsCache(ps, nil)
+	next := map[string]Profile{"a": ps[0], "b": ps[1]}
+	if err := vetAll(next, UsableNow()); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(state, "approve"), nil, 0o600)
+	waitExited(t, a)
+	if got, _ := os.ReadFile(ssoCachePath("af-team")); strings.Contains(string(got), "second") {
+		t.Fatal("a login for the former owner was published")
+	}
+	if accepted(t, next, "af-team") {
+		t.Fatal("the new owner can use a token written for the former one")
+	}
+}
+
+// B2: a run planned while Agent Fleet used the key stops once the member's own files take it.
+func TestPlannedRunStopsWhenItsKeyBecomesMemberOwned(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	token(t, "af-team", sp.StartURL, sp.SSORegion, "tok")
+	check, _ := plannedTarget(s, "af-team")
+	if check == nil || check("af-team") != nil {
+		t.Fatal("control: the planned key exports")
+	}
+	own := "[sso-session af-team]\nsso_start_url = https://mine.awsapps.com/start\nsso_region = us-east-1\n"
+	b, _ := os.ReadFile(ConfigPath())
+	os.WriteFile(ConfigPath(), append([]byte(own), b...), 0o600)
+	if err := check("af-team"); !errors.Is(err, ErrSettingsChangedRun) {
+		t.Fatalf("export after the member took the key = %v", err)
+	}
+}
+
+// B3: a chain in no sign-in logs in through af-<source>, as the pane renders it; and a known
+// owner mismatch is refused while the key is held back.
+func TestSSMChainAndHeldBackKeysAreCheckedAgainstSettings(t *testing.T) {
+	src := chainSrc()
+	src.ID = "ps"
+	ch := chainProf()
+	ch.ID = "pd"
+	s := teamSettings(t, src, ch)
+	meta := session.SSMMeta{Profile: "deploy", RoleARN: ch.RoleARN, SourceProfile: "src", StartURL: src.StartURL,
+		SSORegion: src.SSORegion, AccountID: src.AccountID, RoleName: src.RoleName, SSOOwnerID: "ps"}
+	if err := vetSSMLogin(meta); err != nil {
+		t.Fatalf("an unshared chain was refused: %v", err)
+	}
+
+	sp := s["a"]
+	own := "[sso-session af-team]\nsso_start_url = https://mine.awsapps.com/start\nsso_region = us-east-1\n"
+	b, _ := os.ReadFile(ConfigPath())
+	os.WriteFile(ConfigPath(), append([]byte(own), b...), 0o600)
+	stale := session.SSMMeta{Profile: "a", StartURL: sp.StartURL, SSORegion: sp.SSORegion, AccountID: sp.AccountID,
+		RoleName: sp.RoleName, SSOSession: "af-team", SSOOwnerID: "old"}
+	if err := vetSSMLogin(stale); !errors.Is(err, ErrSSMSettingsChanged) {
+		t.Fatalf("another owner over a held-back key = %v", err)
+	}
+}
+
+// B4: a sync that cannot retire the old portal's login publishes nothing and says so.
+func TestSyncMustNotPublishAPortalWhenRetireFails(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	token(t, "af-team", sp.StartURL, sp.SSORegion, "old")
+	if !accepted(t, s, "af-team") {
+		t.Fatal("control: the current portal's login is kept")
+	}
+	if err := os.MkdirAll(filepath.Join(ssoCachePath("af-team")+".af-retired", "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	moved := []Profile{s["a"], s["b"]}
+	for i := range moved {
+		moved[i].StartURL = "https://other.awsapps.com/start"
+	}
+	body, _ := json.Marshal(map[string]any{"profiles": moved})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
+	defer srv.Close()
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	if _, err := Sync(); !errors.Is(err, ErrKeyRetireFailed) {
+		t.Fatalf("Sync = %v", err)
+	}
+	if cfg, _ := os.ReadFile(ConfigPath()); strings.Contains(string(cfg), "other.awsapps.com") {
+		t.Fatal("the new portal was published beside the old portal's login")
+	}
+}
+
+// B5: a leftover is kept while any current Settings owner, usable or not, renders its key.
+func TestLeftoverCannotBelongToAnyCurrentSettingsOwner(t *testing.T) {
+	p := fakePortal(t)
+	b := prof("c")
+	b.ID, b.SignIn, b.SignInID = "pc", "a", "g3" // sign-in "a" renders af-a
+	s := teamSettings(t, b)
+	sp := s["a"]
+	own := "[profile c]\nregion = us-east-1\n" // holds c back
+	cfg, _ := os.ReadFile(ConfigPath())
+	os.WriteFile(ConfigPath(), append([]byte(own), cfg...), 0o600)
+	token(t, "af-a", sp.StartURL, sp.SSORegion, "left-a")
+	writeJSONAtomic(bindingPath("af-a"), keyBinding{Session: "af-a", Owner: "profile:pa", StartURL: sp.StartURL, SSORegion: sp.SSORegion})
+	forgetLeftovers([]Profile{sp}, "af-team")
+	if !exists(ssoCachePath("af-a")) || strings.Contains(strings.Join(p.seen(), "\n"), "left-a") {
+		t.Fatal("the login of a sign-in that owns the name now was revoked as a leftover")
+	}
+}
+
+// B6: role credentials with neither a token nor a binding carry no portal: they go.
+func TestLegacyRoleCacheCannotBeUsedWithoutTokenOrBinding(t *testing.T) {
+	s := teamSettings(t)
+	legacy := roleCache(t, s["a"], "af-team")
+	if err := VetKeyOf(s, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if exists(legacy) {
+		t.Fatal("role credentials of unknown portal survived")
 	}
 }

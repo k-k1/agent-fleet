@@ -61,8 +61,12 @@ var (
 // af-<profile> otherwise. Every file that describes s names it the same, so they share one
 // cached login.
 func SSOSessionName(s session.SSMMeta) string {
-	if s.SSOSession != "" {
+	switch {
+	case s.SSOSession != "":
 		return s.SSOSession
+	case s.RoleARN != "" && s.SourceProfile != "":
+		// A chain logs in through its source (renderChained renders the source's section).
+		return "af-" + s.SourceProfile
 	}
 	return "af-" + s.Profile
 }

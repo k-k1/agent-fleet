@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -202,7 +203,7 @@ func Sync() (SyncResult, error) {
 		return unlock, lerr
 	}, func(l cloudbridge.List[Profile]) error {
 		var aerr error
-		res, aerr = applyLocked(ConfigPath(), target, l.Profiles)
+		res, aerr = applyLocked(ConfigPath(), target, l.Profiles, vetBeforePublish)
 		applied = true
 		return aerr
 	})
@@ -212,12 +213,6 @@ func Sync() (SyncResult, error) {
 			res.Settings[sp.Name] = sp
 		}
 		res.Conflicts = p.Conflicts
-		// A portal change or a rename is acted on before any reader uses the new files, the
-		// poll's and af-aws-exec's sync alike (ADR 0125 decision 10). A key that cannot be
-		// retired is logged here; af-aws-exec's own vet refuses the run.
-		if verr := vetAll(res.Settings, UsableNow()); verr != nil {
-			log.Printf("aws profiles sync: %v", verr)
-		}
 	}
 	res.Fetched, res.FromCache = p.Fetched, p.FromCache
 	if p.Fetched && applied {
@@ -238,7 +233,7 @@ func Apply(path string, ps []Profile) (SyncResult, error) {
 		return SyncResult{}, err
 	}
 	defer unlock()
-	return applyLocked(path, target, ps)
+	return applyLocked(path, target, ps, nil)
 }
 
 // lockConfig resolves the config at path, makes its directory, and takes the lock that
@@ -258,8 +253,10 @@ func lockConfig(path string) (func(), string, error) {
 	return unlock, target, nil
 }
 
-// applyLocked is Apply for a caller that already holds lockConfig.
-func applyLocked(path, target string, ps []Profile) (SyncResult, error) {
+// applyLocked is Apply for a caller that already holds lockConfig. before, when set, runs once
+// the new block is rendered and before anything is written; its error stops the sync with the
+// files as they were.
+func applyLocked(path, target string, ps []Profile, before func([]Profile, SyncResult) error) (SyncResult, error) {
 	old, err := os.ReadFile(target)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return SyncResult{}, err
@@ -282,6 +279,11 @@ func applyLocked(path, target string, ps []Profile) (SyncResult, error) {
 	if err != nil {
 		return res, err
 	}
+	if before != nil {
+		if err := before(ps, res); err != nil {
+			return res, err
+		}
+	}
 	// The usable set and the withheld profiles' configs are written under the same lock as
 	// the block, and before it: a reader never sees a profile usable whose config is missing.
 	if err := writeUsable(res); err != nil {
@@ -295,6 +297,21 @@ func applyLocked(path, target string, ps []Profile) (SyncResult, error) {
 	}
 	res.Changed = true
 	return res, nil
+}
+
+// vetBeforePublish vets every key the new list makes usable before the block naming it is
+// written (ADR 0125 decision 10): a portal change or a rename retires the old login first, so no
+// reader, a plain aws included, ever finds the new definition beside the old portal's token or
+// role credentials. A key that cannot be retired stops the sync with the old block in place.
+func vetBeforePublish(ps []Profile, res SyncResult) error {
+	settings := make(map[string]Profile, len(ps))
+	for _, p := range ps {
+		settings[p.Name] = p
+	}
+	if err := vetAll(settings, append(slices.Clone(res.Exported), res.Withheld...)); err != nil {
+		return fmt.Errorf("the AWS profiles were not updated: %w", err)
+	}
+	return nil
 }
 
 // resolveLink follows a symlinked config to its target, so the atomic rename replaces

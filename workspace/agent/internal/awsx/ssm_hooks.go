@@ -42,10 +42,13 @@ func metaOwner(s session.SSMMeta) string {
 }
 
 // checkSSMMeta compares the key an SSM meta renders (ssm.SSOSessionName) with what Settings
-// gives that key now, and returns the key. A key no usable Settings profile renders is not
-// Agent Fleet's to judge, but one whose binding names another portal is still refused. A meta
-// from a Control Plane that sends no owner must render the key its profile renders now, which
-// an old wire's af-<profile> does only while the profile is in no sign-in.
+// gives that key now, and returns the key and whether Agent Fleet uses it (only then may its
+// cache be vetted). Two questions are kept apart: whom the meta and the key point at is checked
+// against every Settings profile, usable or not, so a known owner or portal mismatch is refused
+// even while the key is held back; whether the cache may be changed is the usable set's. A meta
+// from a Control Plane that sends no owner must render the key its profile renders now, which an
+// old wire's af-<profile> does only while the profile is in no sign-in. A key no Settings profile
+// renders is the member's, but one whose binding names another portal is still refused.
 func checkSSMMeta(settings map[string]Profile, usable []string, s session.SSMMeta) (string, bool, error) {
 	key := ssm.SSOSessionName(s)
 	url := strings.TrimRight(s.StartURL, "/")
@@ -55,21 +58,22 @@ func checkSSMMeta(settings map[string]Profile, usable []string, s session.SSMMet
 		// that sends no sign-in): the pane would read another login than Settings gives it.
 		return key, false, ErrSSMSettingsChanged
 	}
-	want, ours := keyOwner(settings, usable, key)
-	if !ours {
+	owner, owned := settingsOwner(settings, key)
+	if !owned {
 		var got keyBinding
 		if readJSON(bindingPath(key), &got) && (got.StartURL != url || got.SSORegion != s.SSORegion) {
 			return key, false, ErrSSMSettingsChanged
 		}
 		return key, false, nil
 	}
-	if !inSettings || want.StartURL != url || want.SSORegion != s.SSORegion {
-		return key, true, ErrSSMSettingsChanged
+	if !inSettings || owner.StartURL != url || owner.SSORegion != s.SSORegion {
+		return key, false, ErrSSMSettingsChanged
 	}
-	if o := metaOwner(s); o != "" && o != want.Owner {
-		return key, true, ErrSSMSettingsChanged
+	if o := metaOwner(s); o != "" && o != owner.Owner {
+		return key, false, ErrSSMSettingsChanged
 	}
-	return key, true, nil
+	_, ours := keyOwner(settings, usable, key)
+	return key, ours, nil
 }
 
 // vetSSMLogin vets the key the pane or discovery is about to read, refusing a meta Settings no
