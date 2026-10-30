@@ -48,8 +48,9 @@ type codexError struct {
 	message string
 	label   string // codexErrorInfo variant name, e.g. "usageLimitExceeded"; "" if absent
 	status  int    // httpStatusCode, when the variant carries one
-	// turnID is the failed turn, when codex named one (turn/completed). managedEnrich uses it
-	// to tell whether the rollout already shows this failure; a turn/start rejection has none.
+	// turnID is the failed turn, when codex named one (turn/completed). Such a failure is on
+	// the rollout's task_complete record, so withLastError adds no copy of it; a turn/start
+	// rejection has none.
 	turnID string
 }
 

@@ -1297,34 +1297,26 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	td.Turns = withLastError(td.Turns, h.turnError())
 }
 
-// withLastError appends ce as the synthetic trailing error turn (see managedEnrich).
+// withLastError appends ce as the synthetic trailing error turn (see managedEnrich), for a
+// turn/start rejection only.
 //
-// A turn that did start and then failed also has the failure on its task_complete record,
-// which the rollout parser renders on its own; once that has landed the copy is left out, or
-// the same error would be drawn twice. Both take errorTurnIdx, so in a Console that already
-// showed the copy the record arrives as its replacement rather than beside it.
+// A turn that did start and then failed (ce.turnID set) is left to the rollout: codex writes
+// the same failure on its task_complete record (the app-server builds turn/completed's error
+// from that field), and the parser renders it there. A copy would take a slot in the Console's
+// turn-count cursor from a snapshot read before the record landed; when it lands among turns
+// that arrived in between, the copy stays beside it and the cursor skips a real turn.
 func withLastError(turns []transcript.Turn, ce *codexError) []transcript.Turn {
-	if ce == nil || rolloutShowsError(turns, ce.turnID) {
+	if ce == nil || ce.turnID != "" {
 		return turns
+	}
+	idx := 0
+	if n := len(turns); n > 0 {
+		idx = turns[n-1].Idx + 1
 	}
 	return append(turns, transcript.Turn{
 		Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
-		Idx: errorTurnIdx(turns), TS: time.Now().Format(time.RFC3339),
+		Idx: idx, TS: time.Now().Format(time.RFC3339),
 	})
-}
-
-// rolloutShowsError reports whether turns already hold the error record of turn turnID.
-func rolloutShowsError(turns []transcript.Turn, turnID string) bool {
-	if turnID == "" {
-		return false
-	}
-	for i := len(turns) - 1; i >= 0; i-- {
-		t := turns[i]
-		if t.AnchorID == turnID && len(t.Parts) == 1 && t.Parts[0].Kind == "error" {
-			return true
-		}
-	}
-	return false
 }
 
 // buildInput assembles the turn/start and turn/steer input items: prompt text plus

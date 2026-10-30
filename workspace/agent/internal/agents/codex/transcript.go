@@ -268,7 +268,7 @@ func (p *rolloutParser) feed(ln []byte) {
 		case "task_complete":
 			p.noteLifecycle("task_complete", ev.Timestamp)
 			p.noteTurnEnded(ev.Payload)
-			p.noteTurnError(ev.Payload, ev.Timestamp)
+			p.noteTurnError(ev.Payload, ev.Timestamp, i)
 			p.askOpenFrom = len(p.askCalls)
 		case "turn_aborted":
 			// Esc fires no Stop hook (measured 0.159.0), so this is the only record that an
@@ -350,12 +350,7 @@ func (p *rolloutParser) noteTurnEnded(payload json.RawMessage) {
 // task_complete record's `error` is the only trace a Terminal session leaves: without this a
 // turn that died on a revoked login shows the prompt and then nothing at all. It is not made
 // lastAssistant: a failure carries no usage of its own.
-//
-// Its Idx is errorTurnIdx, not the task_complete line: a Managed poll that ran before this
-// record was written already showed the driver's synthetic copy at that Idx, and the
-// Console replaces a resent turn by Idx. On the line number the real record would land
-// beside the copy instead of over it, and both would stay on screen.
-func (p *rolloutParser) noteTurnError(payload json.RawMessage, ts string) {
+func (p *rolloutParser) noteTurnError(payload json.RawMessage, ts string, idx int) {
 	var tc struct {
 		TurnID string          `json:"turn_id"`
 		Error  json.RawMessage `json:"error"`
@@ -369,18 +364,8 @@ func (p *rolloutParser) noteTurnError(payload json.RawMessage, ts string) {
 	}
 	p.turns = append(p.turns, transcript.Turn{
 		Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
-		Idx: errorTurnIdx(p.turns), TS: ts, EndTS: ts, AnchorID: tc.TurnID, Cwd: p.cwd, Branch: p.branch,
+		Idx: idx, TS: ts, EndTS: ts, AnchorID: tc.TurnID, Cwd: p.cwd, Branch: p.branch,
 	})
-}
-
-// errorTurnIdx is the Idx an error turn takes after turns: one past the last turn's. It is
-// unique because the line it names is never a displayable turn (that would be the last
-// turn), and the synthetic copy (managedEnrich) and the rollout's record agree on it.
-func errorTurnIdx(turns []transcript.Turn) int {
-	if n := len(turns); n > 0 {
-		return turns[n-1].Idx + 1
-	}
-	return 0
 }
 
 // snapshot renders the parse so far as the caller's own copy: the transcript, the ToDo

@@ -103,71 +103,70 @@ func TestRolloutTaskCompleteErrorRendersAsErrorTurn(t *testing.T) {
 	}
 }
 
-// The Managed transcript is the same rollout plus a synthetic copy of the last failure. Once
-// the rollout's own record of that turn has landed, the copy must step aside; a turn/start
-// rejection (no turn id, nothing in the rollout) keeps it.
-func TestRolloutShowsError(t *testing.T) {
-	turns := []transcript.Turn{
-		{Role: "user", AnchorID: "t2", Text: "again"},
-		{Role: "assistant", AnchorID: "t2", Parts: []transcript.Part{{Kind: "error", Text: revokedLoginMsg}}},
+// The Managed transcript is the same rollout plus the driver's synthetic copy of the last
+// failure. Only a turn/start rejection (no turn id, nothing in the rollout) gets one; a turn
+// that started is shown by its own task_complete record.
+func TestWithLastErrorOnlyForRejectedStarts(t *testing.T) {
+	turns := []transcript.Turn{{Role: "user", Idx: 4, Text: "again"}}
+	rejected := codexError{label: "usageLimitExceeded", message: "You've hit your usage limit."}
+	got := withLastError(turns, &rejected)
+	if len(got) != 2 || got[1].Parts[0].Kind != "error" || got[1].Idx != 5 {
+		t.Fatalf("turn/start rejection: turns = %+v, want a trailing error turn at Idx 5", got)
 	}
-	if !rolloutShowsError(turns, "t2") {
-		t.Fatal("the rollout's error turn for t2 was not recognized")
+	started := codexError{label: "unauthorized", message: revokedLoginMsg, turnID: "t2"}
+	if got := withLastError(turns, &started); len(got) != 1 {
+		t.Fatalf("started turn: turns = %+v, want no synthetic copy", got)
 	}
-	if rolloutShowsError(turns[:1], "t2") {
-		t.Fatal("a user turn alone counted as the error record")
-	}
-	if rolloutShowsError(turns, "t3") {
-		t.Fatal("another turn's error counted")
-	}
-	if rolloutShowsError(turns, "") {
-		t.Fatal("a turn/start rejection (no turn id) must keep its synthetic turn")
+	if got := withLastError(turns, nil); len(got) != 1 {
+		t.Fatalf("no failure: turns = %+v", got)
 	}
 }
 
-// A Managed poll can run between turn/completed and the rollout write of task_complete: it
-// shows the synthetic copy, the next poll the rollout's record. The turn count is the same, so
-// the Console gets the record as a resent tail and replaces by Idx. A record hidden lines
-// further down than the copy must still land on the copy's Idx, or both stay on screen.
-func TestManagedErrorCopyIsReplacedByTheRolloutRecord(t *testing.T) {
+// A Managed poll reads the rollout and then the driver's last failure separately, so a new
+// prompt and its failed task_complete can both land in between. The Console's cursor is the
+// turn count and it merges a resent tail by Idx; across two such polls it must end with the
+// new prompt and exactly one error block.
+func TestManagedPollRaceKeepsPromptAndOneError(t *testing.T) {
 	p := newRolloutParser()
 	for _, ln := range [][]byte{
-		taskStarted("2026-10-30T02:01:00.000Z", "t2"),
-		userSays("2026-10-30T02:01:00.100Z", "again"),
+		taskStarted("2026-10-30T02:00:00.000Z", "t1"),
+		userSays("2026-10-30T02:00:00.100Z", "hello"),
+		taskComplete("2026-10-30T02:00:01.000Z", "t1"),
 	} {
 		p.feed(ln)
 	}
-	ce := codexError{label: "unauthorized", message: revokedLoginMsg, turnID: "t2"}
-	snap := func() []transcript.Turn {
-		turns, _, _, _ := p.snapshot(time.Time{})
-		return withLastError(turns, &ce)
-	}
-	first := snap()
-	// Lines nothing renders, then the record itself.
-	p.feed([]byte(`{"timestamp":"2026-10-30T02:01:00.500Z","type":"event_msg","payload":{"type":"token_count","info":null}}`))
-	p.feed([]byte(`{"timestamp":"2026-10-30T02:01:00.600Z","type":"turn_context","payload":{"turn_id":"t2","model":"gpt-5.5"}}`))
+	first, _, _, _ := p.snapshot(time.Time{})
+	// Written after the snapshot, before managedEnrich read the failure turn/completed set.
+	p.feed(taskStarted("2026-10-30T02:01:00.000Z", "t2"))
+	p.feed(userSays("2026-10-30T02:01:00.100Z", "again"))
 	p.feed(taskFailed("2026-10-30T02:01:00.900Z", "t2", `{"message":"`+revokedLoginMsg+`","codex_error_info":"unauthorized"}`))
-	second := snap()
-	if len(second) != len(first) {
-		t.Fatalf("turn count %d -> %d; the record must take the copy's place", len(first), len(second))
+	ce := codexError{label: "unauthorized", message: revokedLoginMsg, turnID: "t2"}
+	first = withLastError(first, &ce)
+	cursor := len(first)
+
+	second, _, _, _ := p.snapshot(time.Time{})
+	second = withLastError(second, &ce)
+	var sent []transcript.Turn
+	switch {
+	case cursor < len(second):
+		sent = second[cursor:]
+	case cursor == len(second) && second[len(second)-1].Role == "assistant":
+		sent = second[len(second)-1:] // genericMutableTail
 	}
-	// The Console's merge: a resent turn replaces the one with its Idx, any other is added.
 	shown := map[int]transcript.Turn{}
-	for _, tn := range first {
+	for _, tn := range append(first, sent...) {
 		shown[tn.Idx] = tn
 	}
-	last := second[len(second)-1]
-	shown[last.Idx] = last
-	errs := 0
+	errs, prompt := 0, false
 	for _, tn := range shown {
 		if len(tn.Parts) == 1 && tn.Parts[0].Kind == "error" {
 			errs++
 		}
+		if tn.Role == "user" && tn.Text == "again" {
+			prompt = true
+		}
 	}
-	if errs != 1 {
-		t.Fatalf("error blocks on screen = %d, want 1 (copy Idx %d, record Idx %d)", errs, first[len(first)-1].Idx, last.Idx)
-	}
-	if last.AnchorID != "t2" || last.Parts[0].Cause != transcript.CauseAuth {
-		t.Fatalf("record = %+v, want the rollout's auth error turn", last)
+	if errs != 1 || !prompt {
+		t.Fatalf("on screen: %d error blocks, prompt shown=%v; want 1 and true (%+v)", errs, prompt, shown)
 	}
 }
