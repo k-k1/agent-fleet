@@ -231,6 +231,8 @@ describe("review round 1 regressions", () => {
     expect(parseSshConfig(`Host 'web'\n  ${first}\n` + second)).toEqual({ ok: false, error: { code: "bad_quote", line: 1 } });
     expect(parseSshConfig("Host we\\b\n")).toMatchObject({ ok: false });
     expect(parseSshConfig("Host web # it's fine\n")).toMatchObject({ ok: true });
+    // A `#` inside double quotes is not a comment, so what follows is still checked.
+    expect(parseSshConfig(`Host "ignored # x" 'web'\n  ${first}\n` + second)).toEqual({ ok: false, error: { code: "bad_quote", line: 1 } });
   });
   it("%h falls back to the Host name only when no later Match or Include could set HostName", () => {
     const own = `Host i-11111111111111111\n  ProxyCommand ${CMD} --profile prod\n`;

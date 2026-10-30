@@ -50,18 +50,19 @@ const BARE_RE = /^([A-Za-z][A-Za-z0-9]*)$/;
 const WORD_RE = /^(?:"([^"]*)"|([^\s"]+))/;
 
 /** Split the arguments of a Host or Match line into words; a word that starts with `#` ends
- *  the line (a trailing comment). Null when a quote is left open. */
+ *  the line (a trailing comment). Null when a quote is left open or one this reader does not
+ *  support (single quote, backslash) is used. */
 function words(args: string): string[] | null {
   const out: string[] = [];
   let rest = args.trim();
-  // OpenSSH also strips single quotes and reads backslash escapes in these words; this reader
-  // does not, and a name read differently would skip the blocks that really apply to it, so
-  // the whole file is refused instead.
-  if (/['\\]/.test(rest.split(/(?:^|\s)#/)[0])) return null;
   while (rest) {
     if (rest.startsWith("#")) break;
     const m = WORD_RE.exec(rest);
     if (!m) return null;
+    // OpenSSH also strips single quotes and reads backslash escapes in these words; this reader
+    // does not, and a name read differently would skip the blocks that really apply to it, so
+    // the whole file is refused instead.
+    if (/['\\]/.test(m[1] ?? m[2])) return null;
     out.push(m[1] ?? m[2]);
     rest = rest.slice(m[0].length);
     // A quote glued to the next word ("a"b) is not a form OpenSSH documents.

@@ -157,6 +157,18 @@ describe("SshConfigImport", () => {
     expect(rawJSON.mock.calls[0][2]).toMatchObject({ alias: "a", profileId: "p1" });
   });
 
+  it("offers no profile pick for an ambiguous AWS name, and says to rename in Settings", async () => {
+    api.mockImplementation((p: string) =>
+      Promise.resolve(p.endsWith("profiles") ? [{ id: "a", label: "prod app" }, { id: "b", label: "prod-app" }] : []),
+    );
+    await mount();
+    await paste(`Host a\n  HostName ${I1}\n  ProxyCommand aws ssm start-session --target %h --document-name AWS-StartSSHSession --profile prod-app\n`);
+    expect(rowEl("a").className).toContain("blocked");
+    expect(rowEl("a").querySelector("select")).toBeNull();
+    expect(rowEl("a").textContent).toMatch(/rename one in Settings|Settings で名前を変えて/);
+    expect(importBtn().disabled).toBe(true);
+  });
+
   it("names the line of a file OpenSSH cannot read", async () => {
     await mount();
     await paste("Host a\n  User x\nHost\n");
