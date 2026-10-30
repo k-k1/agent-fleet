@@ -269,19 +269,6 @@ index 91415d0c3..0906377c7 100644
  	{session.KindShell, ""},
  	{session.KindSSM, ""},
  }
-diff --git a/workspace/agent/internal/kinds/kinds_test.go b/workspace/agent/internal/kinds/kinds_test.go
-index b381fe4d5..064d0049e 100644
---- a/workspace/agent/internal/kinds/kinds_test.go
-+++ b/workspace/agent/internal/kinds/kinds_test.go
-@@ -110,7 +110,7 @@ func TestLabels(t *testing.T) {
- 	want := map[string]string{
- 		"claude": "Claude Code", "opencode": "opencode", "codex": "Codex", "copilot": "GitHub Copilot",
- 		"cursor": "Cursor", "kiro": "Kiro", "agy": "Antigravity", "muse": "Muse Code",
--		"lcpp": "", "shell": "", "ssm": "",
-+		"lcpp": "", "shell": "", "ssm": "", "zz": "ZZ Stub",
- 	}
- 	for _, k := range All() {
- 		l, ok := want[k]
 diff --git a/workspace/agent/internal/session/session.go b/workspace/agent/internal/session/session.go
 index 471e82a05..734dab8d3 100644
 --- a/workspace/agent/internal/session/session.go
@@ -294,31 +281,6 @@ index 471e82a05..734dab8d3 100644
  )
  
  // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
-diff --git a/workspace/agent/internal/sessionx/managed_runtime_test.go b/workspace/agent/internal/sessionx/managed_runtime_test.go
-index 71a2030b7..0db2c58e9 100644
---- a/workspace/agent/internal/sessionx/managed_runtime_test.go
-+++ b/workspace/agent/internal/sessionx/managed_runtime_test.go
-@@ -35,6 +35,7 @@ var wantRuntime = map[string]*agents.ManagedRuntimeOps{
- 	session.KindAgy:      nil,
- 	session.KindShell:    nil,
- 	session.KindSSM:      nil,
-+	session.KindZz:       nil,
- 	// Not kinds: no NormalizeKind, no AgentOf claude fallback.
- 	"":         nil,
- 	"Codex":    nil,
-diff --git a/workspace/agent/internal/sessionx/prompt_paste_test.go b/workspace/agent/internal/sessionx/prompt_paste_test.go
-index 3cc042292..f4c9cd72e 100644
---- a/workspace/agent/internal/sessionx/prompt_paste_test.go
-+++ b/workspace/agent/internal/sessionx/prompt_paste_test.go
-@@ -25,7 +25,7 @@ func legacyPasteNeeded(kind, text string) bool {
- // Every registered kind is in exactly one of these two lists. A new kind must be placed on
- // purpose: pasteKinds by implementing agents.PromptPaste, literalKinds after checking that its
- // composer keeps an Enter that follows literal keys (copilot, cursor and kiro lose it).
--var literalKinds = []string{session.KindAgy, session.KindMuse, session.KindLcpp, session.KindShell, session.KindSSM}
-+var literalKinds = []string{session.KindAgy, session.KindMuse, session.KindLcpp, session.KindShell, session.KindSSM, session.KindZz}
- 
- var pasteKinds = []string{
- 	session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCopilot,
 diff --git a/workspace/agent/internal/sessionx/session_move.go b/workspace/agent/internal/sessionx/session_move.go
 index cdc21668b..9cf59b9dd 100644
 --- a/workspace/agent/internal/sessionx/session_move.go
@@ -332,27 +294,6 @@ index cdc21668b..9cf59b9dd 100644
  
  // Reasons a kind is not offered as a target, as the preview reports them.
  const (
-diff --git a/workspace/agent/internal/sessionx/session_move_kinds_test.go b/workspace/agent/internal/sessionx/session_move_kinds_test.go
-index 173b85726..eab388313 100644
---- a/workspace/agent/internal/sessionx/session_move_kinds_test.go
-+++ b/workspace/agent/internal/sessionx/session_move_kinds_test.go
-@@ -24,6 +24,7 @@ var moveClassification = map[string]string{
- 	session.KindLcpp:     moveTargetCannotRead,
- 	session.KindShell:    moveTargetNotAnAgent,
- 	session.KindSSM:      moveTargetNotAnAgent,
-+	session.KindZz:       moveTargetNotMeasured,
- }
- 
- func TestEveryKindIsClassifiedForMove(t *testing.T) {
-@@ -50,7 +51,7 @@ func TestMoveTargetListsAreUnchanged(t *testing.T) {
- 	if !slices.Equal(moveTargetKinds, wantTargets) {
- 		t.Errorf("moveTargetKinds = %v, want %v", moveTargetKinds, wantTargets)
- 	}
--	if !slices.Equal(moveUnmeasuredTargets, []string{"cursor"}) {
-+	if !slices.Equal(moveUnmeasuredTargets, []string{"cursor", "zz"}) {
- 		t.Errorf("moveUnmeasuredTargets = %v, want [cursor]", moveUnmeasuredTargets)
- 	}
- }
 diff --git a/workspace/agent/kind_lists_test.go b/workspace/agent/kind_lists_test.go
 index 713d3fd27..e5afb71b3 100644
 --- a/workspace/agent/kind_lists_test.go

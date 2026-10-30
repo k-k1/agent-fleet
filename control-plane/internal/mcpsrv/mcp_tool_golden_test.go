@@ -5,7 +5,7 @@ package mcpsrv
 // held to goldens under testdata/mcp_tools. A golden diff is a behaviour change and is
 // reviewed as one.
 //
-//	go test -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden ./internal/mcpsrv
+//	go test ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden
 
 import (
 	"bytes"

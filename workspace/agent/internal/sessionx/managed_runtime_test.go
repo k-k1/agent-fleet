@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"maps"
 	"reflect"
 	"runtime"
 	"slices"
@@ -21,8 +22,10 @@ import (
 // wantRuntime is the dispatch the per-kind switches in session_handlers.go made before
 // agents.ManagedRuntime replaced them: kind -> the package functions ManagedAlive / managedBusy /
 // managedInFlight / dropManagedRuntime / removeManagedLedger called. A nil row is "no runtime":
-// false, false, false, no-op, no-op. Every registered kind has a row, and so do spellings that
-// are not kinds, which the switches matched exactly and so answered as no runtime.
+// false, false, false, no-op, no-op. Only the kinds that had a runtime then, and spellings that
+// are not kinds (which the switches matched exactly), have a row. Which registered kind has a
+// runtime at all is TestManagedRuntimeFollowsCaps, derived from the registry: a new kind needs
+// no row here.
 var wantRuntime = map[string]*agents.ManagedRuntimeOps{
 	session.KindOpencode: {Alive: opencode.ManagedAlive, Busy: opencode.ManagedBusy, InFlight: opencode.ManagedInFlight, Drop: opencode.DropHandle, RemoveLedger: opencode.RemoveLedger},
 	session.KindCodex:    {Alive: codex.ManagedAlive, Busy: codex.ManagedBusy, InFlight: codex.ManagedInFlight, Drop: codex.DropHandle, RemoveLedger: codex.RemoveLedger},
@@ -31,10 +34,6 @@ var wantRuntime = map[string]*agents.ManagedRuntimeOps{
 	session.KindKiro:     {Alive: kiro.ManagedAlive, Busy: kiro.ManagedBusy, InFlight: kiro.ManagedInFlight, Drop: kiro.DropHandle, RemoveLedger: kiro.RemoveLedger},
 	session.KindLcpp:     {Alive: lcpp.ManagedAlive, Busy: lcpp.ManagedBusy, InFlight: lcpp.ManagedInFlight, Drop: lcpp.DropHandle, RemoveLedger: lcpp.RemoveLedger},
 	session.KindMuse:     {Alive: muse.ManagedAlive, Busy: muse.ManagedBusy, InFlight: muse.ManagedInFlight, Drop: muse.DropHandle, RemoveLedger: muse.RemoveLedger},
-	session.KindClaude:   nil,
-	session.KindAgy:      nil,
-	session.KindShell:    nil,
-	session.KindSSM:      nil,
 	// Not kinds: no NormalizeKind, no AgentOf claude fallback.
 	"":         nil,
 	"Codex":    nil,
@@ -61,11 +60,6 @@ func sameFunc(a, b any) bool {
 // Each kind dispatches to exactly the package functions the switches called, so a live handle
 // gets the same answer it did; the table also has to name every registered kind.
 func TestManagedRuntimeDispatchPinned(t *testing.T) {
-	for _, k := range RegisteredKinds() {
-		if _, ok := wantRuntime[k]; !ok {
-			t.Errorf("registered kind %q has no row in wantRuntime; decide whether it has a Managed runtime", k)
-		}
-	}
 	for kind, want := range wantRuntime {
 		got, ok := managedRuntimeOf(kind)
 		if ok != (want != nil) {
@@ -96,7 +90,7 @@ func TestManagedRuntimeDispatchPinned(t *testing.T) {
 // drop / ledger removal do nothing (and do not panic).
 func TestManagedRuntimeWithoutHandle(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for kind := range wantRuntime {
+	for _, kind := range append(RegisteredKinds(), slices.Collect(maps.Keys(wantRuntime))...) {
 		m := session.Meta{Name: "no-such-managed-runtime", Kind: kind, Driver: session.DriverManaged}
 		if ManagedAlive(m) || managedBusy(m) || managedInFlight(m) {
 			t.Errorf("%q: alive/busy/inFlight = %v/%v/%v without a handle, want all false",

@@ -22,11 +22,10 @@ func legacyPasteNeeded(kind, text string) bool {
 	return claudeRule
 }
 
-// Every registered kind is in exactly one of these two lists. A new kind must be placed on
-// purpose: pasteKinds by implementing agents.PromptPaste, literalKinds after checking that its
-// composer keeps an Enter that follows literal keys (copilot, cursor and kiro lose it).
-var literalKinds = []string{session.KindAgy, session.KindMuse, session.KindLcpp, session.KindShell, session.KindSSM}
-
+// pasteKinds are the kinds measured to need a paste for multi-line text, the ones legacyPasteNeeded
+// names plus claude. Opting a kind in means implementing agents.PromptPaste AND listing it here,
+// after checking that a paste reaches its composer. A kind that implements nothing types literal
+// keys, which is the default, so a new kind needs no row unless it opts into paste.
 var pasteKinds = []string{
 	session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCopilot,
 	session.KindCursor, session.KindKiro,
@@ -53,17 +52,13 @@ func TestPromptPasteMatchesLegacyChain(t *testing.T) {
 func TestPromptPasteClassifiesEveryRegisteredKind(t *testing.T) {
 	for _, kind := range RegisteredKinds() {
 		_, impl := AgentOf(kind).(agents.PromptPaste)
-		paste, literal := slices.Contains(pasteKinds, kind), slices.Contains(literalKinds, kind)
-		if paste == literal {
-			t.Errorf("%s: must be in exactly one of pasteKinds / literalKinds (paste=%v literal=%v)", kind, paste, literal)
-		}
-		if impl != paste {
+		if paste := slices.Contains(pasteKinds, kind); impl != paste {
 			t.Errorf("%s: implements agents.PromptPaste = %v, pasteKinds lists it = %v", kind, impl, paste)
 		}
 	}
-	for _, kind := range append(slices.Clone(pasteKinds), literalKinds...) {
+	for _, kind := range pasteKinds {
 		if _, ok := RegisteredAgent(kind); !ok {
-			t.Errorf("pasteKinds / literalKinds has %q, which is not a registered kind", kind)
+			t.Errorf("pasteKinds has %q, which is not a registered kind", kind)
 		}
 	}
 }

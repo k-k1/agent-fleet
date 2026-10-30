@@ -400,3 +400,17 @@ without a menu) moved into the claude package with the capability. A kind withou
 is not watched, which is what the old `switch` returned for every other kind.
 `TestUsageLimitTraitsMatchOldSwitch` holds the answers to a copy of the old switch over every
 registered kind and driver. The remaining sites stay in #2925.
+
+## Addendum (2026-10-30) — four registry-restating tests retired (#2933, first slice)
+
+`TestLabels`, the nil rows of `wantRuntime`, `literalKinds` and `moveClassification` /
+`TestMoveTargetListsAreUnchanged` no longer need an edit when a kind is added: each now derives
+its rows from the registry or from the production list it checked, and keeps only what is
+measured or shipped (labels, runtime function identities, `pasteKinds`, the three move refusals).
+`scripts/stub-kind-count.sh` on the refreshed `zz.patch`: 22 files with tests and Markdown (was
+25; test files 5 → 1), 17 non-test, non-Markdown files (was 16). The extra file is
+`sessionx/testdata/create_refusals.golden`, which lists the accepted kinds and which the script now
+regenerates; without it the count read 16. Not a full `--verify` (busy host): the stub's clone
+passes the `kinds`, `sessionx`, `agentreg`, `mcpx` and root packages of the agent and the CP's
+`mcpsrv` and `agentkinds`. `usageMeasuredByKind` and `noChatProvider` stay: nothing declares their
+"none" answer per kind, and a case line for it would raise the kind-literal ceiling.

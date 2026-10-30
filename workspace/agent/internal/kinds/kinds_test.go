@@ -105,21 +105,27 @@ func TestKnownIsExact(t *testing.T) {
 }
 
 // The product names the notification bridge writes into a chat message. A label edited here
-// changes what every connected Discord / Slack channel reads, so the set is pinned.
+// changes what every connected Discord / Slack channel reads, so the labels already shipped are
+// pinned. A newly registered kind needs no row: its label is its registry entry, and only has to
+// be a clean name (or empty, for a kind with no outward name).
 func TestLabels(t *testing.T) {
-	want := map[string]string{
+	shipped := map[string]string{
 		"claude": "Claude Code", "opencode": "opencode", "codex": "Codex", "copilot": "GitHub Copilot",
 		"cursor": "Cursor", "kiro": "Kiro", "agy": "Antigravity", "muse": "Muse Code",
 		"lcpp": "", "shell": "", "ssm": "",
 	}
-	for _, k := range All() {
-		l, ok := want[k]
-		if !ok {
-			t.Errorf("%q has no expected label; add it to this table", k)
+	for k, l := range shipped {
+		if !Known(k) {
+			t.Errorf("%q is pinned here but no longer registered; a kind is not removed silently", k)
 			continue
 		}
 		if got := Label(k); got != l {
 			t.Errorf("Label(%q) = %q, want %q", k, got, l)
+		}
+	}
+	for _, k := range All() {
+		if l := Label(k); l != strings.TrimSpace(l) {
+			t.Errorf("Label(%q) = %q has surrounding space", k, l)
 		}
 	}
 	if got := Label("pi"); got != "" {

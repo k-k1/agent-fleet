@@ -10,48 +10,89 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// moveClassification is every registered kind's answer as a TARGET of a move from a kind
-// that is not itself. A kind registered without a row here fails TestEveryKindIsClassifiedForMove.
-var moveClassification = map[string]string{
-	session.KindClaude:   "",
-	session.KindCodex:    "",
-	session.KindOpencode: "",
-	session.KindCopilot:  "",
-	session.KindAgy:      "",
-	session.KindMuse:     "",
-	session.KindKiro:     "",
-	session.KindCursor:   moveTargetNotMeasured,
-	session.KindLcpp:     moveTargetCannotRead,
-	session.KindShell:    moveTargetNotAnAgent,
-	session.KindSSM:      moveTargetNotAnAgent,
+// moveRefusals are the registered kinds that are deliberately not move targets, and the reason
+// each is refused. Every other registered kind must be on moveTargetKinds (answer "") or on
+// moveUnmeasuredTargets (answer moveTargetNotMeasured), which are where the measurement lives, so
+// adding a measured kind edits only those lists. A kind on neither list and not here is a kind
+// nobody has classified, and fails TestEveryKindIsClassifiedForMove.
+var moveRefusals = map[string]string{
+	session.KindLcpp:  moveTargetCannotRead,
+	session.KindShell: moveTargetNotAnAgent,
+	session.KindSSM:   moveTargetNotAnAgent,
+}
+
+// Measurements already shipped (ADR 0115 decision 9): these kinds are move targets, cursor is
+// offered as unmeasured, and the refusals above stand. A new kind needs no row here; moving one of
+// these between lists is a measurement change and edits this snapshot on purpose.
+var (
+	shippedMoveTargets    = []string{"claude", "codex", "opencode", "copilot", "agy", "muse", "kiro"}
+	shippedMoveUnmeasured = []string{"cursor"}
+)
+
+func TestShippedMoveClassificationHolds(t *testing.T) {
+	for _, k := range shippedMoveTargets {
+		if !slices.Contains(moveTargetKinds, k) {
+			t.Errorf("%q was a measured move target and is not on moveTargetKinds any more", k)
+		}
+	}
+	for _, k := range shippedMoveUnmeasured {
+		if !slices.Contains(moveUnmeasuredTargets, k) {
+			t.Errorf("%q was an unmeasured move target and is not on moveUnmeasuredTargets any more", k)
+		}
+	}
+	for k, want := range moveRefusals {
+		if got := moveTargetReason("other", k); got != want {
+			t.Errorf("moveTargetReason(other, %q) = %q, want %q", k, got, want)
+		}
+	}
+}
+
+// The lists are disjoint, duplicate-free and hold only registered kinds.
+func TestMoveListsAreWellFormed(t *testing.T) {
+	seen := map[string]string{}
+	for list, kinds := range map[string][]string{"moveTargetKinds": moveTargetKinds, "moveUnmeasuredTargets": moveUnmeasuredTargets} {
+		for _, k := range kinds {
+			if prev, dup := seen[k]; dup {
+				t.Errorf("%q is on %s and %s", k, prev, list)
+			}
+			seen[k] = list
+		}
+	}
+	for _, list := range [][]string{moveTargetKinds, moveUnmeasuredTargets} {
+		if len(slices.Compact(slices.Sorted(slices.Values(list)))) != len(list) {
+			t.Errorf("a move target list has a duplicate: %v", list)
+		}
+	}
 }
 
 func TestEveryKindIsClassifiedForMove(t *testing.T) {
 	for _, k := range RegisteredKinds() {
-		want, ok := moveClassification[k]
-		if !ok {
-			t.Errorf("kind %q is registered but not classified as a move target: measure it and add it to moveTargetKinds, moveUnmeasuredTargets or the refusals in moveTargetReason, then add a row to moveClassification", k)
+		want, refused := moveRefusals[k]
+		switch {
+		case slices.Contains(moveTargetKinds, k):
+			want = ""
+		case slices.Contains(moveUnmeasuredTargets, k):
+			want = moveTargetNotMeasured
+		case !refused:
+			t.Errorf("kind %q is registered but not classified as a move target: measure it and add it to moveTargetKinds or moveUnmeasuredTargets, or refuse it with a reason in moveRefusals", k)
 			continue
+		}
+		if refused && (slices.Contains(moveTargetKinds, k) || slices.Contains(moveUnmeasuredTargets, k)) {
+			t.Errorf("kind %q is both refused and on a target list", k)
 		}
 		if got := moveTargetReason("other", k); got != want {
 			t.Errorf("moveTargetReason(other, %q) = %q, want %q", k, got, want)
 		}
 	}
-	for k := range moveClassification {
+	for k := range moveRefusals {
 		if _, ok := RegisteredAgent(k); !ok {
-			t.Errorf("moveClassification has %q, which is not a registered kind", k)
+			t.Errorf("moveRefusals has %q, which is not a registered kind", k)
 		}
 	}
-}
-
-// The pre-change answer, as literals: the two lists a kind can be on, in order.
-func TestMoveTargetListsAreUnchanged(t *testing.T) {
-	wantTargets := []string{"claude", "codex", "opencode", "copilot", "agy", "muse", "kiro"}
-	if !slices.Equal(moveTargetKinds, wantTargets) {
-		t.Errorf("moveTargetKinds = %v, want %v", moveTargetKinds, wantTargets)
-	}
-	if !slices.Equal(moveUnmeasuredTargets, []string{"cursor"}) {
-		t.Errorf("moveUnmeasuredTargets = %v, want [cursor]", moveUnmeasuredTargets)
+	for _, k := range append(slices.Clone(moveTargetKinds), moveUnmeasuredTargets...) {
+		if _, ok := RegisteredAgent(k); !ok {
+			t.Errorf("a move target list has %q, which is not a registered kind", k)
+		}
 	}
 }
 
