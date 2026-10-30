@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -41,6 +42,26 @@ func (agentImpl) RecordedModel(m session.Meta) string {
 		return ""
 	}
 	return recordedModelOf(st)
+}
+
+// RecordedModelMissing says why RecordedModel is empty: no store.db yet, an unreadable one, or
+// a meta row without lastUsedModel (its key names are listed; the values are never read out,
+// the row holds the chat's blob key). "" when a model is recorded.
+func (agentImpl) RecordedModelMissing(m session.Meta) string {
+	st, exists, ok := chatStore(sids.Read(session.UUID(m.Dir, m.Name)))
+	return recordedMissingWhy(st, exists, ok)
+}
+
+func recordedMissingWhy(st chatMeta, exists, ok bool) string {
+	switch {
+	case !exists:
+		return "no store.db for the chat"
+	case !ok:
+		return "store.db could not be read"
+	case recordedModelOf(st) != "":
+		return ""
+	}
+	return "store.db meta has no lastUsedModel; keys: " + strings.Join(st.Keys, ",")
 }
 
 func recordedModelOf(st chatMeta) string {
@@ -78,6 +99,8 @@ func chatStore(chatID string) (st chatMeta, exists, ok bool) {
 type chatMeta struct {
 	Mode          string `json:"mode"`
 	LastUsedModel string `json:"lastUsedModel"`
+	// Keys are the field names the row carries, for a diagnostic only.
+	Keys []string `json:"-"`
 }
 
 func readChatMeta(path string) (chatMeta, bool) {
@@ -98,6 +121,12 @@ func readChatMeta(path string) (chatMeta, bool) {
 	if json.Unmarshal(raw, &st) != nil {
 		return chatMeta{}, false
 	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	for k := range fields {
+		st.Keys = append(st.Keys, k)
+	}
+	sort.Strings(st.Keys)
 	return st, true
 }
 

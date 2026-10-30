@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -52,7 +53,7 @@ func TestReadChatMeta(t *testing.T) {
 	}
 	db.Close()
 	st, ok := readChatMeta(path)
-	if !ok || st.Mode != "plan" || st.LastUsedModel != "composer-2.5" {
+	if !ok || st.Mode != "plan" || st.LastUsedModel != "composer-2.5" || strings.Join(st.Keys, ",") != "agentId,blobEncryptionKey,isRunEverything,lastUsedModel,mode,name" {
 		t.Errorf("readChatMeta = %+v, %v", st, ok)
 	}
 	if _, ok := readChatMeta(filepath.Join(t.TempDir(), "missing.db")); ok {
@@ -77,5 +78,24 @@ func TestRecordedModelSurvivesWhereRecallDropsTheFlag(t *testing.T) {
 	}
 	if got := recordedModelOf(chatMeta{}); got != "" {
 		t.Errorf("nothing stored read as %q", got)
+	}
+}
+
+func TestRecordedMissingWhy(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		st         chatMeta
+		exists, ok bool
+		want       string
+	}{
+		{"no store yet", chatMeta{}, false, false, "no store.db"},
+		{"unreadable", chatMeta{}, true, false, "could not be read"},
+		{"field absent", chatMeta{Keys: []string{"agentId", "mode"}}, true, true, "keys: agentId,mode"},
+		{"recorded", chatMeta{LastUsedModel: "composer-2.5"}, true, true, ""},
+	} {
+		got := recordedMissingWhy(c.st, c.exists, c.ok)
+		if (c.want == "" && got != "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: got %q, want it to contain %q", c.name, got, c.want)
+		}
 	}
 }

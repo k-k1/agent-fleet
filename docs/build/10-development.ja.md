@@ -77,6 +77,10 @@ CLI は通常 §10.2.2 が自動で開く版上げ PR で上がる。下の手�
    （`cli-contract-report.sh advisory`。ピンが最新でもこの行がある間は issue を開いたままにする）で
    見せる。次に通った実行で行は消える。cap を `false` にするのは、プローブが失敗を観測してから
    にする。下の「caps drift probes を blocking に昇格する」を参照。
+   model-override プローブは、試した全モデルを CLI 自身が起動拒否した場合（copilot の
+   `Model "X" from --model flag is not available`。アカウントやプランの上限）は `DRIFT` ではなく
+   `PROBE-ERROR` を報告する。黙って別モデルで動く CLI は従来どおり `DRIFT`。CLI 自身のストアに
+   モデルが記録されるまで最大 15 秒待つ。
 6. **ホストに反映**: `run-dev.sh`。ビルド直後にイメージスモーク（L1）が走る。既定の lean
    イメージでは `versions.json` が新しいピンを持ち、CLI が焼かれていないことを確かめる。
    `BAKE_AGENT_CLIS=1` なら導入された版も確かめる。
