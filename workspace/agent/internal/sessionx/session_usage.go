@@ -170,18 +170,19 @@ func UsageTurns(m session.Meta) []transcript.Turn {
 	return td.Turns
 }
 
-// SubagentLogs lists the session's subagent transcripts, nil for a kind that keeps none apart.
-func SubagentLogs(m session.Meta) []string {
+// SubagentLogs lists the session's subagent transcripts grouped by agent (every copy of one
+// agent's transcript in one group), nil for a kind that keeps none apart.
+func SubagentLogs(m session.Meta) [][]string {
 	if sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader); ok {
 		return sr.SubagentLogs(m)
 	}
 	return nil
 }
 
-// SubagentTurns parses one transcript from SubagentLogs, every turn marked Sidechain.
-func SubagentTurns(m session.Meta, path string) ([]transcript.Turn, error) {
+// SubagentTurns parses one agent's group from SubagentLogs, every turn marked Sidechain.
+func SubagentTurns(m session.Meta, paths []string) ([]transcript.Turn, error) {
 	if sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader); ok {
-		return sr.SubagentTurns(path)
+		return sr.SubagentTurns(paths)
 	}
 	return nil, nil
 }
@@ -190,8 +191,8 @@ func SubagentTurns(m session.Meta, path string) ([]transcript.Turn, error) {
 // that cannot be read is left out: this is an on-demand figure, read again on the next call.
 func SubagentUsageTurns(m session.Meta) [][]transcript.Turn {
 	var out [][]transcript.Turn
-	for _, p := range SubagentLogs(m) {
-		if turns, err := SubagentTurns(m, p); err == nil {
+	for _, paths := range SubagentLogs(m) {
+		if turns, err := SubagentTurns(m, paths); err == nil {
 			out = append(out, turns)
 		}
 	}

@@ -158,7 +158,7 @@ func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
 		t.Fatalf("spend with an unreadable agent = %v, want 22.50", sp.USD)
 	}
 	subagentRowsCache.Lock()
-	_, cached := subagentRowsCache.m[m.Name].files[unreadable]
+	_, cached := subagentRowsCache.m[m.Name].agents[unreadable]
 	subagentRowsCache.Unlock()
 	if cached {
 		t.Fatal("a failed read was cached; the agent would never be read again")

@@ -257,12 +257,14 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 func (agentImpl) ClearResume(sid string) { _ = StartFresh(sid) }
 
 // SubagentLogs implements agents.SubagentUsageReader.
-func (agentImpl) SubagentLogs(m session.Meta) []string {
+func (agentImpl) SubagentLogs(m session.Meta) [][]string {
 	return SubagentUsageLogs(session.UUID(m.Dir, m.Name))
 }
 
 // SubagentTurns implements agents.SubagentUsageReader.
-func (agentImpl) SubagentTurns(path string) ([]transcript.Turn, error) { return SubagentTurns(path) }
+func (agentImpl) SubagentTurns(paths []string) ([]transcript.Turn, error) {
+	return SubagentTurns(paths)
+}
 
 var _ agents.SubagentUsageReader = agentImpl{}
 

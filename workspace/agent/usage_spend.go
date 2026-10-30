@@ -10,8 +10,10 @@ package main
 // read, and adding its rows to a transcript sum would count every turn twice.
 
 import (
+	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,16 +27,15 @@ func sessionSpend(m session.Meta) session.Spend {
 	return spendOfRows(m, foldTurnRows(sessionx.UsageTurns(m), true), subagentSpendRows(m))
 }
 
-// subagentRowsEntry is one subagent transcript folded into rows, valid while the file keeps
-// this size and mtime.
+// subagentRowsEntry is one agent's transcripts folded into rows, valid while every copy keeps
+// the size and mtime recorded in stamp.
 type subagentRowsEntry struct {
-	size  int64
-	mtime time.Time
+	stamp string
 	rows  []usageTurnRow
 }
 
 // subagentRowsCache holds each session's subagent transcripts already folded, keyed by session
-// name and then by path. A Workflow run leaves a hundred or more of them, and the budget sweep
+// name and then by agent (its copies' paths). A Workflow run leaves a hundred or more of them, and the budget sweep
 // prices a capped session every spendCacheTTL: re-reading them all each time costs tens of
 // megabytes per tick on network storage, while only the agents still running ever change.
 var subagentRowsCache = struct {
@@ -44,7 +45,7 @@ var subagentRowsCache = struct {
 
 type subagentRowsCacheSession struct {
 	createdAt string // a recreated name is a new session; never serve its predecessor's rows
-	files     map[string]subagentRowsEntry
+	agents    map[string]subagentRowsEntry
 	used      time.Time
 }
 
@@ -62,41 +63,49 @@ func subagentSpendRows(m session.Meta) []usageTurnRow {
 }
 
 func subagentSpendRowsAt(m session.Meta, now time.Time) []usageTurnRow {
-	logs := sessionx.SubagentLogs(m)
+	groups := sessionx.SubagentLogs(m)
 	subagentRowsCache.Lock()
 	prev := subagentRowsCache.m[m.Name]
 	subagentRowsCache.Unlock()
 	if prev.createdAt != m.CreatedAt {
-		prev.files = nil
+		prev.agents = nil
 	}
-	next := subagentRowsCacheSession{createdAt: m.CreatedAt, files: make(map[string]subagentRowsEntry, len(logs)), used: now}
+	next := subagentRowsCacheSession{createdAt: m.CreatedAt, agents: make(map[string]subagentRowsEntry, len(groups)), used: now}
 	var rows []usageTurnRow
-	for _, p := range logs {
+	for _, paths := range groups {
 		// Stat before reading: a file that grows in between is read with more than the cached
-		// size says, so the next call sees a different size and reads it again.
-		fi, err := os.Stat(p)
-		if err != nil {
+		// size says, so the next call sees a different stamp and reads it again.
+		var live []string
+		var stamp strings.Builder
+		for _, p := range paths {
+			if fi, err := os.Stat(p); err == nil {
+				live = append(live, p)
+				fmt.Fprintf(&stamp, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
+			}
+		}
+		if len(live) == 0 {
 			continue
 		}
-		e, ok := prev.files[p]
-		if !ok || e.size != fi.Size() || !e.mtime.Equal(fi.ModTime()) {
-			turns, err := sessionx.SubagentTurns(m, p)
+		key := strings.Join(paths, "\x00")
+		e, ok := prev.agents[key]
+		if !ok || e.stamp != stamp.String() {
+			turns, err := sessionx.SubagentTurns(m, live)
 			if err != nil {
 				// Not cached, so the next call reads it again; until then the last good fold
 				// stands in, an undercount of only what was appended since.
 				if ok {
-					next.files[p] = e
+					next.agents[key] = e
 					rows = append(rows, e.rows...)
 				}
 				continue
 			}
-			e = subagentRowsEntry{size: fi.Size(), mtime: fi.ModTime(), rows: foldTurnRows(turns, true)}
+			e = subagentRowsEntry{stamp: stamp.String(), rows: foldTurnRows(turns, true)}
 		}
-		next.files[p] = e
+		next.agents[key] = e
 		rows = append(rows, e.rows...)
 	}
 	subagentRowsCache.Lock()
-	if len(next.files) == 0 {
+	if len(next.agents) == 0 {
 		delete(subagentRowsCache.m, m.Name)
 	} else {
 		subagentRowsCache.m[m.Name] = next

@@ -77,18 +77,34 @@ func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) 
 	return fallback, fallbackPath, matched
 }
 
-// SubagentTurns parses one subagent or Workflow-agent transcript (a path from SubagentUsageLogs)
-// for usage, every turn marked Sidechain. Claude writes these beside the session's own
-// transcript and never into it, so a usage figure read from TranscriptRead alone leaves out
-// everything the session delegated.
+// SubagentTurns parses one subagent or Workflow-agent transcript for usage — every copy of one
+// agent, a group from SubagentUsageLogs — every turn marked Sidechain. Claude writes these
+// beside the session's own transcript and never into it, so a usage figure read from
+// TranscriptRead alone leaves out everything the session delegated.
+//
+// Copies are merged line by line: a line is kept once by its uuid and the rest are put in time
+// order before the turns are collected, so a response found in two copies is counted once (the
+// requestId dedup runs over the merged lines) while a call only one copy holds still counts.
+// Neither copy is assumed to be the complete one: a newer mtime proves nothing about that.
 //
 // Unlike CollectTurns it has no 1 MiB cap: the cap keeps the newest turns, so a long agent's
 // oldest calls would drop out and its spend would fall as it grew. A read error is returned,
 // not read as an empty agent, so a caller that caches the result does not keep a hole.
-func SubagentTurns(path string) ([]transcript.Turn, error) {
-	lines, err := readJSONLLinesErr(path)
-	if err != nil {
-		return nil, err
+func SubagentTurns(paths []string) ([]transcript.Turn, error) {
+	var lines [][]byte
+	for i, p := range paths {
+		ls, err := readJSONLLinesErr(p)
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			lines = ls
+			continue
+		}
+		lines = append(lines, ls...)
+	}
+	if len(paths) > 1 {
+		lines = mergeCopies(lines)
 	}
 	turns := collectTurns(lines, 0, len(lines), false, false)
 	for i := range turns {
@@ -97,23 +113,53 @@ func SubagentTurns(path string) ([]transcript.Turn, error) {
 	return turns, nil
 }
 
-// SubagentUsageLogs is SubagentLogs with each agent listed once. subagentBases can name the
-// subagents directory under more than one project directory; an agent found in two of them is
-// one agent, and counting both copies would charge its spend twice. The newest copy is kept.
-func SubagentUsageLogs(sid string) []string {
-	var out []string
-	seen := map[string]int{}
+// mergeCopies drops lines whose uuid an earlier line already had and stable-sorts the rest by
+// timestamp. A line with no uuid is kept; one with no parseable timestamp keeps its place
+// relative to its neighbours as far as a stable sort allows.
+func mergeCopies(lines [][]byte) [][]byte {
+	type keyed struct {
+		line []byte
+		at   time.Time
+	}
+	seen := map[string]bool{}
+	var out []keyed
+	for _, ln := range lines {
+		var ev struct {
+			UUID      string `json:"uuid"`
+			Timestamp string `json:"timestamp"`
+		}
+		_ = json.Unmarshal(ln, &ev)
+		if ev.UUID != "" {
+			if seen[ev.UUID] {
+				continue
+			}
+			seen[ev.UUID] = true
+		}
+		at, _ := time.Parse(time.RFC3339Nano, ev.Timestamp)
+		out = append(out, keyed{ln, at})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
+	merged := make([][]byte, len(out))
+	for i, k := range out {
+		merged[i] = k.line
+	}
+	return merged
+}
+
+// SubagentUsageLogs is SubagentLogs grouped by agent. subagentBases can name the subagents
+// directory under more than one project directory, and an agent found in two of them is one
+// agent: pricing each copy would charge its spend twice. SubagentTurns merges a group.
+func SubagentUsageLogs(sid string) [][]string {
+	var out [][]string
+	at := map[string]int{}
 	for _, p := range SubagentLogs(sid) {
 		rel := subagentRel(p)
-		i, dup := seen[rel]
-		if !dup {
-			seen[rel] = len(out)
-			out = append(out, p)
+		if i, ok := at[rel]; ok {
+			out[i] = append(out[i], p)
 			continue
 		}
-		if jsonlMtime(p).After(jsonlMtime(out[i])) {
-			out[i] = p
-		}
+		at[rel] = len(out)
+		out = append(out, []string{p})
 	}
 	return out
 }
