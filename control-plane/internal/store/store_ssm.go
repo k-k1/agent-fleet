@@ -32,6 +32,20 @@ type SSMProfile struct {
 	// UPDATE, ignoring ConfirmUse: a write that did not name the field must not put back a
 	// value read before another write changed it (ADR 0126 decision 8). Never stored.
 	KeepConfirmUse bool
+	// SignInID is the shared sign-in the profile is in, "" for a sign-in of its own (ADR
+	// 0125). SignInName is that sign-in's name, read with the row.
+	SignInID, SignInName string
+	// SignIn is what a create or an update does with the profile's sign-in. Never stored.
+	SignIn SignInWrite
+}
+
+// SignInWrite is a write's instruction for the profile's sign-in. The zero value keeps the
+// sign-in an update finds on the row (a create gets none): a write that did not name it must
+// not move the profile (ADR 0125 decision 11).
+type SignInWrite struct {
+	// Set is true when the write names the sign-in; Name "" then leaves any sign-in.
+	Set  bool
+	Name string
 }
 
 // The values of SSMProfile.Kind.
@@ -84,6 +98,9 @@ type SSMStore interface {
 	CreateSSMProfile(ctx context.Context, p SSMProfile) error
 	UpdateSSMProfile(ctx context.Context, p SSMProfile) error
 	DeleteSSMProfile(ctx context.Context, id, membershipID string) error
+	ListSSMSignIns(ctx context.Context, membershipID string) ([]SSMSignIn, error)
+	GetSSMSignIn(ctx context.Context, id string) (SSMSignIn, bool, error)
+	UpdateSSMSignIn(ctx context.Context, si SSMSignIn) (bool, error)
 	ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error)
 	GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error)
 	CreateSSMHost(ctx context.Context, h SSMHost) error
@@ -94,14 +111,16 @@ type SSMStore interface {
 // --- SSM login config (docs/log/p3-ssm-session.md) --------------------------
 
 const ssmProfileCols = `SELECT id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
-	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use FROM ssm_profile`
+	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, sign_in_id,
+	COALESCE((SELECT si.name FROM ssm_sign_in si WHERE si.id = ssm_profile.sign_in_id), '') FROM ssm_profile`
 
 func scanSSMProfile(row scanner) (SSMProfile, error) {
 	var p SSMProfile
 	var confirm int
 	err := row.Scan(&p.ID, &p.MembershipID, &p.Label, &p.StartURL, &p.SSORegion,
 		&p.AccountID, &p.RoleName, &p.Region, &p.CreatedAt,
-		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds, &confirm)
+		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds, &confirm,
+		&p.SignInID, &p.SignInName)
 	p.ConfirmUse = confirm != 0
 	return p, err
 }
@@ -165,15 +184,27 @@ func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := lockSSMMember(ctx, tx, p.MembershipID); err != nil {
+		return err
+	}
 	if err := checkSSMSource(ctx, tx, p); err != nil {
 		return err
 	}
+	if p.SignIn.Set && p.SignIn.Name != "" {
+		if err := joinSignIn(ctx, tx, &p); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
-			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, sign_in_id)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.MembershipID, p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region, p.CreatedAt,
-		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds, boolInt(p.ConfirmUse)); err != nil {
+		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds, boolInt(p.ConfirmUse),
+		p.SignInID); err != nil {
+		return err
+	}
+	if err := checkSignInNames(ctx, tx, p.MembershipID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -195,8 +226,33 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := lockSSMMember(ctx, tx, p.MembershipID); err != nil {
+		return err
+	}
 	if err := checkSSMSource(ctx, tx, p); err != nil {
 		return err
+	}
+	// The row as it is now, under the member's lock: what an update that does not name the
+	// sign-in keeps.
+	cur, err := scanSSMProfile(tx.QueryRowContext(ctx, ssmProfileCols+` WHERE id=? AND membership_id=?`, p.ID, p.MembershipID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case !p.SignIn.Set && cur.SignInID != "" && ssmKindOrDefault(p.Kind) == SSMKindSSO:
+		p.SignIn = SignInWrite{Set: true, Name: cur.SignInName}
+	case !p.SignIn.Set:
+		p.SignIn = SignInWrite{Set: true}
+	}
+	if p.SignIn.Name != "" {
+		if err := joinSignIn(ctx, tx, &p); err != nil {
+			return err
+		}
+	} else {
+		p.SignInID = ""
 	}
 	if p.Kind == SSMKindAssumeRole {
 		found, err := lockSSMProfile(ctx, tx, p.ID, p.MembershipID)
@@ -221,12 +277,20 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?,
 			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?,
-			confirm_use = CASE WHEN ? = 1 THEN confirm_use ELSE ? END
+			confirm_use = CASE WHEN ? = 1 THEN confirm_use ELSE ? END, sign_in_id=?
 		   WHERE id=? AND membership_id=?`,
 		p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region,
 		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds,
-		keep, boolInt(p.ConfirmUse),
+		keep, boolInt(p.ConfirmUse), p.SignInID,
 		p.ID, p.MembershipID); err != nil {
+		return err
+	}
+	if cur.SignInID != "" && cur.SignInID != p.SignInID {
+		if err := dropEmptySignIn(ctx, tx, cur.SignInID); err != nil {
+			return err
+		}
+	}
+	if err := checkSignInNames(ctx, tx, p.MembershipID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -275,8 +339,15 @@ func (s *SQL) DeleteSSMProfile(ctx context.Context, id, membershipID string) err
 		return err
 	}
 	defer tx.Rollback()
+	if err := lockSSMMember(ctx, tx, membershipID); err != nil {
+		return err
+	}
 	found, err := lockSSMProfile(ctx, tx, id, membershipID)
 	if err != nil || !found {
+		return err
+	}
+	var signInID string
+	if err := tx.QueryRowContext(ctx, `SELECT sign_in_id FROM ssm_profile WHERE id=?`, id).Scan(&signInID); err != nil {
 		return err
 	}
 	rows, err := tx.QueryContext(ctx, ssmHostCols+` WHERE profile_id=? ORDER BY alias`, id)
@@ -306,6 +377,11 @@ func (s *SQL) DeleteSSMProfile(ctx context.Context, id, membershipID string) err
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID); err != nil {
 		return err
+	}
+	if signInID != "" {
+		if err := dropEmptySignIn(ctx, tx, signInID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

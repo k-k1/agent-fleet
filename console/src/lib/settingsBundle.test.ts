@@ -323,3 +323,17 @@ describe("confirm before use in a bundle", () => {
     expect(plan.profiles.find((p) => p.label === "plain")?.confirmBeforeUse).toBeUndefined();
   });
 });
+
+// ADR 0125: an SSO profile's shared sign-in survives an export and an import, by name (the
+// import joins or creates it); a chain carries none, and an entry without one keeps its bytes.
+describe("shared sign-ins in a bundle", () => {
+  const sso = { id: "s1", label: "main", startUrl: "https://c.awsapps.com/start", ssoRegion: "us-east-1", accountId: "1", roleName: "R", region: "" };
+  it("is carried on sso entries only", () => {
+    const out = toSsmSection([{ ...sso, signIn: "corp" }, { ...sso, id: "s2", label: "plain" }], []);
+    expect(out.profiles[0].signIn).toBe("corp");
+    expect("signIn" in out.profiles[1]).toBe(false);
+    const plan = planSsmImport(out, [], []);
+    expect(plan.profiles.find((p) => p.label === "main")?.signIn).toBe("corp");
+    expect(plan.profiles.find((p) => p.label === "plain")?.signIn).toBeUndefined();
+  });
+});

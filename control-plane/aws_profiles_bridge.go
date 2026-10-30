@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -99,6 +100,11 @@ type awsProfileWire struct {
 	// ConfirmBeforeUse: af-aws-exec asks the member in the Console before the first use in a
 	// session, and the profile is not written to ~/.aws/config (ADR 0126 decisions 4 to 6).
 	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
+	// SignIn and SignInID name the shared sign-in an SSO profile is in (ADR 0125): its
+	// sso-session is af-<SignIn>. Absent for a sign-in of its own. An Agent that predates them
+	// renders af-<Name> with the copied portal: a separate login, never another member's.
+	SignIn   string `json:"signIn,omitempty"`
+	SignInID string `json:"signInId,omitempty"`
 }
 
 // awsProfilesVersionHeader names the bridge version on both sides (ADR 0126 decision 8). An
@@ -221,7 +227,70 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 		out = append(out, awsProfileWire{
 			ID: p.ID, Name: name, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
 			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, ConfirmBeforeUse: p.ConfirmUse,
+			SignIn: p.SignInName, SignInID: p.SignInID,
 		})
 	}
-	return out, conflicts
+	return withoutSessionCollisions(out, conflicts)
+}
+
+// withoutSessionCollisions leaves out every SSO profile whose sso-session name another owner
+// renders too (ADR 0125 decision 2): a sign-in named like a profile with a sign-in of its own.
+// The store refuses that state, but rows an older binary wrote after a rollback can hold it.
+// It holds whatever the portals: two equal portals under one name would share a login nobody
+// asked to share. Members of one sign-in render one name by design and are no collision. A
+// chain whose source is left out goes too.
+func withoutSessionCollisions(ps []awsProfileWire, conflicts []awsProfileConflict) ([]awsProfileWire, []awsProfileConflict) {
+	type owners struct {
+		ids    map[string]bool
+		labels []string
+	}
+	bySession := map[string]*owners{}
+	for _, p := range ps {
+		if p.Kind == store.SSMKindAssumeRole {
+			continue
+		}
+		session, owner := p.Name, "profile:"+p.ID
+		if p.SignIn != "" {
+			session, owner = p.SignIn, "sign-in:"+p.SignInID
+		}
+		o := bySession[session]
+		if o == nil {
+			o = &owners{ids: map[string]bool{}}
+			bySession[session] = o
+		}
+		o.ids[owner] = true
+		o.labels = append(o.labels, p.Label)
+	}
+	drop := map[string]bool{}
+	for session, o := range bySession {
+		if len(o.ids) > 1 {
+			drop[session] = true
+			conflicts = append(conflicts, awsProfileConflict{Name: session, Labels: o.labels})
+		}
+	}
+	if len(drop) == 0 {
+		return ps, conflicts
+	}
+	gone := map[string]bool{}
+	out := ps[:0:0]
+	for _, p := range ps {
+		session := p.Name
+		if p.SignIn != "" {
+			session = p.SignIn
+		}
+		if p.Kind != store.SSMKindAssumeRole && drop[session] {
+			gone[p.Name] = true
+			continue
+		}
+		out = append(out, p)
+	}
+	final := out[:0:0]
+	for _, p := range out {
+		if p.Kind == store.SSMKindAssumeRole && gone[p.SourceProfile] {
+			continue
+		}
+		final = append(final, p)
+	}
+	sort.Slice(conflicts, func(i, j int) bool { return conflicts[i].Name < conflicts[j].Name })
+	return final, conflicts
 }

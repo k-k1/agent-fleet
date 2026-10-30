@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -61,6 +62,21 @@ type ssmProfileDTO struct {
 	// predates the field) leaves the stored value alone instead of removing the gate
 	// (decision 8); it is emitted only when true.
 	ConfirmBeforeUse *bool `json:"confirmBeforeUse,omitempty"`
+	// SignIn names the shared sign-in the profile is in (ADR 0125), absent for a sign-in of
+	// its own. On a write: absent keeps the profile's sign-in, "" leaves it, a name joins that
+	// sign-in or creates it from startUrl and ssoRegion. A pointer for the same reason as
+	// ConfirmBeforeUse.
+	SignIn *string `json:"signIn,omitempty"`
+}
+
+// ssmSignInDTO is one shared sign-in (ADR 0125 decision 3): its portal and the profiles in it.
+type ssmSignInDTO struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	StartURL  string   `json:"startUrl"`
+	SSORegion string   `json:"ssoRegion"`
+	CreatedAt string   `json:"createdAt"`
+	Profiles  []string `json:"profiles"`
 }
 
 type ssmHostDTO struct {
@@ -78,7 +94,24 @@ func profileToDTO(p store.SSMProfile) ssmProfileDTO {
 		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt,
 		Kind: ssmKindOf(p), SourceProfileID: p.SourceProfileID, RoleARN: p.RoleARN,
 		ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds,
-		ConfirmBeforeUse: confirmPtr(p.ConfirmUse)}
+		ConfirmBeforeUse: confirmPtr(p.ConfirmUse), SignIn: signInPtr(p)}
+}
+
+// signInPtr is SignIn as the wire carries it: present only for a profile in a shared sign-in.
+func signInPtr(p store.SSMProfile) *string {
+	if p.SignInID == "" {
+		return nil
+	}
+	n := p.SignInName
+	return &n
+}
+
+// signInWrite turns the DTO's signIn into the store's instruction.
+func signInWrite(in ssmProfileDTO) store.SignInWrite {
+	if in.SignIn == nil {
+		return store.SignInWrite{}
+	}
+	return store.SignInWrite{Set: true, Name: strings.TrimSpace(*in.SignIn)}
 }
 
 // confirmPtr is ConfirmBeforeUse as the wire carries it: present only when set.
@@ -193,16 +226,25 @@ func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfil
 		if in.SourceProfileID != "" || in.RoleARN != "" || in.ExternalID != "" || in.SessionName != "" || in.DurationSeconds != 0 {
 			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "sourceProfileId, roleArn, externalId, sessionName and durationSeconds belong to kind assume_role"}
 		}
-		if !httpsURLRe.MatchString(p.StartURL) {
+		// A profile that joins a sign-in may leave the portal to it; one it gives must be whole.
+		joining := in.SignIn != nil && strings.TrimSpace(*in.SignIn) != ""
+		if (!joining || p.StartURL != "") && !httpsURLRe.MatchString(p.StartURL) {
 			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
 		}
-		if p.SSORegion == "" {
+		if p.SSORegion == "" && (!joining || p.StartURL != "") {
 			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
 		}
+		if joining && !store.SignInNameRe.MatchString(strings.TrimSpace(*in.SignIn)) {
+			return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_sign_in", "signIn must be 1-61 characters of letters, digits and ._@-"}
+		}
+		p.SignIn = signInWrite(in)
 		return p, nil
 	case store.SSMKindAssumeRole:
 	default:
 		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "kind must be sso or assume_role"}
+	}
+	if in.SignIn != nil && strings.TrimSpace(*in.SignIn) != "" {
+		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_sign_in", "an assume_role profile has no sign-in of its own: it follows its source's"}
 	}
 	if p.StartURL != "" || p.SSORegion != "" || p.RoleName != "" {
 		return store.SSMProfile{}, &apiError{http.StatusBadRequest, "bad_kind", "an assume_role profile has no portal of its own: leave startUrl, ssoRegion and roleName empty"}
@@ -242,6 +284,16 @@ func validateProfile(mv store.MembershipView, in ssmProfileDTO) (store.SSMProfil
 func profileWriteErr(w http.ResponseWriter, err error) {
 	var inUse *store.SSMProfileInUseError
 	switch {
+	case errors.As(err, new(*store.SignInNameTakenError)):
+		writeAPIErr(w, &apiError{http.StatusConflict, "sign_in_name_taken", err.Error() + "; rename the sign-in or that profile"})
+	case errors.Is(err, store.ErrSignInMismatch):
+		writeAPIErr(w, &apiError{http.StatusConflict, "sign_in_mismatch", "the sign-in has another start URL or SSO region; change the sign-in's portal instead"})
+	case errors.Is(err, store.ErrSignInExists):
+		writeAPIErr(w, &apiError{http.StatusConflict, "sign_in_exists", "you already have a sign-in of that name"})
+	case errors.Is(err, store.ErrSignInInvalid):
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_sign_in", "a new sign-in needs a name of letters, digits and ._@- (at most 61) and an https:// startUrl and an ssoRegion"})
+	case errors.Is(err, store.ErrSignInKind):
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_sign_in", "only an sso profile joins a sign-in"})
 	case errors.Is(err, store.ErrSSMSourceInvalid):
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_source", "sourceProfileId must name one of your own sso profiles (not an assume_role profile)"})
 	case errors.As(err, &inUse):
@@ -268,6 +320,9 @@ func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ st
 	if err := a.store.CreateSSMProfile(r.Context(), p); err != nil {
 		profileWriteErr(w, err)
 		return
+	}
+	if saved, ok, err := a.store.GetSSMProfile(r.Context(), p.ID); err == nil && ok {
+		p = saved
 	}
 	writeJSON(w, http.StatusCreated, profileToDTO(p))
 }
@@ -478,17 +533,21 @@ func (a ssmConfigAPI) deleteHost(w http.ResponseWriter, r *http.Request, _ store
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ssmProfileRe strips characters unsafe for an ~/.aws/config profile header.
-var ssmProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
-
-// ssmProfileName derives a stable aws profile name from a profile label.
-func ssmProfileName(label string) string {
-	p := ssmProfileRe.ReplaceAllString(strings.TrimSpace(label), "-")
-	if p == "" {
-		p = "ssm"
+// ssmSignInJSON adds what an SSM session or the instance list needs to use the login the
+// workspace keeps for src (ADR 0125 decision 3): the owner of its token (the sign-in, or the
+// profile itself), and the sso-session of a profile in a shared sign-in. An Agent that does not
+// know the keys renders af-<profile>, a login of its own.
+func ssmSignInJSON(src store.SSMProfile, m map[string]any, sessionKey, ownerKey string) {
+	m[ownerKey] = src.ID
+	if src.SignInID != "" {
+		m[sessionKey] = "af-" + src.SignInName
+		m[ownerKey] = src.SignInID
 	}
-	return p
 }
+
+// ssmProfileName derives a stable aws profile name from a profile label. The store holds the
+// rule, because its sign-in name check needs the same names.
+func ssmProfileName(label string) string { return store.ProfileName(label) }
 
 // ssmLoginSource returns the profile whose Identity Center login p runs on: p itself for an
 // sso profile, the source for an assume-role profile (nil source error when it is gone or no
@@ -620,6 +679,7 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 		"ssm_force_login": peek.SSMForceLogin,
 	}
 	ssmChainJSON(p, src, out, [5]string{"ssm_source_profile", "ssm_role_arn", "ssm_external_id", "ssm_role_session_name", "ssm_duration_seconds"})
+	ssmSignInJSON(src, out, "sso_session", "sso_owner_id")
 	nb, err := json.Marshal(out)
 	if err != nil {
 		return internalErr(err)
@@ -632,4 +692,92 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 		Detail: "alias=" + h.Alias + " document=" + h.DocumentName, At: store.NowTS(),
 	})
 	return nil
+}
+
+// --- shared sign-ins (ADR 0125) ---------------------------------------------------
+
+// listSignIns (GET /api/ssm/sign-ins) lists the member's sign-ins with the profiles in each.
+func (a ssmConfigAPI) listSignIns(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	sis, err := a.store.ListSSMSignIns(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	ps, err := a.store.ListSSMProfiles(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	members := map[string][]string{}
+	for _, p := range ps {
+		if p.SignInID != "" {
+			members[p.SignInID] = append(members[p.SignInID], p.ID)
+		}
+	}
+	out := make([]ssmSignInDTO, 0, len(sis))
+	for _, si := range sis {
+		ids := members[si.ID]
+		if ids == nil {
+			ids = []string{}
+		}
+		out = append(out, ssmSignInDTO{ID: si.ID, Name: si.Name, StartURL: si.StartURL, SSORegion: si.SSORegion,
+			CreatedAt: si.CreatedAt, Profiles: ids})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// updateSignIn (PUT /api/ssm/sign-ins/{id}) renames a sign-in or changes its portal; its
+// members' copies follow in the same transaction. A rename moves the login to a new cache key,
+// and a portal change makes the old token unusable (decision 10): the Console says both first.
+func (a ssmConfigAPI) updateSignIn(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	var in ssmSignInDTO
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	si := store.SSMSignIn{ID: r.PathValue("id"), MembershipID: mv.MembershipID, Name: strings.TrimSpace(in.Name),
+		StartURL: strings.TrimSpace(in.StartURL), SSORegion: strings.TrimSpace(in.SSORegion)}
+	if !httpsURLRe.MatchString(si.StartURL) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"})
+		return
+	}
+	found, err := a.store.UpdateSSMSignIn(r.Context(), si)
+	if err != nil {
+		profileWriteErr(w, err)
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "sign-in not found"})
+		return
+	}
+	saved, _, err := a.store.GetSSMSignIn(r.Context(), si.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, ssmSignInDTO{ID: saved.ID, Name: saved.Name, StartURL: saved.StartURL, SSORegion: saved.SSORegion,
+		CreatedAt: saved.CreatedAt, Profiles: []string{}})
+}
+
+// reconcileSSMSignIns repairs, once at start, what an older binary can leave after a rollback
+// (ADR 0125 decision 11), and records each change in the log and the audit log. A failure is
+// logged and the start goes on: the bridge never exports colliding names, whatever is stored.
+func reconcileSSMSignIns(ctx context.Context, st *store.SQL) {
+	changes, err := st.ReconcileSSMSignIns(ctx)
+	if err != nil {
+		log.Printf("ssm sign-ins: reconcile: %v", err)
+	}
+	for _, c := range changes {
+		log.Printf("ssm sign-ins: reconcile: membership %s profile %s sign-in %s: %s", c.MembershipID, c.ProfileID, c.SignInID, c.What)
+		tenant := ""
+		if mv, ok, err := st.GetMembershipByID(ctx, c.MembershipID); err == nil && ok {
+			tenant = mv.TenantID
+		}
+		target := "sign-in " + c.SignInID
+		if c.ProfileID != "" {
+			target = "profile " + c.ProfileID + " in " + target
+		}
+		_ = st.InsertAudit(ctx, store.AuditLog{ID: store.NewID(), TenantID: tenant, ActorKind: "system", ActorID: "control-plane",
+			Action: "ssm.sign_in.reconcile", Target: target, Detail: c.What, At: store.NowTS()})
+	}
 }

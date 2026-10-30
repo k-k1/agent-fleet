@@ -477,6 +477,8 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/ssm/profiles", ssm.withMembership(ssm.createProfile))
 	mux.HandleFunc("PUT /api/ssm/profiles/{id}", ssm.withMembership(ssm.updateProfile))
 	mux.HandleFunc("DELETE /api/ssm/profiles/{id}", ssm.withMembership(ssm.deleteProfile))
+	mux.HandleFunc("GET /api/ssm/sign-ins", ssm.withMembership(ssm.listSignIns))
+	mux.HandleFunc("PUT /api/ssm/sign-ins/{id}", ssm.withMembership(ssm.updateSignIn))
 	mux.HandleFunc("GET /api/ssm/hosts", ssm.withMembership(ssm.listHosts))
 	mux.HandleFunc("POST /api/ssm/hosts", ssm.withMembership(ssm.createHost))
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", ssm.withMembership(ssm.updateHost))

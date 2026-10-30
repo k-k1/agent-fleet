@@ -90,6 +90,19 @@ func cpContractFamilies() []contractFamily {
 			},
 		},
 
+		// A shared sign-in (ADR 0125), GET /api/ssm/sign-ins. The Settings UI that reads it
+		// comes later; the type is bound from the PR that adds the route.
+		{
+			name:    "ssmSignInDTO",
+			goType:  reflect.TypeOf(ssmSignInDTO{}),
+			binding: ssmSignInBinding,
+			tsPath:  "../console/src/features/settings/workspace/ssmSignIns.ts",
+			tsName:  "SsmSignIn",
+			tsKeys:  keySet("id", "name", "startUrl", "ssoRegion", "createdAt", "profiles"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+
 		// SSM profiles (read by settings export / import).
 		{
 			name:    "ssmProfileDTO",
@@ -97,7 +110,7 @@ func cpContractFamilies() []contractFamily {
 			binding: ssmProfileBinding,
 			tsPath:  "../console/src/lib/settingsBundle.ts",
 			tsName:  "SsmProfileEntry",
-			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "sourceKey", "sourceId", "roleArn", "externalId", "sessionName", "durationSeconds", "confirmBeforeUse"),
+			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "sourceKey", "sourceId", "roleArn", "externalId", "sessionName", "durationSeconds", "confirmBeforeUse", "signIn"),
 			tsOnly: map[string]string{
 				"sourceKey": "Intended: the source's sign-in (portal, region, account, role) so an import joins the chain to the same sign-in, not just the same label.",
 				"source":    "Intended: a bundle names an assume-role profile's source by its label, because the destination assigns new ids (the Console turns it into sourceProfileId on import).",
@@ -227,6 +240,12 @@ var ssmProfileBinding = map[string]string{
 	"AccountID": "accountId", "RoleName": "roleName", "Region": "region", "CreatedAt": "createdAt",
 	"Kind": "kind", "SourceProfileID": "sourceProfileId", "RoleARN": "roleArn", "ExternalID": "externalId",
 	"SessionName": "sessionName", "DurationSeconds": "durationSeconds", "ConfirmBeforeUse": "confirmBeforeUse",
+	"SignIn": "signIn",
+}
+
+var ssmSignInBinding = map[string]string{
+	"ID": "id", "Name": "name", "StartURL": "startUrl", "SSORegion": "ssoRegion", "CreatedAt": "createdAt",
+	"Profiles": "profiles",
 }
 
 var gitOAuthBinding = map[string]string{
@@ -241,7 +260,7 @@ var gitOAuthBinding = map[string]string{
 func TestContractFamilies(t *testing.T) {
 	fams := cpContractFamilies()
 	// Watch the population: a family silently dropped from the table is noticed here.
-	if len(fams) != 9 {
+	if len(fams) != 10 {
 		t.Fatalf("only %d families = one has fallen out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {
