@@ -68,19 +68,33 @@ export async function executeSsmPlan(
       out.push({ kind, label, outcome: "unknown" });
       return null;
     }
-    const j = await res.json().catch(() => null);
     if (!res.ok) {
+      const j = await res.json().catch(() => null);
       out.push({ kind, label, outcome: "failed", code: typeof j?.error?.code === "string" ? j.error.code : String(res.status) });
       return null;
     }
+    // A success whose body never arrived (or a profile without its id) is as uncertain as no
+    // answer at all: the row probably exists, but the next row cannot be chained to it.
+    let id = "";
+    try {
+      const j = await res.json();
+      id = typeof j?.id === "string" ? j.id : "";
+    } catch {
+      /* handled below */
+    }
+    if (!id && kind === "profile") {
+      stopped = true;
+      out.push({ kind, label, outcome: "unknown" });
+      return null;
+    }
     out.push({ kind, label, outcome: "created" });
-    return typeof j?.id === "string" ? j.id : "";
+    return id;
   };
   for (const p of plan.profiles) {
-    const { source, sourceKey: _k, ...rest } = p;
-    let body: unknown = p;
+    const { source, sourceKey: _k, sourceId, ...rest } = p;
+    let body: unknown = rest;
     if (p.kind === "assume_role") {
-      const sourceProfileId = ssoIds.get(source || "");
+      const sourceProfileId = sourceId || ssoIds.get(source || "");
       if (!sourceProfileId) {
         out.push({ kind: "profile", label: p.label, outcome: stopped ? "not_run" : "skipped_source" });
         continue;

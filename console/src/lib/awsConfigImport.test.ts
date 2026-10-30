@@ -56,10 +56,45 @@ describe("readAwsConfig / resolveImport — SSO", () => {
   });
 
   it("applies [DEFAULT]: its region reaches every profile, an explicit empty value overrides it", () => {
-    const p = preview("[DEFAULT]\nregion = ap-northeast-1\n" + SESSION + ssoProfile("a") + ssoProfile("b") + "region =\n");
+    const legacy = (name: string) =>
+      `[profile ${name}]\nsso_start_url = ${URL}\nsso_region = us-east-1\nsso_account_id = 1\nsso_role_name = R\n`;
+    const p = preview("[DEFAULT]\nregion = ap-northeast-1\n" + SESSION + ssoProfile("a") + legacy("b") + "region =\n");
     expect(row(p, "a").entry?.region).toBe("ap-northeast-1");
     expect(row(p, "b").entry?.region).toBe("");
     expect(row(p, "b").effectiveRegion).toBe("us-east-1");
+  });
+
+  it("refuses any key the profile and its session give differently, [DEFAULT] included", () => {
+    // The session inherits [DEFAULT]'s region too, so a profile overriding it disagrees with it.
+    const p = preview("[DEFAULT]\nregion = ap-northeast-1\n" + SESSION + ssoProfile("b") + "region = eu-west-1\n");
+    expect(row(p, "b").reason).toEqual({ code: "sso_conflict", key: "region" });
+    const acct = preview(SESSION + "sso_account_id = 222222222222\n" + ssoProfile("c"));
+    expect(row(acct, "c").reason).toEqual({ code: "sso_conflict", key: "sso_account_id" });
+    const odd = preview(SESSION + "secretsentinel = 1\n" + ssoProfile("d") + "secretsentinel = 2\n");
+    expect(row(odd, "d").reason).toEqual({ code: "sso_conflict", key: "" });
+  });
+
+  it("takes the role from the session when the profile names the account", () => {
+    const p = preview(SESSION + "sso_role_name = Admin\n[profile a]\nsso_session = corp\nsso_account_id = 111111111111\n");
+    expect(row(p, "a")).toMatchObject({ status: "create", entry: { roleName: "Admin" } });
+    const none = preview(SESSION + "sso_role_name = Admin\nsso_account_id = 1\n[profile a]\nsso_session = corp\n");
+    expect(row(none, "a").reason).toMatchObject({ code: "incomplete_sso" });
+  });
+
+  it("does not read a nested block's first line as a value", () => {
+    const p = preview(SESSION + "[profile a]\nsso_session = corp\nsso_account_id = 111111111111\nsso_role_name =\n  aws_secret_access_key=SECRETSENTINEL\n");
+    expect(row(p, "a").reason).toEqual({ code: "invalid", key: "sso_role_name" });
+    expect(JSON.stringify(p)).not.toContain("SECRETSENTINEL");
+  });
+
+  it("does not show or propose a profile name that holds a key assignment", () => {
+    const p = preview(SESSION + ssoProfile('"aws_secret_access_key=SECRETSENTINEL"'));
+    const r = p.rows[0];
+    expect(r).toMatchObject({ display: "", label: "", reason: { code: "label_empty" } });
+    expect(JSON.stringify({ ...r, name: "" })).not.toContain("SECRETSENTINEL");
+    // A key assignment that names no known key is held back too.
+    const q = preview(SESSION + ssoProfile('"token=SECRETSENTINEL"'));
+    expect(q.rows[0]).toMatchObject({ display: "", label: "" });
   });
 
   it("treats a credential_process inherited from [DEFAULT] as a second way to sign in", () => {
@@ -187,6 +222,25 @@ describe("resolveImport — role chains", () => {
     expect(planSsmImport(toImportSection(p), existing, []).profiles.map((x) => x.label)).toEqual(["deploy"]);
   });
 
+  it("keeps the picked row's id through the planner when two rows share its label", () => {
+    const text = `[profile deploy]\nrole_arn = ${ARN}\nsource_profile = elsewhere\n`;
+    const existing = [
+      { id: "e1", kind: "sso", label: "Elsewhere", startUrl: URL, ssoRegion: "us-east-1", accountId: "1", roleName: "R" },
+      { id: "e2", kind: "sso", label: "Elsewhere", startUrl: URL, ssoRegion: "us-east-1", accountId: "2", roleName: "R" },
+    ];
+    const p = preview(text, existing, { deploy: { sourceId: "e1" } });
+    const plan = planSsmImport(toImportSection(p), existing, []);
+    expect(plan.skippedProfiles).toEqual([]);
+    expect(plan.profiles[0]).toMatchObject({ label: "deploy", sourceId: "e1" });
+  });
+
+  it("shows the region of the existing row a source resolves to", () => {
+    const existing = [{ id: "d1", kind: "sso", label: "dev", startUrl: URL, ssoRegion: "us-east-1", accountId: "111111111111", roleName: "Admin", region: "eu-west-1" }];
+    const p = preview(chain, existing);
+    expect(row(p, "dev")).toMatchObject({ status: "exists", effectiveRegion: "eu-west-1" });
+    expect(row(p, "deploy").effectiveRegion).toBe("eu-west-1");
+  });
+
   it("checks duration_seconds and lets the preview fix it", () => {
     const bad = (d: string) => chain + `duration_seconds = ${d}\n`;
     expect(row(preview(bad("7200")), "deploy").reason).toEqual({ code: "bad_duration" });
@@ -220,6 +274,24 @@ describe("resolveImport — names", () => {
     const p = preview(SESSION + ssoProfile("a-b") + `[profile deploy]\nrole_arn = ${ARN}\nsource_profile = a-b\n`, existing);
     expect(row(p, "a-b").reason).toEqual({ code: "name_collision", other: "a b" });
     expect(row(p, "deploy").reason).toEqual({ code: "source_unsupported", source: "a-b" });
+  });
+
+  it("does not keep a clash with a row that dropped out for its source", () => {
+    // "a b" clashes with the existing a-b, so the role on it cannot be created; the SSO
+    // "deploy app" it would have clashed with is then free.
+    const existing = [{ id: "x", kind: "sso", label: "a-b", startUrl: URL, ssoRegion: "us-east-1", accountId: "9", roleName: "R" }];
+    const text = SESSION + ssoProfile('"a b"') + ssoProfile('"deploy app"', "2") + `[profile deploy-app]\nrole_arn = ${ARN}\nsource_profile = a b\n`;
+    const p = preview(text, existing);
+    expect(row(p, "a b").reason).toEqual({ code: "name_collision", other: "a-b" });
+    expect(row(p, "deploy-app").reason).toEqual({ code: "source_unsupported", source: "a b" });
+    expect(row(p, "deploy app").status).toBe("create");
+  });
+
+  it("blocks both sides when a role clashes with its own source", () => {
+    const text = SESSION + ssoProfile('"x y"') + `[profile x-y]\nrole_arn = ${ARN}\nsource_profile = x y\n`;
+    const p = preview(text);
+    expect(row(p, "x y").status).toBe("blocked");
+    expect(row(p, "x-y").status).toBe("blocked");
   });
 
   it("refuses a label whose AWS name is too long, and lets a rename fix it", () => {

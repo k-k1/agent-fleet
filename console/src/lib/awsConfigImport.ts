@@ -95,8 +95,12 @@ interface SsoFields {
 
 /** One profile as the CLI defines it, before it meets the member's Settings. */
 export interface NativeProfile {
-  /** The profile name botocore uses; unique within a file, and the row's identity. */
+  /** The profile name botocore uses; unique within a file, and the row's identity. Never shown
+   *  as is: see `display`. */
   name: string;
+  /** `name` when it is safe to show and to propose as a label, else "" (the row is then shown
+   *  by its line and needs a label typed in). */
+  display: string;
   line: number;
   kind: "sso" | "assume_role" | null;
   /** Why the profile cannot become a Settings profile at all (null = it can). */
@@ -128,10 +132,30 @@ export interface NativeConfig {
 }
 
 const has = (o: Map<string, IniValue>, k: string): boolean => o.has(k);
-// A name read from a value (sso_session, source_profile) that is shown back in a reason. One
-// line and short, or it is not shown: a continuation line can hold anything, keys included.
-const shownName = (v: string): boolean => /^[^\r\n]{1,128}$/.test(v) && !SECRET_KEYS.some((k) => v.toLowerCase().includes(k));
-const val = (o: Map<string, IniValue>, k: string): string => o.get(k)?.value.trim() ?? "";
+// A name taken from the file (a section header, sso_session, source_profile) that may be shown
+// or proposed as a label. One short line holding nothing that looks like a key assignment: a
+// header such as [profile "aws_secret_access_key=..."] is still a valid profile name to botocore.
+const shownName = (v: string): boolean => /^[^\r\n=]{1,128}$/.test(v) && !SECRET_KEYS.some((k) => v.toLowerCase().includes(k));
+// The value as the parser returns it. Not trimmed: a value that starts with a newline is a
+// nested block to botocore, and trimming would turn its first line into a plausible scalar.
+const val = (o: Map<string, IniValue>, k: string): string => o.get(k)?.value ?? "";
+
+const SAFE_KEYS = new Set([
+  ...KNOWN_KEYS,
+  ...SECRET_KEYS,
+  ...UNSUPPORTED_AUTH,
+  "output",
+  "cli_pager",
+  "endpoint_url",
+  "services",
+  "s3",
+  "ca_bundle",
+]);
+/** A key name from the file, or "" when it is not one this importer knows: key names are text
+ *  from the file too, and only known ones are shown. */
+export function safeKey(k: string): string {
+  return SAFE_KEYS.has(k) ? k : "";
+}
 
 /** Map the parsed file to profiles, as botocore's build_profile_map does: a later section
  *  that names the same profile replaces the earlier one. */
@@ -160,6 +184,7 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
   const region = val(o, "region");
   const base: NativeProfile = {
     name,
+    display: shownName(name) ? name : "",
     line,
     kind: null,
     reason: null,
@@ -186,26 +211,36 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
 
   if (hasSso) {
     base.kind = "sso";
-    let startUrl = val(o, "sso_start_url");
-    let ssoRegion = val(o, "sso_region");
-    let scopes = val(o, "sso_registration_scopes");
+    // botocore's SSO provider claims a profile only when the profile itself names an account
+    // or a role; a session cannot supply both.
+    if (!has(o, "sso_account_id") && !has(o, "sso_role_name")) {
+      return fail({ code: "incomplete_sso", missing: ["sso_account_id", "sso_role_name"] });
+    }
+    // Resolve the session the way botocore does: every key of the session joins the profile's,
+    // and a key both give with different values is an error (credentials.py
+    // _resolve_sso_session_reference). [DEFAULT] has reached both sides by now.
+    let merged = o;
     const sessionName = val(o, "sso_session");
     if (has(o, "sso_session")) {
-      const s = sessions.get(sessionName);
       if (!shownName(sessionName)) return fail({ code: "invalid", key: "sso_session" });
-      if (!s) return fail({ code: "no_session", session: sessionName });
-      // botocore refuses a profile whose own sso_start_url / sso_region disagree with its session's.
-      for (const k of ["sso_start_url", "sso_region"]) {
-        if (has(o, k) && has(s, k) && val(o, k) !== val(s, k)) return fail({ code: "sso_conflict", key: k });
+      const sess = sessions.get(sessionName);
+      if (!sess) return fail({ code: "no_session", session: sessionName });
+      merged = new Map(o);
+      for (const [k, v] of sess) {
+        const mine = o.get(k);
+        if (mine && mine.value !== v.value) return fail({ code: "sso_conflict", key: safeKey(k) });
+        merged.set(k, v);
       }
-      startUrl = val(s, "sso_start_url") || startUrl;
-      ssoRegion = val(s, "sso_region") || ssoRegion;
-      scopes = val(s, "sso_registration_scopes") || scopes;
       base.signIn = "session:" + sessionName;
     } else {
-      base.signIn = "url:" + startUrl.replace(/\/+$/, "");
+      base.signIn = "url:" + val(o, "sso_start_url").replace(/\/+$/, "");
     }
-    const sso = { startUrl, ssoRegion, accountId: val(o, "sso_account_id"), roleName: val(o, "sso_role_name") };
+    const sso = {
+      startUrl: val(merged, "sso_start_url"),
+      ssoRegion: val(merged, "sso_region"),
+      accountId: val(merged, "sso_account_id"),
+      roleName: val(merged, "sso_role_name"),
+    };
     const missing = (
       [
         ["sso_start_url", sso.startUrl],
@@ -225,7 +260,11 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
     ] as const) {
       if (!re.test(v)) return fail({ code: "invalid", key: k });
     }
+    const region = val(merged, "region");
+    if (region && !RE.region.test(region)) return fail({ code: "invalid", key: "region" });
+    base.region = region;
     base.sso = sso;
+    const scopes = val(merged, "sso_registration_scopes");
     base.scopesChange =
       !!scopes &&
       scopes
@@ -297,6 +336,8 @@ export interface ImportPreview {
 
 const ci = (s: string) => s.trim().toLowerCase();
 
+type Source = { via: "file" | "existing" | "picked"; label: string; key: string; existingId?: string; region: string };
+
 /** Resolve the native profiles against the member's existing Settings profiles (the CP list,
  *  as returned by GET api/ssm/profiles) and the preview's edits. Re-run on every edit. */
 export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<string, RowEdit>): ImportPreview {
@@ -311,28 +352,37 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
     ssoRegion: String(p?.ssoRegion ?? ""),
     raw: p,
   }));
-  const exByLabel = new Map(ex.map((e) => [ci(e.label), e]));
+  // The CP does not keep labels unique, so one label may name several rows.
+  const exByLabel = new Map<string, typeof ex>();
+  for (const e of ex) exByLabel.set(ci(e.label), [...(exByLabel.get(ci(e.label)) || []), e]);
   const exById = new Map(ex.map((e) => [e.id, e]));
   const byName = new Map(cfg.profiles.map((p) => [p.name, p]));
-  // Rows blocked by a name clash. Only ever grows, so the loop below ends.
-  const clashed = new Map<string, Reason>();
-
   const keyOf = (p: NativeProfile) => ssoKey(p.sso);
-  let rows: ImportRow[] = [];
-  for (let pass = 0; pass <= cfg.profiles.length + 1; pass++) {
+
+  // One pass of the resolution, with `clashed` = rows blocked by a clash among the creations.
+  const pass = (clashed: Map<string, Reason>): ImportRow[] => {
     const rowOf = new Map<string, ImportRow>();
     const base = (p: NativeProfile): ImportRow => {
       const e = edits[p.name] || {};
-      const label = (e.label ?? p.name).trim();
+      const label = (e.label ?? p.display).trim();
       const awsName = awsProfileName(label);
       const row: ImportRow = { ...p, label, awsName, selected: e.selected ?? true, status: "blocked", effectiveRegion: p.region };
       if (p.reason) return { ...row, reason: p.reason };
       if (!label) return { ...row, reason: { code: "label_empty" } };
       if (awsName === "default") return { ...row, reason: { code: "name_default" } };
       if (!RE.profile.test(awsName)) return { ...row, reason: { code: "name_too_long" } };
-      const c = clashed.get(p.name);
-      if (c) return { ...row, reason: c };
+      // An existing row under another label that becomes the same AWS name: both would be left
+      // out of ~/.aws (aws_profiles_bridge.go). Independent of the other rows, so settled here.
+      const twin = ex.find((x) => ci(x.label) !== ci(label) && awsProfileName(x.label) === awsName);
+      if (twin) return { ...row, reason: { code: "name_collision", other: twin.label } };
       return row;
+    };
+    // A row that would be created, unless it clashes with another such row. The clash is
+    // applied last so that a row whose source fell away is not kept in the clash pool.
+    const finish = (row: ImportRow, entry: SsmProfileEntry) => {
+      const c = row.selected ? clashed.get(row.name) : undefined;
+      if (c) Object.assign(row, { reason: c, entry });
+      else Object.assign(row, { status: row.selected ? "create" : "unselected", entry });
     };
     // SSO rows first: role rows depend on their outcome.
     for (const p of cfg.profiles) {
@@ -342,14 +392,17 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
       if (row.reason) continue;
       row.effectiveRegion = p.region || p.sso!.ssoRegion;
       const entry: SsmProfileEntry = { label: row.label, ...p.sso!, region: p.region };
-      const hit = exByLabel.get(ci(row.label));
-      if (hit) {
-        if (hit.kind === "sso" && hit.key === keyOf(p))
-          Object.assign(row, { status: "exists", entry: { ...entry, label: hit.label }, existingId: hit.id });
-        else row.reason = { code: "label_taken", other: hit.label };
+      const hits = exByLabel.get(ci(row.label));
+      if (hits) {
+        const same = hits.find((h) => h.kind === "sso" && h.key === keyOf(p));
+        if (same) {
+          // The existing row is what will be used, so its region is the one that counts.
+          row.effectiveRegion = same.region || same.ssoRegion;
+          Object.assign(row, { status: "exists", entry: { ...entry, label: same.label }, existingId: same.id });
+        } else row.reason = { code: "label_taken", other: hits[0].label };
         continue;
       }
-      Object.assign(row, { status: row.selected ? "create" : "unselected", entry });
+      finish(row, entry);
     }
     for (const p of cfg.profiles) {
       if (p.kind === "sso") continue;
@@ -357,14 +410,14 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
       rowOf.set(p.name, row);
       if (row.reason || p.kind !== "assume_role") continue;
       const e = edits[p.name] || {};
-      // Source.
-      let source: { via: "file" | "existing" | "picked"; label: string; key: string; existingId?: string; region: string } | null = null;
+      let source: Source | null = null;
       const def = byName.get(p.sourceProfile!);
       if (def) {
         const s = rowOf.get(def.name);
-        if (def.kind === "assume_role") row.reason = { code: "multi_hop", source: def.name };
-        else if (!s || s.reason || def.kind !== "sso") row.reason = { code: "source_unsupported", source: def.name };
-        else if (s.status === "unselected") row.reason = { code: "source_unselected", source: def.name };
+        const shown = def.display;
+        if (def.kind === "assume_role") row.reason = { code: "multi_hop", source: shown };
+        else if (!s || s.reason || def.kind !== "sso") row.reason = { code: "source_unsupported", source: shown };
+        else if (s.status === "unselected") row.reason = { code: "source_unselected", source: shown };
         else
           source = {
             via: s.status === "exists" ? "existing" : "file",
@@ -418,43 +471,60 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
         region: p.region,
         source: source.label,
         sourceKey: source.key,
+        // The row matched or picked, carried to the executor so a label shared by two rows
+        // cannot send the chain to the other one.
+        ...(source.existingId ? { sourceId: source.existingId } : {}),
         roleArn: p.roleArn!,
         externalId: p.externalId!,
         sessionName: p.sessionName!,
         ...(duration !== undefined ? { durationSeconds: duration } : {}),
       };
-      const hit = exByLabel.get(ci(row.label));
-      if (hit) {
-        if (hit.kind === "assume_role" && hit.roleArn === p.roleArn && !!source.existingId && hit.sourceProfileId === source.existingId) {
-          Object.assign(row, { status: "exists", entry: { ...entry, label: hit.label }, existingId: hit.id });
-        } else row.reason = { code: "label_taken", other: hit.label };
+      const hits = exByLabel.get(ci(row.label));
+      if (hits) {
+        const same = hits.find(
+          (h) => h.kind === "assume_role" && h.roleArn === p.roleArn && !!source!.existingId && h.sourceProfileId === source!.existingId,
+        );
+        if (same) Object.assign(row, { status: "exists", entry: { ...entry, label: same.label }, existingId: same.id });
+        else row.reason = { code: "label_taken", other: hits[0].label };
         continue;
       }
-      Object.assign(row, { status: row.selected ? "create" : "unselected", entry });
+      finish(row, entry);
     }
-    rows = cfg.profiles.map((p) => rowOf.get(p.name)!);
-    // Name clashes among what will exist afterwards: the existing rows plus the creations. An
-    // existing row a creation matched as "exists" is that row, so it is not counted twice.
-    // Labels compare case-insensitively (the planner's rule), AWS names exactly (the CLI's).
-    let grew = false;
-    const creating = rows.filter((r) => r.status === "create");
-    const block = (r: ImportRow, reason: Reason) => {
-      if (!clashed.has(r.name)) {
-        clashed.set(r.name, reason);
-        grew = true;
-      }
-    };
-    for (const r of creating) {
-      for (const o of creating) {
-        if (o === r) continue;
-        if (ci(o.label) === ci(r.label)) block(r, { code: "label_dup", other: o.name });
-        else if (o.awsName === r.awsName) block(r, { code: "name_collision", other: o.label });
-      }
-      for (const x of ex) {
-        if (awsProfileName(x.label) === r.awsName) block(r, { code: "name_collision", other: x.label });
+    return cfg.profiles.map((p) => rowOf.get(p.name)!);
+  };
+
+  // Clashes among the creations. Labels compare case-insensitively (the planner's rule), AWS
+  // names exactly (the CLI's). They are recomputed from scratch on every pass, among the rows
+  // that would be created but for their own clash, because blocking one row can drop a
+  // dependent that was the other side of another clash.
+  const clashesOf = (rows: ImportRow[], prev: Map<string, Reason>): Map<string, Reason> => {
+    const pool = rows.filter((r) => r.status === "create" || (prev.has(r.name) && r.reason === prev.get(r.name)));
+    const out = new Map<string, Reason>();
+    for (const r of pool) {
+      for (const o of pool) {
+        if (o === r || out.has(r.name)) continue;
+        if (ci(o.label) === ci(r.label)) out.set(r.name, { code: "label_dup", other: o.display || o.label });
+        else if (o.awsName === r.awsName) out.set(r.name, { code: "name_collision", other: o.label });
       }
     }
-    if (!grew) break;
+    return out;
+  };
+  const same = (a: Map<string, Reason>, b: Map<string, Reason>) => a.size === b.size && [...a.keys()].every((k) => b.has(k));
+  let clashed = new Map<string, Reason>();
+  let before = new Map<string, Reason>();
+  let rows = pass(clashed);
+  for (let i = 0; i <= cfg.profiles.length + 1; i++) {
+    const next = clashesOf(rows, clashed);
+    if (same(next, clashed)) break;
+    // Two states taking turns: settle on blocking both sides rather than one at random.
+    if (same(next, before)) {
+      next.forEach((v, k) => clashed.set(k, v));
+      rows = pass(clashed);
+      break;
+    }
+    before = clashed;
+    clashed = next;
+    rows = pass(clashed);
   }
   for (const r of rows) if (r.reason) r.status = "blocked";
 

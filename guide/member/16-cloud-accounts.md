@@ -76,7 +76,8 @@ The preview lists every profile in the file with what will happen to it:
 - **Already registered**: the same profile is in Settings; nothing is changed.
 - **Not importable**, with the reason: access keys, `credential_process`, `mfa_serial`, `credential_source`,
   `web_identity_token_file`, `login_session`, more than one way to sign in (including keys inherited from
-  `[DEFAULT]`), a role assumed from another role, an SSO profile without both account and role, a value Settings
+  `[DEFAULT]`), a role assumed from another role, an SSO profile without both account and role, a key its `sso-session` gives
+  differently (the AWS CLI refuses that too), a value Settings
   cannot hold, or a name that is taken or turns into the same AWS profile name as another.
 
 You can untick a row, change its display name (needed for `[default]`: `default` cannot be a Settings name) and

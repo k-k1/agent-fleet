@@ -76,7 +76,8 @@ WS バーの AWS バッジのポップオーバーの両方にあります。確
 - **同じものが登録済み**：Settings に同じプロファイルがあります。何も変えません。
 - **取り込めません**（理由つき）：アクセスキー、`credential_process`、`mfa_serial`、`credential_source`、
   `web_identity_token_file`、`login_session`、認証の方法が 2 つ以上（`[DEFAULT]` から継いだキーを含む）、
-  ロールからさらにロールを引き受けるもの、アカウントとロールがそろわない SSO、Settings が持てない値、
+  ロールからさらにロールを引き受けるもの、アカウントとロールがそろわない SSO、`sso-session` と値が食い違うキーがあるもの
+  （AWS CLI も断ります）、Settings が持てない値、
   名前が使用済み・ほかと同じ AWS プロファイル名になるもの。
 
 行ごとにチェックを外す、表示名を変える（`[default]` はこれが必要です。`default` は Settings の名前にできません）、

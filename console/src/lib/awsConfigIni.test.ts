@@ -67,6 +67,11 @@ describe("parseAwsIni", () => {
     expect(f.sections[0].header).toBe("profile a");
   });
 
+  it("refuses a nested block with a line botocore cannot split", () => {
+    expect(parseAwsIni("[profile a]\ns3 =\n  malformed-line\n")).toEqual({ ok: false, error: { code: "bad_nested", line: 2 } });
+    expect(parseAwsIni("[profile a]\ns3 =\n  max_concurrent_requests = 20\n").ok).toBe(true);
+  });
+
   it("never puts a value in an error", () => {
     const r = parseAwsIni("[profile a]\nsecret-value-123\n");
     expect(JSON.stringify(r)).not.toContain("secret-value-123");
@@ -84,5 +89,8 @@ describe("sectionRole", () => {
     expect(sectionRole("sso-session corp")).toEqual({ kind: "sso-session", name: "corp" });
     expect(sectionRole("services dev")).toEqual({ kind: "other" });
     expect(sectionRole("prod")).toEqual({ kind: "other" });
+    // Python's shlex: a trailing backslash is an error, and only ASCII whitespace separates.
+    expect(sectionRole("profile a\\")).toEqual({ kind: "other" });
+    expect(sectionRole("profile prod\u00a0app")).toEqual({ kind: "profile", name: "prod\u00a0app" });
   });
 });

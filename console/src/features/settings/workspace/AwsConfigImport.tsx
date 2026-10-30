@@ -18,6 +18,7 @@ import {
   type NativeConfig,
   type Reason,
   type RowEdit,
+  safeKey,
 } from "../../../lib/awsConfigImport.ts";
 import { planSsmImport } from "../../../lib/settingsBundle.ts";
 import { executeSsmPlan, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
@@ -29,16 +30,16 @@ export function reasonText(tr: Tr, r: Reason): string {
     case "auth":
     case "sso_conflict":
     case "invalid":
-      return tr(("ssm.imp_r_" + r.code) as MsgKey, { key: r.key });
+      return tr(("ssm.imp_r_" + r.code) as MsgKey, { key: r.key || "?" });
     case "incomplete_sso":
       return tr("ssm.imp_r_incomplete_sso", { keys: r.missing.join(", ") });
     case "no_session":
-      return tr("ssm.imp_r_no_session", { name: r.session });
+      return tr("ssm.imp_r_no_session", { name: r.session || "?" });
     case "multi_hop":
     case "source_unsupported":
     case "source_unselected":
     case "source_missing":
-      return tr(("ssm.imp_r_" + r.code) as MsgKey, { name: r.source });
+      return tr(("ssm.imp_r_" + r.code) as MsgKey, { name: r.source || "?" });
     case "label_taken":
     case "label_dup":
     case "name_collision":
@@ -59,6 +60,9 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<[number, number] | null>(null);
   const [results, setResults] = useState<ExecRow[] | null>(null);
+  // Logins the last run implied, kept with its results: once the rows exist the preview counts
+  // them as already registered, though none has been signed in yet.
+  const [ranLogins, setRanLogins] = useState<{ logins: number; signins: number } | null>(null);
   const cancelRef = useRef(false);
 
   const preview = useMemo(() => (cfg ? resolveImport(cfg, existing, edits) : null), [cfg, existing, edits]);
@@ -70,6 +74,7 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const read = async (source: string) => {
     setErr("");
     setResults(null);
+    setRanLogins(null);
     // The raw text is not kept past this point, whatever the outcome.
     setText("");
     if (fileRef.current) fileRef.current.value = "";
@@ -79,7 +84,9 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
     }
     const parsed = parseAwsIni(source);
     if (!parsed.ok) {
-      setErr(tr(("ssm.imp_err_" + parsed.error.code) as MsgKey, { line: parsed.error.line, key: parsed.error.key ?? "" }));
+      // A key name is file text too: only one this importer knows is shown.
+      const key = safeKey(parsed.error.key ?? "") || "?";
+      setErr(tr(("ssm.imp_err_" + parsed.error.code) as MsgKey, { line: parsed.error.line, key }));
       return;
     }
     const native = readAwsConfig(parsed.file);
@@ -117,6 +124,11 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
         onProgress: (done, total) => setProgress([done, total]),
       });
       setResults(rows);
+      const ssoLabels = new Set(plan.profiles.filter((x) => x.kind !== "assume_role").map((x) => x.label));
+      const made = fresh.rows.filter((r) => r.status === "create" && r.kind === "sso" && ssoLabels.has(r.label));
+      const ok = new Set(rows.filter((x) => x.outcome === "created").map((x) => x.label));
+      const done = made.filter((r) => ok.has(r.label));
+      setRanLogins({ logins: done.length, signins: new Set(done.map((r) => r.signIn)).size });
       onImported();
       const after = await loadSsmLists();
       if (after) setExisting(after.profiles);
@@ -137,7 +149,9 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   };
 
   return (
-    <Modal title={tr("ssm.imp_title")} onClose={close} className="aws-import" lockClose={busy}>
+    // No lockClose: it makes the whole panel inert, Stop included. close() cancels instead
+    // while a run is in flight.
+    <Modal title={tr("ssm.imp_title")} onClose={close} className="aws-import">
       <div className="ui-modal-body">
         <p className="field-help">{tr("ssm.imp_intro")}</p>
         {!cfg && (
@@ -192,7 +206,7 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
             ) : (
               <ul className="ssm-list aws-import-rows">
                 {preview.rows.map((r) => (
-                  <Row key={r.name} tr={tr} r={r} e={edits[r.name] || {}} preview={preview} edit={edit} busy={busy} />
+                  <Row key={r.line} tr={tr} r={r} e={edits[r.name] || {}} preview={preview} edit={edit} busy={busy} />
                 ))}
               </ul>
             )}
@@ -202,6 +216,9 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
             </p>
             <p className="field-help">{tr("ssm.imp_after")}</p>
             {results && <Results tr={tr} rows={results} />}
+            {results && ranLogins && (
+              <p className="field-help">{tr("ssm.imp_res_logins", { logins: ranLogins.logins, signins: ranLogins.signins })}</p>
+            )}
             <div className="flow">
               <button type="button" className="primary" disabled={busy || creating === 0} onClick={() => void apply()}>
                 {progress ? tr("ssm.imp_running", { done: progress[0], total: progress[1] }) : tr("ssm.imp_do", { n: creating })}
@@ -234,6 +251,8 @@ function Row({
 }) {
   // A row the file itself rules out has nothing a member could change here.
   const editable = !r.reason || !(r.reason.code in FILE_REASONS);
+  // The profile name, unless it is not safe to show (then the row goes by its line).
+  const shown = r.display || tr("ssm.imp_unnamed", { line: r.line });
   const status =
     r.status === "create"
       ? tr(r.kind === "sso" ? "ssm.imp_s_create_sso" : "ssm.imp_s_create_role")
@@ -243,17 +262,17 @@ function Row({
           ? tr("ssm.imp_s_unselected")
           : tr("ssm.imp_s_blocked", { reason: reasonText(tr, r.reason!) });
   return (
-    <li className={"ssm-item aws-import-row " + r.status} data-row={r.name}>
+    <li className={"ssm-item aws-import-row " + r.status} data-row={r.display || "line-" + r.line}>
       <div className="ssm-item-head">
         <label className="aws-import-pick">
           <input
             type="checkbox"
-            checked={r.selected && r.status !== "blocked" && r.status !== "exists"}
+            checked={r.status !== "exists" && editable && r.selected}
             disabled={busy || r.status === "exists" || !editable}
-            aria-label={r.name}
+            aria-label={shown}
             onChange={(e) => edit(r.name, { selected: e.target.checked })}
           />
-          <span className="ssm-alias">{r.name}</span>
+          <span className="ssm-alias">{shown}</span>
         </label>
         <span className="muted">{tr("ssm.imp_line", { line: r.line })}</span>
       </div>
@@ -262,7 +281,12 @@ function Row({
         <div className="ssm-fgrid">
           <label className="ssm-fld">
             <span>{tr("ssm.imp_label")}</span>
-            <input className="cinput" value={e.label ?? r.name} disabled={busy} onChange={(e) => edit(r.name, { label: e.target.value })} />
+            <input
+              className="cinput"
+              value={e.label ?? r.display}
+              disabled={busy}
+              onChange={(e) => edit(r.name, { label: e.target.value })}
+            />
           </label>
           {r.kind === "assume_role" && (
             <label className="ssm-fld">

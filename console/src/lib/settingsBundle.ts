@@ -47,6 +47,10 @@ export interface SsmProfileEntry {
   /** The source's SSO coordinates (ssoKey), so an import joins the chain to the same sign-in
    *  and never to another profile that happens to share the label. */
   sourceKey?: string;
+  /** The existing Settings row to chain to, when the importer matched or the member picked one.
+   *  Never in a bundle file (ids differ per environment); the ~/.aws/config import sets it so a
+   *  label two rows share cannot send the chain to the other row. */
+  sourceId?: string;
   roleArn?: string;
   externalId?: string;
   sessionName?: string;
@@ -374,6 +378,8 @@ export function planSsmImport(
   // account (the profile list itself folds case, so such an sso entry is "exists", not created).
   const ssoByLabel = new Map<string, string>();
   for (const p of existingProfiles || []) if (p?.kind !== "assume_role") ssoByLabel.set(str(p?.label), ssoKey(p));
+  const ssoById = new Map<string, string>();
+  for (const p of existingProfiles || []) if (p?.kind !== "assume_role") ssoById.set(String(p?.id ?? ""), ssoKey(p));
   const entries = (section.profiles || []).map((raw) => ({
     raw,
     chained: raw?.kind === "assume_role",
@@ -391,6 +397,7 @@ export function planSsmImport(
       p.kind = "assume_role";
       p.source = str(raw?.source);
       p.sourceKey = str(raw?.sourceKey);
+      if (str(raw?.sourceId)) p.sourceId = str(raw?.sourceId);
       p.roleArn = str(raw?.roleArn);
       p.externalId = str(raw?.externalId);
       p.sessionName = str(raw?.sessionName);
@@ -400,7 +407,7 @@ export function planSsmImport(
     // Same minimum condition as CP's validateProfile. Without dropping these here the user
     // just sees a row of 400s and cannot tell how many entries were imported.
     const valid = chained
-      ? !!p.label && validRoleArn(p.roleArn || "") && validExternalId(p.externalId || "") && validSessionName(p.sessionName || "") && (p.durationSeconds === undefined || validDuration(p.durationSeconds)) && !!p.sourceKey && ssoByLabel.get(p.source || "") === p.sourceKey
+      ? !!p.label && validRoleArn(p.roleArn || "") && validExternalId(p.externalId || "") && validSessionName(p.sessionName || "") && (p.durationSeconds === undefined || validDuration(p.durationSeconds)) && !!p.sourceKey && (p.sourceId ? ssoById.get(p.sourceId) === p.sourceKey : ssoByLabel.get(p.source || "") === p.sourceKey)
       : !!p.label && /^https:\/\/\S+$/.test(p.startUrl) && !!p.ssoRegion;
     if (!valid) {
       plan.skippedProfiles.push({ label: p.label, reason: "invalid" });

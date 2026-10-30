@@ -81,7 +81,9 @@ async function paste(text: string) {
   await flush();
 }
 
-const rowEl = (name: string) => document.querySelector<HTMLElement>(`[data-row="${name}"]`)!;
+// By the shown name, compared exactly (attribute selectors may fold case in jsdom).
+const rowEl = (name: string) =>
+  [...document.querySelectorAll<HTMLElement>("li.aws-import-row")].find((li) => li.querySelector(".ssm-alias")?.textContent === name)!;
 const importBtn = () => [...document.querySelectorAll<HTMLButtonElement>("button.primary")].at(-1)!;
 
 beforeEach(() => {
@@ -144,6 +146,51 @@ describe("AwsConfigImport", () => {
     await act(async () => importBtn().click());
     await flush();
     expect(rawJSON).not.toHaveBeenCalled();
+  });
+
+  it("shows no part of a profile name or key name that holds a key", async () => {
+    await mount();
+    await paste(`[profile "aws_secret_access_key=SECRETSENTINEL"]\nsso_start_url = ${URL}\nsso_region = us-east-1\nsso_account_id = 1\nsso_role_name = R\n`);
+    expect(document.body.innerHTML).not.toContain("SECRETSENTINEL");
+    expect(document.querySelector('[data-row="line-1"]')).not.toBeNull();
+    root!.unmount();
+    document.body.innerHTML = "";
+    await mount();
+    await paste("[profile a]\nSECRETSENTINEL = 1\nsecretsentinel = 2\n");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("3");
+    expect(document.body.innerHTML.toLowerCase()).not.toContain("secretsentinel");
+  });
+
+  it("lets a clashing row be unticked so the other one goes in", async () => {
+    await mount();
+    const sso = (n: string, acct: string) => `[profile ${n}]\nsso_start_url = ${URL}\nsso_region = us-east-1\nsso_account_id = ${acct}\nsso_role_name = R\n`;
+    await paste(sso("Prod", "1") + sso("prod", "2"));
+    expect(rowEl("Prod").className).toContain("blocked");
+    const box = rowEl("prod").querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    expect(box.checked).toBe(true);
+    await act(async () => box.click());
+    expect(rowEl("Prod").className).toContain("create");
+    expect(rowEl("prod").querySelector<HTMLInputElement>("input[type=checkbox]")!.checked).toBe(false);
+  });
+
+  it("keeps Stop usable while importing, and reports the logins the run implies", async () => {
+    await mount();
+    const sso = (n: string) => `[profile ${n}]\nsso_session = corp\nsso_account_id = 1${n.length}\nsso_role_name = R${n}\n`;
+    await paste(`[sso-session corp]\nsso_start_url = ${URL}\nsso_region = us-east-1\n` + sso("a") + sso("bb"));
+    let release: () => void = () => {};
+    rawJSON.mockImplementationOnce(
+      () => new Promise((res) => (release = () => res(new Response(JSON.stringify({ id: "id1" }), { status: 201 })))),
+    );
+    await act(async () => importBtn().click());
+    await flush();
+    const stop = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "中止" || b.textContent === "Stop")!;
+    expect(stop.closest("[inert]")).toBeNull();
+    await act(async () => stop.click());
+    await act(async () => release());
+    await flush();
+    expect(rawJSON).toHaveBeenCalledTimes(1);
+    const text = document.body.textContent || "";
+    expect(text).toMatch(/1 回|: 1 \(/);
   });
 
   it("names the line of a file the CLI cannot read", async () => {

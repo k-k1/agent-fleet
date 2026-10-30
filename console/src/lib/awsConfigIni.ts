@@ -34,7 +34,7 @@ export interface IniFile {
   bomStripped: boolean;
 }
 
-export type IniErrorCode = "no_section_header" | "duplicate_section" | "duplicate_key" | "bad_line";
+export type IniErrorCode = "no_section_header" | "duplicate_section" | "duplicate_key" | "bad_line" | "bad_nested";
 
 export interface IniError {
   code: IniErrorCode;
@@ -114,7 +114,13 @@ export function parseAwsIni(text: string): { ok: true; file: IniFile } | { ok: f
   for (const [target, values] of pending) {
     for (const [k, parts] of values) {
       // Trailing blank lines are not part of the value (configparser rstrips the join).
-      target.get(k)!.value = parts.join("\n").replace(/\s+$/, "");
+      const v = target.get(k)!;
+      v.value = parts.join("\n").replace(/\s+$/, "");
+      // botocore reads a value that starts on the next line as a nested block of `k = v`
+      // lines, and fails the whole file when one has no "=" (configloader._parse_nested).
+      if (v.value.startsWith("\n") && v.value.split("\n").some((l) => l.trim() !== "" && !l.includes("="))) {
+        return { ok: false, error: { code: "bad_nested", line: v.line } };
+      }
     }
   }
   return { ok: true, file: { sections, defaults, bomStripped } };
@@ -128,8 +134,9 @@ export function effectiveOptions(file: IniFile, sec: IniSection): Map<string, In
   return out;
 }
 
-// botocore splits a section header with shlex: `profile "prod app"` names `prod app`, and a
-// header that does not split into exactly two words names no profile at all.
+// botocore splits a section header with Python's shlex (POSIX mode): `profile "prod app"` names
+// `prod app`, and a header that does not split into exactly two words names no profile at all.
+// Only space, tab, CR and LF separate words there; a no-break space is part of a name.
 function shlexSplit(s: string): string[] | null {
   const out: string[] = [];
   let cur = "";
@@ -146,11 +153,13 @@ function shlexSplit(s: string): string[] | null {
     if (c === '"' || c === "'") {
       quote = c;
       inWord = true;
-    } else if (/\s/.test(c)) {
+    } else if (c === " " || c === "\t" || c === "\r" || c === "\n") {
       if (inWord) out.push(cur);
       cur = "";
       inWord = false;
-    } else if (c === "\\" && i + 1 < s.length) {
+    } else if (c === "\\") {
+      // Python's shlex refuses a trailing backslash ("No escaped character").
+      if (i + 1 >= s.length) return null;
       cur += s[++i];
       inWord = true;
     } else {

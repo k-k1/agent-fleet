@@ -75,6 +75,26 @@ describe("executeSsmPlan", () => {
     expect(rows.map((r) => r.outcome)).toEqual(["unknown", "not_run", "not_run"]);
   });
 
+  it("treats a success whose body was lost as unknown, and stops", async () => {
+    const broken = new Response("{", { status: 201 });
+    rawJSON.mockResolvedValueOnce(broken);
+    const rows = await executeSsmPlan(plan([sso("a"), sso("b")]), []);
+    expect(rawJSON).toHaveBeenCalledTimes(1);
+    expect(rows.map((r) => r.outcome)).toEqual(["unknown", "not_run"]);
+  });
+
+  it("chains to the row the plan names by id, not to another row with the same label", async () => {
+    rawJSON.mockResolvedValueOnce(ok("r1"));
+    // b-1 comes first, so a lookup by label (last one wins) would pick b-2.
+    const r = { ...role("ra", "B"), sourceId: "b-1" };
+    await executeSsmPlan(plan([r]), [
+      { id: "b-1", label: "B", kind: "sso" },
+      { id: "b-2", label: "B", kind: "sso" },
+    ]);
+    expect(rawJSON.mock.calls[0][2]).toMatchObject({ sourceProfileId: "b-1" });
+    expect(rawJSON.mock.calls[0][2]).not.toHaveProperty("sourceId");
+  });
+
   it("stops when cancelled and keeps what was done", async () => {
     let cancel = false;
     rawJSON.mockImplementation(async () => {
