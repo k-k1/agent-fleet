@@ -248,7 +248,7 @@ func TestToolCallGolden(t *testing.T) {
 				p := cp.prin
 				p.scope = scope
 				log = nil
-				resp := New(cp).mcpToolCall(ctx, &p, rpcRequest{ID: json.RawMessage(`1`), Params: raw})
+				resp := New(cp).mcpToolCall(withMCPCall(ctx, mcpCallInfo{patID: "pat1", principalName: "Claude", impl: "golden"}), &p, rpcRequest{ID: json.RawMessage(`1`), Params: raw})
 				// Trimmed: an argument-less set would leave trailing whitespace git diff --check flags.
 				fmt.Fprintf(&out, "%s\n", strings.TrimRight(fmt.Sprintf("## %s %s %s %s", scope, tool.name, set[0], set[1]), " "))
 				for _, l := range log {

@@ -76,6 +76,9 @@ func buildMux() *http.ServeMux {
 	// generate_image do not wait out the catalogue's 10-minute TTL.
 	mux.HandleFunc("POST /engine/catalog-changed", handleEngineCatalogChanged)
 	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
+	// create_session from the CP's /mcp, with its origin (#3027). Absent from the CP's
+	// agent-proxy allowlist for the same reason as /mcp-input: the Console only reaches /sessions.
+	mux.HandleFunc("POST /sessions-mcp", sessionx.HandleMCPCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
 	// response was lost to a client timeout, so the caller need not retry into a dup.
 	// Top-level path (not under /sessions/{name}/…) to avoid a mux wildcard collision.

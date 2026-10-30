@@ -398,6 +398,9 @@ type CreateReq struct {
 	// initial_prompt carrying its id (instr) (#1257). False on the Terminal route.
 	managed bool
 	instr   string
+	// mcp is who sent this create over the CP's /mcp (HandleMCPCreateSession), or nil. Unexported,
+	// so no JSON body can set it: the only way to a non-nil value is that route.
+	mcp *mcpOrigin
 	// name is the slug a move booked for its target before writing the handover file there
 	// (ADR 0115 decision 9). Unexported, so no client can name a session: every other create
 	// allocates a fresh slug.
@@ -746,6 +749,8 @@ var deliverInitialPromptFn = deliverInitialPrompt
 // same origin for the launch task.
 func createTurnOrigin(req *CreateReq, spawnParent string) agents.Origin {
 	switch {
+	case req.mcp != nil:
+		return turnOrigin(TurnSourceMCP, "")
 	case req.ReportTo != "":
 		return turnOrigin(injectionSource(req.Source), "")
 	case scheduleInjectionSource(req.Source) != "":
@@ -781,6 +786,11 @@ func (req *CreateReq) delivery() *chatx.ScheduleDelivery {
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
+	case req.mcp != nil:
+		// The same record /mcp-input makes: a badge, and nothing else. No ledger row, no
+		// Discord mirror and no fleet-graph arrow (fleetGraphActorFor drops TurnSourceMCP), and
+		// ahead of the default branch, which would draw the prompt as the member's own.
+		recordInjection(name, req.InitialPrompt, TurnSourceMCP)
 	case req.ReportTo != "" || req.delivery() != nil:
 		req.instr = chatx.AddScheduledInstruction(name, req.ReportTo, injectionSource(req.Source), req.delivery(), req.managed)
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)

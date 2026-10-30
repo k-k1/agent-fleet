@@ -287,3 +287,10 @@ CI などのヘッドレスな呼び出しと、OAuth を持たないクライ�
   読み取りのみ／読み書き）も必要。テナントがブロックすると、OAuth 接続でもトークンでもツールは
   見えなくなる。文言のみの変更（同意画面・Console・ガイド、英日）で、スコープが与える範囲は
   変わらず、上の決定は何も変わらない。
+
+- 2026-10-30, #3027: `create_session` の `initial_prompt` も `send_to_session`（2026-10-22 の注記）と同じ
+  出どころを持つようになった。CP は作成を Agent の別ルート `/sessions-mcp` に送る（Console の `/sessions`
+  からは届かない）。接続は認証済みの主体から取り、主体がなければ拒否する。Agent は最初のプロンプトを
+  `[agent-fleet:mcp …]` で包み、同じ「MCP 経由」バッジの記録を付け、`[agent-fleet:` で始まるプロンプトは
+  拒否する。shell / ssm のセッションは `send_to_session` と同様、MCP 経由の `initial_prompt` を受け付けない。
+  上の決定は何も変わらない。ガイド: `guide/member/19-outside-access.md`。

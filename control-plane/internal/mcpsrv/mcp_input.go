@@ -18,14 +18,38 @@ import (
 // impl the client's own clientInfo name, which is informational. The prompt text is not logged
 // anywhere on this side.
 func mcpInputBody(ctx context.Context, prompt string) ([]byte, error) {
+	o, err := mcpOriginFields(ctx, "send_to_session")
+	if err != nil {
+		return nil, err
+	}
+	o["prompt"] = prompt
+	return json.Marshal(o)
+}
+
+// mcpOriginFields is the origin the Agent builds its envelope from, read from the authenticated
+// principal on ctx (see mcpInputBody). tool names the caller in the refusal.
+func mcpOriginFields(ctx context.Context, tool string) (map[string]any, error) {
 	ci := mcpCallFrom(ctx)
 	if ci.patID == "" {
-		return nil, errors.New("send_to_session needs an authenticated connection")
+		return nil, errors.New(tool + " needs an authenticated connection")
 	}
-	return json.Marshal(map[string]string{
-		"prompt":     prompt,
+	return map[string]any{
 		"connection": ci.patID,
 		"via":        ci.principalName,
 		"impl":       ci.impl,
-	})
+	}, nil
+}
+
+// createSessionBody is create_session's POST body for the Agent's /sessions-mcp (#3027): the
+// create fields plus the origin its initial_prompt is wrapped with. The route, not the Console's
+// /sessions, is what makes the Agent build the envelope, so a create cannot omit it.
+func createSessionBody(ctx context.Context, fields map[string]any) ([]byte, error) {
+	o, err := mcpOriginFields(ctx, "create_session")
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range o {
+		fields[k] = v
+	}
+	return json.Marshal(fields)
 }

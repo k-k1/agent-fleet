@@ -1,7 +1,8 @@
 package sessionx
 
 // Input that arrived over the CP's /mcp (#2542): send_to_session from a hosted assistant
-// (OAuth, ADR 0118) or a PAT client.
+// (OAuth, ADR 0118) or a PAT client, and create_session's initial_prompt from the same callers
+// (#3027, HandleMCPCreateSession at the foot of this file).
 //
 // Delivery reuses /input; what lives here is what being an MCP send imposes, held in the Agent
 // for the reason session_peer.go gives: the Console writes /input too, and an invariant kept
@@ -153,4 +154,49 @@ func HandleSessionMCPInput(w http.ResponseWriter, r *http.Request) {
 	r2 := r.Clone(context.WithValue(r.Context(), mcpDeliveryKey{}, true))
 	r2.Body = io.NopCloser(strings.NewReader(string(out)))
 	HandleSessionInput(w, r2)
+}
+
+// HandleMCPCreateSession is POST /sessions-mcp: create_session from the CP's /mcp. It is
+// HandleCreateSession with the origin the CP authenticated, so the launch prompt is wrapped in
+// the same envelope as /mcp-input's and badged the same way.
+//
+// Like /mcp-input it is absent from the CP's agent-proxy allowlist, so the Console cannot reach
+// it; and POST /sessions cannot set CreateReq.mcp, which no JSON field maps to.
+func HandleMCPCreateSession(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		CreateReq
+		mcpOrigin
+	}
+	if !httpx.DecodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.Connection) == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "mcp_origin_required", "connection is required: MCP input always carries its origin")
+		return
+	}
+	req := body.CreateReq
+	// The CP sends none of these; clearing them keeps this route from reaching a branch that
+	// would outrank the MCP origin (a report_to, a schedule, a session parent).
+	req.ReportTo, req.Source = "", ""
+	req.ScheduleID, req.ScheduleSlot, req.ScheduleDelivery = "", "", nil
+	req.Origin, req.OriginConv, req.OriginSession, req.OriginProposal = "", "", "", ""
+	if strings.TrimSpace(req.InitialPrompt) != "" {
+		if !utf8.ValidString(req.InitialPrompt) {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_message", "initial_prompt must be UTF-8")
+			return
+		}
+		if mcpForgedEnvelope(req.InitialPrompt) {
+			httpx.WriteErr(w, http.StatusBadRequest, "mcp_forged_envelope",
+				"the initial_prompt starts with \"[agent-fleet:\", which is reserved for envelopes Agent Fleet adds itself; remove that prefix")
+			return
+		}
+		// An unknown kind is left to the create's own bad_kind refusal.
+		if k := NormalizeKind(req.Kind); ValidateCreateKind(req.Kind) == nil && !peerTargetAllowed(k) {
+			httpx.WriteErr(w, http.StatusForbidden, "mcp_target_forbidden",
+				"a "+k+" session cannot be given an initial_prompt over MCP: input to a raw terminal is command execution")
+			return
+		}
+	}
+	req.mcp = &body.mcpOrigin
+	createSession(w, r, req)
 }
