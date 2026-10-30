@@ -52,10 +52,11 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	home, _, _ := memoryTestEnv(t)
 	repos := filepath.Join(home, "repos")
 	copies := liveScanFixture(t, repos, 40, 1500)
-	// A repository deep inside ignored content is the working copy's own business.
+	// A clone deep inside ignored content is found too (phase two).
 	nested := filepath.Join(repos, "r000", "node_modules", "p1", "lib", "d", "e")
 	memoryMkdirAll(t, nested)
 	liveScanGit(t, nested, "init", "--quiet", "-b", "main")
+	copies = append(copies, nested)
 
 	start := time.Now()
 	live, complete := agentMemLiveProjects()
@@ -63,8 +64,8 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	if !complete {
 		t.Fatal("the search must be complete")
 	}
-	if len(live) != 40 {
-		t.Fatalf("found %d projects, want 40 (a clone and its worktree are one project)", len(live))
+	if len(live) != 41 {
+		t.Fatalf("found %d projects, want 41 (40 clones, whose worktrees share theirs, and the nested clone)", len(live))
 	}
 	for _, c := range copies {
 		if p := agentMemProjectFor(c); p == nil || live[p.ID] == nil {
@@ -73,8 +74,9 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	}
 }
 
-// What git ignores in a working copy is not walked whole; what it does not ignore is, however deep.
-func TestAgentMemoryLiveSearchSkipsIgnoredContentOnly(t *testing.T) {
+// What git does not ignore in a working copy is walked first and whole; ignored content after it,
+// until agentMemLiveSoft. What that leaves unread makes the answer incomplete, never guessed empty.
+func TestAgentMemoryLiveSearchWalksIgnoredContentLast(t *testing.T) {
 	home, _, _ := memoryTestEnv(t)
 	repos := filepath.Join(home, "repos")
 	clone := filepath.Join(repos, "app")
@@ -83,26 +85,71 @@ func TestAgentMemoryLiveSearchSkipsIgnoredContentOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte("node_modules/\n.worktrees/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hidden := filepath.Join(clone, "a", "b", "c", "hidden") // not ignored, deep
-	memoryMkdirAll(t, hidden)
-	liveScanGit(t, hidden, "init", "--quiet", "-b", "main")
-	wt := filepath.Join(clone, ".worktrees", "x") // ignored, one level in
-	memoryMkdirAll(t, wt)
-	liveScanGit(t, wt, "init", "--quiet", "-b", "main")
-	deep := filepath.Join(clone, "node_modules", "p", "q", "r", "s", "deep") // ignored, deep
-	memoryMkdirAll(t, deep)
-	liveScanGit(t, deep, "init", "--quiet", "-b", "main")
+	mk := func(rel ...string) string {
+		d := filepath.Join(append([]string{clone}, rel...)...)
+		memoryMkdirAll(t, d)
+		liveScanGit(t, d, "init", "--quiet", "-b", "main")
+		return d
+	}
+	plain := mk("a", "b", "c", "hidden")
+	// A clone inside a clone inside a clone, none of them ignored.
+	mk("inner")
+	chain := mk("inner", "x", "y", "deep")
+	wt := mk(".worktrees", "x")
+	ignoredDeep := mk("node_modules", "p", "q", "r", "s", "deep")
+	liveOf := func(live map[string]*agentMemProject, d string) bool {
+		p := agentMemProjectFor(d)
+		return p != nil && live[p.ID] != nil
+	}
 	live, complete := agentMemLiveProjects()
 	if !complete {
 		t.Fatal("incomplete")
 	}
-	for _, d := range []string{clone, hidden, wt} {
-		if p := agentMemProjectFor(d); p == nil || live[p.ID] == nil {
+	for _, d := range []string{clone, plain, chain, wt, ignoredDeep} {
+		if !liveOf(live, d) {
 			t.Fatalf("%s is not live", d)
 		}
 	}
-	if p := agentMemProjectFor(deep); live[p.ID] != nil {
-		t.Fatal("the walk went deep into ignored content")
+	old := agentMemLiveSoft
+	agentMemLiveSoft = -time.Second // phase two never starts
+	t.Cleanup(func() { agentMemLiveSoft = old })
+	live, complete = agentMemLiveProjects()
+	if complete {
+		t.Fatal("ignored content was not read, yet the answer is complete")
+	}
+	for _, d := range []string{clone, plain, chain} {
+		if !liveOf(live, d) {
+			t.Fatalf("%s is lost with the partial answer", d)
+		}
+	}
+	if liveOf(live, ignoredDeep) {
+		t.Fatal("phase two ran")
+	}
+}
+
+// git quotes names with non-ASCII characters unless asked for -z, and a quoted name matches nothing.
+func TestAgentMemoryIgnoredDirsHandlesQuotedNames(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	clone := filepath.Join(home, "repos", "app")
+	memoryMkdirAll(t, clone)
+	liveScanGit(t, clone, "init", "--quiet", "-b", "main")
+	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte("*/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"plain", "build-é", " lead"} {
+		memoryMkdirAll(t, filepath.Join(clone, d))
+		if err := os.WriteFile(filepath.Join(clone, d, "file"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ign, ok := agentMemIgnoredDirs(clone)
+	if !ok {
+		t.Fatal("git could not list")
+	}
+	for _, d := range []string{"plain", "build-é", " lead"} {
+		if !ign[filepath.Join(clone, d)] {
+			t.Errorf("%q is not in %v", d, ign)
+		}
 	}
 }
 
