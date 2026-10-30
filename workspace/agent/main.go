@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -119,6 +120,24 @@ func serve() {
 		for _, err := range r.Errs {
 			log.Printf("state: migration: %v", err)
 		}
+	}
+	// codex's SQLite databases off an NFS ~/.codex (#3013), before anything below can start a
+	// codex process. Exported here and into every tmux launch, so the app-server, image
+	// generation, Terminal sessions and a codex a member types in a pane all open the same copy;
+	// two codex processes on two copies would each show a different thread list.
+	// The tmux server takes the value on every launch either way: one that outlived an earlier
+	// boot still carries that boot's value (or none) in its global environment.
+	dir, note := codex.RelocateSQLite()
+	if dir != "" {
+		_ = os.Setenv(codex.SQLiteHomeEnv, dir)
+	}
+	if v := os.Getenv(codex.SQLiteHomeEnv); v != "" {
+		tmuxx.AddLaunchEnv(nil, []string{codex.SQLiteHomeEnv + "=" + v})
+	} else {
+		tmuxx.AddLaunchEnv([]string{codex.SQLiteHomeEnv}, nil)
+	}
+	if note != "" {
+		log.Print(note)
 	}
 	// Re-seal the credential store under the home's own key when the CP sent one, before
 	// anything below reads or writes the store.

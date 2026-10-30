@@ -30,6 +30,13 @@ func SetLaunchEnv(unset, set []string) {
 	launchUnset, launchSet = unset, set
 }
 
+// AddLaunchEnv adds to what SetLaunchEnv set, for a boot step that decides later. The same
+// rule holds: before any session is launched.
+func AddLaunchEnv(unset, set []string) {
+	launchUnset = append(launchUnset, unset...)
+	launchSet = append(launchSet, set...)
+}
+
 func withLaunchEnv(args []string) []string {
 	if len(launchUnset) == 0 && len(launchSet) == 0 {
 		return args

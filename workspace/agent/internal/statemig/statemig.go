@@ -116,6 +116,9 @@ var Entries = []string{
 	// An open PreCompact on a Terminal codex session (codex.MarkCompacting). Introduced
 	// directly under AgentStateDir; it never existed under .config.
 	"codex-compacting",
+	// codex's SQLite databases, moved off an NFS ~/.codex (codex.RelocateSQLite). Introduced
+	// directly under AgentStateDir; it never existed under .config.
+	"codex-sqlite",
 	"opencode-sid",
 	// How each opencode Terminal slot was launched (opencode.slotModes). Introduced directly under
 	// AgentStateDir.
