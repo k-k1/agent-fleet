@@ -193,3 +193,35 @@ func TestSubagentRowsCacheDropsIdleSessions(t *testing.T) {
 		t.Fatalf("idle session kept=%v, live session present=%v; want false, true", kept, livePresent)
 	}
 }
+
+// A copy of an agent that cannot be read must not freeze the agent's spend at what the cache
+// last held while another copy keeps growing; the partial figure is used and not cached.
+func TestSessionSpendUsesReadableCopiesOfAnAgent(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	born := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	m := session.Meta{Name: "copies3051", Dir: t.TempDir(), Kind: session.KindClaude, Model: "claude-opus-5",
+		CreatedAt: born.Format(time.RFC3339)}
+	sid := session.UUID(m.Dir, m.Name)
+	broken := filepath.Join(cfg, "projects", "p1", sid, "subagents", "agent-a.jsonl")
+	if err := os.MkdirAll(broken, 0o700); err != nil { // stat works, reading fails
+		t.Fatal(err)
+	}
+	good := filepath.Join(cfg, "projects", "p2", sid, "subagents", "agent-a.jsonl")
+	if err := os.MkdirAll(filepath.Dir(good), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ts := born.Add(time.Minute).Format(time.RFC3339Nano)
+	if err := os.WriteFile(good, []byte(claudeUserLine(ts)+claudeUsageLine(ts, "g1", 1_000_000, 0)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
+		t.Fatalf("spend = %v, want the readable copy's $5", sp.USD)
+	}
+	subagentRowsCache.Lock()
+	n := len(subagentRowsCache.m[m.Name].agents)
+	subagentRowsCache.Unlock()
+	if n != 0 {
+		t.Fatal("a partial read was cached as complete")
+	}
+}

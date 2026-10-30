@@ -192,7 +192,7 @@ func SubagentTurns(m session.Meta, paths []string) ([]transcript.Turn, error) {
 func SubagentUsageTurns(m session.Meta) [][]transcript.Turn {
 	var out [][]transcript.Turn
 	for _, paths := range SubagentLogs(m) {
-		if turns, err := SubagentTurns(m, paths); err == nil {
+		if turns, _ := SubagentTurns(m, paths); len(turns) > 0 {
 			out = append(out, turns)
 		}
 	}

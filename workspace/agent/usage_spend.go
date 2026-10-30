@@ -90,13 +90,19 @@ func subagentSpendRowsAt(m session.Meta, now time.Time) []usageTurnRow {
 		e, ok := prev.agents[key]
 		if !ok || e.stamp != stamp.String() {
 			turns, err := sessionx.SubagentTurns(m, live)
-			if err != nil {
+			switch {
+			case err != nil && len(turns) == 0:
 				// Not cached, so the next call reads it again; until then the last good fold
 				// stands in, an undercount of only what was appended since.
 				if ok {
 					next.agents[key] = e
 					rows = append(rows, e.rows...)
 				}
+				continue
+			case err != nil:
+				// Some copies read: price what they hold now, and cache nothing, so the next
+				// call reads every copy again.
+				rows = append(rows, foldTurnRows(turns, true)...)
 				continue
 			}
 			e = subagentRowsEntry{stamp: stamp.String(), rows: foldTurnRows(turns, true)}

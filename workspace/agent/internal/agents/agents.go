@@ -446,7 +446,8 @@ type SubagentUsageReader interface {
 	// agent, holding every copy of its transcript found on disk.
 	SubagentLogs(m session.Meta) [][]string
 	// SubagentTurns parses one group in full, the copies merged, every turn marked Sidechain.
-	// An error means a file could not be read, never that the agent spent nothing.
+	// An error means a file could not be read, never that the agent spent nothing; turns that
+	// come back with one are what the readable copies hold, to use but not to cache.
 	SubagentTurns(paths []string) ([]transcript.Turn, error)
 }
 

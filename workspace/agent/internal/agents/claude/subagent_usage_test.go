@@ -119,3 +119,51 @@ func TestSubagentTurnsMergesCopies(t *testing.T) {
 		t.Fatalf("turns = %d, want 6 (three calls, each with its prompt, once)", len(turns))
 	}
 }
+
+// A line with no timestamp stays where its copy put it. Sorted as the zero time it would jump
+// to the front and merge the two calls it separates into one turn, whose input snapshot is
+// then only the second call's.
+func TestSubagentTurnsMergeKeepsUntimedLinesInPlace(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"type":"user","timestamp":"2026-10-30T09:00:01Z","uuid":"q1","message":{"role":"user","content":"go"}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-10-30T09:00:02Z","uuid":"a1","requestId":"r1","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"one"}],"usage":{"input_tokens":1000,"output_tokens":1}}}` + "\n" +
+		`{"type":"user","uuid":"q2","message":{"role":"user","content":"again"}}` + "\n" +
+		`{"type":"assistant","timestamp":"2026-10-30T09:00:04Z","uuid":"a2","requestId":"r2","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"two"}],"usage":{"input_tokens":2000,"output_tokens":1}}}` + "\n"
+	a, b := filepath.Join(dir, "a.jsonl"), filepath.Join(dir, "b.jsonl")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turns, err := SubagentTurns([]string{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roles []string
+	for _, tr := range turns {
+		roles = append(roles, tr.Role)
+	}
+	if got := strings.Join(roles, ","); got != "user,assistant,user,assistant" {
+		t.Fatalf("roles = %s, want the untimed prompt still between the two calls", got)
+	}
+}
+
+// One unreadable copy must not hide the readable ones: their turns come back with the error.
+func TestSubagentTurnsReadsTheCopiesItCan(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.jsonl")
+	if err := os.WriteFile(good, []byte(subagentUsageLine(1, 7, "x")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	turns, err := SubagentTurns([]string{t.TempDir(), good})
+	if err == nil {
+		t.Fatal("want the unreadable copy's error")
+	}
+	in := 0
+	for _, tr := range turns {
+		in += tr.InTok
+	}
+	if in != 7 {
+		t.Fatalf("input tokens = %d, want 7 from the readable copy", in)
+	}
+}

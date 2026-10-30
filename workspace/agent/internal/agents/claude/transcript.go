@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -89,54 +90,65 @@ func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) 
 //
 // Unlike CollectTurns it has no 1 MiB cap: the cap keeps the newest turns, so a long agent's
 // oldest calls would drop out and its spend would fall as it grew. A read error is returned,
-// not read as an empty agent, so a caller that caches the result does not keep a hole.
+// not read as an empty agent, so a caller that caches the result does not keep a hole. When
+// only some copies fail, the turns of the readable ones come back with the error: a partial
+// figure the caller may use but must not cache.
 func SubagentTurns(paths []string) ([]transcript.Turn, error) {
-	var lines [][]byte
-	for i, p := range paths {
+	var copies [][][]byte
+	var readErr error
+	for _, p := range paths {
 		ls, err := readJSONLLinesErr(p)
 		if err != nil {
-			return nil, err
-		}
-		if i == 0 {
-			lines = ls
+			// One unreadable copy must not hide the others, the running one among them.
+			readErr = errors.Join(readErr, err)
 			continue
 		}
-		lines = append(lines, ls...)
+		copies = append(copies, ls)
 	}
-	if len(paths) > 1 {
-		lines = mergeCopies(lines)
+	if len(copies) == 0 {
+		return nil, readErr
+	}
+	lines := copies[0]
+	if len(copies) > 1 {
+		lines = mergeCopies(copies)
 	}
 	turns := collectTurns(lines, 0, len(lines), false, false)
 	for i := range turns {
 		turns[i].Sidechain = true // an agent's context is its own, never the session's fill
 	}
-	return turns, nil
+	return turns, readErr
 }
 
-// mergeCopies drops lines whose uuid an earlier line already had and stable-sorts the rest by
-// timestamp. A line with no uuid is kept; one with no parseable timestamp keeps its place
-// relative to its neighbours as far as a stable sort allows.
-func mergeCopies(lines [][]byte) [][]byte {
+// mergeCopies joins copies of one transcript: a line whose uuid an earlier line had is dropped,
+// and the rest are stable-sorted by timestamp. A line with no parseable timestamp takes the
+// previous line's in its own copy, so it stays where its copy put it: sorted as the zero time it
+// would jump to the front and merge the two turns it separated.
+func mergeCopies(copies [][][]byte) [][]byte {
 	type keyed struct {
 		line []byte
 		at   time.Time
 	}
 	seen := map[string]bool{}
 	var out []keyed
-	for _, ln := range lines {
-		var ev struct {
-			UUID      string `json:"uuid"`
-			Timestamp string `json:"timestamp"`
-		}
-		_ = json.Unmarshal(ln, &ev)
-		if ev.UUID != "" {
-			if seen[ev.UUID] {
-				continue
+	for _, lines := range copies {
+		var last time.Time
+		for _, ln := range lines {
+			var ev struct {
+				UUID      string `json:"uuid"`
+				Timestamp string `json:"timestamp"`
 			}
-			seen[ev.UUID] = true
+			_ = json.Unmarshal(ln, &ev)
+			if at, err := time.Parse(time.RFC3339Nano, ev.Timestamp); err == nil {
+				last = at
+			}
+			if ev.UUID != "" {
+				if seen[ev.UUID] {
+					continue
+				}
+				seen[ev.UUID] = true
+			}
+			out = append(out, keyed{ln, last})
 		}
-		at, _ := time.Parse(time.RFC3339Nano, ev.Timestamp)
-		out = append(out, keyed{ln, at})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
 	merged := make([][]byte, len(out))
