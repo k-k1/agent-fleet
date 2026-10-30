@@ -213,6 +213,15 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	return mcpTextResult(id, body)
 }
 
+// sessionOutputArgs is get_session_output's.
+type sessionOutputArgs struct {
+	Name string `json:"name"`
+	// Since is a pointer: an explicit since:0 (re-read from the start) has to be
+	// distinguished from an omitted one (continue from the previous cursor —
+	// mcpSessionOutput).
+	Since *int64 `json:"since"`
+}
+
 // fleetObserveTools is the operator's read-only view of the sessions, the repositories and
 // their cleanup. A session is offered some of the same tools in its own words
 // (mcpStdioFleetObserveTools, mcpStdioFleetSpawnTools) and reaches the same handlers.
@@ -227,11 +236,11 @@ func fleetObserveTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				var path string
 				path = "/sessions"
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 		{
 			name: "get_session_status",
@@ -267,7 +276,7 @@ func fleetObserveTools() []toolSpec {
 					},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				var path string
 				name := a.Name
 				if name == "" && selfReportOnly() {
@@ -284,7 +293,7 @@ func fleetObserveTools() []toolSpec {
 				}
 				path = "/sessions/" + url.PathEscape(name) + "/status"
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 		{
 			name: "get_session_output",
@@ -319,7 +328,7 @@ func fleetObserveTools() []toolSpec {
 					},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *sessionOutputArgs) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -329,7 +338,7 @@ func fleetObserveTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpSessionOutput(req.ID, a.Name, a.Since)
-			},
+			}),
 		},
 		{
 			name: "list_cleanup_candidates",
@@ -340,11 +349,11 @@ func fleetObserveTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				var path string
 				path = "/sessions/cleanup"
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 		{
 			name: "list_cleanup_archives",
@@ -355,11 +364,11 @@ func fleetObserveTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				var path string
 				path = "/cleanup/archives"
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 		{
 			name: "get_session_usage",
@@ -394,14 +403,14 @@ func fleetObserveTools() []toolSpec {
 					},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				var path string
 				path = "/sessions/usage"
 				if a.Name != "" {
 					path += "?name=" + url.QueryEscape(a.Name)
 				}
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 		{
 			name: "get_agent_usage",
@@ -424,7 +433,7 @@ func fleetObserveTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				// Read-only merge of the two WsBar usage endpoints (5h/weekly windows captured
 				// locally from statusline / rollout — no network call). opencode has no usage
 				// source, so it is intentionally absent from the result (said in the tool desc).
@@ -458,7 +467,7 @@ func fleetObserveTools() []toolSpec {
 					"muse":   json.RawMessage(ms),
 				})
 				return mcpTextResult(req.ID, string(b))
-			},
+			}),
 		},
 		{
 			name: "list_repos",
@@ -477,11 +486,11 @@ func fleetObserveTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				var path string
 				path = "/repos"
 				return mcpAgentGETRelay(req, p, path)
-			},
+			}),
 		},
 	}
 }

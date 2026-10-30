@@ -6,6 +6,37 @@ import (
 	"net/url"
 )
 
+type sendToSessionArgs struct {
+	Name   string `json:"name"`
+	Prompt string `json:"prompt"`
+}
+
+type answerSessionQuestionArgs struct {
+	Name string `json:"name"`
+	// Choices are 1-based choice numbers, in question order.
+	Choices []int `json:"choices"`
+}
+
+type respondSessionPlanArgs struct {
+	Name     string `json:"name"`
+	Decision string `json:"decision"`
+	Feedback string `json:"feedback"`
+}
+
+type stopSessionAfterTurnArgs struct {
+	Name string `json:"name"`
+	// On arms or releases. A POINTER because the zero value of the arming flag has to mean
+	// "arm": decoded into a plain bool, a call that omitted it would silently release the arm
+	// it was meant to set.
+	On *bool `json:"on"`
+}
+
+// deleteBranchArgs: Repo names the branch's repo.
+type deleteBranchArgs struct {
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+}
+
 // driveTools steer, stop and clean up sessions: the operator's under --write. stop_session,
 // stop_session_after_turn and resume_session are also a session's under --fleet-spawn, for its
 // own children only (sessionDriveAllowed).
@@ -34,7 +65,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *sendToSessionArgs) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -65,7 +96,7 @@ func driveTools() []toolSpec {
 				}
 				b, _ := json.Marshal(result)
 				return mcpTextResult(req.ID, string(b))
-			},
+			}),
 		},
 		{
 			name: "answer_session_question",
@@ -90,7 +121,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *answerSessionQuestionArgs) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -103,7 +134,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "質問への回答に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "respond_session_plan",
@@ -129,7 +160,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *respondSessionPlanArgs) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -142,7 +173,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "プランへの応答に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "stop_session",
@@ -188,7 +219,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -209,7 +240,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "セッションの停止に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "stop_session_after_turn",
@@ -262,7 +293,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *stopSessionAfterTurnArgs) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -276,7 +307,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "停止予約の更新に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "resume_session",
@@ -315,7 +346,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -327,7 +358,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "セッションの再開に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "archive_session",
@@ -351,7 +382,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -360,7 +391,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "セッションのアーカイブに失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "delete_worktree",
@@ -385,7 +416,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（worktree 名）が必要です")
 				}
@@ -401,7 +432,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "worktree の削除に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "delete_session",
@@ -425,7 +456,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *nameArg) []byte {
 				if a.Name == "" {
 					return mcpToolErr(req.ID, "name（セッション名）が必要です")
 				}
@@ -440,7 +471,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "セッションの削除に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "delete_branch",
@@ -465,7 +496,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *deleteBranchArgs) []byte {
 				if a.Repo == "" || a.Branch == "" {
 					return mcpToolErr(req.ID, "repo（リポジトリ名）と branch（ブランチ名）が必要です")
 				}
@@ -478,7 +509,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "ブランチの削除に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "restore_cleanup_archive",
@@ -502,7 +533,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（アーカイブ id）が必要です")
 				}
@@ -511,7 +542,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "アーカイブの復元に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "purge_cleanup_archive",
@@ -535,7 +566,7 @@ func driveTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（アーカイブ id）が必要です")
 				}
@@ -547,7 +578,7 @@ func driveTools() []toolSpec {
 					return mcpToolErr(req.ID, "アーカイブの完全削除に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 	}
 }

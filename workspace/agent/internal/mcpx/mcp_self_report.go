@@ -89,6 +89,28 @@ func mcpStdioSelfReportTools() []map[string]any {
 	return sessionTools(selfReportTools())
 }
 
+// proposeHandoffArgs is propose_session_handoff's.
+type proposeHandoffArgs struct {
+	Prompt string `json:"prompt"`
+	Title  string `json:"title"`
+}
+
+// afReportArgs is af_report's (docs/log/51 Phase 3). Session is the reporting session's name,
+// kept apart from "name" because this tool carries "who I am", not "which session to observe".
+type afReportArgs struct {
+	Session string `json:"session"`
+}
+
+// afStopAfterTurnArgs is af_stop_after_turn's (docs/log/85); Session means the same as in
+// afReportArgs.
+type afStopAfterTurnArgs struct {
+	Session string `json:"session"`
+	// On is the arm / release. A POINTER because the zero value of the arming flag has to
+	// mean "arm": decoded into a plain bool, a call that omitted it would silently release
+	// the arm it was meant to set.
+	On *bool `json:"on"`
+}
+
 // selfReportTools are the session server's own tools, on every session (docs/log/51 Phase 3).
 // The assistant's af_read/af_write never advertise them, so each is refused there on the call
 // side too.
@@ -124,7 +146,7 @@ func selfReportTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *proposeHandoffArgs) []byte {
 				if strings.TrimSpace(a.Prompt) == "" {
 					return mcpToolErr(req.ID, "prompt（次セッションへの引き継ぎ本文）が必要です")
 				}
@@ -147,7 +169,7 @@ func selfReportTools() []toolSpec {
 					return mcpToolErr(req.ID, "引き継ぎ提案の保存に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, "引き継ぎ案を利用者へ提示しました。利用者が内容、次のエージェント、モデルを確認してから新規セッションを起動します。")
-			},
+			}),
 		},
 		{
 			name: "af_report",
@@ -181,7 +203,7 @@ func selfReportTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *afReportArgs) []byte {
 				name := a.Session
 				if !session.ValidName(name) {
 					// The argument only ever means "me", and a Managed model has no shell variable to
@@ -200,7 +222,7 @@ func selfReportTools() []toolSpec {
 				// report itself. Telling the model "reported" here would hide the recovery paths for
 				// a forgotten or premature call (the reconciler).
 				return mcpTextResult(req.ID, "完了を申告しました（報告は Agent Fleet 側が状態を確認して配信します）。")
-			},
+			}),
 		},
 		{
 			name: "af_stop_after_turn",
@@ -238,7 +260,7 @@ func selfReportTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *afStopAfterTurnArgs) []byte {
 				name := a.Session
 				if !session.ValidName(name) {
 					// Unlike af_report the session name may be omitted: this tool is called off a
@@ -260,7 +282,7 @@ func selfReportTools() []toolSpec {
 				return mcpTextResult(req.ID,
 					"ターン終了後に停止するよう予約しました（この回答は最後まで出し切ってから停止します。"+
 						"再開はいつでもできます。新しい指示が届いた場合は予約が解除されます）。")
-			},
+			}),
 		},
 	}
 }
