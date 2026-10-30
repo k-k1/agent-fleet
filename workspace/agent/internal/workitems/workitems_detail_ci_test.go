@@ -94,3 +94,27 @@ func TestGitHubPanelCIBrokenExtraBodies(t *testing.T) {
 		t.Errorf("= %+v, want the check-run-only success", got)
 	}
 }
+
+func TestGitHubPanelCIStartupFailureRunWithoutCheckRuns(t *testing.T) {
+	got := ciDetail(t, ciRoutes(map[string]string{
+		ciBase + "/actions/runs": `{"workflow_runs":[
+		  {"status":"completed","conclusion":"startup_failure","check_suite_id":9},
+		  {"status":"completed","conclusion":"success","check_suite_id":8}]}`,
+	}))
+	if got.State != "failure" || got.Failed != 1 || got.Total != 3 {
+		t.Errorf("= %+v, want the run that never created jobs to turn the line red", got)
+	}
+}
+
+func TestGitHubPanelCIIncompleteCheckRunPageSkipsJudgement(t *testing.T) {
+	page := `{"total_count":150,"check_runs":[
+	  {"name":"build","status":"completed","conclusion":"success","check_suite":{"id":1}}]}`
+	got := ciDetail(t, ciRoutes(map[string]string{
+		ciBase + "/commits/" + mergeSHA + "/check-runs": page,
+		ciBase + "/rules/branches/main":                 `[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"on-page-two"}]}}]`,
+		ciBase + "/actions/runs":                        `{"workflow_runs":[{"status":"queued","check_suite_id":5}]}`,
+	}))
+	if got.State != "success" || got.Total != 1 {
+		t.Errorf("= %+v, want no pending guessed from a partial page", got)
+	}
+}

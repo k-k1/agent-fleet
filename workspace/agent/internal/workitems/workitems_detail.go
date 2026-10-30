@@ -684,13 +684,21 @@ func parseGitHubCheckRuns(body []byte) workItemChecksOut {
 			out.Pending++
 			continue
 		}
-		switch strings.ToLower(run.Conclusion) {
-		case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+		if githubConclusionFailed(run.Conclusion) {
 			out.Failed++
 		}
 	}
 	out.settle()
 	return out
+}
+
+// githubConclusionFailed is the set of conclusions that make a check run or workflow run red.
+func githubConclusionFailed(conclusion string) bool {
+	switch strings.ToLower(conclusion) {
+	case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+		return true
+	}
+	return false
 }
 
 // --- Bitbucket ----------------------------------------------------------------
