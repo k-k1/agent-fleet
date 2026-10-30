@@ -482,6 +482,7 @@ MCP servers, cloud-account commands, Jira and apps that connect from outside.
 | An outside app connects but shows no tools | [details](#an-outside-app-connects-but-shows-no-tools) |
 | Jira: boards, sprints and epics "not available" | [details](#jira-says-boards-sprints-and-epics-are-not-available) |
 | `jira issue create` timed out (exit status 124) | [details](#jira-issue-create-or-comment-add-timed-out-with-exit-status-124) |
+| `jira` exited with status 3 | [details](#jira-exited-with-status-3-the-description-was-not-set) |
 | AWS "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops | [details](#aws-commands-say-unable-to-locate-credentials-or-af-aws-exec-af-gcloud-exec-stops) |
 
 ### An MCP server I registered isn't available in sessions or assistants
@@ -555,6 +556,14 @@ the search can fail ("could not look for the issue"), so do not rely on it. Chec
 `project = PROJ AND creator = currentUser() AND created >= -15m`, and create it again only if it is not there.
 Commands that only read are re-run by themselves after a timeout or a connection reset
 ([15](15-external-services.md#use-jira-in-a-session)).
+
+### `jira` exited with status 3: the description was not set
+
+Status **3** from `jira issue create` or `jira issue edit -b` means the only part that failed is the description,
+and `jira` normally names the issue. If a `create` could not read the new issue's key, it says so instead: find the
+issue in Jira (for example with the JQL above). After a `create` **the issue exists**, so do not create it again. After
+an `edit` the other changes you asked for were applied. Either way, set the description with
+`jira issue edit PROJ-1 --no-input -b "…"` ([15](15-external-services.md#use-jira-in-a-session)).
 
 ### AWS commands say "Unable to locate credentials", or `af-aws-exec` / `af-gcloud-exec` stops
 

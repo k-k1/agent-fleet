@@ -6,6 +6,10 @@ English | [日本語](0120-workspace-memory-pressure.ja.md)
   read from the tree on this date. **Every threshold is a provisional starting value, not a
   measurement**: no pressure history exists from the incidents (the signals were never recorded), and
   decision 8 is the plan to get it.
+  Status update (2026-10-30): phase 0 (measure only) is built — the Agent's PSI sampler and the
+  `mem_pressure` axis on the Stats endpoint shipped in #2818 (merged 2026-10-27, commit e448b6f7a;
+  `workspace/agent/internal/mempressure/`), and `AF_MEM_PRESSURE=off` switches it off. Warning, refusing
+  and stopping are still not built, and every threshold remains provisional.
 - Refs: #2453
 - Follow-ups: #2516, #2517, #2518, #2519
 - Related: [0045](0045-ec2-persistent-workspace.md) decision 8 (one slot per member, which is why the
