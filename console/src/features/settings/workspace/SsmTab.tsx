@@ -15,6 +15,7 @@ import { awsProfileName, validExternalId, validRoleArn, validSessionName } from 
 import { useAwsLoginStore } from "../../awslogin/store.ts";
 import { useSettingsUI } from "../store.ts";
 import { AwsConfigImport } from "./AwsConfigImport.tsx";
+import { AwsConfigExport } from "./AwsConfigExport.tsx";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -251,6 +252,7 @@ function ProfileSection({
   // The ~/.aws/config import (issue #3010); openSettings("ssm:import") opens it from elsewhere.
   const requested = useSettingsUI((s) => (s.settingsSection === "ssm" ? s.settingsView : null));
   const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   useEffect(() => {
     if (requested !== "import") return;
     setImportOpen(true);
@@ -634,9 +636,13 @@ function ProfileSection({
               <button className="ghost ssm-import-toggle" onClick={() => setImportOpen(true)}>
                 <Icon name="cloud-upload" /> {tr("ssm.imp_open")}
               </button>
+              <button className="ghost ssm-export-toggle" onClick={() => setExportOpen(true)}>
+                <Icon name="download" /> {tr("ssm.exp_open")}
+              </button>
             </div>
           )}
       {importOpen && <AwsConfigImport onClose={() => setImportOpen(false)} onImported={reload} />}
+      {exportOpen && <AwsConfigExport onClose={() => setExportOpen(false)} />}
       {loginFor && (
         <ProfileLoginModal
           profile={loginFor}

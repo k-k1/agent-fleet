@@ -112,3 +112,15 @@ Decision 6 (no server change) holds: the file is read in the browser and only pe
 `POST api/ssm/profiles`. Concurrent imports from two places are not de-duplicated (that would need a CP unique
 constraint). Procedure and the remaining phases (`~/.ssh/config`, gcloud, export):
 [docs/79 §9](../log/79-settings-export-import.md#9-手元の-awsconfig-を読む3010).
+
+## Addendum (2026-10-30) — exporting Settings AWS profiles as `~/.aws/config` (#3017, part 3)
+
+The reverse direction is built from allowed fields only, never by concatenating stored values: the CP checks an SSO
+profile's fields more loosely than the Agent does, so a stored value may hold what an INI reader takes for a new key
+or section. A renderer checks every value against the Agent's allowlists, applies the Agent's own rules about which
+rows are exported (reserved `default`, name collisions leave out both sides, an SSO row needs an account and a role,
+a role row needs an exported source), reports each left-out row with a reason that names a field and never a value,
+and refuses to produce text whose lines are not of the shapes it writes. The result is "what Agent Fleet can
+express", not the inverse of an import, so it is offered as a fragment to merge by hand under a name that cannot be
+mistaken for `~/.aws/config`. Still no server change. The sso-session name is decided in one function, so sign-ins
+that several profiles share (a later decision) change the export in one place.

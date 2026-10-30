@@ -94,6 +94,27 @@ fix a role's session length (900–3600 seconds). Renaming a source keeps the ro
 - Importing again with the same choices creates nothing new. If a run stops halfway, read the file again: what was
   created shows as already registered and the rest can be imported.
 
+### Exporting profiles as ~/.aws/config
+
+**Export as ~/.aws/config** (next to the import) builds the text of an AWS config file from your Settings profiles
+and downloads it as `agent-fleet-aws-profiles.aws-config-fragment.txt`. It is built in your browser and nothing is
+sent. **It is a fragment to merge into your own `~/.aws/config` by hand, not a replacement for it**: it holds only what
+Agent Fleet can express (SSO profiles, each with its own `sso-session`, and the roles assumed from them), so replacing
+your file with it would drop your access keys, MFA and `credential_process` profiles and your own `[default]`. That is
+also why the file is not called `config`.
+
+The dialog lists every profile that was **left out**, with the reason:
+
+- the name `default` (reserved);
+- two profiles whose display names become the same AWS profile name (`prod app` / `prod-app`): both are left out until
+  one is renamed, as in the workspace's own `~/.aws/config`;
+- an SSO profile without both an account and a role;
+- a value the AWS config cannot hold (every value is checked against the same rules the workspace uses before it is
+  written, so a stored value cannot add a setting or a section of its own);
+- a role whose source profile is itself left out, missing, or not an SSO profile.
+
+Each SSO profile is written with its own `sso-session` (`af-<name>`), so each needs its own login on your machine too.
+
 ### Profile type: assume a role from another profile
 
 When an account is reached by a role that trusts your IAM Identity Center sign-in, you do not need long-lived keys
