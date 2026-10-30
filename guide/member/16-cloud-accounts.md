@@ -94,6 +94,37 @@ fix a role's session length (900–3600 seconds). Renaming a source keeps the ro
 - Importing again with the same choices creates nothing new. If a run stops halfway, read the file again: what was
   created shows as already registered and the rest can be imported.
 
+### Importing SSM hosts from ~/.ssh/config
+
+**Import from ~/.ssh/config** (next to the profile import) reads your ssh config and creates SSM hosts. Read
+this first: **the connection method changes.** In your ssh config these entries open an SSH session (your user,
+key and port) through an SSM tunnel, with `ProxyCommand aws ssm start-session … --document-name AWS-StartSSHSession`.
+An Agent Fleet host opens an `aws ssm start-session` shell on the instance, with no SSH user, key or port; those
+settings (`User`, `IdentityFile`, `Port`, forwards …) are not carried over, and the preview lists their names.
+
+The file is read in your browser only, and **a `ProxyCommand` is never run, shown, sent or kept**: only the alias,
+instance ID, AWS profile and region of the rows you tick are saved, through the same save as the add-host form.
+
+Only one static form is read. A `Host` name that is a single concrete name, whose `ProxyCommand` is
+`aws ssm start-session` (optionally wrapped as `sh -c "…"`) with only these options, each at most once:
+`--target` (an instance ID `i-…` / `mi-…`, or `%h`, which is the entry's `HostName`, or the `Host` name itself when
+there is no `HostName`, and must be an instance ID), `--document-name AWS-StartSSHSession`,
+`--parameters portNumber=%p` (or `portNumber=22`), `--profile`, `--region`. Everything else is **not importable**,
+with a reason: other documents (port forwarding, custom), other options, other `%` tokens, shell syntax
+(`;`, `|`, `$(…)`, quoting beyond the whole word), `ProxyJump`, wildcards (`*`, `?`), negations (`!`), `Match` and
+`Include`.
+
+OpenSSH uses the **first** value it finds for each keyword across every block that applies to a name, so the blocks
+are not independent. A host is importable only if its `ProxyCommand` (and its `HostName`, when `%h` needs it) is the
+first value and comes from a block that names the host exactly. A value inherited from `Host *` or an earlier
+pattern, or one that follows a `Match` that sets such a keyword or any `Include` (its text is not in what you
+pasted), is refused. To import such a host, paste the included files' text above it and write its entry out in full.
+
+The **AWS profile** is the Settings profile whose AWS name equals the command's `--profile`. When there is no
+`--profile`, or none matches, choose a profile in the row. Rows that already exist (same alias and instance) show
+as **Already registered**; an alias already used for another instance is refused. Nothing is created until you
+press Import, and a failed read of the current hosts sends nothing.
+
 ### Exporting profiles as ~/.aws/config
 
 **Export as ~/.aws/config** (next to the import) builds the text of an AWS config file from your Settings profiles
