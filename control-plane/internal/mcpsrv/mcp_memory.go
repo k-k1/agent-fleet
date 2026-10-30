@@ -79,7 +79,7 @@ func memoryTools() []mcpTool {
 	tools := []mcpTool{
 		{
 			name: "memory_projects", minScope: scopeRead,
-			desc:   "List the projects of the member's Agent Fleet memory (id, display name, repository, memory count). Each project's `remote` is what the other memory tools match `repository` against; an id can be passed as `project` instead. Needs \"Use AF memory from outside Agent Fleet\" in Settings > Agent memory, and the tenant administrator must allow it; the workspace must be running.",
+			desc:   "List the projects of the member's Agent Fleet memory (id, display name, repository, memory count; a count of 0 is a repository cloned in the workspace that holds no memory yet, which a save starts). Each project's `remote` is what the other memory tools match `repository` against; an id can be passed as `project` instead. Needs \"Use AF memory from outside Agent Fleet\" in Settings > Agent memory, and the tenant administrator must allow it; the workspace must be running.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
 				return a.memoryCall(ctx, res, "GET", "/agents/memory/external/projects", nil)
@@ -136,7 +136,7 @@ func memoryTools() []mcpTool {
 		},
 		{
 			name: "memory_save", minScope: scopeWrite,
-			desc: "Create or update an Agent Fleet memory (one fact per memory). Published at once and read by every agent kind in the workspace, so write facts, not instructions, and never a secret (the Agent refuses text that looks like one). " + repoHint + "scope is required: \"project\" for a fact about that repository, \"user\" only for a fact that holds in every project; a save without scope is refused. To update, pass the revision you read; 0 creates. Needs write access to be allowed in Settings > Agent memory. A project must already hold memory: new projects are started from inside the workspace.",
+			desc: "Create or update an Agent Fleet memory (one fact per memory). Published at once and read by every agent kind in the workspace, so write facts, not instructions, and never a secret (the Agent refuses text that looks like one). " + repoHint + "scope is required: \"project\" for a fact about that repository, \"user\" only for a fact that holds in every project; a save without scope is refused. To update, pass the revision you read; 0 creates. Needs write access to be allowed in Settings > Agent memory. A project that holds no memory yet is started by the first save when `repository` matches a repository cloned in the workspace; one that is not cloned there is refused.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"name":        map[string]any{"type": "string", "description": "lower-case slug (letters, digits, - _ .), up to 64 characters"},
 				"description": map[string]any{"type": "string", "description": "one line, about 150 characters"},

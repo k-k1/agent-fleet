@@ -7,8 +7,10 @@ package memoryx
 // separate from the in-workspace agentMemory switch: turning one on says nothing about the other.
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -65,48 +67,84 @@ func agentMemExternalAllow(w http.ResponseWriter, write bool) bool {
 	return false
 }
 
+// agentMemExternalTarget is the project a call is about: its id, and the working copy's identity
+// when the project holds no memory yet but a working copy under ~/repos stands for it (Live).
+type agentMemExternalTarget struct {
+	ID   string
+	Live *agentMemProject
+}
+
+// agentMemExternalLive finds the working copy that stands for a project id that holds no memory.
+// complete=false (the search ran out of budget or time) answers nothing: a clone that could not be
+// ruled out is a project that could be chosen wrongly.
+func agentMemExternalLive(id string) *agentMemProject {
+	live, complete := agentMemLiveProjects()
+	if !complete {
+		return nil
+	}
+	return live[id]
+}
+
 // agentMemExternalCaller is the outside caller for one project. An empty project is the user
-// scope only. A project must already hold memory, as for the Console: there is no working copy
-// to take a new project's root from.
-func agentMemExternalCaller(project string) (agentMemCaller, error) {
+// scope only. A project that holds no memory is only known through its working copy under
+// ~/repos, which is where its root comes from; with none the project does not exist. start makes
+// a save write the project's record with its first memory, as a session's first save does.
+func agentMemExternalCaller(t agentMemExternalTarget, start bool) (agentMemCaller, error) {
 	c := agentMemCaller{Session: agentMemUnknown, Kind: agentMemExternalKind}
-	if project == "" {
+	if t.ID == "" {
 		return c, nil
 	}
-	m, err := agentMemMemberCaller(agentMemScopeProject, project)
-	if err != nil {
+	m, err := agentMemMemberCaller(agentMemScopeProject, t.ID)
+	if err == nil {
+		c.Project = m.Project
+		if t.Live != nil && start {
+			c.Project, c.startProject = t.Live, true
+		}
+		return c, nil
+	}
+	var ue *memoryUserErr
+	if !errors.As(err, &ue) || ue.Code != errCodeMemoryNotFound {
 		return c, err
 	}
-	c.Project = m.Project
+	live := t.Live
+	if live == nil {
+		live = agentMemExternalLive(t.ID)
+	}
+	if live == nil || live.ID != t.ID {
+		return c, err
+	}
+	c.Project, c.startProject = live, start
 	return c, nil
 }
 
 // agentMemExternalResolve names the project a call is about. `repository` is a git remote URL
 // (what `git remote get-url origin` prints) and is matched, after the same normalisation the
 // projects' Remote went through, against the projects that hold memory, so an outside model needs
-// no opaque id. `project` stays accepted; when both are given they must name the same project.
-// A remote that matches no project, or more than one, is refused: guessing here is how a fact
-// lands in another repository's memory. Both empty answers "" (the user scope).
-func agentMemExternalResolve(project, repository string) (string, error) {
+// no opaque id. When none holds memory, the working copies under ~/repos are matched the same
+// way, and exactly one is the project to start. `project` stays accepted; when both are given
+// they must name the same project. A remote that matches no project, or more than one, is
+// refused: guessing here is how a fact lands in another repository's memory. Both empty answers
+// the user scope.
+func agentMemExternalResolve(project, repository string) (agentMemExternalTarget, error) {
 	repository = strings.TrimSpace(repository)
 	if repository == "" {
-		return project, nil
+		return agentMemExternalTarget{ID: project}, nil
 	}
 	want := agentMemNormalizeRemote(repository)
 	if want == "" {
-		return "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
+		return agentMemExternalTarget{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
 			"repository %q is not a remote this memory can match: pass the https or ssh URL printed by `git remote get-url origin` (only github.com, gitlab.com, bitbucket.org and codeberg.org remotes are matched), or pass `project` from memory_projects", repository)
 	}
 	// The normaliser drops the port, so on a self-hosted host "forge:8443/x" and "forge:9443/x" (or
 	// a port-less one) are one string yet can be different services. Only the big forges, whose
 	// host names one service, are trusted to pick a write target; elsewhere the id is the answer.
 	if host, _, _ := strings.Cut(want, "/"); !forgeHosts[host] {
-		return "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
+		return agentMemExternalTarget{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
 			"repository on %q cannot be matched safely (the remote does not tell self-hosted services on different ports apart): pass `project` from memory_projects instead", host)
 	}
 	all, err := agentMemMemberProjects()
 	if err != nil {
-		return "", err
+		return agentMemExternalTarget{}, err
 	}
 	var ids []string
 	for _, p := range all.Projects {
@@ -114,28 +152,51 @@ func agentMemExternalResolve(project, repository string) (string, error) {
 			ids = append(ids, p.Project.ID)
 		}
 	}
+	t := agentMemExternalTarget{}
 	switch {
-	case len(ids) == 0:
-		return "", memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
-			"no project of this memory has the remote %q: check memory_projects (its `repository` column), or save from inside the workspace first, since a project must already hold memory", want)
 	case len(ids) > 1:
-		return "", memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+		return t, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
 			"the remote %q matches %d projects (%s): pass `project` from memory_projects to choose one", want, len(ids), strings.Join(ids, ", "))
+	case len(ids) == 1:
+		t.ID = ids[0]
+	default:
+		// No project holds memory for it: a working copy that is cloned in the workspace starts one.
+		live, complete := agentMemLiveProjects()
+		var found []string
+		for id, p := range live {
+			if p.Remote == want {
+				found = append(found, id)
+			}
+		}
+		sort.Strings(found)
+		switch {
+		case len(found) == 0:
+			return t, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
+				"no project of this memory has the remote %q and no working copy of it is cloned in the workspace: clone the repository under ~/repos in the workspace first, or check memory_projects (its `repository` column)", want)
+		case !complete:
+			return t, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+				"the working copies under ~/repos could not all be read, so the project for the remote %q cannot be chosen safely: try again, or pass `project` from memory_projects", want)
+		case len(found) > 1:
+			return t, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+				"the remote %q matches %d working copies in the workspace (%s): pass `project` from memory_projects to choose one", want, len(found), strings.Join(found, ", "))
+		}
+		t.ID, t.Live = found[0], live[found[0]]
 	}
-	if project != "" && project != ids[0] {
-		return "", memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
-			"`project` (%s) and `repository` (%s) name different projects: pass only one of them", project, ids[0])
+	if project != "" && project != t.ID {
+		return agentMemExternalTarget{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
+			"`project` (%s) and `repository` (%s) name different projects: pass only one of them", project, t.ID)
 	}
-	return ids[0], nil
+	return t, nil
 }
 
-// agentMemExternalCallerFor resolves project/repository and returns the caller for it.
-func agentMemExternalCallerFor(project, repository string) (agentMemCaller, error) {
-	id, err := agentMemExternalResolve(project, repository)
+// agentMemExternalCallerFor resolves project/repository and returns the caller for it. start is
+// true for a save, the only call that may bring a project into being.
+func agentMemExternalCallerFor(project, repository string, start bool) (agentMemCaller, error) {
+	t, err := agentMemExternalResolve(project, repository)
 	if err != nil {
 		return agentMemCaller{}, err
 	}
-	return agentMemExternalCaller(id)
+	return agentMemExternalCaller(t, start)
 }
 
 // agentMemExternalWriteScope refuses a write that does not say where it goes. An omitted scope
@@ -186,7 +247,9 @@ type agentMemExternalProjectsWire struct {
 	Projects []agentMemExternalProjectRow `json:"projects"`
 }
 
-// HandleAgentMemoryExternalProjects lists the projects that hold memory.
+// HandleAgentMemoryExternalProjects lists the projects that hold memory and the working copies
+// under ~/repos that could start one (count 0): an ambiguous `repository` is resolved by passing
+// one of these ids as `project`, so they have to be listable.
 func HandleAgentMemoryExternalProjects(w http.ResponseWriter, r *http.Request) {
 	if !agentMemExternalAllow(w, false) {
 		return
@@ -198,7 +261,7 @@ func HandleAgentMemoryExternalProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := []agentMemExternalProjectRow{}
 	for _, p := range all.Projects {
-		if p.Count == 0 {
+		if p.Count == 0 && !p.Live {
 			continue
 		}
 		rows = append(rows, agentMemExternalProjectRow{ID: p.Project.ID, Display: p.Project.Display, Remote: p.Project.Remote, Count: p.Count})
@@ -212,7 +275,7 @@ func HandleAgentMemoryExternalIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	c, err := agentMemExternalCallerFor(q.Get("project"), q.Get("repository"))
+	c, err := agentMemExternalCallerFor(q.Get("project"), q.Get("repository"), false)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
@@ -232,7 +295,7 @@ func HandleAgentMemoryExternalSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	c, err := agentMemExternalCallerFor(q.Get("project"), q.Get("repository"))
+	c, err := agentMemExternalCallerFor(q.Get("project"), q.Get("repository"), false)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
@@ -252,7 +315,7 @@ func HandleAgentMemoryExternalRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	c, err := agentMemExternalCallerFor(q.Get("project"), q.Get("repository"))
+	c, err := agentMemExternalCallerFor(q.Get("project"), q.Get("repository"), false)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
@@ -302,7 +365,7 @@ func HandleAgentMemoryExternalSave(w http.ResponseWriter, r *http.Request) {
 		agentMemWriteErr(w, err)
 		return
 	}
-	c, err := agentMemExternalCallerFor(req.Project, req.Repository)
+	c, err := agentMemExternalCallerFor(req.Project, req.Repository, true)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
@@ -330,7 +393,7 @@ func HandleAgentMemoryExternalForget(w http.ResponseWriter, r *http.Request) {
 		agentMemWriteErr(w, err)
 		return
 	}
-	c, err := agentMemExternalCallerFor(req.Project, req.Repository)
+	c, err := agentMemExternalCallerFor(req.Project, req.Repository, false)
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
