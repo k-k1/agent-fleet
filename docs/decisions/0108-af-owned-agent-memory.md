@@ -964,12 +964,14 @@ are refused with their ids and `project` chosen from `memory_projects`, which no
 project that holds memory still wins over a working copy with the same remote. Reads and forgets never create anything,
 and read-only mode refuses before resolving. The Console's **New memory** keeps the restriction (#3032).
 
-## Note (2026-10-30): the live working-copy search no longer walks whole working copies (#3045)
+## Note (2026-10-30): the live working-copy search skips what git ignores (#3045)
 
 The search behind "orphaned" and behind starting a project from a clone (`agentMemLiveProjects`) timed out (20 s) on a
-workspace with 129 clones and answered with an empty map, so no project read as live. It now reads only one level of
-subdirectories below a working copy's root (`repo/.worktrees/x`, `repo/build/live` are found), instead of the whole
-tree, and each directory's identity is computed once per search (a session's directory the walk already found is not
-resolved again). The note of 2026-10-14 said working copies are found "inside other working copies" at any depth; that
-now holds to that depth, deeper only for a session's directory. A timeout or an unreadable directory still makes the
-answer incomplete.
+workspace with 129 clones and answered with an empty map, so no project read as live. Walking every tree is not an
+option (800k entries took 20-30 s on its own). Inside a git working copy the walk now skips the directories git
+ignores (`git ls-files --others --ignored --exclude-standard --directory`, one call per clone) and still reads two
+levels into each (an ignored `.worktrees/` is found); everything git does not ignore is walked whole, at any depth.
+The 2026-10-14 note's "inside other working copies" holds with that exception: a clone deeper inside ignored content
+(`node_modules/a/b/c/clone`) is found only as a session's directory. If git cannot list the ignored directories the
+answer is incomplete. Each directory's identity is computed once per search. A timeout or an unreadable directory
+still makes the answer incomplete.

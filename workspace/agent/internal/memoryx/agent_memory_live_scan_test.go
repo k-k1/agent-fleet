@@ -37,6 +37,9 @@ func liveScanFixture(t *testing.T, repos string, n, deepDirs int) (copies []stri
 		liveScanGit(t, clone, "worktree", "add", "--quiet", "-b", "wt", wt)
 		copies = append(copies, clone, wt)
 		if i < 3 {
+			if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte("node_modules/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			for j := 0; j < deepDirs; j++ {
 				memoryMkdirAll(t, filepath.Join(clone, "node_modules", fmt.Sprintf("p%d", j), "lib"))
 			}
@@ -49,8 +52,9 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	home, _, _ := memoryTestEnv(t)
 	repos := filepath.Join(home, "repos")
 	copies := liveScanFixture(t, repos, 40, 1500)
-	// A repository nested in a working copy's content is the working copy's own business.
-	nested := filepath.Join(repos, "r000", "node_modules", "p1", "lib")
+	// A repository deep inside ignored content is the working copy's own business.
+	nested := filepath.Join(repos, "r000", "node_modules", "p1", "lib", "d", "e")
+	memoryMkdirAll(t, nested)
 	liveScanGit(t, nested, "init", "--quiet", "-b", "main")
 
 	start := time.Now()
@@ -69,26 +73,54 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	}
 }
 
-// Below a working copy the walk reads a bounded number of levels, never its whole content.
-func TestAgentMemoryLiveSearchDoesNotWalkAWorkingCopyWhole(t *testing.T) {
+// What git ignores in a working copy is not walked whole; what it does not ignore is, however deep.
+func TestAgentMemoryLiveSearchSkipsIgnoredContentOnly(t *testing.T) {
 	home, _, _ := memoryTestEnv(t)
 	repos := filepath.Join(home, "repos")
 	clone := filepath.Join(repos, "app")
 	memoryMkdirAll(t, clone)
 	liveScanGit(t, clone, "init", "--quiet", "-b", "main")
-	inner := filepath.Join(clone, "a", "b", "inner")
-	memoryMkdirAll(t, inner)
-	liveScanGit(t, inner, "init", "--quiet", "-b", "main")
-	// Budget 3 = ~/repos, app and app/a. A walk that went on into app/a/b would be incomplete.
-	oldB := agentMemLiveBudget
-	agentMemLiveBudget = 3
-	t.Cleanup(func() { agentMemLiveBudget = oldB })
+	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte("node_modules/\n.worktrees/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hidden := filepath.Join(clone, "a", "b", "c", "hidden") // not ignored, deep
+	memoryMkdirAll(t, hidden)
+	liveScanGit(t, hidden, "init", "--quiet", "-b", "main")
+	wt := filepath.Join(clone, ".worktrees", "x") // ignored, one level in
+	memoryMkdirAll(t, wt)
+	liveScanGit(t, wt, "init", "--quiet", "-b", "main")
+	deep := filepath.Join(clone, "node_modules", "p", "q", "r", "s", "deep") // ignored, deep
+	memoryMkdirAll(t, deep)
+	liveScanGit(t, deep, "init", "--quiet", "-b", "main")
 	live, complete := agentMemLiveProjects()
 	if !complete {
-		t.Fatal("the walk went below the working copy")
+		t.Fatal("incomplete")
 	}
-	if len(live) != 1 {
-		t.Fatalf("live = %d projects, want only app", len(live))
+	for _, d := range []string{clone, hidden, wt} {
+		if p := agentMemProjectFor(d); p == nil || live[p.ID] == nil {
+			t.Fatalf("%s is not live", d)
+		}
+	}
+	if p := agentMemProjectFor(deep); live[p.ID] != nil {
+		t.Fatal("the walk went deep into ignored content")
+	}
+}
+
+// An id derived from the path (svn) differs between a symlink and its target: both are live.
+func TestAgentMemoryLiveSearchKeepsPathDerivedIdsOfAliases(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	repos := filepath.Join(home, "repos")
+	real := filepath.Join(repos, "z-real")
+	memoryMkdirAll(t, filepath.Join(real, ".svn"))
+	link := filepath.Join(repos, "a-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	live, _ := agentMemLiveProjects()
+	for _, d := range []string{real, link} {
+		if p := agentMemProjectFor(d); p == nil || live[p.ID] == nil {
+			t.Fatalf("%s is not live", d)
+		}
 	}
 }
 

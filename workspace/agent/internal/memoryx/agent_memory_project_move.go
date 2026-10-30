@@ -116,24 +116,24 @@ var (
 	// Past either the answer is "incomplete" and nothing is called orphaned.
 	agentMemLiveBudget  = 100000
 	agentMemLiveTimeout = 20 * time.Second
-	// agentMemNestedDepth: below a working copy's root the walk reads this many directory levels
-	// beyond the root's own (1 = its subdirectories are read, their children only checked for a
-	// marker).
-	agentMemNestedDepth = 1
+	// agentMemNestedDepth: how many directory levels the walk reads inside a skipped directory
+	// (an ignored one, or an svn copy): 2 = its subdirectories and theirs are read, the next level
+	// only checked for a marker.
+	agentMemNestedDepth = 2
 )
 
 // agentMemLiveProjects maps the working copies to their projects, by id: every directory under
-// ~/repos with a .git or .svn entry, found at any depth outside other working copies and behind
+// ~/repos with a .git or .svn entry, found at any depth, inside other working copies and behind
 // symlinks included, and every session's working directory. A project with a live working copy
 // is never orphaned, whatever its recorded root says. complete=false says something could not be
 // ruled out: a directory that could not be read, a repository whose identity could not be
 // resolved, or the budget or time of the search ran out.
 //
-// Inside a working copy the walk looks only agentMemNestedDepth directory levels down, for a
-// worktree or clone placed below another one (repo/.worktrees/x, repo/build/live); a repository
-// deeper than that is found only when it is also a session's directory. Walking whole
-// node_modules trees timed out on a large workspace, and an empty answer from a timeout reads as
-// "nothing is live" (#3045).
+// Inside a git working copy the walk skips what git ignores (node_modules, build output): walking
+// every tree took 20-30 s on 130 clones with 800k entries (#3045), and ignored content is not
+// part of the copy. A skipped directory is still looked into agentMemNestedDepth levels, which is
+// where an ignored .worktrees/ holds its worktrees; a clone deeper inside ignored content is
+// found only when it is a session's directory. Content git does not ignore is walked whole.
 func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 	type result struct {
 		live     map[string]*agentMemProject
@@ -157,21 +157,35 @@ var agentMemLiveRunner = func(dir string) agentMemGitRunner {
 	return func(args ...string) (string, error) { return gitx.Run(dir, args...) }
 }
 
+// agentMemIgnoredDirs lists the directories git ignores in a working copy, by absolute path.
+// ok=false when git could not say.
+func agentMemIgnoredDirs(dir string) (map[string]bool, bool) {
+	out, err := agentMemLiveRunner(dir)("ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
+	if err != nil {
+		return nil, false
+	}
+	ign := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if rel, ok := strings.CutSuffix(strings.TrimSpace(line), "/"); ok && rel != "" {
+			ign[filepath.Join(dir, filepath.FromSlash(rel))] = true
+		}
+	}
+	return ign, true
+}
+
 func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 	live = map[string]*agentMemProject{}
 	complete = true
-	// resolved holds the directories whose identity was computed, by real path: a session's
-	// directory the walk already found costs nothing.
+	// resolved holds the directories whose identity was computed, by cleaned path: a session's
+	// directory the walk already found costs nothing. Not by real path: an id derived from the
+	// path (svn, no VCS) differs between a symlink and its target, and each must be live.
 	resolved := map[string]bool{}
 	add := func(dir string) {
-		real := dir
-		if r, err := filepath.EvalSymlinks(dir); err == nil {
-			real = r
-		}
-		if resolved[real] {
+		dir = filepath.Clean(dir)
+		if resolved[dir] {
 			return
 		}
-		resolved[real] = true
+		resolved[dir] = true
 		p, identified := agentMemProjectIdent(dir, dir, agentMemLiveRunner(dir))
 		if p == nil {
 			return
@@ -184,18 +198,22 @@ func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 			live[p.ID] = p
 		}
 	}
-	// left is how many more levels may be read below dir: -1 outside any working copy
-	// (unbounded, the budget limits it), counting down inside one.
+	// An item is read with left levels still allowed when left >= 0 (a skipped directory, or an
+	// svn copy), unbounded when left < 0: outside any copy (ign nil) or inside a git copy, where
+	// ign holds the directories git ignores.
 	type item struct {
 		dir  string
 		left int
+		ign  map[string]bool
 	}
 	visited := map[string]bool{}
-	queue := []item{{gitx.ReposRoot(), -1}}
+	queue := []item{{gitx.ReposRoot(), -1, nil}}
 	reads := 0
 	for len(queue) > 0 {
-		dir, left := queue[0].dir, queue[0].left
+		cur := queue[0]
 		queue = queue[1:]
+		dir, left := cur.dir, cur.left
+		insideCopy := cur.ign != nil || left >= 0
 		if real, err := filepath.EvalSymlinks(dir); err == nil {
 			if visited[real] {
 				continue
@@ -229,10 +247,10 @@ func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 			} else if !e.IsDir() {
 				continue
 			}
-			isCopy := false
+			isGit, isCopy := false, false
 			for _, marker := range []string{".git", ".svn"} {
 				if _, err := os.Lstat(filepath.Join(d, marker)); err == nil {
-					isCopy = true
+					isCopy, isGit = true, marker == ".git"
 					break
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					complete = false
@@ -241,14 +259,23 @@ func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 			switch {
 			case isCopy:
 				add(d)
-				if left < 0 {
-					// Its content is not walked whole: only agentMemNestedDepth levels.
-					queue = append(queue, item{d, agentMemNestedDepth})
-				} // a copy inside a copy is a leaf
-			case left < 0:
-				queue = append(queue, item{d, -1})
+				if insideCopy {
+					continue // a copy inside a copy is a leaf
+				}
+				if !isGit {
+					queue = append(queue, item{d, agentMemNestedDepth, nil})
+				} else if ign, ok := agentMemIgnoredDirs(d); ok {
+					queue = append(queue, item{d, -1, ign})
+				} else {
+					complete = false // what git ignores is unknown: do not walk it whole
+					queue = append(queue, item{d, agentMemNestedDepth, nil})
+				}
+			case cur.ign != nil && cur.ign[d]:
+				queue = append(queue, item{d, agentMemNestedDepth - 1, nil})
+			case cur.ign != nil || left < 0:
+				queue = append(queue, item{d, left, cur.ign})
 			case left > 0:
-				queue = append(queue, item{d, left - 1})
+				queue = append(queue, item{d, left - 1, nil})
 			}
 		}
 	}
