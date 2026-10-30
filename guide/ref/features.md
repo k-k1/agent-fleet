@@ -101,6 +101,7 @@ If a feature ships and does not appear here, it is not done
 | Cleanup and the trash | member | Clean up | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
 | Keyboard system | member | Settings → Keyboard | [02 Console basics](../member/02-console-basics.md) |
 | Text-to-speech | member | Settings → Read aloud | [20 Settings](../member/20-settings.md) |
+| Skills views — each agent's skills, read-only: personal (Settings) and a repository's (project tree → Skills…) | member | Settings → Skills; repository row menu → Skills… | [20 Settings](../member/20-settings.md#skills); [09 Agents](../member/09-agents.md) |
 
 ## Personal settings
 

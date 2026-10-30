@@ -180,9 +180,10 @@ directory belongs to someone else.
   instead, `issue create` could not get them: run `jira init`. Never paste a token, run `jira init` with your own
   `--server`, or add `--debug` (it gets no credential).
   Markdown bodies (`comment add`, `issue create -b/-T`, `issue edit -b`) are sent as ADF: write
-  plain Markdown, `code` and **bold** right next to Japanese text included. `issue create` with a
-  body exits **3** when the issue was created but its description was not set: **never re-run the
-  create**; set it with `jira issue edit KEY --no-input -b "…"`.
+  plain Markdown (piped stdin too), `code` and **bold** right next to Japanese text included.
+  `issue create` / `issue edit -b` exit **3** when only the description was not set (a create's issue
+  exists, an edit's other changes applied): **never re-run the create**; set it with
+  `jira issue edit KEY --no-input -b "…"`.
 - **Jira comments: `jira issue comment edit KEY ID` and `delete KEY ID`** exist only through the
   wrapper (jira-cli has none); edit takes `-b`, `-T FILE` (`-` = stdin) or piped stdin and sends
   the Markdown as ADF (no glue bug). Find ID with
