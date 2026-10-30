@@ -164,6 +164,19 @@ func ExitReasonFor(code, sig int, oom bool) string {
 	return "crashed"
 }
 
+// ExitReasonAfterStop is ExitReasonFor for a child we asked to stop (SIGTERM, EOF). A CLI that
+// handles the signal itself exits normally with a status of its own choosing (cursor's node
+// exits 143), which ExitReasonFor reads as a crash. Our own stop request is the evidence that
+// such a non-signalled non-zero exit is the stop; a death by signal (SIGKILL after the grace
+// period, SIGSEGV) still goes through ExitReasonFor, and an exit nobody asked for must not use
+// this, or a CLI that exits 143 on its own would be hidden.
+func ExitReasonAfterStop(code, sig int, oom, askedStop bool) string {
+	if askedStop && sig == 0 && code != 0 {
+		return "stopped"
+	}
+	return ExitReasonFor(code, sig, oom)
+}
+
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's working / answered badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
