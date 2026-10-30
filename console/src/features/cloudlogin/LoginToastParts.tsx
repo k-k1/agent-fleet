@@ -31,5 +31,11 @@ function Ticking({ deadline, text }: { deadline: number; text: (time: string) =>
   // deadline between two ticks is not drawn against a now up to a second old.
   useNow(1000);
   const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-  return <span className={"login-toast-countdown" + (left < 60 ? " is-soon" : "")}>{text(fmtCountdown(left))}</span>;
+  // Hidden from assistive tech: the toast is a polite live region (role=status, atomic), so a
+  // line rewritten every second would have the whole toast read out again every second.
+  return (
+    <span className={"login-toast-countdown" + (left < 60 ? " is-soon" : "")} aria-hidden="true">
+      {text(fmtCountdown(left))}
+    </span>
+  );
 }

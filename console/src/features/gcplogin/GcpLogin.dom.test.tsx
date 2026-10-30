@@ -126,6 +126,9 @@ describe("Google Cloud login toast and modal", () => {
     expect(fields).toEqual(["Projectprod-project", "Accountchosen at login"]);
     expect(toast.textContent).toContain("Request withdrawn in 1:01");
     expect(toast.querySelector(".login-toast-countdown.is-soon")).toBeNull();
+    // The toast is a live region; a line that changes every second must stay out of it.
+    expect(toast.closest("[aria-live]")).not.toBeNull();
+    expect(toast.querySelector(".login-toast-countdown")?.getAttribute("aria-hidden")).toBe("true");
     await tick(2000);
     expect(toast.textContent).toContain("Request withdrawn in 0:59");
     expect(toast.querySelector(".login-toast-countdown.is-soon")).not.toBeNull();
