@@ -26,6 +26,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -674,7 +675,9 @@ func chatCodexCmd(ctx context.Context, extraEnv []string, args ...string) *exec.
 	cmd.Dir = chatWorkdir()
 	over := extraEnv
 	if home, err := chatCodexHome(); err == nil {
-		over = append(append([]string(nil), extraEnv...), "CODEX_HOME="+home)
+		// The Agent may export codex.SQLiteHomeEnv for the member's sessions; inherited here it
+		// would put the chat's threads into their databases. Pin the chat's to its own home.
+		over = append(append([]string(nil), extraEnv...), "CODEX_HOME="+home, codex.SQLiteHomeEnv+"="+home)
 	}
 	if len(over) > 0 {
 		cmd.Env = envWith(over...)
