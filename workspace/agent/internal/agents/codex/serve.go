@@ -315,22 +315,21 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int)
 	if deliberate {
 		return // Restart/Shutdown own this teardown
 	}
-	code := 0
+	// sig comes from the wait status alone: a daemon that exits normally with 143 on its own
+	// is a crash, and reading the signal back out of the exit code would file it as stopped.
+	code, sig := 0, 0
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-				code = 128 + int(ws.Signal())
+				sig = int(ws.Signal())
+				code = 128 + sig
 			} else {
 				code = ee.ExitCode()
 			}
 		} else {
 			code = -1
 		}
-	}
-	sig := 0
-	if code >= 128 {
-		sig = code - 128
 	}
 	oomNow, okOOM := status.OOMKillCount()
 	// Generation history (the operational metadata of §9.5): like opencode, P3 uses the log
