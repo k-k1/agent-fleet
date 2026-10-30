@@ -57,6 +57,8 @@ type Supervisor struct {
 	cmd    *exec.Cmd  // this generation's child process (nil for an adopted existing process)
 	client *appClient // managed writer connection (one per generation)
 	up     bool
+	// retries counts in-flight retryEnsure goroutines so a test can wait for them.
+	retries sync.WaitGroup
 	// stopping marks a deliberate teardown (Restart/Shutdown) so the waiter doesn't
 	// record it as a crash or trigger reconciliation.
 	stopping bool
@@ -350,18 +352,25 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, tail *agents.StderrTail, gen int)
 	// With nobody waiting, do not restart — the same call as the fold-up-on-zero-demand
 	// policy (stopIfIdle), reclaiming 110 MB the moment it dies.
 	if dependents() > 0 {
-		go s.retryEnsure("daemon death")
+		s.retries.Add(1)
+		go func() {
+			defer s.retries.Done()
+			s.retryEnsure("daemon death")
+		}()
 	} else {
 		_ = os.Unsetenv(appServerAddrEnv)
 	}
 	go reconcileAll("daemon death")
 }
 
+// retryEnsureDelay is the settle before retryEnsure; tests shorten it.
+var retryEnsureDelay = 3 * time.Second
+
 // retryEnsure brings the shared daemon back after an unexpected death, once per
 // death with a short settle (a brake on instant-death loops — the next retry comes from the
 // next Resume).
 func (s *Supervisor) retryEnsure(reason string) {
-	time.Sleep(3 * time.Second)
+	time.Sleep(retryEnsureDelay)
 	if _, _, err := s.Ensure(); err != nil {
 		log.Printf("codex app-server: restart after %s failed: %v", reason, err)
 	}

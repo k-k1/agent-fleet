@@ -13,6 +13,8 @@ func daemonExit(t *testing.T, script string) status.ExitInfo {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	stubLoggedIn(t, false) // the retry after the death must not spawn a real daemon
+	prevDelay := retryEnsureDelay
+	retryEnsureDelay = 0
 	const name = "exit-143-test"
 	h := &threadHandle{name: name, alive: true}
 	handlesMu.Lock()
@@ -28,6 +30,12 @@ func daemonExit(t *testing.T, script string) status.ExitInfo {
 		t.Fatalf("start: %v", err)
 	}
 	s := &Supervisor{}
+	// Registered before the stubs are restored: the retry has to finish while loggedIn is
+	// still stubbed, or it would consult the real login state.
+	t.Cleanup(func() {
+		s.retries.Wait()
+		retryEnsureDelay = prevDelay
+	})
 	s.mu.Lock()
 	s.up, s.cmd = true, cmd
 	s.mu.Unlock()
