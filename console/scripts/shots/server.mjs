@@ -184,13 +184,20 @@ const exact = {
       },
     ],
   }),
-  // The body of the opened skill (api/skills/file), shown beneath its path.
-  "/api/skills/file": () => ({
-    content: L(
-      "---\nname: review\ndescription: 差分を読んで指摘を並べる\n---\n\n# review\n\n変更された差分を読み、バグの可能性が高いものから順に指摘を並べます。\n\n- 修正案は 1 行で添える\n- 好みの問題は挙げない\n",
-      "---\nname: review\ndescription: Read the diff and list findings\n---\n\n# review\n\nRead the changed diff and list findings, most likely bug first.\n\n- Add a one-line fix to each\n- Leave out matters of taste\n",
-    ),
-  }),
+  // The body of the opened skill (api/skills/file), keyed by the catalog's own paths so each row
+  // shows its own file; any other path is refused, as the real route does outside the roots.
+  "/api/skills/file": (q) => {
+    const md = (name, desc, body) => `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\n${body}\n`;
+    const bodies = {
+      "/home/dev/.claude/skills/handoff/SKILL.md": md("handoff", L("セッションを別のエージェントへ引き継ぐ", "Hand the session over to another agent"), L("作業の状況と次の一手をまとめ、引き継ぎ先に渡します。", "Summarise the state of the work and the next step, and pass it on.")),
+      "/home/dev/.claude/skills/release-notes/SKILL.md": md("release-notes", L("マージ済み PR からリリースノートを下書きする", "Draft release notes from merged pull requests"), L("前回のタグ以降にマージされた PR を読み、変更点を種類別に並べます。", "Read the pull requests merged since the last tag and group the changes by kind.")),
+      "/home/dev/.claude/skills/review/SKILL.md": md("review", L("差分を読んで指摘を並べる", "Read the diff and list findings"), L("変更された差分を読み、バグの可能性が高いものから順に指摘を並べます。", "Read the changed diff and list findings, most likely bug first.")),
+      "/home/dev/.claude/commands/review.md": md("review", L("古いレビュー用コマンド", "Older review command"), L("以前使っていたレビュー用のコマンドです。同名のスキルが優先されます。", "The review command used before; the skill of the same name wins.")),
+      "/home/dev/.claude/skills/af-build/SKILL.md": md("af-build", "Build memory and toolchains", L("ビルドのメモリとツールチェーンの扱いです。", "How builds use memory and toolchains.")),
+    };
+    const content = bodies[q.get("path") || ""];
+    return content === undefined ? { error: { code: "not_found", message: "no such skill file" } } : { content };
+  },
   "/api/ssm/profiles": () => ({ profiles: [] }),
   // MCP registry (docs/log/48). One row per origin so the settings tab shows all three
   // editability states (user = full CRUD, tenant = disable-only, builtin = code).
