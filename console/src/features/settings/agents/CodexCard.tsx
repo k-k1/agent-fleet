@@ -5,7 +5,15 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { OnOff } from "../parts/controls.tsx";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
+import {
+  ProviderCard,
+  StatusPill,
+  Hint,
+  DeviceSteps,
+  DisconnectButton,
+  ReauthButton,
+  IssueLink,
+} from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
 import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
@@ -92,6 +100,17 @@ export function CodexCard({
     await raw("api/connections/codex", { method: "DELETE" });
     reload();
   };
+  // A login revoked server side still reads as connected (`codex login status` and auth.json
+  // are local), so signing in again has to be offered on the connected card. It signs in the
+  // way the card was connected: the device flow for ChatGPT, the key form for an API key —
+  // the device flow would silently switch an API-key workspace to a subscription.
+  const reauth = async () => {
+    const viaKey = st?.method === "apikey";
+    await raw("api/connections/codex", { method: "DELETE" });
+    reload(); // put the status pill back to "not connected"; the flow view below takes over first
+    if (viaKey) setMode("key");
+    else await startDevice();
+  };
 
   return (
     <ProviderCard
@@ -111,6 +130,7 @@ export function CodexCard({
             {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
+          <ReauthButton onClick={() => void reauth()} />
           <DisconnectButton onClick={disconnect} />
         </div>
       ) : mode === "device" && dev ? (
