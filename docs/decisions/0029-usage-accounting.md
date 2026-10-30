@@ -358,3 +358,18 @@ turn, which the uncapped numbering shifts. `rebaseCappedMark` renumbers such a m
 transcript line of its last folded turn (`LastIdx`), and marks written from now on carry
 `uncapped`. The hidden head is not folded afterwards: its `Idx` values would collide with rows
 already in the ledger.
+
+## Addendum (2026-10-31) — the ledger folds subagent and Workflow-agent transcripts
+
+Claude writes subagent and Workflow-agent transcripts beside the session's own, and the ledger
+took in only the main one (#3054), so the usage view undercounted a session that delegated
+while the budget (which prices them since #3051) did not. Merging their turns into the
+session's sequence would have renumbered turns already folded, so each agent transcript is its
+own row sequence instead (`foldSubagentUsage`): a watermark per agent in `state.json`
+(`subagents`, keyed by session name and the agent's path below `subagents/`), its own `Idx`
+numbering, and an `agent` field on the record (a hash of that path). The reader's dedup keys
+such a row by `(ref, agent)`, one entry per agent. `Ref` stays the session name and rows stay
+`sidechain`. An agent with no watermark is folded from its first turn, which is exact for a
+session that predates this change; the session's own watermark is not touched. An agent's last
+turn never closes on its own, so it is folded once the file has stood still for five minutes
+(or at settle-on-delete); a turn appended after that is a known small double count.

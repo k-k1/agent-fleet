@@ -4,9 +4,9 @@ package main
 //
 // It is priced from the session's own transcript, and from its subagents' transcripts where the
 // CLI keeps them apart (claude), through the same turn fold the ledger uses (foldTurnRows) and
-// the same price table the usage view uses (usageEstCostUSD). The ledger does not take in the
-// subagents yet (#3054), so for a session that delegated, its usage-view row is lower than its
-// budget chip. The ledger itself is not read: it has no per-session query, it folds lazily on
+// the same price table the usage view uses (usageEstCostUSD). The ledger folds the subagents'
+// transcripts too (foldSubagentUsage), so a session's usage-view row and its budget chip price
+// the same turns. The ledger itself is not read: it has no per-session query, it folds lazily on
 // read, and adding its rows to a transcript sum would count every turn twice.
 
 import (

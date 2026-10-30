@@ -89,7 +89,11 @@ func (d usageDedupIndex) accept(r usagex.Record, ts time.Time) bool {
 	if r.Feature != usagex.FeatureSession || r.Ref == "" || r.Idx <= 0 {
 		return true
 	}
+	// A subagent's rows are their own idx sequence under the same ref.
 	k := usageRefKey(r.Ref)
+	if r.Agent != "" {
+		k = usageRefKey(r.Ref + "\x00agent\x00" + r.Agent)
+	}
 	m, seen := d[k]
 	sec := ts.Unix()
 	if seen && r.Idx <= m.Idx && sec <= m.TS {
