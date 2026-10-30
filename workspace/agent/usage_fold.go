@@ -20,6 +20,8 @@ package main
 // deletion.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -99,8 +101,8 @@ type usageAgentMark struct {
 	Stamp string `json:"stamp,omitempty"`
 }
 
-// usageAgentTurn is one recorded turn: short hashes of every event id it has held and the
-// totals written for it so far. 32 bits per event is ample inside one agent's transcript.
+// usageAgentTurn is one recorded turn: hashes (usageEventHash) of every event id it has held
+// and the totals written for it so far.
 type usageAgentTurn struct {
 	IDs         []string `json:"ids"`
 	In          int      `json:"in,omitempty"`
@@ -499,12 +501,20 @@ func rowEventIDs(r usageTurnRow) []string {
 	}
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
-		h := usageAgentID(id)[:8]
+		h := usageEventHash(id)
 		if !slices.Contains(out, h) {
 			out = append(out, h)
 		}
 	}
 	return out
+}
+
+// usageEventHash is a recorded event id: 128 bits of its SHA-256. The agent's whole set of
+// event hashes is one lookup table, so a collision would read another turn as a recorded one and
+// subtract its totals; 32 bits collide near 1% at 10,000 events (measured with two real uuids).
+func usageEventHash(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:16])
 }
 
 // usageAgentID is the id a ledger record carries for a subagent transcript: a hash, so the

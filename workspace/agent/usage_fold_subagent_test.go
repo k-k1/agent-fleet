@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -328,7 +329,7 @@ func TestFoldSubagentWritesABatchSavedBeforeAnAppendThatFailed(t *testing.T) {
 	st := readUsageFoldState()
 	for k, mk := range st.Subagents {
 		mk.Seq = 2
-		mk.Turns = []usageAgentTurn{{IDs: []string{usageAgentID("a")[:8]}, In: 2600, Out: 50}}
+		mk.Turns = []usageAgentTurn{{IDs: []string{usageEventHash("a")}, In: 2600, Out: 50}}
 		mk.Pending = []usagex.Record{lost}
 		st.Subagents[k] = mk
 	}
@@ -362,5 +363,32 @@ func TestFoldSubagentMatchesATurnByAnyOfItsEvents(t *testing.T) {
 	}
 	if rows, in, out := sidechainSums(m); rows != 2 || in != 2000 || out != 60 {
 		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 2000 / 60", rows, in, out)
+	}
+}
+
+// Two event ids whose hashes agree on their first 32 bits are still two events: a short hash
+// would have read the second turn as the first and subtracted its totals.
+func TestFoldSubagentEventHashDoesNotCollideOn32Bits(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "hash3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	seen := map[string]string{}
+	var x, y string
+	for i := 0; x == ""; i++ { // a birthday collision turns up within ~100,000 ids
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012x", i)
+		h := usageEventHash(id)[:8]
+		if prev, ok := seen[h]; ok {
+			x, y = prev, id
+		}
+		seen[h] = id
+	}
+	if usageEventHash(x) == usageEventHash(y) {
+		t.Fatal("the full hashes collide")
+	}
+	turns := append(agentTurn(x, "2026-10-30T09:00:00Z", 2000, 20), agentTurn(y, "2026-10-30T09:05:00Z", 3000, 5)...)
+	if n := foldAgent(t, m, "s1", turns); n != 2 {
+		t.Fatalf("fold = %d rows, want 2", n)
+	}
+	if rows, in, out := sidechainSums(m); rows != 2 || in != 5000 || out != 25 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 5000 / 25", rows, in, out)
 	}
 }

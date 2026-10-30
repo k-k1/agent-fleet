@@ -382,4 +382,5 @@ The batch about to be
 appended is saved in the mark first (`pending`) and replayed identically if the pass did not
 finish: the dedup drops it when it had landed, and a recomputed difference would not match it.
 A delta row adds a row to the turn count of the usage view; its token and cost sums are exact.
-The mark holds a short hash per event of each agent in `state.json`.
+The mark holds a 128-bit hash per event of each agent in `state.json` (a 32-bit one collides near
+1% at 10,000 events, and a collision reads another turn as recorded).
