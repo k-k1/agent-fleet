@@ -50,6 +50,13 @@ const SECTION_RE = /^\[(.+)\]/;
 const OPTION_RE = /^(.*?)\s*([=:])\s*(.*)$/;
 
 export function parseAwsIni(text: string): { ok: true; file: IniFile } | { ok: false; error: IniError } {
+  return parseIni(text, true);
+}
+
+/** The same reader for another configparser-based file (gcloud's configurations, which use
+ *  ConfigParser's defaults too). `botocoreNested` is the AWS-only step that fails a file whose
+ *  value starts on the next line without "="; gcloud has no such rule. */
+export function parseIni(text: string, botocoreNested: boolean): { ok: true; file: IniFile } | { ok: false; error: IniError } {
   let bomStripped = false;
   if (text.charCodeAt(0) === 0xfeff) {
     text = text.slice(1);
@@ -121,9 +128,11 @@ export function parseAwsIni(text: string): { ok: true; file: IniFile } | { ok: f
   // fails the whole file when one has no "=" (configloader._parse_nested). It does so on each
   // section's effective values, so a bad [DEFAULT] value a section overrides is never reached.
   const file: IniFile = { sections, defaults, bomStripped };
-  for (const sec of sections) {
-    for (const v of effectiveOptions(file, sec).values()) {
-      if (nestedDict(v.value) === null) return { ok: false, error: { code: "bad_nested", line: v.line } };
+  if (botocoreNested) {
+    for (const sec of sections) {
+      for (const v of effectiveOptions(file, sec).values()) {
+        if (nestedDict(v.value) === null) return { ok: false, error: { code: "bad_nested", line: v.line } };
+      }
     }
   }
   return { ok: true, file };
