@@ -83,3 +83,15 @@ Only that key shape is excluded, not the file."""
 condition = "AND"
 paths = ['''workspace/agent/internal/mcpx/testdata/mcp_tools/calls\.txt''']
 regexes = ['''cs_[0-9a-f]{64}''']
+
+[[allowlists]]
+description = """The gcloud property name `compute/region` in the gcloud configuration import \
+(`{ code: "invalid", key: "compute/region" }`) and its test. generic-api-key reads the \
+`key: "..."` right-hand side as a value; it is a section/property name that a refusal \
+reason may show, not a credential. Only that literal in those two files is excluded."""
+condition = "AND"
+paths = [
+  '''console/src/lib/gcloudConfigImport\.ts''',
+  '''console/src/lib/gcloudConfigImport\.test\.ts''',
+]
+regexes = ['''compute/region''']

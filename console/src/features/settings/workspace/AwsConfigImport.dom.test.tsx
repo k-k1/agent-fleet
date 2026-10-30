@@ -199,4 +199,35 @@ describe("AwsConfigImport", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("3");
     expect(api).not.toHaveBeenCalled();
   });
+
+  const A = "[profile a]\nsso_start_url = " + URL + "\nsso_region = us-east-1\nsso_account_id = 1\nsso_role_name = R\n";
+  const readBtn = () => [...document.querySelectorAll("button")].find((b) => b.textContent === "読み込む" || b.textContent === "Read");
+
+  it("shows a reading state, not an empty form, while the current profiles load", async () => {
+    const release: ((v: unknown[]) => void)[] = [];
+    api.mockImplementation(() => new Promise((r) => release.push(r)));
+    await mount();
+    await paste(A);
+    expect(document.querySelector("textarea")).toBeNull();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toBeTruthy();
+    expect(readBtn()!.disabled).toBe(true);
+    // A second click on the disabled button starts no second load.
+    await act(async () => readBtn()!.click());
+    expect(api).toHaveBeenCalledTimes(2);
+    await act(async () => release.forEach((r) => r([])));
+    await flush();
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(document.querySelector("li.aws-import-row")).not.toBeNull();
+  });
+
+  it("clears the reading state and shows the error when the load rejects", async () => {
+    api.mockRejectedValue(new Error("boom"));
+    await mount();
+    await paste(A);
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+    expect(document.querySelector("textarea")).not.toBeNull();
+    expect(readBtn()).toBeDefined();
+  });
 });
