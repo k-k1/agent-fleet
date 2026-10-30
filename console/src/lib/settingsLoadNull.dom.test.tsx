@@ -36,6 +36,14 @@ describe("load() and a stored null", () => {
     expect(got.quickReplies).not.toBeNull();
   });
 
+  it("keeps a null under an unknown key and inside a nested value", async () => {
+    const s = await loadWith({ futureKey: null, futureMap: { a: null }, quickReplies: null });
+    const got = s.getSettings() as unknown as Record<string, unknown>;
+    expect(got.futureKey).toBeNull();
+    expect(got.futureMap).toEqual({ a: null });
+    expect(got.quickReplies).not.toBeNull();
+  });
+
   it("does not send a stored null on the next save", async () => {
     const s = await loadWith({ workingSets: null });
     s.persist();

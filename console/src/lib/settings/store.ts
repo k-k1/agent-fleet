@@ -13,7 +13,9 @@ function load(): Settings {
     const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
     // A null reads as a missing key, as in hydrateUIPrefs(): kept, it reaches readers that
     // dereference a map or array and the next save sends it to the server. No setting is nullable.
-    for (const k of Object.keys(saved)) {
+    // Known keys only: an unknown key is kept verbatim until the next PUT (a newer Console may
+    // store a nullable value there).
+    for (const k of Object.keys(DEFAULTS)) {
       if (saved[k] === null) delete saved[k];
     }
     // Migrate the old ON/OFF setting to the three-way choice; an explicit new setting wins.
