@@ -3,6 +3,7 @@ package sessionx
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -273,4 +274,92 @@ func readApprovalDir(t *testing.T) ([]string, error) {
 		names = append(names, e.Name())
 	}
 	return names, nil
+}
+
+// TestBridgeApprovalDecisionRacesDeadline pins the interleaving behind #2964: the waiter's
+// deadline lands between the daemon's pending check and its write. Whatever the order the
+// lock settles on, the user's message and the gate's result must agree: "approved" only if
+// the waiter returned nil, "expired" only if it timed out — and an expired record is never
+// re-created.
+func TestBridgeApprovalDecisionRacesDeadline(t *testing.T) {
+	withTempHome(t)
+
+	for _, choice := range []string{"approve", "reject"} {
+		t.Run(choice, func(t *testing.T) {
+			id := chatx.RandUUID()
+			_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
+
+			waiter := make(chan error, 1)
+			locked := make(chan struct{})
+			bridgeApprovalBetweenReadAndWrite = func(id string) {
+				go func() {
+					waiter <- expireApproval(id)
+				}()
+				// With the lock the waiter blocks until the decision is written, so this
+				// wait only runs out on the fixed path; without it the waiter removes the
+				// record right here, which is the bug.
+				select {
+				case err := <-waiter:
+					waiter <- err
+				case <-time.After(100 * time.Millisecond):
+				}
+				close(locked)
+			}
+			t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
+
+			msg, err := bridgeApprovalDecision(id, choice, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			<-locked
+			werr := <-waiter
+
+			approved := strings.Contains(msg, "Approved")
+			rejected := strings.Contains(msg, "Rejected")
+			expired := strings.Contains(msg, "expired")
+			switch {
+			case approved && werr != nil, rejected && !errors.Is(werr, errApprovalRejected):
+				t.Fatalf("user told %q but the gate returned %v", msg, werr)
+			case expired && !errors.Is(werr, errApprovalTimeout):
+				t.Fatalf("user told %q but the gate returned %v", msg, werr)
+			case !approved && !rejected && !expired:
+				t.Fatalf("unexpected message %q", msg)
+			}
+			if _, ok := bridgeApprovals.Read(id); ok {
+				t.Fatal("record must not outlive the gate's result")
+			}
+		})
+	}
+}
+
+// A click that arrives after the waiter gave up reports "expired" and leaves no record.
+func TestBridgeApprovalDecisionAfterTimeout(t *testing.T) {
+	withTempHome(t)
+	id := chatx.RandUUID()
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
+	if err := expireApproval(id); !errors.Is(err, errApprovalTimeout) {
+		t.Fatalf("expire → %v", err)
+	}
+	for _, choice := range []string{"approve", "reject"} {
+		msg, err := bridgeApprovalDecision(id, choice, true)
+		if err != nil || !strings.Contains(msg, "expired") {
+			t.Fatalf("%s after timeout: msg=%q err=%v", choice, msg, err)
+		}
+		if _, ok := bridgeApprovals.Read(id); ok {
+			t.Fatalf("%s re-created the record", choice)
+		}
+	}
+}
+
+// A decision that landed before the deadline step is honored rather than discarded.
+func TestExpireApprovalHonorsEarlierDecision(t *testing.T) {
+	withTempHome(t)
+	id := chatx.RandUUID()
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs(), Decision: "approve"})
+	if err := expireApproval(id); err != nil {
+		t.Fatalf("decided-before-deadline → %v", err)
+	}
+	if _, ok := bridgeApprovals.Read(id); ok {
+		t.Fatal("record must be removed")
+	}
 }
