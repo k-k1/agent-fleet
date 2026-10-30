@@ -60,6 +60,7 @@ const MIME = {
 // ---- API surface ------------------------------------------------------------------
 // Each entry is (query) => JSON body. Keys are exact paths; `re` entries match by
 // regexp and receive the captured groups.
+const L = (ja, en) => (LOCALE === "ja" ? ja : en);
 const exact = {
   "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
   "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
@@ -169,15 +170,26 @@ const exact = {
         kind: "claude",
         roots: [
           { dir: "/home/dev/.claude/skills", scope: "user", form: "skills", exists: true },
-          { dir: "/home/dev/.claude/commands", scope: "user", form: "commands", exists: false },
+          { dir: "/home/dev/.claude/commands", scope: "user", form: "commands", exists: true },
         ],
         skills: [
-          { name: "handoff", description: "Hand the session over", type: "skill", scope: "user", path: "/home/dev/.claude/skills/handoff/SKILL.md", userInvocable: true },
+          { name: "handoff", description: L("セッションを別のエージェントへ引き継ぐ", "Hand the session over to another agent"), type: "skill", scope: "user", root: "/home/dev/.claude/skills", path: "/home/dev/.claude/skills/handoff/SKILL.md", userInvocable: true, files: ["checklist.md"] },
+          { name: "release-notes", description: L("マージ済み PR からリリースノートを下書きする", "Draft release notes from merged pull requests"), argumentHint: "[tag]", type: "skill", scope: "user", root: "/home/dev/.claude/skills", path: "/home/dev/.claude/skills/release-notes/SKILL.md", userInvocable: true },
+          { name: "review", description: L("差分を読んで指摘を並べる", "Read the diff and list findings"), type: "skill", scope: "user", root: "/home/dev/.claude/skills", path: "/home/dev/.claude/skills/review/SKILL.md", userInvocable: true },
+          // The same name in the commands folder: the skill above wins, so this one is never used.
+          { name: "review", description: L("古いレビュー用コマンド", "Older review command"), type: "command", scope: "user", root: "/home/dev/.claude/commands", path: "/home/dev/.claude/commands/review.md", userInvocable: true, shadowedBy: "/home/dev/.claude/skills/review/SKILL.md" },
           { name: "af-build", description: "Build memory and toolchains", type: "skill", scope: "fleet", path: "/home/dev/.claude/skills/af-build/SKILL.md", userInvocable: false },
           { name: "simplify", type: "skill", scope: "cli", userInvocable: true },
         ],
       },
     ],
+  }),
+  // The body of the opened skill (api/skills/file), shown beneath its path.
+  "/api/skills/file": () => ({
+    content: L(
+      "---\nname: review\ndescription: 差分を読んで指摘を並べる\n---\n\n# review\n\n変更された差分を読み、バグの可能性が高いものから順に指摘を並べます。\n\n- 修正案は 1 行で添える\n- 好みの問題は挙げない\n",
+      "---\nname: review\ndescription: Read the diff and list findings\n---\n\n# review\n\nRead the changed diff and list findings, most likely bug first.\n\n- Add a one-line fix to each\n- Leave out matters of taste\n",
+    ),
   }),
   "/api/ssm/profiles": () => ({ profiles: [] }),
   // MCP registry (docs/log/48). One row per origin so the settings tab shows all three
