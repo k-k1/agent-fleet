@@ -435,11 +435,13 @@ func TestLockApprovalsIsBounded(t *testing.T) {
 func TestBridgeApprovalDecisionNeverRetracted(t *testing.T) {
 	withTempHome(t)
 	id := chatx.RandUUID()
-	dl := chatx.NowMs() + 20
-	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs(), Deadline: dl})
-	bridgeApprovalBetweenReadAndWrite = func(string) {
-		for chatx.NowMs() < dl {
-		}
+	// The deadline starts far ahead so the daemon's pre-check always passes; the seam then
+	// moves the stored deadline into the past, which is what "stalled across it" means.
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs(), Deadline: chatx.NowMs() + time.Hour.Milliseconds()})
+	bridgeApprovalBetweenReadAndWrite = func(id string) {
+		rec, _ := bridgeApprovals.Read(id)
+		rec.Deadline = chatx.NowMs() - 1
+		_ = bridgeApprovals.Write(id, rec)
 	}
 	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
 	msg, err := bridgeApprovalDecision(id, "approve", true)
