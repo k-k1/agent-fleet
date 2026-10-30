@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -117,5 +119,71 @@ func TestAWSProfilesBridgeGate(t *testing.T) {
 	}
 	if _, ok := m["sandbox"]; !ok {
 		t.Fatal("an older Agent lost an ungated profile")
+	}
+}
+
+// racingSSMStore commits another write of the same profile's gate right after the PUT handler has
+// read the row, before its UPDATE: the order two concurrent PUTs can take.
+type racingSSMStore struct {
+	store.SSMStore
+	sql   *store.SQL
+	flip  *bool // the value the other write commits; nil = no race
+	fired bool
+}
+
+func (s *racingSSMStore) GetSSMProfile(ctx context.Context, id string) (store.SSMProfile, bool, error) {
+	p, ok, err := s.SSMStore.GetSSMProfile(ctx, id)
+	if err == nil && ok && s.flip != nil && !s.fired {
+		s.fired = true
+		other := p
+		other.ConfirmUse = *s.flip
+		if werr := s.sql.UpdateSSMProfile(ctx, other); werr != nil {
+			return p, ok, werr
+		}
+	}
+	return p, ok, err
+}
+
+// G8: a PUT without confirmBeforeUse never undoes a gate change another write committed after
+// it read the row, enabling or disabling, on SQLite and on Postgres; its answer shows the row as
+// committed.
+func TestAbsentConfirmKeepsAConcurrentChange(t *testing.T) {
+	for name, st := range ssmAPIStores(t) {
+		for _, to := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/to-%t", name, to), func(t *testing.T) {
+				ctx := context.Background()
+				e := newSSMAPIEnv(t, st)
+				var made ssmProfileDTO
+				from := !to
+				if c := e.do(t, "POST", "/api/ssm/profiles", ssmProfileDTO{Label: fmt.Sprintf("p-%s-%t", name, to), StartURL: chainSSOStart,
+					SSORegion: "us-east-1", AccountID: "123456789012", RoleName: "Admin", ConfirmBeforeUse: &from}, &made); c != http.StatusCreated {
+					t.Fatalf("create = %d", c)
+				}
+				rs := &racingSSMStore{SSMStore: st, sql: st, flip: &to}
+				api := newSSMConfigAPI(&manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email", dataRoot: t.TempDir()})
+				api.store = rs
+				mux := http.NewServeMux()
+				mux.HandleFunc("PUT /api/ssm/profiles/{id}", api.withMembership(api.updateProfile))
+				body, _ := json.Marshal(map[string]any{"label": made.Label, "startUrl": chainSSOStart, "ssoRegion": "us-east-1",
+					"accountId": "123456789012", "roleName": "Admin", "region": "eu-west-1"})
+				r := httptest.NewRequest("PUT", "/api/ssm/profiles/"+made.ID, bytes.NewReader(body))
+				r.Header.Set("X-Forwarded-Email", "u@x")
+				r.Header.Set("X-AF-Tenant", "default")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, r)
+				if w.Code != http.StatusOK || !rs.fired {
+					t.Fatalf("put = %d (race fired %t) %s", w.Code, rs.fired, w.Body.String())
+				}
+				got, _, err := st.GetSSMProfile(ctx, made.ID)
+				if err != nil || got.ConfirmUse != to || got.Region != "eu-west-1" {
+					t.Fatalf("stored = %+v, %v; want the concurrent %t kept and the PUT's region", got, err, to)
+				}
+				var answer ssmProfileDTO
+				json.Unmarshal(w.Body.Bytes(), &answer)
+				if (answer.ConfirmBeforeUse != nil && *answer.ConfirmBeforeUse) != to {
+					t.Fatalf("answer = %+v, want confirmBeforeUse %t as committed", answer.ConfirmBeforeUse, to)
+				}
+			})
+		}
 	}
 }

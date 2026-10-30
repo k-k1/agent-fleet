@@ -294,14 +294,23 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ st
 	}
 	p.ID = cur.ID
 	p.CreatedAt = cur.CreatedAt
-	// Absent is not false: only an explicit value changes the gate (ADR 0126 decision 8).
-	p.ConfirmUse = cur.ConfirmUse
+	// Absent is not false: only an explicit value changes the gate (ADR 0126 decision 8). The
+	// store keeps the column in the UPDATE itself; copying cur's value here would put back what
+	// another write changed after the read.
 	if in.ConfirmBeforeUse != nil {
 		p.ConfirmUse = *in.ConfirmBeforeUse
+	} else {
+		p.KeepConfirmUse = true
 	}
 	if err := a.store.UpdateSSMProfile(r.Context(), p); err != nil {
 		profileWriteErr(w, err)
 		return
+	}
+	// The answer shows the row as committed, the kept gate included.
+	if saved, ok, err := a.store.GetSSMProfile(r.Context(), p.ID); err == nil && ok {
+		p = saved
+	} else {
+		p.ConfirmUse = p.ConfirmUse || (p.KeepConfirmUse && cur.ConfirmUse)
 	}
 	writeJSON(w, http.StatusOK, profileToDTO(p))
 }

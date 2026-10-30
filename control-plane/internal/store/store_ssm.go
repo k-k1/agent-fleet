@@ -28,6 +28,10 @@ type SSMProfile struct {
 	// ConfirmUse makes af-aws-exec ask the member in the Console before the profile's first
 	// use in a session (ADR 0126 decision 4).
 	ConfirmUse bool
+	// KeepConfirmUse tells UpdateSSMProfile to leave confirm_use as the row has it at the
+	// UPDATE, ignoring ConfirmUse: a write that did not name the field must not put back a
+	// value read before another write changed it (ADR 0126 decision 8). Never stored.
+	KeepConfirmUse bool
 }
 
 // The values of SSMProfile.Kind.
@@ -207,13 +211,21 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 			return &SSMProfileInUseError{Dependents: deps}
 		}
 	}
-	// membership_id in the WHERE so a member can only update their own row.
+	// membership_id in the WHERE so a member can only update their own row. The CASE keeps
+	// confirm_use in the same statement when the write did not name it, so no value read
+	// earlier can overwrite one committed since.
+	keep := 0
+	if p.KeepConfirmUse {
+		keep = 1
+	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?,
-			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?, confirm_use=?
+			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?,
+			confirm_use = CASE WHEN ? = 1 THEN confirm_use ELSE ? END
 		   WHERE id=? AND membership_id=?`,
 		p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region,
-		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds, boolInt(p.ConfirmUse),
+		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds,
+		keep, boolInt(p.ConfirmUse),
 		p.ID, p.MembershipID); err != nil {
 		return err
 	}
