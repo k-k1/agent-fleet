@@ -37,6 +37,13 @@ func TestParseResetClock(t *testing.T) {
 			wantH: 9, wantM: 0, wantZone: "Asia/Tokyo",
 		},
 		{
+			// Reworded 5-hour window (measured sutgu3b 2026-10-30, issue #3065):
+			// the clock still parses the same way.
+			name:  "5-hour limit banner",
+			msg:   "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)",
+			wantH: 1, wantM: 50, wantZone: "Asia/Tokyo",
+		},
+		{
 			// 12am/12pm is the %12 boundary. Get it wrong and the wake-up is 12 hours off.
 			name:  "12am is hour 0",
 			msg:   "resets 12am (Asia/Tokyo)",

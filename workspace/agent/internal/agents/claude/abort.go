@@ -71,6 +71,8 @@ var blockedMarkers = []string{
 	"reached your",       // "You've reached your <model> limit. Run /usage-credits …"
 	"usage limit",        // another wording of the limit ("not a limit" already excluded by overrides)
 	"session limit",      // "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
+	"5-hour limit",       // reworded account window (measured 2026-10-30 sutgu3b, claude
+	"5 hour limit",       // 2.1.314): "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)"
 	"weekly limit",       // "You've hit your weekly limit · resets 9am (Asia/Tokyo)" (measured corpus)
 	"spend limit",        // "You've hit your org's monthly spend limit · run /usage-credits …"
 	"prompt is too long", // conversation too long — re-sending without /compact is pointless
@@ -111,6 +113,12 @@ var limitMarkers = []string{
 	// Account window. Comes with the /rate-limit-options menu (measured 2026-07-31
 	// s5jjqv4) — "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
 	"session limit",
+	// Reworded account window (measured 2026-10-30 sutgu3b, claude 2.1.314) —
+	// "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)". Without it the
+	// 5-hour window alone opened no episode: no notification, no resume booking,
+	// no chip, while the session stayed working.
+	"5-hour limit",
+	"5 hour limit",
 	// Weekly window (measured corpus 2026-08-20) — "You've hit your weekly limit · resets
 	// 9am (Asia/Tokyo)". It matches none of the three above, so the weekly one alone opened
 	// no episode: no notification, no resume booking, no chip (it fell to the blocked
