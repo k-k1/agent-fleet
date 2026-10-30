@@ -86,13 +86,25 @@ func TestErrorsNameTheRuntime(t *testing.T) {
 // reading at once, so these lines hit nil handlers (dropped) and the late assignment raced with
 // readLoop (go test -race).
 func TestStartDeliversBufferedLines(t *testing.T) {
-	stdout := io.MultiReader(strings.NewReader(
-		`{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{"a":1}}`+"\n"+
-			`{"jsonrpc":"2.0","method":"session/update","params":{"b":2}}`+"\n"),
-		blockForever{})
+	// A pipe rather than a finite reader: stdout stays open while the callbacks run, and the
+	// cleanup closes it so readLoop exits instead of outliving the test.
+	stdout, feed := io.Pipe()
+	go func() {
+		_, _ = io.WriteString(feed,
+			`{"jsonrpc":"2.0","id":7,"method":"session/request_permission","params":{"a":1}}`+"\n"+
+				`{"jsonrpc":"2.0","method":"session/update","params":{"b":2}}`+"\n")
+	}()
 	sent := &lockedWriter{}
 	cl := NewClient(Config{Runtime: "x"}, sent, stdout)
 
+	t.Cleanup(func() {
+		_ = feed.Close()
+		select {
+		case <-cl.closed:
+		case <-time.After(5 * time.Second):
+			t.Error("readLoop did not exit after stdout closed")
+		}
+	})
 	reqs := make(chan string, 4)
 	notes := make(chan string, 4)
 	cl.Start(Callbacks{
@@ -134,11 +146,6 @@ func recvOrFail(t *testing.T, ch chan string) string {
 		return ""
 	}
 }
-
-// blockForever is a stdout that stays open after the buffered lines.
-type blockForever struct{}
-
-func (blockForever) Read([]byte) (int, error) { select {} }
 
 // lockedWriter lets the test read what the client wrote while readLoop is still writing.
 type lockedWriter struct {
