@@ -976,3 +976,15 @@ answer incomplete (`complete=false`), so no project is called orphaned and no re
 timeout also keeps the map found so far instead of an empty one: a project known to be live stays live, in the list and
 as the target of a save that names its id. The 2026-10-14 note's limits (unreadable directory, unresolved identity,
 budget, now shared by both phases) are unchanged. Each directory's identity is computed once per search.
+
+## Note (2026-10-30): the live search never enters dependency stores (#3061)
+
+With the two-phase search of the note above, a workspace with heavy dependency trees did not finish phase two in its
+12 s window, so the answer stayed incomplete: a save by `repository` was refused and an orphaned project could not be
+moved. The search now never enters, at any depth, a directory named `node_modules`, `.venv`, `venv`, `.gradle`,
+`.pnpm-store` or `.cache` (`agentMemLiveSkip`), and skipping one does not make the answer incomplete. A working copy
+inside a dependency store or a build-tool cache is not a layout anyone uses, and both decisions the answer backs (one
+clone has this remote, a project has no clone left) still go through a preview or a named project. Every other
+unread directory, a git-ignored one included, still makes the answer incomplete. A clone cloned into such a directory
+is found only as a session's directory. The identity of a working copy now takes one `git rev-parse` for its three
+paths instead of three, which was the larger cost per clone once the stores were skipped.

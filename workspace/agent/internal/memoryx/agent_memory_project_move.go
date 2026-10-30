@@ -121,6 +121,21 @@ var (
 	agentMemLiveSoft = 12 * time.Second
 )
 
+// agentMemLiveSkip names the dependency stores the search never enters, at any depth, and whose
+// being skipped does not make the answer incomplete: a working copy inside one is not a layout
+// anyone uses, and both decisions the answer backs (one clone has this remote, a project has no
+// clone left) still go through a preview or a named project. Everything else that is not read
+// makes the answer incomplete. A directory named like this that is itself a working copy still counts as one; only what
+// is inside it is not entered. Changing the list changes what members can rely on: update the ADR 0108 note.
+var agentMemLiveSkip = map[string]bool{
+	"node_modules": true,
+	".venv":        true,
+	"venv":         true,
+	".gradle":      true,
+	".pnpm-store":  true,
+	".cache":       true,
+}
+
 // agentMemLiveProjects maps the working copies to their projects, by id: every directory under
 // ~/repos with a .git or .svn entry, found at any depth, inside other working copies and behind
 // symlinks included, and every session's working directory. A project with a live working copy
@@ -129,7 +144,7 @@ var (
 // resolved, or the budget or time of the search ran out. The map then holds what was found, so a
 // project known to be live stays live; only "nothing else exists" is withdrawn.
 //
-// The search runs in two phases because reading every tree of a large workspace takes longer than
+// The directories of agentMemLiveSkip are not entered. The search runs in two phases because reading every tree of a large workspace takes longer than
 // the time allowed (800k entries: 20-30 s, #3045). Phase one walks everything outside working
 // copies and, inside a git working copy, everything git does not ignore. Phase two walks the
 // ignored content (node_modules, build output) and svn working copies, until agentMemLiveSoft:
@@ -269,6 +284,13 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					complete = false
 				}
+			}
+			if agentMemLiveSkip[e.Name()] {
+				// The directory may itself be a working copy; only its content is not entered.
+				if isCopy {
+					add(d)
+				}
+				continue
 			}
 			switch {
 			case whole:
