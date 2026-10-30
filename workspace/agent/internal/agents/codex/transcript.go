@@ -268,6 +268,7 @@ func (p *rolloutParser) feed(ln []byte) {
 		case "task_complete":
 			p.noteLifecycle("task_complete", ev.Timestamp)
 			p.noteTurnEnded(ev.Payload)
+			p.noteTurnError(ev.Payload, ev.Timestamp, i)
 			p.askOpenFrom = len(p.askCalls)
 		case "turn_aborted":
 			// Esc fires no Stop hook (measured 0.159.0), so this is the only record that an
@@ -342,6 +343,29 @@ func (p *rolloutParser) noteTurnEnded(payload json.RawMessage) {
 	if id := payloadTurnID(payload); id != "" {
 		p.endedTurns[id] = struct{}{}
 	}
+}
+
+// noteTurnError renders a failed turn's error as its own assistant turn. codex never writes
+// its error events to the rollout (rollout/src/policy.rs files them under transient), so the
+// task_complete record's `error` is the only trace a Terminal session leaves: without this a
+// turn that died on a revoked login shows the prompt and then nothing at all. It is not made
+// lastAssistant: a failure carries no usage of its own.
+func (p *rolloutParser) noteTurnError(payload json.RawMessage, ts string, idx int) {
+	var tc struct {
+		TurnID string          `json:"turn_id"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(payload, &tc) != nil {
+		return
+	}
+	ce, ok := decodeRolloutError(tc.Error)
+	if !ok {
+		return
+	}
+	p.turns = append(p.turns, transcript.Turn{
+		Role: "assistant", Parts: []transcript.Part{ce.part()}, Text: ce.summary(),
+		Idx: idx, TS: ts, EndTS: ts, AnchorID: tc.TurnID, Cwd: p.cwd, Branch: p.branch,
+	})
 }
 
 // snapshot renders the parse so far as the caller's own copy: the transcript, the ToDo

@@ -2,6 +2,11 @@
 // (docs/log/23 P1-W5). The JSON tags pair with the Console's types; never change them.
 package transcript
 
+// CauseAuth is Part.Cause for a failure that clears by signing in again. Every kind's
+// classifier sets this one value, because the Console offers its re-authentication route
+// (Settings > Agents, on the session's own kind) for it alone.
+const CauseAuth = "auth"
+
 // Part is one ordered piece of a turn: rendered text, a faint tool trace, a
 // subagent delegation, an AskUserQuestion the user can answer inline, an
 // ExitPlanMode plan, or a turn-level failure the agent recorded instead of an answer.

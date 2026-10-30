@@ -1293,7 +1293,11 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	// console/src/features/mirror/pendingEcho.ts) and the Console (ErrorBlock, same Kind
 	// opencode's errors.go targets) something to show. Cleared by clearLastError the moment
 	// the next turn starts (runTurn), so it never lingers past a successful retry.
-	if ce := h.turnError(); ce != nil {
+	//
+	// A turn that did start and then failed also has the failure on its task_complete record,
+	// which the rollout parser renders on its own; once that has landed the synthetic copy
+	// would draw the same error twice.
+	if ce := h.turnError(); ce != nil && !rolloutShowsError(td.Turns, ce.turnID) {
 		idx := 0
 		if n := len(td.Turns); n > 0 {
 			idx = td.Turns[n-1].Idx + 1
@@ -1303,6 +1307,20 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 			Idx: idx, TS: time.Now().Format(time.RFC3339),
 		})
 	}
+}
+
+// rolloutShowsError reports whether turns already hold the error record of turn turnID.
+func rolloutShowsError(turns []transcript.Turn, turnID string) bool {
+	if turnID == "" {
+		return false
+	}
+	for i := len(turns) - 1; i >= 0; i-- {
+		t := turns[i]
+		if t.AnchorID == turnID && len(t.Parts) == 1 && t.Parts[0].Kind == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 // buildInput assembles the turn/start and turn/steer input items: prompt text plus
@@ -1459,6 +1477,7 @@ func dispatchNotification(msg rpcMsg) {
 			case "failed":
 				st = agents.TurnFailed
 				if ce, ok := decodeCodexError(p.Turn.Error); ok {
+					ce.turnID = p.Turn.ID
 					failure = ce.summary()
 					h.setLastError(ce)
 					if ce.retryable() {
