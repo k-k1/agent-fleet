@@ -1375,7 +1375,8 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     ["behind", "wi.merge_why_behind"],
     ["dirty", "wi.merge_why_dirty"],
     ["unstable", "wi.merge_why_unstable"],
-    ["unknown", "wi.merge_why_unknown"],
+    // While the panel re-reads by itself (#3012); the spent-budget wording is tested below.
+    ["unknown", "wi.merge_why_checking"],
     ["something_new", "wi.merge_why_other"],
   ] as const)("disables Merge for %s and says why next to it", async (state, why) => {
     workItemDetail.mockResolvedValue({ ...mergeable, mergeableState: state });
@@ -1467,6 +1468,122 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     await act(async () => release({ ...mergeable, canMerge: false }));
     expect(footer(modal).querySelectorAll("button, a").length).toBe(before);
     expect(footer(modal).querySelector(".wi-dmergehold")).not.toBeNull();
+  });
+
+  // Right after another pull request merges into the same base, GitHub answers "unknown" until it
+  // has recomputed (#3012). The panel re-reads by itself instead of waiting to be reopened.
+  describe("while GitHub is still computing mergeability", () => {
+    const unknown = { ...mergeable, mergeable: "unknown", mergeableState: "unknown" };
+    beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+    afterEach(() => {
+      vi.restoreAllMocks(); // the timer spies, before the fakes they wrap go away
+      vi.useRealTimers();
+    });
+    const tick = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+      await settle();
+    };
+
+    it("shows a spinner, re-reads without blanking the panel, and enables Merge once GitHub decides", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).not.toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_checking"));
+      expect(mergeBtn(modal)?.disabled).toBe(true);
+
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await tick(2000);
+      expect(workItemDetail).toHaveBeenCalledTimes(2);
+      // In flight: the facts stay on screen, no skeletons.
+      expect(modal.textContent).toContain("feature/x");
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+
+      const status = modal.querySelector(".wi-dmerge [role=status]")!;
+      expect(status.textContent).toBe(t("wi.detail_merge_checking"));
+      await act(async () => release(mergeable));
+      await settle();
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
+      // The same live region carries the answer, so it is announced.
+      expect(modal.querySelector(".wi-dmerge [role=status]")).toBe(status);
+      expect(status.textContent).toBe(t("wi.detail_merge_clean"));
+      expect(mergeBtn(modal)?.disabled).toBe(false);
+      await tick(60000);
+      expect(workItemDetail).toHaveBeenCalledTimes(2); // decided: no more reads
+    });
+
+    it("stops after its budget and offers a manual re-check", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      for (let i = 0; i < 10; i++) await tick(10000);
+      expect(workItemDetail).toHaveBeenCalledTimes(6); // the open + five re-reads
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_unknown"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_unknown"));
+      const again = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dmerge button")].find((b) => b.textContent === t("wi.detail_merge_recheck"))!;
+      workItemDetail.mockResolvedValue(mergeable);
+      await act(async () => again.click());
+      await tick(0);
+      expect(workItemDetail).toHaveBeenCalledTimes(7);
+      expect(mergeBtn(modal)?.disabled).toBe(false);
+    });
+
+    it("drops a poll in flight when a fresh read starts, even if both answers are unknown", async () => {
+      // The merge dialog stays open after a plain failure, so a second press re-reads the pull
+      // request while a poll from the first re-read may still be out.
+      // Under act() the fresh read's blanking commits on its own, so the batched case (blank +
+      // fast "unknown" in one commit) cannot be reproduced. What it depends on is observable
+      // instead: the poll's cleanup has already run when the fresh read is sent.
+      const setSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+      workItemDetail.mockResolvedValue(mergeable);
+      workItemMerge.mockResolvedValue({ error: { code: "provider_error", message: "boom" } });
+      const modal = await open();
+      await act(async () => mergeBtn(modal)!.click());
+      // The read after the failure: GitHub is recomputing.
+      workItemDetail.mockResolvedValue(unknown);
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(dialog()).not.toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
+      // The first poll goes out and hangs.
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await tick(2000);
+      const calls = workItemDetail.mock.calls.length;
+      const pollIdx = setSpy.mock.calls.map((c) => c[1]).lastIndexOf(2000);
+      const pollTimer = setSpy.mock.results[pollIdx].value;
+      // A second failed press re-reads; the answer is unknown again, with a newer head.
+      const NEW = "f".repeat(40);
+      let cleanedFirst = false;
+      workItemDetail.mockImplementation(async () => {
+        cleanedFirst = clearSpy.mock.calls.some((c) => c[0] === pollTimer);
+        return { ...unknown, headSha: NEW, additions: 99 };
+      });
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(workItemDetail.mock.calls.length).toBe(calls + 1);
+      expect(cleanedFirst).toBe(true);
+      expect(modal.textContent).toContain("+99");
+      // The stale poll answers last: it must not paint the older pull request back.
+      await act(async () => release({ ...mergeable, additions: 1 }));
+      await settle();
+      expect(modal.textContent).toContain("+99");
+      expect(mergeBtn(modal)?.disabled).toBe(true);
+    });
+
+    it("stops re-reading when the panel closes", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      const cancel = [...footer(modal).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("common.cancel"))!;
+      await act(async () => cancel.click());
+      expect(document.querySelector(".wi-dmodal")).toBeNull();
+      await tick(60000);
+      expect(workItemDetail).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

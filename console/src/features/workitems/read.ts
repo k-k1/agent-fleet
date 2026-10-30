@@ -344,6 +344,22 @@ export function mergeGate(d: WorkItemDetail | null): MergeGate {
   return { show: true, enabled: false, whyKey };
 }
 
+/** Whether GitHub is still computing this pull request's mergeability, so the panel should read
+ * it again by itself. GitHub answers `mergeable: null` / `mergeable_state: "unknown"` for a few
+ * seconds after the base moves (another pull request merged into it) and only starts computing on
+ * that read, so a panel that reads once stays on "cannot tell" until it is reopened. Never for
+ * Bitbucket: it never answers, and polling it would only spend calls. */
+export function mergePending(d: WorkItemDetail | null): boolean {
+  if (!d || d.provider !== "github" || d.kind !== "pr") return false;
+  if (d.merged || d.state === "done" || d.draft) return false;
+  return d.mergeable === "unknown" || d.mergeableState === "unknown";
+}
+
+/** Delays before each automatic re-read while `mergePending` holds: about 26 s in total, which
+ * covers GitHub's usual few seconds with room to spare and bounds the provider calls one open
+ * panel can make. After the last one the panel offers a manual re-check instead. */
+export const MERGE_RECHECK_DELAYS_MS: readonly number[] = [2000, 3000, 5000, 8000, 8000];
+
 export interface WorkItemSearchResult {
   items: WorkItem[];
   /** Per-query failures, named on the rail the same way a refresh failure is. */
