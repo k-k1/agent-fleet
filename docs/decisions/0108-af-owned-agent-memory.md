@@ -975,4 +975,4 @@ copies and, inside a git working copy, everything git does not ignore (one `git 
 answer incomplete (`complete=false`), so no project is called orphaned and no remote is chosen as unique from it. A
 timeout also keeps the map found so far instead of an empty one: a project known to be live stays live, in the list and
 as the target of a save that names its id. The 2026-10-14 note's limits (unreadable directory, unresolved identity,
-budget) are unchanged. Each directory's identity is computed once per search.
+budget, now shared by both phases) are unchanged. Each directory's identity is computed once per search.

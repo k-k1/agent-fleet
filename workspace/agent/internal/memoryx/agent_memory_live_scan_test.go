@@ -206,3 +206,24 @@ func TestAgentMemoryLiveSearchComputesIdentityOncePerDirectory(t *testing.T) {
 		}
 	}
 }
+
+// The directory budget covers phase two as well: a tree of ignored content cannot run past it.
+func TestAgentMemoryLiveSearchBudgetCoversIgnoredContent(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	app := filepath.Join(home, "repos", "app")
+	memoryMkdirAll(t, app)
+	liveScanGit(t, app, "init", "--quiet", "-b", "main")
+	old := agentMemLiveBudget
+	t.Cleanup(func() { agentMemLiveBudget = old })
+	agentMemLiveBudget = 2 // ~/repos and app
+	if _, complete := agentMemLiveProjects(); !complete {
+		t.Fatal("positive control: two directories fit the budget")
+	}
+	if err := os.WriteFile(filepath.Join(app, ".gitignore"), []byte("ignored/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	memoryMkdirAll(t, filepath.Join(app, "ignored"))
+	if _, complete := agentMemLiveProjects(); complete {
+		t.Fatal("phase two read past the budget")
+	}
+}

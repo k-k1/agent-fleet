@@ -112,7 +112,7 @@ func agentMemRootGoneProbe(repos, rel string) bool {
 }
 
 var (
-	// agentMemLiveBudget bounds the directories one search reads, agentMemLiveTimeout its time.
+	// agentMemLiveBudget bounds the directories one search reads, both phases together, agentMemLiveTimeout its time.
 	// Past either the answer is "incomplete" and nothing is called orphaned.
 	agentMemLiveBudget  = 100000
 	agentMemLiveTimeout = 20 * time.Second
@@ -309,6 +309,10 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 	}
 	for len(deferred) > 0 {
 		if time.Since(start) > agentMemLiveSoft {
+			complete = false
+			break
+		}
+		if reads++; reads > agentMemLiveBudget {
 			complete = false
 			break
 		}
