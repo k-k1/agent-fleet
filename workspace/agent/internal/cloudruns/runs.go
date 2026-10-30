@@ -157,21 +157,32 @@ func pruneWorkspace(t time.Time) {
 	withLock(dir, func() { prune(dir, true, t) })
 }
 
-// withLock runs fn under the spool directory's lock. Every writer takes it, so a prune and
-// the update of a row it evicts cannot interleave: an evicted row is never written back.
-// Without the lock (it cannot be taken) fn runs anyway; the row is visibility, and the
-// command must not wait on it.
-func withLock(dir string, fn func()) {
+// lockWait bounds how long a writer waits for a spool's lock. A row is visibility: the
+// command must never wait on it, and a wrapper stopped (Ctrl-Z) while it holds the lock must not
+// stall every later run.
+var lockWait = 200 * time.Millisecond
+
+// withLock runs fn under the spool directory's lock, and reports whether it did. Every writer
+// takes it, so a prune and the update of a row it evicts cannot interleave: an evicted row is
+// never written back. When the lock cannot be had within lockWait, fn does not run at all: an
+// unlocked prune or update would lose that guarantee, and a skipped row costs less than a
+// spool over its limit.
+func withLock(dir string, fn func()) bool {
 	f, err := os.OpenFile(filepath.Join(dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		fn()
-		return
+		return false
 	}
 	defer f.Close()
-	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX) == nil {
-		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	deadline := time.Now().Add(lockWait)
+	for syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	fn()
+	return true
 }
 
 // Resolved records the identity the wrapper resolved, just before the command starts.
@@ -316,7 +327,9 @@ func ForSession(sessionName string) []Row {
 // first. The workspace spool's age limit is applied first, so a row past it is never listed
 // even when nothing has been written since.
 func Recent(n int) []Row {
-	pruneWorkspace(now())
+	t := now()
+	pruneWorkspace(t)
+	cut := t.Add(-workspaceKeep).UnixNano()
 	ents, err := os.ReadDir(root())
 	if err != nil {
 		return nil
@@ -329,6 +342,10 @@ func Recent(n int) []Row {
 		}
 		dir := filepath.Join(root(), e.Name())
 		for _, f := range rowFiles(dir) {
+			// The prune above may not have had the lock; an expired row is still not listed.
+			if e.Name() == workspaceDir && stamp(f) < cut {
+				continue
+			}
 			all = append(all, ref{dir, f})
 		}
 	}
