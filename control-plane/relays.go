@@ -198,6 +198,19 @@ func auditAWSLogin(r *http.Request) (string, string, bool) {
 	return "", "", false
 }
 
+// auditAWSConfirm records the member's answer to a "confirm before use" request (ADR 0126
+// decision 5). The id is from the path; the profile and the session are only the Console's
+// hints (the Agent decides from the id alone), so they are labelled as such.
+func auditAWSConfirm(r *http.Request) (string, string, bool) {
+	p, q := r.URL.Path, r.URL.Query()
+	id, verb, _ := strings.Cut(strings.TrimPrefix(p, "/api/aws-confirm/"), "/")
+	switch verb {
+	case "approve", "deny":
+		return "aws.use." + verb, id + " (profile hint: " + q.Get("profile") + ", session hint: " + q.Get("session") + ")", true
+	}
+	return "", "", false
+}
+
 // awsLoginAuditTarget names an AWS login request by its id, with the profile hint the
 // Console sends.
 func awsLoginAuditTarget(p string, q url.Values) string {

@@ -18,6 +18,8 @@ export interface CloudRun {
   program?: string;
   service?: string;
   operation?: string;
+  /** Let through by an approval that did not come through the Control Plane (ADR 0126). */
+  approvedOutsideConsole?: boolean;
   refused?: string;
 }
 
@@ -34,6 +36,7 @@ const REFUSED: Record<string, MsgKey> = {
   login_required: "cloudruns.refused_login_required",
   usage: "cloudruns.refused_usage",
   refused: "cloudruns.refused_refused",
+  confirm_required: "cloudruns.refused_confirm",
 };
 
 /** The parts of a run's line, in order; empty parts are left out. */
@@ -48,6 +51,7 @@ export function cloudRunParts(r: CloudRun): string[] {
     r.region ?? "",
     r.source ? tr("cloudruns.via", { source: r.source }) : "",
     cmd,
+    r.approvedOutsideConsole ? tr("cloudruns.outside_console") : "",
     end,
   ].filter(Boolean);
 }

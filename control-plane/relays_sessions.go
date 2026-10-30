@@ -91,6 +91,11 @@ var sessionRelays = []agentRelay{
 	// Settings' "Recent runs" (ADR 0126 decision 2): af-aws-exec's run rows, a read. The
 	// session mirror's rows come with /messages and need no route of their own.
 	{route: "GET /api/aws-runs"},
+	// "Confirm before use" (ADR 0126 decision 5): the pending requests are a read, the member's
+	// answer is audited with the request id and the Console's profile and session hints.
+	{route: "GET /api/aws-confirm"},
+	{route: "POST /api/aws-confirm/{id}/approve", audit: auditAWSConfirm},
+	{route: "POST /api/aws-confirm/{id}/deny", audit: auditAWSConfirm},
 	{route: "GET /api/aws-login"},
 	{route: "POST /api/aws-login/{id}/cancel", audit: auditAWSLogin},
 	// The Settings row's "Log in" (#1028): an attempt without a request, and each row's state.

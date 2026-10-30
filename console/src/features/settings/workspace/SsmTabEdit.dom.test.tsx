@@ -169,6 +169,7 @@ describe("SsmTab profile Edit", () => {
           accountId: "123456789012",
           roleName: "Admin",
           region: "",
+          confirmBeforeUse: false,
         },
       },
     ]);
@@ -728,6 +729,7 @@ describe("SsmTab assume-role profile", () => {
           sessionName: "",
           region: "",
           durationSeconds: 3600,
+          confirmBeforeUse: false,
         },
       },
     ]);
@@ -832,5 +834,30 @@ describe("SsmTab assume-role profile", () => {
     await mount();
     await click(btn(rows(0)[1], t("common.delete")));
     expect(toasts).toEqual([t("ssm.profile_in_use_source", { n: 1, profiles: "deploy" })]);
+  });
+});
+
+// "Confirm before use" (ADR 0126 decision 4): the form saves the switch explicitly, an edit
+// starts from the stored value, and the row says when it is on.
+describe("confirm before use", () => {
+  it("is saved from the form and shown on the row", async () => {
+    profiles = [{ ...prod, confirmBeforeUse: true }, stg];
+    await mount();
+    expect(rows(0)[0].textContent).toContain(t("ssm.meta_confirm_use"));
+    expect(rows(0)[1].textContent).not.toContain(t("ssm.meta_confirm_use"));
+
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    const box = host.querySelector<HTMLInputElement>(".ssm-frm .ssm-confirm-use input[type=checkbox]")!;
+    expect(box.checked).toBe(true);
+    await act(async () => box.click());
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes.at(-1)).toMatchObject({ method: "PUT", body: { confirmBeforeUse: false } });
+
+    await click(btn(rows(0)[1], t("ssm.edit")));
+    const box2 = host.querySelector<HTMLInputElement>(".ssm-frm .ssm-confirm-use input[type=checkbox]")!;
+    expect(box2.checked).toBe(false);
+    await act(async () => box2.click());
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes.at(-1)).toMatchObject({ method: "PUT", body: { confirmBeforeUse: true } });
   });
 });

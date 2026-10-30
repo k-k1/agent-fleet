@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -58,14 +59,21 @@ the arguments.
 
 Exit status: the command's own on success; 2 usage error; 3 SSO login required but not
 started (--no-login, no Console
-answer in time, or Ctrl-C while waiting for it); 1 any other refusal or failure.
+answer in time, or Ctrl-C while waiting for it); 4 the profile asks for confirmation
+before use and it was denied in the Console, not given in time, or the run belongs to no
+Agent Fleet session (it stays pending in the Console: run again once it is allowed); 1 any
+other refusal or failure.
+
+A profile set to "confirm before use" in Settings is not written to ~/.aws/config: run it
+through af-aws-exec.
 `
 
 // awsExec is af-aws-exec's skeleton: its name, usage text and version line.
 var awsExec = cloudexec.Wrapper{Name: "af-aws-exec", Usage: awsExecUsage, Version: versionLine}
 
 // runAWSExec is `workspace-agent aws-exec`, reached through the af-aws-exec PATH shim.
-// Exit codes: 2 usage, 3 SSO login required but not attempted, 1 anything else.
+// Exit codes: 2 usage, 3 SSO login required but not attempted, 4 confirmation before use not
+// given, 1 anything else.
 func runAWSExec(args []string) {
 	o, list := parseAWSExecArgs(args)
 
@@ -88,7 +96,7 @@ func runAWSExec(args []string) {
 				"only profiles run with --account are allowed\n", serr)
 		}
 	}
-	o.Settings, o.Conflicts, o.DefaultClash, o.ChainBroken, o.Exported = res.Settings, res.Conflicts, res.DefaultClash, res.ChainBroken, res.Exported
+	o.Settings, o.Conflicts, o.DefaultClash, o.ChainBroken, o.Exported = res.Settings, res.Conflicts, res.DefaultClash, res.ChainBroken, res.Usable()
 	if exe, err := os.Executable(); err == nil {
 		o.CredentialHelper = exe + " aws-env-credentials"
 	}
@@ -116,6 +124,17 @@ func runAWSExec(args []string) {
 				}
 			}
 			fmt.Printf("%s\t%s\t%s%s\n", n, acct, role, label)
+		}
+		if fresh || res.FromCache {
+			for _, n := range res.Withheld {
+				sp := res.Settings[n]
+				role := sp.RoleName
+				if sp.Chained() {
+					role = awsx.RoleNameOf(sp.RoleARN)
+				}
+				fmt.Printf("%s\t%s\t%s\t(%q, asks for confirmation before use: usable through af-aws-exec only, not in ~/.aws/config)\n",
+					n, sp.AccountID, role, sp.Label)
+			}
 		}
 		for _, n := range res.Shadowed {
 			if n == "default" {
@@ -168,12 +187,39 @@ func runAWSExec(args []string) {
 	o.Resolved = func(account, role, region string) {
 		run.Resolved(cloudruns.Identity{Account: account, Role: role, Region: region, Source: source})
 	}
+	// A profile that asks for confirmation before use is held here until the member allows it
+	// in the Console (ADR 0126 decision 5): before the CLI is installed, before any credential
+	// is fetched, and before the command runs.
+	sessionName := os.Getenv("AF_SESSION_NAME")
+	interactive := cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
+	if awsx.NeedsConfirmation(o.Settings, o.Profile) {
+		wait, _ := consoleLoginWaitFor(sessionName, interactive)
+		cmd := ""
+		if len(o.Argv) > 0 {
+			cmd = o.Argv[0]
+		}
+		cr, cerr := awsx.ConfirmGate(awsx.ConfirmOptions{Settings: o.Settings, Profile: o.Profile, Session: sessionName,
+			Wait: wait, Command: cmd, Stderr: os.Stderr})
+		if cerr != nil {
+			run.Refuse(cloudruns.RefusedConfirm)
+			awsExec.Fail(cloudexec.ExitConfirmRequired, cerr.Error())
+		}
+		run.Confirmed(cr.OutsideConsole)
+	}
+	withheld := res.Withheld
+	if !res.Fetched && !res.FromCache {
+		withheld = awsx.WithheldNow()
+	}
+	gated := slices.Contains(withheld, o.Profile)
+	if gated {
+		o.GatedConfig = awsx.GatedConfigPath(o.Profile)
+	}
 	awsBin, err := ensureAWSCLI()
 	if err != nil {
 		run.Refuse(cloudruns.RefusedOther)
 		awsExec.Fail(cloudexec.ExitRefused, err.Error())
 	}
-	o.Interactive = cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
+	o.Interactive = interactive
 	// Inside a workspace the Agent can show the login in the Console (ADR 0102).
 	if os.Getenv("AF_CP_BASE_URL") != "" {
 		name := os.Getenv("AF_SESSION_NAME")
@@ -189,6 +235,11 @@ func runAWSExec(args []string) {
 			run.Refuse(cloudruns.RefusedOther)
 		}
 		awsExec.FailPlan(err, awsx.ErrLoginRequired)
+	}
+	if gated {
+		// No role credentials of a withheld profile stay on disk for a plain aws to pick up
+		// (ADR 0126 decision 6): the child has them in its environment.
+		awsx.ForgetRoleCredentials(o.Settings, o.Profile)
 	}
 	// The wrapper becomes the command, so signals, process groups and a parent's SIGKILL reach
 	// it exactly as before. Supervising it as a child would let the row record the exit

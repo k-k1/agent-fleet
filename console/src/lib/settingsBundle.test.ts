@@ -303,3 +303,23 @@ describe("Google Cloud profiles (ADR 0107)", () => {
     ]);
   });
 });
+
+// ADR 0126: a profile's "confirm before use" survives an export and an import, and an entry
+// without it keeps the bytes it always had.
+describe("confirm before use in a bundle", () => {
+  const sso = { id: "s1", label: "main", startUrl: "https://c.awsapps.com/start", ssoRegion: "us-east-1", accountId: "1", roleName: "R", region: "" };
+  const chain = {
+    id: "c1", kind: "assume_role", label: "deploy", sourceProfileId: "s1", roleArn: "arn:aws:iam::210987654321:role/deploy",
+    accountId: "210987654321", region: "",
+  };
+  it("is carried on both kinds, and absent when off", () => {
+    const out = toSsmSection([{ ...sso, confirmBeforeUse: true }, { ...chain, confirmBeforeUse: true }, { ...sso, id: "s2", label: "plain" }], []);
+    expect(out.profiles[0].confirmBeforeUse).toBe(true);
+    expect(out.profiles[1].confirmBeforeUse).toBe(true);
+    expect("confirmBeforeUse" in out.profiles[2]).toBe(false);
+    const plan = planSsmImport(out, [], []);
+    expect(plan.profiles.find((p) => p.label === "main")?.confirmBeforeUse).toBe(true);
+    expect(plan.profiles.find((p) => p.label === "deploy")?.confirmBeforeUse).toBe(true);
+    expect(plan.profiles.find((p) => p.label === "plain")?.confirmBeforeUse).toBeUndefined();
+  });
+});

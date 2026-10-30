@@ -56,8 +56,9 @@ type ExecOptions struct {
 	// ChainBroken is SyncResult.ChainBroken: role-chaining Settings profiles held back
 	// because their source is not exported, so the run can say why.
 	ChainBroken map[string]string
-	// Exported is SyncResult.Exported: the profiles this sync wrote to the managed block. A
-	// Settings role chain runs only when it and its source are both in it.
+	// Exported is SyncResult.Usable(): the profiles this sync wrote to the managed block and
+	// those it withheld from it (ADR 0126 decision 6). A Settings role chain runs only when it
+	// and its source are both in it.
 	Exported []string
 
 	Stderr      io.Writer
@@ -74,6 +75,10 @@ type ExecOptions struct {
 	// Set only for a terminal that is not an agent's (an agent's run keeps its own path).
 	// --login still forces the in-terminal login.
 	TerminalConsole bool
+
+	// GatedConfig, when set, is the config the profile is read from instead of the member's
+	// ~/.aws/config: a profile the sync withheld from the managed block (GatedConfigPath).
+	GatedConfig string
 
 	// Resolved, when set, is told the account, role and region the command will run as,
 	// once STS has confirmed them: the run's row in the session's mirror (ADR 0126).
@@ -347,6 +352,11 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, errors.New("af-aws-exec does not run under the default profile; name the SSO profile from Settings (`af-aws-exec --list`)")
 	}
 	env, steered := steerIsolatedConfig(baseEnv(environ))
+	if o.GatedConfig != "" {
+		// The sync checked this profile against the member's files exactly as it checks an
+		// exported one; it only did not write it there.
+		env, steered = cloudexec.SetEnv(env, "AWS_CONFIG_FILE="+o.GatedConfig), false
+	}
 	keys, origin, err := profileKeysFrom(env, o.Profile)
 	if err != nil {
 		return "", nil, nil, err

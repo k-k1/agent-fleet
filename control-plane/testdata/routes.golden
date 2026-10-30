@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with every routeSwitch on (routes_golden_test.go).
-# count: 735
+# count: 738
 ANY /
 ANY /.well-known/oauth-authorization-server/mcp-oauth
 ANY /.well-known/oauth-protected-resource/mcp
@@ -184,6 +184,9 @@ POST /api/assistants
 DELETE /api/assistants/{id}
 GET /api/assistants/{id}
 PUT /api/assistants/{id}
+GET /api/aws-confirm
+POST /api/aws-confirm/{id}/approve
+POST /api/aws-confirm/{id}/deny
 GET /api/aws-login
 GET /api/aws-login/profiles
 GET /api/aws-login/profiles/{name}/attempts/{attempt}

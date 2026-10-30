@@ -61,6 +61,7 @@ func newSSMAPIEnv(t *testing.T, st *store.SQL) *ssmAPIEnv {
 	}
 	api := newSSMConfigAPI(&manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email", dataRoot: t.TempDir()})
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ssm/profiles", api.withMembership(api.listProfiles))
 	mux.HandleFunc("POST /api/ssm/profiles", api.withMembership(api.createProfile))
 	mux.HandleFunc("PUT /api/ssm/profiles/{id}", api.withMembership(api.updateProfile))
 	mux.HandleFunc("DELETE /api/ssm/profiles/{id}", api.withMembership(api.deleteProfile))

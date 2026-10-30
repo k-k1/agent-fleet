@@ -498,4 +498,6 @@ export const mirror = {
   "cloudruns.recent_help": "このワークスペースでの最近の af-aws-exec の実行と、それぞれが使ったプロファイル・アカウント・ロール・リージョンです。セッションは実行が申告したものでコマンド側から変えられ、素の aws で実行したコマンドは行を残しません。何が動いたかを見るための一覧で、監査ではありません。引数は記録しません。",
   "cloudruns.recent_empty": "af-aws-exec の実行はまだありません。",
   "cloudruns.load_failed": "最近の実行を読み込めませんでした: {msg}",
+  "cloudruns.refused_confirm": "未実行: 確認が得られず",
+  "cloudruns.outside_console": "Console を通さずに承認",
 };

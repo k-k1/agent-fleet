@@ -25,6 +25,9 @@ type SSMProfile struct {
 	Kind, SourceProfileID, RoleARN           string
 	ExternalID, SessionName                  string
 	DurationSeconds                          int
+	// ConfirmUse makes af-aws-exec ask the member in the Console before the profile's first
+	// use in a session (ADR 0126 decision 4).
+	ConfirmUse bool
 }
 
 // The values of SSMProfile.Kind.
@@ -87,13 +90,15 @@ type SSMStore interface {
 // --- SSM login config (docs/log/p3-ssm-session.md) --------------------------
 
 const ssmProfileCols = `SELECT id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
-	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds FROM ssm_profile`
+	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use FROM ssm_profile`
 
 func scanSSMProfile(row scanner) (SSMProfile, error) {
 	var p SSMProfile
+	var confirm int
 	err := row.Scan(&p.ID, &p.MembershipID, &p.Label, &p.StartURL, &p.SSORegion,
 		&p.AccountID, &p.RoleName, &p.Region, &p.CreatedAt,
-		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds)
+		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds, &confirm)
+	p.ConfirmUse = confirm != 0
 	return p, err
 }
 
@@ -161,10 +166,10 @@ func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
-			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.MembershipID, p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region, p.CreatedAt,
-		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds); err != nil {
+		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds, boolInt(p.ConfirmUse)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -205,10 +210,10 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?,
-			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?
+			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?, confirm_use=?
 		   WHERE id=? AND membership_id=?`,
 		p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region,
-		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds,
+		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds, boolInt(p.ConfirmUse),
 		p.ID, p.MembershipID); err != nil {
 		return err
 	}

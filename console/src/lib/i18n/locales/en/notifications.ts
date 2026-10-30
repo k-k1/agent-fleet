@@ -204,4 +204,8 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "notif.handoff_late_session.title": "A session started from a handoff you gave back",
   "notif.handoff_late_session.body": "“{title}”: the session {session} started after you gave the handoff back. Check that the same work is not running twice.",
   "notif.handoff_late_session.speech": "A session started from a handoff you gave back",
+  "notif.aws_confirm.title": "An agent asks to use a protected AWS profile",
+  "notif.aws_confirm.body": "Open the session to allow or deny it",
+  "notif.aws_confirm.speech": "An agent asks to use a protected AWS profile.",
+  "noti.kind_aws_use_confirm": "AWS profile use to confirm",
 };

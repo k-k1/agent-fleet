@@ -46,6 +46,9 @@ const (
 	RefusedLogin = "login_required" // exit 3
 	RefusedUsage = "usage"          // exit 2
 	RefusedOther = "refused"        // exit 1
+	// RefusedConfirm: the profile asks for confirmation before use, and it was denied, not
+	// answered in time, or had no session to be tied to (exit 4, ADR 0126 decision 5).
+	RefusedConfirm = "confirm_required"
 )
 
 // Row is one run, as stored and as served.
@@ -68,6 +71,9 @@ type Row struct {
 	Program   string `json:"program,omitempty"`
 	Service   string `json:"service,omitempty"`
 	Operation string `json:"operation,omitempty"`
+	// ApprovedOutsideConsole is set when the run was let through by an approval that did not
+	// come through the Control Plane's relay (an agent calling the Agent's route itself).
+	ApprovedOutsideConsole bool `json:"approvedOutsideConsole,omitempty"`
 	// Refused is set when the wrapper refused the run before the command started.
 	Refused string `json:"refused,omitempty"`
 }
@@ -194,6 +200,16 @@ func (r *Run) Resolved(id Identity) {
 	r.row.Role = keep(id.Role, roleRe)
 	r.row.Region = keep(id.Region, regionRe)
 	r.row.Source = keep(id.Source, profileRe)
+	r.write()
+}
+
+// Confirmed records that the run passed the confirmation gate, and whether by an approval from
+// outside the Console.
+func (r *Run) Confirmed(outsideConsole bool) {
+	if r == nil || !outsideConsole {
+		return
+	}
+	r.row.ApprovedOutsideConsole = true
 	r.write()
 }
 

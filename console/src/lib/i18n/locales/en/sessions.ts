@@ -947,4 +947,11 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "sess.budget_chip_title": "Estimated spend at list price (the CLI's own reported cost where it gives one), not your bill. Click to set the budget",
   "sess.budget_children": "children {spend}",
   "sess.budget_children_title": "Estimated spend of the sessions this one started with create_session. Not counted against this session's budget",
+  "awsconfirm.title": "This session wants to use an AWS profile that asks for confirmation",
+  "awsconfirm.title_session": "Session {session} wants to use an AWS profile that asks for confirmation",
+  "awsconfirm.via": "via {source}",
+  "awsconfirm.commands": "Command: {commands}",
+  "awsconfirm.approve": "Allow for this session",
+  "awsconfirm.deny": "Deny",
+  "awsconfirm.answer_failed": "Could not answer the request ({code})",
 };

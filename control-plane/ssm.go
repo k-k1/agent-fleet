@@ -56,6 +56,11 @@ type ssmProfileDTO struct {
 	ExternalID      string `json:"externalId,omitempty"`
 	SessionName     string `json:"sessionName,omitempty"`
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	// ConfirmBeforeUse makes af-aws-exec ask in the Console before the profile's first use in
+	// a session (ADR 0126 decision 4). A pointer so that a PUT without it (a Console that
+	// predates the field) leaves the stored value alone instead of removing the gate
+	// (decision 8); it is emitted only when true.
+	ConfirmBeforeUse *bool `json:"confirmBeforeUse,omitempty"`
 }
 
 type ssmHostDTO struct {
@@ -72,7 +77,16 @@ func profileToDTO(p store.SSMProfile) ssmProfileDTO {
 	return ssmProfileDTO{ID: p.ID, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
 		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt,
 		Kind: ssmKindOf(p), SourceProfileID: p.SourceProfileID, RoleARN: p.RoleARN,
-		ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds}
+		ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds,
+		ConfirmBeforeUse: confirmPtr(p.ConfirmUse)}
+}
+
+// confirmPtr is ConfirmBeforeUse as the wire carries it: present only when set.
+func confirmPtr(on bool) *bool {
+	if !on {
+		return nil
+	}
+	return &on
 }
 
 // ssmKindOf reads a row's kind with the empty string as sso (a row from a store that
@@ -248,6 +262,7 @@ func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ st
 		writeAPIErr(w, aerr)
 		return
 	}
+	p.ConfirmUse = in.ConfirmBeforeUse != nil && *in.ConfirmBeforeUse
 	p.ID = store.NewID()
 	p.CreatedAt = store.NowTS()
 	if err := a.store.CreateSSMProfile(r.Context(), p); err != nil {
@@ -279,6 +294,11 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ st
 	}
 	p.ID = cur.ID
 	p.CreatedAt = cur.CreatedAt
+	// Absent is not false: only an explicit value changes the gate (ADR 0126 decision 8).
+	p.ConfirmUse = cur.ConfirmUse
+	if in.ConfirmBeforeUse != nil {
+		p.ConfirmUse = *in.ConfirmBeforeUse
+	}
 	if err := a.store.UpdateSSMProfile(r.Context(), p); err != nil {
 		profileWriteErr(w, err)
 		return

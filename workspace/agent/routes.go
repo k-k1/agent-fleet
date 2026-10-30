@@ -218,6 +218,9 @@ func buildMux() *http.ServeMux {
 	// af-aws-exec's Console login (ADR 0102): the pending requests, and the device-code
 	// attempt the member starts with "Log in". CP allowlist: registerSessionRoutes.
 	mux.HandleFunc("GET /aws-runs", cloudruns.HandleRecent)
+	mux.HandleFunc("GET /aws-confirm", awsx.HandleConfirmList)
+	mux.HandleFunc("POST /aws-confirm/{id}/approve", awsx.HandleConfirmApprove)
+	mux.HandleFunc("POST /aws-confirm/{id}/deny", awsx.HandleConfirmDeny)
 	mux.HandleFunc("GET /aws-login", awsx.HandleLoginList)
 	mux.HandleFunc("POST /aws-login/{id}/start", awsx.HandleLoginStart)
 	mux.HandleFunc("GET /aws-login/{id}/attempts/{attempt}", awsx.HandleLoginAttempt)

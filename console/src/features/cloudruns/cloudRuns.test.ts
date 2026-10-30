@@ -36,3 +36,10 @@ describe("parseCloudRuns", () => {
     expect(parseCloudRuns([base, null, { id: 1 }, { id: "x" }, "str"])).toEqual([base]);
   });
 });
+
+describe("confirm before use in a run's line (ADR 0126)", () => {
+  it("says why a run was held, and flags an approval from outside the Console", () => {
+    expect(cloudRunParts({ ...base, refused: "confirm_required" }).at(-1)).toBe(t("cloudruns.refused_confirm"));
+    expect(cloudRunParts({ ...base, approvedOutsideConsole: true })).toContain(t("cloudruns.outside_console"));
+  });
+});

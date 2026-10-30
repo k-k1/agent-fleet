@@ -202,4 +202,8 @@ export const notifications = {
   "notif.handoff_late_session.title": "返した引き継ぎからセッションが起動しました",
   "notif.handoff_late_session.body": "「{title}」: 引き継ぎを返した後にセッション {session} が起動しました。同じ作業が二重に動いていないか確認してください。",
   "notif.handoff_late_session.speech": "返した引き継ぎからセッションが起動しました",
+  "notif.aws_confirm.title": "エージェントが確認付きの AWS プロファイルを使おうとしています",
+  "notif.aws_confirm.body": "セッションを開いて許可か拒否を選んでください",
+  "notif.aws_confirm.speech": "エージェントが確認付きの AWS プロファイルを使おうとしています。",
+  "noti.kind_aws_use_confirm": "AWS プロファイルの使用確認",
 };

@@ -28,6 +28,8 @@ import { wireSessionPaneReconcile } from "../features/sessions/paneReconcile.ts"
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
 import { useAwsLoginStore } from "../features/awslogin/store.ts";
+import { useAwsConfirmStore } from "../features/awsconfirm/store.ts";
+import { AwsConfirmHost } from "../features/awsconfirm/AwsConfirmHost.tsx";
 import { useGcpLoginStore } from "../features/gcplogin/store.ts";
 import { clearCachedConns } from "../features/repos/connsCache.ts";
 import { loadKindCatalogAfter, resetKindCatalog, syncKindCatalogTenant } from "../agents/kindCatalogLoad.ts";
@@ -406,6 +408,9 @@ export function App() {
       const gcp = useGcpLoginStore.getState();
       gcp.reset();
       void gcp.refresh();
+      const confirm = useAwsConfirmStore.getState();
+      confirm.reset();
+      void confirm.refresh();
       profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
@@ -627,6 +632,7 @@ export function App() {
       <WorkItemModalHost />
       <SessionModals />
       <AwsLoginHost />
+      <AwsConfirmHost />
       <GcpLoginHost />
       <WsStartingDialog />
       <AuthExpiredModal />

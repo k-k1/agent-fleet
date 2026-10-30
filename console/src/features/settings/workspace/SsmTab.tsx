@@ -185,6 +185,8 @@ const emptyProfile: Record<string, string> = {
   externalId: "",
   sessionName: "",
   durationSeconds: "",
+  // "true" when the profile asks for confirmation before use (ADR 0126); pick() stringifies.
+  confirmBeforeUse: "",
 };
 
 // The assume-role profile type (issue #1109): no portal of its own, it assumes a role from
@@ -344,6 +346,7 @@ function ProfileSection({
             sessionName: f.sessionName.trim(),
             region: f.region.trim(),
             ...(duration ? { durationSeconds: Number(duration) } : {}),
+            confirmBeforeUse: f.confirmBeforeUse === "true",
           }
         : {
             label: f.label.trim(),
@@ -352,6 +355,7 @@ function ProfileSection({
             accountId: f.accountId.trim(),
             roleName: f.roleName.trim(),
             region: f.region.trim(),
+            confirmBeforeUse: f.confirmBeforeUse === "true",
           };
       const ok = editing
         ? await postJSON(`api/ssm/profiles/${encodeURIComponent(editing.id)}`, "PUT", body, toast)
@@ -505,6 +509,17 @@ function ProfileSection({
           </Field>
         </FieldGroup>
         )}
+        <label className="ssm-confirm-use">
+          <input
+            type="checkbox"
+            checked={f.confirmBeforeUse === "true"}
+            onChange={(e) => setF((p) => ({ ...p, confirmBeforeUse: e.target.checked ? "true" : "" }))}
+          />
+          <span>
+            <b>{tr("ssm.f_confirm_use")}</b>
+            <span className="field-help">{tr("ssm.f_confirm_use_hint")}</span>
+          </span>
+        </label>
       </fieldset>
       {editing && (
         <div className="field-help ssm-edit-notes">
@@ -615,6 +630,7 @@ function ProfileSection({
                     {p.externalId && <Meta k={tr("ssm.f_external_id")} v={p.externalId} />}
                     {p.sessionName && <Meta k={tr("ssm.f_session_name")} v={p.sessionName} />}
                     {p.durationSeconds ? <Meta k={tr("ssm.f_duration")} v={String(p.durationSeconds)} /> : null}
+                    {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
                   </div>
                 ) : (
                 <div className="ssm-meta">
@@ -623,6 +639,7 @@ function ProfileSection({
                   <Meta k={tr("ssm.meta_default_region")} v={p.region} />
                   <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />
                   <Meta k="start URL" v={p.startUrl} wide />
+                  {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
                 </div>
                 )
               )}

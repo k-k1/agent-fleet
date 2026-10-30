@@ -371,6 +371,9 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 	}
 	var diffs []string
 	for k, o := range results {
+		if route, _, _ := strings.Cut(k, " <- "); auditedAfterTheFreeze[route] {
+			continue
+		}
 		if o.got != o.want {
 			diffs = append(diffs, k+": derived "+fmtClassified(o.got)+", frozen "+fmtClassified(o.want))
 		}
@@ -389,6 +392,14 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 		t.Errorf("the frozen switch audited %d golden routes, want at least %d: the sweep is not reaching them", len(audited), minFrozenAuditedRoutes)
 	}
 	t.Logf("%d requests compared, %d golden routes audited", len(results), len(audited))
+}
+
+// auditedAfterTheFreeze are golden routes the relay table audits that did not exist when the
+// switch above was frozen, so it cannot classify them. TestAuditActionTarget pins what each is
+// audited as instead. Only a new route belongs here, never one the frozen switch knows.
+var auditedAfterTheFreeze = map[string]bool{
+	"POST /api/aws-confirm/{id}/approve": true, // ADR 0126 decision 5
+	"POST /api/aws-confirm/{id}/deny":    true,
 }
 
 // minFrozenAuditedRoutes is how many golden routes the frozen switch audits (57 when it was frozen).

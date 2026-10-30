@@ -81,7 +81,7 @@ func expiringAt(end, now time.Time) bool {
 func warnExpiringSSO(now time.Time) {
 	settings := loginSettings()
 	names := make([]string, 0, len(settings))
-	for _, name := range ExportedIn(ConfigPath()) {
+	for _, name := range UsableNow() {
 		if _, ok := settings[name]; ok {
 			names = append(names, name)
 		}
