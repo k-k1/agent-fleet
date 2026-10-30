@@ -114,8 +114,8 @@ func TestAWSProfilesWireChained(t *testing.T) {
 	}
 	got, _ := awsProfilesWire(rows)
 	b, _ := json.Marshal(got)
-	want := `[{"name":"sso-main","label":"sso main","startUrl":"https://example.awsapps.com/start","ssoRegion":"us-east-1","accountId":"123456789012","roleName":"Dev"},` +
-		`{"name":"deploy","label":"deploy","startUrl":"","ssoRegion":"","accountId":"210987654321","region":"eu-west-1","kind":"assume_role","roleArn":"arn:aws:iam::210987654321:role/deploy","sourceProfile":"sso-main","externalId":"ext-1","sessionName":"af","durationSeconds":1800}]`
+	want := `[{"id":"s","name":"sso-main","label":"sso main","startUrl":"https://example.awsapps.com/start","ssoRegion":"us-east-1","accountId":"123456789012","roleName":"Dev"},` +
+		`{"id":"c","name":"deploy","label":"deploy","startUrl":"","ssoRegion":"","accountId":"210987654321","region":"eu-west-1","kind":"assume_role","roleArn":"arn:aws:iam::210987654321:role/deploy","sourceProfile":"sso-main","externalId":"ext-1","sessionName":"af","durationSeconds":1800}]`
 	if string(b) != want {
 		t.Errorf("wire =\n%s\nwant\n%s\n(a profile whose source is gone or is itself chained must not be exported)", b, want)
 	}
