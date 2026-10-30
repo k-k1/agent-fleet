@@ -51,6 +51,9 @@ type loginRequestWire struct {
 	Waiters   []cloudlogin.WaiterWire `json:"waiters"`
 	FirstAt   string                  `json:"firstAt"`
 	LastAt    string                  `json:"lastAt"`
+	// ExpiresInSec is the time left before the request is dropped (cloudlogin.ExpiresInSec);
+	// absent while a login attempt for it runs.
+	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
 }
 
 type loginListWire struct {
@@ -69,13 +72,15 @@ func loginSettings() map[string]Profile {
 func HandleLoginList(w http.ResponseWriter, r *http.Request) {
 	settings := loginSettings()
 	out := []loginRequestWire{}
-	for _, req := range logins.Sweep(time.Now()) {
+	now := time.Now()
+	for _, req := range logins.Sweep(now) {
 		sp, ok := settingsFor(req, settings)
 		if !ok {
 			continue
 		}
 		out = append(out, loginRequestWire{ID: req.ID, Profile: sp.Name, Label: sp.Label, AccountID: sp.AccountID,
-			RoleName: sp.RoleName, Waiters: cloudlogin.RecentWaiters(req.Waiters, 5), FirstAt: req.FirstAt, LastAt: req.LastAt})
+			RoleName: sp.RoleName, Waiters: cloudlogin.RecentWaiters(req.Waiters, 5), FirstAt: req.FirstAt, LastAt: req.LastAt,
+			ExpiresInSec: logins.ExpiresInSec(req, now)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, loginListWire{Requests: out})
 }
@@ -188,7 +193,10 @@ type profileLoginStateWire struct {
 	AccountID string `json:"accountId,omitempty"`
 	RoleName  string `json:"roleName,omitempty"`
 	ExpiresAt string `json:"expiresAt,omitempty"`
-	Expiring  bool   `json:"expiring,omitempty"`
+	// ExpiresInSec is ExpiresAt as seconds left on the Agent's clock, for a countdown that does
+	// not depend on the browser's clock.
+	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
+	Expiring     bool   `json:"expiring,omitempty"`
 }
 
 type profileLoginStatesWire struct {
@@ -231,6 +239,7 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 				// Shown, never warned about: the source's own row carries the expiry warning.
 				if end, ok := readSSOExpiry("af-"+sp.SourceProfile, now); ok {
 					p.ExpiresAt = end.Format(time.RFC3339)
+					p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 				}
 			}
 			out = append(out, p)
@@ -240,6 +249,7 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName}
 		if end, ok := readSSOExpiry("af-"+name, now); ok {
 			p.ExpiresAt = end.Format(time.RFC3339)
+			p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 			// Only a profile in the managed block: the row's login refuses any other.
 			p.Expiring = expiringAt(end, now) && slices.Contains(exported, name)
 		}

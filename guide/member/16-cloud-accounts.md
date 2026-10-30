@@ -27,7 +27,7 @@ until the portal session ends, and that end is recorded nowhere the workspace ca
 warned about in advance**: when the portal ends it, the next command asks for a login as below. Only when the cached
 login has nothing to renew it with (no refresh token, or its sign-in client registration has expired) is its end
 known; then the Console warns once per profile, about 10–15 minutes before: a toast "Your AWS login ends at …" (and
-a notification), with **Log in** opening the same login window. The warning goes once you log in again; closing the
+a notification), counting down the time left, with **Log in** opening the same login window. The warning goes once you log in again; closing the
 toast hides it for that end in that tab. A profile that is not in the managed block (see `af-aws-exec --list`) is
 never warned about.
 
@@ -287,7 +287,8 @@ Agents in the workspace follow the same rule.
   falling back. Inside a workspace, at a terminal too, it asks you in the Console (next item); `--login` runs the
   device-code login in that terminal instead.
 - **When a command needs the login** (an agent's, or yours in a shell session's terminal), it asks you in the Console: a toast at the bottom of the
-  screen names the profile, its account and role from Settings, and which session asks. Press **Log in** to open the
+  screen names the profile, its account and role from Settings, and which session asks, and counts down until the
+  request is withdrawn (15 minutes after a command last asked; no countdown while a sign-in for it runs). Press **Log in** to open the
   login window, check what it is for, and press **Log in** there; only then is a sign-in code created, and only
   that window shows it. Check the code, press **Sign in and approve**, and approve it on the page that opens. The
   agent's command waits about a minute and a half (a few seconds when it is not run by an agent session, such
@@ -475,7 +476,8 @@ meanwhile), nothing is logged out and the Console says so.
 
 **When an agent's command needs the login**, it asks you in the Console: `af-gcloud-exec` prints "Google Cloud
 login for profile … requested in the Agent Fleet Console", and a toast at the bottom of the screen says **"An agent
-is waiting for a Google Cloud login"**, with the profile, its project and which session and command ask. Press
+is waiting for a Google Cloud login"**, with the profile, its project and account, which session and command ask,
+and the same countdown until the request is withdrawn. Press
 **Log in** on the toast to open the login window and continue as above. When Google refused the stored login, the
 window says so, and the sign-in starts afresh. The agent's command waits about a minute and a half (a few seconds
 when it is not run by an agent session, such as a script in a shell session) and continues once you are logged in;

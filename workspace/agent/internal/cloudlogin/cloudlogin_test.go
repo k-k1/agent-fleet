@@ -515,3 +515,34 @@ func TestSubmitKeepsAWriteError(t *testing.T) {
 		t.Fatalf("submit to a pipe nobody reads = %v", err)
 	}
 }
+
+// The Console counts down from ExpiresInSec, so it must agree with Sweep: RequestTTL after
+// the last run asked, never below zero, and absent while an attempt for the request runs.
+func TestExpiresInSecFollowsTheSweepRule(t *testing.T) {
+	s := newStore(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	r := Request[testState]{ID: "0123456789abcdef01234567", Key: "k", LastAt: now.Add(-5 * time.Minute).Format(time.RFC3339Nano)}
+	if got := s.ExpiresInSec(r, now); got == nil || *got != int64((RequestTTL-5*time.Minute)/time.Second) {
+		t.Fatalf("expiresInSec = %v, want %d", got, int64((RequestTTL-5*time.Minute)/time.Second))
+	}
+	if got := s.ExpiresInSec(r, now.Add(time.Hour)); got == nil || *got != 0 {
+		t.Fatalf("past the TTL: expiresInSec = %v, want 0", got)
+	}
+	if got := s.ExpiresInSec(Request[testState]{ID: r.ID, Key: "k", LastAt: "garbage"}, now); got != nil {
+		t.Fatalf("unreadable lastAt: expiresInSec = %d, want nil", *got)
+	}
+	// An attempt for another request does not hold this one.
+	other := s.Begin("k", "fedcba9876543210fedcba98", "prod", func() {})
+	if s.ExpiresInSec(r, now) == nil {
+		t.Fatal("an attempt for another request hid the countdown")
+	}
+	other.End(PhaseCancelled, "")
+	a := s.Begin("k", r.ID, "prod", func() {})
+	if got := s.ExpiresInSec(r, now); got != nil {
+		t.Fatalf("live attempt: expiresInSec = %d, want nil", *got)
+	}
+	a.End(PhaseCancelled, "")
+	if s.ExpiresInSec(r, now) == nil {
+		t.Fatal("an ended attempt still hides the countdown")
+	}
+}

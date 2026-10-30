@@ -507,11 +507,19 @@ func TestConsoleLoginEndToEnd(t *testing.T) {
 	if strings.Contains(fmt.Sprint(list), "attempt") {
 		t.Fatalf("the list carries an attempt: %v", list)
 	}
+	if left, _ := reqs[0].(map[string]any)["expiresInSec"].(float64); left <= 0 || left > cloudlogin.RequestTTL.Seconds() {
+		t.Fatalf("expiresInSec = %v", reqs[0].(map[string]any)["expiresInSec"])
+	}
 
 	id := l.start(t, "/gcp-login/"+reqID+"/start")
 	view := l.waitPhase(t, "prod", id, cloudlogin.PhaseAuthorize)
 	if view["url"] != l.url || view["code"] != nil {
 		t.Fatalf("view = %v", view)
+	}
+	// The request does not expire under a running attempt, so the list gives no countdown.
+	_, list = l.do(t, "GET", "/gcp-login", "")
+	if reqs, _ := list["requests"].([]any); len(reqs) != 1 || reqs[0].(map[string]any)["expiresInSec"] != nil {
+		t.Fatalf("list during the attempt = %v", list)
 	}
 	// The same attempt read through another profile's route is gone; a code through it is refused.
 	if _, out := l.do(t, "GET", "/gcp-login/profiles/other/attempts/"+id, ""); out["phase"] != cloudlogin.PhaseGone {

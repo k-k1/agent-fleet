@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useNotificationStore } from "../notifications/store.ts";
+import { ToastCountdown, ToastIdentity } from "../cloudlogin/LoginToastParts.tsx";
 import { GcpLoginModal } from "./GcpLoginModal.tsx";
 import { GcpProfileLoginModal } from "./GcpProfileLoginModal.tsx";
 import { gcpWaitersLine, useGcpLoginStore, type GcpLoginRequest } from "./store.ts";
@@ -19,15 +20,22 @@ const toastKey = (id: string) => "gcp-login:" + id;
 function GcpLoginToast({ r }: { r: GcpLoginRequest }) {
   const tr = useT();
   const open = useGcpLoginStore((s) => s.open);
+  // Read live: the toast is re-issued only when what it names changes, not on every poll.
+  const deadline = useGcpLoginStore((s) => s.requests.find((x) => x.id === r.id)?.deadline ?? null);
   const who = gcpWaitersLine(r);
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
         <span>{tr("gcplogin.toast_title")}</span>
-        <span className="update-toast-sub">
-          {tr("gcplogin.toast_profile", { profile: r.label || r.profile, project: r.project })}
-        </span>
+        <ToastIdentity
+          name={r.label || r.profile}
+          fields={[
+            { label: tr("gcplogin.field_project"), value: r.project },
+            { label: tr("gcplogin.field_account"), value: r.account || tr("gcplogin.account_at_login") },
+          ]}
+        />
         {who && <span className="update-toast-sub">{tr("gcplogin.toast_who", { who })}</span>}
+        <ToastCountdown deadline={deadline} text={(time) => tr("gcplogin.toast_expires_in", { time })} />
       </span>
       <button type="button" className="update-toast-btn" onClick={() => open(r.id)}>
         {tr("gcplogin.toast_button")}
@@ -68,7 +76,7 @@ export function GcpLoginHost() {
     const next = new Map<string, string>();
     for (const r of visible) {
       const key = toastKey(r.id);
-      const sig = JSON.stringify([r.label, r.profile, r.project, gcpWaitersLine(r)]);
+      const sig = JSON.stringify([r.label, r.profile, r.project, r.account, gcpWaitersLine(r)]);
       if (shown.current.get(key) === sig) {
         next.set(key, sig);
       } else if (toast(<GcpLoginToast r={r} />, { kind: "info", duration: 0, key, onClose: () => hide(r.id) })) {

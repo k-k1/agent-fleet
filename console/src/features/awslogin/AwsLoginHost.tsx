@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useNotificationStore } from "../notifications/store.ts";
+import { ToastCountdown, ToastIdentity } from "../cloudlogin/LoginToastParts.tsx";
 import { AwsLoginModal } from "./AwsLoginModal.tsx";
 import { ProfileLoginModal } from "./ProfileLoginModal.tsx";
 import { expiryKey, useAwsLoginStore, waitersLine, type AwsLoginRequest, type AwsProfileExpiry } from "./store.ts";
@@ -33,13 +34,14 @@ function endTime(iso: string): string {
 function AwsExpiryToast({ p }: { p: AwsProfileExpiry }) {
   const tr = useT();
   const open = useAwsLoginStore((s) => s.showProfile);
+  // Read live: the toast is issued once per profile and end, while each list re-anchors the deadline.
+  const deadline = useAwsLoginStore((s) => s.expiring.find((x) => expiryKey(x) === expiryKey(p))?.deadline ?? null);
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
         <span>{tr("awslogin.expiry_title", { time: endTime(p.expiresAt) })}</span>
-        <span className="update-toast-sub">
-          {tr("awslogin.toast_profile", { profile: p.label || p.name, account: p.accountId, role: p.roleName })}
-        </span>
+        <AwsIdentity name={p.label || p.name} accountId={p.accountId} roleName={p.roleName} />
+        <ToastCountdown deadline={deadline} text={(time) => tr("awslogin.expiry_left", { time })} />
       </span>
       <button type="button" className="update-toast-btn" onClick={() => open(p)}>
         {tr("awslogin.toast_button")}
@@ -48,18 +50,32 @@ function AwsExpiryToast({ p }: { p: AwsProfileExpiry }) {
   );
 }
 
+function AwsIdentity({ name, accountId, roleName }: { name: string; accountId: string; roleName: string }) {
+  const tr = useT();
+  return (
+    <ToastIdentity
+      name={name}
+      fields={[
+        { label: tr("awslogin.field_account"), value: accountId },
+        { label: tr("awslogin.field_role"), value: roleName },
+      ]}
+    />
+  );
+}
+
 function AwsLoginToast({ r }: { r: AwsLoginRequest }) {
   const tr = useT();
   const open = useAwsLoginStore((s) => s.open);
+  // Read live: the toast is re-issued only when what it names changes, not on every poll.
+  const deadline = useAwsLoginStore((s) => s.requests.find((x) => x.id === r.id)?.deadline ?? null);
   const who = waitersLine(r);
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
         <span>{tr("awslogin.toast_title")}</span>
-        <span className="update-toast-sub">
-          {tr("awslogin.toast_profile", { profile: r.label || r.profile, account: r.accountId, role: r.roleName })}
-        </span>
+        <AwsIdentity name={r.label || r.profile} accountId={r.accountId} roleName={r.roleName} />
         {who && <span className="update-toast-sub">{tr("awslogin.toast_who", { who })}</span>}
+        <ToastCountdown deadline={deadline} text={(time) => tr("awslogin.toast_expires_in", { time })} />
       </span>
       <button type="button" className="update-toast-btn" onClick={() => open(r.id)}>
         {tr("awslogin.toast_button")}
