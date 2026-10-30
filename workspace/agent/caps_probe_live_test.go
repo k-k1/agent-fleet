@@ -112,8 +112,10 @@ func (e *liveProbeEnv) Interrupt() probeObservation {
 }
 
 // oneLineTurns starts a session (with model, when given), runs n one-line turns to completion
-// one after another and returns the transcript of the last.
-func (e *liveProbeEnv) oneLineTurns(suffix, model string, n int) (agents.TranscriptData, session.Meta, error) {
+// one after another and returns the transcript of the last. whileLive, when set, runs with
+// the session still up: a CLI's own store can be written late, or on exit, and the pane is
+// gone once this returns.
+func (e *liveProbeEnv) oneLineTurns(suffix, model string, n int, whileLive func(agents.TranscriptData, session.Meta)) (agents.TranscriptData, session.Meta, error) {
 	t := e.t
 	t.Helper()
 	meta, tn, stop := startTUIContractSession(t, e.spec, suffix, model)
@@ -136,13 +138,16 @@ func (e *liveProbeEnv) oneLineTurns(suffix, model string, n int) (agents.Transcr
 			return agents.TranscriptData{}, meta, fmt.Errorf("one-line turn %d/%d did not complete\npane:\n%s", i, n, tmuxx.CapturePane(tn))
 		}
 	}
+	if whileLive != nil {
+		whileLive(td, meta)
+	}
 	return td, meta, nil
 }
 
 func (e *liveProbeEnv) ForkAt() probeObservation {
 	// Two exchanges: a fork cuts before the anchored message, so the first message can
 	// never be the anchor (observeForkAt).
-	td, meta, err := e.oneLineTurns("forkat", "", 2)
+	td, meta, err := e.oneLineTurns("forkat", "", 2, nil)
 	if err != nil {
 		return probeObservation{Err: err}
 	}
@@ -154,25 +159,29 @@ func (e *liveProbeEnv) ModelOverride(model string) probeObservation {
 	if model == "" {
 		return probeObservation{Err: errors.New("no model id to start with")}
 	}
-	td, meta, err := e.oneLineTurns("model", model, 1)
+	var rec modelRecord
+	td, _, err := e.oneLineTurns("model", model, 1, func(_ agents.TranscriptData, meta session.Meta) {
+		// Read the CLI's own record with the request cleared, so a store that only echoes the
+		// meta cannot answer for itself (see observeModelOverride). A kind that exposes the raw
+		// stored id is preferred: RecallSettings maps through the catalog and may answer "".
+		asked := meta
+		asked.Model = ""
+		read := func() string { return "" }
+		if raw, ok := e.spec.agent.(interface{ RecordedModel(session.Meta) string }); ok {
+			rec.Have, read = true, func() string { return raw.RecordedModel(asked) }
+		} else if recaller, ok := e.spec.agent.(agents.SettingsRecaller); ok {
+			rec.Have, read = true, func() string { return recaller.RecallSettings(asked).Model }
+		}
+		rec.Model = waitRecordedModel(read, recordedModelWait, recordedModelEvery, time.Sleep)
+		if why, ok := e.spec.agent.(interface{ RecordedModelMissing(session.Meta) string }); ok && rec.Model == "" {
+			rec.Missing = why.RecordedModelMissing(asked)
+		}
+		if r, ok := e.spec.agent.(interface{ ModelRefusal(session.Meta) string }); ok {
+			rec.Refusal = r.ModelRefusal(asked)
+		}
+	})
 	if err != nil {
 		return probeObservation{Err: err}
 	}
-	// Read the CLI's own record with the request cleared, so a store that only echoes the
-	// meta cannot answer for itself (see observeModelOverride). A kind that exposes the raw
-	// stored id is preferred: RecallSettings maps through the catalog and may answer "".
-	asked := meta
-	asked.Model = ""
-	var recorded string
-	haveRecorder := false
-	if raw, ok := e.spec.agent.(interface{ RecordedModel(session.Meta) string }); ok {
-		recorded, haveRecorder = raw.RecordedModel(asked), true
-	} else if recaller, ok := e.spec.agent.(agents.SettingsRecaller); ok {
-		recorded, haveRecorder = recaller.RecallSettings(asked).Model, true
-	}
-	refused := false
-	if r, ok := e.spec.agent.(interface{ ModelRefusedAtLaunch(session.Meta) bool }); ok {
-		refused = r.ModelRefusedAtLaunch(asked)
-	}
-	return observeModelOverride(td.Turns, recorded, haveRecorder, model, refused)
+	return observeModelOverride(td.Turns, rec, model)
 }

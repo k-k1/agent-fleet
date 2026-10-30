@@ -83,6 +83,10 @@ manifest `versions.json` on the default lean image — is
    (`cli-contract-report.sh advisory`, which keeps that issue open while the pin is current).
    A later passing run clears the row. Declare a cap `false` only after a probe has seen it
    fail. See "Promoting the caps drift probes" below.
+   The model-override probe reports `PROBE-ERROR`, not `DRIFT`, when the CLI itself said it
+   would not launch any of the models tried (copilot: `Model "X" from --model flag is not
+   available`, an account or plan limit); a CLI that quietly runs another model is still
+   `DRIFT`. It also waits up to 15 s for the CLI's own store to record the model.
 6. **Reflect it on the host** with `run-dev.sh`. The image smoke test (L1) runs right
    after the build. On the default lean image it checks that `versions.json` carries
    the new pins and that no CLI is baked in; with `BAKE_AGENT_CLIS=1` it also checks

@@ -44,13 +44,13 @@ func TestRecallFrom(t *testing.T) {
 	}
 }
 
-func TestRefusedFrom(t *testing.T) {
+func TestRefusalFrom(t *testing.T) {
 	refusal := `{"type":"session.error","data":{"message":"Model \"gpt-5-mini\" from --model flag is not available. Using \"auto\" instead.","errorType":"model"}}`
 	other := `{"type":"session.error","data":{"message":"rate limited","errorType":"rate_limit"}}`
-	if !refusedFrom(strings.NewReader(other + "\n" + refusal)) {
-		t.Error("the launch refusal was not recognised")
+	if got := refusalFrom(strings.NewReader(other + "\n" + refusal)); !strings.Contains(got, `"gpt-5-mini" from --model flag is not available`) {
+		t.Errorf("the launch refusal was not recognised, got %q", got)
 	}
-	if refusedFrom(strings.NewReader(other + "\n" + `{"type":"session.model_change","data":{"newModel":"auto"}}`)) {
+	if got := refusalFrom(strings.NewReader(other + "\n" + `{"type":"session.model_change","data":{"newModel":"auto"}}`)); got != "" {
 		t.Error("an unrelated error or a bare switch to auto is not a refusal")
 	}
 }

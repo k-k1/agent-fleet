@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -241,9 +242,10 @@ func TestModelOverrideTriesPastAnAccountRefusal(t *testing.T) {
 	if obs.Worked || obs.Err != nil || calls != 1 {
 		t.Errorf("mismatch without a refusal must be DRIFT after one try: calls=%d obs=%+v", calls, obs)
 	}
-	// Every candidate refused stays DRIFT.
-	if obs := observeModelOverrideTries(cands, fake([]string{"gated", "b", "c"}, nil)); obs.Worked || obs.Err != nil || !strings.Contains(obs.Detail, `"c"`) {
-		t.Errorf("all candidates refused must stay DRIFT, got %+v", obs)
+	// Every candidate refused is a probe error naming each refusal, never DRIFT.
+	if obs := observeModelOverrideTries(cands, fake([]string{"gated", "b", "c"}, nil)); obs.Worked || obs.Err == nil ||
+		!strings.Contains(obs.Err.Error(), `"gated"`) || !strings.Contains(obs.Err.Error(), `"c"`) {
+		t.Errorf("all candidates refused must be a probe error naming them, got %+v", obs)
 	}
 	// A probe error is not retried past.
 	calls = 0
@@ -258,11 +260,71 @@ func TestModelOverrideTriesPastAnAccountRefusal(t *testing.T) {
 
 func TestObserveModelOverrideCarriesRefusal(t *testing.T) {
 	turns := []transcript.Turn{{Role: "assistant", Model: "x"}}
-	if o := observeModelOverride(turns, "auto", true, "x", true); o.Worked || !o.Refused {
-		t.Errorf("mismatch + CLI refusal = %+v, want Refused", o)
+	msg := `Model "x" from --model flag is not available. Using "auto" instead.`
+	if o := observeModelOverride(turns, modelRecord{Have: true, Model: "auto", Refusal: msg}, "x"); o.Worked || !o.Refused || !strings.Contains(o.Detail, msg) {
+		t.Errorf("mismatch + CLI refusal = %+v, want Refused carrying the CLI message", o)
 	}
-	if o := observeModelOverride(turns, "auto", true, "x", false); o.Worked || o.Refused {
+	if o := observeModelOverride(turns, modelRecord{Have: true, Model: "auto"}, "x"); o.Worked || o.Refused {
 		t.Errorf("bare mismatch = %+v, must not be Refused", o)
+	}
+}
+
+func TestObserveModelOverrideEmptyRecordSaysWhy(t *testing.T) {
+	turns := []transcript.Turn{{Role: "assistant", Model: "x"}}
+	o := observeModelOverride(turns, modelRecord{Have: true, Missing: "store.db meta has no lastUsedModel; keys: mode"}, "x")
+	if o.Err == nil || !strings.Contains(o.Err.Error(), "keys: mode") {
+		t.Errorf("an empty record must be a probe error that says why, got %+v", o)
+	}
+}
+
+// The probe must still tell the two outcomes apart end to end: a CLI that quietly runs another
+// model (flag ignored, nothing refused) is DRIFT; one that said it would not launch any of the
+// listed models is PROBE-ERROR, with its own words in the line.
+func TestModelOverrideIgnoredFlagIsDriftRefusedIsProbeError(t *testing.T) {
+	models := []agents.ModelChoice{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	turns := []transcript.Turn{{Role: "assistant", Model: "stamped"}}
+	run := func(rec modelRecord) probeResult {
+		env := &fakeProbeEnv{modelFn: func(m string) probeObservation { return observeModelOverride(turns, rec, m) }}
+		for _, r := range runCapsProbes(agents.Caps{}, models, "", env) {
+			if r.ID == probeModelOverride {
+				return r
+			}
+		}
+		t.Fatal("no model-override result")
+		return probeResult{}
+	}
+	if r := run(modelRecord{Have: true, Model: "auto"}); r.Verdict != verdictDrift {
+		t.Errorf("flag ignored without a refusal = %s, want DRIFT: %s", r.Verdict, r)
+	}
+	msg := `Model "a" from --model flag is not available. Using "auto" instead.`
+	r := run(modelRecord{Have: true, Model: "auto", Refusal: msg})
+	if r.Verdict != verdictBroken || !strings.Contains(r.String(), "not available") {
+		t.Errorf("every model refused = %s, want PROBE-ERROR with the CLI message: %s", r.Verdict, r)
+	}
+}
+
+func TestWaitRecordedModel(t *testing.T) {
+	sleeps := 0
+	sleep := func(time.Duration) { sleeps++ }
+	reads := 0
+	late := func() string {
+		reads++
+		if reads == 4 {
+			return "composer-2.5"
+		}
+		return ""
+	}
+	if got := waitRecordedModel(late, 10*time.Second, time.Second, sleep); got != "composer-2.5" || sleeps != 3 {
+		t.Errorf("late write: got %q after %d sleeps, want composer-2.5 after 3", got, sleeps)
+	}
+	sleeps = 0
+	if got := waitRecordedModel(func() string { return "" }, 5*time.Second, time.Second, sleep); got != "" || sleeps != 5 {
+		t.Errorf("never written: got %q after %d sleeps, want an empty answer after the bounded 5", got, sleeps)
+	}
+	// A non-empty record is final even when it is the wrong one.
+	sleeps = 0
+	if got := waitRecordedModel(func() string { return "auto" }, 5*time.Second, time.Second, sleep); got != "auto" || sleeps != 0 {
+		t.Errorf("a recorded model must not be waited on: got %q after %d sleeps", got, sleeps)
 	}
 }
 
@@ -338,7 +400,7 @@ func TestObserveModelOverride(t *testing.T) {
 		{"agent has no recorder", stamped, "", false, "want", false, true},
 		{"no assistant model at all", []transcript.Turn{{Role: "user", Model: "want"}, {Role: "assistant"}}, rec("want"), true, "want", false, true},
 	} {
-		o := observeModelOverride(c.turns, c.recalled, c.have, c.want, false)
+		o := observeModelOverride(c.turns, modelRecord{Have: c.have, Model: c.recalled}, c.want)
 		if o.Worked != c.worked || (o.Err != nil) != c.inconcl {
 			t.Errorf("%s: Worked=%v Err=%v, want Worked=%v inconclusive=%v", c.name, o.Worked, o.Err, c.worked, c.inconcl)
 		}
