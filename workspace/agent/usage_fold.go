@@ -99,16 +99,15 @@ type usageAgentMark struct {
 	Stamp string `json:"stamp,omitempty"`
 }
 
-// usageAgentTurn is one recorded turn: the hashes of its first and last event ids and the
-// totals written for it so far.
+// usageAgentTurn is one recorded turn: short hashes of every event id it has held and the
+// totals written for it so far. 32 bits per event is ample inside one agent's transcript.
 type usageAgentTurn struct {
-	First       string  `json:"f"`
-	Last        string  `json:"l,omitempty"`
-	In          int     `json:"in,omitempty"`
-	Out         int     `json:"out,omitempty"`
-	CacheRead   int     `json:"cr,omitempty"`
-	CacheCreate int     `json:"cc,omitempty"`
-	CostUSD     float64 `json:"cost,omitempty"`
+	IDs         []string `json:"ids"`
+	In          int      `json:"in,omitempty"`
+	Out         int      `json:"out,omitempty"`
+	CacheRead   int      `json:"cr,omitempty"`
+	CacheCreate int      `json:"cc,omitempty"`
+	CostUSD     float64  `json:"cost,omitempty"`
 }
 
 // There are three separate locks. Merging them would undo the point of making
@@ -179,12 +178,9 @@ type usageTurnRow struct {
 	// input tokens it is additive: each row is one LLM call's own cost, never a re-report.
 	CostUSD float64
 	LastIdx int // transcript line number of the last event (diagnostic)
-	// ID is the uuid of the turn's first event: what tells one turn from another when the
-	// transcript is read again with a different set of lines (subagent copies merged).
-	ID string
-	// LastID is the uuid of its last event. A copy found later can add events at either end, so
-	// a turn is recognised by either id.
-	LastID string
+	// IDs is the uuid of every event of the turn. A copy found later can add events anywhere
+	// in it, so a turn is recognised by any one of them.
+	IDs []string
 	// Orphan marks a cost-only row: the reported cost of CostOnly turns that no logical turn on
 	// their side took in before the next boundary. It is outside the logical turn sequence (Idx
 	// stays 0, so the watermark's Groups never moves) and is identified by OrphanKey, the
@@ -278,7 +274,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			sidechain = t.Sidechain
 		}
 		if !inGroup {
-			cur = usageTurnRow{Trigger: trigger, Sidechain: sidechain, ID: t.AnchorID}
+			cur = usageTurnRow{Trigger: trigger, Sidechain: sidechain}
 			inGroup = true
 			if p := &pending[side(sidechain)]; p.CostUSD > 0 {
 				cur.CostUSD, *p = p.CostUSD, usageTurnRow{}
@@ -296,11 +292,8 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			cur.Model = t.Model
 		}
 		cur.LastIdx = t.Idx
-		if cur.ID == "" {
-			cur.ID = t.AnchorID
-		}
 		if t.AnchorID != "" {
-			cur.LastID = t.AnchorID
+			cur.IDs = append(cur.IDs, t.AnchorID)
 		}
 	}
 	if includeTrailing {
@@ -393,8 +386,8 @@ func subagentMarkKey(m session.Meta, id string) string { return m.Name + "\x00" 
 // fold writes exactly the difference. Nothing in an agent's file says it is finished, so the
 // newest turn is folded as it stands and its growth is added later; the copies of an agent are
 // merged by timestamp, so a copy found later can put an older turn first, or fill events into a
-// turn already recorded; positions shift, event uuids do not. A turn is matched by its first or
-// its last event id, so events added at one end do not make it a new turn. The batch is saved
+// turn already recorded; positions shift, event uuids do not. A turn is matched by any of its
+// event ids, so events added anywhere in it do not make it a new turn. The batch is saved
 // as Pending before it is appended (see usageAgentMark). An agent with no mark folds from its
 // first turn, which is exact for a session that predates this change; an orphan (cost-only) row
 // never occurs in a claude subagent file and is not folded here. dirty reports a change to st
@@ -424,9 +417,8 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 		next := usageAgentMark{Seq: mark.Seq, Turns: slices.Clone(mark.Turns), Stamp: src.Stamp}
 		at := map[string]int{} // event id hash -> index in next.Turns
 		for i, t := range next.Turns {
-			at[t.First] = i
-			if t.Last != "" {
-				at[t.Last] = i
+			for _, h := range t.IDs {
+				at[h] = i
 			}
 		}
 		agent := usageAgentID(src.ID)
@@ -435,13 +427,13 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 			if r.Orphan {
 				continue
 			}
-			first, last := usageAgentID(rowIdentity(r))[:12], ""
-			if r.LastID != "" {
-				last = usageAgentID(r.LastID)[:12]
-			}
-			i, known := at[first]
-			if !known && last != "" {
-				i, known = at[last]
+			ids := rowEventIDs(r)
+			i, known := -1, false
+			for _, h := range ids {
+				if j, ok := at[h]; ok {
+					i, known = j, true
+					break
+				}
 			}
 			var was usageAgentTurn
 			if known {
@@ -458,17 +450,21 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 				delta.Idx = next.Seq
 				out = append(out, usageRecordOf(m, delta, agent))
 			}
-			now := usageAgentTurn{First: first, Last: last, In: r.Tokens.In, Out: r.Tokens.Out,
+			now := usageAgentTurn{IDs: ids, In: r.Tokens.In, Out: r.Tokens.Out,
 				CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD}
 			if !known {
 				i = len(next.Turns)
 				next.Turns = append(next.Turns, now)
 			} else {
+				for _, h := range was.IDs { // keep what the turn has held
+					if !slices.Contains(now.IDs, h) {
+						now.IDs = append(now.IDs, h)
+					}
+				}
 				next.Turns[i] = now
 			}
-			at[first] = i
-			if last != "" {
-				at[last] = i
+			for _, h := range now.IDs {
+				at[h] = i
 			}
 		}
 		if len(out) == 0 {
@@ -494,13 +490,21 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 	return total, dirty, nil
 }
 
-// rowIdentity is a folded turn's id: its first event's uuid, else a stand-in from what the row
-// holds (a transcript without uuids does not occur in claude's own files).
-func rowIdentity(r usageTurnRow) string {
-	if r.ID != "" {
-		return r.ID
+// rowEventIDs is the short hashes of every event id of a folded turn; a transcript without
+// uuids (not claude's own files) falls back to a stand-in from what the row holds.
+func rowEventIDs(r usageTurnRow) []string {
+	ids := r.IDs
+	if len(ids) == 0 {
+		ids = []string{fmt.Sprintf("ts:%s#%d", r.TS, r.LastIdx)}
 	}
-	return fmt.Sprintf("ts:%s#%d", r.TS, r.LastIdx)
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		h := usageAgentID(id)[:8]
+		if !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // usageAgentID is the id a ledger record carries for a subagent transcript: a hash, so the

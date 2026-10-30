@@ -328,7 +328,7 @@ func TestFoldSubagentWritesABatchSavedBeforeAnAppendThatFailed(t *testing.T) {
 	st := readUsageFoldState()
 	for k, mk := range st.Subagents {
 		mk.Seq = 2
-		mk.Turns = []usageAgentTurn{{First: usageAgentID("a")[:12], In: 2600, Out: 50}}
+		mk.Turns = []usageAgentTurn{{IDs: []string{usageAgentID("a")[:8]}, In: 2600, Out: 50}}
 		mk.Pending = []usagex.Record{lost}
 		st.Subagents[k] = mk
 	}
@@ -339,5 +339,28 @@ func TestFoldSubagentWritesABatchSavedBeforeAnAppendThatFailed(t *testing.T) {
 	foldAgent(t, m, "s2", grown)
 	if rows, in, out := sidechainSums(m); rows != 2 || in != 2600 || out != 50 {
 		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 2600 / 50", rows, in, out)
+	}
+}
+
+// The copy found later and the live file's growth meet in one pass: events are added in front
+// of a recorded turn and after it, so neither its first nor its last event is the recorded one.
+// Its own event is still inside, and it is matched by that.
+func TestFoldSubagentMatchesATurnByAnyOfItsEvents(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "both3054", Kind: session.KindClaude, Model: "claude-opus-5"}
+	ev := func(id string, in, out int) transcript.Turn {
+		return transcript.Turn{Role: "assistant", Model: "claude-opus-5", InTok: in, OutTok: out,
+			TS: "2026-10-30T09:00:00Z", Sidechain: true, AnchorID: id}
+	}
+	user := transcript.Turn{Role: "user", TS: "2026-10-30T09:00:00Z", Sidechain: true}
+	if n := foldAgent(t, m, "s1", []transcript.Turn{user, ev("a", 2000, 20)}); n != 1 {
+		t.Fatalf("first fold = %d rows", n)
+	}
+	both := []transcript.Turn{user, ev("z", 0, 10), ev("a", 2000, 20), ev("b", 0, 30)}
+	if n := foldAgent(t, m, "s2", both); n != 1 {
+		t.Fatalf("fold with events at both ends = %d rows, want the 1 difference", n)
+	}
+	if rows, in, out := sidechainSums(m); rows != 2 || in != 2000 || out != 60 {
+		t.Fatalf("ledger rows=%d in=%d out=%d, want 2 / 2000 / 60", rows, in, out)
 	}
 }

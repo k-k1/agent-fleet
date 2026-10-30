@@ -376,11 +376,10 @@ The agent watermark is by turn identity, not position, and keeps the totals writ
 turn, so every fold writes exactly the difference. Nothing in an agent's file says it is
 finished, so its newest turn is folded as it stands and its growth is added later as a delta
 row. The copies of an agent are merged by timestamp, so a copy found later can put an older
-turn first or fill events into a recorded turn; a turn is recognised by the uuid of its first or
-its last event, so events added at one end do not make a second turn. The batch about to be
+turn first or fill events into a recorded turn; a turn is recognised by any of its event uuids,
+so events added anywhere in it, at both ends at once included, do not make a second turn.
+The batch about to be
 appended is saved in the mark first (`pending`) and replayed identically if the pass did not
 finish: the dedup drops it when it had landed, and a recomputed difference would not match it.
 A delta row adds a row to the turn count of the usage view; its token and cost sums are exact.
-The mark holds about one small entry per turn of each agent in `state.json`. A turn that gains
-events at both ends from a later copy at once, with no event in common, is not recognised and
-is recorded again.
+The mark holds a short hash per event of each agent in `state.json`.
