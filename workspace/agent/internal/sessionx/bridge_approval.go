@@ -105,6 +105,9 @@ type bridgeApprovalRec struct {
 	Conv      string `json:"conv"`
 	Decision  string `json:"decision"` // "" (pending) | "approve" | "reject"
 	CreatedAt int64  `json:"createdAt"`
+	// Deadline (unix ms) is when the waiter gives up. It lets the daemon refuse a late
+	// click even when the waiter could not take the lock and left the record in place.
+	Deadline int64 `json:"deadline,omitempty"`
 }
 
 var bridgeApprovals = fstore.JSON[bridgeApprovalRec](paths.AgentStateDir, "bridge-approvals", ".json")
@@ -115,7 +118,12 @@ var (
 	bridgeApprovalTimeout = 4 * time.Minute
 	bridgeApprovalPoll    = 2 * time.Second
 	bridgeApprovalMaxAge  = 1 * time.Hour // orphan-record sweep horizon
+
+	bridgeApprovalLockWait = 2 * time.Second // bound on waiting for the handshake lock
 )
+
+// lockApprovals is a var so tests can inject an acquisition failure.
+var lockApprovals = lockApprovalsFile
 
 var (
 	errApprovalRejected      = errors.New("この操作は却下されました（実行していません）")
@@ -137,6 +145,7 @@ func BridgeApprovalGate(op, summary string) error {
 	id := chatx.RandUUID()
 	if err := bridgeApprovals.Write(id, bridgeApprovalRec{
 		ID: id, Op: op, Summary: summary, Conv: mcpConvID(), CreatedAt: chatx.NowMs(),
+		Deadline: chatx.NowMs() + bridgeApprovalTimeout.Milliseconds(),
 	}); err != nil {
 		return errApprovalUndeliverable
 	}
@@ -147,6 +156,11 @@ func BridgeApprovalGate(op, summary string) error {
 	return waitApprovalDecision(id)
 }
 
+// bridgeApprovalBetweenReadAndWrite is a test seam: it runs inside bridgeApprovalDecision's
+// critical section, after the pending check and before the decision is written, so a test
+// can land the waiter's deadline exactly there.
+var bridgeApprovalBetweenReadAndWrite func(id string)
+
 // waitApprovalDecision polls the handshake record until the daemon writes a decision or the
 // window elapses, then removes the record. Read errors (a partial file during the daemon's
 // write) are treated as "still pending" and retried on the next tick.
@@ -155,34 +169,85 @@ func waitApprovalDecision(id string) error {
 	for {
 		time.Sleep(bridgeApprovalPoll)
 		if cur, ok := bridgeApprovals.Read(id); ok {
-			switch cur.Decision {
-			case "approve":
-				bridgeApprovals.Remove(id)
-				return nil
-			case "reject":
-				bridgeApprovals.Remove(id)
-				return errApprovalRejected
+			if decided, err := approvalOutcome(id, cur); decided {
+				return err
 			}
 		}
 		if time.Now().After(deadline) {
-			bridgeApprovals.Remove(id)
-			return errApprovalTimeout
+			return expireApproval(id)
 		}
 	}
+}
+
+// approvalOutcome maps a decided record to the gate's result and removes the record.
+func approvalOutcome(id string, cur bridgeApprovalRec) (decided bool, err error) {
+	switch cur.Decision {
+	case "approve":
+		bridgeApprovals.Remove(id)
+		return true, nil
+	case "reject":
+		bridgeApprovals.Remove(id)
+		return true, errApprovalRejected
+	}
+	return false, nil
+}
+
+// expireApproval is the waiter's deadline step. Under the lock shared with
+// bridgeApprovalDecision it re-reads the record: a decision that landed first is honored
+// (the user was told "running it"), otherwise the record is removed so a later click finds
+// nothing and reports "expired". Without the lock, a click between the daemon's read and
+// write re-created the removed record and the user was told "Approved" for an action that
+// never ran.
+func expireApproval(id string) error {
+	unlock, err := lockApprovals()
+	if err != nil {
+		// Never remove without the lock: that is the race. Leave the record (its Deadline
+		// makes the daemon refuse any later click; the sweep removes it) and take a last
+		// look so a decision already written is not discarded.
+		if cur, ok := bridgeApprovals.Read(id); ok {
+			if decided, derr := approvalOutcome(id, cur); decided {
+				return derr
+			}
+		}
+		return errApprovalTimeout
+	}
+	defer unlock()
+	if cur, ok := bridgeApprovals.Read(id); ok {
+		if decided, err := approvalOutcome(id, cur); decided {
+			return err
+		}
+	}
+	bridgeApprovals.Remove(id)
+	return errApprovalTimeout
 }
 
 // bridgeApprovalDecision records the bound user's approve/reject on a pending approval
 // (from routeInteraction via answerInteraction, kind "op") and returns the localized outcome
 // line the receiver shows on the now-button-less message. The subprocess's gate loop is
 // polling the same record and proceeds/aborts once it observes the decision. Stale or
-// already-decided clicks are reported without changing the record.
+// already-decided clicks are reported without changing the record. A written decision is
+// never retracted: the waiter polls without the lock and may already have acted on it. The read-check-write runs
+// under the lock shared with expireApproval, so a record the waiter has removed is never
+// re-created and a click after the deadline is reported as expired.
 func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
+	unlock, err := lockApprovals()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	rec, ok := bridgeApprovals.Read(id)
 	if !ok {
 		return Fb(en, "この承認は期限切れ、または処理済みです", "This approval has expired or was already handled"), nil
 	}
 	if rec.Decision != "" {
 		return Fb(en, "この承認はすでに処理済みです", "This approval was already handled"), nil
+	}
+	expired := Fb(en, "この承認は期限切れ、または処理済みです", "This approval has expired or was already handled")
+	if rec.Deadline > 0 && chatx.NowMs() >= rec.Deadline {
+		return expired, nil // the waiter has given up (or is about to)
+	}
+	if h := bridgeApprovalBetweenReadAndWrite; h != nil {
+		h(id)
 	}
 	rec.Decision = choice
 	if err := bridgeApprovals.Write(id, rec); err != nil {
