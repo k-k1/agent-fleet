@@ -369,3 +369,16 @@ for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.g
 ```
 
 **Reopen** only if a cross-kind fix has to land in these methods again.
+
+## Addendum (2026-10-30) — four registry-restating tests retired (#2933, first slice)
+
+`TestLabels`, the nil rows of `wantRuntime`, `literalKinds` and `moveClassification` /
+`TestMoveTargetListsAreUnchanged` no longer need an edit when a kind is added: each now derives
+its rows from the registry or from the production list it checked, and keeps only what is
+measured or shipped (labels, runtime function identities, `pasteKinds`, the three move refusals).
+`scripts/stub-kind-count.sh` on the refreshed `zz.patch`: 21 files with tests and Markdown (was
+25; test files 5 → 1), the figure unchanged at 16 non-test, non-Markdown files. Not run under
+`--verify`: with the stub, `TestCreateSessionEarlyReturnsAreByteIdentical`
+(`testdata/create_refusals.golden`, which lists the accepted kinds) fails, a golden the script
+does not regenerate. `usageMeasuredByKind` and `noChatProvider` stay: nothing declares their
+"none" answer per kind, and a case line for it would raise the kind-literal ceiling.
