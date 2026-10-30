@@ -1,7 +1,6 @@
 package acp
 
 import (
-	"encoding/json"
 	"os/exec"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -11,14 +10,9 @@ import (
 // No production code calls them.
 
 // AttachForTest connects the handle to cl as a running session sid, wired as Spawn wires a new
-// child, without starting one.
+// child, without starting one. It starts cl.
 func (h *Handle) AttachForTest(cl *Client, sid string) {
-	cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
-		h.onServerRequest(cl, id, method, params)
-	}
-	if h.hooks.OnNotify != nil {
-		cl.OnNotify = h.hooks.OnNotify
-	}
+	cl.Start(h.callbacks())
 	h.mu.Lock()
 	h.cl, h.sid, h.alive, h.state = cl, sid, true, agents.TurnCompleted
 	h.mu.Unlock()

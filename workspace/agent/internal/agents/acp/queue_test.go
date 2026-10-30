@@ -5,7 +5,6 @@ package acp
 // processed, not just that a request reached the fake.
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"sync"
@@ -532,9 +531,7 @@ func TestQueueSurvivesChildDeathAndStartsAfterRespawn(t *testing.T) {
 	h.mu.Lock()
 	h.cl, h.alive = cl2, true
 	h.mu.Unlock()
-	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
-		h.onServerRequest(h.cl, id, method, params)
-	}
+	h.cl.Start(h.callbacks())
 	h.resumePump()
 	f2.reply(expectPrompt(t, f2, "two"), map[string]any{"stopReason": "end_turn"})
 	f2.reply(expectPrompt(t, f2, "three"), map[string]any{"stopReason": "end_turn"})
@@ -631,9 +628,7 @@ func TestPromptLostOnADeadChildIsRequeued(t *testing.T) {
 	h.mu.Lock()
 	h.cl, h.alive = cl2, true
 	h.mu.Unlock()
-	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
-		h.onServerRequest(h.cl, id, method, params)
-	}
+	h.cl.Start(h.callbacks())
 	h.resumePump()
 	f2.reply(expectPrompt(t, f2, "one"), map[string]any{"stopReason": "end_turn"})
 	if items, _, _ := settled(t, h); len(items) != 0 {
