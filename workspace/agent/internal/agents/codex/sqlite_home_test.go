@@ -1,12 +1,14 @@
 package codex
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sqliteHomeFixture isolates HOME and CODEX_HOME and stubs the probes: codex home on NFS, home
@@ -22,8 +24,11 @@ func sqliteHomeFixture(t *testing.T) (src, dst string) {
 	t.Setenv("CODEX_HOME", src)
 	t.Setenv(SQLiteHomeEnv, "")
 	os.Unsetenv(SQLiteHomeEnv)
-	origNFS, origRun, origTmux := onNFS, codexRunning, tmuxUp
-	t.Cleanup(func() { onNFS, codexRunning, tmuxUp = origNFS, origRun, origTmux })
+	origNFS, origRun, origTmux, origSync, origNow := onNFS, codexRunning, tmuxUp, parentSync, now
+	t.Cleanup(func() {
+		onNFS, codexRunning, tmuxUp, parentSync, now = origNFS, origRun, origTmux, origSync, origNow
+	})
+	now = func() time.Time { return time.Unix(100, 0) }
 	onNFS = func(p string) bool { return p == src }
 	codexRunning = func() bool { return false }
 	tmuxUp = func() bool { return false }
@@ -74,8 +79,8 @@ func TestRelocateSQLiteMovesDatabasesOffNFS(t *testing.T) {
 		t.Fatalf("wal content = %q", b)
 	}
 	// Keep side: auth and rollouts untouched, every database name retired.
-	want := "auth.json,logs_2.sqlite.moved-to-local,sessions,state_5.sqlite-shm.moved-to-local," +
-		"state_5.sqlite-wal.moved-to-local,state_5.sqlite.moved-to-local"
+	want := "auth.json,logs_2.sqlite.moved-to-local-100,sessions,state_5.sqlite-shm.moved-to-local-100," +
+		"state_5.sqlite-wal.moved-to-local-100,state_5.sqlite.moved-to-local-100"
 	if got := strings.Join(dirNames(t, src), ","); got != want {
 		t.Fatalf("keep side = %s, want %s", got, want)
 	}
@@ -138,40 +143,103 @@ func TestRelocateSQLiteDiscardsAnInterruptedStaging(t *testing.T) {
 	}
 }
 
-// After the move, a database a codex outside af created at the old path is not renamed over
-// the retired copy, its WAL is not separated from it, and nothing is renamed while a codex
-// process may hold it open.
-func TestRelocateSQLiteRetiresWithoutClobbering(t *testing.T) {
+// After the move, database files a codex outside af created at the old path are left alone
+// (renaming them would take a live database from that process) and only named in the log.
+func TestRelocateSQLiteLeavesLaterDatabasesAlone(t *testing.T) {
 	src, dst := sqliteHomeFixture(t)
 	writeFile(t, filepath.Join(src, "state_5.sqlite"), "old")
 	if dir, _ := RelocateSQLite(); dir != dst {
 		t.Fatalf("first boot dir = %q", dir)
 	}
 	writeFile(t, filepath.Join(src, "state_5.sqlite"), "new")
-	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "new-wal") // free name, same group
-	writeFile(t, filepath.Join(src, "goals_1.sqlite"), "goals")
+	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "new-wal")
+	dir, note := RelocateSQLite()
+	if dir != dst || !strings.Contains(note, "state_5.sqlite, state_5.sqlite-wal") {
+		t.Fatalf("dir = %q, note = %q", dir, note)
+	}
+	for name, want := range map[string]string{
+		"state_5.sqlite": "new", "state_5.sqlite-wal": "new-wal", "state_5.sqlite.moved-to-local-100": "old",
+	} {
+		if b, _ := os.ReadFile(filepath.Join(src, name)); string(b) != want {
+			t.Fatalf("%s = %q, want %q", name, b, want)
+		}
+	}
+}
 
+// A boot that stopped between the renames, or whose directory sync failed, leaves the manifest
+// in dst; the next boot finishes the listed renames with the same stamp, and none happen while
+// a codex process is running.
+func TestRelocateSQLiteResumesTheRetire(t *testing.T) {
+	src, dst := sqliteHomeFixture(t)
+	writeFile(t, filepath.Join(src, "state_5.sqlite"), "db")
+	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "wal")
+	parentSync = func(string) error { return errors.New("EIO") }
+	dir, note := RelocateSQLite()
+	if dir != dst || !strings.Contains(note, "left until the next start") {
+		t.Fatalf("dir = %q, note = %q", dir, note)
+	}
+	if got := strings.Join(dirNames(t, src), ","); got != "state_5.sqlite,state_5.sqlite-wal" {
+		t.Fatalf("keep side retired before dst was durable: %s", got)
+	}
+	parentSync = syncDir
+	now = func() time.Time { return time.Unix(999, 0) } // the stamp comes from the manifest
+
+	// Simulate a stop after the first rename.
+	if err := os.Rename(filepath.Join(src, "state_5.sqlite"), filepath.Join(src, "state_5.sqlite.moved-to-local-100")); err != nil {
+		t.Fatal(err)
+	}
 	codexRunning = func() bool { return true }
 	if dir, _ := RelocateSQLite(); dir != dst {
 		t.Fatalf("running: dir = %q", dir)
 	}
-	if _, err := os.Stat(filepath.Join(src, "goals_1.sqlite")); err != nil {
+	if _, err := os.Stat(filepath.Join(src, "state_5.sqlite-wal")); err != nil {
 		t.Fatalf("renamed while a codex was running: %v", err)
 	}
-
 	codexRunning = func() bool { return false }
-	dir, note := RelocateSQLite()
-	if dir != dst || !strings.Contains(note, "state_5.sqlite") {
-		t.Fatalf("dir = %q, note = %q", dir, note)
+	if dir, _ := RelocateSQLite(); dir != dst {
+		t.Fatalf("dir = %q", dir)
 	}
-	if b, _ := os.ReadFile(filepath.Join(src, "state_5.sqlite"+retiredSuffix)); string(b) != "old" {
-		t.Fatalf("retired copy = %q, want the pre-migration bytes", b)
+	if got := strings.Join(dirNames(t, src), ","); got != "state_5.sqlite-wal.moved-to-local-100,state_5.sqlite.moved-to-local-100" {
+		t.Fatalf("keep side = %s", got)
 	}
-	if b, _ := os.ReadFile(filepath.Join(src, "state_5.sqlite-wal")); string(b) != "new-wal" {
-		t.Fatalf("live database's WAL was separated from it (got %q)", b)
+	if _, err := os.Stat(filepath.Join(dst, retireManifest)); !os.IsNotExist(err) {
+		t.Fatalf("manifest left after the retire finished: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(src, "goals_1.sqlite"+retiredSuffix)); err != nil {
-		t.Fatalf("free name not retired: %v", err)
+}
+
+// A codex whose npm launcher was still node at the first probe and started during the copy
+// may have written the source: the staged copy is thrown away, the keep side untouched.
+func TestRelocateSQLiteDiscardsACopyRacedByCodex(t *testing.T) {
+	src, dst := sqliteHomeFixture(t)
+	writeFile(t, filepath.Join(src, "state_5.sqlite"), "db")
+	calls := 0
+	codexRunning = func() bool { calls++; return calls > 1 }
+	if dir, _ := RelocateSQLite(); dir != "" {
+		t.Fatalf("dir = %q, want none", dir)
+	}
+	for _, p := range []string{dst, dst + ".tmp"} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s exists: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(src, "state_5.sqlite")); err != nil {
+		t.Fatalf("keep-side database moved: %v", err)
+	}
+}
+
+func TestIsCodexProcessSeesTheLauncher(t *testing.T) {
+	for cmdline, want := range map[string]bool{
+		"node\x00/home/u/.local/bin/codex\x00app-server\x00":                   true,
+		"node\x00/usr/lib/node_modules/@openai/codex/bin/codex.js\x00exec\x00": true,
+		"/usr/bin/codex\x00login\x00":                                          true,
+		"node\x00/srv/app.js\x00codex\x00":                                     false, // an argument, not the program
+		"bash\x00-c\x00echo codex\x00":                                         false,
+	} {
+		proc := t.TempDir()
+		writeFile(t, filepath.Join(proc, "cmdline"), cmdline)
+		if got := isCodexProcess(proc); got != want {
+			t.Errorf("%q: got %v, want %v", cmdline, got, want)
+		}
 	}
 }
 
@@ -210,6 +278,10 @@ func TestConfigSetsSQLiteHome(t *testing.T) {
 		{"note = \"\"\"\nsqlite_home = \"/x\"\n\"\"\"\n", false},             // inside a multi-line string
 		{"note = \"\"\"\nx\n\"\"\"\nsqlite_home = \"/x\"\n", true},
 		{"[ features ] # c\nsqlite_home = \"/x\"\n", false},
+		{"# documentation uses \"\"\" here\nsqlite_home = \"/local\"\n", true}, // quotes in a comment
+		{"dirs = [\n  [\"a\"]\n]\nsqlite_home = \"/local\"\n", true},           // last nested row, no comma
+		{"a = \"[x]\" # [y]\nsqlite_home = \"/x\"\n", true},
+		{"a = 'C:\\\\\"' \nsqlite_home = \"/x\"\n", true}, // literal strings have no escapes
 	}
 	for _, c := range cases {
 		p := filepath.Join(t.TempDir(), "config.toml")
