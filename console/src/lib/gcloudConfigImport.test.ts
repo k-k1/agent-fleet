@@ -167,7 +167,7 @@ describe("the CP's value checks", () => {
 });
 
 const ok = (name: string, extra = "") => read(name, `[core]\nproject = my-project-123\n${extra}`);
-const existingRow = (o: Record<string, string>) => ({ loginMethod: "google", project: "my-project-123", quotaProject: "", account: "", region: "", zone: "", impersonateServiceAccount: "", ...o });
+const existingRow = (o: Record<string, unknown>) => ({ loginMethod: "google", project: "my-project-123", quotaProject: "", account: "", region: "", zone: "", impersonateServiceAccount: "", ...o });
 
 describe("resolveGcpImport", () => {
   it("lists every configuration as create / exists / blocked, in order", () => {
