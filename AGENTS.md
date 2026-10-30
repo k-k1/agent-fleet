@@ -155,7 +155,9 @@ issue in English** (`gh issue create`) instead of writing "residual" or "not yet
 into an ADR, a `docs/log/` journal, `roadmap.md` or your memory. Then point at it once:
 `Follow-ups: #N` under the ADR's Status line, or the issue number at the end of the
 journal's residual list. Keep the issue short and link the section that holds the
-evidence. An issue is public the moment it is filed and skips the secret scans, so no
+evidence. Pass `--label` when you file it: one of `bug` / `enhancement` /
+`documentation`, one `priority: high|medium|low`, plus `follow-up` or `needs-live-run`
+where they apply. An issue is public the moment it is filed and skips the secret scans, so no
 real hostnames, account IDs or tokens. Full rule: `docs/CONVENTIONS.md` §10.
 
 ## Running the Console tests

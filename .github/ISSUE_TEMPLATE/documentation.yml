@@ -1,0 +1,11 @@
+name: Documentation
+description: A guide, ADR or comment that is missing, wrong or out of date
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: gap
+    attributes:
+      label: What is wrong or missing
+      description: Name the file and the sentence. No hostnames, account IDs, tokens or customer names.
+    validations:
+      required: true
