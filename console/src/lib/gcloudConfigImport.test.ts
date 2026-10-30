@@ -122,6 +122,12 @@ describe("readGcloudSource: refusals", () => {
     for (const v of ["garbage", "treu", "t"]) expect(read("a", `${BASE}[auth]\ndisable_credentials = ${v}\n`).reason, v).toEqual({ code: "invalid", key: "auth/disable_credentials" });
   });
 
+  it("folds case the way the CP's (?i) does: Kelvin sign and long s count", () => {
+    for (const a of ["private_\u212Aey:a@example.com", "\"type\": \"\u017Fervice_account\"", "PRIVATE_KEY:a@example.com"]) {
+      expect(read("a", `[core]\nproject = my-project-123\naccount = ${a}\n`).reason, a).toEqual({ code: "key_material" });
+    }
+  });
+
   it("lets harmless values through: empty overrides, disable_credentials = false, the default universe", () => {
     const c = read("a", `${BASE}universe_domain = googleapis.com\n[auth]\nimpersonate_service_account =\naccess_token_file =\ndisable_credentials = false\n[proxy]\ntype =\n`);
     expect(c.reason).toBeNull();

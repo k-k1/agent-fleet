@@ -30,7 +30,9 @@ export const GCP_EMAIL_RE = new RegExp(`^[^${WS}@,;"'<>]+@[a-zA-Z0-9-]+(?:\\.[a-
 export const GCP_SERVICE_ACCOUNT_RE = /^[a-z0-9][a-z0-9-]{0,99}@(?:[a-z0-9:.-]+\.)?gserviceaccount\.com$/;
 export const GCP_REGION_RE = /^[a-z]+(?:-[a-z]+)+[0-9]+$/;
 export const GCP_ZONE_RE = /^[a-z]+(?:-[a-z]+)+[0-9]+-[a-z]$/;
-const KEY_MATERIAL_RE = new RegExp(`"?private_key(?:_id)?"?[${WS}]*:|"type"[${WS}]*:[${WS}]*"service_account"|-----BEGIN`, "i");
+// "iu", not "i": Go's (?i) folds Unicode (U+212A Kelvin sign matches k, U+017F long s matches s), JS's
+// "i" alone does not, and a miss here is a row the CP then refuses.
+const KEY_MATERIAL_RE = new RegExp(`"?private_key(?:_id)?"?[${WS}]*:|"type"[${WS}]*:[${WS}]*"service_account"|-----BEGIN`, "iu");
 const LABEL_MAX = 100;
 
 /** A label this importer creates. It is a subset of what the CP accepts, chosen so that the CP's
