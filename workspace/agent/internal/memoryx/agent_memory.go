@@ -226,17 +226,31 @@ func agentMemGitIdentity(dir string) (root, key string) {
 }
 
 func agentMemGitIdentityWith(run agentMemGitRunner) (root, key string) {
-	common, err := run("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || common == "" {
-		return "", ""
+	// One process for the three answers: a large workspace resolves a hundred clones and each
+	// process counts (#3061). A name with a line break, or any error, takes the separate calls.
+	var common, top, gitDir string
+	gotGitDir := false
+	if out, err := run("rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel", "--absolute-git-dir"); err == nil {
+		if lines := strings.Split(out, "\n"); len(lines) == 3 && lines[0] != "" && lines[1] != "" {
+			common, top, gitDir, gotGitDir = lines[0], lines[1], lines[2], true
+		}
 	}
-	top, err := run("rev-parse", "--show-toplevel")
-	if err != nil || top == "" {
-		return "", ""
+	if !gotGitDir {
+		var err error
+		common, err = run("rev-parse", "--path-format=absolute", "--git-common-dir")
+		if err != nil || common == "" {
+			return "", ""
+		}
+		top, err = run("rev-parse", "--show-toplevel")
+		if err != nil || top == "" {
+			return "", ""
+		}
+		if g, err := run("rev-parse", "--absolute-git-dir"); err == nil {
+			gitDir, gotGitDir = g, true
+		}
 	}
 	root = filepath.Clean(top)
-	gitDir, err := run("rev-parse", "--absolute-git-dir")
-	if err == nil && filepath.Clean(gitDir) != filepath.Clean(common) {
+	if gotGitDir && filepath.Clean(gitDir) != filepath.Clean(common) {
 		// A linked worktree: the main one is git's first entry, when it is a real checkout.
 		if out, err := run("worktree", "list", "--porcelain"); err == nil {
 			first, _, _ := strings.Cut(out, "\n")

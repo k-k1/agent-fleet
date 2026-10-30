@@ -52,11 +52,10 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	home, _, _ := memoryTestEnv(t)
 	repos := filepath.Join(home, "repos")
 	copies := liveScanFixture(t, repos, 40, 1500)
-	// A clone deep inside ignored content is found too (phase two).
+	// A clone inside a dependency store is not looked for.
 	nested := filepath.Join(repos, "r000", "node_modules", "p1", "lib", "d", "e")
 	memoryMkdirAll(t, nested)
 	liveScanGit(t, nested, "init", "--quiet", "-b", "main")
-	copies = append(copies, nested)
 
 	start := time.Now()
 	live, complete := agentMemLiveProjects()
@@ -64,8 +63,8 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	if !complete {
 		t.Fatal("the search must be complete")
 	}
-	if len(live) != 41 {
-		t.Fatalf("found %d projects, want 41 (40 clones, whose worktrees share theirs, and the nested clone)", len(live))
+	if len(live) != 40 {
+		t.Fatalf("found %d projects, want 40 (a clone and its worktree are one project; the one in node_modules is skipped)", len(live))
 	}
 	for _, c := range copies {
 		if p := agentMemProjectFor(c); p == nil || live[p.ID] == nil {
@@ -82,7 +81,7 @@ func TestAgentMemoryLiveSearchWalksIgnoredContentLast(t *testing.T) {
 	clone := filepath.Join(repos, "app")
 	memoryMkdirAll(t, clone)
 	liveScanGit(t, clone, "init", "--quiet", "-b", "main")
-	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte("node_modules/\n.worktrees/\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte("node_modules/\n.worktrees/\nbuild-out/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mk := func(rel ...string) string {
@@ -96,7 +95,7 @@ func TestAgentMemoryLiveSearchWalksIgnoredContentLast(t *testing.T) {
 	mk("inner")
 	chain := mk("inner", "x", "y", "deep")
 	wt := mk(".worktrees", "x")
-	ignoredDeep := mk("node_modules", "p", "q", "r", "s", "deep")
+	ignoredDeep := mk("build-out", "p", "q", "r", "s", "deep")
 	liveOf := func(live map[string]*agentMemProject, d string) bool {
 		p := agentMemProjectFor(d)
 		return p != nil && live[p.ID] != nil
@@ -181,7 +180,7 @@ func TestAgentMemoryLiveSearchComputesIdentityOncePerDirectory(t *testing.T) {
 		session.WriteMeta(session.Meta{Name: fmt.Sprintf("codex-s%d", i), Dir: c + string(filepath.Separator), Kind: "codex"})
 	}
 	var mu sync.Mutex
-	perDir := map[string]int{}
+	perDir, calls := map[string]int{}, map[string]int{}
 	old := agentMemLiveRunner
 	agentMemLiveRunner = func(dir string) agentMemGitRunner {
 		return func(args ...string) (string, error) {
@@ -204,6 +203,10 @@ func TestAgentMemoryLiveSearchComputesIdentityOncePerDirectory(t *testing.T) {
 		if n != 1 {
 			t.Errorf("identity of %s computed %d times", d, n)
 		}
+		// rev-parse (one process), worktree list for a linked worktree, remote get-url.
+		if calls[d] > 3 {
+			t.Errorf("%s took %d git processes", d, calls[d])
+		}
 	}
 }
 
@@ -225,5 +228,54 @@ func TestAgentMemoryLiveSearchBudgetCoversIgnoredContent(t *testing.T) {
 	memoryMkdirAll(t, filepath.Join(app, "ignored"))
 	if _, complete := agentMemLiveProjects(); complete {
 		t.Fatal("phase two read past the budget")
+	}
+}
+
+// A working copy hidden only inside a dependency store is not looked for, and not looking does not
+// make the answer incomplete; a copy under an ordinary ignored directory still is looked for.
+func TestAgentMemoryLiveSearchSkipsDependencyStores(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	repos := filepath.Join(home, "repos")
+	app := filepath.Join(repos, "app")
+	memoryMkdirAll(t, app)
+	liveScanGit(t, app, "init", "--quiet", "-b", "main")
+	if err := os.WriteFile(filepath.Join(app, ".gitignore"), []byte("node_modules/\n.venv/\ncustom-out/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(parts ...string) string {
+		d := filepath.Join(parts...)
+		memoryMkdirAll(t, d)
+		liveScanGit(t, d, "init", "--quiet", "-b", "main")
+		return d
+	}
+	var stored []string
+	for _, name := range []string{"node_modules", ".venv", "venv", ".gradle", ".pnpm-store", ".cache"} {
+		stored = append(stored, mk(app, name, "pkg", "clone"))
+		stored = append(stored, mk(repos, "plain", name, "clone")) // outside any working copy too
+	}
+	ordinary := mk(app, "custom-out", "a", "clone")
+	liveOf := func(live map[string]*agentMemProject, d string) bool {
+		p := agentMemProjectFor(d)
+		return p != nil && live[p.ID] != nil
+	}
+	live, complete := agentMemLiveProjects()
+	if !complete {
+		t.Fatal("skipping a dependency store made the answer incomplete")
+	}
+	if !liveOf(live, app) || !liveOf(live, ordinary) {
+		t.Fatal("a clone or a copy under an ordinary ignored directory was not found")
+	}
+	for _, d := range stored {
+		if p := agentMemProjectFor(d); live[p.ID] != nil && p.Root == d {
+			t.Errorf("the clone in %s was found: the store was entered", d)
+		}
+	}
+	// The same copy under an ordinary ignored directory is unread once phase two does not run:
+	// that stays incomplete.
+	old := agentMemLiveSoft
+	agentMemLiveSoft = -time.Second
+	t.Cleanup(func() { agentMemLiveSoft = old })
+	if _, complete := agentMemLiveProjects(); complete {
+		t.Fatal("an unread ordinary ignored directory must keep the answer incomplete")
 	}
 }
