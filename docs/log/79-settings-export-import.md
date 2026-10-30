@@ -154,3 +154,38 @@ localStorage に触るため node のテストから import できない（混�
 - 実機目視（実フリート再ビルド後）。
 - カテゴリの追加余地: 環境変数 / ツールチェーン / MCP 定義 / 内部リポジトリ登録。いずれも
   **秘密の混入判定**（マスクするか、検出して除外を知らせるか）を先に決める必要がある。
+
+## 9. 手元の ~/.aws/config を読む（#3010）
+
+決定は [ADR 0060 の追記](../decisions/0060-settings-export-import.ja.md#追記2026-10-30-手元の-awsconfig-を読む3010)。
+AF へ移る妨げとして「作り込んだ AWS プロファイルを設定画面で 1 つずつ手入力するのが面倒」という声が出た。
+§0 のバンドルは AF が書き出したものしか読まないので、手元の PC から来る人には効かない。
+
+### 9.1 流れ
+
+| 段 | 置き場 | 役割 |
+|----|--------|------|
+| 読む | `console/src/lib/awsConfigIni.ts` | configparser（strict）と同じ読み方。値をエラーに入れない |
+| 意味づけ | `console/src/lib/awsConfigImport.ts` `readAwsConfig` | botocore のセクション対応・`[DEFAULT]`・sso-session の解決、認証方式の分類と Agent 許可リストでの検証 |
+| 解決 | 同 `resolveImport` | 既存行・プレビューの編集（選択・改名・duration・引き受け元の選択）と突き合わせ、名前の衝突を見る。編集のたびに走り直す |
+| 計画 | `settingsBundle.ts` `planSsmImport` | バンドルと同じ「足すだけ」の最終段 |
+| 実行 | `console/src/features/settings/workspace/ssmImportExec.ts` | 一覧を読めなければ送らない・元が失敗したら依存を送らない・応答なしで止まる。バンドル取り込みと共用 |
+| 画面 | `AwsConfigImport.tsx`（AWS タブ）、バックアップタブからは `openSettings("ssm:import")` | |
+
+### 9.2 実測と根拠
+
+- 読み方の期待値は Python の `configparser.RawConfigParser` に同じ入力を与えて取った（継続行、`[DEFAULT]` の
+  再開は可・キー重複は不可、行中の `#` は値の一部、BOM は CLI も読めない）。`awsConfigIni.test.ts` がその値。
+- 継続行の危険：`sso_role_name = Admin` の次の字下げ行 `aws_secret_access_key = …` は role 名の続きになる。
+  Agent はこれを不正な値として**値ごと**ログに出す（`awsx/profiles.go` `InvalidReason`）ので、CP の最低条件
+  （空でなければ通す）では止まらない。Agent の許可リストで弾く。
+- 既存の取り込みは GET の失敗（`api()` はエラー本文を返す）を「0 件」と読み、CP にラベルの一意制約がないため
+  全部を二重に作っていた。実行部を分けて直した。
+- 変異確認：GET のガード・混在認証の拒否・未選択の引き受け元・role 名の許可リスト・継続行・依存の送信止めを
+  1 つずつ壊し、それぞれ新しいテストが落ちるのを見た。
+
+### 9.3 残り
+
+- 実機での目視（実フリート反映後）。
+- ログインの共有（同じ sso-session の 20 個が 20 回のログインになる）：#3014。
+- `~/.ssh/config` の SSM ホスト・gcloud の構成・`~/.aws/config` への書き出し：#3017。

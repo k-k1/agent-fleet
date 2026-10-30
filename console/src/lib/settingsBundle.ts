@@ -442,16 +442,6 @@ export function planSsmImport(
   return plan;
 }
 
-/** Display name -> CP id table, built from the list of profiles that now exist. */
-export function profileIdByLabel(profiles: any[]): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const p of profiles || []) {
-    const label = key(str(p?.label));
-    if (label && !m.has(label)) m.set(label, String(p?.id ?? ""));
-  }
-  return m;
-}
-
 // --- Import (Google Cloud) -----------------------------------------------------
 
 export interface GcpPlan {

@@ -59,6 +59,40 @@ choosing the **target host**.
 If authentication is needed, the `aws sso login` URL appears on a confirmation screen; approve it in another tab
 (never enter a code / URL you don't recognize).
 
+### Importing profiles from ~/.aws/config
+
+Moving from your own machine? **Import from ~/.aws/config** (under the profile list) reads that file and
+creates the profiles for you instead of retyping them. Choose the file or paste its contents; it is read **in
+your browser only**. What is sent is the settings of the profiles you tick, through the same save as the form.
+It works while the workspace is stopped.
+
+The preview lists every profile in the file with what will happen to it:
+
+- **Create (SSO)**: a profile with a portal, SSO region, account and role (`sso_session` style or the older inline
+  `sso_*` keys).
+- **Create (assume a role)**: `role_arn` + `source_profile` whose source is one of those, in the file or already in
+  Settings (only when its portal, SSO region, account and role are the same). When the source is not in the file,
+  pick the Settings profile to use; the row then says it is your choice, not something that was checked.
+- **Already registered**: the same profile is in Settings; nothing is changed.
+- **Not importable**, with the reason: access keys, `credential_process`, `mfa_serial`, `credential_source`,
+  `web_identity_token_file`, `login_session`, more than one way to sign in (including keys inherited from
+  `[DEFAULT]`), a role assumed from another role, an SSO profile without both account and role, a value Settings
+  cannot hold, or a name that is taken or turns into the same AWS profile name as another.
+
+You can untick a row, change its display name (needed for `[default]`: `default` cannot be a Settings name) and
+fix a role's session length (900–3600 seconds). Renaming a source keeps the roles that use it attached.
+
+- **Secrets are never imported.** If the text holds access keys, the import says so: do not paste that text
+  anywhere else. Ask for `~/.aws/config` only, never `~/.aws/credentials`.
+- A file the AWS CLI cannot read (a section or key given twice, a key before any section) is refused with its line
+  number.
+- **Each Settings profile signs in on its own.** Twenty profiles that shared one `sso-session` on your machine need
+  twenty logins here; the preview shows the count (#3014 tracks sharing one login).
+- A profile without a region uses its SSO region (a role: its source's); on your machine an environment variable
+  may have set it. The preview shows which region each row gets.
+- Importing again with the same choices creates nothing new. If a run stops halfway, read the file again: what was
+  created shows as already registered and the rest can be imported.
+
 ### Profile type: assume a role from another profile
 
 When an account is reached by a role that trusts your IAM Identity Center sign-in, you do not need long-lived keys

@@ -1041,3 +1041,56 @@ button.mv-path:focus-visible {
     order: 3;
   }
 }
+
+/* ~/.aws/config import (AwsConfigImport.tsx). A row that cannot be imported stays as legible as
+   one that can: the reason is what the member needs to read, so only the name is dimmed. */
+.ui-modal.aws-import {
+  width: min(760px, 96vw);
+  max-width: min(760px, 96vw);
+}
+
+.aws-import-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.aws-import-input textarea {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+
+.aws-import-rows {
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.aws-import-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aws-import-row.blocked .ssm-alias,
+.aws-import-row.unselected .ssm-alias {
+  color: var(--muted);
+}
+
+.aws-import-status {
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+.aws-import-row .ssm-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.aws-import-row .ssm-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11.5px;
+}

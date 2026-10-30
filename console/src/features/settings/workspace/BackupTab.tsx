@@ -35,7 +35,6 @@ import {
   parseBundle,
   planGcpImport,
   planSsmImport,
-  profileIdByLabel,
   sanitizeImportedPrefs,
   summarizeBundle,
   toGcpSection,
@@ -49,6 +48,8 @@ import {
 } from "../../../lib/settingsBundle.ts";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { countOutcomes, executeSsmPlan, loadSsmLists } from "./ssmImportExec.ts";
+import { useSettingsUI } from "../store.ts";
 
 type Picked = Record<SectionKey, boolean>;
 
@@ -252,6 +253,12 @@ export function BackupTab() {
           }}
         />
         <p className="field-help">{tr("backup.import_hint")}</p>
+        <p className="field-help">
+          {tr("backup.native_hint")}{" "}
+          <button type="button" className="ghost" onClick={() => useSettingsUI.getState().openSettings("ssm:import")}>
+            {tr("backup.native_open")}
+          </button>
+        </p>
 
         {bundle && summary && (
           <div className="backup-preview">
@@ -340,66 +347,21 @@ function Pick({
   );
 }
 
-// importSsm — create the profiles first, then the hosts that reference their ids. The order
-// is essential, so this is not a Promise.all: a host whose referent does not exist yet is a 400.
+// importSsm — create the profiles first, then the hosts that reference their ids
+// (executeSsmPlan keeps that order). Nothing is sent when the current lists cannot be read:
+// the add-only rule depends on knowing what exists.
 async function importSsm(
   section: NonNullable<BundleSections["ssm"]>,
   tr: (k: any, v?: any) => string,
 ): Promise<string[]> {
-  const [curProfiles, curHosts] = await Promise.all([api("api/ssm/profiles"), api("api/ssm/hosts")]);
-  const plan = planSsmImport(
-    section,
-    Array.isArray(curProfiles) ? curProfiles : [],
-    Array.isArray(curHosts) ? curHosts : [],
-  );
-  const ids = profileIdByLabel(Array.isArray(curProfiles) ? curProfiles : []);
-  // Exact label -> id, for a chain's source (the plan already checked label and sign-in).
-  const exactIds = new Map<string, string>();
-  for (const x of Array.isArray(curProfiles) ? curProfiles : []) if (x?.kind !== "assume_role") exactIds.set(String(x.label), String(x.id));
-  let addedProfiles = 0;
-  let failed = 0;
-  for (const p of plan.profiles) {
-    // A chained entry names its source by label; the id exists only now, and the plan puts
-    // sso entries first, so it is already in ids.
-    const { source, sourceKey: _k, ...rest } = p;
-    const body = p.kind === "assume_role" ? { ...rest, sourceProfileId: exactIds.get(source || "") } : p;
-    const res = await rawJSON("api/ssm/profiles", "POST", body);
-    if (!res.ok) {
-      failed++;
-      continue;
-    }
-    const created = await res.json().catch(() => null);
-    if (created?.id) {
-      ids.set(p.label.trim().toLowerCase(), created.id);
-      if (p.kind !== "assume_role") exactIds.set(p.label, created.id);
-    }
-    addedProfiles++;
-  }
-  let addedHosts = 0;
-  for (const h of plan.hosts) {
-    const profileId = ids.get(h.profile.trim().toLowerCase());
-    if (!profileId) {
-      failed++;
-      continue;
-    }
-    const res = await rawJSON("api/ssm/hosts", "POST", {
-      alias: h.alias,
-      profileId,
-      instanceId: h.instanceId,
-      documentName: h.documentName,
-      region: h.region,
-    });
-    if (!res.ok) {
-      failed++;
-      continue;
-    }
-    addedHosts++;
-  }
+  const cur = await loadSsmLists();
+  if (!cur) return [tr("backup.res_ssm_unread")];
+  const plan = planSsmImport(section, cur.profiles, cur.hosts);
+  const c = countOutcomes(await executeSsmPlan(plan, cur.profiles));
   const skipped = plan.skippedProfiles.length + plan.skippedHosts.length;
-  const lines = [
-    tr("backup.res_ssm", { profiles: addedProfiles, hosts: addedHosts, skipped }),
-  ];
-  if (failed > 0) lines.push(tr("backup.res_ssm_failed", { n: failed }));
+  const lines = [tr("backup.res_ssm", { profiles: c.profiles, hosts: c.hosts, skipped })];
+  const notIn = c.failed + c.unknown + c.skipped_source + c.not_run;
+  if (notIn > 0) lines.push(tr("backup.res_ssm_failed", { n: notIn }));
   return lines;
 }
 

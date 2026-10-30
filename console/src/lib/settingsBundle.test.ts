@@ -9,7 +9,6 @@ import {
   parseBundle,
   planGcpImport,
   planSsmImport,
-  profileIdByLabel,
   sanitizeImportedPrefs,
   summarizeBundle,
   toGcpSection,
@@ -186,8 +185,6 @@ describe("planSsmImport", () => {
   it("attaches a host to a profile that the same import is about to create", () => {
     const plan = planSsmImport(section, [], []);
     expect(plan.hosts[0].profile).toBe("prod");
-    const ids = profileIdByLabel([{ id: "new1", label: "prod" }]);
-    expect(ids.get("prod")).toBe("new1");
   });
 });
 
