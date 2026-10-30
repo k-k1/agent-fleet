@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
@@ -335,8 +336,11 @@ func TestGithubScopesCanMerge(t *testing.T) {
 func fakeGitHubScopes(t *testing.T, scopes *string, routes map[string]string) *[]string {
 	t.Helper()
 	var hits []string
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		hits = append(hits, r.URL.Path)
+		mu.Unlock()
 		if scopes != nil {
 			w.Header().Set("X-OAuth-Scopes", *scopes)
 		}

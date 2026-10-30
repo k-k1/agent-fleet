@@ -25,8 +25,8 @@ const githubGraphQLURL = "https://api.github.com/graphql"
 
 // githubPRStatusQuery asks for counts rather than the check runs themselves, so the answer stays
 // the same size whether a commit has two checks or two hundred. `contexts` spans both check runs
-// (Actions and other apps) and commit statuses (older CI services); the detail panel reads check
-// runs only.
+// (Actions and other apps) and commit statuses (older CI services). The detail panel folds both and
+// also adds what has not reported yet (workitems_detail_ci.go).
 const githubPRStatusQuery = `query($ids:[ID!]!){nodes(ids:$ids){... on PullRequest{id mergeable ` +
 	`commits(last:1){nodes{commit{statusCheckRollup{contexts(first:0){` +
 	`checkRunCountsByState{state count} statusContextCountsByState{state count}}}}}}}}}`
