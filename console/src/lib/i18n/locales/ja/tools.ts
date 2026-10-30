@@ -641,6 +641,7 @@ export const tools = {
   "ssm.imp_file": "設定ファイルを選ぶ",
   "ssm.imp_paste": "または、ここに中身を貼り付け",
   "ssm.imp_read": "読み込む",
+  "ssm.imp_reading": "今の登録を読み込んでいます…",
   "ssm.imp_other_file": "別のファイルを読む",
   "ssm.imp_too_big": "ファイルが大きすぎます（1 MiB まで）。",
   "ssm.imp_too_many": "プロファイルが多すぎます（{max} 個まで）。ファイルを分けて読み込んでください。",

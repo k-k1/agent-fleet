@@ -644,6 +644,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.imp_file": "Choose a config file",
   "ssm.imp_paste": "Or paste its contents here",
   "ssm.imp_read": "Read",
+  "ssm.imp_reading": "Reading the current profiles…",
   "ssm.imp_other_file": "Read another file",
   "ssm.imp_too_big": "The file is too large (1 MiB at most).",
   "ssm.imp_too_many": "Too many profiles ({max} at most). Split the file and read it in parts.",
