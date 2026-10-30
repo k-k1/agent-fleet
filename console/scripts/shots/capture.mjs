@@ -245,22 +245,51 @@ const SCENES = [
   },
   {
     // The work-item inbox, for the features page: GitHub, Jira and Bitbucket rows with the CI and
-    // conflict marks on the pull requests, and the detail panel of the red, conflicting one
-    // (demo/webshop#308) — its checks, reviews and the buttons that start a session or a review
-    // on its head branch.
+    // conflict marks, new-activity dots and comment counts on the rows, and the detail panel of a
+    // green, mergeable pull request (demo/webshop#315) — its checks, reviews, the Merge button and
+    // the buttons that start a session or a review on its head branch.
     name: "workitems",
     sections: { assistant: 0, workitems: 1, memos: 0, schedules: 0, repos: 0, files: 0 },
+    // What the user last saw of two rows (console/src/features/workitems/seen.ts): an older
+    // updatedAt and fewer comments, so #312 reads "new comments" and Bitbucket's ledger#201 reads
+    // "updated" — the dot and the bold title.
+    storage: {
+      "af.workitems.seen.v1": JSON.stringify({
+        "github:demo/webshop#312": { u: "2020-01-01T00:00:00Z", c: 2 },
+        "bitbucket:acme/ledger#201": { u: "2020-01-01T00:00:00Z", c: 7 },
+      }),
+    },
     width: 1600,
     height: 1000,
     layout: { cols: [col("c0", [pane("p0", null, { kind: "sessions", showStopped: false })])], colRatios: [1], activeId: "p0" },
     action: `(async () => {
       await new Promise((r) => setTimeout(r, 400));
-      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#308"))?.click();
+      [...document.querySelectorAll(".wi-row")].find((el) => el.textContent.includes("#315"))?.click();
       // Unfold "Review this pull request" so the shot shows how a review starts on the head branch.
       await new Promise((r) => setTimeout(r, 900));
       [...document.querySelectorAll("[role=dialog] details > summary, .modal details > summary")].pop()?.click();
     })()`,
     settle: 1800,
+  },
+  {
+    // Settings › Skills (read-only): the personal skills of one agent kind by scope, with a
+    // skill and a command of the same name in two folders (the later one is shown as shadowed)
+    // and one opened to show where it lives.
+    name: "skills",
+    sections: FOCUS_TREE,
+    settings: "skills",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 1500));
+      [...document.querySelectorAll(".skills-row.skills-shadowed")][0]?.click();
+    })()`,
+    settle: 2000,
   },
   {
     // The sessions overview (ADR 0078): every running session as a card, grouped by
