@@ -171,8 +171,10 @@ even when the fonts are not embedded.
 
 To **find text**, click in the PDF and press **Ctrl+F** (**Cmd+F** on a Mac), or use the find
 button in the toolbar (**Find in PDF**). The find bar searches **every page**, including a word that
-wraps across two lines. **Enter** goes to the next match and **Shift+Enter** to the previous one (or
-use the **Next match** / **Previous match** buttons); **Esc** closes the bar.
+wraps across two lines. With the cursor in the find box, **Enter** goes to the next match and
+**Shift+Enter** to the previous one; the **Next match (Enter)** and **Previous match
+(Shift+Enter)** buttons do the same. **Esc** closes the bar when focus is anywhere inside it (the
+box or a button).
 
 **Word / Excel / PowerPoint** (`.docx`, `.xlsx`, `.pptx`, plus `.odt`, `.rtf`, `.epub` and friends)
 get a **plain preview**: the content is converted into something readable, and the surface says so:
