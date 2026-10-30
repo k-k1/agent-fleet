@@ -41,6 +41,15 @@ func (e editedLiveAgent) TerminalTraits() agents.TerminalTraits {
 	return agents.TerminalTraits{}
 }
 
+// editedLiveLimitAgent is editedLiveAgent for a kind that also has usage-limit traits, which it
+// passes through: the capability must stay absent for a kind that lacks it, so it cannot be a
+// method of editedLiveAgent itself.
+type editedLiveLimitAgent struct{ editedLiveAgent }
+
+func (e editedLiveLimitAgent) UsageLimitTraits() agents.UsageLimitTraits {
+	return e.Agent.(agents.UsageLimiter).UsageLimitTraits()
+}
+
 func (e editedLiveAgent) LiveStateTraits() agents.LiveStateTraits {
 	var tr agents.LiveStateTraits
 	if l, ok := e.Agent.(agents.LiveStater); ok {
@@ -54,7 +63,12 @@ func (e editedLiveAgent) LiveStateTraits() agents.LiveStateTraits {
 // until the test ends: how a test stands in for a kind's store or live handle.
 func editLiveStateTraits(t *testing.T, kind string, edit func(*agents.LiveStateTraits)) {
 	t.Helper()
-	t.Cleanup(agentreg.SwapForTest(kind, editedLiveAgent{agentreg.Of(kind), edit}))
+	e := editedLiveAgent{agentreg.Of(kind), edit}
+	var a agents.Agent = e
+	if _, ok := e.Agent.(agents.UsageLimiter); ok {
+		a = editedLiveLimitAgent{e}
+	}
+	t.Cleanup(agentreg.SwapForTest(kind, a))
 }
 
 // stubVerdicts replaces a kind's own verdicts, where it has them, with the stubs.

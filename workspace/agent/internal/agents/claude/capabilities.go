@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
@@ -78,3 +79,19 @@ func (agentImpl) TerminalTraits() agents.TerminalTraits {
 
 // ConnectionStatus is agents.ConnectionStatuser: this package's Status().
 func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return Status() }
+
+// UsageLimitTraits is agents.UsageLimiter: the pane's /rate-limit-options menu, the transcript
+// tail's usage-limit abort (UsageLimitAbort) and its reset instant (ResetAt).
+func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
+	return agents.UsageLimitTraits{
+		PaneMenu: func(name string) bool { return tmuxx.ReadPane(name).RateLimitMenu },
+		AtLimit: func(m session.Meta) (agents.LimitKind, bool) {
+			_, kind, atLimit := UsageLimitAbort(session.UUID(m.Dir, m.Name))
+			return kind, atLimit
+		},
+		ResetAt: func(m session.Meta, menu bool, now time.Time) (time.Time, string, bool) {
+			at, source, ok := ResetAt(session.UUID(m.Dir, m.Name), now)
+			return at, source, bannerGated(source, ok, menu)
+		},
+	}
+}

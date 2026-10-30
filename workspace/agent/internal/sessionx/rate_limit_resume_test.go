@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -55,7 +54,7 @@ func newRateLimitFixture(t *testing.T) *rateLimitFixture {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	f := &rateLimitFixture{dismissOK: true, resetOK: true, resetSource: "banner"}
 	origDismiss, origPut := dismissRateLimitModal, putRateLimitSchedule
-	origDrop, origReset := dropRateLimitSchedule, rateLimitResetAt
+	origDrop := dropRateLimitSchedule
 	dismissRateLimitModal = func(string) bool { f.dismissed++; return f.dismissOK }
 	putRateLimitSchedule = func(_ session.Meta, at time.Time) (string, error) {
 		f.scheduled++
@@ -69,25 +68,27 @@ func newRateLimitFixture(t *testing.T) *rateLimitFixture {
 		f.deleted = append(f.deleted, id)
 		return f.dropErr
 	}
-	rateLimitResetAt = func(string, time.Time) (time.Time, string, bool) {
-		f.resetCalls++
-		return f.resetAt, f.resetSource, f.resetOK
-	}
-	origLimited, origCodexReset := codexRateLimited, codexResetAt
-	codexRateLimited = func(string) bool { return f.codexLimited }
-	codexResetAt = func(time.Time) (time.Time, string, bool) {
-		return f.codexReset, "codex:5h", f.codexResetOK
-	}
-	origMuseLimited, origMuseReset := museRateLimited, museResetAt
-	museRateLimited = func(string) bool { return f.museLimited }
-	museResetAt = func(string, time.Time) (time.Time, string, bool) {
-		return f.museReset, "error", f.museResetOK
-	}
+	editUsageLimitTraits(t, session.KindClaude, func(tr *agents.UsageLimitTraits) {
+		tr.ResetAt = func(session.Meta, bool, time.Time) (time.Time, string, bool) {
+			f.resetCalls++
+			return f.resetAt, f.resetSource, f.resetOK
+		}
+	})
+	editUsageLimitTraits(t, session.KindCodex, func(tr *agents.UsageLimitTraits) {
+		tr.AtLimit = func(session.Meta) (agents.LimitKind, bool) { return agents.LimitWindow, f.codexLimited }
+		tr.ResetAt = func(session.Meta, bool, time.Time) (time.Time, string, bool) {
+			return f.codexReset, "codex:5h", f.codexResetOK
+		}
+	})
+	editUsageLimitTraits(t, session.KindMuse, func(tr *agents.UsageLimitTraits) {
+		tr.AtLimit = func(session.Meta) (agents.LimitKind, bool) { return agents.LimitWindow, f.museLimited }
+		tr.ResetAt = func(session.Meta, bool, time.Time) (time.Time, string, bool) {
+			return f.museReset, "error", f.museResetOK
+		}
+	})
 	t.Cleanup(func() {
 		dismissRateLimitModal, putRateLimitSchedule = origDismiss, origPut
-		dropRateLimitSchedule, rateLimitResetAt = origDrop, origReset
-		codexRateLimited, codexResetAt = origLimited, origCodexReset
-		museRateLimited, museResetAt = origMuseLimited, origMuseReset
+		dropRateLimitSchedule = origDrop
 	})
 	return f
 }
@@ -128,7 +129,7 @@ func TestRateLimitRecoverBooksThenDismisses(t *testing.T) {
 	f.resetAt = now.Add(3 * time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 	st := stateOf(t, m.Name)
 	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
 		t.Fatalf("bookings = %d / id=%q, want 1 / sch_test", f.scheduled, st.ScheduleID)
@@ -141,7 +142,7 @@ func TestRateLimitRecoverBooksThenDismisses(t *testing.T) {
 	}
 	// Another sweep while the menu is still visible (the dismissal has not landed yet) must
 	// not fire either action again.
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true, agents.LimitWindow)
 	if f.scheduled != 1 || f.dismissed != 1 {
 		t.Errorf("second tick: bookings=%d dismissals=%d - repeating within one episode", f.scheduled, f.dismissed)
 	}
@@ -169,7 +170,7 @@ func TestRateLimitRecoverDoesNotDependOnSessionOrigin(t *testing.T) {
 			m.Origin = tc.origin
 			m.OriginConv = tc.originConv
 
-			rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+			rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 			if f.scheduled != 1 || f.dismissed != 1 {
 				t.Fatalf("origin=%q originConv=%q: bookings=%d dismissals=%d, want 1 / 1",
 					m.Origin, m.OriginConv, f.scheduled, f.dismissed)
@@ -190,13 +191,13 @@ func TestRateLimitNotificationsAreOnceAndDeliveryBased(t *testing.T) {
 	m.Title = "API 整理"
 	session.WriteMeta(m)
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 	got := notice.List()
 	if len(got) != 1 || got[0].Kind != rateLimitNoticeReached || got[0].DisplayName != m.Title {
 		t.Fatalf("first notice = %+v, want 1 reached", got)
 	}
 	// The watcher seeing the same menu again must not add another reached notice.
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true, agents.LimitWindow)
 	if got = notice.List(); len(got) != 1 {
 		t.Fatalf("notices after re-sweep = %+v, want still 1", got)
 	}
@@ -232,7 +233,7 @@ func TestRateLimitRecoverWithoutMenu(t *testing.T) {
 	m.Title = "読者レポート生成"
 	session.WriteMeta(m)
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow)
 	if f.dismissed != 0 {
 		t.Errorf("dismissals = %d, want 0 (Enter sent although no menu is up)", f.dismissed)
 	}
@@ -244,44 +245,9 @@ func TestRateLimitRecoverWithoutMenu(t *testing.T) {
 		t.Errorf("state = %+v, want At set / Menu=false", st)
 	}
 	// However often the watcher sees the same limit, neither notices nor keys accumulate.
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false, agents.LimitWindow)
 	if len(notice.List()) != 1 || f.dismissed != 0 {
 		t.Errorf("re-sweep: notices=%d dismissals=%d - repeating within one episode", len(notice.List()), f.dismissed)
-	}
-}
-
-// TestRateLimitWithoutMenuNeedsBannerTime: for a limit without a menu, the reset instant is
-// trusted only when it came from the banner. The statusline-capture fallback (source=capture)
-// answers for the account's 5-hour/weekly windows, and a per-model limit is a different window
-// - resuming there just hits the same limit. The form that comes with a menu (an account
-// window) keeps using the capture as before.
-func TestRateLimitWithoutMenuNeedsBannerTime(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		onMenu  bool
-		source  string
-		wantSch int
-	}{
-		{"no menu, capture only", false, "capture", 0},
-		{"no menu, banner", false, "banner", 1},
-		{"no menu, banner and capture", false, "banner+capture", 1},
-		{"menu, capture only", true, "capture", 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newRateLimitFixture(t)
-			now := time.Now()
-			f.resetAt, f.resetSource = now.Add(time.Hour), tc.source
-			m := rlMeta()
-
-			rateLimitRecover(m, stateOf(t, m.Name), now, tc.onMenu, claude.LimitWindow)
-			if f.scheduled != tc.wantSch {
-				t.Errorf("bookings = %d, want %d (source=%s onMenu=%v)",
-					f.scheduled, tc.wantSch, tc.source, tc.onMenu)
-			}
-			if st := stateOf(t, m.Name); tc.wantSch == 0 && st.ResumeAt != "" {
-				t.Errorf("ResumeAt = %q, want empty (the instant cannot be trusted)", st.ResumeAt)
-			}
-		})
 	}
 }
 
@@ -296,7 +262,7 @@ func TestRateLimitDismissRetriesAreBounded(t *testing.T) {
 	m := rlMeta()
 
 	for i := 0; i < maxRateLimitDismissTries+3; i++ {
-		rateLimitRecover(m, stateOf(t, m.Name), now.Add(time.Duration(i)*rateLimitWatchInterval), true, claude.LimitWindow)
+		rateLimitRecover(m, stateOf(t, m.Name), now.Add(time.Duration(i)*rateLimitWatchInterval), true, agents.LimitWindow)
 	}
 	if f.dismissed != maxRateLimitDismissTries {
 		t.Fatalf("dismissal attempts = %d, want capped at %d", f.dismissed, maxRateLimitDismissTries)
@@ -320,7 +286,7 @@ func TestRateLimitDismissRunsWithSettingOff(t *testing.T) {
 	f.resetAt = now.Add(time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 	if f.dismissed != 1 {
 		t.Errorf("dismissals = %d, want 1 (dismissal happens even with the setting off)", f.dismissed)
 	}
@@ -340,7 +306,7 @@ func TestRateLimitPastResetResumesSoon(t *testing.T) {
 	f.resetAt = now.Add(-16 * time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 	if f.scheduled != 1 {
 		t.Fatalf("bookings = %d, want 1", f.scheduled)
 	}
@@ -356,7 +322,7 @@ func TestRateLimitNoResetTimeNoSchedule(t *testing.T) {
 	f.resetOK = false
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), time.Now(), true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), time.Now(), true, agents.LimitWindow)
 	if f.scheduled != 0 {
 		t.Errorf("bookings = %d, want 0", f.scheduled)
 	}
@@ -375,7 +341,7 @@ func TestRateLimitFollowUpRetriesRegistration(t *testing.T) {
 	f.resetAt = now.Add(2 * time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 	if f.scheduled != 1 || stateOf(t, m.Name).ScheduleID != "" {
 		t.Fatalf("premise broken: bookings=%d id=%q", f.scheduled, stateOf(t, m.Name).ScheduleID)
 	}
@@ -401,7 +367,7 @@ func TestRateLimitEpisodeRetired(t *testing.T) {
 	now := time.Now()
 	f.resetAt = now.Add(time.Hour)
 	m := rlMeta()
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 
 	after := now.Add(time.Hour + rateLimitCleanupGrace + time.Minute)
 	rateLimitFollowUp(m, stateOf(t, m.Name), after, true)
@@ -413,7 +379,7 @@ func TestRateLimitEpisodeRetired(t *testing.T) {
 	}
 	// The next limit is treated as a new episode.
 	f.resetAt = after.Add(2 * time.Hour)
-	rateLimitRecover(m, stateOf(t, m.Name), after, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), after, true, agents.LimitWindow)
 	if f.scheduled != 2 {
 		t.Errorf("bookings = %d, want 2 (a new episode)", f.scheduled)
 	}
@@ -429,7 +395,7 @@ func TestRateLimitSpendLimitNeverSchedules(t *testing.T) {
 	f.resetAt = now.Add(time.Hour) // resolvable, but unused: this is not a question of timing
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitSpend)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitSpend)
 	if f.scheduled != 0 {
 		t.Errorf("bookings = %d, want 0 (waking the session for a reset that never comes)", f.scheduled)
 	}
@@ -453,7 +419,7 @@ func TestRateLimitSpendEpisodeEndsWithTheTranscript(t *testing.T) {
 	newRateLimitFixture(t)
 	now := time.Now()
 	m := rlMeta()
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitSpend)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitSpend)
 
 	// Far past the TTL, still not retired.
 	late := now.Add(rateLimitEpisodeTTL + 6*time.Hour)
@@ -482,7 +448,7 @@ func TestRateLimitResumeNoteOnFailedReport(t *testing.T) {
 	now := time.Now()
 	f.resetAt = now.Add(90 * time.Minute)
 	m := rlMeta()
-	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, agents.LimitWindow)
 
 	body := reportBodyForTest("表示名", m.Name, chatx.ReportKindAnswerReady, chatx.ReportReasonTurnFailed)
 	if !strings.Contains(body, "利用上限による停止です") ||
@@ -548,10 +514,10 @@ func TestRateLimitCodexManagedBooksWithoutAMenu(t *testing.T) {
 	m := rlCodexMeta()
 	session.WriteMeta(m)
 
-	if kind, at := atUsageLimit(m); !at || kind != claude.LimitWindow {
+	if kind, at := atUsageLimit(m); !at || kind != agents.LimitWindow {
 		t.Fatalf("atUsageLimit = %q / %v, want window / true (the handle's turn error is the evidence)", kind, at)
 	}
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow)
 
 	st := stateOf(t, m.Name)
 	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
@@ -570,7 +536,7 @@ func TestRateLimitCodexManagedBooksWithoutAMenu(t *testing.T) {
 		t.Fatalf("notices = %+v, want 1 reached", got)
 	}
 	// Still at the limit on the next sweep: one episode, one booking.
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false, agents.LimitWindow)
 	if f.scheduled != 1 || len(notice.List()) != 1 {
 		t.Errorf("second tick: bookings=%d notices=%d - repeating within one episode", f.scheduled, len(notice.List()))
 	}
@@ -587,10 +553,10 @@ func TestRateLimitMuseBooksAtTheErrorInstant(t *testing.T) {
 	m := session.Meta{Name: "rlmuse1", Dir: "/tmp/rlmuse1", Kind: session.KindMuse, Driver: session.DriverManaged}
 	session.WriteMeta(m)
 
-	if kind, at := atUsageLimit(m); !at || kind != claude.LimitWindow {
+	if kind, at := atUsageLimit(m); !at || kind != agents.LimitWindow {
 		t.Fatalf("atUsageLimit = %q / %v, want window / true", kind, at)
 	}
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow)
 
 	st := stateOf(t, m.Name)
 	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
@@ -622,7 +588,7 @@ func TestRateLimitCodexWithoutAResetInstantBooksNothing(t *testing.T) {
 	m := rlCodexMeta()
 	session.WriteMeta(m)
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow)
 	st := stateOf(t, m.Name)
 	if f.scheduled != 0 || st.ResumeAt != "" {
 		t.Errorf("bookings = %d / ResumeAt = %q, want 0 / empty", f.scheduled, st.ResumeAt)
@@ -697,7 +663,7 @@ func TestRateLimitResumeNoticeCoversCodexManaged(t *testing.T) {
 	f.codexReset = now.Add(time.Hour)
 	m := rlCodexMeta()
 	session.WriteMeta(m)
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow) // 1 notice: reached
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow) // 1 notice: reached
 
 	notifyRateLimitResumeDelivered(m.Name, rateLimitResumePrompt(), TurnSourceSchedule, now.Add(time.Hour))
 	got := notice.List()
@@ -734,7 +700,7 @@ func TestRateLimitRebooksAfterAFiredResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow)
 
 	st := stateOf(t, m.Name)
 	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
@@ -773,7 +739,7 @@ func TestRateLimitDoesNotRebookWhileTheResumeIsInFlight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, agents.LimitWindow)
 
 	if f.scheduled != 0 || len(f.deleted) != 0 {
 		t.Errorf("bookings = %d / deleted = %v, want 0 / none while the resume is still landing",

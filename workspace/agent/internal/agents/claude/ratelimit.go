@@ -174,6 +174,17 @@ func ResetAt(sid string, now time.Time) (time.Time, string, bool) {
 	return resolveResetAt(a.Msg, a.At, capturedResets(), now)
 }
 
+// bannerGated is ResetAt's ok for a limit that came without a menu: the instant is trusted only
+// when it comes from the banner, i.e. the wording this session actually received. resolveResetAt's
+// fallback is the statusline capture, which describes the account's 5-hour / weekly windows, but a
+// per-model limit lives in a different window that never appears there (claude packs only
+// five_hour and seven_day into statusLine). Measured 2026-08-05 s6no6jv: at the moment the limit
+// hit, the 5-hour window was at 23% and the weekly at 75%, and the fallback returned 19:30 that
+// day (the 5-hour reset) - resuming there just hits the same limit.
+func bannerGated(source string, ok, menu bool) bool {
+	return ok && (menu || strings.HasPrefix(source, "banner"))
+}
+
 // LimitInMessage reads the error text of a headless run (`claude -p`'s is_error result, or its
 // stderr) with the same markers a session's transcript is read with, so the router and the
 // session auto-resume never disagree on what a limit looks like. resetAt is zero when the

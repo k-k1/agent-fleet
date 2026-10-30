@@ -369,3 +369,15 @@ for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.g
 ```
 
 **Reopen** only if a cross-kind fix has to land in these methods again.
+
+## Addendum (2026-10-30) — rate-limit resume asks `agents.UsageLimiter` (#2925, first slice)
+
+`internal/sessionx/rate_limit_resume.go` held 7 of the kind-literal branches counted after
+Phase 3: which kinds the sweep watches, the claude-only pane menu read, and the at-limit and
+reset-instant questions. They are now `agents.UsageLimiter` (`agents/usagelimit.go`), implemented
+by claude, codex and muse; `kindLiteralCeiling` goes 133 → 126. None of the seven was "one
+product's behaviour" that has to stay: the claude details (banner-only reset trust for a limit
+without a menu) moved into the claude package with the capability. A kind without the capability
+is not watched, which is what the old `switch` returned for every other kind.
+`TestUsageLimitTraitsMatchOldSwitch` holds the answers to a copy of the old switch over every
+registered kind and driver. The remaining sites stay in #2925.
