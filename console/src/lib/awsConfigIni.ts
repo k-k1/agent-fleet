@@ -114,16 +114,35 @@ export function parseAwsIni(text: string): { ok: true; file: IniFile } | { ok: f
   for (const [target, values] of pending) {
     for (const [k, parts] of values) {
       // Trailing blank lines are not part of the value (configparser rstrips the join).
-      const v = target.get(k)!;
-      v.value = parts.join("\n").replace(/\s+$/, "");
-      // botocore reads a value that starts on the next line as a nested block of `k = v`
-      // lines, and fails the whole file when one has no "=" (configloader._parse_nested).
-      if (v.value.startsWith("\n") && v.value.split("\n").some((l) => l.trim() !== "" && !l.includes("="))) {
-        return { ok: false, error: { code: "bad_nested", line: v.line } };
-      }
+      target.get(k)!.value = parts.join("\n").replace(/\s+$/, "");
     }
   }
-  return { ok: true, file: { sections, defaults, bomStripped } };
+  // botocore reads a value that starts on the next line as a nested block of `k = v` lines and
+  // fails the whole file when one has no "=" (configloader._parse_nested). It does so on each
+  // section's effective values, so a bad [DEFAULT] value a section overrides is never reached.
+  const file: IniFile = { sections, defaults, bomStripped };
+  for (const sec of sections) {
+    for (const v of effectiveOptions(file, sec).values()) {
+      if (nestedPairs(v.value) === null) return { ok: false, error: { code: "bad_nested", line: v.line } };
+    }
+  }
+  return { ok: true, file };
+}
+
+/** A nested value (one that starts on the next line) as botocore reads it: `k = v` pairs,
+ *  sorted, so two spellings of the same block compare equal. Null when a line has no "=";
+ *  undefined for a plain value. */
+export function nestedPairs(value: string): string[] | null | undefined {
+  if (!value.startsWith("\n")) return undefined;
+  const out: string[] = [];
+  for (const l of value.split("\n")) {
+    const t = l.trim();
+    if (!t) continue;
+    const i = t.indexOf("=");
+    if (i < 0) return null;
+    out.push(t.slice(0, i).trim() + "=" + t.slice(i + 1).trim());
+  }
+  return out.sort();
 }
 
 /** Effective options of a section: its own keys over [DEFAULT]'s, as configparser's

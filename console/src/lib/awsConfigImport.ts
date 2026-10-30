@@ -23,7 +23,7 @@
 //
 // Pure: no fetch, no React.
 
-import { effectiveOptions, sectionRole, type IniFile, type IniValue } from "./awsConfigIni.ts";
+import { effectiveOptions, nestedPairs, sectionRole, type IniFile, type IniValue } from "./awsConfigIni.ts";
 import { awsProfileName, validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
 import { ssoKey, type SsmProfileEntry, type SsmSection } from "./settingsBundle.ts";
 
@@ -133,9 +133,11 @@ export interface NativeConfig {
 
 const has = (o: Map<string, IniValue>, k: string): boolean => o.has(k);
 // A name taken from the file (a section header, sso_session, source_profile) that may be shown
-// or proposed as a label. One short line holding nothing that looks like a key assignment: a
-// header such as [profile "aws_secret_access_key=..."] is still a valid profile name to botocore.
-const shownName = (v: string): boolean => /^[^\r\n=]{1,128}$/.test(v) && !SECRET_KEYS.some((k) => v.toLowerCase().includes(k));
+// or proposed as a label. One short line holding nothing that looks like a key assignment ("="
+// and ":" are both INI delimiters) or a credential key: a header such as
+// [profile "aws_secret_access_key=..."] is still a valid profile name to botocore.
+const shownName = (v: string): boolean =>
+  /^[^\r\n=:]{1,128}$/.test(v) && ![...SECRET_KEYS, ...UNSUPPORTED_AUTH].some((k) => v.toLowerCase().includes(k));
 // The value as the parser returns it. Not trimmed: a value that starts with a newline is a
 // nested block to botocore, and trimming would turn its first line into a plausible scalar.
 const val = (o: Map<string, IniValue>, k: string): string => o.get(k)?.value ?? "";
@@ -228,7 +230,10 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
       merged = new Map(o);
       for (const [k, v] of sess) {
         const mine = o.get(k);
-        if (mine && mine.value !== v.value) return fail({ code: "sso_conflict", key: safeKey(k) });
+        // Compared as botocore sees them: a nested block by its pairs, not its spelling.
+        if (mine && String(nestedPairs(mine.value) ?? mine.value) !== String(nestedPairs(v.value) ?? v.value)) {
+          return fail({ code: "sso_conflict", key: safeKey(k) });
+        }
         merged.set(k, v);
       }
       base.signIn = "session:" + sessionName;
@@ -260,9 +265,8 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
     ] as const) {
       if (!re.test(v)) return fail({ code: "invalid", key: k });
     }
-    const region = val(merged, "region");
-    if (region && !RE.region.test(region)) return fail({ code: "invalid", key: "region" });
-    base.region = region;
+    // The service region stays the profile's own (botocore's scoped config, checked above): the
+    // session's keys join only the SSO sign-in, so a region only the session sets is not used.
     base.sso = sso;
     const scopes = val(merged, "sso_registration_scopes");
     base.scopesChange =

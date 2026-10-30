@@ -83,6 +83,14 @@ describe("executeSsmPlan", () => {
     expect(rows.map((r) => r.outcome)).toEqual(["unknown", "not_run"]);
   });
 
+  it("treats a host whose success body was lost as unknown too", async () => {
+    rawJSON.mockResolvedValueOnce(new Response("{", { status: 201 }));
+    const h = (alias: string) => ({ alias, profile: "a", instanceId: "i-" + alias, documentName: "", region: "" });
+    const rows = await executeSsmPlan(plan([], [h("x"), h("y")]), [{ id: "p1", label: "a", kind: "sso" }]);
+    expect(rawJSON).toHaveBeenCalledTimes(1);
+    expect(rows.map((r) => r.outcome)).toEqual(["unknown", "not_run"]);
+  });
+
   it("chains to the row the plan names by id, not to another row with the same label", async () => {
     rawJSON.mockResolvedValueOnce(ok("r1"));
     // b-1 comes first, so a lookup by label (last one wins) would pick b-2.

@@ -76,13 +76,14 @@ export async function executeSsmPlan(
     // A success whose body never arrived (or a profile without its id) is as uncertain as no
     // answer at all: the row probably exists, but the next row cannot be chained to it.
     let id = "";
+    let bodyRead = true;
     try {
       const j = await res.json();
       id = typeof j?.id === "string" ? j.id : "";
     } catch {
-      /* handled below */
+      bodyRead = false;
     }
-    if (!id && kind === "profile") {
+    if (!bodyRead || (!id && kind === "profile")) {
       stopped = true;
       out.push({ kind, label, outcome: "unknown" });
       return null;

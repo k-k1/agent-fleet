@@ -74,6 +74,18 @@ describe("readAwsConfig / resolveImport — SSO", () => {
     expect(row(odd, "d").reason).toEqual({ code: "sso_conflict", key: "" });
   });
 
+  it("compares nested blocks by their pairs, not their spelling", () => {
+    const p = preview(SESSION + "s3 =\n  x=1\n" + ssoProfile("a") + "s3 =\n  x = 1\n");
+    expect(row(p, "a").status).toBe("create");
+    const q = preview(SESSION + "s3 =\n  x=1\n" + ssoProfile("a") + "s3 =\n  x = 2\n");
+    expect(row(q, "a").reason).toEqual({ code: "sso_conflict", key: "s3" });
+  });
+
+  it("does not take a region only the sso-session sets", () => {
+    const p = preview(SESSION + "region = eu-west-1\n" + ssoProfile("a"));
+    expect(row(p, "a")).toMatchObject({ status: "create", entry: { region: "" }, effectiveRegion: "us-east-1" });
+  });
+
   it("takes the role from the session when the profile names the account", () => {
     const p = preview(SESSION + "sso_role_name = Admin\n[profile a]\nsso_session = corp\nsso_account_id = 111111111111\n");
     expect(row(p, "a")).toMatchObject({ status: "create", entry: { roleName: "Admin" } });
@@ -95,6 +107,11 @@ describe("readAwsConfig / resolveImport — SSO", () => {
     // A key assignment that names no known key is held back too.
     const q = preview(SESSION + ssoProfile('"token=SECRETSENTINEL"'));
     expect(q.rows[0]).toMatchObject({ display: "", label: "" });
+    for (const n of ['"credential_process:cmd-PROCSENTINEL"', '"token:SENTINEL"']) {
+      const c = preview(SESSION + ssoProfile(n));
+      expect(c.rows[0]).toMatchObject({ display: "", label: "" });
+      expect(toImportSection(c).profiles).toEqual([]);
+    }
   });
 
   it("treats a credential_process inherited from [DEFAULT] as a second way to sign in", () => {

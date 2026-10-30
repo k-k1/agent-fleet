@@ -70,6 +70,13 @@ describe("parseAwsIni", () => {
   it("refuses a nested block with a line botocore cannot split", () => {
     expect(parseAwsIni("[profile a]\ns3 =\n  malformed-line\n")).toEqual({ ok: false, error: { code: "bad_nested", line: 2 } });
     expect(parseAwsIni("[profile a]\ns3 =\n  max_concurrent_requests = 20\n").ok).toBe(true);
+    // botocore checks each section's effective values: a bad [DEFAULT] block a section overrides
+    // is never read, one it inherits is.
+    expect(parseAwsIni("[DEFAULT]\ns3 =\n  malformed-line\n[profile a]\ns3 = ignored\n").ok).toBe(true);
+    expect(parseAwsIni("[DEFAULT]\ns3 =\n  malformed-line\n[profile a]\nregion = x\n")).toEqual({
+      ok: false,
+      error: { code: "bad_nested", line: 2 },
+    });
   });
 
   it("never puts a value in an error", () => {
