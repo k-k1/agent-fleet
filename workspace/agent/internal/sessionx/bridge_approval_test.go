@@ -363,3 +363,89 @@ func TestExpireApprovalHonorsEarlierDecision(t *testing.T) {
 		t.Fatal("record must be removed")
 	}
 }
+
+func failApprovalLock(t *testing.T) {
+	t.Helper()
+	orig := lockApprovals
+	t.Cleanup(func() { lockApprovals = orig })
+	lockApprovals = func() (func(), error) { return nil, errors.New("injected lock failure") }
+}
+
+// When the waiter cannot take the lock it must not remove the record (that is the race):
+// it still times out, and the record's Deadline makes a later click report "expired".
+func TestExpireApprovalLockFailureKeepsRecord(t *testing.T) {
+	withTempHome(t)
+	failApprovalLock(t)
+	id := chatx.RandUUID()
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs(), Deadline: chatx.NowMs() - 1})
+	if err := expireApproval(id); !errors.Is(err, errApprovalTimeout) {
+		t.Fatalf("expire → %v", err)
+	}
+	if _, ok := bridgeApprovals.Read(id); !ok {
+		t.Fatal("record must be left alone without the lock")
+	}
+	lockApprovals = lockApprovalsFile
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || !strings.Contains(msg, "expired") {
+		t.Fatalf("late click: msg=%q err=%v", msg, err)
+	}
+	if rec, _ := bridgeApprovals.Read(id); rec.Decision != "" {
+		t.Fatalf("late click wrote a decision: %+v", rec)
+	}
+}
+
+// The daemon fails closed when it cannot take the lock: error, nothing written.
+func TestBridgeApprovalDecisionLockFailure(t *testing.T) {
+	withTempHome(t)
+	failApprovalLock(t)
+	id := chatx.RandUUID()
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs()})
+	if _, err := bridgeApprovalDecision(id, "approve", true); err == nil {
+		t.Fatal("want an error")
+	}
+	if rec, _ := bridgeApprovals.Read(id); rec.Decision != "" {
+		t.Fatalf("decision written without the lock: %+v", rec)
+	}
+}
+
+// A holder that never lets go must not stall the acquirer past the bounded wait.
+func TestLockApprovalsIsBounded(t *testing.T) {
+	withTempHome(t)
+	hold, err := lockApprovalsFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold()
+	w := bridgeApprovalLockWait
+	t.Cleanup(func() { bridgeApprovalLockWait = w })
+	bridgeApprovalLockWait = 50 * time.Millisecond
+	start := time.Now()
+	if unlock, err := lockApprovalsFile(); err == nil {
+		unlock()
+		t.Fatal("second acquisition must fail while held")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("acquisition was not bounded")
+	}
+}
+
+// A daemon stalled between its check and its write past the deadline must report
+// "expired" and leave no decision behind.
+func TestBridgeApprovalDecisionStalledPastDeadline(t *testing.T) {
+	withTempHome(t)
+	id := chatx.RandUUID()
+	dl := chatx.NowMs() + 20
+	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs(), Deadline: dl})
+	bridgeApprovalBetweenReadAndWrite = func(string) {
+		for chatx.NowMs() < dl {
+		}
+	}
+	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || !strings.Contains(msg, "expired") {
+		t.Fatalf("msg=%q err=%v", msg, err)
+	}
+	if _, ok := bridgeApprovals.Read(id); ok {
+		t.Fatal("record must not keep a late decision")
+	}
+}

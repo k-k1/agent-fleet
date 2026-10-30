@@ -105,6 +105,9 @@ type bridgeApprovalRec struct {
 	Conv      string `json:"conv"`
 	Decision  string `json:"decision"` // "" (pending) | "approve" | "reject"
 	CreatedAt int64  `json:"createdAt"`
+	// Deadline (unix ms) is when the waiter gives up. It lets the daemon refuse a late
+	// click even when the waiter could not take the lock and left the record in place.
+	Deadline int64 `json:"deadline,omitempty"`
 }
 
 var bridgeApprovals = fstore.JSON[bridgeApprovalRec](paths.AgentStateDir, "bridge-approvals", ".json")
@@ -115,7 +118,12 @@ var (
 	bridgeApprovalTimeout = 4 * time.Minute
 	bridgeApprovalPoll    = 2 * time.Second
 	bridgeApprovalMaxAge  = 1 * time.Hour // orphan-record sweep horizon
+
+	bridgeApprovalLockWait = 2 * time.Second // bound on waiting for the handshake lock
 )
+
+// lockApprovals is a var so tests can inject an acquisition failure.
+var lockApprovals = lockApprovalsFile
 
 var (
 	errApprovalRejected      = errors.New("この操作は却下されました（実行していません）")
@@ -137,6 +145,7 @@ func BridgeApprovalGate(op, summary string) error {
 	id := chatx.RandUUID()
 	if err := bridgeApprovals.Write(id, bridgeApprovalRec{
 		ID: id, Op: op, Summary: summary, Conv: mcpConvID(), CreatedAt: chatx.NowMs(),
+		Deadline: chatx.NowMs() + bridgeApprovalTimeout.Milliseconds(),
 	}); err != nil {
 		return errApprovalUndeliverable
 	}
@@ -190,9 +199,19 @@ func approvalOutcome(id string, cur bridgeApprovalRec) (decided bool, err error)
 // write re-created the removed record and the user was told "Approved" for an action that
 // never ran.
 func expireApproval(id string) error {
-	if unlock, err := lockApprovals(); err == nil {
-		defer unlock()
+	unlock, err := lockApprovals()
+	if err != nil {
+		// Never remove without the lock: that is the race. Leave the record (its Deadline
+		// makes the daemon refuse any later click; the sweep removes it) and take a last
+		// look so a decision already written is not discarded.
+		if cur, ok := bridgeApprovals.Read(id); ok {
+			if decided, derr := approvalOutcome(id, cur); decided {
+				return derr
+			}
+		}
+		return errApprovalTimeout
 	}
+	defer unlock()
 	if cur, ok := bridgeApprovals.Read(id); ok {
 		if decided, err := approvalOutcome(id, cur); decided {
 			return err
@@ -222,12 +241,22 @@ func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
 	if rec.Decision != "" {
 		return Fb(en, "この承認はすでに処理済みです", "This approval was already handled"), nil
 	}
+	expired := Fb(en, "この承認は期限切れ、または処理済みです", "This approval has expired or was already handled")
+	if rec.Deadline > 0 && chatx.NowMs() >= rec.Deadline {
+		return expired, nil // the waiter has given up (or is about to)
+	}
 	if h := bridgeApprovalBetweenReadAndWrite; h != nil {
 		h(id)
 	}
 	rec.Decision = choice
 	if err := bridgeApprovals.Write(id, rec); err != nil {
 		return "", err
+	}
+	if rec.Deadline > 0 && chatx.NowMs() >= rec.Deadline {
+		// Stalled past the deadline between check and write (e.g. the process was
+		// suspended): the waiter may already have timed out without the lock.
+		bridgeApprovals.Remove(id)
+		return expired, nil
 	}
 	if choice == "approve" {
 		return Fb(en, "✓ 承認しました（実行します）", "✓ Approved (running it)"), nil
