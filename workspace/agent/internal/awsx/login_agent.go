@@ -36,13 +36,13 @@ const loginAttemptTimeout = 15 * time.Minute
 // way the request was filed for.
 func settingsFor(r LoginRequest, settings map[string]Profile) (Profile, bool) {
 	sp, ok := settings[r.Profile]
-	return sp, ok && r.Key == "af-"+sp.Name && IncompleteReason(sp) == ""
+	return sp, ok && r.Key == sp.SSOSession() && IncompleteReason(sp) == ""
 }
 
-// loginRequestWire is one pending request as the Console shows it. The account, role and
+// LoginRequestWire is one pending request as the Console shows it. The account, role and
 // label come from Settings; waiters are the cut-down text of decision 1. No attempt id,
 // URL or code is ever here.
-type loginRequestWire struct {
+type LoginRequestWire struct {
 	ID        string                  `json:"id"`
 	Profile   string                  `json:"profile"`
 	Label     string                  `json:"label"`
@@ -54,10 +54,14 @@ type loginRequestWire struct {
 	// ExpiresInSec is the time left before the request is dropped (cloudlogin.ExpiresInSec);
 	// absent while a login attempt for it runs.
 	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
+	// SignIn is the shared sign-in the login is for (ADR 0125), and Profiles the profiles
+	// whose runs wait on it: one login serves them all.
+	SignIn   string   `json:"signIn,omitempty"`
+	Profiles []string `json:"profiles"`
 }
 
 type loginListWire struct {
-	Requests []loginRequestWire `json:"requests"`
+	Requests []LoginRequestWire `json:"requests"`
 }
 
 func loginSettings() map[string]Profile {
@@ -71,16 +75,16 @@ func loginSettings() map[string]Profile {
 // HandleLoginList is GET /aws-login: the pending requests the Console may show.
 func HandleLoginList(w http.ResponseWriter, r *http.Request) {
 	settings := loginSettings()
-	out := []loginRequestWire{}
+	out := []LoginRequestWire{}
 	now := time.Now()
 	for _, req := range logins.Sweep(now) {
 		sp, ok := settingsFor(req, settings)
 		if !ok {
 			continue
 		}
-		out = append(out, loginRequestWire{ID: req.ID, Profile: sp.Name, Label: sp.Label, AccountID: sp.AccountID,
+		out = append(out, LoginRequestWire{ID: req.ID, Profile: sp.Name, Label: sp.Label, AccountID: sp.AccountID,
 			RoleName: sp.RoleName, Waiters: cloudlogin.RecentWaiters(req.Waiters, 5), FirstAt: req.FirstAt, LastAt: req.LastAt,
-			ExpiresInSec: logins.ExpiresInSec(req, now)})
+			ExpiresInSec: logins.ExpiresInSec(req, now), SignIn: sp.SignIn, Profiles: cloudlogin.WaiterProfiles(req.Waiters)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, loginListWire{Requests: out})
 }
@@ -159,7 +163,7 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "no_aws_cli", err.Error())
 		return
 	}
-	a, err := startLoginAttempt(bin, "af-"+sp.Name, "", sp)
+	a, err := startLoginAttempt(bin, sp.SSOSession(), "", sp)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
@@ -182,9 +186,9 @@ const (
 	loginStateSourceUnavailable = "source_unavailable"
 )
 
-// profileLoginStateWire carries Settings' account, role and label so the Console can open
+// ProfileLoginStateWire carries Settings' account, role and label so the Console can open
 // the login modal from an expiry warning without a second list. No token is ever here.
-type profileLoginStateWire struct {
+type ProfileLoginStateWire struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	// Source is the Settings profile a chained profile follows ("" for an SSO profile).
@@ -197,10 +201,24 @@ type profileLoginStateWire struct {
 	// not depend on the browser's clock.
 	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
 	Expiring     bool   `json:"expiring,omitempty"`
+	// SignIn is the shared sign-in an SSO profile is in (ADR 0125); its State is the sign-in's.
+	SignIn string `json:"signIn,omitempty"`
+}
+
+// SignInStateWire is one shared sign-in's login (ADR 0125 decision 5): one state for all its
+// members, which the Console shows once on the sign-in's header.
+type SignInStateWire struct {
+	Name         string   `json:"name"`
+	State        string   `json:"state"`
+	ExpiresAt    string   `json:"expiresAt,omitempty"`
+	ExpiresInSec *int64   `json:"expiresInSec,omitempty"`
+	Expiring     bool     `json:"expiring,omitempty"`
+	Profiles     []string `json:"profiles"`
 }
 
 type profileLoginStatesWire struct {
-	Profiles []profileLoginStateWire `json:"profiles"`
+	Profiles []ProfileLoginStateWire `json:"profiles"`
+	SignIns  []SignInStateWire       `json:"signIns"`
 }
 
 // profileLoginState reads the token cache of ssoSession. Neither token leaves this function.
@@ -221,23 +239,24 @@ func profileLoginState(ssoSession string, now time.Time) string {
 // profile the Agent knows, from the last poll's list (a read must not pull from the CP).
 func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
-	out := []profileLoginStateWire{}
+	out := []ProfileLoginStateWire{}
 	exported := UsableNow()
 	settings := loginSettings()
+	signIns := map[string]*SignInStateWire{}
 	for name, sp := range settings {
 		if sp.Chained() {
 			// No login of its own: it follows its source, so a row never shows "not signed in"
 			// for a chain whose source is signed in. A source that is not an exported SSO
 			// Settings profile leaves nothing to follow (af-aws-exec refuses the run too), and
 			// that is never "signed in".
-			p := profileLoginStateWire{Name: name, Source: sp.SourceProfile, Label: sp.Label, AccountID: sp.AccountID,
+			p := ProfileLoginStateWire{Name: name, Source: sp.SourceProfile, Label: sp.Label, AccountID: sp.AccountID,
 				RoleName: roleNameOf(sp.RoleARN)}
 			if src, ok := settings[sp.SourceProfile]; !ok || src.Chained() || !slices.Contains(exported, sp.SourceProfile) || !slices.Contains(exported, name) {
 				p.State = loginStateSourceUnavailable
 			} else {
-				p.State = profileLoginState("af-"+sp.SourceProfile, now)
+				p.State = keyLoginState(src, settings, now)
 				// Shown, never warned about: the source's own row carries the expiry warning.
-				if end, ok := readSSOExpiry("af-"+sp.SourceProfile, now); ok {
+				if end, ok := readSSOExpiry(src.SSOSession(), now); ok {
 					p.ExpiresAt = end.Format(time.RFC3339)
 					p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 				}
@@ -245,18 +264,33 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 			out = append(out, p)
 			continue
 		}
-		p := profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now),
-			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName}
-		if end, ok := readSSOExpiry("af-"+name, now); ok {
+		p := ProfileLoginStateWire{Name: name, State: keyLoginState(sp, settings, now),
+			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName, SignIn: sp.SignIn}
+		if end, ok := readSSOExpiry(sp.SSOSession(), now); ok {
 			p.ExpiresAt = end.Format(time.RFC3339)
 			p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 			// Only a profile in the managed block: the row's login refuses any other.
 			p.Expiring = expiringAt(end, now) && slices.Contains(exported, name)
 		}
+		if sp.SignIn != "" {
+			si := signIns[sp.SignIn]
+			if si == nil {
+				si = &SignInStateWire{Name: sp.SignIn, State: p.State, ExpiresAt: p.ExpiresAt, ExpiresInSec: p.ExpiresInSec}
+				signIns[sp.SignIn] = si
+			}
+			si.Expiring = si.Expiring || p.Expiring
+			si.Profiles = append(si.Profiles, name)
+		}
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	httpx.WriteJSON(w, http.StatusOK, profileLoginStatesWire{Profiles: out})
+	sis := []SignInStateWire{}
+	for _, si := range signIns {
+		sort.Strings(si.Profiles)
+		sis = append(sis, *si)
+	}
+	sort.Slice(sis, func(i, j int) bool { return sis[i].Name < sis[j].Name })
+	httpx.WriteJSON(w, http.StatusOK, profileLoginStatesWire{Profiles: out, SignIns: sis})
 }
 
 // HandleLoginAttempt is GET /aws-login/{id}/attempts/{attempt}: the phase of one attempt,
@@ -366,6 +400,9 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 	if err != nil {
 		return nil, err
 	}
+	// The owner and portal this attempt logs in for: its landing binds only that (decision 10).
+	target := keyBinding{Session: ssoSession, Owner: sp.TokenOwner(), StartURL: strings.TrimRight(sp.StartURL, "/"), SSORegion: sp.SSORegion}
+	attemptTargets.Store(ssoSession, target)
 	cfg := filepath.Join(dir, "config")
 	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {
 		os.RemoveAll(dir)
@@ -386,7 +423,13 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 			return url, code, nil
 		},
 		Exited: func(err error) (bool, string) {
+			defer attemptTargets.CompareAndDelete(ssoSession, target)
 			if err == nil && ReadCacheState(ssoSession).Unexpired(time.Now()) {
+				if !bindLanding(ssoSession, target) {
+					// The token it wrote stays unbound to anyone it was not meant for: the next
+					// vet retires it unless Settings is back to this owner and portal.
+					return false, "Settings changed during the login; log in again"
+				}
 				return true, ""
 			}
 			msg := "aws sso login did not complete"

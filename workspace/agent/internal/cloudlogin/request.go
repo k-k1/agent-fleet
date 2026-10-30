@@ -63,6 +63,9 @@ type Store[S comparable] struct {
 type Waiter struct {
 	Session string `json:"session,omitempty"`
 	Command string `json:"command,omitempty"`
+	// Profile is the profile the waiting run asked for: with a shared sign-in (ADR 0125) one
+	// request serves several.
+	Profile string `json:"profile,omitempty"`
 	At      string `json:"at"`
 }
 
@@ -251,6 +254,19 @@ func RecentWaiters(ws []Waiter, n int) []WaiterWire {
 	return out
 }
 
+// WaiterProfiles lists the distinct profiles the waiters asked for, in the order they asked.
+func WaiterProfiles(ws []Waiter) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, w := range ws {
+		if p := CleanWaiterText(w.Profile); p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // ErrHeld means a cancel in the Console still holds new requests back.
 var ErrHeld = errors.New("the login request was cancelled in the Console")
 
@@ -269,7 +285,7 @@ func (s *Store[S]) FileCancel(profile, key string, snap S, w Waiter, cancel <-ch
 	if s.Held(key, now) {
 		return Request[S]{}, false, ErrHeld
 	}
-	w.Session, w.Command = CleanWaiterText(w.Session), CleanWaiterText(w.Command)
+	w.Session, w.Command, w.Profile = CleanWaiterText(w.Session), CleanWaiterText(w.Command), CleanWaiterText(w.Profile)
 	w.At = now.Format(time.RFC3339Nano)
 	r, exists := s.Read(key)
 	created := !exists

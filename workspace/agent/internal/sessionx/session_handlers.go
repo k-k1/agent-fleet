@@ -478,6 +478,10 @@ type CreateReq struct {
 	SSMExternalID      string `json:"ssm_external_id"`
 	SSMRoleSessionName string `json:"ssm_role_session_name"`
 	SSMDurationSeconds int    `json:"ssm_duration_seconds"`
+	// The shared sign-in (ADR 0125) the login source is in, and its token's owner; the Control
+	// Plane fills them, and an older one leaves them out (a login of its own).
+	SSOSession string `json:"sso_session"`
+	SSOOwnerID string `json:"sso_owner_id"`
 	// SSMForceLogin: drop this profile's cached login and run `aws sso login` at launch
 	// (skip the cached-token short-circuit) so the user re-authenticates. One-shot.
 	SSMForceLogin bool `json:"ssm_force_login"`

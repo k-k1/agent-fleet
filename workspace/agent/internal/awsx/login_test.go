@@ -47,7 +47,11 @@ func putSSOCache(token string, expires time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	b, _ := json.Marshal(map[string]string{"accessToken": token, "expiresAt": expires.UTC().Format(time.RFC3339)})
+	// The portal fields the CLI writes with every token: the Agent accepts a token only for the
+	// portal Settings gives its key (ADR 0125 decision 10).
+	sp := prodSettings["prod"]
+	b, _ := json.Marshal(map[string]string{"accessToken": token, "expiresAt": expires.UTC().Format(time.RFC3339),
+		"startUrl": sp.StartURL, "region": sp.SSORegion})
 	return os.WriteFile(path, b, 0o600)
 }
 
@@ -229,7 +233,7 @@ func TestConsoleLoginRetriesWhenALoginLandsDuringTheCheck(t *testing.T) {
 	cache := ssoCachePath("af-prod")
 	os.MkdirAll(filepath.Dir(cache), 0o700)
 	hook := `if [ ! -f "$S/landed" ]; then touch "$S/landed"; ` +
-		`printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > '` + cache + `'; ` +
+		`printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z","startUrl":"https://example.awsapps.com/start","region":"ap-northeast-1"}' > '` + cache + `'; ` +
 		`echo "Error loading SSO Token: expired" >&2; exit 255; fi; touch "$S/loggedIn"
 `
 	os.WriteFile(filepath.Join(state, "onExport"), []byte(hook), 0o600)
@@ -260,7 +264,7 @@ func TestLoginListShowsSettingsNotTheCallersText(t *testing.T) {
 	rec := httptest.NewRecorder()
 	HandleLoginList(rec, httptest.NewRequest(http.MethodGet, "/aws-login", nil))
 	var out struct {
-		Requests []loginRequestWire `json:"requests"`
+		Requests []LoginRequestWire `json:"requests"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Requests) != 1 {
 		t.Fatalf("list = %s", rec.Body.String())
@@ -299,7 +303,7 @@ func TestLoginListCleansAWaiterWrittenStraightIntoTheFile(t *testing.T) {
 	rec := httptest.NewRecorder()
 	HandleLoginList(rec, httptest.NewRequest(http.MethodGet, "/aws-login", nil))
 	var out struct {
-		Requests []loginRequestWire `json:"requests"`
+		Requests []LoginRequestWire `json:"requests"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Requests) != 1 || len(out.Requests[0].Waiters) != 1 {
 		t.Fatalf("list = %s", rec.Body.String())
@@ -453,7 +457,7 @@ echo "Open https://device.sso.ap-northeast-1.amazonaws.com/?user_code=ABCD-EFGH"
 echo "Then enter the code:"; echo; echo "ABCD-EFGH"
 while [ ! -f "$S/approve" ]; do sleep 0.02; done
 mkdir -p "$(dirname "`+cache+`")"
-printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`"
+printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z","startUrl":"https://example.awsapps.com/start","region":"ap-northeast-1"}' > "`+cache+`"
 `)
 	first := startAttempt(t, r.ID)
 	v := waitPhase(t, r.ID, first, cloudlogin.PhaseAuthorize)
@@ -573,7 +577,7 @@ func TestProfileLoginRunsUnderACancelHoldAndSettlesIt(t *testing.T) {
 echo "Then enter the code:"; echo; echo "WXYZ-1234"
 while [ ! -f "$S/approve" ]; do sleep 0.02; done
 mkdir -p "$(dirname "`+cache+`")"
-printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}' > "`+cache+`"
+printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z","startUrl":"https://example.awsapps.com/start","region":"ap-northeast-1"}' > "`+cache+`"
 `)
 	exportedProd(t)
 	rec := httptest.NewRecorder()
@@ -686,7 +690,7 @@ func TestProfileLoginStatesSayNoMoreThanTheCacheKnows(t *testing.T) {
 		t.Fatalf("expired, nothing to renew with: %s", s)
 	}
 	// The access token lasts about an hour and the CLI renews it: expired is not logged out.
-	b, _ := json.Marshal(map[string]string{"accessToken": "secret-access", "refreshToken": "secret-refresh",
+	b, _ := json.Marshal(map[string]string{"startUrl": "https://example.awsapps.com/start", "region": "ap-northeast-1", "accessToken": "secret-access", "refreshToken": "secret-refresh",
 		"expiresAt": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)})
 	os.WriteFile(ssoCachePath("af-prod"), b, 0o600)
 	if s := states(); s != loginStateRenew {

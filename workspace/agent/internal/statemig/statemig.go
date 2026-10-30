@@ -195,6 +195,9 @@ var Entries = []string{
 	"aws-confirm",
 	"aws-usable.json",
 	"aws-gated",
+	// Which owner and portal each cached AWS login was written for (ADR 0125 decision 10).
+	// Introduced directly under AgentStateDir.
+	"aws-sso-bindings",
 	// Per-boot / per-run state of the CLIs themselves.
 	"mcp-output-cursor",
 	"mcp-af-name",

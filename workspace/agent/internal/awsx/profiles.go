@@ -70,6 +70,28 @@ type Profile struct {
 	// ConfirmBeforeUse makes af-aws-exec ask the member in the Console before the profile's
 	// first use in a session, and keeps it out of ~/.aws/config (ADR 0126 decisions 4 to 6).
 	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
+	// SignIn and SignInID name the shared sign-in an SSO profile is in (ADR 0125): it logs in
+	// through [sso-session af-<SignIn>], which every member shares. Empty for a sign-in of its
+	// own, af-<Name>.
+	SignIn   string `json:"signIn,omitempty"`
+	SignInID string `json:"signInId,omitempty"`
+}
+
+// SSOSession is the sso-session p logs in through: its shared sign-in's, or af-<Name>. Every
+// cache key, request, attempt, lock, state and logout of p's login is this name.
+func (p Profile) SSOSession() string {
+	if p.SignIn != "" {
+		return "af-" + p.SignIn
+	}
+	return "af-" + p.Name
+}
+
+// TokenOwner is the owner of p's login (ADR 0125 decision 10): its sign-in, or p itself.
+func (p Profile) TokenOwner() string {
+	if p.SignInID != "" {
+		return "sign-in:" + p.SignInID
+	}
+	return "profile:" + p.ID
 }
 
 // KindAssumeRole is Profile.Kind of a role-chaining profile.
@@ -113,9 +135,14 @@ type SyncResult struct {
 	// by name, with the reason (IncompleteReason).
 	Incomplete map[string]string
 	// SessionShadowed are Settings profiles not exported because the member's own
-	// ~/.aws/config has an [sso-session af-<name>] section (the name this profile's
-	// sso-session needs) but no profile of that name.
+	// ~/.aws/config has an [sso-session] of the name this profile's sso-session needs
+	// (af-<name>, or af-<sign-in> for every member of a shared sign-in).
 	SessionShadowed []string
+	// SessionConflict are SSO profiles not exported because another owner, or another
+	// portal, renders the same sso-session name (ADR 0125 decision 2): the Control Plane never
+	// sends that, but a list from an older one after a rollback can hold it. Neither side gets
+	// a login another might share.
+	SessionConflict []string
 	// DefaultClash are profiles not exported because a [DEFAULT] line in ~/.aws/config
 	// would make the CLI refuse them or run them as another role, by name, with that
 	// line and what it does (a ready-to-print reason).
@@ -345,6 +372,8 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	for _, p := range ps {
 		byName[p.Name] = p
 	}
+	conflicted := sessionConflicts(ps)
+	sessionWritten := map[string]bool{}
 	for _, p := range ps {
 		if p.Chained() {
 			chained = append(chained, p)
@@ -354,7 +383,11 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.Shadowed = append(res.Shadowed, p.Name)
 			continue
 		}
-		if ssoSessions["af-"+p.Name] {
+		if conflicted[p.SSOSession()] {
+			res.SessionConflict = append(res.SessionConflict, p.Name)
+			continue
+		}
+		if ssoSessions[p.SSOSession()] {
 			res.SessionShadowed = append(res.SessionShadowed, p.Name)
 			continue
 		}
@@ -370,7 +403,7 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 		}
 		// A Settings value the AWS config cannot hold comes before anything about the
 		// member's files: it needs fixing in Settings whatever the files say.
-		ini, rerr := renderProfile(p)
+		sessINI, profINI, rerr := renderProfileParts(p)
 		if rerr != nil {
 			if res.Invalid == nil {
 				res.Invalid = map[string]string{}
@@ -385,13 +418,20 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.DefaultClash[p.Name] = why
 			continue
 		}
+		ini := sessINI + "\n" + profINI
 		ssoINI[p.Name] = ini
 		if p.ConfirmBeforeUse {
 			withhold(&res, p.Name, ini)
 			continue
 		}
+		// A shared sign-in's sso-session is written once, before its first member.
+		if !sessionWritten[p.SSOSession()] {
+			sessionWritten[p.SSOSession()] = true
+			body.WriteString("\n")
+			body.WriteString(sessINI)
+		}
 		body.WriteString("\n")
-		body.WriteString(ini)
+		body.WriteString(profINI)
 		res.Exported = append(res.Exported, p.Name)
 	}
 	// A chain may assume from any usable SSO profile; one whose source is withheld is itself
@@ -544,10 +584,45 @@ func defaultClashChained(defaults map[string]string, p Profile, region string) s
 }
 
 func renderProfile(p Profile) (string, error) {
-	return ssm.RenderSSMConfig(session.SSMMeta{
-		Profile: p.Name, StartURL: p.StartURL, SSORegion: p.SSORegion,
-		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
-	})
+	sess, prof, err := renderProfileParts(p)
+	if err != nil {
+		return "", err
+	}
+	return sess + "\n" + prof, nil
+}
+
+// renderProfileParts is renderProfile as its sso-session and profile sections.
+func renderProfileParts(p Profile) (string, string, error) {
+	return ssm.RenderSSOParts(ssmMetaOf(p))
+}
+
+// ssmMetaOf is p as the ssm renderer takes it.
+func ssmMetaOf(p Profile) session.SSMMeta {
+	m := session.SSMMeta{Profile: p.Name, StartURL: p.StartURL, SSORegion: p.SSORegion,
+		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region}
+	if p.SignIn != "" {
+		m.SSOSession = p.SSOSession()
+	}
+	return m
+}
+
+// sessionConflicts lists the sso-session names of ps that two owners render, or one owner with
+// two portals: a shared sign-in's members always share one name and one portal.
+func sessionConflicts(ps []Profile) map[string]bool {
+	owner, portal := map[string]string{}, map[string]string{}
+	out := map[string]bool{}
+	for _, p := range ps {
+		if p.Chained() {
+			continue
+		}
+		name := p.SSOSession()
+		o, pt := p.TokenOwner(), strings.TrimRight(p.StartURL, "/")+"|"+p.SSORegion
+		if prev, ok := owner[name]; ok && (prev != o || portal[name] != pt) {
+			out[name] = true
+		}
+		owner[name], portal[name] = o, pt
+	}
+	return out
 }
 
 // invalidFields maps the ssm package's allowlist fields to the words a user knows, the Settings
@@ -632,7 +707,7 @@ func defaultClash(defaults map[string]string, p Profile) string {
 		region = p.SSORegion
 	}
 	written := map[string]string{
-		"sso_session": "af-" + p.Name, "sso_start_url": p.StartURL, "sso_region": p.SSORegion,
+		"sso_session": p.SSOSession(), "sso_start_url": p.StartURL, "sso_region": p.SSORegion,
 		"sso_registration_scopes": "sso:account:access", "region": region,
 	}
 	if p.AccountID != "" {
@@ -708,6 +783,10 @@ func credentialsNames(s string) map[string]bool {
 func StartSync() {
 	cloudbridge.Poll(func(why string) {
 		syncAndLog(why)
+		// A portal change or a rename is acted on within one poll, even when nothing runs.
+		if settings := loginSettings(); settings != nil {
+			vetAll(settings)
+		}
 		warnExpiringSSO(time.Now())
 	})
 }

@@ -484,7 +484,7 @@ func ForgetRoleCredentials(settings map[string]Profile, profile string) error {
 		}
 	}
 	if sso.Name != "" {
-		if err := os.Remove(ssoRoleCachePath(sso.AccountID, sso.RoleName, "af-"+sso.Name)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(ssoRoleCachePath(sso.AccountID, sso.RoleName, sso.SSOSession())); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err)
 		}
 	}

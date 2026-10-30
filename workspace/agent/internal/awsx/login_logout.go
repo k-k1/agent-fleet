@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -47,6 +48,9 @@ type profileLogoutWire struct {
 	// NoToken: there was no cached token, so there was nothing to revoke.
 	NoToken bool   `json:"noToken,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Profiles are the Settings profiles the logout signed out: every member of the profile's
+	// shared sign-in (ADR 0125 decision 5), or the profile alone.
+	Profiles []string `json:"profiles"`
 }
 
 // ssoRegionRe is what a token's region must look like before it names a host the token is
@@ -353,7 +357,9 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "not_exported", "this profile is not in ~/.aws/config; `af-aws-exec --list` says why")
 		return
 	}
-	ssoSession := "af-" + sp.Name
+	ssoSession := sp.SSOSession()
+	settings := loginSettings()
+	members := sessionMembers(settings, ssoSession)
 	// From ending the running login until the old token is off disk, no new login starts
 	// (cloudlogin's Gate); the revoke after that runs without it.
 	gate := logins.Gate(ssoSession)
@@ -388,10 +394,16 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
 		return
 	}
-	for _, p := range roleCachePaths(sp, ssoSession) {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
-			return
+	// Every member's role credentials go: the token is shared, and a member's credentials left
+	// behind would keep that profile working after a "log out".
+	out.Profiles = []string{}
+	for _, m := range members {
+		out.Profiles = append(out.Profiles, m.Name)
+		for _, p := range roleCachePaths(m, ssoSession) {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				httpx.WriteErr(w, http.StatusInternalServerError, "remove_failed", err.Error())
+				return
+			}
 		}
 	}
 	if !out.NoToken {
@@ -413,6 +425,22 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 			out.Revoked = true
 		}
 	}
-	log.Printf("aws-login: logout profile=%s revoked=%t already_ended=%t no_token=%t relayed=%t", sp.Name, out.Revoked, out.AlreadyEnded, out.NoToken, cloudlogin.RelayedByCP(r))
+	// The tokens the members kept from before they joined the sign-in under another name, when
+	// they are provably theirs and nothing else uses them (decision C).
+	forgetLeftovers(settings, members, ssoSession)
+	log.Printf("aws-login: logout profile=%s sso_session=%s profiles=%d revoked=%t already_ended=%t no_token=%t relayed=%t",
+		sp.Name, ssoSession, len(out.Profiles), out.Revoked, out.AlreadyEnded, out.NoToken, cloudlogin.RelayedByCP(r))
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// sessionMembers lists the SSO profiles of settings that log in through ssoSession, by name.
+func sessionMembers(settings map[string]Profile, ssoSession string) []Profile {
+	var out []Profile
+	for _, p := range settings {
+		if !p.Chained() && p.SSOSession() == ssoSession {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

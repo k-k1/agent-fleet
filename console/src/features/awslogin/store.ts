@@ -23,6 +23,21 @@ export interface AwsLoginRequest {
   /** When the Agent drops the request, on this browser's clock (deadlineFrom); null while a
    *  login attempt for it runs, or when the Agent gave no countdown. */
   deadline?: number | null;
+  /** The shared sign-in the login is for (ADR 0125), and the profiles whose runs wait on it;
+   *  absent from an Agent that predates sign-ins. */
+  signIn?: string;
+  profiles?: string[];
+}
+
+/** A shared sign-in's login (ADR 0125), as GET /api/aws-login/profiles lists it: one state for
+ *  every member. */
+export interface AwsSignInState {
+  name: string;
+  state: string;
+  expiresAt?: string;
+  expiresInSec?: number;
+  expiring?: boolean;
+  profiles: string[];
 }
 
 /** A Settings profile whose cached login ends soon, as GET /api/aws-login/profiles lists it (#1029). */
@@ -56,6 +71,8 @@ export interface AwsProfileState {
   expiring: boolean;
   /** expiresAt on this browser's clock, from the Agent's seconds left (deadlineFrom). */
   deadline?: number | null;
+  /** The shared sign-in the profile is in (ADR 0125); its state is the sign-in's. */
+  signIn?: string;
 }
 
 /** What a profile's login modal needs; a subset of both lists, so either can open it. */

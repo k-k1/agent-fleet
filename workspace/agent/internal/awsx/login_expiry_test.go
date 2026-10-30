@@ -20,6 +20,13 @@ func writeSSOCacheDoc(t *testing.T, doc map[string]string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The portal fields the CLI writes with every token (see putSSOCache).
+	if _, ok := doc["startUrl"]; !ok {
+		doc["startUrl"] = prodSettings["prod"].StartURL
+	}
+	if _, ok := doc["region"]; !ok {
+		doc["region"] = prodSettings["prod"].SSORegion
+	}
 	b, _ := json.Marshal(doc)
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatal(err)
@@ -41,7 +48,7 @@ func exportProd(t *testing.T, own string) {
 	}
 }
 
-func profileStates(t *testing.T) (profileLoginStateWire, string) {
+func profileStates(t *testing.T) (ProfileLoginStateWire, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	HandleProfileLoginStates(rec, httptest.NewRequest(http.MethodGet, "/aws-login/profiles", nil))

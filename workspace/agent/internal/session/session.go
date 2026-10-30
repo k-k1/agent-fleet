@@ -743,6 +743,11 @@ type SSMMeta struct {
 	ExternalID      string `json:"externalId,omitempty"`
 	RoleSessionName string `json:"roleSessionName,omitempty"`
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	// SSOSession is the sso-session of a profile in a shared sign-in (ADR 0125), af-<name>;
+	// "" is af-<Profile>, a sign-in of its own. SSOOwnerID is the owner of that login's token:
+	// the sign-in's id, or the profile's. Neither is a secret.
+	SSOSession string `json:"ssoSession,omitempty"`
+	SSOOwnerID string `json:"ssoOwnerId,omitempty"`
 }
 
 // DriverKind normalizes Meta.Driver ("" → tui). Always branch through it: comparing raw

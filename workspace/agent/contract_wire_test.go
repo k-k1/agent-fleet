@@ -132,6 +132,48 @@ func agentContractFamilies() []contractFamily {
 			goOnly: map[string]string{},
 		},
 
+		// af-aws-exec's Console login (ADR 0102) with shared sign-ins (ADR 0125 decision 5): a
+		// pending request, a profile's login state and a sign-in's, GET /aws-login and
+		// GET /aws-login/profiles.
+		{
+			name:    "awsx.LoginRequestWire",
+			goType:  reflect.TypeOf(awsx.LoginRequestWire{}),
+			binding: loginRequestBinding,
+			tsPath:  "../../console/src/features/awslogin/store.ts",
+			tsName:  "AwsLoginRequest",
+			tsKeys:  keySet("id", "profile", "label", "accountId", "roleName", "waiters", "firstAt", "lastAt", "deadline", "signIn", "profiles"),
+			tsOnly: map[string]string{
+				"deadline": "Intended: the store turns expiresInSec into a deadline on this browser's clock (deadlineFrom).",
+			},
+			goOnly: map[string]string{
+				"expiresInSec": "Intended: read by the store and replaced with deadline, never kept as is.",
+			},
+		},
+		{
+			name:    "awsx.ProfileLoginStateWire",
+			goType:  reflect.TypeOf(awsx.ProfileLoginStateWire{}),
+			binding: profileLoginStateBinding,
+			tsPath:  "../../console/src/features/awslogin/store.ts",
+			tsName:  "AwsProfileState",
+			tsKeys:  keySet("name", "label", "accountId", "roleName", "state", "source", "expiresAt", "expiring", "deadline", "signIn"),
+			tsOnly: map[string]string{
+				"deadline": "Intended: the store turns expiresInSec into a deadline on this browser's clock (deadlineFrom).",
+			},
+			goOnly: map[string]string{
+				"expiresInSec": "Intended: read by the store and replaced with deadline, never kept as is.",
+			},
+		},
+		{
+			name:    "awsx.SignInStateWire",
+			goType:  reflect.TypeOf(awsx.SignInStateWire{}),
+			binding: signInStateBinding,
+			tsPath:  "../../console/src/features/awslogin/store.ts",
+			tsName:  "AwsSignInState",
+			tsKeys:  keySet("name", "state", "expiresAt", "expiresInSec", "expiring", "profiles"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+
 		// A "confirm before use" request (ADR 0126 decision 5), GET /aws-confirm.
 		{
 			name:    "awsx.ConfirmRequestWire",
@@ -344,6 +386,23 @@ var memoryImportPreviewBinding = map[string]string{
 	"SecretScanFailed": "secretScanFailed",
 }
 
+var loginRequestBinding = map[string]string{
+	"ID": "id", "Profile": "profile", "Label": "label", "AccountID": "accountId", "RoleName": "roleName",
+	"Waiters": "waiters", "FirstAt": "firstAt", "LastAt": "lastAt", "ExpiresInSec": "expiresInSec",
+	"SignIn": "signIn", "Profiles": "profiles",
+}
+
+var profileLoginStateBinding = map[string]string{
+	"Name": "name", "State": "state", "Source": "source", "Label": "label", "AccountID": "accountId",
+	"RoleName": "roleName", "ExpiresAt": "expiresAt", "ExpiresInSec": "expiresInSec", "Expiring": "expiring",
+	"SignIn": "signIn",
+}
+
+var signInStateBinding = map[string]string{
+	"Name": "name", "State": "state", "ExpiresAt": "expiresAt", "ExpiresInSec": "expiresInSec",
+	"Expiring": "expiring", "Profiles": "profiles",
+}
+
 var confirmRequestBinding = map[string]string{
 	"ID": "id", "Session": "session", "Targets": "targets", "Commands": "commands", "FirstAt": "firstAt",
 	"LastAt": "lastAt", "ExpiresInSec": "expiresInSec",
@@ -396,7 +455,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 17 {
+	if len(fams) != 20 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

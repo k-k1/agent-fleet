@@ -22,7 +22,7 @@ func consoleEligible(sso ssoInfo, o ExecOptions) bool {
 		return false
 	}
 	sp, listed := o.Settings[o.Profile]
-	return listed && sameSSO(sp, sso) && sso.Session == "af-"+o.Profile
+	return listed && sameSSO(sp, sso) && sso.Session == sp.SSOSession()
 }
 
 // errConsoleNotAsked marks the refusal of a run whose request could not be filed, so a

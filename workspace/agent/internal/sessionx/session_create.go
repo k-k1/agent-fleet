@@ -551,6 +551,7 @@ func (c *createRun) identify() bool {
 			AccountID: req.SSOAccountID, RoleName: req.SSORoleName,
 			RoleARN: req.SSMRoleARN, SourceProfile: req.SSMSourceProfile, ExternalID: req.SSMExternalID,
 			RoleSessionName: req.SSMRoleSessionName, DurationSeconds: req.SSMDurationSeconds,
+			SSOSession: req.SSOSession, SSOOwnerID: req.SSOOwnerID,
 		}
 		if c.ssm.Region == "" {
 			c.ssm.Region = c.ssm.SSORegion

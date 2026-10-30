@@ -51,6 +51,20 @@ func ssoCachePath(ssoSession string) string {
 	return filepath.Join(paths.HomeDir(), ".aws", "sso", "cache", hex.EncodeToString(sum[:])+".json")
 }
 
+// refreshWindow is botocore's: SSOTokenProvider renews a token this close to its expiry.
+const refreshWindow = 15 * time.Minute
+
+// nearRefresh reports whether an export of ssoSession may make botocore renew the token: none
+// cached that it could read, or one expired or inside the refresh window.
+func nearRefresh(ssoSession string, now time.Time) bool {
+	st := ReadCacheState(ssoSession)
+	if !st.Present || st.ExpiresAt == "" {
+		return true
+	}
+	end, ok := parseCacheTime(st.ExpiresAt)
+	return !ok || end.Sub(now) < refreshWindow
+}
+
 // ReadCacheState reads the token cache of ssoSession. It never returns the token itself.
 func ReadCacheState(ssoSession string) CacheState {
 	b, err := os.ReadFile(ssoCachePath(ssoSession))
@@ -121,7 +135,11 @@ func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, erro
 			cancel = aws.ctx.Done()
 			deadline, _ = aws.ctx.Deadline()
 		}
-		unlock, err := logins.LockKeyCancel(ssoSession, true, cancel, deadline)
+		// Exclusive near a refresh: botocore renews an access token within 15 minutes of its
+		// expiry and writes the cache back, and two members of one sign-in refreshing at once
+		// can each keep a refresh token the other's refresh rotated away (ADR 0125 decision 5).
+		// Shared otherwise, so plain exports of one sign-in run side by side.
+		unlock, err := logins.LockKeyCancel(ssoSession, !nearRefresh(ssoSession, time.Now()), cancel, deadline)
 		if err != nil && aws.ctx != nil && aws.ctx.Err() != nil {
 			// A Console wait's Ctrl-C or budget ended the wait for the lock (a logout holds
 			// it across its network call); the wait classifies it like a killed child.
