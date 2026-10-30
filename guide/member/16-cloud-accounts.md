@@ -375,6 +375,27 @@ run `af-gcloud-exec`. Changing a profile's account, changing its label so that i
 and adding it again, resets which account it uses: unless the account it names is already logged in in the workspace, the next run asks for a
 login. Export and import carry the profiles (see [20 Settings](20-settings.md#export-import)).
 
+### Importing profiles from gcloud configurations
+
+On the Google Cloud tab, **Import from gcloud configurations** reads the configuration files of your own machine
+(`~/.config/gcloud/configurations/config_<name>`; choose several at once, or paste one and give it a name). The
+files are read in the page and never sent; only the fields of the profiles you tick are saved. The preview lists
+every file as **Create**, **Already registered** or **Not importable** with the reason, and the label (the
+configuration name by default) can be changed before importing.
+
+- **What carries over**: `core/project`, `core/account`, `billing/quota_project`, `compute/region`,
+  `compute/zone` and a single `auth/impersonate_service_account`. The same checks as the add form apply.
+- **What is refused, with a reason**: a configuration with no project; a service account as `core/account`
+  (it cannot sign in without a key: sign in with a Google account and impersonate the service account); a list of
+  service accounts (a delegation chain); credential file or access token file settings, a custom OAuth client or
+  any other setting under `auth/`; proxy and API endpoint settings; a universe domain or custom CA file. Creating
+  such a profile without them would point it at something your configuration does not.
+- **What is never read or shown**: your gcloud credentials, application default credentials and key files, and any
+  path or token file a configuration names. A reason names the setting and the line, not its value.
+- A configuration whose label already exists with the same settings shows **Already registered**; with different
+  settings it asks for another label. If the current profiles cannot be read, nothing is created.
+- Importing signs nothing in: use **Log in** on each new profile.
+
 ### Running a command as a profile
 
 ```sh
