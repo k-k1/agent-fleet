@@ -2,7 +2,7 @@
 
 English | [日本語](0125-shared-sso-sign-in.ja.md)
 
-- Status: **proposed** (2026-10-30). Nothing is built yet. The open decisions are listed at the end.
+- Status: **accepted** (2026-10-30). The user took decisions A–D below, the recommended option in each. Nothing is built yet.
 - Issue: #3014
 - Prerequisite: [0126](0126-aws-runs-in-the-mirror-and-confirm-before-use.md) (#3050): runs shown in the
   session's mirror and per-profile "confirm before use". A shared sign-in removes the per-profile device code
@@ -169,7 +169,7 @@ before.
   per laptop `sso-session` and the number of Console logins becomes the number of laptop sign-ins. A name
   outside the allowlist, or one that `sign_in_name_taken` would refuse, is shown with that reason and an
   editable name. An existing sign-in of that name with another portal refuses those rows
-  (`sign_in_mismatch`), named in the preview. Legacy `url:` profiles: open decision B.
+  (`sign_in_mismatch`), named in the preview. Legacy `url:` profiles: decision B.
 - **Export (#3017).** A grouped profile is written with `sso_session = <name>` and one `[sso-session <name>]`;
   an ungrouped one with `[sso-session <profile name>]`. Importing that file back gives the same grouping.
 
@@ -186,13 +186,13 @@ before.
 - **Leftover per-profile tokens.** A member that joins a sign-in under another name leaves its
   `af-<member>` token on disk. Nothing uses it any more. It is not moved or copied (Rejected). Logging out
   of the sign-in also revokes and deletes the leftover `af-<member>` tokens of its members. That is skipped
-  for a member whose `af-<member>` name the member's own files use (open decision C).
+  for a member whose `af-<member>` name the member's own files use (decision C).
 
 ### 8. Separate logins to one portal stay possible
 
 Nothing groups profiles automatically. Two profiles with the same start URL and SSO region and no sign-in,
 or in two sign-ins, render two sso-sessions and log in separately. The only grouping by start URL is the
-Console's proposal for legacy laptop profiles on import (open decision B), and the member can change it in
+Console's proposal for legacy laptop profiles on import (decision B), and the member can change it in
 the preview.
 
 ### 9. Documentation
@@ -229,18 +229,18 @@ request can name a sign-in rather than a single profile.
 - The Agent builds the sso-session name in one helper instead of a dozen literal concatenations.
 - The SSO cache status reads `startUrl` and `region` from the cache file as well as the expiry.
 
-## Open decisions
+## Decisions taken (2026-10-30, by the user)
 
-- **A. Delivery.** Recommended: three PRs in order, after ADR 0126's two (0126 decision 7). CP (migration, store
+- **A. Taken: the recommended option.** **Delivery.** Recommended: three PRs in order, after ADR 0126's two (0126 decision 7). CP (migration, store
   invariant, DTO, routes, bridge, contract); then Agent (render, shadowing, `ssoSessionOf`, requests, status,
   expiry, logout); then Console (grouped list, form, grouping action, import default). Every new field is
   omitted when empty, so each PR is safe on its own.
-- **B. Legacy laptop profiles on import** (`sso_start_url` on the profile, no `sso_session`; the laptop shares
+- **B. Taken: the recommended option.** **Legacy laptop profiles on import** (`sso_start_url` on the profile, no `sso_session`; the laptop shares
   one login per start URL). Recommended: propose one sign-in per start URL and SSO region in the preview,
   named after the portal's host label (`d-1234567890`, editable, can be cleared). The alternative is to
   import them ungrouped.
-- **C. Leftover per-profile tokens after joining.** Recommended: clean them at the sign-in's logout only
+- **C. Taken: the recommended option.** **Leftover per-profile tokens after joining.** Recommended: clean them at the sign-in's logout only
   (decision 7). The alternative is to revoke and delete them when the profile joins, which means a network
   call from a Settings sync.
-- **D. A sign-in named after a member.** Recommended: the Console proposes it whenever a member is signed in,
+- **D. Taken: the recommended option.** **A sign-in named after a member.** Recommended: the Console proposes it whenever a member is signed in,
   so grouping costs no login. The alternative is always the laptop or typed name, with one fresh login.

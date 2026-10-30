@@ -2,7 +2,7 @@
 
 English | [日本語](0126-aws-runs-in-the-mirror-and-confirm-before-use.ja.md)
 
-- Status: **proposed** (2026-10-30). Nothing is built yet. The open decisions are listed at the end.
+- Status: **accepted** (2026-10-30). The user took decisions E–H below, the recommended option in each. Nothing is built yet.
 - Issue: #3050
 - Related: [0125](0125-shared-sso-sign-in.md) (shared sign-ins, which this ADR has to land before) /
   [0102](0102-aws-login-through-the-console.md) (the Console login: requests, waits, exit 3, the notice
@@ -70,7 +70,7 @@ What exists, and what does not (measured by reading the code):
 shows up in its own mirror. An agent that changes `AF_SESSION_NAME` can move its rows to another session's
 mirror or to `_workspace`, but not out of the "Recent runs" list. An agent that does not use `af-aws-exec`
 leaves no row at all. The rows are visibility, not an audit. Checking a run's process tree against the
-session (open decision H) would stop misattribution, but not the bypass.
+session (decision H) would stop misattribution, but not the bypass.
 
 ### 3. SSM sessions
 
@@ -95,7 +95,7 @@ export or login. Confirmation first, then login: a confirmation is cheap, and as
 denied run never starts a device code.
 
 - **Approval scope:** one approval covers that session and that profile for 8 hours, or until the session
-  ends, whichever comes first (open decision F). The record is an Agent state file under
+  ends, whichever comes first (decision F). The record is an Agent state file under
   `AgentStateDir/aws-confirm/`, keyed by session and profile.
 - **Asking:** a run without a live approval files a **confirmation request**, with the same machinery as a
   login request: one per session and profile, waiters, a random id, a notice of kind `aws-use-confirm` that
@@ -132,7 +132,7 @@ that sets out to get past it, because that agent can:
 
 What reduces item 2, and is part of this decision:
 
-- **A gated profile is not written to the managed block of `~/.aws/config`** (open decision E). A plain
+- **A gated profile is not written to the managed block of `~/.aws/config`** (decision E). A plain
   `aws --profile prod-admin` then fails instead of quietly working, and `af-aws-exec` renders it into the
   run's isolated config only. A tool that needs the profile by name runs under `af-aws-exec`, which already
   wraps any command.
@@ -142,7 +142,7 @@ What reduces item 2, and is part of this decision:
 What only the member can do: **the only gate an agent cannot pass by itself is a token it does not have.** A
 profile kept on its own sign-in and signed out after use still needs a device-code approval each time.
 Grouping a gated profile into a sign-in that other profiles keep signed in removes that (ADR 0125). The
-Console says so when a gated profile joins a shared sign-in, or gets the gate while it is in one (open decision
+Console says so when a gated profile joins a shared sign-in, or gets the gate while it is in one (decision
 G).
 
 ### 7. Order relative to ADR 0125
@@ -163,7 +163,7 @@ Migrations: the gate's column takes the next numbers (SQLite `0116`, Postgres `0
   secrets, and redacting them is guesswork.
 - **Attribute the run by process tree now.** Managed kinds run tool commands under shared daemons whose
   environment names no session (`listenports` documents this), so a tree walk would lose real runs. It would
-  also not touch the bypass of decision 6. Kept as open decision H.
+  also not touch the bypass of decision 6. Kept as decision H.
 - **A CP-signed approval that the Agent verifies.** An agent that wants to get past the gate does not need to
   forge an approval when it can run `aws` directly (decision 6). The signature would protect a door next to an
   open one.
@@ -180,14 +180,14 @@ Migrations: the gate's column takes the next numbers (SQLite `0116`, Postgres `0
 - The guide (`guide/member/16-cloud-accounts.md` and `.ja.md`) states the limits of decision 6 in the member's
   terms: the gate catches mistakes, not an agent that sets out to get around it.
 
-## Open decisions
+## Decisions taken (2026-10-30, by the user)
 
-- **E. Hold gated profiles out of `~/.aws/config`.** Recommended: yes, so a plain `aws --profile` cannot quietly
+- **E. Taken: the recommended option.** **Hold gated profiles out of `~/.aws/config`.** Recommended: yes, so a plain `aws --profile` cannot quietly
   bypass the gate. The cost is that a gated profile is usable only through `af-aws-exec`.
-- **F. Approval scope.** Recommended: per session and profile, for 8 hours or until the session ends. The
+- **F. Taken: the recommended option.** **Approval scope.** Recommended: per session and profile, for 8 hours or until the session ends. The
   alternatives are a 1-hour window, or every run (noisy for scripts that call `aws` many times).
-- **G. A gated profile inside a shared sign-in.** Recommended: allowed, with the warning of decision 6 in the
+- **G. Taken: the recommended option.** **A gated profile inside a shared sign-in.** Recommended: allowed, with the warning of decision 6 in the
   form and in the grouping action. The alternative is to forbid it, which keeps the device code as a real gate
   but blocks the main #3014 case (an admin profile on the same portal).
-- **H. Attribution by process tree** as a follow-up. Recommended: not now (decision 2 and Rejected). File an
+- **H. Taken: the recommended option.** **Attribution by process tree** as a follow-up. Recommended: not now (decision 2 and Rejected). File an
   issue only if misattributed rows turn up in practice.
