@@ -1039,7 +1039,7 @@
       "name": "memory_index"
     },
     "memory_projects": {
-      "description": "List the projects of the member's Agent Fleet memory (id, display name, repository, memory count). Each project's `remote` is what the other memory tools match `repository` against; an id can be passed as `project` instead. Needs \"Use AF memory from outside Agent Fleet\" in Settings > Agent memory, and the tenant administrator must allow it; the workspace must be running. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
+      "description": "List the projects of the member's Agent Fleet memory (id, display name, repository, memory count; a count of 0 is a repository cloned in the workspace that holds no memory yet, which a save starts). Each project's `remote` is what the other memory tools match `repository` against; an id can be passed as `project` instead. Needs \"Use AF memory from outside Agent Fleet\" in Settings > Agent memory, and the tenant administrator must allow it; the workspace must be running. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
       "inputSchema": {
         "properties": {},
         "type": "object"
@@ -1079,7 +1079,7 @@
       "name": "memory_read"
     },
     "memory_save": {
-      "description": "Create or update an Agent Fleet memory (one fact per memory). Published at once and read by every agent kind in the workspace, so write facts, not instructions, and never a secret (the Agent refuses text that looks like one). Pass `repository` = the output of `git remote get-url origin` in the repository you are working in; the project is found from it. scope is required: \"project\" for a fact about that repository, \"user\" only for a fact that holds in every project; a save without scope is refused. To update, pass the revision you read; 0 creates. Needs write access to be allowed in Settings > Agent memory. A project must already hold memory: new projects are started from inside the workspace. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
+      "description": "Create or update an Agent Fleet memory (one fact per memory). Published at once and read by every agent kind in the workspace, so write facts, not instructions, and never a secret (the Agent refuses text that looks like one). Pass `repository` = the output of `git remote get-url origin` in the repository you are working in; the project is found from it. scope is required: \"project\" for a fact about that repository, \"user\" only for a fact that holds in every project; a save without scope is refused. To update, pass the revision you read; 0 creates. Needs write access to be allowed in Settings > Agent memory. A project that holds no memory yet is started by the first save when `repository` matches a repository cloned in the workspace; one that is not cloned there is refused. Inside an Agent Fleet session, use the af server's own memory tools instead; these are for agents outside Agent Fleet.",
       "inputSchema": {
         "properties": {
           "body": {

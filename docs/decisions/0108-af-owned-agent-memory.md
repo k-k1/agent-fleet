@@ -952,3 +952,14 @@ second resource; the decisions above and the #2318 note are unchanged.
   `/mcp/memory`, with its own code (`mcp_url_own_memory_endpoint`): there it would only duplicate the local tools.
 - **Visibility.** "MCP tokens & apps" shows each PAT's and OAuth connection's endpoint; the `mcp-call` log line and
   the recent-calls record carry `endpoint`. Guide: `member/19-outside-access` recommends `/mcp/memory` for claude.ai.
+
+## Note 2026-10-30: an outside save may start a project from a working copy
+
+Decision 11's "a project must already hold memory" no longer holds for an outside caller that names a
+`repository`. When no project that holds memory has the remote, the Agent matches the working copies under `~/repos`
+(`agentMemLiveProjects`, whose worktrees share the main clone's project) by the same normalised remote. Exactly one
+starts that project on the first save, with the record a session's first save writes (`agentMemProjectFor`, written in
+the same commit as the memory, so racing saves start it once); none is refused as not cloned in the workspace; several
+are refused with their ids and `project` chosen from `memory_projects`, which now also lists them with a count of 0. A
+project that holds memory still wins over a working copy with the same remote. Reads and forgets never create anything,
+and read-only mode refuses before resolving. The Console's **New memory** keeps the restriction (#3032).

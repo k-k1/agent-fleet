@@ -133,6 +133,10 @@ type agentMemCaller struct {
 	// already has instead of taking the request's. Both are set by the review's publish only.
 	noRevival bool
 	keepKinds bool
+	// startProject makes a project save write the project's record along with the memory, though
+	// the caller is not a session: an outside client that names a repository cloned in the
+	// workspace starts its project, and Project is then that working copy's identity.
+	startProject bool
 }
 
 // agentMemResolveCaller looks the calling session up. An empty name is an author AF cannot
@@ -1064,8 +1068,9 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 
 	changes := []agentMemChange{{Rel: repoRel, Data: data}}
 	// The member and an external client name a project that already holds memory and have no
-	// working copy to describe it, so the project's record is left as the sessions wrote it.
-	if c.Project != nil && req.Scope == agentMemScopeProject && c.Kind != agentMemMember.Kind && c.Kind != agentMemExternalKind {
+	// working copy to describe it, so the project's record is left as the sessions wrote it,
+	// unless the external client started the project from a working copy (startProject).
+	if c.Project != nil && req.Scope == agentMemScopeProject && (c.startProject || c.Kind != agentMemMember.Kind && c.Kind != agentMemExternalKind) {
 		extra, err := agentMemProjectInfoChange(*c.Project)
 		if err != nil {
 			return agentMemWriteResult{}, err
