@@ -269,6 +269,11 @@ func TestLoginListShowsSettingsNotTheCallersText(t *testing.T) {
 	if got.AccountID != "123456789012" || got.RoleName != "Dev" || got.Profile != "prod" {
 		t.Fatalf("request = %+v", got)
 	}
+	// Just filed: about the whole TTL left, for the Console's countdown.
+	if got.ExpiresInSec == nil || *got.ExpiresInSec > int64(cloudlogin.RequestTTL/time.Second) ||
+		*got.ExpiresInSec < int64(cloudlogin.RequestTTL/time.Second)-60 {
+		t.Fatalf("expiresInSec = %v", got.ExpiresInSec)
+	}
 	w := got.Waiters[0]
 	if strings.ContainsAny(w.Session, " \n<>") || len(w.Command) > 40 {
 		t.Fatalf("waiter text was not cut down: %+v", w)

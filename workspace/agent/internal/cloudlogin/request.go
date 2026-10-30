@@ -369,6 +369,26 @@ func (s *Store[S]) Sweep(now time.Time) []Request[S] {
 	return out
 }
 
+// ExpiresInSec is how many whole seconds r has left before Sweep drops it, on the Agent's
+// clock, so the Console can count down without trusting the browser's clock. nil while an
+// attempt for r runs (it does not expire then) or when LastAt cannot be read.
+func (s *Store[S]) ExpiresInSec(r Request[S], now time.Time) *int64 {
+	if s.attempts.liveFor(r.Key, r.ID) {
+		return nil
+	}
+	last, err := time.Parse(time.RFC3339Nano, r.LastAt)
+	if err != nil {
+		return nil
+	}
+	return SecondsLeft(last.Add(RequestTTL), now)
+}
+
+// SecondsLeft is the whole seconds from now to end, never below zero.
+func SecondsLeft(end, now time.Time) *int64 {
+	n := max(int64(end.Sub(now)/time.Second), 0)
+	return &n
+}
+
 var idRe = regexp.MustCompile(`^[0-9a-f]{24}$`)
 
 // Pending finds the pending request with id.

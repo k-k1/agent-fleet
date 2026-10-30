@@ -104,6 +104,35 @@ describe("AWS login toast and modal", () => {
     expect(calls.some((c) => c.path.includes("/start"))).toBe(false);
   });
 
+  it("names the profile, account and role as separate fields above the requester", async () => {
+    await mount();
+    const toast = document.querySelector(".ui-toast")!;
+    expect(toast.querySelector(".login-toast-name")?.textContent).toBe("Production");
+    const fields = Array.from(toast.querySelectorAll(".login-toast-field")).map((f) => f.textContent);
+    expect(fields).toEqual(["Account123456789012", "RoleDev"]);
+  });
+
+  it("counts down to the Agent's deadline whatever the browser's clock says, and re-anchors on each poll", async () => {
+    // Years away from the request's lastAt: only the seconds left the Agent measured count.
+    vi.setSystemTime(new Date("2031-01-01T00:00:00Z"));
+    listed = [{ ...prod, expiresInSec: 125 }];
+    await mount();
+    const text = () => document.querySelector(".ui-toast")!.textContent;
+    expect(text()).toContain("Request withdrawn in 2:05");
+    await tick(3000);
+    expect(text()).toContain("Request withdrawn in 2:02");
+    // A rerun moved lastAt: the next poll restarts the countdown in the same toast.
+    listed = [{ ...prod, expiresInSec: 900 }];
+    await tick(1000);
+    expect(text()).toContain("Request withdrawn in 15:00");
+    expect(document.querySelectorAll(".ui-toast")).toHaveLength(1);
+    // An attempt is running: the request does not expire, so there is nothing to count.
+    listed = [prod];
+    await tick(4000);
+    expect(text()).not.toContain("Request withdrawn");
+    expect(text()).toContain("Production");
+  });
+
   it("shows the code of its own attempt only, and drops it when the attempt is replaced", async () => {
     await mount();
     await act(async () => useAwsLoginStore.getState().open(prod.id as string));

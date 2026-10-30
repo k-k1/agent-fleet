@@ -108,6 +108,20 @@ describe("SSO expiry warning", () => {
     expect(calls.some((c) => c.path.includes("/start"))).toBe(false);
   });
 
+  it("counts down to the end from the Agent's seconds left, not from the browser's clock", async () => {
+    vi.setSystemTime(new Date("2031-01-01T00:00:00Z"));
+    profiles = [{ ...expiring, expiresInSec: 600 }];
+    await mount();
+    const t = toasts()[0];
+    expect(t.querySelector(".login-toast-name")?.textContent).toBe("Production");
+    expect(t.textContent).toContain("10:00 left");
+    // The minute poll asks again; the Agent's clock has moved on by then.
+    profiles = [{ ...expiring, expiresInSec: 540 }];
+    await tick(61_000);
+    expect(toasts()[0].textContent).toContain("8:59 left");
+    expect(toasts()).toHaveLength(1);
+  });
+
   it("shows nothing and polls nothing when no profile is expiring", async () => {
     profiles = [{ ...expiring, expiring: false }, { name: "stg", state: "none" }];
     await mount();

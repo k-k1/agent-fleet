@@ -431,6 +431,9 @@ type loginRequestWire struct {
 	Waiters []cloudlogin.WaiterWire `json:"waiters"`
 	FirstAt string                  `json:"firstAt"`
 	LastAt  string                  `json:"lastAt"`
+	// ExpiresInSec is the time left before the request is dropped (cloudlogin.ExpiresInSec);
+	// absent while a login attempt for it runs.
+	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
 }
 
 type loginListWire struct {
@@ -441,14 +444,15 @@ type loginListWire struct {
 func HandleLoginList(w http.ResponseWriter, r *http.Request) {
 	settings := loginSettings()
 	out := []loginRequestWire{}
-	for _, req := range logins.Sweep(time.Now()) {
+	now := time.Now()
+	for _, req := range logins.Sweep(now) {
 		sp, ok := settingsFor(req, settings)
 		if !ok {
 			continue
 		}
 		out = append(out, loginRequestWire{ID: req.ID, Profile: sp.Name, Label: sp.Label, Project: sp.Project,
 			Account: sp.Account, Relogin: req.Snapshot.rejected(), Waiters: cloudlogin.RecentWaiters(req.Waiters, 5),
-			FirstAt: req.FirstAt, LastAt: req.LastAt})
+			FirstAt: req.FirstAt, LastAt: req.LastAt, ExpiresInSec: logins.ExpiresInSec(req, now)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, loginListWire{Requests: out})
 }

@@ -5,6 +5,7 @@
 // ever holds an attempt id: only the modal's own press does (useGcpLoginAttempt).
 import { create } from "zustand";
 import { api, getTenant } from "../../core/api/client.ts";
+import { deadlineFrom } from "../cloudlogin/countdown.ts";
 
 export interface GcpLoginWaiter {
   session?: string;
@@ -23,6 +24,9 @@ export interface GcpLoginRequest {
   waiters: GcpLoginWaiter[];
   firstAt: string;
   lastAt: string;
+  /** When the Agent drops the request, on this browser's clock (deadlineFrom); null while a
+   *  login attempt for it runs, or when the Agent gave no countdown. */
+  deadline?: number | null;
 }
 
 /** A Settings profile and its login, as GET /api/gcp-login/profiles lists it (the WS bar badge). */
@@ -91,7 +95,7 @@ interface GcpLoginState {
  */
 export type GcpLogoutResult = { ok: true; account: string; profiles: string[] } | { ok: false; code: string; message: string };
 
-function asRequest(raw: unknown): GcpLoginRequest | null {
+function asRequest(raw: unknown, receivedAt: number): GcpLoginRequest | null {
   const r = raw as Record<string, unknown>;
   if (typeof r?.id !== "string" || !r.id || typeof r.profile !== "string" || !r.profile) return null;
   return {
@@ -104,6 +108,7 @@ function asRequest(raw: unknown): GcpLoginRequest | null {
     waiters: Array.isArray(r.waiters) ? (r.waiters as GcpLoginWaiter[]) : [],
     firstAt: String(r.firstAt ?? ""),
     lastAt: String(r.lastAt ?? ""),
+    deadline: deadlineFrom(r.expiresInSec, receivedAt),
   };
 }
 
@@ -127,7 +132,8 @@ export const useGcpLoginStore = create<GcpLoginState>((set, get) => ({
     }
     if (!d || d.error || !Array.isArray(d.requests)) return;
     if (getTenant() !== tenant) return; // asked under the previous tenant
-    set({ requests: d.requests.map(asRequest).filter((r): r is GcpLoginRequest => r !== null) });
+    const now = Date.now();
+    set({ requests: d.requests.map((r) => asRequest(r, now)).filter((r): r is GcpLoginRequest => r !== null) });
   },
   reset() {
     clearTimeout(syncTimer);

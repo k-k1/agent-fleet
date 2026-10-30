@@ -297,6 +297,40 @@
   line-height: 1.5;
   color: var(--muted);
 }
+/* Cloud login toasts: the identity a login is for, at body weight so the member checks it
+   before pressing Log in, and the countdown to the Agent's deadline. */
+.login-toast-id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  color: var(--fg);
+}
+.login-toast-name {
+  font-weight: 600;
+}
+.login-toast-field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.login-toast-key {
+  font-size: 11px;
+  color: var(--muted);
+}
+.login-toast-val {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.login-toast-countdown {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.login-toast-countdown.is-soon {
+  color: var(--warn);
+}
 .update-toast-btn {
   flex: none;
   padding: 2px 10px;
