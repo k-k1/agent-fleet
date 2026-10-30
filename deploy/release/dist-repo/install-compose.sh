@@ -87,8 +87,9 @@ else
   # macOS ships shasum, not sha256sum; compare the one line this bundle owns.
   want="$(awk -v f="$BUNDLE" '$2 == f { print $1 }' "$TMP/SHA256SUMS")"
   got="$(shasum -a 256 "$TMP/$BUNDLE" | cut -d' ' -f1)"
-  [ -n "$want" ] && [ "$want" = "$got" ] \
-    || die "sha256 mismatch (possibly a corrupted download — please retry)"
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    die "sha256 mismatch (possibly a corrupted download — please retry)"
+  fi
 fi
 
 TARGET="$DEST/agent-fleet-$VER"
