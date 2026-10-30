@@ -1475,7 +1475,10 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
   describe("while GitHub is still computing mergeability", () => {
     const unknown = { ...mergeable, mergeable: "unknown", mergeableState: "unknown" };
     beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
-    afterEach(() => vi.useRealTimers());
+    afterEach(() => {
+      vi.restoreAllMocks(); // the timer spies, before the fakes they wrap go away
+      vi.useRealTimers();
+    });
     const tick = async (ms: number) => {
       await act(async () => {
         vi.advanceTimersByTime(ms);
@@ -1531,9 +1534,11 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     it("drops a poll in flight when a fresh read starts, even if both answers are unknown", async () => {
       // The merge dialog stays open after a plain failure, so a second press re-reads the pull
       // request while a poll from the first re-read may still be out.
-      // Under act() the fresh read's blanking commits on its own, so this pins the flow but not
-      // the batched case (blank + fast "unknown" in one commit); the poll effect's `attempt`
-      // dependency is what covers that one.
+      // Under act() the fresh read's blanking commits on its own, so the batched case (blank +
+      // fast "unknown" in one commit) cannot be reproduced. What it depends on is observable
+      // instead: the poll's cleanup has already run when the fresh read is sent.
+      const setSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearSpy = vi.spyOn(globalThis, "clearTimeout");
       workItemDetail.mockResolvedValue(mergeable);
       workItemMerge.mockResolvedValue({ error: { code: "provider_error", message: "boom" } });
       const modal = await open();
@@ -1549,12 +1554,18 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
       await tick(2000);
       const calls = workItemDetail.mock.calls.length;
+      const pollTimer = setSpy.mock.results[setSpy.mock.calls.findLastIndex((c) => c[1] === 2000)].value;
       // A second failed press re-reads; the answer is unknown again, with a newer head.
       const NEW = "f".repeat(40);
-      workItemDetail.mockResolvedValue({ ...unknown, headSha: NEW, additions: 99 });
+      let cleanedFirst = false;
+      workItemDetail.mockImplementation(async () => {
+        cleanedFirst = clearSpy.mock.calls.some((c) => c[0] === pollTimer);
+        return { ...unknown, headSha: NEW, additions: 99 };
+      });
       await act(async () => confirmBtn().click());
       await settle();
       expect(workItemDetail.mock.calls.length).toBe(calls + 1);
+      expect(cleanedFirst).toBe(true);
       expect(modal.textContent).toContain("+99");
       // The stale poll answers last: it must not paint the older pull request back.
       await act(async () => release({ ...mergeable, additions: 1 }));
