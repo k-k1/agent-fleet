@@ -65,6 +65,29 @@ describe("after the teardown cancel (#2977)", () => {
   });
 });
 
+describe("a retired instance (end of its file)", () => {
+  it("is not resumed by a later file's beforeEach", async () => {
+    vi.resetModules();
+    const s = await import("./settings.ts");
+    expect(await s.hydrateUIPrefs()).toBe(true);
+    const g = globalThis as any;
+    const cancels: Set<() => unknown> = g[Symbol.for("af.prefsTimerHooks")];
+    const resumes: Set<() => unknown> = g[Symbol.for("af.prefsTimerResumeHooks")];
+    const saved = [new Set(cancels), new Set(resumes)];
+    try {
+      cancels.forEach((c) => c()); // what the shared afterAll does...
+      cancels.clear();
+      resumes.clear();
+      resumes.forEach((r) => r()); // ...so a later beforeEach reaches nothing
+      s.setSetting("iconSet", "seti"); // a tail from the retired file
+      expect(s.cancelPrefsTimersForTest()).toEqual({ save: false, hydrateRetry: false });
+    } finally {
+      saved[0].forEach((c) => cancels.add(c));
+      saved[1].forEach((r) => resumes.add(r));
+    }
+  });
+});
+
 describe("a hydrate still in flight when its test ends", () => {
   let finish!: (v: unknown) => void;
 

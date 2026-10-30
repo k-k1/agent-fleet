@@ -17,4 +17,10 @@ const cancelAll = () => hooks("af.prefsTimerHooks")?.forEach((cancel) => cancel(
 // the test, an afterAll) is refused instead of outliving the file; beforeEach lifts it.
 beforeEach(() => hooks("af.prefsTimerResumeHooks")?.forEach((resume) => resume()));
 afterEach(cancelAll);
-afterAll(cancelAll);
+// End of file: cancel, then forget every instance. Nobody resumes a forgotten one, so a tail from
+// this file can never arm a timer in a later file that shares the worker.
+afterAll(() => {
+  cancelAll();
+  hooks("af.prefsTimerHooks")?.clear();
+  hooks("af.prefsTimerResumeHooks")?.clear();
+});
