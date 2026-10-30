@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// sqliteHomeFixture isolates HOME and CODEX_HOME and stubs the two probes: codex home on NFS,
-// home local, nothing running.
+// sqliteHomeFixture isolates HOME and CODEX_HOME and stubs the probes: codex home on NFS, home
+// local, no codex and no tmux server running.
 func sqliteHomeFixture(t *testing.T) (src, dst string) {
 	t.Helper()
 	home := t.TempDir()
@@ -22,10 +22,11 @@ func sqliteHomeFixture(t *testing.T) (src, dst string) {
 	t.Setenv("CODEX_HOME", src)
 	t.Setenv(SQLiteHomeEnv, "")
 	os.Unsetenv(SQLiteHomeEnv)
-	origNFS, origRun := onNFS, codexRunning
-	t.Cleanup(func() { onNFS, codexRunning = origNFS, origRun })
+	origNFS, origRun, origTmux := onNFS, codexRunning, tmuxUp
+	t.Cleanup(func() { onNFS, codexRunning, tmuxUp = origNFS, origRun, origTmux })
 	onNFS = func(p string) bool { return p == src }
 	codexRunning = func() bool { return false }
+	tmuxUp = func() bool { return false }
 	return src, SQLiteHomeDir()
 }
 
@@ -96,6 +97,7 @@ func TestRelocateSQLiteLeavesOtherLayoutsAlone(t *testing.T) {
 		"codex home local": func(*testing.T, string) { onNFS = func(string) bool { return false } },
 		"home on NFS too":  func(*testing.T, string) { onNFS = func(string) bool { return true } },
 		"codex running":    func(*testing.T, string) { codexRunning = func() bool { return true } },
+		"tmux server up":   func(*testing.T, string) { tmuxUp = func() bool { return true } },
 		"env set":          func(t *testing.T, _ string) { t.Setenv(SQLiteHomeEnv, "/elsewhere") },
 		"config sets it": func(t *testing.T, src string) {
 			writeFile(t, filepath.Join(src, "config.toml"), "model = \"x\"\nsqlite_home = \"/local\"\n[features]\n")
@@ -137,7 +139,8 @@ func TestRelocateSQLiteDiscardsAnInterruptedStaging(t *testing.T) {
 }
 
 // After the move, a database a codex outside af created at the old path is not renamed over
-// the retired copy, and nothing is renamed while a codex process may hold it open.
+// the retired copy, its WAL is not separated from it, and nothing is renamed while a codex
+// process may hold it open.
 func TestRelocateSQLiteRetiresWithoutClobbering(t *testing.T) {
 	src, dst := sqliteHomeFixture(t)
 	writeFile(t, filepath.Join(src, "state_5.sqlite"), "old")
@@ -145,6 +148,7 @@ func TestRelocateSQLiteRetiresWithoutClobbering(t *testing.T) {
 		t.Fatalf("first boot dir = %q", dir)
 	}
 	writeFile(t, filepath.Join(src, "state_5.sqlite"), "new")
+	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "new-wal") // free name, same group
 	writeFile(t, filepath.Join(src, "goals_1.sqlite"), "goals")
 
 	codexRunning = func() bool { return true }
@@ -162,6 +166,9 @@ func TestRelocateSQLiteRetiresWithoutClobbering(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(src, "state_5.sqlite"+retiredSuffix)); string(b) != "old" {
 		t.Fatalf("retired copy = %q, want the pre-migration bytes", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(src, "state_5.sqlite-wal")); string(b) != "new-wal" {
+		t.Fatalf("live database's WAL was separated from it (got %q)", b)
 	}
 	if _, err := os.Stat(filepath.Join(src, "goals_1.sqlite"+retiredSuffix)); err != nil {
 		t.Fatalf("free name not retired: %v", err)
@@ -198,6 +205,11 @@ func TestConfigSetsSQLiteHome(t *testing.T) {
 		{"# sqlite_home = \"/x\"\n", false},
 		{"sqlite_home_extra = 1\n", false},
 		{"model = \"gpt\"\n", false},
+		{"\"sqlite_home\" = \"/x\"\n", true},
+		{"dirs = [\n  [\"a\"],\n  [1, 2],\n]\nsqlite_home = \"/x\"\n", true}, // array rows are not headers
+		{"note = \"\"\"\nsqlite_home = \"/x\"\n\"\"\"\n", false},             // inside a multi-line string
+		{"note = \"\"\"\nx\n\"\"\"\nsqlite_home = \"/x\"\n", true},
+		{"[ features ] # c\nsqlite_home = \"/x\"\n", false},
 	}
 	for _, c := range cases {
 		p := filepath.Join(t.TempDir(), "config.toml")
@@ -231,7 +243,10 @@ func TestSQLiteHomeProbes(t *testing.T) {
 		t.Skip("cannot exec from TMPDIR: ", err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	if !anyCodexProcess() {
-		t.Fatal("a running binary named codex was not seen")
+	for _, pid := range codexPIDs() {
+		if pid == cmd.Process.Pid {
+			return
+		}
 	}
+	t.Fatalf("the codex binary this test started (pid %d) was not seen", cmd.Process.Pid)
 }

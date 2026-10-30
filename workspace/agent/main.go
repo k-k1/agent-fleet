@@ -125,14 +125,15 @@ func serve() {
 	// codex process. Exported here and into every tmux launch, so the app-server, image
 	// generation, Terminal sessions and a codex a member types in a pane all open the same copy;
 	// two codex processes on two copies would each show a different thread list.
-	// When it is not relocated, a tmux server that outlived an earlier boot may still carry the
-	// variable in its global environment, so it is unset there unless the operator set it.
+	// The tmux server takes the value on every launch either way: one that outlived an earlier
+	// boot still carries that boot's value (or none) in its global environment.
 	dir, note := codex.RelocateSQLite()
-	switch {
-	case dir != "":
+	if dir != "" {
 		_ = os.Setenv(codex.SQLiteHomeEnv, dir)
-		tmuxx.AddLaunchEnv(nil, []string{codex.SQLiteHomeEnv + "=" + dir})
-	case os.Getenv(codex.SQLiteHomeEnv) == "":
+	}
+	if v := os.Getenv(codex.SQLiteHomeEnv); v != "" {
+		tmuxx.AddLaunchEnv(nil, []string{codex.SQLiteHomeEnv + "=" + v})
+	} else {
 		tmuxx.AddLaunchEnv([]string{codex.SQLiteHomeEnv}, nil)
 	}
 	if note != "" {

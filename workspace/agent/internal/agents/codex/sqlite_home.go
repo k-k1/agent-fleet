@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // codex keeps its SQLite databases (state_5.sqlite and siblings) in CODEX_HOME unless told
@@ -34,10 +36,11 @@ func SQLiteHomeDir() string {
 	return filepath.Join(paths.AgentStateDir(), "codex-sqlite")
 }
 
-// Seams for tests: the real ones read the mount type and /proc.
+// Seams for tests: the real ones read the mount type, /proc and the tmux server.
 var (
 	onNFS        = statfsIsNFS
-	codexRunning = anyCodexProcess
+	codexRunning = func() bool { return len(codexPIDs()) > 0 }
+	tmuxUp       = func() bool { return tmuxx.Cmd("list-sessions").Run() == nil }
 )
 
 // RelocateSQLite moves codex's databases off an NFS CODEX_HOME once and returns the directory
@@ -72,6 +75,12 @@ func RelocateSQLite() (dir, note string) {
 	if codexRunning() {
 		return "", "codex sqlite: a codex process is running; the move off NFS waits for the next start"
 	}
+	// A shell already open in a pane predates this boot's environment, so a codex typed there
+	// would open ~/.codex and create a second set of databases. The server only outlives the
+	// Agent on an in-place restart; a container start has none, which is when the move happens.
+	if tmuxUp() {
+		return "", "codex sqlite: tmux sessions from before this boot are open; the move off NFS waits for the next start"
+	}
 	n, err := copyDatabases(src, dst)
 	if err != nil {
 		return "", fmt.Sprintf("codex sqlite: not moved off NFS, staying in %s: %v", src, err)
@@ -83,11 +92,17 @@ func RelocateSQLite() (dir, note string) {
 	return dst, moved
 }
 
-var sqliteHomeKeyRe = regexp.MustCompile(`^sqlite_home\s*=`)
+var (
+	sqliteHomeKeyRe = regexp.MustCompile(`^(?:sqlite_home|"sqlite_home"|'sqlite_home')\s*=`)
+	tableHeaderRe   = regexp.MustCompile(`^\[\[?\s*[A-Za-z0-9_."' -]+\]\]?\s*(?:#.*)?$`)
+)
 
 // configSetsSQLiteHome reports whether config.toml sets sqlite_home at the top level, the
 // manual workaround from #3013. Precedence between that key and SQLiteHomeEnv is not something
-// to depend on, so a user who set it keeps exactly what they set.
+// to depend on, so a user who set it keeps exactly what they set. A line scan, not a TOML
+// parser (the module has none): it skips multi-line strings, and a line counts as a table
+// header only in the [name] / [[name]] shape, so an array value continued on a line that
+// starts with "[" does not end the top level early.
 func configSetsSQLiteHome(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -95,13 +110,25 @@ func configSetsSQLiteHome(path string) bool {
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
+	inString := ""
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(line, "[") {
-			return false // a table header ends the top level
+		if inString != "" {
+			if strings.Count(line, inString)%2 == 1 {
+				inString = ""
+			}
+			continue
+		}
+		if tableHeaderRe.MatchString(line) {
+			return false
 		}
 		if sqliteHomeKeyRe.MatchString(line) {
 			return true
+		}
+		for _, q := range []string{`"""`, `'''`} {
+			if strings.Count(line, q)%2 == 1 {
+				inString = q
+			}
 		}
 	}
 	return false
@@ -140,13 +167,14 @@ func copyDatabases(src, dst string) (int, error) {
 	if err == nil {
 		err = os.Rename(stage, dst)
 	}
-	if err == nil {
-		err = syncDir(filepath.Dir(dst))
-	}
 	if err != nil {
 		_ = os.RemoveAll(stage)
 		return 0, err
 	}
+	// Past the rename dst is the marker, and every later boot uses it. Reporting a failed
+	// directory sync as a failed move would run codex on the keep-side copy for this boot only,
+	// and the next boot would come back to dst without those writes.
+	_ = syncDir(filepath.Dir(dst))
 	return n, nil
 }
 
@@ -202,33 +230,51 @@ func syncDir(dir string) error {
 }
 
 // retireLeftovers renames the keep-side database files out of codex's way. It also runs on
-// every boot after the move, because the rename after the staging rename can be interrupted.
-// A file whose retired name is already taken is left alone: it was created after the move by
-// a codex that did not see SQLiteHomeEnv, and overwriting the retired copy would lose the
-// pre-migration bytes instead.
+// every boot after the move, because the renames after the staging rename can be interrupted.
+//
+// A database and its -wal / -shm / -journal move as one group or not at all. A group with any
+// retired name already taken was created after the move by a codex that did not see
+// SQLiteHomeEnv: renaming part of it would separate a live database from its WAL, and
+// renaming over the retired copy would lose the pre-migration bytes.
 func retireLeftovers(src string) string {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return ""
 	}
-	var kept []string
-	retired := 0
+	groups := map[string][]string{} // database file name -> its files present here
 	for _, e := range entries {
 		if _, rt := dbFile(e.Name()); !rt || !e.Type().IsRegular() {
 			continue
 		}
-		from := filepath.Join(src, e.Name())
-		to := from + retiredSuffix
-		if _, err := os.Lstat(to); err == nil {
-			kept = append(kept, e.Name())
-			continue
+		base := e.Name()
+		if i := strings.LastIndex(base, ".sqlite"); i >= 0 {
+			base = base[:i+len(".sqlite")]
 		}
-		if err := os.Rename(from, to); err != nil {
-			kept = append(kept, e.Name())
-			continue
-		}
-		retired++
+		groups[base] = append(groups[base], e.Name())
 	}
+	var kept []string
+	retired := 0
+	for base, names := range groups {
+		taken := false
+		for _, n := range []string{"", "-wal", "-shm", "-journal"} {
+			if _, err := os.Lstat(filepath.Join(src, base+n+retiredSuffix)); err == nil {
+				taken = true
+			}
+		}
+		if taken {
+			kept = append(kept, base)
+			continue
+		}
+		for _, n := range names {
+			from := filepath.Join(src, n)
+			if err := os.Rename(from, from+retiredSuffix); err != nil {
+				kept = append(kept, n)
+				continue
+			}
+			retired++
+		}
+	}
+	sort.Strings(kept)
 	var parts []string
 	if retired > 0 {
 		parts = append(parts, fmt.Sprintf("retired %d keep-side file(s) as *%s", retired, retiredSuffix))
@@ -242,14 +288,15 @@ func retireLeftovers(src string) string {
 	return "codex sqlite: " + strings.Join(parts, "; ")
 }
 
-// anyCodexProcess reports whether a native codex binary is running in this container. The npm
-// launcher is node; the process holding the databases is the binary it execs. When in doubt
-// (no /proc) it answers true, which only postpones the move.
-func anyCodexProcess() bool {
+// codexPIDs lists the native codex binaries running in this container. The npm launcher is
+// node; the process holding the databases is the binary it execs. Without /proc it answers
+// with a placeholder pid, which only postpones the move.
+func codexPIDs() []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return true
+		return []int{-1}
 	}
+	var pids []int
 	self := os.Getpid()
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
@@ -261,8 +308,8 @@ func anyCodexProcess() bool {
 			continue // gone, or not ours to read
 		}
 		if filepath.Base(strings.TrimSuffix(exe, " (deleted)")) == "codex" {
-			return true
+			pids = append(pids, pid)
 		}
 	}
-	return false
+	return pids
 }
