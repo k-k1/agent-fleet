@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func projectDirExists(id string) bool {
@@ -165,5 +167,41 @@ func TestAgentMemoryExternalRetryAfterRefusedStartKeepsRecord(t *testing.T) {
 	}
 	if out, err := memoryGitRun("show", "--stat", "--format=", "HEAD"); err != nil || !strings.Contains(out, "project.json") || !strings.Contains(out, "fact.md") {
 		t.Fatalf("commit should hold record and memory: %q %v", out, err)
+	}
+}
+
+// The retry of a refused first save is refused too when the working copy cannot be found (the
+// search is incomplete, or the clone is gone): saving without the identity would drop the record.
+func TestAgentMemoryExternalRetryWithoutIdentityIsRefused(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		prep func(dir string)
+		code int
+	}{
+		// The session's working directory would still name the project, so it goes too.
+		{"incomplete search", func(string) { session.RemoveMeta("claude-fresh"); agentMemLiveBudget = 0 }, http.StatusConflict},
+		{"clone removed", func(dir string) { os.RemoveAll(dir) }, http.StatusNotFound},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home, _, _ := agentMemTestEnv(t)
+			dir := remoteRepo(t, home, "fresh", "https://github.com/k-k1/fresh.git")
+			want := agentMemProjectFor(dir)
+			externalMode(t, ExternalMemoryWrite)
+			if code, _ := extSave(t, map[string]any{"scope": "project", "project": want.ID, "revision": 7}); code == 200 {
+				t.Fatal("stale revision accepted")
+			}
+			old := agentMemLiveBudget
+			t.Cleanup(func() { agentMemLiveBudget = old })
+			c.prep(dir)
+			if code, out := extSave(t, map[string]any{"scope": "project", "project": want.ID}); code != c.code {
+				t.Fatalf("retry: %d %s", code, out)
+			}
+			if _, err := os.Stat(filepath.Join(agentMemDir(), "projects", want.ID, "fact.md")); err == nil {
+				t.Fatal("a memory was written without a project record")
+			}
+			if _, err := os.Stat(filepath.Join(agentMemDir(), "projects", want.ID, "project.json")); err == nil {
+				t.Fatal("a record appeared")
+			}
+		})
 	}
 }

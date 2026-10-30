@@ -77,14 +77,11 @@ type agentMemExternalTarget struct {
 }
 
 // agentMemExternalLive finds the working copy that stands for a project id that holds no memory.
-// complete=false (the search ran out of budget or time) answers nothing: a clone that could not be
-// ruled out is a project that could be chosen wrongly.
-func agentMemExternalLive(id string) *agentMemProject {
+// complete=false (the search ran out of budget or time) says a clone could not be ruled out, so the
+// caller must not treat a nil answer as "not cloned".
+func agentMemExternalLive(id string) (p *agentMemProject, complete bool) {
 	live, complete := agentMemLiveProjects()
-	if !complete {
-		return nil
-	}
-	return live[id]
+	return live[id], complete
 }
 
 // agentMemExternalCaller is the outside caller for one project. An empty project is the user
@@ -110,9 +107,12 @@ func agentMemExternalCaller(t agentMemExternalTarget, start bool) (agentMemCalle
 			if _, err := os.Stat(filepath.Join(agentMemDir(), "projects", t.ID, "project.json")); err == nil || !os.IsNotExist(err) {
 				return c, nil
 			}
-			live = agentMemExternalLive(t.ID)
+			var complete bool
+			if live, complete = agentMemExternalLive(t.ID); live == nil {
+				return c, agentMemExternalNoIdentity(complete)
+			}
 		}
-		if live != nil && live.ID == t.ID {
+		if live.ID == t.ID {
 			c.Project, c.startProject = live, true
 		}
 		return c, nil
@@ -123,13 +123,27 @@ func agentMemExternalCaller(t agentMemExternalTarget, start bool) (agentMemCalle
 	}
 	live := t.Live
 	if live == nil {
-		live = agentMemExternalLive(t.ID)
+		var complete bool
+		if live, complete = agentMemExternalLive(t.ID); live == nil && !complete && start {
+			return c, agentMemExternalNoIdentity(false)
+		}
 	}
 	if live == nil || live.ID != t.ID {
 		return c, err
 	}
 	c.Project, c.startProject = live, start
 	return c, nil
+}
+
+// agentMemExternalNoIdentity refuses a save into a project that has no record and whose working
+// copy cannot be found: without the identity the record cannot be written with the first memory.
+func agentMemExternalNoIdentity(complete bool) error {
+	if !complete {
+		return memoryErrf(http.StatusConflict, errCodeMemoryConflict,
+			"the working copies under ~/repos could not all be read, so this project cannot be started safely: try again")
+	}
+	return memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
+		"this project holds no memory record and its working copy is no longer cloned in the workspace: clone the repository again first")
 }
 
 // agentMemExternalResolve names the project a call is about. `repository` is a git remote URL
