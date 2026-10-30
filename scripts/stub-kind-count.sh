@@ -67,6 +67,8 @@ PY
 # Generated files, with the commands their own tests name; the MCP goldens on both sides list
 # the kinds, the agent's through the catalog snapshot, so they follow it.
 (cd "$dir/workspace/agent" && go test -count=1 -run TestKindCatalogSnapshot -update-kind-catalog . >/dev/null)
+# The create refusals name the accepted kinds, so that golden follows the registry too.
+(cd "$dir/workspace/agent" && go test -count=1 ./internal/sessionx -run TestCreateSessionEarlyReturnsAreByteIdentical -update-create-golden >/dev/null)
 (cd "$dir/workspace/agent" && go test -count=1 ./internal/mcpx -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden >/dev/null)
 (cd "$dir/control-plane" && go test -count=1 ./internal/mcpsrv -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden >/dev/null)
 

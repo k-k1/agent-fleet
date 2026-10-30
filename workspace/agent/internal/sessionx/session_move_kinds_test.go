@@ -21,6 +21,50 @@ var moveRefusals = map[string]string{
 	session.KindSSM:   moveTargetNotAnAgent,
 }
 
+// Measurements already shipped (ADR 0115 decision 9): these kinds are move targets, cursor is
+// offered as unmeasured, and the refusals above stand. A new kind needs no row here; moving one of
+// these between lists is a measurement change and edits this snapshot on purpose.
+var (
+	shippedMoveTargets    = []string{"claude", "codex", "opencode", "copilot", "agy", "muse", "kiro"}
+	shippedMoveUnmeasured = []string{"cursor"}
+)
+
+func TestShippedMoveClassificationHolds(t *testing.T) {
+	for _, k := range shippedMoveTargets {
+		if !slices.Contains(moveTargetKinds, k) {
+			t.Errorf("%q was a measured move target and is not on moveTargetKinds any more", k)
+		}
+	}
+	for _, k := range shippedMoveUnmeasured {
+		if !slices.Contains(moveUnmeasuredTargets, k) {
+			t.Errorf("%q was an unmeasured move target and is not on moveUnmeasuredTargets any more", k)
+		}
+	}
+	for k, want := range moveRefusals {
+		if got := moveTargetReason("other", k); got != want {
+			t.Errorf("moveTargetReason(other, %q) = %q, want %q", k, got, want)
+		}
+	}
+}
+
+// The lists are disjoint, duplicate-free and hold only registered kinds.
+func TestMoveListsAreWellFormed(t *testing.T) {
+	seen := map[string]string{}
+	for list, kinds := range map[string][]string{"moveTargetKinds": moveTargetKinds, "moveUnmeasuredTargets": moveUnmeasuredTargets} {
+		for _, k := range kinds {
+			if prev, dup := seen[k]; dup {
+				t.Errorf("%q is on %s and %s", k, prev, list)
+			}
+			seen[k] = list
+		}
+	}
+	for _, list := range [][]string{moveTargetKinds, moveUnmeasuredTargets} {
+		if len(slices.Compact(slices.Sorted(slices.Values(list)))) != len(list) {
+			t.Errorf("a move target list has a duplicate: %v", list)
+		}
+	}
+}
+
 func TestEveryKindIsClassifiedForMove(t *testing.T) {
 	for _, k := range RegisteredKinds() {
 		want, refused := moveRefusals[k]
