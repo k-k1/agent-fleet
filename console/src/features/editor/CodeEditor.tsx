@@ -150,6 +150,14 @@ export const editorTheme = EditorView.theme({
   },
   ".cm-panels-top": { borderBottom: "1px solid var(--border)" },
   ".cm-panels-bottom": { borderTop: "1px solid var(--border)" },
+  // Autocomplete and other tooltips; the selected completion keeps its own
+  // white-on-blue fill, which reads in both themes.
+  ".cm-tooltip": {
+    backgroundColor: "color-mix(in srgb, var(--viewer-bg, var(--bg)) 94%, var(--fg))",
+    color: "var(--fg)",
+    border: "1px solid var(--border)",
+  },
+  ".cm-tooltip-section:not(:first-child)": { borderTop: "1px solid var(--border)" },
   ".cm-textfield": {
     backgroundColor: "var(--viewer-bg, var(--bg))",
     border: "1px solid var(--border)",

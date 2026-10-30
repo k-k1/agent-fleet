@@ -24,50 +24,87 @@ function mount(extensions: Extension): EditorView {
   return view;
 }
 
-function styleRules(): CSSStyleRule[] {
-  return [...document.styleSheets].flatMap((sheet) =>
-    [...sheet.cssRules].filter((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule),
-  );
+interface Rule {
+  /** Position in the cascade: later wins between equal selectors. */
+  order: number;
+  style: CSSStyleDeclaration;
 }
 
-/** Rules under one theme class, keyed by the selector with that class cut out. */
-function rulesOf(themeClass: string): Map<string, string> {
+/** Rules under one theme class, keyed by the selector with that class written as `&`. */
+function rulesOf(themeClass: string): Map<string, Rule> {
   const scope = `.${themeClass}`;
-  const rules = new Map<string, string>();
-  for (const rule of styleRules()) {
-    if (rule.selectorText.startsWith(scope)) {
-      rules.set(rule.selectorText.split(scope).join("&"), rule.style.cssText);
+  const rules = new Map<string, Rule>();
+  let order = 0;
+  for (const sheet of document.styleSheets) {
+    for (const rule of sheet.cssRules) {
+      order++;
+      if (rule instanceof CSSStyleRule && rule.selectorText.startsWith(scope)) {
+        rules.set(rule.selectorText.split(scope).join("&"), { order, style: rule.style });
+      }
     }
   }
   return rules;
 }
 
+/** The value `style` gives `longhand`, directly or through a shorthand. jsdom keeps a
+ *  shorthand holding var() unexpanded, so `border: … var(--border)` has no longhands. */
+function valueFor(style: CSSStyleDeclaration, longhand: string): string | undefined {
+  for (const property of style) {
+    if (longhand === property || longhand.startsWith(`${property}-`)) {
+      return style.getPropertyValue(property);
+    }
+  }
+  return undefined;
+}
+
+const MUST_OVERRIDE = [
+  "& .cm-selectionBackground",
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground",
+  "& .cm-panels",
+  "& .cm-panels-top",
+  "& .cm-panels-bottom",
+  "& .cm-tooltip",
+  "& .cm-tooltip-section:not(:first-child)",
+  "& .cm-textfield",
+  "& .cm-button",
+  "& .cm-button:active",
+];
+
 describe("editorTheme", () => {
-  it("overrides every light base-theme colour the editor would show in the dark theme", () => {
+  it("replaces every colour the light base theme paints behind or over the text with a token", () => {
     const plain = mount(basicSetup).themeClasses.split(" ");
     const themed = mount([basicSetup, editorTheme]).themeClasses.split(" ");
     const ours = themed.filter((c) => !plain.includes(c));
     expect(ours).toHaveLength(1);
-    // The light base theme's scope class is the one a plain dark-unflagged editor carries
-    // and that also scopes the light focused-selection fill.
-    const light = plain.find((c) => rulesOf(c).has("&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground"));
+    const light = plain.find((c) =>
+      rulesOf(c).has("&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground"),
+    );
     expect(light).toBeDefined();
-
+    const base = rulesOf(light!);
     const theme = rulesOf(ours[0]);
-    const mustOverride = [
-      "& .cm-selectionBackground",
-      "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground",
-      "& .cm-panels",
-      "& .cm-panels-top",
-      "& .cm-panels-bottom",
-      "& .cm-textfield",
-      "& .cm-button",
-    ];
-    for (const selector of mustOverride) {
-      expect(rulesOf(light!).has(selector), `base theme still has ${selector}`).toBe(true);
-      expect(theme.get(selector), selector).toMatch(/var\(--/);
+
+    for (const selector of MUST_OVERRIDE) {
+      const baseRule = base.get(selector);
+      const themeRule = theme.get(selector);
+      expect(baseRule, `base theme no longer has ${selector}`).toBeDefined();
+      expect(themeRule, selector).toBeDefined();
+      expect(themeRule!.order, `${selector} loses the cascade`).toBeGreaterThan(baseRule!.order);
+      const painted = [...baseRule!.style].filter((p) => /color|background|border-image/.test(p));
+      expect(painted.length, selector).toBeGreaterThan(0);
+      for (const property of painted) {
+        expect(valueFor(themeRule!.style, property), `${selector} ${property}`).toMatch(
+          /var\(--|^none$/,
+        );
+      }
     }
-    // The base caret is black outside the dark theme.
-    expect(theme.get("& .cm-cursor, & .cm-dropCursor")).toContain("var(--fg)");
+  });
+
+  it("draws the caret in --fg instead of the base theme's black", () => {
+    const view = mount([basicSetup, editorTheme]);
+    const theme = rulesOf(view.themeClasses.split(" ").at(-1)!);
+    expect(theme.get("& .cm-cursor, & .cm-dropCursor")?.style.getPropertyValue("border-left-color")).toBe(
+      "var(--fg)",
+    );
+    expect(theme.get("& .cm-content")?.style.getPropertyValue("caret-color")).toBe("var(--fg)");
   });
 });
