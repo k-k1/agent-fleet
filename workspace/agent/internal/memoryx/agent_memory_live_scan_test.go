@@ -184,6 +184,9 @@ func TestAgentMemoryLiveSearchComputesIdentityOncePerDirectory(t *testing.T) {
 	old := agentMemLiveRunner
 	agentMemLiveRunner = func(dir string) agentMemGitRunner {
 		return func(args ...string) (string, error) {
+			mu.Lock()
+			calls[dir]++
+			mu.Unlock()
 			if len(args) > 2 && args[2] == "--git-common-dir" {
 				mu.Lock()
 				perDir[dir]++
@@ -203,9 +206,16 @@ func TestAgentMemoryLiveSearchComputesIdentityOncePerDirectory(t *testing.T) {
 		if n != 1 {
 			t.Errorf("identity of %s computed %d times", d, n)
 		}
-		// rev-parse (one process), worktree list for a linked worktree, remote get-url.
-		if calls[d] > 3 {
-			t.Errorf("%s took %d git processes", d, calls[d])
+	}
+	// The runner counts what identity runs; the ls-files of the walk is outside it. A clone costs
+	// rev-parse + remote get-url, a linked worktree adds worktree list.
+	for i, c := range copies {
+		want := 2
+		if i%2 == 1 {
+			want = 3
+		}
+		if calls[c] != want {
+			t.Errorf("%s took %d git processes, want %d", c, calls[c], want)
 		}
 	}
 }
@@ -277,5 +287,49 @@ func TestAgentMemoryLiveSearchSkipsDependencyStores(t *testing.T) {
 	t.Cleanup(func() { agentMemLiveSoft = old })
 	if _, complete := agentMemLiveProjects(); complete {
 		t.Fatal("an unread ordinary ignored directory must keep the answer incomplete")
+	}
+}
+
+// A working copy whose own name is a dependency store's is still a working copy: only its content
+// is not entered.
+func TestAgentMemoryLiveSearchKeepsACopyNamedLikeAStore(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	repos := filepath.Join(home, "repos")
+	var copies []string
+	for _, name := range []string{"venv", ".cache", "node_modules"} {
+		d := filepath.Join(repos, name)
+		memoryMkdirAll(t, d)
+		liveScanGit(t, d, "init", "--quiet", "-b", "main")
+		copies = append(copies, d)
+	}
+	live, complete := agentMemLiveProjects()
+	if !complete {
+		t.Fatal("incomplete")
+	}
+	for _, d := range copies {
+		if p := agentMemProjectFor(d); p == nil || live[p.ID] == nil {
+			t.Errorf("%s is not live", d)
+		}
+	}
+}
+
+// The single rev-parse must give the id the separate calls gave, whitespace in the path included.
+func TestAgentMemoryGitIdentityMatchesSeparateCalls(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	app := filepath.Join(home, "repos", "app")
+	memoryMkdirAll(t, app)
+	meta := filepath.Join(home, "metadata ") // trailing space
+	liveScanGit(t, app, "init", "--quiet", "-b", "main", "--separate-git-dir="+meta)
+	combined := func(args ...string) (string, error) { return gitx.Run(app, args...) }
+	separate := func(args ...string) (string, error) {
+		if len(args) > 3 { // the combined call: fail it, so the separate calls run
+			return "", os.ErrInvalid
+		}
+		return gitx.Run(app, args...)
+	}
+	r1, k1 := agentMemGitIdentityWith(combined)
+	r2, k2 := agentMemGitIdentityWith(separate)
+	if k1 == "" || r1 != r2 || k1 != k2 {
+		t.Fatalf("combined (%q, %q) differs from separate (%q, %q)", r1, k1, r2, k2)
 	}
 }

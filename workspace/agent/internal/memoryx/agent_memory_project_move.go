@@ -125,8 +125,8 @@ var (
 // being skipped does not make the answer incomplete: a working copy inside one is not a layout
 // anyone uses, and both decisions the answer backs (one clone has this remote, a project has no
 // clone left) still go through a preview or a named project. Everything else that is not read
-// makes the answer incomplete. A directory named like this is skipped even when it holds a .git
-// entry. Changing the list changes what members can rely on: update the ADR 0108 note.
+// makes the answer incomplete. A directory named like this that is itself a working copy still counts as one; only what
+// is inside it is not entered. Changing the list changes what members can rely on: update the ADR 0108 note.
 var agentMemLiveSkip = map[string]bool{
 	"node_modules": true,
 	".venv":        true,
@@ -276,9 +276,6 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 			} else if !e.IsDir() {
 				continue
 			}
-			if agentMemLiveSkip[e.Name()] {
-				continue
-			}
 			isGit, isCopy := false, false
 			for _, marker := range []string{".git", ".svn"} {
 				if _, err := os.Lstat(filepath.Join(d, marker)); err == nil {
@@ -287,6 +284,13 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					complete = false
 				}
+			}
+			if agentMemLiveSkip[e.Name()] {
+				// The directory may itself be a working copy; only its content is not entered.
+				if isCopy {
+					add(d)
+				}
+				continue
 			}
 			switch {
 			case whole:

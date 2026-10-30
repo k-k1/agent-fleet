@@ -231,8 +231,9 @@ func agentMemGitIdentityWith(run agentMemGitRunner) (root, key string) {
 	var common, top, gitDir string
 	gotGitDir := false
 	if out, err := run("rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel", "--absolute-git-dir"); err == nil {
-		if lines := strings.Split(out, "\n"); len(lines) == 3 && lines[0] != "" && lines[1] != "" {
-			common, top, gitDir, gotGitDir = lines[0], lines[1], lines[2], true
+		if lines := strings.Split(out, "\n"); len(lines) == 3 && strings.TrimSpace(lines[0]) != "" && strings.TrimSpace(lines[1]) != "" {
+			// Trimmed as gitx.Run trims a single answer: the id is derived from this text.
+			common, top, gitDir, gotGitDir = strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2]), true
 		}
 	}
 	if !gotGitDir {
