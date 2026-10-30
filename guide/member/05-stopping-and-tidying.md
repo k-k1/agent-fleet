@@ -147,7 +147,10 @@ runs on to **twice** the budget, the session is halted at once, mid-turn, and th
   budget above what is already spent. Resuming without raising it gives the session one more turn,
   after which it stops again.
 - **What the figure is.** An estimate at list price from the session's own transcript, or the
-  CLI's own reported cost where it gives one (opencode); **not your bill**. On a subscription plan
+  CLI's own reported cost where it gives one (opencode); **not your bill**. For Claude Code it
+  includes the session's subagents and Workflow agents, which Claude Code records in transcripts
+  of their own. The usage view does not count those yet, so there a session that delegated work
+  shows less than its budget figure. On a subscription plan
   it is the API-equivalent figure. A model with no price cannot be estimated, so a budget has no
   effect on it (the dialog says so); kinds whose transcript carries no token counts (Kiro, Cursor, Antigravity)
   and the self-hosted engine ($0) are never stopped by one. A fork starts from $0: the history it

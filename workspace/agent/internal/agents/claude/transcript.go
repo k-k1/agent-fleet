@@ -76,6 +76,19 @@ func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) 
 	return fallback, fallbackPath, matched
 }
 
+// SubagentTurns parses one subagent or Workflow-agent transcript (a path from SubagentLogs)
+// for usage, every turn marked Sidechain. Claude writes these beside the session's own
+// transcript and never into it, so a usage figure read from TranscriptRead alone leaves out
+// everything the session delegated.
+func SubagentTurns(path string) []transcript.Turn {
+	lines := readJSONLLines(path)
+	turns := CollectTurns(lines, 0, len(lines))
+	for i := range turns {
+		turns[i].Sidechain = true // an agent's context is its own, never the session's fill
+	}
+	return turns
+}
+
 // lastLineWhere returns the LAST line of p that ok accepts, scanning backwards. It reads
 // the tail window first and only falls back to the whole file when the window holds no
 // accepted line, so the polled callers (freshness / abort detection) do not re-read a multi-MB

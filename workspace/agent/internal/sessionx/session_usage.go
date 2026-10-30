@@ -44,6 +44,18 @@ type sessionUsage struct {
 	Kind       string               `json:"kind"`
 	Context    *usagex.ContextUsage `json:"context,omitempty"`
 	Cumulative cumulativeUsage      `json:"cumulative"`
+	// Subagents is the part of Cumulative that the session's subagents and Workflow agents
+	// spent (claude only; absent when it delegated nothing).
+	Subagents *cumulativeUsage `json:"subagents,omitempty"`
+}
+
+func (c *cumulativeUsage) add(o cumulativeUsage) {
+	c.Turns += o.Turns
+	c.InTok += o.InTok
+	c.OutTok += o.OutTok
+	c.CacheRead += o.CacheRead
+	c.CacheCreate += o.CacheCreate
+	c.Spend += o.Spend
 }
 
 // HandleSessionsUsage (GET /sessions/usage?name=<optional>) returns usage for every
@@ -68,6 +80,7 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		u := AggregateUsage(UsageTurns(m))
+		addSubagentUsage(&u, SubagentUsageTurns(m))
 		u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
 		overlayKiroLiveUsage(m, &u)
 		overlayMuseLiveUsage(m, &u)
@@ -155,6 +168,47 @@ func UsageTurns(m session.Meta) []transcript.Turn {
 	}
 	td, _ := AgentOf(m.Kind).Transcript(m)
 	return td.Turns
+}
+
+// SubagentLogs lists the session's subagent transcripts, nil for a kind that keeps none apart.
+func SubagentLogs(m session.Meta) []string {
+	if sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader); ok {
+		return sr.SubagentLogs(m)
+	}
+	return nil
+}
+
+// SubagentTurns parses one transcript from SubagentLogs, every turn marked Sidechain.
+func SubagentTurns(m session.Meta, path string) []transcript.Turn {
+	if sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader); ok {
+		return sr.SubagentTurns(path)
+	}
+	return nil
+}
+
+// SubagentUsageTurns is every subagent transcript of the session, one slice per agent.
+func SubagentUsageTurns(m session.Meta) [][]transcript.Turn {
+	var out [][]transcript.Turn
+	for _, p := range SubagentLogs(m) {
+		out = append(out, SubagentTurns(m, p))
+	}
+	return out
+}
+
+// addSubagentUsage adds the subagents' consumption to the session's cumulative figure and
+// reports it on its own as well. Each agent is folded alone: every event re-reports only its
+// own agent's context, so folding two agents' interleaved events together would keep one
+// agent's input snapshot and drop the other's.
+func addSubagentUsage(u *sessionUsage, subagents [][]transcript.Turn) {
+	var sub cumulativeUsage
+	for _, turns := range subagents {
+		sub.add(AggregateUsage(turns).Cumulative)
+	}
+	if sub == (cumulativeUsage{}) {
+		return
+	}
+	u.Cumulative.add(sub)
+	u.Subagents = &sub
 }
 
 // AggregateUsage folds per-event turns into the wire shape. Pure — unit-tested.

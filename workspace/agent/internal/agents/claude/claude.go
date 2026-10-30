@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // New returns the claude Agent implementation for the kind registry.
@@ -254,6 +255,16 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 }
 
 func (agentImpl) ClearResume(sid string) { _ = StartFresh(sid) }
+
+// SubagentLogs implements agents.SubagentUsageReader.
+func (agentImpl) SubagentLogs(m session.Meta) []string {
+	return SubagentLogs(session.UUID(m.Dir, m.Name))
+}
+
+// SubagentTurns implements agents.SubagentUsageReader.
+func (agentImpl) SubagentTurns(path string) []transcript.Turn { return SubagentTurns(path) }
+
+var _ agents.SubagentUsageReader = agentImpl{}
 
 // RemoteSessionURL derives the claude.ai Remote Control page for sid from its
 // jsonl "bridge-session" line (written when RC connects). The web URL is

@@ -2,13 +2,17 @@ package main
 
 // The spend the per-session budget compares with (#1054, session.Spend).
 //
-// It is priced from the session's own transcript through the same turn fold the ledger uses
-// (foldTurnRows) and the same price table the usage view uses (usageEstCostUSD), so a session's
-// budget chip and its row in the usage view agree. The ledger itself is not read: it has no
-// per-session query, it folds lazily on read, and adding its rows to a transcript sum would
-// count every turn twice.
+// It is priced from the session's own transcript, and from its subagents' transcripts where the
+// CLI keeps them apart (claude), through the same turn fold the ledger uses (foldTurnRows) and
+// the same price table the usage view uses (usageEstCostUSD). The ledger does not take in the
+// subagents yet (#3054), so for a session that delegated, its usage-view row is lower than its
+// budget chip. The ledger itself is not read: it has no per-session query, it folds lazily on
+// read, and adding its rows to a transcript sum would count every turn twice.
 
 import (
+	"os"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -18,10 +22,75 @@ import (
 )
 
 func sessionSpend(m session.Meta) session.Spend {
-	return spendOfTurns(m, sessionx.UsageTurns(m))
+	return spendOfRows(m, foldTurnRows(sessionx.UsageTurns(m), true), subagentSpendRows(m))
 }
 
-// spendOfTurns prices one session's turns. Per logical turn: the CLI's reported cost when it
+// subagentRowsEntry is one subagent transcript folded into rows, valid while the file keeps
+// this size and mtime.
+type subagentRowsEntry struct {
+	size  int64
+	mtime time.Time
+	rows  []usageTurnRow
+}
+
+// subagentRowsCache holds each session's subagent transcripts already folded, keyed by session
+// name and then by path. A Workflow run leaves a hundred or more of them, and the budget sweep
+// prices a capped session every spendCacheTTL: re-reading them all each time costs tens of
+// megabytes per tick on network storage, while only the agents still running ever change.
+var subagentRowsCache = struct {
+	sync.Mutex
+	m map[string]subagentRowsCacheSession
+}{m: map[string]subagentRowsCacheSession{}}
+
+type subagentRowsCacheSession struct {
+	createdAt string // a recreated name is a new session; never serve its predecessor's rows
+	files     map[string]subagentRowsEntry
+}
+
+// subagentSpendRows folds each of the session's subagent transcripts on its own (an agent
+// reports only its own context, so two agents must never share a logical turn), re-reading
+// only the files that changed since the last call.
+func subagentSpendRows(m session.Meta) []usageTurnRow {
+	logs := sessionx.SubagentLogs(m)
+	subagentRowsCache.Lock()
+	prev := subagentRowsCache.m[m.Name]
+	subagentRowsCache.Unlock()
+	if prev.createdAt != m.CreatedAt {
+		prev.files = nil
+	}
+	next := subagentRowsCacheSession{createdAt: m.CreatedAt, files: make(map[string]subagentRowsEntry, len(logs))}
+	var rows []usageTurnRow
+	for _, p := range logs {
+		// Stat before reading: a file that grows in between is read with more than the cached
+		// size says, so the next call sees a different size and reads it again.
+		fi, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		e, ok := prev.files[p]
+		if !ok || e.size != fi.Size() || !e.mtime.Equal(fi.ModTime()) {
+			e = subagentRowsEntry{size: fi.Size(), mtime: fi.ModTime(),
+				rows: foldTurnRows(sessionx.SubagentTurns(m, p), true)}
+		}
+		next.files[p] = e
+		rows = append(rows, e.rows...)
+	}
+	subagentRowsCache.Lock()
+	if len(next.files) == 0 {
+		delete(subagentRowsCache.m, m.Name)
+	} else {
+		subagentRowsCache.m[m.Name] = next
+	}
+	subagentRowsCache.Unlock()
+	return rows
+}
+
+// spendOfTurns prices one session's own turns, without subagents.
+func spendOfTurns(m session.Meta, turns []transcript.Turn) session.Spend {
+	return spendOfRows(m, foldTurnRows(turns, true), nil)
+}
+
+// spendOfRows prices one session's folded turns. Per logical turn: the CLI's reported cost when it
 // gave one, otherwise the list-price estimate of the turn's tokens. The two are alternatives,
 // never added — the usage view shows them side by side for the same reason.
 //
@@ -32,10 +101,17 @@ func sessionSpend(m session.Meta) session.Spend {
 // start from a copy of the source's history with the source's own timestamps; opencode zeroes
 // the copied cost but keeps the tokens, which the estimate would price. A turn with no usable
 // timestamp is counted — undercounting is the failure the budget exists to prevent.
-func spendOfTurns(m session.Meta, turns []transcript.Turn) session.Spend {
+//
+// Subagent rows are priced like the session's own and merged in by time: the Marks have to run
+// oldest first for SpendCrossingBound to find the last turn that stayed under the cap.
+func spendOfRows(m session.Meta, rows, subagentRows []usageTurnRow) session.Spend {
+	if len(subagentRows) > 0 {
+		rows = append(rows[:len(rows):len(rows)], subagentRows...)
+		sort.SliceStable(rows, func(i, j int) bool { return rowEnd(rows[i].TS).Before(rowEnd(rows[j].TS)) })
+	}
 	var sp session.Spend
 	born, bornOK := session.SpendStart(m)
-	for _, r := range foldTurnRows(turns, true) {
+	for _, r := range rows {
 		if bornOK && r.TS != "" {
 			if ts, err := time.Parse(time.RFC3339Nano, r.TS); err == nil && ts.Before(born) {
 				continue

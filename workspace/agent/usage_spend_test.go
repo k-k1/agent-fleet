@@ -2,6 +2,9 @@ package main
 
 import (
 	"math"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -71,5 +74,78 @@ func TestSpendOfTurnsExcludesHistoryCopiedInTheForksOwnSecond(t *testing.T) {
 	}
 	if sp := spendOfTurns(m, turns); !spendNear(sp.USD, 5) {
 		t.Fatalf("spend = %v, want only the fork's own $5", sp.USD)
+	}
+}
+
+// claudeUsageLine is one assistant record in claude's own transcript shape, carrying usage.
+func claudeUsageLine(ts, req string, in, out int) string {
+	return `{"type":"assistant","timestamp":"` + ts + `","uuid":"u-` + req + `","requestId":"` + req +
+		`","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"ok"}],` +
+		`"usage":{"input_tokens":` + strconv.Itoa(in) + `,"output_tokens":` + strconv.Itoa(out) + `}}}` + "\n"
+}
+
+func claudeUserLine(ts string) string {
+	return `{"type":"user","timestamp":"` + ts + `","message":{"role":"user","content":"go"}}` + "\n"
+}
+
+// Claude writes subagent and Workflow-agent transcripts beside the session's own and never
+// into it (#3051): a budget priced from the main transcript alone never stopped a session whose
+// work ran in subagents.
+func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	born := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return born.Add(d).Format(time.RFC3339Nano) }
+	m := session.Meta{Name: "sub3051", Dir: t.TempDir(), Kind: session.KindClaude, Model: "claude-opus-5",
+		CreatedAt: born.Format(time.RFC3339)}
+	sid := session.UUID(m.Dir, m.Name)
+	proj := filepath.Join(cfg, "projects", "p1")
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The main thread: 1M in × $5 = $5.
+	write(filepath.Join(proj, sid+".jsonl"), claudeUserLine(at(0))+claudeUsageLine(at(time.Minute), "r1", 1_000_000, 0))
+	// A subagent: two calls, each re-reporting its own 1M context = $10.
+	agent := filepath.Join(proj, sid, "subagents", "agent-a1.jsonl")
+	write(agent, claudeUserLine(at(2*time.Minute))+claudeUsageLine(at(3*time.Minute), "a1", 1_000_000, 0)+
+		claudeUserLine(at(4*time.Minute))+claudeUsageLine(at(5*time.Minute), "a2", 1_000_000, 0))
+	// A Workflow agent, finished before the subagent's first call: 100k out × $25 = $2.50.
+	write(filepath.Join(proj, sid, "subagents", "workflows", "wf_x", "agent-b1.jsonl"),
+		claudeUserLine(at(2*time.Minute))+claudeUsageLine(at(150*time.Second), "b1", 0, 100_000))
+
+	sp := sessionSpend(m)
+	if want := 5 + 10 + 2.50; !spendNear(sp.USD, want) {
+		t.Fatalf("spend = %v, want %v (main + subagent + Workflow agent)", sp.USD, want)
+	}
+	for i := 1; i < len(sp.Marks); i++ {
+		if sp.Marks[i].End.Before(sp.Marks[i-1].End) {
+			t.Fatalf("marks out of order at %d: %+v", i, sp.Marks)
+		}
+	}
+	// The crossing bound is the end of the last turn under the cap, in time order across the
+	// files: $5 (main) + $2.50 (Workflow agent) stays under $12, the subagent's first call
+	// crosses it.
+	if got := session.SpendCrossingBound(sp, 12, born, born.Add(10*time.Minute)); !got.Equal(born.Add(150 * time.Second)) {
+		t.Fatalf("crossing bound = %v, want the end of the Workflow agent's call", got)
+	}
+
+	// A running agent's transcript grows; the cached fold of it must not hide that.
+	f, err := os.OpenFile(agent, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString(claudeUserLine(at(7*time.Minute)) + claudeUsageLine(at(8*time.Minute), "a3", 1_000_000, 0))
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sp := sessionSpend(m); !spendNear(sp.USD, 22.50) {
+		t.Fatalf("spend after the agent grew = %v, want 22.50", sp.USD)
 	}
 }
