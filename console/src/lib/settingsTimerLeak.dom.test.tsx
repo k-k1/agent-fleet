@@ -50,6 +50,21 @@ describe("cancelPrefsTimersForTest", () => {
   });
 });
 
+describe("after the teardown cancel (#2977)", () => {
+  it("refuses a timer armed late, and the next test can save again", async () => {
+    vi.resetModules();
+    const s = await import("./settings.ts");
+    expect(await s.hydrateUIPrefs()).toBe(true);
+    s.cancelPrefsTimersForTest(); // what the shared afterEach / afterAll does
+    s.setSetting("iconSet", "seti"); // an async tail of the finished test
+    expect(s.cancelPrefsTimersForTest()).toEqual({ save: false, hydrateRetry: false });
+
+    (await import("./settings/sync.ts")).resumePrefsTimersForTest(); // what the shared beforeEach does
+    s.setSetting("iconSet", "material");
+    expect(s.cancelPrefsTimersForTest()).toEqual({ save: true, hydrateRetry: false });
+  });
+});
+
 describe("a hydrate still in flight when its test ends", () => {
   let finish!: (v: unknown) => void;
 

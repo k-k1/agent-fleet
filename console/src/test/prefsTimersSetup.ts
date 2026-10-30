@@ -7,11 +7,14 @@
 //
 // Cancelling silently, not failing: a change to any setting schedules a save, so a test that
 // merely exercises a settings-backed component leaves one pending and is not at fault.
-import { afterEach } from "vitest";
+import { afterAll, afterEach, beforeEach } from "vitest";
 
-afterEach(() => {
-  const hooks = (globalThis as any)[Symbol.for("af.prefsTimerHooks")] as
-    | Set<() => unknown>
-    | undefined;
-  hooks?.forEach((cancel) => cancel());
-});
+const hooks = (key: string) =>
+  (globalThis as any)[Symbol.for(key)] as Set<() => unknown> | undefined;
+const cancelAll = () => hooks("af.prefsTimerHooks")?.forEach((cancel) => cancel());
+
+// Cancelling also quiesces the sync module, so a timer armed after this point (an async tail of
+// the test, an afterAll) is refused instead of outliving the file; beforeEach lifts it.
+beforeEach(() => hooks("af.prefsTimerResumeHooks")?.forEach((resume) => resume()));
+afterEach(cancelAll);
+afterAll(cancelAll);
