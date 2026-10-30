@@ -249,3 +249,28 @@ func TestIsPerModelLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestBannerGated: for a limit without a menu the reset instant is trusted only when it came
+// from the banner. The statusline-capture fallback answers for the account's 5-hour/weekly
+// windows, and a per-model limit is a different window; the form that comes with a menu (an
+// account window) keeps using the capture.
+func TestBannerGated(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		ok     bool
+		menu   bool
+		want   bool
+	}{
+		{"no menu, capture only", "capture", true, false, false},
+		{"no menu, banner", "banner", true, false, true},
+		{"no menu, banner and capture", "banner+capture", true, false, true},
+		{"menu, capture only", "capture", true, true, true},
+		{"menu, nothing found", "", false, true, false},
+		{"no menu, nothing found", "", false, false, false},
+	} {
+		if got := bannerGated(tc.source, tc.ok, tc.menu); got != tc.want {
+			t.Errorf("%s: bannerGated = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

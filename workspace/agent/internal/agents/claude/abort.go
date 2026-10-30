@@ -118,19 +118,13 @@ var limitMarkers = []string{
 	"weekly limit",
 }
 
-// LimitKind splits a turn that ended on a limit into the two kinds whose next move is
-// opposite. Both arrive as 429 / `error:"rate_limit"`, so code alone cannot tell them apart
-// (docs/log/47 §4-10).
-type LimitKind string
+// LimitKind and its values are agents.LimitKind: the sweep's capability speaks them, so they
+// live there.
+type LimitKind = agents.LimitKind
 
 const (
-	// LimitWindow is a window of time (5-hour / weekly / per-model). Waiting clears it, so
-	// it is eligible for auto-resume.
-	LimitWindow LimitKind = "window"
-	// LimitSpend is a spend or balance cap. Waiting never clears it — raising the cap or
-	// adding credit is a billing decision — so no auto-resume is armed and it must not call
-	// itself "waiting for the limit to lift".
-	LimitSpend LimitKind = "spend"
+	LimitWindow = agents.LimitWindow
+	LimitSpend  = agents.LimitSpend
 )
 
 // spendMarkers are the usage-limit texts that mean a cap on money. Measured (2026-08-20,

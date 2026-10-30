@@ -388,3 +388,15 @@ directions, so a field that drifts back into a shared struct fails it.
 One edge moved: a `tools/call` for a name with no spec used to get a type-mismatch refusal
 decoded through the union ahead of `unknown tool`; it now gets `unknown tool` directly, because
 there is no struct to decode into. A name that is not a tool is not in any golden.
+
+## Addendum (2026-10-30) — rate-limit resume asks `agents.UsageLimiter` (#2925, first slice)
+
+`internal/sessionx/rate_limit_resume.go` held 7 of the kind-literal branches counted after
+Phase 3: which kinds the sweep watches, the claude-only pane menu read, and the at-limit and
+reset-instant questions. They are now `agents.UsageLimiter` (`agents/usagelimit.go`), implemented
+by claude, codex and muse; `kindLiteralCeiling` goes 133 → 126. None of the seven was "one
+product's behaviour" that has to stay: the claude details (banner-only reset trust for a limit
+without a menu) moved into the claude package with the capability. A kind without the capability
+is not watched, which is what the old `switch` returned for every other kind.
+`TestUsageLimitTraitsMatchOldSwitch` holds the answers to a copy of the old switch over every
+registered kind and driver. The remaining sites stay in #2925.
