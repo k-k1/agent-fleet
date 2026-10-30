@@ -128,9 +128,7 @@ func newTestHandle(t *testing.T) (*Handle, *fakeACP) {
 	cl, f := newFakeACP(t)
 	h := NewHandle(testKind, Hooks{}, "s1", t.TempDir(), "slot-1")
 	h.sid, h.cl, h.alive, h.state = "sess-1", cl, true, agents.TurnCompleted
-	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
-		h.onServerRequest(h.cl, id, method, params)
-	}
+	h.cl.Start(h.callbacks())
 	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", …) above, runs before
 	// HOME is restored (pushed before it, it would run after the restore, which is too late).
 	t.Cleanup(func() { endTurnsBeforeHomeRestore(t, h) })

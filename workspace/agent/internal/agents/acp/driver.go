@@ -63,7 +63,8 @@ type Kind struct {
 	Ledger *agents.MsgLedger
 	Sids   agents.SidStore
 
-	// NewClient connects the JSON-RPC client to the child's stdio.
+	// NewClient connects the JSON-RPC client to the child's stdio. It must not start reading:
+	// the driver calls Start once the callbacks are known.
 	NewClient func(stdin io.Writer, stdout io.Reader) *Client
 	// Command builds the child for st: binary, args, env, SysProcAttr. Start sets Dir.
 	Command func(h *Handle, st agents.ThreadSettings) *exec.Cmd
@@ -270,15 +271,7 @@ func (h *Handle) Spawn(st agents.ThreadSettings) error {
 		return err
 	}
 	cl := k.NewClient(stdin, stdout)
-	// Capture this cl in the closure: during the first spawn readLoop can already run while
-	// h.cl is still unassigned, so going through h.cl would panic on a nil dereference when
-	// answering an unknown method.
-	cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
-		h.onServerRequest(cl, id, method, params)
-	}
-	if h.hooks.OnNotify != nil {
-		cl.OnNotify = h.hooks.OnNotify
-	}
+	cl.Start(h.callbacks())
 	go h.watch(cmd, tail, cl, exited)
 
 	if _, err := cl.Call("initialize", map[string]any{
@@ -1191,5 +1184,14 @@ func (h *Handle) NoteToolCall(sessionUpdate, id, status string) {
 		if sessionUpdate == "tool_call" || status == "in_progress" {
 			h.calls.Add(id)
 		}
+	}
+}
+
+// callbacks is how a client delivers into this handle. OnRequest gets the receiving client from
+// readLoop rather than reading h.cl: during the first spawn h.cl is still unassigned.
+func (h *Handle) callbacks() Callbacks {
+	return Callbacks{
+		OnRequest: h.onServerRequest,
+		OnNotify:  h.hooks.OnNotify,
 	}
 }
