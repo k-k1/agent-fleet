@@ -113,6 +113,23 @@ Decision 6 (no server change) holds: the file is read in the browser and only pe
 constraint). Procedure and the remaining phases (`~/.ssh/config`, gcloud, export):
 [docs/79 §9](../log/79-settings-export-import.md#9-手元の-awsconfig-を読む3010).
 
+## Addendum (2026-10-30) — reading gcloud configurations (#3017 part 2)
+
+For the same reason as `~/.aws/config`, a gcloud configuration file (`~/.config/gcloud/configurations/config_<name>`)
+becomes a source. **The sink stays the CP's existing CRUD (`api/gcp/profiles`).** No new REST endpoint.
+
+1. **Create only what the CP accepts.** Login method Google, a project id by the CP's own regexes, impersonation of
+   one service account. A configuration whose `core/account` is a service account is not imported: it cannot sign in
+   without a key.
+2. **Settings that change who signs in or where requests go are refused with a reason, not dropped.** Auth overrides
+   under `auth/`, a delegation chain, a proxy, endpoint overrides, a universe domain. Creating without them would
+   point the profile at something other than what the laptop's configuration does.
+3. **Never touch credentials.** The credentials DB, ADC and key files are not read, and a path or token file named in
+   a configuration is neither shown nor sent. A reason names a known key and a line, nothing else.
+4. Re-read the current list before writing and send nothing when it cannot be read (the executor rule of decision 5).
+
+Decision 6 holds. Procedure: [docs/79 §9.4](../log/79-settings-export-import.md#94-gcloud-の構成を読む3017-第-2-部2026-10-30).
+
 ## Addendum (2026-10-30) — exporting Settings AWS profiles as `~/.aws/config` (#3017, part 3)
 
 The reverse direction is built from allowed fields only, never by concatenating stored values: the CP checks an SSO
