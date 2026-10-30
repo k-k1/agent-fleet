@@ -100,8 +100,12 @@ func subagentSpendRowsAt(m session.Meta, now time.Time) []usageTurnRow {
 				}
 				continue
 			case err != nil:
-				// Some copies read: price what they hold now, and cache nothing, so the next
-				// call reads every copy again.
+				// Some copies read: price what they hold now, but keep the last complete fold
+				// under its old stamp, so the next call reads every copy again and a later
+				// total failure still has it to fall back on.
+				if ok {
+					next.agents[key] = e
+				}
 				rows = append(rows, foldTurnRows(turns, true)...)
 				continue
 			}

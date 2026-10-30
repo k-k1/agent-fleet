@@ -225,3 +225,63 @@ func TestSessionSpendUsesReadableCopiesOfAnAgent(t *testing.T) {
 		t.Fatal("a partial read was cached as complete")
 	}
 }
+
+// Success, then one copy unreadable while the other grows, then both unreadable, then both
+// readable again: the partial read is priced, never replaces the last complete fold, and that
+// fold is what a total failure falls back on.
+func TestSessionSpendKeepsTheLastCompleteFoldThroughPartialReads(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	born := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return born.Add(d).Format(time.RFC3339Nano) }
+	m := session.Meta{Name: "partial3051", Dir: t.TempDir(), Kind: session.KindClaude, Model: "claude-opus-5",
+		CreatedAt: born.Format(time.RFC3339)}
+	sid := session.UUID(m.Dir, m.Name)
+	a := filepath.Join(cfg, "projects", "p1", sid, "subagents", "agent-a.jsonl")
+	b := filepath.Join(cfg, "projects", "p2", sid, "subagents", "agent-a.jsonl")
+	shared := claudeUserLine(at(time.Minute)) + claudeUsageLine(at(2*time.Minute), "s1", 1_000_000, 0)
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.RemoveAll(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unreadable := func(p string) {
+		t.Helper()
+		if err := os.RemoveAll(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(p, 0o700); err != nil { // stat works, reading fails
+			t.Fatal(err)
+		}
+	}
+	// Both copies hold the same call: $5, counted once.
+	write(a, shared)
+	write(b, shared)
+	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
+		t.Fatalf("complete read = %v, want 5", sp.USD)
+	}
+	// a unreadable, b grows by a $5 call: the partial read prices it.
+	unreadable(a)
+	write(b, shared+claudeUserLine(at(3*time.Minute))+claudeUsageLine(at(4*time.Minute), "s2", 1_000_000, 0))
+	if sp := sessionSpend(m); !spendNear(sp.USD, 10) {
+		t.Fatalf("partial read = %v, want 10", sp.USD)
+	}
+	// Both unreadable: the last complete fold stands in rather than $0.
+	unreadable(b)
+	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
+		t.Fatalf("total failure = %v, want the last complete fold's 5", sp.USD)
+	}
+	// Both readable again: everything, once.
+	write(a, shared)
+	write(b, shared+claudeUserLine(at(3*time.Minute))+claudeUsageLine(at(4*time.Minute), "s2", 1_000_000, 0))
+	if sp := sessionSpend(m); !spendNear(sp.USD, 10) {
+		t.Fatalf("recovered = %v, want 10", sp.USD)
+	}
+}
