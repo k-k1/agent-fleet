@@ -67,3 +67,35 @@ func TestEnsureWorktreeFlatNameCollisionRefused(t *testing.T) {
 		t.Fatalf("relaunch = %q, %v; want %q", again, err, r1)
 	}
 }
+
+func TestEnsureWorktreeRefusesForeignRepoOnSameBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	app := filepath.Join(home, "repos", "app")
+	gitInit(t, app)
+	p1, err := EnsureWorktree(app, "main", "p1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated clone squatting on the flat name, on the very branch requested.
+	other := filepath.Join(home, "repos", "app@review")
+	gitInit(t, other)
+	runIntegrationGit(t, other, "checkout", "-q", "-b", "review")
+	if got, err := EnsureWorktree(p1, "p1", "review", "review"); err == nil {
+		t.Fatalf("foreign repo handed out as %q, want error", got)
+	}
+	// Another repo's linked worktree is refused too.
+	app2 := filepath.Join(home, "repos", "app2")
+	gitInit(t, app2)
+	w2, err := EnsureWorktree(app2, "main", "review", "x") // repos/app2@x
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIntegrationGit(t, app2, "worktree", "move", w2, filepath.Join(home, "repos", "app@rev2"))
+	if got, err := EnsureWorktree(p1, "p1", "review", "rev2"); err == nil {
+		t.Fatalf("foreign linked worktree handed out as %q, want error", got)
+	}
+}
