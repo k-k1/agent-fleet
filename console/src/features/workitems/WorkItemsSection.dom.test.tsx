@@ -1554,7 +1554,8 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
       await tick(2000);
       const calls = workItemDetail.mock.calls.length;
-      const pollTimer = setSpy.mock.results[setSpy.mock.calls.findLastIndex((c) => c[1] === 2000)].value;
+      const pollIdx = setSpy.mock.calls.map((c) => c[1]).lastIndexOf(2000);
+      const pollTimer = setSpy.mock.results[pollIdx].value;
       // A second failed press re-reads; the answer is unknown again, with a newer head.
       const NEW = "f".repeat(40);
       let cleanedFirst = false;
