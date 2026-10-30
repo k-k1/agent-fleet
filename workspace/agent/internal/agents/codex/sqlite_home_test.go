@@ -181,6 +181,16 @@ func TestRelocateSQLiteResumesTheRetire(t *testing.T) {
 	if got := strings.Join(dirNames(t, src), ","); got != "state_5.sqlite,state_5.sqlite-wal" {
 		t.Fatalf("keep side retired before dst was durable: %s", got)
 	}
+	// An Agent-only restart sees dst, which proves nothing about durability: still no retire.
+	if dir, _ := RelocateSQLite(); dir != dst {
+		t.Fatalf("restart dir = %q", dir)
+	}
+	if got := strings.Join(dirNames(t, src), ","); got != "state_5.sqlite,state_5.sqlite-wal" {
+		t.Fatalf("keep side retired while the sync still fails: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dst, retireManifest)); err != nil {
+		t.Fatalf("manifest gone while the sync still fails: %v", err)
+	}
 	parentSync = syncDir
 	now = func() time.Time { return time.Unix(999, 0) } // the stamp comes from the manifest
 
@@ -204,6 +214,50 @@ func TestRelocateSQLiteResumesTheRetire(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, retireManifest)); !os.IsNotExist(err) {
 		t.Fatalf("manifest left after the retire finished: %v", err)
+	}
+}
+
+// A file recreated at a listed name after the copy, or a listed name whose retired name already
+// exists, is never renamed: a retired copy is not overwritten, nor paired with another
+// generation's WAL.
+func TestRelocateSQLiteResumeSkipsAnotherGeneration(t *testing.T) {
+	src, dst := sqliteHomeFixture(t)
+	writeFile(t, filepath.Join(src, "state_5.sqlite"), "A")
+	writeFile(t, filepath.Join(src, "state_5.sqlite-wal"), "A-wal")
+	writeFile(t, filepath.Join(src, "logs_2.sqlite"), "L")
+	parentSync = func(string) error { return errors.New("EIO") }
+	if dir, _ := RelocateSQLite(); dir != dst {
+		t.Fatal("first boot did not move")
+	}
+	parentSync = syncDir
+	// state_5: both retired, but the manifest not yet removed, then a codex without the
+	// variable created B at the old name and checkpointed its WAL away.
+	for _, n := range []string{"state_5.sqlite", "state_5.sqlite-wal"} {
+		if err := os.Rename(filepath.Join(src, n), filepath.Join(src, n+".moved-to-local-100")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(src, "state_5.sqlite"), "B")
+	// logs_2: replaced in place by a new file (a new inode) before any retire ran.
+	if err := os.Remove(filepath.Join(src, "logs_2.sqlite")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(src, "logs_2.sqlite"), "L2")
+
+	dir, note := RelocateSQLite()
+	if dir != dst || !strings.Contains(note, "changed since the copy: logs_2.sqlite") {
+		t.Fatalf("dir = %q, note = %q", dir, note)
+	}
+	for name, want := range map[string]string{
+		"state_5.sqlite": "B", "state_5.sqlite.moved-to-local-100": "A",
+		"state_5.sqlite-wal.moved-to-local-100": "A-wal", "logs_2.sqlite": "L2",
+	} {
+		if b, _ := os.ReadFile(filepath.Join(src, name)); string(b) != want {
+			t.Fatalf("%s = %q, want %q", name, b, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(src, "logs_2.sqlite.moved-to-local-100")); !os.IsNotExist(err) {
+		t.Fatalf("a recreated file was retired: %v", err)
 	}
 }
 

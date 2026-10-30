@@ -32,7 +32,7 @@ const SQLiteHomeEnv = "CODEX_SQLITE_HOME"
 const retiredSuffix = ".moved-to-local-"
 
 // retireManifest lists, inside the destination, the keep-side files the move still has to
-// rename. It is written into the staging directory, so it appears together with the marker,
+// rename, each with the identity (fileID) it had when copied. It is written into the staging directory, so it appears together with the marker,
 // and removed once every rename is done: a crash between renames resumes on the next boot
 // instead of leaving a database retired without its WAL.
 const retireManifest = ".af-retire-pending"
@@ -221,6 +221,7 @@ func copyDatabases(src, dst string) (n int, durable bool, err error) {
 	n, retire, err := copyInto(src, stage)
 	if err == nil {
 		manifest := fmt.Sprintf("%d\n%s", now().Unix(), strings.Join(retire, "\n"))
+		// one "name<TAB>fileID" per line after the stamp
 		err = writeSynced(filepath.Join(stage, retireManifest), []byte(manifest))
 	}
 	if err == nil {
@@ -260,7 +261,11 @@ func copyInto(src, stage string) (n int, retire []string, err error) {
 		if !rt || !e.Type().IsRegular() {
 			continue
 		}
-		retire = append(retire, e.Name())
+		fi, err := e.Info()
+		if err != nil {
+			return 0, nil, err
+		}
+		retire = append(retire, e.Name()+"\t"+fileID(fi))
 		if !cp {
 			continue
 		}
@@ -323,6 +328,13 @@ func syncDir(dir string) error {
 // on from there. Database files a codex outside af created at the old path after the move are
 // not in the manifest and are left alone: renaming a live database would take it from that
 // process, and they are named in the log instead.
+//
+// Nothing on the keep side changes until dst's rename is known to be durable: seeing dst on a
+// later boot proves nothing after an Agent-only restart, and retiring the originals of a rename
+// a host crash then undoes would leave only retired copies. An entry whose retired name exists
+// is done, and one whose file is no longer the copied one (fileID) was recreated at that name
+// by a codex without SQLiteHomeEnv; neither is renamed, so a retired copy is never overwritten
+// or paired with another generation's WAL.
 func retirePending(src, dst string) string {
 	manifest := filepath.Join(dst, retireManifest)
 	b, err := os.ReadFile(manifest)
@@ -332,16 +344,29 @@ func retirePending(src, dst string) string {
 		}
 		return "codex sqlite: reading the retire manifest: " + err.Error()
 	}
+	if err := parentSync(filepath.Dir(dst)); err != nil {
+		return "codex sqlite: keep-side files left until the next start (directory sync failed: " + err.Error() + ")"
+	}
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	suffix := retiredSuffix + lines[0]
 	retired := 0
-	for _, name := range lines[1:] {
+	var changed []string
+	for _, line := range lines[1:] {
+		name, id, _ := strings.Cut(line, "\t")
 		if name == "" || strings.ContainsRune(name, '/') {
 			continue
 		}
 		from := filepath.Join(src, name)
-		if _, err := os.Lstat(from); os.IsNotExist(err) {
+		fi, err := os.Lstat(from)
+		if os.IsNotExist(err) {
 			continue // renamed by an earlier, interrupted boot
+		}
+		if _, err := os.Lstat(from + suffix); err == nil {
+			continue // already retired; what sits at the old name is newer
+		}
+		if err != nil || fileID(fi) != id {
+			changed = append(changed, name)
+			continue
 		}
 		if err := os.Rename(from, from+suffix); err != nil {
 			return fmt.Sprintf("codex sqlite: retired %d keep-side file(s), stopped at %s (resumes next start): %v", retired, name, err)
@@ -354,6 +379,12 @@ func retirePending(src, dst string) string {
 	note := ""
 	if retired > 0 {
 		note = fmt.Sprintf("codex sqlite: retired %d keep-side file(s) as *%s", retired, suffix)
+	}
+	if len(changed) > 0 {
+		if note != "" {
+			note += "; "
+		}
+		note += "codex sqlite: not retired, changed since the copy: " + strings.Join(changed, ", ")
 	}
 	if s := strangers(src); s != "" {
 		if note != "" {
