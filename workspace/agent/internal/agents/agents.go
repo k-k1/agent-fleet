@@ -437,6 +437,18 @@ type UsageReader interface {
 	UsageTurns(m session.Meta) []transcript.Turn
 }
 
+// TextReader is an optional Agent capability: the turns as a reader of their text (the search
+// index) wants them, when UsageReader's differ — claude, whose usage turns carry no text.
+type TextReader interface {
+	TextTurns(m session.Meta) []transcript.Turn
+}
+
+// LegacyCappedUsage marks an Agent whose usage fold once read a capped transcript, so its
+// older watermarks count from the first visible turn (see rebaseCappedMark in usage_fold.go).
+type LegacyCappedUsage interface {
+	LegacyCappedUsage()
+}
+
 // SubagentUsageReader is an optional Agent capability: the transcripts a session's subagents
 // write apart from its own (claude's subagents/ and Workflow agents). A usage figure that
 // reads only the session's transcript leaves them out. Kinds that write a subagent inline, or

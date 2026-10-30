@@ -676,3 +676,38 @@ func TestCollectTurnsUsageOncePerRequest(t *testing.T) {
 		t.Errorf("usage kept on the wrong row: %d %d %d", turns[0].OutTok, turns[1].OutTok, turns[2].OutTok)
 	}
 }
+
+// TestCollectUsageTurnsKeepsEveryTurn: a transcript past the chat view's 1 MiB text cap loses
+// its oldest turns under CollectTurns, but the usage reader sees all of them, text-free, with
+// the usage of each response counted once.
+func TestCollectUsageTurnsKeepsEveryTurn(t *testing.T) {
+	big := strings.Repeat("x", 100<<10)
+	var lines [][]byte
+	const n = 30 // 30 x 100 KiB of answer text: ~3 MiB, three times the cap
+	for i := 0; i < n; i++ {
+		lines = append(lines,
+			[]byte(`{"type":"user","message":{"content":"q"}}`),
+			[]byte(`{"type":"assistant","requestId":"r`+string(rune('a'+i))+`","message":{"usage":{"output_tokens":7},"content":[{"type":"text","text":"`+big+`"}]}}`),
+		)
+	}
+	if capped := CollectTurns(lines, 0, len(lines)); len(capped) >= 2*n {
+		t.Fatalf("fixture too small: the chat view kept %d of %d turns", len(capped), 2*n)
+	}
+	turns := CollectUsageTurns(lines)
+	if len(turns) != 2*n {
+		t.Fatalf("usage turns = %d, want %d", len(turns), 2*n)
+	}
+	out := 0
+	for i, tn := range turns {
+		if tn.Idx != i {
+			t.Fatalf("turn %d has idx %d", i, tn.Idx)
+		}
+		if tn.Text != "" || tn.Parts != nil {
+			t.Fatalf("turn %d kept text/parts", i)
+		}
+		out += tn.OutTok
+	}
+	if out != 7*n {
+		t.Errorf("summed output tokens = %d, want %d", out, 7*n)
+	}
+}

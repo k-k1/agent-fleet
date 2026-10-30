@@ -343,3 +343,18 @@ ADR:
 
 The figure is an estimate at list price, and the Console writes it with "≈" and says it is not the
 bill. Where it lives: `internal/session/spend_cap.go`, `internal/sessionx/session_spend_cap.go`.
+
+## Addendum (2026-10-31) — claude usage reads every turn, not the chat view's newest 1 MiB
+
+The budget, `get_session_usage` and the ledger fold read a claude transcript through the chat
+view's parse, which keeps only the newest 1 MiB of text, so a long session lost its oldest turns
+from every cumulative figure (#3055). They now use `claude.CollectUsageTurns`: the whole file,
+no tool results resolved, and text and parts dropped as each line is parsed (a cliWarning keeps
+its part). The search index keeps the capped parse through `sessionx.TextTurns`; title
+suggestion is not usage and is unchanged.
+
+The fold's `Groups` of a mark written under the capped reader counted from the first visible
+turn, which the uncapped numbering shifts. `rebaseCappedMark` renumbers such a mark by the
+transcript line of its last folded turn (`LastIdx`), and marks written from now on carry
+`uncapped`. The hidden head is not folded afterwards: its `Idx` values would collide with rows
+already in the ledger.

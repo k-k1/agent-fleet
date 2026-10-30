@@ -155,19 +155,24 @@ func overlayMuseLiveUsage(m session.Meta, u *sessionUsage) {
 	}
 }
 
-// UsageTurns loads the full transcript for aggregation: claude via its jsonl
-// (TranscriptRead + CollectTurns — the same parse /messages uses), the other
-// transcript agents via their Transcript() normalization.
+// UsageTurns loads the full transcript for aggregation: the kinds with a UsageReader (claude:
+// every turn, usage fields only; opencode: billed calls with nothing to display), the rest via
+// their Transcript() normalization.
 func UsageTurns(m session.Meta) []transcript.Turn {
-	if m.Kind == session.KindClaude {
-		lines, _, _ := claude.TranscriptRead(session.UUID(m.Dir, m.Name))
-		return claude.CollectTurns(lines, 0, len(lines))
-	}
 	if ur, ok := AgentOf(m.Kind).(agents.UsageReader); ok {
 		return ur.UsageTurns(m)
 	}
 	td, _ := AgentOf(m.Kind).Transcript(m)
 	return td.Turns
+}
+
+// TextTurns is the transcript for a reader of its text (the search index): a kind with a
+// TextReader gives its own, otherwise it is UsageTurns.
+func TextTurns(m session.Meta) []transcript.Turn {
+	if tr, ok := AgentOf(m.Kind).(agents.TextReader); ok {
+		return tr.TextTurns(m)
+	}
+	return UsageTurns(m)
 }
 
 // SubagentLogs lists the session's subagent transcripts grouped by agent (every copy of one
