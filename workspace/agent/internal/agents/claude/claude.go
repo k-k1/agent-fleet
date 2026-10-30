@@ -258,11 +258,11 @@ func (agentImpl) ClearResume(sid string) { _ = StartFresh(sid) }
 
 // SubagentLogs implements agents.SubagentUsageReader.
 func (agentImpl) SubagentLogs(m session.Meta) []string {
-	return SubagentLogs(session.UUID(m.Dir, m.Name))
+	return SubagentUsageLogs(session.UUID(m.Dir, m.Name))
 }
 
 // SubagentTurns implements agents.SubagentUsageReader.
-func (agentImpl) SubagentTurns(path string) []transcript.Turn { return SubagentTurns(path) }
+func (agentImpl) SubagentTurns(path string) ([]transcript.Turn, error) { return SubagentTurns(path) }
 
 var _ agents.SubagentUsageReader = agentImpl{}
 

@@ -45,12 +45,23 @@ var subagentRowsCache = struct {
 type subagentRowsCacheSession struct {
 	createdAt string // a recreated name is a new session; never serve its predecessor's rows
 	files     map[string]subagentRowsEntry
+	used      time.Time
 }
+
+// subagentRowsIdle drops a session's folded rows once nobody has priced it for this long. A
+// stopped, archived or deleted session leaves the budget sweep and is never read again, and
+// without this its rows would stay until the Agent restarts. A session priced after that is
+// re-read in full once.
+const subagentRowsIdle = 10 * time.Minute
 
 // subagentSpendRows folds each of the session's subagent transcripts on its own (an agent
 // reports only its own context, so two agents must never share a logical turn), re-reading
 // only the files that changed since the last call.
 func subagentSpendRows(m session.Meta) []usageTurnRow {
+	return subagentSpendRowsAt(m, time.Now())
+}
+
+func subagentSpendRowsAt(m session.Meta, now time.Time) []usageTurnRow {
 	logs := sessionx.SubagentLogs(m)
 	subagentRowsCache.Lock()
 	prev := subagentRowsCache.m[m.Name]
@@ -58,7 +69,7 @@ func subagentSpendRows(m session.Meta) []usageTurnRow {
 	if prev.createdAt != m.CreatedAt {
 		prev.files = nil
 	}
-	next := subagentRowsCacheSession{createdAt: m.CreatedAt, files: make(map[string]subagentRowsEntry, len(logs))}
+	next := subagentRowsCacheSession{createdAt: m.CreatedAt, files: make(map[string]subagentRowsEntry, len(logs)), used: now}
 	var rows []usageTurnRow
 	for _, p := range logs {
 		// Stat before reading: a file that grows in between is read with more than the cached
@@ -69,8 +80,17 @@ func subagentSpendRows(m session.Meta) []usageTurnRow {
 		}
 		e, ok := prev.files[p]
 		if !ok || e.size != fi.Size() || !e.mtime.Equal(fi.ModTime()) {
-			e = subagentRowsEntry{size: fi.Size(), mtime: fi.ModTime(),
-				rows: foldTurnRows(sessionx.SubagentTurns(m, p), true)}
+			turns, err := sessionx.SubagentTurns(m, p)
+			if err != nil {
+				// Not cached, so the next call reads it again; until then the last good fold
+				// stands in, an undercount of only what was appended since.
+				if ok {
+					next.files[p] = e
+					rows = append(rows, e.rows...)
+				}
+				continue
+			}
+			e = subagentRowsEntry{size: fi.Size(), mtime: fi.ModTime(), rows: foldTurnRows(turns, true)}
 		}
 		next.files[p] = e
 		rows = append(rows, e.rows...)
@@ -80,6 +100,11 @@ func subagentSpendRows(m session.Meta) []usageTurnRow {
 		delete(subagentRowsCache.m, m.Name)
 	} else {
 		subagentRowsCache.m[m.Name] = next
+	}
+	for name, c := range subagentRowsCache.m {
+		if now.Sub(c.used) > subagentRowsIdle {
+			delete(subagentRowsCache.m, name)
+		}
 	}
 	subagentRowsCache.Unlock()
 	return rows

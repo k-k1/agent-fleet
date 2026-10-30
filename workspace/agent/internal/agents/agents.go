@@ -442,10 +442,11 @@ type UsageReader interface {
 // reads only the session's transcript leaves them out. Kinds that write a subagent inline, or
 // not at all, do not implement it.
 type SubagentUsageReader interface {
-	// SubagentLogs lists the session's subagent transcripts, one file per agent.
+	// SubagentLogs lists the session's subagent transcripts, one file per agent, each agent once.
 	SubagentLogs(m session.Meta) []string
-	// SubagentTurns parses one of them, every turn marked Sidechain.
-	SubagentTurns(path string) []transcript.Turn
+	// SubagentTurns parses one of them in full, every turn marked Sidechain. An error means the
+	// file could not be read, never that the agent spent nothing.
+	SubagentTurns(path string) ([]transcript.Turn, error)
 }
 
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves

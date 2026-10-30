@@ -179,18 +179,21 @@ func SubagentLogs(m session.Meta) []string {
 }
 
 // SubagentTurns parses one transcript from SubagentLogs, every turn marked Sidechain.
-func SubagentTurns(m session.Meta, path string) []transcript.Turn {
+func SubagentTurns(m session.Meta, path string) ([]transcript.Turn, error) {
 	if sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader); ok {
 		return sr.SubagentTurns(path)
 	}
-	return nil
+	return nil, nil
 }
 
-// SubagentUsageTurns is every subagent transcript of the session, one slice per agent.
+// SubagentUsageTurns is every subagent transcript of the session, one slice per agent. A file
+// that cannot be read is left out: this is an on-demand figure, read again on the next call.
 func SubagentUsageTurns(m session.Meta) [][]transcript.Turn {
 	var out [][]transcript.Turn
 	for _, p := range SubagentLogs(m) {
-		out = append(out, SubagentTurns(m, p))
+		if turns, err := SubagentTurns(m, p); err == nil {
+			out = append(out, turns)
+		}
 	}
 	return out
 }

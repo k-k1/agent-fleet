@@ -148,4 +148,48 @@ func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
 	if sp := sessionSpend(m); !spendNear(sp.USD, 22.50) {
 		t.Fatalf("spend after the agent grew = %v, want 22.50", sp.USD)
 	}
+
+	// An agent transcript that cannot be read is not cached as an agent that spent nothing.
+	unreadable := filepath.Join(proj, sid, "subagents", "agent-z.jsonl")
+	if err := os.MkdirAll(unreadable, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if sp := sessionSpend(m); !spendNear(sp.USD, 22.50) {
+		t.Fatalf("spend with an unreadable agent = %v, want 22.50", sp.USD)
+	}
+	subagentRowsCache.Lock()
+	_, cached := subagentRowsCache.m[m.Name].files[unreadable]
+	subagentRowsCache.Unlock()
+	if cached {
+		t.Fatal("a failed read was cached; the agent would never be read again")
+	}
+}
+
+// A session nobody prices any more (stopped, archived, deleted) must not hold its folded rows
+// until the Agent restarts.
+func TestSubagentRowsCacheDropsIdleSessions(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	meta := func(name string) session.Meta {
+		m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, CreatedAt: now.Format(time.RFC3339)}
+		p := filepath.Join(cfg, "projects", "p1", session.UUID(m.Dir, m.Name), "subagents", "agent-a.jsonl")
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(claudeUsageLine(now.Format(time.RFC3339), "r", 1, 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	gone, live := meta("idle3051a"), meta("idle3051b")
+	subagentSpendRowsAt(gone, now)
+	subagentSpendRowsAt(live, now.Add(subagentRowsIdle+time.Minute))
+	subagentRowsCache.Lock()
+	_, kept := subagentRowsCache.m[gone.Name]
+	_, livePresent := subagentRowsCache.m[live.Name]
+	subagentRowsCache.Unlock()
+	if kept || !livePresent {
+		t.Fatalf("idle session kept=%v, live session present=%v; want false, true", kept, livePresent)
+	}
 }
