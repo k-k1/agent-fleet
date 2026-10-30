@@ -2,6 +2,12 @@ package mcpx
 
 import "encoding/json"
 
+// askAssistantArgs is ask_assistant's.
+type askAssistantArgs struct {
+	Assistant string `json:"assistant"`
+	Prompt    string `json:"prompt"`
+}
+
 // assistantTools consult other assistants, under --write. Consults are advisory-only by
 // construction (the sub-turn runs with no tools), so they can't loop or escalate.
 func assistantTools() []toolSpec {
@@ -22,13 +28,13 @@ func assistantTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				out, err := agentGET("/assistants")
 				if err != nil {
 					return mcpToolErr(req.ID, "アシスタント一覧の取得に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "ask_assistant",
@@ -53,7 +59,7 @@ func assistantTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *askAssistantArgs) []byte {
 				if a.Assistant == "" || a.Prompt == "" {
 					return mcpToolErr(req.ID, "assistant（相手）と prompt（相談内容）が必要です")
 				}
@@ -63,7 +69,7 @@ func assistantTools() []toolSpec {
 					return mcpToolErr(req.ID, "相談の実行に失敗しました: "+err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 	}
 }

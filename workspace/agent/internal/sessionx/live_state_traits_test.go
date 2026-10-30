@@ -46,7 +46,7 @@ func TestLiveStateTraitsMatchOldConditions(t *testing.T) {
 	}
 	oldStale := func(k string) bool { return k == session.KindAgy }
 	// `m.DriverKind() == session.DriverManaged && NormalizeKind(m.Kind) == session.KindCodex && ... codex.IsRateLimited`
-	// and `m.Kind == session.KindMuse && ... museRateLimited` (museRateLimited is muse.IsRateLimited).
+	// and `m.Kind == session.KindMuse && ... museRateLimited`.
 	oldLimited := func(k string) (fn any, managedOnly bool) {
 		if NormalizeKind(k) == session.KindCodex {
 			return codex.IsRateLimited, true
@@ -55,9 +55,6 @@ func TestLiveStateTraitsMatchOldConditions(t *testing.T) {
 			return muse.IsRateLimited, false
 		}
 		return nil, false
-	}
-	if ptrOf(museRateLimited) != ptrOf(muse.IsRateLimited) {
-		t.Fatal("museRateLimited is no longer muse.IsRateLimited: the old muse line's function moved")
 	}
 	n := 0
 	for _, k := range liveStateProbeKinds() {

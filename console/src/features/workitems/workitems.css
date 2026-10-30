@@ -662,6 +662,15 @@
   color: var(--warn);
 }
 
+/* Merge row: the spinner while GitHub is still computing, and the manual re-check once the
+   automatic budget is spent. */
+.wi-dmerge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .wi-dbranches {
   display: flex;
   align-items: center;

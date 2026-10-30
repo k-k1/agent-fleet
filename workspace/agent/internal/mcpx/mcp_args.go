@@ -57,11 +57,13 @@ func mcpToolProps(name string) (map[string]bool, bool) {
 	return props, ok
 }
 
-// mcpCheckCallArgs holds a tools/call to what its tool advertised and decodes it into a.
+// mcpCheckCallArgs holds a tools/call to what its tool advertised and decodes it into a, the
+// tool's own args struct (nil for a name with no spec: only the shape and the advertised keys are
+// checked).
 // A non-empty result is the tool error text; nothing has been done by then. Without it a
 // misspelt key (create_session with `prompt` for `initial_prompt`) decodes to a zero value and
 // the call succeeds with no task.
-func mcpCheckCallArgs(tool string, args json.RawMessage, a *mcpCallArgs) string {
+func mcpCheckCallArgs(tool string, args json.RawMessage, a any) string {
 	if t := strings.TrimSpace(string(args)); t == "" || t == "null" {
 		return ""
 	}
@@ -88,6 +90,9 @@ func mcpCheckCallArgs(tool string, args json.RawMessage, a *mcpCallArgs) string 
 			}
 			return strings.Join(msgs, "; ")
 		}
+	}
+	if a == nil {
+		return ""
 	}
 	err := json.Unmarshal(args, a)
 	if err != nil && !toolOwnsArgs(tool) {

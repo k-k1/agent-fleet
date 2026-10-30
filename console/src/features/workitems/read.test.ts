@@ -12,6 +12,7 @@ import {
   dedupeWorkItems,
   matchWorkItem,
   mergeGate,
+  mergePending,
   promptForItem,
   readMergeResult,
   readWorkItemDetail,
@@ -727,6 +728,34 @@ describe("mergeGate", () => {
     const d = pr({ mergeMethods: ["squash", "ff-only", 3, null], defaultMergeMethod: "ff-only" })!;
     expect(d.mergeMethods).toEqual(["squash"]);
     expect(d.defaultMergeMethod).toBe("");
+  });
+});
+
+// GitHub answers "unknown" for a few seconds after the base moves; the panel re-reads by itself
+// only then, and never for a provider that does not answer at all (#3012).
+describe("mergePending", () => {
+  const pr = (over: Record<string, unknown> = {}) =>
+    readWorkItemDetail({ provider: "github", key: "acme/web#1", kind: "pr", state: "open", mergeable: "unknown", mergeableState: "unknown", ...over }).detail;
+
+  it("holds while GitHub has not decided", () => {
+    expect(mergePending(pr())).toBe(true);
+    expect(mergePending(pr({ mergeable: "clean" }))).toBe(true);
+    expect(mergePending(pr({ mergeableState: "" }))).toBe(true);
+  });
+
+  it("stops once GitHub has decided, either way", () => {
+    expect(mergePending(pr({ mergeable: "clean", mergeableState: "clean" }))).toBe(false);
+    expect(mergePending(pr({ mergeable: "conflict", mergeableState: "dirty" }))).toBe(false);
+    expect(mergePending(pr({ mergeable: "clean", mergeableState: "blocked" }))).toBe(false);
+  });
+
+  it("never polls for Bitbucket, an issue, a draft or a finished pull request", () => {
+    expect(mergePending(null)).toBe(false);
+    expect(mergePending(pr({ provider: "bitbucket" }))).toBe(false);
+    expect(mergePending(pr({ kind: "issue" }))).toBe(false);
+    expect(mergePending(pr({ draft: true }))).toBe(false);
+    expect(mergePending(pr({ merged: true }))).toBe(false);
+    expect(mergePending(pr({ state: "done" }))).toBe(false);
   });
 });
 

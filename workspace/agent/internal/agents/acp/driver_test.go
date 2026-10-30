@@ -14,10 +14,12 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // fakeACP is a scriptable ACP peer on the other end of the client's pipes.
@@ -128,9 +130,7 @@ func newTestHandle(t *testing.T) (*Handle, *fakeACP) {
 	cl, f := newFakeACP(t)
 	h := NewHandle(testKind, Hooks{}, "s1", t.TempDir(), "slot-1")
 	h.sid, h.cl, h.alive, h.state = "sess-1", cl, true, agents.TurnCompleted
-	h.cl.OnRequest = func(id json.RawMessage, method string, params json.RawMessage) {
-		h.onServerRequest(h.cl, id, method, params)
-	}
+	h.cl.Start(h.callbacks())
 	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", …) above, runs before
 	// HOME is restored (pushed before it, it would run after the restore, which is too late).
 	t.Cleanup(func() { endTurnsBeforeHomeRestore(t, h) })
@@ -416,4 +416,91 @@ func payload(h *Handle) agents.TranscriptData {
 	var td agents.TranscriptData
 	h.Enrich(&td)
 	return td
+}
+
+// watchExit runs h.watch over a real shell child and returns the exit record it wrote.
+// stop runs once the child is up (trap installed); nil lets the child exit by itself.
+func watchExit(t *testing.T, script string, stop func(h *Handle, cmd *exec.Cmd)) status.ExitInfo {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	h := NewHandle(testKind, Hooks{}, "s-exit", t.TempDir(), "slot-exit")
+	cmd := exec.Command("sh", "-c", script)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail, err := agents.StartWithStderrTail(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tail.Settle()
+	cl := testKind.NewClient(stdin, stdout)
+	h.mu.Lock()
+	h.cmd, h.stdin = cmd, stdin
+	h.mu.Unlock()
+	exited := make(chan struct{})
+	go h.watch(cmd, tail, cl, exited)
+	if stop != nil {
+		time.Sleep(300 * time.Millisecond) // let sh install its trap
+		stop(h, cmd)
+	}
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("child never exited")
+	}
+	ex, ok := status.ReadExit("s-exit")
+	if !ok {
+		t.Fatal("no exit record")
+	}
+	return ex
+}
+
+const trap143 = `trap 'exit 143' TERM; while :; do sleep 0.05; done`
+
+func TestWatchRecordsStoppedWhenCLIExits143AfterDetach(t *testing.T) {
+	ex := watchExit(t, trap143, func(h *Handle, cmd *exec.Cmd) {
+		k := *testKind
+		k.StopChild = func(c *exec.Cmd, _ io.Closer) { _ = c.Process.Signal(syscall.SIGTERM) }
+		h.kind = &k
+		h.Detach()
+	})
+	if ex.Reason != "stopped" || ex.Code != 143 {
+		t.Fatalf("exit after Detach = %+v, want stopped/143", ex)
+	}
+}
+
+func TestWatchRecordsStoppedWhenCLIExits143AfterDown(t *testing.T) {
+	ex := watchExit(t, trap143, func(h *Handle, cmd *exec.Cmd) {
+		k := *testKind
+		k.StopChild = func(c *exec.Cmd, _ io.Closer) { _ = c.Process.Signal(syscall.SIGTERM) }
+		h.kind = &k
+		h.Down()()
+	})
+	if ex.Reason != "stopped" {
+		t.Fatalf("exit after Down = %+v, want stopped", ex)
+	}
+}
+
+func TestWatchKeepsCrashedWhenCLIExits143OnItsOwn(t *testing.T) {
+	ex := watchExit(t, `sleep 0.2; exit 143`, nil)
+	if ex.Reason != "crashed" || ex.Code != 143 {
+		t.Fatalf("unrequested exit 143 = %+v, want crashed/143", ex)
+	}
+}
+
+func TestWatchRecordsStoppedWhenKilledBySIGTERM(t *testing.T) {
+	ex := watchExit(t, `sleep 30`, func(h *Handle, cmd *exec.Cmd) {
+		k := *testKind
+		k.StopChild = func(c *exec.Cmd, _ io.Closer) { _ = c.Process.Signal(syscall.SIGTERM) }
+		h.kind = &k
+		h.Detach()
+	})
+	if ex.Reason != "stopped" || ex.Signal != int(syscall.SIGTERM) {
+		t.Fatalf("SIGTERM death = %+v, want stopped/sig 15", ex)
+	}
 }

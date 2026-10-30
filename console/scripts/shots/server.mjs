@@ -60,6 +60,7 @@ const MIME = {
 // ---- API surface ------------------------------------------------------------------
 // Each entry is (query) => JSON body. Keys are exact paths; `re` entries match by
 // regexp and receive the captured groups.
+const L = (ja, en) => (LOCALE === "ja" ? ja : en);
 const exact = {
   "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
   "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
@@ -169,16 +170,34 @@ const exact = {
         kind: "claude",
         roots: [
           { dir: "/home/dev/.claude/skills", scope: "user", form: "skills", exists: true },
-          { dir: "/home/dev/.claude/commands", scope: "user", form: "commands", exists: false },
+          { dir: "/home/dev/.claude/commands", scope: "user", form: "commands", exists: true },
         ],
         skills: [
-          { name: "handoff", description: "Hand the session over", type: "skill", scope: "user", path: "/home/dev/.claude/skills/handoff/SKILL.md", userInvocable: true },
+          { name: "handoff", description: L("セッションを別のエージェントへ引き継ぐ", "Hand the session over to another agent"), type: "skill", scope: "user", root: "/home/dev/.claude/skills", path: "/home/dev/.claude/skills/handoff/SKILL.md", userInvocable: true, files: ["checklist.md"] },
+          { name: "release-notes", description: L("マージ済み PR からリリースノートを下書きする", "Draft release notes from merged pull requests"), argumentHint: "[tag]", type: "skill", scope: "user", root: "/home/dev/.claude/skills", path: "/home/dev/.claude/skills/release-notes/SKILL.md", userInvocable: true },
+          { name: "review", description: L("差分を読んで指摘を並べる", "Read the diff and list findings"), type: "skill", scope: "user", root: "/home/dev/.claude/skills", path: "/home/dev/.claude/skills/review/SKILL.md", userInvocable: true },
+          // The same name in the commands folder: the skill above wins, so this one is never used.
+          { name: "review", description: L("古いレビュー用コマンド", "Older review command"), type: "command", scope: "user", root: "/home/dev/.claude/commands", path: "/home/dev/.claude/commands/review.md", userInvocable: true, shadowedBy: "/home/dev/.claude/skills/review/SKILL.md" },
           { name: "af-build", description: "Build memory and toolchains", type: "skill", scope: "fleet", path: "/home/dev/.claude/skills/af-build/SKILL.md", userInvocable: false },
           { name: "simplify", type: "skill", scope: "cli", userInvocable: true },
         ],
       },
     ],
   }),
+  // The body of the opened skill (api/skills/file), keyed by the catalog's own paths so each row
+  // shows its own file; any other path is refused, as the real route does outside the roots.
+  "/api/skills/file": (q) => {
+    const md = (name, desc, body) => `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\n${body}\n`;
+    const bodies = {
+      "/home/dev/.claude/skills/handoff/SKILL.md": md("handoff", L("セッションを別のエージェントへ引き継ぐ", "Hand the session over to another agent"), L("作業の状況と次の一手をまとめ、引き継ぎ先に渡します。", "Summarise the state of the work and the next step, and pass it on.")),
+      "/home/dev/.claude/skills/release-notes/SKILL.md": md("release-notes", L("マージ済み PR からリリースノートを下書きする", "Draft release notes from merged pull requests"), L("前回のタグ以降にマージされた PR を読み、変更点を種類別に並べます。", "Read the pull requests merged since the last tag and group the changes by kind.")),
+      "/home/dev/.claude/skills/review/SKILL.md": md("review", L("差分を読んで指摘を並べる", "Read the diff and list findings"), L("変更された差分を読み、バグの可能性が高いものから順に指摘を並べます。", "Read the changed diff and list findings, most likely bug first.")),
+      "/home/dev/.claude/commands/review.md": md("review", L("古いレビュー用コマンド", "Older review command"), L("以前使っていたレビュー用のコマンドです。同名のスキルが優先されます。", "The review command used before; the skill of the same name wins.")),
+      "/home/dev/.claude/skills/af-build/SKILL.md": md("af-build", "Build memory and toolchains", L("ビルドのメモリとツールチェーンの扱いです。", "How builds use memory and toolchains.")),
+    };
+    const content = bodies[q.get("path") || ""];
+    return content === undefined ? { error: { code: "not_found", message: "no such skill file" } } : { content };
+  },
   "/api/ssm/profiles": () => ({ profiles: [] }),
   // MCP registry (docs/log/48). One row per origin so the settings tab shows all three
   // editability states (user = full CRUD, tenant = disable-only, builtin = code).

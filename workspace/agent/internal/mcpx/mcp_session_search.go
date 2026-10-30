@@ -104,9 +104,9 @@ func mcpSearchSessions(id json.RawMessage, raw json.RawMessage) []byte {
 func sessionSearchTools() []toolSpec {
 	return []toolSpec{{
 		name: mcpToolSearchSessions, session: searchSessionsSchema, ownArgs: true,
-		handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+		handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 			return mcpSearchSessions(req.ID, p.Args)
-		},
+		}),
 	}}
 }
 

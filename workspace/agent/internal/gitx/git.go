@@ -1200,7 +1200,7 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	} else {
 		seg = sanitizeSeg(seg)
 	}
-	name := filepath.Base(parentDir) + "@" + seg
+	name := worktreeNamePrefix(parentDir) + "@" + seg
 	dir, ok := ResolveRepoDir(name)
 	if !ok {
 		return "", fmt.Errorf("worktree name is invalid: %q", name)
@@ -1209,6 +1209,15 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	// the same name is a conflict the caller must resolve with a different branch.
 	if _, err := os.Stat(dir); err == nil {
 		if IsGitRepo(dir) {
+			// Folder names are flat (<repo>@<seg>), so two parents can ask for the same
+			// name. Only the worktree already on this branch is the idempotent re-launch;
+			// anything else belongs to another session and must not be handed over.
+			if !sameRepoWorktree(parentDir, dir) {
+				return "", fmt.Errorf("%s already exists and is not a worktree of %s: pick a different folder name", name, filepath.Base(parentDir))
+			}
+			if cur := GitCurrentBranch(dir); cur != target {
+				return "", fmt.Errorf("worktree %s already exists on branch %q, not %q: pick a different folder name", name, cur, target)
+			}
 			// A previous launch may have left submodules unfetched or wedged (the sync is
 			// time-boxed, and a killed clone does not resume by itself — git_submodule.go).
 			// Nothing else on the relaunch path ever retries, so the session would keep
@@ -1239,6 +1248,41 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	}
 	finishNewWorktree(dir, parentDir)
 	return dir, nil
+}
+
+// worktreeNamePrefix is the folder-name prefix for a worktree created from parentDir:
+// the main working copy's name, so a worktree made from a linked worktree is still
+// <repo>@<seg> rather than nesting (<repo>@a@b). Falls back to parentDir's own name
+// when it is a main copy or the main copy cannot be resolved.
+func worktreeNamePrefix(parentDir string) string {
+	if IsLinkedWorktree(parentDir) {
+		if main := WorktreeParent(parentDir); main != "" {
+			return filepath.Base(main)
+		}
+	}
+	return filepath.Base(parentDir)
+}
+
+// sameRepoWorktree reports whether dir is a linked worktree sharing parentDir's
+// repository (same resolved --git-common-dir). A flat folder name can land on a clone
+// or another repo's worktree that merely sits on the same branch name.
+func sameRepoWorktree(parentDir, dir string) bool {
+	if !IsLinkedWorktree(dir) {
+		return false
+	}
+	a, b := commonGitDir(parentDir), commonGitDir(dir)
+	return a != "" && a == b
+}
+
+func commonGitDir(dir string) string {
+	out, err := Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(out); err == nil {
+		return r
+	}
+	return filepath.Clean(out)
 }
 
 // finishNewWorktree is what every freshly added worktree needs before a session runs in it.

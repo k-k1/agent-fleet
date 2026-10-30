@@ -555,6 +555,8 @@ administrator's to set.
   answers. It is for measurement only: nothing is warned, refused or stopped because of it, and it is not
   coloured. Where the machine cannot report it (a cgroup the Agent cannot confirm is its own, an older
   kernel), the row says "Cannot be measured on this machine" instead of drawing a calm line.
+  An operator can switch the sampler off by starting the workspace with `AF_MEM_PRESSURE=off` in its
+  environment (exactly `off`; any other value, or none, leaves it on); the row is then not shown.
 - **Disk used by Agent Fleet**: what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
   down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
   sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after

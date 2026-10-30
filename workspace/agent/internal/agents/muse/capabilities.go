@@ -1,6 +1,11 @@
 package muse
 
-import "github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+import (
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
 
 // Optional agents capabilities of the muse kind, each delegating to this package's own function.
 
@@ -39,4 +44,18 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 // status file holds only turn start and end; and the handle's last turn error (IsRateLimited).
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState, RateLimited: IsRateLimited}
+}
+
+// UsageLimitTraits is agents.UsageLimiter: the same shape as codex's, a subscription window that
+// waiting clears, read from the handle's last turn error in memory (IsRateLimited, ResetAt).
+// muse has only the managed driver, so there is no Terminal session to exclude.
+func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
+	return agents.UsageLimitTraits{
+		AtLimit: func(m session.Meta) (agents.LimitKind, bool) {
+			return agents.LimitWindow, IsRateLimited(m.Name)
+		},
+		ResetAt: func(m session.Meta, _ bool, now time.Time) (time.Time, string, bool) {
+			return ResetAt(m.Name, now)
+		},
+	}
 }

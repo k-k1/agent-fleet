@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -198,7 +199,8 @@ func pickProbeModel(models []agents.ModelChoice, preferred string) string {
 // picker row the plan or an org policy does not enable), so one refusal is not evidence that
 // the override is broken. Only an explicit refusal (probeObservation.Refused) moves on to the
 // next candidate: a plain mismatch between asked and recorded is DRIFT at once, so a silent
-// substitution cannot be masked by a later candidate that happens to match.
+// substitution cannot be masked by a later candidate that happens to match. When every
+// candidate is refused the result is a probe error carrying the CLI's own messages.
 func observeModelOverrideTries(candidates []string, try func(model string) probeObservation) probeObservation {
 	if len(candidates) == 0 {
 		return probeObservation{Err: errors.New("no model id to start with")}
@@ -214,7 +216,10 @@ func observeModelOverrideTries(candidates []string, try func(model string) probe
 		}
 		refused = append(refused, obs.Detail)
 	}
-	return probeObservation{Detail: strings.Join(refused, "; ")}
+	// Every candidate was refused by the CLI itself, so the override was never put to the
+	// test: a plan or policy limit, not drift. Reporting DRIFT here would open a drift issue
+	// for a CLI that honours --model.
+	return probeObservation{Err: fmt.Errorf("the CLI refused every model tried, so the override was not observed: %s", strings.Join(refused, "; "))}
 }
 
 // runCapsProbes runs every probe the declaration obliges and classifies the outcomes.
@@ -332,12 +337,47 @@ func recordedModelMatches(recorded, want string) bool {
 	return true
 }
 
+// modelRecord is what the CLI's own store said about the session's model, read after the
+// turn.
+type modelRecord struct {
+	// Have is false when the agent has no store to read (nothing to compare against).
+	Have  bool
+	Model string
+	// Missing says why Model is empty (no store file, unreadable, field absent), so a CI log
+	// can tell "written later" from "never written".
+	Missing string
+	// Refusal is the CLI's own message when it said it would not launch the requested model.
+	Refusal string
+}
+
+// recordedModelWait bounds how long the probe waits for the CLI to write its model record:
+// cursor writes it when a prompt is sent, which can land after the reply the probe waits for.
+const (
+	recordedModelWait  = 15 * time.Second
+	recordedModelEvery = 500 * time.Millisecond
+)
+
+// waitRecordedModel polls read until it returns a non-empty model or wait of real time has
+// passed. The deadline is the clock's, not a count of sleeps: a read can itself block (cursor's
+// SQLite read waits up to 3 s on a lock the running CLI holds), so it may overrun the bound by
+// one read but never by one read per poll. Only an empty record is waited for: a non-empty one
+// is final, so a wrong model is never given time to "become" the right one.
+func waitRecordedModel(read func() string, wait, every time.Duration, now func() time.Time, sleep func(time.Duration)) string {
+	deadline := now().Add(wait)
+	for {
+		if m := read(); m != "" || !now().Before(deadline) {
+			return m
+		}
+		sleep(every)
+	}
+}
+
 // observeModelOverride checks that a session started with `want` ended up on it. The
 // evidence is recorded: the model the CLI itself kept (read with an empty meta.Model).
 // The transcript is NOT evidence: cursor and kiro stamp meta.Model onto every assistant
 // turn, so the probe's own request would come back and match even when the CLI ignored the
 // flag. No independent record is PROBE-ERROR, never a pass.
-func observeModelOverride(turns []transcript.Turn, recorded string, haveRecorder bool, want string, refused bool) probeObservation {
+func observeModelOverride(turns []transcript.Turn, rec modelRecord, want string) probeObservation {
 	reported := false
 	for _, t := range turns {
 		if t.Role == "assistant" && t.Model != "" {
@@ -348,15 +388,22 @@ func observeModelOverride(turns []transcript.Turn, recorded string, haveRecorder
 	switch {
 	case !reported:
 		return probeObservation{Err: fmt.Errorf("started with %q but no assistant turn reports a model", want)}
-	case !haveRecorder:
+	case !rec.Have:
 		return probeObservation{Err: errors.New("the agent records no settings of its own to check the model against")}
-	case recorded == "":
-		return probeObservation{Err: errors.New("the CLI's own store recorded no model for the session")}
-	case recordedModelMatches(recorded, want):
-		return probeObservation{Worked: true, Detail: "the CLI recorded " + recorded}
-	default:
-		return probeObservation{Detail: fmt.Sprintf("started with %q but the CLI recorded %s", want, recorded), Refused: refused}
+	case rec.Model == "":
+		msg := "the CLI's own store recorded no model for the session"
+		if rec.Missing != "" {
+			msg += " (" + rec.Missing + ")"
+		}
+		return probeObservation{Err: errors.New(msg)}
+	case recordedModelMatches(rec.Model, want):
+		return probeObservation{Worked: true, Detail: "the CLI recorded " + rec.Model}
 	}
+	detail := fmt.Sprintf("started with %q but the CLI recorded %s", want, rec.Model)
+	if rec.Refusal != "" {
+		detail += " (CLI: " + rec.Refusal + ")"
+	}
+	return probeObservation{Detail: detail, Refused: rec.Refusal != ""}
 }
 
 // observeInterrupt turns what the live probe watched into an observation. Only a turn that

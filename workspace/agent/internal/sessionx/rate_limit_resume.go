@@ -46,9 +46,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -108,7 +105,7 @@ type rateLimitState struct {
 	Source        string `json:"source,omitempty"`        // evidence for the instant (banner / capture ...)
 	ScheduleID    string `json:"scheduleId,omitempty"`    // schedule id on the CP side
 	ScheduleTries int    `json:"scheduleTries,omitempty"` // registration attempts
-	// Spend marks an episode opened by a spend/balance limit (claude.LimitSpend). Unlike a
+	// Spend marks an episode opened by a spend/balance limit (agents.LimitSpend). Unlike a
 	// window limit it does not end at an instant, so nothing is booked, ResumeAt stays empty,
 	// and the episode is retired only once the transcript tail is no longer at the limit
 	// (episodeStale / rateLimitFollowUp).
@@ -126,12 +123,6 @@ var (
 	dismissRateLimitModal = tmuxx.DismissRateLimitModal
 	putRateLimitSchedule  = createRateLimitSchedule
 	dropRateLimitSchedule = deleteRateLimitSchedule
-	rateLimitResetAt      = claude.ResetAt
-	claudeUsageLimitAbort = claude.UsageLimitAbort
-	codexRateLimited      = codex.IsRateLimited
-	codexResetAt          = codex.ResetAt
-	museRateLimited       = muse.IsRateLimited
-	museResetAt           = muse.ResetAt
 )
 
 // StartRateLimitWatch runs the sweep for the life of the agent.
@@ -199,9 +190,9 @@ func rateLimitTickSession(m session.Meta, now time.Time) {
 	}
 	alive := SessionAlive(m)
 	if alive {
-		if NormalizeKind(m.Kind) == session.KindClaude && tmuxx.ReadPane(m.Name).RateLimitMenu {
+		if tr, _ := usageLimitTraits(m); tr.PaneMenu != nil && tr.PaneMenu(m.Name) {
 			// Only an account window puts up a menu, and that is the kind waiting clears.
-			rateLimitRecover(m, st, now, true, claude.LimitWindow)
+			rateLimitRecover(m, st, now, true, agents.LimitWindow)
 			return
 		}
 		if kind, atLimit := atUsageLimit(m); atLimit {
@@ -237,64 +228,43 @@ var rateLimitEpisodeLocks sync.Map
 // managed driver, and its failed turn carries the 429 (muse/ratelimit.go). opencode and the
 // other kinds have neither half yet.
 func rateLimitWatched(m session.Meta) bool {
-	switch NormalizeKind(m.Kind) {
-	case session.KindClaude, session.KindMuse:
-		return true
-	case session.KindCodex:
-		return m.DriverKind() == session.DriverManaged
+	tr, ok := usageLimitTraits(m)
+	return ok && (!tr.ManagedOnly || m.DriverKind() == session.DriverManaged)
+}
+
+// usageLimitTraits is the kind's agents.UsageLimitTraits, resolved by the normalised kind so an
+// empty or legacy kind is claude's. ok=false means the kind has no capability: its limit cannot
+// be seen, so the sweep never asks it anything.
+func usageLimitTraits(m session.Meta) (agents.UsageLimitTraits, bool) {
+	a, _ := RegisteredAgent(NormalizeKind(m.Kind))
+	if u, ok := a.(agents.UsageLimiter); ok {
+		return u.UsageLimitTraits(), true
 	}
-	return false
+	return agents.UsageLimitTraits{}, false
 }
 
 // atUsageLimit reports whether this session's last turn is sitting at its usage limit right
 // now, and which shape of limit it is. It is the first of the two kind-specific questions.
-func atUsageLimit(m session.Meta) (claude.LimitKind, bool) {
-	if NormalizeKind(m.Kind) == session.KindCodex {
-		// codex names exactly one usage limit (usageLimitExceeded) and it is the kind that
-		// waiting clears; its error vocabulary has no spend/balance counterpart, so nothing
-		// here can be claude.LimitSpend. The evidence is the managed handle's last turn error,
-		// so this is an in-memory read - unlike the claude branch it opens no file.
-		return claude.LimitWindow, codexRateLimited(m.Name)
+func atUsageLimit(m session.Meta) (agents.LimitKind, bool) {
+	if tr, ok := usageLimitTraits(m); ok && tr.AtLimit != nil {
+		return tr.AtLimit(m)
 	}
-	if NormalizeKind(m.Kind) == session.KindMuse {
-		// The same shape as codex: a subscription window that waiting clears, read from the
-		// handle's last turn error in memory.
-		return claude.LimitWindow, museRateLimited(m.Name)
-	}
-	_, kind, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name))
-	return kind, atLimit
+	return "", false
 }
 
 // usageLimitResetAt is the second kind-specific question: the instant the limit lifts, plus
 // the evidence for it. ok=false means no instant can be named and nothing is booked.
 func usageLimitResetAt(m session.Meta, st rateLimitState, now time.Time) (time.Time, string, bool) {
-	if NormalizeKind(m.Kind) == session.KindCodex {
-		return codexResetAt(now)
+	if tr, ok := usageLimitTraits(m); ok && tr.ResetAt != nil {
+		return tr.ResetAt(m, st.Menu, now)
 	}
-	if NormalizeKind(m.Kind) == session.KindMuse {
-		return museResetAt(m.Name, now)
-	}
-	at, source, ok := rateLimitResetAt(session.UUID(m.Dir, m.Name), now)
-	// For a limit without a menu the instant is trusted only when it comes from the banner,
-	// i.e. the wording this session actually received. resolveResetAt's fallback is the
-	// statusline capture, which describes the account's 5-hour / weekly windows, but a
-	// per-model limit lives in a different window that never appears there (claude packs only
-	// five_hour and seven_day into statusLine). Measured 2026-08-05 s6no6jv: at the moment
-	// the limit hit, the 5-hour window was at 23% and the weekly at 75%, and the fallback
-	// returned 19:30 that day (the 5-hour reset) - resuming there just hits the same limit.
-	//
-	// codex needs no such rule: its windows ARE the reading (codex.ResetAt), and it has no
-	// per-model limit to confuse them with.
-	if ok && !st.Menu && !strings.HasPrefix(source, "banner") {
-		ok = false
-	}
-	return at, source, ok
+	return time.Time{}, "", false
 }
 
 // rateLimitRecover handles a session stopped by its usage limit. onMenu says which form it
 // is: true = the pane is pinned on the /rate-limit-options menu, false = the transcript tail
 // is a turn cut off by the limit (no menu, and the session can accept input).
-func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool, kind claude.LimitKind) {
+func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool, kind agents.LimitKind) {
 	if episodeStale(st, now) || episodeSpent(st, now) {
 		// The previous episode is over - treat this as a new limit. Its once-schedule has
 		// already fired (or is past saving); leaving the row behind would pile dead entries up
@@ -309,7 +279,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 		switch {
 		case onMenu:
 			log.Printf("rate-limit: %s is stopped on the usage-limit menu", m.Name)
-		case kind == claude.LimitSpend:
+		case kind == agents.LimitSpend:
 			log.Printf("rate-limit: turn on %s was cut off by the spend/balance limit (needs a raised limit)", m.Name)
 		default:
 			log.Printf("rate-limit: turn on %s was cut off by the usage limit", m.Name)
@@ -321,7 +291,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 	if onMenu {
 		st.Menu = true
 	}
-	if kind == claude.LimitSpend {
+	if kind == agents.LimitSpend {
 		// Spend/balance limit: book nothing and raise no "usage limit reached" notice. Both
 		// rest on the assumption that waiting clears it, which is a lie in this shape - waking
 		// hits the same 429 and waiting never lifts it. The user already gets the turn-failed
@@ -484,7 +454,7 @@ func rateLimitWaiting(m session.Meta, now time.Time) (state, resumeAt string, ok
 	if !atLimit {
 		return "", "", false
 	}
-	if kind == claude.LimitSpend {
+	if kind == agents.LimitSpend {
 		return agents.StateSpendLimit, "", true // no booking exists: no instant clears this
 	}
 	// A booked instant that has passed is not an answer to "when does this move again": the

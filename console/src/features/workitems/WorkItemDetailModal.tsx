@@ -59,6 +59,8 @@ import {
   checksTone,
   fullLocal,
   mergeGate,
+  mergePending,
+  MERGE_RECHECK_DELAYS_MS,
   readMergeResult,
   readWorkItemDetail,
   relTime,
@@ -109,8 +111,12 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
   const [stopped, setStopped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Automatic re-reads made while GitHub is still computing mergeability (-1 = one requested by
+  // hand, sent at once; a manual re-check then gets the whole budget again).
+  const [polls, setPolls] = useState(0);
   const { provider, key, kind } = item;
   useEffect(() => {
+    setPolls(0);
     if (!canReadLive({ provider, kind }, reference)) return;
     // The panel can be re-pointed at another row while a read is in flight (or closed under it).
     // Without this guard the late answer would paint the previous pull request's numbers onto
@@ -148,7 +154,51 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
       current = false;
     };
   }, [provider, key, kind, reference, attempt]);
-  return { detail, err, stopped, busy, retry: () => setAttempt((n) => n + 1) };
+
+  // Re-read while GitHub has not decided whether the pull request can merge. Unlike the read
+  // above it keeps `detail` on screen and swaps it only for an answer: blanking it would flash
+  // every row back to skeletons once per poll. A failed poll keeps what is shown and counts
+  // against the budget, so a provider outage cannot keep it polling.
+  const pending = mergePending(detail);
+  useEffect(() => {
+    if (!pending || polls >= MERGE_RECHECK_DELAYS_MS.length) return;
+    let current = true;
+    const timer = setTimeout(
+      () => {
+        void workItemDetail({ provider, key, kind: reference ? "" : kind })
+          .then((res) => {
+            if (!current) return;
+            const got = readWorkItemDetail(res);
+            if (got.detail) setDetail(got.detail);
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (current) setPolls((n) => n + 1);
+          });
+      },
+      polls < 0 ? 0 : MERGE_RECHECK_DELAYS_MS[polls],
+    );
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+    // `attempt` too: a fresh read (after a merge attempt) must cancel a poll in flight. Its own
+    // setDetail(null) does not reliably do it — batched with a fast answer that is again
+    // "unknown", `pending` never changes, and the old poll would land on top of the newer read.
+  }, [pending, polls, provider, key, kind, reference, attempt]);
+
+  return {
+    detail,
+    err,
+    stopped,
+    busy,
+    retry: () => setAttempt((n) => n + 1),
+    /** GitHub is still computing mergeability and another automatic read is coming. */
+    rechecking: pending && polls < MERGE_RECHECK_DELAYS_MS.length,
+    /** Still undecided after the whole budget: the panel offers `recheck` by hand. */
+    recheckSpent: pending && polls >= MERGE_RECHECK_DELAYS_MS.length,
+    recheck: () => setPolls(-1),
+  };
 }
 
 /** A fact row whose value the live read has not brought back yet. It keeps the row's height so
@@ -397,7 +447,12 @@ export function WorkItemDetailModal({
   const mergeSlot: { button: "none" | "hold" | "enabled" | "disabled"; note: { text: string; bad: boolean } | null } = (() => {
     if (mergeNote) return { button: gate.show ? (gate.enabled ? "enabled" : "disabled") : "hold", note: mergeNote };
     if (item.provider !== "github" || !isPR || neutral) return { button: "none", note: null };
-    if (gate.show) return { button: gate.enabled ? "enabled" : "disabled", note: gate.whyKey ? { text: tr(gate.whyKey), bad: false } : null };
+    if (gate.show) {
+      // While the panel is re-reading by itself, "try again in a moment" would ask the user to do
+      // what is already happening.
+      const why = gate.whyKey === "wi.merge_why_unknown" && live.rechecking ? "wi.merge_why_checking" : gate.whyKey;
+      return { button: gate.enabled ? "enabled" : "disabled", note: why ? { text: tr(why), bad: false } : null };
+    }
     if (live.stopped) return { button: "disabled", note: { text: tr("wi.merge_why_stopped"), bad: false } };
     if (live.err) return { button: "disabled", note: { text: tr("wi.merge_why_unread"), bad: false } };
     return { button: "hold", note: null };
@@ -536,7 +591,25 @@ export function WorkItemDetailModal({
           {d && d.kind === "pr" && (
             <>
               <dt>{tr("wi.detail_merge")}</dt>
-              <dd className={d.mergeable === "conflict" && !d.merged ? "tone-bad" : undefined}>{mergeText(d)}</dd>
+              <dd className={"wi-dmerge" + (d.mergeable === "conflict" && !d.merged ? " tone-bad" : "")}>
+                {/* A status region that stays mounted, so "checking" turning into the answer is
+                    announced: the footer's note disappears at that moment and cannot say it. */}
+                <span role="status">
+                  {live.rechecking ? (
+                    <>
+                      <Icon name="sync" spin />
+                      {tr("wi.detail_merge_checking")}
+                    </>
+                  ) : (
+                    mergeText(d)
+                  )}
+                </span>
+                {live.recheckSpent && (
+                  <button type="button" className="linklike" onClick={live.recheck}>
+                    {tr("wi.detail_merge_recheck")}
+                  </button>
+                )}
+              </dd>
             </>
           )}
           {d && !(d.changedFiles > 0 || d.additions > 0 || d.deletions > 0) && d.kind === "pr" && <SpacerRow />}
