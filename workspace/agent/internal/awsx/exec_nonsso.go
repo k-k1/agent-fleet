@@ -385,6 +385,9 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 		}
 		aws.env = verifierEnv(env, cfg)
 	}
+	if rootSession != "" {
+		aws.target, aws.targetID = plannedTarget(o.Settings, rootSession)
+	}
 	// Read before the check, not after (ADR 0102 decision 1).
 	snap := ReadCacheState(rootSession)
 	creds, err := exportLocked(aws, o.Profile, rootSession)

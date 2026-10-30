@@ -124,13 +124,23 @@ interface AwsLoginState {
   logoutProfile(name: string): Promise<AwsLogoutResult>;
 }
 
+/** POST api/aws-login/profiles/{name}/logout as the Agent sends it (awsx.ProfileLogoutWire). */
+export interface AwsLogoutWire {
+  revoked: boolean;
+  alreadyEnded?: boolean;
+  noToken?: boolean;
+  message?: string;
+  /** Every profile the logout signed out: the members of a shared sign-in, or the profile alone. */
+  profiles: string[];
+}
+
 /**
  * The Agent's answer to a logout. revoked is false when AWS could not be told (the workspace
  * is signed out all the same), when there was no login to revoke (noToken), or when the session
  * at AWS had already ended (alreadyEnded: AWS refused to renew the expired login).
  */
 export type AwsLogoutResult =
-  | { ok: true; revoked: boolean; alreadyEnded: boolean; noToken: boolean; message: string }
+  | { ok: true; revoked: boolean; alreadyEnded: boolean; noToken: boolean; message: string; profiles: string[] }
   | { ok: false; code: string; message: string };
 
 export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
@@ -220,7 +230,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     // === true, not truthiness: a profile named "constructor" would read Object.prototype's.
     if (get().loggingOut[name] === true) return { ok: false, code: "busy", message: "" };
     set((s) => ({ loggingOut: { ...s.loggingOut, [name]: true } }));
-    let d: { revoked?: unknown; alreadyEnded?: unknown; noToken?: unknown; message?: unknown; error?: { code?: string; message?: string } } | null;
+    let d: (Partial<Record<keyof AwsLogoutWire, unknown>> & { error?: { code?: string; message?: string } }) | null;
     try {
       d = await api(`api/aws-login/profiles/${encodeURIComponent(name)}/logout`, { method: "POST" });
     } catch (e) {
@@ -234,7 +244,16 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     // Whatever the answer, the cache may have changed under the list.
     void get().refreshExpiry();
     if (!d || d.error) return { ok: false, code: d?.error?.code || "", message: d?.error?.message || "" };
-    return { ok: true, revoked: d.revoked === true, alreadyEnded: d.alreadyEnded === true, noToken: d.noToken === true, message: String(d.message ?? "") };
+    // An Agent that predates shared sign-ins sends no profiles: the profile alone was signed out.
+    const profiles = Array.isArray(d.profiles) ? d.profiles.filter((p): p is string => typeof p === "string") : [name];
+    return {
+      ok: true,
+      revoked: d.revoked === true,
+      alreadyEnded: d.alreadyEnded === true,
+      noToken: d.noToken === true,
+      message: String(d.message ?? ""),
+      profiles,
+    };
   },
 }));
 

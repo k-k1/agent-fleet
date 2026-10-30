@@ -64,7 +64,7 @@ func (p *portal) seen() []string {
 	return append([]string(nil), p.calls...)
 }
 
-func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, profileLogoutWire) {
+func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, ProfileLogoutWire) {
 	t.Helper()
 	rec, out, err := postProfileLogout(name)
 	if err != nil {
@@ -75,12 +75,12 @@ func profileLogout(t *testing.T, name string) (*httptest.ResponseRecorder, profi
 
 // postProfileLogout is profileLogout for a goroutine, which may not call t.Fatal: a 200
 // whose body does not decode is returned as an error.
-func postProfileLogout(name string) (*httptest.ResponseRecorder, profileLogoutWire, error) {
+func postProfileLogout(name string) (*httptest.ResponseRecorder, ProfileLogoutWire, error) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/aws-login/profiles/"+name+"/logout", nil)
 	req.SetPathValue("name", name)
 	HandleProfileLogout(rec, req)
-	var out profileLogoutWire
+	var out ProfileLogoutWire
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			return rec, out, fmt.Errorf("logout body = %s", rec.Body.String())
@@ -404,7 +404,7 @@ func TestProfileLogoutKeepsALoginThatLandsDuringTheRevoke(t *testing.T) {
 	t.Cleanup(func() { ssoPortalURL = old })
 
 	type result struct {
-		out profileLogoutWire
+		out ProfileLogoutWire
 		err error
 	}
 	done := make(chan result, 1)

@@ -32,11 +32,29 @@ var LoginAWSBin = func() (string, error) { return exec.LookPath("aws") }
 // when the code is dead and says so.
 const loginAttemptTimeout = 15 * time.Minute
 
-// settingsFor is the Settings profile a request names, if Settings still defines it the
-// way the request was filed for.
+// settingsFor is the Settings profile a request's login runs as, if Settings still gives the
+// request's key the owner and portal the request was filed for. With a shared sign-in any
+// current member serves (the profile that filed it may have left or been deleted): the one that
+// filed it first, then the waiters' in order, then any other.
 func settingsFor(r LoginRequest, settings map[string]Profile) (Profile, bool) {
-	sp, ok := settings[r.Profile]
-	return sp, ok && r.Key == sp.SSOSession() && IncompleteReason(sp) == ""
+	if r.Target != "" {
+		want, ok := settingsOwner(settings, r.Key)
+		if !ok || want.id() != r.Target {
+			return Profile{}, false
+		}
+	}
+	names := append([]string{r.Profile}, cloudlogin.WaiterProfiles(r.Waiters)...)
+	if r.Target != "" {
+		for _, m := range sessionMembers(settings, r.Key) {
+			names = append(names, m.Name)
+		}
+	}
+	for _, n := range names {
+		if sp, ok := settings[n]; ok && !sp.Chained() && r.Key == sp.SSOSession() && IncompleteReason(sp) == "" {
+			return sp, true
+		}
+	}
+	return Profile{}, false
 }
 
 // LoginRequestWire is one pending request as the Console shows it. The account, role and
@@ -254,9 +272,9 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 			if src, ok := settings[sp.SourceProfile]; !ok || src.Chained() || !slices.Contains(exported, sp.SourceProfile) || !slices.Contains(exported, name) {
 				p.State = loginStateSourceUnavailable
 			} else {
-				p.State = keyLoginState(src, settings, now)
+				p.State = keyLoginState(src, settings, exported, now)
 				// Shown, never warned about: the source's own row carries the expiry warning.
-				if end, ok := readSSOExpiry(src.SSOSession(), now); ok {
+				if end, ok := keyExpiry(src, settings, exported, now); ok {
 					p.ExpiresAt = end.Format(time.RFC3339)
 					p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 				}
@@ -264,9 +282,9 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 			out = append(out, p)
 			continue
 		}
-		p := ProfileLoginStateWire{Name: name, State: keyLoginState(sp, settings, now),
+		p := ProfileLoginStateWire{Name: name, State: keyLoginState(sp, settings, exported, now),
 			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName, SignIn: sp.SignIn}
-		if end, ok := readSSOExpiry(sp.SSOSession(), now); ok {
+		if end, ok := keyExpiry(sp, settings, exported, now); ok {
 			p.ExpiresAt = end.Format(time.RFC3339)
 			p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 			// Only a profile in the managed block: the row's login refuses any other.
@@ -402,14 +420,22 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 	}
 	// The owner and portal this attempt logs in for: its landing binds only that (decision 10).
 	target := keyBinding{Session: ssoSession, Owner: sp.TokenOwner(), StartURL: strings.TrimRight(sp.StartURL, "/"), SSORegion: sp.SSORegion}
-	attemptTargets.Store(ssoSession, target)
+	if want, ok := settingsOwner(loginSettings(), ssoSession); ok {
+		if !want.sameTarget(target) {
+			os.RemoveAll(dir)
+			return nil, errors.New(settingsChangedLogin)
+		}
+		target = want
+	}
+	reg, unregister := registerAttempt(target)
 	cfg := filepath.Join(dir, "config")
 	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {
+		unregister()
 		os.RemoveAll(dir)
 		return nil, err
 	}
 	allowed := allowedDeviceHosts(sp)
-	return logins.Start(ssoSession, requestID, sp.Name, cloudlogin.Process{
+	a, err := logins.Start(ssoSession, requestID, sp.Name, cloudlogin.Process{
 		Name:    "aws sso login",
 		Path:    bin,
 		Args:    []string{"sso", "login", "--profile", ssoOnlyProfile, "--use-device-code", "--no-browser"},
@@ -423,12 +449,12 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 			return url, code, nil
 		},
 		Exited: func(err error) (bool, string) {
-			defer attemptTargets.CompareAndDelete(ssoSession, target)
+			defer unregister()
 			if err == nil && ReadCacheState(ssoSession).Unexpired(time.Now()) {
 				if !bindLanding(ssoSession, target) {
-					// The token it wrote stays unbound to anyone it was not meant for: the next
-					// vet retires it unless Settings is back to this owner and portal.
-					return false, "Settings changed during the login; log in again"
+					// bindLanding retired what it wrote: it is for an owner or portal Settings
+					// no longer gives this key.
+					return false, settingsChangedLogin
 				}
 				return true, ""
 			}
@@ -441,6 +467,15 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		},
 		Cleanup: func() { os.RemoveAll(dir) },
 	})
+	if err != nil {
+		unregister()
+		return nil, err
+	}
+	if !attachAttempt(reg, a) {
+		// A sync ended the registration while the process started: its target is gone.
+		a.End(cloudlogin.PhaseCancelled, settingsChangedLogin)
+	}
+	return a, nil
 }
 
 // roleNameOf is the role name of an IAM role ARN, "" when arn is not one.

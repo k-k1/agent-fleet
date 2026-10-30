@@ -47,12 +47,13 @@ var (
 
 // VetLogin and ForgetLogin are the AWS backend's (internal/awsx, which sets them): this package
 // cannot import it. VetLogin retires the cached login of a Settings profile whose owner or portal
-// changed (ADR 0125 decision 10) before the pane uses it. ForgetLogin drops that login for a
+// changed (ADR 0125 decision 10) before the pane uses it, and refuses a meta Settings no longer
+// matches or a login it could not retire. ForgetLogin drops that login for a
 // forced re-login: the token and the role credentials of every profile sharing it, in one
 // section under the login's lock, so no other run's export can put a member's credentials back
 // in between. Nil leaves the pane to its shell steps (tests, a profile of the member's own).
 var (
-	VetLogin    func(s session.SSMMeta)
+	VetLogin    func(s session.SSMMeta) error
 	ForgetLogin func(s session.SSMMeta) error
 )
 
@@ -322,7 +323,9 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 				return "", err
 			}
 		} else if VetLogin != nil {
-			VetLogin(s)
+			if err := VetLogin(s); err != nil {
+				return "", err
+			}
 		}
 		if s.RoleARN != "" {
 			b.WriteString(chainIsolationShell())

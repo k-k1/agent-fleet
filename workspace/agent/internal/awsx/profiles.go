@@ -212,6 +212,12 @@ func Sync() (SyncResult, error) {
 			res.Settings[sp.Name] = sp
 		}
 		res.Conflicts = p.Conflicts
+		// A portal change or a rename is acted on before any reader uses the new files, the
+		// poll's and af-aws-exec's sync alike (ADR 0125 decision 10). A key that cannot be
+		// retired is logged here; af-aws-exec's own vet refuses the run.
+		if verr := vetAll(res.Settings, UsableNow()); verr != nil {
+			log.Printf("aws profiles sync: %v", verr)
+		}
 	}
 	res.Fetched, res.FromCache = p.Fetched, p.FromCache
 	if p.Fetched && applied {
@@ -783,10 +789,6 @@ func credentialsNames(s string) map[string]bool {
 func StartSync() {
 	cloudbridge.Poll(func(why string) {
 		syncAndLog(why)
-		// A portal change or a rename is acted on within one poll, even when nothing runs.
-		if settings := loginSettings(); settings != nil {
-			vetAll(settings)
-		}
 		warnExpiringSSO(time.Now())
 	})
 }

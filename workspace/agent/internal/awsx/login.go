@@ -121,6 +121,9 @@ func exportSSOCreds(aws awsRunner, ssoSession string) (processCreds, error) {
 	return exportLocked(aws, ssoOnlyProfile, ssoSession)
 }
 
+// exportLockHook lets a test see which hold an export ended up with.
+var exportLockHook = func(shared bool) {}
+
 // exportLocked is exportCreds for profile, whose credentials come from ssoSession's cached
 // login ("" when they come from no sso-session), under that session's shared credential
 // lock, so a logout cannot delete the login while this run turns it into role credentials
@@ -139,16 +142,37 @@ func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, erro
 		// expiry and writes the cache back, and two members of one sign-in refreshing at once
 		// can each keep a refresh token the other's refresh rotated away (ADR 0125 decision 5).
 		// Shared otherwise, so plain exports of one sign-in run side by side.
-		unlock, err := logins.LockKeyCancel(ssoSession, !nearRefresh(ssoSession, time.Now()), cancel, deadline)
-		if err != nil && aws.ctx != nil && aws.ctx.Err() != nil {
-			// A Console wait's Ctrl-C or budget ended the wait for the lock (a logout holds
-			// it across its network call); the wait classifies it like a killed child.
-			return processCreds{}, fmt.Errorf("stopped: %w", aws.ctx.Err())
-		}
-		if err != nil {
-			return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
+		// The token can enter the window while this run waits for a shared lock, so a shared
+		// hold is checked again once taken and traded for an exclusive one when it has.
+		shared := !nearRefresh(ssoSession, time.Now())
+		var unlock func()
+		for {
+			var err error
+			unlock, err = logins.LockKeyCancel(ssoSession, shared, cancel, deadline)
+			if err != nil && aws.ctx != nil && aws.ctx.Err() != nil {
+				// A Console wait's Ctrl-C or budget ended the wait for the lock (a logout holds
+				// it across its network call); the wait classifies it like a killed child.
+				return processCreds{}, fmt.Errorf("stopped: %w", aws.ctx.Err())
+			}
+			if err != nil {
+				return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
+			}
+			if !shared || !nearRefresh(ssoSession, time.Now()) {
+				break
+			}
+			unlock()
+			shared = false
 		}
 		defer unlock()
+		exportLockHook(shared)
+		// The key's owner and portal are checked under its lock: Settings can change between
+		// the plan and the export, and a token bound to another owner must not be turned into
+		// credentials for this run.
+		if aws.target != nil {
+			if err := aws.target(ssoSession); err != nil {
+				return processCreds{}, err
+			}
+		}
 	}
 	return exportCreds(aws, profile)
 }

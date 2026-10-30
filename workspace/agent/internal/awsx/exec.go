@@ -301,6 +301,11 @@ type awsRunner struct {
 	// ctx, when set, kills the child when it ends and makes out return only after the child
 	// exited (a Console wait's Ctrl-C and budget); nil runs to the child's own end.
 	ctx context.Context
+	// target, when set, is checked under the sso-session's lock right before every export
+	// (plannedTarget); an error stops the export.
+	target func(ssoSession string) error
+	// targetID names the owner and portal target holds the key to, for the login request.
+	targetID string
 }
 
 func (r awsRunner) out(args ...string) (string, error) {
@@ -446,6 +451,7 @@ func planExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, err
 	}
 	aws := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
+	aws.target, aws.targetID = plannedTarget(o.Settings, sso.Session)
 
 	// Read before the check, not after: a login landing between the two must not be
 	// recorded as the cache that failed (ADR 0102 decision 1).

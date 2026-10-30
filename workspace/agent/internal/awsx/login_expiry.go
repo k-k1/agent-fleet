@@ -80,8 +80,9 @@ func expiringAt(end, now time.Time) bool {
 // the Console shows it only if GET /aws-login/profiles lists that profile as expiring.
 func warnExpiringSSO(now time.Time) {
 	settings := loginSettings()
+	usable := UsableNow()
 	names := make([]string, 0, len(settings))
-	for _, name := range UsableNow() {
+	for _, name := range usable {
 		if _, ok := settings[name]; ok {
 			names = append(names, name)
 		}
@@ -97,7 +98,7 @@ func warnExpiringSSO(now time.Time) {
 			continue
 		}
 		warned[sp.SSOSession()] = true
-		end, ok := readSSOExpiry(sp.SSOSession(), now)
+		end, ok := keyExpiry(sp, settings, usable, now)
 		if !ok || !expiringAt(end, now) {
 			continue
 		}

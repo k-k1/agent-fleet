@@ -3,23 +3,33 @@ package awsx
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // A token key is bound to its owner and its portal (ADR 0125 decision 10). Neither of the
 // CLI's caches is checked against the config: botocore takes whatever token sits under
-// sha1(sso-session name), and the role credentials under sha1(account, role, session). A key
-// that changes hands (a sign-in renamed, a portal changed, a name freed and taken by another
-// owner) would be used as it is. So the Agent records, per key, which Settings owner and which
-// portal its token was written for, and accepts a key only when both still hold. A key that
-// fails is retired: its token is moved aside and the members' role credentials are deleted, so
-// no reader finds them, the SSM pane and a plain aws included.
+// sha1(sso-session name), and it serves cached role credentials under sha1(account, role,
+// session) without reading the token at all (CachedCredentialFetcher). A key that changes
+// hands (a sign-in renamed, a portal changed, a name freed and taken by another owner) would be
+// used as it is. So the Agent records, per key, which Settings owner and portal its token was
+// written for, and which roles were taken through it, and accepts a key only while all of that
+// still holds. A key that fails is retired: the token moves aside and the role credentials of
+// every role it ever served are deleted, so no reader finds them, the SSM pane and a plain aws
+// included.
+//
+// Only keys Agent Fleet uses are touched: those of usable Settings profiles (UsableNow). A key
+// the member's own files take, or that a collision holds back, is theirs, and its cache is left
+// alone.
 
 // keyBinding is what one sso-session key's token was written for.
 type keyBinding struct {
@@ -27,6 +37,14 @@ type keyBinding struct {
 	Owner     string `json:"owner"`
 	StartURL  string `json:"startUrl"`
 	SSORegion string `json:"ssoRegion"`
+	// Roles are the account and role pairs taken through the key since it was bound: their
+	// role credentials are what a retire must delete, also of members no longer in Settings.
+	Roles [][2]string `json:"roles,omitempty"`
+}
+
+// sameTarget compares what two bindings are for, not the roles they recorded.
+func (b keyBinding) sameTarget(o keyBinding) bool {
+	return b.Session == o.Session && b.Owner == o.Owner && b.StartURL == o.StartURL && b.SSORegion == o.SSORegion
 }
 
 func bindingPath(session string) string {
@@ -34,15 +52,47 @@ func bindingPath(session string) string {
 	return filepath.Join(paths.AgentStateDir(), "aws-sso-bindings", hex.EncodeToString(sum[:])+".json")
 }
 
-// keyOwner is who and which portal Settings gives session now, from its first SSO member;
-// ok is false when no Settings SSO profile logs in through session.
-func keyOwner(settings map[string]Profile, session string) (keyBinding, bool) {
-	ms := sessionMembers(settings, session)
+// keyOwner is who and which portal Settings gives session now, from its first usable SSO
+// member, with every member's role; ok is false when no usable Settings SSO profile logs in
+// through session (the key is then not Agent Fleet's to judge).
+func keyOwner(settings map[string]Profile, usable []string, session string) (keyBinding, bool) {
+	var ms []Profile
+	for _, m := range sessionMembers(settings, session) {
+		if slices.Contains(usable, m.Name) {
+			ms = append(ms, m)
+		}
+	}
 	if len(ms) == 0 {
 		return keyBinding{}, false
 	}
 	p := ms[0]
-	return keyBinding{Session: session, Owner: p.TokenOwner(), StartURL: strings.TrimRight(p.StartURL, "/"), SSORegion: p.SSORegion}, true
+	b := keyBinding{Session: session, Owner: p.TokenOwner(), StartURL: strings.TrimRight(p.StartURL, "/"), SSORegion: p.SSORegion}
+	for _, m := range ms {
+		b.Roles = addRole(b.Roles, m.AccountID, m.RoleName)
+	}
+	return b, true
+}
+
+// settingsOwner is keyOwner over every Settings profile, usable or not: who Settings gives the
+// key to, for a login attempt and a request, which may be for a profile the member's own files
+// define the way Settings does.
+func settingsOwner(settings map[string]Profile, session string) (keyBinding, bool) {
+	all := make([]string, 0, len(settings))
+	for n := range settings {
+		all = append(all, n)
+	}
+	return keyOwner(settings, all, session)
+}
+
+func addRole(roles [][2]string, account, role string) [][2]string {
+	if account == "" || role == "" {
+		return roles
+	}
+	r := [2]string{account, role}
+	if slices.Contains(roles, r) {
+		return roles
+	}
+	return append(roles, r)
 }
 
 // tokenPortal is the start URL and region the cached token of session says it is for.
@@ -62,175 +112,293 @@ func tokenPortal(session string) (url, region string, present bool) {
 type verdict int
 
 const (
-	keyNoToken  verdict = iota // nothing cached: nothing to accept or retire
+	keyNotOurs  verdict = iota // no usable Settings profile renders it: never touched
+	keyNoToken                 // nothing cached, and no binding that names another owner
 	keyUsable                  // bound to the current owner and portal
 	keyAdopt                   // unbound, and the token is for the current owner's portal
 	keyHandOver                // bound to a profile that is now a member of the sign-in owning the key
+	keyLanding                 // a login attempt for this key is under way: not adoptable yet
 	keyUnusable                // another owner, another portal, or a token for another portal
 )
 
 // judgeKey decides session's key against Settings, reading only.
-func judgeKey(settings map[string]Profile, session string) (verdict, keyBinding) {
-	want, ok := keyOwner(settings, session)
-	url, region, present := tokenPortal(session)
-	if !present {
-		return keyNoToken, want
-	}
-	if !ok || url != want.StartURL || region != want.SSORegion {
-		return keyUnusable, want
+func judgeKey(settings map[string]Profile, usable []string, session string) (verdict, keyBinding, keyBinding) {
+	want, ours := keyOwner(settings, usable, session)
+	if !ours {
+		return keyNotOurs, want, keyBinding{}
 	}
 	var got keyBinding
-	if !readJSON(bindingPath(session), &got) {
-		return keyAdopt, want
+	bound := readJSON(bindingPath(session), &got)
+	url, region, present := tokenPortal(session)
+	if bound && (got.StartURL != want.StartURL || got.SSORegion != want.SSORegion || got.Owner != want.Owner) && !handOver(settings, got, want) {
+		// A binding that names another owner or portal invalidates the role credentials taken
+		// through it even with no token: botocore serves them without reading the token.
+		return keyUnusable, want, got
 	}
-	if got.StartURL != want.StartURL || got.SSORegion != want.SSORegion {
-		return keyUnusable, want
+	if !present {
+		return keyNoToken, want, got
 	}
-	if got.Owner == want.Owner {
-		return keyUsable, want
+	if url != want.StartURL || region != want.SSORegion {
+		return keyUnusable, want, got
 	}
-	// The one legitimate hand-over: profile P becomes a member of sign-in S, which took P's name,
-	// so S renders the key P's token sits under (decision D).
-	if pid, isProfile := strings.CutPrefix(got.Owner, "profile:"); isProfile && strings.HasPrefix(want.Owner, "sign-in:") {
-		for _, m := range sessionMembers(settings, session) {
-			if m.ID == pid && m.TokenOwner() == want.Owner {
-				return keyHandOver, want
-			}
+	switch {
+	case !bound && landingFor(session):
+		return keyLanding, want, got
+	case !bound:
+		return keyAdopt, want, got
+	case got.Owner == want.Owner:
+		return keyUsable, want, got
+	}
+	return keyHandOver, want, got
+}
+
+// handOver is the one legitimate change of owner: profile P becomes a member of sign-in S,
+// which took P's name, so S renders the key P's token sits under (decision D).
+func handOver(settings map[string]Profile, got, want keyBinding) bool {
+	pid, isProfile := strings.CutPrefix(got.Owner, "profile:")
+	if !isProfile || !strings.HasPrefix(want.Owner, "sign-in:") || got.StartURL != want.StartURL || got.SSORegion != want.SSORegion {
+		return false
+	}
+	for _, m := range sessionMembers(settings, want.Session) {
+		if m.ID == pid && m.TokenOwner() == want.Owner {
+			return true
 		}
 	}
-	return keyUnusable, want
+	return false
+}
+
+// usableVerdict reports whether v lets the key's token be used.
+func usableVerdict(v verdict) bool {
+	return v == keyNotOurs || v == keyNoToken || v == keyUsable || v == keyAdopt || v == keyHandOver
 }
 
 // vetKeyHook lets a test watch the key's lock being held.
 var vetKeyHook = func() {}
 
-// vetKey accepts or retires session's key under its exclusive lock, and reports whether its
-// token may be used. Adopting an unbound token and the hand-over write the binding. It runs
-// after every Settings sync and before every use Agent Fleet starts (an export, a login
-// attempt's landing, the SSM pane and the instance list).
-func vetKey(settings map[string]Profile, session string) bool {
+// ErrKeyRetireFailed reports a key that had to be retired but could not be: its token or role
+// credentials may still be readable, so nothing may use it.
+var ErrKeyRetireFailed = errors.New("could not retire a cached AWS login that no longer matches Settings")
+
+// vetKey accepts or retires session's key under its exclusive lock. It returns nil when the key
+// may be used or was retired cleanly (the run then takes the normal login-required path), and
+// an error when the lock, the binding or the retire failed: the caller must not use the key.
+// Adopting an unbound token and the hand-over write the binding; a usable key records its
+// members' roles. A key no usable Settings profile renders is left alone.
+func vetKey(settings map[string]Profile, usable []string, session string) error {
 	unlock, err := logins.LockKey(session, false)
 	if err != nil {
-		return false
+		return fmt.Errorf("lock the cached login of %s: %w", session, err)
 	}
 	defer unlock()
 	vetKeyHook()
-	v, want := judgeKey(settings, session)
-	switch v {
-	case keyNoToken, keyUsable:
-		return true
-	case keyAdopt, keyHandOver:
-		return writeJSONAtomic(bindingPath(session), want) == nil
-	}
-	retireKey(settings, session)
-	return false
+	return vetLocked(settings, usable, session)
 }
 
-// retireKey moves the token aside (kept for a later revoke) and deletes the role credentials
-// of the key's current members. The caller holds the key's exclusive lock.
-func retireKey(settings map[string]Profile, session string) {
+// vetLocked is vetKey for a caller that holds the key's exclusive lock.
+func vetLocked(settings map[string]Profile, usable []string, session string) error {
+	v, want, got := judgeKey(settings, usable, session)
+	switch v {
+	case keyNotOurs, keyLanding, keyNoToken:
+		return nil
+	case keyUsable, keyAdopt, keyHandOver:
+		for _, r := range got.Roles {
+			want.Roles = addRole(want.Roles, r[0], r[1])
+		}
+		if err := writeJSONAtomic(bindingPath(session), want); err != nil {
+			return fmt.Errorf("%w: write the binding of %s: %v", ErrKeyRetireFailed, session, err)
+		}
+		return nil
+	}
+	return retireKey(session, append(got.Roles, want.Roles...))
+}
+
+// retireKey moves the token aside (kept for a later revoke), deletes the role credentials of
+// every role in roles, and removes the binding. The caller holds the key's exclusive lock. Any
+// failure is returned: a token or role credentials left in place would still be used.
+func retireKey(session string, roles [][2]string) error {
 	path := ssoCachePath(session)
-	_ = os.Rename(path, path+".af-retired")
-	for _, m := range sessionMembers(settings, session) {
-		for _, p := range roleCachePaths(m, session) {
-			_ = os.Remove(p)
+	if err := os.Rename(path, path+".af-retired"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%w: %v", ErrKeyRetireFailed, err)
+	}
+	for _, r := range roles {
+		if err := os.Remove(ssoRoleCachePath(r[0], r[1], session)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("%w: %v", ErrKeyRetireFailed, err)
 		}
 	}
-	_ = os.Remove(bindingPath(session))
+	if err := os.Remove(bindingPath(session)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%w: %v", ErrKeyRetireFailed, err)
+	}
+	return nil
 }
 
 // keyLoginState is profileLoginState for sp's key, as decision 10 reads it: a key that vetting
 // would retire is "none". A read moves no file.
-func keyLoginState(sp Profile, settings map[string]Profile, now time.Time) string {
-	if v, _ := judgeKey(settings, sp.SSOSession()); v == keyUnusable {
+func keyLoginState(sp Profile, settings map[string]Profile, usable []string, now time.Time) string {
+	if v, _, _ := judgeKey(settings, usable, sp.SSOSession()); !usableVerdict(v) {
 		return loginStateNone
 	}
 	return profileLoginState(sp.SSOSession(), now)
 }
 
-// VetKeyOf vets the key the profile name logs in through (its source's for a chain); for
-// af-aws-exec right before it fetches credentials. A name Settings does not have is the
-// member's own profile, which this does not judge.
-func VetKeyOf(settings map[string]Profile, name string) bool {
+// keyExpiry is readSSOExpiry for sp's key, only while the key is usable: the end of a token
+// for another owner or portal is not this sign-in's.
+func keyExpiry(sp Profile, settings map[string]Profile, usable []string, now time.Time) (time.Time, bool) {
+	if v, _, _ := judgeKey(settings, usable, sp.SSOSession()); !usableVerdict(v) {
+		return time.Time{}, false
+	}
+	return readSSOExpiry(sp.SSOSession(), now)
+}
+
+// VetKeyOf vets the key the profile name logs in through (its source's for a chain), for
+// af-aws-exec right before it fetches credentials. An error means the key could not be made
+// safe and must not be used.
+func VetKeyOf(settings map[string]Profile, name string) error {
 	p, ok := settings[name]
 	if !ok {
-		return true
+		return nil
 	}
 	if p.Chained() {
 		if p, ok = settings[p.SourceProfile]; !ok {
-			return true
+			return nil
 		}
 	}
-	return vetKey(settings, p.SSOSession())
+	return vetKey(settings, UsableNow(), p.SSOSession())
 }
 
-// vetAll vets every key Settings renders, after a sync: a portal change or a rename is acted on
-// within one poll even when nothing runs. A login attempt whose target changed is ended.
-func vetAll(settings map[string]Profile) {
+// vetAll vets every key the usable Settings profiles render, and ends every login attempt whose
+// target Settings no longer names, a key Settings dropped included. Every Sync runs it before it
+// returns, so a portal change or a rename is acted on before a reader uses the new files.
+func vetAll(settings map[string]Profile, usable []string) error {
+	var errs []error
 	done := map[string]bool{}
-	for _, p := range settings {
-		if p.Chained() || done[p.SSOSession()] {
+	for _, name := range usable {
+		p, ok := settings[name]
+		if !ok || p.Chained() || done[p.SSOSession()] {
 			continue
 		}
 		done[p.SSOSession()] = true
-		vetKey(settings, p.SSOSession())
-		if t, ok := attemptTargetOf(p.SSOSession()); ok {
-			if want, ok := keyOwner(settings, p.SSOSession()); !ok || want != t {
-				endLoginFor(p.SSOSession())
-			}
+		errs = append(errs, vetKey(settings, usable, p.SSOSession()))
+	}
+	endStaleAttempts(settings)
+	return errors.Join(errs...)
+}
+
+// runningAttempt is one login attempt and the owner and portal it started for. attempt is nil
+// until Start returned.
+type runningAttempt struct {
+	attempt *cloudlogin.Attempt
+	target  keyBinding
+}
+
+// attempts holds the running login attempts by a registration number of their own, taken before
+// the process starts so a landing is never adoptable unseen: a landing binds only its target,
+// and a sync that sees the target change ends it, a key Settings dropped included.
+var (
+	attemptsMu sync.Mutex
+	attempts   = map[uint64]*runningAttempt{}
+	attemptSeq uint64
+)
+
+// registerAttempt records target before its attempt starts; the returned func drops it.
+func registerAttempt(target keyBinding) (uint64, func()) {
+	attemptsMu.Lock()
+	defer attemptsMu.Unlock()
+	attemptSeq++
+	id := attemptSeq
+	attempts[id] = &runningAttempt{target: target}
+	return id, func() {
+		attemptsMu.Lock()
+		delete(attempts, id)
+		attemptsMu.Unlock()
+	}
+}
+
+// attachAttempt gives registration id its attempt. It reports false when a sync already ended
+// the registration (its target changed while the process started): the caller ends a.
+func attachAttempt(id uint64, a *cloudlogin.Attempt) bool {
+	attemptsMu.Lock()
+	defer attemptsMu.Unlock()
+	ra, ok := attempts[id]
+	if ok {
+		ra.attempt = a
+	}
+	return ok
+}
+
+// landingFor reports whether a login attempt for session is under way: its token is not to be
+// adopted before the attempt binds it.
+func landingFor(session string) bool {
+	attemptsMu.Lock()
+	defer attemptsMu.Unlock()
+	for _, ra := range attempts {
+		if ra.target.Session == session {
+			return true
 		}
 	}
+	return false
 }
 
-// attemptTargets records, per running login attempt's key, the owner and portal it started
-// for: its landing binds only that, and a sync that sees them change ends it.
-var attemptTargets sync.Map // session -> keyBinding
-
-func attemptTargetOf(session string) (keyBinding, bool) {
-	v, ok := attemptTargets.Load(session)
-	if !ok {
-		return keyBinding{}, false
+// endStaleAttempts ends each running attempt whose target the current Settings does not name,
+// under the key's gate, the order a logout takes.
+func endStaleAttempts(settings map[string]Profile) {
+	var stale []*runningAttempt
+	attemptsMu.Lock()
+	for id, ra := range attempts {
+		if want, ok := settingsOwner(settings, ra.target.Session); ok && want.sameTarget(ra.target) {
+			continue
+		}
+		delete(attempts, id)
+		stale = append(stale, ra)
 	}
-	return v.(keyBinding), true
+	attemptsMu.Unlock()
+	for _, ra := range stale {
+		if ra.attempt == nil {
+			continue
+		}
+		gate := logins.Gate(ra.target.Session)
+		gate.Lock()
+		ra.attempt.End(cloudlogin.PhaseCancelled, settingsChangedLogin)
+		gate.Unlock()
+	}
 }
+
+// settingsChangedLogin is what an attempt ended by a change of its target says.
+const settingsChangedLogin = "Settings changed during the login; log in again"
 
 // bindLanding binds session's freshly written token to target, if Settings still names the
-// same owner and portal and the token is for that portal. It reports whether it did.
+// same owner and portal and the token is for that portal. Otherwise the token it wrote is
+// retired at once, in the same exclusive section: it is known to be for another owner or
+// portal, and must never be adopted by the key's next owner.
 func bindLanding(session string, target keyBinding) bool {
 	unlock, err := logins.LockKey(session, false)
 	if err != nil {
 		return false
 	}
 	defer unlock()
-	want, ok := keyOwner(loginSettings(), session)
-	url, region, present := tokenPortal(session)
-	if !ok || want != target || !present || url != target.StartURL || region != target.SSORegion {
-		return false
+	settings := loginSettings()
+	want, ok := settingsOwner(settings, session)
+	if settings == nil {
+		// No Settings list on this Agent yet: the attempt's own target is all there is.
+		want, ok = target, true
 	}
-	return writeJSONAtomic(bindingPath(session), target) == nil
+	url, region, present := tokenPortal(session)
+	if ok && want.sameTarget(target) && present && url == target.StartURL && region == target.SSORegion {
+		return writeJSONAtomic(bindingPath(session), want) == nil
+	}
+	_ = retireKey(session, append(target.Roles, want.Roles...))
+	return false
 }
 
 // forgetLeftovers revokes and deletes the per-profile tokens the members of session kept from
 // before they joined it under another name (ADR 0125 decision C), but only a key provably left
-// by that member: no current Settings profile or sign-in renders it, the member's own files
-// define no sso-session of that name, and its binding names that member's profile. Anything
-// else is left alone: where it came from cannot be shown.
-func forgetLeftovers(settings map[string]Profile, members []Profile, session string) {
-	rendered := map[string]bool{}
-	for _, p := range settings {
-		if !p.Chained() {
-			rendered[p.SSOSession()] = true
-		}
-	}
-	b, _ := os.ReadFile(ConfigPath())
-	user, err := stripBlock(string(b))
-	if err != nil {
-		return
-	}
-	_, own := configNames(user)
+// by that member. Each is decided inside the key's exclusive lock, from the Settings and the
+// member's files as they are then: no usable profile or sign-in renders the key, the member's
+// own files define no sso-session of that name (a file that cannot be read keeps everything),
+// and its binding names that member's profile.
+func forgetLeftovers(members []Profile, session string) {
 	for _, m := range members {
 		key := "af-" + m.Name
-		if key == session || rendered[key] || own[key] || m.ID == "" {
+		if key == session || m.ID == "" {
 			continue
 		}
 		forgetLeftover(m, key)
@@ -243,6 +411,23 @@ func forgetLeftover(m Profile, key string) {
 		return
 	}
 	defer unlock()
+	settings := loginSettings()
+	for _, n := range UsableNow() {
+		if p, ok := settings[n]; ok && !p.Chained() && p.SSOSession() == key {
+			return
+		}
+	}
+	b, err := os.ReadFile(ConfigPath())
+	if err != nil && !os.IsNotExist(err) {
+		return
+	}
+	user, err := stripBlock(string(b))
+	if err != nil {
+		return
+	}
+	if _, own := configNames(user); own[key] {
+		return
+	}
 	var got keyBinding
 	if !readJSON(bindingPath(key), &got) || got.Owner != "profile:"+m.ID {
 		return
@@ -252,11 +437,47 @@ func forgetLeftover(m Profile, key string) {
 		if err != nil {
 			continue
 		}
-		_ = os.Remove(path)
+		if os.Remove(path) != nil {
+			return
+		}
 		_, _ = revokeSSOToken(snap, m.SSORegion)
 	}
-	for _, p := range roleCachePaths(m, key) {
-		_ = os.Remove(p)
+	for _, r := range addRole(got.Roles, m.AccountID, m.RoleName) {
+		_ = os.Remove(ssoRoleCachePath(r[0], r[1], key))
 	}
 	_ = os.Remove(bindingPath(key))
+}
+
+// id is the owner and portal of b as one string, for a login request and its waiters.
+func (b keyBinding) id() string { return b.Owner + "|" + b.StartURL + "|" + b.SSORegion }
+
+// ErrSettingsChangedRun stops a run whose key Settings gave another owner or portal after the
+// run was planned.
+var ErrSettingsChangedRun = errors.New("the AWS profile's sign-in changed in Settings while this command ran; run it again")
+
+// plannedTarget is the check exportLocked runs under session's lock: Settings still gives the
+// key the owner and portal it gave at plan time, and the key is usable for it. Nil when the key
+// was not Agent Fleet's at plan time (a profile of the member's own).
+func plannedTarget(planSettings map[string]Profile, session string) (func(string) error, string) {
+	if planSettings == nil {
+		return nil, ""
+	}
+	planned, ok := settingsOwner(planSettings, session)
+	if !ok {
+		return nil, ""
+	}
+	return func(key string) error {
+		settings := loginSettings()
+		if settings == nil {
+			settings = planSettings
+		}
+		want, ok := settingsOwner(settings, key)
+		if !ok || !want.sameTarget(planned) {
+			return ErrSettingsChangedRun
+		}
+		if v, _, _ := judgeKey(settings, UsableNow(), key); !usableVerdict(v) && v != keyLanding {
+			return ErrSettingsChangedRun
+		}
+		return nil
+	}, planned.id()
 }

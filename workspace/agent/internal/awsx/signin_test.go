@@ -72,6 +72,24 @@ func roleCache(t *testing.T, p Profile, session string) string {
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
+func names(s map[string]Profile) []string {
+	out := make([]string, 0, len(s))
+	for n := range s {
+		out = append(out, n)
+	}
+	return out
+}
+
+// accepted vets key against s with every profile of s usable, and reports whether its token is
+// still where a reader finds it.
+func accepted(t *testing.T, s map[string]Profile, key string) bool {
+	t.Helper()
+	if err := vetKey(s, names(s), key); err != nil {
+		t.Fatal(err)
+	}
+	return exists(ssoCachePath(key))
+}
+
 // Decision 4: the members of a sign-in share one [sso-session af-<sign-in>], written once; the
 // member's own [sso-session af-<sign-in>] holds back every member, their own [profile x] only
 // x; a sign-in named like a profile with a login of its own exports neither.
@@ -121,14 +139,14 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 	s := teamSettings(t)
 	sp := s["a"]
 	token(t, "af-team", sp.StartURL, sp.SSORegion, "tok1")
-	if !vetKey(s, "af-team") {
+	if !accepted(t, s, "af-team") {
 		t.Fatal("an unbound token of the current portal was not adopted")
 	}
 	var b keyBinding
 	if !readJSON(bindingPath("af-team"), &b) || b.Owner != "sign-in:g1" {
 		t.Fatalf("binding = %+v", b)
 	}
-	if st := keyLoginState(sp, s, time.Now()); st != loginStateSignedIn {
+	if st := keyLoginState(sp, s, names(s), time.Now()); st != loginStateSignedIn {
 		t.Fatalf("state = %s", st)
 	}
 
@@ -139,13 +157,13 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 		moved[k] = v
 	}
 	ra, rb := roleCache(t, s["a"], "af-team"), roleCache(t, s["b"], "af-team")
-	if st := keyLoginState(moved["a"], moved, time.Now()); st != loginStateNone {
+	if st := keyLoginState(moved["a"], moved, names(moved), time.Now()); st != loginStateNone {
 		t.Fatalf("state after a portal change = %s", st)
 	}
 	if !exists(ssoCachePath("af-team")) {
 		t.Fatal("a read moved the token")
 	}
-	if vetKey(moved, "af-team") {
+	if accepted(t, moved, "af-team") {
 		t.Fatal("a token for another portal was accepted")
 	}
 	if exists(ssoCachePath("af-team")) || exists(ra) || exists(rb) || !exists(ssoCachePath("af-team")+".af-retired") {
@@ -155,7 +173,7 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 	// Another owner under the same key and portal (a name freed and taken).
 	token(t, "af-team", sp.StartURL, sp.SSORegion, "tok2")
 	writeJSONAtomic(bindingPath("af-team"), keyBinding{Session: "af-team", Owner: "sign-in:old", StartURL: sp.StartURL, SSORegion: sp.SSORegion})
-	if vetKey(s, "af-team") {
+	if accepted(t, s, "af-team") {
 		t.Fatal("a token bound to another owner was accepted")
 	}
 
@@ -163,7 +181,7 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 	solo := prof("solo")
 	solo.ID = "ps"
 	token(t, "af-solo", solo.StartURL, solo.SSORegion, "tok3")
-	if !vetKey(map[string]Profile{"solo": solo}, "af-solo") {
+	if !accepted(t, map[string]Profile{"solo": solo}, "af-solo") {
 		t.Fatal("control: solo's own login")
 	}
 	grouped := solo
@@ -171,7 +189,7 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 	other := prof("solo-2")
 	other.ID, other.SignIn, other.SignInID = "ps2", "solo", "g2"
 	after := map[string]Profile{"solo": grouped, "solo-2": other}
-	if !vetKey(after, "af-solo") || !exists(ssoCachePath("af-solo")) {
+	if !accepted(t, after, "af-solo") {
 		t.Fatal("the member's login did not carry over to the sign-in of its name")
 	}
 	if !readJSON(bindingPath("af-solo"), &b) || b.Owner != "sign-in:g2" {
@@ -179,13 +197,13 @@ func TestVetKeyBindsAdoptsAndRetires(t *testing.T) {
 	}
 	// A profile that was never that member hands nothing over.
 	writeJSONAtomic(bindingPath("af-solo"), keyBinding{Session: "af-solo", Owner: "profile:someone-else", StartURL: solo.StartURL, SSORegion: solo.SSORegion})
-	if vetKey(after, "af-solo") {
+	if accepted(t, after, "af-solo") {
 		t.Fatal("another profile's token was handed over")
 	}
 }
 
 // A login attempt binds only the owner and portal it started for: Settings changing during
-// the login leaves its token unbound and the attempt failed.
+// the login fails the attempt and retires what it wrote, so the key's next owner cannot adopt it.
 func TestLandingBindsOnlyItsTarget(t *testing.T) {
 	s := teamSettings(t)
 	sp := s["a"]
@@ -248,7 +266,7 @@ func TestSignInRoutesNeverCarryAToken(t *testing.T) {
 	s := teamSettings(t)
 	sp := s["a"]
 	token(t, "af-team", sp.StartURL, sp.SSORegion, "zq-sentinel-access")
-	vetKey(s, "af-team")
+	accepted(t, s, "af-team")
 	rec := httptest.NewRecorder()
 	HandleProfileLoginStates(rec, httptest.NewRequest("GET", "/aws-login/profiles", nil))
 	body := rec.Body.String()

@@ -174,6 +174,18 @@ func agentContractFamilies() []contractFamily {
 			goOnly:  map[string]string{},
 		},
 
+		// A profile's logout, which signs out every member of its sign-in (ADR 0125 decision 5).
+		{
+			name:    "awsx.ProfileLogoutWire",
+			goType:  reflect.TypeOf(awsx.ProfileLogoutWire{}),
+			binding: profileLogoutBinding,
+			tsPath:  "../../console/src/features/awslogin/store.ts",
+			tsName:  "AwsLogoutWire",
+			tsKeys:  keySet("revoked", "alreadyEnded", "noToken", "message", "profiles"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+
 		// A "confirm before use" request (ADR 0126 decision 5), GET /aws-confirm.
 		{
 			name:    "awsx.ConfirmRequestWire",
@@ -403,6 +415,11 @@ var signInStateBinding = map[string]string{
 	"Expiring": "expiring", "Profiles": "profiles",
 }
 
+var profileLogoutBinding = map[string]string{
+	"Revoked": "revoked", "AlreadyEnded": "alreadyEnded", "NoToken": "noToken", "Message": "message",
+	"Profiles": "profiles",
+}
+
 var confirmRequestBinding = map[string]string{
 	"ID": "id", "Session": "session", "Targets": "targets", "Commands": "commands", "FirstAt": "firstAt",
 	"LastAt": "lastAt", "ExpiresInSec": "expiresInSec",
@@ -455,7 +472,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 20 {
+	if len(fams) != 21 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

@@ -240,7 +240,11 @@ func runAWSExec(args []string) {
 		o.Exported = usable
 	}
 	// A key whose owner or portal changed is retired before the CLI reads it (ADR 0125 decision 10).
-	awsx.VetKeyOf(o.Settings, o.Profile)
+	// One that cannot be retired is refused: its token or role credentials may still be read.
+	if err := awsx.VetKeyOf(o.Settings, o.Profile); err != nil {
+		run.Refuse(cloudruns.RefusedOther)
+		awsExec.Fail(cloudexec.ExitRefused, err.Error())
+	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
 	if err != nil {
 		if errors.Is(err, awsx.ErrLoginRequired) {

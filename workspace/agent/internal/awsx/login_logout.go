@@ -39,7 +39,9 @@ const ssoLogoutTimeout = 30 * time.Second
 // is SIGKILL to its process group, so this is only scheduling latency.
 const attemptExitWait = 5 * time.Second
 
-type profileLogoutWire struct {
+// ProfileLogoutWire is the answer to POST /aws-login/profiles/{name}/logout (the Console's
+// AwsLogoutWire).
+type ProfileLogoutWire struct {
 	// Revoked is true once AWS answered the Logout call with success.
 	Revoked bool `json:"revoked"`
 	// AlreadyEnded: AWS refused to renew the expired login, so its portal session is over and
@@ -381,7 +383,7 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	defer unlock()
 
-	var out profileLogoutWire
+	var out ProfileLogoutWire
 	token := ssoCachePath(ssoSession)
 	// The login is read once, taken off disk, and only then revoked from memory: the revoke
 	// can take seconds, and a login the member starts meanwhile is a new one whose token
@@ -427,7 +429,7 @@ func HandleProfileLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// The tokens the members kept from before they joined the sign-in under another name, when
 	// they are provably theirs and nothing else uses them (decision C).
-	forgetLeftovers(settings, members, ssoSession)
+	forgetLeftovers(members, ssoSession)
 	log.Printf("aws-login: logout profile=%s sso_session=%s profiles=%d revoked=%t already_ended=%t no_token=%t relayed=%t",
 		sp.Name, ssoSession, len(out.Profiles), out.Revoked, out.AlreadyEnded, out.NoToken, cloudlogin.RelayedByCP(r))
 	httpx.WriteJSON(w, http.StatusOK, out)

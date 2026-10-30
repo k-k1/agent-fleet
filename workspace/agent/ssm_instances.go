@@ -54,8 +54,13 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return
 	}
+	// The token of another owner or portal is retired before the CLI reads it, and a profile
+	// Settings no longer renders this way is refused.
 	if ssm.VetLogin != nil {
-		ssm.VetLogin(meta) // the token of another owner or portal is retired before the CLI reads it
+		if err := ssm.VetLogin(meta); err != nil {
+			httpx.WriteErr(w, http.StatusConflict, "ssm_login_stale", err.Error())
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
