@@ -429,9 +429,10 @@ func TestLockApprovalsIsBounded(t *testing.T) {
 	}
 }
 
-// A daemon stalled between its check and its write past the deadline must report
-// "expired" and leave no decision behind.
-func TestBridgeApprovalDecisionStalledPastDeadline(t *testing.T) {
+// A published decision is never retracted: a daemon stalled across the deadline after its
+// pre-write check still reports what it wrote, because the waiter's lock-free poll may
+// already have acted on it.
+func TestBridgeApprovalDecisionNeverRetracted(t *testing.T) {
 	withTempHome(t)
 	id := chatx.RandUUID()
 	dl := chatx.NowMs() + 20
@@ -442,10 +443,13 @@ func TestBridgeApprovalDecisionStalledPastDeadline(t *testing.T) {
 	}
 	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
 	msg, err := bridgeApprovalDecision(id, "approve", true)
-	if err != nil || !strings.Contains(msg, "expired") {
+	if err != nil || !strings.Contains(msg, "Approved") {
 		t.Fatalf("msg=%q err=%v", msg, err)
 	}
-	if _, ok := bridgeApprovals.Read(id); ok {
-		t.Fatal("record must not keep a late decision")
+	if rec, ok := bridgeApprovals.Read(id); !ok || rec.Decision != "approve" {
+		t.Fatalf("decision must stay published: %+v ok=%v", rec, ok)
+	}
+	if err := waitApprovalDecision(id); err != nil {
+		t.Fatalf("the waiter must see the approval: %v", err)
 	}
 }

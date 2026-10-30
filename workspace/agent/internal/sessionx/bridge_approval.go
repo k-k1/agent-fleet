@@ -225,7 +225,8 @@ func expireApproval(id string) error {
 // (from routeInteraction via answerInteraction, kind "op") and returns the localized outcome
 // line the receiver shows on the now-button-less message. The subprocess's gate loop is
 // polling the same record and proceeds/aborts once it observes the decision. Stale or
-// already-decided clicks are reported without changing the record. The read-check-write runs
+// already-decided clicks are reported without changing the record. A written decision is
+// never retracted: the waiter polls without the lock and may already have acted on it. The read-check-write runs
 // under the lock shared with expireApproval, so a record the waiter has removed is never
 // re-created and a click after the deadline is reported as expired.
 func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
@@ -251,12 +252,6 @@ func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
 	rec.Decision = choice
 	if err := bridgeApprovals.Write(id, rec); err != nil {
 		return "", err
-	}
-	if rec.Deadline > 0 && chatx.NowMs() >= rec.Deadline {
-		// Stalled past the deadline between check and write (e.g. the process was
-		// suspended): the waiter may already have timed out without the lock.
-		bridgeApprovals.Remove(id)
-		return expired, nil
 	}
 	if choice == "approve" {
 		return Fb(en, "✓ 承認しました（実行します）", "✓ Approved (running it)"), nil
