@@ -122,6 +122,54 @@ export function followDocument(
   });
 }
 
+/** editorTheme keeps the editor on the same configurable surface as FileView.
+ *  The editor is never flagged dark, so CodeMirror applies its LIGHT base theme
+ *  in every app theme: every colour that paints behind or over the text has to
+ *  come from our tokens here, or the dark theme gets light-theme fills under
+ *  light `--fg` text (the focused selection was #d7d4f0 under #ddd, ~1:1).
+ *  Tokens rather than `EditorView.darkTheme` also follow a nested data-theme
+ *  region and the user's viewer surface colour. */
+export const editorTheme = EditorView.theme({
+  "&": { height: "100%", backgroundColor: "var(--viewer-bg, var(--bg))" },
+  ".cm-scroller": { fontFamily: "var(--viewer-font)", fontSize: "var(--viewer-size)" },
+  ".cm-content": { minHeight: "100%", caretColor: "var(--fg)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--fg)" },
+  // Same selectors as the base theme so these win on order, not on specificity.
+  "& .cm-selectionBackground": {
+    background: "color-mix(in srgb, var(--accent) 20%, var(--viewer-bg, var(--bg)))",
+  },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+    background: "color-mix(in srgb, var(--accent) 35%, var(--viewer-bg, var(--bg)))",
+  },
+  ".cm-selectionMatch": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent)",
+  },
+  ".cm-panels": {
+    backgroundColor: "color-mix(in srgb, var(--viewer-bg, var(--bg)) 94%, var(--fg))",
+    color: "var(--fg)",
+  },
+  ".cm-panels-top": { borderBottom: "1px solid var(--border)" },
+  ".cm-panels-bottom": { borderTop: "1px solid var(--border)" },
+  // Autocomplete and other tooltips; the selected completion keeps its own
+  // white-on-blue fill, which reads in both themes.
+  ".cm-tooltip": {
+    backgroundColor: "color-mix(in srgb, var(--viewer-bg, var(--bg)) 94%, var(--fg))",
+    color: "var(--fg)",
+    border: "1px solid var(--border)",
+  },
+  ".cm-tooltip-section:not(:first-child)": { borderTop: "1px solid var(--border)" },
+  ".cm-textfield": {
+    backgroundColor: "var(--viewer-bg, var(--bg))",
+    border: "1px solid var(--border)",
+  },
+  ".cm-button": {
+    backgroundImage: "none",
+    backgroundColor: "color-mix(in srgb, var(--viewer-bg, var(--bg)) 85%, var(--fg))",
+    border: "1px solid var(--border)",
+    "&:active": { backgroundImage: "none" },
+  },
+});
+
 /** Scroll a 1-based line into view and put the cursor on it. The cursor is what
  *  marks the line: `basicSetup`'s active-line highlight follows it, which is the
  *  editing surface's equivalent of CodeView's target-line row. */
@@ -201,13 +249,7 @@ export function CodeEditor({
         ...historyKeymap,
         ...searchKeymap,
       ]),
-      EditorView.theme({
-        // Keep the editor on the same configurable surface as FileView rather
-        // than falling back to CodeMirror's dark default in a light viewer.
-        "&": { height: "100%", backgroundColor: "var(--viewer-bg, var(--bg))" },
-        ".cm-scroller": { fontFamily: "var(--viewer-font)", fontSize: "var(--viewer-size)" },
-        ".cm-content": { minHeight: "100%" },
-      }),
+      editorTheme,
     ];
     extensionsRef.current = extensions;
     // A fresh mount starts a fresh model, so its follow epoch is the baseline —
