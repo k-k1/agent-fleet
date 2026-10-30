@@ -285,3 +285,15 @@ Migrations: the gate's column takes the next numbers (SQLite `0116`, Postgres `0
   but blocks the main #3014 case (an admin profile on the same portal).
 - **H. Taken: the recommended option.** **Attribution by process tree** as a follow-up. Recommended: not now (decision 2 and Rejected). File an
   issue only if misattributed rows turn up in practice.
+
+## Note — the workspace's spool is `.workspace` (2026-10-30)
+
+Implementation of decision 1 (#3050, PR 1). `_workspace` is a valid session name (`^[A-Za-z0-9_-]{1,40}$`), so a
+session called that would share the spool of unattributed runs. The spool is `cloud-runs/.workspace/` instead:
+the dot is outside the session namespace. Wherever decisions 1 and 2 say `_workspace`, read `.workspace`.
+Nothing else changes.
+
+Two more details the decisions left open:
+- The workspace spool also keeps at most 500 rows, so a burst within the 7 days stays bounded.
+- A session's spool is removed when the session is purged from the trash, not when it is moved there,
+  so a restored session keeps its rows.

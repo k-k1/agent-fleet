@@ -54,6 +54,7 @@ func TestAuditActionTarget(t *testing.T) {
 		{"GET", "/api/aws-login/profiles/prod/attempts/abc", "prod", "", "", false},
 		{"POST", "/api/aws-login/profiles/prod/logout", "prod", "aws.logout", "profile: prod", true},
 		{"GET", "/api/aws-login/profiles", "", "", "", false},
+		{"GET", "/api/aws-runs", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the
 		// attempt by its reference only. Polls and lists are reads.

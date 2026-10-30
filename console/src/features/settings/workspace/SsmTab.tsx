@@ -15,6 +15,7 @@ import { awsProfileName, validExternalId, validRoleArn, validSessionName } from 
 import { useAwsLoginStore } from "../../awslogin/store.ts";
 import { useSettingsUI } from "../store.ts";
 import { AwsConfigImport } from "./AwsConfigImport.tsx";
+import { RecentCloudRuns } from "../../cloudruns/cloudRuns.tsx";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -154,6 +155,7 @@ export function SsmTab() {
         setOpen={setProfileOpen}
       />
       <HostSection hosts={hosts} loadErr={hostsErr} profiles={profiles} reload={reload} onNeedProfile={focusProfile} />
+      <RecentCloudRuns />
     </div>
   );
 }

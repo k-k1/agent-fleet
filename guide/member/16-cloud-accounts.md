@@ -200,6 +200,13 @@ The plugin then finds the profile's short-lived credentials in its environment, 
 and the "running as" line shows who uploads. If the build script names a profile itself (`profileName = "prod"`,
 say), see "could not be found" below.
 
+**Every run shows in the session's conversation.** Each `af-aws-exec` run leaves one line in the conversation of
+the session that ran it, at the time it started: the profile, the account and role it ran as, the region, the
+command (`aws s3 ls`, or just the program's name), and how it ended. Settings > AWS profiles/SSM lists the latest
+runs of every session under "Recent runs". The line never holds the command's arguments, which can carry secrets.
+It is there so you can see what ran, and it is not an audit: the session is the one the run reported, which the
+command can change, and a command run with plain `aws` leaves no line.
+
 **A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
 SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
 read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the
