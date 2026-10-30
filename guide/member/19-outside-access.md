@@ -154,8 +154,9 @@ Before you start:
    This continues a Claude Code session that ran outside Agent Fleet.
 
    - Branch: <branch>, commit at hand-off: <sha>
-   - First run `git rev-parse HEAD`. If it is not <sha>, run `git fetch origin` and compare with
-     `origin/<branch>`; if that does not match either, do no work and report it.
+   - First run `git rev-parse HEAD`. If it is not <sha>, run `git fetch origin`, then
+     `git merge --ff-only <sha>`, and check `git rev-parse HEAD` again. Do no work until HEAD is <sha>; if the
+     fast-forward fails or HEAD still differs, stop and report it.
    - Original working folder: <absolute path>. Paths in this note are relative to it; read them as relative
      to the root of your working copy.
 
@@ -179,8 +180,9 @@ Good to know:
 
 - The session works in a new worktree, on a temporary branch based on the one you pushed. When you want the work
   back on the original branch, ask the session to push there.
-- If the session reports that it does not start at the pushed commit, the workspace's copy of that branch was out
-  of date. Let it fetch and continue, or start over once the branch is current.
+- The session fast-forwards itself to the pushed commit before it starts. If it still reports that it does not
+  start at that commit, the branch you pushed and the workspace's copy have diverged. Check what you pushed, then
+  run `/af-move` again.
 - If Claude stops because the repository is not in the workspace, clone it from the Console and run `/af-move`
   again.
 - The note appears in the session as the first instruction. Answer permission prompts and plans in the Console as
