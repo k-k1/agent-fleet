@@ -560,7 +560,8 @@ Commands that only read are re-run by themselves after a timeout or a connection
 ### `jira` exited with status 3: the description was not set
 
 Status **3** from `jira issue create` or `jira issue edit -b` means the only part that failed is the description,
-and `jira` printed which issue it concerns. After a `create` **the issue exists**, so do not create it again. After
+and `jira` normally names the issue. If a `create` could not read the new issue's key, it says so instead: find the
+issue in Jira (for example with the JQL above). After a `create` **the issue exists**, so do not create it again. After
 an `edit` the other changes you asked for were applied. Either way, set the description with
 `jira issue edit PROJ-1 --no-input -b "…"` ([15](15-external-services.md#use-jira-in-a-session)).
 
