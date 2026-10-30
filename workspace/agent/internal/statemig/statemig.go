@@ -187,6 +187,9 @@ var Entries = []string{
 	// af-aws-exec's Console login requests and cancel markers (ADR 0102). Introduced
 	// directly under AgentStateDir, so run() no-ops on a source that was never there.
 	"aws-login",
+	// af-aws-exec's run rows (ADR 0126). Introduced directly under AgentStateDir, so run()
+	// no-ops on a source that was never there.
+	"cloud-runs",
 	// Per-boot / per-run state of the CLIs themselves.
 	"mcp-output-cursor",
 	"mcp-af-name",
