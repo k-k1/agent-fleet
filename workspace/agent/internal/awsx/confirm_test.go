@@ -361,3 +361,53 @@ func TestDenyHoldIsPerProfile(t *testing.T) {
 		t.Fatalf("the source alone = %v after %s", err, time.Since(start))
 	}
 }
+
+// G1: a grant for what the run planned does not let it through once Settings changed, whether
+// the grant was there before the run started or lands while it waits.
+func TestConfirmGrantDoesNotSkipTheSettingsCheck(t *testing.T) {
+	s := gateEnv(t)
+	inc := incarnation(session.Meta{Name: "s1", Kind: session.KindShell, Dir: "/w", CreatedAt: "2026-10-31T00:00:00Z"})
+	target := confirmTargets(s, "prod-admin")[0]
+	grant := func() {
+		t.Helper()
+		g := confirmGrant{Session: "s1", Incarnation: inc, ProfileID: target.ProfileID, Identity: target.Identity,
+			Expires: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), Relayed: true}
+		if err := writeJSONAtomic(grantPath(inc, target.ProfileID), g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	edited := map[string]Profile{}
+	for k, v := range s {
+		edited[k] = v
+	}
+	p := edited["prod-admin"]
+	p.RoleName = "AdministratorAccess"
+	edited["prod-admin"] = p
+
+	// Control: the grant lets the unchanged plan through.
+	grant()
+	if res, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: time.Millisecond}); err != nil || !res.Confirmed {
+		t.Fatalf("control = %+v, %v", res, err)
+	}
+	// The grant exists from the start, but Settings changed.
+	confirmSettings = func() map[string]Profile { return edited }
+	if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: time.Millisecond}); !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
+		t.Fatalf("existing grant, changed Settings = %v", err)
+	}
+
+	// The grant lands while the run waits, together with a Settings change.
+	os.Remove(grantPath(inc, target.ProfileID))
+	confirmSettings = func() map[string]Profile { return s }
+	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	pending(t, 1)
+	confirmSettings = func() map[string]Profile { return edited }
+	grant()
+	select {
+	case err := <-ch:
+		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
+			t.Fatalf("grant landing with a Settings change = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the run never ended")
+	}
+}

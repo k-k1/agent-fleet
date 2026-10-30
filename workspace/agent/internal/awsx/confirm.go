@@ -289,19 +289,21 @@ func ConfirmGate(o ConfirmOptions) (ConfirmResult, error) {
 		}
 		return nil
 	}
-	granted := func() (ConfirmResult, bool) {
-		if ok, relayed := allGranted(inc, targets, time.Now()); ok && liveIncarnation(m.Name) == inc {
-			return ConfirmResult{Confirmed: true, OutsideConsole: !relayed}, true
+	// granted is checked only after stale: a grant for what the run planned does not count once
+	// the session or Settings moved on, even when it was there before the run started.
+	granted := func() (ConfirmResult, bool, error) {
+		if err := stale(); err != nil {
+			return ConfirmResult{}, false, err
 		}
-		return ConfirmResult{}, false
+		if ok, relayed := allGranted(inc, targets, time.Now()); ok {
+			return ConfirmResult{Confirmed: true, OutsideConsole: !relayed}, true, nil
+		}
+		return ConfirmResult{}, false, nil
 	}
 	announced := false
 	for {
-		if res, ok := granted(); ok {
-			return res, nil
-		}
-		if err := stale(); err != nil {
-			return ConfirmResult{}, err
+		if res, ok, err := granted(); err != nil || ok {
+			return res, err
 		}
 		now := time.Now()
 		// Ask only for what is not granted yet: an approved source is not asked about again.
@@ -330,11 +332,8 @@ func ConfirmGate(o ConfirmOptions) (ConfirmResult, error) {
 				return ConfirmResult{}, waiting()
 			}
 			time.Sleep(confirmPoll)
-			if res, ok := granted(); ok {
-				return res, nil
-			}
-			if err := stale(); err != nil {
-				return ConfirmResult{}, err
+			if res, ok, err := granted(); err != nil || ok {
+				return res, err
 			}
 			if deniedNow(inc, ask, time.Now()) {
 				return ConfirmResult{}, denied()
