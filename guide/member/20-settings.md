@@ -653,6 +653,8 @@ your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and you
   created a second time); try again.
 - **Coming from your own machine's `~/.aws/config` rather than another Agent Fleet?** The AWS profiles/SSM tab
   reads that file directly (the link is on this tab too). → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-awsconfig)
+- **Google Cloud profiles from your own gcloud configurations?** The Google Cloud tab reads
+  `~/.config/gcloud/configurations/config_<name>` files directly. → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-gcloud-configurations)
 
 ### Danger zone
 

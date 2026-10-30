@@ -190,8 +190,9 @@ Good to know:
   run `/af-move` again.
 - If Claude stops because the repository is not in the workspace, clone it from the Console and run `/af-move`
   again.
-- The note appears in the session as the first instruction. Answer permission prompts and plans in the Console as
-  usual.
+- The note arrives as the session's first instruction, marked as coming over MCP. The session treats it as a
+  teammate's request, not your approval ([what the session sees](#driving-your-workspace-from-an-external-claude-mcp)),
+  so answer permission prompts and plans in the Console as usual.
 - Close the session on your computer afterwards. Two sessions working on one branch get in each other's way.
 
 ### A memory-only connector (for claude.ai)

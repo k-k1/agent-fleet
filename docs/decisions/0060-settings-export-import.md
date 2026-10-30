@@ -112,3 +112,40 @@ Decision 6 (no server change) holds: the file is read in the browser and only pe
 `POST api/ssm/profiles`. Concurrent imports from two places are not de-duplicated (that would need a CP unique
 constraint). Procedure and the remaining phases (`~/.ssh/config`, gcloud, export):
 [docs/79 §9](../log/79-settings-export-import.md#9-手元の-awsconfig-を読む3010).
+
+## Addendum (2026-10-30) — reading gcloud configurations (#3017 part 2)
+
+For the same reason as `~/.aws/config`, a gcloud configuration file (`~/.config/gcloud/configurations/config_<name>`)
+becomes a source. **The sink stays the CP's existing CRUD (`api/gcp/profiles`).** No new REST endpoint.
+
+1. **Create only what the CP accepts.** Login method Google, a project id by the CP's own regexes, impersonation of
+   one service account. A configuration whose `core/account` is a service account is not imported: it cannot sign in
+   without a key.
+2. **Settings that change who signs in or where requests go are refused with a reason, not dropped.** Auth overrides
+   under `auth/`, a delegation chain, a proxy, endpoint overrides, a universe domain. Creating without them would
+   point the profile at something other than what the laptop's configuration does.
+3. **Never touch credentials.** The credentials DB, ADC and key files are not read, and a path or token file named in
+   a configuration is neither shown nor sent. A reason names a known key and a line, nothing else.
+4. Re-read the current list before writing and send nothing when it cannot be read (the executor rule of decision 5).
+
+Decision 6 holds. Procedure: [docs/79 §9.4](../log/79-settings-export-import.md#94-gcloud-の構成を読む3017-第-2-部2026-10-30).
+
+## Addendum (2026-10-30) — reading a laptop's `~/.ssh/config` for SSM hosts (#3017, part 1)
+
+The same source/sink split: `~/.ssh/config` is read in the browser, the sink is `planSsmImport` and the existing
+`POST api/ssm/hosts`. What differs from the AWS file is that an entry is **not a record**.
+
+1. **A tunnel becomes a shell, and the preview says so.** The usual entry is an SSH session over an SSM tunnel
+   (`AWS-StartSSHSession`); an Agent Fleet host is an `aws ssm start-session` shell with no SSH user, key or port.
+   Only that document is accepted, every created row is labelled as converted, and `User` / `IdentityFile` / `Port`
+   and the like are named as not carried over.
+2. **Read ssh_config(5) as OpenSSH does.** The first value per keyword wins across all matching blocks, so a host is
+   importable only when its `ProxyCommand` (and `HostName` when `%h` needs it) is the first value and comes from a
+   block naming the host exactly. A value inherited from a pattern, or following a `Match` that sets a deciding
+   keyword or any `Include`, is refused rather than guessed.
+3. **A `ProxyCommand` is data, never a program.** It is not executed, not kept past the reader, not shown and not
+   sent; it is accepted only as an exact static grammar (`aws ssm start-session` with a fixed option set), and a
+   reason names no part of it.
+4. **The AWS profile comes from Settings, by AWS name** (the Phase 1 name conversion), or from the member's pick.
+
+No server change and no new endpoint. Procedure: [docs/79 §9.5](../log/79-settings-export-import.md).

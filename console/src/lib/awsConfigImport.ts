@@ -32,7 +32,7 @@ export const MAX_PROFILES = 500;
 /** Paste / file size cap, checked before parsing. */
 export const MAX_BYTES = 1024 * 1024;
 
-const SECRET_KEYS = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"];
+export const SECRET_KEYS = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"];
 // Ways to get credentials Settings cannot represent. Same list as the Agent's refusals
 // (workspace/agent/internal/awsx/exec_nonsso.go).
 const UNSUPPORTED_AUTH = ["credential_process", "credential_source", "web_identity_token_file", "mfa_serial", "login_session"];
@@ -55,7 +55,7 @@ const AF_SCOPES = "sso:account:access";
 
 // The Agent's allowlists (workspace/agent/internal/agents/ssm/config.go). Anchored and
 // without \s, so a multi-line value never passes.
-const RE = {
+export const RE = {
   startUrl: /^https:\/\/[!-~]+$/,
   region: /^[a-z0-9-]{1,32}$/,
   account: /^[0-9]{1,20}$/,
@@ -136,7 +136,7 @@ const has = (o: Map<string, IniValue>, k: string): boolean => o.has(k);
 // or proposed as a label. One short line holding nothing that looks like a key assignment ("="
 // and ":" are both INI delimiters) or a credential key: a header such as
 // [profile "aws_secret_access_key=..."] is still a valid profile name to botocore.
-const shownName = (v: string): boolean =>
+export const shownName = (v: string): boolean =>
   /^[^\r\n=:]{1,128}$/.test(v) && ![...SECRET_KEYS, ...UNSUPPORTED_AUTH].some((k) => v.toLowerCase().includes(k));
 // The value as the parser returns it. Not trimmed: a value that starts with a newline is a
 // nested block to botocore, and trimming would turn its first line into a plausible scalar.
