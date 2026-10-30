@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,8 +88,15 @@ type fakeEC2 struct {
 	// an operator's reservation lands while a Start is under way.
 	afterDescribeVolumes func()
 	onAttach             func(instID string)
+	// describeDelay makes every DescribeInstances take that long (ending early with the
+	// context), so a test can spend a request's wall-clock budget on AWS calls.
+	describeDelay time.Duration
 	// terminateErr makes TerminateInstances fail without terminating anything.
 	terminateErr error
+	// stopForce records the Force flag of each StopInstances; stopHold leaves the instance
+	// in `stopping` instead of `stopped`, the way a wedged box answers a graceful stop.
+	stopForce []bool
+	stopHold  bool
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -160,6 +169,17 @@ func (f *fakeEC2) attach(volID, instID string, at time.Time) {
 	if inst := f.instances[instID]; inst != nil {
 		inst.BlockDeviceMappings = []ec2types.InstanceBlockDeviceMapping{{DeviceName: aws.String(ec2HomeDevice)}}
 	}
+}
+
+func (f *fakeEC2) detach(volID string) {
+	v := f.volumes[volID]
+	for _, a := range v.Attachments {
+		if inst := f.instances[aws.ToString(a.InstanceId)]; inst != nil {
+			inst.BlockDeviceMappings = nil
+		}
+	}
+	v.Attachments = nil
+	v.State = ec2types.VolumeStateAvailable
 }
 
 func (f *fakeEC2) setTag(volID, key, value string) {
@@ -272,7 +292,14 @@ func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInpu
 	return out, nil
 }
 
-func (f *fakeEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+func (f *fakeEC2) DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	if d := f.describeDelay; d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := &ec2.DescribeInstancesOutput{}
@@ -662,8 +689,12 @@ func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _
 	defer f.mu.Unlock()
 	for _, id := range in.InstanceIds {
 		f.log("StopInstances %s", id)
+		f.stopForce = append(f.stopForce, aws.ToBool(in.Force))
 		if i := f.instances[id]; i != nil {
 			i.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}
+			if f.stopHold && !aws.ToBool(in.Force) {
+				i.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopping}
+			}
 		}
 	}
 	return &ec2.StopInstancesOutput{}, nil
@@ -717,6 +748,57 @@ type fakeSSMCmd struct {
 	// onSend, when set, is called with each command as it is sent, so a test can look at
 	// the rest of the fake world at that moment.
 	onSend func(cmd string)
+	// onList runs before ListCommands answers, outside the fake's lock.
+	onList func()
+	// status, when set and non-empty for a command, is the invocation status reported for it.
+	status func(cmd string) string
+	// unfinished are the commands ListCommands reports as Pending; cancelled collects the
+	// ids CancelCommand was given. online is the SSM ping state per instance (absent =
+	// not listed), and infoErr makes DescribeInstanceInformation fail.
+	unfinished []ssmtypes.Command
+	cancelled  []string
+	online     map[string]bool
+	infoErr    error
+}
+
+func (f *fakeSSMCmd) ListCommands(_ context.Context, in *ssm.ListCommandsInput, _ ...func(*ssm.Options)) (*ssm.ListCommandsOutput, error) {
+	if f.onList != nil {
+		f.onList()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := &ssm.ListCommandsOutput{}
+	if len(in.Filters) == 1 && aws.ToString(in.Filters[0].Value) == "Pending" {
+		out.Commands = append(out.Commands, f.unfinished...)
+	}
+	return out, nil
+}
+
+func (f *fakeSSMCmd) CancelCommand(_ context.Context, in *ssm.CancelCommandInput, _ ...func(*ssm.Options)) (*ssm.CancelCommandOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelled = append(f.cancelled, aws.ToString(in.CommandId))
+	return &ssm.CancelCommandOutput{}, nil
+}
+
+func (f *fakeSSMCmd) DescribeInstanceInformation(_ context.Context, in *ssm.DescribeInstanceInformationInput, _ ...func(*ssm.Options)) (*ssm.DescribeInstanceInformationOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.infoErr != nil {
+		return nil, f.infoErr
+	}
+	out := &ssm.DescribeInstanceInformationOutput{}
+	for _, id := range in.Filters[0].Values {
+		if on, listed := f.online[id]; listed {
+			ping := ssmtypes.PingStatusConnectionLost
+			if on {
+				ping = ssmtypes.PingStatusOnline
+			}
+			out.InstanceInformationList = append(out.InstanceInformationList,
+				ssmtypes.InstanceInformation{InstanceId: aws.String(id), PingStatus: ping})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -753,6 +835,11 @@ func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandI
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	cmd := aws.ToString(in.CommandId)
+	if f.status != nil {
+		if st := f.status(cmd); st != "" {
+			return &ssm.GetCommandInvocationOutput{Status: ssmtypes.CommandInvocationStatus(st)}, nil
+		}
+	}
 	for sub := range f.fail {
 		if strings.Contains(cmd, sub) {
 			return &ssm.GetCommandInvocationOutput{Status: "Failed", StandardErrorContent: aws.String("boom")}, nil
@@ -782,6 +869,74 @@ type fakeContainerInstances struct {
 	// a value means somebody else's box shares the cluster — an ADR 0071 engine on
 	// Managed Instances.
 	capacityProvider map[string]string
+	// stopping are the service's tasks that were asked to stop and have not reported it.
+	stopping  []ecstypes.Task
+	taskCalls int
+	// taskPageSize splits ListTasks into pages of this many ARNs (0: one page).
+	taskPageSize int
+	// onList / onDescribeTasks run at the start of ListTasks / DescribeTasks.
+	onList, onDescribeTasks func()
+	// taskFailures are returned by DescribeTasks as Failures.
+	taskFailures []ecstypes.Failure
+	// describeErr is returned (once) by DescribeContainerInstances.
+	describeErr error
+	// missing instances come back as a MISSING failure, the way a deregistered one does.
+	missing map[string]bool
+	// status overrides the container instance status (ACTIVE otherwise).
+	status map[string]string
+	// badTaskCalls records ListTasks calls that did not ask for this service's stopped tasks.
+	badTaskCalls []string
+}
+
+func (f *fakeContainerInstances) ListTasks(_ context.Context, in *ecs.ListTasksInput, _ ...func(*ecs.Options)) (*ecs.ListTasksOutput, error) {
+	f.taskCalls++
+	if f.onList != nil {
+		f.onList()
+	}
+	if in.ContainerInstance != nil {
+		// The tasks of one container instance, which is how the pool screen asks.
+		out := &ecs.ListTasksOutput{}
+		for _, t := range f.stopping {
+			if aws.ToString(t.ContainerInstanceArn) == aws.ToString(in.ContainerInstance) {
+				out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+			}
+		}
+		return out, nil
+	}
+	if aws.ToString(in.ServiceName) != "af-ws-acme-alice" || in.DesiredStatus != ecstypes.DesiredStatusStopped {
+		f.badTaskCalls = append(f.badTaskCalls, aws.ToString(in.ServiceName)+"/"+string(in.DesiredStatus))
+	}
+	start := 0
+	if in.NextToken != nil {
+		start, _ = strconv.Atoi(*in.NextToken)
+	}
+	end := len(f.stopping)
+	if f.taskPageSize > 0 && start+f.taskPageSize < end {
+		end = start + f.taskPageSize
+	}
+	out := &ecs.ListTasksOutput{}
+	for _, t := range f.stopping[start:end] {
+		out.TaskArns = append(out.TaskArns, aws.ToString(t.TaskArn))
+	}
+	if end < len(f.stopping) {
+		out.NextToken = aws.String(strconv.Itoa(end))
+	}
+	return out, nil
+}
+
+func (f *fakeContainerInstances) DescribeTasks(_ context.Context, in *ecs.DescribeTasksInput, _ ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error) {
+	if f.onDescribeTasks != nil {
+		f.onDescribeTasks()
+	}
+	out := &ecs.DescribeTasksOutput{Failures: f.taskFailures}
+	for _, arn := range in.Tasks {
+		for _, t := range f.stopping {
+			if aws.ToString(t.TaskArn) == arn {
+				out.Tasks = append(out.Tasks, t)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
@@ -793,13 +948,21 @@ func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ec
 }
 
 func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, in *ecs.DescribeContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
+	if err := f.describeErr; err != nil {
+		f.describeErr = nil
+		return nil, err
+	}
 	out := &ecs.DescribeContainerInstancesOutput{}
 	for _, arn := range in.ContainerInstances {
 		id := strings.TrimPrefix(arn, "arn:ci/")
+		if f.missing[id] {
+			out.Failures = append(out.Failures, ecstypes.Failure{Arn: aws.String(arn), Reason: aws.String("MISSING")})
+			continue
+		}
 		ci := ecstypes.ContainerInstance{
 			ContainerInstanceArn: aws.String(arn),
 			Ec2InstanceId:        aws.String(id),
-			Status:               aws.String("ACTIVE"),
+			Status:               aws.String(cmp.Or(f.status[id], "ACTIVE")),
 			AgentConnected:       f.registered[id],
 			RunningTasksCount:    f.tasks[id],
 		}
@@ -853,7 +1016,7 @@ type ec2Harness struct {
 func newEC2Harness(t *testing.T) *ec2Harness {
 	t.Helper()
 	// lastTaskDef and startGen/startPhase are process-local scratch keyed by
-	// workspace name (runtime_ecs_ec2.go) — every test in this package reuses the
+	// workspace name (runtime_ecs_ec2_taskdef.go, runtime_ecs_ec2_pool.go) — every test in this package reuses the
 	// same "af-ws-acme-alice" name, so without a reset an earlier test's cache
 	// entry leaks into a later one and its Start silently skips
 	// RegisterTaskDefinition. Production never resets it (a real CP process only
@@ -861,6 +1024,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 	lastTaskDef.Delete("af-ws-acme-alice")
 	startGen.Delete("af-ws-acme-alice")
 	startPhase.Delete("af-ws-acme-alice")
+	stuckStoppingCache.Delete("af-ws-acme-alice")
 	h := &ec2Harness{
 		ec2:  newFakeEC2(),
 		ecs:  &fakeECS{},
@@ -883,6 +1047,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		ssmc: h.ssmc,
 		ci:   h.ci,
 		pool: ec2PoolConfig{
+			hostReserveMiB: ec2HostReserveAuto, // the production default (unset env)
 			launchTemplate: "lt-1",
 			pool:           "clu",
 			classes:        parseSlotClasses("m7i.large:8192,m7i.xlarge:16384"),
@@ -916,6 +1081,8 @@ func (h *ec2Harness) factory() *ecsEC2Factory {
 	return &ecsEC2Factory{
 		base: &ecsFactory{cfg: h.rt.base.cfg, ecs: h.ecs, efs: h.efs, ssm: h.ssm},
 		ec2:  h.ec2, ssmc: h.ssmc, ci: h.ci, pool: h.rt.pool,
+		bg:    h.rt.bg,
+		sleep: h.rt.sleep,
 	}
 }
 
@@ -3552,7 +3719,7 @@ func (f *fakeEC2) countCalls(prefix string) int {
 var errNoCapacity = fmt.Errorf("api error InsufficientInstanceCapacity: We currently do not have sufficient m7i.large capacity in the Availability Zone you requested")
 
 // One AZ running out of the slot type used to stop every NEW user in the deployment:
-// anyAZ() is deterministic, so the one AZ the adapter ever picked was the one that had no
+// the first pool AZ was the only pick, so the one AZ the adapter ever picked was the one that had no
 // room, and nothing tried anywhere else. Everybody already placed kept working, so it did
 // not look like an outage.
 func TestECSEC2NewHomeMovesToAnAZWithRoom(t *testing.T) {
@@ -4863,8 +5030,12 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	defer h.rt.setPhase("")
 
 	// Aged past placementBlockedGrace: a fresh event is the pool growing, not a wall.
-	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-10*time.Minute),
-		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)))
+	gen, err := h.rt.startGenNow(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.rt.notePlacementBlocked(context.Background(), svcWithEvents(1, 0, now.Add(-10*time.Minute),
+		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)), gen, true)
 	ph := h.rt.BootPhase()
 	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
 		t.Fatalf("phase does not carry the reason: %q", ph)
@@ -4958,7 +5129,7 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 // contain anything (the incident's whole point was that the daemons had nowhere to
 // live); one that is too mean takes RAM off a member for nothing.
 func TestECSEC2WorkspaceMemCap(t *testing.T) {
-	auto := ec2PoolConfig{hostReserveMiB: 0}
+	auto := ec2PoolConfig{hostReserveMiB: ec2HostReserveAuto}
 	for _, tc := range []struct {
 		name string
 		pool ec2PoolConfig
@@ -4967,14 +5138,22 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 	}{
 		// ⚠️ The load-bearing case. An "8192 MiB" m7i.large really reports MemTotal 7784
 		// (measured), so the reserve has to cover that ~5% AND the ~1.2-1.4 GiB the
-		// daemons need. A fifth of the rung leaves 7784-6553 = 1231 MiB of real headroom.
-		{"m7i.large lands at 6.4 GiB", auto, 8192, 6554},
-		// The ceiling: the daemons cost the same on a big box, so it must not donate
-		// proportionally more (a fifth of 32768 would be 6.5 GiB thrown away).
-		{"a large rung is clamped to 2 GiB of reserve", auto, 32768, 30720},
-		// The floor: a fifth of a small rung would not house the daemons at all.
-		{"a small rung gets the 1 GiB floor", auto, 4096, 3072},
+		// daemons need. A fifth of the rung left 7784-6554 = 1230 MiB and a box thrashed
+		// (#2451); a flat 2 GiB leaves 1640.
+		{"m7i.large lands at 6 GiB", auto, 8192, 6144},
+		{"just over 8 GiB keeps the same reserve", auto, 8193, 6145},
+		{"9 GiB keeps the same reserve", auto, 9216, 7168},
+		{"10239 keeps the same reserve", auto, 10239, 8191},
+		{"10 GiB", auto, 10240, 8192},
+		// The reserve must never shrink as the rung grows.
+		{"a large rung gets the same 2 GiB", auto, 32768, 30720},
+		{"a small rung gets the full 2 GiB reserve", auto, 4096, 2048},
+		// buildTaskDef sets MemoryReservation=512 and ECS needs Memory > that.
+		{"the smallest capped rung leaves more than the soft reservation", auto, 2561, 513},
+		{"a cap equal to the soft reservation is dropped", auto, 2560, 0},
 		{"explicit reserve is honoured", ec2PoolConfig{hostReserveMiB: 1536}, 8192, 6656},
+		// An explicit 0 is "reserve nothing", not auto (#2503).
+		{"explicit 0 caps at the full rung", ec2PoolConfig{hostReserveMiB: 0}, 8192, 8192},
 		{"off means uncapped", ec2PoolConfig{hostReserveMiB: ec2HostReserveOff}, 8192, 0},
 		// Capping a rung this small would leave a workspace that cannot run; better to
 		// leave the deployment as it was than to break every Start on it.
@@ -4989,14 +5168,27 @@ func TestECSEC2WorkspaceMemCap(t *testing.T) {
 	}
 }
 
+// ECS rejects a task definition whose hard Memory is not above MemoryReservation (512),
+// so no rung may come out capped at or below it, auto or explicit.
+func TestECSEC2WorkspaceMemCapStaysAboveSoftReservation(t *testing.T) {
+	for _, pool := range []ec2PoolConfig{{hostReserveMiB: ec2HostReserveAuto}, {hostReserveMiB: 0}, {hostReserveMiB: 1024}} {
+		for rung := int64(1); rung <= 4096; rung++ {
+			if c := pool.workspaceMemCapMiB(rung); c != 0 && c <= 512 {
+				t.Fatalf("reserve %d, rung %d: cap %d is not above the 512 MiB soft reservation", pool.hostReserveMiB, rung, c)
+			}
+		}
+	}
+}
+
 // A typo in the knob that decides how much RAM a workspace gets must not be the reason
 // a deployment stops capping — or stops starting.
 func TestECSEC2HostReserveParsing(t *testing.T) {
 	for in, want := range map[string]int64{
-		"": 0, "auto": 0, "AUTO": 0, " auto ": 0,
+		"": ec2HostReserveAuto, "auto": ec2HostReserveAuto, "AUTO": ec2HostReserveAuto, " auto ": ec2HostReserveAuto,
 		"off": ec2HostReserveOff, "none": ec2HostReserveOff,
-		"1536": 1536, "0": 0,
-		"banana": 0, "-5": 0,
+		"1536": 1536, "0": 0, " 0 ": 0,
+		"OFF": ec2HostReserveOff, "None": ec2HostReserveOff, "FALSE": ec2HostReserveOff,
+		"banana": ec2HostReserveAuto, "-5": ec2HostReserveAuto,
 	} {
 		if got := parseHostReserveMiB(in); got != want {
 			t.Errorf("parseHostReserveMiB(%q) = %d, want %d", in, got, want)
@@ -5023,13 +5215,13 @@ func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
 	}
 	c := h.ecs.regCalls[0].ContainerDefinitions[0]
 	limit := aws.ToInt32(c.Memory)
-	if limit != 6554 {
-		t.Errorf("container Memory = %d MiB, want 6554", limit)
+	if limit != 6144 {
+		t.Errorf("container Memory = %d MiB, want 6144", limit)
 	}
 	// The soft reservation is what ECS schedules on and must stay BELOW the hard cap;
 	// a reservation above the limit is a task definition ECS rejects outright.
-	if res := aws.ToInt32(c.MemoryReservation); res > limit {
-		t.Errorf("MemoryReservation %d exceeds the hard limit %d", res, limit)
+	if res := aws.ToInt32(c.MemoryReservation); res >= limit {
+		t.Errorf("MemoryReservation %d is not below the hard limit %d", res, limit)
 	}
 }
 
@@ -5212,5 +5404,536 @@ func TestECSEC2ResizeHomeWaitsForTheModificationBeforeGrowingTheFilesystem(t *te
 	h.runDeferred(ctx)
 	if len(h.ssmc.commands) != 0 {
 		t.Fatalf("grew the filesystem while the modification was still pending: %v", h.ssmc.commands)
+	}
+}
+
+// A size/class change releases the old slot, and that is waitTasksGone + an SSM umount +
+// a detach + waitDeviceFree: never a seconds-only path. On a slot whose agents have
+// stopped answering it outlasted the ingress timeout on every retry. The fake SSM below
+// never completes, so a Start that still releases inline cannot return at all.
+func TestECSEC2SizeChangeStartDoesNotReleaseOnTheRequestThread(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	// the member now needs m7i.large (h.rt.instanceType); the slot is an xlarge
+
+	wedged := make(chan struct{})
+	defer close(wedged)
+	h.ssmc.onSend = func(string) { <-wedged }
+
+	done := make(chan error, 1)
+	go func() { done <- h.rt.Start(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start is stuck behind the old slot's umount: the release runs on the request thread")
+	}
+	if len(h.deferred) != 1 {
+		t.Fatalf("deferred %d background steps, want 1", len(h.deferred))
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting off the claim", got)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "DetachVolume") || strings.HasPrefix(c, "SSM ") {
+			t.Fatalf("Start touched the old slot on the request thread: %q", c)
+		}
+	}
+}
+
+// The background half: the old slot is released and the home lands on a slot of the right
+// size, with no second Start.
+func TestECSEC2SizeChangeStartConvergesInTheBackground(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-new"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-new" {
+		t.Fatalf("home is on %q, want i-new", inst)
+	}
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a converged start", got)
+	}
+}
+
+// A release that fails in the background must say why. Left alone it would be a `starting`
+// that expires into a `stopped` with no reason anywhere the member can read.
+func TestECSEC2SizeChangeReleaseFailureLeavesABlockedReason(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ssmc.fail["af-umount"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) || !strings.Contains(got, "released") ||
+		!strings.Contains(got, "Failed") || !strings.Contains(got, "boom") {
+		t.Fatalf("BootPhase = %q, want a blocked reason naming the failed release and its cause", got)
+	}
+	if got := h.rt.State(ctx); got == "starting" {
+		t.Fatalf("State = %q: the claim outlived the failed background release", got)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-old" {
+		t.Fatalf("home moved to %q although the umount failed", inst)
+	}
+}
+
+// sizeChangeHome is a home on an xlarge slot for a workspace that now needs a large one,
+// with a right-sized slot free to take it.
+func sizeChangeHome(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-old"] = true
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-new"] = true
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now().Add(-time.Hour))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	return h
+}
+
+// The claim TTL (5 minutes) is shorter than the background budget (10), so a Start can
+// begin while an older one is still releasing. Once the home is off the old slot, the old
+// half must not re-place it, claim over the newer Start, or write its phase.
+func TestECSEC2SizeChangeOvertakenByANewerStartLeavesItAlone(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Meanwhile the claim lapsed and the home came off the old slot...
+	h.ec2.detach("vol-1")
+	// ...and a newer Start began and wrote its claim and phase.
+	if _, err := h.rt.beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setPhase("new start owns this phase")
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-newer")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+	callsBefore := len(h.ec2.calls)
+
+	h.runDeferred(ctx)
+
+	for _, c := range h.ec2.calls[callsBefore:] {
+		if strings.HasPrefix(c, "AttachVolume") {
+			t.Fatalf("the overtaken Start drove the home: %q", c)
+		}
+	}
+	if got := h.rt.BootPhase(); got != "new start owns this phase" {
+		t.Errorf("phase = %q, the newer Start's phase was overwritten or cleared", got)
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, EC2TagClaim); got != "i-newer" {
+		t.Errorf("claim = %q, the newer Start's claim was overwritten", got)
+	}
+}
+
+// A failed release that was overtaken is the newer Start's business: it must not paint
+// that Start's screen as a failure, nor bring back a blocked phase a Stop has cleared.
+func TestECSEC2SizeChangeOvertakenFailureWritesNoBlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	h.ssmc.fail["af-umount"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// A Stop (or a newer Start) ran after this one and left no phase.
+	if _, err := h.rt.beginStart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.rt.setPhase("")
+
+	h.runDeferred(ctx)
+
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase = %q, an overtaken release wrote it", got)
+	}
+}
+
+// Overtaken in the middle of the release (a Stop during the umount): nothing is re-placed.
+func TestECSEC2SizeChangeOvertakenDuringTheReleaseIsNotReplaced(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.ssmc.onSend = func(cmd string) {
+		if strings.HasPrefix(cmd, "af-umount") {
+			if _, err := h.rt.beginStart(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	callsBefore := len(h.ec2.calls)
+	h.runDeferred(ctx)
+	for _, c := range h.ec2.calls[callsBefore:] {
+		if strings.HasPrefix(c, "AttachVolume") || strings.HasPrefix(c, "DetachVolume") {
+			t.Fatalf("overtaken release went on: %q", c)
+		}
+	}
+	if got := h.rt.BootPhase(); strings.HasPrefix(got, blockedPhasePrefix) {
+		t.Errorf("phase = %q, overtaken release reported a failure", got)
+	}
+}
+
+// The production way a wedged release ends: the umount sits Pending until the background
+// budget runs out. With a store, reading the Start count on that expired context fails, and
+// that used to read as "overtaken" — leaving no reason at all and a plain `stopped`.
+func TestECSEC2SizeChangeDeadlineKeepsABlockedReasonWithAStore(t *testing.T) {
+	ctx := context.Background()
+	h := sizeChangeHome(t)
+	h.rt.leases = newFakeLeaseStore()
+	h.rt.replica = "R/"
+	h.rt.leasePoll = 2 * time.Millisecond
+	h.rt.sleep = sleepCtx
+	t.Cleanup(func() {
+		startGen.Delete("R/af-ws-acme-alice")
+		homeMountLocks.Delete("R/af-ws-acme-alice")
+		claimGenLocks.Delete("R/af-ws-acme-alice")
+	})
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	bg, expire := context.WithCancel(ctx)
+	defer expire()
+	var polls atomic.Int32
+	h.ssmc.status = func(cmd string) string {
+		if !strings.HasPrefix(cmd, "af-umount") {
+			return ""
+		}
+		if polls.Add(1) == 1 {
+			expire() // the background budget ends while the umount is still Pending
+			return "Pending"
+		}
+		return "Success"
+	}
+	pending := h.deferred
+	h.deferred = nil
+	for _, fn := range pending {
+		fn(bg)
+	}
+	if polls.Load() == 0 {
+		t.Fatal("the release never reached the umount, so the deadline path was not exercised")
+	}
+	if got := h.rt.BootPhase(); !strings.HasPrefix(got, blockedPhasePrefix) {
+		t.Fatalf("BootPhase = %q, want a blocked reason after the budget ran out", got)
+	}
+	if got := h.rt.State(ctx); got == "starting" {
+		t.Errorf("State = %q, the claim outlived the failed release", got)
+	}
+}
+
+// A Stop that lands while the background release is in flight (the umount is slow, then
+// either fails or succeeds) ends the Start: no re-placement, no service scale-up, and no
+// blocked reason resurrected after the Stop cleared the screen.
+func TestECSEC2StopDuringTheSizeChangeReleaseEndsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		umountFail bool
+	}{{"umount fails after the stop", true}, {"umount succeeds after the stop", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			h := sizeChangeHome(t)
+			if err := h.rt.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			stopped := false
+			h.ssmc.onSend = func(cmd string) {
+				if strings.HasPrefix(cmd, "af-umount") && !stopped {
+					stopped = true
+					if err := h.rt.Stop(ctx); err != nil {
+						t.Errorf("Stop: %v", err)
+					}
+					if tc.umountFail {
+						h.ssmc.fail["af-umount"] = true
+					}
+				}
+			}
+			updatesBefore, createsBefore := len(h.ecs.updateCalls), len(h.ecs.createCalls)
+			callsBefore := len(h.ec2.calls)
+
+			h.runDeferred(ctx)
+
+			if !stopped {
+				t.Fatal("the release never reached the umount, so the Stop did not land mid-release")
+			}
+			for _, c := range h.ec2.calls[callsBefore:] {
+				if strings.HasPrefix(c, "AttachVolume") {
+					t.Fatalf("a stopped Start re-placed the home: %q", c)
+				}
+			}
+			for _, u := range h.ecs.updateCalls[updatesBefore:] {
+				if aws.ToInt32(u.DesiredCount) >= 1 {
+					t.Fatalf("a stopped Start raised desiredCount: %+v", u)
+				}
+			}
+			if len(h.ecs.createCalls) != createsBefore {
+				t.Fatal("a stopped Start created the service")
+			}
+			if got := h.rt.BootPhase(); got != "" {
+				t.Errorf("phase = %q after a Stop, want none", got)
+			}
+			if got := h.rt.State(ctx); got != "stopped" {
+				t.Errorf("State = %q, want stopped", got)
+			}
+		})
+	}
+}
+
+// stuckStoppingHarness is a workspace whose service wants a task (desired 1, nothing
+// running or pending, no placement event) while its previous task is still STOPPING on a
+// slot that has stopped.
+func stuckStoppingHarness(t *testing.T, stoppingFor time.Duration, agentConnected bool) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-new", time.Now())
+	h.ci.registered["i-new"] = true
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m7i.large", false, false)
+	h.ci.registered["i-old"] = agentConnected
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1}
+	h.ci.stopping = []ecstypes.Task{{
+		TaskArn:              aws.String("arn:task/old"),
+		LastStatus:           aws.String("STOPPING"),
+		DesiredStatus:        aws.String("STOPPED"),
+		ContainerInstanceArn: aws.String("arn:ci/i-old"),
+		StoppingAt:           aws.Time(time.Now().Add(-stoppingFor)),
+	}}
+	return h
+}
+
+// ECS gives no service event for a start waiting on the previous task's stop, so without
+// this the Console shows an endless `starting`.
+func TestECSEC2StuckStoppingTaskIsSurfacedAsABlockedPhase(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Fatalf("State = %q, want starting", got)
+	}
+	ph := h.rt.BootPhase()
+	for _, want := range []string{blockedPhasePrefix, "STOPPING", "agent disconnected", "i-old"} {
+		if !strings.Contains(ph, want) {
+			t.Fatalf("phase %q does not mention %q", ph, want)
+		}
+	}
+}
+
+func TestECSEC2StuckStoppingNamesTheStateOfTheStoppedSlot(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ec2.instances["i-old"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}
+
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "instance state: stopped") {
+		t.Fatalf("phase %q does not say the slot is stopped", ph)
+	}
+}
+
+// Not provably stuck means silence: a young stop is a normal one, and a connected agent
+// will report it by itself.
+func TestECSEC2StuckStoppingStaysQuietWhenNotProvablyStuck(t *testing.T) {
+	ctx := context.Background()
+	for name, h := range map[string]*ec2Harness{
+		"young stop":      stuckStoppingHarness(t, 20*time.Second, false),
+		"agent connected": stuckStoppingHarness(t, 10*time.Minute, true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer h.rt.setPhase("")
+			if got := h.rt.State(ctx); got != "starting" {
+				t.Fatalf("State = %q, want starting", got)
+			}
+			if ph := h.rt.BootPhase(); ph != "" {
+				t.Fatalf("phase %q reported for a stop that is not stuck", ph)
+			}
+		})
+	}
+}
+
+// The reason goes away with the cause, and the polls in between do not hit ECS every time.
+func TestECSEC2StuckStoppingClearsOnceTheTaskIsGoneAndIsRateLimited(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	clock := time.Now()
+	h.rt.now = func() time.Time { return clock }
+
+	h.rt.State(ctx)
+	h.rt.State(ctx)
+	if h.ci.taskCalls != 1 {
+		t.Fatalf("ListTasks called %d times for two polls, want 1", h.ci.taskCalls)
+	}
+	h.ci.stopping = nil
+	clock = clock.Add(stuckStoppingEvery + time.Second)
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q outlived the stuck task", ph)
+	}
+}
+
+// A running task is not the case this is about, and must not cost the extra calls.
+func TestECSEC2StuckStoppingIsNotLookedForOnAPlacedTask(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	h.rt.State(ctx)
+	if h.ci.taskCalls != 0 {
+		t.Fatalf("ListTasks called %d times for a running service", h.ci.taskCalls)
+	}
+}
+
+// The diagnosis waits on several AWS calls. A Stop that completes meanwhile has already
+// cleared the phase; the stale answer must not bring the blocked reason back.
+func TestECSEC2StuckStoppingDoesNotResurrectAPhaseAStopCleared(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.onDescribeTasks = func() {
+		h.ci.onDescribeTasks = nil
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+	}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q came back after a Stop", ph)
+	}
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Fatalf("State = %q, want stopped", got)
+	}
+}
+
+// The other direction: an empty answer from an old poll must not clear the reason a newer
+// Start has written since.
+func TestECSEC2StuckStoppingEmptyAnswerDoesNotClearANewerStartsReason(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.stopping = nil
+	h.ci.onList = func() {
+		h.ci.onList = nil
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Errorf("Stop: %v", err)
+		}
+		if _, err := h.rt.beginStart(ctx); err != nil {
+			t.Error(err)
+		}
+		h.rt.setPhase(blockedPhasePrefix + "the newer start's own reason")
+	}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "newer start's own reason") {
+		t.Fatalf("phase = %q, the older poll cleared the newer Start's reason", ph)
+	}
+}
+
+// The stuck task is not promised to be on the first page of ListTasks.
+func TestECSEC2StuckStoppingReadsEveryPage(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	stuck := h.ci.stopping[0]
+	h.ci.stopping = []ecstypes.Task{
+		{TaskArn: aws.String("arn:task/done"), LastStatus: aws.String("STOPPED")},
+		stuck,
+	}
+	h.ci.taskPageSize = 1
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+		t.Fatalf("phase %q: the stuck task on page two was missed", ph)
+	}
+	if len(h.ci.badTaskCalls) != 0 {
+		t.Fatalf("ListTasks asked for the wrong tasks: %v", h.ci.badTaskCalls)
+	}
+}
+
+// A lookup that failed says nothing about the task: it must be asked again at the next poll,
+// not cached as "nothing is stuck".
+func TestECSEC2StuckStoppingRetriesAfterAFailedLookup(t *testing.T) {
+	ctx := context.Background()
+	for name, arm := range map[string]func(h *ec2Harness){
+		"container instance lookup fails": func(h *ec2Harness) { h.ci.describeErr = errors.New("throttled") },
+		"task read fails": func(h *ec2Harness) {
+			h.ci.taskFailures = []ecstypes.Failure{{Arn: aws.String("arn:task/old"), Reason: aws.String("ThrottlingException")}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := stuckStoppingHarness(t, 10*time.Minute, false)
+			defer h.rt.setPhase("")
+			arm(h)
+			h.rt.State(ctx)
+			if ph := h.rt.BootPhase(); ph != "" {
+				t.Fatalf("phase %q from a failed lookup", ph)
+			}
+			h.ci.taskFailures = nil
+			h.rt.State(ctx)
+			if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+				t.Fatalf("phase = %q: the failure was cached as a healthy answer", ph)
+			}
+		})
+	}
+}
+
+// A failed lookup also must not clear a reason that was already standing.
+func TestECSEC2StuckStoppingFailedLookupKeepsTheStandingReason(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	clock := time.Now()
+	h.rt.now = func() time.Time { return clock }
+	h.rt.State(ctx)
+	clock = clock.Add(stuckStoppingEvery + time.Second)
+	h.ci.describeErr = errors.New("throttled")
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "STOPPING") {
+		t.Fatalf("phase = %q, a failed lookup cleared the standing reason", ph)
+	}
+}
+
+func TestECSEC2StuckStoppingNamesAnUnregisteredSlot(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, false)
+	defer h.rt.setPhase("")
+	h.ci.missing = map[string]bool{"i-old": true}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); !strings.Contains(ph, "no longer registered") {
+		t.Fatalf("phase %q does not say the slot is unregistered", ph)
+	}
+}
+
+// DRAINING only stops new placements; a connected agent still reports the stop.
+func TestECSEC2StuckStoppingStaysQuietOnAConnectedDrainingInstance(t *testing.T) {
+	ctx := context.Background()
+	h := stuckStoppingHarness(t, 10*time.Minute, true)
+	defer h.rt.setPhase("")
+	h.ci.status = map[string]string{"i-old": "DRAINING"}
+	h.rt.State(ctx)
+	if ph := h.rt.BootPhase(); ph != "" {
+		t.Fatalf("phase %q reported for a draining instance whose agent is connected", ph)
 	}
 }

@@ -8,7 +8,7 @@ import "encoding/json"
 // rendered from. A different fingerprint only says the bundle is behind the host;
 // whether these types can still speak to it is schemagen.Compare's question, asked of
 // the installed binary by fingerprint_test.go.
-const SchemaFingerprint = "sha256:4e3200c3c9dc0cd7919d11022630d43f9bc1c5cdda375381e90b0183b5665069"
+const SchemaFingerprint = "sha256:c94c3d1f2f51e6424074b9ec43eac3eedcf532d3dcd77351ec1383a87d3049c6"
 
 // SchemaVersion is MSP's own version, carried in `initialize`.
 const SchemaVersion = 1
@@ -42,6 +42,7 @@ const (
 	MethodRecapRequest              = "recap/request"
 	MethodSessionCompact            = "session/compact"
 	MethodSessionFork               = "session/fork"
+	MethodSessionLeave              = "session/leave"
 	MethodSessionList               = "session/list"
 	MethodSessionRead               = "session/read"
 	MethodSessionRename             = "session/rename"
@@ -90,6 +91,7 @@ const (
 const (
 	NotificationApprovalRequested             = "approval/requested"
 	NotificationApprovalResolved              = "approval/resolved"
+	NotificationApprovalReviewing             = "approval/reviewing"
 	NotificationApprovalUpdated               = "approval/updated"
 	NotificationComputerUseSetupChanged       = "computerUseSetup/changed"
 	NotificationInitialized                   = "initialized"
@@ -97,6 +99,9 @@ const (
 	NotificationItemDelta                     = "item/delta"
 	NotificationItemStarted                   = "item/started"
 	NotificationItemUpdated                   = "item/updated"
+	NotificationMonitorInboxItemAdmitted      = "monitor/inboxItemAdmitted"
+	NotificationMonitorInboxItemDrained       = "monitor/inboxItemDrained"
+	NotificationMonitorInboxItemVoided        = "monitor/inboxItemVoided"
 	NotificationPluginChanged                 = "plugin/changed"
 	NotificationPluginMarketplaceChanged      = "plugin/marketplaceChanged"
 	NotificationRecapCompleted                = "recap/completed"
@@ -105,6 +110,7 @@ const (
 	NotificationSessionClosed                 = "session/closed"
 	NotificationSessionContextUsage           = "session/contextUsage"
 	NotificationSessionGoalChanged            = "session/goalChanged"
+	NotificationSessionLeaveCompleted         = "session/leaveCompleted"
 	NotificationSessionListChanged            = "session/listChanged"
 	NotificationSessionModelChanged           = "session/modelChanged"
 	NotificationSessionModelRouteUnserved     = "session/modelRouteUnserved"
@@ -189,6 +195,7 @@ var retryableErrorCodes = map[int]bool{
 var notificationParams = map[string]string{
 	"approval/requested":             "ApprovalRequestParams",
 	"approval/resolved":              "ApprovalResolvedParams",
+	"approval/reviewing":             "ApprovalRequestParams",
 	"approval/updated":               "ApprovalUpdatedParams",
 	"computerUseSetup/changed":       "ComputerUseSetupChanged",
 	"initialized":                    "",
@@ -196,6 +203,9 @@ var notificationParams = map[string]string{
 	"item/delta":                     "ItemDeltaParams",
 	"item/started":                   "ItemStartedParams",
 	"item/updated":                   "ItemUpdatedParams",
+	"monitor/inboxItemAdmitted":      "MonitorInboxItemAdmittedParams",
+	"monitor/inboxItemDrained":       "MonitorInboxItemDrainedParams",
+	"monitor/inboxItemVoided":        "MonitorInboxItemVoidedParams",
 	"plugin/changed":                 "PluginChangedParams",
 	"plugin/marketplaceChanged":      "PluginMarketplaceChangedParams",
 	"recap/completed":                "RecapCompletedParams",
@@ -204,6 +214,7 @@ var notificationParams = map[string]string{
 	"session/closed":                 "SessionClosedParams",
 	"session/contextUsage":           "SessionContextUsageParams",
 	"session/goalChanged":            "SessionGoalChangedParams",
+	"session/leaveCompleted":         "SessionLeaveCompletedParams",
 	"session/listChanged":            "SessionListChangedParams",
 	"session/modelChanged":           "SessionModelChangedParams",
 	"session/modelRouteUnserved":     "SessionModelRouteUnservedParams",
@@ -229,11 +240,16 @@ var notificationParams = map[string]string{
 	"view/gap":                       "ViewGapParams",
 }
 
+// ApprovalAmendment The policy rule a decision created, in display form; the full rule is not included.
 type ApprovalAmendment struct {
-	Durability  ApprovalAmendmentDurability `json:"durability"`
-	RulePreview string                      `json:"rulePreview"`
+	// How long the rule lasts: `session` or `localPersistent`.
+	Durability ApprovalAmendmentDurability `json:"durability"`
+	// A human-readable preview of the rule, for display.
+	RulePreview string `json:"rulePreview"`
 }
 
+// ApprovalAmendmentDurability How long a rule created by an approval decision lasts. The set is open, so newer hosts
+// may send other values.
 type ApprovalAmendmentDurability string
 
 const (
@@ -247,26 +263,63 @@ var ApprovalAmendmentDurabilityValues = []ApprovalAmendmentDurability{
 	ApprovalAmendmentDurabilityLocalPersistent,
 }
 
+// ApprovalChange The change an `approval/updated` event reports. `kind` says what happened, and only the
+// fields for that kind are present.
 type ApprovalChange struct {
-	ChoiceID      *string                    `json:"choiceId,omitempty"`
-	Decision      *ApprovalDecision          `json:"decision,omitempty"`
-	Executable    *bool                      `json:"executable,omitempty"`
-	Kind          string                     `json:"kind"`
-	Reason        *string                    `json:"reason,omitempty"`
-	Reparsed      *bool                      `json:"reparsed,omitempty"`
-	RequirementID *ApprovalRequirementRef    `json:"requirementId,omitempty"`
-	Status        *ApprovalPersistenceStatus `json:"status,omitempty"`
+	// The `choiceId` that satisfied the stage. Present only when `kind` is `stageResolved`.
+	ChoiceID *string `json:"choiceId,omitempty"`
+	// The decision the chosen option applied to the stage. Present only when `kind` is
+	// `stageResolved`.
+	Decision *ApprovalDecision `json:"decision,omitempty"`
+	// A recovery detail: whether the action could run without a new decision. Present only
+	// when `kind` is `restartRecovered`.
+	Executable *bool `json:"executable,omitempty"`
+	// What happened: for example `stageResolved` (a shell stage was satisfied),
+	// `policyPersistence` (saving a rule succeeded or failed), `reviewStarted` or
+	// `reviewCompleted` (the automated LLM judge started or finished reviewing),
+	// `restartRecovered` (a host restart recovered this approval: either the host first
+	// resolves it `abort` and a re-ask comes as a new approval with a new `approvalId`, or it
+	// stays pending under the same `approvalId` with refreshed choices) or `alreadyTerminal`
+	// (recovery found it already decided). The set is open, so newer hosts may add kinds.
+	Kind string `json:"kind"`
+	// Why saving the policy rule failed, as human-readable text. Present only when `kind` is
+	// `policyPersistence` and `status` is `failed`.
+	Reason *string `json:"reason,omitempty"`
+	// A recovery detail: whether the command was re-parsed during recovery. Present only when
+	// `kind` is `restartRecovered`.
+	Reparsed *bool `json:"reparsed,omitempty"`
+	// The stage requirement that was satisfied. Present only when `kind` is `stageResolved`.
+	RequirementID *ApprovalRequirementRef `json:"requirementId,omitempty"`
+	// Whether saving the policy rule succeeded or failed; present only when `kind` is
+	// `policyPersistence`. A failure does not undo the decision; only the saved rule is
+	// missing.
+	Status *ApprovalPersistenceStatus `json:"status,omitempty"`
 }
 
+// ApprovalChoice One option the server offers for deciding an approval. Clients pick one and send its
+// `choiceId` in `approval/decide`; they never build their own.
 type ApprovalChoice struct {
-	AcceptsFeedback *bool               `json:"acceptsFeedback,omitempty"`
-	ChoiceID        string              `json:"choiceId"`
-	Decision        ApprovalDecision    `json:"decision"`
-	Label           string              `json:"label"`
-	RulePreview     *string             `json:"rulePreview,omitempty"`
-	Scope           ApprovalChoiceScope `json:"scope"`
+	// `true` when this choice takes optional `feedback` text in `approval/decide`, which
+	// reaches the model as guidance. Omitted when `false`.
+	AcceptsFeedback *bool `json:"acceptsFeedback,omitempty"`
+	// The id to send as `choiceId` in `approval/decide`. The set of ids is open, so show
+	// `label` and do not base behavior on specific ids.
+	ChoiceID string `json:"choiceId"`
+	// The decision this choice applies, so a client can act on approve or reject without
+	// knowing choice ids.
+	Decision ApprovalDecision `json:"decision"`
+	// The human-readable label to show for this choice.
+	Label string `json:"label"`
+	// A human-readable preview of what this choice grants, such as the policy rule it would
+	// create; show it exactly as given.
+	RulePreview *string `json:"rulePreview,omitempty"`
+	// The grant duration this choice declares: `once` (this request only), `session` (the rest
+	// of the session) or `localPersistent` (saved in the local policy store).
+	Scope ApprovalChoiceScope `json:"scope"`
 }
 
+// ApprovalChoiceScope How long a grant made by a choice lasts. The set is open, so newer hosts may send other
+// values.
 type ApprovalChoiceScope string
 
 const (
@@ -280,6 +333,85 @@ var ApprovalChoiceScopeValues = []ApprovalChoiceScope{
 	ApprovalChoiceScopeOnce,
 	ApprovalChoiceScopeSession,
 	ApprovalChoiceScopeLocalPersistent,
+}
+
+// ApprovalCuaCardFacts One Computer Use card's facts. Empty collections and absent rows are omitted, never
+// `null`.
+type ApprovalCuaCardFacts struct {
+	// The data the call would send that the card must name; a card with any offers only
+	// one-shot choices.
+	Data []ApprovalCuaDataFact `json:"data,omitempty"`
+	// For a browser, the host of the window's current page.
+	Page *ApprovalCuaPage `json:"page,omitempty"`
+	// Only the consequential steps, in call order.
+	Steps []ApprovalCuaStep `json:"steps,omitempty"`
+	// The target window's title: the app's own text, which a page can set; a client shows it
+	// quoted and as plain text, never as markup or a choice, and may cap it.
+	WindowTitle *string `json:"windowTitle,omitempty"`
+}
+
+// ApprovalCuaDataFact One piece of data the call would send. An open union on `kind` (`secret`, or `other` for
+// a row the host can't word); a client shows `other` and any kind it doesn't know as a
+// generic data row.
+type ApprovalCuaDataFact struct {
+	// Open discriminator: `secret` or `other`.
+	Kind string `json:"kind"`
+	// For `secret`, the parts of it the card may show, never the value.
+	Mask *ApprovalCuaMask `json:"mask,omitempty"`
+	// For `secret`, the scanner's open tag (`github_token`, `secret_named_value` and so on); a
+	// client words the tags it knows and shows any other as "a secret".
+	SecretKind *string `json:"secretKind,omitempty"`
+}
+
+// ApprovalCuaMask A secret's mask: a vendor token's prefix and last 4 characters (`ghp_…3f9a`), a named
+// value's name and length (`password=… (12 chars)`), or the length alone; all absent
+// names the kind only.
+type ApprovalCuaMask struct {
+	// The secret's length in characters.
+	Chars *int64 `json:"chars,omitempty"`
+	// A vendor token's last 4 characters.
+	Last4 *string `json:"last4,omitempty"`
+	// A vendor token's fixed prefix (`ghp_`), or a named value's name and its `=`
+	// (`password=`).
+	Prefix *string `json:"prefix,omitempty"`
+}
+
+// ApprovalCuaPage The page's full host, no path or query.
+type ApprovalCuaPage struct {
+	// The host in Unicode.
+	Host string `json:"host"`
+	// The host's `xn--` form; equal to `host` when they don't differ.
+	HostAscii string `json:"hostAscii"`
+}
+
+// ApprovalCuaPoint A point in the model's 0–1000 coordinates.
+type ApprovalCuaPoint struct {
+	X int64 `json:"x"`
+	Y int64 `json:"y"`
+}
+
+// ApprovalCuaStep One consequential step. A client renders "Step N: <action> <roleWord> "<label>" —
+// <effect>"; a key step names its `chord`, and only a step with a `point` (and no label or
+// chord) reads "at x,y".
+type ApprovalCuaStep struct {
+	// The host's verb phrase, such as `click` or `type into`.
+	Action string `json:"action"`
+	// The chord, for a key step.
+	Chord *string `json:"chord,omitempty"`
+	// The host's trusted sentence for what the step may do.
+	Effect string `json:"effect"`
+	// An open tag for styling and tests only (`verb:<class>`, `unresolved`, `unlabeled`); a
+	// client that doesn't know a value renders the step from `effect` and its label as usual.
+	Kind string `json:"kind"`
+	// The control's label: the app's own text, shown quoted and as plain text; a client may
+	// cap it.
+	Label *string `json:"label,omitempty"`
+	// The step's own 0–1000 model coordinates, only for a point step.
+	Point *ApprovalCuaPoint `json:"point,omitempty"`
+	// `button`, `link`, `menu item` or `key`; absent for a point step.
+	RoleWord *string `json:"roleWord,omitempty"`
+	// 1-based, as the batch numbers its steps.
+	Step int64 `json:"step"`
 }
 
 // ApprovalDecideParams `approval/decide` params (tdd SS5.4): the decision. A standard SS3 command — requires
@@ -320,6 +452,8 @@ type ApprovalDecideResult struct {
 	Terminal bool `json:"terminal"`
 }
 
+// ApprovalDecision The kind of decision a choice applies or an approval received. The set is open, so newer
+// hosts may send values this version does not list.
 type ApprovalDecision string
 
 const (
@@ -355,9 +489,9 @@ type ApprovalListPendingParams struct {
 // race-safely, `approval/decide` carries the `requirementId` guard regardless of how the
 // client learned the state.
 type ApprovalListPendingResult struct {
-	// Exactly the `approval/request` params of tdd SS5.3, one per pending approval.
+	// Exactly the `approval/request` params, one per pending approval.
 	Approvals []ApprovalRequestParams `json:"approvals"`
-	// Exactly the `userInput/request` params of tdd SS5.10, one per pending prompt.
+	// Exactly the `userInput/request` params, one per pending prompt.
 	UserInputs []UserInputRequestParams `json:"userInputs"`
 }
 
@@ -414,12 +548,20 @@ var ApprovalModeSourceValues = []ApprovalModeSource{
 	ApprovalModeSourceApprovalReconfigure,
 }
 
+// ApprovalOrigin What triggered a tool action, shown so the user can judge it. It is display-only and
+// untrusted, and policy rules never match on it.
 type ApprovalOrigin struct {
+	// The shell command whose process asked for the action. Present when `kind` is
+	// `shellCommand`.
 	Command *string `json:"command,omitempty"`
-	Kind    string  `json:"kind"`
-	URL     *string `json:"url,omitempty"`
+	// Which kind of origin this is: `shellCommand` or `url`.
+	Kind string `json:"kind"`
+	// The full URL a fetch tool is requesting. Present when `kind` is `url`.
+	URL *string `json:"url,omitempty"`
 }
 
+// ApprovalPersistenceStatus The result of saving a granted rule to the local policy store. The set is open, so newer
+// hosts may send other values.
 type ApprovalPersistenceStatus string
 
 const (
@@ -433,6 +575,8 @@ var ApprovalPersistenceStatusValues = []ApprovalPersistenceStatus{
 	ApprovalPersistenceStatusFailed,
 }
 
+// ApprovalPolicyResult Whether an approval's final decision lets the action run. The set is open, so newer
+// hosts may send other values.
 type ApprovalPolicyResult string
 
 const (
@@ -448,39 +592,90 @@ var ApprovalPolicyResultValues = []ApprovalPolicyResult{
 
 // ApprovalRequestParams Full params shared by `approval/request` and `approval/requested`.
 type ApprovalRequestParams struct {
-	ApprovalID           string                 `json:"approvalId"`
-	AvailableChoices     []ApprovalChoice       `json:"availableChoices"`
+	// The approval's stable id. Match `approval/decide`, `approval/updated` and
+	// `approval/resolved` by it, never by the JSON-RPC request id, which belongs to one
+	// connection.
+	ApprovalID string `json:"approvalId"`
+	// The choices the server offers for the current requirement. Send the chosen one's
+	// `choiceId` in `approval/decide`; clients never build their own.
+	AvailableChoices []ApprovalChoice `json:"availableChoices"`
+	// A Computer Use card's facts: the page, the window and each step that may have an effect,
+	// in the host's words; absent on every other approval.
+	CuaCardFacts *ApprovalCuaCardFacts `json:"cuaCardFacts,omitempty"`
+	// The requirement the next decision must target; send it unchanged as `requirementId` in
+	// `approval/decide`. For `shell` it names the first stage still needing a decision; for
+	// other kinds its `sourceIndex` is 0.
 	CurrentRequirementID ApprovalRequirementRef `json:"currentRequirementId"`
-	ItemID               string                 `json:"itemId"`
-	JudgeEscalated       bool                   `json:"judgeEscalated"`
-	ProtectedWrite       bool                   `json:"protectedWrite"`
-	RawArgs              string                 `json:"rawArgs"`
-	SessionID            string                 `json:"sessionId"`
-	SourceRange          SourceRange            `json:"sourceRange"`
+	// The `toolCall` view item waiting on this approval.
+	ItemID string `json:"itemId"`
+	// `true` when the automated LLM judge saw this request first and handed it to a person
+	// without deciding. A display hint only. The host sends it as `false` when it re-issues
+	// the request after a restart or on `session/resume`; a re-send for a later stage keeps
+	// it.
+	JudgeEscalated bool `json:"judgeEscalated"`
+	// `true` when this approval guards a write to a protected file. Only allow-once and reject
+	// choices are offered, and a decision is accepted only while at least one client is
+	// subscribed to the session.
+	ProtectedWrite bool `json:"protectedWrite"`
+	// The tool call's arguments as a string, usually JSON. With `toolName`, it lets a client
+	// show a subject whose `kind` it does not recognize.
+	RawArgs string `json:"rawArgs"`
+	// The judge's escalation reason as one bounded display line (ADR 8609 D3: first sentence,
+	// whitespace controls folded, other control and format scalars stripped, 100 extended
+	// grapheme clusters max). Present only on a request released by a valid structured
+	// `escalate` with a non-blank judge rationale; absent on every other approval. A display
+	// hint only, like `judge_escalated`: it never authorizes anything.
+	ReviewerReason *string `json:"reviewerReason,omitempty"`
+	// The owning session. For a subagent's approval shown on the parent, this is the parent
+	// session.
+	SessionID string `json:"sessionId"`
+	// The stored records this event was folded from: an opaque token clients must not
+	// interpret.
+	SourceRange SourceRange `json:"sourceRange"`
 	// Present only for a child (native subagent) approval projected onto the parent session's
 	// plane (ADR 36182); parent-own approvals omit it.
 	SubagentOrigin *ApprovalSubagentOrigin `json:"subagentOrigin,omitempty"`
-	Subject        ApprovalSubject         `json:"subject"`
-	TaskID         string                  `json:"taskId"`
-	ToolCallID     string                  `json:"toolCallId"`
-	ToolName       string                  `json:"toolName"`
-	TurnID         string                  `json:"turnId"`
-	ViewCursor     string                  `json:"viewCursor"`
+	// What the approval is for. Show a `kind` you do not recognize generically, and never
+	// auto-approve it.
+	Subject ApprovalSubject `json:"subject"`
+	// The id of the task running the tool call.
+	TaskID string `json:"taskId"`
+	// The model provider's id for this tool call.
+	ToolCallID string `json:"toolCallId"`
+	// The name of the tool being called.
+	ToolName string `json:"toolName"`
+	// The turn whose tool call is waiting on this approval.
+	TurnID string `json:"turnId"`
+	// The cursor of the `approval/requested` event that opened this request. A re-send for a
+	// later stage keeps this cursor, so `view/page` at it returns the opening stage, which may
+	// be older than this payload.
+	ViewCursor string `json:"viewCursor"`
 }
 
-// ApprovalRequirementRef Approval-stage token carried in SS5 params and stale-requirement errors.
+// ApprovalRequirementRef Identifies one requirement of an approval: for a `shell` approval, one stage. A client
+// sends it back as `requirementId` in `approval/decide`, and a stale-requirement error
+// names the current one.
 type ApprovalRequirementRef struct {
-	ApprovalID  string `json:"approvalId"`
-	SourceIndex int64  `json:"sourceIndex"`
+	// The approval this requirement belongs to.
+	ApprovalID string `json:"approvalId"`
+	// The requirement's index within the approval, counting from 0; an approval with a single
+	// requirement uses 0.
+	SourceIndex int64 `json:"sourceIndex"`
 }
 
 // ApprovalResolutionSummary Winning terminal returned to a losing `approval/decide` command.
 type ApprovalResolutionSummary struct {
-	Decision   string `json:"decision"`
+	// The winning decision, as an `approval/resolved` decision value such as `approved` or
+	// `abort`.
+	Decision string `json:"decision"`
+	// Who made the winning decision, such as `user`, `policy` or `llmJudge`.
 	ResolvedBy string `json:"resolvedBy"`
+	// The view cursor of the winning `approval/resolved` event.
 	ViewCursor string `json:"viewCursor"`
 }
 
+// ApprovalResolvedBy Who or what made an approval's final decision. The set is open, so newer hosts may send
+// other values.
 type ApprovalResolvedBy string
 
 const (
@@ -498,49 +693,93 @@ var ApprovalResolvedByValues = []ApprovalResolvedBy{
 
 // ApprovalResolvedParams `approval/resolved` params: the first durable terminal decision.
 type ApprovalResolvedParams struct {
-	Amendment  *ApprovalAmendment `json:"amendment,omitempty"`
-	ApprovalID string             `json:"approvalId"`
+	// The policy rule the decision created. Present only when the decision created one.
+	Amendment *ApprovalAmendment `json:"amendment,omitempty"`
+	// The approval that was decided.
+	ApprovalID string `json:"approvalId"`
 	// The decision time as RFC3339, projected from the durable `DecisionApplied` record's own
 	// stamp (ADR 45450 D3): optional on the wire so decoders tolerate its absence, always
 	// populated by current hosts.
-	DecidedAt          *string                 `json:"decidedAt,omitempty"`
-	DecidedByCommandID *string                 `json:"decidedByCommandId,omitempty"`
-	Decision           ApprovalDecision        `json:"decision"`
-	ItemID             string                  `json:"itemId"`
-	PolicyResult       ApprovalPolicyResult    `json:"policyResult"`
-	ResolvedBy         ApprovalResolvedBy      `json:"resolvedBy"`
-	SessionID          string                  `json:"sessionId"`
-	SourceRange        SourceRange             `json:"sourceRange"`
-	StageEvidence      []ApprovalStageEvidence `json:"stageEvidence"`
+	DecidedAt *string `json:"decidedAt,omitempty"`
+	// The `commandId` of the `approval/decide` command that won. Absent when no such command
+	// made the decision, for example a policy or LLM judge decision.
+	DecidedByCommandID *string `json:"decidedByCommandId,omitempty"`
+	// The final decision.
+	Decision ApprovalDecision `json:"decision"`
+	// The `toolCall` view item this approval was holding.
+	ItemID string `json:"itemId"`
+	// Whether the final decision lets the action run (`allow`) or blocks it (`deny`).
+	PolicyResult ApprovalPolicyResult `json:"policyResult"`
+	// Who or what made the decision: `user`, `policy` or `llmJudge`.
+	ResolvedBy ApprovalResolvedBy `json:"resolvedBy"`
+	// The owning session.
+	SessionID string `json:"sessionId"`
+	// The stored records this event was folded from: an opaque token clients must not
+	// interpret.
+	SourceRange SourceRange `json:"sourceRange"`
+	// For a `shell` approval, how each stage was resolved when the decision became final.
+	// Empty for other subject kinds, and it can be empty for `shell` too.
+	StageEvidence []ApprovalStageEvidence `json:"stageEvidence"`
 	// Present only for a child (native subagent) approval projected onto the parent session's
 	// plane (ADR 36182); parent-own approvals omit it.
 	SubagentOrigin *ApprovalSubagentOrigin `json:"subagentOrigin,omitempty"`
-	TurnID         string                  `json:"turnId"`
-	ViewCursor     string                  `json:"viewCursor"`
+	// The turn whose tool call this approval was holding.
+	TurnID string `json:"turnId"`
+	// This event's view cursor: opaque, and strictly increasing within the session.
+	ViewCursor string `json:"viewCursor"`
 }
 
+// ApprovalStage One stage of a `shell` approval: a single command from the pipeline or command list,
+// approved separately from the others.
 type ApprovalStage struct {
-	Argv            []string                 `json:"argv"`
-	ArgvComplete    bool                     `json:"argvComplete"`
-	Position        int64                    `json:"position"`
-	RequirementID   ApprovalRequirementRef   `json:"requirementId"`
-	Resolution      ApprovalStageResolution  `json:"resolution"`
+	// The stage's command words as parsed. When `argvComplete` is `false`, this can be a
+	// single unparsed piece of the command.
+	Argv []string `json:"argv"`
+	// `true` when `argv` is the stage's complete command, known before it runs; `false` when
+	// part of it cannot be resolved ahead of time (for example a command substitution). A
+	// stage with `false` never has a `suggestedPrefix`.
+	ArgvComplete bool `json:"argvComplete"`
+	// This stage's 1-based position in the command; it equals `requirementId.sourceIndex + 1`.
+	Position int64 `json:"position"`
+	// This stage's requirement id. When it equals the approval's `currentRequirementId`, send
+	// it as `requirementId` in `approval/decide`.
+	RequirementID ApprovalRequirementRef `json:"requirementId"`
+	// Whether this stage still needs a decision or, if not, how it was satisfied.
+	Resolution ApprovalStageResolution `json:"resolution"`
+	// A command prefix the host suggests always allowing in this workspace, present only when
+	// one can be taken from a fully parsed stage. `availableChoices` shows whether that grant
+	// is offered.
 	SuggestedPrefix *ApprovalSuggestedPrefix `json:"suggestedPrefix,omitempty"`
-	TotalStages     int64                    `json:"totalStages"`
+	// The total number of stages in the command.
+	TotalStages int64 `json:"totalStages"`
 }
 
+// ApprovalStageEvidence How one stage of a `shell` approval was resolved when the decision became final.
 type ApprovalStageEvidence struct {
-	Argv          []string                `json:"argv"`
-	Position      int64                   `json:"position"`
-	RequirementID ApprovalRequirementRef  `json:"requirementId"`
-	Resolution    ApprovalStageResolution `json:"resolution"`
-	TotalStages   int64                   `json:"totalStages"`
+	// The stage's command words as parsed.
+	Argv []string `json:"argv"`
+	// The stage's 1-based position in the command.
+	Position int64 `json:"position"`
+	// The stage's requirement id.
+	RequirementID ApprovalRequirementRef `json:"requirementId"`
+	// How the stage was resolved at the final decision.
+	Resolution ApprovalStageResolution `json:"resolution"`
+	// The total number of stages in the command.
+	TotalStages int64 `json:"totalStages"`
 }
 
+// ApprovalStageResolution Whether a shell stage still needs a decision, or how it was satisfied. Satisfied stages
+// are included so a client can show progress.
 type ApprovalStageResolution struct {
+	// The command prefix saved as an always-allow rule when this stage was approved. Present
+	// only when `kind` is `policyAmendment`.
 	ArgvPrefix []string `json:"argvPrefix,omitempty"`
-	Diagnostic *string  `json:"diagnostic,omitempty"`
-	Kind       string   `json:"kind"`
+	// Free-form text naming the rule or mode that allowed the stage, for display or
+	// troubleshooting. Present only when `kind` is `policyAllow`.
+	Diagnostic *string `json:"diagnostic,omitempty"`
+	// One of `unresolved`, `knownSafe`, `policyAllow`, `allowOnce` or `policyAmendment`. The
+	// set is open, so newer hosts may add values.
+	Kind string `json:"kind"`
 }
 
 // ApprovalSubagentOrigin Child (native subagent) provenance for an approval projected onto the PARENT session's
@@ -560,39 +799,73 @@ type ApprovalSubagentOrigin struct {
 // ApprovalSubject Open approval subject union. Unknown kinds are rendered generically and never
 // auto-approved by clients (tdd SS5.2).
 type ApprovalSubject struct {
-	Access  *string `json:"access,omitempty"`
+	// The access asked for: `read` or `write` for `fileAccess`, `control` for `process`.
+	// Absent for other kinds.
+	Access *string `json:"access,omitempty"`
+	// The full raw shell command. Present when `kind` is `shell`.
 	Command *string `json:"command,omitempty"`
-	Host    *string `json:"host,omitempty"`
+	// The network host the tool wants to reach. Present when `kind` is `network`.
+	Host *string `json:"host,omitempty"`
 	// Open discriminator: `shell | fileAccess | network | unixSocket | process | tool`.
-	Kind          string          `json:"kind"`
-	Origin        *ApprovalOrigin `json:"origin,omitempty"`
-	Path          *string         `json:"path,omitempty"`
-	Port          *int64          `json:"port,omitempty"`
-	Protocol      *string         `json:"protocol,omitempty"`
-	Stages        []ApprovalStage `json:"stages,omitempty"`
-	Target        *string         `json:"target,omitempty"`
-	ToolName      *string         `json:"toolName,omitempty"`
-	WorkspaceRoot *string         `json:"workspaceRoot,omitempty"`
+	Kind string `json:"kind"`
+	// What triggered the action (a shell command or a URL), for display only and untrusted. It
+	// is not sent on `shell` subjects, and policy rules never match on it.
+	Origin *ApprovalOrigin `json:"origin,omitempty"`
+	// For `fileAccess`, the path the tool asked to access, normalized by the host
+	// (workspace-relative inside the workspace); for `unixSocket`, the exact resolved socket
+	// path, sent unescaped, so escape it before display.
+	Path *string `json:"path,omitempty"`
+	// The network port, present only on `network` subjects that name one. A session grant made
+	// from a subject without a port covers every port.
+	Port *int64 `json:"port,omitempty"`
+	// The network protocol, for example `https`. Present only on `network` subjects that name
+	// one.
+	Protocol *string `json:"protocol,omitempty"`
+	// The shell command split into stages that are approved separately (the commands of a
+	// pipeline or command list), in order. Present on `shell` subjects; it may be empty.
+	Stages []ApprovalStage `json:"stages,omitempty"`
+	// Display text naming the process the tool wants to control. Present when `kind` is
+	// `process`.
+	Target *string `json:"target,omitempty"`
+	// The tool asking for the action. Present for every kind except `shell`.
+	ToolName *string `json:"toolName,omitempty"`
+	// The canonical workspace root the shell command runs in, present on `shell` subjects when
+	// the host knows it. Saved command-prefix rules apply only within this root.
+	WorkspaceRoot *string `json:"workspaceRoot,omitempty"`
 }
 
+// ApprovalSuggestedPrefix A suggested always-allow rule for a shell stage: commands starting with `argvPrefix`
+// would run in this workspace without asking.
 type ApprovalSuggestedPrefix struct {
+	// The leading command words the rule would allow, for example `["cargo", "test"]`.
 	ArgvPrefix []string `json:"argvPrefix"`
-	Label      string   `json:"label"`
+	// A human-readable label for the suggestion, ready to show as is.
+	Label string `json:"label"`
 }
 
 // ApprovalUpdatedParams `approval/updated` params: the refreshed pending view plus one change.
 type ApprovalUpdatedParams struct {
-	ApprovalID           string                 `json:"approvalId"`
-	AvailableChoices     []ApprovalChoice       `json:"availableChoices"`
-	Change               ApprovalChange         `json:"change"`
+	// The approval that changed.
+	ApprovalID string `json:"approvalId"`
+	// The refreshed choices for the current requirement.
+	AvailableChoices []ApprovalChoice `json:"availableChoices"`
+	// What changed; `change.kind` names the kind of change.
+	Change ApprovalChange `json:"change"`
+	// The requirement the next decision must target after this change; send it as
+	// `requirementId` in `approval/decide`.
 	CurrentRequirementID ApprovalRequirementRef `json:"currentRequirementId"`
-	SessionID            string                 `json:"sessionId"`
-	SourceRange          SourceRange            `json:"sourceRange"`
+	// The owning session.
+	SessionID string `json:"sessionId"`
+	// The stored records this event was folded from: an opaque token clients must not
+	// interpret.
+	SourceRange SourceRange `json:"sourceRange"`
 	// Present only for a child (native subagent) approval projected onto the parent session's
 	// plane (ADR 36182); parent-own approvals omit it.
 	SubagentOrigin *ApprovalSubagentOrigin `json:"subagentOrigin,omitempty"`
-	Subject        ApprovalSubject         `json:"subject"`
-	ViewCursor     string                  `json:"viewCursor"`
+	// The approval's subject, with `stages` refreshed for this change.
+	Subject ApprovalSubject `json:"subject"`
+	// This event's view cursor: opaque, and strictly increasing within the session.
+	ViewCursor string `json:"viewCursor"`
 }
 
 // AttentionFlag One attention flag (tdd SS2.4, ADR 31983 D3): a pending server-initiated request class
@@ -626,6 +899,33 @@ var BackgroundInitiatorValues = []BackgroundInitiator{
 	BackgroundInitiatorTimeout,
 }
 
+// BackgroundTerminalCompletion `backgroundTerminalCompletion`: the five facts the Finished cell renders (ADR 50041
+// D3/D4). The fold reads them from the inbox terminal record and the backgrounded call it
+// names; every member is required (empty output serializes as `""`, never absent).
+type BackgroundTerminalCompletion struct {
+	// The title text gate-off shows for the backgrounded command.
+	Command string `json:"command"`
+	// The completion text; empty when the terminal carries none.
+	Output string `json:"output"`
+	// True when `output` is a prefix of the terminal text.
+	OutputTruncated bool `json:"outputTruncated"`
+	// One of `completed`, `failed`, `cancelled`, `timedOut`, `rejected` (the ItemStatus wire
+	// vocabulary, tdd SS4.4.1).
+	TerminalStatus string `json:"terminalStatus"`
+	// The backgrounded call's call id: the live/history correlation key behind the
+	// skip-when-minted rule (ADR 50041 D6).
+	ToolCallID string `json:"toolCallId"`
+}
+
+// BlockedPrompt The cold recall seed on `session/resume` and `session/read` results (ADR 50074 D2): at
+// most one, the latest blocked Main prompt — exactly the host's mirror of
+// `prompt_recovery::replay::ReplayInput`'s choice.
+type BlockedPrompt struct {
+	// The exact submitted prompt, verbatim — no truncation, no normalization; recall
+	// fidelity requires exactness.
+	Text string `json:"text"`
+}
+
 // BranchState The latest branch observation in the snapshot (tdd SS4.6.4, SS4.9.1).
 type BranchState struct {
 	// The observed branch; `null` on a detached-HEAD observation.
@@ -636,9 +936,9 @@ type BranchState struct {
 	WorkspaceRoot string `json:"workspaceRoot"`
 }
 
-// CapabilityName A grantable capability name (SS1.4.4). Open: the reserved `rawLog` entry joins this
-// domain as an additive open-enum extension when SS6 un-defers (#13929, Scenario 5 AS-3)
-// — closed would make that a retype.
+// CapabilityName A grantable capability name. Open: the experimental-only `rawLog` entry joins the stable
+// domain as an additive open-enum extension when it graduates — closed would make that a
+// retype.
 type CapabilityName string
 
 const (
@@ -660,6 +960,14 @@ var CapabilityNameValues = []CapabilityName{
 	CapabilityNameComputerUseSetup,
 	CapabilityNameComputerUseHostSetup,
 	CapabilityNameSessionRename,
+}
+
+// CheckpointBoundary A served checkpoint-prune boundary (spec 13929 amendment FR-50042-1; ADR 50042 D3):
+// `through_item_id` names the last first-opened item that opened strictly before the
+// boundary checkpoint event.
+type CheckpointBoundary struct {
+	// The last pre-boundary item's id, in served (first-opened) order.
+	ThroughItemID string `json:"throughItemId"`
 }
 
 // ClientCapabilities The client's requested capability posture (SS1.4.1). Every member defaults; an absent
@@ -760,12 +1068,11 @@ type CommandAcceptedResult struct {
 	Status CommandAckStatus `json:"status"`
 }
 
-// CommandAckStatus The ack-status vocabulary (`tdd.md` SS3.1/SS3.1.2): `"accepted"` for every admitted
-// command; `session/compact` alone may answer `"noop"`. Closed: SS3.1.2 names exactly
-// these two values, so SDK clients get a discriminated type and validation catches a wrong
-// status (PR #21550 review) — and a client that received a third value would have been
-// told nothing it can act on, unlike [`TurnStartDisposition`], where "acked, not otherwise
-// classified" is a usable reading.
+// CommandAckStatus The ack-status vocabulary: `"accepted"` for every admitted command; `session/compact`
+// alone may answer `"noop"`. Closed: the protocol defines exactly these two values, so SDK
+// clients get a discriminated type and validation catches a wrong status — and a client
+// that received a third value would have been told nothing it can act on, unlike
+// [`TurnStartDisposition`], where "acked, not otherwise classified" is a usable reading.
 type CommandAckStatus string
 
 const (
@@ -1086,14 +1393,13 @@ type ContextUsage struct {
 
 // CronReceipt Cron's `details` payload (ADR 42728 D2, thirteenth directive). Every field a family owns
 // lives here, under the container's one `details` key, rather than flat beside the
-// discriminators — ADR 43399 D5 as amended. Each is a **bounded machine fact**: scalars,
-// short identifiers and a small fixed-shape array of those.
+// discriminators. Each is a **bounded machine fact**: scalars, short identifiers and a
+// small fixed-shape array of those.
 type CronReceipt struct {
 	// Cron `create` and `delete`: the job id. On `delete`'s `missing` arm this is the caller's
-	// own id echoed back under ADR 43399 D1's declared echo — that arm has no server-side
-	// subject to name. Also the field ADR 42728 D4's D8 declaration names as conveying the
-	// hidden fact on the declared `created` + `cancelled` pairing: a job row was committed and
-	// will fire.
+	// own id echoed back — that arm has no server-side subject to name. On the `created` +
+	// `cancelled` pairing, this field also conveys the hidden fact: a job row was committed
+	// and will fire.
 	JobID *string `json:"jobId,omitempty"`
 	// Cron `list`: the served jobs in server order, `active` and `firing` rows only.
 	Jobs []CronReceiptJob `json:"jobs,omitempty"`
@@ -1103,9 +1409,8 @@ type CronReceipt struct {
 }
 
 // CronReceiptJob One row of the Cron `list` receipt's `jobs` array (ADR 42728 D2). Server order, and
-// **`active` + `firing` rows only** — the owner's `Serve active+firing only` directive.
-// A small fixed-shape array of scalars, which is what keeps it inside D5's
-// bounded-machine-fact rule.
+// **`active` + `firing` rows only**. A small fixed-shape array of scalars, which is what
+// keeps it a bounded machine fact.
 type CronReceiptJob struct {
 	// The job's server-owned id.
 	JobID string `json:"jobId"`
@@ -1122,10 +1427,10 @@ type CumulativeCost struct {
 	Usd float64 `json:"usd"`
 }
 
-// CumulativeTokenUsage Session running totals of counted-once usage (tdd SS4.6.5). Amendment #41610: the cache
-// splits and server-computed `cost` join the counters. The counters stay accumulate-only;
-// `cost` is the documented exception — it may move either way on price re-adoption and
-// is labeled estimate (INV-41610-1). `Copy` was dropped for the `cost` member.
+// CumulativeTokenUsage Session running totals of counted-once usage (tdd SS4.6.5). The cache splits and
+// server-computed `cost` join the counters. The counters stay accumulate-only; `cost` is
+// the documented exception — it may move either way on price re-adoption and is labeled
+// estimate. `Copy` was dropped for the `cost` member.
 type CumulativeTokenUsage struct {
 	// Cache-read tokens, session total (FR-41610-1): saturating sum of the per-completion
 	// splits; an absent split contributes 0. Additive-optional: absent on the wire reads as 0
@@ -1142,6 +1447,45 @@ type CumulativeTokenUsage struct {
 	PromptTokens int64 `json:"promptTokens"`
 	// Counted-once totals, session total.
 	TotalTokens int64 `json:"totalTokens"`
+}
+
+// DamagedRange `damagedRange`: what one damaged range of the session log cost (ADR 60914 D1/D2). The
+// reader finds the range in the log bytes; no log record is written for it, so every
+// member is derived from the readable records around it.
+type DamagedRange struct {
+	// The last finished turn before the first damaged range, when one exists: the safe
+	// `session/fork` cut (ADR 60914 D1 "Fork cuts", D4).
+	LastGoodTurnID *string `json:"lastGoodTurnId,omitempty"`
+	// Records the log proves missing (session-stream sequence numbers no readable record or
+	// unreadable line accounts for).
+	MissingRecords int64 `json:"missingRecords"`
+	// RFC3339 `recordedAt` of the first readable record after the range; always present, since
+	// a range is read past only when readable records follow it (ADR 60914 D1).
+	ReadableAfterAt string `json:"readableAfterAt"`
+	// RFC3339 `recordedAt` of the last readable record before the range; absent when the range
+	// starts the log.
+	ReadableBeforeAt *string `json:"readableBeforeAt,omitempty"`
+	// Physical log lines in the range that are not a readable record.
+	UnreadableLines int64 `json:"unreadableLines"`
+}
+
+// EarlierHistory `earlierHistory`: the boundary checkpoint's transcript tail, served in place of every
+// item that opened in its pruned prefix (ADR 71910 D1/D3). No log record carries it; the
+// host derives it from the checkpoint.
+type EarlierHistory struct {
+	// The tail entries whose source record is in the pruned prefix, in tail order (at most 50,
+	// spec 6127 INV-002). May be empty.
+	Messages []EarlierHistoryMessage `json:"messages"`
+}
+
+// EarlierHistoryMessage One transcript-tail message of an [`EarlierHistory`] item.
+type EarlierHistoryMessage struct {
+	// Open string enum: `"user"` or `"assistant"`, the only roles a host serves; a client
+	// skips any other value (spec 6127 FM-004).
+	Role string `json:"role"`
+	// The stored tail text verbatim (at most 1,000 characters); clients apply their own
+	// assistant display rules.
+	Text string `json:"text"`
 }
 
 // EffectiveApprovalModeState The effective approval-mode projection (`EffectiveApprovalModeState`, tdd SS5.12): the
@@ -1177,15 +1521,15 @@ type ErrorData struct {
 	// (SS4.7.3, SS4.11); on `-32042` it is served as an explicit `null` when the request named
 	// no concrete anchor (spec 208 FM-005).
 	Anchor *string `json:"anchor,omitempty"`
-	// Approval identity on SS5 errors.
+	// Approval id on approval errors.
 	ApprovalID *string `json:"approvalId,omitempty"`
 	// The stored output's availability on `outputUnavailable` — the durable
 	// `ToolOutputAvailability` value, read-time-derived when the durable record still says
 	// `available` (SS4.5.5; spec 208 FM-008).
 	Availability *string `json:"availability,omitempty"`
 	// The missing capability, on `capabilityRequired` errors. Typed on the grantable registry,
-	// so `rawLog` is outside the v1 domain and joins it as an additive open-enum extension
-	// when SS6 un-defers (TEST-009).
+	// so the experimental-only `rawLog` joins the stable domain as an additive open-enum
+	// extension when it graduates.
 	Capability *CapabilityName `json:"capability,omitempty"`
 	// The configured command-admission bound, on `backpressured` errors.
 	Capacity *int64 `json:"capacity,omitempty"`
@@ -1198,7 +1542,8 @@ type ErrorData struct {
 	CommandID *string `json:"commandId,omitempty"`
 	// Current stage token on `approvalRequirementStale`.
 	CurrentRequirementID *ApprovalRequirementRef `json:"currentRequirementId,omitempty"`
-	// SS1.5.1 descriptor, on `experimentalRequired` errors.
+	// On `experimentalRequired` errors, the name of the experimental method, field or variant
+	// the request used, for example `turn/start.providerRequestOptions`.
 	Descriptor *string `json:"descriptor,omitempty"`
 	// Free-form additive detail.
 	Details json.RawMessage `json:"details,omitempty"`
@@ -1231,6 +1576,9 @@ type ErrorData struct {
 	// Failure detail vocabulary (e.g. `"missingAnchor"` on `notFound` for a missing
 	// view-cursor anchor).
 	Reason *string `json:"reason,omitempty"`
+	// The original recovery-dependent construction's coherent observation. An absent or
+	// unusable observation establishes no supported recovery.
+	RecoveryObservation *RecoveryObservation `json:"recoveryObservation,omitempty"`
 	// Winning resolution on `approvalAlreadyResolved`.
 	Resolution *ApprovalResolutionSummary `json:"resolution,omitempty"`
 	// Whether retrying can succeed (e.g. `overloaded`). When present, overrides the error
@@ -1255,16 +1603,15 @@ type ErrorData struct {
 	Settlement *UserInputSettlementSummary `json:"settlement,omitempty"`
 	// The rejected upload id on `uploadNotFound` (`-32038`, SS3.33).
 	UploadID *string `json:"uploadId,omitempty"`
-	// User-input prompt identity on SS5.10 errors.
+	// Prompt identity on user-input errors.
 	UserInputID *string `json:"userInputId,omitempty"`
 	// The blocked view position on `pageEventTooLarge` errors.
 	ViewCursor *string `json:"viewCursor,omitempty"`
 }
 
-// ErrorKind A stable `error.data.kind` category (SS1.6): camelCase, the value clients branch on.
-// Open: SS2–SS5 lanes add kinds additively as their methods land (Appendix B already
-// registers them), and the spec's edge-case rule makes a new `kind` additive only because
-// this domain is declared open.
+// ErrorKind A stable `error.data.kind` category: camelCase, the value clients branch on. Open: new
+// kinds are added as their methods land, and a new `kind` is additive only because this
+// domain is declared open.
 type ErrorKind string
 
 const (
@@ -1516,6 +1863,10 @@ type ForkProvenance struct {
 // `status` and `percentComplete` are carried **verbatim** — out-of-contract status
 // strings and >100 percents pass through; display clamping is the renderer's job.
 type Goal struct {
+	// Goal creation time, epoch milliseconds, verbatim from the durable row. Absent on blocks
+	// whose producer never carried it (tool-result adoptions, older logs); absence must never
+	// render as a fabricated zero.
+	CreatedAtMs *int64 `json:"createdAtMs,omitempty"`
 	// Current work description, when present.
 	CurrentWork *string `json:"currentWork,omitempty"`
 	// Next work description, when present.
@@ -1527,6 +1878,9 @@ type Goal struct {
 	// Goal status, verbatim from the durable goal state (free string by design:
 	// out-of-contract values pass through).
 	Status string `json:"status"`
+	// Last goal mutation time, epoch milliseconds, verbatim from the durable row. Same absence
+	// rule as `createdAtMs`.
+	UpdatedAtMs *int64 `json:"updatedAtMs,omitempty"`
 }
 
 // GoalClearParams `goal/clear` params (tdd SS3.18). An `objective` here is an unknown field and rejects
@@ -1591,6 +1945,21 @@ type GoalSetParams struct {
 	SessionID string `json:"sessionId"`
 }
 
+// HeldFor What holds a tool call before it is admitted to execute (ADR 50063 D6). Open: a client
+// reads an unknown value as held by something it does not know, never as released.
+type HeldFor string
+
+const (
+	HeldForApproval HeldFor = "approval"
+	HeldForHook     HeldFor = "hook"
+)
+
+// HeldForValues are every HeldFor the bundle declares, in schema order.
+var HeldForValues = []HeldFor{
+	HeldForApproval,
+	HeldForHook,
+}
+
 // HistoryMode What history a lifecycle result actually served (tdd SS2.5.2). Open on the client side:
 // report-what-was-served means a client treats an unknown mode as "page it yourself".
 type HistoryMode string
@@ -1610,10 +1979,10 @@ var HistoryModeValues = []HistoryMode{
 	HistoryModeNone,
 }
 
-// HistoryNoneReason Why a result served `history.mode: "none"` — spec 208 FM-005's typed unavailability
-// (tdd SS2.5.2; D-050). Open on the client side: an absent (older server) or unknown
-// (newer server) value decodes conservatively as an unknown reason, and `viewCursor` text
-// never substitutes for it (spec 208 INV-19734-1).
+// HistoryNoneReason Why a result served `history.mode: "none"`: the server's typed reason for serving no
+// history. Open on the client side: an absent (older server) or unknown (newer server)
+// value decodes conservatively as an unknown reason, and `viewCursor` text never
+// substitutes for it.
 type HistoryNoneReason string
 
 const (
@@ -1677,6 +2046,8 @@ const (
 	HookEventNamePreToolUse         HookEventName = "preToolUse"
 	HookEventNamePermissionRequest  HookEventName = "permissionRequest"
 	HookEventNamePostToolUse        HookEventName = "postToolUse"
+	HookEventNamePreLLMCall         HookEventName = "preLLMCall"
+	HookEventNamePostLLMCall        HookEventName = "postLLMCall"
 	HookEventNamePreCompact         HookEventName = "preCompact"
 	HookEventNamePostCompact        HookEventName = "postCompact"
 	HookEventNameSubagentStart      HookEventName = "subagentStart"
@@ -1690,8 +2061,6 @@ const (
 	HookEventNameInterrupt          HookEventName = "interrupt"
 	HookEventNameSessionFork        HookEventName = "sessionFork"
 	HookEventNameToolUseStart       HookEventName = "toolUseStart"
-	HookEventNamePreLLMCall         HookEventName = "preLLMCall"
-	HookEventNamePostLLMCall        HookEventName = "postLLMCall"
 )
 
 // HookEventNameValues are every HookEventName the bundle declares, in schema order.
@@ -1701,6 +2070,8 @@ var HookEventNameValues = []HookEventName{
 	HookEventNamePreToolUse,
 	HookEventNamePermissionRequest,
 	HookEventNamePostToolUse,
+	HookEventNamePreLLMCall,
+	HookEventNamePostLLMCall,
 	HookEventNamePreCompact,
 	HookEventNamePostCompact,
 	HookEventNameSubagentStart,
@@ -1714,8 +2085,6 @@ var HookEventNameValues = []HookEventName{
 	HookEventNameInterrupt,
 	HookEventNameSessionFork,
 	HookEventNameToolUseStart,
-	HookEventNamePreLLMCall,
-	HookEventNamePostLLMCall,
 }
 
 // HookHandlerKind A hook row's origin (tdd SS3.26.1, ADR 33398 D7 item 1): the config `HookSourceKind`
@@ -1813,10 +2182,10 @@ type InitializeResult struct {
 	PlatformFamily PlatformFamily `json:"platformFamily"`
 	// Server operating system.
 	PlatformOS PlatformOS `json:"platformOs"`
-	// Whether this host can enforce the sandbox (ADR 50064-startup-report-sandbox-availability
-	// D2/D4). Optional so the addition is additive under SS1.5.4; a v1 host always sends it,
-	// and a client reads absent as unknown — the host predates the field, so the client
-	// falls back to its own probe rather than inventing an answer.
+	// Whether this host can enforce the sandbox. Optional so adding it stays backward
+	// compatible; a v1 host always sends it, and a client reads absent as unknown — the host
+	// predates the field, so the client falls back to its own probe rather than inventing an
+	// answer.
 	SandboxAvailability *SandboxAvailability `json:"sandboxAvailability,omitempty"`
 	// Why enforcement is impossible. Sent only when `sandbox_availability` is `unavailable`; a
 	// client MUST NOT infer a reason when none is sent.
@@ -1825,9 +2194,9 @@ type InitializeResult struct {
 	Schema SchemaInfo `json:"schema"`
 	// Server identification.
 	ServerInfo ServerInfo `json:"serverInfo"`
-	// Whether this host persists its sessions (SS2.13). Optional so the addition is additive
-	// under SS1.5.4; a v1 host always sends it, and a client reads absent as `durable` because
-	// no server that omits it has the ephemeral profile.
+	// Whether this host persists its sessions. Optional so adding it stays backward
+	// compatible; a v1 host always sends it, and a client reads absent as `durable` because no
+	// server that omits it has the ephemeral profile.
 	SessionDurability *SessionDurability `json:"sessionDurability,omitempty"`
 	// Exact user-agent string presented to upstream model providers.
 	UserAgent string `json:"userAgent"`
@@ -1854,6 +2223,8 @@ type Item struct {
 	// `toolCall`: who backgrounded the task; absent on pre-split records — never inferred
 	// (tdd SS4.5.5).
 	BackgroundInitiator *BackgroundInitiator `json:"backgroundInitiator,omitempty"`
+	// `backgroundTerminalCompletion`: the five facts the Finished cell renders (ADR 50041 D4).
+	BackgroundTerminalCompletion *BackgroundTerminalCompletion `json:"backgroundTerminalCompletion,omitempty"`
 	// `reminderChild`: `true` when this child is a blocking reminder (it holds the turn open
 	// until it settles); absent otherwise, never `false` (ADR 41191 D4). The status word stays
 	// off the wire; clients name the reminder from `reminderAgentId`.
@@ -1886,17 +2257,29 @@ type Item struct {
 	// this partial text committed (ADR 50063 D2) — the wire mark for the gate-off
 	// "incomplete response" rule (#13328). Absent otherwise; never cleared once set.
 	CutOff *bool `json:"cutOff,omitempty"`
+	// `damagedRange`: what the damaged range cost (ADR 60914 D2).
+	DamagedRange *DamagedRange `json:"damagedRange,omitempty"`
 	// `workflow`: the run-level declared-phase label — the last `Phase` detail-row label of
 	// the reconciled projection; terminal-only, absent while live (tdd SS4.5.8, #45449).
 	DeclaredPhase *string `json:"declaredPhase,omitempty"`
+	// `scheduledFire`: the occurrence number within the job's history, present with occurrence
+	// metadata (tdd SS4.5.17; ADR 45446 D2).
+	DeliveryNumber *int64 `json:"deliveryNumber,omitempty"`
 	// `subagent`: nesting depth.
 	Depth *int64 `json:"depth,omitempty"`
+	// `toolCall`: the tool's own words for this call; absent = none (tdd SS4.5.5).
+	DisplayLabel *ToolDisplayLabel `json:"displayLabel,omitempty"`
 	// `userMessage`: presentation form (tdd SS3.2); absent when the client sent none.
 	DisplayText *string `json:"displayText,omitempty"`
 	// `userShell`/`subagent`: observed wall-clock duration. `workflow`: the run's wall time
 	// from launch to reconciliation, set only on the settling `item/completed` — never a sum
-	// of child durations.
+	// of child durations. `toolCall`: the Backgrounded row's duration (ADR 50041 D11) — the
+	// open→update record delta in whole ms, served on the `backgroundStatus` re-emission and
+	// frozen there; absent otherwise.
 	DurationMs *int64 `json:"durationMs,omitempty"`
+	// `earlierHistory`: the boundary checkpoint's transcript tail (ADR 71910 D3, tdd
+	// SS4.5.22).
+	EarlierHistory *EarlierHistory `json:"earlierHistory,omitempty"`
 	// `workflow`: launched entry identity.
 	EntryID *string `json:"entryId,omitempty"`
 	// `hookRun`: the hook event in Q2 camelCase vocabulary (tdd SS4.5.11).
@@ -1920,13 +2303,25 @@ type Item struct {
 	FinalSummary *string `json:"finalSummary,omitempty"`
 	// `reminderChild`: the reminder generation.
 	GenerationID *int64 `json:"generationId,omitempty"`
+	// `toolCall` (ADR 50063 D4/D6): `true` while the call is held before it is admitted to
+	// execute. Present on an item started at hold time, cleared by the release `item/updated`,
+	// absent on calls never held.
+	Held *bool `json:"held,omitempty"`
+	// `toolCall` (ADR 50063 D6): what holds the call; present exactly when `held` is.
+	HeldFor *HeldFor `json:"heldFor,omitempty"`
 	// `hookRun`: the durable `hook_key` (tdd SS4.5.11).
 	HookKey *string `json:"hookKey,omitempty"`
 	// Bare UUIDv7; the item's identity across its whole lifecycle. Identity rule (tdd
 	// SS4.4.1): the task id for task-backed kinds (`toolCall`, `subagent`), the pre-minted
-	// commit `message_id` for delta-streamed kinds (`agentMessage`, `reasoning`), and the
-	// opening durable record's event id for everything else. Opaque to clients.
+	// commit `message_id` for delta-streamed kinds (`agentMessage`, `reasoning`),
+	// `EventId::derive` over the session id and the range's starting sequence number for
+	// `damagedRange` (no record carries it, SS4.5.16), the same over the boundary checkpoint's
+	// sequence number for `earlierHistory` (SS4.5.22), and the opening durable record's event
+	// id for everything else. Opaque to clients.
 	ItemID string `json:"itemId"`
+	// `scheduledFire`: the cron job id that fired (tdd SS4.5.17; ADR 45446 D2, spec 13929
+	// amendment #62595 FR-62595-1).
+	JobID *string `json:"jobId,omitempty"`
 	// The item kind (open enum): clients MUST render unknown kinds generically — kind name
 	// plus `status` plus `fallbackText` (tdd SS4.10).
 	Kind ItemKind `json:"kind"`
@@ -1946,6 +2341,9 @@ type Item struct {
 	// `monitorFeed`: the monitor task id — the same value as that monitor's `toolCall`
 	// `itemId` (ADR 50058-monitor-feed-wire D1).
 	MonitorID *string `json:"monitorId,omitempty"`
+	// `scheduledFire`: the next scheduled epoch in milliseconds; absent on a final delivery
+	// (tdd SS4.5.17; ADR 45446 D2).
+	NextFireAtMs *int64 `json:"nextFireAtMs,omitempty"`
 	// `subagent`: objective as spawned, bounded on the wire at the 64 KiB retained-text budget
 	// (tdd SS4.5.4, ADR 35691 D9); a cut sets `truncated`. The durable record stays verbatim.
 	Objective *string `json:"objective,omitempty"`
@@ -1977,6 +2375,9 @@ type Item struct {
 	RecordedAt *string `json:"recordedAt,omitempty"`
 	// `reminderChild`: the reminder agent's id.
 	ReminderAgentID *string `json:"reminderAgentId,omitempty"`
+	// Monitor `toolCall`: the D26 hint verdict plus anchor (`ReplayHint`); absent means no
+	// hint.
+	ReplayHint *ReplayHint `json:"replayHint,omitempty"`
 	// `subagent`: the result envelope from `ResultReady` (tdd SS4.5.7).
 	Result *SubagentResult `json:"result,omitempty"`
 	// `workflow`: set on resumed launches.
@@ -1992,6 +2393,9 @@ type Item struct {
 	// `hookRun`: terminal-only durable outcome; stays `blocked` when the item settles
 	// `rejected` (tdd SS4.5.11).
 	RunStatus *HookRunStatus `json:"runStatus,omitempty"`
+	// `scheduledFire`: the fire's scheduled epoch in milliseconds (tdd SS4.5.17; ADR 45446
+	// D2).
+	ScheduledFireAtMs *int64 `json:"scheduledFireAtMs,omitempty"`
 	// `workflow`: launched script identity.
 	ScriptID *string `json:"scriptId,omitempty"`
 	// `sideChat`: the side's own session id, readable via `session/read`/`view/page` —
@@ -2033,16 +2437,18 @@ type Item struct {
 	StrategyID *string `json:"strategyId,omitempty"`
 	// `subagent`: durable child identity (`subagent_id`).
 	SubagentID *string `json:"subagentId,omitempty"`
-	// `compaction`: opaque provenance string naming the compaction boundary. A
-	// compaction-anchored read anchor since D-029 (2026-08-12): accepted by `session/resume`
-	// and `view/page` (wire shape and validation are the #208 lane's). Still opaque —
-	// clients relay it, never parse it (tdd SS4.5.10).
+	// `compaction`: opaque provenance string naming the compaction boundary. Also a
+	// compaction-anchored read anchor, accepted by `session/resume` and `view/page`. Still
+	// opaque — clients relay it, never parse it.
 	SummarizedThrough *string `json:"summarizedThrough,omitempty"`
 	// `reasoning`: one entry per summary part; part *n* streams via `item/delta` field
 	// `"summary.n"` (part boundary = index change).
 	Summary []string `json:"summary,omitempty"`
 	// `reminderChild`: the linked task id.
 	TaskID *string `json:"taskId,omitempty"`
+	// Terminal `toolCall`: the item after whose rows the terminal row renders (tdd SS4.5.21,
+	// ADR 56496 D2/D3).
+	TerminalRowAfterItemID *string `json:"terminalRowAfterItemId,omitempty"`
 	// `userMessage`: the prompt text as submitted. `agentMessage`: the accumulated reply,
 	// streamed via `item/delta` field `"text"`. `reasoning`: raw committed reasoning text
 	// where the provider exposes it (never streamed in v1, tdd SS4.5.4).
@@ -2079,7 +2485,9 @@ type Item struct {
 	Truncated *bool `json:"truncated,omitempty"`
 	// The owning turn (== the submitting `commandId` for fresh turns, tdd SS3.1.4). `null` for
 	// the kinds outside a turn: `userShell` always (tdd SS4.5.6), `hookRun` for
-	// session-boundary runs, `monitorFeed` always (ADR 50058-monitor-feed-wire D1).
+	// session-boundary runs, `monitorFeed` always (ADR 50058-monitor-feed-wire D1), `sideChat`
+	// always (SS4.5.13), `damagedRange` always (ADR 60914 D2), `earlierHistory` always (ADR
+	// 71910 D3).
 	TurnID *string `json:"turnId,omitempty"`
 	// `subagent`: **transitive** observed usage — the child and its own descendants; updated
 	// in place, absent until first observation; never folded into
@@ -2088,6 +2496,17 @@ type Item struct {
 	// `toolCall`/`userShell`: bounded transcript-visible result text (budget per tdd SS4.5.4);
 	// streams via `item/delta` field `"output"`.
 	VisibleOutput *string `json:"visibleOutput,omitempty"`
+	// `agentMessage`: the Monitor source descriptions for the wake turn's first answer (ADR
+	// 62265 D1, #62265) — stripped, bounded, one entry per arming drain in drain order.
+	// Absent (or empty) means untagged: the row renders the ordinary untagged shape. The
+	// client scrubs per part before joining.
+	WakeSourceDescriptions []string `json:"wakeSourceDescriptions,omitempty"`
+	// `toolCall`: the task's registered Work ID, verbatim (`work.v2.managed_bash.sha256.…`);
+	// present only when the task registered a ManagedBash id, absent otherwise (tdd SS4.5.5,
+	// ADR 50041 D20). Stable from day one: no `x-msp-stability` marker. The host serves it at
+	// the later of the task terminal and the inbox admission (D21); absence keeps the client's
+	// v1 derivation.
+	WorkID *string `json:"workId,omitempty"`
 	// `subagent`/`workflow`: the owning durable workflow run id (opaque string — not a UUID
 	// family).
 	WorkflowRunID *string `json:"workflowRunId,omitempty"`
@@ -2133,19 +2552,24 @@ type ItemDeltaParams struct {
 type ItemKind string
 
 const (
-	ItemKindUserMessage   ItemKind = "userMessage"
-	ItemKindAgentMessage  ItemKind = "agentMessage"
-	ItemKindReasoning     ItemKind = "reasoning"
-	ItemKindToolCall      ItemKind = "toolCall"
-	ItemKindUserShell     ItemKind = "userShell"
-	ItemKindSubagent      ItemKind = "subagent"
-	ItemKindWorkflow      ItemKind = "workflow"
-	ItemKindReminderChild ItemKind = "reminderChild"
-	ItemKindCompaction    ItemKind = "compaction"
-	ItemKindHookRun       ItemKind = "hookRun"
-	ItemKindSideChat      ItemKind = "sideChat"
-	ItemKindWebSearch     ItemKind = "webSearch"
-	ItemKindMonitorFeed   ItemKind = "monitorFeed"
+	ItemKindUserMessage                  ItemKind = "userMessage"
+	ItemKindAgentMessage                 ItemKind = "agentMessage"
+	ItemKindReasoning                    ItemKind = "reasoning"
+	ItemKindToolCall                     ItemKind = "toolCall"
+	ItemKindUserShell                    ItemKind = "userShell"
+	ItemKindSubagent                     ItemKind = "subagent"
+	ItemKindWorkflow                     ItemKind = "workflow"
+	ItemKindReminderChild                ItemKind = "reminderChild"
+	ItemKindCompaction                   ItemKind = "compaction"
+	ItemKindHookRun                      ItemKind = "hookRun"
+	ItemKindSideChat                     ItemKind = "sideChat"
+	ItemKindWebSearch                    ItemKind = "webSearch"
+	ItemKindMonitorFeed                  ItemKind = "monitorFeed"
+	ItemKindDamagedRange                 ItemKind = "damagedRange"
+	ItemKindScheduledFire                ItemKind = "scheduledFire"
+	ItemKindBackgroundTerminalCompletion ItemKind = "backgroundTerminalCompletion"
+	ItemKindOverdueNotice                ItemKind = "overdueNotice"
+	ItemKindEarlierHistory               ItemKind = "earlierHistory"
 )
 
 // ItemKindValues are every ItemKind the bundle declares, in schema order.
@@ -2163,6 +2587,11 @@ var ItemKindValues = []ItemKind{
 	ItemKindSideChat,
 	ItemKindWebSearch,
 	ItemKindMonitorFeed,
+	ItemKindDamagedRange,
+	ItemKindScheduledFire,
+	ItemKindBackgroundTerminalCompletion,
+	ItemKindOverdueNotice,
+	ItemKindEarlierHistory,
 }
 
 // ItemReadOutputEncoding The `item/readOutput` content encoding (tdd SS4.7.4). Closed: text media is ALWAYS
@@ -2181,9 +2610,9 @@ var ItemReadOutputEncodingValues = []ItemReadOutputEncoding{
 	ItemReadOutputEncodingBase64,
 }
 
-// ItemReadOutputParams `item/readOutput` params (tdd SS4.7.4): byte-ranged fetch of stored full output that the
-// view truncated — the `outputRef` fetch path SS3.9 and SS4.5.5 owe. Read-only; works on
-// loaded and unloaded sessions; no lease.
+// ItemReadOutputParams `item/readOutput` params: byte-ranged fetch of stored full output that the view
+// truncated, via the item's `outputRef`. Read-only; works on loaded and unloaded sessions;
+// no lease.
 type ItemReadOutputParams struct {
 	// The item whose stored output is fetched.
 	ItemID string `json:"itemId"`
@@ -2321,7 +2750,9 @@ type MediaUploadParams struct {
 	ChunkCount int64 `json:"chunkCount"`
 	// This chunk's 0-based position.
 	ChunkIndex int64 `json:"chunkIndex"`
-	// One per call; SS3.1.1 replay answers the recorded receipt.
+	// One per call. While the host runs, replaying it with the same params returns the
+	// recorded receipt, and reusing it with different params is refused. After a host restart,
+	// start over under a new `uploadId`.
 	CommandID string `json:"commandId"`
 	// `video/mp4` or `video/quicktime`, matching `VideoInput`.
 	MediaType string `json:"mediaType"`
@@ -2534,6 +2965,74 @@ type ModelVisibleContent struct {
 	Width *int64 `json:"width,omitempty"`
 }
 
+// MonitorInboxItemAdmittedParams `monitor/inboxItemAdmitted` params (tdd SS4.5.18): one monitor inbox admission — the
+// fold keys gate-off consumes.
+type MonitorInboxItemAdmittedParams struct {
+	// The model-facing delivery text.
+	Body string `json:"body"`
+	// The producer-recorded pre-augmentation content; absent on pre-#24686 records.
+	DisplayBody *string `json:"displayBody,omitempty"`
+	// Per-task event order key (with `line_index`).
+	EventIndex int64 `json:"eventIndex"`
+	// Monitor event kind, snake_case, open vocabulary — clients ignore unknown kinds.
+	EventKind string `json:"eventKind"`
+	// The inbox item id (dedupe key).
+	ItemID string `json:"itemId"`
+	// Line order key; absent when the event has no line.
+	LineIndex *int64 `json:"lineIndex,omitempty"`
+	// Admission stamp (RFC3339); consumed by the pending sort.
+	QueuedAt string `json:"queuedAt"`
+	// The owning session.
+	SessionID string `json:"sessionId"`
+	// Whether the event carries displayable lines.
+	ShowLines bool `json:"showLines"`
+	// The durable records this event folded from.
+	SourceRange SourceRange `json:"sourceRange"`
+	// The notice-text summary.
+	Summary string `json:"summary"`
+	// The owning monitor task id (per-task set key).
+	TaskID string `json:"taskId"`
+	// Opaque, strictly monotonic view cursor (tdd SS4.1).
+	ViewCursor string `json:"viewCursor"`
+}
+
+// MonitorInboxItemDrainedParams `monitor/inboxItemDrained` params (tdd SS4.5.18): one monitor inbox drain — a
+// consumption marker with its recorded stamp.
+type MonitorInboxItemDrainedParams struct {
+	// False is a local claim-only recall: no delivery row or recovery consequence, but the
+	// drain still stamps the awaiting verdict.
+	DeliveryVisible bool `json:"deliveryVisible"`
+	// The draining run stream (`StreamRef`), absent means the current draining run.
+	DrainTargetRunStream *StreamRef `json:"drainTargetRunStream,omitempty"`
+	// The drain record's recorded stamp (RFC3339), the drain-side operand of drain-vs-void
+	// latest-wins.
+	DrainedAt string `json:"drainedAt"`
+	// The drained inbox item id.
+	ItemID string `json:"itemId"`
+	// The owning session.
+	SessionID string `json:"sessionId"`
+	// The durable records this event folded from.
+	SourceRange SourceRange `json:"sourceRange"`
+	// Opaque, strictly monotonic view cursor (tdd SS4.1).
+	ViewCursor string `json:"viewCursor"`
+}
+
+// MonitorInboxItemVoidedParams `monitor/inboxItemVoided` params (tdd SS4.5.18): one wake-missed void — count-only, no
+// transcript row (spec 9627 D15).
+type MonitorInboxItemVoidedParams struct {
+	// The voided inbox item id.
+	ItemID string `json:"itemId"`
+	// The owning session.
+	SessionID string `json:"sessionId"`
+	// The durable records this event folded from.
+	SourceRange SourceRange `json:"sourceRange"`
+	// Opaque, strictly monotonic view cursor (tdd SS4.1).
+	ViewCursor string `json:"viewCursor"`
+	// The anomaly's recorded stamp (RFC3339), the void-side operand of drain-vs-void
+	// latest-wins.
+	VoidedAt string `json:"voidedAt"`
+}
+
 // Notification A notification frame, either direction (SS1.2 §2.2). No `id`; a notification is never
 // answered.
 type Notification struct {
@@ -2632,17 +3131,12 @@ var PendingRequestKindValues = []PendingRequestKind{
 // PendingRequestPointer A late-joiner pointer at an unsettled server-initiated request (tdd SS2.5.2, SS2.2.1).
 // The full payloads arrive as re-issued server-to-client requests right after a
 // `session/resume` response (tdd SS5.6); `session/read` never re-issues them (tdd
-// SS2.5.5). **A second E4 instance, RULED with E4 (#22785, owner, 2026-08-26): the flat
-// discriminated-object precedent is accepted for this type too, on the `ApprovalSubject`
-// precedent, with the serialized JSON unchanged. A strict union node kind may be funded
-// later; if it is, it must cover both this type and `TurnInputPart`.** SS2.5.2 ratifies
-// two kind-discriminated entry shapes (`{kind: "approval", approvalId, viewCursor}` /
-// `{kind: "userInput", userInputId, viewCursor}`); this is one flat object with both ids
-// optional, so the published schema accepts `{"kind":"approval","userInputId":…}` and an
-// entry carrying no id at all. The v1 model names no object-variant union (the
-// `ApprovalSubject` precedent, followed for `TurnInputPart`), and this instance differs
-// from that one in a way the ruling should see: `kind` here is an OPEN enum, where
-// `TurnInputPart.type` is closed.
+// SS2.5.5). The protocol defines two kind-discriminated entry shapes (`{kind: "approval",
+// approvalId, viewCursor}` / `{kind: "userInput", userInputId, viewCursor}`). This type is
+// one flat object with both ids optional, as for `ApprovalSubject` and `TurnInputPart`,
+// because the v1 model names no object-variant union; the serialized JSON is the same, but
+// the published schema also accepts `{"kind":"approval","userInputId":…}` and an entry
+// carrying no id at all. Unlike `TurnInputPart.type`, `kind` here is an OPEN enum.
 type PendingRequestPointer struct {
 	// Present on an `approval` entry.
 	ApprovalID *string `json:"approvalId,omitempty"`
@@ -2664,10 +3158,9 @@ type PendingUserInputPointer struct {
 	ViewCursor string `json:"viewCursor"`
 }
 
-// PlatformFamily The server runtime's platform family (SS1.4.1); may differ from the client's. Closed:
-// SS1.4.1 fixes the value set, so widening it is a deliberate, gate-visible protocol
-// change rather than a silent addition (a later `Closed`→`Open` flip is itself additive,
-// data-model.md §5.2).
+// PlatformFamily The server runtime's platform family; may differ from the client's. Closed: the protocol
+// fixes the value set, so widening it is a deliberate, gate-visible protocol change rather
+// than a silent addition (a later `Closed`→`Open` flip is itself additive).
 type PlatformFamily string
 
 const (
@@ -2947,6 +3440,27 @@ var PluginSourceValues = []PluginSource{
 	PluginSourceNativeLocal,
 }
 
+// QueuedInput One input still queued for delivery to a session (tdd SS2.5.5, ADR
+// 63254-queued-inputs-on-read D2): the full message body plus its log record sequence, the
+// delivery-order and re-read dedupe key, plus the run-log record id clients join served
+// entries against record-seeded rows by.
+type QueuedInput struct {
+	// The queued record's log sequence: delivery order, and the key clients deduplicate
+	// re-reads by.
+	Sequence int64 `json:"sequence"`
+	// The `SubagentInput` record's model-authored command id: the key wire-twin rows join by
+	// in either order (the twin reads the same string from the verbatim wire args). Absent for
+	// root own-queue members, which are never `SubagentInput`.
+	SourceCommandID *string `json:"sourceCommandId,omitempty"`
+	// The run-log record id the served mirror was taken from: the key clients join served
+	// entries against record-seeded rows by, so an already-rendered input never mints a second
+	// row under diverged sequences. Absent when the host's record carries no mirror metadata
+	// (a pre-feature host), which falls back to sequence-key dedup only.
+	SourceRunRecordID *string `json:"sourceRunRecordId,omitempty"`
+	// The full message body, verbatim (never truncated, never a summary).
+	Text string `json:"text"`
+}
+
 // QuotaDetail Typed quota-exhaustion detail (tdd SS4.5.1, ADR 50047 D2): the limit kind plus the
 // provider's reset instant.
 type QuotaDetail struct {
@@ -3065,8 +3579,8 @@ var RecapFailureReasonValues = []RecapFailureReason{
 	RecapFailureReasonProviderFailed,
 }
 
-// RecapOutcome `recap/completed` outcome (tdd SS3.28.2): the terminal vocabulary, camelCase per SS1.6.
-// **Open**: a server-produced result vocabulary (#22785 E2).
+// RecapOutcome `recap/completed` outcome: the terminal vocabulary, in camelCase. **Open**: a
+// server-produced result vocabulary.
 type RecapOutcome string
 
 const (
@@ -3108,6 +3622,93 @@ type RecordPosition struct {
 	ID string `json:"id"`
 	// The record's sequence number within its stream.
 	Sequence int64 `json:"sequence"`
+}
+
+// RecoveryEffectiveSource Proven effective-choice provenance, independently of input presence.
+type RecoveryEffectiveSource string
+
+const (
+	RecoveryEffectiveSourceRequest        RecoveryEffectiveSource = "request"
+	RecoveryEffectiveSourceRetained       RecoveryEffectiveSource = "retained"
+	RecoveryEffectiveSourceLegacyOmission RecoveryEffectiveSource = "legacyOmission"
+	RecoveryEffectiveSourceHostPolicy     RecoveryEffectiveSource = "hostPolicy"
+	RecoveryEffectiveSourceUnknown        RecoveryEffectiveSource = "unknown"
+)
+
+// RecoveryEffectiveSourceValues are every RecoveryEffectiveSource the bundle declares, in schema order.
+var RecoveryEffectiveSourceValues = []RecoveryEffectiveSource{
+	RecoveryEffectiveSourceRequest,
+	RecoveryEffectiveSourceRetained,
+	RecoveryEffectiveSourceLegacyOmission,
+	RecoveryEffectiveSourceHostPolicy,
+	RecoveryEffectiveSourceUnknown,
+}
+
+// RecoveryMode A requested construction choice; omission is distinct from explicit OFF.
+type RecoveryMode string
+
+const (
+	RecoveryModeOn  RecoveryMode = "on"
+	RecoveryModeOff RecoveryMode = "off"
+)
+
+// RecoveryModeValues are every RecoveryMode the bundle declares, in schema order.
+var RecoveryModeValues = []RecoveryMode{
+	RecoveryModeOn,
+	RecoveryModeOff,
+}
+
+// RecoveryObservation One coherent producer snapshot; all members are required and non-null.
+type RecoveryObservation struct {
+	ConstructionID  string                  `json:"constructionId"`
+	EffectiveMode   RecoveryObservedMode    `json:"effectiveMode"`
+	EffectiveSource RecoveryEffectiveSource `json:"effectiveSource"`
+	Qualification   RecoveryQualification   `json:"qualification"`
+	RequestedMode   RecoveryObservedMode    `json:"requestedMode"`
+	SessionID       string                  `json:"sessionId"`
+}
+
+// RecoveryObservedMode A proven mode or unknown; future strings cannot establish OFF.
+type RecoveryObservedMode string
+
+const (
+	RecoveryObservedModeOn      RecoveryObservedMode = "on"
+	RecoveryObservedModeOff     RecoveryObservedMode = "off"
+	RecoveryObservedModeUnknown RecoveryObservedMode = "unknown"
+)
+
+// RecoveryObservedModeValues are every RecoveryObservedMode the bundle declares, in schema order.
+var RecoveryObservedModeValues = []RecoveryObservedMode{
+	RecoveryObservedModeOn,
+	RecoveryObservedModeOff,
+	RecoveryObservedModeUnknown,
+}
+
+// RecoveryQualification This construction's assessment, never an operation acceptance receipt.
+type RecoveryQualification string
+
+const (
+	RecoveryQualificationQualified   RecoveryQualification = "qualified"
+	RecoveryQualificationUnavailable RecoveryQualification = "unavailable"
+	RecoveryQualificationNotRequired RecoveryQualification = "notRequired"
+	RecoveryQualificationUnknown     RecoveryQualification = "unknown"
+)
+
+// RecoveryQualificationValues are every RecoveryQualification the bundle declares, in schema order.
+var RecoveryQualificationValues = []RecoveryQualification{
+	RecoveryQualificationQualified,
+	RecoveryQualificationUnavailable,
+	RecoveryQualificationNotRequired,
+	RecoveryQualificationUnknown,
+}
+
+// ReplayHint The D26 first-tree-transition hint verdict plus anchor (tdd SS4.5.21, ADR 56496 D3):
+// `rowKinds` is the open lowercase row-kind vocabulary the client formats through its
+// shared kind-noun constructor; `afterItemId` is the item id after whose rows the hint
+// renders. Both members always ride when the object does.
+type ReplayHint struct {
+	AfterItemID string   `json:"afterItemId"`
+	RowKinds    []string `json:"rowKinds"`
 }
 
 // Request A request frame, either direction (SS1.2 §2.1).
@@ -3153,6 +3754,73 @@ const (
 var RetractOutcomeValues = []RetractOutcome{
 	RetractOutcomeAccepted,
 	RetractOutcomeDeclined,
+}
+
+// RuntimeWorktree The runtime-owned git worktree a child session runs in, mirrored from the
+// `subagent.worktree.*` records on its parent's log (tdd SS2.5.5, ADR
+// 50042-child-worktree-on-read D2). The three enums are open: clients treat an unknown
+// value as unknown.
+type RuntimeWorktree struct {
+	// The commit the worktree was created from.
+	BaseCommit string `json:"baseCommit"`
+	// How the worktree is cleaned up.
+	CleanupPolicy RuntimeWorktreeCleanupPolicy `json:"cleanupPolicy"`
+	// Where the worktree's cleanup stands.
+	CleanupState RuntimeWorktreeCleanupState `json:"cleanupState"`
+	// The head commit the active lease recorded.
+	HeadCommit string `json:"headCommit"`
+	// Who owns the worktree.
+	Ownership RuntimeWorktreeOwnership `json:"ownership"`
+	// True exactly when the parent's uncommitted changes were recorded as excluded from the
+	// checkout.
+	ParentDirtyExcluded bool `json:"parentDirtyExcluded"`
+	// The recorded worktree root, verbatim (recorded history; serving it never probes the
+	// path).
+	WorktreeRoot string `json:"worktreeRoot"`
+}
+
+// RuntimeWorktreeCleanupPolicy How a session's worktree is cleaned up. The set is open, so newer hosts may send other
+// values.
+type RuntimeWorktreeCleanupPolicy string
+
+const (
+	RuntimeWorktreeCleanupPolicyRemoveIfClean RuntimeWorktreeCleanupPolicy = "removeIfClean"
+)
+
+// RuntimeWorktreeCleanupPolicyValues are every RuntimeWorktreeCleanupPolicy the bundle declares, in schema order.
+var RuntimeWorktreeCleanupPolicyValues = []RuntimeWorktreeCleanupPolicy{
+	RuntimeWorktreeCleanupPolicyRemoveIfClean,
+}
+
+// RuntimeWorktreeCleanupState Where a session's worktree cleanup stands. The set is open, so newer hosts may send
+// other values.
+type RuntimeWorktreeCleanupState string
+
+const (
+	RuntimeWorktreeCleanupStateActive        RuntimeWorktreeCleanupState = "active"
+	RuntimeWorktreeCleanupStateCleaned       RuntimeWorktreeCleanupState = "cleaned"
+	RuntimeWorktreeCleanupStateRetained      RuntimeWorktreeCleanupState = "retained"
+	RuntimeWorktreeCleanupStateCleanupFailed RuntimeWorktreeCleanupState = "cleanupFailed"
+)
+
+// RuntimeWorktreeCleanupStateValues are every RuntimeWorktreeCleanupState the bundle declares, in schema order.
+var RuntimeWorktreeCleanupStateValues = []RuntimeWorktreeCleanupState{
+	RuntimeWorktreeCleanupStateActive,
+	RuntimeWorktreeCleanupStateCleaned,
+	RuntimeWorktreeCleanupStateRetained,
+	RuntimeWorktreeCleanupStateCleanupFailed,
+}
+
+// RuntimeWorktreeOwnership Who owns a session's worktree. The set is open, so newer hosts may send other values.
+type RuntimeWorktreeOwnership string
+
+const (
+	RuntimeWorktreeOwnershipRuntimeOwned RuntimeWorktreeOwnership = "runtimeOwned"
+)
+
+// RuntimeWorktreeOwnershipValues are every RuntimeWorktreeOwnership the bundle declares, in schema order.
+var RuntimeWorktreeOwnershipValues = []RuntimeWorktreeOwnership{
+	RuntimeWorktreeOwnershipRuntimeOwned,
 }
 
 // SandboxAvailability Whether this host can enforce the sandbox (ADR 50064-startup-report-sandbox-availability
@@ -3213,16 +3881,10 @@ type ServerInfo struct {
 // Additive-optional evolution applies: clients must ignore unknown fields.
 type Session struct {
 	// The `turnId` of the current foreground turn when `status` is `running`, and `null` when
-	// the session is idle (tdd SS2.4). **Required-nullable, per the owner ruling on #22946**
-	// ("approve required-nullable", review comment `r3863946961`, 2026-08-26). Both production
-	// writers hard-code `"activeTurnId": null` (`session/start/commit_load.rs` for
-	// `session/start`, `session/snapshot.rs` feeding resume/read/list/fork) and nothing strips
-	// it, so this is what the binary emits and what SS2.4's example spells. The
-	// optional-absent shape published it as plain `string` and REJECTED every idle `Session`
-	// frame the host sent — the #19923 defect class this PR exists to close. E5's original
-	// evidence for optional-absent ("every committed transcript shows the omission") was
-	// wrong: those transcripts are hand-authored fixtures, not host recordings. They are
-	// corrected in the same change under the ruling's SS1.5 `regenerationJustification`.
+	// the session is idle (tdd SS2.4). **Required-nullable.** Every served `Session` carries
+	// the member: `null` when the session is idle or not loaded, the turn id when it is
+	// running. An optional-absent shape would publish it as plain `string` and reject every
+	// idle `Session` frame the host sends.
 	ActiveTurnID *string `json:"activeTurnId,omitempty"`
 	// The folded effective approval mode. **Additive-optional**: a Session object that omits
 	// it means the host has not folded a mode, which is why the index-derived `session/list`
@@ -3247,6 +3909,16 @@ type Session struct {
 	// handshake of its own — a fork child or a subagent — which never carries a stamp to
 	// begin with.
 	CreatedByClient *ClientInfo `json:"createdByClient,omitempty"`
+	// The handshake `ClientInfo` of the connection that currently holds this session's drive
+	// grant (spec 39851 INV-001; spec 42713 FR-58706-1, ADR 58706 D2), served on
+	// `session/read` only, as `name` and `version` (the handshake's display `title` is never
+	// served, the `createdByClient` rule). **Additive-optional, loaded-only, live**: present
+	// exactly when a live connection holds the grant and its handshake is known; absent on
+	// `notLoaded` rows, once the holder's connection drops (its orphaned turn included), and
+	// for a holder with no handshake stamp. Provenance only (INV-005): whether a client may
+	// drive is answered by `session/resume` / `turn/start` (`sessionInUse`), never by this
+	// member (FR-58706-4).
+	DriveHolder *ClientInfo `json:"driveHolder,omitempty"`
 	// Derived first-user-prompt preview (tdd SS2.14.1, #27598). **Additive-optional**, omitted
 	// when underivable.
 	FirstUserPrompt *string `json:"firstUserPrompt,omitempty"`
@@ -3258,6 +3930,15 @@ type Session struct {
 	// when no pair was ever published — absent reads as unpublished, never fabricated, never
 	// inferred from the name text. `name` stays the canonical name it always was.
 	GeneratedName *string `json:"generatedName,omitempty"`
+	// The published head's ordinal (kt-dvw5): the head reference's own ordinal — the count
+	// of head slots in its sequence, including any reserved ones — as of the probe that
+	// served this row. A sizing hint for a first `view/page`, so the Console can size its page
+	// without folding the log. **Additive-optional**, present only on metadata reads
+	// (`session/read` with `excludeItems`), where the client has no items to count; full reads
+	// carry the items themselves and omit it. Absent when no head is published (unknown),
+	// never fabricated. May lag a live log: the head is a snapshot, and appends after its
+	// publication are not counted.
+	ItemCount *int64 `json:"itemCount,omitempty"`
 	// What kind of session this is (spec 42713 FR-001, ADR 42713 D1/D4). **Open enum**, v1
 	// values `"root"` and `"subagent"`; a client treats an unknown value as an
 	// unknown-but-present kind and renders it, never rejecting the row. **Additive-optional**:
@@ -3269,6 +3950,12 @@ type Session struct {
 	// resume marker, re-stamps) or a fork's copied seed-replay records, and never precedes
 	// `createdAt`.
 	LastActivityAt *string `json:"lastActivityAt,omitempty"`
+	// The durable log's byte length at read time (kt-dvw5): the size hint paired with
+	// `itemCount`, so the Console can size its first page without folding the log.
+	// **Additive-optional**, present only on metadata reads (`session/read` with
+	// `excludeItems`); full reads omit it. Absent when the log's length is not known
+	// (unknown), never fabricated. A live log grows after the read; the value is a snapshot.
+	LogBytes *int64 `json:"logBytes,omitempty"`
 	// The winning metadata fold's model; `null` when that record omits it.
 	ModelID *string `json:"modelId,omitempty"`
 	// The durable allocated session name (tdd SS2.4/SS2.14.1, #27598; ADR 27598 D2/D4).
@@ -3296,11 +3983,31 @@ type Session struct {
 	Path string `json:"path"`
 	// The winning metadata fold's provider; `null` when that record omits it.
 	ProviderID *string `json:"providerId,omitempty"`
+	// The handshake `ClientInfo` of the connection whose wire `session/resume` most recently
+	// loaded this session (spec 42713 FR-58706-2, ADR 58706 D2): stamped on the durable
+	// `session.resumed` marker, folded into the session index, and served from that column by
+	// every carrier; while the session is loaded, the stamp the loading resume wrote replaces
+	// the column on every carrier (the ack, `session/read`, `session/list`,
+	// `session/listChanged`), and after the next fold the column serves it.
+	// **Additive-optional** and **provenance only** (INV-005); a resume with no admitting
+	// handshake (TUI, exec) stamps nothing, a warm attach to an already-loaded session writes
+	// no marker, and a half stamp serves nothing (FR-003a), so absence asserts nothing.
+	// `createdByClient` never follows a resume (FR-58706-3).
+	ResumedByClient *ClientInfo `json:"resumedByClient,omitempty"`
 	// The session identity.
 	SessionID string `json:"sessionId"`
 	// `null` for root sessions and forks; side provenance otherwise (tdd SS2.4/SS2.5.7; ADR
 	// 45435 D2). A session carries at most one of `forkedFrom` and `sideFrom`.
 	SideFrom *SideProvenance `json:"sideFrom,omitempty"`
+	// The session that opened this one (spec 42713 FR-69621-6, ADR 69621 D4), recorded once in
+	// this session's creation record and served from the session index. Its `parentSessionId`
+	// is the exact spawner, unlike the containing session `parentSessionId` names above;
+	// `project` and `thread` are opaque labels the spawner may name beside it.
+	// **Additive-optional** and **provenance only** (INV-005): never a visibility or authority
+	// gate. Absence asserts nothing — no recorded spawner, a later session of the spawned
+	// process, a row folded before the member existed, or a session the index has not folded
+	// yet.
+	SpawnedBy *SessionSpawnedBy `json:"spawnedBy,omitempty"`
 	// Load state as this host knows it; `session/list` reports `notLoaded` for sessions loaded
 	// by *other* hosts (tdd SS2.4).
 	Status SessionStatus `json:"status"`
@@ -3358,8 +4065,8 @@ type SessionBranchChangedParams struct {
 // SessionClosedParams `session/closed` params (tdd SS2.6.2; enrolled by #33065): a loaded session was unloaded
 // from this host, broadcast to every initialized connection. After it, the session is
 // `notLoaded`; the log remains on disk and `session/resume` reloads it. A crash emits
-// nothing — only the two orderly unload paths do, and both write the durable
-// `SessionEnd` record first.
+// nothing — only the orderly unload paths do (idle unload, host shutdown and a released
+// `session/leave`), and each writes the durable `SessionEnd` record first.
 type SessionClosedParams struct {
 	// Which orderly unload path fired.
 	Reason SessionClosedReason `json:"reason"`
@@ -3384,12 +4091,14 @@ type SessionClosedReason string
 const (
 	SessionClosedReasonIdle         SessionClosedReason = "idle"
 	SessionClosedReasonHostShutdown SessionClosedReason = "hostShutdown"
+	SessionClosedReasonLeave        SessionClosedReason = "leave"
 )
 
 // SessionClosedReasonValues are every SessionClosedReason the bundle declares, in schema order.
 var SessionClosedReasonValues = []SessionClosedReason{
 	SessionClosedReasonIdle,
 	SessionClosedReasonHostShutdown,
+	SessionClosedReasonLeave,
 }
 
 // SessionCompactParams `session/compact` params (tdd SS3.7): manually compact the session's conversation
@@ -3421,13 +4130,11 @@ type SessionCompactResult struct {
 }
 
 // SessionConfig The open configuration extension object shared by `session/start` and `session/resume`
-// (ADR 32760 D1). Unknown keys are ignored on the wire, never rejected (tdd SS1.5.4, spec
-// 206 INV-015; D-052 resolving [#23456](https://github.com/mslsrc/tbh/issues/23456)): the
-// live decoder is D-042's tolerant path, and TEST-024 keeps every exported bundle free of
-// `additionalProperties: false`. The Rust typed model's `deny_unknown_fields` is internal
-// and never exported — the #22785 E6b closedness export applies nowhere, and the
-// `x-msp-closed` opt-in mechanism stays inert. Recognized `mcpServers` values are typed
-// and validated before they leave the wire boundary.
+// (ADR 32760 D1). Unknown keys are ignored on the wire, never rejected: the live decoder
+// tolerates them, and no exported bundle carries `additionalProperties: false`. The Rust
+// typed model's `deny_unknown_fields` is internal and never exported — the closedness
+// export applies nowhere, and the `x-msp-closed` opt-in mechanism stays inert. Recognized
+// `mcpServers` values are typed and validated before they leave the wire boundary.
 type SessionConfig struct {
 	// Native MCP servers added only to this session runtime.
 	MCPServers map[string]SessionMCPServerConfig `json:"mcpServers,omitempty"`
@@ -3516,6 +4223,10 @@ type SessionGoalChangedParams struct {
 // SessionHistory The `history` envelope shared by `session/resume`, `session/fork`, and `session/read`
 // (tdd SS2.5.2).
 type SessionHistory struct {
+	// The checkpoint-prune boundary (spec 13929 amendment FR-50042-1): rows for served items
+	// at-or-before `through_item_id` in served order predate the selected checkpoint.
+	// Additive-optional; absence is a non-assertion (ADR 50042 D6).
+	CheckpointBoundary *CheckpointBoundary `json:"checkpointBoundary,omitempty"`
 	// The full folded item array when `mode` is `inline`; `null` otherwise.
 	Items []Item `json:"items,omitempty"`
 	// What was actually served — never what was asked for (tdd SS2.5.2).
@@ -3543,6 +4254,81 @@ const (
 var SessionKindValues = []SessionKind{
 	SessionKindRoot,
 	SessionKindSubagent,
+}
+
+// SessionLeaveCompletedParams Params of the protected, non-view leave terminal notification.
+type SessionLeaveCompletedParams struct {
+	// The leave command's id, matching the `session/leave` request.
+	CommandID string `json:"commandId"`
+	// How the leave ended: `released` or `failed`. The set is open, so newer hosts may add
+	// outcomes.
+	Outcome SessionLeaveOutcome `json:"outcome"`
+	// Why the leave failed. Present when `outcome` is `failed`.
+	Reason *SessionLeaveFailureReason `json:"reason,omitempty"`
+	// The session the leave was for.
+	SessionID string `json:"sessionId"`
+	// The session's view cursor at release: everything up to it was folded before the host let
+	// go. Present when `outcome` is `released`.
+	ViewCursor *string `json:"viewCursor,omitempty"`
+}
+
+// SessionLeaveFailureReason Current producer failure reasons for `session/leaveCompleted`; receiver-open for
+// additive future reasons.
+type SessionLeaveFailureReason string
+
+const (
+	SessionLeaveFailureReasonTimeout             SessionLeaveFailureReason = "timeout"
+	SessionLeaveFailureReasonResponseUndelivered SessionLeaveFailureReason = "responseUndelivered"
+	SessionLeaveFailureReasonPersistenceFailed   SessionLeaveFailureReason = "persistenceFailed"
+	SessionLeaveFailureReasonRuntimeFailed       SessionLeaveFailureReason = "runtimeFailed"
+	SessionLeaveFailureReasonAbandoned           SessionLeaveFailureReason = "abandoned"
+)
+
+// SessionLeaveFailureReasonValues are every SessionLeaveFailureReason the bundle declares, in schema order.
+var SessionLeaveFailureReasonValues = []SessionLeaveFailureReason{
+	SessionLeaveFailureReasonTimeout,
+	SessionLeaveFailureReasonResponseUndelivered,
+	SessionLeaveFailureReasonPersistenceFailed,
+	SessionLeaveFailureReasonRuntimeFailed,
+	SessionLeaveFailureReasonAbandoned,
+}
+
+// SessionLeaveOutcome Current producer outcomes for `session/leaveCompleted`; receiver-open.
+type SessionLeaveOutcome string
+
+const (
+	SessionLeaveOutcomeReleased SessionLeaveOutcome = "released"
+	SessionLeaveOutcomeFailed   SessionLeaveOutcome = "failed"
+)
+
+// SessionLeaveOutcomeValues are every SessionLeaveOutcome the bundle declares, in schema order.
+var SessionLeaveOutcomeValues = []SessionLeaveOutcome{
+	SessionLeaveOutcomeReleased,
+	SessionLeaveOutcomeFailed,
+}
+
+// SessionLeaveParams `session/leave` params (tdd SS2.15, ADR 31741 D2/D8).
+type SessionLeaveParams struct {
+	// Client-minted UUIDv7 command identity.
+	CommandID string `json:"commandId"`
+	// The exact loaded session whose ownership is to be released.
+	SessionID string `json:"sessionId"`
+	// Explicitly cancel unfinished work before leaving. Omitted is `false`.
+	Stop *bool `json:"stop,omitempty"`
+}
+
+// SessionLeaveResult The admission-only `session/leave` result.
+type SessionLeaveResult struct {
+	// The leave command's id.
+	CommandID string `json:"commandId"`
+	// The admission status, `accepted` once the leave is admitted. The final result arrives
+	// later as `session/leaveCompleted`. Sending the same leave command again returns
+	// `accepted` and re-pushes the recorded result if there is one, from the host that ran the
+	// leave (for as long as it runs, even after the release) or from a host that has the
+	// session loaded (after a host crash, `abandoned` among them). Any other host treats it as
+	// a fresh leave: a durable host that has not loaded the session refuses it with
+	// `sessionNotLoaded` until it is resumed there.
+	Status CommandAckStatus `json:"status"`
 }
 
 // SessionListBranchFilter Exact branch selection (#42035 FR-42035-2).
@@ -3587,8 +4373,7 @@ type SessionListParams struct {
 	// (#42035, spec 207 FR-42035-1). Present — including `{}` — makes a supporting server
 	// echo its canonical form as `appliedFilter`; omitted keeps the pre-#42035 behavior.
 	Filter *SessionListFilter `json:"filter,omitempty"`
-	// Page size; default 50, max 200 — the cap is published under #22785 E6c (owner-ruled
-	// 2026-08-26).
+	// Page size; default 50, max 200 — the schema publishes the cap.
 	Limit *int64 `json:"limit,omitempty"`
 	// Only sessions with log activity after this RFC3339 instant.
 	UpdatedAfter *string `json:"updatedAfter,omitempty"`
@@ -3802,6 +4587,8 @@ type SessionReadParams struct {
 // SessionReadResult `session/read` result (tdd SS2.5.5). The `viewCursor` is the fold head at read time —
 // a point-in-time read, immediately stale if a foreign host is appending.
 type SessionReadResult struct {
+	// Same member as `session/resume` (tdd SS2.5.5, ADR 50074 D2).
+	BlockedPrompt *BlockedPrompt `json:"blockedPrompt,omitempty"`
 	// The served history.
 	History SessionHistory `json:"history"`
 	// Same member as `session/resume` (tdd SS2.5.5, ADR 36635 D2).
@@ -3809,18 +4596,28 @@ type SessionReadResult struct {
 	// The same pointer shape as `session/resume`. Because `session/read` never subscribes this
 	// is a point-in-time log read only: no requests are re-issued after it (tdd SS2.5.5).
 	PendingRequests []PendingRequestPointer `json:"pendingRequests"`
+	// The inputs still queued for delivery to the read session (tdd SS2.5.5, ADR
+	// 63254-queued-inputs-on-read D2). Absent-when-empty: a missing member means nothing
+	// queued, never an error.
+	QueuedInputs []QueuedInput `json:"queuedInputs,omitempty"`
+	// Current local construction only; never inferred from retained history. Absence
+	// establishes neither a choice nor supported recovery.
+	RecoveryObservation *RecoveryObservation `json:"recoveryObservation,omitempty"`
 	// The session as folded point-in-time.
 	Session Session `json:"session"`
 	// The fold head at read time.
 	ViewCursor string `json:"viewCursor"`
+	// The facts of the runtime-owned worktree a child read session's subagent runs in (tdd
+	// SS2.5.5, ADR 50042-child-worktree-on-read D2). A root read serves it absent; absent
+	// means no worktree facts, never an error.
+	Worktree *RuntimeWorktree `json:"worktree,omitempty"`
 }
 
 // SessionReasoningEffortChangedParams `session/reasoningEffortChanged` params (tdd SS4.6.9, ADR 31255 D1): a durable
 // reasoning-effort reconfigure record landed (tdd SS3.21). Replace wholesale, latest wins;
 // the snapshot carries the latest value (SS4.9.1).
 type SessionReasoningEffortChangedParams struct {
-	// The new session default: the closed eight-string tier vocabulary of tdd SS3.2, spelled
-	// identically.
+	// The new session default: the same closed eight-string tier vocabulary as `turn/start`.
 	ReasoningEffort ReasoningEffort `json:"reasoningEffort"`
 	// The owning session.
 	SessionID string `json:"sessionId"`
@@ -3865,9 +4662,15 @@ type SessionResumeParams struct {
 	// The same open construction-time extension object as `session/start`.
 	Config *SessionConfig `json:"config,omitempty"`
 	// A view cursor previously observed by this client — or an observed `summarizedThrough`
-	// compaction anchor (tdd SS4.5.10, D-029). When present the server returns only the suffix
-	// and `history.mode` is `none` (tdd SS2.5.2). Omitted and explicit `null` both mean "no
-	// cursor" (#23468).
+	// compaction anchor. When it names an event the server still holds, the server returns
+	// only the suffix and `history.mode` is `none`. A cursor the server minted that names no
+	// event yet, such as the empty start cursor of a session that had no events, is treated as
+	// no cursor: the server serves what a resume without a cursor would. A cursor older than
+	// the earliest event the server still holds gets a snapshot, or `-32040` `viewTruncated`
+	// when none fits. A cursor this session's view never minted is refused with `-32011`
+	// `notFound`, reason `missingAnchor`, and a compaction anchor naming a boundary the server
+	// has pruned is refused with `-32042` `boundaryPruned`. Omitted and explicit `null` both
+	// mean "no cursor".
 	Cursor *string `json:"cursor,omitempty"`
 	// Return only session metadata and live resume state; page history separately with
 	// `view/page`. Default `false` (tdd SS2.5.2).
@@ -3877,20 +4680,39 @@ type SessionResumeParams struct {
 	// `history.mode` reports what was actually served (tdd SS2.5.2). Ignored when `cursor` or
 	// `excludeItems` makes it moot.
 	History *HistoryPreference `json:"history,omitempty"`
+	// The explicit MSP model override (T-51858-304; INV-51858-11 rank 1): a model string the
+	// caller supplies at resume time. When present it wins over the retained binding's
+	// recorded origin — over a stamped label and over a stamped pin — and it recovers an
+	// otherwise-unresolved label binding by sending the override as the wire model instead of
+	// the unresolved refusal. Omitted preserves arm (2): the retained binding resolves by
+	// recorded origin exactly as without this member. Explicit `null` is invalid params (the
+	// same closed null-tolerant set as at start). The override changes the model within the
+	// retained provider; it never names a provider, and it never touches the retained profile.
+	ModelID *string `json:"modelId,omitempty"`
 	// The launch permission-profile pick (amendment 42624 FR-42624-1, #50054): a profile id
-	// the host catalog already admits. Select, never create. Omitted means today's behavior:
-	// restore retained authority only, no override. The host restores first, then applies the
-	// pick in the same pre-marker step; a pick that fails admission refuses the resume
+	// the host catalog already admits. Select, never create. Omitted restores retained
+	// authority only, with no override. The host restores first, then applies the pick in the
+	// same pre-marker step; over a declared lost record the restore is the never-wider reset,
+	// committed before the pick, and where the reset cannot commit the pick is committed alone
+	// as that reset (spec 11237 FR-57059-4). A pick that fails admission refuses the resume
 	// `commandRejected` (-32030; `permission_profile_unknown` /
 	// `permission_profile_unavailable`) before any durable byte. Explicit `null` is invalid
 	// params (the same closed null-tolerant set as at start).
 	PermissionProfile *string `json:"permissionProfile,omitempty"`
+	// Cold-resume replacement choice; omission preserves the retained choice. A warm attach
+	// rejects a different or unestablished choice as invalidParams. Explicit null is invalid.
+	RecoveryMode *RecoveryMode `json:"recoveryMode,omitempty"`
 	// The session to load.
 	SessionID string `json:"sessionId"`
 }
 
 // SessionResumeResult `session/resume` result (tdd SS2.5.2).
 type SessionResumeResult struct {
+	// The recallable blocked prompt's refill text (ADR 50074 D2). **Additive-optional**;
+	// absence means no blocked prompt to recall (an unblocked session, or a pre-feature host).
+	// Data only, never a rendered row: clients seed cold recall from it (C-p refills `text`)
+	// and MUST NOT display it as history.
+	BlockedPrompt *BlockedPrompt `json:"blockedPrompt,omitempty"`
 	// The served history.
 	History SessionHistory `json:"history"`
 	// How the last folded turn ended (tdd SS2.5.2, ADR 36635 D2). **Additive-optional**;
@@ -4005,6 +4827,16 @@ type SessionSideChatResult struct {
 	ViewCursor string `json:"viewCursor"`
 }
 
+// SessionSpawnedBy Who opened a session (`Session.spawnedBy`, spec 42713 FR-69621-6, ADR 69621 D4).
+type SessionSpawnedBy struct {
+	// The exact session that opened this one (ADR 69621 D2).
+	ParentSessionID string `json:"parentSessionId"`
+	// An opaque project label the spawner named, when it named one.
+	Project *string `json:"project,omitempty"`
+	// An opaque thread label the spawner named, when it named one.
+	Thread *string `json:"thread,omitempty"`
+}
+
 // SessionStartParams `session/start` params (tdd SS2.5.1).
 type SessionStartParams struct {
 	// The session's starting approval mode; server default when omitted or explicit `null` —
@@ -4014,8 +4846,7 @@ type SessionStartParams struct {
 	ApprovalMode *ApprovalMode `json:"approvalMode,omitempty"`
 	// The SS2.5 idempotency handle (UUIDv7). Required; the server never mints one.
 	CommandID string `json:"commandId"`
-	// Reserved for per-session overrides owned by a future Configuration section. Issue #32760
-	// admits only its `mcpServers` member.
+	// Reserved for future per-session overrides; only its `mcpServers` member is admitted.
 	Config *SessionConfig `json:"config,omitempty"`
 	// Initial model; server default when omitted.
 	ModelID *string `json:"modelId,omitempty"`
@@ -4031,13 +4862,31 @@ type SessionStartParams struct {
 	// tolerate `null` is closed and excludes this one, exactly as it excludes
 	// `workspaceRoots`.
 	PermissionProfile *string `json:"permissionProfile,omitempty"`
+	// The `/new` predecessor link (spec 207 amendment 50054, FR-50054-1): the outgoing session
+	// this start succeeds. Any syntactically valid session UUID; there is no existence check,
+	// so a link to a session that is gone still commits. Omitted means a true root. Explicit
+	// `null` is invalid params.
+	PreviousSessionID *string `json:"previousSessionId,omitempty"`
 	// Initial provider routing; server default when omitted or explicit `null` — both
 	// spellings select the default (#23468).
 	ProviderID *string `json:"providerId,omitempty"`
+	// Recovery choice for this construction; omission keeps legacy behavior. Explicit null is
+	// invalid.
+	RecoveryMode *RecoveryMode `json:"recoveryMode,omitempty"`
 	// Exact identity for this new root session. When omitted the server mints a UUIDv7. This
 	// field never selects an existing session: a retained or reserved id is rejected
 	// `commandRejected` with reason `session_id_conflict` (tdd SS2.5.1).
 	SessionID *string `json:"sessionId,omitempty"`
+	// The session that opens this one (spec 42713 FR-69621-8, ADR 69621 D7), in the
+	// `Session.spawnedBy` shape: a spawner that starts a worker session over MSP names its own
+	// session here. The host writes it once into the new session's creation record, as a
+	// worker process records its environment hand-over, and `session/list` / `session/read`
+	// serve it back as `Session.spawnedBy`; `session/resume` never takes it.
+	// **Additive-optional** and **provenance only** (INV-005). A value the host cannot use (a
+	// `parentSessionId` that is not a session id, a malformed member) records nothing and
+	// never refuses the start; an unusable `project` or `thread` is dropped on its own. Hosts
+	// that predate the member ignore it.
+	SpawnedBy *SessionSpawnedBy `json:"spawnedBy,omitempty"`
 	// Absolute path, folded into the first metadata record.
 	WorkspaceRoot *string `json:"workspaceRoot,omitempty"`
 	// The session's initial runtime workspace-root set: ordered absolute canonical existing
@@ -4392,6 +5241,28 @@ var SkillImportSourceValues = []SkillImportSource{
 	SkillImportSourceCodex,
 }
 
+// SkillInvocationSource A `skill` input part's picked-copy source (tdd SS3.22.3; ADR 32471 D12): the D2
+// catalog-row `source` enum values, sent by the TUI on every skill submit so the host
+// resolves the exact `(selector, source)` row. **Closed**: a client-selected write
+// vocabulary (ADR 45433 D2) — an unknown value is `invalidParams`, never a fall-through
+// to the bare row. Contrast the open read-side [`SkillSource`].
+type SkillInvocationSource string
+
+const (
+	SkillInvocationSourceBundled SkillInvocationSource = "bundled"
+	SkillInvocationSourceUser    SkillInvocationSource = "user"
+	SkillInvocationSourceProject SkillInvocationSource = "project"
+	SkillInvocationSourcePlugin  SkillInvocationSource = "plugin"
+)
+
+// SkillInvocationSourceValues are every SkillInvocationSource the bundle declares, in schema order.
+var SkillInvocationSourceValues = []SkillInvocationSource{
+	SkillInvocationSourceBundled,
+	SkillInvocationSourceUser,
+	SkillInvocationSourceProject,
+	SkillInvocationSourcePlugin,
+}
+
 // SkillListParams `skill/list` params (tdd SS3.22.1, SS3.30.3). Per-session because skill scope follows
 // the session's workspace and plugin state.
 type SkillListParams struct {
@@ -4473,15 +5344,7 @@ type SnapshotAnchor struct {
 
 // SnapshotState The complete folded view at the snapshot cursor (tdd SS4.9.1). Additive-optional
 // evolution applies exactly as everywhere else; unknown members MUST be ignored, and
-// preserved if re-serialized. **One served site does not satisfy this type today,
-// escalated under #22785 (E8).** The genesis snapshot rung serves `state: {"items":
-// [...]}` alone (`tbh-session-view-serve`'s `materialized_fold.rs`, the
-// `select_genesis_history` call), while the anchored rung serves the full folded state. A
-// schema-validating client resuming with `{"history": "snapshot"}` against the real fold
-// therefore sees the other required members missing. The fix is a serving change in the
-// #208/#14653 lane (serialize the `SessionViewState` the genesis path already folds, as
-// the anchored path does) plus its own RED against the real fold; it is not a shape change
-// here, because SS4.9.1 ratifies this shape.
+// preserved if re-serialized.
 type SnapshotState struct {
 	// The running foreground turn; `null` when none is running.
 	ActiveTurn *TurnRef `json:"activeTurn,omitempty"`
@@ -4490,10 +5353,10 @@ type SnapshotState struct {
 	ApprovalMode EffectiveApprovalModeState `json:"approvalMode"`
 	// Latest branch observation; `null` when no fact has landed.
 	Branch *BranchState `json:"branch,omitempty"`
-	// The latest `(windowTokens, usedTokens, pressure)` triple. SS4.9.1 says "`null`/absent"
-	// and SS4.9.2's worked example OMITS the member; the binary omits it too, so this is the
-	// absent arm — the four siblings above are present-null in the same frame. INV-017
-	// admits one or the other, never both; escalated under #22785.
+	// The latest `(windowTokens, usedTokens, pressure)` triple. The protocol allows
+	// "`null`/absent" and its worked example OMITS the member; the binary omits it too, so
+	// this is the absent arm — the four siblings above are present-null in the same frame. A
+	// member is published as one or the other, never both.
 	ContextUsage *ContextUsage `json:"contextUsage,omitempty"`
 	// Latest effective model; `null` when no fact has landed.
 	EffectiveModel *EffectiveModel `json:"effectiveModel,omitempty"`
@@ -4706,6 +5569,10 @@ type SubagentOwnerReasonParams struct {
 type SubagentResult struct {
 	// Artifact references, verbatim.
 	ArtifactRefs []string `json:"artifactRefs"`
+	// `true` once the parent consumed the result (the inbox join fact the gate-off drain arm
+	// folds into the `Finished` marker — tdd SS4.5.7). Absent otherwise; never cleared once
+	// set. Clients mint the `Finished` marker off this flag instead of re-deriving the join.
+	Drained *bool `json:"drained,omitempty"`
 	// Error kind, verbatim durable vocabulary, when the child failed.
 	ErrorKind *string `json:"errorKind,omitempty"`
 	// Evidence references, verbatim.
@@ -4803,12 +5670,35 @@ type TaskCommandResult struct {
 	TaskID string `json:"taskId"`
 }
 
-// TaskListEntry One background-task inventory row (tdd SS3.31). The row is the stable contract: `kind`
-// and `status` stay open so a future state extends them without breaking clients.
+// TaskExecutionMode A task row's execution mode (tdd SS3.31, ADR 62268 D2). Open (server-produced result
+// vocabulary, the #22785 enum-openness rule): clients MUST ignore unknown modes.
+type TaskExecutionMode string
+
+const (
+	TaskExecutionModeForeground TaskExecutionMode = "foreground"
+	TaskExecutionModeBackground TaskExecutionMode = "background"
+)
+
+// TaskExecutionModeValues are every TaskExecutionMode the bundle declares, in schema order.
+var TaskExecutionModeValues = []TaskExecutionMode{
+	TaskExecutionModeForeground,
+	TaskExecutionModeBackground,
+}
+
+// TaskListEntry One task inventory row (tdd SS3.31). The row is the stable contract: `kind` and `status`
+// stay open so a future state extends them without breaking clients.
 type TaskListEntry struct {
 	// Who backgrounded the task, mirroring the item field. **Additive-optional**: absent on
 	// pre-split records and registry-only rows, never inferred.
 	BackgroundInitiator *BackgroundInitiator `json:"backgroundInitiator,omitempty"`
+	// The raw command text: the joined `toolCall` item's `command` argument verbatim (ADR
+	// 62268 D2). **Additive-optional**: omitted when the row has no item or the item carries
+	// no command. Monitors join raw — clients redact (INV-17544-6).
+	Command *string `json:"command,omitempty"`
+	// `"foreground" | "background"` (ADR 62268 D2). **Additive-optional**: absent means
+	// `"background"` (only pre-change hosts omit it, and those list background rows only);
+	// never guessed.
+	ExecutionMode *TaskExecutionMode `json:"executionMode,omitempty"`
 	// What the workload is: `"tool"` or `"tool.*"` for item rows (the recorded kind when the
 	// registry records one, else `"tool"`); the recorded registry kind string verbatim for
 	// registry-only rows. Open vocabulary — clients MUST ignore unknown kinds. A `String`,
@@ -4836,10 +5726,10 @@ type TaskListParams struct {
 	SessionID string `json:"sessionId"`
 }
 
-// TaskListResult `task/list` result (tdd SS3.31): one row per running background workload in
-// `task/stopAll` reach, oldest first; empty when nothing is running.
+// TaskListResult `task/list` result (tdd SS3.31): one row per live workload, background and foreground
+// (ADR 62268 D1), oldest first; empty when nothing is running.
 type TaskListResult struct {
-	// The session's live background-task rows.
+	// The session's live task rows.
 	Tasks []TaskListEntry `json:"tasks"`
 }
 
@@ -4942,6 +5832,18 @@ type TokenUsage struct {
 	OutputTokens int64 `json:"outputTokens"`
 	// Output tokens spent on reasoning, when the provider reports it.
 	ReasoningTokens int64 `json:"reasoningTokens"`
+}
+
+// ToolDisplayLabel `toolCall.displayLabel`: the call's words in three forms, each one line of plain text,
+// always present together. The item's `status` picks the form.
+type ToolDisplayLabel struct {
+	// Shown while the call runs (`inProgress`), e.g. "Setting up Computer Use".
+	Active string `json:"active"`
+	// Shown after the call succeeds (`completed`), e.g. "Set up Computer Use".
+	Done string `json:"done"`
+	// Shown for every other status (failed, rejected, timed out, cancelled), beside that
+	// status; never implies success.
+	Neutral string `json:"neutral"`
 }
 
 type ToolReceipt struct {
@@ -5077,6 +5979,10 @@ type TurnError struct {
 	// Typed quota-exhaustion detail (ADR 50047 D2/D3): present iff the stopping failure was
 	// the quota class. Clients branch on presence, never by parsing `message`.
 	Quota *QuotaDetail `json:"quota,omitempty"`
+	// `true` when the provider refused this request. Present only on the live
+	// `turn/completed`: replayed, snapshot-served and `workflow/resume` terminals omit it, so
+	// absence does not mean the request was not denied. Never `false`. (ADR 39289 D2/D3)
+	RequestDenied *bool `json:"requestDenied,omitempty"`
 	// The server's judgment that resubmitting the same input may succeed.
 	Retryable bool `json:"retryable"`
 }
@@ -5137,11 +6043,8 @@ type TurnForegroundCompletedParams struct {
 // discriminated flat object rather than a Rust `enum`, the convention
 // [`crate::view::approval::ApprovalSubject`] already established for a wire union in this
 // crate: the v1 schema model names no object-variant union shape and fails closed on one.
-// The serialized JSON is the tdd shape either way; what a flat object cannot express is
-// "`mediaType` is required exactly when `type` is `image`". **RULED (#22785 E4, owner,
-// 2026-08-26): the precedent is accepted.** A strict union node kind may be funded later
-// as a follow-up; if it is, it must cover
-// [`crate::method::lifecycle::PendingRequestPointer`] too.
+// The serialized JSON is the same either way; what a flat object cannot express is
+// "`mediaType` is required exactly when `type` is `image`".
 type TurnInputPart struct {
 	// Free-text skill arguments, optional on a `skill` part — the wire twin of what the TUI
 	// accepts after the shortcut token (tdd SS3.22.3).
@@ -5158,6 +6061,12 @@ type TurnInputPart struct {
 	// bare or plugin-qualified shortcut token from `skill/list`. The HOST resolves and
 	// expands; an unknown selector is the typed `-32032 skillNotFound` request error.
 	Selector *string `json:"selector,omitempty"`
+	// The picked copy's source, optional on a `skill` part: one of the catalog rows' `source`
+	// values. When present the host resolves the exact `(selector, source)` row; when absent
+	// it resolves the selector, bare or plugin-qualified, against the session's skill catalog,
+	// as the TUI shortcut does. Closed: an unknown value is `invalidParams`, never a
+	// fall-through.
+	Source *SkillInvocationSource `json:"source,omitempty"`
 	// User prompt text, on a `text` part. Multiple text parts are joined in order into the
 	// turn's prompt.
 	Text *string `json:"text,omitempty"`
@@ -5166,8 +6075,8 @@ type TurnInputPart struct {
 	// The upload receipt, required on a `video` part (tdd SS3.2, SS3.33; ADR 45443 D5): the
 	// client-minted id `media/upload` echoed.
 	UploadID *string `json:"uploadId,omitempty"`
-	// Pixel width; must be provided together with `height` or not at all (tdd SS3.2).
-	// Published as a `dependentRequired` pair under #22785 E6c.
+	// Pixel width; must be provided together with `height` or not at all. Published as a
+	// `dependentRequired` pair.
 	Width *int64 `json:"width,omitempty"`
 }
 
@@ -5275,7 +6184,7 @@ type TurnRef struct {
 	// `queuedTurns[]` only: set when `displayText` was cut to the committed-surface budget,
 	// mirroring `userMessage.truncated` (tdd SS4.5.2). Absent unless `true`.
 	Truncated *bool `json:"truncated,omitempty"`
-	// The turn's id, pre-minted per tdd SS3.1.4.
+	// The turn's id, minted at admission.
 	TurnID string `json:"turnId"`
 }
 
@@ -5524,10 +6433,10 @@ type TurnUserShell struct {
 }
 
 // UnframedViewNotification One element of a `view/page` result's `events` array: an **unframed view notification**
-// exactly as tdd SS4.2.1 defines it — the nested pair `{"method", "params"}`, which is
-// the live notification minus `jsonrpc` and `emittedAtMs`, with nothing lifted out of
-// `params` and nothing spliced into it. SS4.2.1 is the single normative definition;
-// SS4.7.3 and SS7.4 both cite it, so the two surfaces cannot drift.
+// — the nested pair `{"method", "params"}`, which is the live notification minus
+// `jsonrpc` and `emittedAtMs`, with nothing lifted out of `params` and nothing spliced
+// into it. `view/page` and `muse exec --json` share this one definition, so the two
+// surfaces cannot drift.
 type UnframedViewNotification struct {
 	// The event type — the live notification's method name, retained because the type lives
 	// only in the notification name and would otherwise be lost (tdd SS4.2.1).
@@ -5536,18 +6445,15 @@ type UnframedViewNotification struct {
 	Params UnframedViewNotificationParams `json:"params"`
 }
 
-// UnframedViewNotificationParams The `params` of an unframed view notification (tdd SS4.2.1, SS4.2). Declares the SS4.2
-// base members every view notification carries, and stays **open** for the event-specific
-// fields SS4.5/SS4.6/SS5 add per event type. The v1 schema model names no
-// method-correlated union (the SS4.7.3 `events` element's `params` arm is selected by its
-// sibling `method`), so the per-event arms cannot be expressed here without one;
-// enumerating them as an uncorrelated union would additionally exclude `turn/unqueued`,
-// whose notification row is another lane's ratified deferral (#207/#14407) — a published
-// schema that rejects a real page element is the exact #19923 defect this PR exists to
-// close. Recorded as a Design delta on #22785. `sourceRange` is required here and not
-// optional: `view/page` serves durable-sourced events only (tdd SS4.7.3), and
-// durable-sourced is *defined* as carrying a `sourceRange` — the SS4.2 ephemeral-sourced
-// exemption applies to `item/delta`, which `view/page` never replays.
+// UnframedViewNotificationParams The `params` of an unframed view notification (tdd SS4.2.1, SS4.2). Declares the base
+// members every view notification carries, and stays **open** for the event-specific
+// fields each event type adds. The v1 schema model names no method-correlated union (the
+// `events` element's `params` arm is selected by its sibling `method`), so the per-event
+// arms cannot be expressed here without one, and an uncorrelated union of them could
+// reject a real page element, which a published schema must not do. `sourceRange` is
+// required here and not optional: `view/page` serves durable-sourced events only (tdd
+// SS4.7.3), and durable-sourced is *defined* as carrying a `sourceRange` — the SS4.2
+// ephemeral-sourced exemption applies to `item/delta`, which `view/page` never replays.
 type UnframedViewNotificationParams struct {
 	// The owning session (tdd SS4.2).
 	SessionID string `json:"sessionId"`
@@ -5579,11 +6485,19 @@ type UsageReadResult struct {
 	Usage *SubscriptionUsage `json:"usage,omitempty"`
 }
 
+// UserInputAnswer One question's answer, as sent in `userInput/answer` or `userInput/interrupt` and as
+// recorded in `userInput/settled`.
 type UserInputAnswer struct {
-	FreeText       *string  `json:"freeText,omitempty"`
-	Note           *string  `json:"note,omitempty"`
-	QuestionID     string   `json:"questionId"`
-	SelectedLabel  *string  `json:"selectedLabel,omitempty"`
+	// A free-form answer, at most 500 characters.
+	FreeText *string `json:"freeText,omitempty"`
+	// An optional comment the user adds to the answer, at most 500 characters.
+	Note *string `json:"note,omitempty"`
+	// The `id` of the question this answers.
+	QuestionID string `json:"questionId"`
+	// The label of the chosen option, for a `single` question.
+	SelectedLabel *string `json:"selectedLabel,omitempty"`
+	// The labels of the chosen options for a `multiple` question, within its selection bounds;
+	// omitted when empty.
 	SelectedLabels []string `json:"selectedLabels,omitempty"`
 }
 
@@ -5592,7 +6506,7 @@ type UserInputAnswer struct {
 // (multiple mode, within min/max bounds), or `freeText` (<=500 chars); plus an optional
 // `note` (<=500). Answers that do not match the prompt fail -32057
 // `userInputAnswerInvalid`. Image `attachments` are a **reserved** field in v1, rejected
-// if sent, because the blob-upload path they reference is reserved in tdd SS3.2.
+// if sent, because the blob-upload path they reference is also reserved.
 type UserInputAnswerParams struct {
 	// One entry per question.
 	Answers []UserInputAnswer `json:"answers"`
@@ -5637,9 +6551,13 @@ type UserInputCancelResult struct {
 	UserInputID string `json:"userInputId"`
 }
 
+// UserInputClarification A free-form reply the user gives instead of choosing from the options; the model reads
+// it and decides again.
 type UserInputClarification struct {
+	// The clarification text, at most 500 characters.
 	Content string `json:"content"`
-	Format  string `json:"format"`
+	// The content format. `text` is the only value today, and more may be added.
+	Format string `json:"format"`
 }
 
 // UserInputClarifyParams `userInput/clarify` params (tdd SS5.10.2): answer with a free-form clarification instead
@@ -5702,17 +6620,28 @@ type UserInputInterruptResult struct {
 	UserInputID string `json:"userInputId"`
 }
 
+// UserInputOption One option offered for a question.
 type UserInputOption struct {
-	Description *string                 `json:"description,omitempty"`
-	Label       string                  `json:"label"`
-	Preview     *UserInputOptionPreview `json:"preview,omitempty"`
+	// An optional longer explanation of the option, at most 240 characters.
+	Description *string `json:"description,omitempty"`
+	// The option's text, at most 80 characters and unique within its question; an answer
+	// selects the option by this exact label.
+	Label string `json:"label"`
+	// An optional rich preview of the option, present only on single-select questions.
+	Preview *UserInputOptionPreview `json:"preview,omitempty"`
 }
 
+// UserInputOptionPreview Rich content a client can show for an option. Only single-select questions carry
+// previews.
 type UserInputOptionPreview struct {
+	// The preview content in that format, at most 2000 characters.
 	Content string `json:"content"`
-	Format  string `json:"format"`
+	// The content format, for example `markdown`.
+	Format string `json:"format"`
 }
 
+// UserInputOutcome How a user-input prompt settled. More values may be added, so handle values you do not
+// recognize.
 type UserInputOutcome string
 
 const (
@@ -5734,34 +6663,63 @@ var UserInputOutcomeValues = []UserInputOutcome{
 	UserInputOutcomeAborted,
 }
 
+// UserInputQuestion One question in a user-input prompt.
 type UserInputQuestion struct {
-	Header    string             `json:"header"`
-	ID        string             `json:"id"`
-	Options   []UserInputOption  `json:"options"`
-	Question  string             `json:"question"`
+	// A short title for the question, at most 12 characters.
+	Header string `json:"header"`
+	// The question's id, unique within the prompt and at most 64 characters. An answer names
+	// it in `questionId`.
+	ID string `json:"id"`
+	// The options offered, two or three, in order.
+	Options []UserInputOption `json:"options"`
+	// The full question text to show the user.
+	Question string `json:"question"`
+	// Whether the user picks one option or several.
 	Selection UserInputSelection `json:"selection"`
 }
 
 // UserInputRequestParams Full params shared by `userInput/request` and `userInput/requested`.
 type UserInputRequestParams struct {
-	AutoResolutionMs *int64              `json:"autoResolutionMs,omitempty"`
-	ItemID           string              `json:"itemId"`
-	Questions        []UserInputQuestion `json:"questions"`
-	SessionID        string              `json:"sessionId"`
-	SourceRange      *SourceRange        `json:"sourceRange,omitempty"`
-	ToolCallID       string              `json:"toolCallId"`
-	ToolName         string              `json:"toolName"`
-	TurnID           string              `json:"turnId"`
-	UserInputID      string              `json:"userInputId"`
-	ViewCursor       string              `json:"viewCursor"`
+	// The auto-resolution time per question, in milliseconds: a prompt nobody engages with
+	// settles as `timedOut` after this value times the number of questions.
+	AutoResolutionMs *int64 `json:"autoResolutionMs,omitempty"`
+	// The `toolCall` view item of the tool call waiting on this prompt.
+	ItemID string `json:"itemId"`
+	// The questions to ask, one to three, in order.
+	Questions []UserInputQuestion `json:"questions"`
+	// The session that owns the prompt.
+	SessionID string `json:"sessionId"`
+	// The stored records this prompt was folded from, when sent: an opaque token clients must
+	// not interpret.
+	SourceRange *SourceRange `json:"sourceRange,omitempty"`
+	// The provider's id for the tool call that opened the prompt.
+	ToolCallID string `json:"toolCallId"`
+	// The name of the tool that opened the prompt.
+	ToolName string `json:"toolName"`
+	// The turn whose tool call is waiting on this prompt.
+	TurnID string `json:"turnId"`
+	// The prompt's stable id. Pass it to `userInput/answer`, `userInput/cancel`,
+	// `userInput/clarify` and `userInput/interrupt`, and use it to match the later
+	// `userInput/settled`.
+	UserInputID string `json:"userInputId"`
+	// The cursor of the `userInput/requested` event for this prompt. A client that missed the
+	// request can read the same payload at this cursor with `view/page`.
+	ViewCursor string `json:"viewCursor"`
 }
 
+// UserInputSelection How many options the user may pick for a question.
 type UserInputSelection struct {
-	MaxSelections *int64                 `json:"maxSelections,omitempty"`
-	MinSelections *int64                 `json:"minSelections,omitempty"`
-	Mode          UserInputSelectionMode `json:"mode"`
+	// The most options the user may pick. Sent only in `multiple` mode; when absent the
+	// maximum is the number of options.
+	MaxSelections *int64 `json:"maxSelections,omitempty"`
+	// The minimum selection count for a `multiple` answer. Sent only in `multiple` mode; when
+	// absent the minimum is 1.
+	MinSelections *int64 `json:"minSelections,omitempty"`
+	// `single` or `multiple`: whether an answer selects one option or several.
+	Mode UserInputSelectionMode `json:"mode"`
 }
 
+// UserInputSelectionMode Whether a question takes one option or several.
 type UserInputSelectionMode string
 
 const (
@@ -5777,25 +6735,42 @@ var UserInputSelectionModeValues = []UserInputSelectionMode{
 
 // UserInputSettledParams `userInput/settled` params: the first durable prompt settlement.
 type UserInputSettledParams struct {
-	Answers       []UserInputAnswer       `json:"answers"`
+	// The recorded answers: one per question for `answered`, any confirmed partial answers for
+	// `interrupted`, and empty for every other outcome.
+	Answers []UserInputAnswer `json:"answers"`
+	// The user's free-form clarification when the outcome is `clarified`; `null` otherwise.
 	Clarification *UserInputClarification `json:"clarification,omitempty"`
 	// The decision time as RFC3339, projected from the durable settlement record's own stamp
 	// (ADR 45450 D3, ruling 2026-10-01): always present on the wire (schema-required,
 	// `null`-able); decoders still tolerate its absence (`default`, never skipped — SS5.10.3
 	// keeps every member present), and current hosts always populate it.
-	DecidedAt          *string          `json:"decidedAt,omitempty"`
-	DecidedByCommandID *string          `json:"decidedByCommandId,omitempty"`
-	Outcome            UserInputOutcome `json:"outcome"`
-	Reason             *string          `json:"reason,omitempty"`
-	SessionID          string           `json:"sessionId"`
-	SourceRange        SourceRange      `json:"sourceRange"`
-	UserInputID        string           `json:"userInputId"`
-	ViewCursor         string           `json:"viewCursor"`
+	DecidedAt *string `json:"decidedAt,omitempty"`
+	// The `commandId` of the client command that settled the prompt; `null` when no command
+	// did, for example after a timeout or an abort.
+	DecidedByCommandID *string `json:"decidedByCommandId,omitempty"`
+	// How the prompt ended.
+	Outcome UserInputOutcome `json:"outcome"`
+	// The reason, when one applies: the optional reason given with a cancel, or why an
+	// `aborted` prompt was closed; `null` otherwise.
+	Reason *string `json:"reason,omitempty"`
+	// The session that owns the prompt.
+	SessionID string `json:"sessionId"`
+	// The stored records this event was folded from: an opaque token clients must not
+	// interpret.
+	SourceRange SourceRange `json:"sourceRange"`
+	// The prompt that settled. Accept a settlement even for a prompt whose request you never
+	// saw.
+	UserInputID string `json:"userInputId"`
+	// This event's view cursor: opaque, and strictly increasing within the session.
+	ViewCursor string `json:"viewCursor"`
 }
 
 // UserInputSettlementSummary Winning terminal returned to a late user-input command.
 type UserInputSettlementSummary struct {
-	Outcome    string `json:"outcome"`
+	// How the prompt settled, as a `userInput/settled` outcome value such as `answered` or
+	// `timedOut`.
+	Outcome string `json:"outcome"`
+	// The view cursor of the `userInput/settled` event that recorded the settlement.
 	ViewCursor string `json:"viewCursor"`
 }
 
@@ -5837,8 +6812,8 @@ type ViewGapParams struct {
 	SessionID string `json:"sessionId"`
 }
 
-// ViewPageAnchor The `view/page` request-mode anchor (tdd SS4.7.3). Declared **open**: the tdd spells it
-// "open string enum, v1 value `latestCompaction`".
+// ViewPageAnchor The `view/page` request-mode anchor. Declared **open**: the protocol spells it "open
+// string enum, v1 value `latestCompaction`".
 type ViewPageAnchor string
 
 const (
@@ -5850,8 +6825,8 @@ var ViewPageAnchorValues = []ViewPageAnchor{
 	ViewPageAnchorLatestCompaction,
 }
 
-// ViewPageDirection The `view/page` paging direction (tdd SS4.7.3). Closed: the tdd spells exactly two
-// values and a third would change the paging contract.
+// ViewPageDirection The `view/page` paging direction. Closed: the protocol spells exactly two values and a
+// third would change the paging contract.
 type ViewPageDirection string
 
 const (
@@ -5877,11 +6852,18 @@ type ViewPageParams struct {
 	Cursor *string `json:"cursor,omitempty"`
 	// Paging direction; `forward` when omitted.
 	Direction *ViewPageDirection `json:"direction,omitempty"`
-	// Maximum events to return, 1–1000. The server MAY return fewer (tdd SS4.7.3's
-	// short-serve rule). The 1–1000 range is ratified and now **published**: #22785 E6c is
-	// owner-ruled, so the model carries the bound and the bundle renders `minimum`/`maximum`
-	// instead of a bare `integer`.
+	// Maximum events to return, 1–1000. The server MAY return fewer. The 1–1000 range is
+	// ratified and **published**: the model carries the bound and the bundle renders
+	// `minimum`/`maximum` instead of a bare `integer`.
 	Limit int64 `json:"limit"`
+	// The caller's page byte cap (kt-dvw5, additive-optional). The page serves under
+	// `min(server budget, maxBytes)`, so a Console page stays under its own budget without the
+	// server's frame cap alone deciding. Absent means the server budget governs. `0` is
+	// refused typed (`invalid_params`): a 0 cap admits no progress. A single event over the
+	// cap is truncated (marked) instead of erroring, except verbatim and fetch-key content
+	// (`item.args`, `structuredData`, `outputRef`/ `patchRef`), which is never cut and still
+	// answers typed `PageEventTooLarge`.
+	MaxBytes *int64 `json:"maxBytes,omitempty"`
 	// The session to page.
 	SessionID string `json:"sessionId"`
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -35,6 +36,13 @@ const usageHourFmt = "2006-01-02T15"
 // quickly is recorded as "running, sessions unmeasured" instead.
 const usageSessionTimeout = 10 * time.Second
 
+// usageDiskTimeout bounds ONE workspace's host-side du inside a sweep, for the same reason as
+// usageSessionTimeout: du over a huge or slow home would otherwise hold the whole sequential
+// sweep, and every later member's usage, mirror and the heartbeat with it. Longer than the
+// Agent read because walking a tree is slower than answering a statfs. A variable so a test can
+// shrink it.
+var usageDiskTimeout = 30 * time.Second
+
 // usageHourlyRetentionDays caps how far back the hourly buckets are kept. They are 24x
 // the rows of usage_daily and answer a question nobody asks about last spring; the daily
 // ledger, which does get asked, is never pruned.
@@ -50,10 +58,18 @@ type usageSampler struct {
 	// tenant's workspaces and each one's State() — and a second ticker repeating it is the
 	// cost usage.go avoids for the hourly bucket too. nil = no deadline.
 	deadline *startDeadline
+	// backgroundDef is the deployment default of background_hold_max, so the heatmap reads a
+	// lapsed background row as the reaper does (0 = unbounded).
+	backgroundDef time.Duration
+	// diskBudget caps one sweep's disk reads; 0 = half the interval. A field so a test can
+	// shrink it.
+	diskBudget time.Duration
+	// diskNext is where the next sweep starts reading disks (see recordDisks).
+	diskNext int
 }
 
 func newUsageSampler(mgr *manager, interval time.Duration) *usageSampler {
-	return &usageSampler{mgr: mgr, interval: interval}
+	return &usageSampler{mgr: mgr, interval: interval, backgroundDef: defaultBackgroundHoldMax}
 }
 
 func (u *usageSampler) run(ctx context.Context) {
@@ -96,6 +112,12 @@ func (u *usageSampler) sample(ctx context.Context) {
 	// "unknown", so writing it after a partial walk would paint grey over workspaces
 	// this pass never reached — a confident answer produced by a failure.
 	complete := true
+	// The disk gauge is cosmetic and its reads are slow (du up to usageDiskTimeout, a statfs
+	// call up to usageSessionTimeout, per workspace), while everything else here is accounting.
+	// Collected in the walk, read once the usage rows, deadline dispatch, heartbeat and prune
+	// are done, so a slow home delays none of them.
+	var disks []diskJob
+	defer func() { u.recordDisks(ctx, disks) }()
 	found := map[string]bool{}
 	var overdue []overdueStart
 	for _, t := range tenants {
@@ -119,10 +141,14 @@ func (u *usageSampler) sample(ctx context.Context) {
 			if err := u.mgr.store.AddUsage(ctx, ws.MembershipID, ws.TenantID, day, secs); err != nil {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
 			}
-			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour,
-				u.counters(ctx, rt, secs)); err != nil {
+			c := u.counters(ctx, ws, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))
+			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour, c); err != nil {
 				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
 			}
+			// The disk read is deferred to after the accounting (see recordDisks). MeasuredSecs == 0
+			// means the Agent did not answer the sessions read a moment ago; asking it again for
+			// the disk would only spend a second timeout on the same wedge.
+			disks = append(disks, diskJob{ws, rt, c.MeasuredSecs > 0})
 		}
 	}
 	u.deadline.dispatch(ctx, overdue)
@@ -142,13 +168,21 @@ func (u *usageSampler) sample(ctx context.Context) {
 // A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
 // count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
 // 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
-func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs int) store.UsageHourCounters {
+func (u *usageSampler) counters(ctx context.Context, ws store.Workspace, rt runtime.Runtime, secs int, bgMax time.Duration) store.UsageHourCounters {
 	c := store.UsageHourCounters{Samples: 1, RunningSecs: secs}
 	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
 	defer cancel()
+	readStart := time.Now()
 	env, err := u.mgr.agentSessionsEnv(sctx, rt)
 	if err != nil {
 		return c
+	}
+	// Keep the session mirror fresh for every running workspace, from the envelope this
+	// sample already paid for: the member roster reads sessions and their age from the
+	// mirror, and the list handlers only refresh it for a workspace someone opens. Only a
+	// successful read gets here, so an unreachable Agent leaves the mirror as it was.
+	if err := u.mgr.mirrorSessions(ctx, ws.ID, readStart, env.Sessions); err != nil {
+		log.Printf("showback: mirror sessions (%s): %v", ws.ContainerName, err)
 	}
 	alive, busy := 0, 0
 	for _, s := range env.Sessions {
@@ -162,7 +196,7 @@ func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs in
 		// predicate here leaves one of the two stale the next time a state is added. A
 		// keepAwake pin counting as machineBusy is intended — a pin left dark all weekend
 		// is exactly the waste this screen exists to show.
-		if sessionActivity(s) == activityMachineBusy {
+		if sessionActivity(s, bgMax) == activityMachineBusy {
 			busy++
 		}
 	}
@@ -172,6 +206,104 @@ func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs in
 	c.MaxSessions = alive
 	c.MaxBusy = busy
 	return c
+}
+
+// diskJob is one running workspace whose disk is read after the accounting.
+type diskJob struct {
+	ws      store.Workspace
+	rt      runtime.Runtime
+	agentUp bool
+}
+
+// recordDisks reads the collected workspaces' disks within an overall budget (half the sampling
+// interval unless diskBudget says otherwise). Workspaces left when it runs out are skipped, not
+// stored as anything: their last reading and its age stay. The next sweep starts where this one
+// stopped, so a slow head of the list cannot starve the tail of readings for good.
+func (u *usageSampler) recordDisks(ctx context.Context, jobs []diskJob) {
+	if len(jobs) == 0 {
+		return
+	}
+	budget := u.diskBudget
+	if budget <= 0 {
+		budget = u.interval / 2
+	}
+	bctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	start := u.diskNext % len(jobs)
+	for i := 0; i < len(jobs); i++ {
+		if bctx.Err() != nil {
+			return
+		}
+		j := jobs[(start+i)%len(jobs)]
+		u.recordDisk(bctx, j.ws, j.rt, j.agentUp)
+		u.diskNext = start + i + 1
+	}
+}
+
+// recordDisk stores the home-disk reading the roster gauges from, for one running workspace.
+// What a reading means depends on the runtime (WorkspaceSizing.DiskMeaning):
+//   - home (ecs-ec2, kubernetes): the Agent's statfs of the member's own volume, used and total.
+//   - quota (local, native): the host-side size of the home tree against the member's disk
+//     quota; total is 0 when no quota is set, so the figure is "used" alone.
+//   - work (ecs Fargate): nothing is recorded. The working disk is wiped on stop and statfs
+//     of it says nothing about the member's data; the roster shows the configured size.
+//
+// A reading that cannot be taken is skipped, never stored as zero, so the last real one (and
+// its age) stays on the card.
+func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt runtime.Runtime, agentUp bool) {
+	var used, total uint64
+	taken := time.Now()
+	// One Agent call serves the install outcome (every runtime) and the home statfs. The outcome
+	// is recorded whether or not a disk reading follows: a disk that cannot be read must neither
+	// drop a new failure nor keep an old one, and a clean answer withdraws it.
+	var st map[string]any
+	if agentUp {
+		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
+		s, err := u.mgr.agentStats(sctx, rt)
+		cancel()
+		if err == nil {
+			st = s
+			u.recordBootFailed(ctx, ws, s, taken)
+		}
+	}
+	switch u.mgr.workspaceSizing().DiskMeaning {
+	case runtime.DiskMeaningHome:
+		if st == nil {
+			return
+		}
+		du, ok1 := st["disk_used"].(uint64)
+		dt, ok2 := st["disk_total"].(uint64)
+		if !ok1 || !ok2 || dt == 0 {
+			return
+		}
+		used, total = du, dt
+	case runtime.DiskMeaningQuota:
+		dctx, cancel := context.WithTimeout(ctx, usageDiskTimeout)
+		defer cancel()
+		du, ok := dirDiskUsage(dctx, u.mgr.rootedDataDir(ws))
+		if !ok {
+			return
+		}
+		used = du
+		// "No limit set" (ok=false) and "could not read the limit" (err) are different: storing
+		// total=0 for the second would erase the last good denominator and make a full disk look
+		// like one with no quota. On an error the whole reading is dropped.
+		ul, hasLimit, err := u.mgr.store.GetUserLimit(ctx, ws.MembershipID)
+		if err != nil {
+			log.Printf("showback: disk quota (%s): %v", ws.ContainerName, err)
+			return
+		}
+		if hasLimit && ul.DiskGB > 0 {
+			total = uint64(ul.DiskGB) * gib
+		}
+	default:
+		return
+	}
+	if err := u.mgr.store.PutWorkspaceDisk(ctx, store.WorkspaceDisk{
+		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken),
+	}); err != nil {
+		log.Printf("showback: record disk (%s): %v", ws.ContainerName, err)
+	}
 }
 
 // prune drops hourly buckets past the retention window, once an hour rather than on
@@ -359,4 +491,21 @@ func writeUsageCSV(w http.ResponseWriter, rows []store.UsageRow) {
 		})
 	}
 	cw.Flush()
+}
+
+// recordBootFailed stores which CLIs failed to install on this start, from an answered stats
+// call. An Agent that reports none withdraws an earlier failure.
+func (u *usageSampler) recordBootFailed(ctx context.Context, ws store.Workspace, st map[string]any, at time.Time) {
+	bf, _ := st["boot_install_failed"].(map[string]string)
+	failed := ""
+	if len(bf) > 0 {
+		b, err := json.Marshal(bf)
+		if err != nil {
+			return
+		}
+		failed = string(b)
+	}
+	if err := u.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, failed, store.DiskObservedAt(at)); err != nil {
+		log.Printf("showback: record boot install (%s): %v", ws.ContainerName, err)
+	}
 }

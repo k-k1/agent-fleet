@@ -20,6 +20,7 @@ package sessionx
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,7 @@ func peerEnvelope(from, intent, reply, message string) string {
 // 6: it has no CLI config file to write) and so, wrongly, could never be a peer target either —
 // 403 peer_target_forbidden on a kind ADR 0041 never meant to exclude (found live 2026-09-21,
 // the lcpp kind's first end-to-end run). The axis that actually answers "can receive a peer
-// message" is agentRegistry (agent.go): every kind registered there gets an /input turn the same
+// message" is the kind registry (internal/agentreg): every kind registered there gets an /input turn the same
 // way, which is the whole delivery mechanism a peer send reuses (this file's own header comment)
 // — shell/ssm are excluded above because that turn is arbitrary command execution for them, not
 // because they are unregistered.
@@ -140,7 +141,7 @@ func peerTargetAllowed(kind string) bool {
 	case session.KindShell, session.KindSSM, "":
 		return false
 	}
-	_, ok := agentRegistry[kind]
+	_, ok := RegisteredAgent(kind)
 	return ok
 }
 
@@ -260,6 +261,18 @@ func (l *peerLimiter) allow(from, to, message string, now time.Time) error {
 	return nil
 }
 
+// release disarms the duplicate key allow armed at at, for a send that did not reach the
+// peer: the sender may retry it at once (#2741). The rate count stays, so a sender looping on
+// failures is still slowed down. A key armed again since (a later send) is left alone.
+func (l *peerLimiter) release(from, to, message string, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := from + "|" + to + "|" + message
+	if got, ok := l.recent[key]; ok && got.Equal(at) {
+		delete(l.recent, key)
+	}
+}
+
 // check applies the rate window to from without recording a send or looking at duplicates:
 // a queued message's delivery (peer_pending.go), which was counted when it was queued.
 func (l *peerLimiter) check(from string, now time.Time) error {
@@ -292,3 +305,27 @@ func (l *peerLimiter) pruneLocked(now time.Time) {
 		}
 	}
 }
+
+// statusRecorder passes a response through and remembers its status, so a peer send can tell
+// afterwards whether it ended in an error.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if s.status == 0 {
+		s.status = code
+	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.NewResponseController reach the writer underneath.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }

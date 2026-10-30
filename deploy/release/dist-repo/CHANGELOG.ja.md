@@ -3,6 +3,53 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.37.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.37.0) — 2026-10-30
+
+Apple Silicon の Mac に単独利用で対応し、並べたターミナルのペインの文字が互いに崩れなくなり、Cursor の
+セッションは既定で Auto で動くので Free プランでも使えます。
+
+## [0.36.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.36.0) — 2026-10-28
+
+エージェントのスキルを読み取り専用で一覧できるようになり、アシスタントは利用上限やレート制限で
+止まったバックエンドを避け、作業項目には新しい動きがあると印が付きます。
+
+## [0.35.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.35.0) — 2026-10-26
+
+AWS では、ワークスペースの Web の通信を任意の egress ゲートウェイ経由にして記録し、許可リストを強制できます。
+テナント管理者は OAuth の MCP サーバーを配布でき、メモリには専用の MCP エンドポイントができ、ツールチェーンでは
+JDK と Node.js のパッチを最新に保てます。
+
+## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
+
+0.34.0 で出た `/mcp` エンドポイントと MCP のサインイン（OAuth）を、ECS のデプロイでも有効にできるように
+なりました。0.34.0 のテンプレートには、これらを設定する手段がありませんでした。
+
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
+
+MCP のサインインが両方向で使えるようになりました。claude.ai や ChatGPT などのリモート MCP クライアントは、
+トークンを貼り付ける代わりにサインインして Agent Fleet に接続できます。OAuth が必要な MCP サーバーには設定から
+サインインでき、セッションから使えます。EC2 プールのスロットは強制停止でき、ホスト側のメモリの余裕が増えました。
+Jira CLI は不安定なネットワークでも動くようになりました。
+
+## [0.33.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.33.0) — 2026-10-21
+
+テナントのメンバー画面が、メンバーごとのカードで稼働中のセッション・最終アクティブ・home ディスク・メモリと CPU を
+示すようになりました。home ディスクの空き不足や CLI のインストール失敗は、壊れたセッションとしてではなく、メンバーと
+テナント管理者に知らされます。コマンドパレットでエージェントメモリを検索でき、Markdown 中のループバック URL は
+ワークスペースのプレビューで開きます。
+
+## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
+
+0.32.0 の修正リリースです。メモリの提案は頼まない限りバックグラウンドで動かなくなり、止めた opencode セッションの
+履歴が再び表示され、同梱の Jira CLI は `jira init` なしで課題を作れるようになりました。
+
+## [0.32.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.0) — 2026-10-18
+
+セッションを、会話と作業の状態ごと別のエージェントへ移せるようになり、利用上限に達したときにはその移動を勧めます。
+Google でサインインするアプリがプレビュー用ホストで開発用ログインを使えるようになり、ワークスペースには Jira CLI が
+同梱され、opencode は opencode 2 になりました。エージェントメモリには、終わったセッションからメモリを提案する
+実験的なレビューが加わり、Agent Fleet の外のエージェントからも使えるようになりました。
+
 ## [0.31.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.31.0) — 2026-10-14
 
 テナントのメンバー同士が新しい受信箱でメッセージや依頼を送り合えるようになり、利用枠の状況を利用枠ボードで

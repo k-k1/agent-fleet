@@ -1,7 +1,6 @@
 ---
 audience: "認証・暗号・隔離・監査・egress に触れる人"
 source_of_truth: "コード（本書は境界と設計意図）"
-updated: "2026-10"
 ---
 
 # 07. セキュリティ — 脅威モデル・認証・暗号・監査
@@ -95,7 +94,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 |------|----------------|----------------|-----------------|---|
 | ユーザー間ファイル | そのメンバーの home を `<WS_DATA>/[<slug>/]<key>/home` から bind mount。**他ユーザーの home はマウントされない** | membership ごとの EFS アクセスポイント（`/home/<membership>`・`/claude-config/<membership>`）で root dir を固定。uid/gid は全員共通（`AF_ECS_POSIX_UID` / `_GID`） | メンバー専用の EBS ボリューム。**同時に 1 メンバーだけ**に仕えるスロットへ付け（[decisions/0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 8）、CP が SSM でマウントする。Claude の状態と保持する dotfile は EFS アクセスポイントに残る | Workspace ごとに claim 2 本。参照するのはその Workspace の StatefulSet だけで、ストレージドライバが対応すれば `ReadWriteOncePod`。メンバーは Workspace の名前空間に Kubernetes API で触れない — そこで Pod を作れる者はどの claim でもマウントできる |
 | プロセス / メモリ | 1 membership = 1 コンテナ。`--memory`（`WS_MEMORY` 既定 `1g`・Workspace ごとに上書き可）、指定時は `--cpus` | 1 タスク。Fargate はタスク間でカーネルを共有しない | スロット 1 台に 1 タスク。メモリはスロットの容量より下で頭打ち（`AF_ECS_EC2_HOST_RESERVE_MB`）。スロットのルートボリュームは前のメンバーより長生きするので `/tmp` は tmpfs | 1 Workspace = 1 Pod。CPU・メモリ・ephemeral-storage の request と limit は Workspace のサイジングから。`/tmp` はサイズ上限付きの `emptyDir`。ephemeral-storage の limit は事後の退避で効くので、ノードのディスクの余裕と disk-pressure の警報が残りを受け持つ |
-| ネットワーク | Workspace ごとの network（`af-net-…`）で相互到達を遮断。Agent はホストの loopback にだけ publish | `awsvpc`: タスクごとに ENI を持ち Workspace 用 SG に入る。SG は CP の SG からの Agent ポートだけを通し、他の Workspace からは通さない。公開 IP は付けない。外向きは開いている（§7.8） | ecs と同じ。スロット自身の SG は ingress なし | NetworkPolicy（実装する CNI でだけ効く）: Agent のポートは CP の Pod からだけ。egress はクラスタ DNS、CP の Workspace 専用リスナ、私設・リンクローカル・クラスタ自身のレンジを除くインターネット。それ以外の外向きは開いている（§7.8） |
+| ネットワーク | Workspace ごとの network（`af-net-…`）で相互到達を遮断。Agent はホストの loopback にだけ publish | `awsvpc`: タスクごとに ENI を持ち Workspace 用 SG に入る。SG は CP の SG からの Agent ポートだけを通し、他の Workspace からは通さない。公開 IP は付けない。外向きは開いている（`EgressRoute=gateway` なら egress gateway を通る。§7.8） | ecs と同じ。スロット自身の SG は ingress なし | NetworkPolicy（実装する CNI でだけ効く）: Agent のポートは CP の Pod からだけ。egress はクラスタ DNS、CP の Workspace 専用リスナ、私設・リンクローカル・クラスタ自身のレンジを除くインターネット。それ以外の外向きは開いている（§7.8） |
 | 権限 | 非特権・`dev` で動く。Chromium の setuid サンドボックスが namespace を作れるよう **bounding set に `SYS_ADMIN` を足す**。他の setuid/setgid バイナリが残るとイメージのビルドが失敗するので、`dev` 自身は実効 capability を持たない | 特権モードなし・capability の追加なし（Fargate は `SYS_ADMIN` を足せないのでブラウザ機能なし: `BrowserUnavailable`） | 非特権。docker と同じ理由で、agent コンテナの bounding set に **`SYS_ADMIN` を足す**（タスク定義の `linuxParameters.capabilities`）。足さないとスロットの Docker 既定の seccomp が名前空間を断り、Chromium が起動時に落ちる。イメージは `chrome-sandbox` だけを setuid の経路に保つ。スロット側の対策が 2 つ付く（`cfn/40-ec2-pool.yaml` の user data）：`user.max_user_namespaces=0`（`SYS_ADMIN` に届くのは setuid ヘルパー経由だけになり、ほかのプロセスはユーザー名前空間を作れない。実測で `unshare -U` は ENOSPC、browser-smoke は通る）と、ホームボリュームの `nosuid,nodev` マウント。`kernel.unprivileged_bpf_disabled`（1）と `kernel.perf_event_paranoid`（2）は AL2023 で既に厳しいと実測したので触らない。スロットはその場でパッチを当てず、カーネルの修正は AMI の更新とスロット交換で届ける。どちらの対策もテンプレートに入った後に起動したスロットにだけ効く | 名前空間に `restricted` の Pod Security Standard を強制（CP には変えられないラベル）: 非特権・非 root・能力の追加なし・ホストの名前空間なし・`hostPath` なし — Fargate の水準で、Chromium 用の `SYS_ADMIN` も無い |
 | クラウドの権限 | なし | タスクロール `WsTaskRole` は**ポリシーを 1 つも持たない**。`AGENT_TOKEN` と DEK はタスク定義の `secrets`（SSM・実行ロールが読む）で届く | 同じタスクロール。スロットのインスタンスロールは ECS 登録・SSM 管理・イメージ取得・ログだけ | なし: サービスアカウントのトークンはマウントせず、名前空間とそのサービスアカウントを名指す IAM 付与は無い。GKE では Workspace を載せるプールはすべて GKE メタデータサーバを使い、`169.254.0.0/16` への egress は拒否。`AGENT_TOKEN`・DEK・発行したトークンは Workspace ごとの Secret から `envFrom` で届き、Secret は etcd 内で暗号化（GKE では Cloud KMS） |
 | 機微状態の退避 | Agent の平文状態は 2nd mount（`CLAUDE_CONFIG_DIR=/var/lib/af/claude`）で**ファイルブラウザの範囲外**へ。暗号化ストアは home 据置で Agent の denylist（`fsDeny`）の内側 | 同左（イメージ・Agent は共通） | 同左 | 同じ。2 本目の claim の上 |
@@ -319,7 +318,10 @@ membership の 2 段（[06 §6.2](06-data.ja.md)）。
 - **Workspace 専用リスナーは転送ヘッダを一切読まない**（`AF_CP_INTERNAL_LISTEN`・
   [09 §9.3](09-deploy.ja.md)）。ホップ数の設定にかかわらず接続そのもののアドレスを送信元とし、
   識別ヘッダと forwarded-for/-host/-proto 系のヘッダをハンドラの前で全部消す——そこへ接続した
-  Workspace は利用者も送信元も名乗れない。配るのはトークンで認証する上記の面だけ。
+  Workspace は利用者も送信元も名乗れない。配るのはトークンで認証する上記の面だけ。`docker` では
+  docker0 のゲートウェイアドレスに bind し、ホスト上のどの Workspace からも届くが LAN のインタフェース
+  には載らない。どの経路もそのメンバーシップ自身のトークンを求めるので、公開 URL で得られる以上のものを
+  Workspace が得ることはない（`docker` で全インタフェースに bind すると起動時に警告を出す）。
 - **締め出しの逃げ道**: デプロイ管理者は対象外。編集者の現在のアドレスを締め出す保存は拒否
   （`would_lock_out`）。プロキシのホップ未申告なのに forwarded-for が届いた場合
   （`proxy_not_configured`）と、チェーンが申告より短い場合（`client_ip_unknown`）も保存を拒否する。
@@ -414,7 +416,7 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   暗号化コンテキストで key ref に結び付け、KMS が失敗すれば失敗する（フェイルクローズ）。同じ custodian が
   上のテナントの秘密と、セッションの引き継ぎ・共有のペイロードも封印する。KMS へ切り替える前に封じた値は
   形式で見分けて local の custodian が開き、KMS の失敗で振り分けることは無い。`af-cp rewrap-keys` が
-  それを一度に KMS で封じ直す（2026-10-10 追記、[operate/04](../../guide/operate/04-secure.ja.md#切り替え前に保存された値を封じ直す)）。
+  それを一度に KMS で封じ直す（2026-10-10 追記、[operate/12](../../guide/operate/12-keys.ja.md#切り替え前に保存された値を封じ直す)）。
 - ⚠️ **正直な限界**: local の custodian では KEK がマスター鍵由来で、実効強度は単一のマスター鍵と同等。
   KMS では鍵の無効化で切り替え後に封じたものが shred されるが、ワークスペースの DEK 自体は今もマスター鍵と
   ユーザーキーから導出する（封筒保存より前に書かれたストアを開けるため）ので、メンバーの資格情報ストアは
@@ -453,15 +455,42 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   メタデータのアドレスを含む）・未指定アドレスは、どのモードでも検査して拒否する設計である。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
+  報告は at-least-once：proxy は 10 秒ごとに送信し（タイムアウト 10 秒・固定間隔・バックオフ
+  なし）、CP が 2xx を返すまでバッチを保持し、CP の 1 MiB 上限に収まるチャンクに分けて送る。
+  タイムアウト後の再送や途中まで記録されたバッチでは行が二重に数えられるため、件数は概数。
+  CP に届かない間 proxy が保持するのは host/verdict 最大 5000 件で、超過分は `dropped` として
+  報告され `egress.dropped` で監査される。保持中の件数はメモリ上のみで、proxy 再起動で失われる。
 - **allowlist は版管理**（`egress_allowlist`: active / proposed / retired）+ デプロイ全体のモード
-  （`egress_mode`）。**AI は提案のみ・人間が承認**（自動適用しない）。
+  （`egress_mode`）。**AI は提案のみ・人間が承認**（自動適用しない）。配る policy
+  （`GET /internal/egress/policy`）には、この表と別に CP 自身のホスト（`PUBLIC_BASE_URL` と
+  `AF_CP_INTERNAL_URL` のもの、`cpEgressHosts`）が完全一致のホストとして必ず入る。Workspace は
+  公開 base に egress の経路を通って届く（AWS の gateway では `NO_PROXY` に関係なく 443 が横取り
+  される）ので、allowlist の編集で CP から切り離されてはならない（#2742）。Admin の一覧では組み込みと表示する。
+  エントリはホスト全体（どのポート・パスも）で、gateway のポートと内部アドレスの拒否は解除しない。ホストが完全一致の
+  1 つの名前でない URL と IPv6 リテラル（#2754）は許可せず、起動時にログに出す。
 - **enforce は proxy で遮断する**: allowlist の外は 403。
 - `AF_EGRESS_PROXY_ADDR` がどのターゲットでも全 Workspace に proxy の変数（`http_proxy`・
-  `https_proxy`・`no_proxy`）を注入する。
+  `https_proxy`・`no_proxy`、と大文字の同名変数）を注入する。`docker`・`native`・Kubernetes は
+  配備全体の env をそのまま渡し、`ecs` と `ecs-ec2` はこれらの変数（`AF_EGRESS_PROXY_ADDR` から生成したものだけで、同名の `WS_ENV` の項目は取らない）だけを取る
+  （`WS_ENV` は資格情報を含みうるうえ、タスク定義の平文 env は読めてしまうため、意図して渡さない）。
+  `AF_CP_INTERNAL_URL` があれば、そのホストを docker・Kubernetes・ecs・ecs-ec2 で `NO_PROXY` に加え、
+  ecs / ecs-ec2 は proxy がリンクローカル宛を拒否するため、タスク／インスタンスのメタデータ
+  アドレス（`169.254.170.2`・`169.254.169.254`）も加える。起動ごとの同名の変数は、配備全体の値に優先する。
 
-**足りないのは柵である。** Workspace の通信を proxy に強制するものが無い: `docker` に内部専用の
-network は無く、AWS の SG に egress 規則も無く、proxy を動かすデプロイのテンプレートも無い。
-proxy の変数を無視するプロセスはそのまま外へ出るので、**enforce はまだ Workspace を縛らない**。
+**柵があるのは AWS だけで、選択制である。** `00-network` の `EgressRoute=gateway`
+（[ADR 0122](../decisions/0122-egress-gateway.ja.md)）では、Workspace のルートテーブルの既定ルートが
+egress gateway（Squid と、Squid の見えない部分を受け持つ nftables）へ向く。インターネット宛の TCP 80 と
+443 は Squid を通るので、Workspace にインターネットへの他の出口は無く、**enforce が Workspace を縛る**。
+プレビューで、確認はテスト用のデプロイだけである。制約も設計のうち: enforce は HTTP の Host か TLS の
+SNI で判定するので、許可された名前なら 443 番のどの公開アドレスにも届く。VPC のリゾルバへの DNS は
+記録されずに通る。それ以外のインターネット宛の通信は、SSH の git や他のリゾルバへの直接の DNS も含めて
+落とす。VPC 内の通信（CP、2049 番の EFS）はセキュリティグループに従い、gateway を通らない。
+Workspace は NAT gateway ではなく gateway 自身のアドレスから出る
+（[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) の「Egress gateway」）。
+
+それ以外では柵が無い: `docker` に内部専用の network は無く、`native` はホストのネットワークを
+共有し、Kubernetes の NetworkPolicy はインターネットを通し、AWS の既定の `EgressRoute=nat-gateway`
+では Workspace はそのまま NAT gateway へ出る。proxy の変数を無視するプロセスはそのまま外へ出るので、**そこでは enforce は Workspace を縛らない**。
 段階運用が設計の核なのは変わらない——log-only で実測し、測ったものから allowlist を固め、それから
 enforce へ切り替える。
 
@@ -475,6 +504,6 @@ enforce へ切り替える。
 3. **長期保持するエージェント資格情報の失効・ローテーション** — 枠組みはあるが、真の失効は
    ワークスペースの DEK をランダムにするまで待ち（§7.6）。
 4. **サプライチェーン** — Workspace イメージ同梱ツールの出所管理・定期更新（[04](04-agent.ja.md)）。
-5. **egress の enforce はまだ Workspace を縛らない** — proxy は遮断するが、Workspace を proxy に
-   通す柵が無い（§7.8・[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。
+5. **egress の enforce が Workspace を縛るのは AWS の `EgressRoute=gateway`（プレビュー）だけ** —
+   それ以外では proxy は遮断するが、Workspace を proxy に通す柵が無い（§7.8・[#1181](https://github.com/k-k1/agent-fleet/issues/1181)）。
 6. 対外的な脅威モデル・脆弱性報告窓口は [SECURITY.md](../../SECURITY.md)（英語）。

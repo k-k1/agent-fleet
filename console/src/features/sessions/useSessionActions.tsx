@@ -2,7 +2,7 @@
 // drive a session row wherever it renders (the flat list AND the per-working-copy
 // nodes of the project tree). Each op hits the Agent, then refreshes the store and
 // closes any stale panes; confirmations and error toasts are built in.
-import { raw, sessionDelete, sessionSetLock, sessionKeepAwake, sessionStopAfterTurn } from "../../core/api/client.ts";
+import { errText, raw, sessionDelete, sessionSetLock, sessionKeepAwake, sessionStopAfterTurn } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -252,7 +252,10 @@ export function useSessionActions(): SessionActions {
       let msg = t("sess.recreate_failed");
       try {
         const j = await res.json();
-        if (j?.error?.message) msg += t("common.detail_sep") + j.error.message;
+        // A cli_install_* refusal has its own localized sentence; the server's English message
+        // would say the same thing in the wrong language.
+        if (typeof j?.error?.code === "string" && j.error.code.startsWith("cli_install_")) msg += t("common.detail_sep") + errText(j.error);
+        else if (j?.error?.message) msg += t("common.detail_sep") + j.error.message;
       } catch {}
       toast(msg);
       void refreshSessions();

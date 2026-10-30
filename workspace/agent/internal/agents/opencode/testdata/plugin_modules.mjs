@@ -32,11 +32,16 @@ const v2Host = (sessions = {}) => {
     },
     ctx: {
       tool: { hook: async (name, cb) => void (hooks[name] = cb) },
-      // Like ctx.session.get: the session's info, a rejection for one that does not exist.
+      // Like ctx.session.get: the session's info, a rejection for one that does not exist. A
+      // session's `delay` (ms) slows the answer down: with `snapshot` the answer is what the
+      // session was when asked, otherwise what it is when the answer arrives.
       session: {
         get: async ({ sessionID }) => {
           if (!(sessionID in sessions)) throw new Error("Session.NotFoundError");
-          return { id: sessionID, ...sessions[sessionID] };
+          const asked = { id: sessionID, ...sessions[sessionID], metadata: { ...sessions[sessionID].metadata } };
+          if (!asked.delay) return asked;
+          await sleep(asked.delay);
+          return asked.snapshot ? asked : { id: sessionID, ...sessions[sessionID] };
         },
         hook: async (name, cb) => void (hooks["session." + name] = cb),
       },
@@ -264,6 +269,80 @@ const now = Date.now();
     sessions.ses_c.metadata = { "af.sid": "sidC" };
     h.push(ev("session.execution.started", { sessionID: "ses_c" }));
     await until(() => statusLines().includes("session-status working sidC"), "C reports once tagged");
+
+    // /new: the session is created untagged and its turn starts before the pane tags it. The start
+    // is held and reported once the tag appears, the turn's end after it.
+    sessions.ses_new = { metadata: {} };
+    let mark = statusLines().length;
+    h.push(ev("session.created", { sessionID: "ses_new" }), ev("session.execution.started", { sessionID: "ses_new" }));
+    await sleep(200);
+    assert.deepEqual(statusLines().slice(mark), [], "nothing is reported before the tag");
+    sessions.ses_new.metadata = { "af.sid": "sidN" };
+    await until(() => statusLines().length >= mark + 1, "the held start once tagged");
+    h.push(ev("session.execution.succeeded", { sessionID: "ses_new" }));
+    await until(() => statusLines().length >= mark + 2, "the turn's end");
+    assert.deepEqual(statusLines().slice(mark), ["session-status working sidN", "session-status idle sidN"]);
+    assert.ok(!existsSync(join(sidDirOf(), "sidN")), "a replay is late and leaves the slot to the TUI plugin");
+
+    // A turn that ended before the tag appeared is still reported whole, in order.
+    sessions.ses_quick = { metadata: {} };
+    mark = statusLines().length;
+    h.push(
+      ev("session.created", { sessionID: "ses_quick" }),
+      ev("session.execution.started", { sessionID: "ses_quick" }),
+      ev("session.execution.succeeded", { sessionID: "ses_quick" }),
+    );
+    await sleep(200);
+    sessions.ses_quick.metadata = { "af.sid": "sidQ" };
+    await until(() => statusLines().length >= mark + 2, "the replayed turn");
+    assert.deepEqual(statusLines().slice(mark), ["session-status working sidQ", "session-status idle sidQ"]);
+
+    // The turn ends while the poller's lookup is in flight and slow: the end must not be lost to
+    // an untagged answer that arrives after the tag (a working with no idle sticks the badge).
+    sessions.ses_slow = { metadata: {} };
+    mark = statusLines().length;
+    h.push(ev("session.created", { sessionID: "ses_slow" }), ev("session.execution.started", { sessionID: "ses_slow" }));
+    await sleep(150);
+    Object.assign(sessions.ses_slow, { delay: 300, snapshot: true });
+    h.push(ev("session.execution.succeeded", { sessionID: "ses_slow" }));
+    await sleep(30);
+    sessions.ses_slow.metadata = { "af.sid": "sidS" };
+    await until(() => statusLines().length >= mark + 2, "the slow turn");
+    await sleep(400);
+    assert.deepEqual(statusLines().slice(mark), ["session-status working sidS", "session-status idle sidS"]);
+
+    // An untagged session this server did not see created moments ago (an old one a pane picks
+    // and claims later) ran its turn before it was anyone's: that turn is not replayed.
+    sessions.ses_old = { metadata: {} };
+    mark = statusLines().length;
+    h.push(ev("session.execution.started", { sessionID: "ses_old" }), ev("session.execution.succeeded", { sessionID: "ses_old" }));
+    await sleep(100);
+    sessions.ses_old.metadata = { "af.sid": "sidO" };
+    await sleep(300);
+    assert.deepEqual(statusLines().slice(mark), [], "an old session's earlier turn must not be replayed");
+    assert.ok(!existsSync(join(sidDirOf(), "sidO")), "nor may it move the slot");
+
+    // A session that is never tagged in time, one whose lookup outlasts the wait, and a Managed
+    // one report nothing; the hold ends with the wait (AF_OPENCODE_TAG_WAIT_MS = 700 here).
+    sessions.ses_never = { metadata: {} };
+    sessions.ses_hang = { metadata: {} };
+    sessions.ses_managed = { metadata: { "af.managed": "1" } };
+    mark = statusLines().length;
+    h.push(
+      ev("session.created", { sessionID: "ses_never" }),
+      ev("session.created", { sessionID: "ses_hang" }),
+      ev("session.created", { sessionID: "ses_managed" }),
+      ev("session.execution.started", { sessionID: "ses_never" }),
+      ev("session.execution.started", { sessionID: "ses_hang" }),
+      ev("session.execution.started", { sessionID: "ses_managed" }),
+    );
+    await sleep(100);
+    sessions.ses_hang.delay = 1500; // answered after the wait, tagged by then
+    await sleep(800);
+    sessions.ses_never.metadata = { "af.sid": "sidX" };
+    sessions.ses_hang.metadata = { "af.sid": "sidH" };
+    await sleep(1000);
+    assert.deepEqual(statusLines().slice(mark), [], "an expired hold or a Managed session must not report");
     stop();
   } finally {
     if (saved !== undefined) process.env.AF_SESSION_SID = saved;
@@ -311,6 +390,8 @@ const now = Date.now();
         ses_new: { time: { created: Date.now() }, metadata: {} },
         ses_old: { time: { created: now - 3600_000 }, metadata: {} },
         ses_managed: { time: { created: Date.now() }, metadata: { "af.managed": "1" } },
+        ses_named: { time: { created: Date.now() }, metadata: { "af.managed": "1", "af.managed.name": "mgdA" } },
+        ses_namedkid: { time: { created: Date.now() }, parentID: "ses_named", metadata: { "af.managed": "1", "af.managed.name": "mgdA" } },
         ses_root: { time: { created: now - 3600_000 }, metadata: { "af.sid": "sidR", "af.name": "slotR" } },
         // a subagent session inherits the tag, not the environment; a fork copies the tag too
         ses_kid: { time: { created: Date.now() }, parentID: "ses_root", metadata: { "af.sid": "sidR", "af.name": "slotR" } },
@@ -335,6 +416,9 @@ const now = Date.now();
       await run("shell", "ses_oldkid");
       await run("shell", "ses_managed");
       assert.equal(asked().length, before + 3, "old untagged and Managed sessions have no pane to ask for");
+      await run("shell", "ses_named");
+      await run("bash", "ses_namedkid");
+      assert.deepEqual(asked().slice(before + 3), ["opencode-put-env mgdA ses_named", "opencode-put-env mgdA ses_namedkid"], "a Managed session that names its af session is confirmed under that name, subagents included");
 
       const waiting = run("shell", "ses_new");
       assert.equal(await pending(waiting), true, "a new untagged session is held until it is claimed");
@@ -471,8 +555,12 @@ const now = Date.now();
     // a new server process lost every environment: this pane's sessions get theirs again.
     const putEnvs = () => readFileSync(agentLog, "utf8").split("\n").filter((l) => l.startsWith("opencode-put-env paneP"));
     w.pid = 200;
-    await until(() => putEnvs().length >= 2, "environments re-sent after a pid change");
+    await until(() => new Set(putEnvs()).size >= 2, "environments re-sent after a pid change");
     assert.deepEqual(new Set(putEnvs()), new Set(["opencode-put-env paneP ses_free", "opencode-put-env paneP ses_mine"]), "only sessions this pane won are re-sent, through the Agent that checks they are still its own");
+    // The fake Agent answers slower than the server poll, so a tick that did not wait for the one
+    // before it would send each environment again.
+    await sleep(500);
+    assert.equal(putEnvs().length, 2, "one pid change re-sends each environment once");
     stop();
   } finally {
     for (const [k, v] of [["AF_OPENCODE_SHARED", saved.shared], ["AF_SESSION_SID", saved.sid], ["AF_SESSION_NAME", saved.name], ["OPENCODE_SERVER_PASSWORD", saved.pw]]) {

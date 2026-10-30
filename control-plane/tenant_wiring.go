@@ -132,6 +132,10 @@ func (a adminAPI) terminatePoolSlot(w http.ResponseWriter, r *http.Request, iden
 	a.srv().TerminatePoolSlot(w, r, ident)
 }
 
+func (a adminAPI) forceStopPoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().ForceStopPoolSlot(w, r, ident)
+}
+
 func (a adminAPI) reservePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	a.srv().ReservePoolSlot(w, r, ident)
 }
@@ -144,6 +148,14 @@ func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) { a.srv(
 
 func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
 	a.srv().SetTenantNetwork(w, r)
+}
+
+func (a adminAPI) tenantExternalMemory(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantExternalMemory(w, r)
+}
+
+func (a adminAPI) setTenantExternalMemory(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantExternalMemory(w, r)
 }
 
 func (a adminAPI) tenantSlotClass(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +318,10 @@ func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID strin
 	return d.m.terminateQuarantinedSlot(ctx, instanceID)
 }
 
+func (d cpTenant) ForceStopSlot(ctx context.Context, instanceID string, overrideHealthy bool) (runtime.SlotForceStop, bool, error) {
+	return d.m.forceStopSlot(ctx, instanceID, overrideHealthy)
+}
+
 func (d cpTenant) ReserveSlotReplacement(ctx context.Context, instanceID string, reserve, onlyOutdated bool) (runtime.SlotReservation, bool, error) {
 	return d.m.reserveSlotReplacement(ctx, instanceID, reserve, onlyOutdated)
 }
@@ -373,6 +389,7 @@ func tenantLimitsOut(l tenantLimits) tenantsrv.Limits {
 		SessionIdleTimeout:           l.SessionIdleTimeout,
 		WSIdleTimeout:                l.WSIdleTimeout,
 		InteractionIdleTimeout:       l.InteractionIdleTimeout,
+		BackgroundHoldMax:            l.BackgroundHoldMax,
 		HomeHibernateAfter:           l.HomeHibernateAfter,
 		HomeBackupEvery:              l.HomeBackupEvery,
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
@@ -397,6 +414,7 @@ func tenantLimitsIn(l tenantsrv.Limits) tenantLimits {
 		SessionIdleTimeout:           l.SessionIdleTimeout,
 		WSIdleTimeout:                l.WSIdleTimeout,
 		InteractionIdleTimeout:       l.InteractionIdleTimeout,
+		BackgroundHoldMax:            l.BackgroundHoldMax,
 		HomeHibernateAfter:           l.HomeHibernateAfter,
 		HomeBackupEvery:              l.HomeBackupEvery,
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
@@ -414,3 +432,11 @@ func tenantAPIError(e *apiError) *tenantsrv.APIError {
 	}
 	return &tenantsrv.APIError{Status: e.status, Code: e.code, Message: e.message}
 }
+
+func (a adminAPI) tenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
+	a.srv().TenantMCPOAuth(w, r)
+}
+func (a adminAPI) setTenantMCPOAuth(w http.ResponseWriter, r *http.Request) {
+	a.srv().SetTenantMCPOAuth(w, r)
+}
+func (d cpTenant) MCPOAuthServed() bool { return d.m.mcpOAuthServed.Load() }

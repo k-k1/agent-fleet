@@ -1,6 +1,6 @@
 // The wire contract for docs/log/56 P0's read-only project-scope MCP snapshot
 // (workspace/agent/internal/mcpproj, GET /api/repos/{name}/mcp). Kept separate from
-// ../settings/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 decision 15
+// ../settings/mcp/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 decision 15
 // keeps the Go types apart too — a project file's "af" entry must be FOUND and
 // flagged here, not treated like an editable registry row — so this file defines
 // its own interfaces rather than reusing/extending McpServer/Registry.
@@ -61,6 +61,13 @@ export interface ProjectSnapshot {
   files: ProjectFile[];
   kinds: ProjectKindInfo[];
   warnings?: ProjectWarning[];
+}
+
+// The agent kinds a copy may target, in the snapshot's order: those the Agent reports with a
+// verified project scope. kiro's is unverified (docs/log/56 §4.3, its project-scope write
+// contract is unmeasured) and agy and muse have none, so none of them is a destination.
+export function copyTargetKinds(snap: Pick<ProjectSnapshot, "kinds">): string[] {
+  return snap.kinds.filter((k) => k.hasProjectScope && !k.unverified).map((k) => k.kind);
 }
 
 export const fetchProjectMcpSnapshot = (repo: string): Promise<ProjectSnapshot> =>

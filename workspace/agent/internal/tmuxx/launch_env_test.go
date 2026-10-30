@@ -63,3 +63,15 @@ func withoutKey(env []string, key string) []string {
 	}
 	return out
 }
+
+func TestAddLaunchEnvExtendsSetLaunchEnv(t *testing.T) {
+	t.Cleanup(func() { SetLaunchEnv(nil, nil) })
+	SetLaunchEnv([]string{"A"}, []string{"B=1"})
+	AddLaunchEnv([]string{"C"}, []string{"CODEX_SQLITE_HOME=/h"})
+	got := strings.Join(withLaunchEnv([]string{"new-session"}), " ")
+	want := "set-environment -g -u A ; set-environment -g -u C ; set-environment -g B 1 ; " +
+		"set-environment -g CODEX_SQLITE_HOME /h ; new-session"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+}

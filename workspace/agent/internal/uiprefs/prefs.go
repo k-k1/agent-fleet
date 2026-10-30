@@ -259,6 +259,64 @@ func AgentMemory() bool {
 	return v
 }
 
+// ExternalMemory is the member's setting for agents outside Agent Fleet reaching AF memory through
+// the Control Plane's /mcp (#1988, ui-prefs externalMemory): "off", "read" or "write". Missing or
+// anything else ⇒ "off". It is separate from AgentMemory: that one governs the sessions in this
+// workspace, this one a client on another machine, and text that leaves the workspace's egress
+// controls is why the default is off.
+func ExternalMemory() string {
+	switch v, _ := Read()["externalMemory"].(string); v {
+	case memoryx.ExternalMemoryRead, memoryx.ExternalMemoryWrite:
+		return v
+	}
+	return memoryx.ExternalMemoryOff
+}
+
+// MemoryReview is the member's background memory review mode (ADR 0117 decision 6, ui-prefs
+// memoryReview): "off" or "propose". Missing, malformed or any other value (including "auto",
+// which does not exist before phase P3) reads as "off": the review sends conversation excerpts to
+// a model, so a member turns it on knowingly. Separate from AgentMemory, which it needs as well:
+// see MemoryReviewEnabled.
+func MemoryReview() string {
+	if v, _ := Read()["memoryReview"].(string); v == memoryx.MemoryReviewPropose {
+		return v
+	}
+	return memoryx.MemoryReviewOff
+}
+
+// MuseContributorMode is the member's choice to run Muse Code in contributor mode (ui-prefs
+// museContributorMode, #2535), under which the vendor may use the conversation to improve its
+// product. Only a boolean true is on; missing or malformed reads as off, so nobody is opted in
+// by a prefs file that predates the switch or was written by hand.
+func MuseContributorMode() bool {
+	v, _ := Read()["museContributorMode"].(bool)
+	return v
+}
+
+// MemoryReviewEnabled is whether the review may run at all: AF memory is on AND a review mode is
+// chosen. Every caller that starts or continues a review asks this, never MemoryReview alone —
+// a review proposing into a store the member switched off would be a write path the switch does
+// not govern.
+func MemoryReviewEnabled() bool {
+	return AgentMemory() && MemoryReview() != memoryx.MemoryReviewOff
+}
+
+// MemoryReviewAuto is the member's separate choice to let the turn-end loop claim review windows
+// (ADR 0117 decision 1, ui-prefs memoryReviewAuto). Only a boolean true is on; missing or malformed
+// reads as false, so a member who enabled the review by hand-only use is never opted into
+// background spending. See MemoryReviewAutoEnabled.
+func MemoryReviewAuto() bool {
+	v, _ := Read()["memoryReviewAuto"].(bool)
+	return v
+}
+
+// MemoryReviewAutoEnabled is whether the automatic loop may claim or continue a window: the review
+// itself is enabled AND the member turned automatic review on. A manual "Suggest memories now" asks
+// MemoryReviewEnabled alone. Phase P3's `auto` publish mode and budgets must respect this too.
+func MemoryReviewAutoEnabled() bool {
+	return MemoryReviewEnabled() && MemoryReviewAuto()
+}
+
 // SpawnChildLimit is how many children the user lets one session have at a time (ADR 0073
 // decision 6, ui-prefs sessionSpawnChildLimit). It returns the stored number RAW — 0 for missing
 // or malformed — because the range and the fallback belong to session.NormalizeSpawnChildLimit,
@@ -322,6 +380,7 @@ func init() {
 	// AF memory (ADR 0108) takes the same double gate: the tool set and the Agent routes.
 	mcpreg.AgentMemoryEnabled = AgentMemory
 	memoryx.AgentMemoryEnabled = AgentMemory
+	memoryx.ExternalMemoryMode = ExternalMemory
 	memoryx.AutoSyncWant = AgentMemory
 	imagegen.ProviderOrderPref = ImageProviderOrder
 }

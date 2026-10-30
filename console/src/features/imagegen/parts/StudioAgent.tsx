@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { apiJSON, errText } from "../../../core/api/client.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT } from "../../../lib/i18n/index.ts";
-import { kindDisplayName } from "../../../lib/sessionkind.ts";
+import { kindColorClasses, kindDisplayName } from "../../../lib/sessionkind.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -139,7 +139,7 @@ export function StudioAgent({
   return (
     <div className="igen-agent">
       <div className="igen-agent-head">
-        <span className={"igen-chip kind-" + agentOf(meta.kind).cssClass}>
+        <span className={"igen-chip " + kindColorClasses(agentOf(meta.kind).cssClass)}>
           <Icon name={agentOf(meta.kind).icon} /> {kindDisplayName(meta.kind)}
         </span>
         {/* The narrow pane keeps the head to one line (imagegen.css): these two chips go, and

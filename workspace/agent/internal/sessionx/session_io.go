@@ -17,13 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -34,28 +29,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// opencodeStatusAgentRe pulls the current agent from opencode's composer status line
-// ("Plan auto · <model> …" / "Build auto · …"), the ground-truth mode the TUI shows.
-var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
-
-// codexFooterEffortRe pulls the reasoning effort from codex's composer footer
-// "<model> <effort> · <cwd>" (the word right before " · " then the cwd path).
-var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
-
-// paneTail returns the last n non-empty lines of s (the TUI's status/composer footer
-// region), so mode detection matches the STATUS LINE — not conversation text that merely
-// mentions "plan mode" (which false-positived claude's indicator).
-func paneTail(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	var out []string
-	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			out = append(out, lines[i])
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
 // PaneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too — not
 // just via the chat. Returns the DISPLAY label the Console shows in the composer's mode
@@ -64,145 +37,22 @@ func paneTail(s string, n int) string {
 // "" = unknown (composer not drawn / stopped) → the Console shows no mode. Matching is
 // confined to the pane's tail (status line region) so conversation content can't spoof it.
 func PaneMode(kind, tn string) string {
+	r, ok := paneModeReader(kind)
+	if !ok {
+		return ""
+	}
 	s := tmuxx.CapturePane(tn)
 	if s == "" {
 		return ""
 	}
-	switch kind {
-	case session.KindClaude:
-		return claudeModeLabel(paneTail(s, 3))
-	case session.KindOpencode:
-		// The composer status line ("<Agent> auto · …") sits a few lines above the very
-		// bottom (above the border + token/commands footer). The agent name IS the mode.
-		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
-			return titleFirst(m[1]) // "Plan" / "Build" / …
-		}
-	case session.KindAgy:
-		// agy's composer footer (v1.1.4, measured): left "? for shortcuts" (idle) or
-		// "esc to cancel" (generating), right "<model>" — "plan · <model>" in plan
-		// mode. The footer only exists once the composer is drawn (the "Signing
-		// in..." boot screen has none, and text typed into it is eaten), so this
-		// doubles as the launch-seed readiness signal, like the other kinds.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if strings.Contains(line, "? for shortcuts") || strings.Contains(line, "esc to cancel") {
-				if strings.Contains(line, "plan · ") {
-					return "Plan"
-				}
-				return "Default"
-			}
-		}
-	case session.KindCopilot:
-		// copilot's composer footer (v1.0.73, measured): idle "/ commands · ? help · tab
-		// next tab", draft "@ files · # issues", working "◎ Working esc interrupt" —
-		// right edge shows the model ("Auto → gpt-5-mini"). The footer exists only
-		// once the composer is drawn (the trust dialog / boot screen has none), so
-		// this doubles as the launch-seed readiness signal. Mode has no footer
-		// marker; plan mode is fixed at launch (--mode plan), so meta is the truth —
-		// here we only distinguish drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if strings.Contains(line, "/ commands") || strings.Contains(line, "@ files") ||
-				strings.Contains(line, "Working") {
-				return "Default"
-			}
-		}
-	case session.KindCursor:
-		// cursor's composer footer (v2026.07.20, measured): idle placeholder "→ Add a
-		// follow-up" / "→ Plan, search, build anything", with the model name ("Auto")
-		// and the cwd below it; working is "Running … ctrl+c to stop". The footer only
-		// exists once the composer is drawn (--trust suppresses the trust dialog, but
-		// there is still nothing right after boot), so this doubles as the launch-seed
-		// readiness signal. Plan mode is fixed at launch (--plan), so meta is the truth —
-		// here we only distinguish drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 4), "\n") {
-			if strings.Contains(line, "Add a follow-up") ||
-				strings.Contains(line, "Plan, search, build anything") ||
-				strings.Contains(line, "ctrl+c to stop") || strings.Contains(line, "Running") {
-				return "Default"
-			}
-		}
-	case session.KindKiro:
-		// kiro's composer footer (2.14.1, measured): idle placeholder "ask a question or
-		// describe a task ↵", with model/context on the line above it ("kiro_default ·
-		// auto · ◔ n%   <cwd>"); working is "Kiro is working · Type to steer · Ctrl+S to
-		// queue". The footer only exists once the composer is drawn (a pinned
-		// chat.disableTrustAllConfirmation suppresses the dangerous-mode confirmation
-		// dialog, but there is still nothing right after boot), so this doubles as the
-		// launch-seed readiness signal. Plan mode is fixed at launch (by omitting
-		// --trust-all-tools), so meta is the truth — here we only distinguish
-		// drawn/not-drawn and report the non-plan label.
-		for _, line := range strings.Split(paneTail(s, 4), "\n") {
-			if strings.Contains(line, "ask a question or describe a task") ||
-				strings.Contains(line, "Kiro is working") || strings.Contains(line, "requires approval") {
-				return "Default"
-			}
-		}
-	case session.KindCodex:
-		// codex's composer footer is "<model> <effort> · <cwd>". Through 0.144 it
-		// appended "Plan mode [(shift+tab to cycle)]" in plan mode; 0.145 removed that
-		// textual marker. Keep accepting it for pinned/older versions, while the bare
-		// footer remains the composer-readiness signal and mirror-driven mode is persisted
-		// in meta (rememberCodexTUIMode). Never inspect history text here: a stale
-		// "… for Plan mode." line would spoof the current state.
-		for _, line := range strings.Split(paneTail(s, 3), "\n") {
-			if codexFooterEffortRe.MatchString(line) {
-				if strings.Contains(line, "Plan mode") {
-					return "Plan"
-				}
-				return "Default"
-			}
-		}
-	}
-	return ""
+	return r.PaneMode(s)
 }
 
-// claudeModeLabel maps claude's status-line mode strip to the chip label.
-//
-// Measured (claude 2.1.241, 2026-08-24; the left column is the --permission-mode value):
-//
-//	(unset = default) / manual  "⏸ manual mode on · ← for agents"
-//	auto                        "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
-//	acceptEdits                 "⏵⏵ accept edits on (shift+tab to cycle) · …"
-//	bypassPermissions           "⏵⏵ bypass permissions on (shift+tab to cycle) · …"
-//	dontAsk                     "⏵⏵ don't ask on (shift+tab to cycle) · …"
-//	plan                        "⏸ plan mode on (shift+tab to cycle) · …"
-//
-// Only manual omits "(shift+tab to cycle)" (tmuxx's modeFooterRe hit the same thing on
-// 2.1.212), and manual is exactly where a session launched WITH permission prompts lands
-// (docs/log/76) — so matching on "four names plus the shift+tab catchphrase" yields "".
-// An empty PaneMode means "composer not drawn", which makes the launch-seed readiness
-// gate (submitPromptTUI / initial prompt delivery) wait 30s before falling back to
-// best-effort.
-//
-// So the last resort is the footer strip itself (tmuxx.ClaudeModeFooter) rather than a
-// list of names: when a mode is added or renamed this degrades to "drawn, mode treated as
-// Default" and delivery keeps working.
-func claudeModeLabel(tail string) string {
-	switch {
-	case strings.Contains(tail, "plan mode on"):
-		return "Plan"
-	case strings.Contains(tail, "accept edits on"):
-		return "Accept Edits"
-	case strings.Contains(tail, "bypass permissions on"):
-		return "Bypass"
-	case strings.Contains(tail, "auto mode on"):
-		return "Auto"
-	case strings.Contains(tail, "manual mode on"):
-		return "Manual"
-	case strings.Contains(tail, "don't ask on"):
-		return "Don't ask"
-	case tmuxx.ClaudeModeFooter(tail), strings.Contains(tail, "shift+tab to cycle"):
-		// An unknown mode name, or an older build where only the catchphrase is left.
-		return "Default"
-	}
-	return ""
-}
-
-// titleFirst upper-cases the first rune ("plan" → "Plan", "build" → "Build").
-func titleFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
+// paneModeReader is kind's agents.PaneModeReader, by exact registry key.
+func paneModeReader(kind string) (agents.PaneModeReader, bool) {
+	a, _ := RegisteredAgent(kind)
+	r, ok := a.(agents.PaneModeReader)
+	return r, ok
 }
 
 // Programmatic session I/O for the MCP drive tools (docs/decisions/0006, P3-6 E).
@@ -215,6 +65,10 @@ func titleFirst(s string) string {
 // session and submits it. Returns immediately; the caller polls /status then
 // /output for the reply.
 func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
+	// True only when HandleSessionMCPInput (session_mcp.go) delegated here: its route is not in
+	// the CP's agent-proxy allowlist, and the context key is unexported, so nothing a client
+	// sends can claim the MCP origin on this route.
+	fromMCP := r.Context().Value(mcpDeliveryKey{}) != nil
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
@@ -284,6 +138,14 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
 	}
+	// Source is a client-supplied field on the shared /input route, so the MCP origin is
+	// stamped here from the route and a caller-supplied "mcp" is erased: otherwise the Console
+	// could badge its own input as an assistant's.
+	if fromMCP {
+		body.Source = TurnSourceMCP
+	} else if body.Source == TurnSourceMCP {
+		body.Source = ""
+	}
 	if len(body.Keys) == 0 && len(body.Seq) == 0 && strings.TrimSpace(body.Prompt) == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
@@ -352,6 +214,21 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		delivery, isDelivery := pendingDeliveryOf(r)
+		armedAt := time.Now()
+		if !isDelivery {
+			// allow arms the duplicate guard before the outcome is known. A send that ends in an
+			// error (delivery_unconfirmed included) is not known to have arrived, so it disarms
+			// again: refusing the retry as a duplicate is what left the sender with no way to
+			// get the message through (#2741). A 2xx, queued included, keeps it armed.
+			rw := &statusRecorder{ResponseWriter: w}
+			w = rw
+			msg := strings.TrimSpace(body.Prompt)
+			defer func() {
+				if rw.status >= 300 {
+					peerRate.release(body.PeerFrom, name, msg, armedAt)
+				}
+			}()
+		}
 		if isDelivery {
 			// A queued message (peer_pending.go) was counted when it was queued; the rate is
 			// re-checked here, not counted again.
@@ -362,7 +239,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			// them in order (peer_pending.go).
 			blockedOn, n, qerr := enqueueDecision(name, dst, body.PeerFrom, strings.TrimSpace(body.PeerIntent), body.Prompt,
 				func() error {
-					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+					return peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), armedAt)
 				})
 			if _, ok := qerr.(*peerRejection); ok {
 				writePeerErr(w, qerr)
@@ -375,7 +252,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 				writePendingQueued(w, name, blockedOn, n)
 				return
 			}
-			err = peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now())
+			err = peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), armedAt)
 		}
 		if err != nil {
 			writePeerErr(w, err)
@@ -557,8 +434,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// that judgement and also handles the automatic resume at the reset time. This send
 	// just reports "it cannot land right now" back to its caller (mirror, operator,
 	// scheduled execution).
-	if m, ok := session.ReadMeta(name); ok && NormalizeKind(m.Kind) == session.KindClaude &&
-		tmuxx.AtRateLimitModal(name) {
+	if m, ok := session.ReadMeta(name); ok && callTrue(normalizedTerminalTraits(m.Kind).UsageLimitMenu, name) {
 		httpx.WriteErr(w, http.StatusConflict, "rate_limit_modal",
 			"session is parked on claude's usage-limit menu; typed text would become a menu "+
 				"selection instead of a prompt. Choose an option in the pane (wait for the reset, "+
@@ -575,9 +451,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 	//
 	// Recover when we can (the recovery steps are measured). Only when recovery fails do we
 	// answer 409 — telling the caller it did not land beats misdelivering silently.
-	if m, ok := session.ReadMeta(name); ok && NormalizeKind(m.Kind) == session.KindClaude &&
-		tmuxx.AgentsViewActive(name) {
-		if !tmuxx.LeaveAgentsView(name) {
+	if m, ok := session.ReadMeta(name); ok && callTrue(normalizedTerminalTraits(m.Kind).AgentsViewActive, name) {
+		if !normalizedTerminalTraits(m.Kind).LeaveAgentsView(name) {
 			httpx.WriteErr(w, http.StatusConflict, "agents_view",
 				"session pane's input box is bound to a background agent / the agents screen, "+
 					"not the session's conversation; typing there does not reach the session "+
@@ -597,6 +472,17 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			confirmBase = deliveryBaseline(m)
 		}
 	}
+	cursorTUI := confirmMeta.Name != "" && isCursorTerminal(confirmMeta)
+	// An earlier prompt cursor handed back (or a half-typed one) is still in the composer, and
+	// a paste lands after it: two instructions run as one. Refuse rather than clear it, which
+	// would lose the earlier request.
+	if cursorTUI && cursor.TerminalDraft(confirmMeta) {
+		httpx.WriteErr(w, http.StatusConflict, "composer_not_empty",
+			"the cursor session's input box still holds unsent text (a prompt its CLI refused, "+
+				"or a draft); sending now would append to it and run both as one prompt. "+
+				"Clear or send that text in the pane (or fix what made the CLI refuse it), then send again.")
+		return
+	}
 	// Record the mirror badge's origin BEFORE typing (see recordInjection's comment). After
 	// delivery, a poll landing in the gap between the user row appearing in the transcript
 	// and the record being written pins that turn on the user's screen with no origin. peer
@@ -608,12 +494,22 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			recordFleetGraphInstruct(name, src, body.ReportTo, "", body.Prompt)
 		}
 	}
-	if !submitPromptTUI(lease, w, name, pane, body.Prompt) {
+	// workingRev names the optimistic "working" this send wrote, the one write an unconfirmed
+	// delivery may take back: a record read back afterwards could already be a hook's.
+	workingRev, ok := submitPromptTUIRev(lease, w, name, pane, body.Prompt)
+	if !ok {
 		return
 	}
 	rememberCodexTUIMode(name, body.Prompt, nil)
-	if body.Confirm && confirmMeta.Name != "" {
-		if err := confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
+	held, heldReason := false, ""
+	if cursorTUI {
+		// cursor has no turn log to confirm against (the JSONL is written when a turn ends), so
+		// the only thing to catch is a prompt the TUI hands back at submit.
+		held, heldReason = confirmCursorSubmit(confirmMeta, body.Prompt)
+	} else if body.Confirm && confirmMeta.Name != "" {
+		var err error
+		if held, err = confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
+			withdrawOptimisticWorking(confirmMeta, confirmBase, workingRev)
 			// Never dress an unconfirmed delivery up as success: the caller (the CP
 			// scheduler / the operator MCP) records and notifies it as an error instead
 			// of manufacturing a false "fired" (docs/log/38, delivery confirmation).
@@ -639,6 +535,9 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// that.
 	case body.ReportTo != "" || delivery != nil:
 		chatx.AddScheduledInstruction(name, body.ReportTo, injectionSource(body.Source), delivery, false)
+	case body.Source == TurnSourceMCP:
+		// An assistant's message over /mcp: not mirrored to Discord (that mirror reflects what
+		// the member typed) and not on the ledger (no report_to). Badge origin already recorded.
 	case scheduleInjectionSource(body.Source) != "":
 		// A scheduled injection with completion reporting off (report_to is empty, so it
 		// misses the branch above). It does not go on the ledger — there is no report
@@ -658,7 +557,19 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 			fleetgraph.RecordInstruct("user", name, "", p)
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
+	resp := map[string]any{"sent": name}
+	if held {
+		// Same key and meaning as the managed path below: claude has only queued the prompt
+		// behind a running turn (in memory, lost on a pane kill), so the sender must not
+		// read this as "started a turn".
+		resp["held"] = true
+		if heldReason != "" {
+			// A cursor prompt the TUI refused is not queued behind a turn: it sits in the
+			// composer and nothing will run it. The sender has to hear why.
+			resp["held_reason"] = heldReason
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // inputMirrors counts the detached Discord/Slack mirror goroutines. In production nobody
@@ -728,7 +639,7 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 			"managed driver はこの kind ではまだ利用できません")
 		return
 	}
-	h, err := d.Resume(meta)
+	h, err := resumeManaged(d, meta)
 	if err != nil {
 		writeRuntimeErr(w, err)
 		return
@@ -776,15 +687,9 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 	// user turn is already in the store). Without this the codex resume would land silently
 	// and only the TUI kinds would report one (docs/log/47 §4-12).
 	notifyRateLimitResumeDelivered(meta.Name, prompt, source, time.Now())
-	switch {
-	case peerFrom != "":
-		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
-	case reportTo != "" || delivery != nil:
-		// Raised before the send, above.
-	case scheduleInjectionSource(source) != "":
-		// Scheduled execution with reporting off (as on the TUI path) — no ledger row,
-		// no Discord mirror.
-	default:
+	// Peer (ADR 0041 decision 4), report_to / schedule (ledger raised above) and MCP input
+	// are not the member's own typing: no Discord mirror, no "user" arrow.
+	if typedByMember(peerFrom, reportTo, source, delivery != nil) {
 		mirrorUserInputAsync(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
 		fleetgraph.RecordInstruct("user", meta.Name, "", prompt)
 	}
@@ -804,9 +709,16 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 // on failure the HTTP error is already written and false is returned. The caller holds the
 // session's lease (ADR 0115 decision 11.1).
 func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string) bool {
+	_, ok := submitPromptTUIRev(lease, w, name, pane, prompt)
+	return ok
+}
+
+// submitPromptTUIRev is submitPromptTUI that also returns the Rev of the optimistic "working"
+// it wrote ("" when it wrote none), the one write an unconfirmed delivery may take back.
+func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane, prompt string) (workingRev string, ok bool) {
 	if err := lease.Check(name); err != nil {
 		writeGateErr(w, err)
-		return false
+		return "", false
 	}
 	// While ANY interaction is pending (question / plan approval / permission), the TUI
 	// is showing a modal that swallows typed text and lets the trailing Enter confirm
@@ -816,7 +728,7 @@ func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, p
 	// (tui), /plan-respond (plan) or /respond (managed). See promptBlocker.
 	if st := promptBlocker(name); st != "" {
 		writeBlockedErr(w, st)
-		return false
+		return "", false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
 	// send_to_session right after create (no initial_prompt) would vanish. Its
@@ -827,9 +739,7 @@ func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, p
 	// copilot: same shape — even with trust pre-written, there is no composer until the tab
 	// UI is drawn, and text sent to the boot screen disappears silently. The footer is the
 	// readiness signal.
-	if meta, ok := session.ReadMeta(name); ok &&
-		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor ||
-			meta.Kind == session.KindKiro) {
+	if meta, ok := session.ReadMeta(name); ok && sendWaitsForComposer(meta.Kind) {
 		tn := session.TmuxName(name)
 		for i := 0; i < 30 && PaneMode(meta.Kind, tn) == ""; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -840,18 +750,25 @@ func submitPromptTUI(lease *lifegate.Lease, w http.ResponseWriter, name, pane, p
 	// is not swallowed while their input widget is still consuming the paste.
 	if err := typeLineAndSubmit(name, pane, prompt); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return false
+		return "", false
 	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
 	// session working, or codex sticks on "in progress" (no Stop hook fires to clear it).
 	// Real prompts still mark working so the chip reacts before the agent's own hook.
 	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
-		markSessionWorking(name)
+		workingRev = markSessionWorking(name)
 		// The same predicate decides that a stop-after-turn arm is superseded (docs/log/85):
 		// what releases the arm is new WORK arriving, and a slash command starts none.
 		cancelStopArmOnNewPrompt(name)
 	}
-	return true
+	return workingRev, true
+}
+
+// sendWaitsForComposer reports that kind's boot screen eats a Terminal send
+// (agents.PaneModeReader.SendWaitsForComposer).
+func sendWaitsForComposer(kind string) bool {
+	r, ok := paneModeReader(kind)
+	return ok && r.SendWaitsForComposer()
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -873,7 +790,7 @@ func rememberCodexTUIMode(name, prompt string, keys []string) {
 	// The toggle reads the mode it flips under the lock, and the write sets only Mode: a meta
 	// read before it and written back whole would roll back a lock set meanwhile (issue #950).
 	UpdateSessionMeta(name, func(meta *session.Meta) bool {
-		if meta.Kind != session.KindCodex || meta.DriverKind() == session.DriverManaged {
+		if !terminalTraits(meta.Kind).RemembersMode || meta.DriverKind() == session.DriverManaged {
 			return false
 		}
 		mode := "plan"
@@ -897,7 +814,7 @@ func typeLineAndSubmit(name, pane, text string) error {
 		return err
 	}
 	delay := inputSubmitDelay(name)
-	if m, ok := session.ReadMeta(name); ok && claudeNeedsPaste(m.Kind, text) && os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS") == "" {
+	if m, ok := session.ReadMeta(name); ok && pasteNeeded(m.Kind, text) && os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS") == "" {
 		// The paste path waits the 200 ms the other paste kinds get, not claude's 20 ms
 		// (a guess at what the composer needs; unverified live).
 		delay = 200 * time.Millisecond
@@ -909,50 +826,39 @@ func typeLineAndSubmit(name, pane, text string) error {
 	return nil
 }
 
-// claudePasteMinBytes is the length from which claude gets its prompt as a bracketed paste
-// even when it has no line break. claude's own notes treat a long literal-key chunk as a
-// paste (agents/claude/image_paste.go), so one explicit paste is the predictable form. The
-// threshold is a guess, unverified against a live TUI; short single-line prompts keep the
-// literal-key path.
-const claudePasteMinBytes = 2048
-
-// claudeNeedsPaste reports whether a prompt must reach claude's composer as a bracketed paste
-// rather than literal keys. A line break in a literal stream is an Enter (docs/build/92), so a
-// multi-line prompt is submitted line by line. Suspected, not confirmed on a live TUI, to be
-// what left a busy session with only the tail of a peer message (issue #2195); a paste carries
-// the breaks as text and ends in one submit either way.
-func claudeNeedsPaste(kind, text string) bool {
-	return kind == session.KindClaude &&
-		(len(text) >= claudePasteMinBytes || strings.ContainsAny(text, "\r\n"))
+// pasteNeeded reports whether kind's composer takes this prompt as a bracketed paste
+// (agents.PromptPaste). The lookup is exact: an unregistered kind or an alternate spelling gets
+// literal keys.
+func pasteNeeded(kind, text string) bool {
+	a, _ := RegisteredAgent(kind)
+	p, ok := a.(agents.PromptPaste)
+	return ok && p.PasteNeeded(text)
 }
 
 // typePromptText puts text in an agent's composer. Codex and OpenCode treat a fast
 // stream of literal key events as an in-progress paste and may consume a following
 // Enter as part of that paste. tmux paste-buffer -p uses the terminal's bracketed-paste
 // protocol, which gives the TUI an explicit end-of-paste marker before Enter arrives.
-// Claude keeps the literal-key path for short single-line prompts only (claudeNeedsPaste).
+// Which kinds paste, and for which texts, is agents.PromptPaste; the rest get literal keys.
 func typePromptText(name, pane, text string) error {
 	kind := session.KindClaude
 	if meta, ok := session.ReadMeta(name); ok {
 		kind = meta.Kind
 	}
-	if kind == session.KindClaude {
+	t := terminalTraits(kind)
+	if t.ShapePrompt != nil {
 		// A long prompt reaches claude as one paste-sized chunk, and its paste handler
 		// would turn the attached image paths into [Image #N] and split the text.
-		text = claude.QuoteImagePaths(text)
+		text = t.ShapePrompt(text)
 	}
-	// copilot needs bracketed paste too: measured on v1.0.73, the Enter inside the same
-	// literal-keys send-keys is eaten by the paste coalescing and the prompt is never
-	// submitted.
-	if (kind != session.KindCodex && kind != session.KindOpencode && kind != session.KindCopilot &&
-		kind != session.KindCursor && kind != session.KindKiro) && !claudeNeedsPaste(kind, text) {
+	if !pasteNeeded(kind, text) {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
 		return nil
 	}
 
-	if kind == session.KindClaude {
+	if t.PasteLF {
 		// tmux turns each LF of a paste into CR, so a CRLF arrives as CR CR and claude reads two
 		// line breaks (measured on a raw tty: "a\r\nb" → ESC[200~a\r\rb). Send one LF per break.
 		text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -1003,8 +909,15 @@ func typeInitialPrompt(name, prompt string) string {
 	// An expired claude login makes the TUI accept the characters and start no turn, so the
 	// task would be eaten and the member would learn why only from their next, refused send.
 	// Settling failed instead keeps the loss visible (the same refusal promptBlocker gives).
-	if m, ok := session.ReadMeta(name); (!ok || NormalizeKind(m.Kind) == session.KindClaude) && claude.AuthExpired() {
+	// An unreadable meta reads as claude, as an empty kind does (normalizedTerminalTraits); a
+	// meta that failed to decode may hold a partial kind, so it is not consulted.
+	authKind := ""
+	if m, ok := session.ReadMeta(name); ok {
+		authKind = m.Kind
+	}
+	if callTrue0(normalizedTerminalTraits(authKind).AuthExpired) {
 		log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
+		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
 	}
 	tn := session.TmuxName(name)
@@ -1081,7 +994,8 @@ func typeInitialPrompt(name, prompt string) string {
 	// HTTP — log it if it stays unconfirmed. Unlike the reuse sender's confirm, this stays
 	// best-effort.
 	if metaOK && base.logs != nil {
-		if err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
+		// A queued initial prompt (held) still counts: the CLI has it and runs it next.
+		if _, err := confirmPromptDelivery(meta, pane, prompt, base); err != nil {
 			log.Printf("initial prompt delivery UNCONFIRMED for %s: %v", name, err)
 			return session.InitialPromptUnknown
 		}
@@ -1112,7 +1026,8 @@ func typeInitialPrompt(name, prompt string) string {
 // blocked or delayed by a failure here, and this only ever runs immediately
 // before that kill — never while the session might still be in active use.
 func disconnectRemoteControl(name string, m session.Meta) {
-	if m.Kind != session.KindClaude || claude.RemoteSessionURL(session.UUID(m.Dir, m.Name)) == "" {
+	rc := terminalTraits(m.Kind).RemoteControlURL
+	if rc == nil || rc(session.UUID(m.Dir, m.Name)) == "" {
 		return // not a claude session, or RC has never been used here
 	}
 	pane := tmuxx.SessionPaneID(session.TmuxName(name))
@@ -1135,8 +1050,10 @@ func disconnectRemoteControl(name string, m session.Meta) {
 // back so it gets a token pause. Tunable via AGENT_INPUT_SUBMIT_DELAY_MS.
 func inputSubmitDelay(name string) time.Duration {
 	ms := 200
-	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindClaude {
-		ms = 20
+	if meta, ok := session.ReadMeta(name); ok {
+		if d := terminalTraits(meta.Kind).SubmitDelay; d > 0 {
+			ms = int(d / time.Millisecond)
+		}
 	}
 	if v := os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 5000 {
@@ -1150,12 +1067,17 @@ func inputSubmitDelay(name string) time.Duration {
 // the TUI can re-render between keys (e.g. after Enter advances to the next
 // question page). Shared by the /input {keys} path and /turn's tui interrupt.
 func sendNamedKeys(pane string, keys []string) error {
+	return sendNamedKeysGap(pane, keys, 90*time.Millisecond)
+}
+
+// sendNamedKeysGap is sendNamedKeys with an explicit pause between keys.
+func sendNamedKeysGap(pane string, keys []string, gap time.Duration) error {
 	for i, k := range keys {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, k).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)
 		}
 		if i < len(keys)-1 {
-			time.Sleep(90 * time.Millisecond)
+			time.Sleep(gap)
 		}
 	}
 	return nil
@@ -1199,8 +1121,12 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
-	if probe, ok := kindModalProbes[meta.Kind]; ok {
-		return blockingState(probe(meta))
+	// A kind whose modals never reach the status store reads them where they live
+	// (agents.ModalProbe), by exact registry key.
+	if a, _ := RegisteredAgent(meta.Kind); a != nil {
+		if p, ok := a.(agents.ModalProbe); ok {
+			return blockingState(p.PromptModal(meta))
+		}
 	}
 	// claude: when the credentials have expired, refuse on that ground before any modal
 	// (docs/log/47 §4-8). The TUI accepts the characters and the Enter goes through, yet
@@ -1208,7 +1134,7 @@ func promptBlocker(name string) string {
 	// prompt stuck as pending (user report, 2026-08-14). Refusing is the only way to say
 	// "the login has expired". Key input ({keys}/{seq}) is NOT blocked: running /login in
 	// the pane is a legitimate recovery.
-	if NormalizeKind(meta.Kind) == session.KindClaude && claude.AuthExpired() {
+	if callTrue0(normalizedTerminalTraits(meta.Kind).AuthExpired) {
 		return agents.StateAuth
 	}
 	sid := session.UUID(meta.Dir, name)
@@ -1221,42 +1147,6 @@ func promptBlocker(name string) string {
 	// on screen (plan_pending, not permission_pending) and the operator is pointed at
 	// the surface that can actually decide it.
 	return blockingState(effectiveModal(sid, st.State))
-}
-
-// kindModalProbes reads, for every kind whose modals never reach the status store, the modal
-// it is showing now ("" when none) — from the same source its own live state is built on, so
-// the refusal and the Console's badge agree. Every kind with a Terminal route is here except
-// claude, whose hooks write its question / plan / permission into the status store, and
-// shell / ssm, which have no modal; a kind missing from both would fall through to a status
-// store nothing fills and never be refused (TestPromptBlockerCoversEveryTerminalKind).
-var kindModalProbes = map[string]func(session.Meta) string{
-	// The conversation DB's last step (pending.go). It reports ONLY the blocking states
-	// ("question" / "permission"), so an empty probe means "nothing pending".
-	session.KindAgy: func(m session.Meta) string { st, _ := agy.Probe(m); return st },
-	// An unfinished permission.requested in events.jsonl — the tui's permission menu and
-	// managed's Interaction in the same shape.
-	session.KindCopilot: copilot.LiveState,
-	// The approval panel's text in the pane ("shell requires approval"), reported as
-	// "question"; managed is also guarded by ErrQuestionPending.
-	session.KindKiro: kiro.LiveState,
-	// Their hooks and plugin report working/idle at most, so the question (codex's rollout,
-	// opencode's store) and cursor's approval and build menus (the pane) are read where they
-	// live. Terminal route only: their managed drivers refuse free text themselves
-	// (ErrQuestionPending).
-	session.KindCodex:    codexModal,
-	session.KindOpencode: opencode.TerminalModal,
-	session.KindCursor:   cursor.TerminalModal,
-}
-
-// codexModal adds to codex's question the screens its Terminal pane draws outside the
-// conversation — the update menu, the lock screen, the model-switch nudge — which take a typed
-// line's keys just the same (codex.PaneScreen). They stay out of codex.TerminalModal, which the
-// chat chip reads as "question".
-func codexModal(m session.Meta) string {
-	if q := codex.TerminalModal(m); q != "" {
-		return q
-	}
-	return codex.TerminalScreen(m)
 }
 
 // blockingState maps a live state to "" (free) or the state itself (blocking). An
@@ -1314,12 +1204,12 @@ func writeBlockedErr(w http.ResponseWriter, state string) {
 
 // markSessionWorking optimistically marks the session working so a poll immediately
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
-func markSessionWorking(name string) {
+func markSessionWorking(name string) (rev string) {
 	meta, ok := session.ReadMeta(name)
 	if !ok {
-		return
+		return ""
 	}
-	status.Persist(session.UUID(meta.Dir, name), "working")
+	return status.PersistRev(session.UUID(meta.Dir, name), "working")
 }
 
 // viewNavKeys are the keys claude's TUI reads as VIEW navigation when no dialog is up:
@@ -1345,10 +1235,12 @@ func allowViewNavKeys(name string, keys []string) bool {
 	if !nav {
 		return true
 	}
-	if m, ok := session.ReadMeta(name); !ok || NormalizeKind(m.Kind) != session.KindClaude {
-		return true // ← means nothing to other kinds; this trap is specific to claude's TUI
+	m, ok := session.ReadMeta(name)
+	modal := normalizedTerminalTraits(m.Kind).ModalActive
+	if !ok || modal == nil {
+		return true // ← means nothing to a kind without the trap (claude's TUI has it)
 	}
-	return tmuxx.ModalActive(name) // with a dialog up, it is legitimate navigation
+	return modal(name) // with a dialog up, it is legitimate navigation
 }
 
 func writeViewNavErr(w http.ResponseWriter) {
@@ -1390,7 +1282,7 @@ func HandleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	// A pending AskUserQuestion / ExitPlanMode plan rides along (claude: the
 	// hook-captured payloads) so the operator can relay them to the user and act via
 	// /answer-question // /plan-respond without scraping the terminal.
-	if meta.Kind == session.KindClaude {
+	if terminalTraits(meta.Kind).HookPending {
 		sid := session.UUID(meta.Dir, name)
 		if raw, ok := status.ReadPendingQuestion(sid); ok && len(raw) > 0 {
 			resp["questions"] = json.RawMessage(raw)
@@ -1427,13 +1319,8 @@ func sessionInputReady(meta session.Meta, alive bool) bool {
 		out, err := tmuxx.Cmd("capture-pane", "-p", "-S", "-", "-t", pane).Output()
 		return err == nil && strings.Contains(string(out), "Starting session with SessionId:")
 	}
-	if meta.Kind == session.KindClaude {
-		if state, _ := sessionTerminalState(meta.Name); state != "" {
-			return false
-		}
-	}
-	if meta.Kind == session.KindCodex && codexTerminalState(meta.Name) != "" {
-		return false
+	if terminalScreen(meta.Kind, meta.Name) != "" {
+		return false // a startup menu, compaction or an update prompt takes the keystrokes
 	}
 	return PaneMode(meta.Kind, session.TmuxName(meta.Name)) != ""
 }
@@ -1510,7 +1397,7 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
 	// output from the generic Transcript() turns instead (cursor = turn count), so the
 	// drive tools (MCP get_session_output) work for every transcript-capable kind.
-	if meta.Kind != session.KindClaude {
+	if !terminalTraits(meta.Kind).TranscriptLines {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
 		var gb strings.Builder
 		for i := since; i < len(td.Turns); i++ {
@@ -1529,7 +1416,11 @@ func HandleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		var sb strings.Builder
 		cursor = len(tlines)
 		for i := since; i < len(tlines); i++ {
-			if t := claude.AssistantText(tlines[i]); t != "" {
+			t := claude.AssistantText(tlines[i])
+			if t == "" {
+				t = claude.CLIWarningText(tlines[i])
+			}
+			if t != "" {
 				if sb.Len() > 0 {
 					sb.WriteString("\n")
 				}

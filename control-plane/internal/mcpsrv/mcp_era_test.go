@@ -213,3 +213,18 @@ func TestMCPEndpointRejectsRemovedTransportVerbs(t *testing.T) {
 		}
 	}
 }
+
+// The instructions go to external models whatever the user's language is: English only, and the
+// memory tools are named so a model knows they exist.
+func TestMCPDiscoverInstructionsAreEnglishAndMentionMemory(t *testing.T) {
+	resp, _ := dispatch(t, statelessBody(1, "server/discover", "", mcpVersionStateless),
+		statelessHdr("server/discover"))
+	res, _ := resp.Result.(map[string]any)
+	ins, _ := res["instructions"].(string)
+	if ins == "" || strings.ContainsFunc(ins, func(r rune) bool { return r > 0x7f }) {
+		t.Fatalf("instructions must be non-empty ASCII English: %q", ins)
+	}
+	if !strings.Contains(ins, "memory") {
+		t.Fatalf("instructions do not mention memory: %q", ins)
+	}
+}

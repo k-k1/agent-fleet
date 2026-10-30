@@ -20,7 +20,10 @@ main cause of OOM trouble — this has caused real incidents. Your own limit:
   `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk* 2>/dev/null`.
   `/usr/lib/jvm` is deployment-provided (baked or bind-mounted; Temurin 8/21/25 on most local
   deployments, but **empty on ECS**), `~/.local/share/agent-fleet/jvm` is the per-user home
-  volume that survives restarts and is the only source on ECS.
+  volume that survives restarts and is the only source on ECS. When a major is in both, the
+  newer patch wins (its `release` file's `SEMANTIC_VERSION`; a tie keeps `/usr/lib/jvm`), so
+  re-running `install-jdk 21` is how you update one. `workspace-agent java-home 21` prints the
+  directory that wins.
 - **Nothing there, or you need another major?** `workspace-agent install-jdk 21` downloads the
   latest GA Temurin for this arch as `temurin-21-jdk-<arch>`, on every runtime. The user's
   terminal-free equivalent: **Settings > Toolchains** (「ツールチェーン」) — the picker lists
@@ -32,11 +35,12 @@ main cause of OOM trouble — this has caused real incidents. Your own limit:
   changed selection applies at the next launch (no Stop → Start). With no selection — the default
   for a fresh workspace — both are absent; select a version instead of working around it. Check
   with `echo "$JAVA_HOME"` / `command -v java`.
-- Setting `JAVA_HOME` by hand is the fallback, and **never as `ls … | head -1`**: both dirs use
-  `temurin-<major>-jdk-<arch>` and `amd64` sorts before `arm64`, so a home volume filled on x86
-  and later attached to an arm64 box makes the first match the one whose `bin/java` cannot exec.
-  Pin your arch:
-  `a=$(dpkg --print-architecture); JAVA_HOME=$(ls -d /usr/lib/jvm/temurin-21-jdk-$a ~/.local/share/agent-fleet/jvm/temurin-21-jdk-$a 2>/dev/null | head -1)`.
+- Setting `JAVA_HOME` by hand is the fallback: `JAVA_HOME=$(workspace-agent java-home 21)` (it
+  applies both rules above and exits 1 when that major is not installed for this arch). **Never
+  pick it with `ls … | head -1`**: both dirs use `temurin-<major>-jdk-<arch>` and `amd64` sorts
+  before `arm64`, so a home volume filled on x86 and later attached to an arm64 box makes the
+  first match the one whose `bin/java` cannot exec, and even an arch-pinned glob ignores the
+  newer-patch rule.
 
 ## Gradle / Maven
 

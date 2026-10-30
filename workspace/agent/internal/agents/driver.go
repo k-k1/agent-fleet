@@ -70,6 +70,8 @@ const (
 	OriginDiscord        = "discord"
 	OriginSlack          = "slack"
 	OriginAutoResume     = "auto-resume"
+	OriginNotice         = "notice"
+	OriginMCP            = "mcp"
 )
 
 // Origin says where a TurnInput came from.
@@ -264,6 +266,11 @@ type LiveHandles interface {
 type TerminalResponder interface {
 	RespondTerminal(m session.Meta, reply InteractionReply) error
 }
+
+// ErrInteractionNotPending: the Interaction a respond named is not waiting for an answer (already
+// answered, cancelled, or forgotten by the runtime). Drivers wrap it with the id; the respond
+// handler maps it to the interaction_not_pending code, which the Console words per language.
+var ErrInteractionNotPending = errors.New("interaction is not pending")
 
 // ErrTerminalRespond: this Terminal slot has no API route for its pending Interaction.
 var ErrTerminalRespond = errors.New("this terminal session cannot be answered by id")

@@ -32,7 +32,8 @@ no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
 
 ## Prerequisites
 
-- A Linux host with **Docker** (Engine + `docker compose`).
+- A Linux host with **Docker** (Engine + `docker compose`). A Mac (Apple Silicon) is
+  supported for a single user: see [macOS](#macos-apple-silicon).
 - A **public domain** with a DNS A/AAAA record pointing at this host (for TLS).
   Internal-only? Use the `tls internal` fallback in `Caddyfile`.
 - An **IdP client for login**: a Google OAuth 2.0 Web client, or an OIDC app
@@ -344,6 +345,121 @@ encodes them, but if you customize it, keep them:
   owned by uid 1000 (the workspace `dev` user), and the CP needs the host docker
   group to use the socket. A wrong `DOCKER_GID` = "permission denied" on the socket.
 
+<a id="macos-experimental-unverified"></a>
+
+## macOS (Apple Silicon)
+
+Supported for **one user on an Apple Silicon Mac**. The images are published for
+`linux/arm64`, so the Mac pulls the right ones; what does not carry over is the DooD wiring
+above, which assumes rootful Docker on Linux, hence the overlay below. Not covered: Intel
+Macs (never run), a team or public deployment on a Mac (no Caddy, no IdP in this setup), and
+Apple's `container` tool.
+
+**Checked with colima, OrbStack and Docker Desktop.** On an M1 Mac mini with macOS 26.7,
+colima 0.10.3 (`colima start --vm-type vz --mount-type virtiofs`), OrbStack (engine 29.8)
+and Docker Desktop 4.97 each passed every check of
+[deploy/macos/acceptance.sh](../macos/README.md): workspace start in both directions,
+`linux/arm64`, home ownership and modes on the shared directory, headless Chromium, and
+stop → start keeping the home (#2961). OrbStack and Docker Desktop have to be started once
+from a logged-in screen; after that the commands below work from any terminal.
+
+Single user, reached at `http://127.0.0.1:8099` from the Mac; no Caddy, no public domain.
+In `.env`, besides the secrets from the Quick start:
+
+```bash
+AUTH=dev                                  # one fixed user, no IdP
+AF_PROVISION=auto                         # the template's `invite` leaves that user in no tenant
+PUBLIC_BASE_URL=http://127.0.0.1:8099
+AF_TRUSTED_PROXY_HOPS=0                   # no Caddy in front; the template's 1 assumes one
+VERSION=<version>                         # the template's `dev` is not a published CP tag
+WS_IMAGE=ghcr.io/k-k1/agent-fleet/workspace:<version>
+# (B) a directory the engine shares with its VM — under your home works for all three
+DATA_DIR=/Users/<you>/agent-fleet/data
+# (C) the socket's group as the engine reports it, not a host `docker` group
+#     (measured: 991 on colima, 0 on OrbStack and Docker Desktop):
+#   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock
+DOCKER_GID=<that number>
+```
+
+Then start with the overlay, which replaces (A):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.macos.yml up -d
+```
+
+- **(A) without the host network.** On a Mac the daemon runs in a Linux VM, so "host" is
+  the VM. `docker-compose.macos.yml` puts the CP on a bridge network, reaches workspaces
+  through `host.docker.internal` (`WS_AGENT_HOST`), and gives workspaces the
+  [workspace listener](#workspace-listener-optional-when-workspaces-cannot-reach-public_base_url)
+  on the same name, because `127.0.0.1` inside a workspace is the workspace itself.
+  Both ports are published on the Mac's loopback only.
+- **Alternative, unchecked:** Docker Desktop 4.34+ can enable host networking
+  (Settings → Resources → Network) and OrbStack supports `network_mode: host`; with it the
+  plain `docker-compose.yml` might work unchanged.
+- **(B) and (C)** are where Linux and a Mac can differ: the home lives on a directory the
+  engine shares with its VM. With colima and virtiofs, files kept uid 1000 and their modes
+  (`~/.ssh` 700, a new file 600), and writes were not slower than the container's own disk.
+  Another engine's file sharing may behave differently; the acceptance script checks it.
+- Apple's `container` tool is not a Docker daemon, so the CP cannot drive it.
+- Without Docker, the native package runs inside a Linux VM: checked with Lima, see
+  [deploy/native/README.md](../native/README.md).
+
+## Workspace listener (optional): when workspaces cannot reach `PUBLIC_BASE_URL`
+
+The Agent in each workspace calls the CP back — the docs pull, branch rules, the tenant
+MCP registry, AWS / Google Cloud profiles, memos, schedules, git over the CP. By default
+it does so at `PUBLIC_BASE_URL`: out through the Docker bridge's NAT and back in through
+whatever serves the public URL. If that front end stops accepting traffic from the
+Docker bridges (seen with a tunnel daemon whose `:443` socket became bound to one host
+interface: containers got an immediate RST while the host and browsers were fine), every
+one of those calls fails at once although the CP is healthy.
+
+The workspace listener gives workspaces a way to the CP that does not leave the host:
+
+```bash
+# the docker0 gateway address (normally 172.17.0.1):
+docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'
+# .env
+AF_CP_INTERNAL_LISTEN=172.17.0.1:8098
+AF_CP_INTERNAL_URL=http://host.docker.internal:8098
+```
+
+`docker compose up -d` (the CP reads both from `.env`), then Stop and Start each
+workspace — the setting reaches a workspace at its next start.
+
+- **What it serves.** Only the routes the Agent calls, each behind its own per-membership
+  bearer token; the Console, the admin API, sign-in and the egress proxy's routes answer 404.
+  It drops the identity header and every forwarding header. Links a person opens, and
+  `af-curl` / `af-shot`, stay on `PUBLIC_BASE_URL`.
+- **Bind the docker0 address, never `0.0.0.0` or `:8098`.** The docker0 address is local
+  to the host, so every per-user network reaches it (the packet is delivered to the host,
+  not forwarded between bridges), while no LAN or tailnet interface carries it. A wildcard
+  bind would put the listener on the LAN too; the CP logs a `WARNING` at start if you do.
+  (Linux still accepts a packet for that address on any interface, so a LAN machine that
+  deliberately routes the docker0 range through this host could reach it; a firewall that
+  admits the port only from the Docker bridges closes that too.) If docker0 does not exist
+  when the CP starts, the bind fails and the CP exits.
+- **`host.docker.internal`.** When `AF_CP_INTERNAL_URL` names it, the CP starts each
+  workspace with `--add-host host.docker.internal:host-gateway` (Docker Engine 20.10 or
+  later). `host-gateway` is docker0's address unless the daemon sets `host-gateway-ip`; in
+  that case bind that address instead. Any other host in the URL is left to DNS.
+- **Host firewall.** A host whose INPUT policy drops (ufw's default) must admit TCP to
+  that address and port from the Docker networks.
+- **Egress proxy.** With `AF_EGRESS_PROXY_ADDR` set, the host of `AF_CP_INTERNAL_URL` is
+  added to the workspaces' `NO_PROXY`, and it is on the built-in egress allowlist.
+- **Not on by default.** The address depends on the host's Docker configuration and
+  firewall, and a listen address that does not exist stops the CP, so a deployment that
+  works today should not have to change. Unset, there is no second port and nothing
+  changes.
+- **Docker Desktop** maps `host-gateway` to the desktop machine, not to the engine where
+  the CP listens, so this setup does not apply there. This setup is written for **rootful
+  Docker on Linux**. With **rootless Docker** it is unverified, and the two addresses need not
+  share a network namespace: docker0 lives in RootlessKit's namespace, while from Docker Engine
+  29.5 `network_mode: host` is the real host's, where that address does not exist and the CP
+  would fail to bind.
+
+Full reference: `docs/build/09-deploy.md` §9.3.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -352,6 +468,7 @@ encodes them, but if you customize it, keep them:
 | "permission denied" on docker.sock | `DOCKER_GID` matches `getent group docker`? |
 | Workspace starts but home is empty | DooD (B): `DATA_DIR` identical inside/outside; same path on restore |
 | Can't reach a started workspace | DooD (A): CP + Caddy both `network_mode: host` |
+| Workspaces cannot reach `PUBLIC_BASE_URL` while the host can (docs, branch rules, git over the CP all fail at once) | the front end serving the public URL refuses the Docker bridges — set up the [workspace listener](#workspace-listener-optional-when-workspaces-cannot-reach-public_base_url) |
 | Login always denied | allowlist empty **and nobody invited yet** (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS`, or invite somebody |
 | "this tenant needs a different sign-in" | the tenant's Login rules → sign-in methods excludes the IdP they used; send them `<PUBLIC_BASE_URL>/login/<slug>` |
 | A removed person still has access | the IdP block doesn't end their session — remove the member (Admin → tenant → member) or rotate `AF_COOKIE_SECRET` |

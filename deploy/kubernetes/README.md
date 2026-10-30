@@ -8,9 +8,9 @@ file refer to it.
 
 > **Preview.** This runtime profile is a preview: accepted on a GKE Standard cluster, not yet
 > supported for production. Known limits: no browser features on this runtime (below), and the
-> regional SSD quota on GKE ("Disk quota (GKE)" under Preconditions). Still being measured: the
-> load balancer's 24-hour WebSocket cut ("7. The load balancer"). What it costs is "The bill".
-> The rest of the acceptance run is tracked in issue #1468.
+> regional SSD quota on GKE ("Disk quota (GKE)" under Preconditions). The acceptance run (#1468)
+> is done; what a WebSocket cut does to a terminal is in "7. The load balancer". What it costs is
+> "The bill".
 
 | Path | What it is |
 |---|---|
@@ -243,8 +243,13 @@ it with `kubectl -n default delete pod psql-grant`.
 command above cannot run there. The alternative keeps the password out of argv and out of the
 pod spec by reading it from a Secret: store the password in a temporary Secret, run a
 non-interactive pod that takes `PGPASSWORD` from it and the statements from `-c`, then delete
-both. The variant below is **not verified as written**; only the interactive pod above has been
-run.
+both. The variant below ran as written on a stand-up of the small zonal profile (`GRANT ROLE`,
+`ALTER DATABASE`, `ALTER SCHEMA` came back, and the trap removed the pod and the Secret); the one
+change was the `read` line, replaced by a generated password. The first line of the interactive
+block, `gcloud sql users set-password … --prompt-for-password`, needs a terminal too: without one
+set the password with `--password` (it is in that one `gcloud` call's argument list for a moment),
+and set a new random value afterwards. The interactive `-it … -W` form was not run on that
+stand-up.
 
 ```bash
 PWDIR="$(mktemp -d)"; chmod 700 "$PWDIR"
@@ -361,8 +366,11 @@ minutes past the 3600-second `timeoutSec` (ADR 0106, note of 2026-10-03). The Co
 the same socket on timers, a round-trip ping every 5 seconds and a heartbeat every 15
 (`console/src/terminal/term.ts`), and during that run the pings kept the connection from looking
 idle. A browser may slow or stop those timers for a hidden tab, a frozen page or a sleeping
-machine, and that was **not measured**; nor were the 24-hour cut and whether the Console
-reconnects transparently after a cut (#1468). Test them before relying on day-long terminals.
+machine, and that was **not measured**. The 24-hour cut was not waited out either, but a forced cut
+was (a Control Plane restart, #1468): the terminal pane shows `[disconnected]`, and clicking it
+reattaches within a few seconds with the shell and its tmux session intact, without reloading the
+page. A cut by the load balancer reaches the browser as the same unclean close, so the same
+recovery applies.
 
 **`AF_TRUSTED_PROXY_HOPS` stays 2.** The load balancer appends `<client>, <load balancer>` to
 whatever `X-Forwarded-For` it receives, and the CP counts from the right. With nothing in front
@@ -383,18 +391,20 @@ kubectl -n "$PREFIX-cp" get gateway af-cp     # PROGRAMMED True, ADDRESS = lb_ad
 curl -sS https://<fqdn>/readyz
 ```
 
-**Wait for the Gateway to be `PROGRAMMED True` before judging `/readyz`.** A rollout that is
-done does not mean the load balancer is: on a second stand-up it took about 5 more minutes
-after the CP was ready before `/readyz` returned 200, and `curl` printed `000` (no connection)
-in the meantime, although DNS already pointed at the new address. Poll the Gateway, then
-retry the request:
+**Poll `/readyz` itself; `PROGRAMMED True` is not enough.** A rollout that is done does not mean
+the load balancer is: on two stand-ups it took about 5 to 6 more minutes after the CP was ready
+before `/readyz` returned 200, and `curl` printed `000` (no connection) in the meantime, although
+DNS already pointed at the new address. On the latest one the Gateway turned `PROGRAMMED True`
+about 2 minutes after the CP was ready and `/readyz` still answered `000` for about 4 minutes
+after that. Retry the request until it answers:
 
 ```bash
-kubectl -n "$PREFIX-cp" wait --for=condition=Programmed gateway/af-cp --timeout=15m
+until [ "$(curl -sS -m 10 -o /dev/null -w '%{http_code}' https://<fqdn>/readyz)" = 200 ]; do sleep 30; done
 ```
 
-The `wait` command is **not verified as written** (the observation above is from the
-`get gateway` column); `kubectl -n "$PREFIX-cp" get gateway af-cp -w` shows the same state.
+`kubectl -n "$PREFIX-cp" get gateway af-cp -w` shows the Gateway's own state. A
+`kubectl wait --for=condition=Programmed gateway/af-cp` was not run, and would stop too early for
+the same reason.
 
 What the CP's account may do — every line must answer as shown:
 
@@ -1007,8 +1017,8 @@ scales them to 0 (their sessions end), `--keep-db` leaves Cloud SQL running.
   balancer's forwarding rule, the Private Service Connect endpoint, Cloud NAT and its reserved
   address, persistent disks (every workspace's two claims, the CP's `af-cp-data`) and Cloud SQL
   storage. Measured in [deploy/gcp/gke, "Cost"](../gcp/gke/README.md#cost).
-- Tested against stub `gcloud` / `kubectl` (`deploy/local/gke-pause-stub-test.sh`); it has not
-  yet been run on a real cluster.
+- Tested against stub `gcloud` / `kubectl` (`deploy/local/gke-pause-stub-test.sh`), and run on a
+  real small-profile cluster (#2271).
 
 ### The bill
 
@@ -1195,7 +1205,9 @@ Things seen on a real teardown (one zonal cluster, small profile):
   address range, the subnet and the VPC without the long stall and without a manual peering delete.
 - The first `$TF destroy` can fail once on `google_certificate_manager_certificate_map` ("already
   being used by" a target HTTPS proxy). The Gateway controller removes that proxy asynchronously
-  after the cluster is gone; run `$TF destroy` again after a minute or so.
+  after the cluster is gone; run `$TF destroy` again after a minute or so. It depends on timing:
+  of three teardowns it failed on one, and the others finished in a single run. `terraform init`
+  can also fail once with "connection reset by peer" while downloading a provider; run it again.
 - `kubectl delete -k` exits 1 with `NotFound` for the workspace namespace's network policies when
   that namespace was deleted first. Nothing is left behind; it is harmless.
 - The KMS key ring and the key's name cannot be used again after a destroy: the key's versions

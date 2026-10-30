@@ -14,6 +14,7 @@ import type {
 } from "../types/session.ts";
 import { SESSION_KINDS } from "../types/session.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
+import { catalogHasKind, kindCatalogVersion, kindFacts } from "./kindCatalog.ts";
 
 // Capability flags. The UI shows an affordance iff the attached session's agent
 // has the matching cap, so a new agent lights up the right controls by data alone.
@@ -75,6 +76,21 @@ export interface AgentCaps {
   launchableFromRepo: boolean; // offered in a repo row's launch menu (ssm is not)
   fixedAliveChip: boolean; // liveness shown as a fixed "running" chip (no state model) — shell
   namedByLabel: boolean; // display name comes from the session label (else repo@time) — non-shell
+  // The launch model picker lists models the Agent serves live (GET /agents/{kind}/models)
+  // rather than claude's fixed alias list.
+  liveModels: boolean;
+  // That live list has no "let the CLI pick" entry, so a launch must name a model (lcpp —
+  // requiresConcreteModel in lib/agentModels.ts says why).
+  concreteModel: boolean;
+  // Has a tab in Settings > Skills. Only gates which remembered tab is restored before the
+  // Agent's catalog loads; the tabs themselves are the kinds the Agent reports.
+  skillsCatalog: boolean;
+  // A member connects it with an account of their own, so a tenant may name it as the default
+  // agent (ADR 0114 decision 8) and connecting it completes the first-run card. shell and ssm
+  // need no connection, lcpp is governed by engine access, and agy is experimental.
+  // control-plane/tenant_member_defaults.go accepts exactly these (memberDefaultAgents;
+  // derivedKindLists.test.ts reads it).
+  memberDefault: boolean;
 }
 
 // A status chip for a session: codicon + label + color class (+ optional spinner).
@@ -131,25 +147,24 @@ export interface AgentDescriptor {
   // slash-command kinds, "$" for codex skill mentions). "" = the picker opens from
   // its button only (kinds whose entries are all injection prompts — no slash form).
   skillTrigger: string;
-  // managed driver (docs/log/27 P2/P3): whether this kind supports creating paneless sessions
-  // driven by the shared runtime. Kinds with it true show the driver choice in the launch UI and
+  // managed driver (docs/log/27 P2/P3): whether this kind defaults to a paneless session driven
+  // by the shared runtime. Kinds with it true show the driver choice in the launch UI and
   // default to managed (§9.2 — Terminal (CLI) is the user's explicit memory trade-off).
-  managedDriver: boolean;
-  // Whether this kind can ever run in a Terminal (CLI) pane. Optional; absent/true means yes —
-  // only lcpp sets it false (ADR 0093 決定 2: it owns its own tool loop and transcript, so there
-  // is no CLI program to put in a pane, ever — BuildLaunch always errors). Read by the driver
-  // toggle in LaunchModal and the driver-switch menu item in SessionMenu, so a kind that is
-  // managedDriver-only never offers a choice that can only fail.
-  //
-  // Declared statically here, like managedDriver, rather than read off the wire: the server has
-  // an equivalent (agents.Caps.ManagedOnly), but it is not serialized into the session/agent API
-  // yet, and wiring it is a Go change (out of scope for this Console-only change — see
-  // docs/log/99-lcpp-agent-kind.md §3.7).
-  terminalDriver?: boolean;
+  // Read from the kind catalog (managedDefault), not declared here; see kindCatalog.ts.
+  readonly managedDriver: boolean;
+  // Whether this kind can ever run in a Terminal (CLI) pane: false for a managed-only kind
+  // (lcpp, muse; ADR 0093 decision 2 — no CLI program to put in a pane, BuildLaunch always errors).
+  // Read by the driver toggle in LaunchModal and the driver-switch item in SessionMenu, so a
+  // managed-only kind never offers a choice that can only fail. From the catalog (managedOnly).
+  readonly terminalDriver?: boolean;
   // Approximate extra RSS of one Terminal (CLI) session over a managed one. The launch and
   // switch UI carry no per-kind branch and just show this measured value (docs/log/27 §12.2-9,
   // appendix B).
   tuiMemoryCost: string;
+  // Default priority among the assistant-chat backends (caps.headlessChat), 1 first: the seed of
+  // assistantAgentOrder / aiAssistOrder, which the Agent's chatx.DefaultHeadlessOrder also
+  // follows. Every other kind list is in SESSION_KINDS order.
+  assistantRank?: number;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
   available(ctx: AvailCtx): boolean;
@@ -179,11 +194,15 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     launchableFromRepo: false,
     fixedAliveChip: false,
     namedByLabel: true,
+    liveModels: false,
+    concreteModel: false,
+    skillsCatalog: false,
+    memberDefault: false,
     ...overrides,
   };
 }
 
-export const AGENTS: Record<SessionKind, AgentDescriptor> = {
+const PRESENTATION: Record<SessionKind, Presentation> = {
   claude: {
     id: "claude",
     icon: "brand:claude",
@@ -198,9 +217,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "/plan", // claude has a direct command to enter plan mode
     defaultModeLabel: "Bypass",
     skillTrigger: "/",
-    managedDriver: false,
     tuiMemoryCost: "",
+    assistantRank: 1,
     caps: caps({
+      skillsCatalog: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: status-hook permission state + the mirror's permission card
       chat: true,
@@ -252,9 +273,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // models` under codex's own subscription auth) → `codex -m`.
     // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
     // a plain path mention — live-verified for both the TUI and `codex exec`.
-    managedDriver: true,
     tuiMemoryCost: "230MiB",
+    assistantRank: 2,
     caps: caps({
+      liveModels: true,
+      skillsCatalog: true,
+      memberDefault: true,
       scheduledRuns: true,
       chat: true,
       headlessChat: true,
@@ -296,11 +320,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // the mirror — docs/log/40 Track D). imagePaste is off: ACP advertises image:true but v1
     // does not wire it, and an unverified cap is not declared (same rule as copilot).
     // Auth is a dedicated login flow (~/.config/cursor/auth.json; API-key registration is Track D).
-    managedDriver: true,
     // A per-session child either way, so choosing Terminal (CLI) does not change the number of
     // resident processes (one cursor process per session) — no extra cost shown, as for copilot.
     tuiMemoryCost: "",
+    assistantRank: 4,
     caps: caps({
+      liveModels: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP session/request_permission -> Interaction
       chat: true,
@@ -345,9 +371,10 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // shows the quota gauge.
     // headlessChat: `agy -p` backs assistant-chat conversations (resume via
     // --conversation; plain-text output — no working steps, no context gauge).
-    managedDriver: false,
     tuiMemoryCost: "",
+    assistantRank: 5,
     caps: caps({
+      liveModels: true,
       // the one kind whose scheduled runs shipped while the Console's hand-kept picker never
       // learned about them (ADR 0095 P2-13's closing note); see AgentCaps.scheduledRuns.
       scheduledRuns: true,
@@ -390,11 +417,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // No fork (the CLI has no fork entry point). No contextBar (events.jsonl carries outTok only
     // and no context size). imagePaste is off in v1 because it is unmeasured: an unverified cap
     // is not declared. Auth rides on the GitHub connection and assumes a Copilot subscription.
-    managedDriver: true,
     // A per-session child either way, so choosing Terminal (CLI) does not change the number of
     // resident processes (one copilot process per session) — no extra cost shown.
     tuiMemoryCost: "",
     caps: caps({
+      liveModels: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP session/request_permission -> Interaction
       chat: true,
@@ -456,12 +484,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // ACP advertises image:true but v1 does not wire it. headlessChat: off (decision §4-3, kiro
     // is not added to ASSISTANT_AGENT_KINDS — title suggestion works through the generic read
     // layer). Auth is a device-flow login (Builder ID / free; API keys are Track D).
-    managedDriver: true,
     // A per-session child either way, so choosing Terminal (CLI) does not change the number of
     // resident processes (one kiro process per session) — no extra cost shown, as for
     // cursor and copilot.
     tuiMemoryCost: "",
     caps: caps({
+      liveModels: true,
+      memberDefault: true,
       scheduledRuns: true,
       permissionChoice: true, // approvals are answerable: ACP request_permission / the TUI's requires-approval
       chat: true,
@@ -501,9 +530,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // imagePaste: upload + path-in-prompt. Vision is model-dependent: a vision model
     // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
     // live-verified) or declines honestly — never a silent failure.
-    managedDriver: true,
     tuiMemoryCost: "300MiB",
+    assistantRank: 3,
     caps: caps({
+      liveModels: true,
+      skillsCatalog: true,
+      memberDefault: true,
       scheduledRuns: true,
       chat: true,
       headlessChat: true,
@@ -558,16 +590,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     defaultModeLabel: "",
     skillTrigger: "",
     // Both the managed driver (driver.go, in-process — decision 4) and the transcript store
-    // (store.go) landed (ADR 0093 stage 2), so the kind is now launchable. managedDriver is
-    // true because the *shape* is managed-only (決定 2): there is no Terminal (CLI) route at
-    // all (terminalDriver below), so the launch modal's driver choice and the session-menu
-    // driver-switch item never offer one — LaunchModal/SessionMenu both gate on
-    // terminalDriver, not on managedDriver alone.
-    managedDriver: true,
-    // No Terminal (CLI) route exists, or ever will — see the field's doc comment above.
-    terminalDriver: false,
+    // (store.go) landed (ADR 0093 stage 2), so the kind is now launchable. The driver facts
+    // (managed-only: no Terminal (CLI) route, ever — decision 2) come from the kind catalog.
     tuiMemoryCost: "",
     caps: caps({
+      liveModels: true,
+      concreteModel: true,
       // Caps().PermissionChoice on the Go side is true (driver.go's approve() really blocks
       // the tool loop on a Console-answerable question, docs/log/76's condition).
       permissionChoice: true,
@@ -610,12 +638,14 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "",
     skillTrigger: "",
-    // Managed-only, the same shape as lcpp: BuildLaunch refuses unconditionally (決定 2), so the
-    // launch modal and the driver-switch item must never offer a choice that can only fail.
-    managedDriver: true,
-    terminalDriver: false,
+    // Managed-only, the same shape as lcpp (the catalog says so): BuildLaunch refuses
+    // unconditionally (decision 2).
     tuiMemoryCost: "",
+    assistantRank: 6,
     caps: caps({
+      liveModels: true,
+      skillsCatalog: true,
+      memberDefault: true,
       // Live-verified 2026-09-22 (ADR 0095 P2-17), one subscription turn: the driver reads the
       // attached file and sends an MSP `image` part, the host echoed the attachment back on the
       // userMessage item (type=image, mediaType=image/png), and the model reported a token that
@@ -686,7 +716,6 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "",
     skillTrigger: "",
-    managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
       ephemeral: true,
@@ -712,17 +741,73 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // Like shell: a plain login shell with no working/idle model, so its liveness is a
     // fixed "running" chip (never "waiting for input") and it raises no answer/question
     // notifications.
-    managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({ ephemeral: true, fixedAliveChip: true }),
     available: (c) => (c.ssmHostCount ?? 0) > 0,
   },
 };
 
-// agentOf resolves a kind to its descriptor, defaulting to claude for unknown
-// kinds (mirrors the old ternary chains that fell back to claude).
+// Everything in a descriptor except the driver facts is presentation and stays static here.
+// The two driver facts are live getters over the kind catalog (kindCatalog.ts), so the
+// descriptor object stays the same and call sites keep reading plain properties.
+type Presentation = Omit<AgentDescriptor, "managedDriver" | "terminalDriver">;
+
+function withCatalogFacts(p: Presentation): AgentDescriptor {
+  return Object.defineProperties(
+    { ...p },
+    {
+      managedDriver: { enumerable: true, get: () => !!kindFacts(p.id)?.managedDefault },
+      terminalDriver: { enumerable: true, get: () => !kindFacts(p.id)?.managedOnly },
+    },
+  ) as AgentDescriptor;
+}
+
+export const AGENTS = Object.fromEntries(
+  Object.entries(PRESENTATION).map(([k, p]) => [k, withCatalogFacts(p)]),
+) as Record<SessionKind, AgentDescriptor>;
+
+// A kind the Agent's catalog names but this Console has no presentation for (an Agent newer
+// than the Console): a neutral descriptor so the session list, chips and headers render it by
+// its id. No capability is claimed and it is never launchable from here.
+const genericCache = new Map<string, AgentDescriptor>();
+let genericVersion = -1;
+
+function genericAgent(kind: string): AgentDescriptor {
+  const v = kindCatalogVersion();
+  if (v !== genericVersion) {
+    genericCache.clear();
+    genericVersion = v;
+  }
+  let d = genericCache.get(kind);
+  if (!d) {
+    d = withCatalogFacts({
+      id: kind as SessionKind,
+      icon: "symbol-misc",
+      label: kind,
+      assistantName: kind,
+      short: kind.slice(0, 2),
+      cssClass: "generic",
+      launchHintKey: "agent.launch_hint.shell",
+      launchSuffix: "",
+      planCycleKey: "",
+      planEnterCmd: "",
+      defaultModeLabel: "",
+      skillTrigger: "",
+      tuiMemoryCost: "",
+      caps: caps({}),
+      available: () => false,
+    });
+    genericCache.set(kind, d);
+  }
+  return d;
+}
+
+// agentOf resolves a kind to its descriptor. A kind only the catalog knows gets a generic
+// descriptor; anything else (alternate spellings, junk) still defaults to claude, as the old
+// ternary chains did.
 export function agentOf(kind: string | null | undefined): AgentDescriptor {
-  return (kind && AGENTS[kind as SessionKind]) || AGENTS.claude;
+  if (!kind) return AGENTS.claude;
+  return AGENTS[kind as SessionKind] || (catalogHasKind(kind) ? genericAgent(kind) : AGENTS.claude);
 }
 
 // loginExpired: the kind is connected but its stored login can no longer run a turn. Only
@@ -757,21 +842,19 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
   return out;
 }
 
+// The kinds a member connects with an account of their own (caps.memberDefault), in
+// SESSION_KINDS order.
+export const MEMBER_DEFAULT_AGENTS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.memberDefault);
+
 // Kinds a schedule may be pointed at, DERIVED from the cap rather than listed: the hand-kept
 // copy of this list in the schedule editor had already lost agy, and a derived one cannot drift.
 // The order is the registry's own.
-// The kinds a member connects with an account of their own: what a tenant may name as its
-// default agent (ADR 0114 decision 8), and what completes the first-run card's connect step.
-// control-plane/tenant_member_defaults.go accepts exactly these (memberDefaultAgents; a test
-// there reads this line). shell and ssm need no connection, lcpp is governed by engine access,
-// and agy is experimental.
-export const MEMBER_DEFAULT_AGENTS = ["claude", "codex", "opencode", "cursor", "copilot", "kiro", "muse"] as const;
-
 export const scheduledKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.scheduledRuns);
 
-// Kinds offered in a repo row's launch menu, in display order. Every entry must
-// carry the launchableFromRepo cap (asserted in availability.test.ts); the order
-// is presentational.
-export const repoLaunchKinds: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"];
+// Kinds offered in a repo row's launch menu, in SESSION_KINDS order.
+export const repoLaunchKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.launchableFromRepo);
+
+// Kinds with a Settings > Skills tab, in SESSION_KINDS order.
+export const skillsCatalogKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.skillsCatalog);
 
 export type { SsmHost };

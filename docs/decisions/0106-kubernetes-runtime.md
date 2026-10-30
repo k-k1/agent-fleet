@@ -2,9 +2,12 @@
 
 English | [日本語](0106-kubernetes-runtime.ja.md)
 
-- Status: **proposed** (2026-10-02). Nothing is built or measured yet; the facts below come from
-  reading the code, the documentation and the Kubernetes and Google Cloud references, and each
-  one that has not been run says so.
+- Status: **accepted** (2026-10-05; proposed 2026-10-02). Phase 1 is built and was accepted live on GKE
+  Standard (#1468, closed 2026-10-05): the adapter, the CP's workspace-only listener, `deploy/kubernetes/`
+  and `deploy/gcp/gke/`, first released in v0.27.0. Not built: phase 2 (Autopilot and the "Out of scope"
+  items), and the Helm chart stays shelved (decision 12). Measurements are in the notes of 2026-10-03,
+  2026-10-04 and 2026-10-23 below. Follow-ups: #1092 (tracking, still open), #2498 (IMDS isolation and
+  the home-full notice are missing on this runtime).
 - Tracking: #1092
 - Reopens: the shelving of Kubernetes in [docs/log/35](../log/35-packaging.md) §35.3-5 and
   `docs/log/roadmap.md` P3-10 ("Helm chart shelved until there is demand; the AWS answer is
@@ -969,3 +972,47 @@ init container and the erase pod, and the Recreate's `~/repos`) now run
 `find … -type d ! -perm -u+rwx -exec chmod u+rwx {} \;` over what they are about to remove, kept
 names excluded, without following links and within one filesystem. Decision 4 itself is
 unchanged.
+
+## Note (2026-10-23) — measurements written back from the live acceptance (#1468)
+
+Nothing above is changed. Open questions 2 and 3 were answered on the GKE Standard acceptance
+cluster (2026-10-02/05; GKE 1.35.8, Dataplane V2, `asia-northeast1`); the figures are from #1468.
+
+- **Start latency (open question 2).** Pod create to Ready took 49 s with the workspace image
+  already on the node, of which 33 s was the boot-time install of the agent CLIs. With a node
+  scale-up from 0 nodes it took about 3 m 20 s. The first pull of the image took about 49 s.
+  The runbook does not carry these figures.
+- **The Console's reconnect (open question 3, measured 2026-10-05).** A forced cut (a rollout
+  restart of the CP, which closes every Console WebSocket) left the terminal pane on
+  `[disconnected]`. Clicking the pane reattached it within a few seconds, with the shell and its
+  tmux session intact and no page reload. The Console reconnects an unclean close on focus, not
+  instantly, so the notice stays readable. A cut by the load balancer reaches the browser as the
+  same unclean close. The 24-hour cut itself was not waited out, and a hidden tab or sleeping
+  machine was not measured.
+- **Cost.** The measured cost table is in the same issue and in
+  [`deploy/gcp/gke/README.md`](../../deploy/gcp/gke/README.md#cost); this record states no figure.
+- **Not measured:** GKE Autopilot (open question 4), which stays with phase 2.
+
+## Note 2026-10-23 — IMDS opt-out and home-full notice (#2498)
+
+- The workspace Secret now carries `AWS_EC2_METADATA_DISABLED=true` as the first entry, as
+  docker does, so an operator's `WS_ENV` still overrides it; `AF_WS_WORKLOAD_AWS=1` leaves it
+  out. It does not block the GKE metadata server (node service account / Workload Identity);
+  blocking that route (NetworkPolicy, metadata concealment) is left to the cluster.
+- The runtime reports `home_own` through `OwnHomeVolume()`: the home claim is per workspace.
+  Not verified on a real cluster.
+- `AF_K8S_HOME_SHARED_FS=1` withholds `home_own` for a StorageClass that backs homes with one
+  shared filesystem; the block-storage expectation is not checked. Follow-ups: #2620.
+
+## Note 2026-10-26 — the workspace listener on docker (#2776)
+
+Decision 8's second listener is now a supported, opt-in setup on `docker` too, for hosts whose
+public front end refuses the Docker bridges. The CP binds the docker0 gateway address, never a
+wildcard (a wildcard on `docker` is logged at start), and workspaces use
+`AF_CP_INTERNAL_URL=http://host.docker.internal:<port>`; the docker adapter adds
+`--add-host host.docker.internal:host-gateway` when the URL names that host, and adds the host
+to `NO_PROXY` when the egress proxy is set, as on Kubernetes. The docker0 address is local to
+the host, so every per-user network reaches it without crossing the inter-network isolation.
+Binding each per-user network's gateway was not chosen: those networks come and go with
+workspaces, and one CP socket per network would follow them. Compose leaves it off by default.
+Decision 8 itself is unchanged. Not verified on a live Docker deployment yet.

@@ -15,11 +15,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -75,6 +76,9 @@ func TestValidateMCPBodyRules(t *testing.T) {
 		{"unknown kind", mcpServerBody{Name: "x", URL: "https://x/y", Kinds: []string{"emacs"}}, codeMCPKindUnknown},
 		{"timeout", mcpServerBody{Name: "x", URL: "https://x/y", TimeoutMS: 10}, codeMCPTimeoutRange},
 		{"transport", mcpServerBody{Name: "x", Transport: "sse", URL: "https://x/y"}, codeMCPTransport},
+		{"oauth headers", mcpServerBody{Name: "x", URL: "https://x/y", Auth: "oauth", Headers: map[string]string{"Authorization": "***"}}, codeMCPOAuthHeader},
+		{"oauth user_secret", mcpServerBody{Name: "x", URL: "https://x/y", Auth: "oauth", UserSecret: true}, codeMCPOAuthSecret},
+		{"auth unknown", mcpServerBody{Name: "x", URL: "https://x/y", Auth: "kerberos"}, codeMCPAuthUnknown},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -108,13 +112,45 @@ func TestMergeHeadersRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMaskHeadersKeepsBearerScheme(t *testing.T) {
+	cases := map[string]string{
+		"Bearer abc123": "Bearer ***",
+		"bearer abc123": "bearer ***",
+		"Token abc123":  MaskedValue,
+		"Bearer":        MaskedValue,
+		"abc123":        MaskedValue,
+	}
+	for in, want := range cases {
+		got := maskHeaders(map[string]string{"Authorization": in})["Authorization"]
+		if got != want {
+			t.Errorf("maskHeaders(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMergeHeadersBearerMask(t *testing.T) {
+	stored := map[string]string{"Authorization": "bearer real", "X-Team": "sre"}
+	for _, in := range []string{"Bearer ***", "bearer ***", "BEARER ***", MaskedValue} {
+		if got := mergeHeaders(map[string]string{"Authorization": in}, stored); got["Authorization"] != "bearer real" {
+			t.Errorf("incoming %q lost the stored value: %v", in, got)
+		}
+	}
+	if got := mergeHeaders(map[string]string{"Authorization": "Bearer new"}, stored); got["Authorization"] != "Bearer new" {
+		t.Errorf("a typed token must replace the stored one: %v", got)
+	}
+	// Never stored literally when nothing is behind it.
+	if _, ok := mergeHeaders(map[string]string{"New": "Bearer ***"}, stored)["New"]; ok {
+		t.Error("an unbacked Bearer mask must be dropped")
+	}
+}
+
 func TestStripValuesAndMask(t *testing.T) {
 	in := map[string]string{"Authorization": "Bearer real"}
 	if v := stripValues(in)["Authorization"]; v != "" {
 		t.Fatalf("user_secret must keep the NAME and drop the value, got %q", v)
 	}
-	if v := maskHeaders(in)["Authorization"]; v != MaskedValue {
-		t.Fatalf("a stored value must be masked, got %q", v)
+	if v := maskHeaders(in)["Authorization"]; v != "Bearer "+MaskedValue {
+		t.Fatalf("a stored Bearer value must be masked with its scheme kept, got %q", v)
 	}
 	// An empty value stays empty: it is not a secret being withheld, it is one nobody has
 	// entered. Masking it would tell the admin a credential is stored when none is.
@@ -241,7 +277,7 @@ func TestMCPServerStoreRoundTripsFlags(t *testing.T) {
 	row := store.MCPServerRow{
 		ID: "s1", TenantID: "t", Name: "wiki", Transport: "http", URL: "https://wiki/mcp",
 		Targets: "session", Kinds: "claude,codex", TimeoutMS: 30000,
-		Enabled: false, UserSecret: true, CreatedBy: "admin@example.com",
+		Enabled: false, UserSecret: true, Auth: "oauth", CreatedBy: "admin@example.com",
 		CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
 	if err := a.store.CreateMCPServer(ctx, row); err != nil {
@@ -256,7 +292,7 @@ func TestMCPServerStoreRoundTripsFlags(t *testing.T) {
 	if got.Enabled || !got.UserSecret {
 		t.Fatalf("bool columns round-tripped wrong: enabled=%v user_secret=%v", got.Enabled, got.UserSecret)
 	}
-	if got.TimeoutMS != 30000 || got.Kinds != "claude,codex" || got.CreatedBy != "admin@example.com" {
+	if got.TimeoutMS != 30000 || got.Kinds != "claude,codex" || got.CreatedBy != "admin@example.com" || got.Auth != "oauth" {
 		t.Fatalf("row round-tripped wrong: %+v", got)
 	}
 }
@@ -340,61 +376,212 @@ func TestDistributeScopesAndStrips(t *testing.T) {
 	}
 }
 
-// 🔴 The same list of MCP-capable kinds exists in three places in three languages, and it had
-// already drifted: muse shipped into `mcpreg.knownKinds` (Go, agent) and `MCP_KINDS` (TS,
-// Console) while this module's copy stayed at seven, so the CP refused a tenant MCP definition
-// scoped to muse with "unknown agent kind" (ADR 0095 P2-14).
-//
-// Module boundaries are why it is a copy at all — the Console is TypeScript and the agent is a
-// separate Go module — so the guard reads the other two as TEXT. A missing file skips rather
-// than fails: the check exists to catch drift in the repo, not to make a trimmed checkout red.
-func TestMcpKnownKindsMirrorsTheOtherTwoCopies(t *testing.T) {
-	read := func(rel string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", "..", rel))
-		if err != nil {
-			t.Skipf("%s is not in this checkout: %v", rel, err)
-		}
-		return string(b)
-	}
-	agent := read("workspace/agent/internal/mcpreg/def.go")
-	console := read("console/src/features/settings/mcp/mcpWire.ts")
+// mcpBodyForKind is the smallest tenant definition validateMCPBody accepts, scoped to one kind,
+// so the kind is the only thing that can make it fail.
+func mcpBodyForKind(kind string) mcpServerBody {
+	return mcpServerBody{Name: "wiki", URL: "https://mcp.example.com/mcp", Kinds: []string{kind}}
+}
 
-	start := strings.Index(agent, "var knownKinds = map[string]bool{")
-	if start < 0 {
-		t.Fatal("mcpreg.knownKinds has been renamed; this guard is now reading nothing")
-	}
-	agentBlock := agent[start : start+strings.Index(agent[start:], "\n}")]
-	consoleLine := ""
-	for _, line := range strings.Split(console, "\n") {
-		if strings.HasPrefix(line, "export const MCP_KINDS") {
-			consoleLine = line
+// mcpKnownKinds is derived from the Agent's kind catalog snapshot, which the Agent module holds
+// equal to its registry (TestKindCatalogSnapshot). This pins the derivation itself: exactly the
+// catalog's mcpClient "yes" kinds, the two that drifted (#1075) among them, and nothing else.
+func TestMcpKnownKindsDeriveFromKindCatalog(t *testing.T) {
+	want := map[string]bool{}
+	for _, e := range agentkinds.All() {
+		if e.MCPClient == agentkinds.Yes {
+			want[e.Kind] = true
 		}
 	}
-	if consoleLine == "" {
-		t.Fatal("MCP_KINDS has been renamed; this guard is now reading nothing")
+	if len(want) == 0 || !reflect.DeepEqual(mcpKnownKinds, want) {
+		t.Fatalf("mcpKnownKinds = %v, want the catalog's MCP clients %v", mcpKnownKinds, want)
+	}
+	for _, k := range []string{"muse", "lcpp", "claude"} {
+		if aerr := validateMCPBody(mcpBodyForKind(k)); aerr != nil {
+			t.Errorf("a definition scoped to %q is refused: %v", k, aerr)
+		}
+	}
+}
+
+// Deriving a list is where alternate spellings slip in or fall out. The Agent's mcpreg matches
+// kinds exactly, so the CP must refuse every other spelling too: accepting one would distribute
+// a definition no session receives.
+func TestMcpKnownKindsRefuseAlternateSpellings(t *testing.T) {
+	for _, k := range []string{"", "shell", "ssm", "Claude", "CLAUDE", " claude", "claude-code",
+		"llamacpp", "llama.cpp", "antigravity", "kiro-cli", "cursor-agent", "github-copilot", "Muse"} {
+		aerr := validateMCPBody(mcpBodyForKind(k))
+		if aerr == nil || aerr.Code != codeMCPKindUnknown {
+			t.Errorf("kind %q: got %v, want %s", k, aerr, codeMCPKindUnknown)
+		}
+	}
+}
+
+// Switching a distributed definition to OAuth discards the header values stored for it, the
+// same rule as user_secret: nothing reads them any more, so they must not stay in the table.
+// The row is then distributed as auth=oauth with no headers.
+func TestAdminUpsertToOAuthDropsStoredHeaders(t *testing.T) {
+	a, ctx := newMCPServerAPITest(t, true)
+	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
+	cp := a.cp.(testCP)
+	cp.admin = &tn
+	a = NewServerAPI(cp)
+	upsert := func(method, path, id string, b mcpServerBody) *httptest.ResponseRecorder {
+		b.TenantSlug = tn.Slug
+		raw, _ := json.Marshal(b)
+		r := httptest.NewRequest(method, path, strings.NewReader(string(raw)))
+		r.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		a.AdminUpsert(w, r)
+		return w
+	}
+	w := upsert(http.MethodPost, "/api/admin/mcp-servers", "", mcpServerBody{Name: "hosted", URL: "https://m.example.com/mcp",
+		Headers: map[string]string{"Authorization": "Bearer tenant-wide"}, Targets: mcpTargets{Session: true}, Enabled: true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	var created mcpServerBody
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+
+	// The Console sends the masked header back by mistake: refused, nothing changes.
+	if w := upsert(http.MethodPut, "/api/admin/mcp-servers/"+created.ID, created.ID, mcpServerBody{Name: "hosted", URL: "https://m.example.com/mcp",
+		Auth: "oauth", Headers: map[string]string{"Authorization": "Bearer ***"}, Targets: mcpTargets{Session: true}, Enabled: true}); w.Code != http.StatusBadRequest {
+		t.Fatalf("oauth with a header: %d %s", w.Code, w.Body)
+	}
+	if w := upsert(http.MethodPut, "/api/admin/mcp-servers/"+created.ID, created.ID, mcpServerBody{Name: "hosted", URL: "https://m.example.com/mcp",
+		Auth: "oauth", Targets: mcpTargets{Session: true}, Enabled: true}); w.Code != http.StatusOK {
+		t.Fatalf("switch to oauth: %d %s", w.Code, w.Body)
+	}
+	row, ok, err := a.store.GetMCPServer(ctx, tn.ID, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: %v %v", ok, err)
+	}
+	if row.Auth != "oauth" || row.HeadersEnc != "" || row.KeyRef != "" {
+		t.Fatalf("the stored row still holds headers or lost auth: auth=%q headers_enc=%q", row.Auth, row.HeadersEnc)
 	}
 
-	for kind := range mcpKnownKinds {
-		// session.KindMuse, not "muse", is how the agent's copy spells it — so the check is on
-		// the kind slug appearing in the block at all, capitalised the Go way.
-		if !strings.Contains(agentBlock, "Kind"+strings.ToUpper(kind[:1])+kind[1:]) &&
-			!strings.Contains(agentBlock, `"`+kind+`"`) {
-			t.Errorf("%q is in the CP's list and not in mcpreg.knownKinds", kind)
-		}
-		if !strings.Contains(consoleLine, `"`+kind+`"`) {
-			t.Errorf("%q is in the CP's list and not in the Console's MCP_KINDS", kind)
-		}
+	rec := httptest.NewRecorder()
+	a.Distribute(rec, httptest.NewRequest(http.MethodGet, "/internal/mcp-servers", nil),
+		store.MembershipView{MembershipID: "m1", TenantID: tn.ID})
+	var out struct {
+		Servers []distDef `json:"servers"`
 	}
-	// …and the other direction, which is the one that actually broke: a kind the agent accepts
-	// and the CP does not is a tenant definition the admin API refuses for no reason the admin
-	// can act on.
-	for _, kind := range []string{"claude", "codex", "opencode", "cursor", "kiro", "agy", "copilot", "muse", "lcpp", "shell"} {
-		inAgent := strings.Contains(agentBlock, "Kind"+strings.ToUpper(kind[:1])+kind[1:])
-		if inAgent && !mcpKnownKinds[kind] {
-			t.Errorf("mcpreg.knownKinds has %q and the CP's copy does not: a tenant server scoped to it is refused", kind)
-		}
-		if !inAgent && mcpKnownKinds[kind] {
-			t.Errorf("the CP's copy has %q and mcpreg.knownKinds does not", kind)
-		}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Servers) != 1 {
+		t.Fatalf("distribute: %v %s", err, rec.Body)
+	}
+	if d := out.Servers[0]; d.Auth != "oauth" || len(d.Headers) != 0 || d.UserSecret {
+		t.Fatalf("distributed as %+v, want auth=oauth with no headers", d)
+	}
+}
+
+func TestRefuseOwnMCP(t *testing.T) {
+	const base = "https://af.example.com"
+	for _, c := range []struct {
+		name, url, base string
+		refused         bool
+	}{
+		{"exact", "https://af.example.com/mcp", base, true},
+		{"trailing slash", "https://af.example.com/mcp/", base, true},
+		{"explicit default port", "https://af.example.com:443/mcp", base, true},
+		{"scheme and case", "http://AF.Example.com/mcp", base, true},
+		{"base with slash and port", "https://af.example.com:8443/mcp", "https://af.example.com:8443/", true},
+		{"dot segment", "https://af.example.com/mcp/../mcp", base, true},
+		{"double slash", "https://af.example.com//mcp", base, true},
+		{"base prefix equal", "https://af.example.com/af/mcp", "https://af.example.com/af/", true},
+		{"base prefix other path", "https://af.example.com/mcp", "https://af.example.com/af", false},
+		{"dot segment escapes base", "https://af.example.com/af/../mcp", "https://af.example.com/af", false},
+		{"absolute dns name", "https://af.example.com./mcp", base, true},
+		{"ipv6 spelling", "http://[0:0:0:0:0:0:0:1]:8080/mcp", "http://[::1]:8080", true},
+		{"other ipv6", "http://[::2]:8080/mcp", "http://[::1]:8080", false},
+		{"other host", "https://other.example.com/mcp", base, false},
+		{"other deployment subdomain", "https://af.example.com.evil.test/mcp", base, false},
+		{"other port", "https://af.example.com:8443/mcp", base, false},
+		{"other path", "https://af.example.com/api", base, false},
+		{"unset base refuses nothing", "https://af.example.com/mcp", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			aerr := refuseOwnMCP(c.url, c.base)
+			if c.refused != (aerr != nil) || (aerr != nil && aerr.Code != codeMCPURLOwnMCP) {
+				t.Fatalf("refuseOwnMCP(%q, %q) = %+v, refused want %v", c.url, c.base, aerr, c.refused)
+			}
+		})
+	}
+}
+
+// The memory-only endpoint is refused with its own code, through the same spellings.
+func TestRefuseOwnMemoryEndpoint(t *testing.T) {
+	const base = "https://af.example.com"
+	for _, c := range []struct {
+		name, url, base string
+		refused         bool
+	}{
+		{"exact", "https://af.example.com/mcp/memory", base, true},
+		{"trailing slash", "https://af.example.com/mcp/memory/", base, true},
+		{"scheme, case and default port", "http://AF.example.com:443/mcp/memory", base, true},
+		{"dot segment", "https://af.example.com/mcp/x/../memory", base, true},
+		{"double slash", "https://af.example.com//mcp//memory", base, true},
+		{"base prefix", "https://af.example.com/af/mcp/memory", "https://af.example.com/af/", true},
+		{"other host", "https://other.example.com/mcp/memory", base, false},
+		{"other path below /mcp", "https://af.example.com/mcp/other", base, false},
+		{"unset base refuses nothing", "https://af.example.com/mcp/memory", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			aerr := refuseOwnMCP(c.url, c.base)
+			if c.refused != (aerr != nil) || (aerr != nil && aerr.Code != codeMCPURLOwnMemory) {
+				t.Fatalf("refuseOwnMCP(%q, %q) = %+v, refused want %v", c.url, c.base, aerr, c.refused)
+			}
+		})
+	}
+}
+
+func TestAdminUpsertRefusesOwnMCPEndpoint(t *testing.T) {
+	a, _ := newMCPServerAPITest(t, true)
+	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
+	cp := a.cp.(testCP)
+	cp.admin = &tn
+	a = NewServerAPI(identCP{testCP: cp, id: ServerIdentity{PublicBaseURL: "https://af.example.com"}})
+	post := func(u string) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(mcpServerBody{Name: "x", URL: u, TenantSlug: tn.Slug, Targets: mcpTargets{Session: true}, Enabled: true})
+		w := httptest.NewRecorder()
+		a.AdminUpsert(w, httptest.NewRequest(http.MethodPost, "/api/admin/mcp-servers", strings.NewReader(string(raw))))
+		return w
+	}
+	if w := post("https://af.example.com/mcp"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), codeMCPURLOwnMCP) {
+		t.Fatalf("own endpoint: %d %s", w.Code, w.Body)
+	}
+	if w := post("https://af.example.com/mcp/memory"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), codeMCPURLOwnMemory) {
+		t.Fatalf("own memory endpoint: %d %s", w.Code, w.Body)
+	}
+	if w := post("https://other.example.com/mcp"); w.Code != http.StatusOK {
+		t.Fatalf("other deployment: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestAdminUpsertKeepsLegacyOwnMCPRowEditable(t *testing.T) {
+	a, _ := newMCPServerAPITest(t, true)
+	tn := store.Tenant{ID: "tenant-a", Slug: "a"}
+	cp := a.cp.(testCP)
+	cp.admin = &tn
+	send := func(api ServerAPI, method, id string, b mcpServerBody) *httptest.ResponseRecorder {
+		b.TenantSlug = tn.Slug
+		raw, _ := json.Marshal(b)
+		r := httptest.NewRequest(method, "/api/admin/mcp-servers", strings.NewReader(string(raw)))
+		r.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		api.AdminUpsert(w, r)
+		return w
+	}
+	const own = "https://af.example.com/mcp"
+	// The row predates the check: no public base was known when it was saved.
+	w := send(NewServerAPI(cp), http.MethodPost, "", mcpServerBody{Name: "old", URL: own, Targets: mcpTargets{Session: true}, Enabled: true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", w.Code, w.Body)
+	}
+	var row mcpServerBody
+	_ = json.Unmarshal(w.Body.Bytes(), &row)
+	api := NewServerAPI(identCP{testCP: cp, id: ServerIdentity{PublicBaseURL: "https://af.example.com"}})
+	if w := send(api, http.MethodPut, row.ID, mcpServerBody{Name: "old2", URL: own, Targets: mcpTargets{Session: true}, Enabled: false}); w.Code != http.StatusOK {
+		t.Fatalf("disable and rename of a legacy row: %d %s", w.Code, w.Body)
+	}
+	if w := send(api, http.MethodPut, row.ID, mcpServerBody{Name: "old2", URL: "https://af.example.com/mcp/../mcp", Targets: mcpTargets{Session: true}}); w.Code != http.StatusBadRequest {
+		t.Fatalf("a changed URL that is still the own endpoint: %d %s", w.Code, w.Body)
 	}
 }

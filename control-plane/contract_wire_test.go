@@ -97,10 +97,11 @@ func cpContractFamilies() []contractFamily {
 			binding: ssmProfileBinding,
 			tsPath:  "../console/src/lib/settingsBundle.ts",
 			tsName:  "SsmProfileEntry",
-			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "sourceKey", "roleArn", "externalId", "sessionName", "durationSeconds"),
+			tsKeys:  keySet("label", "startUrl", "ssoRegion", "accountId", "roleName", "region", "kind", "source", "sourceKey", "sourceId", "roleArn", "externalId", "sessionName", "durationSeconds"),
 			tsOnly: map[string]string{
 				"sourceKey": "Intended: the source's sign-in (portal, region, account, role) so an import joins the chain to the same sign-in, not just the same label.",
 				"source":    "Intended: a bundle names an assume-role profile's source by its label, because the destination assigns new ids (the Console turns it into sourceProfileId on import).",
+				"sourceId":  "Intended: set only by the ~/.aws/config import (#3010), never in a bundle file; names the existing row a chain was matched or picked to, so the executor sends it as sourceProfileId even when two rows share the source's label.",
 			},
 			goOnly: map[string]string{
 				"sourceProfileId": "Intended exemption: an id does not survive a bundle, so the entry carries the source's label as `source` instead.",
@@ -140,7 +141,7 @@ func cpContractFamilies() []contractFamily {
 			tsPath:  "../console/src/features/settings/mcp/mcpWire.ts",
 			tsName:  "TenantServer",
 			tsKeys: keySet("id", "name", "label", "transport", "url", "headers", "targets",
-				"kinds", "timeoutMs", "enabled", "user_secret", "created_by", "updated_at"),
+				"kinds", "timeoutMs", "enabled", "user_secret", "auth", "oauth_client", "created_by", "updated_at"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{
 				"tenant_slug": "Gap: it returns which tenant the setting belongs to, but the Console's TenantServer does not declare it.",
@@ -202,7 +203,7 @@ var mcpServerBinding = map[string]string{
 	"ID": "id", "TenantSlug": "tenant_slug", "Name": "name", "Label": "label",
 	"Transport": "transport", "URL": "url", "Headers": "headers", "Targets": "targets",
 	"Kinds": "kinds", "TimeoutMS": "timeoutMs", "Enabled": "enabled",
-	"UserSecret": "user_secret", "CreatedBy": "created_by", "CreatedAt": "created_at",
+	"UserSecret": "user_secret", "Auth": "auth", "OAuthClient": "oauth_client", "CreatedBy": "created_by", "CreatedAt": "created_at",
 	"UpdatedAt": "updated_at",
 }
 

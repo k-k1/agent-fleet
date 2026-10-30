@@ -80,6 +80,9 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.codex_releasing":
     "codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly.",
   "err.driver_switching": "This session is switching its execution method. Try again once the switch is done.",
+  "err.interaction_not_pending":
+    "This question has already been answered or cancelled. Refresh to see the current state.",
+  "err.transcript_restore_failed": "Couldn't restore the conversation log from the backup",
   "err.codex_stop_first": "Stop this codex session first, then switch it to terminal execution (about a minute after the stop).",
   "err.not_running": "The session is stopped. Resume it before sending.",
   // The workspace is mid-boot (container up, Agent not answering yet) and something
@@ -91,6 +94,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.member_origin_unavailable": "The workspace's agent just started or needs a restart. Try again in a minute.",
   "err.too_many_uploads": "Another memory import is already running. Try again when it finishes.",
   "err.upload_timeout": "The upload stalled or took too long. Try again.",
+  "err.cli_install_no_space": "This agent's CLI could not be installed when the workspace started because the home disk is full. Free some space, then restart the workspace.",
+  "err.cli_install_network": "This agent's CLI could not be installed when the workspace started because of a network error. Restart the workspace to try again.",
+  "err.cli_install_checksum": "This agent's CLI could not be installed when the workspace started because the download did not match its checksum. Restart the workspace to try again.",
+  "err.cli_install_other": "This agent's CLI could not be installed when the workspace started. See Settings › Toolchains and the workspace log.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
   // The line above is for failures that waiting fixes. A shared daemon that was not
   // started because the CLI is not signed in never fixes itself, so it gets its own
@@ -185,6 +192,23 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_url_scheme": "The URL must be http or https.",
   "err.mcp_url_host": "The URL has no host.",
   "err.mcp_url_credentials": "Do not embed credentials in the URL. Use a header.",
+  "err.mcp_url_own_endpoint": "This is this deployment's own /mcp endpoint. Connecting it would give sessions your full /mcp authority (any session, delete, admin tools). Another Agent Fleet deployment is fine.",
+  "err.mcp_url_own_memory_endpoint": "This is this deployment's own /mcp/memory endpoint. Sessions already have Agent Fleet memory through their built-in af tools, so connecting it would only add a second copy of them.",
+  "err.mcp_auth_unknown": "That authentication method is not known.",
+  "err.mcp_oauth_remote_only": "OAuth sign-in is only for remote servers.",
+  "err.mcp_oauth_authorization_header": "An OAuth server takes no static headers. Remove them, or choose another authentication.",
+  "err.mcp_oauth_client_invalid": "The tenant's client needs a client ID and the authorization server's issuer as an https URL, and belongs only to an OAuth server.",
+  "err.mcp_oauth_client_tenant_only": "Only a tenant-distributed server carries a client registered by the tenant.",
+  "err.mcp_oauth_secret_reenter": "Enter the client secret again: the issuer or client ID changed, or no secret is stored.",
+  "err.mcp_oauth_user_secret": "An OAuth server asks members for no header values. Turn off \"Each member enters the credential\", or choose another authentication.",
+  "err.oauth_not_required": "The server did not ask for OAuth.",
+  "err.oauth_discovery_failed": "The server's OAuth metadata could not be used. Run the connection test to see why.",
+  "err.as_endpoints_unusable": "The authorization server's authorization or token endpoint is missing or not https.",
+  "err.registration_failed": "The authorization server refused the dynamic client registration.",
+  "err.not_oauth_server": "Only a registered remote server can be signed in to.",
+  "err.bad_authorize_url": "The authorization address is not usable.",
+  "err.no_public_base_url": "Sign-in needs this deployment's public address (PUBLIC_BASE_URL). Ask the operator.",
+  "err.workspace_unreachable": "The workspace could not be reached. Is it running?",
   "err.mcp_http_no_command": "A remote server cannot carry a command, arguments or environment variables.",
   "err.mcp_env_name_invalid": "Invalid environment variable name.",
   "err.mcp_header_name_invalid": "Invalid header name.",
@@ -266,7 +290,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memory_not_found": "That memory does not exist.",
   "err.memory_conflict": "The memory was changed first. Read it again and retry.",
   "err.memory_no_project": "This session has no working copy, so it has no project memory.",
-  "err.memory_disabled": "Agent Fleet memory is turned off in Settings > Agent memory.",
+  "err.memory_disabled": "Agent Fleet memory is turned off in Settings > Agent memory > Settings.",
   "err.tenant_idp_link_claim_required":
     "This deployment already has a sign-in method for the same issuer. That issuer gives each app registration a different subject for the same person, so without \"how the same account is recognised\", everybody already using this deployment would be refused at login as a duplicate address.",
 
@@ -330,7 +354,6 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_files_missing": "This row does not hold the files its family's workflow reads.",
   "err.engine_vae_missing": "This checkpoint carries no VAE of its own, so every request would fail.",
   "err.engine_slot_filled": "This row already reads a file in that role; repeat as a replacement to swap it.",
-  "err.engine_vae_unreadable": "The checkpoint's header could not be read, so whether it has a VAE is unknown.",
   "err.engine_no_source": "This row records no source page, so there is nothing to read a name or an example image from.",
   "err.engine_discover_unsupported": "This row is not an external ComfyUI row, so there is nothing to discover.",
   "err.engine_discover_unreachable": "Could not reach that machine. It may be powered off or unreachable on the network.",

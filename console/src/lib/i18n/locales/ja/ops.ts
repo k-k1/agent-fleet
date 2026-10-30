@@ -128,6 +128,20 @@ export const ops = {
     "インスタンスと root ボリュームを削除します。取り消せません。中を調べたいことが残っていれば、先に済ませてください。",
   "pool.terminate_reason": "隔離理由: {reason}",
   "pool.terminate_failed": "終了できませんでした: {msg}",
+  "pool.force_stop": "停止（強制）",
+  "pool.force_stop_title": "スロット {id} を強制停止しますか",
+  "pool.force_stop_body":
+    "起動中なのに動かなくなったスロット（ECS エージェントが未接続で、SSM も応答しない）向けです。進行中の Start を打ち切り、Control Plane が積んだコマンドを取り消し、インスタンスを停止します（まず通常のシャットダウン、止まらなければ Force）。スロットはプールに残り、home もそのままです。メンバーの次の Start が同じスロットを起こし、再起動で詰まりが解けます。載っているメンバーのワークスペースは停止に見えます。Start してもらうのは、この行が休止中になってからにしてください。",
+  "pool.force_stop_occupant": "利用者: {ws}",
+  "pool.force_stop_failed": "停止できませんでした: {msg}",
+  "pool.force_stop_done":
+    "{id} に停止を送りました。未実行のコマンド {cancelled} 件を取り消しました{failed}。{how}",
+  "pool.force_stop_cancel_failed": "（{n} 件は取り消せず）",
+  "pool.force_stop_graceful": "まず通常の停止を送り、{min} 分たっても止まらなければ Force 付きでもう一度送ります。停止処理中にもう一度押すと、すぐ Force で送ります。メンバーに Start してもらうのは、スロットの行が休止中（停止済み）になってからにしてください。早く Start すると、インスタンスの停止待ちで時間切れになり、claim が切れるまでワークスペースが「起動中」のままになることがあります。その場合はワークスペースを停止してからもう一度 Start してください。",
+  "pool.force_stop_forced": "Force 付きで停止を送りました（すでに停止処理中だったため）。",
+  "pool.stopping_task": "タスク {status} {min} 分",
+  "pool.stopping_task_title":
+    "このスロットのワークスペースのタスクが、エージェントが停止を報告できないため ECS 上で {status} のままで、メンバーの次の Start がそれを待ちます。インスタンスが再び動けばエージェントが報告します。メンバーの次の Start がこのスロットを起こすか、EC2 コンソールでインスタンスを起動してください。Control Plane は自動では行いません。管理ガイドのプールの節を参照してください。",
   "pool.col_template": "テンプレート",
   "pool.outdated": "$Latest より古い",
   "pool.outdated_title": "$Latest（v{latest}）より古い起動テンプレートのバージョンで起動されています。スロットはユーザーデータを起動時にしか読まないため、入れ替えるまで古いままです。",

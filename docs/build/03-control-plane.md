@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the Control Plane"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-09"
 ---
 
 # 03. Control Plane
@@ -37,8 +36,8 @@ security design is [07](07-security.md).
   behind the Runtime adapter (§3.3).
 - **Relaying to the agent** — five paths: REST, SSE, terminal WebSocket, browser
   REST + WebSocket, and preview ([05 §5.3](05-api.md)). **The REST relay is an
-  allowlist**: every relayed path is a route the CP registers (`routes.go` and the
-  `register*Routes` functions beside it), so an agent endpoint without a CP route is
+  allowlist**: every relayed path is a route the CP registers (a row in a relay table,
+  `relays_*.go`, or a wrapper in `routes.go`), so an agent endpoint without a CP route is
   unreachable from the browser. Preview also answers on per-workspace subdomains when
   `AF_PREVIEW_DOMAIN` is set ([decisions/0062](../decisions/0062-preview-subdomain.md)).
 - **The Console's push channel** — `GET /api/events` is the CP's own SSE stream. It
@@ -345,11 +344,90 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   outside the allowlist is blocked only when enforce is on; loopback, link-local (the
   cloud metadata address included) and unspecified destinations are refused in every
   mode.
+- **An egress-agent subcommand** — `control-plane egress-agent` is the small agent on the
+  egress gateway of ADR [0122](../decisions/0122-egress-gateway.md) (decision 4,
+  `internal/egressagent`). It writes Squid's allow file and mode include from the policy
+  and reloads Squid on a change (and once at start), and ships Squid's log to ingest from a stored file
+  offset, one event per line with the line's position as its `id`. The Squid lines it
+  expects and its log format are in the package doc.
 - **Policy distribution** — `GET /internal/egress/policy` returns the effective
-  allowlist and mode to the proxy.
+  allowlist and mode to the proxy and the gateway agent.
 - **Ingest** — `POST /internal/egress` (`AF_EGRESS_TOKEN`) takes observed events into a
   daily aggregate, with would-block entries de-duplicated per day and host and also
-  recorded to the audit log.
+  recorded to the audit log. An event that carries an `id` (the egress gateway's, ADR
+  [0122](../decisions/0122-egress-gateway.md)) is also kept raw with its `at`, `source` and
+  `dest`, and is stored and counted once however often it is resent.
+- **Retention** — raw events are kept `AF_EGRESS_EVENT_RETENTION_DAYS` days (default 30; `0` =
+  forever). A purger (one CP at a time, under a CP lease, every 10 minutes) deletes older events
+  and the closed `workspace_address` rows that ended before them, in batches of 5000 rows;
+  an open row is never deleted. `egress_daily` is not touched. Because dedup on `id` only holds
+  while the row exists, ingest refuses to store or count an event whose `at` is older than the
+  window, or older than the **purge floor** (logged, still answered 204): a resend of a purged
+  event cannot be counted twice. The floor is the newest cutoff any purge has deleted up to, kept
+  in the database (`cp_counter` row `egress-event-floor`), raised before each delete and read by
+  `RecordEgressEvent` in the same transaction, so it holds for every CP, whatever its clock or
+  its retention setting, and it never falls: lengthening the retention or setting it to `0`
+  does not let a purged event back in. An address row is deleted only after the event delete
+  finished without error.
+- **Archive (optional)** — with `AF_EGRESS_ARCHIVE_URL` set (`s3://bucket/prefix`,
+  `gs://bucket/prefix`, or `file:///absolute/dir` for a mounted volume; empty = off), the purger archives before it
+  deletes. Only whole UTC days are archived, so the cutoff becomes the UTC midnight at or before
+  now minus the retention (the retention is effectively up to 24 hours longer, and the floor is
+  raised to that midnight, before the archive is read). One object per day,
+  `<prefix>/egress/yyyy=YYYY/mm=MM/dd=DD/events-YYYY-MM-DD.jsonl.gz`: gzip JSON lines, a `header`
+  line (schema version, day), the `address` rows whose interval meets the day, the `event` rows
+  in `(at, id)` order, and a closing `manifest` line (row counts, id and time range). The manifest
+  is last because the counts are known only after the rows were streamed (a day is millions of
+  rows, paged 5000 at a time and staged in a temporary file, never held in memory); an object
+  without it, or whose counts disagree, is damaged. An object is complete or absent (S3: a single
+  PutObject confirmed by a HeadObject length check; GCS: one upload finalized under
+  `ifGenerationMatch=0`, sent with its CRC32C and compared with the stored length and CRC32C;
+  local: temp file, fsync, rename), so a partial
+  object cannot exist. A day whose object exists is read back and verified (header, counts,
+  gzip checksum) and never rewritten: after a crash between write and delete, or a delete cut off
+  midway, the retry skips the write and deletes, and a rewrite could not replace the full day
+  with the part that is left. A damaged existing object (zero bytes, truncated, wrong header)
+  stops the purge at its day and is never overwritten by the CP; an operator removes it.
+  **A day that fails to archive (or is not confirmed) is not deleted, nor is any later day.**
+  Earlier days are, and the next run (10 minutes later) retries. Address rows are not closed to
+  writers by the floor (one can arrive, or change its end, after its day was written), so the
+  closed rows to delete are written as an address supplement object
+  (`<prefix>/egress/addresses/yyyy=/mm=/dd=/addresses-<sha256>.jsonl.gz`, kind `addresses`)
+  immediately before, and exactly those row versions are deleted (a row that changed since is
+  kept for the next run). A day object holds the address rows meeting the day as they were then, so read-back must
+  normalise them (below). An existing day object is also merged against the events the database
+  still has for that day (both in `(at, id)` order, ids compared bytewise): one that lacks any of
+  them, or holds different content, stops the purge, so a well-formed partial day cannot
+  authorise a delete. A day with only some events left (a delete cut off midway) passes.
+  Role permissions: `s3:PutObject` and `s3:GetObject` on the prefix, and `s3:ListBucket` on the
+  bucket: without it S3 answers a HeadObject for a missing key with 403 instead of 404, and the
+  archive stops at the first day. GCS: `roles/storage.objectCreator` and
+  `roles/storage.objectViewer` on the bucket (create and get, never list, delete or overwrite),
+  through Application Default Credentials only (Workload Identity on GKE; no key file is read
+  from configuration). The sink never replaces a key: a Put on an existing one fails the
+  precondition and is always an error, even when the object there has the same length and
+  CRC32C (a retried upload whose first attempt landed looks like that, and so does a CRC32C
+  collision); the next run finds the key with `Exists` and the archiver verifies the object
+  against the database as for any other sink. Local: the file and every directory above it, up to the filesystem root, are fsynced on every Put and every
+  read-back of an existing object, so a failed fsync is retried by the next run and a readable
+  file is never taken as proof it is durable.
+  A bad URL stops the CP at startup rather than deleting without an archive.
+  **Reading back is offline:** download the day objects and the address supplements, collapse their `address` rows to one
+  per `(ref, address, from)` with the smallest non-zero `until` (0 = open; the store only ever
+  shortens an end, and a stale open copy in a day object would keep matching events after the
+  end a supplement recorded), and attribute each event to those rows by source and time (`from <= at < until`, `until` 0 = open), as the Console does.
+  Archived events are never re-ingested: ingest still refuses an event older than the window or
+  the floor, so the archive and `egress_daily` cannot double count.
+- **Attribution** — when `AF_EGRESS_TOKEN` is set, a recorder (one CP at a time, under a CP
+  lease) asks each workspace's runtime every `AF_EGRESS_ADDRESS_INTERVAL` (default 60s) which
+  addresses it holds: the ECS task ENI,
+  the pod IP, or the container's address on the per-user network. It keeps them as time ranges.
+  A docker or Kubernetes Stop hands the address over just before it removes it, because nothing
+  is left to read afterwards. An ECS task that DescribeTasks answers MISSING stays open for 15
+  minutes before it is closed.
+  `GET /api/admin/egress/events` joins each raw event to them on address and time and reports
+  the event as attributed, ambiguous, unattributed, or infrastructure (a source inside
+  `AF_EGRESS_INFRA_CIDRS`).
 - **The admin API** — `/api/admin/egress*`, `super_admin` only: the statistics, the
   allowlist (active, proposed, retired) and the log-only / enforce switch.
 - **The member face** — `GET /api/egress/check` says whether a workspace can reach a
@@ -357,7 +435,8 @@ The design and the staged rollout — log-only → allowlist → enforce — are
   administrator still has to approve.
 
 The container side is only wired when `AF_EGRESS_PROXY_ADDR` is set, which injects the
-proxy environment into every workspace; **the default is off, and nothing changes**.
+proxy environment into every workspace on every target (what each target takes, and what stays
+out of the proxy, is [07 §7.8](07-security.md)); **the default is off, and nothing changes**.
 
 ## 3.9 Self-hosted engines
 

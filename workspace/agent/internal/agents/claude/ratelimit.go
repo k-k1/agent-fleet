@@ -173,3 +173,77 @@ func ResetAt(sid string, now time.Time) (time.Time, string, bool) {
 	a, _ := AbortInfo(sid)
 	return resolveResetAt(a.Msg, a.At, capturedResets(), now)
 }
+
+// bannerGated is ResetAt's ok for a limit that came without a menu: the instant is trusted only
+// when it comes from the banner, i.e. the wording this session actually received. resolveResetAt's
+// fallback is the statusline capture, which describes the account's 5-hour / weekly windows, but a
+// per-model limit lives in a different window that never appears there (claude packs only
+// five_hour and seven_day into statusLine). Measured 2026-08-05 s6no6jv: at the moment the limit
+// hit, the 5-hour window was at 23% and the weekly at 75%, and the fallback returned 19:30 that
+// day (the 5-hour reset) - resuming there just hits the same limit.
+func bannerGated(source string, ok, menu bool) bool {
+	return ok && (menu || strings.HasPrefix(source, "banner"))
+}
+
+// LimitInMessage reads the error text of a headless run (`claude -p`'s is_error result, or its
+// stderr) with the same markers a session's transcript is read with, so the router and the
+// session auto-resume never disagree on what a limit looks like. resetAt is zero when the
+// text names no time that can be pinned down; a spend cap never has one.
+func LimitInMessage(msg string, now time.Time) (kind LimitKind, resetAt time.Time, ok bool) {
+	return limitInMessage(msg, now, capturedResets())
+}
+
+// headlessResetSlack is how far past the banner's wall clock a headless error may be read and
+// still mean that clock today. The banner is rounded to the minute and the text is classified
+// after the CLI exits, so "resets 7:50pm" read at 19:50:01 is today's reset just passing, not
+// tomorrow's.
+const headlessResetSlack = 10 * time.Minute
+
+func limitInMessage(msg string, now time.Time, captured []time.Time) (LimitKind, time.Time, bool) {
+	// A retryable verdict covers "temporarily limiting requests (not your usage limit)",
+	// which also carries the limit markers.
+	if classifyAbort(msg, 0, "") {
+		return "", time.Time{}, false
+	}
+	_, kind, ok := limitKindOf(msg, Abort{})
+	if !ok {
+		return "", time.Time{}, false
+	}
+	if kind != LimitWindow {
+		return kind, time.Time{}, true
+	}
+	// Only a text that names a time gets one. Without a banner clock resolveResetAt would take
+	// the first future statusline reset, which belongs to the 5-hour or weekly window whether
+	// or not that is the limit this text is about (a per-model limit names none).
+	h, m, loc, parsed := parseResetClock(msg)
+	if !parsed {
+		return kind, time.Time{}, true
+	}
+	// The clock just passed: a captured reset at that minute is the real instant (claude
+	// rounds the banner to the minute); without one the limit is lifting now, and no reset is
+	// better than tomorrow's.
+	n := now.In(loc)
+	today := time.Date(n.Year(), n.Month(), n.Day(), h, m, 0, 0, loc)
+	if !today.After(now) && now.Sub(today) <= headlessResetSlack {
+		for _, c := range captured {
+			if c.After(now) && absDur(c.Sub(today)) <= resetMatchWindow {
+				return kind, c, true
+			}
+		}
+		return kind, time.Time{}, true
+	}
+	if at, _, found := resolveResetAt(msg, now, captured, now); found {
+		return kind, at, true
+	}
+	return kind, time.Time{}, true
+}
+
+// IsPerModelLimit reports whether a usage-limit text is about one model rather than the
+// account: "You've reached your Fable 5 limit. Run /usage-credits to continue or switch
+// models" (measured 2026-08-05) leaves the account's other models usable, while the session
+// and weekly windows ("You've hit your session limit", "… weekly limit") stop all of them.
+func IsPerModelLimit(msg string) bool {
+	low := strings.ToLower(msg)
+	return strings.Contains(low, "reached your") &&
+		!strings.Contains(low, "session limit") && !strings.Contains(low, "weekly limit")
+}

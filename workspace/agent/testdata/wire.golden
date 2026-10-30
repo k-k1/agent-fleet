@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 142
+# count: 179
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -34,6 +34,18 @@ RepoStatus.staged number
 RepoStatus.unborn bool,omitempty
 RepoStatus.unstaged number
 RepoStatus.untracked number
+kindCatalog.kinds[].caps.canFork bool
+kindCatalog.kinds[].caps.canForkAt bool
+kindCatalog.kinds[].caps.canTranscript bool
+kindCatalog.kinds[].caps.permissionChoice bool
+kindCatalog.kinds[].caps.usesLabel bool
+kindCatalog.kinds[].instructionDelivery string,omitempty
+kindCatalog.kinds[].instructions string
+kindCatalog.kinds[].instructionsReason string,omitempty
+kindCatalog.kinds[].kind string
+kindCatalog.kinds[].managedDefault bool
+kindCatalog.kinds[].managedOnly bool
+kindCatalog.kinds[].mcpClient string
 notice.Event.createdAt string
 notice.Event.displayName string
 notice.Event.id string
@@ -49,6 +61,7 @@ resources.Machine.instance_type string,omitempty
 resources.Machine.mem_max number,omitempty
 resources.Machine.mem_total number,omitempty
 resources.Machine.vcpu number,omitempty
+resources.Stats.boot_install_failed object,omitempty
 resources.Stats.cpu_pct number,omitempty
 resources.Stats.disk_total number,omitempty
 resources.Stats.disk_used number,omitempty
@@ -83,8 +96,10 @@ session.CatalogResponse.sessions[].workingCopyId string,omitempty
 session.Session.alive bool
 session.Session.archived bool,omitempty
 session.Session.authOkAt string,omitempty
+session.Session.backgroundAgeSec number,omitempty
 session.Session.backgroundBusy bool
 session.Session.backgroundBusyReason string,omitempty
+session.Session.backgroundSince string,omitempty
 session.Session.branch string,omitempty
 session.Session.branchDrift bool,omitempty
 session.Session.carried string,omitempty
@@ -103,9 +118,11 @@ session.Session.driver string,omitempty
 session.Session.exitCode number,omitempty
 session.Session.exitReason string,omitempty
 session.Session.exitSignal number,omitempty
+session.Session.forkAtTerminal bool,omitempty
 session.Session.generatedImages number,omitempty
 session.Session.generatedImagesPath string,omitempty
 session.Session.handoffPending bool,omitempty
+session.Session.initialPromptReason string,omitempty
 session.Session.initialPromptState string,omitempty
 session.Session.keepAwakeUntil string,omitempty
 session.Session.kind string
@@ -118,6 +135,8 @@ session.Session.moving string,omitempty
 session.Session.name string
 session.Session.origin string,omitempty
 session.Session.originSession string,omitempty
+session.Session.planReviewers[].path string
+session.Session.planReviewers[].reviewer string
 session.Session.ports [number],omitempty
 session.Session.pr.checks string,omitempty
 session.Session.pr.draft bool,omitempty
@@ -144,3 +163,21 @@ session.Session.tmux string
 session.Session.tokenSpends [number],omitempty
 session.Session.workingCopyId string,omitempty
 session.Session.worktree bool,omitempty
+toolchainInstalls.java[].bytes number
+toolchainInstalls.java[].in_use bool
+toolchainInstalls.java[].major string
+toolchainInstalls.java[].reason string,omitempty
+toolchainInstalls.java[].removable bool
+toolchainInstalls.java[].source string
+toolchainInstalls.java[].version string
+toolchainInstalls.node[].bytes number
+toolchainInstalls.node[].in_use bool
+toolchainInstalls.node[].major string
+toolchainInstalls.node[].reason string,omitempty
+toolchainInstalls.node[].removable bool
+toolchainInstalls.node[].source string
+toolchainInstalls.node[].version string
+toolchainLatest.current string
+toolchainLatest.latest string
+toolchainLatest.major string
+toolchainLatest.update_available bool

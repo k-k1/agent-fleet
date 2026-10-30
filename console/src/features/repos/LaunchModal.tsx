@@ -21,7 +21,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
-import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
+import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
@@ -50,6 +51,7 @@ import { SkillButton, SkillList } from "../mirror/parts/SkillList.tsx";
 import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePicker.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
+import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -106,6 +108,9 @@ interface LaunchModalProps {
   branch?: string;
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
+  /** The workspace's Claude login has expired (RepoRailContext.claudeExpired): a notice under
+   * the agent picker while claude is the picked kind, not a gate. */
+  claudeExpired?: boolean;
   /** The connection check hasn't settled — kinds is empty because we don't know yet,
    * not because nothing is available. Shows a checking note and blocks launching. */
   settling?: boolean;
@@ -202,7 +207,7 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -221,7 +226,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
     setEffort(resolveEffort(k, repo, d.effort));
     setStartMode(resolveStartMode(k, repo, d.startMode));
     setSkipPerm(undefined);
-    setDriver(agentOf(k).managedDriver ? "managed" : "");
+    setDriverPick(null);
   }, [kinds, kind, settings, repo]);
   const tr = useT();
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
@@ -236,7 +241,11 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
   // Driver (docs/log/27 P2/P3): a kind that supports managed defaults to managed (§9.2).
   // CLI (TUI) is an explicit user choice — it costs one TUI process' memory per session.
-  const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
+  // null = untouched: the driver follows the kind's default, which can change under an open dialog
+  // when the kind catalog lands after it. Only a click on the toggle pins a value.
+  useKindCatalogVersion();
+  const [driverPick, setDriverPick] = useState<string | null>(null);
+  const driver = driverPick ?? (agentOf(kind).managedDriver ? "managed" : "");
   // The first prompt is written back to localStorage per repository (launchDraft). It survives
   // closing the dialog and is dropped only once a launch succeeded. initialPrompt (the seed
   // from a handoff, a memo send or a work item) outranks the draft.
@@ -607,7 +616,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                   key={k}
                   type="button"
                   title={tr(a.launchHintKey)}
-                  className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
+                  className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
                   onClick={() => {
                     const defaults = agentLaunchDefault(settings, k);
                     setKind(k);
@@ -615,7 +624,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                     setEffort(resolveEffort(k, repo, defaults.effort));
                     setStartMode(resolveStartMode(k, repo, defaults.startMode));
                     setSkipPerm(undefined);
-                    setDriver(a.managedDriver ? "managed" : "");
+                    setDriverPick(null);
                   }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
@@ -625,6 +634,8 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
             })}
           </div>
         </div>
+
+        <ClaudeExpiredHint kind={kind} expired={claudeExpired} />
 
         {hasModel && (
           <div className="ui-field">
@@ -969,7 +980,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                 <button
                   type="button"
                   className={"seg-btn" + (driver === "managed" ? " active" : "")}
-                  onClick={() => setDriver("managed")}
+                  onClick={() => setDriverPick("managed")}
                 >
                   <Icon name="server-process" /> {tr("launch.driver_managed")}
                   <span className="seg-sub">{tr("launch.driver_managed_sub")}</span>
@@ -977,7 +988,7 @@ function LaunchForm({ repo, branch, path, kinds, settling = false, allowWorktree
                 <button
                   type="button"
                   className={"seg-btn" + (driver !== "managed" ? " active" : "")}
-                  onClick={() => setDriver("")}
+                  onClick={() => setDriverPick("")}
                 >
                   <Icon name="terminal" /> {tr("launch.driver_terminal")}
                   <span className="seg-sub">

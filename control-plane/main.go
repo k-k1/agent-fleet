@@ -12,11 +12,14 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
@@ -66,6 +69,12 @@ type config struct {
 	// `configured` so the Console only warns about unreachable MCP hosts on deployments
 	// where egress really is constrained (docs/log/48 §9).
 	egressProxyAddr string
+	// egressInfra mirrors AF_EGRESS_INFRA_CIDRS: the stack's own source ranges, which egress
+	// attribution reports as infrastructure (ADR 0122, addendum 2026-10-24).
+	egressInfra []netip.Prefix
+	// egressEventRetention mirrors AF_EGRESS_EVENT_RETENTION_DAYS: how long raw egress events
+	// and the address intervals that attribute them are kept (egress_purge.go). 0 = forever.
+	egressEventRetention time.Duration
 	// TTS read-aloud (docs/log/24 + ADR0013): base URL of the VOICEVOX engine the CP calls
 	// directly. In dev the CP runs on the host and reaches docker's published
 	// 127.0.0.1:50021; on AWS the fixed ECS + Cloud Map DNS name is injected (Phase 2).
@@ -90,6 +99,19 @@ func main() {
 	// (docs/log/20 M2) instead of the CP server, reusing this same image/binary.
 	if len(os.Args) > 1 && os.Args[1] == "egress-proxy" {
 		runEgressProxy()
+		return
+	}
+	// Subcommand: `control-plane egress-agent` runs the agent on the egress gateway (ADR
+	// 0122 decision 4, internal/egressagent): Squid's policy files from the CP, and Squid's
+	// log shipped to the CP from a file offset.
+	if len(os.Args) > 1 && os.Args[1] == "egress-agent" {
+		runEgressAgent()
+		return
+	}
+	// Subcommand: `control-plane egress-relay` hands the gateway's intercepted port 443 to
+	// Squid as explicit CONNECTs (internal/egressagent.Relay).
+	if len(os.Args) > 1 && os.Args[1] == "egress-relay" {
+		runEgressRelay()
 		return
 	}
 	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
@@ -243,9 +265,10 @@ func main() {
 	egressProxyAddr := os.Getenv("AF_EGRESS_PROXY_ADDR")
 	if addr := egressProxyAddr; addr != "" {
 		pu := "http://" + addr
-		mgr.extraEnv = append(mgr.extraEnv,
-			"http_proxy="+pu, "https_proxy="+pu, "HTTP_PROXY="+pu, "HTTPS_PROXY="+pu,
-			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1")
+		mgr.egressProxyEnv = []string{
+			"http_proxy=" + pu, "https_proxy=" + pu, "HTTP_PROXY=" + pu, "HTTPS_PROXY=" + pu,
+			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1"}
+		mgr.extraEnv = append(mgr.extraEnv, mgr.egressProxyEnv...)
 		log.Printf("egress: routing workspace egress through proxy %s (log-only)", addr)
 	}
 
@@ -276,6 +299,9 @@ func main() {
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
 	mgr.publicBaseURL = strings.TrimRight(publicBaseURL, "/")
+	if _, refused := cpEgressHostsOf(mgr.publicBaseURL, mgr.internalBaseURL); len(refused) > 0 && egressProxyAddr != "" {
+		log.Printf("WARNING: egress: %v not admitted as the CP's own host (not http(s), not one exact host, or an IPv6 literal): in enforce, workspaces cannot reach the CP there", refused)
+	}
 	// docs/log/81: the parent of the preview subdomains (e.g. pv.example.com). A leading
 	// "." and upper case are normalised away so it can be compared — reading a slightly
 	// mistyped setting charitably beats having the whole feature go dead.
@@ -303,7 +329,9 @@ func main() {
 		egressToken: os.Getenv("AF_EGRESS_TOKEN"),
 		egressDedup: &egressAuditDedup{},
 		// Whether containers are actually routed through the proxy (docs/log/48 §9).
-		egressProxyAddr: egressProxyAddr,
+		egressProxyAddr:      egressProxyAddr,
+		egressInfra:          parseEgressInfraCIDRs(os.Getenv("AF_EGRESS_INFRA_CIDRS")),
+		egressEventRetention: parseEgressRetention(os.Getenv("AF_EGRESS_EVENT_RETENTION_DAYS")),
 		// docs/log/24 TTS: the default is dev's docker-published endpoint (host loopback).
 		voicevoxURL: envx.Or("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 		// docs/log/81: the parent of the preview subdomains. Empty = host-mode preview is
@@ -315,6 +343,8 @@ func main() {
 		// deployment_setting and wins over it, so this is a resolver, not a fixed value.
 		brand: newBrandResolver(newBrandConfig(os.Getenv("AF_BRAND_COLOR"), os.Getenv("AF_BRAND_LABEL")), mgr.store),
 	}
+
+	mgr.brand = cfg.brand
 
 	// P3-9 idle-stop (docs/log/19): a background reaper halts idle claude sessions
 	// (tier 1) and stops cold workspaces (tier 2).
@@ -337,6 +367,10 @@ func main() {
 	// than a billing policy — how long until a stop actually happens is still
 	// ws_idle_timeout. Resolved outside the if below: presence means the same thing on a
 	// deployment where the reaper does not run.
+	// Upper bound on one stretch of background work holding a Workspace awake (#2338); "0"
+	// turns the bound off, hence intervalOff. Read outside the reaper block because the usage
+	// sampler classifies rows by it too.
+	bgDef := intervalOff(os.Getenv("AF_BACKGROUND_HOLD_MAX"), defaultBackgroundHoldMax)
 	presenceGrace = intervalOff(os.Getenv("AF_PRESENCE_IDLE_TIMEOUT"), presenceGrace)
 	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
 		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
@@ -359,11 +393,35 @@ func main() {
 		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
 		// deployment that has not thought about retention should not be paying for it.
 		backupDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
-		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
+		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef, bgDef).run(context.Background())
 	}
 	// Not behind AF_IDLE_SWEEP_INTERVAL: switching idle-stop off must not leave a removed
 	// member's workspace running (member_removal.go).
 	go mgr.runRemovedMemberSweep(context.Background(), removedMemberSweepInterval)
+	// Egress attribution (ADR 0122, addendum 2026-10-24): only a deployment that ingests
+	// egress events has anything to attribute, and the recorder costs orchestrator reads.
+	if os.Getenv("AF_EGRESS_TOKEN") != "" {
+		iv := envx.DurationOr(os.Getenv("AF_EGRESS_ADDRESS_INTERVAL"), time.Minute)
+		go newAddressRecorder(mgr, iv).run(context.Background())
+	}
+	// Raw events are deleted whether or not this deployment still ingests: retention must not
+	// depend on AF_EGRESS_TOKEN staying set.
+	if cfg.egressEventRetention > 0 {
+		purger := newEgressPurger(mgr, cfg.egressEventRetention)
+		if raw := os.Getenv("AF_EGRESS_ARCHIVE_URL"); raw != "" {
+			// A misconfigured archive stops the CP rather than falling back to deleting
+			// events the operator asked to keep.
+			sink, err := newEgressArchiveSink(context.Background(), raw)
+			if err != nil {
+				log.Fatalf("egress archive: %v", err)
+			}
+			purger.archive = newEgressArchiver(mgr.store, sink)
+			log.Printf("egress archive: raw events are archived per UTC day before the purge")
+		}
+		go purger.run(context.Background())
+	} else if os.Getenv("AF_EGRESS_ARCHIVE_URL") != "" {
+		log.Printf("egress archive: ignored, AF_EGRESS_EVENT_RETENTION_DAYS=0 keeps raw events and nothing is purged")
+	}
 	// Home operations a CP restart interrupted (ecs, home_operation.go): their task may
 	// still be running, and the step after it is owed. Not behind any switch either: an
 	// unfinished record keeps the workspace from starting until it is finished.
@@ -397,6 +455,7 @@ func main() {
 		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
 		mgr.usageInterval = iv
 		sampler := newUsageSampler(mgr, iv)
+		sampler.backgroundDef = bgDef
 		// The ceiling on `starting` (start_deadline.go). 30 minutes is several times the
 		// slowest launch that does converge — a Fargate cold pull, an ecs-ec2 slot built
 		// from nothing — and only a launch that cannot converge reaches it. "0" = off.
@@ -588,10 +647,26 @@ func main() {
 	// The workspace-only listener (ADR 0106 decision 8). Unset = no second port, today's
 	// behaviour.
 	if addr := strings.TrimSpace(os.Getenv("AF_CP_INTERNAL_LISTEN")); addr != "" {
+		if workspaceListenerOnEveryInterface(rtProfile, addr) {
+			log.Printf("WARNING: AF_CP_INTERNAL_LISTEN=%s binds every interface of this docker host, so the workspace listener is reachable from the LAN as well as from workspaces — bind the docker0 gateway address instead (09 §9.3)", addr)
+		}
 		serveWorkspaceListener(addr, mux, cfg.mgr.emailHeader)
 	} else if mgr.internalBaseURL != "" {
 		log.Printf("WARNING: AF_CP_INTERNAL_URL is set without AF_CP_INTERNAL_LISTEN — workspaces are sent to an address this CP does not serve")
 	}
+	// Background du children must not outlive the CP: on a signal, cancel them (killing du)
+	// and then exit as the default handler would have.
+	go func() {
+		sigc := make(chan os.Signal, 1)
+		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+		sig := <-sigc
+		stopDiskRefresh()
+		code := 130
+		if sig == syscall.SIGTERM {
+			code = 143
+		}
+		os.Exit(code)
+	}()
 	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(served)), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)

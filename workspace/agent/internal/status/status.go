@@ -105,6 +105,7 @@ var (
 	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
 	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
 	carriedFiles     = fstore.JSON[Carried](paths.AgentStateDir, "carried-interaction", ".json")
+	restoreNoteFiles = fstore.JSON[RestoreNotes](paths.AgentStateDir, "transcript-restore-notes", ".json")
 	// observedEnds holds the end of turn a POLL saw, apart from the status record so that
 	// recording it can never overwrite one — see ObservedTurnEnd for why that separation is
 	// load-bearing rather than tidy.
@@ -163,14 +164,32 @@ func ExitReasonFor(code, sig int, oom bool) string {
 	return "crashed"
 }
 
+// ExitReasonAfterStop is ExitReasonFor for a child we asked to stop (SIGTERM, EOF). A CLI that
+// handles the signal itself exits normally with a status of its own choosing (cursor's node
+// exits 143), which ExitReasonFor reads as a crash. Our own stop request is the evidence that
+// such a non-signalled non-zero exit is the stop; a death by signal (SIGKILL after the grace
+// period, SIGSEGV) still goes through ExitReasonFor, and an exit nobody asked for must not use
+// this, or a CLI that exits 143 on its own would be hidden.
+func ExitReasonAfterStop(code, sig int, oom, askedStop bool) string {
+	if askedStop && sig == 0 && code != 0 {
+		return "stopped"
+	}
+	return ExitReasonFor(code, sig, oom)
+}
+
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's working / answered badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
-func Persist(sid, state string) {
-	persist(sid, SessionStatus{State: state})
+func Persist(sid, state string) { PersistRev(sid, state) }
+
+// PersistRev is Persist that returns the Rev of the record it wrote, so a caller can later
+// take back exactly that write (PersistIf) and never one a hook made since.
+func PersistRev(sid, state string) string {
+	rev := persist(sid, SessionStatus{State: state})
 	if state == "working" {
 		RemoveCompletionKey(sid) // new turn started; the next end will mint a fresh key
 	}
+	return rev
 }
 
 // PersistOpen is Persist for a write made by a hook of turn promptID (UserPromptSubmit,
@@ -299,18 +318,19 @@ func ObservedTurnEnd(sid string) string {
 	return rec.At
 }
 
-func persist(sid string, s SessionStatus) {
+func persist(sid string, s SessionStatus) string {
 	// A timeout still writes: the hook's record is authoritative, and only the conditional
 	// heal (PersistIf) is allowed to give way.
 	unlock, _ := lockSid(sid)
 	defer unlock()
-	persistLocked(sid, s)
+	return persistLocked(sid, s)
 }
 
-func persistLocked(sid string, s SessionStatus) {
+func persistLocked(sid string, s SessionStatus) string {
 	s.TS = time.Now().Format(time.RFC3339)
 	s.Rev = newRev()
 	write(sid, s)
+	return s.Rev
 }
 
 // newRev mints the identity of one write of the record (see SessionStatus.Rev). Not crypto:

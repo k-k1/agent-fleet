@@ -137,6 +137,14 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
     [ "$frag_ver" != "$latest" ] || state=fragments
   fi
 
+  # An advisory caps finding for latest keeps the issue open: the probes gate nothing, so
+  # this is the only place a person would see it. Cleared by a passing probe or a newer release.
+  if [ "$state" = current ] || [ "$state" = waiting ]; then
+    local caps_ver
+    caps_ver="$(sed -n "s/^- \`$kind\` \`\([^\`]*\)\`.*<!-- cli-contract-caps $kind -->.*/\1/p" "$WORK/rows" | tail -1)"
+    [ "$caps_ver" != "$latest" ] || state=caps
+  fi
+
   case "$state" in
     current|waiting)
       [ -n "$num" ] || return 0
@@ -187,6 +195,10 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
       title="$kind CLI: upstream message fragments gone in $latest"
       next="\`$latest\` no longer contains text Agent Fleet matches on (listed under **Red contracts** below). Check whether the code that matches it still works against the new wording (\`deploy/local/cli-message-fragments.txt\` says where each fragment is used), fix it in a PR that mentions this issue, and update the registry. This is a place to look, not proof of a break. Merging the pin-bump PR closes this issue."
       cmd="" ;;
+    caps)
+      title="$kind CLI: caps probes drifted on $latest"
+      next="The advisory caps drift probes of \`$wf\` reported DRIFT or a probe error on \`$latest\` (the run is linked under **Red contracts** below). They gate nothing yet: the mirror contract's result stands. Read the probe output, then either fix the declared \`Caps\` or the probe, or record it as a false positive. The row goes away when the probes pass or a newer release replaces the version."
+      cmd="$(dispatch_cmd "$kind")" ;;
     credential)
       title="$kind CLI: verify $latest (no CI credential)"
       next="The contract secret $(secret_of "$kind") is not configured, so nothing tested \`$latest\`. Either register the secret and run the contract (the pin-bump PR that follows closes this issue), or verify it by hand in a signed-in Terminal (CLI) session — the composer readiness/footer is detected; a prompt sent from the mirror reaches the TUI; both turns appear in \`/messages\`; it returns to idle — then bump the pin in a PR that closes this issue."

@@ -71,6 +71,15 @@ func wireGoldenTypes() []struct {
 		{"resources.Machine", reflect.TypeOf(resources.Machine{})},
 		// GET /notifications — one entry of the notification centre.
 		{"notice.Event", reflect.TypeOf(notice.Event{})},
+		// GET /agents/kinds — the kind catalog the CP embeds a snapshot of and the Console will
+		// derive its kind lists from.
+		{"kindCatalog", reflect.TypeOf(kindCatalogWire{})},
+		// GET /env/jdk-latest and /env/node-latest — the version Install would fetch and
+		// whether the Toolchains tab offers an update.
+		{"toolchainLatest", reflect.TypeOf(toolchainLatestReply{})},
+		// GET /env/toolchain-installs (and the DELETE /env/{jdk,node}/{major} answers) —
+		// what the Installed versions list shows and may remove.
+		{"toolchainInstalls", reflect.TypeOf(toolchainInstallsReply{})},
 	}
 }
 

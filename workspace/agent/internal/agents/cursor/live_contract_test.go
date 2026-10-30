@@ -48,7 +48,7 @@ func waitCompleted(t *testing.T, h *threadHandle) {
 	t.Helper()
 	deadline := time.Now().Add(150 * time.Second)
 	for time.Now().Before(deadline) {
-		st := h.currentState()
+		st := h.TurnState()
 		if st == agents.TurnCompleted {
 			return
 		}
@@ -57,7 +57,7 @@ func waitCompleted(t *testing.T, h *threadHandle) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("turn did not complete (state %s)", h.currentState())
+	t.Fatalf("turn did not complete (state %s)", h.TurnState())
 }
 
 func TestLiveSpawnPromptResume(t *testing.T) {
@@ -65,12 +65,8 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	isolateHomeKeepAuth(t)
 	work := t.TempDir()
 
-	h := &threadHandle{
-		name: "live1", dir: work, slotSid: "live-slot-1",
-		events: make(chan agents.Event, 64),
-		q:      agents.NewTurnQueue("live1", ledger, agents.LedgerAtTake),
-	}
-	if err := h.spawn(agents.ThreadSettings{}); err != nil {
+	h := newThreadHandle("live1", work, "live-slot-1")
+	if err := h.Spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("spawn: %v", err)
 	}
 	t.Cleanup(func() { DropHandle("live1"); Shutdown() })
@@ -84,12 +80,12 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	waitState(t, h, agents.TurnRunning) // wait for the turn to start so we do not race past spawn's initial Completed
 	waitCompleted(t, h)
 
-	sid := h.sid
+	sid := h.SidForTest()
 	if sid == "" || sids.Read("live-slot-1") != sid {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("live-slot-1"))
 	}
 	// The transcript is built in memory (ACP writes no local file).
-	turns := h.buf.snapshot()
+	turns := h.Buf().Snapshot()
 	found := false
 	for _, tn := range turns {
 		if tn.Role == "assistant" && strings.Contains(tn.Text, "LIVE-OK") {
@@ -102,20 +98,16 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 
 	// Resume in a separate process (session/load): kill the child, spawn again, and confirm with a
 	// real prompt that the context and the transcript survived.
-	h.mu.Lock()
-	oldCmd := h.cmd
-	h.alive = false
-	h.mu.Unlock()
-	stopChild(oldCmd)
+	h.Down()() // mark the handle dead and stop its child
 	time.Sleep(1 * time.Second)
-	if err := h.spawn(agents.ThreadSettings{}); err != nil {
+	if err := h.Spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("respawn: %v", err)
 	}
-	if h.sid != sid {
-		t.Fatalf("resume changed sid: %q → %q", sid, h.sid)
+	if h.SidForTest() != sid {
+		t.Fatalf("resume changed sid: %q → %q", sid, h.SidForTest())
 	}
 	// The session/load replay rebuilt the transcript (the previous turn is still there).
-	replayed := h.buf.snapshot()
+	replayed := h.Buf().Snapshot()
 	if len(replayed) == 0 {
 		t.Fatalf("transcript not rebuilt from session/load replay")
 	}
@@ -124,7 +116,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	}
 	waitState(t, h, agents.TurnRunning)
 	waitCompleted(t, h)
-	turns = h.buf.snapshot()
+	turns = h.Buf().Snapshot()
 	last := turns[len(turns)-1]
 	if last.Role != "assistant" || !strings.Contains(last.Text, "LIVE-OK") {
 		t.Fatalf("resume lost context; last turn: %+v", last)

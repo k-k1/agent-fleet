@@ -13,13 +13,15 @@
 //   5. That the text is selectable and copyable: the transparent text layer sits over the glyphs
 //      it stands for (a layer that exists but is offset selects the wrong words), a real mouse
 //      drag selects the heading, and a copy puts that text on the clipboard.
+//   6. That the browser's find reaches every page and its highlight does not hide the match, and
+//      that the pane's own find bar (Ctrl+F in the pane) finds, steps through and shows matches.
 //
 // Needs neither a real backend nor the CP: PdfView and React are bundled into one file with
 // esbuild, served by a plain http server and driven over CDP. The sample PDFs are produced on
 // the spot with chromium's --print-to-pdf, so no binary is committed to the repository.
 //
 //   npm --prefix console run pdf:check
-//   node console/scripts/pdf/check.mjs --screenshot /tmp/pdf.png
+//   node console/scripts/pdf/check.mjs --screenshot /tmp/pdf.png   (also writes /tmp/pdf-find.png)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -129,7 +131,10 @@ async function makeSamplePdf() {
       `table{border-collapse:collapse}td,th{border:1px solid #333;padding:4px 10px}</style>${pages.join("")}`,
   );
   const out = path.join(www, "sample.pdf");
-  await run(CHROMIUM, ["--headless", "--disable-gpu", "--no-sandbox", `--print-to-pdf=${out}`, "file://" + src]);
+  // --no-pdf-header-footer: by default every page gets a header with the print time and a footer
+  // with the file URL (a random tmpdir), so the find checks' queries also matched those whenever
+  // the clock or the path happened to contain them (measured: started at 12:18, "18" found 1/7).
+  await run(CHROMIUM, ["--headless", "--disable-gpu", "--no-sandbox", "--no-pdf-header-footer", `--print-to-pdf=${out}`, "file://" + src]);
   // Corrupt PDF: a real signature with no body. pdf.js answers with InvalidPDFException.
   fs.writeFileSync(path.join(www, "broken.pdf"), Buffer.from("%PDF-1.7\n" + "0".repeat(512)));
   return out;
@@ -194,13 +199,18 @@ async function bundle() {
   fs.writeFileSync(
     entry,
     `import { createRoot } from "react-dom/client";
+     import { useState } from "react";
      import { PdfView } from ${JSON.stringify(path.join(CONSOLE, "src/features/viewer/PdfView.tsx"))};
      const params = new URLSearchParams(location.search);
      const src = params.get("src") || "/sample.pdf";
      window.__meta = null;
-     createRoot(document.getElementById("root")).render(
-       <PdfView src={src} onMeta={(m) => { window.__meta = m; }} />,
-     );`,
+     // window.__setSrc swaps the document in place, as opening another PDF in the same pane does.
+     function App() {
+       const [cur, setCur] = useState(src);
+       window.__setSrc = setCur;
+       return <PdfView src={cur} onMeta={(m) => { window.__meta = m; }} />;
+     }
+     createRoot(document.getElementById("root")).render(<App />);`,
   );
   // `?url` is a suffix esbuild does not know. A small plugin resolves it by copying the worker
   // into www and returning its URL, which is what vite's `?url` means.
@@ -402,6 +412,129 @@ try {
     PDF_BEHAVIOR_TRIES,
   );
   check(freed > 0, "off-screen pages release their canvas", `freed=${freed}`);
+
+  // 10. The browser's find (Ctrl+F) only searches text in the DOM, so every page keeps its text
+  // layer, released canvas or not. With the layer tied to the canvas, find saw only the pages
+  // near the viewport and Enter never moved to a match on another page.
+  const headed = await until(
+    b.evaluate,
+    `[...document.querySelectorAll('.pdfview-page .textLayer')].filter((d) =>
+       [...d.querySelectorAll('span')].some((e) => ${HEAD}.test(e.textContent))).length`,
+    (n) => n === 6,
+    PDF_BEHAVIOR_TRIES,
+  );
+  const releasedWithText = await b.evaluate(`[...document.querySelectorAll('.pdfview-page')].filter((p) =>
+    p.querySelector('.pdfview-canvas').width === 0 && p.querySelector('.textLayer span')).length`);
+  check(headed === 6 && releasedWithText > 0, "every page keeps a findable text layer, released canvas included",
+    `pages with a heading span=${headed}/6, released pages with text=${releasedWithText}`);
+  // The find checks below count matches, so the sample must hold only the text written into it.
+  const stamped = await b.evaluate(`[...document.querySelectorAll('.pdfview-page .textLayer')]
+    .filter((d) => /file:|\\d+\\/\\d+\\/\\d+/.test(d.textContent.replace(/\\s/g, ''))).length`);
+  check(stamped === 0, "the sample PDF carries no print header or footer", `pages with a date or file URL=${stamped}/6`);
+  // Find paints an opaque box behind a match; the layer has to multiply onto the canvas or the
+  // box hides the glyphs it found.
+  const blend = await b.evaluate("getComputedStyle(document.querySelector('.pdfview-page .textLayer')).mixBlendMode");
+  check(blend === "multiply", "a find highlight leaves the glyphs under it visible", `mix-blend-mode=${blend}`);
+
+  // 11. The pane's own find bar. Driven with real key events, because the browser's find cannot
+  // be driven from here at all. "18" is page 6's table cell only (quantities are 3 x page), and
+  // "1" is on page 1 and on later pages (headings and body numbers survive a runner without Japanese
+  // fonts; see check 9).
+  const key = (k, code, vk, modifiers = 0, text) =>
+    b.send("Input.dispatchKeyEvent", { type: "keyDown", key: k, code, windowsVirtualKeyCode: vk, modifiers, text })
+      .then(() => b.send("Input.dispatchKeyEvent", { type: "keyUp", key: k, code, windowsVirtualKeyCode: vk, modifiers }));
+  const PAGE_NO = "document.querySelector('.pdfview-pageno').textContent";
+  const COUNT = "document.querySelector('.pdfview-find-count')?.textContent ?? null";
+  await b.evaluate("(() => { const s = document.querySelector('.pdfview-scroll'); s.scrollTop = 0; s.focus(); })()");
+  await until(b.evaluate, PAGE_NO, (t) => /^1 \//.test(t), PDF_BEHAVIOR_TRIES);
+  await key("f", "KeyF", 70, 2);
+  const focused = await until(b.evaluate, "document.activeElement?.closest('.pdfview-find') ? 'input' : document.activeElement?.className", (v) => v === "input", PDF_BEHAVIOR_TRIES);
+  check(focused === "input", "Ctrl+F in the pane opens its find bar and focuses it", `active=${focused}`);
+
+  await b.send("Input.insertText", { text: "18" });
+  const one = await until(b.evaluate, COUNT, (t) => t === "1/1", PDF_BEHAVIOR_TRIES);
+  const far = await until(b.evaluate, PAGE_NO, (t) => /^6 \//.test(t), PDF_BEHAVIOR_TRIES);
+  // The current match is painted and on screen, not only the page scrolled to.
+  const shown = await until(
+    b.evaluate,
+    `(() => { const h = CSS.highlights.get('pdf-find-current'); if (!h || h.size !== 1) return 'unpainted';
+       const r = [...h][0].getBoundingClientRect(), v = document.querySelector('.pdfview-scroll').getBoundingClientRect();
+       return r.width > 0 && r.top >= v.top && r.bottom <= v.bottom ? 'visible' : 'off-screen'; })()`,
+    (v) => v === "visible",
+    PDF_BEHAVIOR_TRIES,
+  );
+  check(one === "1/1" && /^6 \//.test(far) && shown === "visible", "find reaches a match on a far page and shows it",
+    `count=${one} bar=${JSON.stringify(far)} current=${shown}`);
+  if (SHOT) await b.screenshot(SHOT.replace(/(\.png)?$/, "-find.png"));
+
+  await b.evaluate("document.getSelection().removeAllRanges()");
+  // Back to page 1 first: a new query starts from the page being read.
+  await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
+  await until(b.evaluate, PAGE_NO, (t) => /^1 \//.test(t), PDF_BEHAVIOR_TRIES);
+  await b.evaluate("(() => { const i = document.querySelector('.pdfview-find input'); i.focus(); i.select(); })()");
+  await b.send("Input.insertText", { text: "1" });
+  const many = await until(b.evaluate, COUNT, (t) => /^\d+\/(\d+)$/.test(t ?? "") && Number(t.split("/")[1]) >= 4, PDF_BEHAVIOR_TRIES);
+  const total = Number(String(many).split("/")[1]);
+  await key("Enter", "Enter", 13, 0, "\r");
+  const stepped = await until(b.evaluate, COUNT, (t) => t === `2/${total}`, PDF_BEHAVIOR_TRIES);
+  await key("Enter", "Enter", 13, 8, "\r"); // Shift+Enter: back
+  await key("Enter", "Enter", 13, 8, "\r"); // and once more wraps past the first to the last
+  const wrapped = await until(b.evaluate, COUNT, (t) => t === `${total}/${total}`, PDF_BEHAVIOR_TRIES);
+  const lastPage = await until(b.evaluate, PAGE_NO, (t) => /^6 \//.test(t), PDF_BEHAVIOR_TRIES);
+  check(
+    many?.startsWith("1/") && stepped === `2/${total}` && wrapped === `${total}/${total}` && /^6 \//.test(lastPage),
+    "Enter and Shift+Enter step through the matches, wrapping and scrolling",
+    `start=${many} enter=${stepped} shift+enter x2=${wrapped} bar=${JSON.stringify(lastPage)}`,
+  );
+  await b.evaluate("[...document.querySelectorAll('.pdfview-find button')][1].click()"); // down: wraps to the first
+  const down = await until(b.evaluate, COUNT, (t) => t === `1/${total}`, PDF_BEHAVIOR_TRIES);
+  const backTop = await until(b.evaluate, PAGE_NO, (t) => /^1 \//.test(t), PDF_BEHAVIOR_TRIES);
+  check(down === `1/${total}` && /^1 \//.test(backTop), "the down button moves to the next match and scrolls to it",
+    `count=${down} bar=${JSON.stringify(backTop)}`);
+
+  // From a button, not the input: Escape is handled by the whole bar.
+  await b.evaluate("[...document.querySelectorAll('.pdfview-find button')][1].focus()");
+  await key("Escape", "Escape", 27);
+  const closed = await until(
+    b.evaluate,
+    "document.querySelector('.pdfview-find') ? 'open' : (CSS.highlights.get('pdf-find')?.size ?? 0) + ' painted'",
+    (v) => v === "0 painted",
+    PDF_BEHAVIOR_TRIES,
+  );
+  check(closed === "0 painted", "Escape on a find-bar button closes it and clears its highlights", closed);
+
+  // In the Console the pane's generic find (PaneFind) takes Ctrl+F first and hands it over with
+  // this event (lib/ownFind.ts); the PDF pane must answer it by opening its own bar.
+  const handed = await b.evaluate(`(() => {
+    const v = document.querySelector('.pdfview[data-own-find]');
+    if (!v) return 'unmarked';
+    v.dispatchEvent(new CustomEvent('af-own-find'));
+    return 'sent'; })()`);
+  const handedOpen = await until(b.evaluate, "document.activeElement?.closest('.pdfview-find') ? 'focused' : document.querySelector('.pdfview-find') ? 'open, unfocused' : 'closed'", (v) => v === "focused", PDF_BEHAVIOR_TRIES);
+  check(handed === "sent" && handedOpen === "focused", "the hand-over from the pane's generic find opens the PDF find bar",
+    `${handed}, bar ${handedOpen}`);
+  await key("Escape", "Escape", 27);
+
+  // 12. Swapping the document while its text layers are still being built. Page indices repeat
+  // across documents, so a late job for the old one must not claim or tear down a page of the new
+  // one: after a burst of swaps, every page of the final document still gets its text layer.
+  // Timing-dependent, but the staggered swaps below hit it reliably (measured: without the
+  // generation check, 3 runs out of 3 ended with 5/6 pages).
+  // Each round lets the sample start building its layers, then swaps to another copy of it at a
+  // slightly later moment, so some swap lands while a page of the old copy is mid-render.
+  for (let k = 0; k < 12; k++) {
+    await b.evaluate(`window.__setSrc("/sample.pdf?swap=${k}")`);
+    await sleep(40 + 15 * k);
+  }
+  await b.evaluate(`window.__setSrc("/sample.pdf?swap=final")`);
+  const swapped = await until(
+    b.evaluate,
+    `[...document.querySelectorAll('.pdfview-page .textLayer')].filter((d) =>
+       [...d.querySelectorAll('span')].some((e) => ${HEAD}.test(e.textContent))).length`,
+    (n) => n === 6,
+    PDF_BEHAVIOR_TRIES,
+  );
+  check(swapped === 6, "after swapping documents mid-build every page has its text layer", `pages with a heading span=${swapped}/6`);
 
   if (SHOT) {
     await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");

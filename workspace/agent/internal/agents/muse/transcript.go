@@ -428,6 +428,9 @@ func genericPart(it msp.Item) transcript.Part {
 	if p.Info == "" && it.Event != nil {
 		p.Info = string(*it.Event)
 	}
+	if p.Info == "" {
+		p.Info = transcript.Clip(kindSummary(it))
+	}
 	if it.Status != msp.ItemStatusCompleted {
 		p.Output = failureText(it)
 		if it.RunStatus != nil && *it.RunStatus != msp.HookRunStatusCompleted && str(it.Reason) == "" {
@@ -435,6 +438,36 @@ func genericPart(it msp.Item) transcript.Part {
 		}
 	}
 	return p
+}
+
+// kindSummary is the one-line summary of a kind that carries its facts in typed members rather
+// than in label/fallbackText. Without it a damagedRange item, which says how much of the session
+// log could not be read, would reach the mirror as a bare kind name and the loss would go
+// unnoticed. Empty for any other kind, including overdueNotice, which has no typed members.
+func kindSummary(it msp.Item) string {
+	switch it.Kind {
+	case msp.ItemKindDamagedRange:
+		if d := it.DamagedRange; d != nil {
+			return fmt.Sprintf("session log damaged: %d records missing, %d unreadable lines", d.MissingRecords, d.UnreadableLines)
+		}
+	case msp.ItemKindScheduledFire:
+		if it.JobID != nil && *it.JobID != "" {
+			return "scheduled job " + *it.JobID
+		}
+	case msp.ItemKindBackgroundTerminalCompletion:
+		// The terminal status is the point: a backgrounded command that failed or timed out
+		// after its turn ended has no other trace in the mirror.
+		if b := it.BackgroundTerminalCompletion; b != nil {
+			return fmt.Sprintf("background command %s: %s", b.TerminalStatus, b.Command)
+		}
+	case msp.ItemKindEarlierHistory:
+		// Stands in for every item that opened in a pruned prefix; the count says how much of
+		// the tail the host kept, so the gap before it is not mistaken for an empty session.
+		if e := it.EarlierHistory; e != nil {
+			return fmt.Sprintf("earlier history: %d messages kept from before the checkpoint", len(e.Messages))
+		}
+	}
+	return ""
 }
 
 // toolPart renders a tool call. `visibleOutput` is the host's own already-redacted rendering

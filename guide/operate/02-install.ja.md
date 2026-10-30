@@ -1,7 +1,6 @@
 ---
 audience: "配備をはじめて建てる人"
 source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）"
-updated: "2026-08"
 ---
 
 # 02. 初期構築
@@ -253,11 +252,8 @@ membership が 1 つも無くても Admin パネルに到達できます。招�
 
 `.env` がそろったら `DATA_DIR` を作成し、`docker compose up -d`（プレビルド image を使うなら
 そのまま、ローカルビルドなら `--build`）で起動します。正確なコマンドは runbook の "Quick start"。
-起動後、CP のログを追い、ヘルスチェックが通ることを確認します。
-
-```
-curl -s http://127.0.0.1:8099/healthz    # -> ok
-```
+起動後、CP のログを追い、ヘルスチェックが通ること（Control Plane のループバックのポートの `/healthz` が `ok` を返すこと。正確な確認方法は
+ランブックのトラブルシュートの表）を確認します。
 
 `ok` が返らない・そもそも CP が上がらないときは [06-diagnose.md](06-diagnose.ja.md) の
 「CP が起動しない」を参照してください。

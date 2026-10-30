@@ -289,14 +289,16 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"go":             t.Go,
 		"timezone":       t.Timezone,
 		"agentUpdate":    t.AgentUpdate,
-		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
-		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
+		"java_available": javaOptions(),           // offered for selection (installed ∪ installable)
+		"java_installed": installedJavaMajors(),   // present on disk now (ready without a download)
+		"java_versions":  installedJavaVersions(), // major → the version its JAVA_HOME resolves to
 		"node_options":   nodeOptionsFor(t.Node),
 		// nodeOptions is a FIXED list, so — exactly like java — it offers
 		// versions that may not be on disk. Without this the Console cannot tell the two
 		// apart, and selecting an absent one silently did nothing (docs/decisions/0068).
 		"node_installed": installedNodeMajors(),
-		"go_options":     goOptions(), // "system" ∪ build pin ∪ installed on-demand versions
+		"node_versions":  installedNodeVersions(), // major → the patch sessions get
+		"go_options":     goOptions(),             // "system" ∪ build pin ∪ installed on-demand versions
 		"tz_options":     tzOptions,
 	})
 }
@@ -331,9 +333,37 @@ func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, _ := json.MarshalIndent(req, "", "  ")
-	if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
+	// Under toolchainsMu, so an uninstall cannot remove a major between reading the
+	// selection and staging it; and replaced atomically, so no reader ever sees a
+	// truncated file and takes it for "nothing selected".
+	toolchainsMu.Lock()
+	err := writeToolchainsAtomic(p, append(b, '\n'))
+	toolchainsMu.Unlock()
+	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 	handleToolchainsGet(w, r)
+}
+
+// writeToolchainsAtomic replaces p with b through a temp file and a rename.
+func writeToolchainsAtomic(p string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(p), ".toolchains-*.json")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }

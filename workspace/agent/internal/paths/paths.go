@@ -5,6 +5,9 @@
 package paths
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,7 +248,9 @@ func ImagegenStudiosDir() string { return filepath.Join(AgentConfigDir(), "image
 
 // SessionWorkDir is a session's throwaway directory, ~/.af-work/<name>: probes, review
 // checkouts, bundles — what agents used to drop loose in ~ by the hundred (docs/log/116).
-// Terminal sessions get it as $AF_WORK_DIR; deleting the session deletes it. It sits in
+// Every session kind that can be given it gets it as $AF_WORK_DIR (the tmux launch env, or
+// the per-session channel of a managed kind; agents.WithSessionEnv); deleting the session
+// deletes it. The name is the session's immutable slug, so a rename never moves it. It sits in
 // plain view in home, not under the state roots, because the agent working in the session
 // is the one that reads it. "" for a name that could reach outside ~/.af-work.
 func SessionWorkDir(name string) string {
@@ -253,4 +258,52 @@ func SessionWorkDir(name string) string {
 		return ""
 	}
 	return filepath.Join(HomeDir(), ".af-work", name)
+}
+
+// SessionWorkDirMarker is the empty file the Agent leaves in every directory it creates under
+// ~/.af-work. The boot prune removes an orphaned directory only when it carries this file; a
+// folder a member made there by hand has none and stays until they remove it from Settings >
+// Machine. Directories made before the marker existed have none either, so they are kept at
+// boot too.
+const SessionWorkDirMarker = ".af-session-workdir"
+
+// MarkSessionWorkDir writes the marker into an existing directory.
+func MarkSessionWorkDir(dir string) error {
+	f, err := os.OpenFile(filepath.Join(dir, SessionWorkDirMarker), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// MakeSessionWorkDir creates SessionWorkDir(name) and marks it as the Agent's own, but only
+// when this call created it: an existing directory (a member's own folder of the same name,
+// a symlink to a directory, one from before the marker) is returned as it is and never
+// promoted to Agent-owned. An existing path that is not a directory is an error. "" and an
+// error for a name that could escape ~/.af-work.
+func MakeSessionWorkDir(name string) (string, error) {
+	wd, _, err := MakeSessionWorkDirCreated(name)
+	return wd, err
+}
+
+// MakeSessionWorkDirCreated is MakeSessionWorkDir that also says whether this call made the
+// directory. Ownership is decided by the final os.Mkdir succeeding, never by a check before it.
+func MakeSessionWorkDirCreated(name string) (wd string, created bool, err error) {
+	wd = SessionWorkDir(name)
+	if wd == "" {
+		return "", false, errors.New("bad session work dir name")
+	}
+	if err := os.MkdirAll(filepath.Dir(wd), 0o700); err != nil {
+		return "", false, err
+	}
+	if err := os.Mkdir(wd, 0o700); err != nil {
+		if !errors.Is(err, fs.ErrExist) {
+			return "", false, err
+		}
+		if info, serr := os.Stat(wd); serr != nil || !info.IsDir() {
+			return "", false, fmt.Errorf("%s exists and is not a directory", wd)
+		}
+		return wd, false, nil
+	}
+	return wd, true, MarkSessionWorkDir(wd)
 }

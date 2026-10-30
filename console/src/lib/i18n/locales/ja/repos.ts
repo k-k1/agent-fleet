@@ -1,5 +1,5 @@
 // 日本語 カタログ / ドメイン: repos
-// キー接頭辞: rp, repo, scm, pj, igb, proj, gitflow
+// キー接頭辞: rp, repo, repo_skills, scm, pj, igb, proj, gitflow
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -128,6 +128,9 @@ export const repos = {
   "proj.copy_rel_path": "相対パスをコピー",
   "proj.open_reader": "朗読で開く",
   "proj.open_gallery": "ギャラリーで開く",
+  "proj.open_folder_gallery": "フォルダをギャラリーで開く",
+  "proj.open_shell_here": "ここでシェルを開く",
+  "proj.shell_title": "shell · {name}",
   "proj.download": "ダウンロード",
   "proj.download_zip": "zip でダウンロード",
   "proj.download_zip_title": "フォルダ内の .git と node_modules は含めません",
@@ -199,7 +202,9 @@ export const repos = {
   "pj.loading_repos": "リポジトリを読み込み中…",
   "pj.repos_unreachable": "ワークスペースに接続できません",
   "pj.repos_unreachable_hint": "再試行中です。つながると自動で戻ります",
-  "pj.repos_stale": "ワークスペースに接続できません（最後に取得した一覧を表示中）",
+  "pj.repos_failed": "リポジトリの一覧を読み込めません",
+  "pj.repos_failed_hint": "ワークスペースがエラーを返したため、自動では再試行しません。ページを再読み込みするか、このワークスペースへのアクセス権を確認してください。",
+  "pj.repos_stale": "一覧を更新できません（最後に取得した一覧を表示中）",
   "pj.collapse": "折りたたむ",
   "pj.peek_more": "ほかに稼働中:\n{names}",
   "pj.expand": "展開",
@@ -453,6 +458,7 @@ export const repos = {
   "scm.ref_tag": "タグ {name}",
   "scm.show_detail": "詳細を表示",
   "scm.switch_branch_to": "ブランチ切替: {name}",
+  "scm.switch_remote_branch_to": "リモートブランチへ切替: {name}",
   "scm.start_work_on": "{name} で作業を始める…",
   "scm.open_branch_worktree": "{name} は {folder} で作業中 — 開く",
   "scm.checkout_detached": "チェックアウト（detached HEAD）",
@@ -500,4 +506,23 @@ export const repos = {
   "gitflow.err_invalid": "使えない値です: {detail}",
   "gitflow.err_failed": "設定を書き込めませんでした: {err}",
   "gitflow.err_partial": "書き込みが途中で止まりました（{err}）。書き込み済み: {keys}。もう一度保存するとすべて書き直します。",
+  "repo.skills": "スキル…",
+  "repo_skills.title": "{repo} のスキル",
+  "repo_skills.intro": "このワーキングコピーで各エージェントが見つけるもの（読むフォルダ・同名のうち優先される方・ファイルの中身）です。読み取り専用で、ファイルはリポジトリの一部なのでそちらで編集します。自分用のスキルは 設定 > スキル にあります。",
+  "repo_skills.subdir": "サブディレクトリ",
+  "repo_skills.subdir_ph": "空 = ワーキングコピーの直下（例: packages/app）",
+  "repo_skills.show": "表示",
+  "repo_skills.no_subdir": "このワーキングコピーに「{subdir}」というフォルダはありません。",
+  "repo_skills.no_roots": "このエージェントはリポジトリからスキルを読みません。",
+  "repo_skills.scope_user": "ワーキングコピーより上",
+  "repo_skills.not_present": "未作成",
+  "repo_skills.create": "例: {path} を作ると有効になります",
+  "repo_skills.none": "上のフォルダにスキルはありません。",
+  "repo_skills.group_project": "このリポジトリ内",
+  "repo_skills.group_user": "ワーキングコピーより上のフォルダ",
+  "repo_skills.outside_badge": "ワーキングコピー外",
+  "repo_skills.outside": "このエントリはワーキングコピーの外へ出るリンクなので、読み込みも表示もしません。",
+  "repo_skills.also_personal": "同名の個人スキルもあります。",
+  "repo_skills.open_personal": "個人スキルを開く",
+  "repo_skills.open_in_viewer": "ビューアで開く",
 };

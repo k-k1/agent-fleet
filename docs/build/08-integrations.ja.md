@@ -1,7 +1,6 @@
 ---
 audience: "外部プロバイダや CLI エージェントを足す人"
 source_of_truth: "コード（本書は方式と設計意図の地図）"
-updated: "2026-09"
 ---
 
 # 08. 外部システム連携
@@ -225,7 +224,7 @@ Jira は git でなく作業項目インボックス
 `/usr/local/bin/jira` は `workspace/jira-auth-wrapper.sh`。jira-cli はトークンを
 `JIRA_API_TOKEN` から読み、設定ファイルの値は環境変数（`JIRA_SERVER` / `JIRA_LOGIN` /
 `JIRA_AUTH_TYPE` / `JIRA_INSTALLATION`）がキーごとに上書きする。ラッパーは実行のたびに
-`workspace-agent jira-cred`（`workspace/agent/jira_cred.go`）に尋ね、実 jira を exec する
+`workspace-agent jira-cred`（`workspace/agent/internal/jirax/jira_cred.go`）に尋ね、実 jira を exec する
 1 回分だけそれらを埋める:
 
 - **API トークン接続**: `auth_type` は basic、サーバーはサイト、ログインは保存済みの email。
@@ -250,8 +249,72 @@ Jira は git でなく作業項目インボックス
   - 設定を指定しないときは管理ディレクトリの `config.yml` を使い、なければ
     `JIRA_CONFIG_FILE` を `~/.cache/agent-fleet/jira/config.yml`（中身は
     `installation: Cloud` だけ）に向ける。`issue view` や `issue list -p KEY` はこれで動く。
-    `issue create`・`sprint list`・エピック系は、`jira init` だけが書く課題タイプ・ボード・
-    エピック用フィールドが要る。
+    `sprint list`・エピック系は、`jira init` だけが書くボード・エピック用フィールドが要る。
+  - **`jira init` なしの `issue create`**: jira-cli は `issue.types` を設定からしか読まず
+    （v1.7.0 の `setIssueTypes`）、唯一の書き手である `jira init` は最初に Agile のボード API を
+    呼ぶ（Jira Software スコープのない OAuth では 401）。そこで `issue create` のとき、実効の設定が
+    生成されたものか管理ディレクトリのもの（`-c` で指定したものは環境変数より優先されるので除く）
+    で `types:` キーを持たなければ、ラッパーが `workspace-agent jira-issue-types KEY` を実行する
+    （KEY は `-p` のどの書き方でも、なければ設定の `project.key`）。ヘルパーは自分が持つトークンで
+    `/rest/api/2/issue/createmeta?projectKeys=KEY`（クラシックの `read:jira-work`）を呼び、
+    秘密を含まない `issue.types` のブロックだけを出力する。ラッパーはそれを
+    `~/.cache/agent-fleet/jira/derived/issue-types-<サーバーのハッシュ>-KEY.yml` に保存し（同じ接続の
+    次回の取得失敗時だけ再利用）、`derived/config-KEY-<内容のハッシュ>.yml`（元の設定にそのブロックを
+    足したもの）を `JIRA_CONFIG_FILE` に指定する。名前は内容で決まるので、別の元設定での並行実行が
+    ファイルを共有することはない。元の設定を丸ごとコピーするため、ディレクトリは 0700、ファイルは
+    0600 にする。すでに `types:` がある設定は触らない。単純な block 形式でない設定（先頭行が 0 桁目、
+    0 桁目の行はすべて引用符なしの `key:`、`issue` キーなし、`---` / `...` なし）も、追記では
+    結合できないので触らない。失敗したときは、その
+    設定のまま jira を動かし、標準エラーに `jira init` を促す 1 行のヒントを出す（401 の原因が
+    Jira Software スコープの不足のこともあると添える）。課題タイプと単純な `project.key` を持つ管理設定は
+    そのプロジェクト専用として扱う。`issue create -p B` の B がそのキーと異なる（大文字小文字を
+    区別しない、`-c` なし）ときは、同じ仕組み（キャッシュ・命名・権限・GC）で `config-B-<ハッシュ>.yml`
+    を作る。ただし元設定の 0 桁目の `issue:` ブロックを先に取り除いてから B の課題タイプを足す。
+    このブロックには jira-cli が create で送る `fields.custom` も含まれ、A のカスタムフィールドを
+    B に送ってはならないので、B では捨てる（ボードやエピックなど他のキーは残す）。取り除くのは、
+    裸の `issue:` 行（大文字小文字は問わない）がちょうど 1 つで、YAML のアンカー・エイリアス・`<<` を含まずときだけ（取り除くとエイリアスが未定義になりうる）。`--parent` / `-P` があっても取り除く（親課題は下の手順が `project.type` を上書きする）。そうでないとき、または取得に
+    失敗してキャッシュもないときは、元の設定のまま jira を動かし、
+    `jira init -c ~/.config/agent-fleet/jira/<名前>.yml --project B --board "<名前>"` を案内する
+    ヒントを出す。`project.key` を単純に読めない設定や `-p` なしの実行は、そのまま使う。
+- **`issue create -P KEY` / `--parent`**（#2812）: jira-cli v1.7.0 は `project.type: next-gen`（またはサブタスク型）
+  のときだけ `fields.parent` を送る。それ以外は `epic.link` が指すエピックリンクのカスタムフィールドに入れ、
+  `epic.link` が空だとリクエストから黙って落ち、親なしで課題が作られたうえ成功と表示される。当方の設定には
+  `epic.link` がない。そこで親を伴う create は、実効の設定（当方のもの）に `project.type: next-gen` を設定した
+  派生コピー（`config-nextgen-<ハッシュ>.yml`、キャッシュと権限は同じ）で動かす（`classic` は置換、なければ追加、
+  `project:` ブロックがなければブロックごと追加）。元のファイルは変更せず、利用者自身の設定、管理ディレクトリ外の
+  `-c`、`JIRA_SERVER` / `JIRA_API_TOKEN` の実行にも触れない。管理ディレクトリ内の `-c` や安全に編集できない
+  書式（フロースタイル・アンカー・`project` キーが複数）は、親が落ちうると標準エラーに警告してそのまま動かす。
+  対象は `issue create` のみ。jira-cli v1.7.0 で `project.type` を読む他の処理（`epic list|create|add|remove`、
+  `issue clone`）は派生コピーではなく元の設定を読むので従来どおり。`issue edit -P` もあるが対応不要: edit は `project.type` に関係なく常に `fields.parent` を送る（pkg/jira/edit.go）ので、型が効くのは create だけ。派生コピーのモードは元ファイルの所有者権限を 0600 でマスクしたもの（0400 の元なら 0400。モードはファイル名に含まれるので、キャッシュが元より広くなることはない）。親の判定はラッパーのフラグ走査で行い（他のフラグの値、`--`、`-hPKEY` のような pflag の結合は pflag と同じに読む）、`project` ブロックは、素直な `key: scalar` 行だけで `type` キーが高々 1 つのときに限って編集する。
+  実機（チーム管理・会社管理プロジェクト）では未検証: Jira Cloud は両方で fields.parent を受け付ける想定。
+- **`issue comment edit|delete KEY ID`**（jira-cli にあるのは `comment add` だけ）: 当方の設定なら、
+  ラッパーは資格情報を取りに行く前に、自分の argv のまま `workspace-agent jira-comment` へ `exec`
+  する。トークンがシェルを通ることはない。ヘルパーは `/rest/api/3/issue/KEY/comment/ID` に
+  `PUT` / `DELETE` を送り（`write:jira-work`）、本文は Markdown を ADF に変換して送る
+  （`internal/jirax/jira_adf.go`、goldmark）。jira-cli の wiki 変換は通さない（#2476）ので、編集で崩れたコメントを
+  直せる。`--debug` の実行は断る。利用者自身の設定（次の項目）はそのまま `exec` し、jira が
+  「そのコマンドはない」と答える。
+- **本文を ADF で送る（`comment add`、`issue create -b/-T`、`issue edit -b`）**（#2809）: jira-cli は
+  これらを v2 の wiki 記法で送る。wiki 記法の `{{code}}` と `*bold*` は単語の区切りでしか効かず、
+  日本語の文字や全角の括弧は区切りにならない。当方の設定なら、コマンドラインの本文・`-T`・端末でない
+  標準入力のどれかがあり、jira-cli が確認を出さない（標準入力が端末でない、`-T -`、または有効な `--no-input`）
+  `comment add` は `workspace-agent jira-comment` へ渡す（`/rest/api/3/issue/KEY/comment` に POST。
+  `--internal` は `sd.public.comment` プロパティ。POST は再送しない。知らないフラグや pflag が受け付けない
+  真偽値は、送る前に拒否する）。本文があり、プロンプトが出ない（標準入力が端末でないか、有効な `--no-input`）
+  `create` / `edit` は、まず本文を読む。この読み取りも書き込みと同じ時間制限の下で行い、閉じないパイプなら
+  何も送らずに 124 で終える。次に `-b` / `-T` を抜き、標準入力を `/dev/null` にして jira-cli を動かし、そのあと本文を
+  `workspace-agent jira-description KEY [--skip-notify]` に渡す（`fields.description` を PUT。時間制限と
+  シグナルの転送は同じ）。create のキーは jira-cli の `/browse/KEY` 行か `--raw` の JSON から読む。読めないときや
+  PUT が失敗したときは、課題はあると伝えて終了コード 3（時間切れなら 124）で終わり、create は決して再実行しない。
+  create の前に `workspace-agent jira-description-required PROJECT TYPE` が createmeta（ページ分割された
+  `/issue/createmeta/{project}/issuetypes[/{id}]`）を読み、説明文が必須なら本文を create に付けて jira-cli 自身の
+  変換で送る（本文は標準入力から渡し、argv は変えない）。それでも `- description:` で拒否された create は再送しない。jira-cli は
+  フィールドのエラーを HTTP ステータスなしで出すので、「拒否されて未作成」と「作成後の失敗」を区別できないため。
+  代わりに、3 つの ADF 経路をすべて止める `AF_JIRA_ADF=0` を案内する。本文の読み取りエラーでは何も送らずに止める。
+  本文だけを変える edit は jira-cli を動かさない。フラグは pflag と同じ規則で読む（最後の値が勝つ、`-h=v`、
+  `-hpAB` のような短縮フラグのまとまり。知らない短縮フラグがあれば jira-cli に任せる）。ヘルプ、有効な `--web`、数字だけのキー（jira-cli が設定から補う）、`edit -T` は
+  jira-cli に任せる。Markdown の解析は CommonMark の flanking 規則に CJK 向けの修正を加えたもの
+  （`goldmark-cjk-friendly`）なので、`**「x」**です` も太字になる。
 - **利用者自身の設定が勝つ**: 明示の `JIRA_API_TOKEN` か `JIRA_SERVER`、自分で `--server` /
   `--login` / `--installation` / `--auth-type` を渡した `jira init`、または管理ディレクトリの
   外の設定（どの書き方の `-c` でも、`JIRA_CONFIG_FILE` でも、jira 自身の既定の
@@ -270,13 +333,24 @@ Jira は git でなく作業項目インボックス
 **知っておくべき制限:**
 
 - **OAuth のスコープ**: ボード・スプリント・エピックと `jira init` は `/rest/agile/1.0` を
-  呼び、そこはクラシックスコープを受け付けない。テナントの Jira アプリに
+  呼び、そこはクラシックスコープを受け付けない（`issue create` は不要。上記）。テナントの Jira アプリに
   read:board-scope:jira-software / read:project:jira / read・write:sprint:jira-software /
   read・write:epic:jira-software / read:issue-details:jira / read:jql:jira の許可が必要。
   そのうえで管理者がアプリの `jira_software` スコープグループ（`tenant_git_oauth.scope_groups`）
   にチェックを入れて初めて、認可 URL がそれらを求める。アプリにないスコープを求める認可は
-  Atlassian に拒否されるため。接続済みのメンバーは接続し直すと受け取れる。API トークン接続は
+  Atlassian に拒否されるため。実測（2026-10-19）: この拒否は Atlassian 側の「Something went
+  wrong」の行き止まりページで、callback へのリダイレクトがない。af が捕まえて Software スコープ
+  抜きでやり直せる `error=invalid_scope` は返らないので、テナントのオプションは外せない。
+  接続済みのメンバーは接続し直すと受け取れる。API トークン接続は
   アカウントができることを何でもできる。
+  不足を見えるようにする: Agent は現在のサイトについて accessible-resources が返すスコープを
+  保持し（`JiraSite.Scopes`）、`softwareScopes`（`granted` / `missing`、不明なら省略: API トークン、
+  または取得失敗）を導く。この項目より前のストアは、次の `jira-cred` か Jira 取得のときに
+  accessible-resources から補完する（時間制限と間隔制限があり、スコープ未記録のサイトにだけ書く）
+  ので、警告を見るために再接続する必要はない。設定の Jira カードは `missing` で「ボード・スプリント・
+  エピック: 利用できません」を出し、`workspace-agent jira-cred` は `software=missing` を出力する。
+  wrapper はこれを受けて `board`・`sprint`・`epic`・`init` で同じ 1 行を stderr に書き、そのまま
+  jira を実行する。
 - **OAuth のリンク**: jira-cli はブラウザ用 URL をサーバーから組み立てるので、OAuth では
   サイトではなく `api.atlassian.com/ex/jira/...` を指す。
 - **版の固定**: Dockerfile の `JIRA_CLI_VERSION`（v1.7.0、最新リリース）。tarball はリリースの
@@ -473,7 +547,7 @@ Bedrock を呼ばない。
   `POST /api/admin/engines/issue-token` で発行）・任意で `AF_REMOTE_ENGINE_KEYS` を設定する。
   発行トークンをエンジントークンに交換してメモリ上だけに持ち、貸す側の
   `GET /internal/engine/catalog` をポーリングする。貸す側は新たに何も保存しない。手順は
-  [operate/08](../../guide/operate/08-borrowed-engine.ja.md)。
+  [operate/09](../../guide/operate/09-borrowed-engine.ja.md)。
 - **モデル取り込み**は Hugging Face と Civitai から配備全体のトークンで取得する。super_admin が
   設定し、設定の行に封緘する。AWS では取り込みタスクのためにスタックの Secrets Manager の
   シークレットにも写すが、CP はそこに書くだけで読まない。

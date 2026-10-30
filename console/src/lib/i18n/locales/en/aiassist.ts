@@ -8,7 +8,7 @@ import type { aiassist as jaAiassist } from "../ja/aiassist.ts";
 export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.agent_order": "Agent priority",
   "aiassist.note_agent_order":
-    "Priority order of the CLIs that run AI assistance. The first CONNECTED CLI from the top is used (unconnected ones are skipped). This is ranked separately from the assistant chat: the chat wants the strongest model, while assistance runs constantly and wants the cheapest one that works. Changes apply to the very next generation.",
+    "Priority order of the CLIs that run AI assistance. The first usable CLI from the top is used (unconnected and rate-limited ones are skipped; a generation that hits a limit is retried once on the next CLI). This is ranked separately from the assistant chat: the chat wants the strongest model, while assistance runs constantly and wants the cheapest one that works. Changes apply to the very next generation.",
 
   "aiassist.short_models": "Model for short labels",
   "aiassist.note_short_models":
@@ -36,6 +36,9 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
     "Enables/disables the assistant chat's \"refresh\" button, which re-derives the work plan from the recent exchange. Separate from the automatic summary carry-forward (context compaction). This is the button you press explicitly. Turn it off and the button is hidden.",
   "aiassist.note_mirror_translate":
     "Shows a \"Translate\" button on mirror answers that came back in another language. Tokens are spent only when you press it, and no session turn is used. A translation is kept until that session is deleted, so the same text with the same agent/model is free from the second press on. Changing this feature's agent or model means there is no translation yet for that combination, so the next press generates a fresh one (the earlier agent/model's translation is not lost; it comes back if you switch back).",
+  "aiassist.note_memory_review":
+    "Has an agent with no tools and no MCP servers read excerpts of finished sessions, and lists what is worth keeping as proposals. Nothing reaches memory until you approve it. Conversation excerpts (parts that look like secrets are left out) are sent to the provider of the agent chosen here, and tokens are spent. It runs only on agents that can be run with their tools switched off; choose another and the review does not run.",
+  "aiassist.set_in_memory_settings": "Switch it in the Agent memory settings",
   "aiassist.mirror_auto_translate": "Translate automatically",
   "aiassist.note_mirror_auto_translate":
     "Presses that button for you the moment a turn finishes, for answers that arrive while you are watching that session. Off by default: this is the one translation setting that spends without being asked. Answers already on screen when you open a session are never translated on their own — the button is still there for them.",
@@ -47,4 +50,5 @@ export const aiassist: Record<keyof typeof jaAiassist, string> = {
   "aiassist.feature_model_follow_default": "Default (follow the setting above)",
   "aiassist.currently_using": "Currently uses: {agent} / {model}",
   "aiassist.currently_using_unknown": "Currently uses: not yet known",
+  "aiassist.currently_using_denied": "Currently uses: none (no agent can run with its tools switched off)",
 };

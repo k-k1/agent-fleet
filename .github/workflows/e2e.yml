@@ -2,10 +2,19 @@
 # actual CLI versions = Dockerfile ARG pins etc.) -> L2 (e2e/: boot the CP headless
 # and exercise workspace/session round-trips) -> L3 (console-e2e/: Playwright
 # browser->CP->container end-to-end). The image build is heavy, so this is split
-# out of ci.yml and runs only on PRs to main (merge gate) + a nightly cron
-# (integration check of the default branch = main; caps breakage exposure at one
-# day and keeps bisects practical) + manual dispatch. Not run on pushes to main
-# (spreads billing; CONTRIBUTING "Commits & PRs"). L4 (claude round-trip with real
+# out of ci.yml and runs only on PRs that change the Workspace image inputs or the
+# e2e harness itself (merge gate) + a nightly cron (integration check of the default
+# branch = main; caps breakage exposure at one day and keeps bisects practical) +
+# manual dispatch. Not run on pushes to main, nor on PRs that touch only
+# control-plane/ or console/ (spreads billing; CONTRIBUTING "Commits & PRs").
+#
+# The PR path filter follows what the image build reads: the docker context is
+# workspace/ (the COPY lines in workspace/Dockerfile, incl. workspace/agent/), so a
+# hand pin bump to an ARG *_VERSION must still get an image build before merge.
+# control-plane/ and console/ are not image inputs: L2/L3 build them from source on
+# the runner. A CP- or console-side break therefore merges unseen by this workflow and
+# surfaces in the next nightly run; ci.yml's unit tests are the PR-time guard for them.
+# Test-only files under workspace/ are excluded (the image never runs them). L4 (claude round-trip with real
 # credentials) consumes quota, so it only runs when the workflow_dispatch live
 # input is set.
 #
@@ -27,8 +36,9 @@ on:
     branches: [main]
     paths:
       - "workspace/**"
-      - "control-plane/**"
-      - "console/**"
+      - "!workspace/**/*_test.go"
+      - "!workspace/*-test.sh"
+      - "!workspace/jvm.Dockerfile"
       - "e2e/**"
       - "console-e2e/**"
       - "deploy/local/e2e-smoke.sh"

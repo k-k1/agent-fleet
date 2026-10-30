@@ -38,7 +38,10 @@ node console/scripts/shots/capture.mjs --locale en
   address, a private repo, or an agent account's usage numbers. That covers third-party
   image models too: a real checkpoint's name beside a licence line reads as an endorsement
   and a licence claim, so the studio's models are invented (`sdxl` / `flux1` are Agent
-  Fleet's own family ids and stay).
+  Fleet's own family ids and stay). Agent model ids are the exception: the sessions run real,
+  current models (`claude-opus-5-5`, `gpt-6-luna`, `gemini-4-argon-medium`) by the maintainer's
+  choice. Move them to the newest ids the agents offer (`list_models` per kind) when the shots
+  are retaken.
 - Fixture shapes follow the real wire contracts (`console/src/types/session.ts`,
   `console/src/features/repos/store.ts`,
   `workspace/agent/internal/transcript/transcript.go`, `console/src/lib/gitgraph.ts`).
@@ -52,15 +55,24 @@ node console/scripts/shots/capture.mjs --locale en
 
 ## Features-page stills
 
-Three scenes are for the features page on agent-fleet.org rather than the README: the file
-viewer (`files` — a Markdown note with its Mermaid diagram beside a draw.io diagram), the
-work-item inbox (`workitems` — CI and conflict marks, and a pull request's detail panel) and the
-image-generation studio (`imagegen`). They land in `docs/img/` like the README shots and ship the
-same way:
+Eight scenes are for the features page on agent-fleet.org rather than the README:
+
+| Scene | Shows |
+|---|---|
+| `files` | the file viewer: a Markdown note with its Mermaid diagram beside a draw.io diagram |
+| `workitems` | the work-item inbox: CI and conflict marks, new-activity dots, comment counts, and a mergeable pull request's detail panel with Merge |
+| `imagegen` | the image-generation studio |
+| `memory` | Settings › Agent memory: memories written by sessions of several kinds, one opened |
+| `inbox` | the member inbox: a request waiting, one taken with its session, a message |
+| `sessionmenu` | the session menu: move, handoff, share and the three Markdown exports |
+| `move` | the dialog that moves a session to another agent, with the work that goes along |
+| `skills` | Settings › Skills: personal skills by scope, with a skill and a command of one name shown as shadowed |
+
+They land in `docs/img/` like the README shots and ship the same way:
 
 ```bash
-node console/scripts/shots/capture.mjs --locale en --only files,workitems,imagegen
-node console/scripts/shots/capture.mjs --locale ja --only files,workitems,imagegen
+node console/scripts/shots/capture.mjs --locale en --only files,workitems,imagegen,memory,inbox,sessionmenu,move,skills
+node console/scripts/shots/capture.mjs --locale ja --only files,workitems,imagegen,memory,inbox,sessionmenu,move,skills
 ```
 
 The site takes them from a release of the distribution repository, so a change here reaches the
@@ -112,7 +124,8 @@ node console/scripts/shots/demo.mjs --scenario day --locale en    # and ja, and 
   caption band under the Console, a clock for stories that span hours, and the phone in `day`.
   That phone's Slack thread is **redrawn**, not recorded: its texts and buttons are the chat
   bridge's own strings (`workspace/agent/internal/bridge/format.go`, `slack_interact.go`,
-  `workspace/agent/internal/sessionx/bridge_answer.go`), so update them together.
+  `workspace/agent/internal/sessionx/bridge_answer.go`, and the kind's product name from
+  `workspace/agent/internal/kinds/kinds.go`), so update them together.
 - `sre` streams the assistants' replies: a scenario's `stream()` answers a route as Server-Sent
   Events (the chat's `POST …/stream`), frame by frame.
 - `orchestrate` and `sre` press the rail's repos Refresh behind the scenes after a worktree is

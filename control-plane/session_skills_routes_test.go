@@ -19,4 +19,10 @@ func TestSessionSkillsRouteProxiedByCP(t *testing.T) {
 	if _, pattern := mux.Handler(req); pattern != "GET /api/repos/{name}/skills" {
 		t.Errorf("resolved to %q, want GET /api/repos/{name}/skills", pattern)
 	}
+	for _, p := range []string{"/api/skills/catalog", "/api/skills/file"} {
+		req = httptest.NewRequest("GET", p, nil)
+		if _, pattern := mux.Handler(req); pattern != "GET "+p {
+			t.Errorf("resolved to %q, want GET %s", pattern, p)
+		}
+	}
 }

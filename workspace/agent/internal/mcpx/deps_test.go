@@ -5,6 +5,7 @@ package mcpx
 // those) — copying the real values in would make this a second source for them.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,6 +25,30 @@ var (
 )
 
 func init() { Configure(testDeps()) }
+
+// testKindCatalog is the registry as the CP's checked-in kind catalog records it; package
+// main's TestKindCatalogSnapshot holds that file equal to sessionx's registry.
+var testKindCatalog = func() []KindInfo {
+	b, err := os.ReadFile(kindCatalogPath)
+	if err != nil {
+		panic(err)
+	}
+	var cat struct {
+		Kinds []struct {
+			Kind           string `json:"kind"`
+			ManagedOnly    bool   `json:"managedOnly"`
+			ManagedDefault bool   `json:"managedDefault"`
+		} `json:"kinds"`
+	}
+	if err := json.Unmarshal(b, &cat); err != nil {
+		panic(err)
+	}
+	out := make([]KindInfo, 0, len(cat.Kinds))
+	for _, k := range cat.Kinds {
+		out = append(out, KindInfo{Kind: k.Kind, Default: k.Kind == session.KindClaude, ManagedOnly: k.ManagedOnly, ManagedDefault: k.ManagedDefault})
+	}
+	return out
+}()
 
 // testDeps is the whole set of fakes for the mcpx unit tests. It sits in one place because
 // the completeness check below uses the same set.
@@ -54,6 +79,12 @@ func testDeps() Deps {
 		ShellCreateTarget: func(dir, prompt string) string { return dir + " " + prompt },
 		ShellSendTarget:   func(name, prompt string) string { return name + " " + prompt },
 		SessionIsShell:    func(string) bool { return false },
+
+		ManagedDefaultKind: func(k string) bool { return k == "codex" },
+		// Accepts everything: the refusal itself is held in sessionx (the registry) and in
+		// TestCreateSessionRefusesUnregisteredKind (this package, which swaps in a real rule).
+		ValidateCreateKind: func(string) error { return nil },
+		Kinds:              func() []KindInfo { return testKindCatalog },
 
 		ReadUIPrefs:                func() map[string]any { return map[string]any{} },
 		EnsureClaudeSettingsWiring: func(string) {},

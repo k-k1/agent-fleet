@@ -186,30 +186,9 @@
 .sess-kic .codicon {
   font-size: 12px;
 }
-/* Hue from tokens.css (--kind-*); tint via color-mix. shell/ssm included so every
-   kind's session badge is colored (they previously fell through to no color). */
-.sess-kic.kind-claude { color: var(--kind-claude); background: color-mix(in srgb, var(--kind-claude) 14%, transparent); }
-.sess-kic.kind-codex { color: var(--kind-codex); background: color-mix(in srgb, var(--kind-codex) 14%, transparent); }
-.sess-kic.kind-cursor { color: var(--kind-cursor); background: color-mix(in srgb, var(--kind-cursor) 14%, transparent); }
-.sess-kic.kind-opencode { color: var(--kind-opencode); background: color-mix(in srgb, var(--kind-opencode) 14%, transparent); }
-.sess-kic.kind-agy { color: var(--kind-agy); background: color-mix(in srgb, var(--kind-agy) 14%, transparent); }
-.sess-kic.kind-copilot { color: var(--kind-copilot); background: color-mix(in srgb, var(--kind-copilot) 14%, transparent); }
-.sess-kic.kind-kiro { color: var(--kind-kiro); background: color-mix(in srgb, var(--kind-kiro) 14%, transparent); }
-.sess-kic.kind-lcpp { color: var(--kind-lcpp); background: color-mix(in srgb, var(--kind-lcpp) 14%, transparent); }
-.sess-kic.kind-muse { color: var(--kind-muse); background: color-mix(in srgb, var(--kind-muse) 14%, transparent); }
-.sess-kic.kind-shell { color: var(--kind-shell); background: color-mix(in srgb, var(--kind-shell) 14%, transparent); }
-.sess-kic.kind-ssm { color: var(--kind-ssm); background: color-mix(in srgb, var(--kind-ssm) 14%, transparent); }
-[data-theme="light"] .sess-kic.kind-claude { background: color-mix(in srgb, var(--kind-claude) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-codex { background: color-mix(in srgb, var(--kind-codex) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-cursor { background: color-mix(in srgb, var(--kind-cursor) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-opencode { background: color-mix(in srgb, var(--kind-opencode) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-agy { background: color-mix(in srgb, var(--kind-agy) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-copilot { background: color-mix(in srgb, var(--kind-copilot) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-kiro { background: color-mix(in srgb, var(--kind-kiro) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-lcpp { background: color-mix(in srgb, var(--kind-lcpp) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-muse { background: color-mix(in srgb, var(--kind-muse) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-shell { background: color-mix(in srgb, var(--kind-shell) 20%, transparent); }
-[data-theme="light"] .sess-kic.kind-ssm { background: color-mix(in srgb, var(--kind-ssm) 20%, transparent); }
+/* Hue from tokens.css (--kind, per kind, shell and ssm included); tint via color-mix. */
+.sess-kic.kind { color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); }
+[data-theme="light"] .sess-kic.kind { background: color-mix(in srgb, var(--kind) 20%, transparent); }
 /* The state chip is span.session-state (old markup — rules at the bottom of this
    file); its margin-left:auto puts it at the row's right edge. Calm states are
    icon-only (.mini); question/plan/permission keep their text. */

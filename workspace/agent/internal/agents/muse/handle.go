@@ -57,6 +57,10 @@ type threadHandle struct {
 	// unchanged" cannot express a three-valued bool.
 	bypass bool
 
+	// contributor is the session's recorded contributor mode (session.Meta.MuseContributorMode),
+	// refreshed from meta on every Resume and passed to each host spawned for it.
+	contributor bool
+
 	mu    sync.Mutex
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -167,12 +171,15 @@ func (h *threadHandle) tq() *agents.TurnQueue {
 
 // spawn starts the host, runs the handshake and starts or reloads the muse session.
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
-	cmd := exec.Command(Bin(), serveArgs()...)
+	h.mu.Lock()
+	contributor := h.contributor
+	h.mu.Unlock()
+	cmd := exec.Command(Bin(), serveArgs(contributor)...)
 	cmd.Dir = h.dir
 	// One host per session: this puts the name in the model's own shell as well, the way a
 	// Terminal session has it. The af server gets it on the wire (mcp.go), since muse scrubs
 	// its MCP children's environment.
-	cmd.Env = agents.WithSessionName(childEnv(os.Environ()), h.name)
+	cmd.Env = agents.WithSessionEnv(childEnv(os.Environ()), h.name)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -1295,7 +1302,7 @@ func (h *threadHandle) unpark() {
 // muse can open the file itself.
 const maxInlineImageBytes = 8 << 20
 
-// inputParts renders a TurnInput as MSP input parts: the prompt, then one part per attachment.
+// inputPartsImages renders a TurnInput as MSP input parts: the prompt, then one part per attachment.
 //
 // An IMAGE becomes a real `image` part — the wire takes base64 rather than a path, so the file
 // is read here. Everything else rides as a text part naming the path, which is the same
@@ -1305,13 +1312,8 @@ const maxInlineImageBytes = 8 << 20
 // Every failure falls back to that text part rather than failing the turn or dropping the
 // attachment. A member who pasted a screenshot must never end up with a turn that mentions
 // nothing at all, and the path is still useful to the model.
-func inputParts(in agents.TurnInput) []msp.TurnInputPart {
-	parts, _ := inputPartsImages(in)
-	return parts
-}
-
-// inputPartsImages is inputParts plus the paths that became `image` parts — only those: a
-// path that fell back to a text part is already in the item's text, and listing it again
+//
+// It also returns the paths that became `image` parts — only those: a path that fell back to a text part is already in the item's text, and listing it again
 // would show it twice.
 func inputPartsImages(in agents.TurnInput) ([]msp.TurnInputPart, []string) {
 	parts := []msp.TurnInputPart{{Type: msp.TurnInputPartTypeText, Text: strPtr(in.Prompt)}}

@@ -95,13 +95,81 @@ sed -e 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' \
     -e 's/^AF_STACK_DATA=t-data$/AF_STACK_DATA=t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/' "$STATE/env" > "$STATE5/env"
 echo "Persistence=retain" > "$STATE5/params/10-data"
 
+export AF_TAG_GRACE_SEC=0   # pause.sh --up waits this long after clearing the af-paused tag
+# The egress gateway's polls (readiness, drain, Workspace tasks): no sleeping in between.
+export AF_GATEWAY_POLL_SEC=0
+
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
 echo "aws $*" >> "$STUB_LOG"
 args="$*"
+# af_cfn_clear_params (env.sh) reads every value back after its change set. A stack's live value
+# is "None" once such a change set ran on it, unless STUB_CLEAR_STICKS=1 (CloudFormation kept
+# the value, the way `deploy --parameter-overrides Key=` did in the #2763 rehearsal), and
+# STUB_READBACK_FAIL=1 makes the read after it fail (Throttling) instead.
+live() { # live <stack> <value>
+  if grep -q "execute-change-set --stack-name $1 --change-set-name af-clear-" "$STUB_LOG"; then
+    [ "${STUB_READBACK_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+  fi
+  if [ "${STUB_CLEAR_STICKS:-0}" != 1 ] && grep -q "execute-change-set --stack-name $1 --change-set-name af-clear-" "$STUB_LOG"; then
+    echo None
+  else
+    echo "$2"
+  fi
+}
+# One Parameter of describe-stacks / describe-change-set as the CLI prints it (--output json):
+# jparam <key> <ParameterValue as JSON> [UsePreviousValue] [ResolvedValue as JSON]. Called once
+# per parameter; the list brackets come from jparam_open / jparam_close in extra_params.
+JP_N=0
+jparam() {
+  [ "$JP_N" = 0 ] && echo "["; [ "$JP_N" -gt 0 ] && echo "    ,"
+  JP_N=$((JP_N + 1))
+  echo "    {"
+  echo "        \"ParameterKey\": \"$1\","
+  [ -n "${3:-}" ] && echo "        \"UsePreviousValue\": $3,"
+  [ -n "${4:-}" ] && echo "        \"ResolvedValue\": $4,"
+  echo "        \"ParameterValue\": $2"
+  echo "    }"
+}
+# Extra parameters, by knob: STUB_PW (NoEcho AdminPassword: prev | mask), STUB_SSM (SSM-typed
+# GatewayAmiId: same | changed | missing), STUB_NONE (live-none | cs-none: the string "None"
+# against empty), STUB_SPECIAL=1 (a value with spaces | ( ) , and an equal resolved value).
+# They are in the stack's key list too, so the change set built by the script names them.
+extra_params() { # extra_params live|cs
+  local side="$1"
+  case "${STUB_PW:-}" in
+    prev) [ "$side" = cs ] && jparam AdminPassword '"****"' true || jparam AdminPassword '"****"' ;;
+    mask) [ "$side" = cs ] && jparam AdminPassword '"****"' false || jparam AdminPassword '"****"' ;;
+  esac
+  if [ -n "${STUB_SSM:-}" ]; then
+    if [ "$side" = live ]; then jparam GatewayAmiId '"/aws/service/ami"' "" '"ami-111"'
+    else case "$STUB_SSM" in
+      same) jparam GatewayAmiId '"/aws/service/ami"' true '"ami-111"' ;;
+      plain-changed) jparam GatewayAmiId '"/aws/service/ami"' false '"ami-222"' ;;
+      changed) jparam GatewayAmiId '"/aws/service/ami"' true '"ami-222"' ;;
+      missing) jparam GatewayAmiId '"/aws/service/ami"' true ;;
+    esac; fi
+  fi
+  if [ "${STUB_SECRET_DIFF:-0}" = 1 ]; then
+    if [ "$side" = cs ]; then jparam BitbucketOauthKey '"REVIEW_NEW_SECRET"' false '"REVIEW_NEW_SECRET"'
+    else jparam BitbucketOauthKey '"REVIEW_OLD_SECRET"' "" '"REVIEW_OLD_SECRET"'; fi
+  fi
+  case "${STUB_NONE:-}" in
+    live-none) [ "$side" = cs ] && jparam Foo '""' false || jparam Foo '"None"' ;;
+    cs-none) [ "$side" = cs ] && jparam Foo '"None"' false || jparam Foo '""' ;;
+  esac
+  if [ "${STUB_SPECIAL:-0}" = 1 ]; then
+    jparam Ec2SlotTypes '"standard|Standard (Intel)|x86_64|m7i.large:8192:2,b"' false '"standard|Standard (Intel)|x86_64|m7i.large:8192:2,b"'
+  fi
+  [ "$JP_N" = 0 ] && echo "[" ; echo "]"
+}
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
+  # The Default of the template the stack runs, before the ParameterKey branches below match its query (JSON: null = no Default). STUB_LIVE_DEFAULT unset
+  # is "", none is no Default, anything else that value.
+  *"cloudformation get-template-summary"*)
+    case "${STUB_LIVE_DEFAULT-}" in "") echo '""' ;; none) echo null ;; blank) echo '" "' ;; *) echo "\"$STUB_LIVE_DEFAULT\"" ;; esac ;;
   # STUB_POOL_DEPLOY_FAIL=1: the slot pool's stack update fails (a rollback, a refused
   # capability). update.sh must then leave 20-platform untouched.
   *"cloudformation deploy --stack-name t-pool"*)
@@ -134,9 +202,25 @@ case "$args" in
   *"backup get-backup-selection"*"BackupSelection.Resources"*)
     [ "${STUB_VAULT:-}" = noplan ] && echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-other" \
       || echo "arn:aws:elasticfilesystem:ap-northeast-1:111122223333:file-system/fs-1" ;;
+  # 00-network's GatewayEni (EgressRoute=gateway), before the database lookup below.
+  *"logical-resource-id GatewayEni"*) echo "eni-gw" ;;
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
+  # 00-network's workspace subnets (#2716). Unset = a network stack older than them.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*)
+    [ "${STUB_WS_SUBNETS_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "${STUB_WS_SUBNETS:-None}" ;;
+  # 00-network's egress gateway outputs (EgressRoute=gateway, #2717). Unset = nat-gateway.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressProxyAddr']"*) echo "${STUB_EGRESS_ADDR:-None}" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressTokenSecretArn']"*) echo "${STUB_EGRESS_SECRET:-None}" ;;
+  # 10-data's egress archive bucket (#2732). Unset = no bucket.
+  # STUB_ARCHIVE_FAIL=1: the read itself fails (network, permissions), unlike an absent output.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EgressArchiveBucket']"*)
+    [ "${STUB_ARCHIVE_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "${STUB_ARCHIVE:-None}" ;;
+  # The retained archive bucket after a teardown: present only when the case says so.
+  *"s3api head-bucket"*) [ "${STUB_BUCKET_EXISTS:-0}" = 1 ] || exit 254 ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "${STUB_POOL_LT_OUTPUT:-lt-NEW}" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
@@ -199,10 +283,74 @@ case "$args" in
   # The stack name appears before --query. Get the glob order wrong and everything falls
   # through to the catch-all branch below, and the test lies in the shape of "nothing
   # happens".
-  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\n' ;;
-  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\n' ;;
+  # The egress gateway's address (#2728) has the same shape: created by the stack, so empty as
+  # parameters and real in the outputs.
+  *"t-network"*"Parameters[].join"*) printf 'VpcCidr=10.20.0.0/16\nNatEipAllocationId=\nGatewayEipAllocationId=\nGatewayEipAddress=\n' ;;
+  *"t-network"*"Outputs[].join"*)    printf 'NatEipAllocationId=eipalloc-REAL\nVpcId=vpc-1\nGatewayEipAllocationId=eipalloc-GW\nGatewayEipAddress=203.0.113.7\n' ;;
   *"Parameters[].join"*)             printf 'Fqdn=af.example.test\n' ;;
   *"Outputs[].join"*)                printf '\n' ;;
+  # pause.sh: whether 00-network's NAT gateway is on, and whether 10-data carries the re-stop Lambda.
+  *"ParameterKey=='NatEnabled'"*) echo "${STUB_NAT_ENABLED:-true}" ;;
+  # #2716: unset = a network / ingress stack older than the S3 endpoint switch / workspace subnets.
+  *"ParameterKey=='S3EndpointEnabled'"*) echo "${STUB_S3EP:-None}" ;;
+  *"ParameterKey=='WorkspaceSubnets'"*) live t-ingress "${STUB_ING_WS:-None}" ;;
+  *"ParameterKey=='EgressRoute'"*) echo "${STUB_EGRESS_ROUTE:-None}" ;;
+  # Unset = a gateway stack older than the switch (its gateway is on).
+  *"ParameterKey=='GatewayEnabled'"*) echo "${STUB_GW_ENABLED:-None}" ;;
+  *"ParameterKey=='EgressTokenSecretArn'"*) live t-ingress "${STUB_ING_EGRESS:-None}" ;;
+  *"ParameterKey=='EgressProxyAddr'"*) live t-ingress "${STUB_ING_EGRESS_ADDR:-${STUB_ING_EGRESS:+10.20.0.50:3128}}" ;;
+  *"--stack-name t-platform"*"ParameterKey=='EgressArchiveBucket'"*) live t-platform "${STUB_PLAT_ARCHIVE:-None}" ;;
+  *"ParameterKey=='EgressArchiveBucket'"*) live t-ingress "${STUB_ING_ARCHIVE:-None}" ;;
+  # The clearing change set: every parameter of the stack, then the change set itself.
+  *"Stacks[0].Parameters[].ParameterKey"*)
+    printf 'ImageTag\tWorkspaceSubnets\tEgressProxyAddr\tEgressTokenSecretArn\tEgressArchiveBucket\tFqdn'
+    [ -n "${STUB_PW:-}" ] && printf '\tAdminPassword'
+    [ -n "${STUB_SSM:-}" ] && printf '\tGatewayAmiId'
+    [ -n "${STUB_NONE:-}" ] && printf '\tFoo'
+    [ "${STUB_SECRET_DIFF:-0}" = 1 ] && printf '\tBitbucketOauthKey'
+    [ "${STUB_SPECIAL:-0}" = 1 ] && printf '\tEc2SlotTypes'
+    echo ;;
+  # The clearing change set's state is read off the log: built by create-change-set, gone after
+  # delete-change-set. STUB_CS_FAIL=1: it ends FAILED ("didn't contain changes"); STUB_CS_STATUS /
+  # STUB_CS_EXEC override Status / ExecutionStatus.
+  *"cloudformation execute-change-set"*)
+    [ "${STUB_EXEC_FAIL:-0}" = 1 ] && { echo "An error occurred (InvalidChangeSetStatus) when calling the ExecuteChangeSet operation" >&2; exit 254; }
+    : ;;
+  *"cloudformation wait change-set-create-complete"*)
+    [ "${STUB_CS_FAIL:-0}" = 1 ] && { echo "Waiter ChangeSetCreateComplete failed: Waiter encountered a terminal failure state" >&2; exit 255; }
+    : ;;
+  *"cloudformation describe-stacks"*"Stacks[0].Parameters --output json"*)
+    jparam ImageTag '"9.9.9"'
+    jparam WorkspaceSubnets "\"${STUB_ING_WS:-}\""
+    jparam EgressProxyAddr "\"${STUB_ING_EGRESS_ADDR:-${STUB_ING_EGRESS:+10.20.0.50:3128}}\""
+    jparam EgressTokenSecretArn "\"${STUB_ING_EGRESS:-}\""
+    jparam EgressArchiveBucket "\"${STUB_ING_ARCHIVE:-}\""
+    jparam Fqdn '"af.example.test"'
+    extra_params live ;;
+  *"cloudformation describe-change-set"*"af-clear-"*)
+    cs="$(sed -n 's/.*--change-set-name \([^ ]*\).*/\1/p' <<<"$args" | head -1)"
+    if ! grep -q "create-change-set .*--change-set-name $cs " "$STUB_LOG" \
+      || grep -qE "delete-change-set .*--change-set-name $cs\$" "$STUB_LOG"; then
+      echo "An error occurred (ValidationError) when calling the DescribeChangeSet operation: ChangeSet [$cs] does not exist" >&2; exit 254
+    fi
+    case "$args" in
+      *StatusReason*) echo "The submitted information didn't contain changes. Submit different information to create a change set." ;;
+      *"[Status,ExecutionStatus]"*) printf '%s\t%s\n' "${STUB_CS_STATUS:-CREATE_COMPLETE}" "${STUB_CS_EXEC:-AVAILABLE}" ;;
+      # Parameters as the change set holds them: the ones it was given with UsePreviousValue
+      # (the cleared keys are left out). STUB_CS_DIFF=<key> sets that key to a new value.
+      *"Parameters --output json"*)
+        csl="$(grep "create-change-set .*--change-set-name $cs " "$STUB_LOG" | head -1)"
+        for k in ImageTag WorkspaceSubnets EgressProxyAddr EgressTokenSecretArn EgressArchiveBucket Fqdn; do
+          case "$csl" in *"\"ParameterKey\":\"$k\""*)
+            if [ "${STUB_CS_DIFF:-}" = "$k" ]; then jparam "$k" '"something-else"' false
+            else jparam "$k" null true; fi ;;
+          esac
+        done
+        extra_params cs ;;
+      # 30-ingress's real logical IDs: the new TaskDef revision is replaced, and Service follows it.
+      *) printf 'Modify\tTaskDef\tTrue\nModify\tService\tFalse\n' ;;
+    esac ;;
+  *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
   *"--profile p5"*"ParameterKey=='DataStackName'"*) echo "t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
@@ -235,17 +383,28 @@ case "$args" in
     [ "${STUB_PLATFORM_REPLACE:-0}" = 1 ] && printf 'Modify\tEcrControlPlane\tTrue\n'
     : ;;
   *"cloudformation describe-stacks"*) echo "STACK" ;;
-  *"ecs list-services"*) echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
+  *"ecs list-services"*)
+    [ "${STUB_LIST_SERVICES_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
+    echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
   # Do not confuse the runningCount query (waiting for the CP to stop) with the listing of
   # services whose desired count is > 0. Return a name for the former and the wait loop
   # spins for five minutes.
   *"ecs describe-services"*"runningCount"*) echo "0" ;;
+  # update.sh's listing: [failures, services, names above desired 0]. STUB_SVC_FAILURES=1 answers
+  # 200 with the service in failures[]; STUB_SVC_PARTIAL=1 answers 200 with it simply missing.
+  *"ecs describe-services"*"length(failures), length(services)"*)
+    if [ "${STUB_SVC_FAILURES:-0}" = 1 ]; then printf '1\t0\t\n'
+    elif [ "${STUB_SVC_PARTIAL:-0}" = 1 ]; then printf '0\t0\t\n'
+    elif [ "${STUB_WS_DESIRED0:-0}" = 1 ]; then printf '0\t1\t\n'
+    else printf '0\t1\taf-ws-alice\n'; fi ;;
   # pause.sh asks which engine / speech services are above desired 0. Answer the generic
   # branch below and a Workspace name comes back as an "engine service" — the sweep would then
   # scale a Workspace down and report it as an engine.
   *"ecs describe-services"*"af-af-ecs-engines-"*)
     [ "${STUB_ENGINE_SVC_UP:-0}" = 1 ] && echo "af-af-ecs-engines-image" || echo "" ;;
-  *"ecs describe-services"*) echo "af-ws-alice" ;;
+  # STUB_WS_DESIRED0=1: every workspace service is already at desired 0 (stopped by its user a
+  # moment ago, or by an earlier pause cut short), while its task may still be running.
+  *"ecs describe-services"*) [ "${STUB_WS_DESIRED0:-0}" = 1 ] && echo "" || echo "af-ws-alice" ;;
   *"ecs list-container-instances"*) echo "arn:aws:ecs:x:1:container-instance/ci-1" ;;
   *"ecs list-task-definitions"*) echo "arn:aws:ecs:x:1:task-definition/af-ws-alice:1" ;;
   # The engines' GPU boxes (af-role=engine-*), before the slot branch that answers everything.
@@ -259,6 +418,55 @@ case "$args" in
     esac ;;
   *"ec2 describe-instances"*)
     if [ "${STUB_NO_SLOTS:-0}" = 1 ]; then echo ""; else echo "i-1"; fi ;;
+  # The egress gateway's interface and its checks through SSM. STUB_GW_ATTACH= (empty) is an
+  # interface no instance has attached. STUB_GW_PROBE is what the readiness check answers;
+  # "model" is a gateway whose agent gets its first policy only once the CP is up (the log is
+  # the clock). STUB_GW_DRAIN is the drain's answer: drained, pending (never), or late (pending
+  # on the first ask, a CP report that failed once).
+  *"ec2 describe-network-interfaces"*)
+    [ "${STUB_ENI_FAIL:-0}" = 1 ] && { echo "An error occurred (UnauthorizedOperation)" >&2; exit 254; }
+    printf '%s\n' "${STUB_GW_ATTACH-attached	i-gw}" ;;
+  *"ssm send-command"*"egress gateway drain"*) echo "cmd-drain" ;;
+  *"ssm send-command"*) echo "cmd-probe" ;;
+  *"ssm get-command-invocation --command-id cmd-drain"*)
+    case "${STUB_GW_DRAIN:-drained}" in
+      pending) printf 'Success\taf-gw-pending 120 bytes not yet accepted by the CP\n' ;;
+      late) [ "$(grep -c "get-command-invocation --command-id cmd-drain" "$STUB_LOG")" -ge 2 ] \
+              && printf 'Success\taf-gw-drained\n' || printf 'Success\taf-gw-pending 120 bytes\n' ;;
+      *) printf 'Success\taf-gw-drained\n' ;;
+    esac ;;
+  *"ssm get-command-invocation"*)
+    probe="${STUB_GW_PROBE:-af-gw-ready}"
+    if [ "$probe" = model ]; then
+      grep -q "af-t-ingress-cp --desired-count 1" "$STUB_LOG" && probe=af-gw-ready || probe=af-gw-up
+    fi
+    printf 'Success\t%s\n' "$probe" ;;
+  # Workspace tasks still alive (pause.sh before it stops the egress gateway). One task of a
+  # workspace service; STUB_WS_TASKS: gone (default), stuck, late (alive on the first look),
+  # fail (the read is refused).
+  *"ecs list-tasks"*"--desired-status RUNNING"*) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+  *"ecs list-tasks"*) echo "None" ;;
+  # update.sh's closing hint: the subnet of each running workspace task's ENI.
+  # [failures, tasks, subnet]. STUB_TASK_FAILURES=1: answered 200 with the task in failures[].
+  *"ecs describe-tasks"*"subnetId"*)
+    [ "${STUB_TASK_SUBNET_FAIL:-0}" = 1 ] && exit 254
+    if [ "${STUB_TASK_FAILURES:-0}" = 1 ]; then printf '1\t0\tNone\n'
+    else printf '0\t1\t%s\n' "${STUB_TASK_SUBNET:-subnet-priv0}"; fi ;;
+  *"ecs describe-tasks"*)
+    case "${STUB_WS_TASKS:-gone}" in
+      stuck) echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+      late) [ "$(grep -c "ecs describe-tasks" "$STUB_LOG")" -ge 2 ] && echo "" || echo "arn:aws:ecs:x:1:task/t-cluster/t1" ;;
+      fail) echo "An error occurred (AccessDeniedException) when calling the DescribeTasks operation" >&2; exit 254 ;;
+      *) echo "" ;;
+    esac ;;
+  # The workspace egress address handed back to standup.sh (#2728): its address and the
+  # interface holding it. STUB_GW_EIP: free (default), elsewhere (another interface), gone.
+  *"ec2 describe-addresses --allocation-ids"*)
+    case "${STUB_GW_EIP:-free}" in
+      gone) echo "An error occurred (InvalidAllocationID.NotFound)" >&2; exit 254 ;;
+      elsewhere) printf '203.0.113.7\teni-other\n' ;;
+      *) printf '203.0.113.7\tNone\n' ;;
+    esac ;;
   *"ec2 describe-volumes"*) echo "vol-1" ;;
   *"ec2 describe-snapshots"*) echo "snap-1" ;;
   *"efs describe-access-points"*) echo "fsap-1" ;;
@@ -283,6 +491,8 @@ case "$args" in
   # real stand-up would fail at the engine task with a ResourceNotFoundException that reads
   # as a broken stack.
   *"ssm get-parameter --name /af-ws/engine-llm-key"*) [ "${STUB_ENGINE_KEY_EXISTS:-0}" = 1 ] || exit 1 ;;
+  *"ssm get-parameter --name /af-cp/github-client-secret"*) [ "${STUB_NO_GH_KEY:-0}" = 1 ] && exit 1; echo ok ;;
+  *"ssm get-parameter --name /af-cp/comfy-api-key"*) [ "${STUB_NO_COMFY_KEY:-0}" = 1 ] && exit 1; echo ok ;;
   *"ssm get-parameter"*) echo "ok" ;;
   *"iam get-role"*) echo "ok" ;;
   *"route53 get-hosted-zone"*) echo "ok" ;;
@@ -291,7 +501,17 @@ case "$args" in
   *"ecs list-clusters"*) echo "" ;;
   *"rds describe-db-snapshots"*) echo "t-data-snapshot-db-xyz" ;;
   # pause.sh reads one instance's status; teardown's listing below must keep answering "gone".
-  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*) echo "${STUB_DB_STATUS:-available}" ;;
+  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceArn"*)
+    [ "${STUB_DB_ARN_FAIL:-0}" = 1 ] && exit 254
+    echo "arn:aws:rds:ap-northeast-1:123456789012:db:t-db" ;;
+  # A database that was stopped answers 'available' once a start has been issued (the log is
+  # the fake's clock): pause.sh --up reads it again after the CP is up.
+  *"rds describe-db-instances --db-instance-identifier"*"DBInstanceStatus"*)
+    if [ "${STUB_DB_STATUS:-available}" = stopped ] && grep -q "rds start-db-instance" "$STUB_LOG"; then
+      echo available
+    else
+      echo "${STUB_DB_STATUS:-available}"
+    fi ;;
   *"rds describe-db-instances"*) echo "" ;;
   *"efs describe-file-systems"*) echo "" ;;   # checking after deletion, so empty
   # One vault a retain period left, found by the "<data stack>-efs-" prefix whatever the
@@ -909,6 +1129,417 @@ grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--paramete
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
 
+echo "== case 3h-ws: update.sh and standup.sh hand 00-network's workspace subnets to 30-ingress (#2716) =="
+# A fact of the network stack, passed on every run; a network stack without the output passes
+# nothing (the case above pins that byte for byte) and says so.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_WS_SUBNETS=subnet-0a,subnet-0b \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hw" 2>&1 \
+  || { cat "$WORK/out3hw"; fail "update.sh failed with workspace subnets"; }
+grep -q "describe-stacks --stack-name t-network .*OutputKey=='WorkspaceSubnets'" "$LOG" \
+  || fail "update.sh did not read the workspace subnets from the ingress stack's NetworkStackName"
+grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test EfsBackup=off WorkspaceSubnets=subnet-0a,subnet-0b --no-fail" "$LOG" \
+  || fail "update.sh did not pass WorkspaceSubnets to 30-ingress"
+grep -q "has no WorkspaceSubnets output" "$WORK/out3h" \
+  || fail "update.sh against a network stack without workspace subnets did not say so"
+efs_standup p STUB_WS_SUBNETS=subnet-0a,subnet-0b
+grep -q "deploy --stack-name t-ingress .*WorkspaceSubnets=subnet-0a,subnet-0b" "$LOG" \
+  || fail "standup.sh did not pass the network stack's WorkspaceSubnets to 30-ingress"
+# A live network stack without S3EndpointEnabled may still run workspaces in its private subnets:
+# standup must not switch the endpoint on for it; one that has the switch keeps its value.
+grep -q "deploy --stack-name t-network .*S3EndpointEnabled=false" "$LOG" \
+  || fail "standup.sh switched the S3 endpoint on for a live network stack older than the switch"
+efs_standup p STUB_S3EP=true
+if grep -q "S3EndpointEnabled=" "$LOG"; then fail "standup.sh overrode a live S3EndpointEnabled"; fi
+# The capture's value is a snapshot of old subnet ids; it must never reach the deploy.
+echo "WorkspaceSubnets=subnet-stale" >> "$STATE/params/30-ingress"
+efs_standup p
+if grep -q "WorkspaceSubnets=subnet-stale" "$LOG"; then fail "standup.sh passed the captured WorkspaceSubnets"; fi
+sed -i '/^WorkspaceSubnets=/d' "$STATE/params/30-ingress"
+
+echo "== case 3h-egress: the egress gateway's address and token secret reach 30-ingress (#2717) =="
+SECRET_ARN="arn:aws:secretsmanager:ap-northeast-1:123456789012:secret:af-t-network-egress-token-eni-1-AbCdEf"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3he" 2>&1 \
+  || { cat "$WORK/out3he"; fail "update.sh failed with an egress gateway"; }
+grep -q "deploy --stack-name t-ingress .*EgressProxyAddr=10.20.0.50:3128 EgressTokenSecretArn=$SECRET_ARN" "$LOG" \
+  || fail "update.sh did not pass the egress gateway's address and secret to 30-ingress"
+# Back on nat-gateway: the network has no outputs, the ingress stack still has the secret -> cleared.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_EGRESS="$SECRET_ARN" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3he2" 2>&1 \
+  || { cat "$WORK/out3he2"; fail "update.sh failed clearing the egress gateway"; }
+grep -q "deploy --stack-name t-ingress .*EgressProxyAddr= EgressTokenSecretArn= " "$LOG" \
+  || fail "update.sh did not clear the egress parameters after a switch back to nat-gateway"
+efs_standup p STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN"
+grep -q "deploy --stack-name t-ingress .*EgressProxyAddr=10.20.0.50:3128.*EgressTokenSecretArn=$SECRET_ARN" "$LOG" \
+  || fail "standup.sh did not pass the egress gateway's outputs to 30-ingress"
+grep -q "runs the egress gateway" "$WORK/out3e" || fail "standup.sh did not warn about the egress gateway"
+grep -q "pause.sh refuses" "$WORK/out3e" && fail "standup.sh still says pause.sh refuses the gateway (#2729)"
+# It waits for the gateway's first policy once the CP is up, and says when it has none.
+order "cloudformation deploy --stack-name t-ingress" "ssm send-command --instance-ids i-gw"
+grep -q "first policy applied" "$WORK/out3e" || fail "standup.sh did not report the egress gateway ready"
+efs_standup p STUB_EGRESS_ADDR=10.20.0.50:3128 STUB_EGRESS_SECRET="$SECRET_ARN" STUB_GW_PROBE=af-gw-up AF_GATEWAY_WAIT_SEC=0
+grep -q "the egress gateway is not ready" "$WORK/out3e" || fail "standup.sh did not warn about a gateway without a policy"
+echo "EgressTokenSecretArn=arn:stale" >> "$STATE/params/30-ingress"
+efs_standup p
+if grep -q "EgressTokenSecretArn=arn:stale" "$LOG"; then fail "standup.sh passed the captured EgressTokenSecretArn"; fi
+sed -i '/^EgressTokenSecretArn=/d' "$STATE/params/30-ingress"
+
+echo "== case 3h-archive: the egress archive bucket reaches 20-platform and 30-ingress (#2732) =="
+ARCH_B="t-data-egress-archive-123456789012-ap-northeast-1"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha0" 2>&1 \
+  || { cat "$WORK/out3ha0"; fail "update.sh failed without an archive bucket"; }
+if grep "deploy --stack-name" "$LOG" | grep -q "EgressArchiveBucket"; then
+  fail "update.sh passed EgressArchiveBucket on a stack that has no archive"
+fi
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha1" 2>&1 \
+  || { cat "$WORK/out3ha1"; fail "update.sh failed with an archive bucket"; }
+grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test .*EgressArchiveBucket=$ARCH_B --no-fail" "$LOG" \
+  || fail "update.sh did not pass the data stack's archive bucket to 30-ingress"
+grep -q "deploy --stack-name t-platform .*--parameter-overrides EgressArchiveBucket=$ARCH_B" "$LOG" \
+  || fail "update.sh did not pass the data stack's archive bucket to 20-platform's change set"
+order "deploy --stack-name t-platform" "deploy --stack-name t-ingress"
+# Bucket gone from 10-data while both stacks still name one: both are cleared, not left dangling.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha2" 2>&1 \
+  || { cat "$WORK/out3ha2"; fail "update.sh failed clearing the archive bucket"; }
+grep -q "deploy --stack-name t-ingress .*EgressArchiveBucket= --no-fail" "$LOG" \
+  || fail "update.sh did not clear EgressArchiveBucket on 30-ingress"
+grep -qE "deploy --stack-name t-platform .*--parameter-overrides EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "update.sh did not clear EgressArchiveBucket on 20-platform"
+# standup.sh: the output of the data stack it just deployed, never the capture.
+echo "EgressArchiveBucket=stale-bucket" >> "$STATE/params/30-ingress"
+echo "EgressArchiveBucket=stale-bucket" >> "$STATE/params/20-platform"
+efs_standup p STUB_ARCHIVE=$ARCH_B
+grep -q "deploy --stack-name t-platform .*EgressArchiveBucket=$ARCH_B" "$LOG" \
+  || fail "standup.sh did not pass the archive bucket to 20-platform"
+grep -q "deploy --stack-name t-ingress .*EgressArchiveBucket=$ARCH_B" "$LOG" \
+  || fail "standup.sh did not pass the archive bucket to 30-ingress"
+order "deploy --stack-name t-platform" "deploy --stack-name t-ingress"
+efs_standup p
+if grep -q "stale-bucket" "$LOG"; then fail "standup.sh passed the captured EgressArchiveBucket"; fi
+sed -i '/^EgressArchiveBucket=/d' "$STATE/params/30-ingress" "$STATE/params/20-platform"
+
+# A failed read of the output is not "no bucket": nothing may be deployed, or the next purge
+# deletes events with the archive switched off.
+: > "$LOG"
+if VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ARCHIVE_FAIL=1 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3ha3" 2>&1; then
+  fail "update.sh went on after the archive output could not be read"
+fi
+if grep -q "deploy --stack-name t-ingress\|deploy --stack-name t-platform" "$LOG"; then
+  fail "update.sh deployed after the archive output could not be read"
+fi
+: > "$LOG"
+if env STUB_ARCHIVE_FAIL=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3ha4" 2>&1 </dev/null; then
+  fail "standup.sh went on after the archive output could not be read"
+fi
+if grep -q "deploy --stack-name t-platform\|deploy --stack-name t-ingress" "$LOG"; then
+  fail "standup.sh deployed 20-platform / 30-ingress after the archive output could not be read"
+fi
+# No bucket any more: an omitted parameter would keep the previous value, so it is named empty.
+efs_standup p
+grep -qE "deploy --stack-name t-platform .*EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "standup.sh did not clear 20-platform's EgressArchiveBucket explicitly"
+grep -qE "deploy --stack-name t-ingress .*EgressArchiveBucket=( |$)" "$LOG" \
+  || fail "standup.sh did not clear 30-ingress's EgressArchiveBucket explicitly"
+# A capture with EgressArchive=create and the retained bucket still there: reuse, never a second create.
+echo "EgressArchive=create" >> "$STATE/params/10-data"
+efs_standup p STUB_BUCKET_EXISTS=1
+grep -q "deploy --stack-name t-data .*EgressArchive=existing" "$LOG" \
+  || fail "standup.sh did not reuse the retained archive bucket"
+efs_standup p
+grep -q "deploy --stack-name t-data .*EgressArchive=create" "$LOG" \
+  || fail "standup.sh changed EgressArchive=create although no bucket survived"
+sed -i '/^EgressArchive=/d' "$STATE/params/10-data"
+
+echo "== case 3h-clear: an empty value is cleared through a change set, never by deploy alone (#2763) =="
+# `deploy --parameter-overrides Key=` kept the old value on a live stack. Whatever empties a
+# parameter is followed by af_cfn_clear_params: a change set on the previous template that
+# leaves the key out (Default "") and keeps everything else at UsePreviousValue, then a read-back.
+upd() { # upd <out> [VAR=val ...]: update.sh on p4; fails the test when it fails
+  local out="$1"; shift
+  : > "$LOG"
+  env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 "$@" "$ECS/update.sh" --profile p4 --region ap-northeast-1 \
+    --stack t-ingress > "$WORK/$out" 2>&1 || { cat "$WORK/$out"; fail "update.sh failed ($out)"; }
+}
+cs_line() { grep "create-change-set --stack-name $1 --change-set-name af-clear-" "$LOG" || true; }
+# The switch back to nat-gateway: the ingress stack still has the gateway's secret.
+upd outc1 STUB_ING_EGRESS="$SECRET_ARN"
+l="$(cs_line t-ingress)"
+[ -n "$l" ] || fail "update.sh did not clear EgressProxyAddr / EgressTokenSecretArn through a change set"
+case "$l" in *--use-previous-template*) ;; *) fail "the clearing change set does not keep the template: $l" ;; esac
+case "$l" in *'"ParameterKey":"EgressProxyAddr"'*|*'"ParameterKey":"EgressTokenSecretArn"'*)
+  fail "the clearing change set names the keys it clears (their Default must apply): $l" ;; esac
+case "$l" in *'{"ParameterKey":"ImageTag","UsePreviousValue":true}'*) ;; *)
+  fail "the clearing change set does not keep the other parameters: $l" ;; esac
+order "cloudformation deploy --stack-name t-ingress" "create-change-set --stack-name t-ingress"
+order "create-change-set --stack-name t-ingress" "execute-change-set --stack-name t-ingress --change-set-name af-clear-"
+order "execute-change-set --stack-name t-ingress --change-set-name af-clear-" "wait stack-update-complete --stack-name t-ingress"
+grep -q "t-ingress: EgressProxyAddr EgressTokenSecretArn now empty" "$WORK/outc1" \
+  || fail "update.sh did not confirm the cleared egress parameters"
+# Nothing to clear: no change set at all.
+upd outc2
+[ -z "$(cs_line t-ingress)$(cs_line t-platform)" ] || fail "update.sh built a clearing change set with nothing to clear"
+# CloudFormation keeps the value anyway: the read-back stops the run.
+: > "$LOG"
+if env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_EGRESS="$SECRET_ARN" STUB_CLEAR_STICKS=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/outc3" 2>&1; then
+  fail "update.sh succeeded although EgressTokenSecretArn was not cleared"
+fi
+grep -q "EgressProxyAddr of t-ingress is still" "$WORK/outc3" || fail "update.sh did not say which value stayed"
+# 00-network back on a template without workspace subnets: the ids the CP holds are gone.
+upd outc4 STUB_ING_WS=subnet-0a,subnet-0b
+grep -q "deploy --stack-name t-ingress .*WorkspaceSubnets= " "$LOG" || fail "update.sh did not pass WorkspaceSubnets empty"
+cs_line t-ingress | grep -q '"ParameterKey":"EgressProxyAddr","UsePreviousValue":true' \
+  || fail "update.sh did not clear WorkspaceSubnets through a change set (or cleared more)"
+cs_line t-ingress | grep -q '"ParameterKey":"WorkspaceSubnets"' && fail "the clearing change set kept WorkspaceSubnets"
+# ... unless the network stack could not be read: then nothing is deployed.
+: > "$LOG"
+if env VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_WS=subnet-0a STUB_WS_SUBNETS_FAIL=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/outc5" 2>&1; then
+  fail "update.sh went on after the WorkspaceSubnets output could not be read"
+fi
+if grep -q "deploy --stack-name t-ingress\|create-change-set" "$LOG"; then
+  fail "update.sh deployed after the WorkspaceSubnets output could not be read"
+fi
+# The archive bucket gone from 10-data: both 20-platform and 30-ingress are cleared.
+upd outc6 STUB_ING_ARCHIVE=$ARCH_B STUB_PLAT_ARCHIVE=$ARCH_B
+[ -n "$(cs_line t-platform)" ] || fail "update.sh did not clear 20-platform's EgressArchiveBucket"
+[ -n "$(cs_line t-ingress)" ] || fail "update.sh did not clear 30-ingress's EgressArchiveBucket"
+grep -q "create-change-set --stack-name t-platform .*--capabilities CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "the 20-platform clearing change set lacks CAPABILITY_NAMED_IAM"
+# --dry-run says what it would clear and builds nothing.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ING_EGRESS="$SECRET_ARN" "$ECS/update.sh" --profile p4 \
+  --region ap-northeast-1 --stack t-ingress --dry-run > "$WORK/outc7" 2>&1 || { cat "$WORK/outc7"; fail "update.sh --dry-run failed"; }
+grep -q "DRY: clear EgressProxyAddr EgressTokenSecretArn on t-ingress" "$WORK/outc7" || fail "update.sh --dry-run did not show the clear"
+hasnt "create-change-set"
+# standup.sh against a live ingress stack with stale subnets and a network without them.
+efs_standup p STUB_ING_WS=subnet-stale
+cs_line t-ingress | grep -q 'af-clear-' || fail "standup.sh did not clear a live WorkspaceSubnets"
+# clear-params.sh is the same step for an operator (README, "Back to the NAT gateway"), gated on
+# the change set: the default builds it, shows it and executes nothing.
+cp4() { "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 --stack t-ingress "$@"; }
+: > "$LOG"
+STUB_ING_EGRESS="$SECRET_ARN" cp4 EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 \
+  || { cat "$WORK/outc8"; fail "clear-params.sh failed"; }
+[ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh built no change set"
+hasnt "execute-change-set"
+hasnt "delete-change-set"
+hasnt "wait stack-update-complete"
+grep -q "Modify TaskDef" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the TaskDef change"; }
+grep -q "Modify Service" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not print the Service change"; }
+grep -q "parameter EgressProxyAddr: '10.20.0.50:3128' -> (empty)" "$WORK/outc8" \
+  || { cat "$WORK/outc8"; fail "clear-params.sh did not print which key goes to empty"; }
+grep -q "parameter EgressTokenSecretArn: '\*\*\*' -> (empty)" "$WORK/outc8" \
+  || { cat "$WORK/outc8"; fail "clear-params.sh did not print (masked) the second key"; }
+grep -q "4 others unchanged" "$WORK/outc8" || { cat "$WORK/outc8"; fail "clear-params.sh did not say the rest is unchanged"; }
+cs_name="$(sed -n 's/.*--change-set-name \(af-clear-[0-9]*\) .*/\1/p' <<<"$(cs_line t-ingress)" | head -1)"
+grep -q -- "--execute $cs_name EgressProxyAddr EgressTokenSecretArn" "$WORK/outc8" \
+  || { cat "$WORK/outc8"; fail "clear-params.sh did not print the command that executes the change set"; }
+# --execute runs exactly that change set (the log of the build above is kept), then reads back.
+STUB_ING_EGRESS="$SECRET_ARN" cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8x" 2>&1 \
+  || { cat "$WORK/outc8x"; fail "clear-params.sh --execute of its own change set failed"; }
+has "execute-change-set --stack-name t-ingress --change-set-name $cs_name"
+order "describe-change-set --stack-name t-ingress --change-set-name $cs_name --query Parameters" "execute-change-set --stack-name t-ingress"
+grep -q "t-ingress: EgressProxyAddr EgressTokenSecretArn now empty" "$WORK/outc8x" || fail "--execute did not read the keys back"
+# --execute refuses a change set that does not exist (nothing to delete), is not ours, or is
+# not exactly the clear; one of ours that did not start is deleted, one that is running is not.
+: > "$LOG"
+if STUB_ING_EGRESS="$SECRET_ARN" cp4 --execute af-clear-1 EgressProxyAddr > "$WORK/outc8y" 2>&1; then
+  fail "clear-params.sh --execute accepted a change set that does not exist"
+fi
+hasnt "execute-change-set"
+hasnt "delete-change-set"
+case "$(cat "$WORK/outc8y")" in *"nothing was executed"*) ;; *) cat "$WORK/outc8y"; fail "--execute (missing) did not say nothing ran" ;; esac
+if STUB_ING_EGRESS="$SECRET_ARN" cp4 --execute "not-ours" EgressProxyAddr > "$WORK/outc8y" 2>&1; then
+  fail "clear-params.sh --execute accepted a change set it did not build"
+fi
+hasnt "execute-change-set"
+hasnt "delete-change-set"
+build_cs() { # a kept change set for both keys; its name in cs_name
+  : > "$LOG"
+  env STUB_ING_EGRESS="$SECRET_ARN" "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 \
+    --stack t-ingress EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8" 2>&1 || { cat "$WORK/outc8"; fail "clear-params.sh (build) failed"; }
+  cs_name="$(sed -n 's/.*--change-set-name \(af-clear-[0-9]*\) .*/\1/p' <<<"$(cs_line t-ingress)" | head -1)"
+}
+refuse() { # refuse <deleted|kept> <message part> [VAR=val ...] -- <key>...: --execute must refuse, then delete or not
+  local want="$1" msg="$2"; shift 2
+  local envs=()
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
+  if env STUB_ING_EGRESS="$SECRET_ARN" ${envs[@]+"${envs[@]}"} "$ECS/clear-params.sh" --profile p4 --region ap-northeast-1 \
+    --stack t-ingress --execute "$cs_name" "$@" > "$WORK/outc8y" 2>&1; then
+    fail "clear-params.sh --execute accepted a change set it must refuse ($msg)"
+  fi
+  hasnt "execute-change-set"
+  grep -qF -- "$msg" "$WORK/outc8y" || { cat "$WORK/outc8y"; fail "--execute did not say '$msg'"; }
+  if [ "$want" = deleted ]; then has "delete-change-set --stack-name t-ingress --change-set-name $cs_name"
+  else hasnt "delete-change-set"; fi
+}
+build_cs
+refuse deleted "not CREATE_COMPLETE/AVAILABLE" STUB_CS_STATUS=FAILED -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse kept "not CREATE_COMPLETE/AVAILABLE" STUB_CS_EXEC=EXECUTE_COMPLETE -- EgressProxyAddr EgressTokenSecretArn
+# Built for two keys, executed with one: the change set would also clear the other. Refused, deleted.
+build_cs
+refuse deleted "EgressTokenSecretArn (cleared, but not asked for)" -- EgressProxyAddr
+# A change set that also changes another parameter is not a clear.
+build_cs
+refuse deleted "ImageTag" STUB_CS_DIFF=ImageTag -- EgressProxyAddr EgressTokenSecretArn
+# A change set whose execution cannot start (the API refuses) is deleted too.
+build_cs
+if STUB_ING_EGRESS="$SECRET_ARN" STUB_EXEC_FAIL=1 cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1; then
+  fail "clear-params.sh --execute went on after execute-change-set failed"
+fi
+has "delete-change-set --stack-name t-ingress --change-set-name $cs_name"
+# What the change set shows cannot be taken as proof (#2772 review): a masked NoEcho value is
+# equal to every other mask, so it passes only as UsePreviousValue=true; an SSM-typed value is
+# a key, so what it resolves to must be the same; "None" is a string, not an absent value.
+build_cs
+refuse deleted "AdminPassword (a masked value" STUB_PW=mask -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+STUB_ING_EGRESS="$SECRET_ARN" STUB_PW=prev cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \
+  || { cat "$WORK/outc8y"; fail "--execute refused a masked parameter kept with UsePreviousValue=true"; }
+build_cs
+refuse deleted "GatewayAmiId (resolves to" STUB_SSM=changed -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse deleted "GatewayAmiId (" STUB_SSM=plain-changed -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse deleted "GatewayAmiId (resolves to" STUB_SSM=missing -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+STUB_ING_EGRESS="$SECRET_ARN" STUB_SSM=same cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \
+  || { cat "$WORK/outc8y"; fail "--execute refused an SSM parameter that resolves to the same value"; }
+build_cs
+refuse deleted "Foo (" STUB_NONE=live-none -- EgressProxyAddr EgressTokenSecretArn
+build_cs
+refuse deleted "Foo (" STUB_NONE=cs-none -- EgressProxyAddr EgressTokenSecretArn
+# A refused change that touches a credential-named parameter says which one, never its values.
+build_cs
+refuse deleted "BitbucketOauthKey (*** -> ***)" STUB_SECRET_DIFF=1 -- EgressProxyAddr EgressTokenSecretArn
+grep -q "REVIEW_OLD_SECRET\|REVIEW_NEW_SECRET" "$WORK/outc8y" && fail "--execute printed a credential's value in its refusal"
+# Values with spaces, | ( ) and commas compare as they are.
+build_cs
+STUB_ING_EGRESS="$SECRET_ARN" STUB_SPECIAL=1 cp4 --execute "$cs_name" EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8y" 2>&1 \
+  || { cat "$WORK/outc8y"; fail "--execute refused a parameter whose value has spaces, |, ( ) and commas"; }
+# --yes: build, show, execute, read back.
+: > "$LOG"
+STUB_ING_EGRESS="$SECRET_ARN" cp4 --yes EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8z" 2>&1 \
+  || { cat "$WORK/outc8z"; fail "clear-params.sh --yes failed"; }
+order "create-change-set --stack-name t-ingress" "describe-change-set --stack-name t-ingress"
+order "describe-change-set --stack-name t-ingress" "execute-change-set --stack-name t-ingress"
+order "execute-change-set --stack-name t-ingress" "wait stack-update-complete --stack-name t-ingress"
+grep -q "t-ingress: EgressProxyAddr EgressTokenSecretArn now empty" "$WORK/outc8z" || fail "--yes did not read the keys back"
+grep -q "parameter EgressProxyAddr:" "$WORK/outc8z" || fail "--yes did not print the change set before executing"
+# --dry-run: build, show, delete; the stack is untouched.
+: > "$LOG"
+STUB_ING_EGRESS="$SECRET_ARN" cp4 --dry-run EgressProxyAddr EgressTokenSecretArn > "$WORK/outc8d" 2>&1 \
+  || { cat "$WORK/outc8d"; fail "clear-params.sh --dry-run failed"; }
+[ -n "$(cs_line t-ingress)" ] || fail "clear-params.sh --dry-run built no change set"
+hasnt "execute-change-set"
+order "create-change-set --stack-name t-ingress" "delete-change-set --stack-name t-ingress --change-set-name af-clear-"
+grep -q "parameter EgressProxyAddr:" "$WORK/outc8d" || fail "--dry-run did not print the change set"
+# A change set that FAILED ("didn't contain changes") is reported and deleted, in every mode.
+for m in "" "--yes" "--dry-run"; do
+  : > "$LOG"
+  # shellcheck disable=SC2086
+  if STUB_ING_EGRESS="$SECRET_ARN" STUB_CS_FAIL=1 cp4 $m EgressProxyAddr > "$WORK/outc8f" 2>&1; then
+    fail "clear-params.sh $m succeeded with a change set that failed to build"
+  fi
+  grep -q "didn't contain changes" "$WORK/outc8f" || { cat "$WORK/outc8f"; fail "clear-params.sh $m did not report why the change set failed"; }
+  has "delete-change-set --stack-name t-ingress --change-set-name af-clear-"
+  hasnt "execute-change-set"
+done
+# Nothing to clear: no change set in any mode.
+for m in "" "--yes" "--dry-run"; do
+  : > "$LOG"
+  # shellcheck disable=SC2086
+  cp4 $m EgressProxyAddr > "$WORK/outc8n" 2>&1 || fail "clear-params.sh $m failed with nothing to clear"
+  hasnt "create-change-set"
+done
+# The modes exclude each other.
+if cp4 --yes --dry-run EgressProxyAddr > "$WORK/outc8n" 2>&1; then fail "clear-params.sh took --yes and --dry-run together"; fi
+# The template the stack RUNS decides, before anything changes: a Default that is not "" (or
+# none at all) is refused, whatever the local template says.
+for d in subnet-other none blank; do
+  : > "$LOG"
+  if STUB_ING_EGRESS="$SECRET_ARN" STUB_LIVE_DEFAULT=$d "$ECS/clear-params.sh" --profile p4 \
+    --region ap-northeast-1 --stack t-ingress EgressProxyAddr > "$WORK/outc9" 2>&1; then
+    fail "clear-params.sh cleared a parameter whose live Default is '$d'"
+  fi
+  grep -q "get-template-summary --stack-name t-ingress" "$LOG" || fail "clear-params.sh did not read the live template's Default"
+  grep -q "Default is" "$WORK/outc9" || { cat "$WORK/outc9"; fail "clear-params.sh did not say why it refused ($d)"; }
+  hasnt "create-change-set"
+done
+# The same refusal in a dry run, which must not announce a clear either.
+if STUB_ING_EGRESS="$SECRET_ARN" STUB_LIVE_DEFAULT=blank "$ECS/clear-params.sh" --profile p4 \
+  --region ap-northeast-1 --stack t-ingress --dry-run EgressProxyAddr > "$WORK/outc9" 2>&1; then
+  fail "clear-params.sh --dry-run accepted a Default of blanks"
+fi
+grep -q "DRY: clear" "$WORK/outc9" && fail "clear-params.sh --dry-run announced clearing to a Default of blanks"
+# A read-back that fails after the change set ran is a failure, not "now empty".
+: > "$LOG"
+if STUB_ING_EGRESS="$SECRET_ARN" STUB_READBACK_FAIL=1 "$ECS/clear-params.sh" --profile p4 \
+  --region ap-northeast-1 --stack t-ingress --yes EgressProxyAddr EgressTokenSecretArn > "$WORK/outc10" 2>&1; then
+  fail "clear-params.sh succeeded although the value could not be read back"
+fi
+grep -q "could not be read back" "$WORK/outc10" || { cat "$WORK/outc10"; fail "clear-params.sh did not say the read-back failed"; }
+grep -q "now empty" "$WORK/outc10" && fail "clear-params.sh reported 'now empty' without reading it back"
+
+echo "== case 3h-move: update.sh on the way to the workspace subnets (#2763) =="
+# A network without the subnets: the NOTE names the runbook and the trap of the default deploy.
+upd outm1
+grep -q 'Upgrading from v0.34.x' "$WORK/outm1" || fail "the NOTE does not point at the upgrade block"
+grep -q 'S3EndpointEnabled defaults to true' "$WORK/outm1" || fail "the NOTE does not warn about the default deploy"
+grep -q 'Still in a private subnet' "$WORK/outm1" && fail "update.sh listed private-subnet workspaces with no workspace subnets"
+grep -qi ': none\.$' "$WORK/outm1" && fail "update.sh said none with no workspace subnets to check against"
+# Subnets in use, the endpoint still off, alice's task in a private subnet: listed, step 4 waits.
+upd outm2 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false
+grep -q '^WARNING: still in a private subnet, not in WorkspaceSubnets (subnet-0a,subnet-0b)' "$WORK/outm2" \
+  || { cat "$WORK/outm2"; fail "update.sh did not start the private-subnet list with WARNING: (endpoint off)"; }
+grep -qi ': none\.$' "$WORK/outm2" && fail "update.sh said none while a workspace is in a private subnet"
+grep -qx '  - af-ws-alice' "$WORK/outm2" || fail "update.sh did not name af-ws-alice"
+grep -q "ecs list-tasks --cluster .* --service-name af-ws-alice --desired-status RUNNING" "$LOG" \
+  || fail "update.sh did not look up the workspace's running task"
+# The endpoint already on: the same list is a warning.
+upd outm3 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=true
+grep -q '^WARNING: still in a private subnet' "$WORK/outm3" || fail "update.sh did not warn with the endpoint on"
+grep -qi ': none\.$' "$WORK/outm3" && fail "update.sh said none while a workspace is in a private subnet (endpoint on)"
+# Moved: nothing listed.
+upd outm4 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET=subnet-0b
+grep -q '^  - af-ws-alice$' "$WORK/outm4" || fail "update.sh did not list the running workspace"
+grep -q 'WARNING: still in a private subnet' "$WORK/outm4" && fail "update.sh listed a workspace that is in a workspace subnet"
+grep -qx 'Still in a private subnet, not in WorkspaceSubnets (subnet-0a,subnet-0b): none.' "$WORK/outm4" \
+  || { cat "$WORK/outm4"; fail "update.sh did not say that none is left in a private subnet"; }
+# The old-image list is true for a forced redeploy of the same tag too.
+grep -q 'Workspaces running now (they pick up this release on their next Start):' "$WORK/outm4" \
+  || fail "update.sh's running list still claims the old image"
+grep -q 'old image' "$WORK/outm4" && fail "update.sh still talks about the old image"
+# A task that cannot be read is said so, not taken as moved.
+upd outm5 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET_FAIL=1
+grep -q 'af-ws-alice (its task could not be read' "$WORK/outm5" || fail "update.sh took an unreadable task as moved"
+# 200 with the task in failures[], or no subnet in the answer: unknown too.
+upd outm6 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_FAILURES=1
+grep -q 'af-ws-alice (its task could not be read' "$WORK/outm6" || fail "update.sh took a task in failures[] as moved"
+upd outm7 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_TASK_SUBNET=None
+grep -q 'af-ws-alice (its task could not be read' "$WORK/outm7" || fail "update.sh took a task without a subnet as moved"
+# The services could not be listed: said, never "nothing left".
+upd outm8 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false STUB_LIST_SERVICES_FAIL=1
+grep -q 'could not all be listed' "$WORK/outm8" || fail "update.sh hid a failed service listing"
+grep -qi ': none\.$' "$WORK/outm8" && fail "update.sh said none after a failed service listing"
+for k in STUB_SVC_FAILURES STUB_SVC_PARTIAL; do
+  upd outm9 STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=false $k=1
+  grep -q 'could not all be listed' "$WORK/outm9" || fail "update.sh took describe-services' $k answer as complete"
+  grep -qi ': none\.$' "$WORK/outm9" && fail "update.sh said none after an incomplete listing ($k)"
+done
+grep -q 'could not all be listed' "$WORK/outm2" && fail "update.sh called a complete service listing incomplete"
+
 echo "== case 3h-pool: update.sh never skips the slot pool on ecs-ec2 without saying so =="
 #
 # The pool's user data carries ECS_AWSVPC_BLOCK_IMDS. A lookup that fails (no
@@ -1360,6 +1991,38 @@ for t in "$ECS"/cfn/*.yaml; do
   fi
 done
 
+echo "== case 3b-3: a secret switch that is on needs its SSM parameter before anything is created =="
+# 30-ingress wires AF_COMFY_API_KEY only when ComfyApiKey=on, and a Secrets entry whose parameter
+# does not exist stops the CP task from starting -- after 00-20 are already up.
+cp "$STATE/params/30-ingress" "$WORK/params-30-saved"
+echo "ComfyApiKey=on" >> "$STATE/params/30-ingress"
+: > "$LOG"
+if STUB_NO_COMFY_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+     > "$WORK/out3b3" 2>&1 </dev/null; then
+  fail "standup went on although ComfyApiKey=on and the SSM parameter is missing"
+fi
+grep -q "no SSM /af-cp/comfy-api-key (ComfyApiKey=on)" "$WORK/out3b3" \
+  || fail "the missing secret was not named: $(tail -3 "$WORK/out3b3")"
+hasnt "cloudformation deploy --stack-name t-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b3b" 2>&1 </dev/null \
+  || fail "ComfyApiKey=on with the SSM parameter present was refused: $(tail -3 "$WORK/out3b3b")"
+grep -q "deploy --stack-name t-ingress .*ComfyApiKey=on" "$LOG" || fail "ComfyApiKey=on did not reach 30-ingress"
+# GitHub: the dedicated sign-in App replaces github-client-secret, so standup must not demand it
+# then -- but must when the switch is off (the template injects it for GithubAllowedOrgs).
+printf 'GithubAllowedOrgs=example-org\n' >> "$STATE/params/30-ingress"
+: > "$LOG"
+if STUB_NO_GH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+     > "$WORK/out3b4" 2>&1 </dev/null; then
+  fail "standup went on although GithubAllowedOrgs is set and github-client-secret is missing"
+fi
+grep -q "no SSM /af-cp/github-client-secret" "$WORK/out3b4" || fail "the missing github-client-secret was not named"
+printf 'GithubLoginSecret=on\n' >> "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_NO_GH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b5" 2>&1 </dev/null \
+  || fail "GithubLoginSecret=on was refused for the missing legacy github-client-secret: $(tail -3 "$WORK/out3b5")"
+cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
+
 echo "== case 3c: teardown empties the bucket before deleting 20-platform =="
 # CFN cannot delete a bucket that still has contents. Skip this and 20-platform stops at
 # DELETE_FAILED, so the teardown dies half way -- and the next stand-up again goes unproven.
@@ -1383,6 +2046,8 @@ grep -q "^NatEipAllocationId=eipalloc-REAL$" "$CAPFILE" \
   || fail "the empty parameter was not filled in from the output (the stand-up would orphan the EIP): $(grep NatEip "$CAPFILE" || echo '<no such line>')"
 # Outputs that are not parameters must not be copied across (CFN rejects parameters it does not know)
 if grep -q "^VpcId=" "$CAPFILE"; then fail "an output that is not a parameter was copied into the capture"; fi
+{ grep -q "^GatewayEipAllocationId=eipalloc-GW$" "$CAPFILE" && grep -q "^GatewayEipAddress=203.0.113.7$" "$CAPFILE"; } \
+  || fail "the workspace egress address was not captured from the outputs (a rebuild would allocate a new one): $(grep GatewayEip "$CAPFILE" || echo '<no such line>')"
 
 echo "== case 3e: the preflight required-parameter check does not miss because of formatting =="
 #
@@ -1510,6 +2175,410 @@ STUB_ENGINES_LIVE=1 STUB_ENGINE_BOXES=1 STUB_ENGINE_SVC_UP=1 \
   "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --fast > "$WORK/out4g" </dev/null
 hasnt "update-service"; hasnt "terminate-instances"; hasnt "stop-instances"; hasnt "stop-db-instance"
 grep -q "database stopped" "$WORK/out4g" || fail "the plan did not mention the database step"
+grep -q "NAT gateway deleted" "$WORK/out4g" || fail "the plan did not mention the NAT step"
+hasnt "cloudformation deploy"; hasnt "add-tags-to-resource"
+
+NAT_DEL="cloudformation deploy --stack-name t-network"
+
+echo "== case 4h: the NAT gateway goes LAST (after the CP, the sweep and the database), through the stack =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4h" </dev/null
+order "$CP_DOWN" "rds add-tags-to-resource"
+order "rds add-tags-to-resource" "rds stop-db-instance --db-instance-identifier t-db"   # tagged before it can be force-started
+order "rds stop-db-instance --db-instance-identifier t-db" "$NAT_DEL"
+has "NatEnabled=false"
+has "rds add-tags-to-resource --resource-name arn:aws:rds:ap-northeast-1:123456789012:db:t-db --tags Key=af-paused,Value=true"
+hasnt "delete-nat-gateway"   # never by hand: the stack would keep a dead physical id
+: > "$LOG"
+STUB_DB_STATUS=stopped \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4h2" </dev/null
+has "rds add-tags-to-resource"   # a database that is already stopped is tagged all the same
+
+echo "== case 4i: --keep-nat, and a NAT that is already gone, leave the network stack alone =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast --keep-nat > "$WORK/out4i" </dev/null
+hasnt "$NAT_DEL"
+grep -q "NAT (kept" "$WORK/out4i" || fail "--keep-nat did not say the gateway is still billing"
+: > "$LOG"
+STUB_NAT_ENABLED=false \
+  "$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4i2" </dev/null
+hasnt "$NAT_DEL"
+: > "$LOG"
+"$ECS/pause.sh" --profile p --region ap-northeast-1 --stack t-ingress --fast --dry-run --yes > "$WORK/out4i3" </dev/null
+hasnt "cloudformation deploy"
+grep -q "DRY: cloudformation deploy --stack-name t-network .*NatEnabled=false" "$WORK/out4i3" || fail "dry-run did not print the NAT step"
+
+echo "== case 4j: --up brings the NAT back FIRST, and takes the tag off before it starts the database =="
+: > "$LOG"
+STUB_NAT_ENABLED=false STUB_DB_STATUS=stopped \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4j" </dev/null
+order "$NAT_DEL" "rds remove-tags-from-resource"
+order "rds remove-tags-from-resource" "rds start-db-instance --db-instance-identifier t-db"
+order "rds start-db-instance --db-instance-identifier t-db" "$CP_UP"
+has "NatEnabled=true"
+has "--tag-keys af-paused"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4j2" </dev/null
+hasnt "$NAT_DEL"   # the gateway is already there: nothing to recreate
+
+echo "== case 4j-ws: pause/--up on a network stack older than #2716 never switches the S3 endpoint on =="
+# The checkout's 00-network adds the workspace subnets and S3Endpoint; the endpoint's policy would
+# refuse the own S3 of every workspace still in a private subnet, so an old stack gets "false".
+: > "$LOG"
+STUB_NAT_ENABLED=false \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw" 2>&1 </dev/null
+grep -q "$NAT_DEL .*NatEnabled=true S3EndpointEnabled=false" "$LOG" \
+  || fail "--up on a stack without S3EndpointEnabled did not pass S3EndpointEnabled=false"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jw2" 2>&1 </dev/null
+grep -q "$NAT_DEL .*NatEnabled=false S3EndpointEnabled=false" "$LOG" \
+  || fail "pause on a stack without S3EndpointEnabled did not pass S3EndpointEnabled=false"
+# A stack that already has the switch keeps its value: the operator's step, not pause.sh's.
+: > "$LOG"
+STUB_NAT_ENABLED=false STUB_S3EP=true \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw3" 2>&1 </dev/null
+has "NatEnabled=true"
+if grep -q "S3EndpointEnabled=" "$LOG"; then fail "--up overrode an existing S3EndpointEnabled"; fi
+# --up says so, before the CP is back, when the CP is not using the network's workspace subnets.
+grep -q "WARNING: .* has workspace subnets" "$WORK/out4jw" && fail "warned without workspace subnets in the network"
+: > "$LOG"
+STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_S3EP=true \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw4" 2>&1 </dev/null
+grep -q "WARNING: t-network has workspace subnets (subnet-0a,subnet-0b) that the CP is not using" "$WORK/out4jw4" \
+  || { cat "$WORK/out4jw4"; fail "--up did not warn that the CP lacks the workspace subnets"; }
+grep -q "The S3 endpoint is ON" "$WORK/out4jw4" || fail "--up did not say the endpoint refuses workspace S3"
+: > "$LOG"
+STUB_WS_SUBNETS=subnet-0a,subnet-0b STUB_ING_WS=subnet-0a,subnet-0b STUB_S3EP=true \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4jw5" 2>&1 </dev/null
+if grep -q "WARNING: .* has workspace subnets" "$WORK/out4jw5"; then fail "warned although the CP uses the workspace subnets"; fi
+
+echo "== case 4j-egress: pause stops the egress gateway after the Workspaces and before the CP (#2729) =="
+GW_DOWN="--parameter-overrides GatewayEnabled=false"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4je" 2>&1 </dev/null \
+  || { cat "$WORK/out4je"; fail "pause.sh failed on a stack with EgressRoute=gateway"; }
+order "ecs update-service --cluster t-cluster --service af-ws-alice --desired-count 0" "ecs describe-tasks"
+order "ecs describe-tasks" "ssm send-command --instance-ids i-gw"
+grep -q "ssm send-command .*egress gateway drain" "$LOG" || fail "pause.sh did not drain the gateway"
+order "get-command-invocation --command-id cmd-drain" "$GW_DOWN"
+order "$GW_DOWN" "$CP_DOWN"
+grep -q "$NAT_DEL .*--capabilities CAPABILITY_IAM $GW_DOWN" "$LOG" || fail "the gateway was not stopped through the network stack"
+# The NAT still goes last, in its own deploy that leaves the gateway switch alone.
+order "$CP_DOWN" "--parameter-overrides NatEnabled=false"
+grep "NatEnabled=false" "$LOG" | grep -q "GatewayEnabled" && fail "the NAT deploy touched GatewayEnabled"
+# Never the interface or the address: they are the route target and the egress address.
+hasnt "release-address"; hasnt "disassociate-address"; hasnt "delete-network-interface"; hasnt "detach-network-interface"
+hasnt "autoscaling "   # through the stack only, or the next deploy scales it back
+
+echo "== case 4j-egress-scripts: what the gateway runs: applied (not just written) policy, and the drain =="
+# The two scripts env.sh sends through SSM, run here with fake systemctl / journalctl and their
+# paths moved under $GW. Python is the real one (the drain reads xattrs and state.json).
+GW="$WORK/gw"; mkdir -p "$GW/bin" "$GW/lib" "$GW/log" "$GW/run"
+gw_script() { # gw_script PROBE|DRAIN -> the script with its paths under $GW
+  # shellcheck disable=SC1091  # only the two variables are read
+  ( . "$ECS/env.sh"; eval "printf '%s\n' \"\$AF_GATEWAY_$1\"" ) |
+    sed -e "s#/var/lib/af-egress-agent#$GW/lib#g" -e "s#/var/log/squid#$GW/log#g" -e "s#/run/#$GW/run/#g"
+}
+# Squid's state is a file: stop creates it (GW_STOP=fail fails, GW_STOP=noop leaves Squid
+# running), start removes it.
+cat > "$GW/bin/systemctl" <<'FAKE'
+#!/usr/bin/env bash
+echo "systemctl $*" >> "$GW_LOG"
+case "$1" in
+  is-active) [ "${*: -1}" = squid ] && [ -e "$GW_STATE/squid-stopped" ] && exit 3
+             [ "${GW_ACTIVE:-1}" = 1 ] ;;
+  stop) case "${GW_STOP:-ok}" in
+          fail) echo "injected stop failure" >&2; exit 1 ;;
+          noop) ;;
+          *) touch "$GW_STATE/squid-stopped" ;;
+        esac ;;
+  start) rm -f "$GW_STATE/squid-stopped" ;;
+  show) echo "${GW_INV:-inv-now}" ;;
+esac
+FAKE
+cat > "$GW/bin/journalctl" <<'FAKE'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in _SYSTEMD_INVOCATION_ID=*) cat "$GW_JOURNAL/${a#*=}" 2>/dev/null ;; esac; done
+FAKE
+chmod +x "$GW/bin/systemctl" "$GW/bin/journalctl"
+mkdir -p "$GW/journal"
+gw_run() { GW_LOG="$GW/calls" GW_JOURNAL="$GW/journal" GW_STATE="$GW/run" PATH="$GW/bin:$PATH" bash -c "$(gw_script "$1")"; }
+MODE_AGENT='# Generated by control-plane egress-agent. Do not edit: the next policy change overwrites it.
+# mode: enforce'
+# Journal lines as `journalctl -o short-unix` prints them; the files' mtimes are set to match.
+jl() { echo "$1 ip-10-20-0-5 af-cp[812]: 2026/10/25 09:00:00 egress-agent: $2"; }
+policy_at() { # policy_at <unix time> [bootstrap]: the two policy files, last written then
+  if [ "${2:-}" = bootstrap ]; then printf '# bootstrap: closed until the first policy\nhttp_access deny all\n' > "$GW/lib/af-mode.conf"
+  else printf '%s\n' "$MODE_AGENT" > "$GW/lib/af-mode.conf"; fi
+  echo .example.com > "$GW/lib/af-allow.txt"
+  touch -d "@$1" "$GW/lib/af-mode.conf" "$GW/lib/af-allow.txt"
+}
+APPLIED='policy applied (enforce)'
+policy_at 1000 bootstrap; jl 1100 "$APPLIED" > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: the bootstrap mode file read as ready"
+policy_at 1000; : > "$GW/journal/inv-now"; jl 1100 "$APPLIED" > "$GW/journal/inv-old"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a policy applied by an earlier run of the agent read as ready"
+jl 1100 'policy not updated, keeping the last one that worked: reload: exit status 1' > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a written policy whose reload failed read as ready"
+jl 1100 "$APPLIED" > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-ready ] || fail "probe: an applied policy did not read as ready"
+# Started while the CP was down: the policy on disk (written by an earlier run) reloaded; the CP
+# later answers with the same policy, so no "policy applied" ever follows. Ready all the same.
+{ jl 1100 'reloaded Squid with the policy on disk (enforce)'
+  jl 1130 'policy not updated, keeping the last one that worked: dial tcp: connection refused'; } > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-ready ] || fail "probe: a policy reloaded from disk in this run (CP answers the same) did not read as ready"
+# A new instance: the bootstrap files reloaded from disk while the CP was down, then the CP's
+# policy written and its reload failed, or not run yet. Squid still has the bootstrap policy.
+policy_at 1150; { jl 1100 'reloaded Squid with the policy on disk (log-only)'
+  jl 1160 'policy not updated, keeping the last one that worked: reload: exit status 1'; } > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a bootstrap reload followed by a failed reload of the CP's policy read as ready"
+jl 1100 'reloaded Squid with the policy on disk (log-only)' > "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: a bootstrap reload with the CP's policy written but not yet reloaded read as ready"
+jl 1170 "$APPLIED" >> "$GW/journal/inv-now"
+[ "$(gw_run PROBE)" = af-gw-ready ] || fail "probe: the CP's policy reloaded after it was written did not read as ready"
+# Only the allow file changed (same mode): its write counts too.
+touch -d @1200 "$GW/lib/af-allow.txt"
+[ "$(gw_run PROBE)" = af-gw-up ] || fail "probe: an allow file written after the last reload read as ready"
+policy_at 1000; jl 1100 "$APPLIED" > "$GW/journal/inv-now"
+[ "$(GW_ACTIVE=0 gw_run PROBE)" = af-gw-starting ] || fail "probe: stopped services did not read as starting"
+: > "$GW/calls"; touch "$GW/run/af-egress-drained"
+gw_run PROBE > /dev/null
+grep -q "systemctl start squid" "$GW/calls" && [ ! -e "$GW/run/af-egress-drained" ] \
+  || fail "probe: Squid stopped by a drain was not started again"
+: > "$GW/calls"; gw_run PROBE > /dev/null
+grep -q "systemctl start" "$GW/calls" && fail "probe: started Squid without the drain's marker (a booting box would run the default config)"
+# The drain: the log against the committed offsets, by generation id.
+printf 'a\nbb\n' > "$GW/log/af-egress.log"; printf 'old\n' > "$GW/log/af-egress.log.0"
+python3 -c "import os,sys; os.setxattr(sys.argv[1],'user.af-egress.gen',b'g1'); os.setxattr(sys.argv[2],'user.af-egress.gen',b'g0')" \
+  "$GW/log/af-egress.log" "$GW/log/af-egress.log.0" || fail "drain: this filesystem has no user xattrs (the check cannot run)"
+echo '{"offsets":{"g1":2,"g0":4}}' > "$GW/lib/state.json"
+: > "$GW/calls"
+gw_run DRAIN | grep -q '^af-gw-pending 3 ' || fail "drain: a log line the CP has not accepted read as drained"
+grep -q "systemctl stop squid" "$GW/calls" && [ -e "$GW/run/af-egress-drained" ] || fail "drain: Squid was not stopped behind its marker"
+echo '{"offsets":{"g1":5}}' > "$GW/lib/state.json"
+gw_run DRAIN | grep -q '^af-gw-pending 4 ' || fail "drain: an unshipped rotated log read as drained"
+echo '{"offsets":{"g1":5,"g0":4}}' > "$GW/lib/state.json"
+[ "$(gw_run DRAIN)" = af-gw-drained ] || fail "drain: a fully accepted log did not read as drained"
+# A Squid that did not stop has no final log, however much of it was accepted.
+rm -f "$GW/run/squid-stopped"
+out="$(GW_STOP=fail gw_run DRAIN 2>/dev/null)"
+case "$out" in af-gw-error*) ;; *) fail "drain: a failed Squid stop read as '$out'" ;; esac
+out="$(GW_STOP=noop gw_run DRAIN)"
+case "$out" in af-gw-error*) ;; *) fail "drain: a Squid still running read as '$out'" ;; esac
+rm -f "$GW/run/af-egress-drained" "$GW/run/squid-stopped"; chmod 0555 "$GW/run"
+out="$(gw_run DRAIN 2>/dev/null)"; chmod 0755 "$GW/run"
+[ "$out" = 'af-gw-error: cannot write the drain marker' ] || fail "drain: an unwritable marker read as '$out'"
+rm "$GW/lib/state.json"
+gw_run DRAIN | grep -q '^af-gw-pending' || fail "drain: no state file read as drained"
+
+echo "== case 4j-egress-drain: nothing unconfirmed is destroyed: tasks, task reads and the log =="
+# A workspace already at desired 0 (no service to stop) whose task is still up is waited for.
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_WS_DESIRED0=1 STUB_WS_TASKS=late \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jd" 2>&1 </dev/null \
+  || { cat "$WORK/out4jd"; fail "pause.sh failed waiting for a desired-0 workspace task"; }
+hasnt "ecs update-service --cluster t-cluster --service af-ws-alice"
+[ "$(grep -c "ecs describe-tasks" "$LOG")" -ge 2 ] || fail "the desired-0 task was not waited for"
+order_again "ecs describe-tasks" "$GW_DOWN"
+# A task that stays, a task read that is refused, a log the CP has not accepted: the gateway
+# and the CP are both left running, and the run fails.
+for knob in STUB_WS_TASKS=stuck STUB_WS_TASKS=fail STUB_ENI_FAIL=1 STUB_GW_DRAIN=pending; do
+  : > "$LOG"
+  if env STUB_EGRESS_ROUTE=gateway "$knob" AF_WS_TASK_WAIT_SEC=0 AF_GATEWAY_DRAIN_SEC=0 \
+       "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jd2" 2>&1 </dev/null; then
+    fail "pause.sh exited 0 with $knob"
+  fi
+  hasnt "GatewayEnabled="; hasnt "$CP_DOWN"; hasnt "NatEnabled=false"
+  grep -q "left running" "$WORK/out4jd2" || fail "$knob: pause.sh did not say the gateway and the CP were left running"
+done
+grep -q "not accepted all of the egress gateway's log" "$WORK/out4jd2" || fail "the drain failure did not say why"
+# A report that failed once (the agent backs off) is waited out, not given up on.
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_DRAIN=late \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4jd3" 2>&1 </dev/null \
+  || { cat "$WORK/out4jd3"; fail "pause.sh gave up on a drain that completes on the second look"; }
+order_again "get-command-invocation --command-id cmd-drain" "$GW_DOWN"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4je2" 2>&1 </dev/null
+hasnt "GatewayEnabled="   # already stopped
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --fast > "$WORK/out4je3" 2>&1 </dev/null
+grep -q "engines idle -> egress gateway stopped -> CP desired 0" "$WORK/out4je3" || fail "the plan did not show the gateway step"
+hasnt "cloudformation deploy"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --dry-run > "$WORK/out4je4" 2>&1 </dev/null
+grep -q "DRY: cloudformation deploy --stack-name t-network .*GatewayEnabled=false" "$WORK/out4je4" || fail "dry-run did not print the gateway step"
+hasnt "cloudformation deploy"
+
+echo "== case 4j-egress2: --up starts the gateway with the NAT and waits for it before and after the CP =="
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false STUB_NAT_ENABLED=false STUB_GW_PROBE=model \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je5" 2>&1 </dev/null \
+  || { cat "$WORK/out4je5"; fail "pause.sh --up failed on a stack with EgressRoute=gateway"; }
+grep -q "$NAT_DEL .*--parameter-overrides NatEnabled=true GatewayEnabled=true" "$LOG" \
+  || fail "--up did not start the NAT and the gateway in one network deploy"
+order "GatewayEnabled=true" "ssm send-command --instance-ids i-gw"
+order "ssm send-command --instance-ids i-gw" "$CP_UP"   # up before any workspace can start
+order_again "$CP_UP" "ssm send-command --instance-ids i-gw"   # and its first policy after the CP
+grep -q "first policy from the control plane" "$WORK/out4je5" || fail "--up did not say it waits for the first policy"
+# A gateway that is already on is still waited for (an earlier --up may have stopped half way).
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je6" 2>&1 </dev/null
+hasnt "$NAT_DEL"
+order "ssm send-command --instance-ids i-gw" "$CP_UP"
+# An interface nobody attaches: the CP stays down.
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false STUB_GW_ATTACH='' AF_GATEWAY_WAIT_SEC=0 \
+     "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je7" 2>&1 </dev/null; then
+  fail "--up exited 0 although the gateway never attached its interface"
+fi
+hasnt "$CP_UP"
+grep -q "eni-gw is not attached" "$WORK/out4je7" || fail "--up did not say what it last saw of the gateway"
+# Up, but no policy once the CP is there: a failure, after the CP.
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway STUB_GW_PROBE=af-gw-up AF_GATEWAY_WAIT_SEC=0 \
+     "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je8" 2>&1 </dev/null; then
+  fail "--up exited 0 although the gateway never got a policy"
+fi
+has "$CP_UP"
+grep -q "has no policy from it" "$WORK/out4je8" || fail "--up did not say the gateway has no policy"
+# Squid or the agent not running is not "up".
+: > "$LOG"
+if STUB_EGRESS_ROUTE=gateway STUB_GW_PROBE=af-gw-starting AF_GATEWAY_WAIT_SEC=0 \
+     "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4je9" 2>&1 </dev/null; then
+  fail "--up exited 0 although Squid / the agent were not running"
+fi
+hasnt "$CP_UP"
+
+echo "== case 4j-egress3: --status shows the gateway; a stack without one is paused exactly as before =="
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je10" 2>&1 </dev/null
+grep -q "egress gateway: on (i-gw)" "$WORK/out4je10" || fail "status did not show the running gateway"
+grep -q "the egress gateway is on while the control plane is paused" "$WORK/out4je10" || fail "status did not flag a gateway left on"
+hasnt "cloudformation deploy"; hasnt "ssm send-command"
+: > "$LOG"
+STUB_EGRESS_ROUTE=gateway STUB_GW_ENABLED=false \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je11" 2>&1 </dev/null
+grep -q "egress gateway: stopped" "$WORK/out4je11" || fail "status did not show the stopped gateway"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4je12" 2>&1 </dev/null
+grep -q "egress gateway" "$WORK/out4je12" && fail "status showed a gateway on a stack without one"
+for mode in --fast --up; do
+  : > "$LOG"
+  STUB_NAT_ENABLED=false STUB_GW_ENABLED=false \
+    "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes "$mode" > "$WORK/out4je13" 2>&1 </dev/null
+  hasnt "GatewayEnabled="; hasnt "ssm send-command"; hasnt "describe-network-interfaces"; hasnt "ecs describe-tasks"
+done
+
+echo "== case 4k: --status shows the NAT, and names the re-stop Lambda when the stack has one =="
+: > "$LOG"
+STUB_NAT_ENABLED=false STUB_RESTOP=t-data-RestopFunction-1 \
+  "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --status > "$WORK/out4k" </dev/null
+grep -q "nat gateway   : deleted" "$WORK/out4k" || fail "status did not say the NAT is deleted"
+grep -q "re-stop Lambda t-data-RestopFunction-1" "$WORK/out4k" || fail "status did not name the re-stop Lambda"
+hasnt "cloudformation deploy"; hasnt "add-tags-to-resource"
+
+echo "== case 4l: a capture taken while paused (NatEnabled=false) still stands up WITH a NAT =="
+STATE6="$AF_DEPLOY_STATE_DIR/p6.ap-northeast-1.t-ingress"
+mkdir -p "$STATE6/params"
+cp -a "$STATE/params/." "$STATE6/params/"
+cp "$STATE/env" "$STATE6/env"
+echo "NatEnabled=false" >> "$STATE6/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l" </dev/null
+grep -q "NatEnabled=true" "$WORK/out4l" || fail "standup did not force NatEnabled=true"
+if grep -q "NatEnabled=false" "$WORK/out4l"; then fail "standup passed the captured NatEnabled=false on"; fi
+# The same for a capture taken with the egress gateway stopped.
+echo "GatewayEnabled=false" >> "$STATE6/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4l2" </dev/null
+grep -q "GatewayEnabled=true" "$WORK/out4l2" || fail "standup did not force GatewayEnabled=true"
+if grep -q "GatewayEnabled=false" "$WORK/out4l2"; then fail "standup passed the captured GatewayEnabled=false on"; fi
+
+echo "== case 4l-eip: a handed-back workspace egress address is checked before anything is built (#2728) =="
+STATE7="$AF_DEPLOY_STATE_DIR/p7.ap-northeast-1.t-ingress"
+mkdir -p "$STATE7/params"
+cp -a "$STATE/params/." "$STATE7/params/"
+cp "$STATE/env" "$STATE7/env"
+printf 'EgressRoute=gateway\nGatewayEipAllocationId=eipalloc-GW\nGatewayEipAddress=203.0.113.7\n' >> "$STATE7/params/00-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le" 2>&1 </dev/null \
+  || { cat "$WORK/out4le"; fail "standup refused a free, matching workspace egress address"; }
+has "ec2 describe-addresses --allocation-ids eipalloc-GW"
+{ grep -q "GatewayEipAllocationId=eipalloc-GW" "$WORK/out4le" && grep -q "GatewayEipAddress=203.0.113.7" "$WORK/out4le"; } \
+  || fail "standup did not hand the captured workspace egress address back to 00-network"
+for knob in STUB_GW_EIP=gone STUB_GW_EIP=elsewhere; do
+  : > "$LOG"
+  if env "$knob" "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le2" 2>&1 </dev/null; then
+    fail "standup passed preflight with $knob"
+  fi
+  hasnt "cloudformation deploy"
+done
+grep -q "associated with eni-other" "$WORK/out4le2" || fail "standup did not say where the address is held"
+sed -i 's/^GatewayEipAddress=.*/GatewayEipAddress=198.51.100.9/' "$STATE7/params/00-network"
+: > "$LOG"
+if "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le3" 2>&1 </dev/null; then
+  fail "standup passed preflight with an address that is not the allocation's"
+fi
+grep -q "GatewayEipAddress '198.51.100.9' is not the address of eipalloc-GW (203.0.113.7)" "$WORK/out4le3" \
+  || fail "standup did not say the captured address does not match"
+# Back on nat-gateway (or a capture from before EgressRoute) the stack does not use the address,
+# which may have been released since: no lookup, and the rebuild goes on.
+for route in EgressRoute=nat-gateway ""; do
+  sed -i -e '/^EgressRoute=/d' -e 's/^GatewayEipAddress=.*/GatewayEipAddress=203.0.113.7/' "$STATE7/params/00-network"
+  [ -z "$route" ] || echo "$route" >> "$STATE7/params/00-network"
+  : > "$LOG"
+  STUB_GW_EIP=gone "$ECS/standup.sh" --profile p7 --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out4le4" 2>&1 </dev/null \
+    || { cat "$WORK/out4le4"; fail "standup refused a NAT-only rebuild over a released gateway address (${route:-no EgressRoute})"; }
+  hasnt "describe-addresses"
+done
+# Without the parameter (every capture so far) nothing is looked up.
+: > "$LOG"
+"$ECS/standup.sh" --profile p6 --region ap-northeast-1 --stack t-ingress --yes --dry-run > /dev/null 2>&1 </dev/null
+hasnt "describe-addresses"
+
+echo "== case 4m: a tag that cannot be written is an error, not a quiet success =="
+: > "$LOG"
+if STUB_DB_ARN_FAIL=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast > "$WORK/out4m" 2>&1 </dev/null; then
+  fail "pause exited 0 although the af-paused tag could not be set"
+fi
+has "rds stop-db-instance --db-instance-identifier t-db"   # the bill comes first
+has "$NAT_DEL"                                            # and the rest of the pause still ran
+grep -q "was not set" "$WORK/out4m" || fail "the failure did not say the tag was not set"
+grep -q "not be stopped again" "$WORK/out4m" || fail "the failure did not say what is now unprotected"
+: > "$LOG"
+if STUB_DB_ARN_FAIL=1 STUB_DB_STATUS=stopped "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4m2" 2>&1 </dev/null; then
+  fail "--up exited 0 although the af-paused tag could not be removed"
+fi
+hasnt "rds start-db-instance"
+hasnt "$CP_UP"
+: > "$LOG"
+if STUB_DB_ARN_FAIL=1 "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --keep-db > "$WORK/out4m3" 2>&1 </dev/null; then
+  fail "--keep-db exited 0 although the af-paused tag could not be removed"
+fi
+grep -q "was not removed" "$WORK/out4m3" || fail "the clear failure did not say the tag was not removed"
+grep -q -- "pause.sh --keep-db again" "$WORK/out4m3" || fail "the clear failure did not keep --keep-db in the rerun hint"
+echo "== case 4m4: --up fails loudly when the database is not available once the CP is up =="
+: > "$LOG"
+if STUB_DB_STATUS=backing-up "$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4m4" 2>&1 </dev/null; then
+  fail "--up exited 0 with the database not available"
+fi
+
+echo "== case 4n: --keep-db takes an old af-paused marker off; --up reads the status only after the tag is gone =="
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --fast --keep-db > "$WORK/out4n" </dev/null
+has "rds remove-tags-from-resource"
+hasnt "rds add-tags-to-resource"
+hasnt "rds stop-db-instance"
+: > "$LOG"
+"$ECS/pause.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --up > "$WORK/out4n2" </dev/null
+order "rds remove-tags-from-resource" "DBInstanceStatus"
 
 echo "== case 5: nothing prints a secret-looking parameter =="
 : > "$LOG"

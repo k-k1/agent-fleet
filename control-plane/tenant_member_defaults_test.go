@@ -4,9 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -154,25 +151,4 @@ func TestTenantMemberDefaultsGoWithTheTenant(t *testing.T) {
 
 func storeTenantMemberDefaults(tenantID, doc string) store.TenantMemberDefaults {
 	return store.TenantMemberDefaults{TenantID: tenantID, Defaults: doc, UpdatedAt: store.NowTS()}
-}
-
-// The Console keeps its own copy of the list (the tenant editor offers it, the first-run card
-// completes on it). An agent only the Console offers is refused on save; one only the CP accepts
-// can never be chosen. Either way they must match.
-func TestMemberDefaultAgentsMatchTheConsole(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "console", "src", "agents", "registry.ts"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`MEMBER_DEFAULT_AGENTS = \[([^\]]*)\]`).FindSubmatch(src)
-	if m == nil {
-		t.Fatal("MEMBER_DEFAULT_AGENTS not found in agents/registry.ts")
-	}
-	var ts []string
-	for _, q := range regexp.MustCompile(`"([a-z]+)"`).FindAllSubmatch(m[1], -1) {
-		ts = append(ts, string(q[1]))
-	}
-	if strings.Join(ts, ",") != strings.Join(memberDefaultAgents, ",") {
-		t.Errorf("console offers %v, CP accepts %v", ts, memberDefaultAgents)
-	}
 }

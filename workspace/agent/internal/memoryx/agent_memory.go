@@ -125,6 +125,14 @@ type agentMemCaller struct {
 	Session string
 	Kind    string
 	Project *agentMemProject // nil: the session has no working copy, so user scope only
+	// trailers go on the commit of a write this caller makes (the external client's name).
+	trailers []string
+	// noRevival makes a create refuse a name that was forgotten or ever existed (the background
+	// review never revives a memory the member or an agent forgot, ADR 0117 decision 5), judged
+	// inside the store lock the save holds. keepKinds makes an update keep the kinds the memory
+	// already has instead of taking the request's. Both are set by the review's publish only.
+	noRevival bool
+	keepKinds bool
 }
 
 // agentMemResolveCaller looks the calling session up. An empty name is an author AF cannot
@@ -752,12 +760,44 @@ func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 			return agentMemEntry{}, memoryErrf(http.StatusUnprocessableEntity, errCodeMemorySecretDetected,
 				"this memory is withheld: its file looks like it contains a secret or cannot be checked; your user has to fix the file")
 		}
+		// An outside client is held to the kinds filter the index and search apply: a memory
+		// limited to other kinds is not readable by name either, and is not counted as a use.
+		if c.Kind == agentMemExternalKind && !agentMemAppliesTo(l.Entry, c.Kind) {
+			continue
+		}
 		// Counted under the read lock: a forget or re-create (write lock) cannot slip between the
 		// read and the count and leave this use on a newer memory.
 		agentMemRecordUses(c, l.Entry)
 		return l.Entry, nil
 	}
+	if scope != "" {
+		if other := agentMemOtherScopeHolding(c, scope, name); other != "" {
+			return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
+				"no memory by that name in scope %s; one exists in scope %s (pass scope %q or omit scope)", scope, other, other)
+		}
+	}
 	return agentMemEntry{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name")
+}
+
+// agentMemOtherScopeHolding names the other scope this caller may read that holds name, or "" when
+// there is none. It applies the visibility of a read (the kinds filter of an outside client, and a
+// withheld file is not offered) and never counts a use, so a miss reveals nothing a read of that
+// scope would not. The caller holds agentMemMu.
+func agentMemOtherScopeHolding(c agentMemCaller, missed, name string) string {
+	for _, s := range agentMemScopes(c) {
+		if s == missed {
+			continue
+		}
+		l, ok, err := agentMemLoadOne(c, s, name)
+		if err != nil || !ok || l.Withheld {
+			continue
+		}
+		if c.Kind == agentMemExternalKind && !agentMemAppliesTo(l.Entry, c.Kind) {
+			continue
+		}
+		return s
+	}
+	return ""
 }
 
 func agentMemLoadOne(c agentMemCaller, scope, name string) (agentMemLoaded, bool, error) {
@@ -993,6 +1033,11 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
 			"the memory does not exist (it may have been forgotten); save it with revision 0 to create it")
 	case !exists:
+		if c.noRevival {
+			if err := agentMemRefuseRevival(rel, req.Name); err != nil {
+				return agentMemWriteResult{}, err
+			}
+		}
 		if base, err = agentMemTombRevision(rel, req.Name); err != nil {
 			return agentMemWriteResult{}, err
 		}
@@ -1007,6 +1052,9 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	if exists {
 		e.Created, e.Source, e.SourceHash = cur.Entry.Created, cur.Entry.Source, cur.Entry.SourceHash
 		e.Pinned = cur.Entry.Pinned
+		if c.keepKinds {
+			e.Kinds = cur.Entry.Kinds
+		}
 	}
 	data := agentMemRender(e)
 	repoRel := rel + "/" + req.Name + ".md"
@@ -1015,9 +1063,9 @@ func agentMemSave(c agentMemCaller, req agentMemSaveReq, now time.Time) (agentMe
 	}
 
 	changes := []agentMemChange{{Rel: repoRel, Data: data}}
-	// The member names a project that already holds memory and has no working copy to describe
-	// it, so the project's record is left as the sessions wrote it.
-	if c.Project != nil && req.Scope == agentMemScopeProject && c.Kind != agentMemMember.Kind {
+	// The member and an external client name a project that already holds memory and have no
+	// working copy to describe it, so the project's record is left as the sessions wrote it.
+	if c.Project != nil && req.Scope == agentMemScopeProject && c.Kind != agentMemMember.Kind && c.Kind != agentMemExternalKind {
 		extra, err := agentMemProjectInfoChange(*c.Project)
 		if err != nil {
 			return agentMemWriteResult{}, err
@@ -1076,6 +1124,10 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 		}
 	}
 	if !exists {
+		if other := agentMemOtherScopeHolding(c, req.Scope, req.Name); other != "" {
+			return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
+				"no memory by that name in scope %s; one exists in scope %s (read it there first and forget it with that revision)", req.Scope, other)
+		}
 		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name in scope %s", req.Scope)
 	}
 	if cur.Withheld {
@@ -1086,6 +1138,10 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 			"the memory is at revision %d, not %d; read it again before forgetting it", cur.Entry.Revision, req.Revision)
 	}
 	repoRel := rel + "/" + req.Name + ".md"
+	base, err := forgetIntent(rel, req.Name)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
 	if err := agentMemWriteTomb(rel, req.Name, cur.Entry.Revision); err != nil {
 		return agentMemWriteResult{}, err
 	}
@@ -1095,6 +1151,7 @@ func agentMemForget(c agentMemCaller, req agentMemForgetReq, now time.Time) (age
 		return agentMemWriteResult{}, err
 	}
 	agentMemClearUsage(rel, req.Name)
+	forgetDone(rel, req.Name, base)
 	return agentMemWriteResult{Name: req.Name, Scope: req.Scope, Revision: cur.Entry.Revision, Commit: rev, Deleted: true}, nil
 }
 
@@ -1277,10 +1334,10 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 	if op == agentMemOpProjectInfo {
 		trigger = memoryTriggerAgentMemoryMeta
 	}
-	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n",
+	msg := fmt.Sprintf("agent-memory: %s %s (%s)\n\nAF-Trigger: %s\nAF-Op: %s\nAF-Memory: %s\nAF-Author-Kind: %s\nAF-Author-Session: %s\n%s: %d\n",
 		op, memRel, now.Format(time.RFC3339),
-		trigger, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session)
-	for _, t := range extra {
+		trigger, op, agentMemRepoPrefix+"/"+memRel, c.Kind, c.Session, agentMemSeqTrailer, time.Now().UnixNano())
+	for _, t := range append(extra[:len(extra):len(extra)], c.trailers...) {
 		msg += t + "\n"
 	}
 	var rev string

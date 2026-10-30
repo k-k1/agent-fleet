@@ -113,7 +113,7 @@ describe("notification row headings", () => {
     const payload = { run: "write_back", leftovers: 3, conflicts: 2, secrets: 1 };
     const w = notificationWording({ kind: "memory-sync", displayName: "", payload });
     expect(w.title).toBe(ja["notif.memory_sync.write_back.title"]);
-    expect(w.body).toBe("確認が必要なファイルが 3 件あります（競合 2 件、秘密情報あり 1 件）。設定 > Agent Fleet のメモリに一覧があります。");
+    expect(w.body).toBe("確認が必要なファイルが 3 件あります（競合 2 件、秘密情報あり 1 件）。設定 > エージェントメモリ > 設定 に一覧があります。");
     expect(notificationRowSubtitle({ kind: "memory-sync", displayName: "", payload })).toBe(w.body);
     expect(notificationWording({ kind: "memory-sync", displayName: "", payload: { run: "catch_up" } }).title).toBe(
       ja["notif.memory_sync.catch_up.title"],

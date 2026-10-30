@@ -5,6 +5,7 @@
 - 状態: **採用・P0〜P4 実装済み**（レジストリ型 / 合成 / user CRUD / 接続テスト / Console タブ /
   アシスタント配線 / claude・codex のセッション materialize / **テナント配布**）。
   設計は [docs/48](../log/48-mcp-registry.md)。
+  状態の更新（2026-10-22）: 登録したリモートサーバーの OAuth 対応を [0119](0119-mcp-client-oauth.ja.md) で提案した。採用されれば、却下した「af が MCP のプロキシになる」案を OAuth のサーバーに限って見直す。
 - 関連: [history/19](../log/19-assistant-chat.md)（アシスタント）/ [0020](0020-chat-bridge.ja.md)（同型の CP ブリッジ）/
   docs/25（一般化の対象となる組み込み ops 連携）/ docs/20（egress allowlist）
 
@@ -147,3 +148,12 @@ P4 でこの機構を入れた（既定は `0`）。実装で決めた 3 点:
   （`custodian.go` に既述の性質）。実際の隔離は store の `tenant_id` スコープと、配布面が
   トークン→membership→tenant で解決することに依っている。真の per-tenant 無効化は Vault / KMS
   アダプタ側の話で、ここでは変えていない。
+
+## 追記（2026-10-22）：マスク後の値に Bearer スキームを残す
+
+Console のサーバーフォームに「認証」の選択（なし / Bearer トークン / カスタムヘッダ）が入った。保存済みの行を
+正しい編集欄で開くため、`Bearer <秘密>` の形のヘッダ値は `***` ではなく `Bearer ***`（スキームは保存時の
+表記のまま、大小文字は問わない）でマスクする。agent（`mcpreg.Masked`）と CP のテナント側（`maskHeaders`）の
+両方で行う。それ以外の値（Bearer 以外の `Authorization` を含む）は従来どおり `***` になる。2 つのマージ関数は、
+受け取った `Bearer ***` を `***` と同じに扱う（保存値を残す。保存値がなければ捨てる）。ワイヤ上の他の項目は
+変えておらず、決定 1〜8 はそのまま。

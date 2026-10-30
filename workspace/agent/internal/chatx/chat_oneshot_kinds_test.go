@@ -5,9 +5,7 @@ package chatx
 // claude while the settings screen said Muse.
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -16,9 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// notOneShotKinds are the ChatProviders kinds deliberately left without a one-shot runner.
-// Adding a kind to ChatProviders forces a choice: a case in OneShotHeadlessRun plus an
-// oneShotKinds entry, or an entry here.
+// notOneShotKinds are the chat backends deliberately left without a one-shot runner. Adding a
+// backend forces a choice: a runOneShot method plus an oneShotKinds entry, or an entry here.
 var notOneShotKinds = []string{lcppKind}
 
 func TestEveryChatProviderIsRunnableOrExcluded(t *testing.T) {
@@ -29,62 +26,27 @@ func TestEveryChatProviderIsRunnableOrExcluded(t *testing.T) {
 	}
 }
 
-// oneShotKinds is what selection trusts; the switch is what runs. They must name the same
-// kinds, or a selectable kind reaches the default branch (or a case is unreachable).
-func TestOneShotKindsMatchTheRunnerSwitch(t *testing.T) {
-	consts := map[string]string{
-		"KindClaude":   session.KindClaude,
-		"KindCodex":    session.KindCodex,
-		"KindOpencode": session.KindOpencode,
-		"KindCursor":   session.KindCursor,
-		"KindAgy":      session.KindAgy,
-		"KindMuse":     session.KindMuse,
-	}
-	f, err := parser.ParseFile(token.NewFileSet(), "chat_providers.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cases []string
-	sawDefault := false
-	for _, d := range f.Decls {
-		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "OneShotHeadlessRun" {
-			continue
-		}
-		for _, st := range fn.Body.List {
-			sw, ok := st.(*ast.SwitchStmt)
-			if !ok {
-				continue
-			}
-			if id, ok := sw.Tag.(*ast.Ident); !ok || id.Name != "kind" {
-				continue
-			}
-			for _, c := range sw.Body.List {
-				cc := c.(*ast.CaseClause)
-				if cc.List == nil {
-					sawDefault = true
-				}
-				for _, e := range cc.List {
-					sel, ok := e.(*ast.SelectorExpr)
-					v, known := "", false
-					if ok {
-						v, known = consts[sel.Sel.Name]
-					}
-					if !known {
-						t.Fatalf("unrecognised case expression %#v: extend consts in this test", e)
-					}
-					cases = append(cases, v)
-				}
-			}
+// oneShotKinds is what selection trusts; a backend's oneShotRunner is what runs. They must name
+// the same kinds, or a selectable kind reaches oneShotRunOn's backstop (or a runner is
+// unreachable).
+func TestOneShotKindsMatchTheRunners(t *testing.T) {
+	var runners []string
+	for k, b := range chatBackends {
+		if _, ok := b.(oneShotRunner); ok {
+			runners = append(runners, k)
 		}
 	}
-	if !sawDefault {
-		t.Error("the kind switch has no default: an unknown kind would fall through to the claude path again")
+	slices.Sort(runners)
+	if want := slices.Sorted(slices.Values(oneShotKinds)); !slices.Equal(runners, want) {
+		t.Errorf("one-shot runners %v, oneShotKinds %v — they must match", runners, want)
 	}
-	slices.Sort(cases)
-	want := slices.Sorted(slices.Values(oneShotKinds))
-	if !slices.Equal(cases, want) {
-		t.Errorf("switch cases %v, oneShotKinds %v — they must match", cases, want)
+}
+
+// A kind with no runner is refused, never run on claude's path.
+func TestOneShotRunOnRefusesAKindWithNoRunner(t *testing.T) {
+	writeResolvePrefs(t, `{}`)
+	if _, ran, _, err := oneShotRunOn(context.Background(), lcppKind, "title.session", OneShotShort, "", "p", ""); err == nil || ran != lcppKind {
+		t.Fatalf("oneShotRunOn(lcpp): ran=%q err=%v, want a refusal recorded under lcpp", ran, err)
 	}
 }
 

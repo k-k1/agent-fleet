@@ -19,6 +19,7 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(true) }));
 
 const { MuseCard } = await import("./MuseCard.tsx");
+const { getSettings, setSettings } = await import("../../../lib/settings.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -146,10 +147,10 @@ describe("MuseCard", () => {
     expect(text()).toContain("ABCD-EFGH");
   });
   // The launch defaults (ADR 0095 P2-9). Three things that are each invisible when wrong:
-  // the catalogue's contributor twins have to stay offered, the two rows have to be dropdowns
+  // a host that still lists contributor twins has them offered, the two rows have to be dropdowns
   // rather than segmented controls (four 26-character ids and nine effort values both overflow
-  // `.choice-seg`, which is an inline-flex that does not wrap), and the note explaining what a
-  // contributor model costs has to be plain text — the card's other notes were written with
+  // `.choice-seg`, which is an inline-flex that does not wrap), and the note explaining what
+  // contributor mode costs has to be plain text — the card's other notes were written with
   // markdown asterisks that nothing renders, so they reached the member as literal `**`.
   it("offers the model and effort defaults as dropdowns, with the contributor note in plain text", async () => {
     const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -178,8 +179,11 @@ describe("MuseCard", () => {
     });
 
     // Not a count — the hidden-models row has a select of its own. What is asserted is that
-    // NEITHER of the two rows fell to the segmented control.
-    expect(host?.querySelector(".choice-seg")).toBeNull();
+    // NEITHER of the two rows fell to the segmented control: the one segmented control left is
+    // the contributor mode's on/off.
+    const segRows = [...(host?.querySelectorAll(".choice-seg") ?? [])].map((seg) => seg.closest(".ps-row")?.querySelector(".ps-label")?.textContent || "");
+    expect(segRows).toHaveLength(1);
+    expect(segRows[0]).toMatch(/contributor/i);
     const optionsOf = (s: HTMLSelectElement) => [...s.options].map((o) => o.textContent || "");
     const selects = [...(host?.querySelectorAll("select") ?? [])] as HTMLSelectElement[];
     // The member keeps the choice: a contributor twin is offered, not filtered away.
@@ -193,8 +197,31 @@ describe("MuseCard", () => {
     // The note itself, not merely the word "contributor" — which the catalogue's own option
     // labels also carry, so asserting on that passes with the note deleted (it did).
     const notes = [...(host?.querySelectorAll(".ps-note") ?? [])].map((n) => n.textContent || "");
-    expect(notes.some((n) => /improve the product|製品改善/.test(n))).toBe(true);
+    expect(notes.some((n) => /improve its product|製品改善/.test(n))).toBe(true);
     // Nothing in this card may ship raw markdown: it is rendered as plain text.
     expect(text()).not.toContain("**");
+  });
+
+  // Contributor mode (#2535): off unless the member switches it on here, and the switch writes the
+  // key the Agent reads (ui-prefs museContributorMode).
+  it("switches contributor mode with an on/off row that starts off", async () => {
+    api.mockImplementation(() => Promise.resolve({}));
+    setSettings({ museContributorMode: false });
+    await mount({ supported: true, connected: true, email: "m@example.com" });
+    const disclosure = buttons().find((b) => b.getAttribute("aria-expanded") !== null);
+    await act(async () => {
+      disclosure!.click();
+    });
+    const row = [...(host?.querySelectorAll(".ps-row") ?? [])].find((r) => /contributor/i.test(r.querySelector(".ps-label")?.textContent || ""));
+    expect(row).toBeTruthy();
+    const segs = [...row!.querySelectorAll("button.seg-btn")] as HTMLButtonElement[];
+    expect(segs).toHaveLength(2);
+    const active = segs.find((b) => b.classList.contains("active"));
+    const on = segs.find((b) => !b.classList.contains("active"));
+    expect(active?.textContent).toMatch(/off|オフ/i);
+    await act(async () => {
+      on!.click();
+    });
+    expect(getSettings().museContributorMode).toBe(true);
   });
 });

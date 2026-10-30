@@ -1,7 +1,6 @@
 ---
 audience: "someone adding a deployment target or an adapter"
 source_of_truth: "the code plus each runbook (`deploy/*/README.md`)"
-updated: "2026-10"
 ---
 
 # 09. Deployment — the forms, the adapters, the environment index
@@ -70,6 +69,17 @@ connection's own address as the client whatever `AF_TRUSTED_PROXY_HOPS` says. No
 or an administrator uses is reachable another way. Unset, there is no second port and nothing
 changes.
 
+On `docker` (compose) it is optional, for a host whose public front end does not accept the
+Docker bridges (a tunnel or reverse proxy bound to one host interface): the CP binds the docker0
+gateway address (`AF_CP_INTERNAL_LISTEN=172.17.0.1:8098`), and workspaces reach it as
+`AF_CP_INTERNAL_URL=http://host.docker.internal:8098`, a name the adapter maps with
+`--add-host host.docker.internal:host-gateway` whenever the URL uses it. The docker0 address is
+local to the host, so every per-user network reaches it without crossing Docker's inter-network
+isolation, and no LAN or tailnet interface carries it; a wildcard bind on `docker` is logged as a
+warning at start. It is off by default (the address depends on the host's Docker and firewall
+configuration, and an address that does not exist stops the CP). Runbook:
+[`deploy/compose/README.md`](../../deploy/compose/README.md) "Workspace listener".
+
 The ingress terminates TLS and forwards. With `AUTH=oauth` the CP authenticates for
 itself; only with `AUTH=proxy` does the ingress inject the identity header.
 
@@ -99,24 +109,25 @@ an index. The value in parentheses is the code's default when the variable is un
 | Group | Variables | Role | Detail |
 |---|---|---|---|
 | CP core | `CP_ADDR` (`:8080`) · `CONSOLE_DIR` · `AF_RUNTIME` (`local`) · `AF_DB` (`<WS_DATA>/control-plane.db`) · `PUBLIC_BASE_URL` · `AF_PREVIEW_DOMAIN` · `AF_DEV_IDP` (unset; `0` locks the IdP off, otherwise the Admin modal decides and the default is on) · `AF_TRUSTED_PROXY_HOPS` (0) | where it listens, what it serves, which adapter, the public URL, preview subdomains, the development OIDC IdP ([ADR 0116](../decisions/0116-dev-oidc-idp.md); needs `PUBLIC_BASE_URL`; also `GET`/`PUT /api/admin/dev-idp`), the client address | this chapter |
-| Workspace listener | `AF_CP_INTERNAL_LISTEN` (unset = none) · `AF_CP_INTERNAL_URL` (unset = workspaces use `AF_CP_BASE_URL`) | the workspace-only port and the URL workspaces reach it by (`deploy/kubernetes/`: `:8098` and `http://af-cp-internal.<cp-ns>.svc:8098`). The clone URLs and `AF_INTERNAL_GIT_HOST` stay public; the Agent rewrites the workspace's git onto the URL (`url.<internal>/git/.insteadOf`) with the git credential stored for both hosts, and LFS answers on the workspace listener point back at it. It takes effect only with `PUBLIC_BASE_URL` set, and from the next workspace Start | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
-| Workspace template | `WS_IMAGE` · `WS_DATA` (`/tmp/af-data`) · `WS_MEMORY` (`1g`) · `AF_MAX_WORKSPACE_MEM` · `WS_AGENT_PORT` (7700, the base of the per-workspace ports) · `WS_AGENT_HOST` (`127.0.0.1`) · `WS_JVM_DIR` · `WS_ENV` · `WS_SESSION_CMD` | the common template the CP fills in when starting a workspace. `WS_ENV` reaches `docker` and `native` workspaces only; the ECS runtimes do not pass it on | [04](04-agent.md) |
+| Workspace listener | `AF_CP_INTERNAL_LISTEN` (unset = none) · `AF_CP_INTERNAL_URL` (unset = workspaces use `AF_CP_BASE_URL`) | the workspace-only port and the URL workspaces reach it by (`deploy/kubernetes/`: `:8098` and `http://af-cp-internal.<cp-ns>.svc:8098`; `docker`, optional: the docker0 gateway address, e.g. `172.17.0.1:8098`, and `http://host.docker.internal:8098`). The clone URLs and `AF_INTERNAL_GIT_HOST` stay public; the Agent rewrites the workspace's git onto the URL (`url.<internal>/git/.insteadOf`) with the git credential stored for both hosts, and LFS answers on the workspace listener point back at it. It takes effect only with `PUBLIC_BASE_URL` set, and from the next workspace Start | §9.3 / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
+| Workspace template | `WS_IMAGE` · `WS_DATA` (`/tmp/af-data`) · `WS_MEMORY` (`1g`) · `AF_MAX_WORKSPACE_MEM` · `WS_AGENT_PORT` (7700, the base of the per-workspace ports) · `WS_AGENT_HOST` (`127.0.0.1`) · `WS_JVM_DIR` · `WS_ENV` · `WS_SESSION_CMD` | the common template the CP fills in when starting a workspace. `WS_ENV` reaches `docker`, `native` and Kubernetes workspaces; the ECS runtimes do not pass it on | [04](04-agent.md) |
 | L1 auth | `AUTH` (`dev`) · `DEV_USER` (`dev`) · `AUTH_EMAIL_HEADER` (`X-Forwarded-Email`) · `GOOGLE_OAUTH_CLIENT_ID/SECRET` · `AF_GITHUB_LOGIN_CLIENT_ID/SECRET` (or `GITHUB_OAUTH_CLIENT_ID/SECRET`) with `AF_GITHUB_ALLOWED_ORGS` and the other `AF_GITHUB_*` · `AF_OIDC_PROVIDERS` + `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,LINK_CLAIM,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}` · `AF_COOKIE_SECRET` · `AF_SESSION_TTL` (168h) · `AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console login, with `AUTH=oauth` refusing to boot without a working provider. An OIDC provider must declare `TRUST`, and GitHub needs `AF_GITHUB_ALLOWED_ORGS`; either is disabled otherwise. **A sign-in is refused unless some way in admits it**: these allowlists, a tenant's roster, a tenant's auto-join domains or an approved tenant IdP. With none of them, every login is denied | [07 §7.3](07-security.md) / [decisions/0043](../decisions/0043-login-idp.md) |
 | Provisioning and roles | `AF_PROVISION` (`auto`) · `SUPER_ADMIN_EMAILS` | how an unknown identity is admitted; who is a deployment administrator | [06](06-data.md) |
 | At-rest encryption | `AF_MASTER_KEY` | unset means plaintext (development only). **Losing it is a crypto-shred** — keep it in a vault separate from the data | [07 §7.6](07-security.md) |
 | Git provider OAuth | `AF_GITHUB_BUILTIN_APPS` (on; `off` withdraws the built-in GitHub apps) | a tenant administrator picks or registers the apps in the Console. `BITBUCKET_OAUTH_KEY/SECRET` are no longer read, and `GITHUB_OAUTH_CLIENT_ID` is for sign-in only | [decisions/0052](../decisions/0052-tenant-git-oauth.md) |
 | Scale-to-zero and showback | `AF_AUTOSTART` (on) · `AF_SESSION_IDLE_TIMEOUT` (1h) · `AF_INTERACTION_IDLE_TIMEOUT` (the session value) · `AF_WS_IDLE_TIMEOUT` (2h) · `AF_PRESENCE_IDLE_TIMEOUT` (30m) · `AF_IDLE_SWEEP_INTERVAL` (1m) · `AF_STOP_GRACE_SEC` (30, at most 120) · `AF_USAGE_SAMPLE_INTERVAL` (5m) | auto-start, idle stop, the grace period, usage sampling. For the idle timeouts, the sweep and the usage sampler, `0` means off | [03](03-control-plane.md) |
 | MCP | `AF_MCP_ENABLED` | whether `/mcp` exists at all; only the exact string `true` enables it | [08](08-integrations.md) |
-| Egress | `AF_EGRESS_LISTEN` (`:3128`) · `AF_EGRESS_TOKEN` · `AF_EGRESS_{INGEST,POLICY}_URL` · `AF_EGRESS_PROXY_ADDR` · `AF_EGRESS_ENFORCE` · `AF_EGRESS_ALLOWLIST` | the forward-proxy subcommand and the CP's aggregation. `AF_EGRESS_PROXY_ADDR` injects the proxy variables into `docker` and `native` workspaces only | [07 §7.8](07-security.md) |
+| MCP OAuth | `AF_MCP_OAUTH` (`1` enables; needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`) · `AF_MCP_OAUTH_TRUSTED_HOSTS` (`claude.ai,claude.com,chatgpt.com`) | the Control Plane as the OAuth authorization server of its own `/mcp`; the second variable is the fallback for the hosts that may receive the sign-in redirect and serve client metadata (a super admin's saved list in the Admin modal wins) | [decisions/0118](../decisions/0118-mcp-oauth.md) |
+| Egress | `AF_EGRESS_LISTEN` (`:3128`) · `AF_EGRESS_TOKEN` · `AF_EGRESS_{INGEST,POLICY}_URL` · `AF_EGRESS_PROXY_ADDR` · `AF_EGRESS_ENFORCE` · `AF_EGRESS_ALLOWLIST` · `AF_EGRESS_EVENT_RETENTION_DAYS` (days raw gateway events are kept, default 30, `0` = forever) · `AF_EGRESS_ARCHIVE_URL` (`s3://bucket/prefix`, `gs://bucket/prefix` or `file:///dir`: archive each UTC day of raw events there before the purge deletes it; empty = off; `gs://` needs `roles/storage.objectCreator` + `objectViewer` on the bucket through Application Default Credentials, i.e. Workload Identity on GKE; see [03 §3.8](03-control-plane.md)) | the forward-proxy subcommand and the CP's aggregation. `AF_EGRESS_PROXY_ADDR` injects the proxy variables into every target: `docker`, `native` and Kubernetes pass the whole deployment env (`WS_ENV` included) on, while `ecs` and `ecs-ec2` take only the proxy variables from it and still do not pass `WS_ENV` on. On docker, Kubernetes, ecs and ecs-ec2 the CP internal host joins `NO_PROXY`, and on ecs / ecs-ec2 so do `169.254.170.2` and `169.254.169.254` | [07 §7.8](07-security.md) |
 | Postgres | `AF_DATABASE_URL`, or `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`, and **where the password really lives**: `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | only when the store is Postgres. The parts are composed into a DSN; the ARN is what lets a rotated password be picked up without replacing the task (§9.9) | [06](06-data.md) |
 | ECS adapter | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,INFRA_ROLE,LOG_GROUP,WORKSPACE_IMAGE,TASK_CPU,TASK_MEMORY,WS_DISK_GB,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | the coordinates of the static infrastructure the templates built. Read by `ecs` and `ecs-ec2` alike | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | EC2 slot pool | `AF_ECS_EC2_LAUNCH_TEMPLATE` (required) · `AF_ECS_EC2_SLOT_TYPES` · `AF_ECS_EC2_DEFAULT_SLOT_CLASS` · `AF_ECS_EC2_AMI_ARM64` · `AF_ECS_EC2_MAX_SLOTS` (8) · `AF_ECS_EC2_HOME_GB` (50) · `AF_ECS_EC2_SLOT_SLEEP_SEC` (900) · `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` (0 = never) · `AF_ECS_EC2_HIBERNATE_AFTER_SEC` (0 = off) · `AF_ECS_EC2_BACKUP_EVERY_SEC` (0 = off) · `AF_ECS_EC2_BACKUP_KEEP` (3) · `AF_ECS_EC2_GOLDEN_AUTOBAKE` (on), and the sweep and timing knobs `AF_ECS_EC2_*_SEC` | `ecs-ec2` only: the slot types and cap, the home size, and the idle tiers of §9.5 | [ecs runbook](../../deploy/aws/ecs/README.md) §Optional: EC2 slot pool / [decisions/0045](../decisions/0045-ec2-persistent-workspace.md) |
-| Workload AWS identity | `AF_WS_WORKLOAD_AWS` (off) | `1` hands the ECS task role back to sessions and terminals and stops suppressing the SDKs' instance-metadata lookup. It never removes a network protection (`ECS_AWSVPC_BLOCK_IMDS`, IMDS hop limit 1, a `DOCKER-USER` reject), so it does not give a docker workspace the host's instance profile; that needs a credential path the operator permits separately. Off, the Agent unsets `AWS_CONTAINER_CREDENTIALS_*` / `AWS_CONTAINER_AUTHORIZATION_TOKEN*` and sets `AWS_EC2_METADATA_DISABLED=true` for everything it starts (on docker the CP starts the container with it), so a tool with no member profile fails instead of running as the workload. Set on the CP; it reaches every runtime at the next workspace Start (docker: a running container keeps its environment until Stop → Start) | [guide member/10](../../guide/member/10-integrations.md) |
+| Workload AWS identity | `AF_WS_WORKLOAD_AWS` (off) | `1` hands the ECS task role back to sessions and terminals and stops suppressing the SDKs' instance-metadata lookup. It never removes a network protection (`ECS_AWSVPC_BLOCK_IMDS`, IMDS hop limit 1, a `DOCKER-USER` reject), so it does not give a docker workspace the host's instance profile; that needs a credential path the operator permits separately. Off, the Agent unsets `AWS_CONTAINER_CREDENTIALS_*` / `AWS_CONTAINER_AUTHORIZATION_TOKEN*` and sets `AWS_EC2_METADATA_DISABLED=true` for everything it starts (on docker the CP starts the container with it), so a tool with no member profile fails instead of running as the workload. Set on the CP; it reaches every runtime at the next workspace Start (docker: a running container keeps its environment until Stop → Start) | [guide member/16](../../guide/member/16-cloud-accounts.md) |
 | Engines | `AF_ENGINES_SSM_PARAM` / `AF_ENGINES_JSON` · `AF_LLM_URL` · `AF_COMFY_URL` / `AF_COMFY_API_KEY` · `AF_ENGINE_API_KEY_<KEY>` · `AF_ENGINE_<KEY>_{CONTROL_INTERVAL_SEC,WINDOW_SEC,IDLE_SEC,START_DEADLINE_SEC,FAIL_COOLDOWN_SEC}` · `AF_ENGINE_ECS_CLUSTER` · `AF_ENGINE_WAKE_TIMEOUT` (900 s) · `AF_ENGINE_PLAIN_HOLD` · `AF_REMOTE_ENGINE_{URL,TOKEN,KEYS}` | the engine table, the engine controller, the gateway's hold on a cold engine, and borrowing another deployment's engines | [decisions/0071](../decisions/0071-self-hosted-inference-engines.md) / [0076](../decisions/0076-external-image-engine-on-lan.md) / [0077](../decisions/0077-engine-boxes-bought-by-cp.md) / [0079](../decisions/0079-remote-engine-from-another-deployment.md) |
 | Speech | `AF_VOICEVOX_URL` (`http://127.0.0.1:50021`) · `AF_TTS_ECS_SERVICE` and the other `AF_TTS_ECS_*` · `AF_TTS_MAX_CHARS` (300) · `AF_POLLY_{REGION,ENGINE}` | a VOICEVOX by URL, or the one on ECS that the CP scales from zero; Amazon Polly | [decisions/0070](../decisions/0070-tts-ondemand-engine.md) |
 | Containerless adapter | `AF_NATIVE_AGENT_BIN` (`workspace-agent` on `PATH`) · `AF_NATIVE_ROOTFS` · `AF_NATIVE_BWRAP` | where the agent binary lives; the rootfs that switches on the bubblewrap sandbox | [native runbook](../../deploy/native/README.md) |
-| Kubernetes adapter | `AF_K8S_NAMESPACE` · `AF_K8S_WORKSPACE_IMAGE` · `AF_K8S_STORAGE_CLASS` · `AF_K8S_HOME_GIB` · `AF_K8S_STATE_GIB` · `AF_K8S_IMAGE_PULL_SECRET` · `AF_K8S_NODE_SELECTOR` · `AF_K8S_SERVICE_ACCOUNT` (`default`) | `kubernetes` only: the workspace namespace, image and StorageClass, the claims' default sizes, the node pool, and the workspaces' way back to the CP (the workspace listener row, §9.3) | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
-| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` · where set (on `kubernetes`) also `AF_CP_INTERNAL_URL`, which requests prefer over `AF_CP_BASE_URL` while links for people keep the public one | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker`, as SSM SecureString task secrets on ECS, and as a per-workspace Secret on `kubernetes` | [04](04-agent.md) / [07 §7.5](07-security.md) |
+| Kubernetes adapter | `AF_K8S_NAMESPACE` · `AF_K8S_WORKSPACE_IMAGE` · `AF_K8S_STORAGE_CLASS` · `AF_K8S_HOME_GIB` · `AF_K8S_STATE_GIB` · `AF_K8S_IMAGE_PULL_SECRET` · `AF_K8S_NODE_SELECTOR` · `AF_K8S_SERVICE_ACCOUNT` (`default`) · `AF_K8S_HOME_SHARED_FS` (unset; `1` when the StorageClass backs homes with one shared filesystem, so the home-nearly-full notice is withheld) | `kubernetes` only: the workspace namespace, image and StorageClass, the claims' default sizes, the node pool, and the workspaces' way back to the CP (the workspace listener row, §9.3) | [kubernetes runbook](../../deploy/kubernetes/README.md) / [decisions/0106](../decisions/0106-kubernetes-runtime.md) |
+| Inside the workspace (injected by the CP; **an operator never sets these**) | `AGENT_TOKEN` · `AF_SECRET_KEY` · `AGENT_STOP_GRACE_SEC` · `AGENT_SESSION_CMD` · `CLAUDE_CONFIG_DIR` · `AF_AGENT_SELF_UPDATE_ALLOWED` · `AF_CP_BASE_URL` with the per-feature tokens (`AF_DOCS_TOKEN`, `AF_MCP_TOKEN`, `AF_MEMO_TOKEN` …) · on `native` also `AGENT_ADDR`, `AF_TMUX_SOCKET` and `AGENT_DOCS_DIR` · where set (on `kubernetes`, optionally on `docker`) also `AF_CP_INTERNAL_URL`, which requests prefer over `AF_CP_BASE_URL` while links for people keep the public one | CP ↔ agent authentication, the DEK, the grace period, the agent's routes back to the CP (`manager.workspaceExtraEnv`). The token and the DEK travel as a 0600 env file on `docker`, as SSM SecureString task secrets on ECS, and as a per-workspace Secret on `kubernetes` | [04](04-agent.md) / [07 §7.5](07-security.md) |
 
 How to check this index is complete: **the variable names are their own grep anchors.**
 Cross-check what the CP reads (`envx.Or`, `envx.DurationOr`, `runtime.EnvInt`,
@@ -140,7 +151,47 @@ Java version in the Console makes the entrypoint install any missing one and put
 can be installed (`java_available`); **choosing one that is not installed offers a
 button that installs it there and then** (`POST /env/jdk-install`, then poll with
 `GET`). After installation `resolvedToolchains` globs the directories at every start,
-so it takes effect **from the next session** without a restart.
+so it takes effect **from the next session** without a restart. A major that is in both
+directories resolves to the newer patch (the `release` file's `SEMANTIC_VERSION`; a tie
+keeps `/usr/lib/jvm`), so installing an installed major again is an update. The
+toolchains GET also reports `java_versions` (major → resolved version) and stays offline;
+`GET /env/jdk-latest?major=N` asks Adoptium (cached 6 h, a failure 10 min) and answers
+`update_available`, which is when the Console offers the update button. For a major that
+is not installed it still answers `latest`, the version Install would fetch, and the
+Console names it on the button. `GET /env/node-latest?major=N` is the Node.js twin
+(nodejs.org's index, versions with nvm's `v` prefix). Both accept only the majors the
+picker offers, because each one is a cache key (`version_lookup.go`). The toolchains GET
+reports `node_versions` too (major → the patch `nodeBinFor` resolves), and the Node row
+offers the same update. `install-node` adds each patch next to the old ones, so it marks
+its trees (`.agent-fleet-installed`) and the entrypoint runs `prune-node-versions` right
+after it, before any session: per major, marked patches older than the newest go. Unmarked
+trees (an nvm install, or one written before the marker existed) are never removed. The
+marker only says who installed a tree, so pinned versions stay regardless: the tree
+install-node returned (`--keep`), an exact saved selection, and exact versions named by
+an nvm alias (symlinked aliases included) or by `~/.nvmrc` / `~/repos/*/.nvmrc` (read as
+nvm does: comments, blank and `key=value` lines skipped). Every tree is checked before
+anything is removed: a top-level entry that is a symlink, a directory symlink inside a
+tree, an absolute symlink, or a relative one whose target climbs above its own tree at any
+step stops the whole pass (Node's own trees hold only a few relative file links within
+themselves). A major whose newest has no
+executable `bin/node` is skipped.
+
+`GET /env/toolchain-installs` lists every JDK tree (home volume and `/usr/lib/jvm`) and
+every Node major under `~/.nvm` with version, size and whether it may be removed;
+`DELETE /env/jdk/{major}` / `DELETE /env/node/{major}` remove home-volume trees only
+(`toolchain_uninstall.go`). They refuse the selected major (an exact `22.23.4` counts as
+22) unless an independent `/usr/lib/jvm` copy remains — a real directory, with no symlink
+on the path above it, outside home, sharing no directory (device and inode) with the home
+copy so a bind mount of it does not count, that
+passes the same self-contained link check as the Node prune and has a working `bin/java`
+(Temurin 21/25 do; Temurin 8's directory link means it is no fallback) — and refuse
+while an install runs, including one started from a terminal: install-jdk / install-node
+hold a flock on their root for the whole install. The check and a rename into
+`<root>/.agent-fleet-trash` happen under that flock, the installer's mutex and the lock
+the selection PUT takes (which now also writes `toolchains.json` atomically); the delete
+runs outside them. Only the trash directory is ever swept, only when it is a real
+directory, and it is left in place once empty. The listing and DELETE share one "root
+busy" test, so a row never offers what the DELETE would refuse.
 
 ## 9.5 The AWS target
 

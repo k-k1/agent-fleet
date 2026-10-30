@@ -19,7 +19,11 @@ vi.mock("./api.ts", async (orig) => ({
 }));
 vi.mock("../../core/store/workspace.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/store/workspace.ts")>()),
-  useWorkspaceStore: (sel: (s: { state: string }) => unknown) => sel({ state: "running" }),
+  // getState / subscribe: the preview store (reached through MarkdownView) reads them at load.
+  useWorkspaceStore: Object.assign((sel: (s: { state: string }) => unknown) => sel({ state: "running" }), {
+    getState: () => ({ state: "running" }),
+    subscribe: () => () => {},
+  }),
 }));
 
 const { useLayoutStore } = await import("../../layout/store.ts");

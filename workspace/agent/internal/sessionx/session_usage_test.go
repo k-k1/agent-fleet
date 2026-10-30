@@ -3,6 +3,7 @@ package sessionx
 import (
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -77,5 +78,26 @@ func TestAggregateUsageEmpty(t *testing.T) {
 	u := AggregateUsage([]transcript.Turn{{Role: "user"}})
 	if u.Context != nil || u.Cumulative.Turns != 0 || u.Cumulative.Spend != 0 {
 		t.Fatalf("usage = %+v", u)
+	}
+}
+
+// A mistyped slash command leaves only CLI warning records (claude.IsCLIWarning). They are no
+// model response, so a session that has run nothing else reports zero turns, and one landing
+// inside a reply does not split it.
+func TestAggregateUsageSkipsCLIWarnings(t *testing.T) {
+	warn := []byte(`{"type":"system","subtype":"informational","level":"warning","content":"Unknown command: /x"}`)
+	only := claude.CollectTurns([][]byte{warn, warn}, 0, 2)
+	if len(only) != 2 {
+		t.Fatalf("fixture: %d turns, want the 2 warning turns", len(only))
+	}
+	if u := AggregateUsage(only); u.Cumulative.Turns != 0 || u.Context != nil {
+		t.Fatalf("warnings only: usage = %+v, want zero", u)
+	}
+	mixed := append([]transcript.Turn{
+		{Role: "user"},
+		{Role: "assistant", Model: "claude-fable-5", InTok: 10, OutTok: 20},
+	}, only[0], transcript.Turn{Role: "assistant", Model: "claude-fable-5", InTok: 12, OutTok: 30})
+	if u := AggregateUsage(mixed); u.Cumulative.Turns != 1 || u.Cumulative.OutTok != 50 {
+		t.Fatalf("warning mid-reply: turns = %d, outTok = %d, want 1 and 50", u.Cumulative.Turns, u.Cumulative.OutTok)
 	}
 }

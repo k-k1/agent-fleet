@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -106,7 +107,7 @@ func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identit
 	out := make([]map[string]any, 0, len(pats))
 	for _, p := range pats {
 		out = append(out, map[string]any{
-			"id": p.ID, "name": p.Name, "scope": p.Scope,
+			"id": p.ID, "name": p.Name, "scope": p.Scope, "endpoint": p.Resource,
 			"created_at": p.CreatedAt, "expires_at": p.ExpiresAt,
 			"revoked_at": p.RevokedAt, "last_used_at": p.LastUsedAt,
 			"revoked": p.RevokedAt != "",
@@ -115,17 +116,27 @@ func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identit
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": out, "ceiling": ceilingScope(ident.Role)})
 }
 
-// create (POST /api/pat {name, scope, tenant, ttl_days}) mints a token.
+// create (POST /api/pat {name, scope, tenant, ttl_days, endpoint}) mints a token.
 // scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days,
-// negative = never expires, positive = that many days. Returns the secret once.
+// negative = never expires, positive = that many days. endpoint is "mcp" (the
+// default, /mcp) or "memory" (/mcp/memory only, #2764). Returns the secret once.
 func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
-		Name    string `json:"name"`
-		Scope   string `json:"scope"`
-		Tenant  string `json:"tenant"`
-		TTLDays *int   `json:"ttl_days"`
+		Name     string `json:"name"`
+		Scope    string `json:"scope"`
+		Tenant   string `json:"tenant"`
+		TTLDays  *int   `json:"ttl_days"`
+		Endpoint string `json:"endpoint"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	switch body.Endpoint {
+	case "":
+		body.Endpoint = store.PATResourceMCP
+	case store.PATResourceMCP, store.PATResourceMemory:
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_endpoint", `endpoint must be "mcp" or "memory"`})
+		return
+	}
 
 	ms, aerr := a.mgr.membershipsFor(r.Context(), ident)
 	if aerr != nil {
@@ -160,7 +171,12 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		return
 	}
 
-	scope := clampScope(body.Scope, ceilingScope(ident.Role))
+	ceiling := ceilingScope(ident.Role)
+	if body.Endpoint == store.PATResourceMemory {
+		// The memory tools stop at write; a higher tier would only be a misleading label.
+		ceiling = clampScope(ceiling, scopeWrite)
+	}
+	scope := clampScope(body.Scope, ceiling)
 	expires := ""
 	switch {
 	case body.TTLDays == nil || *body.TTLDays == 0:
@@ -179,26 +195,56 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		Name:         strings.TrimSpace(body.Name),
 		CreatedAt:    store.NowTS(),
 		ExpiresAt:    expires,
+		Resource:     body.Endpoint,
 	}
 	if err := a.store.CreatePAT(r.Context(), p, hash); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	a.auditPAT(r.Context(), mv.TenantID, ident.ID, "pat.create", p.ID,
-		"scope="+scope+" name="+p.Name)
+		"scope="+scope+" endpoint="+p.Resource+" name="+p.Name)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token, // shown once
-		"id":    p.ID, "name": p.Name, "scope": scope,
+		"id":    p.ID, "name": p.Name, "scope": scope, "endpoint": p.Resource,
 		"tenant": mv.TenantSlug, "expires_at": expires,
 	})
+}
+
+// calls (GET /api/pat/{id}/calls) is the recent /mcp requests made with one of the caller's own
+// tokens, newest first; another member's id answers 404 like an unknown one. Per replica, in
+// memory (mcpsrv/mcp_calls.go).
+func (a patAPI) calls(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	noStore(w)
+	id := r.PathValue("id")
+	pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	for _, p := range pats {
+		if p.ID == id {
+			writeJSON(w, http.StatusOK, mcpCallsOut{Calls: a.mgr.mcpCalls.Recent(mcpsrv.CallKey(false, id))})
+			return
+		}
+	}
+	writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "unknown token"})
 }
 
 // revoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
 func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	id := r.PathValue("id")
+	owned := false
+	if pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID); err == nil {
+		for _, p := range pats {
+			owned = owned || p.ID == id
+		}
+	}
 	if err := a.store.RevokePAT(r.Context(), id, ident.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
+	}
+	if owned { // only the owner's revoke may drop a ring
+		a.mgr.mcpCalls.Forget(mcpsrv.CallKey(false, id))
 	}
 	a.auditPAT(r.Context(), "", ident.ID, "pat.revoke", id, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

@@ -13,10 +13,9 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { AgentMemorySection } from "./memoryChanges.tsx";
+import { AgentChangesPanel } from "./memoryChanges.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
-import { getSettings, setSettings, settingsDefaults } from "../../../lib/settings.ts";
 import { t } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
@@ -64,7 +63,7 @@ async function mount() {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <AgentMemorySection reload={0} onChanged={() => {}} />
+          <AgentChangesPanel reload={0} onChanged={() => {}} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -96,25 +95,24 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("AgentMemorySection", () => {
-  // ADR 0108: the sessions' switch sits at the top of this section (#1735). It defaults OFF (an
-  // upgrade must not switch it on) and writes the ui-prefs key the Agent reads (uiprefs.AgentMemory).
-  it("carries the Agent Fleet memory switch, off by default, saving agentMemory", async () => {
-    setSettings(settingsDefaults());
+describe("AgentChangesPanel", () => {
+  it("loads older changes by cursor, back to the start of the history", async () => {
+    const older = [{ ...changes[1], commit: "old1old1old1", name: "ancient" }];
+    api.mockImplementation((path: string) => {
+      if (path === "api/agents/memory/entries/changes?limit=100") return Promise.resolve({ changes, next: "c2c2c2c2c2c2" });
+      if (path === "api/agents/memory/entries/changes?limit=100&before=c2c2c2c2c2c2")
+        return Promise.resolve({ changes: older, withheld: 1 });
+      return Promise.resolve({ diff: "+line" });
+    });
     await mount();
-    const row = Array.from(host!.querySelectorAll(".ds-row")).find(
-      (r) => r.querySelector(".ds-label")?.textContent === t("mem.af_switch"),
-    );
-    expect(row).toBeTruthy();
-    expect(getSettings().agentMemory).toBe(false);
-    const [on, off] = Array.from(row!.querySelectorAll<HTMLButtonElement>(".seg-btn"));
-    expect(off.className).toContain("active");
-    // The flip asks first; nothing is saved until the member agrees (#1972).
-    await click(on);
-    expect(getSettings().agentMemory).toBe(false);
-    await click(confirmButton()!);
-    expect(getSettings().agentMemory).toBe(true);
-    setSettings(settingsDefaults());
+    const more = () => buttons().find((b) => b.textContent === t("mem.af_changes_more"));
+    expect(host!.querySelectorAll(".mem-list .mem-snap")).toHaveLength(2);
+    await click(more());
+    const rows = Array.from(host!.querySelectorAll(".mem-list .mem-snap"));
+    expect(rows).toHaveLength(3);
+    expect(rows[2].textContent).toContain("ancient");
+    expect(more()).toBeUndefined();
+    expect(host!.textContent).toContain(t("mem.af_withheld", { n: 1 }));
   });
 
   it("lists who changed what and offers the way back on the newest change only", async () => {
@@ -228,5 +226,66 @@ describe("AgentMemorySection", () => {
     await mount();
     expect(host!.querySelector(".mem-warn")).toBeTruthy();
     expect(host!.querySelector(".mem-list li")).toBeNull();
+  });
+
+  describe("undoing a review run", () => {
+    const reviewed = [{ ...changes[0], authorKind: "review", authorSession: "s1", reviewRun: "aaaaaaaaaaaaaaaaaaaa" }, changes[1]];
+    const withRun = () =>
+      api.mockImplementation((path: string) =>
+        Promise.resolve(path.startsWith("api/agents/memory/entries/changes") ? { changes: reviewed } : { diff: "+line" }),
+      );
+
+    it("offers it only on a change the review published, and asks first", async () => {
+      withRun();
+      await mount();
+      const labels = () => Array.from(host!.querySelectorAll(".mem-diff-head button")).map((b) => b.textContent);
+      expect(labels()).toHaveLength(3); // revert, forget, undo the run
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-list .mem-snap")[1]); // an ordinary change
+      expect(host!.querySelectorAll(".mem-diff-head button")).toHaveLength(0);
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-list .mem-snap")[0]);
+      apiJSON.mockResolvedValueOnce({ run: "aaaaaaaaaaaaaaaaaaaa", items: [] });
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-diff-head button")[2]);
+      expect(apiJSON).not.toHaveBeenCalled(); // not before the confirmation
+      await click(confirmButton()!);
+      expect(apiJSON.mock.calls[0]).toEqual([
+        "api/agents/memory-review/runs/revert?run=aaaaaaaaaaaaaaaaaaaa",
+        "POST",
+        { run: "aaaaaaaaaaaaaaaaaaaa" },
+      ]);
+    });
+
+    it("reports what it put back and names the memories it left, with the reason", async () => {
+      withRun();
+      apiJSON.mockResolvedValueOnce({
+        run: "aaaaaaaaaaaaaaaaaaaa",
+        items: [
+          { commit: "1", op: "create", scope: "user", name: "put-back", result: "reverted" },
+          { commit: "2", op: "update", scope: "user", name: "SENTINEL-EDITED", result: "conflict", reason: "edited" },
+          { commit: "3", op: "update", scope: "user", name: "SENTINEL-BLOCKED", result: "conflict", reason: "blocked" },
+          { commit: "4", op: "forget", scope: "user", name: "again", result: "already" },
+        ],
+      });
+      await mount();
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-diff-head button")[2]);
+      await click(confirmButton()!);
+      const report = host!.querySelector(".mem-run-report")!;
+      expect(report).toBeTruthy();
+      expect(report.querySelectorAll("li")).toHaveLength(2);
+      expect(report.textContent).toContain("SENTINEL-EDITED");
+      expect(report.textContent).toContain("SENTINEL-BLOCKED");
+      expect(report.textContent).not.toContain("put-back");
+      expect(report.querySelectorAll("li")[0].textContent).not.toBe(report.querySelectorAll("li")[1].textContent.replace("BLOCKED", "EDITED"));
+      await click(report.querySelector("button") ?? undefined);
+      expect(host!.querySelector(".mem-run-report")).toBeNull();
+    });
+
+    it("says a refused request and keeps no report", async () => {
+      withRun();
+      apiJSON.mockResolvedValueOnce({ error: { code: "bad_request", message: "run is not a run id" } });
+      await mount();
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-diff-head button")[2]);
+      await click(confirmButton()!);
+      expect(host!.querySelector(".mem-run-report")).toBeNull();
+    });
   });
 });

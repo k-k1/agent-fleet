@@ -13,6 +13,7 @@ import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
+import { WizardFrame, GroupedPreview, Findings, type WizardStep } from "./memoryWizard.tsx";
 import type {
   ClaudeExportPreview,
   ClaudeExportResult,
@@ -31,7 +32,7 @@ const INDEX_KEY = {
 } as const;
 const reasonLabel = (r: string): string => tMaybe("mem.ce_reason_" + r) ?? r;
 
-export function ClaudeExportPanel({ reload }: { reload: number }) {
+export function ClaudeExportPanel({ reload, onClose }: { reload: number; onClose?: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [sources, setSources] = useState<ClaudeExportSource[] | null>(null);
@@ -44,6 +45,12 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
   const [again, setAgain] = useState(0);
   // Hidden files that hold a newer edit the write-back could not put back; shown until the next apply.
   const [kept, setKept] = useState<string[]>([]);
+  const [result, setResult] = useState<string | null>(null);
+  // The outcome is both toasted and kept in the frame until another project is picked.
+  const notify = (msg: string, opts?: { kind?: "success" }) => {
+    toast(msg, opts);
+    setResult(msg);
+  };
 
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api("api/agents/memory/claude-export");
@@ -75,6 +82,7 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
 
   const pick = (id: string) => {
     setProject(id);
+    setResult(null);
     void loadPreview(id);
   };
 
@@ -101,7 +109,7 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
         overwrite: [...overwrite],
       });
       if (res?.error) {
-        toast(errDetail(res.error));
+        notify(errDetail(res.error));
         return;
       }
       const results = (res?.results ?? []) as ClaudeExportResult[];
@@ -112,12 +120,12 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
         ...results.map((r) => r.kept ?? ""),
         (res?.indexKept as string | undefined) ?? "",
       ].filter(Boolean));
-      toast(tr(skipped ? "mem.ce_done_skipped" : "mem.ce_done", { n: done, skipped }) + (indexFailed ? " " + tr("mem.ce_index_failed") : ""), {
+      notify(tr(skipped ? "mem.ce_done_skipped" : "mem.ce_done", { n: done, skipped }) + (indexFailed ? " " + tr("mem.ce_index_failed") : ""), {
         kind: skipped || indexFailed ? undefined : "success",
       });
     } catch {
       // The request may or may not have reached the Agent: re-read what is there now.
-      toast(tr("mem.ce_failed"));
+      notify(tr("mem.ce_failed"));
     } finally {
       setBusy(false);
       setAgain((n) => n + 1);
@@ -134,49 +142,10 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
     unchanged: tr("mem.ce_status_unchanged"),
     native_only: tr("mem.ce_status_native_only"),
   };
-  const statusLabel = (st: ClaudeExportStatus) => statusLabels[st];
-  const group = (st: ClaudeExportStatus) => {
-    const items = (preview?.items ?? []).filter((i) => i.status === st);
-    if (items.length === 0) return null;
-    return (
-      <details key={st} open={st !== "unchanged" && st !== "native_only"} className="mem-ci-group">
-        <summary>
-          <span className={"mem-badge ci-" + st}>{statusLabel(st)}</span> {items.length}
-        </summary>
-        <ul className="mem-ci-items">
-          {items.map((i) => (
-            <li key={i.name}>
-              {st === "conflict" && (
-                <input
-                  type="checkbox"
-                  aria-label={tr("mem.ce_overwrite", { name: i.name })}
-                  checked={overwrite.has(i.name)}
-                  disabled={busy || LOCKED.has(i.reason ?? "") || i.reason === "forgotten_but_changed"}
-                  onChange={() => toggle(i.name)}
-                />
-              )}{" "}
-              <span className="mem-af-name">{i.name}</span>
-              {i.reason && <span className="muted"> · {reasonLabel(i.reason)}</span>}
-              {st === "secret" && (
-                <ul className="mem-findings">
-                  {(i.findings ?? []).map((f, n) => (
-                    <li key={n}>
-                      <code>{f.rule}</code> {tr("mem.af_secret_line", { line: f.line })} <code>{f.hint}</code>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
-      </details>
-    );
-  };
+  const step: WizardStep = busy ? "apply" : result ? "result" : preview ? "confirm" : project ? "preview" : "source";
 
   return (
-    <div className="mem-ci">
-      <h4>{tr("mem.ce_title")}</h4>
-      <p className="muted ds-hint">{tr("mem.ce_intro")}</p>
+    <WizardFrame title={tr("mem.ce_title")} intro={tr("mem.ce_intro")} step={step} busy={busy} result={result} onClose={onClose}>
       {loadErr && <p className="mem-warn">{loadErr}</p>}
       {sources === null ? (
         <p className="muted">{tr("common.loading")}</p>
@@ -202,7 +171,29 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
           <p className="muted ds-hint">{tr("mem.ce_to", { slug: preview.slug })}</p>
           {preview.switchOn && <p className="mem-warn">{tr("mem.ce_switch_on")}</p>}
           {kept.length > 0 && <p className="mem-warn">{tr("mem.ce_kept", { files: kept.join(", ") })}</p>}
-          {STATUSES.map(group)}
+          <GroupedPreview
+            items={preview.items ?? []}
+            order={STATUSES}
+            statusOf={(i) => i.status}
+            label={(st) => statusLabels[st as ClaudeExportStatus]}
+            badge={(st) => "ci-" + st}
+            open={(st) => st !== "unchanged" && st !== "native_only"}
+            keyOf={(i) => i.name}
+            selection={{
+              shows: (_i, st) => st === "conflict",
+              checked: (i) => overwrite.has(i.name),
+              disabled: (i) => busy || LOCKED.has(i.reason ?? "") || i.reason === "forgotten_but_changed",
+              label: (i) => tr("mem.ce_overwrite", { name: i.name }),
+              toggle: (i) => toggle(i.name),
+            }}
+            renderItem={(i, st) => (
+              <>
+                <span className="mem-af-name">{i.name}</span>
+                {i.reason && <span className="muted"> · {reasonLabel(i.reason)}</span>}
+                {st === "secret" && <Findings findings={i.findings} />}
+              </>
+            )}
+          />
           {preview.userScope > 0 && <p className="muted ds-hint">{tr("mem.ce_user_scope", { n: preview.userScope })}</p>}
           {(preview.notForClaude ?? 0) > 0 && (
             <p className="muted ds-hint">{tr("mem.ce_other_kinds", { n: preview.notForClaude ?? 0 })}</p>
@@ -219,6 +210,6 @@ export function ClaudeExportPanel({ reload }: { reload: number }) {
           </div>
         </>
       )}
-    </div>
+    </WizardFrame>
   );
 }

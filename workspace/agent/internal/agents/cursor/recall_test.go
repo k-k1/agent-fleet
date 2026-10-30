@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -52,10 +53,49 @@ func TestReadChatMeta(t *testing.T) {
 	}
 	db.Close()
 	st, ok := readChatMeta(path)
-	if !ok || st.Mode != "plan" || st.LastUsedModel != "composer-2.5" {
+	if !ok || st.Mode != "plan" || st.LastUsedModel != "composer-2.5" || strings.Join(st.Keys, ",") != "agentId,blobEncryptionKey,isRunEverything,lastUsedModel,mode,name" {
 		t.Errorf("readChatMeta = %+v, %v", st, ok)
 	}
 	if _, ok := readChatMeta(filepath.Join(t.TempDir(), "missing.db")); ok {
 		t.Error("a missing store.db read as ok")
+	}
+}
+
+// RecordedModel must keep answering where RecallSettings cannot: a base id the catalog does
+// not list verbatim makes recallFrom drop the model, but the store still holds it, which is
+// what a contract compares against the model it asked for.
+func TestRecordedModelSurvivesWhereRecallDropsTheFlag(t *testing.T) {
+	st := chatMeta{LastUsedModel: "gemini-3.7-flash"}
+	catalog := map[string]bool{"gemini-3.7-flash-high": true}
+	if r := recallFrom(st, "", catalog); !r.ClearModel || r.Model != "" {
+		t.Fatalf("premise: recallFrom = %+v, want ClearModel with no model", r)
+	}
+	if got := recordedModelOf(st); got != "gemini-3.7-flash" {
+		t.Errorf("recordedModelOf = %q, want the stored base id", got)
+	}
+	if got := recordedModelOf(chatMeta{LastUsedModel: "default"}); got != "auto" {
+		t.Errorf("default read as %q, want auto", got)
+	}
+	if got := recordedModelOf(chatMeta{}); got != "" {
+		t.Errorf("nothing stored read as %q", got)
+	}
+}
+
+func TestRecordedMissingWhy(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		st         chatMeta
+		exists, ok bool
+		want       string
+	}{
+		{"no store yet", chatMeta{}, false, false, "no store.db"},
+		{"unreadable", chatMeta{}, true, false, "could not be read"},
+		{"field absent", chatMeta{Keys: []string{"agentId", "mode"}}, true, true, "keys: agentId,mode"},
+		{"recorded", chatMeta{LastUsedModel: "composer-2.5"}, true, true, ""},
+	} {
+		got := recordedMissingWhy(c.st, c.exists, c.ok)
+		if (c.want == "" && got != "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: got %q, want it to contain %q", c.name, got, c.want)
+		}
 	}
 }

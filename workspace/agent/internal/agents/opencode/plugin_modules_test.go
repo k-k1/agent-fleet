@@ -25,7 +25,7 @@ case "$2" in
   *) echo "$2"; exit 1 ;;
 esac
 `)
-	writeScript(t, filepath.Join(bin, "workspace-agent"), "#!/bin/sh\necho \"$*\" >> \""+agentLog+"\"\nif [ \"$1\" = opencode-engine-token ]; then echo \"tok-$2\"; fi\nif [ \"$1\" = opencode-claim ] && [ \"$3\" = ses_lose ]; then exit 3; fi\nif [ \"$1\" = opencode-put-env ] && [ -e \""+failPutEnv+"\" ]; then exit 1; fi\n")
+	writeScript(t, filepath.Join(bin, "workspace-agent"), "#!/bin/sh\necho \"$*\" >> \""+agentLog+"\"\nif [ \"$1\" = opencode-engine-token ]; then echo \"tok-$2\"; fi\nif [ \"$1\" = opencode-claim ] && [ \"$3\" = ses_lose ]; then exit 3; fi\nif [ \"$1\" = opencode-put-env ]; then sleep 0.2; fi\nif [ \"$1\" = opencode-put-env ] && [ -e \""+failPutEnv+"\" ]; then exit 1; fi\n")
 
 	pluginDir := filepath.Join("..", "..", "..", "..", "opencode-plugin")
 	cmd := exec.Command(node, "--experimental-strip-types", "--no-warnings",

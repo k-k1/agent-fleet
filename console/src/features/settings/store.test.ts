@@ -50,6 +50,38 @@ describe("settings modal — last-opened section persistence", () => {
   });
 });
 
+describe("settings modal — section:view requests", () => {
+  it("splits memory:changes into the section and the view", () => {
+    store.useSettingsUI.getState().openSettings("memory:changes");
+    expect(store.useSettingsUI.getState().settingsSection).toBe("memory");
+    expect(store.useSettingsUI.getState().settingsView).toBe("changes");
+  });
+
+  it("a plain section request carries no view, and closing drops a pending one", () => {
+    store.useSettingsUI.getState().openSettings("memory:changes");
+    store.useSettingsUI.getState().openSettings("memory");
+    expect(store.useSettingsUI.getState().settingsView).toBeNull();
+    store.useSettingsUI.getState().openSettings("memorysnapshots:targets");
+    store.useSettingsUI.getState().closeSettings();
+    expect(store.useSettingsUI.getState().settingsView).toBeNull();
+  });
+
+  it("remembers the view per section, independently", () => {
+    store.rememberSectionView("memory", "settings");
+    store.rememberSectionView("memorysnapshots", "targets");
+    expect(store.lastSectionView("memory")).toBe("settings");
+    expect(store.lastSectionView("memorysnapshots")).toBe("targets");
+    expect(store.lastSectionView("git")).toBe("");
+  });
+
+  it("reads a corrupt stored value as nothing remembered", () => {
+    values.set("af-settings-views", "{not json");
+    expect(store.lastSectionView("memory")).toBe("");
+    store.rememberSectionView("memory", "changes");
+    expect(store.lastSectionView("memory")).toBe("changes");
+  });
+});
+
 describe("tenant settings modal — last-opened section persistence (#1100)", () => {
   it("first-ever open (nothing stored) defaults to sign-in", () => {
     store.useSettingsUI.getState().openTenantSettings();

@@ -5,19 +5,35 @@
 // narrow, so scrolling beats page buttons. Canvases of pages far from the viewport are dropped
 // to give their area back.
 //
-// Text is selectable and copyable through pdf.js's TextLayer: transparent spans laid over each
-// rendered page at the glyph positions, the same mechanism as the stock pdf.js viewer. It lives
-// and dies with the page's canvas.
+// Text is selectable, copyable and findable with the browser's Ctrl+F through pdf.js's
+// TextLayer: transparent spans laid over each page at the glyph positions, the same mechanism as
+// the stock pdf.js viewer. Unlike the canvas it is kept for every page, or find would only see
+// the pages near the viewport.
+//
+// With focus in the pane, Ctrl/Cmd+F opens the pane's own find bar instead (pdfFind.ts): the
+// browser's find loses its place as text layers are built under it, and cannot be tested.
 //
 // The bytes are fetched by pdf.js itself from the download endpoint (via `url`). That path
 // supports Range, so a large PDF starts rendering without loading the whole file into JS memory
 // (the Agent serves with http.ServeContent and the CP proxy relays the headers unchanged).
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as RKeyboardEvent,
+} from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask, TextLayer } from "pdfjs-dist";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { documentAssetParams, loadPdfjs, type Pdfjs } from "./pdfjs.ts";
 import { clipboardText } from "./pdfText.ts";
+import { findMatches, firstMatchFrom, pageText, stepMatch, type FindMatch, type PageText } from "./pdfFind.ts";
+import { addFindHits, clearFindHits, setFindCurrent } from "./pdfFindHighlight.ts";
+import { OWN_FIND_ATTR, OWN_FIND_EVENT } from "../../lib/ownFind.ts";
 import {
   anchorOf,
   canvasPixelRatio,
@@ -75,6 +91,14 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   const textDivsRef = useRef(new Map<number, HTMLDivElement>());
   const textLayersRef = useRef(new Map<number, TextLayer>());
   const docRef = useRef<PDFDocumentProxy | null>(null);
+  // Every page's searchable text, extracted once per document when the find bar first searches.
+  const pageTextsRef = useRef<Promise<PageText[]> | null>(null);
+  // Bumped when a new document starts loading. Async work for the previous one checks it after
+  // every await: page indices repeat across documents, so a late job would otherwise write into,
+  // or tear down, the new document's page of the same number.
+  const docGenRef = useRef(0);
+  // The text layer being built right now, so a document switch can cancel it mid-render.
+  const buildingRef = useRef<TextLayer | null>(null);
   const pdfjsRef = useRef<Pdfjs | null>(null);
   const jobRef = useRef<{ cancelled: boolean; task: RenderTask | null } | null>(null);
   const anchorRef = useRef<ScrollAnchor | null>(null);
@@ -127,6 +151,18 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
   // Version counter telling the render side that the document was swapped. The
   // PDFDocumentProxy itself is not state: it never changes, so it cannot be a redraw dependency.
   const [docEpoch, setDocEpoch] = useState(0);
+  // Bumped whenever a page's text layer is built, so find can paint matches that just got spans.
+  const [layerTick, setLayerTick] = useState(0);
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<FindMatch[]>([]);
+  const [active, setActive] = useState(-1);
+  // Bumped to scroll the active match into view; a counter, because stepping through a single
+  // match leaves `active` unchanged and must still bring it back.
+  const [reveal, setReveal] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const openFindRef = useRef(() => {});
 
   // --- Loading ---------------------------------------------------------------
   useEffect(() => {
@@ -145,7 +181,13 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       textDivsRef.current.get(i)?.replaceChildren();
     }
     textLayersRef.current.clear();
+    docGenRef.current++;
+    buildingRef.current?.cancel();
+    buildingRef.current = null;
     docRef.current = null;
+    pageTextsRef.current = null;
+    setMatches([]);
+    setActive(-1);
     const run = async () => {
       const pdfjs = await loadPdfjs();
       if (!alive) return;
@@ -275,38 +317,10 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
         job.task = null;
         if (job.cancelled) return;
         // The text layer is laid out in CSS pixels (the canvas ratio above is only bitmap
-        // density); its font sizes follow --total-scale-factor on the page element.
-        const textDiv = textDivsRef.current.get(i);
-        if (textDiv) {
-          const textViewport = page.getViewport({ scale });
-          const existing = textLayersRef.current.get(i);
-          if (existing) {
-            existing.update({ viewport: textViewport });
-          } else {
-            dropTextLayer(textLayersRef.current, i, textDiv);
-            const layer = new pdfjs.TextLayer({
-              textContentSource: page.streamTextContent({ includeMarkedContent: true, disableNormalization: true }),
-              container: textDiv,
-              viewport: textViewport,
-            });
-            try {
-              await layer.render();
-            } catch {
-              dropTextLayer(textLayersRef.current, i, textDiv);
-              return; // cancelled or unreadable text; the canvas stays, the page is retried later
-            }
-            if (job.cancelled) {
-              dropTextLayer(textLayersRef.current, i, textDiv);
-              return;
-            }
-            // Without this block, dragging across a gap between lines jumps the selection to the
-            // end of the layer; `.selecting` stretches it over the whole page (see pdf.css).
-            const end = document.createElement("div");
-            end.className = "endOfContent";
-            textDiv.append(end);
-            textLayersRef.current.set(i, layer);
-          }
-        }
+        // density); its font sizes follow --total-scale-factor on the page element. Building it
+        // is the text effect's job; here an existing one is only refitted to the new scale.
+        const textViewport = page.getViewport({ scale });
+        textLayersRef.current.get(i)?.update({ viewport: textViewport });
         renderedRef.current.set(i, scale);
       }
     };
@@ -326,9 +340,87 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       canvas.width = 0;
       canvas.height = 0;
       renderedRef.current.delete(i);
-      dropTextLayer(textLayersRef.current, i, textDivsRef.current.get(i));
     }
   }, [range.start, range.end]);
+
+  // --- Text layers for every page ----------------------------------------------
+  // The browser's own find (Ctrl+F) searches only text that is in the DOM, so a layer that lived
+  // and died with its canvas made find report "1/1" and Enter never reached another page. Every
+  // page gets one, nearest to the viewport first, and keeps it when its canvas is released. A
+  // layer sizes itself from --total-scale-factor, so one built at an earlier zoom still lines up;
+  // the render pass refits the visible ones.
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  useEffect(() => {
+    const doc = docRef.current;
+    const pdfjs = pdfjsRef.current;
+    if (!doc || !pdfjs) return;
+    let cancelled = false;
+    const gen = docGenRef.current;
+    const stale = () => cancelled || gen !== docGenRef.current;
+    // A page whose text cannot be read is skipped for this document, or the loop would retry it
+    // forever.
+    const failed = new Set<number>();
+    const next = () => {
+      const from = rangeRef.current.start;
+      let best = -1;
+      for (let i = 0; i < doc.numPages; i++) {
+        if (textLayersRef.current.has(i) || failed.has(i) || !textDivsRef.current.has(i)) continue;
+        if (best < 0 || Math.abs(i - from) < Math.abs(best - from)) best = i;
+      }
+      return best;
+    };
+    // Tears down only what this job built: the map entry for page i may already belong to a
+    // newer document, so it is left alone unless it is this very layer.
+    const discard = (i: number, layer: TextLayer, div: HTMLDivElement) => {
+      layer.cancel();
+      if (textLayersRef.current.get(i) === layer) textLayersRef.current.delete(i);
+      if (textDivsRef.current.get(i) !== div || !textLayersRef.current.has(i)) div.replaceChildren();
+    };
+    const run = async () => {
+      for (let i = next(); i >= 0 && !stale(); i = next()) {
+        const page = await doc.getPage(i + 1);
+        const textDiv = textDivsRef.current.get(i);
+        if (stale() || !textDiv || !(scaleRef.current > 0)) return;
+        const layer = new pdfjs.TextLayer({
+          textContentSource: page.streamTextContent({ includeMarkedContent: true, disableNormalization: true }),
+          container: textDiv,
+          viewport: page.getViewport({ scale: scaleRef.current }),
+        });
+        buildingRef.current = layer;
+        let ok = true;
+        try {
+          await layer.render();
+        } catch {
+          ok = false;
+        }
+        if (buildingRef.current === layer) buildingRef.current = null;
+        if (stale()) {
+          discard(i, layer, textDiv);
+          return;
+        }
+        if (!ok) {
+          discard(i, layer, textDiv);
+          failed.add(i);
+          continue;
+        }
+        // Without this block, dragging across a gap between lines jumps the selection to the
+        // end of the layer; `.selecting` stretches it over the whole page (see pdf.css).
+        const end = document.createElement("div");
+        end.className = "endOfContent";
+        textDiv.append(end);
+        textLayersRef.current.set(i, layer);
+        setLayerTick((n) => n + 1);
+      }
+    };
+    // A rejection here is the document going away under getPage; there is nothing to report.
+    run().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [docEpoch]);
 
   // Selection support, mirroring pdf.js's TextLayerBuilder: `.selecting` while the pointer is
   // down, and a copy handler that normalises what goes to the clipboard (pdfText.ts).
@@ -360,6 +452,204 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
       window.removeEventListener("blur", onUp);
     };
   }, []);
+
+  // --- Find ---------------------------------------------------------------------
+  const pageNoRef = useRef(1);
+  pageNoRef.current = pageNo;
+
+  const pageTexts = useCallback((): Promise<PageText[]> => {
+    const doc = docRef.current;
+    if (!doc) return Promise.resolve([]);
+    pageTextsRef.current ??= (async () => {
+      const out: PageText[] = [];
+      for (let n = 1; n <= doc.numPages; n++) {
+        // One unreadable page searches as empty rather than failing every other page with it
+        // (and a rejected promise would stay cached for the document's lifetime).
+        try {
+          const page = await doc.getPage(n);
+          // The same options as the text layer, and the same filter as TextLayer (items carrying
+          // `str`), so item k here is span k there.
+          const content = await page.getTextContent({ includeMarkedContent: true, disableNormalization: true });
+          out.push(pageText(content.items.flatMap((it) => ("str" in it ? [it.str] : []))));
+        } catch {
+          out.push(pageText([]));
+        }
+      }
+      return out;
+    })();
+    return pageTextsRef.current;
+  }, []);
+
+  useEffect(() => {
+    if (!findOpen || !query.trim()) {
+      setMatches([]);
+      setActive(-1);
+      return;
+    }
+    let alive = true;
+    const pending = pageTexts();
+    pending.then(
+      (texts) => {
+        // A document switch clears pageTextsRef before this effect re-runs; results from the
+        // previous document must not land on the new one.
+        if (!alive || pageTextsRef.current !== pending) return;
+        const found = findMatches(texts, query);
+        setMatches(found);
+        setActive(firstMatchFrom(found, pageNoRef.current - 1));
+        setReveal((n) => n + 1);
+      },
+      () => {
+        if (alive) setMatches([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [findOpen, query, docEpoch, pageTexts]);
+
+  // A match as a DOM range over its page's text-layer spans; null while that page has no layer.
+  const rangeOf = useCallback((m: FindMatch): Range | null => {
+    const layer = textLayersRef.current.get(m.page);
+    const a = layer?.textDivs[m.startItem]?.firstChild;
+    const b = layer?.textDivs[m.endItem]?.firstChild;
+    if (!a || !b) return null;
+    try {
+      const r = document.createRange();
+      r.setStart(a, m.startOffset);
+      r.setEnd(b, m.endOffset);
+      return r;
+    } catch {
+      return null; // the layer holds different text than was searched; leave it unpainted
+    }
+  }, []);
+
+  // Paints the matches and, when asked, brings the active one into view. A match on a page with
+  // no text layer yet is reached by scrolling to its page, once per request; the layer built there
+  // bumps layerTick and this runs again to place it exactly, unless the reader has meanwhile
+  // scrolled at all. Matches are indexed by page, so a layer being built only turns
+  // its own page's matches into ranges and adds them (pdfFindHighlight.ts is incremental too).
+  const revealedRef = useRef(0);
+  const pagedRef = useRef(0);
+  // Where the placeholder scroll left the pane; any other position later means the reader moved.
+  const pagedTopRef = useRef(0);
+  const rangesRef = useRef<{ of: FindMatch[]; ranges: (Range | null)[]; waiting: Map<number, number[]> }>({
+    of: [],
+    ranges: [],
+    waiting: new Map(),
+  });
+  useEffect(() => {
+    const owner = scrollRef;
+    let cache = rangesRef.current;
+    if (cache.of !== matches) {
+      clearFindHits(owner);
+      const waiting = new Map<number, number[]>();
+      matches.forEach((m, k) => {
+        const list = waiting.get(m.page);
+        if (list) list.push(k);
+        else waiting.set(m.page, [k]);
+      });
+      cache = rangesRef.current = { of: matches, ranges: matches.map(() => null), waiting };
+    }
+    const added: Range[] = [];
+    for (const [page, ks] of cache.waiting) {
+      if (!textLayersRef.current.has(page)) continue;
+      cache.waiting.delete(page);
+      for (const k of ks) {
+        const r = rangeOf(matches[k]);
+        cache.ranges[k] = r;
+        if (r) added.push(r);
+      }
+    }
+    addFindHits(owner, added);
+    const current = cache.ranges[active] ?? null;
+    setFindCurrent(owner, current);
+    const el = scrollRef.current;
+    const m = matches[active];
+    if (!el || !m || revealedRef.current === reveal) return;
+    if (!current) {
+      if (pagedRef.current !== reveal && layout.tops[m.page] !== undefined) {
+        pagedRef.current = reveal;
+        el.scrollTop = layout.tops[m.page];
+        pagedTopRef.current = el.scrollTop;
+        setScrollTop(el.scrollTop);
+      }
+      return;
+    }
+    revealedRef.current = reveal;
+    // The pane was already sent to this page; a reader who has since scrolled at all (to the next
+    // page, or within this one) keeps their place instead of being pulled back when the layer
+    // finally arrives. The rendered range cannot tell: it reaches half a viewport beyond the view.
+    if (pagedRef.current === reveal && Math.abs(el.scrollTop - pagedTopRef.current) > 1) return;
+    const r = current.getBoundingClientRect();
+    const view = el.getBoundingClientRect();
+    if (r.top < view.top || r.bottom > view.bottom) el.scrollTop += r.top - view.top - el.clientHeight / 3;
+    if (r.left < view.left || r.right > view.right) el.scrollLeft += r.left - view.left - el.clientWidth / 3;
+    setScrollTop(el.scrollTop);
+  }, [matches, active, reveal, layerTick, layout, rangeOf]);
+
+  useEffect(() => {
+    const owner = scrollRef;
+    return () => clearFindHits(owner);
+  }, []);
+
+  const openFind = () => {
+    setFindOpen(true);
+    // The bar mounts on this render; focus it once it is there.
+    requestAnimationFrame(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    });
+  };
+
+  openFindRef.current = openFind;
+
+  const closeFind = () => {
+    setFindOpen(false);
+    scrollRef.current?.focus();
+  };
+
+  const stepFind = (dir: 1 | -1) => {
+    if (matches.length === 0) return;
+    setActive((i) => stepMatch(i, matches.length, dir));
+    setReveal((n) => n + 1);
+  };
+
+  // In the Console, the pane's generic find (PaneFind) catches Ctrl/Cmd+F first and hands it
+  // over through OWN_FIND_EVENT (lib/ownFind.ts), also when focus is outside the pane. The key
+  // handler below covers a PdfView mounted without that wrapper.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const onOwnFind = () => openFindRef.current();
+    el.addEventListener(OWN_FIND_EVENT, onOwnFind);
+    return () => el.removeEventListener(OWN_FIND_EVENT, onOwnFind);
+  }, [failure]);
+
+  // Ctrl/Cmd+F anywhere in the pane, the find bar included, opens (or re-selects) the pane's
+  // find instead of the browser's.
+  const onPaneKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "f" || e.key === "F")) {
+      e.preventDefault();
+      openFind();
+    }
+  };
+
+  const onFindKeyDown = (e: RKeyboardEvent<HTMLInputElement>) => {
+    // Enter that confirms an IME conversion is not a request for the next match.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      stepFind(e.shiftKey ? -1 : 1);
+    }
+  };
+
+  // Escape anywhere in the bar (the input or a button) closes it and stays inside the pane.
+  const onBarKeyDown = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Escape" || e.nativeEvent.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeFind();
+  };
 
   // --- Controls ---------------------------------------------------------------
   const applyZoom = useCallback(
@@ -411,7 +701,33 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
 
   const pages = pageSizes.length;
   return (
-    <div className="pdfview">
+    <div className="pdfview" ref={rootRef} {...{ [OWN_FIND_ATTR]: "" }} onKeyDown={onPaneKeyDown}>
+      {findOpen && (
+        <div className="pdfview-find" role="search" onKeyDown={onBarKeyDown}>
+          <input
+            ref={findInputRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onFindKeyDown}
+            placeholder={tr("view.pdf.find")}
+            aria-label={tr("view.pdf.find")}
+            spellCheck={false}
+          />
+          <span className="pdfview-find-count" aria-live="polite">
+            {query.trim() ? `${matches.length ? active + 1 : 0}/${matches.length}` : ""}
+          </span>
+          <button type="button" onClick={() => stepFind(-1)} disabled={matches.length === 0} title={tr("view.pdf.find_prev")}>
+            <Icon name="chevron-up" />
+          </button>
+          <button type="button" onClick={() => stepFind(1)} disabled={matches.length === 0} title={tr("view.pdf.find_next")}>
+            <Icon name="chevron-down" />
+          </button>
+          <button type="button" onClick={closeFind} title={tr("view.pdf.find_close")}>
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
       <div className="pdfview-scroll" ref={attachScroll} tabIndex={0} aria-label={tr("view.pdf.aria")}>
         {pages === 0 ? (
           <p className="pdfview-loading muted">{tr("view.pdf.loading")}</p>
@@ -440,6 +756,9 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
             <Icon name="chevron-down" />
           </button>
           <span className="pdfview-sep" />
+          <button type="button" className="pdfview-findbtn" onClick={openFind} title={tr("view.pdf.find")}>
+            <Icon name="search" />
+          </button>
           <button type="button" onClick={() => applyZoom(stepZoom(zoom, -1))} title={tr("view.pdf.zoom_out")}>
             <Icon name="dash" />
           </button>

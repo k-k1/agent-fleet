@@ -30,7 +30,6 @@ type refreshRig struct {
 	mu       sync.Mutex
 	stopped  []cloudexec.Stop
 	onMint   func(n int) (Token, string, error)
-	onLogin  func(first error) (Token, string, error)
 	seenFile []string // the token file's content after each mint call
 }
 

@@ -147,3 +147,36 @@ func ToolProcessIn(root int, tab map[int]Info) bool {
 	}
 	return false
 }
+
+// GroupToolIn reports whether a tool process lives under root in root's own process group, for
+// a runtime that starts its shell tool without setsid() (kiro: the tool shares the runtime's
+// group, while its long-lived MCP helpers each lead a group of their own, measured). The
+// runtime's own binaries are told apart by the comm prefix, because the child that actually
+// runs the tools shares the group too. A helper that lingers in the group reads as a tool and
+// only delays the lapse (status quo), never ends a live tool early.
+func GroupToolIn(root int, tab map[int]Info, runtimeComm string) bool {
+	rootInfo, ok := tab[root]
+	if !ok {
+		return false
+	}
+	kids := Children(tab)
+	seen := map[int]bool{root: true}
+	queue := append([]int(nil), kids[root]...)
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		pi, ok := tab[pid]
+		if !ok {
+			continue
+		}
+		queue = append(queue, kids[pid]...)
+		if pi.State != 'Z' && pi.Pgrp == rootInfo.Pgrp && !strings.HasPrefix(pi.Comm, runtimeComm) {
+			return true
+		}
+	}
+	return false
+}

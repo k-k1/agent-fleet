@@ -1,7 +1,6 @@
 ---
 audience: "someone asking \"which file does that?\""
 source_of_truth: "the code"
-updated: "2026-09"
 ---
 
 # 90. Code map
@@ -33,7 +32,9 @@ elsewhere in the module (for example `registerEngineRoutes` in the CP,
 `browserx.RegisterRoutes` in the agent). So grep the method and path across the whole
 module, `"GET /api/admin/engines"` say: the line that registers it names the handler,
 and the handler's name tells you the file or package (`sessionx.HandleCreateSession` is
-in `internal/sessionx`). `testdata/routes.golden` is the route table as
+in `internal/sessionx`). A CP route that only relays to the agent is a row in a
+`relays_*.go` table instead, served by `agentProxyAPI.rest` (`proxy.go`); the row also says
+whether it is audited and signed. `testdata/routes.golden` is the route table as
 `TestRouteTableGolden` builds it. In the CP it is taken with every env-conditional
 registration on (MCP, the native self-update, the engine gateway), so it lists every route
 a deployment can serve, including those only some deployments have. What each route is for
@@ -55,7 +56,7 @@ constructor's caller on the `main` side. The rules for these seams are in
 ## 90.3 `control-plane/`
 
 `main.go` wires the binary; `control-plane egress-proxy` runs the egress forward proxy
-from the same binary. Most of the CP is `package main` at the module root, one concern per
+from the same binary, and `control-plane egress-agent` the agent on the egress gateway. Most of the CP is `package main` at the module root, one concern per
 group of files that share a name prefix. The families that could be cut loose are under
 `internal/`: `ls control-plane/internal` is the list, and the comments at the top of a
 package's files (and its `deps.go`, where it has one) say what it holds. The CP image is `control-plane/Dockerfile`, built with the repository root
@@ -69,12 +70,12 @@ as its context (the root `.dockerignore`).
 | Workspace lifecycle | `workspace_*.go`, `agent_client.go`, `agent_dial.go`. The runtime adapters (docker, native, ecs, ecs-ec2) are `internal/runtime` ([03 §3.3](03-control-plane.md#33-the-manager-and-the-runtime-abstraction)) |
 | Relaying to the agent | `proxy.go` (REST, the SSE stream, the terminal WebSocket), `preview*.go`, `browser.go`, `fs_file_proxy.go` |
 | The push channel to the Console | `events.go` |
-| Store | `internal/store`: `store.go` is the port, `store_sql.go` the shared SQL, `store_sqlite.go` and `store_postgres.go` the dialects, each embedding its own migration directory ([06 §6.1](06-data.md#61-store-layout)) |
+| Store | `internal/store`: `store.go` is the port (the `Store` union), each domain's row types, sub-interface and SQL sit together in `store_<domain>.go`, `store_sql.go` is the shared SQL, `store_sqlite.go` and `store_postgres.go` the dialects, each embedding its own migration directory ([06 §6.1](06-data.md#61-store-layout)) |
 | Keys | `custodian.go`, `dek.go` |
 | Internal git | `internal_git*.go`, `git_http.go`, `git_lfs*.go`, `git_gc.go` ([91](91-internal-git.md)) |
 | Egress | `egress*.go` ([03 §3.8](03-control-plane.md#38-the-cps-half-of-egress-control)) |
 | Endpoints the agent calls under `/internal/` | `*_bridge.go`, for example docs, memos, schedules and AWS profiles ([05 §5.2](05-api.md#52-the-internal-surface)) |
-| Audit, metrics, usage, cost | `audit.go` (the read side; the write side is `auditActionTarget` in `proxy.go`), `claude_audit.go`, `metrics.go`, `usage*.go`, `cloudcost.go`, `cost_*.go` |
+| Audit, metrics, usage, cost | `audit.go` (the read side; the write side is `auditActionTarget`, from each relay row's `audit` in `relays_*.go`), `claude_audit.go`, `metrics.go`, `usage*.go`, `cloudcost.go`, `cost_*.go` |
 | Memos, notifications, schedules | `memo*.go`, `notification.go`, `schedule*.go`, `scheduler*.go` ([03 §3.6](03-control-plane.md#36-the-memo-queue), [§3.7](03-control-plane.md#37-background-jobs)) |
 | MCP | `internal/mcpsrv` (the tool server at `/mcp` and the tenant's server distribution) and `mcp_wiring.go` ([03 §3.5](03-control-plane.md#35-the-mcp-server)) |
 | Self-hosted engines | `engines.go` and `engine_*.go`; the gateway a workspace calls is `engine_gateway.go` ([03 §3.9](03-control-plane.md#39-self-hosted-engines)) |
@@ -96,7 +97,7 @@ package's files (and its `deps.go`, where it has one) say what it holds.
 | Concern | Where to start |
 |---|---|
 | Sessions: lifecycle, tmux, driver switching, turns, IO, transcript, titles, spawn, peers | `internal/sessionx`. The session model (wire, metadata, the `Kind*` constants) is `internal/session`, and the live state store is `internal/status` |
-| One agent kind | `internal/agents/<kind>`, one package per agent CLI; shell and ssm are in `internal/sessionx/agent_shell_ssm.go`. Kinds are registered in `agentRegistry` (`internal/sessionx/agent.go`). The shared interfaces are `internal/agents`. Adding a kind: [20](20-add-an-agent.md) and [04 §4.3](04-agent.md#43-the-pattern-for-integrating-a-kind) |
+| One agent kind | `internal/agents/<kind>`, one package per kind, shell and ssm included. Kinds are registered in `internal/agentreg` (kind → Agent) and listed, capability-free, in `internal/kinds`, which the packages below the agent packages (bridge, mcpreg) can import. The shared interfaces are `internal/agents`. Adding a kind: [20](20-add-an-agent.md) and [04 §4.3](04-agent.md#43-the-pattern-for-integrating-a-kind) |
 | The managed-only kinds (`ManagedOnly` in `internal/agents`) | lcpp: `internal/harness` and its MCP client `internal/mcpc`. muse: `internal/msp` (the protocol) |
 | Chat and assistants | `internal/chatx`, `internal/assistants`; `assistants.go` embeds the built-in knowledge (`knowledge/af-usage.md`) |
 | Chat bridge | `internal/bridge`, `bridge_operator.go`, `connections_slack.go` |
@@ -112,7 +113,7 @@ package's files (and its `deps.go`, where it has one) say what it holds.
 | Image generation | `internal/imagegen` |
 | Self-hosted engines | `engines.go` |
 | Fleet session graph | `internal/fleetgraph` |
-| Work items | `workitems*.go`, `connections_jira.go` |
+| Work items | `internal/workitems`, `connections_jira.go`, `internal/jirax` (the Jira REST client and the `jira` wrapper's `jira-*` subcommands) |
 | Secrets | `internal/secrets` ([04 §4.8](04-agent.md#48-secrets--the-agents-responsibility)) |
 | Terminal and preview | `terminal*.go`, `preview.go` |
 | Clean-up | `cleanup_*.go`, `leftovers.go`, `tool_caches.go`, `cli_version_prune.go` |
@@ -149,6 +150,8 @@ How the image is built, and what is baked or installed on demand, is
 | `notes/` | Its topic files (`/usr/local/share/agent-fleet/notes/` in the image), the procedures the policy's index points at |
 | `af-db.sh`, `af-aws-exec.sh`, `af-scratch.sh`, `af-arch-repair.sh` | The `af-*` commands on `PATH`. The first two only exec `workspace-agent` |
 | `gh-auth-wrapper.sh`, `bkt-auth-wrapper.sh`, `jira-auth-wrapper.sh`, `svn-auth-wrapper.sh` | Installed as `gh`, `bkt`, `jira` and `svn` ahead of the real binaries, so all four find the credentials saved through the Console (`bkt-auth-wrapper-test.sh` and `jira-auth-wrapper-test.sh` pin their wrappers) |
+| `entrypoint-boot-install-test.sh` | Runs the lean boot-install section of `entrypoint.sh` against stubs and pins that a half-failed rtk / agy / cursor install logs WARN, writes no marker and is reinstalled next start |
+| `entrypoint-boot-status-test.sh` | Runs the same section and pins the per-CLI status file the Agent serves, its reason classes, the free-space skip and the prune that runs before the installs |
 | `jvm.Dockerfile` | Builds the shared JDK directory (`deploy/local/provision-jvm.sh`) |
 | `opencode-plugin/`, `tmux.conf` | The opencode plugin and the tmux configuration |
 | `.dockerignore` | ⚠️ It excludes `**/*.md` and then re-includes the ones the build needs. **Read it before adding a markdown file the image or the agent binary embeds** |

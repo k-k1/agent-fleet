@@ -38,7 +38,7 @@ const openPopover = async (btn: HTMLButtonElement) => {
 describe("engine pill — decision 5, the four hide conditions", () => {
   // On the wire all four ("no engine of this role", mode=off, no enabled models, tenant not
   // allowed) collapse into the SAME fact Console sees: no row for the role at all
-  // (engine_admin.go's row is only ever built for a role that exists, and P0-C's gate omits
+  // (engine_admin_row.go's row is only ever built for a role that exists, and P0-C's gate omits
   // the row instead of zeroing fields it — decision 5's "行を送らないことで表現する"). So the
   // one mechanism this side has to test is "no row -> no pill", exercised with an empty
   // payload and with a payload missing just the images role.

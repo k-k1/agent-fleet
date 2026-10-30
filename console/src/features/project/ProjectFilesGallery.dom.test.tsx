@@ -132,9 +132,14 @@ describe("左ペインの右クリック「ギャラリーで開く」", () => {
     expect(opened).toEqual([{ path: "repos", opts: { focus: "repos/a.png", newPane: false } }]);
   });
 
-  it("画像でないファイルには出ない", async () => {
+  it("画像でないファイルには親フォルダのギャラリーが、画像の拡大なしで出る", async () => {
     await render();
-    expect(await menuFor("repos/notes.md")).toBeNull();
+    const item = await menuFor("repos/notes.md");
+    expect(item?.textContent).toContain("Open folder in gallery");
+    await act(async () => {
+      item!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(opened).toEqual([{ path: "repos", opts: { newPane: false } }]);
   });
 
   it("Ctrl/⌘ を押しながらなら別のペインに開く", async () => {

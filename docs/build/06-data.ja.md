@@ -1,7 +1,6 @@
 ---
 audience: "スキーマとマイグレーションに触れる人"
 source_of_truth: "`control-plane/internal/store/migrations/*.sql` と `migrations-pg/*.sql`（本書はその読み解き。SQLite 0076／Postgres 0061 時点）"
-updated: "2026-09"
 ---
 
 # 06. データモデルとマイグレーション
@@ -116,7 +115,7 @@ updated: "2026-09"
 | `memo` / `memo_category` | メモキュー（[03 §3.6](03-control-plane.ja.md)）。添付は JSON の参照で、画像そのものはコンテナの中に残る。`memo_category` はカテゴリの並び順を持ち、空のカテゴリも残す。送信済みのメモは 7 日で掃除する |
 | `notification` / `notification_usage_state` | 通知センター（[03](03-control-plane.ja.md)）：membership ごとの行（`event_id` で一意、保持 7 日）と、使用量しきい値通知の窓の状態 |
 | `schedule` / `schedule_run` | 定時実行（[decisions/0021](../decisions/0021-scheduled-execution.ja.md)）。前者は定義と発火台帳（`next_run`・`last_run`）、reuse モードの回転、`report`、`stop_after_run`。後者は上限付きの実行履歴。**CP の DB に置くのは、ワークスペースが停止している間も時計を見られるのが CP だけだから** |
-| `mcp_server` | テナント配布の MCP サーバ：remote の定義だけで、**stdio 用の command・引数・環境の列を意図して持たない**（[decisions/0031](../decisions/0031-mcp-registry.ja.md)）。ヘッダは封印する。`user_secret=1` はヘッダ名だけを配り、値は各メンバーが入れる |
+| `mcp_server` | テナント配布の MCP サーバ：remote の定義だけで、**stdio 用の command・引数・環境の列を意図して持たない**（[decisions/0031](../decisions/0031-mcp-registry.ja.md)）。ヘッダは封印する。`user_secret=1` はヘッダ名だけを配り、値は各メンバーが入れる。`auth=oauth` は資格情報を配らない（各メンバーがサインインする）。任意のテナントのクライアントシークレット（`oauth_secret_enc`）も封印し、配らない（[decisions/0119](../decisions/0119-mcp-client-oauth.ja.md)） |
 | `work_item_query` / `work_item_cache` / `work_item_session` | ワークアイテムの受信箱（[decisions/0061](../decisions/0061-work-item-inbox.ja.md)）：保存したクエリ、**秘密でない**チケットのメタデータのキャッシュ（本文・コメント・トークンは持たない。ワークスペースが停止中でもレールを描くため）、どのチケットからどのセッションを始めたかの台帳。台帳はキャッシュへの外部キーを意図して持たない。キャッシュは揮発するクエリ結果だから |
 
 `schema_migrations` は適用済みの版を記録する（§6.5）。

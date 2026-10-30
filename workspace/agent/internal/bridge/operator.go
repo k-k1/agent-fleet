@@ -144,9 +144,6 @@ func SaveSlackOperatorState(channel, thread, conv string) { slackOperator.save(c
 // ResetSlackOperatorThread drops the Slack operator coordinates (keeps the conv).
 func ResetSlackOperatorThread() { slackOperator.reset() }
 
-// SlackOperatorThreadMatch is the Slack receive loop's operator-thread test.
-func SlackOperatorThreadMatch(threadTS string) (string, bool) { return slackOperator.match(threadTS) }
-
 // SlackCreateOperatorThread posts a seed message and returns its ts, which is the Slack
 // thread root (Slack threads share the parent channel and are keyed by the root message
 // ts, unlike Discord's per-thread channel id).

@@ -120,13 +120,6 @@ func (s *Supervisor) Addr() string {
 	return defaultAppServerAddr
 }
 
-// Generation returns the current runtime generation (§7).
-func (s *Supervisor) Generation() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.gen
-}
-
 // healthy probes the daemon's /healthz (the ws listen port doubles as HTTP —
 // measured 0.144.4). Unix-socket listeners fall back to a ws dial probe.
 func healthy(addr string) bool {

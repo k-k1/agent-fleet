@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator deciding how people get in"
-updated: "2026-08"
 ---
 
 # 05. Who may sign in, and from where
@@ -16,6 +15,9 @@ read-only for you, and one is yours to register but somebody else's to approve.
 | **Login rules** | read-only |
 | **Allowed networks** | yours |
 | **Integration OAuth apps** | yours |
+
+Outside apps that connect to your tenant through MCP OAuth are a fifth switch, covered with the
+rest of the outside access in [04](04-mcp-outside.md#mcp-oauth).
 
 ## Allowed networks
 
@@ -34,12 +36,14 @@ than guessing at a range.
 > currently connecting from *before* you save, and confirm it against the address on
 > the screen. Recovering from a wrong entry needs a deployment administrator.
 
-Two more things worth knowing:
+Three more things worth knowing:
 
 - The restriction is applied **after** authentication, not instead of it. It narrows
   who may use a valid session; it is not a substitute for sign-in.
 - It applies to your tenant. Someone who also belongs to another tenant reaches that
   one under its own rules.
+- The **MCP OAuth** panel sits on this same screen; it is about outside apps, not about
+  networks, and is covered in [04](04-mcp-outside.md#mcp-oauth).
 
 ## Integration OAuth apps
 
@@ -121,7 +125,10 @@ To register one:
 > looks like the first row but is a different scope, and af does not ask for it.
 > **Then** tick *The app also grants the Jira Software scopes* on the Jira card and save.
 > In that order: Atlassian refuses an authorization that asks for a scope the app does not
-> have, so ticking first stops every member from connecting. Members who are already
+> have, so ticking first stops every member from connecting. (Measured: the refusal is a
+> dead-end page on Atlassian's side with no redirect back to af, so af cannot fall back to the
+> basic scopes.) A member whose Jira card says "Boards, sprints and epics: not available" is
+> connected without these scopes. Members who are already
 > connected get the new scopes when they reconnect Jira.
 
 The secret is **encrypted on save and never shown again**. When you edit the

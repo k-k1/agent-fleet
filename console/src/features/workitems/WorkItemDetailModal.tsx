@@ -33,14 +33,21 @@
 // the seeded prompt says so and asks for a review, not an implementation plan. This only
 // fires when the live read actually resolved a head branch; an existing copy the user picked
 // by hand is left on whatever branch it already has (§80.24.4).
+//
+// A GitHub pull request that GitHub says can be merged also gets a Merge button in the footer
+// (ADR 0061, 2026-10-25 note on #2632). It is the one write this panel makes: it opens a confirm
+// dialog naming the pull request, base ← head and the method, and merges only the head commit this
+// panel displayed. It is drawn only for a connection that looks able to merge, never for Bitbucket,
+// and its footer slot is reserved from the first render so the answer does not move the buttons.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import type { Repo } from "../repos/store.ts";
-import { workItemDetail } from "./api.ts";
+import { workItemDetail, workItemMerge } from "./api.ts";
 import { LabelBadge } from "./LabelBadge.tsx";
 import type { ResolvedSessionRef } from "./sessionRefs.ts";
 import {
@@ -51,6 +58,10 @@ import {
   detailStateTone,
   checksTone,
   fullLocal,
+  mergeGate,
+  mergePending,
+  MERGE_RECHECK_DELAYS_MS,
+  readMergeResult,
   readWorkItemDetail,
   relTime,
   reviewCounts,
@@ -100,8 +111,12 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
   const [stopped, setStopped] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Automatic re-reads made while GitHub is still computing mergeability (-1 = one requested by
+  // hand, sent at once; a manual re-check then gets the whole budget again).
+  const [polls, setPolls] = useState(0);
   const { provider, key, kind } = item;
   useEffect(() => {
+    setPolls(0);
     if (!canReadLive({ provider, kind }, reference)) return;
     // The panel can be re-pointed at another row while a read is in flight (or closed under it).
     // Without this guard the late answer would paint the previous pull request's numbers onto
@@ -127,6 +142,11 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
         }
         setErr(errText(got.error) || " ");
       })
+      .catch((e: unknown) => {
+        // A rejected request (network down, unreadable body) never reaches the error branch above;
+        // without this the panel would stay in its loading state with no way to retry.
+        if (current) setErr((e instanceof Error ? e.message : String(e)) || " ");
+      })
       .finally(() => {
         if (current) setBusy(false);
       });
@@ -134,8 +154,93 @@ function useLiveDetail(item: WorkItem, reference: boolean) {
       current = false;
     };
   }, [provider, key, kind, reference, attempt]);
-  return { detail, err, stopped, busy, retry: () => setAttempt((n) => n + 1) };
+
+  // Re-read while GitHub has not decided whether the pull request can merge. Unlike the read
+  // above it keeps `detail` on screen and swaps it only for an answer: blanking it would flash
+  // every row back to skeletons once per poll. A failed poll keeps what is shown and counts
+  // against the budget, so a provider outage cannot keep it polling.
+  const pending = mergePending(detail);
+  useEffect(() => {
+    if (!pending || polls >= MERGE_RECHECK_DELAYS_MS.length) return;
+    let current = true;
+    const timer = setTimeout(
+      () => {
+        void workItemDetail({ provider, key, kind: reference ? "" : kind })
+          .then((res) => {
+            if (!current) return;
+            const got = readWorkItemDetail(res);
+            if (got.detail) setDetail(got.detail);
+          })
+          .catch(() => {})
+          .finally(() => {
+            if (current) setPolls((n) => n + 1);
+          });
+      },
+      polls < 0 ? 0 : MERGE_RECHECK_DELAYS_MS[polls],
+    );
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+    // `attempt` too: a fresh read (after a merge attempt) must cancel a poll in flight. Its own
+    // setDetail(null) does not reliably do it — batched with a fast answer that is again
+    // "unknown", `pending` never changes, and the old poll would land on top of the newer read.
+  }, [pending, polls, provider, key, kind, reference, attempt]);
+
+  return {
+    detail,
+    err,
+    stopped,
+    busy,
+    retry: () => setAttempt((n) => n + 1),
+    /** GitHub is still computing mergeability and another automatic read is coming. */
+    rechecking: pending && polls < MERGE_RECHECK_DELAYS_MS.length,
+    /** Still undecided after the whole budget: the panel offers `recheck` by hand. */
+    recheckSpent: pending && polls >= MERGE_RECHECK_DELAYS_MS.length,
+    recheck: () => setPolls(-1),
+  };
 }
+
+/** A fact row whose value the live read has not brought back yet. It keeps the row's height so
+ * the answer fills it in place; hidden from assistive tech, which gets the status line instead. */
+function SpacerRow() {
+  return (
+    <>
+      <dt aria-hidden="true">&nbsp;</dt>
+      <dd aria-hidden="true">&nbsp;</dd>
+    </>
+  );
+}
+
+function PendingRow({ label }: { label: string }) {
+  return (
+    <>
+      <dt aria-hidden="true">{label}</dt>
+      <dd aria-hidden="true">
+        <span className="wi-dskel" />
+      </dd>
+    </>
+  );
+}
+
+/** What the confirm dialog shows and sends: a snapshot taken when it opened. The live read is
+ * re-run after a merge attempt and blanks `detail` while it runs, so the dialog must not read the
+ * panel's current state — and it must send the SHA that was on screen when it opened. */
+interface MergeDialog {
+  key: string;
+  title: string;
+  base: string;
+  head: string;
+  sha: string;
+  methods: string[];
+  method: string;
+}
+
+const MERGE_METHOD_LABEL = {
+  merge: "wi.merge_method_merge",
+  squash: "wi.merge_method_squash",
+  rebase: "wi.merge_method_rebase",
+} as const;
 
 const PROVIDER_NAMES: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
@@ -189,6 +294,12 @@ export function WorkItemDetailModal({
   // until the live read has answered, after which the answer decides the kind (and with it the
   // review launch flow), exactly as for a cached row.
   const kindKnown = !reference || item.provider !== "github" || !!live.detail;
+  // True from the first render, before the effect has raised `live.busy`, so that no frame draws
+  // the layout the answer is about to replace.
+  const reading = canReadLive(item, reference) && !live.detail && !live.err && !live.stopped;
+  // Reference of unknown kind: either layout would be wrong for half of the answers and swap
+  // wholesale, so neither is drawn until the read has decided (or failed).
+  const neutral = reading && !kindKnown;
   const isPR = live.detail && reference ? live.detail.kind === "pr" : item.kind === "pr";
   const shownPR = isPR;
   const providerName = PROVIDER_NAMES[item.provider] || item.provider;
@@ -214,6 +325,56 @@ export function WorkItemDetailModal({
 
   const rel = relTime(view.updatedAt);
   const d = live.detail;
+
+  const gate = mergeGate(d);
+  const [mergeDlg, setMergeDlg] = useState<MergeDialog | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeErr, setMergeErr] = useState("");
+  // The outcome of the last attempt, kept in the footer next to the button: the dialog is gone
+  // by then, and the panel re-reads and redraws everything else.
+  const [mergeNote, setMergeNote] = useState<{ text: string; bad: boolean } | null>(null);
+
+  const openMerge = () => {
+    if (!d || !gate.enabled) return;
+    setMergeErr("");
+    setMergeNote(null);
+    setMergeDlg({
+      key: item.key,
+      title: d.title || item.title,
+      base: d.baseBranch,
+      head: d.headBranch,
+      sha: d.headSha,
+      methods: d.mergeMethods,
+      method: d.defaultMergeMethod || d.mergeMethods[0] || "",
+    });
+  };
+  const confirmMerge = async () => {
+    if (!mergeDlg || mergeBusy) return;
+    setMergeBusy(true);
+    setMergeErr("");
+    let result = readMergeResult(null);
+    try {
+      result = readMergeResult(
+        await workItemMerge({ provider: "github", key: mergeDlg.key, sha: mergeDlg.sha, method: mergeDlg.method }),
+      );
+    } catch (e) {
+      // A rejected request cannot say whether GitHub saw it, so the read below is what settles it.
+      result = { ok: false, code: "", message: e instanceof Error ? e.message : String(e) };
+    }
+    setMergeBusy(false);
+    // Every outcome re-reads the pull request: success must show "Merged", a refusal must show
+    // why, and a request that died in transit may have merged anyway.
+    live.retry();
+    if (result.ok) {
+      setMergeDlg(null);
+      setMergeNote({ text: tr("wi.merge_done"), bad: false });
+    } else if (result.code === "head_changed") {
+      setMergeDlg(null);
+      setMergeNote({ text: tr("wi.merge_head_changed"), bad: true });
+    } else {
+      setMergeErr(tr("wi.merge_failed", { message: result.message || "?" }));
+    }
+  };
 
   // Only a fresh worktree checks the head branch out — an existing copy the user picked by
   // hand keeps whatever branch it is already on (§80.24.4: never launch off a value the user
@@ -277,6 +438,26 @@ export function WorkItemDetailModal({
     return tr("wi.detail_reviews_sum", { ok: c.approved, ng: c.changes, waiting: c.pending });
   };
 
+  // The footer's Merge slot. GitHub pull requests only: Bitbucket is read-only (decision 19) and
+  // an issue has nothing to merge.
+  //   enabled  GitHub says the merge would succeed
+  //   disabled the button is shown with the reason (a state GitHub will not merge, or no read)
+  //   hold     reserve the room, draw nothing: still reading, or the answer says no button
+  // The reason sits in the footer beside the button; the full text is also its title.
+  const mergeSlot: { button: "none" | "hold" | "enabled" | "disabled"; note: { text: string; bad: boolean } | null } = (() => {
+    if (mergeNote) return { button: gate.show ? (gate.enabled ? "enabled" : "disabled") : "hold", note: mergeNote };
+    if (item.provider !== "github" || !isPR || neutral) return { button: "none", note: null };
+    if (gate.show) {
+      // While the panel is re-reading by itself, "try again in a moment" would ask the user to do
+      // what is already happening.
+      const why = gate.whyKey === "wi.merge_why_unknown" && live.rechecking ? "wi.merge_why_checking" : gate.whyKey;
+      return { button: gate.enabled ? "enabled" : "disabled", note: why ? { text: tr(why), bad: false } : null };
+    }
+    if (live.stopped) return { button: "disabled", note: { text: tr("wi.merge_why_stopped"), bad: false } };
+    if (live.err) return { button: "disabled", note: { text: tr("wi.merge_why_unread"), bad: false } };
+    return { button: "hold", note: null };
+  })();
+
   return (
     // The heading never shortens the key. The rail row drops the repo and shows just `#312`,
     // but only the full key says which of 41 rows was opened (`#312` can exist in three
@@ -309,7 +490,7 @@ export function WorkItemDetailModal({
         {/* A stand-in has nothing the CP holds: it is not in any saved query's results. Fetching
             it here would be a new single-item read (ADR 0061 decision 20.1), so the panel says
             where to read it instead. */}
-        {reference && !live.detail && (
+        {reference && !live.detail && !reading && (
           <p className="wi-dref" role="status">
             <Icon name="info" />
             <span>{tr("wi.detail_ref_note", { name: providerName })}</span>
@@ -322,11 +503,11 @@ export function WorkItemDetailModal({
         {canReadLive(item, reference) && (
           <p className={"wi-dlive" + (live.err ? " bad" : "")} role="status" title={live.err || undefined}>
             <Icon
-              name={live.busy ? "sync" : live.err ? "warning" : live.stopped ? "debug-pause" : "check"}
-              spin={live.busy}
+              name={reading ? "sync" : live.err ? "warning" : live.stopped ? "debug-pause" : "check"}
+              spin={reading}
             />
             <span>
-              {live.busy
+              {reading
                 ? tr("wi.detail_live_loading")
                 : live.err
                   ? reference ? tr("wi.detail_live_failed_ref", { name: providerName }) : tr("wi.detail_live_failed")
@@ -334,7 +515,7 @@ export function WorkItemDetailModal({
                     ? reference ? tr("wi.detail_live_stopped_ref", { name: providerName }) : tr("wi.detail_live_stopped")
                     : reference ? tr("wi.detail_live_fresh_ref", { name: providerName }) : tr("wi.detail_live_fresh")}
             </span>
-            {!live.busy && (live.err || live.stopped) && (
+            {!reading && (live.err || live.stopped) && (
               <button type="button" className="linklike" onClick={live.retry}>
                 {tr("wi.detail_live_retry")}
               </button>
@@ -344,13 +525,16 @@ export function WorkItemDetailModal({
 
         {/* Exactly the fields the CP holds. A row with no value is not drawn; a column of
             em-dashes only adds things to read. */}
-        <dl className="wi-dfacts">
-          {stateText && (
+        <dl className="wi-dfacts" aria-busy={reading || undefined}>
+          {stateText ? (
             <>
               <dt>{tr("wi.detail_state")}</dt>
               <dd>{stateText}</dd>
             </>
+          ) : (
+            neutral && <PendingRow label={tr("wi.detail_state")} />
           )}
+          {neutral && <PendingRow label={tr("wi.detail_kind")} />}
           {kindKnown && (
             <>
               <dt>{tr("wi.detail_kind")}</dt>
@@ -361,11 +545,13 @@ export function WorkItemDetailModal({
           <dd>
             <span className="wi-dprov">{item.provider}</span>
           </dd>
-          {d?.author && (
+          {d?.author ? (
             <>
               <dt>{tr("wi.detail_author")}</dt>
               <dd>@{d.author}</dd>
             </>
+          ) : (
+            reading && <PendingRow label={tr("wi.detail_author")} />
           )}
           {view.assignee && (
             <>
@@ -382,6 +568,16 @@ export function WorkItemDetailModal({
           {/* From here down: only what the live read brought back. These are the fields that
               decide whether to pick a review up, and every one of them can change between two
               rail refreshes — which is why none of them is cached (§80.24). */}
+          {/* While reading, the rows a pull request will have are reserved (an issue has none of
+              them). A neutral reference reserves them too: it may turn out to be one. */}
+          {reading && (neutral || shownPR) && (
+            <>
+              <PendingRow label={tr("wi.detail_branches")} />
+              <PendingRow label={tr("wi.detail_merge")} />
+              <PendingRow label={tr("wi.detail_diff")} />
+              <PendingRow label={tr("wi.detail_checks")} />
+            </>
+          )}
           {d && (d.baseBranch || d.headBranch) && (
             <>
               <dt>{tr("wi.detail_branches")}</dt>
@@ -395,9 +591,28 @@ export function WorkItemDetailModal({
           {d && d.kind === "pr" && (
             <>
               <dt>{tr("wi.detail_merge")}</dt>
-              <dd className={d.mergeable === "conflict" && !d.merged ? "tone-bad" : undefined}>{mergeText(d)}</dd>
+              <dd className={"wi-dmerge" + (d.mergeable === "conflict" && !d.merged ? " tone-bad" : "")}>
+                {/* A status region that stays mounted, so "checking" turning into the answer is
+                    announced: the footer's note disappears at that moment and cannot say it. */}
+                <span role="status">
+                  {live.rechecking ? (
+                    <>
+                      <Icon name="sync" spin />
+                      {tr("wi.detail_merge_checking")}
+                    </>
+                  ) : (
+                    mergeText(d)
+                  )}
+                </span>
+                {live.recheckSpent && (
+                  <button type="button" className="linklike" onClick={live.recheck}>
+                    {tr("wi.detail_merge_recheck")}
+                  </button>
+                )}
+              </dd>
             </>
           )}
+          {d && !(d.changedFiles > 0 || d.additions > 0 || d.deletions > 0) && d.kind === "pr" && <SpacerRow />}
           {d && (d.changedFiles > 0 || d.additions > 0 || d.deletions > 0) && (
             <>
               <dt>{tr("wi.detail_diff")}</dt>
@@ -421,6 +636,7 @@ export function WorkItemDetailModal({
               </dd>
             </>
           )}
+          {d && d.checks.total === 0 && d.kind === "pr" && <SpacerRow />}
           {d && d.checks.total > 0 && (
             <>
               <dt>{tr("wi.detail_checks")}</dt>
@@ -456,7 +672,7 @@ export function WorkItemDetailModal({
         {/* The body is not shown here, so where to go and read it always is (same reason as
             §80.9). A pull request carries the same link as the footer's main button, so it is
             not repeated here. */}
-        {!isPR && view.url && (
+        {!neutral && !isPR && view.url && (
           <a className="wi-dlink" href={view.url} target="_blank" rel="noreferrer noopener">
             <Icon name="link-external" />
             {tr("wi.open_external")}
@@ -509,6 +725,15 @@ export function WorkItemDetailModal({
             it conflict, who has approved it — and reviewing it locally is the less common half,
             so it folds away rather than disappearing: a review still needs a working copy, and
             the started ledger under it is what stops two people picking up the same review. */}
+        {neutral ? (
+          // Holds the room the start section will take (the issue layout's, which is the taller
+          // one), without committing to its heading, its controls or the PR's folded form.
+          <div className="wi-dstart wi-dstart-pending" aria-hidden="true">
+            <span className="wi-dskel wi-dskel-head" />
+            <span className="wi-dskel wi-dskel-field" />
+            <span className="wi-dskel wi-dskel-field" />
+          </div>
+        ) : (
         <StartSection fold={isPR} title={tr(isPR ? "wi.detail_start_head_pr" : "wi.detail_start_head")}>
           {bases.length === 0 ? (
             <p className="wi-shint">{tr("wi.start_no_repos")}</p>
@@ -557,12 +782,44 @@ export function WorkItemDetailModal({
             </Button>
           )}
         </StartSection>
+        )}
       </div>
       <footer className="ui-modal-foot">
+        {mergeSlot.note && (
+          <span
+            id="wi-dmerge-why"
+            className={"wi-dmergewhy" + (mergeSlot.note.bad ? " bad" : "")}
+            title={mergeSlot.note.text}
+            role="status"
+          >
+            {mergeSlot.note.text}
+          </span>
+        )}
         <Button variant="ghost" onClick={onClose}>
           {tr("common.cancel")}
         </Button>
-        {isPR ? (
+        {mergeSlot.button === "hold" && (
+          // Takes the room Merge will (or would) occupy, so the answer to the live read never
+          // moves Cancel and the main button. Invisible and inert: nothing to press or announce.
+          <Button className="wi-dmergehold" disabled aria-hidden="true" tabIndex={-1}>
+            <Icon name="git-merge" />
+            {tr("wi.merge")}
+          </Button>
+        )}
+        {(mergeSlot.button === "enabled" || mergeSlot.button === "disabled") && (
+          <Button
+            onClick={openMerge}
+            disabled={mergeSlot.button === "disabled" || !!mergeDlg}
+            aria-describedby={mergeSlot.note ? "wi-dmerge-why" : undefined}
+          >
+            <Icon name="git-merge" />
+            {tr("wi.merge")}
+          </Button>
+        )}
+        {neutral ? (
+          // No label: "Start" and "Open in GitHub" are both wrong for half of the answers.
+          <Button disabled>{tr("common.loading")}</Button>
+        ) : isPR ? (
           // The main act for a pull request is going and reading it where it lives. af holds no
           // diff, no review thread and no comment text, so anything more here would be a worse
           // copy of the provider's own page (§80.1).
@@ -576,6 +833,50 @@ export function WorkItemDetailModal({
           </Button>
         )}
       </footer>
+      {mergeDlg && (
+        <ConfirmDialog
+          title={tr("wi.merge_title")}
+          confirmLabel={tr("wi.merge_confirm")}
+          danger={false}
+          busy={mergeBusy}
+          onConfirm={() => void confirmMerge()}
+          onCancel={() => setMergeDlg(null)}
+        >
+          <p className="wi-mname">{tr("wi.merge_pr", { key: mergeDlg.key, title: mergeDlg.title })}</p>
+          <dl className="wi-dfacts">
+            <dt>{tr("wi.merge_branches")}</dt>
+            <dd className="wi-dbranches">
+              <code>{mergeDlg.base}</code>
+              <Icon name="arrow-left" />
+              <code>{mergeDlg.head}</code>
+            </dd>
+            <dt>{tr("wi.merge_method")}</dt>
+            <dd>
+              {mergeDlg.methods.length > 1 ? (
+                <select
+                  value={mergeDlg.method}
+                  disabled={mergeBusy}
+                  onChange={(e) => setMergeDlg({ ...mergeDlg, method: e.target.value })}
+                >
+                  {mergeDlg.methods.map((m) => (
+                    <option key={m} value={m}>
+                      {tr(MERGE_METHOD_LABEL[m as keyof typeof MERGE_METHOD_LABEL] ?? "wi.merge_method_merge")}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                tr(MERGE_METHOD_LABEL[mergeDlg.method as keyof typeof MERGE_METHOD_LABEL] ?? "wi.merge_method_merge")
+              )}
+            </dd>
+          </dl>
+          <p className="wi-shint">{tr("wi.merge_note", { sha: mergeDlg.sha.slice(0, 7) })}</p>
+          {mergeErr && (
+            <p className="wi-merr" role="alert">
+              {mergeErr}
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
     </Modal>
   );
 }

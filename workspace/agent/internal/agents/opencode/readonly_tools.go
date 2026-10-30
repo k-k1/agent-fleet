@@ -7,4 +7,5 @@ package opencode
 // Names are matched exactly.
 //
 // Source: opencode's built-in tool ids (lower case); bash, edit, write and patch change things.
-var ReadOnlyTools = []string{"read", "glob", "grep", "list", "webfetch"}
+// websearch is search-only, like webfetch (opencode 2.0.28 tool list in v2state.go).
+var ReadOnlyTools = []string{"read", "glob", "grep", "list", "webfetch", "websearch"}

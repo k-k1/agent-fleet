@@ -90,6 +90,25 @@ jobs:
                exit 1 ;;
           esac
 
+  # Warn only (same step as release-gate.yml): lists the open cli-drift issues so whoever cuts a release sees them
+  # (#2267). Drift is the steady state, so this never fails the run. Its own job so
+  # `issues: read` is granted here and nowhere else.
+  cli-drift-warning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: open cli-drift issues (warning only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: deploy/release/cli-drift-warn.sh
+
   # The native package (C) and its rootfs (R), once per CPU architecture. build.sh
   # --native builds for the host it runs on — every step is a plain `docker build`,
   # and the rootfs cannot be cross-built cheaply (the workspace image pays ~10 min

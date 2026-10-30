@@ -15,6 +15,8 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({
 let resolved: Record<string, { path: string; type: string }> = {};
 const asked: { cwd: string; refs: string[] }[] = [];
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   api: vi.fn(async () => ({})),
   apiJSON: vi.fn(async (_path: string, _method: string, body: { cwd: string; refs: string[] }) => {
     asked.push(body);
@@ -37,14 +39,16 @@ vi.mock("../files/store.ts", () => ({
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
 const { clearPathRefCache } = await import("./pathResolve.ts");
+const { SessionWorkDirProvider, mirrorWorkDir } = await import("./workDirContext.ts");
 
 let host: HTMLDivElement;
 let root: Root;
 const opened: { path: string; line?: number; openInNew?: boolean }[] = [];
 
-const render = async (source: string, props: Record<string, unknown> = {}) => {
+const render = async (source: string, props: Record<string, unknown> = {}, workDir = "") => {
   await act(async () => {
     root.render(
+      <SessionWorkDirProvider value={workDir}>
       <MarkdownView
         source={source}
         baseDir="repos/x/sub"
@@ -52,7 +56,8 @@ const render = async (source: string, props: Record<string, unknown> = {}) => {
           opened.push({ path, line, openInNew })
         }
         {...props}
-      />,
+      />
+      </SessionWorkDirProvider>,
     );
   });
   // Resolution is async: let the request settle and the links land.
@@ -201,5 +206,56 @@ describe("a path outranks the hashes inside it", () => {
   it("still links a sha cited on its own", async () => {
     await render("修正は 9219ab9 で入れた", { repo: "r1" });
     expect(commitLinks().map((a) => a.textContent)).toEqual(["9219ab9"]);
+  });
+});
+
+describe("$AF_WORK_DIR in inline code", () => {
+  const WD = "~/.af-work/sukbq4s";
+
+  it("links the file and the folder through the session's throwaway directory", async () => {
+    resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
+    resolved[WD] = { path: ".af-work/sukbq4s", type: "dir" };
+    await render("`$AF_WORK_DIR/shots/x.png` と `$AF_WORK_DIR`", {}, WD);
+    expect(pathLinks().map((a) => a.textContent)).toEqual(["$AF_WORK_DIR/shots/x.png", "$AF_WORK_DIR"]);
+    expect(asked[0].refs).toEqual([`${WD}/shots/x.png`, WD]);
+    await click(pathLinks()[0]);
+    expect(opened).toEqual([{ path: ".af-work/sukbq4s/shots/x.png", line: undefined, openInNew: false }]);
+    await click(pathLinks()[1]);
+    expect(revealed).toEqual([{ path: ".af-work/sukbq4s", focus: true }]);
+  });
+
+  it("links in a Managed session's reply as it does in a Terminal one", async () => {
+    resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
+    await render("`$AF_WORK_DIR/shots/x.png`", {}, mirrorWorkDir("sukbq4s", { driver: "managed", kind: "codex" }));
+    expect(pathLinks().map((a) => a.textContent)).toEqual(["$AF_WORK_DIR/shots/x.png"]);
+    expect(asked[0].refs).toEqual([`${WD}/shots/x.png`]);
+  });
+
+  it("links in a Managed opencode reply too", async () => {
+    resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
+    await render("`$AF_WORK_DIR/shots/x.png`", {}, mirrorWorkDir("sukbq4s", { driver: "managed", kind: "opencode" }));
+    expect(pathLinks().map((a) => a.textContent)).toEqual(["$AF_WORK_DIR/shots/x.png"]);
+    expect(asked[0].refs).toEqual([`${WD}/shots/x.png`]);
+  });
+
+  it("is not split into commit links when it names a hex-looking file", async () => {
+    resolved[`${WD}/40b1acd8-bf44.png`] = { path: ".af-work/sukbq4s/40b1acd8-bf44.png", type: "file" };
+    await render("`$AF_WORK_DIR/40b1acd8-bf44.png`", { repo: "r1" }, WD);
+    expect(pathLinks()).toHaveLength(1);
+    expect(host.querySelectorAll("a.md-commit-link")).toHaveLength(0);
+  });
+
+  it("stays plain code without a session (shared view, document viewer) and asks nothing", async () => {
+    resolved[`${WD}/shots/x.png`] = { path: ".af-work/sukbq4s/shots/x.png", type: "file" };
+    await render("`$AF_WORK_DIR/shots/x.png`");
+    expect(pathLinks()).toHaveLength(0);
+    expect(asked).toEqual([]);
+    await render("`$AF_WORK_DIR/shots/x.png`", { onOpenFile: undefined }, WD);
+    expect(pathLinks()).toHaveLength(0);
+  });
+
+  it("stays plain when the session has no such file", async () => {
+    await render("`$AF_WORK_DIR/nope.png`", {}, WD);
+    expect(pathLinks()).toHaveLength(0);
   });
 });

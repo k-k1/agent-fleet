@@ -1,7 +1,6 @@
 ---
 audience: "someone adding an external provider or a CLI agent"
 source_of_truth: "the code (this is a map of the methods and the intent)"
-updated: "2026-09"
 ---
 
 # 08. External integrations
@@ -242,7 +241,7 @@ and transitioning issues, plus boards, sprints and epics. The real binary is
 `/usr/local/libexec/jira`, and `/usr/local/bin/jira` is `workspace/jira-auth-wrapper.sh`.
 jira-cli takes its token from `JIRA_API_TOKEN`, and the environment overrides its config
 file key by key (`JIRA_SERVER`, `JIRA_LOGIN`, `JIRA_AUTH_TYPE`, `JIRA_INSTALLATION`). On each
-run the wrapper asks `workspace-agent jira-cred` (`workspace/agent/jira_cred.go`) and fills
+run the wrapper asks `workspace-agent jira-cred` (`workspace/agent/internal/jirax/jira_cred.go`) and fills
 those variables in for one `exec`:
 
 - **API-token connection**: `auth_type` basic, the site as the server, and the stored email
@@ -267,9 +266,81 @@ those variables in for one `exec`:
     then `jira -c` that file. The files hold no secret.
   - With no config named, the wrapper uses the managed `config.yml`, or else points
     `JIRA_CONFIG_FILE` at `~/.cache/agent-fleet/jira/config.yml`, which holds only
-    `installation: Cloud`: enough for `issue view` and `issue list -p KEY`. `issue create`,
-    `sprint list` and the epic commands need the issue types, board and epic fields that only
-    `jira init` writes.
+    `installation: Cloud`: enough for `issue view` and `issue list -p KEY`. `sprint list` and the
+    epic commands need the board and epic fields that only `jira init` writes.
+  - **`issue create` without `jira init`**: jira-cli reads `issue.types` from the config only
+    (`setIssueTypes`, v1.7.0), and `jira init`, the only writer, calls the Agile board API first
+    (401 on OAuth without the Jira Software scopes). So for `issue create`, when the effective
+    config is the generated one or a managed one (not named with `-c`: that one wins over the
+    environment) and has no `types:` key, the wrapper runs `workspace-agent jira-issue-types KEY`
+    (`-p` in any spelling, else the config's `project.key`). The helper GETs
+    `/rest/api/2/issue/createmeta?projectKeys=KEY` with the token it holds itself (classic
+    `read:jira-work`) and prints only the non-secret `issue.types` block. The wrapper caches it as
+    `~/.cache/agent-fleet/jira/derived/issue-types-<server hash>-KEY.yml` (reused only for the same
+    connection when a later fetch fails) and points `JIRA_CONFIG_FILE` at
+    `derived/config-KEY-<content hash>.yml`: the base config plus that block. The name follows the
+    content, so concurrent runs with different bases never share a file; the directory is 0700 and
+    the files 0600 because the whole base is copied. A config that already has `types:` is left
+    alone. So is one that is not plain block style (the first line at column 0, every column-0
+    line a bare `key:`, no `issue` key, no `---` / `...`): appending would not merge. Any failure runs jira on its
+    own config after a one-line stderr hint to run `jira init` (and says that a 401 there can mean
+    missing Jira Software scopes). A managed config that has types and a plain `project.key`
+    serves that project only: for `issue create -p B` with B other than the key (case-insensitive,
+    no `-c`) the wrapper derives `config-B-<hash>.yml` the same way (same cache, naming, modes and
+    GC) but with the base's column-0 `issue:` block cut out first and B's types appended. That
+    block also holds `fields.custom`, which jira-cli sends on create, and A's custom fields must not
+    reach B, so they are dropped for B (the other keys, board and epic included, stay). The cut is
+    made only when the file has exactly one bare `issue:` line (any case) and defines no YAML anchor, alias or `<<` merge (the cut could leave an alias undefined) (a `--parent` / `-P` no longer blocks the cut: the parent step below overrides `project.type` anyway); otherwise, or when the
+    fetch fails with nothing cached, jira runs on the base and a hint names
+    `jira init -c ~/.config/agent-fleet/jira/<name>.yml --project B --board "<name>"`. A config
+    whose `project.key` cannot be read plainly, or that has no `-p`, is used as is.
+- **`issue create -P KEY` / `--parent`** (#2812): jira-cli v1.7.0 sends `fields.parent` only for
+  `project.type: next-gen` (or a sub-task type); otherwise the key goes to the epic-link custom field
+  named by `epic.link`, and with that empty it is dropped from the request, so the issue is created
+  without a parent and success is reported. The configs of ours have no `epic.link`. A create that
+  carries a parent therefore runs on a derived copy (`config-nextgen-<hash>.yml`, same cache and
+  modes) with `project.type: next-gen` set in the effective config of ours (replaced when
+  `classic`, added when absent, the `project:` block added when there is none); the base file is
+  never modified and a user-owned config, `-c` outside the managed directory, `JIRA_SERVER` and
+  `JIRA_API_TOKEN` runs are not touched. `-c` inside the managed directory, or a layout that cannot
+  be edited safely (flow style, anchors, two `project` keys), runs unchanged after a stderr warning
+  that the parent may be dropped. Scope: only `issue create`. Other users of `project.type` in
+  jira-cli v1.7.0 (`epic list|create|add|remove`, `issue clone`) read the config, not the derived
+  copy, so they keep working as before; `issue edit -P` exists too but needs nothing: jira-cli always sends `fields.parent` for an edit, whatever `project.type` says (pkg/jira/edit.go), so the type only matters for create. Derived copies are written with the base's owner mode masked to 0600 (a 0400 base gives a 0400 copy; the mode is part of the file name, so a cached copy is never wider). A parent is detected by the wrapper's flag scanner (values of other flags, `--` and pflag clusters such as `-hPKEY` are read as pflag reads them), and the project block is only edited when it is a flat list of plain `key: scalar` lines with at most one `type` key. Not verified against a
+  live Jira (team-managed and company-managed): fields.parent is accepted by Jira Cloud for both.
+- **`issue comment edit|delete KEY ID`** (jira-cli has only `comment add`): for a config of ours
+  the wrapper `exec`s `workspace-agent jira-comment` with its own argv, before it asks for the
+  credential, so the token never passes through the shell. The helper does `PUT` / `DELETE` on
+  `/rest/api/3/issue/KEY/comment/ID` (`write:jira-work`), with the body as Markdown converted to
+  ADF (`internal/jirax/jira_adf.go`, goldmark) rather than through jira-cli's wiki converter (#2476), so an edit
+  repairs a garbled comment. A `--debug` run is refused. The user's own setup (next bullet) is
+  exec'd unchanged, where jira answers that it has no such command.
+- **Bodies as ADF (`comment add`, `issue create -b/-T`, `issue edit -b`)** (#2809): jira-cli sends
+  them as v2 wiki markup, where `{{code}}` and `*bold*` only work at a word boundary, which
+  Japanese text and full-width brackets are not. For a config of ours, `comment add` with a body
+  (on the command line, `-T`, or stdin) that jira-cli would not prompt or confirm for (stdin not a
+  terminal, `-T -`, or an effective `--no-input`) goes to `workspace-agent jira-comment` (POST
+  `/rest/api/3/issue/KEY/comment`, `--internal` as the `sd.public.comment` property; a POST is
+  never re-sent; any flag it does not know, or a boolean pflag would refuse, is refused before the
+  call). `create` / `edit` with a body and no prompt to make (stdin not a terminal, or an effective
+  `--no-input`) read the body first, bounded like the write (a pipe that never closes exits 124
+  before anything is sent), run jira-cli with `-b` / `-T` taken out and stdin `/dev/null`, then
+  pipe the body to `workspace-agent jira-description KEY [--skip-notify]` (PUT
+  `fields.description`) under the same timeout and signal forwarding. The key of a create is read
+  from jira-cli's `/browse/KEY` line or `--raw` JSON; when it cannot be read or the PUT fails the
+  wrapper exits 3 (124 on a timeout) and says the issue exists, never re-running the create.
+  Before a create, `workspace-agent jira-description-required PROJECT TYPE` reads createmeta (the
+  paged `/issue/createmeta/{project}/issuetypes[/{id}]`); when the description is required, the
+  body goes with the create through jira-cli's own conversion (on stdin, argv untouched). A create
+  that is still refused with `- description:` is not re-sent: jira-cli prints field errors
+  without their status, so "refused, nothing created" cannot be told from a failure after the
+  issue was made; the wrapper names `AF_JIRA_ADF=0`, which turns the three ADF paths off. A read
+  error on the body stops before anything is sent. An edit whose only change is the
+  body skips jira-cli. Flags are read the way pflag reads them (last value wins, `-h=v`, short
+  clusters such as `-hpAB`; a shorthand it does not know leaves the run to jira-cli). Help,
+  an effective `--web`, a bare-number key (jira-cli completes it from the config) and `edit -T`
+  stay with jira-cli. The Markdown parser applies the CJK-friendly amendment to CommonMark's
+  flanking rules (`goldmark-cjk-friendly`), so `**「x」**です` is bold.
 - **The user's own setup wins**: an explicit `JIRA_API_TOKEN` or `JIRA_SERVER`, a `jira init`
   given its own `--server` / `--login` / `--installation` / `--auth-type`, or any config outside
   the managed directory (`-c` in any spelling, `JIRA_CONFIG_FILE`, or jira's own default
@@ -288,13 +359,24 @@ those variables in for one `exec`:
 **Limits worth knowing:**
 
 - **Scopes on OAuth**: boards, sprints, epics and `jira init` call `/rest/agile/1.0`, which
-  accepts no classic scope. The tenant's Jira app has to grant read:board-scope:jira-software,
+  accepts no classic scope (`issue create` does not need them, see above). The tenant's Jira app has to grant read:board-scope:jira-software,
   read:project:jira, read/write:sprint:jira-software, read/write:epic:jira-software,
   read:issue-details:jira and read:jql:jira. The administrator then ticks the
   `jira_software` scope group on the app (`tenant_git_oauth.scope_groups`), and only then does
   the authorize URL ask for them: Atlassian refuses an authorization that names a scope the
-  app lacks. Members already connected reconnect to receive them. An API-token connection has
+  app lacks. Measured (2026-10-19): the refusal is a dead-end "Something went wrong" page on
+  Atlassian's side with no redirect back to the callback, so there is no `error=invalid_scope`
+  for af to catch and retry without the Software scopes; the tenant option cannot be dropped.
+  Members already connected reconnect to receive them. An API-token connection has
   whatever the account can do.
+  Making the absence visible: the Agent keeps the scopes accessible-resources reports for the
+  current site (`JiraSite.Scopes`) and derives `softwareScopes` (`granted` / `missing`, absent
+  when unknown: API token, or a failed lookup). A store from before the field is filled in
+  from accessible-resources on the next `jira-cred` or Jira fetch (bounded, throttled, written
+  only onto site entries that have no scopes), so no reconnect is needed to see the warning. The Settings Jira card shows
+  "Boards, sprints and epics: not available" on `missing`, and `workspace-agent jira-cred`
+  prints `software=missing`, on which the wrapper writes the same one line to stderr for
+  `board`, `sprint`, `epic` and `init` and then runs jira unchanged.
 - **Links on OAuth**: jira-cli builds browse URLs from its server, so with OAuth they point at
   `api.atlassian.com/ex/jira/...` rather than the site.
 - **Pin**: `JIRA_CLI_VERSION` in the Dockerfile (v1.7.0, the latest release). The tarball must
@@ -514,7 +596,7 @@ deployment's table directly**, and never holds an upstream credential:
   `AF_REMOTE_ENGINE_KEYS`; it exchanges the issuing token for engine tokens it keeps
   only in memory, and polls the lender's `GET /internal/engine/catalog`. The lender
   stores nothing new. The procedure is
-  [operate/08](../../guide/operate/08-borrowed-engine.md).
+  [operate/09](../../guide/operate/09-borrowed-engine.md).
 - **Model ingest** downloads from Hugging Face and Civitai with a deployment-wide token,
   set by a super_admin and sealed in a settings row; on AWS it is also copied into the
   stack's Secrets Manager secret for the ingest task, which the CP writes but never

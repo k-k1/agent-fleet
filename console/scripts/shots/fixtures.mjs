@@ -58,7 +58,7 @@ export function sessions(locale) {
       path: "/home/dev/repos/picture-book",
       state: "idle",
       alive: true,
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       worktree: true,
       createdAt: ago(20),
       studio: STUDIO_ID,
@@ -74,7 +74,7 @@ export function sessions(locale) {
       path: "/home/dev/repos/webshop@checkout-validation",
       state: "working",
       alive: true,
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       branch: "feat/checkout-validation",
       worktree: true,
       createdAt: ago(46),
@@ -88,7 +88,7 @@ export function sessions(locale) {
         "Empty carts and zero totals are both rejected now. Moving on to the API-side checks.",
       ),
       tokenSpends: [4200, 1800, 9100, 3400, 2600, 11800, 5200, 3100, 7400, 2200],
-      context: { read: 168000, create: 9400, fresh: 2100, model: "claude-opus-5" },
+      context: { read: 168000, create: 9400, fresh: 2100, model: "claude-opus-5-5" },
     },
     {
       name: "sc9lm3d",
@@ -100,7 +100,7 @@ export function sessions(locale) {
       path: "/home/dev/repos/payments-api",
       state: "question",
       alive: true,
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       branch: "main",
       createdAt: ago(21),
     },
@@ -196,7 +196,7 @@ export function turns(locale) {
       role: "assistant",
       idx: 13,
       ts: ago(45),
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       inTok: 18420,
       outTok: 640,
       cacheRead: 96210,
@@ -775,7 +775,7 @@ export function conversations(locale) {
       agent: "claude",
       assistant_id: "operator",
       title: ja ? "フリート運用の相談" : "Fleet operations",
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       created_at: ms(600),
       updated_at: ms(14),
       message_count: 12,
@@ -786,7 +786,7 @@ export function conversations(locale) {
       agent: "codex",
       assistant_id: "general",
       title: ja ? "リリースノートの下書き" : "Release notes draft",
-      model: "gpt-5.6-luna",
+      model: "gpt-6-luna",
       created_at: ms(2600),
       updated_at: ms(210),
       message_count: 6,
@@ -839,7 +839,7 @@ export function assistants(locale) {
       icon: "rocket",
       builtin: true,
       agent: "claude",
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       description: ja ? "セッションの起動・操作・引き継ぎを代行します。" : "Starts, steers and hands over sessions for you.",
       tools: {},
     },
@@ -849,7 +849,7 @@ export function assistants(locale) {
       icon: "comment-discussion",
       builtin: true,
       agent: "claude",
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       tools: {},
     },
   ];
@@ -950,13 +950,13 @@ export function workItems(locale) {
   });
   const bbRows = ja
     ? [
-        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda", { checks: CI_GREEN }),
-        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
+        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda", { checks: CI_GREEN, commentCount: 3 }),
+        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING, commentCount: 7 }),
         bb(3, "acme/gateway#88", "レート制限のヘッダを返す", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ]
     : [
-        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda", { checks: CI_GREEN }),
-        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING }),
+        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda", { checks: CI_GREEN, commentCount: 3 }),
+        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress", checks: CI_RUNNING, commentCount: 7 }),
         bb(3, "acme/gateway#88", "Return the rate limit headers", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ];
   // 38 items = 5 projects mixed, same assignee on every row. With the 3 GitHub ones, 41 in all.
@@ -970,6 +970,9 @@ export function workItems(locale) {
       it("wi1", "demo/webshop#312", ja ? "クーポン併用時に税額がずれる" : "Tax is off when coupons stack", {
         labels: ["bug", "checkout"],
         updatedAt: ago(35),
+        // Unread on the rail: capture.mjs seeds a baseline with fewer comments, so the count grew
+        // (new-activity dot, bold title).
+        commentCount: 5,
       }),
       it("wi2", "demo/webshop#308", ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form", {
         state: "in_progress",
@@ -980,12 +983,25 @@ export function workItems(locale) {
         // two marks that make a PR worth opening before starting a review on it.
         checks: CI_RED,
         mergeable: "conflict",
+        commentCount: 4,
+      }),
+      // The pull request the features-page still opens (workItemDetail): green CI, no conflict,
+      // so the detail panel offers Merge.
+      it("wi4", "demo/webshop#315", ja ? "注文履歴の並び順を安定させる" : "Keep the order history sort stable", {
+        state: "in_progress",
+        kind: "pr",
+        labels: ["bug"],
+        updatedAt: ago(70),
+        checks: CI_GREEN,
+        mergeable: "clean",
+        commentCount: 2,
       }),
       // Keep one row with no labels. While the CP emitted a nil slice (null in JSON), this shape
       // turned the whole Console blank (docs/log/80 §80.17.5). Do not remove it.
       it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
         labels: null,
         updatedAt: ago(400),
+        commentCount: 0,
       }),
       ...jiraRows,
       ...bbRows,
@@ -1125,9 +1141,9 @@ const USAGE_WEIGHTS = {
   },
   kind: { claude: 0.61, codex: 0.22, cursor: 0.1, opencode: 0.07 },
   model: {
-    "claude-opus-5": 0.44,
-    "claude-sonnet-5": 0.19,
-    "gpt-5.6-luna": 0.22,
+    "claude-opus-5-5": 0.44,
+    "claude-sonnet-5-5": 0.19,
+    "gpt-6-luna": 0.22,
     "composer-1": 0.1,
     "opencode/nemotron-3-ultra-free": 0.05,
   },
@@ -1139,16 +1155,16 @@ const USAGE_WEIGHTS = {
 // dense grid of every combination (a real one is sparse).
 const USAGE_PAIRS = {
   feature: {
-    session: ["claude-opus-5", "gpt-5.6-luna", "composer-1", "opencode/nemotron-3-ultra-free"],
-    "assistant.chat": ["claude-sonnet-5", "gpt-5.6-luna"],
-    compact: ["claude-sonnet-5"],
-    "suggest.session": ["claude-sonnet-5"],
-    "title.session": ["claude-sonnet-5"],
-    "assistant.autoturn": ["claude-sonnet-5"],
+    session: ["claude-opus-5-5", "gpt-6-luna", "composer-1", "opencode/nemotron-3-ultra-free"],
+    "assistant.chat": ["claude-sonnet-5-5", "gpt-6-luna"],
+    compact: ["claude-sonnet-5-5"],
+    "suggest.session": ["claude-sonnet-5-5"],
+    "title.session": ["claude-sonnet-5-5"],
+    "assistant.autoturn": ["claude-sonnet-5-5"],
   },
   kind: {
-    claude: ["claude-opus-5", "claude-sonnet-5"],
-    codex: ["gpt-5.6-luna"],
+    claude: ["claude-opus-5-5", "claude-sonnet-5-5"],
+    codex: ["gpt-6-luna"],
     cursor: ["composer-1"],
     opencode: ["opencode/nemotron-3-ultra-free"],
   },
@@ -1652,7 +1668,7 @@ export function sessionsBig(locale, lanes) {
       path: "/home/dev/repos/webshop",
       state: i % 5 === 0 ? "question" : "idle",
       alive: true,
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       ...(i % 3 !== 0 && i > 0 ? { originSession: bigName(i - 1) } : {}),
     });
   }
@@ -1847,7 +1863,7 @@ export function studioTurns(locale) {
       role: "assistant",
       idx: 2,
       ts: ago(12),
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       text: "",
       parts: [
         { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
@@ -1868,7 +1884,7 @@ export function studioTurns(locale) {
       role: "assistant",
       idx: 4,
       ts: ago(1),
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       text: "",
       parts: [
         { kind: "tool", tool: "mcp__af_40ed9852__get_image_studio" },
@@ -2028,25 +2044,54 @@ const FILES = {
 // red CI and a conflict, one approval and one change request — the state that makes a reviewer
 // want to look before starting a session on the head branch.
 export function workItemDetail(locale, key) {
-  if (key !== "demo/webshop#308") return { error: { code: "not_found", message: "no such item" } };
   const ja = locale === "ja";
-  return {
+  const base = {
     provider: "github",
     key,
     kind: "pr",
-    title: ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form",
     state: "open",
-    url: "https://github.com/demo/webshop/pull/308",
     author: "Kai Morgan",
     assignee: "demo",
-    labels: ["ui"],
-    labelColors: { ui: "1d76db" },
     repo: "demo/webshop",
-    updatedAt: ago(150),
     draft: false,
     merged: false,
-    mergeable: "conflict",
     baseBranch: "develop",
+    mergeMethods: ["merge", "squash", "rebase"],
+    defaultMergeMethod: "squash",
+    canMerge: true,
+  };
+  if (key === "demo/webshop#315") {
+    // Clean and green with one approval: the shape that draws an enabled Merge button.
+    return {
+      ...base,
+      title: ja ? "注文履歴の並び順を安定させる" : "Keep the order history sort stable",
+      url: "https://github.com/demo/webshop/pull/315",
+      labels: ["bug"],
+      labelColors: { bug: "d73a4a" },
+      updatedAt: ago(70),
+      mergeable: "clean",
+      mergeableState: "clean",
+      headSha: "9f3c1e07a4b25d86c0e1f7a39b8d24c65e0a1b73",
+      headBranch: "fix/order-history-sort",
+      additions: 42,
+      deletions: 11,
+      changedFiles: 3,
+      comments: 2,
+      reviews: [{ name: "Sora Nishida", state: "approved" }],
+      checks: CI_GREEN,
+    };
+  }
+  if (key !== "demo/webshop#308") return { error: { code: "not_found", message: "no such item" } };
+  return {
+    ...base,
+    title: ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form",
+    url: "https://github.com/demo/webshop/pull/308",
+    labels: ["ui"],
+    labelColors: { ui: "1d76db" },
+    updatedAt: ago(150),
+    mergeable: "conflict",
+    mergeableState: "dirty",
+    headSha: "5b8e2d41c7f093a6e1d4b0c82f7a9e3d16c54a08",
     headBranch: "feat/postcode-autofill",
     additions: 214,
     deletions: 37,
@@ -2080,5 +2125,90 @@ export function sessionSearch(locale, q) {
     indexing: true,
     indexed: 41,
     total: 44,
+  };
+}
+
+// Agent Fleet's own memory (ADR 0108), for the "memory" scene: memories every agent kind shares,
+// written by sessions of several kinds and one by the member, in the user scope and two projects.
+// MemoryListed / MemoryBody / MemoryChange in console/src/features/settings/memory/memoryTypes.ts.
+const MEM_PROJECTS = {
+  webshop: { id: "p-webshop", root: "/home/dev/repos/webshop", vcs: "git", display: "webshop", remote: "github.com/acme/webshop" },
+  payments: { id: "p-payments", root: "/home/dev/repos/payments-api", vcs: "git", display: "payments-api", remote: "bitbucket.org/acme/payments-api" },
+};
+function memoryRows(locale) {
+  const ago = (h) => new Date(Date.now() - h * 3600e3).toISOString().replace(/\.\d+Z$/, "Z");
+  const m = (name, scope, project, type, ja, en, h, kind, session, uses, pinned = false, body = ["", ""]) => ({
+    name, scope, ...(project ? { project: MEM_PROJECTS[project] } : {}), type,
+    description: L(locale, ja, en), updated: ago(h), pinned, uses, revision: 1 + (uses % 4),
+    authorKind: kind, authorSession: session, body: L(locale, body[0], body[1]), created: ago(h + 48),
+  });
+  return [
+    m("checkout-tests-need-payment-mock", "project", "webshop", "feedback",
+      "決済のテストは決済モックを起動してから流す", "Start the payment mock before running the checkout tests",
+      3, "claude", "sk4rq2f", 14, true, [
+        "決済まわりのテストは `make mock-pay` でモックを起動してから `npm test -- checkout` を流す。\n\nモック無しだと 30 秒のタイムアウトで全件赤になり、テストが壊れたように見える（実測: 42 件中 42 件）。\n\nCI は `services:` でモックを立てているので、ローカルだけの手順。",
+        "Run `make mock-pay` before `npm test -- checkout`.\n\nWithout the mock every checkout test fails on a 30 s timeout, which looks like a broken suite (measured: 42 of 42 red).\n\nCI starts the mock as a service, so this is a local step only.",
+      ]),
+    m("release-branch-naming", "project", "webshop", "project",
+      "リリースブランチは release/<年>.<週> で切る", "Release branches are release/<year>.<week>",
+      26, "codex", "sc9lm3d", 6),
+    m("refund-api-is-idempotent", "project", "payments", "project",
+      "返金 API は Idempotency-Key 必須。再送で二重返金しない", "The refund API needs an Idempotency-Key; a retry never refunds twice",
+      50, "copilot", "sq3hn7v", 9),
+    m("ledger-migrations-review", "project", "payments", "feedback",
+      "台帳のマイグレーションは必ず別セッションにレビューさせる", "Ledger migrations always get a review from another session",
+      74, "member", "", 4),
+    m("prefers-small-prs", "user", null, "user",
+      "PR は 400 行以内に分けると喜ばれる", "Keep pull requests under about 400 lines",
+      100, "opencode", "so5nw6k", 21, true),
+    m("answer-in-japanese", "user", null, "user",
+      "説明は日本語、コミットとコメントは英語", "Explanations in Japanese, commits and comments in English",
+      200, "member", "", 33),
+  ];
+}
+export function memoryList(locale) {
+  return { entries: memoryRows(locale).map(({ body, created, ...row }) => row), withheld: 0 };
+}
+export function memoryRead(locale, name) {
+  const row = memoryRows(locale).find((r) => r.name === name);
+  return row ? { ...row, kinds: ["claude", "codex", "copilot", "opencode"] } : { error: { code: "not_found" } };
+}
+export function memoryChanges(locale, limit) {
+  const rows = memoryRows(locale).sort((a, b) => b.updated.localeCompare(a.updated));
+  const changes = rows.map((r, i) => ({
+    commit: (i + 1).toString(16).padStart(2, "0") + "c4e9a1b7d3f2",
+    at: r.updated, op: i % 3 === 1 ? "update" : "save", scope: r.scope,
+    ...(r.project ? { project: r.project } : {}), name: r.name,
+    authorKind: r.authorKind, authorSession: r.authorSession,
+    latest: true, live: true, revertible: true,
+  }));
+  return { changes: changes.slice(0, limit || changes.length) };
+}
+
+// Moving a session to another agent (ADR 0115), for the "move" scene: the preview the dialog reads
+// for the Claude session in the webshop worktree. Uncommitted work and a queued follow-up travel
+// with it. MovePreview in console/src/features/sessions/move.ts.
+export function movePreview(locale, name) {
+  return {
+    source: name,
+    kind: "claude",
+    state: "idle",
+    targets: [
+      { kind: "codex", eligible: true },
+      { kind: "copilot", eligible: true },
+      { kind: "opencode", eligible: true },
+      { kind: "kiro", eligible: true },
+      { kind: "claude", eligible: false, reason: "same_kind" },
+      { kind: "shell", eligible: false, reason: "not_an_agent" },
+    ],
+    git: {
+      available: true,
+      dirty: true,
+      status: " M src/checkout/validate.ts\n M src/checkout/validate.test.ts\n?? src/checkout/errors.ts",
+      diffStat: " src/checkout/validate.test.ts | 34 ++++++++++\n src/checkout/validate.ts      | 18 ++++--\n 2 files changed, 47 insertions(+), 5 deletions(-)",
+      ahead: "5c1b9f4 " + L(locale, "合計 0 円の注文を弾く", "Reject orders whose total is zero"),
+    },
+    queued: [{ text: L(locale, "エラー文言はデザインのメモに合わせて", "Match the error wording to the design note"), origin: "memo" }],
+    sizeBytes: 48213,
   };
 }

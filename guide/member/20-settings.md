@@ -1,0 +1,707 @@
+---
+audience: "anyone looking for a setting"
+---
+
+# 20. Settings — every tab of the ⚙ settings dialog
+
+English | [日本語](20-settings.ja.md)
+
+How each setting is *used* belongs to the other chapters, so read this one as a
+**map**.
+
+## Opening it, and how it is organised
+
+**⚙ Settings** is in the account menu of the top bar. The left rail is split into four groups.
+
+| Group | What is in it |
+|---|---|
+| **Personal** | Display / Account / Keyboard / Read aloud / Notifications / Limit board / Assistant / AI assistance / Agent instructions / Agent memory / Memory snapshots |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat / MCP servers (used by sessions) / AWS profiles/SSM / Google Cloud |
+| **Outside access** | MCP tokens & apps (personal access tokens and connected apps that drive this Workspace from outside) |
+| **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchains / Databases / Preview subdomains / Internal repos / Export / import / Danger zone |
+
+- It remembers the tab you opened last and reopens there.
+- **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
+- Managing your team's **members, quotas and audit** is a **separate dialog**, **Tenant settings** in the same
+  menu, shown only to those with the permission ([admin/](../admin/README.md)). **Admin** (the shield icon)
+  is the deployment-wide one.
+- Some tabs **need the workspace running**, because the setting itself lives inside the workspace. While it is
+  stopped you get a note and a "Start workspace" button.
+
+### When a change takes effect
+
+Getting this wrong is what makes a setting look like it "didn't work".
+
+| Timing | What |
+|---|---|
+| **Immediately** | Display, keys, speech, notifications; adding and removing connections; the stopped-session archive period (on the next session-list refresh) |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, starting sessions from sessions, past-session search (turning it off also refuses running sessions' searches at once), Agent Fleet memory (likewise), image generation, MCP servers |
+| **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
+| **After stopping and starting the workspace** | Toolchains (timezone, language versions); Machine (a size or class your admin changed) |
+
+There are also **two storage scopes**. The theme, the surface colours and the main-area layout are stored **on
+this device only**; everything else (font, font size, …) is stored on the server and follows you to another PC
+or browser. If saving to the server fails, the top of the settings screen says your settings could not be
+saved; until then the agents act on the previous settings, so press **Retry**.
+
+---
+
+## Personal
+
+### Display
+
+Everything about appearance.
+
+- **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
+  surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
+  readable at a glance.
+- **Terminal**: font and font size, and **Ctrl+C / Ctrl+V copy and paste** (on by default; when Ctrl+C
+  copies and when it interrupts the program is in [08](08-terminal.md#copy-paste)).
+- **File viewer**: tab width, line numbers, wrapping, minimap, Markdown rendering ([07](07-files.md)).
+- **Reader view** / **file icons** (icon set).
+- **Main area layout**: **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
+  Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
+  disturb either ([02](02-console-basics.md)). If you switch often, the same choice sits in **Appearance** (the paint
+  can) in the top bar.
+- **Separate appearance per tenant** (only if you belong to two or more tenants; off by default): remembers the
+  theme and surface colours for each tenant on this device and switches with the tenant. Off keeps the look you see
+  now for every tenant; saved looks are kept.
+
+### Account
+
+The **sign-in methods** linked to your account (Google / Microsoft / GitHub …). Whichever one you use, you
+land in the same workspace, the same home and the same settings.
+
+- **Add a sign-in method**: when your company offers more than one (say Microsoft at head office and GitHub
+  at the subsidiary you are seconded to), you can add a second one to your account. The button takes you
+  through that method's sign-in and back; the list then shows it.
+- Only a method that asserts **the same email address as this account** can be added. Accounts under
+  different addresses cannot be merged into one (it could not be undone).
+- That method's own entry rules still apply: organization membership for GitHub, the allowed email domains.
+  Linking is not a way around them.
+- A method already used by **somebody else's account** cannot be added.
+- If the sign-in page told you "this email address is already used by another sign-in method", the fix is to
+  **sign in the way you normally do** and add the other method here.
+- **Remove**: a method you no longer use can be taken off the list. Your workspace, home and secrets are
+  untouched, and you can add the same method again later. Two of them cannot be removed, and hovering the
+  disabled button says which case you are in:
+  - **the method you are signed in with right now**: sign in with another one first, then remove it.
+  - **the only method left**: removing it would leave you unable to sign in at all, with no way to undo it
+    yourself (this deployment has no password and sends no email).
+
+### Keyboard
+
+- **Shortcut assignment**: you can change the direct keys (`Alt+1` …) and the three app-wide keys. Sequences
+  under the leader (e.g. leader → `p` → `r`) are structural and cannot be changed. **?** opens the cheat sheet
+  at any time.
+- **Terminal input priority**: while a terminal has focus, every Ctrl-key goes to the terminal. Only the leader
+  survives on the app side, and everything remains reachable from the command menu / palette.
+- **Pass every key to shell / SSM terminals**: stronger than the above. The leader (Ctrl/⌘+K) and the palette
+  (Ctrl/⌘+P) are passed through too, making it a pure terminal. It applies only to shell / SSM, not to agent
+  terminals. Off by default.
+- **Send key**: **Ctrl+Enter to send (Enter for a newline, the default)** or **Enter to send
+  (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
+- **Reply suggestions**: chips with short replies above the composer ([04](04-conversation.md#reply-suggestions)). This is also
+  where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
+  drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
+  back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
+
+### Read aloud
+
+Reads out replies from sessions and assistants.
+
+- **Voice**: engine (Zundamon (VOICEVOX) / Polly / auto), speaker, **a different voice per session** (assigned
+  from a character pool), emotion, reading speed.
+- **Auto-read**: read new replies automatically, **read the work in progress in a quiet voice**, read in every
+  open pane, summarise long replies, read out confirmations and questions.
+- **How it reads**: abbreviate code fragments, pause after particles, read English as kana, and a
+  **pronunciation dictionary** (`written=reading`, one per line).
+- **Advanced**: background playback and volume, panning to match the pane position, audio cache.
+- **Audio notifications**: announce session state changes and usage-limit resets by voice; which ones is
+  chosen in the Notifications tab.
+- **Read-aloud language**: Auto (follows the display language) / Japanese / English. With the engine on
+  "auto", English switches to a Polly English voice. This is separate from the assistant's **Output language**.
+- "Reset to defaults" resets the speech settings only (the pronunciation dictionary is kept).
+
+### Notifications
+
+- **Allow desktop notifications**: shown while the browser has not been asked yet; it asks for permission.
+  If the browser blocked notifications for this site, the tab says so: only the site settings can undo it.
+- **Session voice notifications** on / off: the master switch for the "Read aloud" column below (also the
+  speaker button in the notification centre).
+- **The notification table**: one row per kind of notification, one switch per effect:
+
+  | Row | Covers |
+  |---|---|
+  | Turn finished | a session finished its turn and waits for you |
+  | Turn finished (child session) | the same, for a session another session started with `create_session` |
+  | Needs your answer | a question, a plan approval, a permission request |
+  | Usage limit reset | a Claude / Codex 5-hour or weekly limit you had hit has reset |
+  | Session report | a session reported to an assistant conversation |
+  | Rate limit | a session hit a rate limit, or resumed after one |
+  | Scheduled runs | a scheduled run finished, failed or was skipped |
+  | Handoffs | a handoff offered to you, accepted or expired, or a session that started from one you gave back |
+  | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
+  | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
+  | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, and any kind added later |
+
+  - **Unread dot**: off marks the notification read the moment it arrives: no red dot on the session and no
+    unread count, while the notification centre keeps it as a read row. This column follows you to your
+    other devices (the read mark does anyway). It cannot be turned off for "Needs your answer", "Handoffs"
+    and "Cloud sign-in", which wait for a person.
+  - **OS notification** and **Read aloud**: this device only, so a phone and a desk can differ. Read aloud
+    also needs "Session voice notifications" on; a usage-limit reset speaks whenever "Read aloud" is on in
+    the speech tab instead.
+  - Everything is on by default, which is how notifications behaved before the table. The two switches it
+    replaced carry over as they were: "Notify when a child session is waiting for input" became the
+    child-session row (all three cells), "Limit-reset notifications" the usage-limit row.
+  - Nothing pops up or speaks for the session in the pane you are working in, whatever the table says.
+- **Service notifications**: stop sending to Discord / Slack **without disconnecting**. The connection itself,
+  and which events each service receives, live in the "Chat" tab ([15](15-external-services.md#connecting-discord-slack-chat-bridge)).
+- History is in the **notification centre** (last 7 days), opened from the bell in the top bar. What the
+  unread red dot means and how it clears: [Icons, badges, and menus](badges-and-menus.md#session-display).
+
+### Limit board
+
+Who in this tenant may see where you stand on your agents' usage limits, and how much. It is hidden
+until you choose otherwise and is set per tenant; the tab lists every tenant you publish to, then what teammates
+publish to you. The choices and how to read the values are in
+[12](12-collaboration.md#showing-teammates-where-you-stand-on-usage-limits).
+
+### Assistant
+
+The behaviour of assistant chat and the fleet operator ([10](10-chat-memo.md), [11](11-many-sessions.md)).
+
+- **Output language**: follow the input / 日本語 / English. It changes chat replies only (the read-aloud
+  language lives on the **Read aloud** tab).
+- **Agent priority**: a new conversation starts on the first connected CLI from the top of this list. The
+  conversation stays on that CLI; when it cannot be used (not connected, or at a usage or rate limit) the first
+  usable CLI in this order answers that turn instead, which may be one ranked above it, and a note in the
+  thread says so. The next turn goes back once the limit lifts. Titles, reply suggestions and the like are
+  ranked separately (the **AI assistance** tab).
+- **Assistant models**: per CLI. "Recommended (currently: …)" picks a safe default from the live catalogue and
+  shows what it currently resolves to; prices and context window are described in
+  [09](09-agents.md#model-prices-and-usage-chips).
+- **Auto-respond to session reports**: the operator takes one turn automatically when a report arrives.
+  Its companions: the **Unattended auto-reply limit** (default 10, max 50; it cannot be unlimited), the
+  **Auto-reply model** (reading a report is routine work, so a lighter model saves a lot), the **Auto-reply
+  bundling window** (reports arriving within it are handled in one turn) and **Quiet completion reports** (a
+  normal completion delivers the card and the notification but takes no turn). See
+  [11](11-many-sessions.md#session-reports-and-auto-reply).
+- **Auto-pilot**: carries questions and plan approvals through automatically. Off by default (same section).
+- **Auto-resume interrupted turns**: resumes a turn cut short by a dropped connection or a temporary rate
+  limit. On by default.
+- **Auto-compact chat context** and its **threshold (tokens)**: summarise and hand a long conversation forward
+  ([10](10-chat-memo.md#when-a-conversation-gets-long-a-context-rule-of-thumb)).
+- **Session output fetch limit**: how much of a session's output the operator reads at once (default 32 KiB).
+  The larger it is, the more accumulates in the conversation and the more tokens every later turn costs. The
+  full output is always readable in the chat view.
+- **Appearance**: theme and background colour of the assistant surface (this device only).
+
+### AI assistance
+
+Settings for the **one-shot AI generations** that appear on sessions, the mirror and the File pane. These are not
+the assistant conversation: they share an implementation, but they surface somewhere else.
+
+- **Agent priority**: the CLI order used for assistance, ranked separately from the assistant. The chat wants
+  the strongest model; assistance runs constantly and wants the cheapest one that works. CLIs that are not
+  connected or are at a usage or rate limit are skipped, and a generation that hits a limit is retried once on
+  the next CLI. Background memory review is the exception: pinned to a CLI at its limit, it waits rather than
+  moving to another.
+- **Model for short labels** / **Model for prose**: short covers titles, branch names and reply suggestions;
+  prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
+  "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
+  lists (codex and agy; a cheaper model that ships is picked up on its own); for prose it is a fixed tier one step
+  up. Without prices it falls back to the previous defaults. "Recommended (currently: …)" shows what it resolves
+  to right now. For muse, both are the newest model that is neither a `-contributor` one nor one you hid;
+  if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
+  its contributor default. Muse Code's contributor mode (Settings › Agents › Muse Code) applies to these
+  turns too.
+- **Features that use AI assistance**: one card per feature (8, plus **Background memory review** while memory
+  suggestions are on). Turning one off hides its button
+  entirely and folds away that card's agent/model rows.
+  - **Session title suggestion**: the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
+  - **Chat title suggestion**: "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
+  - **Branch name suggestion**: used when creating a worktree or renaming a branch.
+  - **Reply suggestions (session)** / **Reply suggestions (chat)**: the ✨ button on the mirror and the chat
+    composer, each its own switch; it spends tokens only when pressed. Turning one off does not affect the
+    other. The **reply suggestions** learned from your own input history (Keyboard tab) use no AI and are separate.
+  - **File edit suggestions**: turns a selection plus your instruction into a proposed replacement.
+  - **Work-plan update**: the "refresh" button that re-derives the assistant chat's plan from the recent
+    exchange.
+  - **Answer translation (mirror)**: the "Translate" button on a mirror answer that came back in another
+    language ([04](04-conversation.md#reading-an-answer-in-your-own-language-translation)). A translation is kept
+    per agent/model: changing this feature's agent or model means the next press generates a fresh one (the earlier
+    one comes back if you switch back).
+  - **Translate automatically**: presses that button for you the moment a turn finishes (off by default). Only
+    answers that **arrive while you are watching that session** qualify. This is the one translation setting
+    that spends without being asked.
+  - **Background memory review**: shown only while memory suggestions are on; it has no switch of its own, only
+    the agent and model the review uses. Only claude can run it today
+    ([18 Agent memory](18-agent-memory.md#settings)).
+
+  Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
+  priority order"). Once pinned to one agent, that card can also pick that agent's own model: left on "auto"
+  a card follows the default and cannot pick one concrete model. A card's "currently uses" line names the
+  agent it will actually run on right now (blank until the Agent has an answer).
+
+### Agent instructions
+
+Adds your own standing instructions to every agent newly started in this workspace, with a per-target row
+showing which file it was written to and whether it is in effect.
+See [09 Agents](09-agents.md#agent-instructions-write-down-how-you-work-once).
+
+This covers instructions only. Personal skills have the next entry; personal Claude Code hooks and subagents
+have no settings screen: they are files in claude's configuration folder, which survives Recreate. See
+[09 Agents](09-agents.md#bringing-your-personal-claude-code-setup).
+
+### Skills
+
+Lists each agent's personal skills, read-only: Claude (`$CLAUDE_CONFIG_DIR/skills` and `commands`), Codex
+(`$CODEX_HOME/skills`), OpenCode and Muse, one tab per agent. Each tab shows the folders that agent reads (a
+missing one is marked, with the path to create), then the skills grouped as yours, Agent Fleet's own (`af-*`,
+rewritten at every start) and the ones bundled with the CLI. An entry another copy of the same name overrides is
+struck through and names the winner. Open an entry for its path, its `SKILL.md` and the other files in its
+folder. Edit the files themselves; sessions started afterwards pick the change up. Skills kept in a repository
+are not listed here.
+
+### Agent memory
+
+Agent Fleet's own shared memory, which every kind of agent reads and writes, with the sessions' switch in
+its **Settings** view. The page is described in [18 Agent memory](18-agent-memory.md#agent-memory).
+
+### Memory snapshots
+
+Version control over the memory an agent keeps in its own files. The page is described in
+[18 Agent memory](18-agent-memory.md#memory-snapshots).
+
+
+---
+
+## Connections
+
+### Agents
+
+Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
+Antigravity): default model, **models to exclude**, **additional Claude models**, expanded thinking, RTK. The
+**llama.cpp** card holds its on / off switch and **your own connection** to a llama-server on your network;
+the **Muse Code** card holds its one-time install, the sign-in and the model / effort choice. The
+**Sessions** group holds **when stopped sessions are archived** (Default, which is the deployment's period (7 days unless the deployment changed it), 1 / 3 / 7 / 14 / 30 days, or Off), **session-to-session messaging**, **starting sessions from sessions** (with
+**children per session**), **past-session search** (on by default: lets a
+session search this workspace's past conversations with the `search_sessions` tool; the command palette's
+"Conversations" mode works either way, see [02](02-console-basics.md#command-palette)), **image generation** and the **image provider order** (this deployment's own engines first, each under its own name, then the CLI routes), auto-resume after a rate
+limit resets, and auto-resume of an interrupted turn.
+→ [09 Agents](09-agents.md), [11 Running many sessions](11-many-sessions.md#messages-between-sessions),
+[11 Running many sessions](11-many-sessions.md#starting-sessions-from-a-session-child-sessions),
+[13 Images](13-images.md#having-a-session-generate-an-image)
+
+### Git hosting
+
+GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
+The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every session
+([15](15-external-services.md#clis-that-are-already-signed-in)). If GitHub cannot renew the connection, the tab says
+"GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
+again."
+→ [06 Repositories and git](06-code.md)
+
+### Ops & monitoring
+
+Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk through an incident against
+real data. CloudWatch and AWS only need a profile picked from your SSM connections, with no secret to type. AWS
+**write tools are off by default**. → [15 External services](15-external-services.md)
+
+### Issue tracker
+
+Where the work items in the left rail's **Issue tracker** section come from (Jira issues, GitHub
+issues and pull requests, Bitbucket pull requests), so that a session can be started from a row.
+
+- **Saved queries** are the whole of it: GitHub search syntax, Jira JQL or a Bitbucket filter
+  expression, saved exactly as written. **Nothing is fetched until you save one**, and the query is
+  the only filter, and nothing is synced in bulk.
+- **GitHub: `assignee:` lists no pull request.** GitHub does not make a PR's author its assignee, so a
+  query of `assignee:@me` alone shows issues and nothing else. The default `is:open (is:issue OR is:pull-request) involves:@me`
+  (GitHub rejects some accounts' searches that name neither `is:issue` nor `is:pull-request`)
+  covers what you authored, are assigned, were mentioned in or commented on. **Reviews requested of
+  you are not in it**. Add `is:open review-requested:@me` as a second query (an item matched by both
+  still takes one row). `OR` and parentheses work too. A query GitHub rejects shows its reason on the row
+  ("github rejected the query: …"); one GitHub rejects only because it names neither type is retried once as
+  `(is:issue OR is:pull-request) (<your query>)`.
+- **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
+  (the address is half of that credential). The connection also signs in the `jira` CLI in sessions
+  ([15](15-external-services.md#use-jira-in-a-session)). An OAuth connection without the Jira Software scopes says on its card
+  "Boards, sprints and epics: not available.", with what your tenant administrator has to add. **GitHub and
+  Bitbucket ride on the Git hosting connection**, so they need nothing of their own.
+- **Bitbucket** has no search across an account, so its query is **assembled from your connected
+  repositories** (what to list × which target) instead of being typed by hand. Bitbucket items are
+  **read only**: nothing is written back to them.
+- **Branch name template**: what a session started from a row branches as. Empty means the
+  default `{prefix}{ref}-{slug}` (e.g. `feature/45-empty-list`, `fix/PROJ-123`); the placeholders
+  are `{ref}` `{num}` `{key}` `{project}` `{type}` `{prefix}` `{slug}`, and the example under the
+  field shows what yours produces. A repository's own rules (git-flow and the like) win at launch.
+
+See [03 Starting sessions](03-starting-sessions.md#starting-from-the-issue-tracker) for the list itself and for
+starting a session from a row.
+
+### Chat
+
+Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
+→ [15 External services](15-external-services.md#connecting-discord-slack-chat-bridge)
+
+### MCP servers (used by sessions)
+
+The tab is named **MCP servers (used by sessions)**: these are servers *your sessions use*. To let an outside app drive this Workspace, see [MCP tokens & apps](#mcp-tokens-apps) under **Outside access**.
+
+**Register the MCP servers you want to use here** and they become available to your assistants and sessions.
+This is where you add tools Agent Fleet does not ship with, such as an internal wiki, an issue tracker, a document
+search.
+
+- **Display name and ID**: the form starts with the **display name**, which the list shows prominently. The
+  **ID** (the server key written into every CLI's configuration) is filled in from the display name, or from the
+  URL host when the display name has nothing a key can use (a Japanese-only name, say), until you type in the ID
+  field yourself. Editing an existing server never changes its ID.
+- **Transport**: **remote (HTTP)** (URL) is the default; **stdio** (run an executable inside the workspace:
+  command, arguments, environment variables) is the second choice. A plain `http://` URL to a host other than
+  this machine is accepted but gets a warning, because the token and every request would travel unencrypted.
+  **Environment variable and header values are stored encrypted**. The configuration handed to the CLI that
+  runs the server can still contain them (in an owner-only file in your home, never in a repository). Put
+  credentials in the authentication, not in the URL.
+- **Authentication** (remote servers): **None**; **Bearer token**, one field that is sent as
+  `Authorization: Bearer <token>` (a pasted `Bearer ` prefix is removed); or **Custom headers**, any name/value
+  pairs. A saved token is never shown again: the field reads "Saved", leaving it blank keeps the token, and typing
+  a new one replaces it. A server whose stored `Authorization` is anything other than a Bearer token (`Token ...`,
+  say) opens as Custom headers. **OAuth** is for servers that only accept an OAuth sign-in: nothing is typed in the
+  form (no static header is allowed with it). Save the server, then press **Sign in** on its row.
+  The server's authorization server opens in a **new tab** (Sign in does not wait for the status to load). When it
+  is done, that tab shows the result and says it can be closed, and the row in your original Console tab updates by
+  itself. Only if the browser blocks the new tab does the sign-in open in the current tab, after telling you. The row shows
+  **Connected** with when the access token expires (it renews itself), the scopes granted and how the client was
+  identified (a client ID document Agent Fleet publishes, dynamic registration, or a client ID you entered).
+  Other row states: **Not signed in**, **Sign in again** (the saved sign-in can no longer be renewed) and **More
+  permission needed** (the server asked for a scope you did not grant). If the authorization server offers no
+  automatic registration, Sign in asks for a **client ID** (and a secret, if it has one) registered by hand. If a
+  sign-in through the client ID document did not finish, the row offers **Retry with dynamic registration**. A sign-in that was started and never came back (the
+  authorization server refused the client on its own error page, say) shows an **unfinished sign-in** note on the
+  row: press Sign in again, retry with dynamic registration, or ask the server's operator to trust this deployment's
+  host. To sign in to another Agent Fleet deployment, its administrator has to add this deployment's host to that
+  deployment's trusted client hosts setting.
+  **Disconnect** deletes the saved sign-in and revokes it at the authorization server when that supports it.
+  The sign-in lives in your workspace's encrypted store only. Sessions and assistants use it through a small
+  relay inside your workspace: the CLI's configuration names a local address (`127.0.0.1`, never reachable from
+  outside the container) and a private key instead of the server and a token, and the relay adds the access token,
+  renews it when needed and forwards the request. The token itself is never written into a CLI's configuration, so
+  a session can use the sign-in without being able to read it. An OAuth server is handed to sessions and
+  assistants **only while you are signed in**: signing in puts it into the configuration of every agent kind,
+  and disconnecting or **Sign in again** takes it out. Like any server, it is picked up **from the next session you
+  start**. A session that is already running when you disconnect, or whose sign-in can no longer be renewed, gets an
+  error from the relay telling you to sign in again in the Console (Settings > Connections > MCP servers (used by sessions)). If the
+  server answers that a tool needs more permission, the call fails with the server's own answer and the row shows
+  **More permission needed**, and its **Approve the extra permission** button signs in again asking for that permission on top of what you already granted. The relay's port is remembered across restarts of the Agent; if that port is taken at
+  start-up, a new one is chosen (with a new private key) and the configurations are rewritten, so sessions started before that need a restart.
+  The key is written into every agent's server entry as a plain header; that each CLI really sends it was only spot-checked against a local test server, not for every agent. A request without it is answered with a bare 403, so a server that stays unreachable from one agent while others reach it points here.
+  A **tenant**-distributed server can use OAuth too. Its administrator distributes no credential: the row
+  offers **Sign in** like one of your own, the sign-in is yours alone, and the server reaches your sessions only
+  after you have signed in. If the administrator stops distributing it, moves it to another URL or takes OAuth
+  off it, your sign-in to it is disconnected at your workspace's next fetch (within 5 minutes), and a new URL needs a new sign-in.
+  When the administrator registered a client for it, the row says the client was identified by **a client your tenant
+  registered**; changing that client also disconnects your sign-in.
+- **Advanced** (closed by default): **targets** (**assistants**, **sessions**, or both; clear both and the entry
+  stays but goes nowhere), **target agents** (empty covers every agent), the **timeout** and **enabled**. The
+  summary line beside the title shows the current values, for example "Assistant, Sessions · Every agent · default
+  timeout". It opens by itself when you edit a server whose values are not the defaults.
+- **Connection test**: reports the server name, version, tool count and round-trip time.
+  If the server answers that it needs an **OAuth sign-in**, the test says so instead of reporting a failure
+  and lists what it found: the authorization server, how a client can register with it, and the scopes.
+  For a saved server whose authentication is **OAuth**, the report has a **Sign in** button.
+- **Enabled / disabled**: disabling keeps the definition but stops handing it out.
+- Sessions pick it up **from the next session you start**. For assistants, choose it in the assistant's own
+  edit form under "MCP servers" ([10](10-chat-memo.md)).
+- Entries are labelled by origin: **user** (yours), **tenant** (distributed by an admin: a user entry with the
+  same name is not used; some are distributed such that only the values are asked of each member), and
+  **built-in** (Agent Fleet's own server and the ops & monitoring integrations).
+- On a deployment with restricted egress, you get a flow to **request access** for the host and wait for an
+  admin to approve it.
+- MCP definitions committed in a repository (`.mcp.json` and friends) are shown in **Project settings**, from
+  the repository row's menu, with per-agent status and warnings (a secret already under Git, a name clash,
+  files that disagree with each other).
+
+> **Agent Fleet's own MCP** is the "built-in" entry handed to every session from the start, with no setup needed.
+> It is what lets a session report that it finished, or propose a handoff to the next session.
+
+### AWS profiles/SSM
+
+Your AWS profiles (shared settings), which `af-aws-exec` and SSM sessions sign in with, and SSM hosts (individual)
+for logging in to another in-house host. A profile is **IAM Identity Center (SSO)** or **Assume a role from another
+profile**; an SSO row has **Log in** and, when signed in, **Log out**; an assume-role row's **Log out** ends its source's login, after a confirmation that names it. How logging
+in and out work, and the two types, is in [16 Cloud accounts](16-cloud-accounts.md#logging-in-to-another-in-house-host-ssm).
+
+### Google Cloud
+
+Your Google Cloud profiles, which `af-gcloud-exec` runs commands with: a label (the profile's name is made from
+it and shown beside it), the project, and optionally a quota project, the Google account to sign in as, a
+service account to impersonate, a region and a zone. No Google credentials are stored here, and
+service-account keys are not accepted. Two labels that make the same name are not available in the workspace
+until you rename one; the row says so. Each available row has **Log in**, **Log in again** and **Log out**; how
+they work, and the WS bar's Google Cloud badge, are in
+[16 Cloud accounts](16-cloud-accounts.md#running-commands-in-google-cloud-as-you-af-gcloud-exec).
+
+---
+
+## Outside access
+
+### MCP tokens & apps
+
+The **MCP tokens & apps** tab sits in the **Outside access** group, not under Connections, because it points the other way: it holds the personal access tokens and connected apps that *use this Workspace*. To register servers your sessions call, see [MCP servers (used by sessions)](#mcp-servers-used-by-sessions).
+
+Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
+→ [19 Using it from outside](19-outside-access.md#driving-your-workspace-from-an-external-claude-mcp)
+
+The same token can use your Agent Fleet memory too; the tab lists what it can do:
+→ [18 Agent memory](18-agent-memory.md#using-agent-fleet-memory-from-an-external-agent)
+
+## Workspace
+
+### Agent usage
+
+The ledger of **what your tokens went on**. Alongside the sessions themselves, it lists the auxiliary calls
+Agent Fleet makes behind the scenes (title suggestions, summarised handoffs, reply suggestions …) on the same
+scale.
+
+- **Range**: 24 hours / 7 days / 30 days.
+- **Split by**: feature / agent / model / session origin (started by a person, created by the operator, created
+  by a schedule, handoff, started by a session) / trigger (user, automatic, schedule, operator, bridge …).
+- **Metric**: tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)**, which is tokens ×
+  each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
+  what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
+  "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
+  shown alongside, never added to the estimate.
+- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** for everything else.
+  The Agent fetches that catalog once a day (where it cannot, it reads the copy opencode keeps). **Hover an amount to see which rate was used and where it came from.**
+  Consumption that went through opencode is priced at opencode's own rates, which is closer to what you actually pay.
+- Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
+  measurable" as "N% of the consumption runs on models with no price on file", which is not an amount of 0.
+  The same instance shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
+- Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
+- **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
+  (which does not mean they were free). cursor's Terminal (CLI) sessions report tokens per turn from a `stop` hook
+  and are shown as "Tokens: partial"; a turn on Auto has no model name of its own (cursor reports `default`).
+  Managed cursor sessions are not counted this way ([09](09-agents.md#cursor)).
+- **RTK gain**: cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
+  (RTK is in [09](09-agents.md#rtk-token-savings)).
+
+### Cloud cost
+
+What your own workspace costs to run in the cloud. **The tab is only there on a deployment running on
+AWS**, because nowhere else has a cloud bill to read.
+
+- The figure is **what is directly attributable to your workspace** (its slot hours, its persistent
+  home volume and that volume's snapshots), and the screen labels it "directly attributable to your
+  workspace (shared not included)". Shared infrastructure (NAT, DNS, load balancer, database, the idle
+  slot pool) is deliberately **never divided up between members**, so this is **not** the full cost of
+  running your workspace, and it is not "your cost".
+- **It runs about 24 hours behind, and the current day is not final**: the most recent days still
+  move.
+- A **date range**, the **daily trend** and **what it was spent on**. Amounts are in the currency the
+  bill is in (US dollars); nothing is converted.
+- **Nothing at all is available from before the day cost attribution was switched on**: it only
+  counts from that moment and cannot be backfilled. The screen says which day that is.
+
+### Running time
+
+When your workspace was actually running, as a grid of 24 hours (down) by date (across). Each
+square is one hour.
+
+- **The colour is not money.** Cloud costs are only available per day, so there is no such thing as
+  an hourly charge here (that is the Cloud cost tab next door). What this shows is how long the
+  workspace ran and how many sessions were open, usually the *reason* a particular day's cost
+  looks the way it does.
+- **There are three kinds of square.** Grey means **stopped**, a coloured square means **running**
+  (warmer = more sessions), and a **blank square means "not recorded"**: the control plane was not
+  watching that hour. Blank and grey do not mean the same thing.
+- **You can switch what the shading means**: sessions open / sessions actually working / running
+  time.
+- Point at a square and the detail for that hour appears below it (minutes running, peak count).
+  **Table** shows the same thing as numbers.
+- Times are shown in **your device's time zone**.
+- **Hours from before recording started stay blank** and cannot be filled in later.
+
+### Machine
+
+**What your workspace runs on.** Read-only: the size and the kind of machine are your tenant
+administrator's to set.
+
+- **Instance type / architecture / vCPU / memory / home disk.** On a cloud deployment each member gets a
+  instance to themselves, so these are that instance's figures.
+- Each value says whether it was **measured** (read inside the container) or **configured** (what the next
+  start will use). While the workspace is stopped everything is configured.
+- **The architecture matters.** JDKs, Node.js and the agent CLIs are downloaded as the build for that
+  architecture, and a tool whose build cannot run there is left out rather than installed broken
+  (what is installed is under Toolchains).
+- **Memory leads with what this workspace may spend, not what the instance has.** Part of the instance is held back
+  for the host's own daemons, so where both are known you get `6.5 GiB (instance has 8 GiB)`. The first number is
+  the one to look at when a build is being killed.
+- A size or class your admin changes applies **at the next start**, so when the running instance and the
+  configuration disagree, **both** are shown.
+- **Usage**: a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
+  home disk's usage. **The disk figure is only yours on an instance of your own**; on a shared host it is
+  the whole filesystem home sits on (labelled so, and never coloured as a warning), because other
+  members fill it too. On an instance of your own a notice appears once when free space drops below
+  about 2 GiB (or usage passes 90%), and again only after the disk has had real headroom (above about
+  3 GiB free and under 85%) and filled up again. **The ceilings are the rows above** (this workspace's memory limit and its core
+  count), so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
+  unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
+  it could not read**, and it says so when a process was killed for memory during the window.
+- **Memory pressure** (under the usage charts): the share of time tasks in your workspace waited on memory
+  (Linux pressure-stall information, "some" and "full"), next to how quickly the workspace's own Agent
+  answers. It is for measurement only: nothing is warned, refused or stopped because of it, and it is not
+  coloured. Where the machine cannot report it (a cgroup the Agent cannot confirm is its own, an older
+  kernel), the row says "Cannot be measured on this machine" instead of drawing a calm line.
+  An operator can switch the sampler off by starting the workspace with `AF_MEM_PRESSURE=off` in its
+  environment (exactly `off`; any other value, or none, leaves it on); the row is then not shown.
+- **Disk used by Agent Fleet**: what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
+  down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
+  sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after
+  14 on their own; **"Open cleanup"** closes Settings and opens the cleanup modal, where the deleted
+  sessions' share and the trash can be tidied up ([05 Stopping and tidying up](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
+  Working copies and tool caches are not counted here.
+- **Tool caches**: the caches go, npm, uv and pip keep in your home (`~/.cache/go-build`,
+  `~/.npm/_cacache`, …). They grow without limit (tens of GB is common) and are never emptied
+  automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
+  one after a confirmation. The next build or install that needs it is slower once. A cache a running
+  build or install is using shows **"In use"** and cannot be emptied until that finishes.
+  Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
+  the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
+- **Leftover files**, meaning things nothing reads again: throwaway profiles that killed headless Chromium
+  runs left under `~/.config/chromium-headless` and `~/.cache/chromium-headless`, `~/.af-work` folders
+  whose session (in the trash included) and working copy are gone, Node.js patches a newer patch of the
+  same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
+  them each time it starts; this section is for a workspace that runs for weeks without a restart.
+  **"Measure"** counts what would go now, and **"Delete"** removes one kind right away, without a
+  confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
+  process or changed within the last hour is kept. The Agent log names every folder it removes.
+  **`~/.af-work` is a throwaway area, not a place for files you want to keep.** At startup the Agent
+  removes only the session folders it created itself (they carry a hidden `.af-session-workdir` marker).
+  A folder you made there by hand, or one created before the marker existed, is never removed at
+  startup; it is counted here and goes only when you press **"Delete"**. Keep anything you care about
+  elsewhere, for example under `~/repos` or a folder of your own in your home directory.
+- The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
+
+### Toolchains
+
+Timezone, Node.js / Java / Go versions, the table of effective tool versions (a CLI whose install at the workspace's start failed shows
+"install failed" with the reason and is tried again at the next start; what to do is in
+[21](21-troubleshooting.md#starting-a-session-says-the-agents-cli-could-not-be-installed); one whose upgrade at the start was
+skipped because the home disk was full shows "upgrade skipped: home disk full, old version in use" and keeps working at the
+installed version), **agent CLI updates** (off by
+default), and applying an Agent Fleet update.
+The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`).
+When a newer patch of that version is out, an **Update to …** button downloads it into your home volume;
+sessions started afterwards use it, with no Stop → Start. For a Java or Node.js version that is
+not installed yet, the button names the version it will install (for example
+**Install 17.0.21+9**). Older Node.js patches that Agent Fleet installed are removed at the next
+workspace start; versions you installed yourself with nvm, and exact versions pinned by an
+nvm alias or a `.nvmrc`, are kept.
+**Installed versions** lists the JDKs and Node.js versions on disk with their size. **Uninstall**
+removes one from your home volume, after asking; for Node.js that is every patch of the major, including
+ones you installed with nvm. Versions provided by the workspace image, the
+selected version (unless the image also has it) and one being installed cannot be removed.
+→ [17 Workspace environment](17-workspace-environment.md#environment-settings-and-recreating-the-workspace)
+
+### Databases
+
+PostgreSQL and MySQL for this workspace, which is what database-backed tests run against. Each engine's
+state, version, memory, port and connection URL, with installing, starting and stopping it,
+creating, deleting and resetting a database by name, a shell already connected to one, and
+**Start with the workspace** (off by default). The same things from a terminal are `af-db`.
+→ [17 Workspace environment](17-workspace-environment.md#running-database-backed-tests)
+
+### Preview subdomains
+
+Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
+there on a deployment that issues preview subdomains** (elsewhere no URL would ever be minted, whatever
+you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
+login, and re-issuing the URL all live here. Where the deployment offers the development OIDC IdP, the tab
+also shows its Issuer, Discovery URL and Client ID with **Copy** buttons (the client secret is not shown),
+**Issue a new secret…**, **App configuration examples** and **Test personas**.
+→ [14 Preview and browser](14-preview-browser.md#preview-subdomains-only-where-they-are-issued)
+
+### Internal repos
+
+Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
+git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
+is stopped). → [06 Repositories and git](06-code.md)
+
+### Export / import
+
+Collect your own settings into **a single file**, take it away, and read it back on another deployment or
+account. It carries four things: **personal settings** (display, keys, notifications, agent defaults, …),
+your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and your **agent instructions**.
+
+- **Connections (Git / agent / AWS tokens and API keys, Google logins) are NOT included.** Sign in again wherever you
+  import. The flip side is that **this file is safe to hand to someone else**: handing a team the whole
+  set of SSM registrations works.
+- Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
+  is and reported back as "already there". A Google Cloud profile counts as already there when one with the
+  same label (ignoring case) exists; one without a label or project is skipped. An assume-role AWS profile is
+  imported only when an SSO profile with exactly its source's label and the same sign-in already exists or is in
+  the same file.
+- Personal settings are **merged onto** what you have now. Things that accumulate (learned quick replies,
+  key bindings) are never emptied just because the imported file has none.
+- Agent instructions are the one exception: they **replace** the text you have now (you are asked to
+  confirm first).
+- The result stays on screen as counts, and **what did not go in is on the same line**.
+- If the current AWS profiles cannot be read, nothing AWS-related is added (otherwise everything would be
+  created a second time); try again.
+- **Coming from your own machine's `~/.aws/config` rather than another Agent Fleet?** The AWS profiles/SSM tab
+  reads that file directly (the link is on this tab too). → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-awsconfig)
+
+### Danger zone
+
+**Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
+deeper reset that also removes home except logins and connections). Both lose uncommitted changes. The tab
+appears only on deployments that can perform them.
+→ [17 Workspace environment](17-workspace-environment.md#recreating-the-workspace-danger-zone)
+
+---
+
+## What you want to do → which tab
+
+| What you want | Tab |
+|---|---|
+| Text is too small / change the colours | Display |
+| Sign in with another method too | Account |
+| Send with Enter | Keyboard (send key) |
+| Switch panes by tab | Display (main area layout) |
+| Rebind a shortcut / pass keys to the terminal | Keyboard |
+| Have replies read out loud | Read aloud |
+| Silence Slack without disconnecting | Notifications (service notifications) |
+| Make the assistant answer in English | Assistant (output language) |
+| Let the operator run ahead, or stop it | Assistant (autopilot, auto-reply) |
+| Stop AI from writing titles or reply suggestions | AI assistance (per-feature on/off) |
+| Run only the assistance on a cheap model | AI assistance (priority, models) |
+| I keep typing the same preamble | Agent instructions |
+| Sign in to Claude / Codex | Agents |
+| Stop a model that bills extra from being picked | Agents (models to exclude) |
+| Keep stopped sessions in the list longer, or out of it sooner | Agents (archive stopped sessions after) |
+| Let sessions talk to each other | Agents (session-to-session messaging) |
+| Stop sessions from searching past conversations | Agents (past-session search) |
+| Let agents share what they learn across kinds | Agent memory (Settings) |
+| Let a session see what the other sessions are doing | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
+| Have a session leave you a note about what it noticed | Nothing to set: every session can ([11](11-many-sessions.md#letting-a-session-see-the-fleet)) |
+| Clone a private repository | Git hosting |
+| Get help investigating an incident | Ops & monitoring |
+| Start work from a ticket or an issue | Issue tracker |
+| Follow progress while away from the desk | Chat |
+| Let the AI use an in-house tool | MCP servers (used by sessions) |
+| Drive it from the Claude on my laptop | Outside access → MCP tokens & apps |
+| Find out what the tokens went on | Agent usage |
+| Find out what my workspace costs to run | Cloud cost |
+| I want to know when my workspace was actually running | Running time |
+| It memorised something wrong | Agent memory (Memories, Changes); Memory snapshots (History) |
+| Change the Java / Node version | Toolchains |
+| Run a test suite that needs a database | Databases |
+| Show the app you are building to someone | Preview subdomains |
+| Get into another server | AWS profiles/SSM |
+| Run commands in my Google Cloud projects | Google Cloud |
+| Keep code that cannot leave the building | Internal repos |
+| Take my settings to another environment | Export / import |
+| The environment is broken | Danger zone |

@@ -53,7 +53,7 @@ func (agentImpl) Kind() string { return session.KindAgy }
 // --name). The chat mirror IS supported: transcript.go reads the per-conversation
 // brain/…/transcript_full.jsonl, which agy appends live.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+	return agents.Caps{CanTranscript: true, PermissionChoice: true, MCPClient: agents.TriYes}
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {

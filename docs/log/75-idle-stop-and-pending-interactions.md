@@ -642,6 +642,11 @@ pane repaint alone (measured through a 120 s silent tool; see ADR 0055's 2026-10
 Still unbounded: Managed (#1942) and muse / lcpp / shell / ssm (#1943).
 Follow-ups: #1942, #1943.
 
+Note (2026-10-17): Terminal muse / lcpp / shell / ssm turned out to have no busy Terminal row to bound
+(ADR 0055's 2026-10-17 note, #1943). Managed cursor / kiro / codex / opencode are now bounded on each
+runtime's own sign of life (measured through a 120 s silent tool; ADR 0055's 2026-10-17 addendum).
+Still unbounded: Managed muse / lcpp / copilot (#1942).
+
 Note (2026-10-16): a carried plan can now be reviewed in another session (#2211). `Carried`
 keeps the plan file path (`planFile`) when promoted, because `status.Remove` drops the
 session's path record; `GET /sessions/{name}/plan-file` falls back to the carried plan,
@@ -664,3 +669,10 @@ Review round (2026-10-16): the follow-up carries a revision id (the Agent drops 
 to the same target for 2 minutes), a press holds a per-card lock, a failed interrupt stops the
 send, a send that fails after the reject offers a retry in the toast, and the reviewer memory
 follows `storage` events and merges onto storage on write.
+Note (2026-10-27): the reviewer link now lives at the Agent (#2496, piece 1). The planner's
+session meta holds `planReviewers` (plan-file path to reviewer NAME, newest last, at most 16),
+written by `POST /api/sessions/{name}/plan-reviewer` and returned with the session list, so
+another device offers "Review again" too. localStorage stays as a cache and the fallback for an
+Agent without the route; a write this tab has not yet seen come back wins over the Agent's older
+record. The label still comes from the live list and an unknown reviewer is never offered. The
+N-round review loop (#2219 piece 2) is still not built.

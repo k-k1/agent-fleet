@@ -8,20 +8,6 @@ import (
 	"strings"
 )
 
-// mcpOwnDecoderTools decode p.Args themselves (or forward it verbatim), so their argument
-// TYPES are not the union struct's business (it is still filled, best effort, for the fields
-// their handlers do read): running the union decode over them would refuse a
-// legitimate call whose field shares a name with a union field of another type.
-var mcpOwnDecoderTools = map[string]bool{
-	"get_image_studio": true, "set_image_draft": true, "run_image_trial": true, "add_image_knowledge": true,
-	mcpToolBranchName: true, mcpToolSearchSessions: true,
-	mcpToolMemoryIndex: true, mcpToolMemorySearch: true, mcpToolMemoryRead: true,
-	mcpToolMemorySave: true, mcpToolMemoryForget: true,
-	// Forwarded to the Control Plane as written, which owns their shape.
-	"add_memo": true, "update_memo": true, "flush_memos": true,
-	"create_schedule": true, "update_schedule": true,
-}
-
 // mcpSchemaProps returns the property names of a tool's advertised inputSchema, and false when
 // the schema does not enumerate properties (then there is nothing to hold the caller to).
 func mcpSchemaProps(tool map[string]any) (map[string]bool, bool) {
@@ -71,11 +57,13 @@ func mcpToolProps(name string) (map[string]bool, bool) {
 	return props, ok
 }
 
-// mcpCheckCallArgs holds a tools/call to what its tool advertised and decodes it into a.
+// mcpCheckCallArgs holds a tools/call to what its tool advertised and decodes it into a, the
+// tool's own args struct (nil for a name with no spec: only the shape and the advertised keys are
+// checked).
 // A non-empty result is the tool error text; nothing has been done by then. Without it a
 // misspelt key (create_session with `prompt` for `initial_prompt`) decodes to a zero value and
 // the call succeeds with no task.
-func mcpCheckCallArgs(tool string, args json.RawMessage, a *mcpCallArgs) string {
+func mcpCheckCallArgs(tool string, args json.RawMessage, a any) string {
 	if t := strings.TrimSpace(string(args)); t == "" || t == "null" {
 		return ""
 	}
@@ -103,8 +91,11 @@ func mcpCheckCallArgs(tool string, args json.RawMessage, a *mcpCallArgs) string 
 			return strings.Join(msgs, "; ")
 		}
 	}
+	if a == nil {
+		return ""
+	}
 	err := json.Unmarshal(args, a)
-	if err != nil && !mcpOwnDecoderTools[tool] {
+	if err != nil && !toolOwnsArgs(tool) {
 		var te *json.UnmarshalTypeError
 		if errors.As(err, &te) {
 			return fmt.Sprintf("invalid argument %q for %s: got a JSON %s, want %s", te.Field, tool, te.Value, te.Type)

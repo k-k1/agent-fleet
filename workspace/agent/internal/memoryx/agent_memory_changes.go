@@ -53,6 +53,9 @@ type agentMemChangeView struct {
 	AuthorKind    string           `json:"authorKind"`
 	AuthorSession string           `json:"authorSession"`
 	RevertOf      string           `json:"revertOf,omitempty"`
+	// ReviewRun is the background review's run that published the change (ADR 0117), the id
+	// "revert this run" takes. Only a well-formed id of a change authored by the review is shown.
+	ReviewRun string `json:"reviewRun,omitempty"`
 	// Latest is the newest change of this memory in the list, the only one a revert or forget
 	// may start from. Live says the memory exists now. Revertible says the history holds a
 	// text on at least one side of the change (a forget of a file never committed has none).
@@ -65,10 +68,13 @@ type agentMemChangeView struct {
 }
 
 // agentMemChangesWire is the change list. Withheld counts rows left out because a value in
-// them failed the scan or the expected form.
+// them failed the scan or the expected form. Next is the cursor of the following page (the last
+// commit this page scanned, withheld or not): pass it as `before` to read the older changes. Empty
+// means the history ends here.
 type agentMemChangesWire struct {
 	Changes  []agentMemChangeView `json:"changes"`
 	Withheld int                  `json:"withheld,omitempty"`
+	Next     string               `json:"next,omitempty"`
 }
 
 func agentMemCleanText(s string) bool { return len(agentMemScanText("", s)) == 0 }
@@ -176,8 +182,39 @@ func agentMemSides(commit, rel string) (before []byte, beforeOK bool, after []by
 	return
 }
 
-// agentMemListChanges returns the newest published changes first.
+// agentMemChangeLog is the git log of the published agent-memory commits reachable from rev, newest
+// first, as raw records for agentMemChangeFrom. n <= 0 reads them all.
+func agentMemChangeLog(rev string, n int) ([][]string, error) {
+	args := []string{"log", rev}
+	if n > 0 {
+		args = append(args, "-n", strconv.Itoa(n))
+	}
+	args = append(args, "-F", "--grep=AF-Trigger: "+memoryTriggerAgentMemory,
+		"--format=%H"+memoryFldSep+"%aI"+memoryFldSep+"%B"+memoryRecSep)
+	log, err := memoryGitRun(args...)
+	if err != nil {
+		return nil, err
+	}
+	var recs [][]string
+	for _, rec := range strings.Split(log, memoryRecSep) {
+		f := strings.SplitN(strings.TrimSpace(rec), memoryFldSep, 3)
+		if len(f) == 3 {
+			recs = append(recs, f)
+		}
+	}
+	return recs, nil
+}
+
+// agentMemListChanges is the newest page of agentMemListChangesPage.
 func agentMemListChanges(limit int) (agentMemChangesWire, error) {
+	return agentMemListChangesPage(limit, "")
+}
+
+// agentMemListChangesPage returns one page of the published changes, newest first. `before` is the
+// cursor an earlier answer gave as Next: the page then starts at the commit before it. The cursor
+// is a commit, not an offset, so a change published between two pages lands ahead of the cursor
+// and neither repeats a row nor skips one.
+func agentMemListChangesPage(limit int, before string) (agentMemChangesWire, error) {
 	if limit <= 0 {
 		limit = agentMemChangesDefault
 	}
@@ -188,19 +225,50 @@ func agentMemListChanges(limit int) (agentMemChangesWire, error) {
 	if !memoryHasCommits() {
 		return out, nil
 	}
-	log, err := memoryGitRun("log", memoryBranch, "-n", strconv.Itoa(limit),
-		"-F", "--grep=AF-Trigger: "+memoryTriggerAgentMemory,
-		"--format=%H"+memoryFldSep+"%aI"+memoryFldSep+"%B"+memoryRecSep)
+	seen := map[string]bool{}
+	start := memoryBranch
+	if before != "" {
+		if !agentMemCommitRe.MatchString(before) {
+			return out, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "before is not a commit")
+		}
+		_, verr := memoryGitRun("rev-parse", "--verify", "--quiet", before+"^{commit}")
+		if verr == nil {
+			_, verr = memoryGitRun("merge-base", "--is-ancestor", before, memoryBranch)
+		}
+		if verr != nil {
+			return out, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no such change: the history was rewritten, read it again from the newest")
+		}
+		parent, err := agentMemParent(before)
+		if err != nil {
+			return out, err
+		}
+		if parent == "" {
+			return out, nil
+		}
+		// "Newest change of a path" is decided over everything newer than this page too, so a row
+		// whose memory changed after the cursor is not offered a revert the Agent would refuse.
+		newer, err := agentMemChangeLog(parent+".."+memoryBranch, 0)
+		if err != nil {
+			return out, err
+		}
+		for _, f := range newer {
+			if _, rel, _, _ := agentMemChangeFrom(f[0], f[1], f[2]); rel != "" {
+				seen[rel] = true
+			}
+		}
+		start = parent
+	}
+	// One more than the page, to know whether an older page exists without offering an empty one.
+	recs, err := agentMemChangeLog(start, limit+1)
 	if err != nil {
 		return out, err
 	}
-	seen := map[string]bool{}
+	if len(recs) > limit {
+		out.Next = recs[limit-1][0]
+		recs = recs[:limit]
+	}
 	projects := map[string]*agentMemProject{}
-	for _, rec := range strings.Split(log, memoryRecSep) {
-		f := strings.SplitN(strings.TrimSpace(rec), memoryFldSep, 3)
-		if len(f) < 3 {
-			continue
-		}
+	for _, f := range recs {
 		v, rel, pid, ok := agentMemChangeFrom(f[0], f[1], f[2])
 		// The newest change of a path is decided before any row is withheld, the same way
 		// agentMemLatestChange decides it for a revert: otherwise the row before a withheld
@@ -266,6 +334,9 @@ func agentMemChangeFrom(commit, at, body string) (v agentMemChangeView, rel, pid
 		Commit: commit, At: at, Op: tr["AF-Op"], Scope: scope, Name: name,
 		AuthorKind: tr["AF-Author-Kind"], AuthorSession: tr["AF-Author-Session"], RevertOf: tr["AF-Revert-Of"],
 		PurgedBefore: tr[agentMemPurgedTrailer] != "",
+	}
+	if run := tr[reviewRunTrailer]; reviewIDRe.MatchString(run) && tr["AF-Author-Kind"] == ReviewAuthorKind {
+		v.ReviewRun = run
 	}
 	return v, rel, pid, true
 }
@@ -516,6 +587,10 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 			}
 			return agentMemWriteResult{}, memoryErrf(http.StatusConflict, errCodeMemoryConflict, "the memory is already gone")
 		}
+		base, err := forgetIntent(scopeDir, name)
+		if err != nil {
+			return agentMemWriteResult{}, err
+		}
 		if err := agentMemWriteTomb(scopeDir, name, floor); err != nil {
 			return agentMemWriteResult{}, err
 		}
@@ -528,6 +603,7 @@ func agentMemRevert(req agentMemRevertReq, now time.Time) (agentMemWriteResult, 
 			return agentMemWriteResult{}, err
 		}
 		agentMemClearUsage(scopeDir, name)
+		forgetDone(scopeDir, name, base)
 		return agentMemWriteResult{Name: name, Scope: scope, Revision: agentMemRevOf(live, liveOK), Commit: rev, Deleted: true}, nil
 	}
 

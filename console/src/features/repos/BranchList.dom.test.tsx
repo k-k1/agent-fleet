@@ -71,7 +71,7 @@ describe("BranchList worktree occupancy", () => {
     expect(onPick).not.toHaveBeenCalled();
     // A free row still picks normally.
     await click(rowFor("free"));
-    expect(onPick).toHaveBeenCalledWith("free");
+    expect(onPick).toHaveBeenCalledWith("free", expect.objectContaining({ name: "free" }));
   });
 
   it("offers the start-work shortcut only where a new working copy is possible", async () => {

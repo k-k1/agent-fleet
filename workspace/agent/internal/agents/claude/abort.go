@@ -48,7 +48,9 @@ type Abort struct {
 	// but once the credentials are renewed the turn can be picked up again, which is what
 	// auth_resume.go waits for. The verdict is apiError.isAuth (errors.go), the same
 	// classifier that puts cause="auth" on the mirror's error block, so the card offering
-	// "re-authenticate" and the resume that follows can never disagree.
+	// "re-authenticate" and the resume that follows can never disagree. It is deliberately
+	// not AuthExpired(): a token revoked server side still leaves a local credentials file
+	// that looks alive, and the transcript tail is the only witness the turn died of it.
 	Auth bool
 }
 
@@ -116,19 +118,13 @@ var limitMarkers = []string{
 	"weekly limit",
 }
 
-// LimitKind splits a turn that ended on a limit into the two kinds whose next move is
-// opposite. Both arrive as 429 / `error:"rate_limit"`, so code alone cannot tell them apart
-// (docs/log/47 §4-10).
-type LimitKind string
+// LimitKind and its values are agents.LimitKind: the sweep's capability speaks them, so they
+// live there.
+type LimitKind = agents.LimitKind
 
 const (
-	// LimitWindow is a window of time (5-hour / weekly / per-model). Waiting clears it, so
-	// it is eligible for auto-resume.
-	LimitWindow LimitKind = "window"
-	// LimitSpend is a spend or balance cap. Waiting never clears it — raising the cap or
-	// adding credit is a billing decision — so no auto-resume is armed and it must not call
-	// itself "waiting for the limit to lift".
-	LimitSpend LimitKind = "spend"
+	LimitWindow = agents.LimitWindow
+	LimitSpend  = agents.LimitSpend
 )
 
 // spendMarkers are the usage-limit texts that mean a cap on money. Measured (2026-08-20,
@@ -330,22 +326,6 @@ func UsageLimitAbort(sid string) (Abort, LimitKind, bool) {
 		return Abort{}, "", false
 	}
 	return limitKindOf(a.Msg, a)
-}
-
-// AuthAbort is AbortInfo narrowed to a turn that died on the login (docs/log/47 §4-11).
-// Only when ok=true may an auth-resume episode (auth_resume.go) be opened.
-//
-// It is deliberately NOT keyed on AuthExpired(): that reads the local credentials file, and
-// the failure this catches is the one the file cannot see — a token revoked or invalidated
-// server side still leaves a credential that looks perfectly alive locally (`claude auth
-// status` reports loggedIn either way). The transcript tail is the only witness that a turn
-// actually died of it.
-func AuthAbort(sid string) (Abort, bool) {
-	a, ok := AbortInfo(sid)
-	if !ok || !a.Auth {
-		return Abort{}, false
-	}
-	return a, true
 }
 
 // limitKindOf is the pure form (for the corpus tests): it decides the kind of limit from the

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -234,6 +235,15 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	// than offer a pane that fails. Absent on every runtime that has them.
 	if why := runtime.BrowserUnavailable(rt); why != "" {
 		m["browserUnavailable"] = why
+	}
+	// Where this runtime serves the user guide from when that is not the image's fixed path
+	// (native without a rootfs stages it under the data dir, and the agent refuses any other
+	// path). Emitted only then, so every other runtime keeps the Console's fixed path. It is
+	// the owner's own data dir: native is single-user (AUTH=dev) and the payload is theirs.
+	if dr, ok := rt.(interface{ DocsRoot() string }); ok {
+		if root := dr.DocsRoot(); root != "" {
+			m["docsRoot"] = root
+		}
 	}
 	// An administrator has reserved the slot this workspace's home is on for replacement
 	// (ecs-ec2, #1473): the next start moves it to a new slot and takes longer. Emitted only
@@ -454,7 +464,7 @@ func (a workspaceAPI) memberHomeWipeStop(r *http.Request, res *resolved, lease *
 // through it, and an outcome still unknown is left to the reconciler. Nothing is returned
 // for the caller to record.
 func (a workspaceAPI) memberHomeWipeFinish(ctx context.Context, res *resolved, lease *workspaceLifecycleLeaseGuard, what runtime.HomeWipe, unqueue func(), record *store.HomeOperation, lock ...*sync.Mutex) *apiError {
-	err := runtime.WipeHome(lease.Context(), res.rt, what)
+	err := a.mgr.wipeHome(lease.Context(), res.ws, res.rt, what)
 	if record != nil {
 		// The clearing mark reads as `starting`, which Start would take for a launch
 		// already under way.
@@ -735,6 +745,12 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": "stopped"})
 }
 
+// planReviewerWire is one plan file → reviewer session link of sessionWire.PlanReviewers.
+type planReviewerWire struct {
+	Path     string `json:"path"`
+	Reviewer string `json:"reviewer"`
+}
+
 // sessionWire is the session shape exchanged with the Agent and the Console. The
 // CP mirrors it into the DB so it can be re-served while the container is down.
 type sessionWire struct {
@@ -767,7 +783,13 @@ type sessionWire struct {
 	// wrote. No DB-mirror column — it describes a title whose writers both need the Agent
 	// running, and a stale copy would claim authorship for a rename that has since changed.
 	TitleSetBy string `json:"titleSetBy,omitempty"`
-	Display    string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
+	// PlanReviewers: which session reviewed each plan file this session wrote (the Agent's
+	// Meta.PlanReviewers), so "Review again" is offered on every device. Same relay caveat as
+	// its neighbours. A pointer: absent = an Agent that predates the field (the Console then
+	// trusts its local cache), [] = the Agent knows the field and holds no link. No DB-mirror column: the link is only
+	// useful with the Agent up (the reviewer has to take a message).
+	PlanReviewers *[]planReviewerWire `json:"planReviewers,omitempty"`
+	Display       string              `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	// Color: terminal background hue (hex; SSM sessions carry their host color).
 	// Dropped in the relay, an SSM session's background always arrives through the CP as
 	// the default colour. The DB mirror has no column for it, so it is absent while stopped.
@@ -792,6 +814,12 @@ type sessionWire struct {
 	// "shell"), which only picks the badge's wording. Dropping it here would not hide the
 	// badge, just silently pin every session to the generic "running in background" wording.
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
+	// BackgroundSince / BackgroundAgeSec pass through when the current background-busy period
+	// began (RFC3339) and its age on the Agent's clock, the value the reaper compares with
+	// background_hold_max. Dropped here, a dev server's wrapper shell holds the Workspace
+	// forever (#2338). Not persisted to the DB mirror.
+	BackgroundSince  string `json:"backgroundSince,omitempty"`
+	BackgroundAgeSec int    `json:"backgroundAgeSec,omitempty"`
 	// ProgressAt passes through the Agent's last sign of progress for a busy row (RFC3339).
 	// Dropped here, the reaper never sees it and a frozen "working" row holds the Workspace
 	// forever. Not persisted to the DB mirror (a stopped workspace has no busy row).
@@ -809,6 +837,10 @@ type sessionWire struct {
 	// is waiting for the limit to lift and not when work will resume. No DB-mirror column
 	// (a stopped workspace has no episode in progress).
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	// ForkAtTerminal passes through whether a Terminal session can fork from a past message.
+	// Dropped here, the Console never offers "fork from here" on an opencode 2 Terminal session.
+	// No DB-mirror column: it describes a running pane's route.
+	ForkAtTerminal bool `json:"forkAtTerminal,omitempty"`
 	// AuthOkAt passes through when the agent's current login was written (RFC3339, claude
 	// only). Dropped, an error block in the mirror goes on offering "re-authenticate" for a
 	// failure the user already dealt with, and the Console cannot tell a fixed login failure
@@ -940,12 +972,35 @@ type sessionWire struct {
 	// while it is pending. No DB-mirror column: a delivery only happens in a running
 	// Workspace, and the Agent turns a pending it can no longer finish into unknown on start.
 	InitialPromptState string `json:"initialPromptState,omitempty"`
+	// InitialPromptReason: why a failed initial prompt failed, when the Agent knows
+	// ("auth_expired": the Claude login has expired). The Console toasts it once, on seeing the
+	// state move from pending to failed. No DB-mirror column, like the state.
+	InitialPromptReason string `json:"initialPromptReason,omitempty"`
 	// Moving / MovedTo: the session this one is being moved to, or was moved to (ADR 0115
 	// decision 11.7). Dropped here, a moved source's row cannot say where the conversation
 	// went or offer "resume here anyway", and a pending move offers neither retry nor cancel.
 	// No DB-mirror column: every action on them needs the running Agent.
 	Moving  string `json:"moving,omitempty"`
 	MovedTo string `json:"movedTo,omitempty"`
+}
+
+// sessionRows turns the Agent's session list into DB mirror rows. Every writer of the
+// mirror goes through it: ReplaceSessions swaps the whole set, so a writer that leaves
+// out Carried or Studio erases them for the next reader (the stopped-workspace list).
+func sessionRows(list []sessionWire) []store.SessionRow {
+	rows := make([]store.SessionRow, 0, len(list))
+	for _, s := range list {
+		state := "stopped"
+		if s.Alive {
+			state = "running"
+		}
+		rows = append(rows, store.SessionRow{
+			Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
+			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
+			Carried: s.Carried, Studio: s.Studio,
+		})
+	}
+	return rows
 }
 
 func fmtStarted(createdAt string) string {
@@ -962,20 +1017,9 @@ func fmtStarted(createdAt string) string {
 // sessions. Shared by the REST handler and the /api/events push channel.
 func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[string]any {
 	if res.rt.State(ctx) == "running" {
+		readStart := time.Now()
 		if list, err := a.mgr.agentSessions(ctx, res.rt); err == nil {
-			rows := make([]store.SessionRow, 0, len(list))
-			for _, s := range list {
-				state := "stopped"
-				if s.Alive {
-					state = "running"
-				}
-				rows = append(rows, store.SessionRow{
-					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
-					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
-					Carried: s.Carried, Studio: s.Studio,
-				})
-			}
-			_ = a.mgr.store.ReplaceSessions(ctx, res.ws.ID, rows)
+			_ = a.mgr.mirrorSessions(ctx, res.ws.ID, readStart, list)
 			return map[string]any{"sessions": a.applyInboxOrigins(ctx, res.mv, list)}
 		}
 		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.
@@ -1054,6 +1098,12 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 // (inbox_launch.go): any earlier, and a workspace start can outlast the claim.
 func (a workspaceAPI) sessionCreateThen(w http.ResponseWriter, r *http.Request, res *resolved, before func(context.Context) *apiError) {
 	ctx := r.Context()
+	// Before anything with a side effect (the SSM rewrite, a cold Workspace's start, the quota
+	// count): an unregistered kind would only be refused by the Agent after all of that.
+	if err := agentkinds.CheckCreateKind(peekSessionKind(r)); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_kind", err.Error()})
+		return
+	}
 	// SSM sessions (docs/log/p3-ssm-session.md): resolve the host bookmark
 	// server-side and rewrite the body with the (non-secret) instance/document/SSO
 	// coordinates before proxying — the client only sends ssm_host_id.

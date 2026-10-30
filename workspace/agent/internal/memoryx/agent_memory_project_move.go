@@ -766,6 +766,10 @@ func agentMemMoveOne(plan agentMemMovePlan, it agentMemMoveItem, now time.Time) 
 		return res, err
 	}
 	srcRel := fromRel + "/" + it.Name + ".md"
+	base, err := forgetIntent(fromRel, it.Name)
+	if err != nil {
+		return res, err
+	}
 	if err := agentMemWriteTomb(fromRel, it.Name, cur.Entry.Revision); err != nil {
 		return res, err
 	}
@@ -775,6 +779,7 @@ func agentMemMoveOne(plan agentMemMovePlan, it agentMemMoveItem, now time.Time) 
 		return res, err
 	}
 	agentMemClearUsage(fromRel, it.Name)
+	forgetDone(fromRel, it.Name, base)
 	if res.Commit == "" {
 		res.Commit = rev
 	}

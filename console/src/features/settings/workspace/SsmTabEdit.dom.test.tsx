@@ -3,6 +3,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactNode } from "react";
 
 type Json = Record<string, unknown>;
 const gets: string[] = [];
@@ -62,6 +64,7 @@ vi.mock("../../../ui/ConfirmProvider.tsx", () => ({
 
 const { SsmTab, awsProfileName, resetReloginMarks } = await import("./SsmTab.tsx");
 const { t } = await import("../../../lib/i18n/index.ts");
+const { useAwsLoginStore } = await import("../../awslogin/store.ts");
 
 const prod: Json = {
   id: "p1",
@@ -118,6 +121,7 @@ beforeEach(() => {
   writes.length = 0;
   toasts.length = 0;
   confirms.length = 0;
+  useAwsLoginStore.getState().reset(); // no list carried over from an earlier test
   profiles = [prod, stg];
   hosts = [web];
   writeReply = { ok: true, status: 200, body: {} };
@@ -729,15 +733,78 @@ describe("SsmTab assume-role profile", () => {
     ]);
   });
 
-  it("shows the role and its source, logs in to the source and offers no logout of its own", async () => {
+  it("shows the role and its source and logs in to the source", async () => {
     profiles = [prod, stg, deploy];
     states = [{ name: "deploy", state: "signed_in" }];
     await mount();
     const row = rows(0)[2];
     expect(row.textContent).toContain("arn:aws:iam::210987654321:role/deploy");
     expect(row.textContent).toContain(t("ssm.meta_source"));
-    expect(Array.from(row.querySelectorAll("button")).some((b) => b.textContent?.trim() === t("awslogin.logout"))).toBe(false);
     expect(btn(row, t("ssm.login")).disabled).toBe(false);
+  });
+
+  // A chain has no login of its own and the Agent refuses a logout aimed at it, so its Log out
+  // ends the source's login: only after a confirmation that names both the source and the
+  // chains that follow it, and never the other way round without one.
+  describe("Log out on a chain row", () => {
+    const signedIn = () => {
+      profiles = [prod, stg, deploy];
+      states = [
+        { name: "prod", state: "signed_in", label: "prod" },
+        { name: "stg", state: "signed_in", label: "stg" },
+        { name: "deploy", state: "signed_in", label: "deploy", source: "prod" },
+      ];
+    };
+    const logoutPosts = () => gets.filter((g) => g.endsWith("/logout"));
+    const askedText = () => renderToStaticMarkup(<>{confirms[0].body as ReactNode}</>).replace(/&#x27;/g, "'");
+
+    it("names the source it will sign out, and signs out nothing when declined", async () => {
+      signedIn();
+      await mount();
+      await click(btn(rows(0)[2], t("awslogin.logout")));
+      expect(askedText()).toContain(t("awslogin.logout_confirm_chain", { profile: "deploy", source: "prod" }));
+      expect(logoutPosts()).toEqual([]);
+    });
+
+    it("signs out the source, not the chain, once confirmed", async () => {
+      signedIn();
+      confirmAnswer = true;
+      await mount();
+      await click(btn(rows(0)[2], t("awslogin.logout")));
+      expect(logoutPosts()).toEqual(["api/aws-login/profiles/prod/logout"]);
+    });
+
+    it("names the chains that follow a source in the source's own confirmation", async () => {
+      signedIn();
+      await mount();
+      await click(btn(rows(0)[0], t("awslogin.logout")));
+      expect(askedText()).toContain(t("awslogin.logout_confirm_followers", { source: "prod", profiles: "deploy" }));
+      expect(askedText()).not.toContain("stg"); // stg follows nothing
+      expect(logoutPosts()).toEqual([]);
+    });
+
+    it("refuses to log out when the profile list cannot be read now, even if an older one is stored", async () => {
+      signedIn();
+      confirmAnswer = true;
+      await mount();
+      // SsmTab keeps its states locally, so load the store's list explicitly and pin it.
+      await act(async () => {
+        await useAwsLoginStore.getState().refreshExpiry();
+      });
+      expect(useAwsLoginStore.getState().profiles?.map((x) => x.name)).toEqual(["prod", "stg", "deploy"]);
+      failGet.add("api/aws-login/profiles");
+      await click(btn(rows(0)[0], t("awslogin.logout")));
+      expect(confirms).toEqual([]); // refused before asking, not after
+      expect(logoutPosts()).toEqual([]);
+      expect(toasts).toEqual([t("awslogin.logout_unreadable")]);
+    });
+
+    it("offers none while the chain's source is not signed in", async () => {
+      profiles = [prod, stg, deploy];
+      states = [{ name: "deploy", state: "source_unavailable", source: "prod" }];
+      await mount();
+      expect(Array.from(rows(0)[2].querySelectorAll("button")).some((b) => b.textContent?.trim() === t("awslogin.logout"))).toBe(false);
+    });
   });
 
   it("will not log in from a chain whose source is gone", async () => {

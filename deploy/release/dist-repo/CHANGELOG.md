@@ -3,6 +3,55 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.37.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.37.0) — 2026-10-30
+
+A Mac with Apple Silicon is supported for a single user, terminal panes side by side no longer
+garble each other's text, and a Cursor session on Default runs Auto, so a Free plan can use it.
+
+## [0.36.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.36.0) — 2026-10-28
+
+Agents' skills can now be browsed read-only, the assistant moves past a backend held up by a usage
+or rate limit, and work items are marked when they have new activity.
+
+## [0.35.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.35.0) — 2026-10-26
+
+On AWS, workspace web traffic can now leave through an optional egress gateway that records it and
+can enforce the allowlist. Tenant admins can distribute OAuth MCP servers, memory gets its own MCP
+endpoint, and Toolchains keeps JDK and Node.js patches current.
+
+## [0.34.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.1) — 2026-10-23
+
+ECS deployments can now turn on the `/mcp` endpoint and MCP sign-in (OAuth) that 0.34.0 shipped.
+0.34.0's template had no way to set them.
+
+## [0.34.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.34.0) — 2026-10-23
+
+MCP sign-in works in both directions. Remote MCP clients such as claude.ai and ChatGPT can connect to
+Agent Fleet by signing in instead of pasting a token, and you can sign in to MCP servers that require
+OAuth from Settings so your sessions can use them. EC2 pool slots get a force-stop and more memory
+headroom for the host, and the Jira CLI copes with a flaky network.
+
+## [0.33.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.33.0) — 2026-10-21
+
+The tenant Members page shows each member as a card with live sessions, last activity, home disk,
+memory and CPU. A full home disk or a CLI that failed to install is now reported to the member and the
+tenant admin instead of surfacing as a broken session. The command palette searches Agent memory, and
+loopback URLs in Markdown open the workspace preview.
+
+## [0.32.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.1) — 2026-10-19
+
+A fix release for 0.32.0: memory suggestions no longer run in the background unless you ask for it,
+stopped opencode sessions show their history again, and the bundled Jira CLI creates issues without
+`jira init`.
+
+## [0.32.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.32.0) — 2026-10-18
+
+A session can move to another agent, carrying its conversation and working state, and offers the
+move when it hits a usage limit. Apps that sign in with Google can sign in on a preview host through a
+development sign-in, the workspace bundles a Jira CLI, and opencode is now opencode 2. Agent memory
+gets an experimental review that suggests memories from finished sessions, and can be used from
+agents outside Agent Fleet.
+
 ## [0.31.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.31.0) — 2026-10-14
 
 Members of a tenant can send each other messages and requests through a new inbox, opt in to

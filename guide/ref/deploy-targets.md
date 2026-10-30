@@ -1,7 +1,6 @@
 ---
 audience: "everyone; decisive for operate/"
 source_of_truth: "this table; the rows are checked against the runtime profiles the Control Plane accepts"
-updated: "2026-10"
 ---
 
 # Deployment targets — what exists where
@@ -17,16 +16,30 @@ deployment" is the most expensive kind of documentation error here.
 | docker | a container on the host's Docker daemon | a bind-mounted directory on the host | the on-prem default: one host, a team sharing it |
 | native | sandboxed host processes, no Docker at all | a directory on the host | Docker cannot be installed (a plain WSL2 machine). **Single user only**: without container isolation it refuses to run in a shared mode |
 | ecs | a task on AWS ECS / Fargate | EFS | AWS, without managing instances |
-| ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances |
+| ecs-ec2 | a task on an EC2 slot taken from a pool | a per-user EBS volume | AWS, when start latency and disk performance matter enough to manage instances, or when frequent starts make Fargate's NAT image pulls costly (see [choosing a target](../operate/01-choose.md)) |
 | kubernetes | a pod of its own StatefulSet on a Kubernetes cluster | a per-user persistent volume (block storage), plus a second one for logins and Claude's state | **Preview.** You already run Kubernetes, or want Agent Fleet on Google Cloud with workspaces that scale to zero. GKE Standard is the first cluster it is verified on |
 
 > **Preview.** The `kubernetes` runtime is a preview: it has been accepted on a GKE Standard
 > cluster but is not yet supported for production. Known limits: there are no browser features
-> on this runtime (no browser pane, no headless Chromium), and on GKE the region's SSD disk quota
-> has to hold the deployment before you start ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). Still being
-> measured: how the load balancer's 24-hour WebSocket cut affects day-long sessions
-> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). What it costs on
-> GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
+> on this runtime (no browser pane, no headless Chromium), a home lives in one zone and is not
+> backed up, and on GKE the region's SSD disk quota has to hold the deployment before you start
+> ([Preconditions](../../deploy/kubernetes/README.md#preconditions)). The load balancer closes an
+> active WebSocket after 24 hours whatever its timeout says
+> ([7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)). After a cut the
+> terminal pane shows `[disconnected]` and reattaches when you click it or come back to the tab;
+> the shell and its tmux session keep running. That was measured with a forced cut, not by
+> waiting out a day. What it costs on GKE, measured: [The bill](../../deploy/kubernetes/README.md#the-bill).
+> For a trial or one team, `deploy/gcp/gke` has a small zonal profile (one zone, no database
+> standby) at about half the default floor if the billing account's GKE free credit is still unspent
+> (about two thirds if another cluster already uses it). That is an estimate from the measured prices,
+> not a bill; the figures and their assumptions are in `deploy/gcp/gke/README.md`, "Small profile".
+
+**On a Mac (Apple Silicon).** `docker` runs with Docker Desktop, OrbStack or colima through
+`deploy/compose/docker-compose.macos.yml`, and `native` runs inside a Linux VM (Lima or an
+OrbStack machine) with the `linux-arm64` package; neither runs on macOS itself. Single user
+only, reached on `127.0.0.1`. What was checked and when to check again:
+`deploy/macos/README.md`; the steps: "macOS" in
+[deploy/compose/README.md](../../deploy/compose/README.md#macos-apple-silicon).
 
 `docker` also answers to `local`, `ecs` to `aws`, `native` to `wsl`, and `kubernetes` to `k8s`. Anything else
 is rejected at boot rather than quietly defaulting. `ecs` and `ecs-ec2` are separate
@@ -64,7 +77,7 @@ the first time.
 
 ⁴ A ComfyUI **already running on your own network**, pointed at with one environment
 variable, or several engine rows side by side: a LAN ComfyUI, a borrowed engine, an
-OpenAI-compatible server ([operate/07](../operate/07-image-engine.md)).
+OpenAI-compatible server ([operate/08](../operate/08-image-engine.md)).
 
 ⁵ The fleet's own GPU, bought when something asks for it. There is no equivalent on
 Fargate. On every target a session can also generate images on **the member's own CLI
@@ -72,7 +85,7 @@ plan** (Codex / Antigravity); this row is about an engine the deployment provide
 
 ⁶ On `ecs-ec2`, the fleet's own GPU. On `docker`, `native` and `kubernetes`, a llama.cpp
 **already running on your own network**, pointed at with one environment variable
-([operate/09](../operate/09-llm-lan.md)).
+([operate/10](../operate/10-llm-lan.md)).
 
 ⁷ The Control Plane cannot mount the member's EFS home itself, so it starts a short task the
 stack declares (`HomeOpsTaskDef` in `30-ingress`) that mounts the file system and removes the
@@ -144,7 +157,7 @@ before the workspace runs, as on `ecs-ec2`. An administrator's Clean home remove
 with the workspace stopped. Both keep the logins, connections and Claude's state, which live on a
 second volume of their own. The home volume itself is kept.
 
-¹⁴ Off by default; the operator turns it on in the stack ([operate/04](../operate/04-secure.md#keys-at-rest-on-aws-kms)).
+¹⁴ Off by default; the operator turns it on in the stack ([operate/12](../operate/12-keys.md#keys-at-rest-on-aws-kms)).
 The secrets the Control Plane itself seals after the switch (MCP connection headers, sign-in
 client secrets, engine tokens, session handoffs and shares) are then sealed with keys from AWS
 KMS, so disabling the KMS key makes them unreadable. The key to a member's stored credentials is
@@ -155,8 +168,8 @@ every target.
 
 ## Where the procedure lives
 
-Until [operate/](../operate/README.md) is written, the runbooks are still in the
-repository next to what they operate:
+The commands are in the runbooks, kept next to what they operate;
+[operate/](../operate/README.md) explains what happens and what to watch out for:
 
 | Target | Runbook |
 |---|---|

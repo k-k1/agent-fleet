@@ -9,11 +9,14 @@ package mcpreg
 //   - a user_secret is filled with the member's own value (the tenant distributes only the name).
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -189,6 +192,13 @@ func TestUserSecretIsHeldBackUntilFilled(t *testing.T) {
 	if got, _ := Get(d.ID); got.Headers["Authorization"] != "Bearer mine" {
 		t.Fatalf("the value was lost in the masked round trip: %q", got.Headers["Authorization"])
 	}
+	// The scheme-preserving mask is the same stand-in.
+	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": "Bearer ***"}); err != nil {
+		t.Fatalf("SetTenantSecrets bearer mask: %v", err)
+	}
+	if got, _ := Get(d.ID); got.Headers["Authorization"] != "Bearer mine" {
+		t.Fatalf("the value was lost in the Bearer-masked round trip: %q", got.Headers["Authorization"])
+	}
 	// An empty string means "clear it".
 	if err := SetTenantSecrets(d.ID, map[string]string{"Authorization": ""}); err != nil {
 		t.Fatalf("SetTenantSecrets clear: %v", err)
@@ -253,5 +263,95 @@ func TestMaskedKeepsUnsetValuesVisible(t *testing.T) {
 	m := Masked(ServerDef{Headers: map[string]string{"Authorization": "", "X-Team": "sre"}})
 	if m.Headers["Authorization"] != "" || m.Headers["X-Team"] != MaskedValue {
 		t.Fatalf("wrong masking: %+v", m.Headers)
+	}
+}
+
+func TestAcceptTenantKeepsOAuthAndRefusesItWithSecrets(t *testing.T) {
+	oauth := tenantDef("hosted")
+	oauth.Auth = AuthOAuth
+	withHeader := oauth
+	withHeader.ID, withHeader.Name, withHeader.Headers = "t-h", "h", map[string]string{"Authorization": "Bearer x"}
+	withSecret := oauth
+	withSecret.ID, withSecret.Name, withSecret.UserSecret = "t-s", "s", true
+	kept, dropped := acceptTenant([]ServerDef{oauth, withHeader, withSecret})
+	if dropped != 2 || len(kept) != 1 || kept[0].Name != "hosted" || kept[0].Auth != AuthOAuth {
+		t.Fatalf("kept=%+v dropped=%d, want only the plain OAuth definition", kept, dropped)
+	}
+}
+
+// A sign-in ends when the tenant takes the server away, moves it, or takes OAuth off it; a
+// change to anything else (or to a static-header server) ends nothing.
+func TestFetchTenantNamesTheSignInsItEnded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	def := func(name, url, auth string) ServerDef {
+		d := tenantDef(name)
+		d.URL, d.Auth = url, auth
+		return d
+	}
+	first := []ServerDef{
+		def("gone", "https://gone.example/mcp", AuthOAuth),
+		def("moved", "https://moved.example/mcp", AuthOAuth),
+		def("plain", "https://plain.example/mcp", AuthOAuth),
+		def("same", "https://same.example/mcp", AuthOAuth),
+		def("static", "https://static.example/mcp", ""),
+	}
+	serveTenant(t, map[string]any{"servers": first})
+	if res, err := FetchTenant(); err != nil || len(res.EndedOAuth) != 0 {
+		t.Fatalf("first fetch: %+v %v", res, err)
+	}
+	second := []ServerDef{
+		def("moved", "https://moved.example/v2/mcp", AuthOAuth),
+		def("plain", "https://plain.example/mcp", ""),
+		def("same", "https://same.example/mcp", AuthOAuth),
+	}
+	second[2].Label = "relabelled"
+	serveTenant(t, map[string]any{"servers": second})
+	res, err := FetchTenant()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, id := range res.EndedOAuth {
+		got[id] = true
+	}
+	if !reflect.DeepEqual(got, map[string]bool{"t-gone": true, "t-moved": true, "t-plain": true}) {
+		t.Fatalf("ended %v, want t-gone, t-moved and t-plain", res.EndedOAuth)
+	}
+}
+
+// A sign-in that finishes after the tenant moved the server is not stored, and the tokens it got
+// are revoked: a disconnect that ran in between found nothing to end.
+func TestCompleteRefusesWhenTheURLMovedMeanwhile(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	put := func(url string) {
+		t.Helper()
+		d := ServerDef{ID: "t-hosted", Name: "hosted", Origin: OriginTenant, Transport: TransportHTTP, URL: url,
+			Auth: AuthOAuth, Enabled: true, Targets: Targets{Session: true}}
+		if err := writeTenantCache([]ServerDef{d}, time.Now().Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(f.url("/mcp"))
+	t.Cleanup(func() { _ = os.Remove(tenantCachePath()) })
+	req := startReq(nil)
+	mustStart(t, "t-hosted", req)
+	put(f.url("/v2/mcp"))
+	_, err := CompleteOAuth(context.Background(), "t-hosted", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")})
+	wantCode(t, err, OAuthErrStateMismatch)
+	if g := currentGrant("t-hosted"); g != nil {
+		t.Fatalf("a grant for the old URL was stored: %+v", g)
+	}
+	if len(f.revokes) != 1 || f.revokes[0].Get("token") != "rt-0" {
+		t.Errorf("the unstored tokens were not revoked: %v", f.revokes)
+	}
+}
+
+func TestEndedOAuthIgnoresURLSpelling(t *testing.T) {
+	p := ServerDef{ID: "t1", Auth: AuthOAuth, URL: "https://M.Example.com:443/mcp"}
+	n := p
+	n.URL = "https://m.example.com/mcp"
+	if got := endedOAuth([]ServerDef{p}, []ServerDef{n}); len(got) != 0 {
+		t.Errorf("a respelled URL ended %v", got)
 	}
 }

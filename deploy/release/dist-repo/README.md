@@ -97,15 +97,19 @@ Main features:
   Grafana / CloudWatch / Agent Toolkit for AWS) that connect by entering
   credentials; ② **your own MCP servers** (stdio or remote HTTP) registered and
   handed to assistants and sessions; values are stored with envelope encryption
-  and passed only when the server starts, a tenant admin can distribute one to
-  everybody, and on an egress-restricted deployment a host goes through an
-  approval flow; ③ **from an external Claude Code / Claude Desktop**, drive your
-  own workspace with a scoped, expiring token.
+  and passed only when the server starts, servers that require OAuth are signed
+  in to from Settings, a tenant admin can distribute one to everybody, and on an
+  egress-restricted deployment a host goes through an approval flow; ③ **from
+  outside**, claude.ai, ChatGPT, Claude Code and other MCP clients sign in (OAuth)
+  or use a scoped, expiring token to drive your own workspace, or reach only
+  your Agent Fleet memory through `/mcp/memory`.
 - **Keep agent behaviour consistent across the org**: fleet-wide policy
   (distributed by the operator) and per-user instructions are delivered to every
-  agent kind in each CLI's own idiom. The memory an agent accumulates by itself
-  (Claude's auto-memory, Codex's memories) is snapshotted and can be rolled back
-  to any point.
+  agent kind in each CLI's own idiom. **Agent Fleet memory** (opt-in) is one
+  memory every agent kind reads and writes, per project, so what one agent learns
+  survives a switch of kind or a handoff. The memory an agent accumulates by
+  itself (Claude's auto-memory, Codex's memories) is snapshotted and can be
+  rolled back to any point.
 - **Operable**: backup/restore scripts, forward-only DB migrations for
   upgrades, and air-gap installation paths. A turn cut short by a dropped
   connection or a temporary rate limit resumes itself, and a session stopped by
@@ -189,6 +193,7 @@ Kiro is **not** available as an assistant chat (it has no headless chat mode).
 | Your situation | Edition | What you need |
 |---|---|---|
 | Personal use on WSL2 or a single-user Linux machine; no Docker | **Native** (below) | x86_64 or arm64 Linux/WSL2 with unprivileged user namespaces (stock WSL2 works), `curl` or `wget`, ~1.5 GB disk. arm64 is built and started in CI; reports from real arm64 machines are welcome |
+| A Mac with Apple Silicon, single user (checked with colima, OrbStack and Docker Desktop, and natively in Lima and OrbStack VMs) | **Docker Compose** with its macOS overlay, or **Native** inside a Linux VM (Lima, an OrbStack machine) | Docker Desktop, OrbStack or colima; single user on `127.0.0.1:8099`. Steps: ["macOS" in the Compose README](https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-apple-silicon). `install.sh` on macOS explains these routes instead of installing. Reports from other Macs are welcome ([#2961](https://github.com/k-k1/agent-fleet/issues/2961)) |
 | A team on your own Linux server | **Docker Compose** (below) | Docker Engine + `docker compose`, a public domain pointed at the host (auto-TLS; an internal-CA fallback exists), an IdP client for login (a Google OAuth 2.0 client or an OIDC app) |
 
 Common to all editions: outbound network is needed once per workspace to

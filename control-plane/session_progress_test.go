@@ -30,12 +30,12 @@ func TestBusyProgressLapse(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := sessionActivityAt(c.in, now); got != c.want {
+			if got := sessionActivityAt(c.in, now, 0); got != c.want {
 				t.Errorf("sessionActivityAt = %v, want %v", got, c.want)
 			}
 			// The lapsed row is neither a holder nor foldable (tier 2 may stop the
 			// Workspace; tier 1 does not touch what it cannot understand).
-			if c.want == activityUnknown && tier1Reapable(c.in) {
+			if c.want == activityUnknown && tier1Reapable(c.in, 0) {
 				t.Error("a lapsed row became foldable by tier 1")
 			}
 		})
@@ -56,8 +56,8 @@ func TestForecastAgreesWithReaperOnLapse(t *testing.T) {
 		{Name: "a", Alive: true, State: stateWorking, KeepAwakeUntil: now.Add(time.Hour).Format(time.RFC3339), ProgressAgeSec: h3},
 		{Name: "a", Alive: true, State: stateIdle, ProgressAgeSec: h3},
 	} {
-		holds := holdsWorkspace(s)
-		shown := len(holdersOf([]sessionWire{s}, false, now, 0, 0)) > 0
+		holds := holdsWorkspace(s, 0)
+		shown := len(holdersOf([]sessionWire{s}, false, now, 0, 0, 0)) > 0
 		if holds != shown {
 			t.Errorf("%+v: reaper holds=%v but forecast shows a holder=%v", s, holds, shown)
 		}
@@ -70,7 +70,7 @@ func TestWorkingHolderSinceAndLapse(t *testing.T) {
 	h := holdersOf([]sessionWire{{
 		Name: "s1", Alive: true, State: stateWorking,
 		StateSince: "2026-10-06T15:00:00Z", ProgressAt: "2020-01-01T00:00:00Z", ProgressAgeSec: 20 * 60,
-	}}, false, now, 0, 0)
+	}}, false, now, 0, 0, 0)
 	if len(h) != 1 || h[0].Since != "2026-10-06T15:00:00Z" {
 		t.Fatalf("holders = %+v, want the Agent's since", h)
 	}
@@ -79,7 +79,7 @@ func TestWorkingHolderSinceAndLapse(t *testing.T) {
 		t.Errorf("LapseAt = %q, want %q", h[0].LapseAt, want)
 	}
 	// An older Agent (no progress, no since) shows neither: the hold is unbounded for that row.
-	h = holdersOf([]sessionWire{{Name: "s1", Alive: true, State: stateWorking}}, false, now, 0, 0)
+	h = holdersOf([]sessionWire{{Name: "s1", Alive: true, State: stateWorking}}, false, now, 0, 0, 0)
 	if len(h) != 1 || h[0].Since != "" || h[0].LapseAt != "" {
 		t.Errorf("holders = %+v, want no since / lapseAt", h)
 	}

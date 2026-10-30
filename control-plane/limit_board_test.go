@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -71,7 +72,7 @@ func TestLimitSnapshotNeverAffectsTheEnvelope(t *testing.T) {
 			if !reflect.DeepEqual(env.Sessions, plain.Sessions) || env.RepoJobs != 1 || env.ImageJobs != 2 {
 				t.Fatalf("envelope changed: %+v", env)
 			}
-			if env.holdsWorkspace() != plain.holdsWorkspace() || env.jobsRunning() != plain.jobsRunning() {
+			if env.holdsWorkspace(0) != plain.holdsWorkspace(0) || env.jobsRunning() != plain.jobsRunning() {
 				t.Fatal("the snapshot changed a busy decision")
 			}
 			got := parseLimitSnapshot(env.Limits, limitNow)
@@ -811,5 +812,23 @@ func TestLimitBoardMeShowsNothingWhenTheTenantIsOff(t *testing.T) {
 	}
 	if me.Enabled || len(me.Own.Kinds) != 0 || me.Own.SessionsObservedAt != "" || me.Audience != "tenant" || me.Level != "band" {
 		t.Fatalf("me with the tenant off = %s", w.Body)
+	}
+}
+
+// limitKindUnits is keyed by kind name: per-kind unit rules, not a list the catalog could
+// supply. A key the catalog does not name (a typo, a renamed kind) would silently drop that
+// kind's quota from the board, so every key must be a catalog kind.
+func TestLimitKindUnitsAreCatalogKinds(t *testing.T) {
+	known := map[string]bool{}
+	for _, e := range agentkinds.All() {
+		known[e.Kind] = true
+	}
+	if len(limitKindUnits) == 0 {
+		t.Fatal("limitKindUnits is empty; this guard checks nothing")
+	}
+	for k := range limitKindUnits {
+		if !known[k] {
+			t.Errorf("limitKindUnits has %q, which is not a kind in agentkinds/catalog.json", k)
+		}
 	}
 }

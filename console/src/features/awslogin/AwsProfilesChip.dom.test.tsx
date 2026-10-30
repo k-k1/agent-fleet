@@ -11,13 +11,19 @@ let profiles: Json[] = [];
 
 let logoutReply: Json = { revoked: true };
 let confirmAnswer = true;
+// What the Agent lists once a logout has gone through.
+let afterLogout: Json[] | null = null;
+const confirmAsks: { title: string; body: unknown }[] = [];
 const toasts: { msg: string; kind?: string }[] = [];
 vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
   api: vi.fn(async (path: string, opts?: RequestInit) => {
     calls.push(opts?.method ? `${opts.method} ${path}` : path);
     if (path === "api/aws-login/profiles") return { profiles };
-    if (path.endsWith("/logout")) return logoutReply;
+    if (path.endsWith("/logout")) {
+      if (afterLogout) profiles = afterLogout;
+      return logoutReply;
+    }
     return {};
   }),
   apiJSON: vi.fn(async () => ({})),
@@ -25,7 +31,11 @@ vi.mock("../../core/api/client.ts", () => ({
 vi.mock("../../ui/ToastProvider.tsx", () => ({
   useToast: () => (msg: string, o?: { kind?: string }) => toasts.push({ msg, kind: o?.kind }),
 }));
-vi.mock("../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => () => Promise.resolve(confirmAnswer) }));
+vi.mock("../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => (o: { title: string; body: unknown }) => {
+    confirmAsks.push(o);
+    return Promise.resolve(confirmAnswer);
+  },
+}));
 
 const { AwsProfilesChip } = await import("./AwsProfilesChip.tsx");
 const { useAwsLoginStore } = await import("./store.ts");
@@ -66,6 +76,8 @@ beforeEach(() => {
   toasts.length = 0;
   logoutReply = { revoked: true };
   confirmAnswer = true;
+  afterLogout = null;
+  confirmAsks.length = 0;
   profiles = [prod, stg, dev];
   useAwsLoginStore.setState({ profiles: null, expiring: [], profileModal: null });
   useWorkspaceStore.setState({ state: "running" });
@@ -223,7 +235,7 @@ describe("AWS profiles chip", () => {
     expect(logoutOf(1)).not.toBeNull(); // stg, renewable
     expect(logoutOf(2)).toBeNull(); // dev, not signed in
     const before = asks();
-    profiles = [{ ...prod, state: "none" }, stg, dev];
+    afterLogout = [{ ...prod, state: "none" }, stg, dev];
     await act(async () => logoutOf(0)!.click());
     await tick(0);
     expect(calls).toContain("POST api/aws-login/profiles/prod/logout");
@@ -231,6 +243,18 @@ describe("AWS profiles chip", () => {
     expect(asks()).toBeGreaterThan(before);
     expect(toasts).toEqual([{ msg: "Logged out of Production.", kind: "success" }]);
     expect(chip()!.textContent).toContain("Staging");
+  });
+
+  it("offers Log out on a chain row too, and ends its source's login, not a login of its own", async () => {
+    const deploy: Json = { name: "deploy", state: "signed_in", label: "Deploy", accountId: "444444444444", roleName: "Deploy", source: "prod" };
+    profiles = [prod, deploy];
+    await mount();
+    await openPop();
+    const row = rows().find((r) => r.textContent?.includes("Deploy"))!;
+    await act(async () => row.querySelector<HTMLButtonElement>(".ws-aws-logout")!.click());
+    await tick(0);
+    expect(calls.filter((c) => c.endsWith("/logout"))).toEqual(["POST api/aws-login/profiles/prod/logout"]);
+    expect(toasts).toEqual([{ msg: "Logged out of Production.", kind: "success" }]);
   });
 
   it("logs out nothing when the member declines", async () => {

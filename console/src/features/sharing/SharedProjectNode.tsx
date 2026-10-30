@@ -10,7 +10,7 @@
 // the rail fills up immediately.
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { openSharedSession } from "./open.ts";
@@ -38,7 +38,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
       >
         {/* The same kind-coloured icon as the owner-side SessionRow, so which agent the
             conversation is with reads at a glance — the recipient has no other clue. */}
-        <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+        <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
           <Icon name={kindIcon(s.kind)} />
         </span>
         {/* A label coming from claude's --name can carry an "[AF:<name>] " prefix. */}

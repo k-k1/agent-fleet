@@ -53,7 +53,12 @@ func statsAgent(t *testing.T, status int, body string) *httptest.Server {
 
 func memberStatsJSON(t *testing.T, mgr *manager) map[string]any {
 	t.Helper()
-	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/sales/members/leaver-acme-co-jp/stats", nil)
+	return memberStatsJSONAt(t, mgr, "")
+}
+
+func memberStatsJSONAt(t *testing.T, mgr *manager, query string) map[string]any {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/sales/members/leaver-acme-co-jp/stats"+query, nil)
 	r.SetPathValue("slug", "sales")
 	r.SetPathValue("key", "leaver-acme-co-jp")
 	r.Header.Set("X-Forwarded-Email", "boss@acme.co.jp")
@@ -158,5 +163,125 @@ func TestStoppedWorkspaceIsNotProbed(t *testing.T) {
 	}
 	if out["running"] != false {
 		t.Errorf("running = %v, want false", out["running"])
+	}
+}
+
+// dedicatedStatsRuntime declares a box of the member's own, the way the EC2 slot pool does.
+type dedicatedStatsRuntime struct {
+	agentStatsRuntime
+	dedicated bool
+}
+
+func (r dedicatedStatsRuntime) MachineProfile() runtime.WorkspaceMachine {
+	return runtime.WorkspaceMachine{Dedicated: r.dedicated}
+}
+
+// ownHomeStatsRuntime is a per-user volume on a shared box (a kubernetes claim): no
+// MachineProfile, but its home is the member's own.
+type ownHomeStatsRuntime struct {
+	agentStatsRuntime
+}
+
+func (ownHomeStatsRuntime) OwnHomeVolume() bool { return true }
+
+// home_own is what lets the Console warn about a nearly full home: only a member's own volume
+// makes disk_used / disk_total theirs. A shared host (no MachineProfile) and a profile that
+// declares no dedicated box must both leave it out.
+func TestWorkspaceStatsMarksAMembersOwnHomeVolume(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":1,"disk_used":95,"disk_total":100}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	base := agentStatsRuntime{stubRuntime: stubRuntime{endpoint: srv.URL}, state: "running"}
+	running := func() string { return "running" }
+
+	cases := []struct {
+		name string
+		rt   runtime.Runtime
+		want bool
+	}{
+		{"dedicated ec2 box", dedicatedStatsRuntime{base, true}, true},
+		{"profile without a dedicated box", dedicatedStatsRuntime{base, false}, false},
+		{"no machine profile (docker / fargate)", base, false},
+		{"per-user volume on a shared box (kubernetes)", ownHomeStatsRuntime{base}, true},
+	}
+	for _, c := range cases {
+		out := workspaceStats(context.Background(), mgr, c.rt, running)
+		got, present := out["home_own"].(bool)
+		if present != c.want || got != c.want {
+			t.Errorf("%s: home_own = %v (present=%v), want %v", c.name, out["home_own"], present, c.want)
+		}
+		if out["disk_used"] == nil {
+			t.Errorf("%s: disk_used missing, the agent path did not run", c.name)
+		}
+	}
+}
+
+// The roster cards poll /stats for mem/CPU only; ?disk=0 must skip the host-side du they
+// would otherwise trigger per card per poll, while the member detail (no parameter) still
+// gets the du figure.
+func TestMemberStatsDiskOptOutSkipsDU(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_max":200,"cpu_pct":3}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	mgr.dataRoot = t.TempDir()
+	diskUsages.m = map[string]diskSample{}
+	prevDU := runDU
+	t.Cleanup(func() { runDU = prevDU; diskUsages.m = map[string]diskSample{} })
+	calls := 0
+	runDU = func(context.Context, string) ([]byte, error) {
+		calls++
+		return []byte("4096\tx"), nil
+	}
+
+	out := memberStatsJSONAt(t, mgr, "?disk=0")
+	if calls != 0 {
+		t.Errorf("du ran %d times with ?disk=0, want 0", calls)
+	}
+	if _, ok := out["disk_used"]; ok {
+		t.Errorf("disk_used = %v with ?disk=0, want absent", out["disk_used"])
+	}
+	if out["mem_used"] != float64(100) || out["cpu_pct"] != float64(3) {
+		t.Errorf("mem/cpu = %v/%v, want 100/3 regardless of the opt-out", out["mem_used"], out["cpu_pct"])
+	}
+
+	// Without the parameter the first answer is "pending" and the du lands in the background.
+	out = memberStatsJSON(t, mgr)
+	if out["disk_pending"] != true || out["disk_used"] != nil {
+		t.Errorf("first call: disk_pending=%v disk_used=%v, want pending and no figure", out["disk_pending"], out["disk_used"])
+	}
+	waitDiskIdle(t)
+	out = memberStatsJSON(t, mgr)
+	if calls != 1 || out["disk_used"] != float64(4096) || out["disk_observed_at"] == nil {
+		t.Errorf("after the refresh: du calls=%d disk_used=%v observed_at=%v, want 1, 4096 and a timestamp", calls, out["disk_used"], out["disk_observed_at"])
+	}
+}
+
+// The Agent's mem_pressure axis (ADR 0120 phase 0) reaches the stats map as the Agent sent it:
+// a measured 0 stays 0, an unreadable signal stays absent, and available=false is passed on
+// instead of being dropped (the Console tells "cannot measure" from "calm" by it).
+func TestMemPressurePassesThroughAsSent(t *testing.T) {
+	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_pressure":{"available":true,"some_avg10":0,"some_avg60":1.5,"full_avg10":0,"full_avg60":0,"working_set":1048576,"agent_latency_ms":2.5}}`)
+	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	mp, _ := memberStatsJSON(t, mgr)["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != true || mp["some_avg60"] != 1.5 || mp["working_set"] != float64(1048576) {
+		t.Fatalf("mem_pressure = %v", mp)
+	}
+	if v, ok := mp["some_avg10"]; !ok || v != float64(0) {
+		t.Errorf("some_avg10 = %v (present=%v), want a present 0", v, ok)
+	}
+	if _, ok := mp["refault_rate"]; ok {
+		t.Errorf("refault_rate present although the Agent sent none: %v", mp)
+	}
+
+	srv = statsAgent(t, http.StatusOK, `{"mem_used":100,"mem_pressure":{"available":false,"reason":"host root"}}`)
+	_, mgr, _, _ = destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	mp, _ = memberStatsJSON(t, mgr)["mem_pressure"].(map[string]any)
+	if mp == nil || mp["available"] != false || mp["reason"] != "host root" || mp["some_avg10"] != nil {
+		t.Fatalf("unavailable: mem_pressure = %v", mp)
+	}
+
+	// An Agent from before the sampler sends nothing: the key stays absent.
+	srv = statsAgent(t, http.StatusOK, `{"mem_used":100}`)
+	_, mgr, _, _ = destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
+	if v, ok := memberStatsJSON(t, mgr)["mem_pressure"]; ok {
+		t.Errorf("old Agent: mem_pressure = %v, want absent", v)
 	}
 }

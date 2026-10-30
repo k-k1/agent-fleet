@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -73,11 +74,10 @@ func TestCodexSwitchRefusesAResumeMidSwitch(t *testing.T) {
 	t.Setenv("AF_CODEX_APP_SERVER_ADDR", fakeLoadedListServer(t))
 	d := &countingDriver{Driver: managedDrivers[session.KindCodex]}
 	swapCodexDriver(t, d)
-	prevAgent := agentRegistry[session.KindCodex]
-	t.Cleanup(func() { agentRegistry[session.KindCodex] = prevAgent })
+	prevAgent, _ := RegisteredAgent(session.KindCodex)
 	var mid *httptest.ResponseRecorder
 	reconcileMid := true
-	agentRegistry[session.KindCodex] = probeHookAgent{Agent: prevAgent, afterProbe: func() {
+	hook := probeHookAgent{Agent: prevAgent, afterProbe: func() {
 		mid = postTurn(t, name, `{"op":"interrupt"}`)
 		// ReconcileManaged (a daemon restart, an Agent boot) resumes from a meta read before
 		// the switch; it takes the same claim.
@@ -87,6 +87,7 @@ func TestCodexSwitchRefusesAResumeMidSwitch(t *testing.T) {
 			reconcileMid = false
 		}
 	}}
+	t.Cleanup(agentreg.SwapForTest(session.KindCodex, hook))
 
 	if rec := postDriver(t, name, `{"driver":"tui"}`); rec.Code != http.StatusOK {
 		t.Fatalf("switch: status=%d body=%s", rec.Code, rec.Body.String())

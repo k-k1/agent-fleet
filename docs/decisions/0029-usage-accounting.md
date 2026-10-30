@@ -56,7 +56,7 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 
 | Dimension | Values |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -101,6 +101,14 @@ first implementation commit forgot this table anyway, and it was caught while me
 in. If a third drift is to be prevented for real, the rule has to stop being prose and become a
 test that pins the enum against the catalogue (the shape `errcodes_catalog_test.go` already uses
 for error codes).
+
+**Amendment (2026-10-18).** `memory.review` was added to the `feature` row, in the same commit as
+`FeatureMemoryReview` in `usagex/ledger.go`, the Console catalogue entry and the Settings → AI
+assist row. It is the one helper call per window of the background memory review
+([ADR 0117](0117-background-memory-skill-review.md) decision 3), written by the Agent's deny-all
+one-shot route. `trigger` is `auto` or `manual` and `ref` is the reviewed session's name, so the
+usage view can show what each session's review cost. The review is opt-in and bounded by a daily
+call cap, so the Console folds it into "other" instead of giving it a colour slot of its own.
 
 🔴 **There is no `engine.image`, and its absence is a decision, not a gap.** An image answer
 carries no token counts; what an image spends is pixels, and the party that can see those is the

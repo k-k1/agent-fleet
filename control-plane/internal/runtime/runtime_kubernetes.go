@@ -85,9 +85,15 @@ const (
 
 // kubeConfig is the deployment-wide placement, read once at boot from AF_K8S_*.
 type kubeConfig struct {
-	namespace      string
-	image          string // AF_K8S_WORKSPACE_IMAGE: a tag; Start pins the digest
-	storageClass   string // "" = the cluster's default class
+	// onRelease records a pod's address before Stop deletes it (Config.OnAddressesReleasing).
+	onRelease    AddressReleaseHook
+	namespace    string
+	image        string // AF_K8S_WORKSPACE_IMAGE: a tag; Start pins the digest
+	storageClass string // "" = the cluster's default class
+	// homeSharedFS (AF_K8S_HOME_SHARED_FS) declares that the StorageClass backs claims with
+	// one shared filesystem (an NFS subdir provisioner, say), where statfs of a home is the
+	// whole share's usage.
+	homeSharedFS   bool
 	homeGiB        int
 	stateGiB       int
 	pullSecret     string
@@ -95,8 +101,8 @@ type kubeConfig struct {
 	serviceAccount string
 	sessionCmd     string
 	// templateEnv is Config.ExtraEnv: WS_ENV and the egress proxy variables. Unlike the
-	// ECS adapters this one passes it on, as docker and native do — the egress proxy is
-	// the reason — and it travels in the Secret with the rest of the environment, since
+	// ECS adapters, which take only Config.EgressProxyEnv, this
+	// one passes all of it on, as docker and native do, and it travels in the Secret with the rest of the environment, since
 	// an operator's WS_ENV may hold a credential.
 	templateEnv     []string
 	defaultMemBytes int64 // Config.Memory (WS_MEMORY) in bytes; 0 = no default
@@ -148,7 +154,9 @@ func newKubeFactory(mcfg Config) (RuntimeFactory, error) {
 // fail the boot: a node selector or size that silently fell back to a default would
 // place workspaces where the operator said they must not go.
 func kubeConfigFromEnv(get func(k, def string) string, mcfg Config) (*kubeConfig, error) {
+	sharedFS, _ := strconv.ParseBool(get("AF_K8S_HOME_SHARED_FS", ""))
 	cfg := &kubeConfig{
+		onRelease:      mcfg.OnAddressesReleasing,
 		namespace:      get("AF_K8S_NAMESPACE", ""),
 		image:          get("AF_K8S_WORKSPACE_IMAGE", mcfg.Image),
 		storageClass:   get("AF_K8S_STORAGE_CLASS", ""),
@@ -156,6 +164,7 @@ func kubeConfigFromEnv(get func(k, def string) string, mcfg Config) (*kubeConfig
 		serviceAccount: get("AF_K8S_SERVICE_ACCOUNT", "default"),
 		sessionCmd:     mcfg.SessionCmd,
 		templateEnv:    append([]string(nil), mcfg.ExtraEnv...),
+		homeSharedFS:   sharedFS,
 	}
 	if cfg.namespace == "" {
 		return nil, errors.New("kubernetes runtime: AF_K8S_NAMESPACE is required")
@@ -253,6 +262,8 @@ func (f *kubeFactory) New(ws Workspace, keys SecretKeys, extraEnv []string) Runt
 		poll:       f.poll,
 		stopMargin: f.stopMargin,
 		wsName:     ws.ContainerName,
+		membership: ws.MembershipID,
+		wsID:       ws.ID,
 		base:       kubeObjectName(ws.ContainerName),
 		token:      ws.AgentToken,
 		keys:       keys,
@@ -304,6 +315,8 @@ type kubeRuntime struct {
 	c             *kubeClient
 	pins          imageResolver
 	wsName        string // the CP's name for the workspace (Workspace.ContainerName)
+	membership    string // for the address-release hook (cfg.onRelease)
+	wsID          string
 	base          string // the Kubernetes name of the StatefulSet and the Service
 	token         string
 	keys          SecretKeys
@@ -333,6 +346,14 @@ func (k *kubeRuntime) Endpoint() string {
 }
 
 func (k *kubeRuntime) secretName() string { return k.base + "-env" }
+
+// OwnHomeVolume reports that statfs of the home is this member's own figure. The claim is
+// per workspace, but that alone does not make the filesystem per workspace: ADR 0106
+// expects block storage (one volume per claim), which nothing here checks. A StorageClass
+// that carves claims out of one shared filesystem returns the whole share's usage, so
+// the operator declares it with AF_K8S_HOME_SHARED_FS=1 and the notice is withheld.
+func (k *kubeRuntime) OwnHomeVolume() bool { return !k.cfg.homeSharedFS }
+
 func (k *kubeRuntime) homeClaim() string  { return k.base + "-home" }
 func (k *kubeRuntime) stateClaim() string { return k.base + "-state" }
 
@@ -525,6 +546,9 @@ func (k *kubeRuntime) Stop(ctx context.Context) error {
 	}
 	k.setPhase("")
 	if stsReplicas(s) != 0 {
+		if k.cfg != nil {
+			noteReleasing(ctx, k.cfg.onRelease, k, k.membership, k.wsID)
+		}
 		var out kStatefulSet
 		if err := k.c.jsonPatch(ctx, k.stsPath(), []kubePatchOp{
 			{Op: "replace", Path: "/spec/replicas", Value: 0},
@@ -726,8 +750,19 @@ func (k *kubeRuntime) ensureService(ctx context.Context) error {
 // secretEnv is the whole per-start environment: the deployment's template env, the
 // start's own variables (the minted tokens among them), then AGENT_TOKEN and the DEK. A
 // later entry wins, the order docker gives its -e flags.
+//
+// AWS_EC2_METADATA_DISABLED is seeded first, as docker's envArgs does, so an operator's
+// WS_ENV can still override it (which is why it lives here and not in the pod template's
+// env, which beats envFrom). It makes the AWS SDKs stop asking the node's instance
+// metadata service; it does not block a pod's route to the GKE metadata server (node
+// service account / Workload Identity), which a tool ignoring the variable still reaches.
+// AF_WS_WORKLOAD_AWS=1 leaves the default chain alone, as on docker and ECS.
 func (k *kubeRuntime) secretEnv() map[string]string {
 	env := map[string]string{}
+	// The opt-in may arrive from either list (docker merges them before asking).
+	if !slices.Contains(k.extraEnv, "AF_WS_WORKLOAD_AWS=1") && !slices.Contains(k.cfg.templateEnv, "AF_WS_WORKLOAD_AWS=1") {
+		env["AWS_EC2_METADATA_DISABLED"] = "true"
+	}
 	for _, list := range [][]string{k.cfg.templateEnv, k.extraEnv} {
 		for _, kv := range list {
 			if key, v, ok := strings.Cut(kv, "="); ok && key != "" {
@@ -752,29 +787,45 @@ func (k *kubeRuntime) secretEnv() map[string]string {
 // step, as main.go sets both.
 func bypassProxyForCP(env map[string]string) {
 	internal := env["AF_CP_INTERNAL_URL"]
-	if internal == "" {
+	if internal == "" || !routesThroughProxy(env) {
 		return
-	}
-	proxied := false
-	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
-		if env[k] != "" {
-			proxied = true
-		}
 	}
 	u, err := url.Parse(internal)
-	if !proxied || err != nil || u.Hostname() == "" {
+	if err != nil || u.Hostname() == "" {
 		return
 	}
-	host := u.Hostname()
+	appendNoProxy(env, u.Hostname())
+}
+
+// routesThroughProxy reports whether env points any proxy variable at an egress proxy.
+func routesThroughProxy(env map[string]string) bool {
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if env[k] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// appendNoProxy adds hosts to NO_PROXY and no_proxy, skipping any already listed. The two
+// spellings are kept in step.
+func appendNoProxy(env map[string]string, hosts ...string) {
 	for _, k := range []string{"NO_PROXY", "no_proxy"} {
 		cur := env[k]
-		if slices.Contains(splitCSV(cur), host) {
-			continue
+		have := splitCSV(cur)
+		for _, h := range hosts {
+			if slices.Contains(have, h) {
+				continue
+			}
+			have = append(have, h)
+			if cur == "" {
+				cur = h
+			} else {
+				cur += "," + h
+			}
 		}
-		if cur == "" {
-			env[k] = host
-		} else {
-			env[k] = cur + "," + host
+		if cur != "" {
+			env[k] = cur
 		}
 	}
 }

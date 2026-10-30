@@ -1,7 +1,15 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestRouteTableGolden -update-routes-golden .
 # ANY = registered without a method.
-# count: 390
+# count: 419
+GET /agents/kinds
+GET /agents/memory-review
+POST /agents/memory-review/proposals/approve
+POST /agents/memory-review/proposals/list
+POST /agents/memory-review/proposals/reject
+POST /agents/memory-review/proposals/reject-all
+POST /agents/memory-review/run
+POST /agents/memory-review/runs/revert
 POST /agents/memory/af-import
 GET /agents/memory/af-import/preview
 GET /agents/memory/auto-sync
@@ -35,6 +43,12 @@ GET /agents/memory/entries/read
 POST /agents/memory/entries/revert
 GET /agents/memory/entries/search
 GET /agents/memory/export
+GET /agents/memory/external/entries
+POST /agents/memory/external/entries
+POST /agents/memory/external/forget
+GET /agents/memory/external/projects
+GET /agents/memory/external/read
+GET /agents/memory/external/search
 POST /agents/memory/import
 POST /agents/memory/import/apply
 GET /agents/memory/muse-import
@@ -188,9 +202,14 @@ GET /env/databases
 POST /env/databases/{engine}/{action}
 GET /env/jdk-install
 POST /env/jdk-install
+GET /env/jdk-latest
+DELETE /env/jdk/{major}
 GET /env/node-install
 POST /env/node-install
+GET /env/node-latest
+DELETE /env/node/{major}
 GET /env/tool-versions
+GET /env/toolchain-installs
 GET /env/toolchains
 PUT /env/toolchains
 GET /env/ui-prefs
@@ -254,6 +273,11 @@ POST /mcp-servers/test
 DELETE /mcp-servers/{id}
 PUT /mcp-servers/{id}
 POST /mcp-servers/{id}/enabled
+DELETE /mcp-servers/{id}/oauth
+GET /mcp-servers/{id}/oauth
+POST /mcp-servers/{id}/oauth/callback
+PUT /mcp-servers/{id}/oauth/client
+POST /mcp-servers/{id}/oauth/start
 PUT /mcp-servers/{id}/secrets
 POST /memos/images/gc
 GET /memos/images/{file}
@@ -341,6 +365,7 @@ POST /sessions/{name}/lock
 DELETE /sessions/{name}/marks
 GET /sessions/{name}/marks
 POST /sessions/{name}/marks
+POST /sessions/{name}/mcp-input
 GET /sessions/{name}/messages
 POST /sessions/{name}/move
 POST /sessions/{name}/move/cancel
@@ -354,6 +379,7 @@ GET /sessions/{name}/pasted/{file}
 DELETE /sessions/{name}/pending-peer/{id}
 GET /sessions/{name}/plan-file
 POST /sessions/{name}/plan-respond
+POST /sessions/{name}/plan-reviewer
 POST /sessions/{name}/recreate
 POST /sessions/{name}/rename-branch
 POST /sessions/{name}/respond
@@ -378,6 +404,8 @@ POST /sessions/{name}/translate
 GET /sessions/{name}/translations
 POST /sessions/{name}/turn
 GET /share-operations/{key}
+GET /skills/catalog
+GET /skills/file
 POST /ssm/instances
 GET /usage/series
 GET /user-notes
@@ -387,6 +415,7 @@ POST /work-items/comment
 POST /work-items/detail
 POST /work-items/fetch
 POST /work-items/jira-projects
+POST /work-items/merge
 GET /workspace/machine
 GET /workspace/stats
 GET /ws/browser

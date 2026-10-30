@@ -106,6 +106,37 @@ describe("usePreviewAvailable", () => {
     await mount(<P />);
     expect(read()).toBe("pending");
   });
+
+  // Settings opening again is a fresh mount of the same module (the cache survives it).
+  const remount = async (P: () => React.ReactElement) => {
+    act(() => root?.unmount());
+    host?.remove();
+    await mount(<P />);
+  };
+
+  it("does not cache an error answer: the next open asks again and shows the entry", async () => {
+    api.mockResolvedValueOnce({ error: "control plane starting" });
+    const { usePreviewAvailable } = await freshModule();
+    const P = probe(usePreviewAvailable);
+    await mount(<P />);
+    expect(read()).toBe("false");
+    api.mockResolvedValueOnce(wsSettings());
+    await remount(P);
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(read()).toBe("true");
+  });
+
+  it("still caches a successful answer without previewDomain as unavailable", async () => {
+    api.mockResolvedValueOnce(wsSettings({ previewDomain: "" }));
+    const { usePreviewAvailable } = await freshModule();
+    const P = probe(usePreviewAvailable);
+    await mount(<P />);
+    expect(read()).toBe("false");
+    api.mockResolvedValueOnce(wsSettings());
+    await remount(P);
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(read()).toBe("false");
+  });
 });
 
 describe("PreviewTab", () => {
@@ -301,7 +332,7 @@ describe("development OIDC IdP", () => {
     expect(text()).toContain("afdev_abc");
     expect(text()).toContain("AF_DEV_IDP_CLIENT_SECRET");
     const { t } = await import("../../../lib/i18n/index.ts");
-    const copies = [...host!.querySelectorAll("button")].filter((b) => b.textContent === t("env.devidp_copy"));
+    const copies = [...host!.querySelectorAll<HTMLButtonElement>(".dip-creds button")].filter((b) => b.textContent === t("env.devidp_copy"));
     expect(copies).toHaveLength(3);
     await act(async () => copies[2].click());
     expect(write).toHaveBeenCalledWith("afdev_abc");
@@ -313,9 +344,7 @@ describe("development OIDC IdP", () => {
     await mount(<PreviewTab />);
     const { t } = await import("../../../lib/i18n/index.ts");
     expect(text()).toContain("afdev_abc");
-    expect(text()).toContain(t("env.devidp_warn_prod"));
-    expect(text()).toContain(t("env.devidp_warn_rotate"));
-    expect(text()).toContain(t("env.devidp_warn_env"));
+    expect(text()).toContain(t("env.devidp_warn"));
   });
 
   it("rotates the secret on request, shows the new client id and says a restart is needed", async () => {

@@ -97,10 +97,8 @@ func TestMaskAndMergeSecrets(t *testing.T) {
 		Headers: map[string]string{"Authorization": "Bearer real", "X-Team": "ops"},
 	}
 	masked := Masked(stored)
-	for k, v := range masked.Headers {
-		if v != MaskedValue {
-			t.Fatalf("Masked leaked %s=%q", k, v)
-		}
+	if masked.Headers["Authorization"] != "Bearer "+MaskedValue || masked.Headers["X-Team"] != MaskedValue {
+		t.Fatalf("Masked = %v, want the Bearer scheme kept and everything else ***", masked.Headers)
 	}
 	if len(masked.Headers) != 2 {
 		t.Fatalf("masking dropped the header names too: %v", masked.Headers)
@@ -123,6 +121,63 @@ func TestMaskAndMergeSecrets(t *testing.T) {
 	got = MergeSecrets(ServerDef{Headers: map[string]string{"New": MaskedValue}}, stored)
 	if _, ok := got.Headers["New"]; ok {
 		t.Fatalf(`an unbacked mask value was stored: %v`, got.Headers)
+	}
+}
+
+// The scheme survives the mask so the Console can tell a Bearer token from any other
+// Authorization value; the secret never does.
+func TestMaskKeepsBearerScheme(t *testing.T) {
+	cases := map[string]string{
+		"Bearer abc123":      "Bearer ***",
+		"bearer abc123":      "bearer ***",
+		"BEARER   abc 123":   "BEARER ***",
+		"Token abc123":       MaskedValue, // not Bearer: opens as a custom header
+		"Basic dXNlcjpwYXNz": MaskedValue,
+		"Bearer":             MaskedValue, // a scheme with no secret is not a Bearer credential
+		"Bearer ":            MaskedValue,
+		"abc123":             MaskedValue,
+		"":                   "",
+	}
+	for in, want := range cases {
+		got := Masked(ServerDef{Headers: map[string]string{"Authorization": in}}).Headers["Authorization"]
+		if got != want {
+			t.Errorf("Masked(%q) = %q, want %q", in, got, want)
+		}
+		if strings.Contains(got, "abc") {
+			t.Errorf("Masked(%q) = %q leaked the secret", in, got)
+		}
+	}
+	// env values are never scheme-aware.
+	if v := Masked(ServerDef{Env: map[string]string{"T": "Bearer abc"}}).Env["T"]; v != MaskedValue {
+		t.Errorf("env value masked as %q, want ***", v)
+	}
+}
+
+func TestMergeSecretsBearerMask(t *testing.T) {
+	stored := ServerDef{Headers: map[string]string{"Authorization": "bearer real", "Proxy-Authorization": "Token t"}}
+	for _, in := range []string{"Bearer ***", "bearer ***", "BEARER ***", "Bearer   ***", MaskedValue} {
+		got := MergeSecrets(ServerDef{Headers: map[string]string{"Authorization": in}}, stored)
+		if got.Headers["Authorization"] != "bearer real" {
+			t.Errorf("incoming %q lost the stored value: %v", in, got.Headers)
+		}
+	}
+	// A typed token replaces.
+	got := MergeSecrets(ServerDef{Headers: map[string]string{"Authorization": "Bearer new"}}, stored)
+	if got.Headers["Authorization"] != "Bearer new" {
+		t.Errorf("typed token not applied: %v", got.Headers)
+	}
+	// `Bearer ***` with nothing stored behind it is dropped, never stored literally.
+	got = MergeSecrets(ServerDef{Headers: map[string]string{"X-New": "Bearer ***"}}, stored)
+	if _, ok := got.Headers["X-New"]; ok {
+		t.Errorf("an unbacked Bearer mask was stored: %v", got.Headers)
+	}
+	// env keeps the old rule: only a bare *** is a mask.
+	got = MergeSecrets(ServerDef{Env: map[string]string{"T": "Bearer ***"}}, ServerDef{Env: map[string]string{"T": "x"}})
+	if got.Env["T"] != "Bearer ***" {
+		t.Errorf("env value was treated as a mask: %v", got.Env)
+	}
+	if Ready(ServerDef{Enabled: true, Transport: TransportHTTP, URL: "https://e.com", Headers: map[string]string{"Authorization": "Bearer ***"}}) {
+		t.Error("a Bearer mask must not count as a real value")
 	}
 }
 

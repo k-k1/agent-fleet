@@ -1,5 +1,5 @@
 // English カタログ / ドメイン: repos
-// キー接頭辞: rp, repo, scm, pj, igb, proj, gitflow
+// キー接頭辞: rp, repo, repo_skills, scm, pj, igb, proj, gitflow
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -130,6 +130,9 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "proj.copy_rel_path": "Copy the relative path",
   "proj.open_reader": "Open in reader",
   "proj.open_gallery": "Open in gallery",
+  "proj.open_folder_gallery": "Open folder in gallery",
+  "proj.open_shell_here": "Open shell here",
+  "proj.shell_title": "shell · {name}",
   "proj.download": "Download",
   "proj.download_zip": "Download as zip",
   "proj.download_zip_title": ".git and node_modules inside the folder are left out",
@@ -201,7 +204,9 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.loading_repos": "Loading repositories…",
   "pj.repos_unreachable": "Can't reach the workspace",
   "pj.repos_unreachable_hint": "Retrying — the list will come back by itself",
-  "pj.repos_stale": "Can't reach the workspace — showing the last known list",
+  "pj.repos_failed": "Couldn't load the repository list",
+  "pj.repos_failed_hint": "The workspace answered with an error, so it will not retry. Reload the page, or check your access to this workspace.",
+  "pj.repos_stale": "Couldn't refresh the list — showing the last known one",
   "pj.collapse": "Collapse",
   "pj.peek_more": "Also running:\n{names}",
   "pj.expand": "Expand",
@@ -456,6 +461,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "scm.ref_tag": "Tag {name}",
   "scm.show_detail": "Show details",
   "scm.switch_branch_to": "Switch branch: {name}",
+  "scm.switch_remote_branch_to": "Switch to remote branch: {name}",
   "scm.start_work_on": "Start work on {name}…",
   "scm.open_branch_worktree": "{name} is in use by {folder}; open it",
   "scm.checkout_detached": "Check out (detached HEAD)",
@@ -503,4 +509,23 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "gitflow.err_invalid": "Not a valid value: {detail}",
   "gitflow.err_failed": "Could not write the settings: {err}",
   "gitflow.err_partial": "Writing stopped part-way ({err}). Already written: {keys}. Save again to write them all.",
+  "repo.skills": "Skills…",
+  "repo_skills.title": "Skills in {repo}",
+  "repo_skills.intro": "What each agent would find in this working copy: the folders it reads, which copy of a name wins, and what each file says. Read-only; the files are part of the repository, so edit them there. Your own skills are under Settings > Skills.",
+  "repo_skills.subdir": "Subdir",
+  "repo_skills.subdir_ph": "empty = the working copy root (e.g. packages/app)",
+  "repo_skills.show": "Show",
+  "repo_skills.no_subdir": "There is no folder \"{subdir}\" in this working copy.",
+  "repo_skills.no_roots": "This agent reads no skills from a repository.",
+  "repo_skills.scope_user": "above the working copy",
+  "repo_skills.not_present": "not present",
+  "repo_skills.create": "create e.g. {path}",
+  "repo_skills.none": "No skills found in the folders above.",
+  "repo_skills.group_project": "In this repository",
+  "repo_skills.group_user": "In folders above the working copy",
+  "repo_skills.outside_badge": "outside the working copy",
+  "repo_skills.outside": "This entry is a link that leaves the working copy, so it is not read or shown.",
+  "repo_skills.also_personal": "Also defined in your personal skills.",
+  "repo_skills.open_personal": "Open your skills",
+  "repo_skills.open_in_viewer": "Open in viewer",
 };

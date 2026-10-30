@@ -1,0 +1,415 @@
+package workitems
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
+
+// docs/log/80 / ADR 0061 — what shows up in the list is decided by how a provider's response
+// is mapped. That mapping is the substance, so it is pinned here without a network.
+
+func TestParseGitHubSearchItems(t *testing.T) {
+	body := []byte(`{"items":[
+	  {"number":45,"title":"ログイン後に一覧が空になる","state":"open",
+	   "html_url":"https://github.com/acme/web/issues/45",
+	   "repository_url":"https://api.github.com/repos/acme/web",
+	   "updated_at":"2026-08-25T01:02:03Z",
+	   "assignees":[{"login":"taro"},{"login":"hanako"}],
+	   "type":{"id":1,"name":"Bug"},
+	   "labels":[{"name":"bug","color":"D73A4A"},{"name":"p1","color":"url(x)"}]},
+	  {"number":46,"title":"draft pr","state":"open","draft":true,
+	   "html_url":"https://github.com/acme/web/pull/46",
+	   "repository_url":"https://api.github.com/repos/acme/web",
+	   "updated_at":"2026-08-24T00:00:00Z",
+	   "pull_request":{"url":"https://api.github.com/repos/acme/web/pulls/46"}},
+	  {"number":47,"title":"closed one","state":"closed",
+	   "html_url":"https://github.com/acme/web/issues/47",
+	   "repository_url":"https://api.github.com/repos/acme/web"}
+	]}`)
+	rows, err := parseGitHubSearchItems(body, "q1")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows, got %d", len(rows))
+	}
+	got := rows[0]
+	if got.QueryID != "q1" || got.Provider != "github" {
+		t.Errorf("query/provider not stamped: %+v", got)
+	}
+	if got.Key != "acme/web#45" {
+		t.Errorf("key = %q, want acme/web#45", got.Key)
+	}
+	if got.Repo != "acme/web" {
+		t.Errorf("repo = %q", got.Repo)
+	}
+	if got.Kind != "issue" || got.State != "open" {
+		t.Errorf("kind/state = %q/%q", got.Kind, got.State)
+	}
+	// Only the first assignee: a row is one line and cannot hold all of them.
+	if got.Assignee != "taro" {
+		t.Errorf("assignee = %q, want taro", got.Assignee)
+	}
+	if strings.Join(got.Labels, ",") != "bug,p1" {
+		t.Errorf("labels = %v", got.Labels)
+	}
+	// The issue type feeds the branch-name resolver's kind (ADR 0103 decision 4); an
+	// organisation without issue types sends null.
+	if got.Type != "Bug" || rows[1].Type != "" {
+		t.Errorf("type = %q / %q, want Bug / empty", got.Type, rows[1].Type)
+	}
+	// The colour is lowercased, and one that is not "rrggbb" is dropped rather than passed on
+	// to end up in the Console's CSS.
+	if len(got.LabelColors) != 1 || got.LabelColors["bug"] != "d73a4a" {
+		t.Errorf("labelColors = %v, want only bug=d73a4a", got.LabelColors)
+	}
+	// A row without labels still carries {} rather than null.
+	if enc, _ := json.Marshal(rows[1]); !strings.Contains(string(enc), `"labelColors":{}`) {
+		t.Errorf("unlabelled row = %s, want labelColors {}", enc)
+	}
+	if rows[1].Kind != "pr" || rows[1].State != "in_progress" {
+		t.Errorf("draft PR = %q/%q, want pr/in_progress", rows[1].Kind, rows[1].State)
+	}
+	if rows[2].State != "done" {
+		t.Errorf("closed = %q, want done", rows[2].State)
+	}
+	// Bodies and comments are never returned (ADR 0061 decision 2). That no body appears in
+	// the response is checked against the actual JSON rather than the struct, so the moment a
+	// field is added this fails.
+	enc, _ := json.Marshal(rows)
+	for _, forbidden := range []string{`"body"`, `"comments"`, `"description"`} {
+		if strings.Contains(string(enc), forbidden) {
+			t.Errorf("row JSON leaks %s: %s", forbidden, enc)
+		}
+	}
+}
+
+// The request GitHub actually receives. `advanced_search=true` is not cosmetic: it is the only
+// mode in which `OR` and parentheses parse, and a member needs them to write "assigned to me OR
+// mine OR waiting on my review" — `assignee:` matches no pull request at all. Without the
+// parameter GitHub answers 422, which reads as the member's typo (observed on a deployment still running the previous Agent).
+func TestGitHubSearchRequestEnablesAdvancedSearch(t *testing.T) {
+	var got *url.URL
+	orig := workItemHTTPClient.Transport
+	workItemHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.URL
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(`{"items":[]}`))}, nil
+	})
+	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
+
+	query := "is:open (assignee:@me OR author:@me OR review-requested:@me)"
+	if _, _, err := githubSearchWorkItems("tok", "q1", query); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no request was made")
+	}
+	if adv := got.Query().Get("advanced_search"); adv != "true" {
+		t.Errorf("advanced_search = %q, want true (%s)", adv, got.RawQuery)
+	}
+	// Verbatim, parentheses and spaces included: af stores the member's dialect and must not
+	// rewrite it on the way out.
+	if q := got.Query().Get("q"); q != query {
+		t.Errorf("q = %q, want %q", q, query)
+	}
+}
+
+// #1095: the rail showed 50 of 59 matches and said nothing, so an open issue GitHub's own search
+// found was missing with no hint why. The request asks for GitHub's largest page, and the
+// response's total_count comes back so the rail can say what the page left out.
+func TestGitHubSearchAsksFullPageAndReportsTotal(t *testing.T) {
+	var got *url.URL
+	orig := workItemHTTPClient.Transport
+	workItemHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.URL
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(`{"total_count":159,"items":[{"number":1,"title":"a","state":"open"}]}`))}, nil
+	})
+	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
+
+	rows, total, err := githubSearchWorkItems("tok", "q1", "is:open involves:@me")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if pp := got.Query().Get("per_page"); pp != "100" {
+		t.Errorf("per_page = %q, want 100", pp)
+	}
+	if len(rows) != 1 || total != 159 {
+		t.Errorf("rows=%d total=%d, want 1 and 159", len(rows), total)
+	}
+}
+
+func TestWorkItemTruncated(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		fetched, total, cap int
+		want                bool
+	}{
+		{"known total above the page", 100, 159, 100, true},
+		{"known total fits", 59, 59, 100, false},
+		{"known total trusted over a full page", 50, 50, 50, false},
+		{"no total, full page", 50, 0, 50, true},
+		{"no total, short page", 12, 0, 50, false},
+		{"nothing matched", 0, 0, 50, false},
+	} {
+		if got := workItemTruncated(tc.fetched, tc.total, tc.cap); got != tc.want {
+			t.Errorf("%s: workItemTruncated(%d, %d, %d) = %v, want %v", tc.name, tc.fetched, tc.total, tc.cap, got, tc.want)
+		}
+	}
+}
+
+func TestWorkItemFetchCapPerProvider(t *testing.T) {
+	for p, want := range map[string]int{"": 100, "github": 100, "jira": 50, "bitbucket": 50} {
+		if got := workItemFetchCap(p); got != want {
+			t.Errorf("workItemFetchCap(%q) = %d, want %d", p, got, want)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNormalizeGitHubState(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		draft bool
+		want  string
+	}{
+		{"open", false, "open"},
+		{"OPEN", false, "open"},
+		{"open", true, "in_progress"},
+		{"closed", false, "done"},
+		{"closed", true, "done"},
+		{"", false, "other"},
+		{"merged", false, "other"},
+	} {
+		if got := normalizeGitHubState(tc.state, tc.draft); got != tc.want {
+			t.Errorf("normalizeGitHubState(%q,%v) = %q, want %q", tc.state, tc.draft, got, tc.want)
+		}
+	}
+}
+
+func TestRepoFromGitHubAPIURL(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"https://api.github.com/repos/acme/web", "acme/web"},
+		{"https://api.github.com/repos/acme/web/", "acme/web"},
+		{"https://api.github.com/repos/acme", ""},
+		{"https://api.github.com/repos/acme/web/extra", ""},
+		{"", ""},
+	} {
+		if got := repoFromGitHubAPIURL(tc.in); got != tc.want {
+			t.Errorf("repoFromGitHubAPIURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A provider that is unconnected or unknown comes back as an error on that one query while the
+// request as a whole still returns 200: one failing query must not empty the whole shelf
+// (docs/log/80 §80.6).
+func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	body := `{"queries":[{"id":"q1","provider":"github","query":"assignee:@me"},
+	                     {"id":"q2","provider":"jira","query":"assignee = currentUser()"},
+	                     {"id":"q3","provider":"github","query":"  "},
+	                     {"id":"q4","provider":"backlog","query":"x"}]}`
+	req := httptest.NewRequest("POST", "/work-items/fetch", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	HandleWorkItemsFetch(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (per-query failures are not request failures)", w.Code)
+	}
+	var out struct {
+		Items  []workItemOut    `json:"items"`
+		Errors []workItemErrOut `json:"errors"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if len(out.Errors) != 4 {
+		t.Fatalf("want 4 per-query errors, got %d (%s)", len(out.Errors), w.Body.String())
+	}
+	byID := map[string]string{}
+	for _, e := range out.Errors {
+		byID[e.QueryID] = e.Message
+	}
+	if !strings.Contains(byID["q1"], "not connected") {
+		t.Errorf("q1 (no GitHub connection) = %q", byID["q1"])
+	}
+	// Jira is supported, so an unconnected Jira has to say "not connected": leaving
+	// "unsupported" here reads as "af does not support Jira" when connecting would fix it.
+	if !strings.Contains(byID["q2"], "Jira is not connected") {
+		t.Errorf("q2 (jira, no connection) = %q", byID["q2"])
+	}
+	if !strings.Contains(byID["q3"], "empty") {
+		t.Errorf("q3 (blank query) = %q", byID["q3"])
+	}
+	if !strings.Contains(byID["q4"], "unsupported provider") {
+		t.Errorf("q4 (unknown provider) = %q", byID["q4"])
+	}
+}
+
+func TestWorkItemsFetchEmptyRequest(t *testing.T) {
+	req := httptest.NewRequest("POST", "/work-items/fetch", strings.NewReader(`{"queries":[]}`))
+	w := httptest.NewRecorder()
+	HandleWorkItemsFetch(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	// An array is returned even when empty: the Console cannot tell null apart from broken.
+	if got := strings.TrimSpace(w.Body.String()); !strings.Contains(got, `"items":[]`) {
+		t.Errorf("body = %s, want an empty items array", got)
+	}
+}
+
+const typeQualifier422 = `{"message":"Query must include 'is:issue' or 'is:pull-request'","status":"422"}`
+
+// stubGitHubSearch answers each /search/issues call with the next canned (status, body) and
+// records the q parameter of every request.
+func stubGitHubSearch(t *testing.T, answers ...[2]string) *[]string {
+	t.Helper()
+	var qs []string
+	orig := workItemHTTPClient.Transport
+	workItemHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		qs = append(qs, r.URL.Query().Get("q"))
+		i := len(qs) - 1
+		if i >= len(answers) {
+			t.Fatalf("unexpected request #%d: %s", i+1, r.URL)
+		}
+		code := 200
+		fmt.Sscan(answers[i][0], &code)
+		return &http.Response{StatusCode: code, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(answers[i][1]))}, nil
+	})
+	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
+	return &qs
+}
+
+// #1690: GitHub's 422 explanation used to be replaced by a fixed string.
+func TestGitHubSearch422SurfacesGitHubMessage(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422",
+		"{\"message\":\"Validation Failed\\u0007\",\"errors\":[{\"message\":\"bad\\nqualifier\"}]}"})
+	_, _, err := githubSearchWorkItems("tok-secret", "q1", "is:open foo:bar")
+	if err == nil || err.Error() != "github rejected the query: Validation Failed ; bad qualifier" {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.ContainsAny(err.Error(), "\x07\n") || strings.Contains(err.Error(), "tok-secret") {
+		t.Errorf("unsanitised error: %q", err)
+	}
+	if len(*qs) != 1 {
+		t.Errorf("requests = %d, want 1 (no retry for other 422s)", len(*qs))
+	}
+}
+
+func TestGitHubErrorTextIsBounded(t *testing.T) {
+	got := githubErrorText([]byte(`{"message":"` + strings.Repeat("x", 5000) + `"}`))
+	if n := len([]rune(got)); n > 301 {
+		t.Errorf("len = %d", n)
+	}
+}
+
+func TestGitHubSearchRetriesOnceWithTypeQualifier(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422},
+		[2]string{"200", `{"total_count":342,"items":[]}`})
+	_, total, err := githubSearchWorkItems("tok", "q1", "is:open involves:@me")
+	if err != nil || total != 342 {
+		t.Fatalf("total=%d err=%v", total, err)
+	}
+	want := []string{"is:open involves:@me", "(is:issue OR is:pull-request) (is:open involves:@me)"}
+	if len(*qs) != 2 || (*qs)[0] != want[0] || (*qs)[1] != want[1] {
+		t.Errorf("queries = %q, want %q", *qs, want)
+	}
+}
+
+func TestGitHubSearchRetryFailureSurfacesMessageAndDoesNotLoop(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422},
+		[2]string{"422", `{"message":"still wrong"}`})
+	_, _, err := githubSearchWorkItems("tok", "q1", "involves:@me")
+	if err == nil || err.Error() != "github rejected the query: still wrong" {
+		t.Errorf("err = %v", err)
+	}
+	if len(*qs) != 2 {
+		t.Errorf("requests = %d, want 2", len(*qs))
+	}
+}
+
+func TestGitHubSearchNoRetryWhenQueryHasTypeQualifier(t *testing.T) {
+	for _, q := range []string{"is:issue involves:@me", "(is:pr OR author:@me)", "type:pr is:open", "is:open is:pull-request", "type:issue"} {
+		qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422})
+		_, _, err := githubSearchWorkItems("tok", "q1", q)
+		if err == nil || !strings.Contains(err.Error(), "Query must include") {
+			t.Errorf("%q: err = %v", q, err)
+		}
+		if len(*qs) != 1 {
+			t.Errorf("%q: requests = %d, want 1", q, len(*qs))
+		}
+	}
+}
+
+// A qualifier that does not satisfy GitHub (negated, misspelt, a non-type `type:`, quoted text)
+// must not suppress the retry.
+func TestGitHubSearchRetriesWhenQualifierDoesNotCount(t *testing.T) {
+	for _, q := range []string{"is:open -is:pr", "type:bug is:open", "is:open is:issues", `"foo is:issue" is:open`, `label:"is:pr"`} {
+		qs := stubGitHubSearch(t, [2]string{"422", typeQualifier422}, [2]string{"200", `{"items":[]}`})
+		if _, _, err := githubSearchWorkItems("tok", "q1", q); err != nil || len(*qs) != 2 {
+			t.Errorf("%q: err=%v requests=%d, want a retry", q, err, len(*qs))
+		}
+	}
+}
+
+func TestGitHubSearchRetriesWhenReasonIsInErrorsArray(t *testing.T) {
+	qs := stubGitHubSearch(t,
+		[2]string{"422", `{"message":"Validation Failed","errors":[{"message":"Query must include 'is:issue' or 'is:pr'"}]}`},
+		[2]string{"200", `{"items":[]}`})
+	if _, _, err := githubSearchWorkItems("tok", "q1", "involves:@me"); err != nil || len(*qs) != 2 {
+		t.Errorf("err=%v requests=%d, want a retry", err, len(*qs))
+	}
+}
+
+func TestGitHubSearch422WithNonJSONBodyDoesNotRetry(t *testing.T) {
+	qs := stubGitHubSearch(t, [2]string{"422", "<html>nope</html>"})
+	_, _, err := githubSearchWorkItems("tok", "q1", "involves:@me")
+	if err == nil || err.Error() != "github rejected the query: no reason given" || len(*qs) != 1 {
+		t.Errorf("err=%v requests=%d", err, len(*qs))
+	}
+}
+
+func TestGitHubErrorTextDropsBidiOverrides(t *testing.T) {
+	if got := githubErrorText([]byte(`{"message":"a\u202Eb"}`)); strings.ContainsRune(got, '\u202e') {
+		t.Errorf("got %q", got)
+	}
+}
+
+// #2779: the list response's comment count reaches the row, so the Console can show it without a
+// request per row. Absent (or negative) is unknown (nil), which is not a known 0.
+func TestParseGitHubSearchItemsComments(t *testing.T) {
+	body := []byte(`{"items":[
+	  {"number":1,"title":"a","state":"open","comments":7,"repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":2,"title":"b","state":"open","repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":3,"title":"c","state":"open","comments":0,"repository_url":"https://api.github.com/repos/acme/web"},
+	  {"number":4,"title":"d","state":"open","comments":-4,"repository_url":"https://api.github.com/repos/acme/web"}]}`)
+	rows, err := parseGitHubSearchItems(body, "q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].CommentCount == nil || *rows[0].CommentCount != 7 {
+		t.Errorf("row 1 = %v, want 7", rows[0].CommentCount)
+	}
+	if rows[1].CommentCount != nil || rows[3].CommentCount != nil {
+		t.Errorf("absent/negative must stay unknown, got %v / %v", rows[1].CommentCount, rows[3].CommentCount)
+	}
+	if rows[2].CommentCount == nil || *rows[2].CommentCount != 0 {
+		t.Errorf("a sent 0 must stay a known 0, got %v", rows[2].CommentCount)
+	}
+	out, _ := json.Marshal(rows[:3])
+	if !strings.Contains(string(out), `"commentCount":7`) || !strings.Contains(string(out), `"commentCount":null`) {
+		t.Errorf("wire form: %s", out)
+	}
+}

@@ -86,10 +86,6 @@ var (
 	usageMu     sync.Mutex
 	usageCached *usageResult
 	usageAt     time.Time
-	// usageToken is the gh token the cached value was fetched with. The limit snapshot reports
-	// the cache only while the same token is current, so a gh login to another account never
-	// serves the previous account's pools as this one's (ADR 0111 decision 6).
-	usageToken string
 )
 
 // quotaOrder gives the pools a stable, meaningful display order (map iteration is
@@ -122,7 +118,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusOK, out)
 			return
 		}
-		usageCached, usageAt, usageToken = res, time.Now(), tok
+		usageCached, usageAt = res, time.Now()
 		usagePublished.Store(&usagePub{res: res, at: usageAt, token: tok})
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{

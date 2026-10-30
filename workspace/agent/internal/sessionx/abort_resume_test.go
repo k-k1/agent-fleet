@@ -44,7 +44,11 @@ func newAbortFixture(t *testing.T) *abortFixture {
 		return nil
 	}
 	abortResumeReadingPane = func(string) tmuxx.PaneRead { return f.pane }
-	t.Cleanup(func() { abortResumeInject, abortResumeReadingPane = origInject, origPane })
+	origAlive := abortResumeAlive
+	abortResumeAlive = func(session.Meta) bool { return true }
+	t.Cleanup(func() {
+		abortResumeInject, abortResumeReadingPane, abortResumeAlive = origInject, origPane, origAlive
+	})
 	return f
 }
 
@@ -285,6 +289,89 @@ func TestAbortResumeTickClosesEpisode(t *testing.T) {
 	abortResumeTick(time.Now())
 	if _, ok := abortResumeStates.Read(m.Name); ok {
 		t.Error("the cut-off is gone from the tail but the episode remains (no budget for the next cut-off)")
+	}
+}
+
+// TestAbortResumeTickSkipsDeadAndArchived: the sweep reads no tail for an archived or stopped
+// session. That read goes to the claude mount on EFS and, for a session with no transcript,
+// sweeps every project directory; doing it for every archived meta every 30s was the dominant
+// EFS metadata load (ADR 0087). An archived session's episodes are dropped at once; a stopped
+// one's only once they pass their TTL.
+func TestAbortResumeTickSkipsDeadAndArchived(t *testing.T) {
+	newAbortFixture(t)
+	now := time.Now()
+	live := abMeta()
+	stopped := session.Meta{Name: "ab-stopped", Dir: "/tmp/ab-stopped", Kind: session.KindClaude}
+	stale := session.Meta{Name: "ab-stale", Dir: "/tmp/ab-stale", Kind: session.KindClaude}
+	// Archived sessions are not alive either; claiming one alive proves the archived flag
+	// alone keeps the sweep away from its tail.
+	archived := session.Meta{Name: "ab-archived", Dir: "/tmp/ab-archived", Kind: session.KindClaude, Archived: true}
+	fresh := now.Format(time.RFC3339)
+	for _, m := range []session.Meta{live, stopped, archived} {
+		session.WriteMeta(m)
+		_ = abortResumeStates.Write(m.Name, abortResumeState{At: fresh, Attempts: 1})
+		_ = authResumeStates.Write(m.Name, authResumeState{At: fresh})
+	}
+	session.WriteMeta(stale)
+	_ = abortResumeStates.Write(stale.Name, abortResumeState{At: now.Add(-abortResumeEpisodeTTL - time.Minute).Format(time.RFC3339)})
+	_ = authResumeStates.Write(stale.Name, authResumeState{At: now.Add(-authResumeEpisodeTTL - time.Minute).Format(time.RFC3339)})
+	abortResumeAlive = func(m session.Meta) bool { return m.Name == live.Name || m.Name == archived.Name }
+
+	var read []string
+	orig := claudeAbortInfo
+	claudeAbortInfo = func(sid string) (claude.Abort, bool) {
+		read = append(read, sid)
+		return retryableAbort(now), true
+	}
+	t.Cleanup(func() { claudeAbortInfo = orig })
+
+	abortResumeTick(now)
+	if want := session.UUID(live.Dir, live.Name); len(read) != 1 || read[0] != want {
+		t.Errorf("tails read = %v, want only the live session's [%s]", read, want)
+	}
+	for _, m := range []session.Meta{archived, stale} {
+		if _, ok := abortResumeStates.Read(m.Name); ok {
+			t.Errorf("%s: the abort episode was kept", m.Name)
+		}
+		if _, ok := authResumeStates.Read(m.Name); ok {
+			t.Errorf("%s: the auth episode was kept", m.Name)
+		}
+	}
+	for _, m := range []session.Meta{live, stopped} {
+		if _, ok := abortResumeStates.Read(m.Name); !ok {
+			t.Errorf("%s: an abort episode inside its TTL was dropped", m.Name)
+		}
+	}
+	if _, ok := authResumeStates.Read(stopped.Name); !ok {
+		t.Error("the stopped session's auth episode inside its TTL was dropped")
+	}
+}
+
+// TestAbortResumeKeepsBudgetAcrossRuntimeBlip: a Managed runtime reads not-alive while its writer
+// socket is reconnected, then comes back to the same conversation with the same cut-off. The
+// episode must survive that, or the cut-off gets a fresh retry budget past the cap.
+func TestAbortResumeKeepsBudgetAcrossRuntimeBlip(t *testing.T) {
+	f := newAbortFixture(t)
+	setAbortResumePref(t, true)
+	m := abMeta()
+	session.WriteMeta(m)
+	now := time.Now()
+	capped := abortResumeState{At: now.Add(-time.Minute).Format(time.RFC3339), Attempts: chatx.MaxAutoResumeAttempts, GaveUp: abortGaveUpCapped}
+	_ = abortResumeStates.Write(m.Name, capped)
+	orig := claudeAbortInfo
+	claudeAbortInfo = func(string) (claude.Abort, bool) { return retryableAbort(now.Add(-time.Minute)), true }
+	t.Cleanup(func() { claudeAbortInfo = orig })
+
+	abortResumeAlive = func(session.Meta) bool { return false }
+	abortResumeTick(now)
+	abortResumeAlive = func(session.Meta) bool { return true }
+	abortResumeTick(now.Add(abortResumeBackoff))
+
+	if len(f.sent) != 0 {
+		t.Errorf("sent %v after the blip: the capped cut-off got a fresh budget", f.sent)
+	}
+	if st := abState(t, m.Name); st.GaveUp != abortGaveUpCapped || st.Attempts != chatx.MaxAutoResumeAttempts {
+		t.Errorf("episode after the blip = %+v, want the capped one", st)
 	}
 }
 

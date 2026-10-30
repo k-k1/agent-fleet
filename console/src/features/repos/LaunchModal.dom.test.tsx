@@ -47,6 +47,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { LaunchModal } = await import("./LaunchModal.tsx");
+const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
@@ -84,13 +85,14 @@ const rowFor = (name: string) => must(branchRows().find((b) => b.textContent?.in
 const dirRow = (name: string) =>
   must([...document.querySelectorAll(".dirpick-row")].find((b) => b.textContent?.includes(name)), `folder row "${name}"`);
 
-async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?: string } = {}): Promise<void> {
+async function render(kinds = ["claude"], extra: { repo?: string; initialPrompt?: string; claudeExpired?: boolean } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <LaunchModal
         repo={extra.repo ?? "app"}
         branch="main"
         kinds={kinds}
+        claudeExpired={extra.claudeExpired}
         initialPrompt={extra.initialPrompt}
         onClose={onClose}
         onLaunch={onLaunch}
@@ -200,6 +202,22 @@ describe("LaunchModal branch mode", () => {
     const kinds = ["claude", "codex", "cursor", "copilot", "kiro", "opencode"];
     await render(kinds);
     expect(document.querySelectorAll(".ui-seg.big .seg-btn")).toHaveLength(kinds.length);
+  });
+
+  // An expired workspace login is a notice here, as in the start hub (StartModal): claude stays
+  // launchable (/login in the pane recovers). It shows for claude only, and only when expired.
+  it("notes an expired Claude login while claude is the picked agent", async () => {
+    await render(["claude"], { claudeExpired: true });
+    expect(document.body.textContent).toContain("Claude login has expired");
+    await render(["claude"], { claudeExpired: false });
+    expect(document.body.textContent).not.toContain("Claude login has expired");
+  });
+
+  it("does not show the expired-login note for another agent kind", async () => {
+    await render(["codex", "claude"], { claudeExpired: true });
+    expect(document.body.textContent).not.toContain("Claude login has expired");
+    await click(must([...document.querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")].find((b) => b.textContent?.includes("Claude")), "claude card"));
+    expect(document.body.textContent).toContain("Claude login has expired");
   });
 
   // Location is collapsed by default, so the summary line is the ONLY thing telling the user
@@ -483,6 +501,32 @@ describe("LaunchModal driver choice — terminalDriver gate", () => {
     await expand("More");
     expect(buttons().find((b) => b.textContent?.includes("Terminal (CLI)"))).toBeUndefined();
     expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
+  });
+});
+
+// The kind catalog can land after the dialog is open. Facts it changes must show up without a
+// reopen, and an untouched driver follows the new default instead of the one at mount.
+describe("LaunchModal driver choice — catalog arriving late", () => {
+  const claudeManaged = () =>
+    parseKindCatalog({ kinds: [{ kind: "claude", managedOnly: false, managedDefault: true, mcpClient: "yes" }] });
+  afterEach(() => act(() => setKindCatalog(null)));
+
+  it("offers the choice and defaults an untouched driver to Managed", async () => {
+    await render(["claude"]);
+    await expand("More");
+    expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
+    await act(async () => setKindCatalog(claudeManaged()));
+    expect(byText("Managed (recommended)").classList.contains("active")).toBe(true);
+    expect(byText("Terminal (CLI)").classList.contains("active")).toBe(false);
+  });
+
+  it("leaves a driver the user picked alone", async () => {
+    await act(async () => setKindCatalog(claudeManaged()));
+    await render(["claude"]);
+    await expand("More");
+    await click(byText("Terminal (CLI)"));
+    await act(async () => setKindCatalog(parseKindCatalog({ kinds: [{ kind: "claude", managedOnly: false, managedDefault: true, mcpClient: "yes" }, { kind: "x", managedOnly: false, managedDefault: false, mcpClient: "no" }] })));
+    expect(byText("Terminal (CLI)").classList.contains("active")).toBe(true);
   });
 });
 

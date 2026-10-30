@@ -12,6 +12,8 @@ import { createRoot, type Root } from "react-dom/client";
 
 const apiMock = vi.fn();
 vi.mock("../../core/api/client.ts", () => ({
+  // Read when the preview stores load (MarkdownView links loopback URLs to the workspace preview).
+  getTenant: () => "",
   api: (...a: unknown[]) => apiMock(...a),
   isTransientErr: (d: unknown) => !!d && typeof d === "object" && "error" in (d as object),
 }));

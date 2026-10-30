@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { RefObject } from "react";
 import { IconButton } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { OWN_FIND_ATTR, OWN_FIND_EVENT } from "../../lib/ownFind.ts";
 
 const MATCH_HIGHLIGHT = "pane-find-match";
 const CURRENT_HIGHLIGHT = "pane-find-current";
@@ -228,6 +229,15 @@ export function PaneFind({
       if (target instanceof Element && target.closest(".cm-editor")) return;
       event.preventDefault();
       event.stopPropagation();
+      // A view with a find of its own (lib/ownFind.ts) is asked to open it instead. A bar opened
+      // before that view mounted (Ctrl-F while the file was still loading) is closed first, or
+      // its highlights and its re-scan on every DOM change would linger beside the view's bar.
+      const own = root?.querySelector(`[${OWN_FIND_ATTR}]`);
+      if (own) {
+        if (open) close();
+        own.dispatchEvent(new CustomEvent(OWN_FIND_EVENT));
+        return;
+      }
       show();
     };
     window.addEventListener("keydown", onKeyDown, true);

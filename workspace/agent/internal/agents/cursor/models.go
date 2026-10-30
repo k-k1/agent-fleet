@@ -10,11 +10,9 @@ package cursor
 // Free-plan narrowing (docs/log/40 §Free, measured in session2): `cursor-agent models`
 // lists every model regardless of plan, but a Free plan cannot use a named model at all
 // (measured: `ActionRequiredError: Named models unavailable Free plans can only use
-// Auto.`). Only Auto (the picker's default, already excluded from the catalog) and the
-// Composer family work (measured: composer-2.5 returns result:"ok"). So on a Free plan
-// (decided from `Subscription Tier` in `cursor-agent about`) the catalog is narrowed to
-// the composer family, hiding named models that would hit a wall when selected — the fix
-// for a user picking GLM-5.2 and getting an upgrade demand. On a paid plan, or when the
+// Auto.`). Which named models a Free plan includes has moved since: see freePlanModelIDs.
+// So on a Free plan (decided from `Subscription Tier` in `cursor-agent about`) the catalog
+// is narrowed to those, hiding named models that would hit a wall when selected. On a paid plan, or when the
 // plan cannot be determined, the whole catalog stays (never over-restrict).
 
 import (
@@ -53,14 +51,22 @@ func Models() []agents.ModelChoice {
 	return modelsList
 }
 
-// freeUsableModels keeps only the models a Free plan can actually launch — the
-// Composer family (Auto is the picker's own default entry and was never in this list).
-// A named model raises `ActionRequiredError` on Free, so it is hidden. Models() does not
+// freePlanModelIDs are the only named models a Free plan launches ("Free includes Grok 4.7,
+// Grok 4.6, and Auto with fixed settings"). Measured on 2026.10.22 with `-p --model <id>`:
+// these two run; every other effort variant (grok-4.7-low/high/*-fast, cursor-grok-4.6-high,
+// ...) and composer-2.5 answer "ActionRequiredError: Model unavailable on Free". Match whole
+// ids: the catalog lists many variants of the same family and only the "medium" ones work.
+var freePlanModelIDs = map[string]bool{
+	"grok-4.7-medium":        true,
+	"cursor-grok-4.6-medium": true,
+}
+
+// freeUsableModels keeps only the models a Free plan can actually launch. Models() does not
 // call this on a paid plan.
 func freeUsableModels(list []agents.ModelChoice) []agents.ModelChoice {
 	out := make([]agents.ModelChoice, 0, len(list))
 	for _, m := range list {
-		if strings.HasPrefix(m.ID, "composer") {
+		if freePlanModelIDs[m.ID] {
 			out = append(out, m)
 		}
 	}
@@ -138,7 +144,7 @@ func parseModels(s string) []agents.ModelChoice {
 			continue
 		}
 		id := m[1]
-		if id == "auto" || seen[id] { // auto is the default (no flag), so it is not in the catalog
+		if id == "auto" || seen[id] { // auto is the picker's Default (launchModel pins it), so it is not in the catalog
 			continue
 		}
 		seen[id] = true

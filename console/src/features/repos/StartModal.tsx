@@ -13,8 +13,9 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
-import { openAgentsSettings } from "../../lib/authExpiredToast.tsx";
-import { kindDisplayName } from "../../lib/sessionkind.ts";
+import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
+import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
+import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
 import { requiresConcreteModel, useAutoConcreteModel } from "../../lib/agentModels.ts";
@@ -72,6 +73,7 @@ interface SsmInstance {
 }
 
 export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }: StartModalProps) {
+  useKindCatalogVersion(); // effort / start-mode rows and the driver sent depend on the catalog's facts
   const toast = useToast();
   const tr = useT();
   const settings = useSettings();
@@ -543,7 +545,7 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
                       key={k}
                       type="button"
                       title={tr(a.launchHintKey)}
-                      className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
+                      className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
                       onClick={() => {
                         const defaults = agentLaunchDefault(settings, k);
                         setKind(k);
@@ -560,14 +562,7 @@ export function StartModal({ kinds, claudeExpired = false, onClose, onPickRepo }
                 })}
               </div>
             </div>
-            {kind === "claude" && claudeExpired && (
-              <span className="ui-field-hint">
-                {tr("start.claude_expired")}
-                <button type="button" className="linklike" onClick={openAgentsSettings}>
-                  {tr("mirror.error_auth_action")}
-                </button>
-              </span>
-            )}
+            <ClaudeExpiredHint kind={kind} expired={claudeExpired} />
             {agentOf(kind).caps.model && (
               <div className="ui-field">
                 <span className="ui-field-label">{tr("launch.field.model")}</span>

@@ -2,9 +2,9 @@
 // Q Developer CLI; docs/log/43 Track A). It keeps the read layer inside the kind: the Agent
 // implementation, the transcript over the v2 JSONL session store, and the state read from the
 // TUI string contract. The managed driver (`kiro-cli acp`, a per-session child speaking ACP
-// JSON-RPC over stdio) is implemented in driver.go/acp.go/mirror.go under Track A2 - the same
-// shape as cursor/copilot, with cross-process resume through session/load and context retention
-// measured.
+// JSON-RPC over stdio) is implemented in driver.go over the shared ../acp package under Track
+// A2 - the same shape as cursor/copilot, with cross-process resume through session/load and
+// context retention measured.
 //
 // Session identity, the biggest difference from cursor: kiro MINTS THE SESSION ID ITSELF.
 // Passing an unknown self-minted UUID to `--resume-id` is not honoured; the CLI cuts its own
@@ -46,7 +46,7 @@ func (agentImpl) Kind() string { return session.KindKiro }
 // No fork (kiro has no non-interactive fork) and no display label. The chat mirror
 // IS supported: transcript.go reads the v2 JSONL that the TUI appends live.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+	return agents.Caps{CanTranscript: true, PermissionChoice: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
@@ -58,7 +58,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// grab an unrelated newest session in the same cwd, so we read the cache directly
 	// (discovery is post-launch only — see resolveSid).
 	resumeID := sids.Read(session.UUID(m.Dir, m.Name))
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, resumeID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, resumeID, agents.BypassPermissions(m), prepareRecorder(m.Name)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
@@ -101,7 +101,7 @@ func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 		if h == nil {
 			return agents.PendingModal{}, false
 		}
-		detail = h.pendingPermission()
+		detail = h.PendingPermission()
 	} else {
 		detail = approvalDetail(m)
 	}

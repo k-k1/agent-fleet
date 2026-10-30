@@ -72,3 +72,16 @@
   color: var(--muted);
   margin-bottom: 6px;
 }
+
+/* Recent /mcp calls of one token or connection (RecentCalls.tsx). */
+.calls {
+  margin: 2px 0 8px;
+}
+
+.calls-table {
+  font-size: 12px;
+}
+
+.calls-bad {
+  background: var(--active-bg);
+}

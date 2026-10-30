@@ -5,6 +5,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -30,7 +31,7 @@ func TestPeerTargetAllowedExcludesShellAndSSM(t *testing.T) {
 		session.KindCursor, session.KindKiro, session.KindAgy, session.KindCopilot,
 		// lcpp and muse carry no CLI config (ADR 0093 decision 6 / ADR 0095) and so are absent
 		// from mcpreg.MaterializedKinds, but both hold an ordinary conversation reached the same
-		// way every other kind's peer delivery works (agentRegistry) — being un-materialized is
+		// way every other kind's peer delivery works (the kind registry) — being un-materialized is
 		// not the same question as being unreachable (session_peer.go's own doc comment on
 		// peerTargetAllowed). A regression here previously answered lcpp with peer_target_forbidden.
 		session.KindLcpp, session.KindMuse,
@@ -329,5 +330,83 @@ func TestPeerInputToBusyManagedSessionIsQueuedAndKept(t *testing.T) {
 	}
 	if in := <-h.got; !in.Origin.IsMember() {
 		t.Errorf("the user's own input has origin %+v, want member", in.Origin)
+	}
+}
+
+// failingFakeHandle is a managed handle whose every send fails after the peer checks passed,
+// the same place a TUI send ends in 502 delivery_unconfirmed.
+type failingFakeHandle struct {
+	agents.ThreadHandle
+	fail  bool
+	sends int
+}
+
+func (h *failingFakeHandle) Send(in agents.TurnInput) error {
+	h.sends++
+	if h.fail {
+		return errors.New("runtime went away")
+	}
+	return nil
+}
+
+type failingFakeDriver struct {
+	agents.Driver
+	h *failingFakeHandle
+}
+
+func (d *failingFakeDriver) Resume(session.Meta) (agents.ThreadHandle, error) { return d.h, nil }
+
+// #2741: a peer send that failed (502 delivery_unconfirmed, a runtime error) is not known to
+// have arrived, so the sender's immediate retry must reach the peer instead of being refused
+// as peer_duplicate. A send that succeeded keeps the guard: the same text again is refused.
+func TestPeerSendThatFailedDoesNotArmTheDuplicateGuard(t *testing.T) {
+	freshPeerRate(t)
+	withTempHome(t)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	h := &failingFakeHandle{fail: true}
+	prev, had := managedDrivers[session.KindCodex]
+	managedDrivers[session.KindCodex] = &failingFakeDriver{h: h}
+	t.Cleanup(func() {
+		if had {
+			managedDrivers[session.KindCodex] = prev
+			return
+		}
+		delete(managedDrivers, session.KindCodex)
+	})
+	const name, from = "peer_flaky", "peer_sender"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+	body := `{"prompt":"push the branch","peer_from":"` + from + `","peer_intent":"request"}`
+
+	if rec := postInput(t, name, body); rec.Code != http.StatusBadGateway {
+		t.Fatalf("failing send: status = %d, body = %s (want 502)", rec.Code, rec.Body.String())
+	}
+	h.fail = false
+	if rec := postInput(t, name, body); rec.Code != http.StatusOK {
+		t.Fatalf("retry after a failed send: status = %d, body = %s (want 200, not peer_duplicate)", rec.Code, rec.Body.String())
+	}
+	if h.sends != 2 {
+		t.Fatalf("the retry did not reach the session: %d sends, want 2", h.sends)
+	}
+	rec := postInput(t, name, body)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "peer_duplicate") {
+		t.Fatalf("resend after a delivered send: status = %d, body = %s (want 429 peer_duplicate)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPeerLimiterReleaseLeavesALaterArmAlone(t *testing.T) {
+	l := &peerLimiter{sends: map[string][]time.Time{}, recent: map[string]time.Time{}}
+	base := time.Unix(1_800_000_000, 0)
+	if err := l.allow("a", "b", "same", base); err != nil {
+		t.Fatal(err)
+	}
+	// A refused duplicate's release must not disarm the send that armed the key.
+	l.release("a", "b", "same", base.Add(time.Second))
+	if err := l.allow("a", "b", "same", base.Add(2*time.Second)); err == nil {
+		t.Fatal("a release for another arm time disarmed the guard")
+	}
+	l.release("a", "b", "same", base)
+	if err := l.allow("a", "b", "same", base.Add(3*time.Second)); err != nil {
+		t.Fatalf("after its own release the same text may be sent again: %v", err)
 	}
 }

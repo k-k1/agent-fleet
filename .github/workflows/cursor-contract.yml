@@ -31,7 +31,7 @@ concurrency:
 jobs:
   tui-mirror:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
       - name: restore encrypted Cursor auth state
@@ -76,7 +76,63 @@ jobs:
           version="$(printf '%s' "$EFFECTIVE" | head -1)"
           [ -n "$version" ]
           deploy/local/cli-release-state.sh set tested cursor "$version"
-          deploy/local/cli-contract-report.sh success cursor || echo "::warning::could not clear the red-contract row"
+
+      # Declared Caps against observed behaviour (interrupt, fork-at, model override): the
+      # same test as above in AF_CAPS_PROBES=only mode, so it reuses this kind's auth setup.
+      # Placed after "remember successfully tested latest" on purpose: a capability that
+      # drifted is a finding for the update issue, not a reason to call the mirror contract
+      # of this version untested. Costs one interrupted long turn and three one-line turns (up to five when the model probe meets explicit refusals).
+      #
+      # ADVISORY until the repository variable CAPS_PROBES_BLOCKING is 'true' (the one switch,
+      # shared by the cursor, copilot and kiro workflows; docs/build/10-development.md, "Promoting
+      # the caps drift probes"). Advisory: a DRIFT or probe error leaves this step `outcome:
+      # failure` but `conclusion: success`, so the job stays green, `failure()` stays false and the
+      # red-contract report below never sees it; "report caps probe outcome" records it without
+      # the watcher's `red` marker. Blocking: the step fails the job and is reported as a red contract.
+      - name: caps drift probes
+        id: caps_probe
+        continue-on-error: ${{ vars.CAPS_PROBES_BLOCKING != 'true' }}
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1"
+          AF_CAPS_PROBES: only
+        run: go test -tags contract -run '^TestCursorTUIMirrorContract$' -count=1 -v -timeout 15m .
+
+      # Advisory findings only (see above). Never writes or clears the `red` marker or the
+      # red-contract row: those belong to the mirror contract. A pass clears this kind's advisory
+      # row. Skipped when the probes did not run, were cancelled, or are blocking and failed.
+      - name: report caps probe outcome
+        if: ${{ !cancelled() && (steps.caps_probe.outcome == 'success' || (steps.caps_probe.outcome == 'failure' && steps.caps_probe.conclusion == 'success')) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTCOME: ${{ steps.caps_probe.outcome }}
+          EFFECTIVE: ${{ steps.cli.outputs.version }}
+          CLI_VERSION: ${{ inputs.cli_version }}
+        run: |
+          version="$(printf '%s' "$EFFECTIVE" | head -1 || true)"
+          if [ "$OUTCOME" = failure ]; then
+            echo "::warning title=cursor caps drift probes::DRIFT or probe error (advisory, job not failed). Set repository variable CAPS_PROBES_BLOCKING=true to gate on it."
+            {
+              echo "### cursor caps drift probes: DRIFT or probe error (advisory)"
+              echo
+              echo "The mirror contract result stands; no red-contract row or marker was written. Read the \`caps drift probes\` step log for the \`DRIFT\` lines."
+            } >> "$GITHUB_STEP_SUMMARY"
+            [ "$CLI_VERSION" = latest ] || exit 0
+            deploy/local/cli-contract-report.sh advisory cursor "${version:-unknown}" || echo "::warning::could not record the advisory caps finding"
+          elif [ "$CLI_VERSION" = latest ]; then
+            deploy/local/cli-contract-report.sh advisory-clear cursor || echo "::warning::could not clear the advisory caps row"
+          fi
+
+      # Clearing the red-contract row waits for the probes: when they block, a success before them
+      # would drop the previous run's row (and, when pin == latest, let the sync close the update
+      # issue) only for a red probe to open a new one on every re-run of the same version. An
+      # advisory probe failure does not stop this step (the step's conclusion is success), and this
+      # step never touches the advisory caps row. A cancelled probe step leaves the earlier row standing.
+      - name: clear red-contract row
+        if: success() && inputs.cli_version == 'latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: deploy/local/cli-contract-report.sh success cursor || echo "::warning::could not clear the red-contract row"
 
       # A red run of `latest` is written into that CLI's update issue and, for kinds the
       # watcher dispatches by itself, stops it re-dispatching this version every 2 hours
@@ -85,7 +141,7 @@ jobs:
       # step counts: a setup or credential-guard failure ran no test and spent no quota, so it
       # is retried by the next watcher run instead of being held until a human acts.
       - name: report failed contract for latest
-        if: failure() && (steps.contract_0.conclusion == 'failure') && inputs.cli_version == 'latest'
+        if: failure() && (steps.contract_0.conclusion == 'failure' || steps.caps_probe.conclusion == 'failure') && inputs.cli_version == 'latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EFFECTIVE: ${{ steps.cli.outputs.version }}

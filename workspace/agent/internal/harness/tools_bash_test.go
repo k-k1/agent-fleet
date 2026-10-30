@@ -110,3 +110,17 @@ func TestRtkRewriteUsesOutputWhenPresent(t *testing.T) {
 		t.Fatalf("rtkRewrite = %q, want the fake rtk's stdout", got)
 	}
 }
+
+// A per-session caller's Env reaches bash (AF_WORK_DIR); nil keeps the host's own.
+func TestBashRunsWithRuntimeEnv(t *testing.T) {
+	rt := &Runtime{Cwd: t.TempDir(), Env: []string{"PATH=" + os.Getenv("PATH"), "AF_WORK_DIR=/probe/s1"}}
+	out, err := runBash(context.Background(), rt, `{"command":"printf %s \"${AF_WORK_DIR-unset}\""}`)
+	if err != nil || !strings.HasPrefix(out, "/probe/s1") {
+		t.Fatalf("bash saw %q (err %v), want AF_WORK_DIR=/probe/s1", out, err)
+	}
+	t.Setenv("AF_WORK_DIR", "/host")
+	out, _ = runBash(context.Background(), &Runtime{Cwd: t.TempDir()}, `{"command":"printf %s \"$AF_WORK_DIR\""}`)
+	if !strings.HasPrefix(out, "/host") {
+		t.Fatalf("nil Env should inherit the host's, got %q", out)
+	}
+}

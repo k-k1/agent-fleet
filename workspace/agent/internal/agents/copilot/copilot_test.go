@@ -14,9 +14,10 @@ import (
 )
 
 func TestBuildProgram(t *testing.T) {
+	pinVersion(t, "copilot", 1, 0, 103)
 	sid := "3336143a-bf0b-4db3-a0b8-15957462ce0c"
 	got := buildProgram("", "", "", sid, true)
-	for _, want := range []string{"copilot ", "--allow-all", "--no-remote ", "--no-remote-export", "--session-id", sid} {
+	for _, want := range []string{"copilot ", "--allow-all", "--sync-session=off", "--session-id", sid} {
 		if !strings.Contains(got+" ", want) {
 			t.Errorf("program %q lacks %q", got, want)
 		}
@@ -289,10 +290,11 @@ func TestPendingPermissionDetail(t *testing.T) {
 	}
 }
 
-// Permission prompts on (docs/log/76). Only --allow-all goes away. --no-remote /
-// --no-remote-export (which keep the conversation from leaving the fleet and prevent
-// double-driving) are on a different axis from permissions, so they stay.
+// Permission prompts on (docs/log/76). Only --allow-all goes away. The privacy flags (which
+// keep the conversation from leaving the fleet and prevent double-driving) are on a different
+// axis from permissions, so they stay.
 func TestBuildProgramPermissionsOn(t *testing.T) {
+	pinVersion(t, "copilot", 1, 0, 102)
 	sid := "3336143a-bf0b-4db3-a0b8-15957462ce0c"
 	got := buildProgram("", "", "", sid, false)
 	if strings.Contains(got, "--allow-all") || strings.Contains(got, "--mode plan") {

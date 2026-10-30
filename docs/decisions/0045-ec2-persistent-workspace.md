@@ -1750,3 +1750,49 @@ the CP env `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS` (default on; `false` restore
 after the new slot is claimed (release, detach) still fails the Start and retries at the next, as for a reservation.
 Two fences: the sweeper writes its own `af-slot-retire` tag (not the operator's `af-slot-replace`, so a Start that wins the race stays an automatic move: no pill, capacity fallback) on a free outdated slot *before* its occupancy re-read (so placement's `slotNowReserved` and the re-read meet, as for decision 33), and it retires any `af-replaces-home` slot that no home claimed ten minutes after its launch, so a lost launch answer cannot leave a box behind, and the fallback re-reads the old slot's reservation first (a reservation made while the launch was failing still fails the Start); a launch whose answer was lost is adopted through `af-replaces-home` rather than left behind.
 Code: `runtime_ecs_ec2_slot_replace.go` (`replaceReservedSlot(…, automatic)`, `slotRetiring`).
+
+**Note (2026-10-20, #2383): a full home is now visible, and the boot-install no longer starts what cannot fit.** The
+entrypoint records each CLI's boot-install outcome (ok / skipped / failed with a reason class `no_space` / `network` /
+`checksum` / `other`) in `/tmp/af-boot-<uid>/install.tsv` (a private directory; not in home: a full home could not hold it), the Agent serves it on
+`/env/tool-versions` as `bootInstall`, and Settings › Toolchains shows "install failed: <reason>" instead of `—`. On a
+dedicated box the CP marks the stats frame `home_own`, and the Console raises one notice per crossing of less than 2 GiB
+free or over 90% (re-armed above 3 GiB free and under 85%). The entrypoint prunes old CLI versions
+(`workspace-agent prune-cli-versions`) before installing, and skips the npm install, keeping what is installed, when
+home has under 300 MiB per package free. Measured with local tarballs: a failed `npm install -g` that replaces one
+package and fails another rolls the replaced one back (the old version stays) but leaves the failing package's `bin`
+link behind; a real ENOSPC during the rollback itself was not reproduced. Not done: flagging the member to the tenant admin,
+refusing a session start with the reason (Follow-ups: #2398).
+
+**Note (2026-10-20, #2398 part 1): the tenant admin now sees a full home and a failed boot-install.** The Agent adds
+`boot_install_failed` (tool to reason, failures only, bounded to short CLI-name-shaped keys) to `/workspace/stats`, which
+the CP already polls: one stat and one read of at most 8 KiB, nothing from home, no new per-member call. The CP bounds
+the body it reads, keeps only valid names and the four reasons, and the usage sampler stores the outcome in its own table
+`workspace_boot_install`, independent of the disk reading, so it is recorded (and withdrawn by a clean answer) on every
+runtime, including those whose disk is not measured. The DB-only member list flags a start whose install failed, and a
+stopped card keeps the last start's outcome. The member detail's poll serves the running workspace's own report (and stores it, stamped with when the read began, so a stop
+before the next sweep keeps what was seen; the record is the last start observed, and a start that began and ended between two reads is not seen), else the
+stored outcome (local docker never asks the Agent on that path), and the Console renders only that. The detail also flags
+a home over the member notice's threshold (same numbers and hysteresis as `homeDiskPressure.ts`), only where `home_own`
+is true and the workspace runs. The list's existing disk gauge keeps its own 85% / 95% levels. No admin notification.
+Refusing a session start with the reason is still open (Follow-ups: #2398).
+
+**Note (2026-10-20, #2398 part 2): a session start for a kind whose CLI did not install is refused with the reason.** The Agent asks
+`cliInstallRefusal` (boot_install_status.go) wherever it would launch the CLI: create (after the idempotency claim, so a retry still replays
+its session and a durable key ends as refused), `/start` of a stored session, every managed input that would start the runtime (turn, input, answer, bridge, carried: `resumeManaged`), a driver switch, fork and recreate (before the old session is archived). It refuses only when this
+start's status file records the kind's tool as `failed` *and* the binary is not present now (an executable regular file on PATH, in the baked directory or
+`~/.local/bin`, or an operator override of the launch such as `AGENT_<KIND>_CMD` / `_BIN`, so a stale failure stops blocking as soon as the CLI appears). `skipped`, `ok`, an unknown or absent status,
+another tool's failure and kinds with no boot-installed CLI all proceed. The answer is 409 with code
+`cli_install_<no_space|network|checksum|other>` and an English message naming the kind and the reason; the Console maps the code
+to its own en/ja text (`err.cli_install_*`, shown without the English message), so the sentence follows the viewer's language,
+and create_session / the scheduler get the English message. No new status source: the same file `/env/tool-versions` serves.
+Not verified on a real full home.
+
+**2026-10-21 note (decision 28, #2451):** the `auto` host reserve is now a flat 2048 MiB at every rung
+(a fifth of an 8 GiB rung left ~1230 MiB of real headroom against daemons measured at 1.2-1.4 GiB, and a box thrashed).
+`off` and explicit `<n>` are unchanged.
+
+**2026-10-22 note (#2503):** an explicit `AF_ECS_EC2_HOST_RESERVE_MB=0` now means what the code comments always said: reserve nothing, cap the workspace at the full rung. It was being read as `auto` (2 GiB). `auto`/unset/unparseable are unchanged; `off` is still the only uncapped setting.
+
+**Note (2026-10-21, #2448): Stop overtakes a Start that is still converging in the background.** `Stop` first moves the workspace's Start count on (`abortStarts`, under `homeLockClaim`), then scales to zero, clears the phase and drops the claim, so `State()` reads `stopped` at once. The background half (`converge`/`launch`) checks that count at each step boundary and, immediately before the call that raises desiredCount, under the same lock (`underStart`); an overtaken Start ends quietly without touching the claim or phase (`errStartSuperseded`). The home is left attached and mounted as after any Stop. Not covered: a Stop that lands inside `placeHome` itself can leave that call's fresh claim until its TTL. Not verified against live AWS.
+
+**Note (2026-10-21, #2449): a wedged slot can be force-stopped from the pool screen, and it is not quarantined.** `POST /api/admin/ec2-pool/slots/{id}/force-stop` (super_admin) refuses a slot whose ECS agent is connected and SSM online unless the body overrides it (and a stopped or quarantined one), ends the occupant's Start with the runtime's `Stop` (`abortStarts` under `homeLockClaim`), cancels the CP's own pending SSM commands (comment `agent-fleet slot volume`), then `StopInstances` — graceful first (a wedged box may still have the home mounted; Force is a power cut), repeated with Force after 3 minutes only on an instance still `stopping` from the same launch (LaunchTime), or at once when pressed again on a `stopping` slot. **Decision: it does not quarantine and does not touch the Start path.** The slot stays `af-role=slot` with its home attached, so the member's next Start wakes the same stopped slot through the existing path; the reboot clears the thrash and the slot's ECS agent reconnects and reports a task still STOPPING on it (#2447). The ECS container instance is not deregistered; a task still STOPPING is shown on the pool screen (`stopping_task`), and clearing it is not automated. Keeping a box as evidence is what quarantine (decisions 20, 23) is for; routing dark slots there is #2450. IAM: `ssm:ListCommands`, `ssm:CancelCommand`, `ssm:DescribeInstanceInformation` (`SsmSlotForceStop`). Not verified against live AWS.

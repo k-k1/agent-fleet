@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 // A profile of the member's own that is not SSO — a role assumed from a source profile,
@@ -110,7 +110,7 @@ func checkChainedIdentity(env []string, sp Profile, keys, origin map[string]stri
 	}
 	// The run resolves this config, rebuilt from Settings, and not the files again: a source
 	// changed after the checks above (another tab's sync, a login wait) cannot be swapped in.
-	ini, err := sessionx.RenderSSMConfig(session.SSMMeta{Profile: o.Profile, SourceProfile: sp.SourceProfile, RoleARN: sp.RoleARN,
+	ini, err := ssm.RenderSSMConfig(session.SSMMeta{Profile: o.Profile, SourceProfile: sp.SourceProfile, RoleARN: sp.RoleARN,
 		ExternalID: sp.ExternalID, RoleSessionName: sp.SessionName, DurationSeconds: sp.DurationSeconds, Region: region,
 		StartURL: srcSP.StartURL, SSORegion: srcSP.SSORegion, AccountID: srcSP.AccountID, RoleName: srcSP.RoleName})
 	if err != nil {

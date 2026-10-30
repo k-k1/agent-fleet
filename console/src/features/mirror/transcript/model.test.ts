@@ -8,6 +8,7 @@ import {
   latestContext,
   mergeTurns,
   parseCommand,
+  mcpViaOf,
   peerIntentOf,
   peerSenderOf,
   spawnParentOf,
@@ -66,6 +67,13 @@ describe("coalesceUserActions", () => {
     const t = user("<command-message>scout is running…</command-message><command-name>/scout</command-name>");
     expect(parseCommand(t)).toEqual({ name: "/scout", args: "" });
     expect(coalesceUserActions([t])[0].cmd).toBe(true);
+  });
+
+  it("drops the image studio's signal from the args", () => {
+    const sig = STUDIO_SIGNAL_PREFIX + "v4 · draft changed → get_image_studio]";
+    const t = user(`<command-name>/review</command-name><command-args>見て Open the following file(s) with the Read tool: \`/x/pasted/k/paste-1.png\`\n\n${sig}</command-args>`);
+    expect(parseCommand(t)?.args).toBe("見て Open the following file(s) with the Read tool: `/x/pasted/k/paste-1.png`");
+    expect(composerHistory([t])).toEqual(["/review 見て Open the following file(s) with the Read tool: `/x/pasted/k/paste-1.png`"]);
   });
 });
 
@@ -133,6 +141,23 @@ describe("groupTurns", () => {
   });
 });
 
+describe("groupTurns breaks", () => {
+  const rows = () => [
+    asst("old", { ts: "2026-08-13T10:00:00Z", idx: 1 }),
+    asst("new", { ts: "2026-08-13T12:00:00Z", idx: 2 }),
+  ];
+  it("keeps same-role rows in one block without a break", () => {
+    expect(groupTurns(rows())).toHaveLength(1);
+  });
+  it("splits a block that spans a break, so a note can sit between the halves", () => {
+    const g = groupTurns(rows(), [Date.parse("2026-08-13T11:00:00Z")]);
+    expect(g.map((x) => x.text)).toEqual(["old", "new"]);
+  });
+  it("ignores a break outside the rows' span", () => {
+    expect(groupTurns(rows(), [Date.parse("2026-08-13T09:00:00Z"), Date.parse("2026-08-13T13:00:00Z")])).toHaveLength(1);
+  });
+});
+
 describe("foldParts", () => {
   it("groups consecutive tools into one toolrun and passes everything else through", () => {
     const items = foldParts([
@@ -182,6 +207,22 @@ describe("peerSenderOf", () => {
     expect(
       peerSenderOf("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
     ).toBe("build-api");
+  });
+});
+
+describe("mcpViaOf", () => {
+  it("reads the connection name out of an mcp envelope, and nothing else", () => {
+    expect(mcpViaOf("[agent-fleet:mcp via=Claude connection=grant_01 impl=claude.ai reply=none] 走らせて")).toBe("Claude");
+    expect(mcpViaOf("[agent-fleet:peer from=build-api] 直して")).toBeNull();
+    expect(mcpViaOf("自分で打った [agent-fleet:mcp via=x] 指示")).toBeNull();
+  });
+
+  it("keeps an mcp message out of the composer history and in its own bubble", () => {
+    const env = "[agent-fleet:mcp via=Claude connection=g1 reply=none] 走らせて";
+    expect(composerHistory([user(env), user("自分の指示")])).toEqual(["自分の指示"]);
+    expect(composerHistory([user("[agent-fleet:mcp via=C connection=g reply=none] /compact")])).toEqual([]);
+    const blocks = groupTurns([user("自分の指示"), user(env)]);
+    expect(blocks).toHaveLength(2);
   });
 });
 

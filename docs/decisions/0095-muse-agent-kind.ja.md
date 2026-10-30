@@ -2873,3 +2873,51 @@ optional なメンバー 7 つが明示的に nullable になった（`Session.s
 
 同じ代償がある。1.4.8 のバンドルは `MUSE_VERSION` を動かすまで 1.4.7 のバイナリに対して赤になる。
 実測: 1.4.8 緑・1.4.7 赤。ピンの更新は cli-pin-bump の仕事。
+
+### 注記 2026-10-20 — バンドルを 1.4.11-R6667.1 に更新（#2394）
+
+`internal/msp/schema` と `types_gen.go` は 1.4.11 の export（fingerprint `sha256:f282ad16…`、
+リリース manifest の `msp_schema_fingerprint` と一致）を持つ。契約が報告した 3 件の破壊は
+open enum への値追加: `ItemKind` に `damagedRange` と `scheduledFire`、`SessionClosedReason` に
+`leave`。enum は素の文字列なのでデコードは失敗しない。問題はクライアントがどう扱うかだけだった。
+
+- `leave` は `idle` と同じ扱い。`session/closed` でセッションのバックグラウンド作業を消し、
+  理由では分岐しないので、エラーにもクラッシュにもならない。
+- `scheduledFire` / `damagedRange` は汎用 item 経路（未知の kind は描画し、消さない）。契約上
+  `label`/`fallbackText` を持たないため、型付きメンバーから 1 行の要約を作る。
+- 追加の `session/leave`・recovery・monitor inbox は生成されるが未使用。
+
+同じ代償: 1.4.11 のバンドルは `MUSE_VERSION` が動くまで 1.4.10 のバイナリに対して赤。
+実測: 1.4.11 緑・1.4.10 赤。ピンの更新は cli-pin-bump の仕事。
+
+### 注記 2026-10-23 — バンドルを 1.4.12-R6909.1 に更新（#2575）
+
+`internal/msp/schema` と `types_gen.go` は 1.4.12 の export（fingerprint `sha256:cfdb6d25…`、
+リリース manifest の `msp_schema_fingerprint` と一致）を持つ。契約が報告した 2 件の破壊は
+open enum `ItemKind` への値追加: `backgroundTerminalCompletion` と `overdueNotice`。
+
+- `backgroundTerminalCompletion` はバックグラウンドのコマンドがどう終わったかを型付きメンバー
+  （コマンド・終了状態・出力）で伝える。汎用 item 経路で描画し、そのメンバーから 1 行の要約を作る。
+  ターン終了後に失敗したコマンドがミラーに見えるようにするため。
+- `overdueNotice` は型付きメンバーを持たず、未知の kind と同じく `fallbackText` で描画する。
+- 追加の Computer Use 承認の事実・`blockedPrompt`・`checkpointBoundary`・タスク一覧の
+  `command` / `executionMode` は生成されるが未使用。
+
+同じ代償: 1.4.12 のバンドルは `MUSE_VERSION` が動くまで 1.4.11 のバイナリに対して赤。
+実測: 1.4.12 緑・1.4.11 赤。ピンの更新は cli-pin-bump の仕事。
+
+### 注記 2026-10-28 — バンドルを 1.4.14-R7309.1 に更新（#2835）
+
+`internal/msp/schema` と `types_gen.go` は 1.4.14 の export（fingerprint `sha256:c94c3d1f…`、
+リリース manifest の `msp_schema_fingerprint` と一致）を持つ。契約は互換な追加の通知を 33 件
+出したが赤だった。破壊は 1 件だけで、通知に埋もれていた: クライアントが decode して分岐する
+open enum `ItemKind` への値 `earlierHistory` の追加。チェッカーは正しく、変更していない。
+
+- `earlierHistory` はチェックポイントの刈り込まれた前半に始まる item の代わりに、transcript の
+  末尾を型付きメンバーで運ぶ。汎用 item 経路で描画し、そのメンバーから 1 行の要約（件数）を作る。
+- その他の追加（`SessionStartParams.spawnedBy` / `previousSessionId`、
+  `SessionResumeParams.modelId`、`TurnError.requestDenied`、`ViewPageParams.maxBytes`、
+  runtime worktree 型、queued inputs、held item）は生成されるが未使用。
+
+同じ代償: 1.4.14 のバンドルは `MUSE_VERSION` が動くまで 1.4.13 のバイナリに対して赤。
+ピンの更新は cli-pin-bump の仕事で、この PR 自身のピン実行の `muse-contract.yml` も赤になる想定。

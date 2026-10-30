@@ -25,6 +25,7 @@ func TestMain(m *testing.M) {
 	startMigrationServe = func(LaunchSpec) (string, string, <-chan struct{}, func(), error) {
 		return srv.URL, "", nil, func() {}, nil
 	}
+	pinNoHostOpencode()
 	code := testguard.Run(m, nil)
 	srv.Close()
 	os.Exit(code)

@@ -25,7 +25,7 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
     "The reply language for the assistant chat. “Match input” replies in the language of the text or question you give it. Choosing Japanese/English replies in that language even for text in another language (translation assistants excluded). This changes chat replies only — the read-aloud language lives on the Read aloud tab.",
   "assistant.agent_order": "Agent priority",
   "assistant.note_agent_order":
-    "Priority of the CLIs that power the assistant chat. The first connected CLI is used; disconnected ones are skipped. Choose each CLI's model below. Takes effect for new built-in-assistant conversations; an explicit custom-assistant setting wins. AI assistance (titles, reply suggestions and the like) is ranked separately on the AI assistance tab.",
+    "Priority of the CLIs that power the assistant chat. A new conversation starts on the first connected CLI from the top (new built-in-assistant conversations; an explicit custom-assistant setting wins). A conversation stays on that CLI, but when it cannot be used (not connected, or rate-limited) the first usable CLI in this order answers in its place for that turn, which may be one ranked above it. Choose each CLI's model below. AI assistance (titles, reply suggestions and the like) is ranked separately on the AI assistance tab.",
   "assistant.models": "Assistant models",
   "assistant.note_models":
     "Model used by built-in assistants for new conversations. If priority falls back to another CLI, that CLI uses its row's model. “Recommended” chooses a safe model from the connected catalog and shows the current resolution.",
@@ -95,8 +95,8 @@ export const assistant: Record<keyof typeof jaAssistant, string> = {
   "asst.persona_ph": "e.g. You are a technical-document translator. Return only the translated text.",
   "asst.tools_label": "Tool permissions",
   "asst.mcp_label": "MCP servers (optional)",
-  "asst.mcp_hint": "Choose the MCP servers this assistant's chat connects to. The list holds the built-in integrations (PagerDuty / Grafana / CloudWatch) plus anything registered under Settings > MCP servers.",
-  "asst.mcp_empty": "No MCP server is available to attach. Register one under Settings > MCP servers, or connect an integration on the Ops & monitoring tab.",
+  "asst.mcp_hint": "Choose the MCP servers this assistant's chat connects to. The list holds the built-in integrations (PagerDuty / Grafana / CloudWatch) plus anything registered under Settings > Connections > MCP servers (used by sessions).",
+  "asst.mcp_empty": "No MCP server is available to attach. Register one under Settings > Connections > MCP servers (used by sessions), or connect an integration on the Ops & monitoring tab.",
   "asst.mcp_disabled": "Disabled (will not attach)",
   "asst.mcp_not_ready": "Incomplete configuration (will not attach)",
   "asst.mcp_out_of_scope": "Out of scope for {agent} (will not attach)",

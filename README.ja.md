@@ -91,6 +91,10 @@ Docker Compose の Linux 1 台でも AWS ECS でも動きます。
 | **ecs / ecs-ec2** | AWS で、タスク単位の隔離が要る |
 | **ec2-single** | AWS で小規模。EC2 1 台に compose を載せる |
 
+Apple Silicon の Mac に単独利用で対応しています（colima・OrbStack・Docker Desktop、および Lima と OrbStack の VM での native で確認済み）。compose に
+[macOS 用 overlay](deploy/compose/README.md#macos-apple-silicon) を重ねるか、Linux VM の
+中で native を動かします（[#2961](https://github.com/k-k1/agent-fleet/issues/2961)）。
+
 リリース版は GHCR のピンされたイメージを取得する形で
 [配布リポジトリ](https://github.com/k-k1/agent-fleet-dist)に公開しています。コマンドの
 手順書は、操作する対象の隣に置いてあります（[compose](deploy/compose/README.md) /

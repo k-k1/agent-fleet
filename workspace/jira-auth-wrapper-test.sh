@@ -11,24 +11,52 @@
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WRAPPER="$HERE/jira-auth-wrapper.sh"
+WRAPPER="${AF_JIRA_WRAPPER:-$HERE/jira-auth-wrapper.sh}"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
-mkdir "$T/bin" "$T/home"
+mkdir "$T/bin" "$T/home" "$T/tmp"
 
 cat >"$T/bin/workspace-agent" <<'STUB'
 #!/bin/sh
 set +x
 echo "$*" >>"$STUB_DIR/agent.calls"
-[ "$1" = jira-cred ] || exit 2
+[ ! -f "$STUB_DIR/agent.hang" ] || exec sleep 60
 [ -z "${JIRA_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
-[ -f "$STUB_DIR/agent.out" ] || exit 1
-cat "$STUB_DIR/agent.out"
+case "$1" in
+  jira-cred) [ ! -f "$STUB_DIR/agent.why" ] || { cat "$STUB_DIR/agent.why" >&2; exit 0; }
+    [ -f "$STUB_DIR/agent.out" ] || exit 1; cat "$STUB_DIR/agent.out" ;;
+  jira-comment) printf '%s\n' "$@" >"$STUB_DIR/comment.argv"; cat >"$STUB_DIR/comment.stdin"
+    cat "/proc/$PPID/comm" >"$STUB_DIR/comment.parent" 2>/dev/null
+    [ ! -f "$STUB_DIR/comment.hang" ] || exec sleep 60
+    [ ! -f "$STUB_DIR/comment.exit" ] || exit "$(cat "$STUB_DIR/comment.exit")"; echo "stub: comment done" ;;
+  jira-description-required) shift; printf '%s\n' "$@" >"$STUB_DIR/req.argv"
+    [ ! -f "$STUB_DIR/req.out" ] || cat "$STUB_DIR/req.out"; exit 0 ;;
+  jira-description) shift; printf '%s\n' "$@" >"$STUB_DIR/desc.argv"; cat >"$STUB_DIR/desc.stdin"
+    [ ! -f "$STUB_DIR/desc.err" ] || cat "$STUB_DIR/desc.err" >&2
+    [ ! -f "$STUB_DIR/desc.exit" ] || exit "$(cat "$STUB_DIR/desc.exit")"; exit 0 ;;
+  jira-find-created) shift; printf '%s\n' "$@" >"$STUB_DIR/find.argv"
+    [ ! -f "$STUB_DIR/find.delay" ] || sleep "$(cat "$STUB_DIR/find.delay")"
+    [ ! -f "$STUB_DIR/find.hang" ] || exec sleep 60
+    [ ! -f "$STUB_DIR/find.err" ] || cat "$STUB_DIR/find.err" >&2
+    [ ! -f "$STUB_DIR/find.out" ] || cat "$STUB_DIR/find.out"
+    [ ! -f "$STUB_DIR/find.exit" ] || exit "$(cat "$STUB_DIR/find.exit")"; exit 0 ;;
+  jira-issue-types) [ -f "$STUB_DIR/types.out" ] || exit 1; cat "$STUB_DIR/types.out" ;;
+  *) exit 2 ;;
+esac
 STUB
 # The "real" jira: one line per interesting env var plus its argv, one element per line.
 cat >"$T/bin/jira-real" <<'STUB'
 #!/bin/sh
 set +x
+# Attempt N takes plan.N.{rc,out,err} when they exist (see plan()); otherwise it succeeds.
+n=$(($(cat "$STUB_DIR/jira.count" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$STUB_DIR/jira.count"
+echo "$$" >"$STUB_DIR/jira.pid"
+# Who started this process, and with which argv: `timeout` when the wrapper bounded the run.
+cat "/proc/$PPID/comm" >"$STUB_DIR/jira.parent" 2>/dev/null
+tr '\0' ' ' <"/proc/$PPID/cmdline" >"$STUB_DIR/jira.parent.cmd" 2>/dev/null
+# What jira-cli does: read all of stdin (until EOF) whatever -b says. Capped for a char device.
+[ -z "${STUB_READ_STDIN-}" ] || head -c 65536 >"$STUB_DIR/stdin.seen"
 {
   echo "TOKEN=${JIRA_API_TOKEN-<unset>}"
   echo "SERVER=${JIRA_SERVER-<unset>}"
@@ -39,11 +67,18 @@ set +x
   echo "DEBUG=${JIRA_DEBUG-<unset>}"
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/jira.seen"
+# plan.N.hang: take the request and never answer (N seconds; plan.N.deaf ignores TERM too).
+[ ! -f "$STUB_DIR/plan.$n.deaf" ] || trap '' TERM
+[ ! -f "$STUB_DIR/plan.$n.hang" ] && [ ! -f "$STUB_DIR/plan.$n.deaf" ] || exec sleep "$(cat "$STUB_DIR"/plan.$n.hang "$STUB_DIR"/plan.$n.deaf 2>/dev/null | head -n1)"
+[ ! -f "$STUB_DIR/plan.$n.out" ] || cat "$STUB_DIR/plan.$n.out"
+[ ! -f "$STUB_DIR/plan.$n.err" ] || cat "$STUB_DIR/plan.$n.err" >&2
+[ ! -f "$STUB_DIR/plan.$n.rc" ] || exit "$(cat "$STUB_DIR/plan.$n.rc")"
 exit "${STUB_JIRA_EXIT:-0}"
 STUB
 chmod +x "$T/bin/"*
 
 fails=0
+RUN_PRE=()
 fail() { echo "FAIL: $*" >&2; fails=$((fails + 1)); }
 
 # run <env assignments…> -- <jira args…>: a clean slate, then the wrapper. stdout/stderr land in
@@ -52,9 +87,10 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak"
-  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
-    "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err"
+  rm -f "$T/jira.seen" "$T/agent.calls" "$T/agent.leak" "$T/jira.count" "$T/jira.parent" "$T/stdin.seen" \
+    "$T/desc.argv" "$T/desc.stdin" "$T/comment.argv" "$T/comment.stdin" "$T/comment.parent"
+  "${RUN_PRE[@]}" env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
+    TMPDIR="$T/tmp" AF_JIRA_RETRY_WAIT=0 "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" <"${RUN_IN:-/dev/null}"
   rc=$?
 }
 seen() { sed -n "s/^$1=//p" "$T/jira.seen"; }
@@ -76,7 +112,7 @@ MANAGED="$T/home/.config/agent-fleet/jira"
 GEN="$T/home/.cache/agent-fleet/jira/config.yml"
 oauth() { printf 'site=%s\nserver=%s\nauth=bearer\nlogin=me@example.com\ntoken=fake-oauth-tok\n' "$SITE" "$ROUTE" >"$T/agent.out"; }
 apitok() { printf 'site=%s\nserver=%s\nauth=basic\nlogin=me@example.com\ntoken=fake-api-tok\n' "$SITE" "$SITE" >"$T/agent.out"; }
-reset() { rm -f "$T/agent.out"; rm -rf "$T/home/.config" "$T/home/.cache" "$T/other.yml"; }
+reset() { rm -f "$T/agent.out" "$T/agent.why" "$T/types.out" "$T"/plan.*; rm -rf "$T/home/.config" "$T/home/.cache" "$T/other.yml"; }
 config() { mkdir -p "${1%/*}"; printf '%s\n' "$2" >"$1"; }
 
 # 1. OAuth connection, no config → bearer on the api.atlassian.com route, through a generated
@@ -298,11 +334,1493 @@ run tok=preexported cred=preexported -- issue list
 [ ! -f "$T/sed.leak" ] || fail "pre-exported names: the token reached a helper's environment"
 rm -f "$T/bin/sed"
 
+# 13. `issue create` reads issue.types from the config only. With none in the effective (ours)
+#     config, the types come from the helper (createmeta) into a derived, secret-free config.
+CGEN="$T/home/.cache/agent-fleet/jira"
+printf 'issue:\n  types:\n    - id: "10001"\n      name: "Task"\n      handle: "Task"\n      subtask: false\n' >"$T/types.fixture"
+types() { cp "$T/types.fixture" "$T/types.out"; }
+expect_d() { # expect_d <label> <KEY>: CONFIG is a derived config for KEY
+  local got
+  got="$(seen CONFIG)"
+  case "$got" in "$CGEN/derived/config-$2-"*.yml) ;; *) fail "$1: CONFIG = '$got'" ;; esac
+}
+expect_ng() { # expect_ng <label>: CONFIG is a derived config carrying project.type: next-gen
+  local got
+  got="$(seen CONFIG)"
+  case "$got" in "$CGEN/derived/config-nextgen-"*.yml) ;; *) fail "$1: CONFIG = '$got'"; return ;; esac
+  grep -Eq '^[[:space:]]+type: next-gen' "$got" || fail "$1: no project.type: next-gen in $got"
+}
+helper_calls() { grep -c '^jira-issue-types' "$T/agent.calls" 2>/dev/null; }
+reset
+oauth
+types
+run -- issue create -p KEY -t Task -s "a summary"
+expect create TOKEN fake-oauth-tok
+expect_d create KEY
+grep -q '^installation: Cloud$' "$(seen CONFIG)" || fail "create: derived config lost the base"
+grep -q '^    - id: "10001"$' "$(seen CONFIG)" || fail "create: derived config has no issue types"
+[ "$(grep -c '^ARG=' "$T/jira.seen")" = 8 ] || fail "create: argv not passed through intact"
+grep -qx 'jira-issue-types KEY' "$T/agent.calls" || fail "create: helper not asked for KEY"
+[ ! -s "$T/err" ] || fail "create: unexpected stderr: $(cat "$T/err")"
+[ "$(grep -c 'fake' "$(seen CONFIG)")" = 0 ] || fail "create: derived config holds a secret"
+no_leak create fake-oauth-tok
+[ "$(cat "$GEN")" != "" ] && ! grep -q 'issue:' "$GEN" || fail "create: the generated base config was modified"
+
+# 13b. Every spelling of the project, case folded into one file; the last one wins.
+for form in "-p KEY" "-pKEY" "-p=KEY" "--project KEY" "--project=KEY" "-p key" "-p OTHER -p KEY"; do
+  rm -rf "$CGEN/derived"
+  # shellcheck disable=SC2086
+  run -- issue create $form -t Task
+  expect_d "create $form" KEY
+done
+run -- issues create -p KEY
+expect_d create-alias KEY
+
+# 13c. The last good types answer is used when the helper fails; a helper that never worked
+#      leaves jira on its own config, after a hint naming the next step.
+run -- issue create -p KEY
+rm -f "$T/types.out"
+run -- issue create -p KEY
+expect_d create-cached KEY
+[ ! -s "$T/err" ] || fail "create-cached: unexpected stderr"
+reset
+oauth
+run STUB_JIRA_EXIT=3 -- issue create -p KEY
+[ "$rc" = 3 ] || fail "create-nohelper: exit status $rc, want 3 from jira"
+expect create-nohelper CONFIG "$GEN"
+expect create-nohelper TOKEN fake-oauth-tok
+grep -q 'jira init' "$T/err" && grep -q "board list" "$T/err" || fail "create-nohelper: no hint: $(cat "$T/err")"
+[ "$(wc -l <"$T/err")" = 1 ] || fail "create-nohelper: hint is not one line"
+grep -q "tenant administrator" "$T/err" && grep -q "Jira Software option" "$T/err" && grep -q "reconnect Jira" "$T/err" || fail "create-nohelper: hint omits the administrator step: $(cat "$T/err")"
+printf 'garbage\n' >"$T/types.out"
+run -- issue create -p KEY
+expect create-garbage CONFIG "$GEN"
+[ -z "$(ls "$CGEN"/derived/issue-types-* 2>/dev/null)" ] || fail "create-garbage: cached a bad answer"
+
+# 13d. No project anywhere → no helper call, a hint that says to pass -p.
+reset
+oauth
+types
+run -- issue create -t Task
+expect create-noproject CONFIG "$GEN"
+[ "$(helper_calls)" = 0 ] || fail "create-noproject: helper was asked without a project"
+grep -q -- '-p KEY' "$T/err" || fail "create-noproject: hint does not name -p"
+for bad in 'A;b' '../x' '1AB' 'A B'; do
+  run -- issue create -p "$bad"
+  expect "create-badkey $bad" CONFIG "$GEN"
+  [ "$(helper_calls)" = 0 ] || fail "create-badkey $bad: helper was asked"
+done
+
+# 13e. A managed config: with issue.types it is left alone (no helper call, no hint); without,
+#      the project comes from -p or from the config's own project.key.
+reset
+oauth
+types
+config "$MANAGED/config.yml" $'installation: Cloud\nissue:\n    types:\n        - id: "7"\n          name: Task\n          subtask: false'
+run -- issue create -p OTHER
+expect managed-types CONFIG "$MANAGED/config.yml"
+[ "$(helper_calls)" = 0 ] || fail "managed-types: helper was asked"
+[ ! -s "$T/err" ] || fail "managed-types: hint printed"
+config "$MANAGED/config.yml" $'installation: Cloud\nproject:\n    key: ABC\n    type: classic'
+run -- issue create -t Task
+expect_d managed-project ABC
+grep -q '^    key: ABC$' "$(seen CONFIG)" && grep -q '^    - id: "10001"$' "$(seen CONFIG)" ||
+  fail "managed-project: derived config is not managed + types"
+grep -qx 'jira-issue-types ABC' "$T/agent.calls" || fail "managed-project: helper not asked for ABC"
+no_leak managed-project fake-oauth-tok
+grep -q 'issue types' "$MANAGED/config.yml" && fail "managed-project: the managed config was modified"
+# An issue: key without types, or a flow-style file, cannot be merged by appending: left alone.
+config "$MANAGED/config.yml" $'installation: Cloud\nissue:\n    fields:\n        custom: []'
+run -- issue create -p KEY
+expect managed-issue-key CONFIG "$MANAGED/config.yml"
+grep -q 'jira init' "$T/err" || fail "managed-issue-key: no hint"
+config "$MANAGED/config.yml" '{installation: Cloud}'
+run -- issue create -p KEY
+expect managed-flow CONFIG "$MANAGED/config.yml"
+# -c names the config explicitly: jira reads that one whatever the environment says, so only a hint.
+config "$MANAGED/board-b.yml" "installation: Cloud"
+run -- issue create -c "$MANAGED/board-b.yml" -p KEY
+expect managed-c TOKEN fake-oauth-tok
+[ "$(helper_calls)" = 0 ] || fail "managed-c: helper was asked"
+grep -q 'jira init' "$T/err" || fail "managed-c: no hint"
+
+# 13e2. A managed config holding project A's types, `-p B`: jira gets a derived config with B's
+#       types, A's issue block (types and custom fields) gone, the other keys kept.
+A_CFG=$'installation: Cloud\nproject:\n    key: AAA\n    type: classic\nboard:\n    id: 1\n    name: A board\nissue:\n    fields:\n        custom:\n            - name: Sprint\n              key: customfield_10020\n              schema:\n                datatype: number\n    types:\n        - id: "7"\n          name: Task\n          subtask: false\nepic:\n    name: customfield_10011'
+reset
+oauth
+types
+config "$MANAGED/config.yml" "$A_CFG"
+cp "$MANAGED/config.yml" "$T/a.before"
+run -- issue create -p bbb -t Task -s x
+expect_d other-project BBB
+d="$(seen CONFIG)"
+grep -qx '    - id: "10001"' "$d" || fail "other-project: B's types missing"
+grep -q '"7"' "$d" && fail "other-project: A's type ID survived"
+grep -q 'customfield_10020' "$d" && fail "other-project: A's custom fields survived"
+grep -qx 'epic:' "$d" && grep -qx '    key: AAA' "$d" && grep -qx '    name: A board' "$d" || fail "other-project: base keys lost"
+[ "$(stat -c %a "$d")" = 600 ] || fail "other-project: derived config mode $(stat -c %a "$d")"
+grep -qx 'jira-issue-types BBB' "$T/agent.calls" || fail "other-project: helper not asked for BBB"
+[ ! -s "$T/err" ] || fail "other-project: stderr: $(cat "$T/err")"
+cmp -s "$MANAGED/config.yml" "$T/a.before" || fail "other-project: the managed config was modified"
+no_leak other-project fake-oauth-tok
+# The same project (any case), or no -p at all: the managed config itself.
+for form in "-p AAA" "-p aaa" "-t Task"; do
+  # shellcheck disable=SC2086
+  run -- issue create $form
+  expect "same-project $form" CONFIG "$MANAGED/config.yml"
+done
+[ "$(helper_calls)" = 0 ] || fail "same-project: helper was asked"
+# The helper fails and nothing is cached: A's config as before, plus the init hint.
+rm -f "$T/types.out"; rm -rf "$CGEN/derived"
+run -- issue create -p BBB
+expect other-fail CONFIG "$MANAGED/config.yml"
+grep -q 'jira init -c ~/.config/agent-fleet/jira/bbb.yml --project BBB --board' "$T/err" || fail "other-fail: no hint: $(cat "$T/err")"
+# Not merged when the issue key is not a bare one (quoted, indented), or there are two spellings.
+types
+for bad in $'installation: Cloud\nproject:\n    key: AAA\n"issue":\n    types:\n        - id: "7"' \
+           $'installation: Cloud\nproject:\n    key: AAA\nissue:\n    types:\n        - id: "7"\nIssue:\n    types:\n        - id: "8"'; do
+  config "$MANAGED/config.yml" "$bad"
+  run -- issue create -p BBB
+  expect other-unsafe CONFIG "$MANAGED/config.yml"
+  grep -q 'jira init' "$T/err" || fail "other-unsafe: no hint"
+done
+# A column-0 comment inside the block does not end it: nothing of A's survives, and what follows
+# the block stays a top-level key.
+config "$MANAGED/config.yml" $'installation: Cloud\nissue:\n# comment\n    types:\n        - id: "7"\n          name: Task\nproject:\n    key: AAA'
+run -- issue create -p BBB
+expect_d other-comment BBB
+d="$(seen CONFIG)"
+grep -q '"7"' "$d" && fail "other-comment: A's type ID survived"
+grep -qx 'project:' "$d" && grep -qx '    key: AAA' "$d" || fail "other-comment: project key lost"
+# Only project's own `key:` counts, not a nested one: -p BBB is then another project than AAA.
+config "$MANAGED/config.yml" $'project:\n    other:\n        key: BBB\n    key: AAA\nissue:\n    types:\n        - id: "7"'
+run -- issue create -p BBB
+expect_d other-nested BBB
+# An anchor defined in the cut block would leave its aliases undefined: not merged.
+config "$MANAGED/config.yml" $'project:\n    key: AAA\nissue:\n    types: &oldtypes\n        - id: "7"\nissue_x: *oldtypes'
+run -- issue create -p BBB
+expect other-anchor CONFIG "$MANAGED/config.yml"
+grep -q 'jira init' "$T/err" || fail "other-anchor: no hint"
+config "$MANAGED/config.yml" $'project:\n    key: AAA\nissue:\n    types: &-oldtypes\n        - id: "7"\nissue_x: *-oldtypes'
+run -- issue create -p BBB
+expect other-anchor-dash CONFIG "$MANAGED/config.yml"
+# CRLF files read like LF ones: another project is cut, and a default project still comes from the file.
+config "$MANAGED/config.yml" "$(printf 'installation: Cloud\r\nproject:\r\n    key: AAA\r\nissue:\r\n    types:\r\n        - id: "7"\r\n          name: Task\r\n')"
+run -- issue create -p BBB
+expect_d other-crlf BBB
+grep -q '"7"' "$(seen CONFIG)" && fail "other-crlf: A's type ID survived"
+config "$MANAGED/config.yml" "$(printf 'installation: Cloud\r\nproject:\r\n    key: AAA\r\n')"
+run -- issue create -t Task
+expect_d crlf-default AAA
+# A parent is forced to fields.parent whatever the base project's kind: the other project gets its
+# types (A's gone) and the derived config says project.type: next-gen.
+config "$MANAGED/config.yml" "$A_CFG"
+for form in "--parent BBB-1" "-P BBB-1" "--parent=BBB-1"; do
+  # shellcheck disable=SC2086
+  run -- issue create -p BBB $form
+  expect_ng "other-parent $form"
+  d="$(seen CONFIG)"
+  grep -qx '    type: next-gen' "$d" && ! grep -q 'type: classic' "$d" || fail "other-parent $form: project.type not next-gen"
+  grep -qx '    - id: "10001"' "$d" && ! grep -q '"7"' "$d" || fail "other-parent $form: types are not BBB's"
+  [ ! -s "$T/err" ] || fail "other-parent $form: stderr: $(cat "$T/err")"
+done
+# -c, a user's own config, JIRA_SERVER: untouched.
+config "$MANAGED/config.yml" "$A_CFG"
+config "$MANAGED/a.yml" "$A_CFG"
+run -- issue create -c "$MANAGED/a.yml" -p BBB
+expect other-c CONFIG "<unset>"
+grep -qx "ARG=$MANAGED/a.yml" "$T/jira.seen" || fail "other-c: -c not passed through"
+! grep -q '^jira-issue-types' "$T/agent.calls" 2>/dev/null || fail "other-c: helper was asked"
+run JIRA_SERVER=https://own.example.net -- issue create -p BBB
+expect other-server CONFIG "<unset>"
+[ ! -e "$T/agent.calls" ] || fail "other-server: helper was asked"
+run -- issue create --debug -p BBB
+expect other-debug CONFIG "$MANAGED/config.yml"
+[ ! -e "$T/agent.calls" ] || fail "other-debug: helper was asked"
+
+# 13e3. `issue create` with a parent (jira-cli drops it without project.type: next-gen, as no
+#       epic.link is set): a config of ours gets a derived copy that says so; everything else is
+#       left as it was, and the user's own configs are never read or changed.
+reset
+oauth
+types
+for form in "-P AB-1" "-PAB-1" "--parent AB-1" "--parent=AB-1"; do
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY -t Task -s x $form
+  expect_ng "parent-generated $form"
+  grep -q '^installation: Cloud$' "$(seen CONFIG)" || fail "parent-generated $form: base lost"
+  grep -q '^    - id: "10001"$' "$(seen CONFIG)" || fail "parent-generated $form: types lost"
+  [ ! -s "$T/err" ] || fail "parent-generated $form: stderr: $(cat "$T/err")"
+  [ "$(sed -n "s/^ARG=//p" "$T/jira.seen" | tr "\n" " ")" = "issue create -p KEY -t Task -s x $form " ] || fail "parent-generated $form: argv changed"
+done
+grep -q 'next-gen' "$GEN" && fail "parent-generated: the generated base config was modified"
+no_leak parent-generated fake-oauth-tok
+# No parent: no next-gen.
+run -- issue create -p KEY -t Task -s x
+grep -q 'next-gen' "$(seen CONFIG)" && fail "no-parent: next-gen written"
+# Other commands with a parent flag-like word keep the config.
+run -- issue list -P AB-1
+expect list-parent CONFIG "$GEN"
+# Managed config: classic type replaced, other keys kept, the managed file itself untouched.
+config "$MANAGED/config.yml" $'installation: Cloud\nproject:\n    key: AAA\n    type: classic\nepic:\n    name: customfield_1\n    link: ""\nissue:\n    types:\n        - id: "7"\n          name: Task'
+cp "$MANAGED/config.yml" "$T/m.before"
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-managed
+d="$(seen CONFIG)"
+grep -qx '    type: next-gen' "$d" && ! grep -q 'classic' "$d" && grep -qx '    key: AAA' "$d" && grep -qx '    name: customfield_1' "$d" || fail "parent-managed: derived config wrong: $(cat "$d")"
+cmp -s "$MANAGED/config.yml" "$T/m.before" || fail "parent-managed: the managed config was modified"
+[ "$(stat -c %a "$d")" = 600 ] || fail "parent-managed: derived config mode"
+# Already next-gen: used as is.
+config "$MANAGED/config.yml" $'project:\n    key: AAA\n    type: next-gen\nissue:\n    types:\n        - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect parent-already CONFIG "$MANAGED/config.yml"
+# A project block without a type: the type is added at the block's own indent.
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n# note\nissue:\n  types:\n    - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-notype
+grep -qx '  type: next-gen' "$(seen CONFIG)" && grep -qx '  key: AAA' "$(seen CONFIG)" || fail "parent-notype: $(cat "$(seen CONFIG)")"
+# Not a layout that can be edited safely, or -c: the create still runs, with a warning.
+config "$MANAGED/config.yml" $'project: {key: AAA}\nissue:\n    types:\n        - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect parent-flow CONFIG "$MANAGED/config.yml"
+grep -q 'fields.parent' "$T/err" || fail "parent-flow: no warning"
+config "$MANAGED/board-b.yml" $'project:\n    key: AAA\nissue:\n    types:\n        - id: "7"'
+run -- issue create -c "$MANAGED/board-b.yml" -t Task -s x -P AAA-1
+expect parent-c TOKEN fake-oauth-tok
+grep -q 'fields.parent' "$T/err" || fail "parent-c: no warning"
+# The user's own config is never touched, read or warned about.
+config "$T/other.yml" $'project:\n    key: AAA\n    type: classic'
+cp "$T/other.yml" "$T/o.before"
+run -- issue create -c "$T/other.yml" -t Task -s x -P AAA-1
+expect parent-own TOKEN '<unset>'
+cmp -s "$T/other.yml" "$T/o.before" && [ ! -s "$T/err" ] || fail "parent-own: touched or warned: $(cat "$T/err")"
+run JIRA_CONFIG_FILE="$T/other.yml" -- issue create -t Task -s x -P AAA-1
+expect parent-own-env CONFIG "$T/other.yml"
+cmp -s "$T/other.yml" "$T/o.before" || fail "parent-own-env: modified"
+config "$DEFCFG" $'project:\n    key: AAA\n    type: classic'
+run -- issue create -t Task -s x -P AAA-1
+expect parent-default TOKEN '<unset>'
+rm -f "$DEFCFG"
+run JIRA_SERVER=https://own.example.net -- issue create -t Task -s x -P AAA-1
+expect parent-server CONFIG "<unset>"
+
+# Only a parent that jira-cli would read counts: a flag's value, anything after `--` and the
+# value of another flag are not; a pflag cluster ending in -P is. An empty parent is none.
+for form in "-s -P" "-s --parent=X" "-y --parent=X" "-l -PX" "-t Task -- -P AB-1" "-P" "--parent=" "-P="; do
+  reset; oauth; types
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY $form
+  grep -q 'next-gen' "$(seen CONFIG)" 2>/dev/null && fail "parent-false-positive [$form]: next-gen written"
+  [ ! -s "$T/err" ] || fail "parent-false-positive [$form]: stderr: $(cat "$T/err")"
+done
+for form in "-hPAB-1" "-hP AB-1" "-hP=AB-1" "-s x -P AB-1" "-s x --parent AB-1"; do
+  # shellcheck disable=SC2086
+  run -- issue create -p KEY $form
+  expect_ng "parent-cluster [$form]"
+done
+# A project block jira would read differently once a second type is added, or whose type line
+# is not one plain line: no derived copy, a warning, the config as it was.
+reset; oauth; types
+for blk in $'project:\n  key: AAA\n  "type": classic' $'project:\n  key: AAA\n  type : classic' \
+  $'project:\n  key: AAA\n  type: |\n    classic\n  name: x' $'project:\n  key: AAA\n  type: classic\n  Type: classic' \
+  $'project:\n  key: AAA\n  nested:\n    type: classic' $'project:\n  key: AAA\n  type: &t classic' \
+  $'project:\n\tkey: AAA' $'project:\n  key: AAA\n    type: classic' $'project:\n  "key": AAA'; do
+  config "$MANAGED/config.yml" "$blk"$'\nissue:\n  types:\n    - id: "7"'
+  run -- issue create -t Task -s x -P AAA-1
+  expect "parent-unsafe [$blk]" CONFIG "$MANAGED/config.yml"
+  grep -q 'fields.parent' "$T/err" || fail "parent-unsafe [$blk]: no warning"
+done
+# Safe variants: a different case of the key and a quoted value are replaced in place.
+config "$MANAGED/config.yml" $'Project:\n  key: AAA\n  Type: "classic" # note\nissue:\n  types:\n    - id: "7"'
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-case
+[ "$(grep -ci "type:" "$(seen CONFIG)")" = 1 ] || fail "parent-case: type duplicated: $(cat "$(seen CONFIG)")"
+# The derived copy is never wider than its base, a reused cache included.
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic\nissue:\n  types:\n    - id: "7"'
+chmod 400 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -P AAA-1
+expect_ng parent-mode400
+[ "$(stat -c %a "$(seen CONFIG)")" = 400 ] || fail "parent-mode400: $(stat -c %a "$(seen CONFIG)")"
+chmod 644 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -P AAA-1
+[ "$(stat -c %a "$(seen CONFIG)")" = 600 ] || fail "parent-mode644: $(stat -c %a "$(seen CONFIG)")"
+
+# A 0400 managed config without types: the types derivation and the parent derivation (also the
+# other-project route) both keep it 0400.
+for form in "-p AAA -P AAA-1" "-p BBB -P AAA-1"; do
+  reset; oauth; types
+  config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic'
+  chmod 400 "$MANAGED/config.yml"
+  # shellcheck disable=SC2086
+  run -- issue create -t Task -s x $form
+  expect_ng "parent-chain400 [$form]"
+  [ "$(stat -c %a "$(seen CONFIG)")" = 400 ] || fail "parent-chain400 [$form]: $(stat -c %a "$(seen CONFIG)")"
+  grep -q '"10001"' "$(seen CONFIG)" || fail "parent-chain400 [$form]: types lost"
+  for f in "$CGEN"/derived/config-*.yml; do
+    [ "$(stat -c %a "$f")" = 400 ] || fail "parent-chain400 [$form]: $f is $(stat -c %a "$f")"
+  done
+done
+
+# The replace route: a 0400 config holding AAA's types, `-p BBB -P ..`: AAA's types are cut, BBB's
+# and next-gen are in, and both derived files are 0400.
+reset; oauth; types
+config "$MANAGED/config.yml" $'project:\n  key: AAA\n  type: classic\nissue:\n  types:\n    - id: "7"\n      name: Task'
+chmod 400 "$MANAGED/config.yml"
+run -- issue create -t Task -s x -p BBB -P AAA-1
+expect_ng parent-replace400
+d="$(seen CONFIG)"
+grep -q '"7"' "$d" && fail "parent-replace400: AAA's types survived"
+grep -q '"10001"' "$d" && grep -qx '  type: next-gen' "$d" && ! grep -q classic "$d" || fail "parent-replace400: $(cat "$d")"
+n=0
+for f in "$CGEN"/derived/config-*.yml; do
+  n=$((n + 1))
+  [ "$(stat -c %a "$f")" = 400 ] || fail "parent-replace400: $f is $(stat -c %a "$f")"
+done
+[ "$n" = 2 ] || fail "parent-replace400: $n derived files, want 2"
+
+# 13f. The user's own setup is never touched, hinted at or fetched for: another config, jira's
+#      default location, an explicit token or server, a debug run, other subcommands.
+reset
+oauth
+types
+config "$T/other.yml" "installation: Cloud"
+run -- issue create -c "$T/other.yml" -p KEY
+expect user-c CONFIG '<unset>'
+config "$DEFCFG" "installation: Cloud"
+run -- issue create -p KEY
+expect user-default CONFIG '<unset>'
+rm -f "$DEFCFG"
+run JIRA_API_TOKEN=mine -- issue create -p KEY
+expect user-token CONFIG '<unset>'
+run JIRA_SERVER=https://jira.example.test -- issue create -p KEY
+expect user-server CONFIG '<unset>'
+run -- --debug issue create -p KEY
+expect user-debug CONFIG "$GEN"
+run -- issue list -p KEY
+expect list CONFIG "$GEN"
+run -- issue view KEY-1
+expect view CONFIG "$GEN"
+[ ! -s "$T/err" ] || fail "list/view: unexpected stderr"
+[ ! -f "$T/agent.calls" ] || ! grep -q '^jira-issue-types' "$T/agent.calls" || fail "user setups / other subcommands: helper was asked"
+rm -f "$T/agent.out"
+run -- issue create -p KEY
+expect no-connection CONFIG "$GEN"
+[ ! -f "$T/agent.calls" ] || ! grep -q '^jira-issue-types' "$T/agent.calls" || fail "no-connection: types were fetched without a credential"
+
+# 13g. The base is merged by appending, so only a plain block-style file with no `issue` key
+#      qualifies: quoted or indented keys, an `issue` of any spelling, flow style, document marks.
+reset
+oauth
+types
+i=0
+while IFS= read -r -d '' body; do
+  i=$((i + 1))
+  config "$MANAGED/config.yml" "$body"
+  run -- issue create -p KEY
+  expect "unmergeable $i" CONFIG "$MANAGED/config.yml"
+  grep -q 'jira init' "$T/err" || fail "unmergeable $i: no hint"
+done < <(printf '%s\0' \
+  $'installation: Cloud\n\'issue\':\n    fields:\n        custom: []' \
+  $'installation: Cloud\n"issue":\n    fields:\n        custom: []' \
+  $'  installation: Cloud\n  issue:\n    fields: []' \
+  $'---\ninstallation: Cloud\nissue:\n    fields: []' \
+  $'installation: Cloud\nissue:\n    fields: []\n...' \
+  $'installation: Cloud\nIssue:\n    fields:\n        custom: []' \
+  $'installation: Cloud\nISSUE:\n    fields: []' \
+  $'installation: Cloud\n"project": {key: ABC}' \
+  $'{installation: Cloud}')
+config "$MANAGED/config.yml" $'# managed\n\ninstallation: Cloud\nproject:\n    key: ABC\n    type: classic\nissuetypes: []'
+run -- issue create
+expect_d mergeable ABC
+
+# 13h. Two managed configs for one project, run concurrently: each run keeps its own derived file
+#      (the first is still unread by jira when the second starts).
+reset
+oauth
+types
+config "$MANAGED/a.yml" $'installation: Cloud\ncustom-marker: A'
+config "$MANAGED/b.yml" $'installation: Cloud\ncustom-marker: B'
+run -- issue create -c "$MANAGED/a.yml" -p KEY
+run JIRA_CONFIG_FILE="$MANAGED/a.yml" -- issue create -p KEY
+cfg_a="$(seen CONFIG)"
+run JIRA_CONFIG_FILE="$MANAGED/b.yml" -- issue create -p KEY
+cfg_b="$(seen CONFIG)"
+[ "$cfg_a" != "$cfg_b" ] || fail "concurrent: both runs got $cfg_a"
+grep -q 'custom-marker: A' "$cfg_a" && grep -q 'custom-marker: B' "$cfg_b" || fail "concurrent: a run lost its own base"
+
+# 13i. The derived files copy the whole base, so they are private whatever the umask, and the
+#      base keeps its own mode.
+reset
+oauth
+types
+config "$MANAGED/config.yml" $'installation: Cloud\nproject:\n    key: ABC'
+chmod 600 "$MANAGED/config.yml"
+(umask 022; run -- issue create)
+[ "$(stat -c %a "$MANAGED/config.yml")" = 600 ] || fail "perm: base mode changed"
+[ "$(stat -c %a "$CGEN/derived")" = 700 ] || fail "perm: derived dir is $(stat -c %a "$CGEN/derived")"
+for f in "$CGEN"/derived/*; do
+  [ "$(stat -c %a "$f")" = 600 ] || fail "perm: $f is $(stat -c %a "$f")"
+done
+
+# 13j. The last-good types belong to one connection: another site never falls back to them.
+reset
+oauth
+types
+run -- issue create -p KEY
+expect_d site-a KEY
+printf 'site=https://other.atlassian.net\nserver=https://api.atlassian.com/ex/jira/cid-2\nauth=bearer\nlogin=me@example.com\ntoken=fake-oauth-tok\n' >"$T/agent.out"
+rm -f "$T/types.out"
+run -- issue create -p KEY
+expect site-b CONFIG "$GEN"
+grep -q 'jira init' "$T/err" || fail "site-b: no hint"
+oauth
+types
+run -- issue create -p KEY
+expect_d site-a-again KEY
+
+# 13k. A derived file older than the GC age is reused, kept (mtime refreshed) and still exists
+#      when jira starts; other stale files are collected.
+reset
+oauth
+types
+run -- issue create -p KEY
+old_cfg="$(seen CONFIG)"
+touch -d '3 days ago' "$old_cfg"
+printf 'x: 1\n' >"$CGEN/derived/config-OLD-0000.yml"
+touch -d '3 days ago' "$CGEN/derived/config-OLD-0000.yml"
+run -- issue create -p KEY
+[ "$(seen CONFIG)" = "$old_cfg" ] || fail "gc: config changed to $(seen CONFIG)"
+[ -s "$old_cfg" ] || fail "gc: the config handed to jira was collected"
+[ -n "$(find "$old_cfg" -mtime -1)" ] || fail "gc: reuse did not refresh the mtime"
+[ ! -e "$CGEN/derived/config-OLD-0000.yml" ] || fail "gc: a stale file survived"
+
+# 13l. The types cache swapped by another run while the config is being assembled: the published
+#      file is named by what it holds, and the next run's answer is not shadowed by a mismatch.
+reset
+oauth
+types
+cat >"$T/bin/cat" <<'STUB'
+#!/bin/sh
+# After the types cache is read once, another run replaces it.
+/bin/cat "$@"
+case "$*" in *issue-types-*) [ -f "$STUB_DIR/swap.done" ] || { touch "$STUB_DIR/swap.done"; sed 's/10001/99999/' "$STUB_DIR/types.fixture" >"$1.new" 2>/dev/null; mv -f "$1.new" "$1"; } ;; esac
+STUB
+chmod +x "$T/bin/cat"
+rm -f "$T/swap.done"
+run -- issue create -p KEY
+rm -f "$T/bin/cat"
+first="$(seen CONFIG)"
+grep -q '10001' "$first" && ! grep -q '99999' "$first" || fail "snapshot: the published file does not hold what was read"
+[ "$(sha256sum <"$first" | cut -c1-16)" = "$(basename "$first" .yml | sed 's/.*-//')" ] || fail "snapshot: name does not match content"
+types
+run -- issue create -p KEY
+grep -q '10001' "$(seen CONFIG)" && ! grep -q '99999' "$(seen CONFIG)" || fail "snapshot: next run did not get the helper's types"
+
+# 13. software=missing from the helper → one explanatory line on stderr for board / sprint / epic /
+#     init, never for issue calls or `version`; jira still runs as before, token still injected.
+reset
+printf 'site=%s\nserver=%s\nauth=bearer\nlogin=me@example.com\nsoftware=missing\ntoken=fake-oauth-tok\n' "$SITE" "$ROUTE" >"$T/agent.out"
+for sub in board sprint epic init; do
+  run -- $sub list
+  grep -q 'Boards, sprints and epics: not available' "$T/err" || fail "software notice: none for '$sub'"
+  expect "software notice $sub" TOKEN fake-oauth-tok
+  [ "$rc" = 0 ] || fail "software notice $sub: rc=$rc"
+  no_leak "software notice $sub" fake-oauth-tok
+done
+run -- issue list
+grep -q 'not available' "$T/err" && fail "software notice: shown for issue list"
+run -- version
+[ ! -f "$T/agent.calls" ] || fail "software notice: version reached the helper"
+# Granted or unknown (no software= line, e.g. an API token) stays silent.
+reset
+oauth
+run -- board list
+grep -q 'not available' "$T/err" && fail "software notice: shown without software=missing"
+reset
+apitok
+run -- sprint list
+grep -q 'not available' "$T/err" && fail "software notice: shown for an API token"
+
+# 14. Assignee lookup needs a project: `issue assign KEY-N` with no -p and a config of ours
+#     without project.key gets `-p KEY`; every other case leaves argv alone.
+args_of() { sed -n 's/^ARG=//p' "$T/jira.seen" | tr '\n' ' '; }
+reset
+oauth
+run -- issue assign G3-1199 someone@example.com
+[ "$(args_of)" = "-p G3 issue assign G3-1199 someone@example.com " ] || fail "assign: argv '$(args_of)'"
+expect assign TOKEN fake-oauth-tok
+no_leak assign fake-oauth-tok
+run -- issues assign G3-1199 x
+[ "$(args_of)" = "-p G3 issues assign G3-1199 x " ] || fail "assign unassign: argv '$(args_of)'"
+run -- issue assign G3-1199 OTHER-5
+[ "$(args_of)" = "-p G3 issue assign G3-1199 OTHER-5 " ] || fail "assign key-like assignee: argv '$(args_of)'"
+for form in "-p NOPE" "--project NOPE" "-pNOPE" "--project=NOPE" "-p=NOPE"; do
+  # shellcheck disable=SC2086
+  run -- issue assign $form G3-1 me
+  [ "$(args_of)" = "issue assign $form G3-1 me " ] || [ "$(args_of)" = "issue assign ${form% *} ${form#* } G3-1 me " ] || fail "assign explicit '$form': argv '$(args_of)'"
+done
+run -- issue assign -p "" G3-1 me
+[ "$(args_of)" = "issue assign -p  G3-1 me " ] || fail "assign empty -p: argv '$(args_of)'"
+for bad in G3 G3- -1 3G-1 G-3-1 "G3-1x" me; do
+  run -- issue assign "$bad" me
+  [ "$(args_of)" = "issue assign $bad me " ] || fail "assign bad key '$bad': argv '$(args_of)'"
+done
+run -- issue assign
+[ "$(args_of)" = "issue assign " ] || fail "assign no args: argv '$(args_of)'"
+run -- issue assign -- G3-1 me
+[ "$(args_of)" = "-p G3 issue assign -- G3-1 me " ] || fail "assign after --: argv '$(args_of)'"
+run -- issue assign -c "$MANAGED/x.yml" G3-1 me
+[ "$(args_of)" = "-p G3 issue assign -c $MANAGED/x.yml G3-1 me " ] || [ "$(args_of)" = "issue assign -c $MANAGED/x.yml G3-1 me " ] || fail "assign -c: argv '$(args_of)'"
+# Other subcommands are untouched, and -a gets the hint only where no project exists.
+run -- issue view G3-1
+[ "$(args_of)" = "issue view G3-1 " ] || fail "view: argv '$(args_of)'"
+for c in edit move; do
+  run -- issue $c G3-1 -a me
+  [ "$(args_of)" = "issue $c G3-1 -a me " ] || fail "$c -a: argv changed '$(args_of)'"
+  grep -q 'pass -p KEY or run jira init --project KEY --board NAME' "$T/err" || fail "$c -a: no hint"
+  expect "$c -a" TOKEN fake-oauth-tok
+done
+run -- issue edit G3-1 --assignee=me
+grep -q 'assignee lookup needs a project' "$T/err" || fail "edit --assignee=: no hint"
+run -- issue edit G3-1 -s summary
+grep -q 'assignee lookup' "$T/err" && fail "edit without -a: hint shown"
+run -- issue edit -p G3 G3-1 -a me
+grep -q 'assignee lookup' "$T/err" && fail "edit -a with -p: hint shown"
+# A config with project.key is left alone.
+reset
+oauth
+config "$MANAGED/config.yml" "installation: Cloud
+project:
+  key: AAC"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign with project.key: argv '$(args_of)'"
+run -- issue edit G3-1 -a me
+grep -q 'assignee lookup' "$T/err" && fail "edit with project.key: hint shown"
+# A project we cannot parse is not overridden either.
+config "$MANAGED/config.yml" "installation: Cloud
+project: {key: AAC}"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign flow-style project: argv '$(args_of)'"
+for flow in 'installation: Cloud
+project: {key: AAC}' '{installation: Cloud, project: {key: AAC}}' '{"installation": "Cloud", "project": {"key": "AAC"}}' '"project":
+  key: AAC' '? project
+: {key: AAC}' '---
+installation: Cloud
+project:
+  key: AAC' 'project : {key: AAC}'; do
+  config "$MANAGED/config.yml" "$flow"
+  run -- issue assign G3-1 me
+  [ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign ambiguous project ($flow): argv '$(args_of)'"
+done
+# A managed config without a project is ours: injected.
+config "$MANAGED/config.yml" "installation: Cloud"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "-p G3 issue assign G3-1 me " ] || fail "assign managed no project: argv '$(args_of)'"
+# User-owned configs exec unchanged, nothing injected and no token.
+reset
+oauth
+config "$DEFCFG" "installation: Cloud"
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign user default config: argv '$(args_of)'"
+expect assign-user TOKEN '<unset>'
+reset
+oauth
+config "$T/other.yml" "installation: Cloud"
+run -- -c "$T/other.yml" issue assign G3-1 me
+[ "$(args_of)" = "-c $T/other.yml issue assign G3-1 me " ] || fail "assign -c elsewhere: argv '$(args_of)'"
+run JIRA_API_TOKEN=mine -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign own token: argv '$(args_of)'"
+# No credential: argv still untouched.
+reset
+run -- issue assign G3-1 me
+[ "$(args_of)" = "issue assign G3-1 me " ] || fail "assign no credential: argv '$(args_of)'"
+
+# 13. `issue comment edit|delete` is not a jira-cli command: for a config of ours it goes to the
+#     Agent's jira-comment with the original argv, stdin intact, the real jira never started, and
+#     no token anywhere (the wrapper does not even ask for one).
+reset
+oauth
+rm -f "$T/comment.argv" "$T/comment.stdin" "$T/jira.seen"
+printf 'new *body*\n' | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" \
+  bash "$WRAPPER" issue comment edit K-1 10001 >"$T/out" 2>"$T/err"
+rc=$?
+[ "$rc" = 0 ] || fail "comment edit: exit $rc"
+[ "$(tr '\n' ' ' <"$T/comment.argv")" = "jira-comment issue comment edit K-1 10001 " ] || fail "comment edit: argv '$(tr '\n' ' ' <"$T/comment.argv")'"
+[ "$(cat "$T/comment.stdin")" = 'new *body*' ] || fail "comment edit: stdin not passed through"
+[ ! -f "$T/jira.seen" ] || fail "comment edit: the real jira ran"
+no_leak comment-edit fake-oauth-tok
+reset
+oauth
+run -- issues comment delete K-1 10001
+[ "$rc" = 0 ] && [ ! -f "$T/jira.seen" ] || fail "comment delete: rc=$rc or real jira ran"
+[ "$(tr '\n' ' ' <"$T/comment.argv")" = "jira-comment issues comment delete K-1 10001 " ] || fail "comment delete: argv"
+# An exit status of the Agent is the command's.
+echo 1 >"$T/comment.exit"
+run -- issue comment delete K-1 10001
+[ "$rc" = 1 ] || fail "comment delete: Agent status not kept ($rc)"
+rm -f "$T/comment.exit"
+# A debug run is refused (it would print the Authorization header), never forwarded.
+rm -f "$T/comment.argv"
+run -- --debug issue comment edit K-1 10001 -b x
+[ "$rc" = 1 ] && [ ! -f "$T/comment.argv" ] && [ ! -f "$T/jira.seen" ] || fail "comment debug: rc=$rc, forwarded or ran"
+grep -q 'not available in a debug run' "$T/err" || fail "comment debug: no explanation"
+run JIRA_DEBUG=true -- issue comment edit K-1 10001 -b x
+[ "$rc" = 1 ] && [ ! -f "$T/comment.argv" ] || fail "comment JIRA_DEBUG: rc=$rc or forwarded"
+# The user's own setup falls through to the real jira exactly as for any other command.
+for setup in default other token server; do
+  reset
+  oauth
+  rm -f "$T/comment.argv"
+  case "$setup" in
+    default) config "$DEFCFG" "installation: Cloud"; run -- issue comment edit K-1 10001 -b x ;;
+    other) config "$T/other.yml" "installation: Cloud"; run -- -c "$T/other.yml" issue comment edit K-1 10001 -b x ;;
+    token) run JIRA_API_TOKEN=mine -- issue comment edit K-1 10001 -b x ;;
+    server) run JIRA_SERVER=https://elsewhere.example -- issue comment edit K-1 10001 -b x ;;
+  esac
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment $setup: not passed to the real jira"
+  [ "$(seen TOKEN)" != fake-oauth-tok ] || fail "comment $setup: connection token injected"
+done
+# comment add goes to the helper too (its body is sent as ADF), argv untouched and no token.
+reset
+oauth
+run -- issue comment add K-1 hi
+[ ! -f "$T/jira.seen" ] && [ "$(cat "$T/comment.argv" 2>/dev/null)" = "jira-comment
+issue
+comment
+add
+K-1
+hi" ] || fail "comment add: not forwarded: '$(cat "$T/comment.argv" 2>/dev/null)'"
+[ ! -f "$T/agent.leak" ] || fail "comment add: the helper saw a token"
+no_leak "comment add" fake-oauth-tok
+# A piped body or -T reaches the helper; --web, a bare-number key and the user's own setup stay
+# with jira-cli.
+reset; oauth
+RUN_IN=<(printf 'from pipe') run -- issue comment add K-1
+[ "$(cat "$T/comment.stdin" 2>/dev/null)" = "from pipe" ] && [ ! -f "$T/jira.seen" ] || fail "comment add (pipe): '$(cat "$T/comment.stdin" 2>/dev/null)'"
+for spec in "web|issue comment add K-1 hi --web" "number|issue comment add 1 hi" "no key|issue comment add"; do
+  reset; oauth
+  # shellcheck disable=SC2086
+  run -- ${spec#*|}
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add [${spec%%|*}]: not left to jira-cli"
+done
+reset; oauth
+config "$DEFCFG" "installation: Cloud"
+run -- issue comment add K-1 hi
+[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add (own config): not left to jira-cli"
+reset; oauth
+run -- issue comment add K-1 hi --debug
+[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add (debug): not left to jira-cli"
+expect "comment add (debug)" TOKEN '<unset>'
+
 # 12. The helper runs before the export, so it never sees a token in its environment.
 reset
 oauth
 run -- issue list
 [ ! -f "$T/agent.leak" ] || fail "JIRA_API_TOKEN visible to the helper"
+
+# 13. Read-only commands are re-run on a transport failure; only the last attempt's output
+#     reaches the caller, and nothing of the failed attempts does.
+RESET_ERR='Error: Get "https://api.atlassian.com/ex/jira/cid-1/rest/api/3/search": read tcp 10.0.0.2:5->1.2.3.4:443: read: connection reset by peer'
+plan() { # plan <n> <rc> <stdout> <stderr>
+  printf '%s' "$3" >"$T/plan.$1.out"
+  printf '%s\n' "$4" >"$T/plan.$1.err"
+  echo "$2" >"$T/plan.$1.rc"
+}
+count() { cat "$T/jira.count" 2>/dev/null || echo 0; }
+for cmdline in "issue list" "issue view K-1" "issue show K-1" "issue ls" "issue search x" "epic ls" "board list" "sprint list" "epic list" "project list" "me" "issues list"; do
+  reset
+  oauth
+  plan 1 1 PARTIAL "$RESET_ERR"
+  plan 2 1 PARTIAL2 "$RESET_ERR"
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ "$rc" = 0 ] && [ "$(count)" = 3 ] || fail "retry [$cmdline]: rc=$rc attempts=$(count), want 0 and 3"
+  [ "$(cat "$T/out")" = "" ] || fail "retry [$cmdline]: output '$(cat "$T/out")'"
+  grep -q PARTIAL "$T/out" && fail "retry [$cmdline]: a failed attempt's stdout reached the caller"
+  [ ! -s "$T/err" ] || fail "retry [$cmdline]: a failed attempt's stderr reached the caller: $(cat "$T/err")"
+  expect "retry [$cmdline]" TOKEN fake-oauth-tok
+  no_leak "retry [$cmdline]" fake-oauth-tok
+done
+reset
+oauth
+plan 3 0 "GOOD
+" ""
+plan 1 1 PARTIAL "$RESET_ERR"
+plan 2 1 PARTIAL "$RESET_ERR"
+run -- issue list --plain
+[ "$(cat "$T/out")" = GOOD ] || fail "retry: output '$(cat "$T/out")', want GOOD once"
+# Every spelling jira-cli prints for a connection that never answered.
+for msg in 'read tcp: connection reset by peer' 'write tcp: write: connection reset by peer' \
+  'dial tcp 1.2.3.4:443: i/o timeout' 'net/http: TLS handshake timeout' 'Get "https://x/y": EOF' \
+  'Get "https://x/y": unexpected EOF' 'write: broken pipe' 'dial tcp 1.2.3.4:443: connect: connection refused' \
+  'dial tcp: lookup x.atlassian.net: no such host' 'dial tcp: lookup x: Temporary failure in name resolution' 'context deadline exceeded (Client.Timeout exceeded while awaiting headers)'; do
+  reset; oauth
+  plan 1 1 "" "Error: $msg"
+  run -- issue view K-1
+  [ "$(count)" = 2 ] && [ "$rc" = 0 ] || fail "retry [$msg]: attempts=$(count) rc=$rc"
+done
+# Gives up after 2 re-runs, with jira's own exit status and its last stderr.
+reset; oauth
+for i in 1 2 3 4; do plan "$i" 4 "" "$RESET_ERR"; done
+run -- issue list
+[ "$(count)" = 3 ] && [ "$rc" = 4 ] || fail "give up: attempts=$(count) rc=$rc, want 3 and 4"
+grep -q 'connection reset by peer' "$T/err" && grep -q 'giving up after 3 attempts' "$T/err" || fail "give up: stderr '$(cat "$T/err")'"
+# An answered failure (HTTP status, bad query) is final.
+for msg in 'Error: Request failed. Please try again: 401 Unauthorized' 'Error: 404 Not Found' 'Error: the JQL is invalid'; do
+  reset; oauth
+  plan 1 1 "" "$msg"
+  run -- issue list
+  [ "$(count)" = 1 ] && [ "$rc" = 1 ] || fail "no retry [$msg]: attempts=$(count) rc=$rc"
+  grep -q "$msg" "$T/err" || fail "no retry [$msg]: stderr lost"
+done
+# The private files are gone afterwards.
+[ -z "$(ls -A "$T/tmp")" ] || fail "retry left files behind: $(ls -A "$T/tmp")"
+
+# 14. A write, init, or anything unknown is run once, whatever the stderr says, and by exec.
+for cmdline in "issue create -s x" "issue edit K-1 -s x" "issue move K-1 Done" "issue assign K-1 me" \
+  "issue link K-1 K-2 Blocks" "issue delete K-1" "issue clone K-1" "issue watch K-1" \
+  "issue worklog add K-1 1h" "epic add E-1 K-1" "epic create" "sprint add 1 K-1" "init" "open K-1" "release list" "frobnicate"; do
+  reset
+  oauth
+  plan 1 1 "" "$RESET_ERR"
+  plan 2 0 "OK" ""
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ "$(count)" = 1 ] && [ "$rc" = 1 ] || fail "write [$cmdline]: attempts=$(count) rc=$rc, want 1 and 1"
+  grep -q 'connection reset by peer' "$T/err" || fail "write [$cmdline]: stderr not passed through"
+done
+# Not even when a flag value or -p sits between the words.
+reset; oauth
+plan 1 1 "" "$RESET_ERR"
+run -- issue -p KEY create -s x
+[ "$(count)" = 1 ] || fail "write with -p: attempts=$(count)"
+
+# 15. A terminal on stdout or stderr (jira-cli's TUI) keeps the plain exec: no capture, no re-run.
+if command -v script >/dev/null 2>&1; then
+  reset; oauth
+  plan 1 1 "" "$RESET_ERR"
+  plan 2 0 "OK" ""
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 1 ] || fail "tty: attempts=$(count), want 1 (exec, no re-run)"
+  grep -q 'connection reset by peer' "$T/out" || fail "tty: stderr did not reach the terminal"
+  # Only stderr on a terminal is enough, too.
+  reset; oauth
+  plan 1 1 "" "$RESET_ERR"
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list >/dev/null" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 1 ] || fail "tty stderr: attempts=$(count), want 1"
+else
+  echo "SKIP: no script(1), tty cases not run" >&2
+fi
+
+# 16. An unusable connection (the Agent says why on stderr): one line, jira not run. No
+#     connection at all, a user-owned config and help still behave as before.
+reset
+printf 'unusable=the access token expired and Atlassian refused to renew it\n' >"$T/agent.why"
+run -- issue list
+[ "$rc" = 1 ] && [ ! -f "$T/jira.seen" ] || fail "unusable: rc=$rc, jira ran"
+[ "$(cat "$T/err")" = "jira: the Jira connection is unusable (expired or revoked): reconnect Jira in Settings [the access token expired and Atlassian refused to renew it]" ] || fail "unusable: stderr '$(cat "$T/err")'"
+grep -q 'API token' "$T/err" && fail "unusable: still advises an API token"
+[ ! -s "$T/out" ] || fail "unusable: stdout '$(cat "$T/out")'"
+run -- help
+[ -f "$T/jira.seen" ] || fail "unusable: help did not reach jira"
+run -- version-not-a-command
+[ "$rc" = 1 ] || fail "unusable: unknown command rc=$rc"
+reset
+config "$DEFCFG" "installation: Cloud"
+printf 'unusable=x\n' >"$T/agent.why"
+run -- issue list
+[ -f "$T/jira.seen" ] && ! grep -q unusable "$T/err" || fail "unusable: a user-owned config was blocked"
+reset
+run -- issue list
+[ -f "$T/jira.seen" ] && [ ! -s "$T/err" ] || fail "no connection: jira must still run silently (rc=$rc err='$(cat "$T/err")')"
+# A reason cannot smuggle control characters onto the terminal.
+reset
+printf 'unusable=bad\033[31m red\n' >"$T/agent.why"
+run -- issue list
+grep -q "$(printf '\033')" "$T/err" && fail "unusable: control character passed through"
+
+# --raw output is not rewritten.
+reset; oauth
+plan 1 0 "{\"body\":\"$ROUTE/browse/KEY-1\"}
+" ""
+run -- issue view KEY-1 --raw
+grep -q "$ROUTE/browse/KEY-1" "$T/out" || fail "links (--raw): rewritten"
+run -- issue view KEY-1 --raw=true
+grep -q "$ROUTE/browse/KEY-1" "$T/out" || fail "links (--raw=true): rewritten"
+# Completion still works when the connection is unusable.
+reset
+printf 'unusable=x\n' >"$T/agent.why"
+run -- __complete issue ""
+[ -f "$T/jira.seen" ] || fail "unusable: __complete blocked"
+# stdin is not passed to a captured read.
+reset; oauth
+cat >"$T/bin/jira-real-stdin" <<'STUB'
+#!/bin/sh
+cat >"$STUB_DIR/stdin.seen"
+STUB
+chmod +x "$T/bin/jira-real-stdin"
+echo input | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real-stdin" TMPDIR="$T/tmp" bash "$WRAPPER" issue list >/dev/null 2>&1
+[ ! -s "$T/stdin.seen" ] || fail "captured read inherited stdin"
+
+# 17. Browse links of an OAuth connection point at api.atlassian.com; on the captured path they
+#     become site links. A write (exec) prints jira-cli's own, and an API-token connection has
+#     nothing to rewrite.
+reset; oauth
+plan 1 0 "KEY-1 $ROUTE/browse/KEY-1
+see $ROUTE/browse/KEY-2 and $ROUTE/browse/KEY-3, not $ROUTE/rest/api/3/issue/KEY-1
+" ""
+run -- issue list --plain
+want="KEY-1 $SITE/browse/KEY-1
+see $SITE/browse/KEY-2 and $SITE/browse/KEY-3, not $ROUTE/rest/api/3/issue/KEY-1"
+[ "$(cat "$T/out")" = "$want" ] || fail "links: '$(cat "$T/out")'"
+reset; apitok
+plan 1 0 "$SITE/browse/KEY-1
+" ""
+run -- issue view KEY-1
+[ "$(cat "$T/out")" = "$SITE/browse/KEY-1" ] || fail "links (api token): '$(cat "$T/out")'"
+reset; oauth
+plan 1 0 "$ROUTE/browse/KEY-1
+" ""
+run -- issue create -s x
+[ "$(cat "$T/out")" = "$ROUTE/browse/KEY-1" ] || fail "links (write): '$(cat "$T/out")'"
+
+# 18. jira-cli 1.7.0 reads all of stdin for `issue create|edit` and `comment add` even with -b, so
+#     an open pipe hangs it forever. With the body on the command line (and no -T file), or a
+#     character device other than /dev/null for stdin, jira gets /dev/null; a body that may come
+#     from stdin (a pipe or socket with no -b, `-T -` alone) is untouched, even if it blocks.
+#     The stub reads stdin to EOF like jira-cli; the open pipe is a fifo whose write end this
+#     shell keeps open, so the only way out is the wrapper taking stdin away. Each run is
+#     watched for 3 s.
+mkfifo "$T/fifo"
+exec 9<>"$T/fifo"
+finishes() { # finishes <label> <env…> -- <jira args…>: stdin is the open pipe
+  local label="$1"; shift
+  RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
+  run STUB_READ_STDIN=1 "$@"
+  RUN_PRE=() RUN_IN=
+  [ "$rc" != 124 ] && [ "$rc" != 137 ] && { [ -f "$T/jira.seen" ] || [ -f "$T/comment.argv" ] || [ -f "$T/desc.argv" ]; } ||
+    fail "stdin [$label]: blocked on an open pipe (rc=$rc)"
+  [ ! -s "$T/stdin.seen" ] && [ ! -s "$T/comment.stdin" ] || fail "stdin [$label]: jira got stdin data"
+}
+for cmdline in "issue create -tTask -s sum -b body --no-input" "issue create -tTask -s sum --body body" \
+  "issue create -s sum --body=body" "issue create -s sum -b=body" "issue create -s sum -bbody" \
+  "issue edit K-1 -b body" "issue update K-1 --body=x" "issue modify K-1 -bx" \
+  "issue comment add K-1 hello --no-input" "issues comments add K-1 hello" "issue comment add -p KEY K-1 hello" \
+  "issue create -s sum -b body --label l1 -a me" "issue create -t Task -s sum -b body -T - --no-input" \
+  "issue comment add K-1 hello -T -" "issue create -s sum -e 2h -b body" "issue create -s sum -b body --template=-" \
+  "issue edit K-1 -b x -T -"; do
+  reset; oauth
+  # shellcheck disable=SC2086
+  finishes "$cmdline" -- $cmdline
+done
+# A summary that looks like a flag is not a body: -s -b swallows the next word, so stdin stays
+# the description.
+reset; oauth
+echo data >"$T/body.in"
+plan 1 0 "$ROUTE/browse/K-9
+" ""
+RUN_IN="$T/body.in" run STUB_READ_STDIN=1 -- issue create -s -b x
+[ "$(cat "$T/desc.stdin" 2>/dev/null)" = data ] && [ "$(args_of)" = "issue create -s -b x " ] || fail "stdin: '-s -b x' was taken for a body"
+exec 9>&-
+# Bodies that come from stdin are read: -T -, a pipe with no -b, an empty -b, and comment add
+# with no text. They become the description (or the comment) the helper sends; jira-cli gets none.
+# (The pipe is a fifo with a writer, so it ends.)
+for spec in "issue create -s sum -T -|piped body" "issue create -s sum --template=-|piped body" \
+  "issue create -s sum|piped body" "issue create -s sum -b ''|piped body" "issue edit K-1 -s x|piped body" \
+  "issue comment add K-1|piped body" "issue comment add K-1 -T -|piped body" \
+  "issue create -s sum -- -b body|piped body" "issue create -s sum -T $T/body.in -b body|body"; do
+  cmdline="${spec%|*}" want="${spec#*|}"
+  reset; oauth
+  plan 1 0 "$ROUTE/browse/K-9
+" ""
+  (printf 'piped body' >"$T/fifo") &
+  # shellcheck disable=SC2086
+  eval "RUN_IN='$T/fifo' run STUB_READ_STDIN=1 -- $cmdline"
+  wait
+  got="$(cat "$T/desc.stdin" "$T/comment.stdin" 2>/dev/null)"
+  [ "$got" = "$want" ] || fail "stdin [$cmdline]: body '$got', want '$want'"
+  [ ! -s "$T/stdin.seen" ] || fail "stdin [$cmdline]: jira-cli got the body too"
+done
+# Other commands never lose stdin.
+reset; oauth
+(printf 'x' >"$T/fifo") &
+RUN_IN="$T/fifo" run STUB_READ_STDIN=1 -- issue move K-1 Done
+wait
+[ "$(cat "$T/stdin.seen")" = x ] || fail "stdin: issue move lost its stdin"
+# A socket is a body source like a pipe: with -b it is cut (it may never end), without it jira
+# gets what was sent. A character device other than /dev/null is never a body.
+if command -v python3 >/dev/null 2>&1; then
+  sockrun() { # sockrun <data> <close the far end: 1|0> <jira args…>
+    local data="$1" close="$2"; shift 2
+    RUN_PRE=(timeout -k 1 3 python3 -c 'import socket,subprocess,sys
+a,b=socket.socketpair()
+if sys.argv[1]: b.send(sys.argv[1].encode())
+if sys.argv[2]=="1": b.close()
+sys.exit(subprocess.run(sys.argv[3:],stdin=a).returncode)' "$data" "$close")
+    run STUB_READ_STDIN=1 "$@"
+    RUN_PRE=()
+  }
+  reset; oauth
+  plan 1 0 "$ROUTE/browse/K-9
+" ""
+  sockrun "" 0 -- issue create -s sum -b body --no-input
+  [ "$rc" = 0 ] && [ ! -s "$T/stdin.seen" ] && [ -f "$T/jira.seen" ] || fail "stdin: a socket blocked jira despite -b (rc=$rc)"
+  reset; oauth
+  plan 1 0 "$ROUTE/browse/K-9
+" ""
+  sockrun "sock body" 1 -- issue create -s sum --no-input
+  [ "$(cat "$T/desc.stdin" 2>/dev/null)" = "sock body" ] || fail "stdin: a socket body was dropped: '$(cat "$T/desc.stdin" 2>/dev/null)'"
+else
+  echo "SKIP: no python3, socket stdin case not run" >&2
+fi
+reset; oauth
+RUN_IN=/dev/zero; RUN_PRE=(timeout -k 1 3)
+run STUB_READ_STDIN=1 -- issue create -s sum --no-input
+RUN_PRE=() RUN_IN=
+[ "$rc" = 0 ] && [ ! -s "$T/stdin.seen" ] || fail "stdin: a character device was passed on (rc=$rc, $(wc -c <"$T/stdin.seen") bytes)"
+
+# 19. jira-cli has no request timeout. A run with no terminal is bounded: 120 s for a write, 45 s
+#     per attempt for a read, AF_JIRA_TIMEOUT overriding both (0 = off). Small values here.
+errl() { grep -v '^jira: this config has no issue types' "$T/err"; } # the config-less create hint is not under test
+# A write is never re-run: 124, one line on stderr, the issue/comment may exist.
+for cmdline in "issue create -s x -b y" "issue edit K-1 -s x" "issue move K-1 Done"; do
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  # shellcheck disable=SC2086
+  run AF_JIRA_TIMEOUT=0.5 -- $cmdline
+  [ "$rc" = 124 ] && [ "$(count)" = 1 ] || fail "write timeout [$cmdline]: rc=$rc attempts=$(count), want 124 and 1"
+  errl | grep -q '^jira: jira did not answer within 0.5 s; the .* - check Jira before running it again$' || fail "write timeout [$cmdline]: stderr '$(cat "$T/err")'"
+  [ "$(errl | wc -l)" = 1 ] || fail "write timeout [$cmdline]: more than one line on stderr"
+  [ "$(cat "$T/jira.parent")" = timeout ] || fail "write [$cmdline]: not run under timeout"
+  kill -0 "$(cat "$T/jira.pid")" 2>/dev/null && fail "write timeout [$cmdline]: jira left running"
+  no_leak "write timeout [$cmdline]" fake-oauth-tok
+done
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -s x
+grep -q 'the issue may have been created' "$T/err" || fail "write timeout: create wording '$(cat "$T/err")'"
+# comment add is the helper's call, bounded the same way.
+reset; oauth; touch "$T/comment.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue comment add K-1 hi
+[ "$rc" = 124 ] && [ "$(cat "$T/comment.parent")" = timeout ] || fail "write timeout [comment add]: rc=$rc parent=$(cat "$T/comment.parent" 2>/dev/null)"
+[ "$(cat "$T/err")" = "jira: jira did not answer within 0.5 s; the comment may have been added - check Jira before running it again" ] || fail "write timeout: comment wording '$(cat "$T/err")'"
+rm -f "$T/comment.hang"
+# A jira that ignores TERM is killed after the grace period, and still reported as a timeout.
+reset; oauth; echo 60 >"$T/plan.1.deaf"
+run AF_JIRA_TIMEOUT=0.5 AF_JIRA_KILL_GRACE=1 -- issue create -s x
+[ "$rc" = 124 ] && grep -q 'did not answer within 0.5 s' "$T/err" || fail "write kill grace: rc=$rc err='$(cat "$T/err")'"
+# A write that answers in time passes its output and status through untouched.
+reset; oauth
+plan 1 3 "partial
+" "Error: nope"
+run AF_JIRA_TIMEOUT=5 -- issue create -s x
+[ "$rc" = 3 ] && [ "$(cat "$T/out")" = partial ] && [ "$(errl)" = "Error: nope" ] || fail "write in time: rc=$rc out='$(cat "$T/out")' err='$(cat "$T/err")'"
+# Default limits: 120 s for a write, 45 for a read, under timeout(1) with a kill grace.
+reset; oauth
+run -- issue create -s x
+grep -Eq '^timeout -k [0-9.]+ 120 ' "$T/jira.parent.cmd" || fail "default write limit: '$(cat "$T/jira.parent.cmd")'"
+reset; oauth
+run -- issue list
+grep -Eq '^timeout -k [0-9.]+ 45 ' "$T/jira.parent.cmd" || fail "default read limit: '$(cat "$T/jira.parent.cmd")'"
+no_leak "bounded argv" fake-oauth-tok
+grep -q fake-oauth-tok "$T/jira.parent.cmd" && fail "bounded run: token in timeout's argv"
+for v in abc -5 1.2.3 ''; do
+  reset; oauth
+  run AF_JIRA_TIMEOUT="$v" -- issue create -s x
+  grep -Eq '^timeout -k [0-9.]+ 120 ' "$T/jira.parent.cmd" || fail "AF_JIRA_TIMEOUT='$v' not ignored: '$(cat "$T/jira.parent.cmd")'"
+done
+reset; oauth
+run AF_JIRA_TIMEOUT=7 -- issue create -s x
+grep -Eq '^timeout -k [0-9.]+ 7 ' "$T/jira.parent.cmd" || fail "AF_JIRA_TIMEOUT=7: '$(cat "$T/jira.parent.cmd")'"
+# 0 switches it off, however spelt: jira runs without timeout and a slow answer is waited for.
+for v in 0 0.0; do
+  for cmdline in "issue create -s x" "issue list"; do
+    reset; oauth
+    echo 1 >"$T/plan.1.hang"
+    # shellcheck disable=SC2086
+    run AF_JIRA_TIMEOUT="$v" -- $cmdline
+    [ "$rc" = 0 ] && [ "$(count)" = 1 ] && [ "$(cat "$T/jira.parent")" != timeout ] || fail "AF_JIRA_TIMEOUT=$v [$cmdline]: rc=$rc attempts=$(count) parent=$(cat "$T/jira.parent")"
+  done
+done
+# A signal for the wrapper reaches jira instead of orphaning it.
+reset; oauth
+echo 60 >"$T/plan.1.hang"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" \
+  bash "$WRAPPER" issue create -s x >"$T/out" 2>"$T/err" </dev/null &
+wpid=$!
+for _ in $(seq 50); do [ -f "$T/jira.pid" ] && break; sleep 0.1; done
+kill -TERM "$wpid"
+wait "$wpid"
+sleep 0.3
+kill -0 "$(cat "$T/jira.pid")" 2>/dev/null && { fail "signal: jira orphaned"; kill "$(cat "$T/jira.pid")"; }
+
+# The paths that run jira unchanged (the user's own config, an explicit token or server, a debug
+# run) get the same stdin guard and bound; the injected credential is not part of that.
+exec 9<>"$T/fifo"
+for envs in "JIRA_API_TOKEN=own" "JIRA_SERVER=https://own.example.net"; do
+  reset; oauth
+  RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
+  run STUB_READ_STDIN=1 $envs -- issue create -s sum -b body --no-input
+  RUN_PRE=() RUN_IN=
+  [ "$rc" = 0 ] && [ -f "$T/jira.seen" ] && [ ! -s "$T/stdin.seen" ] || fail "own setup [$envs]: blocked on stdin (rc=$rc)"
+done
+reset; oauth
+config "$T/other.yml" "installation: Cloud"
+RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 3)
+run STUB_READ_STDIN=1 -- -c "$T/other.yml" issue comment add K-1 hello
+RUN_PRE=() RUN_IN=
+[ "$rc" = 0 ] && [ -f "$T/jira.seen" ] && [ ! -s "$T/stdin.seen" ] || fail "own config: blocked on stdin (rc=$rc)"
+expect "own config" TOKEN '<unset>'
+exec 9>&-
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- -c "$T/other.yml" issue create -s x
+[ "$rc" = 124 ] && grep -q 'did not answer within 0.5 s' "$T/err" || fail "own config: no timeout (rc=$rc)"
+reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 JIRA_API_TOKEN=own -- issue move K-1 Done
+[ "$rc" = 124 ] || fail "own token: no timeout (rc=$rc)"
+# A helper of the Agent that never answers must not hang every command: jira runs as if there
+# were no connection (or, for comment edit, the call is cut off).
+reset; oauth; touch "$T/agent.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue list
+[ "$rc" = 0 ] && [ -f "$T/jira.seen" ] && expect "stuck helper" TOKEN '<unset>' || fail "stuck jira-cred: rc=$rc"
+reset; oauth; touch "$T/agent.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue comment edit K-1 10001 -b x
+[ "$rc" = 124 ] || fail "stuck jira-comment: rc=$rc"
+rm -f "$T/agent.hang"
+# A kill grace that is not a number is ignored.
+reset; oauth
+run AF_JIRA_KILL_GRACE=1.2.3 -- issue create -s x
+grep -Eq '^timeout -k 5 120 ' "$T/jira.parent.cmd" || fail "bad kill grace: '$(cat "$T/jira.parent.cmd")'"
+# A signal for a reading wrapper reaches the attempt too.
+reset; oauth
+echo 60 >"$T/plan.1.hang"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" \
+  bash "$WRAPPER" issue list >"$T/out" 2>"$T/err" </dev/null &
+wpid=$!
+for _ in $(seq 50); do [ -f "$T/jira.pid" ] && break; sleep 0.1; done
+kill -TERM "$wpid"
+wait "$wpid"
+sleep 0.3
+kill -0 "$(cat "$T/jira.pid")" 2>/dev/null && { fail "signal (read): jira orphaned"; kill "$(cat "$T/jira.pid")"; }
+[ -z "$(ls -A "$T/tmp")" ] || fail "signal (read) left files behind"
+
+# A read that never answers is re-run (a timeout is a transport failure); only the last
+# attempt's output reaches the caller, and no file is left behind.
+for cmdline in "issue list" "issue view K-1" "me"; do
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  plan 2 0 "GOOD
+" ""
+  # shellcheck disable=SC2086
+  run AF_JIRA_TIMEOUT=0.5 -- $cmdline
+  [ "$rc" = 0 ] && [ "$(count)" = 2 ] && [ "$(cat "$T/out")" = GOOD ] && [ -z "$(cat "$T/err")" ] || fail "read timeout [$cmdline]: rc=$rc attempts=$(count) out='$(cat "$T/out")' err='$(cat "$T/err")'"
+  [ "$(cat "$T/jira.parent")" = timeout ] || fail "read [$cmdline]: not run under timeout"
+  no_leak "read timeout [$cmdline]" fake-oauth-tok
+done
+[ -z "$(ls -A "$T/tmp")" ] || fail "read timeout left files behind: $(ls -A "$T/tmp")"
+# Three silent attempts: 124, why, and the give-up line.
+reset; oauth
+for i in 1 2 3; do echo 60 >"$T/plan.$i.hang"; done
+run AF_JIRA_TIMEOUT=0.5 -- issue view K-1
+[ "$rc" = 124 ] && [ "$(count)" = 3 ] || fail "read timeouts: rc=$rc attempts=$(count), want 124 and 3"
+grep -q 'no answer within 0.5 s' "$T/err" && grep -q 'giving up after 3 attempts' "$T/err" || fail "read timeouts: stderr '$(cat "$T/err")'"
+[ -z "$(ls -A "$T/tmp")" ] || fail "read timeouts left files behind"
+no_leak "read timeouts" fake-oauth-tok
+
+# A terminal on stdin, stdout or stderr is never bounded, written to or re-run, whatever
+# AF_JIRA_TIMEOUT says: `timeout` without --foreground would break job control, and the TUI must
+# not be killed. The stub reports who its parent is; stdin is the open pipe for the guard.
+if command -v script >/dev/null 2>&1; then
+  for cmdline in "issue create -s x -b y" "issue list"; do
+    for redir in "" ">/dev/null" "2>/dev/null"; do
+      reset; oauth
+      echo 1 >"$T/plan.1.hang"
+      rm -f "$T/jira.count"
+      script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_TIMEOUT=0.5 bash '$WRAPPER' $cmdline $redir" /dev/null >"$T/out" 2>&1 </dev/null
+      # With stdout or stderr redirected the other is still the terminal; stdin always is.
+      [ "$(count)" = 1 ] && [ "$(cat "$T/jira.parent")" != timeout ] || fail "tty [$cmdline $redir]: bounded or re-run (attempts=$(count) parent=$(cat "$T/jira.parent" 2>/dev/null))"
+      grep -q 'did not answer' "$T/out" && fail "tty [$cmdline $redir]: timeout message on a terminal run"
+    done
+  done
+  # A terminal on stdin alone does not matter for a read: it is captured, so it is bounded too.
+  reset; oauth
+  echo 60 >"$T/plan.1.hang"
+  plan 2 0 "GOOD
+" ""
+  rm -f "$T/jira.count"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' AF_JIRA_TIMEOUT=0.5 AF_JIRA_RETRY_WAIT=0 bash '$WRAPPER' issue list 2>&1 | cat" /dev/null >"$T/out" 2>&1 </dev/null
+  [ "$(count)" = 2 ] && grep -q GOOD "$T/out" || fail "tty stdin only: read not bounded (attempts=$(count))"
+fi
+
+# 20. After a timed-out `issue create` the wrapper asks the Agent for candidate issues (project and
+#     exact summary on argv, no token anywhere) and prints them after the timeout line; the status
+#     stays 124 whatever the lookup says. Only a run with the Agent's own credential does it.
+find_reset() { rm -f "$T"/find.*; }
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+printf 'AB-7 %s/browse/AB-7\nAB-9 %s/browse/AB-9\n' "$SITE" "$SITE" >"$T/find.out"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s "my summary"
+[ "$rc" = 124 ] || fail "find: rc=$rc, want 124"
+[ "$(errl | sed -n 2p)" = "jira: possible matches: AB-7 $SITE/browse/AB-7, AB-9 $SITE/browse/AB-9" ] || fail "find: stderr '$(cat "$T/err")'"
+[ "$(errl | head -n1 | cut -c1-30)" = "jira: jira did not answer with" ] || fail "find: timeout line is not first"
+[ "$(cat "$T/find.argv")" = "AB
+my summary" ] || fail "find: argv '$(cat "$T/find.argv")'"
+[ ! -e "$T/agent.leak" ] || fail "find: the helper inherited JIRA_API_TOKEN"
+no_leak "find" fake-oauth-tok
+grep -q fake-oauth-tok "$T/find.argv" && fail "find: token in the helper's argv"
+# Every spelling of the summary flag, the last one wins, and a value that looks like a flag is a value.
+for spec in "-s|X1" "-sX1|X1" "-s=X1|X1" "--summary|X1" "--summary=X1|X1"; do
+  flags="${spec%|*}" want="${spec#*|}"
+  reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+  case "$flags" in -s | --summary) run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s ignored "$flags" "$want" ;;
+    *) run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s ignored "$flags" ;; esac
+  [ "$(sed -n 2p "$T/find.argv" 2>/dev/null)" = "$want" ] || fail "find [$flags]: summary '$(cat "$T/find.argv" 2>/dev/null)'"
+done
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s -b -b body
+[ "$(sed -n 2p "$T/find.argv" 2>/dev/null)" = "-b" ] || fail "find: '-s -b' summary '$(cat "$T/find.argv" 2>/dev/null)'"
+# The project may come from the config instead of -p.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+config "$MANAGED/config.yml" 'project:
+  key: CFG
+issue:
+  types:
+    - id: "1"'
+run AF_JIRA_TIMEOUT=0.5 -- issue create -s "from config"
+[ "$(cat "$T/find.argv" 2>/dev/null)" = "CFG
+from config" ] || fail "find: config project, argv '$(cat "$T/find.argv" 2>/dev/null)'"
+# An explicit -c names the project when -p is absent.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+config "$MANAGED/other.yml" 'project:
+  key: OTH
+issue:
+  types:
+    - id: "1"'
+run AF_JIRA_TIMEOUT=0.5 -- -c "$MANAGED/other.yml" issue create -s "via -c"
+[ "$(cat "$T/find.argv" 2>/dev/null)" = "OTH
+via -c" ] || fail "find: -c project, argv '$(cat "$T/find.argv" 2>/dev/null)'"
+# A small AF_JIRA_TIMEOUT does not shorten the lookup: a helper that takes 2 s still answers.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+printf 'AB-5 x\n' >"$T/find.out"; echo 2 >"$T/find.delay"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s slow
+[ "$rc" = 124 ] && grep -q 'possible matches: AB-5' "$T/err" || fail "find: lookup cut by AF_JIRA_TIMEOUT: '$(cat "$T/err")'"
+# A signal during the lookup ends the run with 130 and leaves nothing behind.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"; touch "$T/find.hang"; rm -f "$T/jira.count"
+( env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" AF_JIRA_TIMEOUT=0.5 \
+    bash "$WRAPPER" issue create -p AB -s sig >"$T/out" 2>"$T/err" </dev/null & p=$!
+  # The stub writes find.argv when the helper starts: the lookup is in flight from then on.
+  for _ in $(seq 1 150); do [ -f "$T/find.argv" ] && break; sleep 0.1; done
+  kill -TERM "$p"; wait "$p"; echo $? >"$T/sig.rc" )
+[ "$(cat "$T/sig.rc")" = 130 ] || fail "find: signal during lookup, rc=$(cat "$T/sig.rc")"
+# Nothing found: the "may still appear" line.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s none
+[ "$rc" = 124 ] && [ "$(errl | sed -n 2p)" = "jira: no matching issue found in the last 15 minutes (it may still appear; check again before re-running)" ] || fail "find none: rc=$rc '$(cat "$T/err")'"
+# The lookup itself failing, or hanging, says so in one line and still exits 124.
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+echo "no Jira connection" >"$T/find.err"; echo 1 >"$T/find.exit"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s boom
+[ "$rc" = 124 ] && [ "$(errl | wc -l)" = 2 ] && [ "$(errl | sed -n 2p)" = "jira: could not look for the issue (no Jira connection); check Jira before running it again" ] || fail "find failure: rc=$rc '$(cat "$T/err")'"
+reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"; touch "$T/find.hang"
+run AF_JIRA_TIMEOUT=0.5 AF_JIRA_FIND_TIMEOUT=1 AF_JIRA_KILL_GRACE=1 -- issue create -p AB -s stuck
+[ "$rc" = 124 ] && [ "$(errl | sed -n 2p)" = "jira: could not look for the issue (no answer in time); check Jira before running it again" ] || fail "find hang: rc=$rc '$(cat "$T/err")'"
+# No lookup: no summary, no project, a user-owned config / token / server, a debug run, a write
+# other than create, a create that did not time out.
+nolookup() { # nolookup <label> <env…> -- <args…>
+  local label="$1"; shift
+  reset; find_reset; oauth; echo 60 >"$T/plan.1.hang"
+  printf 'AB-7 x\n' >"$T/find.out"
+  run AF_JIRA_TIMEOUT=0.5 "$@"
+  [ "$rc" = 124 ] || fail "no lookup [$label]: rc=$rc"
+  [ ! -e "$T/find.argv" ] || fail "no lookup [$label]: the helper was called"
+  ! grep -Eq 'possible matches|no matching issue|could not look' "$T/err" || fail "no lookup [$label]: stderr '$(cat "$T/err")'"
+}
+nolookup "no summary" -- issue create -p AB
+nolookup "no project" -- issue create -s x
+nolookup "user config" -- -c "$T/other.yml" issue create -p AB -s x
+nolookup "own token" JIRA_API_TOKEN=own -- issue create -p AB -s x
+nolookup "own server" JIRA_SERVER=https://own.example.net -- issue create -p AB -s x
+nolookup "debug" -- issue create --debug -p AB -s x
+nolookup "edit" -- issue edit AB-1 -s x
+nolookup "comment" -- issue comment add 1 hi
+reset; find_reset; oauth; plan 1 0 "AB-1
+" ""
+run -- issue create -p AB -s "done"
+[ "$rc" = 0 ] && [ ! -e "$T/find.argv" ] || fail "find: a create that answered was looked up"
+
+# 21. The description of `issue create -b/-T` and `issue edit -b` is set by the Agent as ADF
+#     (`workspace-agent jira-description KEY`, body on stdin): jira-cli runs without it.
+desc_reset() { rm -f "$T"/desc.*; }
+created() { plan 1 0 "
+✓ Issue created
+$ROUTE/browse/$1
+" ""; }
+reset; desc_reset; oauth; created AB-12
+run -- issue create -p AB -t Task -s sum -b '認証（`/api/auth`）で送る' --no-input
+[ "$rc" = 0 ] || fail "describe create: rc=$rc err='$(cat "$T/err")'"
+[ "$(args_of)" = "issue create -p AB -t Task -s sum --no-input " ] && expect "describe create" TOKEN fake-oauth-tok || fail "describe create: jira argv '$(args_of)'"
+[ "$(cat "$T/desc.argv")" = AB-12 ] || fail "describe create: helper argv '$(cat "$T/desc.argv")'"
+[ "$(cat "$T/desc.stdin")" = '認証（`/api/auth`）で送る' ] || fail "describe create: body '$(cat "$T/desc.stdin")'"
+grep -q "browse/AB-12" "$T/out" || fail "describe create: jira's output lost: '$(cat "$T/out")'"
+[ ! -f "$T/agent.leak" ] || fail "describe create: the helper saw a token"
+no_leak "describe create" fake-oauth-tok
+[ -z "$(ls -A "$T/tmp")" ] || fail "describe create left files behind: $(ls -A "$T/tmp")"
+# Every spelling of the body flags is taken out of jira's argv; -T reads the file.
+printf 'from file\n' >"$T/tmpl.md"
+for spec in "-bX|X" "-b=X|X" "--body=X|X" "--body X|X" "-T $T/tmpl.md|from file" "--template=$T/tmpl.md|from file" "-T $T/tmpl.md -b X|X"; do
+  reset; desc_reset; oauth; created AB-3
+  # shellcheck disable=SC2086
+  run -- issue create -p AB -s sum ${spec%|*}
+  [ "$(args_of)" = "issue create -p AB -s sum " ] || fail "describe [${spec%|*}]: jira argv '$(args_of)'"
+  [ "$(cat "$T/desc.stdin" 2>/dev/null)" = "$(printf '%s' "${spec#*|}")" ] || [ "$(cat "$T/desc.stdin" 2>/dev/null)" = "${spec#*|}
+" ] || fail "describe [${spec%|*}]: body '$(cat "$T/desc.stdin" 2>/dev/null)'"
+done
+# --raw prints JSON; the key is read from it.
+reset; desc_reset; oauth
+plan 1 0 '{"id":"10042","key":"AB-42","self":"x"}
+' ""
+run -- issue create -p AB -s sum -b x --raw
+[ "$rc" = 0 ] && [ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-42 ] || fail "describe --raw: rc=$rc argv '$(cat "$T/desc.argv" 2>/dev/null)'"
+# A template that cannot be read stops before anything is created.
+reset; desc_reset; oauth
+run -- issue create -p AB -s sum -T "$T/missing.md"
+[ "$rc" = 1 ] && [ ! -f "$T/jira.seen" ] || fail "describe: unreadable template: rc=$rc"
+# A failed create is not described; a created issue is never created again: an unreadable key or a
+# failed description exits 3 and names what to run instead.
+reset; desc_reset; oauth
+plan 1 1 "" "Error: 400 Bad Request"
+run -- issue create -p AB -s sum -b x
+[ "$rc" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "describe: failed create was described (rc=$rc)"
+reset; desc_reset; oauth
+plan 1 0 "done
+" ""
+run -- issue create -p AB -s sum -b x
+[ "$rc" = 3 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] && grep -q 'Do not run create again' "$T/err" || fail "describe: no key: rc=$rc err='$(cat "$T/err")'"
+reset; desc_reset; oauth; created AB-12
+echo "jira: Jira refused (403)" >"$T/desc.err"; echo 1 >"$T/desc.exit"
+run -- issue create -p AB -s sum -b x
+[ "$rc" = 3 ] && [ "$(count)" = 1 ] || fail "describe: failed description: rc=$rc attempts=$(count)"
+grep -q 'Jira refused (403)' "$T/err" && grep -q '^jira: AB-12 was created, but its description was NOT set' "$T/err" || fail "describe: failed description: err='$(cat "$T/err")'"
+desc_reset
+# A create that times out exits 124 as before and is not described.
+reset; desc_reset; oauth; echo 60 >"$T/plan.1.hang"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s sum -b x
+[ "$rc" = 124 ] && [ ! -f "$T/desc.argv" ] || fail "describe: timed-out create: rc=$rc"
+# A helper that never answers is cut off like any write (124), saying the issue exists.
+reset; desc_reset; oauth; created AB-12
+printf '#!/bin/sh\n[ "$1" != jira-description ] || exec sleep 60\nexec "%s/bin/workspace-agent.real" "$@"\n' "$T" >"$T/bin/wa.hang"
+mv "$T/bin/workspace-agent" "$T/bin/workspace-agent.real"; cp "$T/bin/wa.hang" "$T/bin/workspace-agent"; chmod +x "$T/bin/workspace-agent"
+run AF_JIRA_TIMEOUT=0.5 -- issue create -p AB -s sum -b x
+mv "$T/bin/workspace-agent.real" "$T/bin/workspace-agent"
+[ "$rc" = 124 ] && grep -q 'the description of AB-12 may have been set (AB-12 exists: do not create it again)' "$T/err" || fail "describe: stuck helper: rc=$rc err='$(cat "$T/err")'"
+[ "$(count)" = 1 ] || fail "describe: stuck helper: create ran $(count) times"
+# edit with nothing but the body skips jira-cli; with other changes jira-cli makes them first.
+reset; desc_reset; oauth
+run -- issue edit AB-5 -b '- **すべて**。次へ' --no-input
+[ "$rc" = 0 ] && [ ! -f "$T/jira.seen" ] && [ "$(cat "$T/desc.argv")" = AB-5 ] || fail "describe edit: rc=$rc jira=$( [ -f "$T/jira.seen" ] && echo ran) argv='$(cat "$T/desc.argv" 2>/dev/null)'"
+grep -q "Issue updated" "$T/out" && grep -q "$SITE/browse/AB-5" "$T/out" || fail "describe edit: stdout '$(cat "$T/out")'"
+reset; desc_reset; oauth
+run -- issue edit AB-5 -s new -b body --skip-notify
+[ "$(args_of)" = "issue edit AB-5 -s new --skip-notify " ] && [ "$(cat "$T/desc.argv")" = "AB-5
+--skip-notify" ] || fail "describe edit with changes: jira '$(args_of)' helper '$(cat "$T/desc.argv" 2>/dev/null)'"
+reset; desc_reset; oauth
+plan 1 1 "" "Error: 404"
+run -- issue edit AB-5 -s new -b body
+[ "$rc" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "describe edit: described after jira-cli failed"
+reset; desc_reset; oauth
+echo 1 >"$T/desc.exit"
+run -- issue edit AB-5 -s new -b body
+[ "$rc" = 3 ] && grep -q 'the description of AB-5 was NOT set (see above); the other changes were applied' "$T/err" || fail "describe edit failure: rc=$rc err='$(cat "$T/err")'"
+desc_reset
+# Help is jira-cli's, wherever -h / --help sits; a summary that reads "--help" is a value.
+for cmdline in "issue comment add AB-1 body --help" "issue comment add AB-1 body -h" \
+  "issue edit AB-1 -b body --help" "issue create -p AB -s sum -b x -h" "issue create --help -p AB -s sum -b x"; do
+  reset; desc_reset; oauth; created AB-1
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && [ ! -f "$T/comment.argv" ] || fail "help [$cmdline]: not left to jira-cli"
+  args_of | grep -qe ' -b ' -e ' body ' || fail "help [$cmdline]: body taken out: '$(args_of)'"
+done
+reset; desc_reset; oauth; created AB-1
+run -- issue create -p AB -s --help -b x
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-1 ] || fail "help: a summary of --help was read as help"
+# --web that is in effect stays with jira-cli; --web=false does not.
+reset; desc_reset; oauth
+run -- issue edit AB-1 -b body --web
+[ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && args_of | grep -q -- ' -b body ' || fail "describe --web: taken over: '$(args_of)'"
+reset; desc_reset; oauth
+run -- issue edit AB-1 -b body --web --web=false
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-1 ] || fail "describe --web=false: not taken over"
+reset; oauth
+run -- issue comment add AB-1 hi --web=true
+[ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "comment add --web=true: taken over"
+# The last value of a boolean flag wins, as in pflag; a value pflag refuses leaves the run to jira-cli.
+reset; desc_reset; oauth
+run -- issue edit AB-1 -b body --skip-notify --skip-notify=false
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-1 ] || fail "describe: --skip-notify=false still passed: '$(cat "$T/desc.argv" 2>/dev/null)'"
+reset; desc_reset; oauth
+run -- issue edit AB-1 -b body --skip-notify=T
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = "AB-1
+--skip-notify" ] || fail "describe: --skip-notify=T not passed"
+for cmdline in "issue edit AB-1 -b body --no-input=maybe" "issue comment add AB-1 hi --web=yes"; do
+  reset; desc_reset; oauth
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && [ ! -f "$T/comment.argv" ] || fail "bad bool [$cmdline]: taken over"
+done
+# A value of any value-taking flag that looks like a body flag is a value, kept in jira's argv.
+for flag in -s --summary -t --type -P --parent -y --priority -r --reporter -a --assignee -l --label \
+  -C --component --fix-version --affects-version -e --original-estimate --custom; do
+  reset; desc_reset; oauth; created AB-1
+  run -- issue create -p AB -s sum "$flag" "--body=literal" -b actual
+  [ "$(args_of)" = "issue create -p AB -s sum $flag --body=literal " ] || fail "strip [$flag]: jira argv '$(args_of)'"
+  [ "$(cat "$T/desc.stdin" 2>/dev/null)" = actual ] || fail "strip [$flag]: body '$(cat "$T/desc.stdin" 2>/dev/null)'"
+done
+# An issue type that requires a description (createmeta, asked first) gets its body with the
+# create, through jira-cli's conversion: on stdin, argv untouched (a `--` may be a flag's value).
+# No description PUT follows.
+for spec in "plain|issue create -p AB -t Task -s sum -b body|issue create -p AB -t Task -s sum " \
+  "dashdash|issue create -p AB -t Task -s sum -b body -- x|issue create -p AB -t Task -s sum -- x " \
+  "value|issue create -p AB -t Task --summary -- -b body|issue create -p AB -t Task --summary -- "; do
+  reset; desc_reset; oauth; rm -f "$T/req.argv"; echo required >"$T/req.out"
+  plan 1 0 "$ROUTE/browse/AB-7
+" ""
+  cmdline="${spec#*|}"; cmdline="${cmdline%|*}"
+  # shellcheck disable=SC2086
+  run STUB_READ_STDIN=1 -- $cmdline
+  [ "$rc" = 0 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "required [${spec%%|*}]: rc=$rc attempts=$(count)"
+  [ "$(cat "$T/req.argv" 2>/dev/null)" = "AB
+Task" ] || fail "required [${spec%%|*}]: lookup argv '$(cat "$T/req.argv" 2>/dev/null)'"
+  [ "$(args_of)" = "${spec##*|}" ] || fail "required [${spec%%|*}]: jira argv '$(args_of)'"
+  [ "$(cat "$T/stdin.seen" 2>/dev/null)" = body ] || fail "required [${spec%%|*}]: body on stdin '$(cat "$T/stdin.seen" 2>/dev/null)'"
+  grep -q 'requires a description at create time' "$T/err" || fail "required [${spec%%|*}]: no note"
+  [ -z "$(ls -A "$T/tmp")" ] || fail "required [${spec%%|*}] left files behind: $(ls -A "$T/tmp")"
+done
+rm -f "$T/req.out"
+# -P together with a body: the parent stays in jira's argv on the next-gen config, and the
+# description goes the same way as without it (set afterwards, or on stdin when required).
+reset; desc_reset; oauth; types; created AB-12
+run -- issue create -p AB -t Task -s sum -P AB-1 -b body --no-input
+expect_ng "parent+body"
+[ "$rc" = 0 ] && [ "$(args_of)" = "issue create -p AB -t Task -s sum -P AB-1 --no-input " ] || fail "parent+body: rc=$rc jira argv '$(args_of)'"
+[ "$(cat "$T/desc.argv" 2>/dev/null)" = AB-12 ] && [ "$(cat "$T/desc.stdin" 2>/dev/null)" = body ] || fail "parent+body: description not set"
+reset; desc_reset; oauth; types; rm -f "$T/req.argv"; echo required >"$T/req.out"
+plan 1 0 "$ROUTE/browse/AB-7
+" ""
+run STUB_READ_STDIN=1 -- issue create -p AB -t Task -s sum -P AB-1 -b body
+expect_ng "parent+required"
+[ "$rc" = 0 ] && [ ! -f "$T/desc.argv" ] && [ "$(args_of)" = "issue create -p AB -t Task -s sum -P AB-1 " ] || fail "parent+required: rc=$rc jira argv '$(args_of)'"
+[ "$(cat "$T/stdin.seen" 2>/dev/null)" = body ] || fail "parent+required: body on stdin '$(cat "$T/stdin.seen" 2>/dev/null)'"
+rm -f "$T/req.out"
+# The type may come as -tTask / --type=Task, the project from the config.
+reset; desc_reset; oauth; rm -f "$T/req.argv"; echo optional >"$T/req.out"; created AB-1
+config "$MANAGED/config.yml" 'project:
+  key: CFG
+issue:
+  types:
+    - id: "1"'
+run -- issue create --type=Task -s sum -b body
+[ "$(cat "$T/req.argv" 2>/dev/null)" = "CFG
+Task" ] && [ -f "$T/desc.argv" ] || fail "required lookup from config: '$(cat "$T/req.argv" 2>/dev/null)'"
+rm -f "$T/req.out"
+# A create refused with a description error is never re-sent: the status is not known (a 500 with
+# the same field error may follow a created issue), so the wrapper says what to check instead.
+reset; desc_reset; oauth
+plan 1 1 "" "
+Error:
+  - description: Description is required."
+plan 2 0 "$ROUTE/browse/AB-7
+" ""
+run -- issue create -p AB -t Task -s sum -b body
+[ "$rc" = 1 ] && [ "$(count)" = 1 ] && [ ! -f "$T/desc.argv" ] || fail "description refusal: rc=$rc attempts=$(count)"
+grep -q 'is not re-sent automatically' "$T/err" && grep -q 'AF_JIRA_ADF=0' "$T/err" || fail "description refusal: '$(cat "$T/err")'"
+# AF_JIRA_ADF=0 leaves all three to jira-cli as before.
+for cmdline in "issue create -p AB -s sum -b body" "issue edit AB-1 -b body" "issue comment add AB-1 hi"; do
+  reset; desc_reset; oauth; created AB-1
+  # shellcheck disable=SC2086
+  run AF_JIRA_ADF=0 -- $cmdline
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && [ ! -f "$T/comment.argv" ] || fail "AF_JIRA_ADF=0 [$cmdline]: taken over"
+done
+# Short flags as pflag reads them: -h=true and a cluster that starts with -h are help, -h=false is not.
+for cmdline in "issue edit AB-1 -b body -h=true" "issue edit AB-1 -b body -hpAB" "issue comment add AB-1 hi -hpAB" "issue edit AB-1 -b body -x"; do
+  reset; desc_reset; oauth
+  # shellcheck disable=SC2086
+  run -- $cmdline
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && [ ! -f "$T/comment.argv" ] || fail "short flags [$cmdline]: taken over"
+done
+reset; desc_reset; oauth
+run -- issue edit AB-1 -b body -h=false
+[ -f "$T/desc.argv" ] || fail "short flags: -h=false not taken over"
+# A false --web / --debug is not in effect: comment add still goes to the helper, which accepts it.
+for flag in --web=false --debug=false; do
+  reset; oauth
+  run -- issue comment add AB-1 hi "$flag"
+  [ -f "$T/comment.argv" ] && [ ! -f "$T/jira.seen" ] || fail "comment add $flag: not taken over"
+done
+# A stdin that cannot be read stops before anything is sent.
+reset; desc_reset; oauth; created AB-1
+RUN_IN="$T/tmp" run -- issue create -p AB -s sum
+[ "$rc" = 1 ] && [ ! -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] && grep -q 'cannot read the body from stdin' "$T/err" || fail "unreadable stdin: rc=$rc jira=$( [ -f "$T/jira.seen" ] && echo ran) err='$(cat "$T/err")'"
+# A body source that never ends (a pipe or a -T FIFO whose writer stays) is bounded like the write
+# it feeds, and nothing is created.
+exec 9<>"$T/fifo"
+for spec in "stdin|issue create -p AB -s sum" "fifo|issue create -p AB -s sum -T $T/fifo" "edit|issue edit AB-1 -s new"; do
+  reset; desc_reset; oauth; created AB-1
+  RUN_IN="$T/fifo"; RUN_PRE=(timeout -k 1 5)
+  # shellcheck disable=SC2086
+  run AF_JIRA_TIMEOUT=0.5 -- ${spec#*|}
+  RUN_PRE=() RUN_IN=
+  [ "$rc" = 124 ] && [ ! -f "$T/jira.seen" ] && grep -q 'the body did not end within 0.5 s' "$T/err" || fail "open body [${spec%%|*}]: rc=$rc err='$(cat "$T/err")'"
+done
+exec 9>&-
+# A signal for the wrapper reaches the description helper too.
+reset; desc_reset; oauth; created AB-12
+printf '#!/bin/sh\n[ "$1" != jira-description ] || { echo $$ >"%s/desc.pid"; exec sleep 60; }\nexec "%s/bin/workspace-agent.real" "$@"\n' "$T" "$T" >"$T/bin/wa.hang"
+mv "$T/bin/workspace-agent" "$T/bin/workspace-agent.real"; cp "$T/bin/wa.hang" "$T/bin/workspace-agent"; chmod +x "$T/bin/workspace-agent"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_JIRA_REAL="$T/bin/jira-real" TMPDIR="$T/tmp" \
+  bash "$WRAPPER" issue create -p AB -s sum -b x >"$T/out" 2>"$T/err" </dev/null &
+wpid=$!
+for _ in $(seq 50); do [ -s "$T/desc.pid" ] && break; sleep 0.1; done
+kill -TERM "$wpid"
+wait "$wpid"
+sleep 0.3
+mv "$T/bin/workspace-agent.real" "$T/bin/workspace-agent"
+if [ -s "$T/desc.pid" ] && kill -0 "$(cat "$T/desc.pid")" 2>/dev/null; then fail "signal: description helper orphaned"; kill "$(cat "$T/desc.pid")"; fi
+[ -s "$T/desc.pid" ] || fail "signal: description helper never started"
+rm -f "$T/desc.pid"
+# A terminal on stdin: comment add keeps jira-cli's confirmation unless --no-input says otherwise.
+if command -v script >/dev/null 2>&1; then
+  for spec in "jira|issue comment add AB-1 body" "jira|issue comment add AB-1 -T $T/tmpl.md" \
+    "jira|issue comment add AB-1 body --no-input --no-input=false" "helper|issue comment add AB-1 body --no-input"; do
+    reset; oauth; rm -f "$T/jira.seen" "$T/comment.argv"
+    script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' bash '$WRAPPER' ${spec#*|}" /dev/null >"$T/out" 2>&1 </dev/null
+    case "${spec%%|*}" in
+      jira) [ -f "$T/jira.seen" ] && [ ! -f "$T/comment.argv" ] || fail "tty [${spec#*|}]: taken over" ;;
+      helper) [ -f "$T/comment.argv" ] && [ ! -f "$T/jira.seen" ] || fail "tty [${spec#*|}]: not taken over" ;;
+    esac
+  done
+  reset; desc_reset; oauth; rm -f "$T/jira.seen"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' bash '$WRAPPER' issue edit AB-1 -b body --no-input --no-input=false" /dev/null >"$T/out" 2>&1 </dev/null
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] || fail "tty edit --no-input=false: taken over"
+fi
+# Left to jira-cli as before: a bare-number key, edit -T (no such flag), an empty body, the user's
+# own config or token, a debug run.
+for spec in "number|-- issue edit 5 -b x" "edit -T|-- issue edit AB-5 -T $T/tmpl.md" "empty|-- issue create -p AB -s sum -b ''" \
+  "own config|-- -c $T/other.yml issue create -s sum -b x" "own token|JIRA_API_TOKEN=own -- issue create -s sum -b x" \
+  "debug|-- issue create --debug -s sum -b x"; do
+  reset; desc_reset; oauth; created AB-1
+  config "$T/other.yml" "installation: Cloud"
+  eval "run ${spec#*|}"
+  [ -f "$T/jira.seen" ] && [ ! -f "$T/desc.argv" ] || fail "describe [${spec%%|*}]: not left to jira-cli (rc=$rc)"
+done
+args_of | grep -q -- '-b x' || fail "describe [debug]: body taken out of a jira-cli run"
+# A terminal without --no-input keeps jira-cli's prompts (and the body) as they were.
+if command -v script >/dev/null 2>&1; then
+  reset; desc_reset; oauth; created AB-1; rm -f "$T/jira.seen"
+  script -qec "env -i PATH='$T/bin:/usr/bin:/bin' HOME='$T/home' STUB_DIR='$T' AF_JIRA_REAL='$T/bin/jira-real' TMPDIR='$T/tmp' bash '$WRAPPER' issue create -s sum -b x" /dev/null >"$T/out" 2>&1 </dev/null
+  [ ! -f "$T/desc.argv" ] && grep -q '^ARG=x$' "$T/jira.seen" || fail "describe tty: body taken from jira-cli"
+fi
 
 if [ "$fails" != 0 ]; then
   echo "jira-auth-wrapper-test: $fails failure(s)" >&2

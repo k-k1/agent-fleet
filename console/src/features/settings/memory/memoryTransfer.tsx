@@ -6,7 +6,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { humanSize } from "../../../lib/filemeta.ts";
 import type { SecretFinding, ImportPreview } from "./memoryTypes.ts";
-import { BundleAfPanel } from "./memoryBundleImport.tsx";
+import { BundleAfPointer } from "./memoryBundleImport.tsx";
 
 // TransferSection — export / import between environments (docs/log/39 item 5, P3).
 //
@@ -198,10 +198,6 @@ export function TransferSection({
 
   return (
     <section className="mem-section">
-      <div className="mem-head">
-        <h3>{tr("mem.transfer_title")}</h3>
-      </div>
-
       {/* Export */}
       <div className="mem-transfer">
         <div className="mem-scope">
@@ -340,8 +336,8 @@ export function TransferSection({
               {tr("common.cancel")}
             </button>
           </div>
-          {/* The restore above never writes AF memory (no secret scan); this is where it comes in. */}
-          {preview.format === "bundle" && <BundleAfPanel importId={preview.importId} onChanged={onApplied} parentBusy={busy} />}
+          {/* The restore above never writes AF memory (no secret scan); it is imported in Agent memory > Import & export. */}
+          {preview.format === "bundle" && <BundleAfPointer importId={preview.importId} />}
         </div>
       )}
     </section>

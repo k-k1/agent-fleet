@@ -6,6 +6,8 @@ package sessionx
 // point still goes through as before (backward compatibility).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,5 +102,45 @@ func TestForkWithoutBodyKeepsWholeConversationPath(t *testing.T) {
 		if got := rec.Body.String(); strings.Contains(got, "fork_at_unsupported") || strings.Contains(got, "fork_bad_anchor") {
 			t.Fatalf("body %q → %s; the anchor gates must not fire without `at`", body, got)
 		}
+	}
+}
+
+// The wire says a Terminal session can fork at a past message only when its kind says so for
+// this session: an opencode pane that is not attached to af's serve, and a kind with no such
+// route (codex), stay unflagged, so the Console keeps those managed-only.
+func TestWireForkAtTerminalUnsetWithoutARoute(t *testing.T) {
+	withTempHome(t)
+	for _, m := range []session.Meta{
+		{Name: "oc-tui", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI},
+		{Name: "oc-mgd", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged},
+		{Name: "cx-tui", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverTUI},
+	} {
+		if s := wireSession(m, true); s.ForkAtTerminal {
+			t.Errorf("%s: ForkAtTerminal = true without a route that carries a fork point", m.Name)
+		}
+	}
+}
+
+// switchingOpencode resolves the fork point against conversation ses_a (Include on the last
+// exchange: the point is "" = everything) and then reports ses_b as the fork source, as a pane that
+// ran /new between the handler's two reads would.
+type switchingOpencode struct{ agents.Agent }
+
+func (switchingOpencode) ResolveForkAtPinned(session.Meta, agents.ForkPoint) (string, string, error) {
+	return "", "ses_a", nil
+}
+func (switchingOpencode) ResolveForkAt(session.Meta, agents.ForkPoint) (string, error) {
+	return "", nil
+}
+func (switchingOpencode) ForkSource(session.Meta) (string, error) { return "ses_b", nil }
+
+func TestForkAtRefusesWhenTheConversationChangedBetweenReads(t *testing.T) {
+	withTempHome(t)
+	old, _ := RegisteredAgent(session.KindOpencode)
+	t.Cleanup(agentreg.SwapForTest(session.KindOpencode, switchingOpencode{old}))
+	session.WriteMeta(session.Meta{Name: "oc-sw", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
+	rec := forkReq(t, "oc-sw", `{"at":"msg_last","include":true}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "fork_bad_anchor") {
+		t.Fatalf("status %d body %s; want 409 fork_bad_anchor instead of forking the other conversation whole", rec.Code, rec.Body.String())
 	}
 }

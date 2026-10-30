@@ -12,17 +12,24 @@ import { useT } from "../../../lib/i18n/index.ts";
 // name rule, the masked round-trip and the "remote only" shape are pinned by
 // mcpWire.test.ts rather than by this component.
 import {
-  MCP_KINDS,
   NAME_RE,
+  useMcpKinds,
+  advancedIsDefault,
   bodyOfTenant,
+  hasStoredBearer,
+  switchAuth,
+  isInsecureRemote,
+  withDerivedId,
   emptyTenantForm,
   tenantFormOf,
   tenantFormValid,
+  tenantOAuthClientValid,
+  tenantOAuthSecretReentry,
 } from "./mcpWire.ts";
 import type { TenantForm, TenantServer } from "./mcpWire.ts";
 // Same field furniture as the member tab's form (McpTab), so the two MCP forms stay
 // one design instead of two.
-import { Field, KVEditor, CheckRow, Check } from "../parts/mcpForm.tsx";
+import { Field, CheckRow, Check, AuthFields, AdvancedSection, advancedSummary } from "../parts/mcpForm.tsx";
 // Egress allowlist tie-in (docs/log/48 §9). It matters more here than on the member tab: a
 // distributed server that the proxy blocks is broken for EVERY member of the tenant.
 import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
@@ -41,7 +48,8 @@ import type { Tenant } from "../parts/adminShared.ts";
 // Header values are write-only from here: they come back masked ("***") and sending them
 // back unchanged keeps the stored value. The secret that CANNOT be protected is the one
 // distributed with values — every member can read it in their own container — which is
-// what the "each member supplies the value" toggle (user_secret) exists to avoid.
+// what the "each member supplies the value" toggle (user_secret) exists to avoid. An OAuth
+// server distributes no credential at all: each member signs in for themselves (ADR 0119).
 
 export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const tr = useT();
@@ -154,14 +162,17 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
             ) : (
               <Fragment key={s.id}>
                 <div className={"adm-mcp-row" + (s.enabled ? "" : " off")}>
-                  <span className="as-name mono" title={s.name}>
-                    {s.name}
+                  <span className={"as-name" + (s.label ? "" : " mono")} title={s.name}>
+                    {s.label || s.name}
                   </span>
                   <span className="as-repo muted" title={s.url}>
-                    {s.label || s.url}
+                    {s.label ? s.name + " · " + s.url : s.url}
                   </span>
                   {s.user_secret && (
                     <span className="mcp-origin mcp-origin-tenant">{tr("admin.mcp_user_secret_badge")}</span>
+                  )}
+                  {s.auth === "oauth" && (
+                    <span className="mcp-origin mcp-origin-tenant">{tr("admin.mcp_oauth_badge")}</span>
                   )}
                   {!s.enabled && <span className="muted">{tr("admin.mcp_disabled")}</span>}
                   <span className="allow-acts">
@@ -217,9 +228,70 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   );
 }
 
+// TenantClientFields — the client the tenant registered at the server's authorization server
+// (ADR 0119 decision 9), optional. Without one, each member's sign-in registers on its own. With a
+// secret, the secret never leaves the control plane, which then runs the token requests.
+function TenantClientFields({ form, patch }: { form: TenantForm; patch: (p: Partial<TenantForm>) => void }) {
+  const tr = useT();
+  const reentry = tenantOAuthSecretReentry(form);
+  const issuerBad = form.oauthClientId.trim() !== "" && !reentry && !tenantOAuthClientValid(form);
+  return (
+    <>
+      <Field label={tr("admin.mcp_oauth_client_id")} hint={tr("admin.mcp_oauth_client_id_hint")}>
+        <input
+          className="cinput mono"
+          autoComplete="off"
+          value={form.oauthClientId}
+          onChange={(e) => patch({ oauthClientId: e.target.value })}
+        />
+      </Field>
+      <Field
+        label={tr("admin.mcp_oauth_issuer")}
+        hint={issuerBad ? <span className="ps-note-warn">{tr("admin.mcp_oauth_issuer_bad")}</span> : tr("admin.mcp_oauth_issuer_hint")}
+      >
+        <input
+          className="cinput"
+          placeholder="https://"
+          value={form.oauthIssuer}
+          onChange={(e) => patch({ oauthIssuer: e.target.value })}
+        />
+      </Field>
+      {form.oauthClientId.trim() !== "" && (
+        <Field
+          label={tr("admin.mcp_oauth_secret")}
+          wide
+          hint={
+            reentry ? (
+              <span className="ps-note-warn">{tr("admin.mcp_oauth_secret_reenter")}</span>
+            ) : (
+              tr("admin.mcp_oauth_secret_hint")
+            )
+          }
+        >
+          <input
+            className="cinput"
+            type="password"
+            autoComplete="off"
+            placeholder={form.oauthSecretStored && !form.oauthSecretDrop && !reentry ? tr("mcp.token_kept") : ""}
+            value={form.oauthSecret}
+            onChange={(e) => patch({ oauthSecret: e.target.value })}
+          />
+          {form.oauthSecretStored && (
+            <CheckRow>
+              <Check checked={form.oauthSecretDrop} onChange={(v) => patch({ oauthSecretDrop: v, oauthSecret: "" })}>
+                {tr("admin.mcp_oauth_secret_drop")}
+              </Check>
+            </CheckRow>
+          )}
+        </Field>
+      )}
+    </>
+  );
+}
+
 // McpAdminForm — the tenant distribution form. Remote only by construction (see
 // bodyOfTenant): there is no transport switch to get wrong.
-function McpAdminForm({
+export function McpAdminForm({
   form,
   setForm,
   busy,
@@ -235,8 +307,11 @@ function McpAdminForm({
   onProposed: () => void;
 }) {
   const tr = useT();
-  const patch = (part: Partial<TenantForm>) => setForm({ ...form, ...part });
+  // Opens once, at mount: an existing distribution whose advanced values are not the defaults.
+  const [advOpen] = useState(() => form.id !== "" && !advancedIsDefault(form, false));
+  const patch = (part: Partial<TenantForm>) => setForm(withDerivedId({ ...form, ...part }));
   const valid = tenantFormValid(form);
+  const kinds = useMcpKinds();
   const nameBad = form.name.trim() !== "" && !NAME_RE.test(form.name.trim());
 
   return (
@@ -244,89 +319,108 @@ function McpAdminForm({
       <div className="ssm-fgroup">
         <p className="ssm-fg-title">{form.id ? tr("admin.mcp_edit_title") : tr("admin.mcp_add")}</p>
         <div className="ssm-fgrid">
-          <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
-            <input
-              className="cinput mono"
-              placeholder="wiki"
-              value={form.name}
-              onChange={(e) => patch({ name: e.target.value })}
-              autoFocus
-            />
-          </Field>
           <Field label={tr("mcp.f_label")} hint={tr("mcp.f_label_hint")}>
             <input
               className="cinput"
               placeholder={tr("mcp.f_label_placeholder")}
               value={form.label}
               onChange={(e) => patch({ label: e.target.value })}
+              autoFocus
             />
           </Field>
-          <Field label="URL" req wide hint={tr("admin.mcp_url_hint")}>
+          <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
+            <input
+              className="cinput mono"
+              placeholder="wiki"
+              value={form.name}
+              onChange={(e) => patch({ name: e.target.value, nameEdited: true })}
+            />
+          </Field>
+          <Field
+            label="URL"
+            req
+            wide
+            hint={
+              isInsecureRemote(form.url) ? (
+                <span className="ps-note-warn">{tr("mcp.url_http_warn")}</span>
+              ) : (
+                tr("admin.mcp_url_hint")
+              )
+            }
+          >
             <input
               className="cinput"
-              placeholder="https://mcp.example.com/mcp"
+              placeholder="https://"
               value={form.url}
               onChange={(e) => patch({ url: e.target.value })}
             />
           </Field>
 
-          {/* The credential decision comes BEFORE the headers, because it decides what
-              the header rows even ask for (name+value vs name only). */}
-          <Field label={tr("admin.mcp_secret_policy")} wide hint={tr("admin.mcp_user_secret_hint")}>
-            <CheckRow>
-              <Check checked={form.userSecret} onChange={(v) => patch({ userSecret: v })}>
-                {tr("admin.mcp_user_secret")}
-              </Check>
-            </CheckRow>
-          </Field>
-          <Field
-            label={tr("mcp.f_headers")}
-            wide
-            hint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
-          >
-            <KVEditor
-              rows={form.headers}
-              onChange={(headers) => patch({ headers })}
-              keyPlaceholder="Authorization"
-              addLabel={tr("mcp.add_header")}
-              noValue={form.userSecret}
-            />
-          </Field>
-
-          {/* Deliberately NOT marked required: both off is a legal staging state
-              (stored, distributed to nothing) — see secrets.MCPTargets. */}
-          <Field label={tr("mcp.f_targets")} wide hint={tr("mcp.f_targets_hint")}>
-            <CheckRow>
-              <Check checked={form.assistant} onChange={(v) => patch({ assistant: v })}>
-                {tr("mcp.target_assistant")}
-              </Check>
-              <Check checked={form.session} onChange={(v) => patch({ session: v })}>
-                {tr("mcp.target_session")}
-              </Check>
-            </CheckRow>
-          </Field>
-          <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
-            <CheckRow>
-              {MCP_KINDS.map((k) => (
-                <Check
-                  key={k}
-                  checked={form.kinds.includes(k)}
-                  onChange={() =>
-                    patch({ kinds: form.kinds.includes(k) ? form.kinds.filter((x) => x !== k) : [...form.kinds, k] })
-                  }
-                >
-                  {kindLabel(k)}
+          {/* The credential decision comes BEFORE the authentication, because it decides what
+              the rows even ask for (name+value vs name only). OAuth distributes no credential,
+              so there is nothing to decide. */}
+          {form.auth !== "oauth" && (
+            <Field label={tr("admin.mcp_secret_policy")} wide hint={tr("admin.mcp_user_secret_hint")}>
+              <CheckRow>
+                <Check checked={form.userSecret} onChange={(v) => patch({ userSecret: v })}>
+                  {tr("admin.mcp_user_secret")}
                 </Check>
-              ))}
-            </CheckRow>
-          </Field>
-          <Field label={tr("mcp.f_enabled")} wide hint={tr("admin.mcp_enabled_hint")}>
-            <CheckRow>
-              <Check checked={form.enabled} onChange={(v) => patch({ enabled: v })}>
-                {tr("mcp.enabled_on")}
-              </Check>
-            </CheckRow>
-          </Field>
+              </CheckRow>
+            </Field>
+          )}
+          <AuthFields
+            auth={form.auth}
+            onAuth={(auth) => patch(switchAuth(form, auth, form.userSecret))}
+            token={form.token}
+            onToken={(token) => patch({ token })}
+            rows={form.headers}
+            onRows={(headers) => patch({ headers })}
+            tokenStored={hasStoredBearer(form.headers)}
+            namesOnly={form.userSecret}
+            oauthNote={tr("admin.mcp_oauth_note")}
+            headersHint={form.userSecret ? tr("admin.mcp_headers_names_hint") : tr("admin.mcp_headers_hint")}
+          />
+          {form.auth === "oauth" && <TenantClientFields form={form} patch={patch} />}
+
+          <AdvancedSection
+            defaultOpen={advOpen}
+            summary={advancedSummary(tr, form, kindLabel, false)}
+          >
+            {/* Deliberately NOT marked required: both off is a legal staging state
+                (stored, distributed to nothing) — see secrets.MCPTargets. */}
+            <Field label={tr("mcp.f_targets")} wide hint={tr("mcp.f_targets_hint")}>
+              <CheckRow>
+                <Check checked={form.assistant} onChange={(v) => patch({ assistant: v })}>
+                  {tr("mcp.target_assistant")}
+                </Check>
+                <Check checked={form.session} onChange={(v) => patch({ session: v })}>
+                  {tr("mcp.target_session")}
+                </Check>
+              </CheckRow>
+            </Field>
+            <Field label={tr("mcp.f_kinds")} wide hint={tr("mcp.f_kinds_hint")}>
+              <CheckRow>
+                {kinds.map((k) => (
+                  <Check
+                    key={k}
+                    checked={form.kinds.includes(k)}
+                    onChange={() =>
+                      patch({ kinds: form.kinds.includes(k) ? form.kinds.filter((x) => x !== k) : [...form.kinds, k] })
+                    }
+                  >
+                    {kindLabel(k)}
+                  </Check>
+                ))}
+              </CheckRow>
+            </Field>
+            <Field label={tr("mcp.f_enabled")} wide hint={tr("admin.mcp_enabled_hint")}>
+              <CheckRow>
+                <Check checked={form.enabled} onChange={(v) => patch({ enabled: v })}>
+                  {tr("mcp.enabled_on")}
+                </Check>
+              </CheckRow>
+            </Field>
+          </AdvancedSection>
         </div>
         <EgressNote
           url={form.url}

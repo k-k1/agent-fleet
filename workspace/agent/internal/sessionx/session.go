@@ -130,7 +130,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	s := session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
-		Display: session.Display(m), Color: m.Color, Label: m.Label,
+		PlanReviewers: planReviewersOrEmpty(m.PlanReviewers),
+		Display:       session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
 		BackgroundBusy: li.BackgroundBusy, BackgroundBusyReason: li.BackgroundBusyReason,
@@ -144,7 +145,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// server's steering gate and per-parent budget, and the Console's mirror attribution
 		// for a spawned session's first turn.
 		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
-		Studio: m.Studio, InitialPromptState: m.InitialPromptState,
+		Studio: m.Studio, InitialPromptState: m.InitialPromptState, InitialPromptReason: m.InitialPromptReason,
 		Moving: m.Moving, MovedTo: m.MovedTo,
 		// An outstanding handoff proposal is work this session has already described and
 		// handed on, and it is the row's only trace: the card lives in the mirror and nothing
@@ -175,6 +176,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		}
 	}
 	fillStateSince(&s, m, realSinceProbes)
+	fillBackgroundSince(&s, time.Now())
 	if alive {
 		fillProgress(&s, m, realProgressProbes)
 	}
@@ -186,6 +188,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		if at := claude.AuthOKAt(); !at.IsZero() {
 			s.AuthOkAt = at.Format(time.RFC3339)
 		}
+	}
+	if t, ok := AgentOf(m.Kind).(agents.TerminalForkAtter); ok && m.DriverKind() != session.DriverManaged {
+		s.ForkAtTerminal = t.ForkAtOnTerminal(m)
 	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves

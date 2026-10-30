@@ -30,8 +30,8 @@ var liveTexts = fstore.Strings(paths.AgentStateDir, "live-text", ".jsonl")
 var livePrompts = fstore.Strings(paths.AgentStateDir, "live-text", ".prompt")
 
 const (
-	// liveTextFileCap stops appending once the file is this large. The file is removed at every
-	// turn end, and one turn's streamed text stays far below this; the cap only bounds a
+	// liveTextFileCap stops appending once the file is this large. The file is removed when the
+	// next turn starts, and one turn's streamed text stays far below this; the cap only bounds a
 	// runaway.
 	liveTextFileCap = 4 << 20
 	// liveTextWindow is how much of the file's tail a read looks at first. The mirror polls
@@ -214,8 +214,18 @@ func assemble(recs []liveRecord) LiveReply {
 	return out
 }
 
-// RemoveLiveText drops sid's streamed text; called when the turn ends. The prompt marker stays:
-// the next turn's first hook overwrites it.
+// LiveTextModTime is when sid's live-text file was last appended to; false when there is none.
+// A stat, so a poll at rest can skip reading a file whose turn is long over.
+func LiveTextModTime(sid string) (time.Time, bool) {
+	fi, err := os.Stat(liveTexts.Path(sid))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
+// RemoveLiveText drops sid's streamed text; called when a turn with a new prompt starts, just
+// before that prompt is recorded.
 func RemoveLiveText(sid string) { liveTexts.Remove(sid) }
 
 // WriteLivePrompt records the prompt_id of the turn now running. A blind write of the whole

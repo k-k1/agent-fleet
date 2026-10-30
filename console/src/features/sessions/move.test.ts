@@ -2,7 +2,7 @@
 // offers, and how a usage answer reads. The Agent decides eligibility; these only must not widen
 // it (a kind it refused never becomes a button) or invent a quota it did not observe.
 import { describe, expect, it } from "vitest";
-import { fmtSize, movePhase, moveTargetOf, offeredTargets, orderByQuota, quotaState, readMoveUsage, type MovePreview } from "./move.ts";
+import { MOVE_USAGE_ENDPOINTS, fmtSize, movePhase, moveTargetOf, offeredTargets, orderByQuota, quotaState, readMoveUsage, type MovePreview } from "./move.ts";
 
 const preview = (over: Partial<MovePreview> = {}): MovePreview => ({
   source: "s1",
@@ -54,6 +54,44 @@ describe("readMoveUsage", () => {
     expect(readMoveUsage(null)).toBeNull();
     expect(readMoveUsage({ ok: true, fiveHour: { pct: 5, stale: true } })).toBeNull();
     expect(readMoveUsage({ ok: true, fiveHour: { pct: 5, stale: true }, sevenDay: { pct: 40 } })).toEqual({ sevenDay: 40 });
+  });
+});
+
+describe("readMoveUsage for copilot and agy", () => {
+  it("has a usage source for both kinds", () => {
+    expect(MOVE_USAGE_ENDPOINTS.copilot).toBe("api/copilot/usage");
+    expect(MOVE_USAGE_ENDPOINTS.agy).toBe("api/connections/agy/usage");
+  });
+  it("reads copilot's primary pool as used percent", () => {
+    expect(readMoveUsage({ ok: true, quotas: [{ id: "premium_interactions", remainingPct: 0 }, { id: "chat", remainingPct: 90 }] })).toEqual({ monthly: 100 });
+    expect(quotaState(readMoveUsage({ ok: true, quotas: [{ id: "chat", remainingPct: 75.4 }] }) ?? undefined)).toBe("left");
+  });
+  it("reads agy's first group, weekly and 5-hour, as used percent", () => {
+    const groups = [{ label: "Gemini", remainingPct: 0, fiveHour: { remainingPct: 40 } }, { label: "Claude", remainingPct: 100 }];
+    expect(readMoveUsage({ ok: true, groups })).toEqual({ fiveHour: 60, sevenDay: 100 });
+    expect(readMoveUsage({ ok: true, groups: [{ label: "Gemini", remainingPct: 70 }] })).toEqual({ sevenDay: 30 });
+  });
+  it("stays unknown for an unauthed, empty, stale or failed answer", () => {
+    expect(readMoveUsage({ ok: false, authed: false, groups: [{ label: "G", remainingPct: 0 }] })).toBeNull();
+    expect(readMoveUsage({ ok: true, authed: false, groups: [] })).toBeNull();
+    expect(readMoveUsage({ ok: true, quotas: [] })).toBeNull();
+    expect(readMoveUsage({ ok: true, groups: [{ label: "G", remainingPct: 0, stale: true }] })).toBeNull();
+    expect(quotaState(readMoveUsage({ ok: true, quotas: [] }) ?? undefined)).toBe("unknown");
+  });
+  it("ignores the cached pools a failed refresh serves next to its error", () => {
+    expect(readMoveUsage({ ok: true, error: "boom", quotas: [{ id: "chat", remainingPct: 80 }] })).toBeNull();
+    expect(readMoveUsage({ ok: true, error: "boom", groups: [{ label: "G", remainingPct: 0 }] })).toBeNull();
+  });
+  it("ignores copilot pools whose monthly reset has passed, and trusts a missing reset", () => {
+    const quotas = [{ id: "chat", remainingPct: 0 }];
+    expect(readMoveUsage({ ok: true, resetsAt: "2020-01-01T00:00:00Z", quotas })).toBeNull();
+    expect(readMoveUsage({ ok: true, resetsAt: "2999-01-01T00:00:00Z", quotas })).toEqual({ monthly: 100 });
+    expect(readMoveUsage({ ok: true, quotas })).toEqual({ monthly: 100 });
+  });
+  it("orders them by quota like the other kinds", () => {
+    const full = readMoveUsage({ ok: true, quotas: [{ id: "chat", remainingPct: 0 }] })!;
+    const room = readMoveUsage({ ok: true, groups: [{ label: "G", remainingPct: 80 }] })!;
+    expect(orderByQuota(["copilot", "opencode", "agy"], { copilot: full, agy: room })).toEqual(["agy", "opencode", "copilot"]);
   });
 });
 

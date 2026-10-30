@@ -1,7 +1,6 @@
 ---
 audience: "someone with a deployment that is not behaving"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-08"
 ---
 
 # 06. Troubleshooting and FAQ
@@ -37,6 +36,7 @@ included here as well. The working directory is `deploy/compose/`.
 | "permission denied" on docker.sock | Whether `DOCKER_GID` matches the host's docker group GID (DooD constraint C) |
 | Workspace starts but home is empty | Whether `DATA_DIR` is the same absolute path inside and outside the CP. The same path at restore time too (DooD constraint B) |
 | Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |
+| Workspaces cannot reach the CP URL while the host can (the docs pull, branch rules, the MCP registry and git over the CP all fail at once; `curl` to `PUBLIC_BASE_URL` from a workspace is refused or reset) | Whatever serves the public URL (a tunnel, a reverse proxy) no longer accepts connections from the Docker bridges, e.g. after it was rebound to one host interface. Give the workspaces the workspace listener (`AF_CP_INTERNAL_LISTEN` on the docker0 address, `AF_CP_INTERNAL_URL=http://host.docker.internal:<port>`), then Stop and Start each workspace ([deploy/compose/README.md](../../deploy/compose/README.md) "Workspace listener") |
 | Logins are always rejected | The allowlist is empty **and nobody is invited yet** (fail-closed). Set `AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS`, or invite somebody |
 | One person is refused with "this tenant needs a different sign-in" | That tenant's **Login rules → Sign-in methods** does not include the IdP they used. Send them `/login/<slug>` |
 | Somebody you removed can still work | Removing them at the IdP does not end the session. Take them off the roster (Admin → tenant → member → **Remove member**) or out of the allowlist |
@@ -48,6 +48,10 @@ included here as well. The working directory is `deploy/compose/`.
 | GitHub users must sign in again after a CP restart | Expected. The org-membership cache is in memory; they are re-verified, not rejected |
 | A tenant registered a sign-in method but no button appears | It is still *waiting for approval*, or it was approved and its settings are incomplete. Admin → the tenant → **Sign-in methods** says which, and so does the **Sign-in method register** in the rail (which also carries the approve/suspend buttons, so you do not have to walk into the tenant); `grep -i "tenant login provider"` in the CP log names the fault |
 | "This email address is already used by another sign-in method" | A tenant-defined method asserted an address that already belongs to an account someone has signed in as. This is deliberate: that method may not take over an existing account. They sign in the way they normally do. The **same GitHub account** (deployment-wide GitHub ⇄ a tenant's GitHub) resolves to one person, so this only appears for a *different* IdP. If they hold **both accounts**, have them sign in the way they normally do and add the other method under **Settings → Personal → Account → Add a sign-in method** (only a method asserting the same address, and its own org / domain rules still apply). If somebody has no account on the other side at all, leave their method on **Accept** for that tenant and, if the button is in the way, clear **Show button** on it |
+| The CP exits at boot with "AF_WORKSPACE_DEK=random needs AF_KEY_CUSTODIAN=kms" | A key of its own for each home needs the KMS custodian. Set `AF_KEY_CUSTODIAN=kms` (with `AF_KMS_KEY_ID`) or drop `AF_WORKSPACE_DEK` ([12](12-keys.md#a-key-of-its-own-for-each-home)) |
+| A workspace start fails with "open the home's credential-store key" | KMS cannot be reached, or the key is disabled or refuses. There is no fallback to the master key, by design; fix KMS access and start again ([12](12-keys.md#a-key-of-its-own-for-each-home)) |
+| After a restore, a workspace refuses to write credentials and the CP log says its credential store is `unreadable` | The home came back from before its store moved to its own key. Run `af-cp home-dek-status --remigrate <membership-id>` with the CP's environment, then restart the workspace ([12](12-keys.md#disabling-the-kms-key-restoring-a-copy-turning-it-off)) |
+| The workspace log shows `[entrypoint] WARN: npm boot-install failed (retrying next start)` | A CLI failed to install (a full home, the network, a checksum). It is retried at the next start, and the member's roster card says "A CLI failed to install at the last start" ([admin/01](../admin/01-members.md#needs-attention)) |
 
 ## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")
 

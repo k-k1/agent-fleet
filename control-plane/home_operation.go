@@ -267,10 +267,10 @@ func (m *manager) resumeHomeOperation(ctx context.Context, op store.HomeOperatio
 	switch op.Kind {
 	case store.HomeOpMemberWipe:
 		unqueue := runtime.QueueHomeWipe(rt)
-		err = runtime.WipeHome(lease.Context(), rt, runtime.HomeWipe(op.Op))
+		err = m.wipeHome(lease.Context(), ws, rt, runtime.HomeWipe(op.Op))
 		unqueue()
 	case store.HomeOpAdminErase:
-		err = runtime.EraseHome(lease.Context(), rt)
+		err = m.eraseHome(lease.Context(), ws, rt)
 	case store.HomeOpDestroy:
 		leftovers, err = runtime.DestroyRuntime(lease.Context(), rt)
 	default:

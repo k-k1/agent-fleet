@@ -329,6 +329,121 @@ fi
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
+# Boot-install outcome per CLI, read by the Agent (boot_install_status.go) for Settings >
+# Toolchains. One line per CLI: <tool>\t<ok|skipped|failed>\t<reason>
+# (reason: failed always; skipped only for "no_space", an upgrade skipped with the old copy kept). It lives under /tmp rather
+# than home because the failure it reports is usually a full home, where a status file in home
+# could not be written. /tmp is shared, so the files sit in a private directory of ours that is
+# checked before use (a real directory, not a symlink, owned by this user); a directory that fails
+# the check is not used and recording is switched off, which reads as "unknown", never "ok". The
+# previous start's files are removed first, so a start that cannot write never serves old results.
+# A later line for a tool wins. Never fatal: a status that cannot be written is a missing status.
+BI_DIR="${BI_DIR:-/tmp/af-boot-$(id -u)}"
+mkdir -m 700 "$BI_DIR" 2>/dev/null || true
+# Type and owner first: chmod follows a symlink, and a directory we refuse must stay untouched.
+if [ -d "$BI_DIR" ] && [ ! -L "$BI_DIR" ] && [ -O "$BI_DIR" ] \
+   && chmod 700 "$BI_DIR" 2>/dev/null && [ "$(stat -c %a "$BI_DIR" 2>/dev/null)" = 700 ]; then
+  rm -f "$BI_DIR/install.tsv" "$BI_DIR/install.err" 2>/dev/null || true
+  BI_STATUS="$BI_DIR/install.tsv"
+  # stderr of the block being run, truncated for each block, so nothing piles up across starts
+  # (this script ends in exec: no trap would ever clean up). If it cannot be created the redirect
+  # `2>"$BI_ERR"` would fail the block itself, hence the /dev/null fallback.
+  BI_ERR="$BI_DIR/install.err"
+  # noclobber: create, never follow or truncate something that appeared in between.
+  (set -C; : > "$BI_STATUS") 2>/dev/null || BI_STATUS=/dev/null
+  (set -C; : > "$BI_ERR") 2>/dev/null || BI_ERR=/dev/null
+else
+  BI_STATUS=/dev/null
+  BI_ERR=/dev/null
+fi
+# The Agent is told where this start's file is (it execs from here, so it inherits this), and
+# gets nothing when recording is off: it must not fall back to a file an earlier start left.
+if [ "$BI_STATUS" != /dev/null ]; then export AF_BOOT_INSTALL_STATUS="$BI_STATUS"; else unset AF_BOOT_INSTALL_STATUS; fi
+# Set by bi_room when an install was skipped for lack of space: everything later in this start
+# that would download or install (the claude fallback, the self-update opt-in) honours it too.
+BI_LOW_SPACE=0
+bi_note() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$BI_STATUS" 2>/dev/null || true; }
+# bi_reason — the reason class of the failure whose stderr is in $BI_ERR. no_space is tested
+# first: a full disk also breaks downloads and checksums, and is the one the member can fix.
+bi_reason() {
+  if grep -qiE 'no space left|ENOSPC|quota exceeded' "$BI_ERR" 2>/dev/null; then echo no_space
+  elif grep -qiE 'did NOT match|computed checksum|: FAILED( |$)|EINTEGRITY|integrity (check|checksum) failed' "$BI_ERR" 2>/dev/null; then echo checksum
+  elif grep -qiE 'curl: \(|could not resolve|connection|timed out|ETIMEDOUT|ENOTFOUND|ECONNRE|EAI_AGAIN|network|registry' "$BI_ERR" 2>/dev/null; then echo network
+  else echo other; fi
+}
+# bi_failed <tool...> — record a failed block (stderr already echoed by the caller).
+bi_failed() { local r t; r="$(bi_reason)"; for t in "$@"; do bi_note "$t" failed "$r"; done; }
+# cli_usable <tool> — an installed copy that can run now: a regular executable file (symlinks
+# followed, so a dangling link or a directory does not count) that answers --version, asked the
+# way the install decision above asks (agy's env mask, cursor's bundle check). The status name
+# is not always the binary name (cursor is cursor-agent).
+cli_usable() {
+  local bin="$1" p
+  [ "$1" = cursor ] && bin=cursor-agent
+  for p in "/usr/local/bin/$bin" "$HOME/.local/bin/$bin"; do
+    [ -f "$p" ] && [ -x "$p" ] || continue
+    case "$1" in
+      agy) if [ "$p" = "$HOME/.local/bin/agy" ]; then [ -n "$(agy_effective_version)" ] || continue
+           else timeout 30 "$p" --version >/dev/null 2>&1 || continue; fi ;;
+      cursor) cursor_runs "$p" || continue ;;
+      *) timeout 30 "$p" --version >/dev/null 2>&1 || continue ;;
+    esac
+    return 0
+  done
+  return 1
+}
+# bi_room <mb> <tool...> — whether home has <mb> MiB free (true when df cannot tell). When it
+# has not, the install is skipped and what is installed stays: a half-run install is how a full
+# home turned into "every agent broke at once". A tool with a usable copy (cli_usable, not the
+# weaker cli_present: a broken or non-executable leftover is not one) keeps working, so its
+# skipped upgrade is recorded "skipped no_space" and only a tool with nothing usable is
+# "failed no_space" (the Agent refuses a start only for the latter).
+bi_room() {
+  local need="$1" t; shift
+  bi_free_ok "$need" "$*" && return 0
+  for t in "$@"; do
+    if cli_usable "$t"; then bi_note "$t" skipped no_space; else bi_note "$t" failed no_space; fi
+  done
+  return 1
+}
+# bi_free_ok <mb> <what> — the check alone, for callers that have no per-CLI outcome to record
+# (the self-update opt-in). A low result also sets BI_LOW_SPACE for the rest of this start.
+bi_free_ok() {
+  local need="$1" free
+  free="$(df -Pm "$HOME" 2>/dev/null | awk 'NR==2{print $4}')"
+  case "$free" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$free" -ge "$need" ] && return 0
+  BI_LOW_SPACE=1
+  echo "[entrypoint] WARN: only ${free} MiB free in home, ${need} MiB needed for ${2:-installs}; skipping (keeping what is installed)"
+  return 1
+}
+# install_atomic <src> <dest> [verify] — `install -m 0755` through a sibling temp name and a
+# rename, so a failure part-way (ENOSPC leaves a truncated file) never leaves anything at <dest>:
+# cli_present would count a truncated binary as installed and skip it on every later start.
+# With "verify" the candidate must answer --version before it replaces <dest>, so a binary that
+# cannot run here never displaces a working copy.
+install_atomic() {
+  local tmp="$2.af-new.$$" err
+  mkdir -p "$(dirname "$2")" || return 1
+  if install -m 0755 "$1" "$tmp"; then
+    if [ "${3:-}" = verify ] && ! err="$(timeout 30 "$tmp" --version 2>&1)"; then
+      echo "[entrypoint] $(basename "$2") does not run in this environment, keeping the current copy: $err" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+    mv -f "$tmp" "$2" && return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+# cursor_runs <cursor-agent path> — the bundle answers --version (a tree unpacked only in part
+# has the execute bit and still fails here). Slow (starts Node), so only asked of a tree that
+# is about to be trusted.
+cursor_runs() { timeout 30 "$1" --disable-auto-update --version >/dev/null 2>&1; }
+# bin_broken <path> — an installed ~/.local binary that does not answer --version. It counts as
+# not present: the boot-install reinstalls it whatever the repin setting says. Plain start only;
+# agy needs agy_effective_version's env mask.
+bin_broken() { [ -e "$1" ] && ! timeout 30 "$1" --version >/dev/null 2>&1; }
 # opencode's npm package follows the major of its pin: opencode-ai (1.x) or @opencode/cli (2.x).
 # Both claim the `opencode` bin, so they never coexist in one prefix (see the pair loop below).
 oc_pkg() { case "${1%%.*}" in ''|*[!0-9]*|0|1) echo opencode-ai ;; *) echo @opencode/cli ;; esac; }
@@ -376,7 +491,7 @@ oc_install_swap() {
       if [ -L "$l" ]; then case "$(readlink "$l")" in *"/$OC_OTHER/"*) mv "$l" "$bak/bin/$b" ;; esac; fi
     done
   fi
-  if npm install -g --prefix "$pfx" "$@" >/dev/null 2>&1; then rm -rf "$bak"; return 0; fi
+  if npm install -g --prefix "$pfx" "$@" >/dev/null 2>>"${BI_ERR:-/dev/null}"; then rm -rf "$bak"; return 0; fi
   oc_swap_restore "$pfx"
   return 1
 }
@@ -409,7 +524,10 @@ agy_effective_version() {
   else
     v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   fi
-  [ -n "$v" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
+  # The marker answers only when there is no binary to ask. A binary that exists but does not
+  # answer is broken (truncated by a full disk, say), and the marker, which says what AF wrote
+  # there, must not vouch for it.
+  [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
   printf '%s' "$v"
 }
 # Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
@@ -424,6 +542,11 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # via cli_present=true and start immediately. That is by design, not a sign that the CLIs
   # are baked into the rootfs (docs/log/35 §35.7.2-8).
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
+  # Old copilot / cursor versions are the biggest thing a full home can give back, and the
+  # Agent's own pass runs only after the installs below, too late to make room for them.
+  if command -v workspace-agent >/dev/null 2>&1; then
+    workspace-agent prune-cli-versions || echo "[entrypoint] WARN: prune-cli-versions failed (continuing)"
+  fi
   # Repin: on a start where the self-update opt-in is OFF, put ~/.local back on the
   # versions.json pin even if an earlier ON moved it ahead. This gives lean the same
   # semantics as the baked variant's "turn it OFF and Stop→Start to return to the baked
@@ -446,30 +569,44 @@ if [ "$LEAN_CLIS" = 1 ]; then
   npm_cur() {
     NPM_LS="$NPM_LS" node -e 'try{const d=JSON.parse(process.env.NPM_LS).dependencies||{};process.stdout.write(((d[process.argv[1]]||{}).version)||"")}catch{}' "$1" 2>/dev/null
   }
-  NPM_BOOT=""
+  NPM_BOOT=""; NPM_BOOT_CLIS=""
+  npm_want() { NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; NPM_BOOT_CLIS="$NPM_BOOT_CLIS $cli"; }
   for pair in "claude=@anthropic-ai/claude-code" "opencode=$OC_PKG" \
               "codex=@openai/codex" "copilot=@github/copilot"; do
     cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
     [ -n "$ver" ] || continue
+    if cli_present "$cli"; then bi_note "$cli" skipped; fi
     if ! cli_present "$cli"; then
-      NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"
+      npm_want
     elif [ "$cli" = opencode ] && [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/opencode" ] \
          && [ -z "$(npm_cur "$pkg")" ] && [ -n "$(npm_cur "$OC_OTHER")" ]; then
       # The copy in ~/.local is the other major's package (the pin crossed 1 <-> 2). It owns
       # the `opencode` bin, so npm would refuse to link the new one: oc_install_swap moves it aside.
-      NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"
+      npm_want
     elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
       # Move a drifted copy back to the pin. Installs npm does not manage (no version) are left alone.
       cur="$(npm_cur "$pkg")"
-      if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; fi
+      if [ -n "$cur" ] && [ "$cur" != "$ver" ]; then npm_want; fi
     fi
   done
   if [ -n "$NPM_BOOT" ]; then
     echo "[entrypoint] boot-install (pinned):$NPM_BOOT ..."
     # shellcheck disable=SC2086
-    oc_install_swap "$HOME/.local" $NPM_BOOT \
-      && echo "[entrypoint] boot-install ok" \
-      || echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
+    # 300 MiB per package: the tarball plus its unpacked tree, with room for npm's rollback copy.
+    # shellcheck disable=SC2086
+    if bi_room $(( $(echo $NPM_BOOT | wc -w) * 300 )) $NPM_BOOT_CLIS; then
+      : > "$BI_ERR" 2>/dev/null || true
+      # shellcheck disable=SC2086
+      if oc_install_swap "$HOME/.local" $NPM_BOOT; then
+        echo "[entrypoint] boot-install ok"
+        for c in $NPM_BOOT_CLIS; do bi_note "$c" ok; done
+      else
+        cat "$BI_ERR" >&2 2>/dev/null || true
+        echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
+        # shellcheck disable=SC2086
+        bi_failed $NPM_BOOT_CLIS
+      fi
+    fi
   else
     echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
@@ -479,11 +616,14 @@ if [ "$LEAN_CLIS" = 1 ]; then
   if [ -n "$(vj_pin rtk)" ]; then
     if ! cli_present rtk; then
       RTK_NEED=1
+    elif bin_broken "$HOME/.local/bin/rtk"; then
+      RTK_NEED=1
     elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/rtk" ]; then
       rtk_cur="$("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1 | awk '{print $2}')"
       if [ -n "$rtk_cur" ] && [ "$rtk_cur" != "$(vj_pin rtk)" ]; then RTK_NEED=1; fi
     fi
   fi
+  if [ "$RTK_NEED" = 1 ] && ! bi_room 150 rtk; then RTK_NEED=2; fi
   if [ "$RTK_NEED" = 1 ]; then
     (
       set -e
@@ -495,27 +635,24 @@ if [ "$LEAN_CLIS" = 1 ]; then
         *) echo "unsupported arch: $arch" >&2; exit 1 ;;
       esac
       base="https://github.com/rtk-ai/rtk/releases/download/v${rver}"
-      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-      cd "$tmp"
+      tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
+      cd "$tmp" || exit 1
       # --retry: a transient blip on first boot otherwise leaves rtk uninstalled
       # until the next start (observed on the WSL2 gate — docs/log/35 §35.9-9).
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}" || exit 1
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt || exit 1
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
-      tar xzf "${asset}"
-      install -D -m 0755 rtk "$HOME/.local/bin/rtk"
-      # Keep it only after running it: a matching checksum says nothing about whether the
-      # binary's runtime libraries match this image (the arm64 release is a gnu build that
-      # needs a recent glibc — docs/log/70 §70.9.2). A binary that fails --version is not
-      # left on PATH, where it would fail only when used.
-      if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
-        rm -f "$HOME/.local/bin/rtk"
-        echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
-        exit 0
-      fi
-    ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
-      || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
+      tar xzf "${asset}" || exit 1
+      # A matching checksum says nothing about whether the binary's runtime libraries match this
+      # image (the arm64 release is a gnu build that needs a recent glibc — docs/log/70 §70.9.2),
+      # so the candidate is run before it replaces anything.
+      install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
+    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install rtk $(vj_pin rtk)"; bi_note rtk ok; } \
+      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"; bi_failed rtk; }
+  elif [ "$RTK_NEED" = 2 ]; then
+    :
   elif cli_present rtk; then
+    bi_note rtk skipped
     echo "[entrypoint] boot-install: rtk already present (skip)"
   fi
   # agy: the pinned immutable GCS object named by the official installer manifest, fetched
@@ -526,11 +663,16 @@ if [ "$LEAN_CLIS" = 1 ]; then
   if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     if ! cli_present agy; then
       AGY_NEED=1
+    elif [ -e "$HOME/.local/bin/agy" ] && [ -z "$(agy_effective_version)" ]; then
+      # Present but it does not answer --version (agy needs agy_effective_version's env mask,
+      # so bin_broken would misjudge it).
+      AGY_NEED=1
     elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/agy" ] \
          && [ "$(agy_effective_version)" != "$(vj_pin agy)" ]; then
       AGY_NEED=1
     fi
   fi
+  if [ "$AGY_NEED" = 1 ] && ! bi_room 400 agy; then AGY_NEED=2; fi
   if [ "$AGY_NEED" = 1 ]; then
     (
       set -e
@@ -541,16 +683,21 @@ if [ "$LEAN_CLIS" = 1 ]; then
         arm64 | aarch64) asset="linux-arm/cli_linux_arm64.tar.gz" ;;
         *) echo "unsupported arch: $arch" >&2; exit 1 ;;
       esac
-      tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-      cd "$tmp"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz
+      tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
+      cd "$tmp" || exit 1
+      curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "https://storage.googleapis.com/antigravity-public/antigravity-cli/${aver}-${abuild}/${asset}" -o agy.tgz || exit 1
       echo "${asha}  agy.tgz" | sha256sum -c - >/dev/null || exit 1
-      tar -xzf agy.tgz antigravity
-      install -D -m 0755 antigravity "$HOME/.local/bin/agy"
-      printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version"
-    ) && echo "[entrypoint] boot-install agy $(vj_pin agy)" \
-      || echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"
+      tar -xzf agy.tgz antigravity || exit 1
+      install_atomic antigravity "$HOME/.local/bin/agy" || exit 1
+      # The marker is written last and only after the binary landed whole.
+      printf '%s\n' "$aver" > "$HOME/.local/bin/.agy.version" \
+        || { rm -f "$HOME/.local/bin/.agy.version"; exit 1; }
+    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install agy $(vj_pin agy)"; bi_note agy ok; } \
+      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: agy boot-install failed (retrying next start)"; bi_failed agy; }
+  elif [ "$AGY_NEED" = 2 ]; then
+    :
   elif cli_present agy; then
+    bi_note agy skipped
     echo "[entrypoint] boot-install: agy already present (skip)"
   fi
   # cursor (kind="cursor", docs/log/40): unpack the versioned tarball's Node.js bundle into
@@ -561,6 +708,9 @@ if [ "$LEAN_CLIS" = 1 ]; then
   if [ -n "$(vj_pin cursor)" ] && [ -n "$(vj_pin cursor_sha256)" ]; then
     if ! cli_present cursor-agent; then
       CUR_NEED=1
+    elif ! cursor_runs "$HOME/.local/bin/cursor-agent"; then
+      # Present but the bundle does not answer (a tree unpacked only in part keeps its execute bit).
+      CUR_NEED=1
     elif [ "$REPIN" = 1 ] && [ -L "$HOME/.local/bin/cursor-agent" ]; then
       # Read the current version from the symlink target's versions/<version>/ (cursor-agent
       # --version takes seconds to start Node, so decide from the path).
@@ -568,6 +718,11 @@ if [ "$LEAN_CLIS" = 1 ]; then
       if [ -n "$cur_ver" ] && [ "$cur_ver" != "$(vj_pin cursor)" ]; then CUR_NEED=1; fi
     fi
   fi
+  # Space is needed only when the pinned tree has to be downloaded; relinking to a healthy one
+  # (a repin after the self-update moved ahead) writes nothing.
+  if [ "$CUR_NEED" = 1 ] \
+     && ! cursor_runs "$HOME/.local/share/cursor-agent/versions/$(vj_pin cursor)/cursor-agent" \
+     && ! bi_room 400 cursor; then CUR_NEED=2; fi
   if [ "$CUR_NEED" = 1 ]; then
     (
       set -e
@@ -576,27 +731,46 @@ if [ "$LEAN_CLIS" = 1 ]; then
       # On repin: the self-update (upstream install.sh) only adds the new version in another
       # directory, so the pinned version's tree usually still exists — if so, skip the
       # ~100 MB re-download and just repoint the symlink.
-      if [ ! -x "$dir/cursor-agent" ]; then
+      if ! cursor_runs "$dir/cursor-agent"; then
         arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
         case "$arch" in
           amd64 | x86_64) casset="x64" ;;
           arm64 | aarch64) casset="arm64" ;;
           *) echo "unsupported arch: $arch" >&2; exit 1 ;;
         esac
-        tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+        tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
         curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused \
-          "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz"
+          "https://downloads.cursor.com/lab/${cver}/linux/${casset}/agent-cli-package.tar.gz" -o "$tmp/cursor.tgz" || exit 1
         echo "${csha}  $tmp/cursor.tgz" | sha256sum -c - >/dev/null || exit 1
-        rm -rf "$dir"; mkdir -p "$dir"
-        tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$dir"
+        # Unpack beside the final name and rename: a tar that dies part-way (ENOSPC) must not
+        # leave a tree at $dir whose cursor-agent is already executable.
+        stage="${dir}.af-new.$$"
+        rm -rf "$stage"
+        mkdir -p "$stage" || exit 1
+        tar --strip-components=1 -xzf "$tmp/cursor.tgz" -C "$stage" || { rm -rf "$stage"; exit 1; }
+        # The tree being replaced is moved aside, not deleted: the candidate must run at its final
+        # path, and when it does not (or the old one only timed out under load) the working copy
+        # is put back.
+        old="${dir}.af-old.$$"
+        rm -rf "$old"
+        if [ -e "$dir" ]; then mv "$dir" "$old" || { rm -rf "$stage"; exit 1; }; fi
+        if ! mv "$stage" "$dir" || ! cursor_runs "$dir/cursor-agent"; then
+          rm -rf "$stage" "$dir"
+          if [ -e "$old" ]; then mv "$old" "$dir" || true; fi
+          exit 1
+        fi
+        rm -rf "$old"
       fi
-      mkdir -p "$HOME/.local/bin"
-      ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent"
+      mkdir -p "$HOME/.local/bin" || exit 1
+      ln -sf "$dir/cursor-agent" "$HOME/.local/bin/cursor-agent" || exit 1
       # If the self-update install.sh left an `agent` alias, point it at the same version.
-      if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent"; fi
-    ) && echo "[entrypoint] boot-install cursor $(vj_pin cursor)" \
-      || echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"
+      if [ -L "$HOME/.local/bin/agent" ]; then ln -sf "$dir/cursor-agent" "$HOME/.local/bin/agent" || exit 1; fi
+    ) 2>"$BI_ERR" && { echo "[entrypoint] boot-install cursor $(vj_pin cursor)"; bi_note cursor ok; } \
+      || { cat "$BI_ERR" >&2; echo "[entrypoint] WARN: cursor boot-install failed (retrying next start)"; bi_failed cursor; }
+  elif [ "$CUR_NEED" = 2 ]; then
+    :
   elif cli_present cursor-agent; then
+    bi_note cursor skipped
     echo "[entrypoint] boot-install: cursor already present (skip)"
   fi
 fi
@@ -637,6 +811,8 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
         # → version-pinned, no self-update.
         : ;;
     esac
+  elif [ "$BI_LOW_SPACE" = 1 ]; then
+    echo "[entrypoint] WARN: not installing the Claude CLI: home is nearly full (retrying next start)"
   else
     echo "[entrypoint] installing latest Claude CLI ..."
     curl -fsSL https://claude.ai/install.sh | bash || echo "[entrypoint] WARN: claude install failed (continuing)"
@@ -686,6 +862,9 @@ fi
 # would churn a 1.3 GB uninstall→reinstall next time. Hence the separate branch.
 if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: skipped for this boot (unattended start) — keeping installed versions"
+elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ] \
+     && { [ "$BI_LOW_SPACE" = 1 ] || ! bi_free_ok 1200 "the self-update"; }; then
+  echo "[entrypoint] agent self-update: skipped for this boot (home is nearly full) — keeping installed versions"
 elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE:-0}" = "1" ]; then
   echo "[entrypoint] agent self-update: checking versions (member opt-in, operator-allowed) ..."
   # Always target ~/.local (a baked /usr/local pin is immutable; only the PATH-first
@@ -741,16 +920,22 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
      && [ "$(agy_effective_version)" = "$agy_latest" ]; then
     echo "[entrypoint] agy already latest ($agy_latest); skip"
   else
-    agy_tmp="$(mktemp -d)"
-    if curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
+    agy_tmp="$(mktemp -d)" || agy_tmp=""
+    if [ -n "$agy_tmp" ] && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$agy_tmp" >/dev/null 2>&1 \
        && [ -x "$agy_tmp/agy" ]; then
-      install -D -m 0755 "$agy_tmp/agy" "$HOME/.local/bin/agy"
-      if [ -n "$agy_latest" ]; then printf '%s\n' "$agy_latest" > "$AGY_MARK"; else rm -f "$AGY_MARK"; fi
-      echo "[entrypoint] agy updated: ${agy_latest:-latest}"
+      if ! install_atomic "$agy_tmp/agy" "$HOME/.local/bin/agy"; then
+        echo "[entrypoint] WARN: agy update failed (install, using previous version)"
+      elif [ -z "$agy_latest" ]; then
+        rm -f "$AGY_MARK"; echo "[entrypoint] agy updated: latest"
+      elif printf '%s\n' "$agy_latest" > "$AGY_MARK"; then
+        echo "[entrypoint] agy updated: $agy_latest"
+      else
+        rm -f "$AGY_MARK"; echo "[entrypoint] agy updated: $agy_latest"
+      fi
     else
       echo "[entrypoint] WARN: agy update failed (using $([ -x "$HOME/.local/bin/agy" ] && echo previous || echo baked) version)"
     fi
-    rm -rf "$agy_tmp"
+    [ -z "$agy_tmp" ] || rm -rf "$agy_tmp"
   fi
   # rtk follows the same opt-in to latest. A baked /usr/local/bin/rtk (BAKE_AGENT_CLIS=1 and
   # BAKE_RTK=1) is root-owned and cannot be overwritten, so the latest release goes into
@@ -773,13 +958,13 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
       *) echo "unsupported arch: $arch" >&2; exit 1 ;;
     esac
     base="https://github.com/rtk-ai/rtk/releases/latest/download"
-    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-    cd "$tmp"
-    curl -fsSL "${base}/${asset}" -o "${asset}"
-    curl -fsSL "${base}/checksums.txt" -o checksums.txt
+    tmp="$(mktemp -d)" || exit 1; trap 'rm -rf "$tmp"' EXIT
+    cd "$tmp" || exit 1
+    curl -fsSL "${base}/${asset}" -o "${asset}" || exit 1
+    curl -fsSL "${base}/checksums.txt" -o checksums.txt || exit 1
     grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null || exit 1
-    tar xzf "${asset}"
-    install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+    tar xzf "${asset}" || exit 1
+    install_atomic rtk "$HOME/.local/bin/rtk" verify || exit 1
   ) && echo "[entrypoint] rtk updated: $("$HOME/.local/bin/rtk" --version 2>/dev/null | head -1)" \
     || echo "[entrypoint] WARN: rtk update failed (using baked version)"
   fi
@@ -1056,31 +1241,16 @@ fi
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
-  # Never go back to "glob and take the first". Both locations name JDKs
-  # temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so once a home populated
-  # on x86 is attached to an arm64 slot, the first match is always the one that cannot run
-  # (docs/log/70 §70.5.1; workspace-agent's javaHomeFor follows the same rule). Prefer this
-  # architecture's suffix and never take another architecture's.
-  find_jh() {
-    for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
-      [ -d "$d" ] || continue
-      jh=""
-      for c in "$d"/temurin-"$JAVA_VER"-jdk*; do
-        [ -d "$c" ] || continue
-        case "$c" in
-          *-jdk-"$af_arch_now") printf '%s\n' "$c"; return 0 ;;
-          *-jdk-amd64 | *-jdk-arm64) continue ;;              # other arch: never take
-          *) [ -n "$jh" ] || jh="$c" ;;                       # no suffix: fallback
-        esac
-      done
-      [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
-    done
-    return 1
-  }
+  # workspace-agent owns the lookup rule (this architecture only, never another's;
+  # docs/log/70 §70.5.1) and the newer patch when a major is in both directories, so
+  # this JAVA_HOME and the one sessions get from resolvedToolchains cannot disagree.
+  # Absolute path, like the image's CMD: PATH puts ~/.local/bin first, and a stale build
+  # left there predates java-home, exits 2, and leaves JAVA_HOME unset with the JDK on disk.
+  find_jh() { /usr/local/bin/workspace-agent java-home "$JAVA_VER"; }
   JH=$(find_jh || true)
   if [ -z "$JH" ]; then
     echo "[entrypoint] temurin-$JAVA_VER not present; installing into home volume ..."
-    workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
+    /usr/local/bin/workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
     JH=$(find_jh || true)
   fi
   if [ -n "$JH" ]; then
@@ -1135,14 +1305,22 @@ if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
   # Never go back to `ls | tail -1` here: lexical order picked v22.9.0 over newer releases;
   # install-node resolves numerically (the same rule as nodeBinFor in env_toolchains.go).
   af_node_bin="$(workspace-agent install-node "$NODE_VER" 2>/dev/null || true)"
+  # Now that the newest patch is in place and before any session starts, drop the older
+  # patches install-node left behind. It keeps the tree just returned (--keep) and every
+  # pinned version (node_prune.go). Absolute path: a stale build in ~/.local/bin would not
+  # know the subcommand.
+  /usr/local/bin/workspace-agent prune-node-versions ${af_node_bin:+--keep "$af_node_bin"} \
+    || echo "[entrypoint] WARN: prune-node-versions failed (continuing)"
   if [ -n "$af_node_bin" ] && [ -x "$af_node_bin/node" ]; then
     export PATH="$af_node_bin:$PATH"
   fi
   if [ -s "$NVM_DIR/nvm.sh" ]; then
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    nvm alias default "$NODE_VER" >/dev/null 2>&1
-    nvm use "$NODE_VER" >/dev/null 2>&1
+    # Under set -e a failing `nvm use` (a version that is not installed) would end the
+    # start before the Agent runs; the check below reports the mismatch instead.
+    nvm alias default "$NODE_VER" >/dev/null 2>&1 || true
+    nvm use "$NODE_VER" >/dev/null 2>&1 || true
   fi
   # Always check that the selected version is what runs. If both the install and `nvm use`
   # fail, `node -v` answers with the image's base node; without this check the log looks

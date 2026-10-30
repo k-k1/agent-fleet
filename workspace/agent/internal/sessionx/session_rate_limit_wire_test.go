@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -23,18 +22,12 @@ import (
 // atLimitProbe replaces the transcript probe and counts the calls: this is the list-polling
 // path, so the count is what lets a test confirm "no transcript read for a session without an
 // episode". An empty kind means "not at the limit".
-func atLimitProbe(t *testing.T, kind claude.LimitKind) *int {
+func atLimitProbe(t *testing.T, kind agents.LimitKind) *int {
 	t.Helper()
 	n := 0
-	orig := claudeUsageLimitAbort
-	claudeUsageLimitAbort = func(string) (claude.Abort, claude.LimitKind, bool) {
-		n++
-		if kind == "" {
-			return claude.Abort{}, "", false
-		}
-		return claude.Abort{Msg: "You've hit your session limit."}, kind, true
-	}
-	t.Cleanup(func() { claudeUsageLimitAbort = orig })
+	editUsageLimitTraits(t, session.KindClaude, func(tr *agents.UsageLimitTraits) {
+		tr.AtLimit = func(session.Meta) (agents.LimitKind, bool) { n++; return kind, kind != "" }
+	})
 	return &n
 }
 
@@ -54,7 +47,7 @@ func limitedMeta(t *testing.T, name string, st rateLimitState) session.Meta {
 // scheduled resume time.
 func TestWireSessionShowsRateLimitWait(t *testing.T) {
 	isolateAgentState(t)
-	calls := atLimitProbe(t, claude.LimitWindow)
+	calls := atLimitProbe(t, agents.LimitWindow)
 	now := time.Now()
 	resume := now.Add(2 * time.Hour).Format(time.RFC3339)
 	m := limitedMeta(t, "rlwire1", rateLimitState{
@@ -83,7 +76,7 @@ func TestWireSessionShowsRateLimitWait(t *testing.T) {
 // resume time (nothing is scheduled), so it stays empty.
 func TestWireSessionShowsSpendLimit(t *testing.T) {
 	isolateAgentState(t)
-	atLimitProbe(t, claude.LimitSpend)
+	atLimitProbe(t, agents.LimitSpend)
 	now := time.Now()
 	m := limitedMeta(t, "rlwire6", rateLimitState{At: now.Format(time.RFC3339), Spend: true})
 
@@ -104,7 +97,7 @@ func TestWireSessionShowsSpendLimit(t *testing.T) {
 // budget was raised and now the window limit is the one being hit".
 func TestWireSessionSpendKindComesFromTranscript(t *testing.T) {
 	isolateAgentState(t)
-	atLimitProbe(t, claude.LimitWindow)
+	atLimitProbe(t, agents.LimitWindow)
 	now := time.Now()
 	m := limitedMeta(t, "rlwire7", rateLimitState{
 		At: now.Format(time.RFC3339), Spend: true, // the old record still says spend
@@ -141,7 +134,7 @@ func TestWireSessionRateLimitClearedByTranscript(t *testing.T) {
 // cannot be read as "wait and it will fix itself".
 func TestWireSessionRateLimitEpisodeExpired(t *testing.T) {
 	isolateAgentState(t)
-	calls := atLimitProbe(t, claude.LimitWindow)
+	calls := atLimitProbe(t, agents.LimitWindow)
 	now := time.Now()
 	m := limitedMeta(t, "rlwire3", rateLimitState{
 		At:       now.Add(-6 * time.Hour).Format(time.RFC3339),
@@ -162,7 +155,7 @@ func TestWireSessionRateLimitEpisodeExpired(t *testing.T) {
 // happens" into a permanent cost of polling.
 func TestWireSessionWithoutEpisodeSkipsTranscript(t *testing.T) {
 	isolateAgentState(t)
-	calls := atLimitProbe(t, claude.LimitWindow)
+	calls := atLimitProbe(t, agents.LimitWindow)
 	m := session.Meta{Name: "rlwire4", Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(m)
 
@@ -178,7 +171,7 @@ func TestWireSessionWithoutEpisodeSkipsTranscript(t *testing.T) {
 // state of a live session and must not overwrite what the row means.
 func TestWireSessionRateLimitOnlyWhileAlive(t *testing.T) {
 	isolateAgentState(t)
-	atLimitProbe(t, claude.LimitWindow)
+	atLimitProbe(t, agents.LimitWindow)
 	now := time.Now()
 	m := limitedMeta(t, "rlwire5", rateLimitState{
 		At: now.Format(time.RFC3339), ResumeAt: now.Add(time.Hour).Format(time.RFC3339),
@@ -194,9 +187,9 @@ func TestWireSessionRateLimitOnlyWhileAlive(t *testing.T) {
 func codexLimitProbe(t *testing.T, limited bool) *int {
 	t.Helper()
 	n := 0
-	orig := codexRateLimited
-	codexRateLimited = func(string) bool { n++; return limited }
-	t.Cleanup(func() { codexRateLimited = orig })
+	editUsageLimitTraits(t, session.KindCodex, func(tr *agents.UsageLimitTraits) {
+		tr.AtLimit = func(session.Meta) (agents.LimitKind, bool) { n++; return agents.LimitWindow, limited }
+	})
 	return &n
 }
 
@@ -206,7 +199,7 @@ func codexLimitProbe(t *testing.T, limited bool) *int {
 // it the chip can only say "waiting", which is what the user sees as "no schedule exists".
 func TestWireSessionCodexRateLimitCarriesTheResumeTime(t *testing.T) {
 	isolateAgentState(t)
-	claudeCalls := atLimitProbe(t, claude.LimitWindow) // must stay untouched for a codex row
+	claudeCalls := atLimitProbe(t, agents.LimitWindow) // must stay untouched for a codex row
 	codexLimitProbe(t, true)
 	now := time.Now()
 	resume := now.Add(2 * time.Hour).Format(time.RFC3339)
@@ -279,11 +272,15 @@ func TestWireSessionCodexTuiIsNotWatched(t *testing.T) {
 // again once the handle clears the mark.
 func TestWireSessionMuseRateLimit(t *testing.T) {
 	isolateAgentState(t)
-	claudeCalls := atLimitProbe(t, claude.LimitWindow) // must stay untouched for a muse row
+	claudeCalls := atLimitProbe(t, agents.LimitWindow) // must stay untouched for a muse row
 	limited := true
-	orig := museRateLimited
-	museRateLimited = func(string) bool { return limited }
-	t.Cleanup(func() { museRateLimited = orig })
+	editUsageLimitTraits(t, session.KindMuse, func(tr *agents.UsageLimitTraits) {
+		tr.AtLimit = func(session.Meta) (agents.LimitKind, bool) { return agents.LimitWindow, limited }
+	})
+	// DriveState reads the same verdict through muse's live-state traits.
+	editLiveStateTraits(t, session.KindMuse, func(tr *agents.LiveStateTraits) {
+		tr.RateLimited = func(string) bool { return limited }
+	})
 	now := time.Now()
 	resume := now.Add(30 * time.Minute).Format(time.RFC3339)
 	m := session.Meta{Name: "rlwiremuse1", Dir: t.TempDir(), Kind: session.KindMuse, Driver: session.DriverManaged}

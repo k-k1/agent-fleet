@@ -296,34 +296,34 @@ T = "2026-01-01T00:00:00Z"
 # requests those calls make. "TagSpecifications" is tag-on-create.
 INVENTORY = [
     # --- tag-on-create ---
-    ("internal/runtime/runtime_ecs_ec2.go", "runSlot", "TagSpecifications", 1, [
+    ("internal/runtime/runtime_ecs_ec2_slots.go", "runSlot", "TagSpecifications", 1, [
         on_create("RunInstances", "instance", SLOT),
         on_create("RunInstances", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}))]),
     ("engine_fleet.go", "request", "TagSpecifications", 1, [
         on_create("CreateFleet", "instance", ENGINE)]),
-    ("internal/runtime/runtime_ecs_ec2.go", "createHomeVolume", "TagSpecifications", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "createHomeVolume", "TagSpecifications", 1, [
         on_create("CreateVolume", "volume", HOME),
         on_create("CreateVolume", "volume", dict(HOME, **{"af-home-wipe-clean": T}))]),
-    ("internal/runtime/runtime_ecs_ec2.go", "hibernate", "TagSpecifications", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "hibernate", "TagSpecifications", 1, [
         on_create("CreateSnapshot", "snapshot", dict(HIBERNATED, **{"af-home-wipe-repos": T}))]),
-    ("internal/runtime/runtime_ecs_ec2.go", "BackupHome", "TagSpecifications", 1, [
+    ("internal/runtime/runtime_ecs_ec2_backups.go", "BackupHome", "TagSpecifications", 1, [
         on_create("CreateSnapshot", "snapshot", dict(BACKUP, **{"af-backup-at": T, "Name": "ws-backup"}))]),
     ("internal/runtime/runtime_ecs_ec2_golden.go", "SnapshotHome", "TagSpecifications", 1, [
         on_create("CreateSnapshot", "snapshot", CANDIDATE)]),
     # --- home volume bookkeeping ---
-    ("internal/runtime/runtime_ecs_ec2.go", "markIdle", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_runtime_port.go", "markIdle", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "volume", HOME, {"af-idle-since": T})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "clearIdle", "DeleteTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_runtime_port.go", "clearIdle", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "volume", HOME, {"af-idle-since": None})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "clearDormancy", "DeleteTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_runtime_port.go", "clearDormancy", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "volume", HOME, {"af-idle-since": None, "af-hibernating": None})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "claim", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "claim", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "volume", HOME, {"af-claim": "i-1", "af-claim-at": T})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "unclaim", "DeleteTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "unclaim", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "volume", HOME, {"af-claim": None, "af-claim-at": None})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "hibernationMark", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "hibernationMark", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "volume", HOME, {"af-hibernating": T})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "unmarkHibernating", "DeleteTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_release.go", "unmarkHibernating", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "volume", HOME, {"af-hibernating": None})]),
     ("internal/runtime/runtime_ecs_ec2_home_wipe.go", "markHomeWipe", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "volume", HOME, {"af-home-wipe-repos": T}),
@@ -333,21 +333,21 @@ INVENTORY = [
     ("internal/runtime/runtime_ecs_ec2_golden.go", "MarkHomeBaked", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "volume", HOME, {"af-bake-ready": T})]),
     # --- slot instance bookkeeping ---
-    ("internal/runtime/runtime_ecs_ec2.go", "tagSlotOwner", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "tagSlotOwner", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-membership": "m-1", "af-tenant": "acme"})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "untagSlotOwner", "DeleteTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "untagSlotOwner", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-membership": None, "af-tenant": None}),
         on_existing("ec2:DeleteTags", "instance", QUARANTINED, {"af-membership": None, "af-tenant": None})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "markSlotFree", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "markSlotFree", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-idle-since": T})]),
     # The sweeper's fence on a free slot below $Latest, or on an orphaned replacement
     # (af-replaces-home): Ec2TagPoolResources already allows any key but af-pool / af-role on a
     # resource of this pool, so no template change is needed - this holds that it stays so.
-    ("internal/runtime/runtime_ecs_ec2.go", "sweepFreeSlots", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepFreeSlots", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-retire": T}),
         on_existing("ec2:CreateTags", "instance", dict(SLOT, **{"af-replaces-home": "vol-home"}),
                     {"af-slot-retire": T})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "clearSlotFree", "DeleteTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_volumes.go", "clearSlotFree", "DeleteTags", 1, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-slot-idle-since": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "ReserveSlotReplacement", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
@@ -358,14 +358,14 @@ INVENTORY = [
                     {"af-replaces-home": None})]),
     ("internal/runtime/runtime_ecs_ec2_slot_replace.go", "retireUnusedReplacement", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-slot-replace": T})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "sweepSlotOwnerTags", "DeleteTags", 2, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepSlotOwnerTags", "DeleteTags", 2, [
         on_existing("ec2:DeleteTags", "instance", SLOT, {"af-membership": None, "af-tenant": None}),
         on_existing("ec2:DeleteTags", "instance", QUARANTINED, {"af-tenant": None})]),
-    ("internal/runtime/runtime_ecs_ec2.go", "sweepSlotOwnerTags", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_sweeper.go", "sweepSlotOwnerTags", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-membership": "m-1", "af-tenant": "acme"}),
         on_existing("ec2:CreateTags", "instance", QUARANTINED, {"af-membership": "m-1"})]),
     # --- role changes ---
-    ("internal/runtime/runtime_ecs_ec2.go", "markQuarantined", "CreateTags", 1, [
+    ("internal/runtime/runtime_ecs_ec2_start.go", "markQuarantined", "CreateTags", 1, [
         on_existing("ec2:CreateTags", "instance", SLOT, {"af-role": "quarantined",
                     "af-quarantine-reason": "mount failed", "af-quarantine-at": T})]),
     ("internal/runtime/runtime_ecs_ec2_golden.go", "SetGoldenRole", "CreateTags", 1, [

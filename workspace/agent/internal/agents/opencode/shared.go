@@ -51,6 +51,10 @@ const (
 	metaSID     = "af.sid"
 	metaName    = "af.name"
 	metaManaged = "af.managed"
+	// metaManagedName is the af session a Managed opencode session belongs to; the env-gate
+	// plugin hands it to the Agent, which puts that session's AF_WORK_DIR / AF_SESSION_NAME on
+	// the shell. A fork copies metadata, so it is re-stamped after every create or fork.
+	metaManagedName = "af.managed.name"
 )
 
 // sharedTUI reports whether Terminal sessions attach to af's serve: opencode 2 only (v1 has no
@@ -225,6 +229,24 @@ func forkSharedSession(addr, src, before string) (string, error) {
 	return w.Data.ID, nil
 }
 
+// forkPointInSource checks that message `at` belongs to conversation src ("" = the whole
+// conversation, nothing to check). When in doubt, it refuses.
+func forkPointInSource(addr, src, at string) error {
+	if at == "" {
+		return nil
+	}
+	msgs, err := (apiTarget{Addr: addr, Client: serveClient}).messages(src)
+	if err != nil {
+		return fmt.Errorf("opencode: read the conversation to fork: %w", err)
+	}
+	for _, mm := range msgs {
+		if mm.ID == at {
+			return nil
+		}
+	}
+	return errors.New("opencode: the fork point is not in the conversation being forked (it changed since the point was chosen); pick the message again")
+}
+
 // discardUnclaimedCopy removes a fork copy this slot failed to claim — but only while it holds the
 // session's claim itself. The failed attempt gave its record back, and in the meantime another pane
 // (the source's, which sees the copy under the inherited tag) may have claimed it legitimately and be
@@ -366,6 +388,12 @@ func buildSharedLaunch(spec LaunchSpec, m session.Meta, sid string) (plan shared
 		srcSID := ""
 		if src, gerr := getSharedSession(addr, m.ForkFrom); gerr == nil {
 			srcSID = src.Metadata[metaSID]
+		}
+		// The fork point was resolved against the conversation the pane had then; a /new or a
+		// reconnect since may have pointed ForkFrom at another one. A point that is not in the
+		// source is refused here, before anything is copied.
+		if err := forkPointInSource(addr, m.ForkFrom, m.ForkAt); err != nil {
+			return sharedPlan{}, false, err
 		}
 		for attempt := 0; ; attempt++ {
 			ses, err = forkSharedSession(addr, m.ForkFrom, m.ForkAt)
@@ -665,8 +693,11 @@ func claimSessionFor(addr string, m session.Meta, ses string, o claimOpts) error
 
 func putEnvironmentFor(addr, name, ses string) error {
 	m, ok := session.ReadMeta(name)
+	if ok && m.Kind == session.KindOpencode && m.DriverKind() == session.DriverManaged {
+		return putManagedEnvironment(addr, name, ses)
+	}
 	if !ok || m.Kind != session.KindOpencode || m.DriverKind() != session.DriverTUI {
-		return fmt.Errorf("%q is not an opencode Terminal slot", name)
+		return fmt.Errorf("%q is not an opencode session", name)
 	}
 	info, err := getSharedSession(addr, ses)
 	if err != nil {
@@ -723,4 +754,58 @@ func connectionFlag(flags []string) string {
 		}
 	}
 	return ""
+}
+
+// tagManagedSession stamps ses as Managed session name's, keeping every other metadata key.
+func tagManagedSession(addr, ses, name string) error {
+	cur, err := getSharedSession(addr, ses)
+	if err != nil {
+		return err
+	}
+	if cur.Metadata[metaManaged] != "" && cur.Metadata[metaManagedName] == name {
+		return nil
+	}
+	md := map[string]string{}
+	for k, v := range cur.Metadata {
+		md[k] = v
+	}
+	md[metaManaged], md[metaManagedName] = "1", name
+	return apiJSON("PATCH", sessionPathURL(addr, ses), map[string]any{"metadata": md}, nil)
+}
+
+// callerEnviron is the environment of this process. `opencode-put-env` is run by the server's
+// plugin, whose child inherits the SERVER's environment, so this is exactly what a shell sees
+// until its session has one, with the process that holds it as the guarantee of origin: nothing
+// is looked up by pid. A var so tests can name it.
+var callerEnviron = os.Environ
+
+// managedShellEnvironment is the server's environment plus the session's own AF_WORK_DIR and
+// AF_SESSION_NAME. PUT /environment replaces the whole shell environment, so the base has to be
+// the full server one: PATH and the toolchain exports stay, and nothing is added that the shell
+// does not already see (the provider keys and the server password are in it today).
+func managedShellEnvironment(serverEnv []string, name string) map[string]string {
+	vars := map[string]string{}
+	for _, kv := range agents.WithSessionEnv(serverEnv, name) {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			vars[k] = v
+		}
+	}
+	return vars
+}
+
+// putManagedEnvironment puts Managed session name's shell environment on ses, which must carry
+// that name (a subagent session inherits it from its parent, a fork is re-stamped at launch).
+func putManagedEnvironment(addr, name, ses string) error {
+	info, err := getSharedSession(addr, ses)
+	if err != nil {
+		return err
+	}
+	if info.Metadata[metaManaged] == "" || info.Metadata[metaManagedName] != name {
+		return fmt.Errorf("session %s does not belong to %s", ses, name)
+	}
+	env := callerEnviron()
+	if len(env) == 0 {
+		return errors.New("no environment to put")
+	}
+	return putEnvironment(addr, ses, managedShellEnvironment(env, name))
 }

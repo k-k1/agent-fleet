@@ -270,6 +270,12 @@ jobs:
         run: |
           bash -n workspace/entrypoint.sh
           ./deploy/local/keep-relocate-test.sh
+          bash -n workspace/entrypoint-boot-install-test.sh
+          ./workspace/entrypoint-boot-install-test.sh
+          bash -n workspace/entrypoint-boot-status-test.sh
+          ./workspace/entrypoint-boot-status-test.sh
+          bash -n workspace/dockerfile-fontconfig-cache-test.sh
+          ./workspace/dockerfile-fontconfig-cache-test.sh
       # The bkt wrapper is the one place a Bitbucket token meets an exec: what the real binary is
       # given, that nothing reaches argv or output, and that every helper failure leaves bkt
       # running without injected auth are pinned against stub git / workspace-agent / bkt.
@@ -342,11 +348,50 @@ jobs:
       # only, and a widened grant decrypts with keys the CP has no business with.
       - name: CP role KMS custodian grant (template vs Go)
         run: python3 ./deploy/local/cfn-cp-kms-scope-test.py
+      # The S3 gateway endpoint bypasses the NAT, and its policy turns refusals into AccessDenied
+      # rather than NAT traffic (#2657), so it sits on the private route table only, with a pinned
+      # policy; workspace task ENIs have their own route table without it (#2716).
+      - name: S3 endpoint on the private route table only, pinned policy (ECS templates)
+        run: python3 ./deploy/local/cfn-s3-endpoint-test.py
+      # A running v0.34.x stack reaches this tree's 00-network through a change set the README
+      # describes (Add 6 + Remove S3Endpoint at S3EndpointEnabled=false; the defaults switch the
+      # restricting policy on at once). The two templates are diffed here so the text stays true
+      # (#2763); v0.34.1's is a frozen copy because this checkout has no tags.
+      - name: 00-network upgrade from v0.34.x (change-set shapes vs README)
+        run: python3 ./deploy/local/cfn-network-upgrade-test.py
+      # The egress event archive (AF_EGRESS_ARCHIVE_URL, #2732) needs three stacks to agree: the
+      # optional bucket, the CP role's grant on egress/* and the URL. A mismatch is AccessDenied
+      # on the first archive write, on a real deployment only, and the purger then keeps events.
+      - name: Egress archive bucket, CP grant and URL (ECS templates, Go call sites)
+        run: python3 ./deploy/local/cfn-egress-archive-test.py
+      # The egress gateway (EgressRoute=gateway, #2717) only runs on a real account: its route,
+      # security groups, instance role, token wiring and the Squid lines the agent parses are
+      # held against the templates here.
+      - name: Egress gateway routes, SGs, IAM, token and Squid configuration (ECS templates)
+        run: python3 ./deploy/local/cfn-egress-gateway-test.py
+      # pause.sh deletes the NAT gateway through 00-network's NatEnabled and re-stops a long-paused
+      # database through 10-data's Lambda; a gateway outside its condition, or a Lambda that stops
+      # an instance pause.sh did not tag, only shows on a real deployment.
+      - name: pause.sh NAT toggle and RDS re-stop (templates + Lambda, offline)
+        run: python3 ./deploy/local/cfn-pause-save-test.py
       # AF_WORKSPACE_DEK=random is refused by the CP without the kms custodian; the template
       # must fail the same combination when the stack operation runs (execute-time guard), and
       # the env var must stay unset without a key, so the CP never crash-loops on it.
       - name: CP AF_WORKSPACE_DEK parameter / Rule (offline template evaluation)
         run: python3 ./deploy/local/cfn-workspace-dek-test.py
+      # /mcp and MCP OAuth stay off unless the operator turns them on, and arrive as the
+      # exact values the CP accepts ("true" / "1").
+      - name: CP AF_MCP_* parameters / Rule (offline template evaluation)
+        run: python3 ./deploy/local/cfn-mcp-env-test.py
+      # Timers, GitHub sign-in extras and LAN / borrowed engines (#2596): empty adds no env
+      # entry, each secret has its own switch, and 30-ingress keeps 1 KiB under the wall.
+      - name: CP settings parameters (offline template evaluation)
+        run: python3 ./deploy/local/cfn-cp-settings-env-test.py
+      # 00-network, 10-data and 20-platform are deployed before the S3 hand-off bucket exists, and
+      # the harness sends 40-ec2-pool by direct upload, so none can go through --template-url:
+      # each keeps 4 KiB under the 51,200-byte wall (#2756).
+      - name: Pre-bucket CFN templates keep their byte budget
+        run: python3 ./deploy/local/cfn-template-size-test.py
       # IAM caps a role's inline policies at 10,240 characters in total and each managed one
       # at 6,144, and four stacks attach to the CP task role, so no one template shows the
       # total. Passing it is a ServiceLimitExceeded and a rolled-back stack on a real
@@ -359,6 +404,10 @@ jobs:
       # a night. No `act` here, so the decision lives in scripts and is tested as such.
       - name: CLI release watcher decisions (real scripts, stub npm/curl/gh)
         run: ./deploy/local/cli-drift-stub-test.sh
+      # Release time only lists the open cli-drift issues, never blocks on them; the stub
+      # pins that a failing `gh` still exits 0 and says the check did not run.
+      - name: release-time cli-drift warning (real script, stub gh)
+        run: ./deploy/local/cli-drift-warn-stub-test.sh
       # The bump PR is opened unattended; which kinds move and which checksums are
       # accepted is decided here, so it is tested here.
       - name: CLI pin bump decisions (real script, stub drift/gh/curl)
@@ -385,6 +434,15 @@ jobs:
       # docker calls, refusals and re-run behaviour are pinned against a stateful fake docker.
       - name: LAN ComfyUI helper (real script, stub docker / nvidia-smi)
         run: ./deploy/local/comfyui-lan-stub-test.sh
+      # The macOS acceptance script only ever runs on a Mac, where no CI reaches; its checks,
+      # FAIL counting, report scrubbing and cleanup are pinned against stub docker / curl /
+      # limactl.
+      - name: macOS acceptance script (real script, stub docker / curl / limactl)
+        run: ./deploy/local/macos-acceptance-stub-test.sh
+      # The Kiro CI credential is uploaded by hand from an operator's machine; a bad upload
+      # only shows as a red kiro contract, so what lands in the secrets is pinned here.
+      - name: Kiro CI credential upload (real script, stub gh, fixture DB)
+        run: ./deploy/local/set-kiro-ci-auth-stub-test.sh
 
   console:
     needs: changes
@@ -414,6 +472,10 @@ jobs:
       # model-id-lint job; both read scripts/model-id-lint/patterns.txt.
       - name: model-id-lint
         run: npm run models:lint
+      # A ceiling, not zero (ADR 0124 Phase 0): a new class name defined in a second stylesheet
+      # fails, the existing duplicates wait for Phase 5. A fall never fails.
+      - name: css-dup ceiling
+        run: npm run css:dup:ci
       - name: vitest
         run: npm test
       # Real-browser checks (docs/log/82). This is the only place that covers what jsdom

@@ -52,15 +52,17 @@ func awsConfigFor(ctx context.Context, region string) (aws.Config, error) {
 // against the empty one.
 func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, error) {
 	return runtime.NewFactory(profile, runtime.Config{
-		Image:             m.image,
-		AgentHost:         m.agentHost,
-		Memory:            m.memory,
-		SessionCmd:        m.sessionCmd,
-		ExtraEnv:          m.extraEnv,
-		AuthMode:          m.authMode,
-		RootDataDir:       func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
-		HomeLeases:        m.store,
-		OnSlotAutoReplace: m.auditSlotAutoReplace,
+		Image:                m.image,
+		AgentHost:            m.agentHost,
+		Memory:               m.memory,
+		SessionCmd:           m.sessionCmd,
+		ExtraEnv:             m.extraEnv,
+		EgressProxyEnv:       m.egressProxyEnv,
+		AuthMode:             m.authMode,
+		RootDataDir:          func(ws runtime.Workspace) string { return m.rootedDataDir(store.Workspace(ws)) },
+		HomeLeases:           m.store,
+		OnSlotAutoReplace:    m.auditSlotAutoReplace,
+		OnAddressesReleasing: addressReleaseHook(m),
 	})
 }
 

@@ -507,3 +507,104 @@ name neither `is:issue` nor `is:pull-request` with 422, which cost two search re
 Saved queries are not rewritten. The Console cannot see the Agent's version, so a workspace still on
 an older image shows "could not parse the query" until it restarts. The original decision stands as
 written above.
+
+## Note (2026-10-22, #2532): the Jira token calls retry transient failures
+
+Some deployments see bursts of TCP resets towards `auth.atlassian.com`. The Control Plane's two Jira
+token calls now retry transport errors, 429 and 5xx with a jittered exponential backoff
+(`oauth_jira_retry.go`); a permanent 4xx such as `invalid_grant` still returns at once. The refresh
+grant's total budget (14 s) stays well under the Agent's 20 s call to the bridge. Retrying a refresh with the
+same token relies on Atlassian's rotating-refresh-token reuse interval (default 10 minutes), per its
+documentation; it has not been measured against a real tenant. The decisions above stand as written.
+
+## Note (2026-10-25, #2709): Bitbucket rows can be commented on once the scope is granted
+
+Decision 19 (Bitbucket read-only) stands for connections that lack `pullrequest:write`. The Agent now posts a
+comment on a Bitbucket pull request (`POST /2.0/repositories/{workspace}/{repo}/pullrequests/{id}/comments`),
+records the scopes Bitbucket granted (OAuth token and refresh responses; a pasted token's `X-OAuth-Scopes`
+at connect, or the header of a work-item fetch for a connection that predates this), and sends `canComment`
+on each Bitbucket row. The Console offers the report button only on `canComment: true`; unknown scopes stay
+read-only. Not measured against a real Bitbucket: that the token and refresh responses carry `scopes` and that
+`X-OAuth-Scopes` is sent for bearer tokens. Bitbucket issues are still not listed. Follow-ups: none.
+
+## Note (2026-10-25, #2632): a person can merge a GitHub pull request from the detail modal
+
+Decision 6 ("no writing back by default") and decision 6.1 (the report comment) stand. A second human-gated
+write is added: the detail modal's **Merge** button for a **GitHub** pull request, which the Agent sends as
+`PUT /repos/{owner}/{repo}/pulls/{n}/merge`. Why it is allowed: a merge that a person presses and then
+confirms in a dialog naming the pull request, base ← head and the method is not automatic, and it replaces a
+single button press on another site, so it adds no capability the person did not already have. What keeps it
+from widening what af does on its own:
+
+- **Never reachable by agents.** No MCP tool is created and nothing triggers it (no "session finished →
+  merge"); the only caller is the Console's confirm button, through the Control Plane's relay to the Agent.
+  This is the same stance as 6.1. A pull request's text is written by third parties, and anything that lets
+  that text steer a merge would close the loop decision 6 keeps open. "No MCP tool" alone does not keep a
+  session out, because every session's shell holds AGENT_TOKEN and can call the Agent's HTTP route: so the
+  Agent takes the route only with a member-origin mark (ADR 0113) that the Control Plane signs over the exact
+  body for the workspace's own member, and the Control Plane signs only after the Console-origin check
+  (JSON body, same-origin `Sec-Fetch-Site` / `Origin`), which a same-site page's no-cors POST fails.
+- **GitHub only.** Bitbucket stays as decision 19 and its 2026-10-25 note left it: no merge, and no Merge button
+  on a Bitbucket row. Jira has no pull request to merge.
+- **Only when GitHub says it would succeed.** The live read now carries `mergeable_state`; the button is
+  enabled for `clean` and `has_hooks` only, and any other state is shown as the reason next to the disabled
+  button. The request carries the head SHA the modal displayed, so a pull request that moved after the panel
+  was drawn is refused (GitHub answers 409) instead of merged unseen. `unstable` (non-required checks failing)
+  is deliberately not offered although GitHub would accept it.
+- **Only a method the repository allows.** The default is the first of merge, squash, rebase that the repository
+  allows: GitHub exposes no stored preference to read.
+- **A stopped Workspace answers 409** like the live read, and is not started for it.
+- **The button is drawn only when the token is known to be able to merge**: the repository's `permissions`
+  must show push access for the connection's user, and the token must report its scopes in `X-OAuth-Scopes`
+  with `repo` (`public_repo` on a public repository), which is what a classic token (the device flow's
+  `repo workflow`) does. A fine-grained token or a GitHub App user token reports no scopes, and the
+  *Contents: write* permission this endpoint needs of it cannot be read back before the press, so it is
+  treated as unknown and the button is withheld. This departs from "draw it for every connection that can
+  merge": the safe direction was chosen over a button that ends in a 403. Not measured against a real token:
+  the `X-OAuth-Scopes` header on the pull request read, and the shape of `base.repo.permissions` in that
+  payload (a repository read settles it when the payload lacks it).
+- Branch deletion after the merge stays out of scope.
+
+The decisions above stand as written. Follow-ups: #2752, #2753.
+
+## Note (2026-10-27, #2779): rows show what changed since the user last looked
+
+The rail marks a row when its `updatedAt` has moved past what this browser last saw, and shows the
+comment count on the row. No decision above changes.
+
+- The baseline (`updatedAt` and count per `provider:key`) lives in the browser's `localStorage`, not in
+  the CP: a reading aid with no server-side per-user state. A key seen for the first time is seeded with
+  its current values, so a first load or a newly listed ticket is never drawn as unread. The map is
+  bounded (oldest evicted) and unreadable storage reads as empty. Opening the detail modal counts as
+  seeing the item.
+- The marker says "updated", or "new comments" when the count also grew (`updatedAt` moves for labels
+  and state too).
+- The count comes from the list response, so there is no request per row: GitHub search's `comments` and
+  Bitbucket's `comment_count` (added to the `fields` projection), carried as `commentCount` and cached in
+  `work_item_cache.comments` (-1 = unknown, never a stored 0). Jira's search does not return it, so Jira rows get the updated marker but no
+  count. Unknown is kept distinct from a known 0 end to end (null on the wire), and growth is read only when
+  both the remembered and the current count are known. The wire key is `commentCount` because the existing guard that no row carries comment text
+  matches the substring `"comments"`.
+
+## Note (2026-10-27, #2752): the report comment write takes the same member-origin gate as merge
+
+Decision 6.1 says no MCP tool is created, but every session's shell holds AGENT_TOKEN and could call the Agent's
+`POST /work-items/comment` directly, and the Control Plane's relay ran no Console-origin check. The comment write now
+follows the merge write's rules (see the 2026-10-25 note on #2632): the Agent takes the route only with a
+member-origin mark (ADR 0113) signed over the exact body for the workspace's own member, and the Control Plane signs
+only after the Console-origin check (JSON body, same-origin `Sec-Fetch-Site` / `Origin`). The Console's Post button is
+the only caller and is unchanged. Decision 6.1 itself stands.
+
+## Note (2026-10-27, #2753): a GitHub App connection gets the Merge button on a positive pre-check
+
+The 2026-10-25 note on #2632 withheld the button from every token that reports no `X-OAuth-Scopes`. For a GitHub App
+user token (`ghu_`) there is a positive pre-check: the merge endpoint needs the **Contents** permission with write
+access (GitHub's "Permissions required for GitHub Apps" and "...fine-grained personal access tokens" pages), the
+installation's permissions are readable through `GET /user/installations`, and `GET /user/installations/{id}/repositories`
+lists the repositories the user can reach through an installation with the user's own `permissions` on each. The detail
+read draws the button for such a token only when an installation has `contents: write`, lists the repository, and the
+user has push there. An error, a rate limit, a timeout, an unread page or any other shape is unknown, and unknown stays
+"no button". The extra requests run on the detail read of an open pull request only (never the list), under one 6 s bound; a `ghu_` token is chosen by its prefix whatever `X-OAuth-Scopes` says, and an unexpected response shape or an unchecked installation is unknown and not cached,
+and a definitive answer is cached for a minute per token hash and repository. A fine-grained personal access token stays
+without a button: GitHub documents no endpoint that reads its granted permissions back (`X-Accepted-GitHub-Permissions`
+says what an endpoint needs, not what the token holds). Merge itself is unchanged.

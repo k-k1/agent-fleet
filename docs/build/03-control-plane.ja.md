@@ -1,7 +1,6 @@
 ---
 audience: "Control Plane を変える人"
 source_of_truth: "コード（本書は地図と設計意図）"
-updated: "2026-09"
 ---
 
 # 03. Control Plane
@@ -31,7 +30,7 @@ CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一
   clean-home と、状態の DB 同期。実行基盤は Runtime アダプタ越し（§3.3）。
 - **Agent 中継** — REST / SSE / terminal WS / browser REST+WS / preview の 5 経路
   （[05 §5.3](05-api.ja.md)）。**REST 中継は許可リスト**: 中継する経路はどれも CP が登録したルート
-  （`routes.go` と隣の `register*Routes` 関数群）で、CP にルートの無い Agent エンドポイントには
+  （中継表 `relays_*.go` の行か、`routes.go` で包んで登録したもの）で、CP にルートの無い Agent エンドポイントには
   ブラウザから届かない。preview は `AF_PREVIEW_DOMAIN` があれば Workspace ごとのサブドメインでも答える
   （[decisions/0062](../decisions/0062-preview-subdomain.ja.md)）。
 - **Console へのプッシュ経路** — `GET /api/events` は CP 自身の SSE。workspace・sessions・stats・
@@ -265,15 +264,79 @@ Workspace を起こさない。
   （FQDN 判定・TLS 非復号・`AF_EGRESS_LISTEN`、`:3128`）。許可リストに無いホストを遮断するのは
   enforce のときだけで、loopback・link-local（クラウドのメタデータのアドレスを含む）・unspecified の宛先は
   どのモードでも拒否する。
-- **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy へ返す。
+- **egress-agent サブコマンド** — `control-plane egress-agent` は ADR
+  [0122](../decisions/0122-egress-gateway.ja.md) の egress ゲートウェイ上の小さなエージェント（決定 4、
+  `internal/egressagent`）。policy から Squid の許可ファイルとモードの include を書き、変わったとき
+  （と起動時に 1 回）Squid を再読込する。Squid のログは保存したファイルオフセットから ingest へ送る。1 行が 1 イベントで、
+  `id` は行の位置。前提にする Squid の設定行とログ形式はパッケージの doc にある。
+- **policy 配布** — `GET /internal/egress/policy` が実効の許可リストとモードを proxy とゲートウェイの
+  エージェントへ返す。
 - **ingest** — `POST /internal/egress`（`AF_EGRESS_TOKEN`）で観測イベントを受けて日次に集計する。
-  would-block は日 × ホストで重複を除き、監査ログにも記録する。
+  would-block は日 × ホストで重複を除き、監査ログにも記録する。`id` を持つイベント（egress ゲートウェイが
+  送るもの。ADR [0122](../decisions/0122-egress-gateway.ja.md)）は `at`・`source`・`dest` と一緒に生のまま
+  保存し、何度再送されても 1 回だけ保存・集計する。
+- **保持期間** — 生のイベントは `AF_EGRESS_EVENT_RETENTION_DAYS` 日（既定 30、`0` で無期限）保持する。
+  purger（CP lease で常に 1 台だけ、10 分ごと）が、それより古いイベントと、それより前に終わった
+  `workspace_address` の閉じた行を 5000 行ずつのバッチで削除する。開いた行は消さない。`egress_daily` には
+  触れない。`id` による重複排除は行が残っている間しか効かないので、ingest は `at` が保持期間より古い
+  イベントを保存も集計もしない（ログに出し、応答は 204 のまま）。purge 済みのイベントの再送が
+  二重に数えられることはない。ここでの下限とは「purge 済みの基準時刻」で、DB（`cp_counter` の
+  `egress-event-floor` 行）に保持する。各 purge が削除の前に引き上げ、`RecordEgressEvent` が同じ
+  トランザクションで読むので、どの CP でも、時計や保持期間の設定によらず効き、下がることもない。
+  保持期間を延ばしたり `0` にしても、purge 済みのイベントは戻らない。address の行は、イベントの
+  削除がエラーなく終わった後にだけ消す。
+- **アーカイブ（任意）** — `AF_EGRESS_ARCHIVE_URL`（`s3://bucket/prefix`、`gs://bucket/prefix`、またはマウントしたボリューム用の
+  `file:///絶対パス`。空で無効）を設定すると、purger は削除の前にアーカイブする。保存するのは丸 1 日（UTC）
+  だけなので、カットオフは「現在 − 保持期間」以前で最も新しい UTC 0 時になる（実質、保持期間は最大 24
+  時間長くなる）。下限もその 0 時まで、アーカイブを読む前に引き上げる。オブジェクトは 1 日 1 つ、
+  `<prefix>/egress/yyyy=YYYY/mm=MM/dd=DD/events-YYYY-MM-DD.jsonl.gz`。gzip した JSON Lines で、
+  `header` 行（スキーマ版・日付）、その日に区間が触れる `address` 行、`(at, id)` 順の `event` 行、
+  最後に `manifest` 行（行数、id と時刻の範囲）。件数は行を流し終えるまで分からないので manifest は
+  最後に置く（1 日は数百万行。5000 行ずつページングして一時ファイルに書き、メモリには載せない）。
+  manifest がない、または件数が合わないオブジェクトは壊れている。オブジェクトは「完全に在る」か
+  「無い」かのどちらかで（S3 は 1 回の PutObject を HeadObject の長さで確認、GCS は `ifGenerationMatch=0` の 1 回のアップロードを CRC32C 付きで送り、保存後の長さと CRC32C を突き合わせる、ローカルは一時ファイル →
+  fsync → rename）、途中までのオブジェクトは存在しえない。オブジェクトがある日は読み戻して検証（header・件数・gzip チェックサム）し、書き直さない。書き込みと
+  削除の間のクラッシュや、途中で打ち切られた削除の後の再実行は、書き込みを飛ばして削除する（書き直す
+  と、完全な 1 日を残りの一部で置き換えてしまう）。壊れた既存オブジェクト（0 バイト、途中まで、header
+  不一致）はその日で purge を止め、CP が自分で上書きすることはない。運用者が消す。
+  **アーカイブに失敗した（または確認できない）日は、その日以降も削除しない。** それより前の日は削除し、
+  次の実行（10 分後）で再試行する。address の行は下限では書き込みを止められない（日のオブジェクトを
+  書いた後に届く行や、終了時刻が変わる行がある）ので、削除する閉じた行は直前に address 補遺オブジェクト
+  （`<prefix>/egress/addresses/yyyy=/mm=/dd=/addresses-<sha256>.jsonl.gz`、kind は `addresses`）として
+  保存し、その行のその版だけを削除する（その後に変わった行は次の実行に残す）。日のオブジェクトは、
+  その日に触れる address 行をその時点の内容で持つので、読み戻しでは正規化が要る（後述）。既存の日の
+  オブジェクトは、DB にまだ残るその日のイベントとも `(at, id)` 順（id はバイト順）でマージ照合し、
+  1 件でも欠けるか内容が違えば purge を止める。形式の整った部分的な日で削除が通ることはない。
+  削除が途中で打ち切られて一部だけ残る日は通る。必要な権限は prefix への `s3:PutObject` と
+  `s3:GetObject`、バケットへの `s3:ListBucket`。後者がないと、存在しないキーへの HeadObject が 404
+  でなく 403 になり、最初の日で止まる。GCS はバケットへの `roles/storage.objectCreator` と
+  `roles/storage.objectViewer`（作成と取得のみ。一覧・削除・上書きはしない）で、認証は Application Default
+  Credentials のみ（GKE では Workload Identity。設定からキーファイルは読まない）。GCS の保存先は既存のキーを
+  置き換えない。既にあるキーへの Put は事前条件に失敗し、常にエラーになる（そこにあるオブジェクトの長さと CRC32C が
+  同じでも同様。最初の試行が届いていた再試行はそう見え、CRC32C の衝突もそう見える）。次の実行が `Exists` でそのキーを
+  見つけ、他の保存先と同じくアーカイバが DB と突き合わせて検証する。ローカルは、Put のたびと既存オブジェクトの読み戻しのたびに、ファイルとそこからファイルシステムのルートまでの全ディレクトリを
+  fsync する。fsync の失敗は次の実行がやり直し、読めるだけのファイルを永続化の証拠とはしない。
+  URL が不正なら、アーカイブなしで消すのではなく CP が起動時に止まる。
+  **読み戻しはオフライン**: 日ごとのオブジェクトと address 補遺をダウンロードし、その `address` 行を `(ref, address, from)`
+  ごとに 1 行にまとめ（`until` は 0 以外の最小値、0 は未終了。store は終了時刻を短くする方向にしか動かさず、
+  日のオブジェクトに残る古い open の写しは、補遺が記録した終了後もイベントに一致し続けてしまう）、その行へ
+  各イベントを source と時刻（`from <= at < until`）で帰属させる。アーカイブしたイベントを
+  ingest し直すことはない。ingest は保持期間または下限より古いイベントを引き続き拒否するので、
+  アーカイブと `egress_daily` が二重に数えることはない。
+- **帰属** — `AF_EGRESS_TOKEN` があるとき、レコーダー（CP lease で常に 1 台だけ）が `AF_EGRESS_ADDRESS_INTERVAL`（既定 60s）ごとに、
+  各 Workspace のランタイムへ持っているアドレス（ECS タスクの ENI、ポッドの IP、ユーザー別ネットワーク上の
+  コンテナのアドレス）を尋ね、期間として残す。docker と Kubernetes の Stop は、消した後には読めるものが
+  残らないので、消す直前にアドレスを渡す。DescribeTasks が MISSING と答えた ECS のタスクは、15 分間は
+  開いたままにしてから閉じる。`GET /api/admin/egress/events` は生のイベントをアドレスと時刻で
+  その期間と突き合わせ、帰属済み・曖昧・帰属不明・基盤（送信元が `AF_EGRESS_INFRA_CIDRS` の範囲内）の
+  いずれかとして返す。
 - **admin API** — `/api/admin/egress*`、`super_admin` のみ: 統計・許可リスト（active / proposed /
   retired）・log-only / enforce の切替。
 - **member の面** — `GET /api/egress/check` は Workspace がそのホストに届くかを答え、
   `POST /api/egress/propose` は*提案*のエントリを出す。承認は配備管理者の仕事のまま。
 
-コンテナ側の配線は `AF_EGRESS_PROXY_ADDR` があるときだけで、全 Workspace に proxy の env を注入する。
+コンテナ側の配線は `AF_EGRESS_PROXY_ADDR` があるときだけで、どのターゲットでも全 Workspace に proxy の env を注入する
+（各ターゲットが何を受け取り、何を proxy の対象から外すかは [07 §7.8](07-security.ja.md)）。
 **既定は off で、何も変わらない**。
 
 ## 3.9 自前エンジン

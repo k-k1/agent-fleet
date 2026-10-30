@@ -71,13 +71,14 @@ describe("repos store refresh", () => {
 
   // A refused request (4xx) or a non-JSON 2xx body (an auth gateway's HTML page, which api()
   // resolves as {}) carries no list: it must not blank the rail. It is terminal — retrying a
-  // refusal changes nothing — but the outcome is recorded as unreachable.
-  it("keeps the list on a coded 4xx error and records unreachable", async () => {
+  // refusal changes nothing — but the outcome is recorded as failed.
+  it("keeps the list on a coded 4xx error and records failed", async () => {
     useReposStore.setState({ repos: [repo("agent-fleet")], loadState: "ok" });
     fetchMock.mockResolvedValue(json({ error: { code: "forbidden_tenant" } }, 403));
     await expect(useReposStore.getState().refresh()).resolves.toBe(true);
     expect(useReposStore.getState().repos).toEqual([repo("agent-fleet")]);
-    expect(useReposStore.getState().loadState).toBe("unreachable");
+    // Terminal, not "unreachable": nothing retries a 4xx, so the rail must not say it will.
+    expect(useReposStore.getState().loadState).toBe("failed");
   });
 
   it("keeps the list on a 2xx body without a repos array ({} from a non-JSON page)", async () => {
@@ -85,7 +86,7 @@ describe("repos store refresh", () => {
     fetchMock.mockResolvedValue(new Response("<html>sign in</html>", { status: 200 }));
     await useReposStore.getState().refresh();
     expect(useReposStore.getState().repos).toEqual([repo("agent-fleet")]);
-    expect(useReposStore.getState().loadState).toBe("unreachable");
+    expect(useReposStore.getState().loadState).toBe("failed");
     fetchMock.mockResolvedValue(json({ repos: null }));
     await useReposStore.getState().refresh();
     expect(useReposStore.getState().repos).toEqual([repo("agent-fleet")]);

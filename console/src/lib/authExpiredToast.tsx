@@ -11,6 +11,7 @@ import { useT } from "./i18n/index.ts";
 
 export const AUTH_EXPIRED_CODE = "auth_expired";
 const TOAST_KEY = "auth-expired";
+const INITIAL_PROMPT_TOAST_KEY = "initial-prompt-auth-expired";
 
 type ToastSink = (message: ReactNode, opts?: ToastOptions) => unknown;
 
@@ -19,18 +20,18 @@ export function openAgentsSettings(): void {
   useSettingsUI.getState().openSettings("agents", { target: "claude" });
 }
 
-export function AuthExpiredToast() {
+export function AuthExpiredToast({ text, toastKey = TOAST_KEY }: { text?: string; toastKey?: string }) {
   const tr = useT();
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
-        <span>{tr("err.auth_expired")}</span>
+        <span>{text ?? tr("err.auth_expired")}</span>
       </span>
       <button
         type="button"
         className="update-toast-btn"
         onClick={() => {
-          dismissToast(TOAST_KEY);
+          dismissToast(toastKey);
           openAgentsSettings();
         }}
       >
@@ -50,3 +51,16 @@ export function toastSendFailure(toast: ToastSink, fail: { code?: string; messag
   toast(fail.message || fallback);
 }
 
+
+/** initialPromptToastKey is the sticky toast's key. It carries the (user, tenant) scope the
+ *  failure was observed in: the same session name in another workspace is another failure, and
+ *  its toast must neither replace nor be dismissed by this one. */
+export const initialPromptToastKey = (scope: string, session: string) => `${INITIAL_PROMPT_TOAST_KEY}:${scope}:${session}`;
+
+/** toastInitialPromptAuthExpired reports a create-time initial prompt the Agent refused to type
+ *  because the Claude login has expired: nothing was sent, and no send of the member's own was
+ *  involved, so no other path would tell them why the session sits idle. */
+export function toastInitialPromptAuthExpired(toast: ToastSink, scope: string, session: string, text: string): void {
+  const toastKey = initialPromptToastKey(scope, session);
+  toast(<AuthExpiredToast text={text} toastKey={toastKey} />, { kind: "error", duration: 0, key: toastKey });
+}

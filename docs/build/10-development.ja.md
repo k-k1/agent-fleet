@@ -1,7 +1,6 @@
 ---
 audience: "はじめてこのリポジトリをビルドする人"
 source_of_truth: "コード + CI 定義"
-updated: "2026-10"
 ---
 
 # 10. 開発 — ビルド・反映・テスト・規約
@@ -59,7 +58,7 @@ CLI は通常 §10.2.2 が自動で開く版上げ PR で上がる。下の手�
    引数の変更は確実にキャッシュを破るので `--no-cache` は不要。
 3. **commit & push** — 小さな diff。メッセージは
    [CONTRIBUTING](../../CONTRIBUTING.md#commits--prs) に従う。
-4. **E2E ワークフローの緑を待つ。** `e2e.yml` は **push では走らない**（main への PR・毎晩の
+4. **E2E ワークフローの緑を待つ。** `e2e.yml` は **push では走らない**（イメージ入力を変える main への PR・毎晩の
    cron・手動 dispatch のみ）ので、作業ブランチでは自分で起こす:
    `gh workflow run e2e.yml --ref <ブランチ>`。CLI を焼き込んだイメージ
    （`BAKE_AGENT_CLIS=1`）をビルドし、L1（§10.3 に挙げたツールについて**導入された版 ＝ ピン**）→ L2（フリート疎通）→
@@ -69,6 +68,19 @@ CLI は通常 §10.2.2 が自動で開く版上げ PR で上がる。下の手�
    どちらも既定 false。`e2e.yml` の `live` は L4（headless の claude ターン）、`codex-contract.yml`
    の `live` は Tier 2（ワークフローの記載で 1 回およそ 45k tokens・実測）。どちらも TUI を
    描かないので、状態検出を見るのは contract ワークフローの仕事で L4 ではない。
+   cursor / copilot / kiro の contract は最後に `caps drift probes` ステップを持つ。割り込み・
+   発言時点からの分岐・モデル指定の 3 つのプローブ（`workspace/agent/caps_probe.go`）が、各 kind の
+   宣言 `Caps` を実 CLI の挙動と突き合わせる。期待値は `Caps()` から導き、食い違えば（宣言どおり動かない
+   場合も、`false` 宣言なのに動く場合も）`DRIFT` として落ちる。このステップは当面 **advisory**:
+   DRIFT やプローブエラーでもジョブは落ちず、赤い contract の行も watcher の `red` マーカーも
+   書かない。代わりに `::warning::` 注釈・ジョブサマリ・kind の更新 issue への advisory 行
+   （`cli-contract-report.sh advisory`。ピンが最新でもこの行がある間は issue を開いたままにする）で
+   見せる。次に通った実行で行は消える。cap を `false` にするのは、プローブが失敗を観測してから
+   にする。下の「caps drift probes を blocking に昇格する」を参照。
+   model-override プローブは、試した全モデルを CLI 自身が起動拒否した場合（copilot の
+   `Model "X" from --model flag is not available`。アカウントやプランの上限）は `DRIFT` ではなく
+   `PROBE-ERROR` を報告する。黙って別モデルで動く CLI は従来どおり `DRIFT`。CLI 自身のストアに
+   モデルが記録されるまで最大 15 秒待つ。
 6. **ホストに反映**: `run-dev.sh`。ビルド直後にイメージスモーク（L1）が走る。既定の lean
    イメージでは `versions.json` が新しいピンを持ち、CLI が焼かれていないことを確かめる。
    `BAKE_AGENT_CLIS=1` なら導入された版も確かめる。
@@ -79,6 +91,18 @@ CLI は通常 §10.2.2 が自動で開く版上げ PR で上がる。下の手�
    追従する（[04 §4.9](04-agent.ja.md#49-workspace-イメージと-entrypoint)）。home と repos は残る。
 8. **（任意）確認**: **設定 → ツールチェーン → ツールのバージョン** で、実効版・イメージ版・
    ピン版が並んで見える。
+
+**caps drift probes を blocking に昇格する。** プローブのロジックはまだ実 CLI で動いたことが
+ない。偽陽性（モデル名の厳密一致、ターンが自然終了するのと競合する Escape）が出ると watcher の
+`red` マーカーが書かれ、copilot ではその版の再 dispatch が止まる。そのため `cursor-` /
+`copilot-` / `kiro-contract.yml` の `caps drift probes` ステップは `continue-on-error` で動く。
+切り替えスイッチは 1 つ、リポジトリ変数 `CAPS_PROBES_BLOCKING`: `true` にする（Settings → Variables、
+または `gh variable set CAPS_PROBES_BLOCKING --body true`）と DRIFT でジョブが落ち、他と同じ赤い
+contract として報告される。変数を消せば advisory に戻る。昇格の前に、3 つの workflow を
+`cli_version=latest` で dispatch し、kind ごとに次を記録する: 健全な CLI でプローブが通ること、
+各プローブの観測結果と宣言 `Caps()` の対応（手で確かめた DRIFT は待つ理由ではなく本物の指摘）、
+同じ結果が 2 回続くこと（Escape の競合とモデル名一致が安定している証拠）。実行 URL と結果は、
+変数を切り替える PR か issue に書く。
 
 補足:
 
@@ -304,6 +328,10 @@ npm --prefix console run build
   `publish-dist.yml` は dispatch 専用。`release-gate.yml` は dispatch と、packaging ブランチで
   自身を変更する push で走る（[deploy/release/notes](../../deploy/release/notes/README.md) を参照）。
 
+  `release-gate.yml` と `publish-dist.yml` は、開いている `cli-drift` Issue も警告とジョブサマリに
+  並べる（`deploy/release/cli-drift-warn.sh`）。警告だけで、ドリフトは常態なのでリリースは止めない。
+  一覧の取得に失敗した場合もそれ自体が警告になる。
+
 ### E2E（イメージスモーク + フリート疎通 + UI + 実 API）
 
 4 層構成。**L1** はイメージスモーク（§10.3・数秒）。**L2** は `e2e/`（独立 Go モジュール・
@@ -326,8 +354,11 @@ cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m .
 cd console-e2e && npm ci && npx playwright test
 ```
 
-- `e2e.yml` は main への PR（関連パス）・main に対する毎晩の cron・手動 dispatch で走り、
-  **push では走らない**。ジョブは `e2e`（L1 → L2）と `ui-e2e`（L3。失敗時は trace と CP ログを
+- `e2e.yml` は、Workspace イメージの入力（`workspace/`。テスト専用ファイルを除く）またはハーネス
+  （`e2e/`・`console-e2e/`・`deploy/local/e2e-smoke.sh`・ワークフロー自身）を変える main への PR、
+  main に対する毎晩の cron、手動 dispatch で走り、**push では走らない**。`control-plane/` や
+  `console/` だけを変える PR では走らない（L2/L3 はそれらをソースからビルドするのでイメージ入力では
+  ない）。そちら側の破損は毎晩の実行で拾い、PR 時点の守りは `ci.yml` が担う。ジョブは `e2e`（L1 → L2）と `ui-e2e`（L3。失敗時は trace と CP ログを
   artifact に残す）が並列、`live-smoke`（L4）は `live` 付きの dispatch のときだけ。イメージの
   ビルドは platform を指定しないので **amd64 のみ**を検証する: arm64 側のアセット（agy・cursor・
   kiro・muse の arch 別 sha256 ピン）はここではビルド検証されない。
@@ -601,7 +632,7 @@ Unicode の文字・数字・アンダースコアがない場合だけです。
 `guide/ref/settings.ja.md`（英語は `settings.md`）の第 1 列は `table-cell` として
 書き換えます。`set.tab_*` / `tenant.tab_*` の変更は `WARN SETTINGS TAB` を出します。
 `scripts/docs-check.py` の規則は変えず、そのセルを更新して検査を通します。個人設定の日本語タブは対応する
-`guide/member/12-settings.ja.md` の節見出しも手動更新が必要で、表の置換だけでは
+`guide/member/20-settings.ja.md` の節見出しも手動更新が必要で、表の置換だけでは
 検査を通りません。編集はすべて
 `path:line old -> new` として出力します。
 

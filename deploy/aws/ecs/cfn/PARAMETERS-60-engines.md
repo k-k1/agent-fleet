@@ -1430,8 +1430,9 @@ Sid `SsmWorkspaceParams`).
 
 ## The models bucket
 
-S3 at $0.025/GB-month, read for free through 00-network's gateway endpoint (the fetch never
-touches the NAT). **Versioning is off deliberately**: a 17 GB model kept in duplicate for every
+S3 at $0.025/GB-month, read through 00-network's S3 gateway endpoint (no NAT data processing):
+the engines, the ingest tasks and the CP sit on the private route table, and the endpoint's policy
+admits this bucket (`ModelsObjects` / `ModelsList`, #2716). **Versioning is off deliberately**: a 17 GB model kept in duplicate for every
 re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (ADR 0071 decision 10).
 The layout is ComfyUI's, so all three engines read one tree (ADR 0072 decision 2).
 
@@ -2156,4 +2157,4 @@ person.
 
 **What still cannot be split**: the ingest job pulls model weights from Hugging Face over the NAT
 gateway, and NAT data processing is untaggable (ADR 0048 decision 4). Fetching the same file from
-S3 afterwards does not — 00-network's gateway endpoint keeps that off the NAT entirely.
+S3 afterwards adds no NAT bytes: it goes through 00-network's S3 gateway endpoint (#2716).

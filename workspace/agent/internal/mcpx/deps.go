@@ -52,6 +52,18 @@ type Deps struct {
 	ShellSendTarget   func(name, prompt string) string
 	SessionIsShell    func(name string) bool
 
+	// ManagedDefaultKind: create_session asks for the managed driver for these kinds
+	// (sessionx.ManagedDefaultKind, the registry). mcpx cannot import sessionx.
+	ManagedDefaultKind func(kind string) bool
+
+	// ValidateCreateKind refuses a create_session kind the registry does not know
+	// (sessionx.ValidateCreateKind; empty is claude). mcpx cannot import sessionx.
+	ValidateCreateKind func(kind string) error
+
+	// Kinds is the kind registry (sessionx.RegisteredKinds and each kind's Caps), in its order.
+	// The kind enumerations in the tool schemas and descriptions are built from it.
+	Kinds func() []KindInfo
+
 	// UI preferences (ui_prefs.go) and claude's settings wiring (session_status.go).
 	ReadUIPrefs                func() map[string]any
 	EnsureClaudeSettingsWiring func(kind string)
@@ -64,7 +76,7 @@ type Deps struct {
 	AgentFleetShareDir func() string
 	InstallGrafanaMCP  func(ver string) (string, error)
 
-	// Writing an SSM session's config (session_ssm.go).
+	// Writing an SSM session's config (internal/agents/ssm/config.go).
 	WriteSSMConfig func(path string, s session.SSMMeta) error
 
 	// --- the three flags that decide the tool set ---
@@ -179,6 +191,10 @@ func shellCreateTarget(dir, prompt string) string { return deps.ShellCreateTarge
 func shellSendTarget(name, prompt string) string { return deps.ShellSendTarget(name, prompt) }
 
 func sessionIsShell(name string) bool { return deps.SessionIsShell(name) }
+
+func managedDefaultKind(kind string) bool { return deps.ManagedDefaultKind(kind) }
+
+func validateCreateKind(kind string) error { return deps.ValidateCreateKind(kind) }
 
 func readUIPrefs() map[string]any { return deps.ReadUIPrefs() }
 

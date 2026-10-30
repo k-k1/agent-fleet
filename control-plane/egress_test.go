@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,13 +27,13 @@ func TestEgressPolicy(t *testing.T) {
 		"api.anthropic.com.",        // trailing FQDN dot
 	}
 	for _, h := range allow {
-		if !p.allows(h) {
+		if !p.Allows(h) {
 			t.Errorf("expected allow: %s", h)
 		}
 	}
 	deny := []string{"paste.ee", "evil.com", "anthropic.com.attacker.net", "notgithub.com", ""}
 	for _, h := range deny {
-		if p.allows(h) {
+		if p.Allows(h) {
 			t.Errorf("expected deny: %s", h)
 		}
 	}
@@ -39,11 +41,11 @@ func TestEgressPolicy(t *testing.T) {
 	// A custom allowlist with a wildcard entry.
 	c := newEgressPolicy([]string{"*.internal.example", "one.host", "# comment", ""})
 	for _, h := range []string{"a.internal.example", "internal.example", "one.host"} {
-		if !c.allows(h) {
+		if !c.Allows(h) {
 			t.Errorf("custom expected allow: %s", h)
 		}
 	}
-	if c.allows("two.host") {
+	if c.Allows("two.host") {
 		t.Errorf("custom expected deny: two.host")
 	}
 }
@@ -53,7 +55,7 @@ func TestEgressBatcher(t *testing.T) {
 	b.add("api.anthropic.com", true)
 	b.add("api.anthropic.com", true)
 	b.add("paste.ee", false)
-	evs := b.drain()
+	evs, _ := b.drain()
 	got := map[string]egressEvent{}
 	for _, e := range evs {
 		got[e.Host] = e
@@ -64,7 +66,7 @@ func TestEgressBatcher(t *testing.T) {
 	if got["paste.ee"].Count != 1 || got["paste.ee"].Allowed {
 		t.Fatalf("paste.ee bucket: %+v", got["paste.ee"])
 	}
-	if b.drain() != nil {
+	if evs, d := b.drain(); evs != nil || d != 0 {
 		t.Fatalf("drain should be empty after first drain")
 	}
 }
@@ -121,7 +123,7 @@ func TestEgressIngestHandler(t *testing.T) {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", &egressAuditDedup{})
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", &egressAuditDedup{}, nil)
 	body := `{"events":[{"host":"api.anthropic.com","allowed":true,"count":3},` +
 		`{"host":"paste.ee","allowed":false,"count":2},{"host":"paste.ee","allowed":false,"count":1}]}`
 
@@ -232,7 +234,7 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 	}
 	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: "extra.internal", State: "active", AddedAt: store.NowTS()})
 	_ = st.SetSetting(ctx, "egress_mode", "enforce")
-	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil)
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
 
 	entries, enforce := eg.effectivePolicy(ctx)
 	if !enforce {
@@ -266,5 +268,154 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "extra.internal") || !strings.Contains(w.Body.String(), `"enforce":true`) {
 		t.Fatalf("policy body: %s", w.Body.String())
+	}
+}
+
+// The policy the gateway and the own proxy enforce must always admit the Control Plane's
+// own hosts: a workspace reaches the CP through the egress path, so an allowlist
+// without them cuts every workspace off from its CP the moment the mode is enforce.
+func TestEgressPolicyAlwaysAdmitsCPHosts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	_ = st.SetSetting(ctx, "egress_mode", "enforce")
+	m := &manager{store: st,
+		publicBaseURL:   "https://Console.Example.test",
+		internalBaseURL: "http://af-cp.af.svc.cluster.local:8081"}
+	eg := newEgressAPI(m, "tok", "proxy:3128", nil, nil)
+
+	served := func() (allow []string, enforce bool) {
+		t.Helper()
+		r := httptest.NewRequest("GET", "/internal/egress/policy", nil)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		eg.policy(w, r)
+		var b struct {
+			Allowlist []string `json:"allowlist"`
+			Enforce   bool     `json:"enforce"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &b) != nil {
+			t.Fatalf("policy: %d %s", w.Code, w.Body.String())
+		}
+		return b.Allowlist, b.Enforce
+	}
+	check := func(when string) {
+		t.Helper()
+		allow, enforce := served()
+		if !enforce {
+			t.Fatalf("%s: enforce should be true", when)
+		}
+		p := newEgressPolicy(allow)
+		for _, h := range []string{"console.example.test", "af-cp.af.svc.cluster.local"} {
+			if !p.Allows(h) {
+				t.Errorf("%s: the served policy does not admit the CP host %s: %v", when, h, allow)
+			}
+		}
+		// Only the CP's own hosts: enforce is not weakened for their neighbours.
+		for _, h := range []string{"other.example.test", "example.test", "x.console.example.test",
+			"console.example.test.evil", "evil.cluster.local", "x.af-cp.af.svc.cluster.local"} {
+			if p.Allows(h) {
+				t.Errorf("%s: the served policy admits %s, which is not a CP host", when, h)
+			}
+		}
+	}
+	check("empty admin allowlist")
+
+	// An admin who adds the CP host and then retires it does not take it away.
+	id := store.NewID()
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: id, Entry: "console.example.test", State: "active", AddedAt: store.NowTS()})
+	if err := st.SetAllowlistState(ctx, id, "retired"); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	check("CP host retired by an admin")
+
+	// The admin list shows them as built-in, apart from the product defaults.
+	w := httptest.NewRecorder()
+	eg.allowlistList(w, httptest.NewRequest("GET", "/api/admin/egress/allowlist", nil), store.Identity{})
+	var lb struct {
+		Builtin []string `json:"builtin"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &lb); err != nil {
+		t.Fatalf("allowlist list: %v", err)
+	}
+	if want := []string{"console.example.test", "af-cp.af.svc.cluster.local"}; !slices.Equal(lb.Builtin, want) {
+		t.Fatalf("builtin = %v, want %v", lb.Builtin, want)
+	}
+
+	// No public base and no internal URL: nothing extra, and no empty entry.
+	bare := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
+	if hosts := bare.mgr.cpEgressHosts(); len(hosts) != 0 {
+		t.Fatalf("cpEgressHosts without URLs = %v, want none", hosts)
+	}
+}
+
+// Only a URL whose host is one plain name or IPv4 address becomes a built-in entry. Anything
+// egressallow would read as a suffix ("*.x", ".x") would open every sibling for good, and a
+// form the allow file cannot carry (a zone ID, an IPv4-mapped address) would be shown as
+// allowed while the gateway drops it, so those are refused and reported instead. An IPv6
+// literal is admitted in its canonical bare form (#2754).
+func TestCPEgressHostsOnlyExactHosts(t *testing.T) {
+	cases := []struct {
+		name             string
+		public, internal string
+		want, refused    []string
+	}{
+		{"trailing FQDN dot", "https://Console.Example.test.", "http://af-cp.af.svc.cluster.local.:8081/",
+			[]string{"console.example.test", "af-cp.af.svc.cluster.local"}, nil},
+		{"port and path dropped", "https://console.example.test:8443/cp", "",
+			[]string{"console.example.test"}, nil},
+		{"same host twice", "https://console.example.test", "http://CONSOLE.example.test.:8081",
+			[]string{"console.example.test"}, nil},
+		{"wildcard host", "https://*.example.test", "", nil, []string{"https://*.example.test"}},
+		{"leading dot", "https://.example.test", "", nil, []string{"https://.example.test"}},
+		{"IPv6 literal", "https://[2001:DB8:0:0:0:0:0:5]:8443/x", "http://10.0.1.5:8081",
+			[]string{"2001:db8::5", "10.0.1.5"}, nil},
+		{"IPv6 two spellings", "https://[2001:db8::5]", "http://[2001:0db8::0005]:8081",
+			[]string{"2001:db8::5"}, nil},
+		{"IPv6 zone ID", "https://[fe80::1%25eth0]", "", nil, []string{"https://[fe80::1%25eth0]"}},
+		{"IPv6 IPv4-mapped", "https://[::ffff:10.0.1.5]", "", nil, []string{"https://[::ffff:10.0.1.5]"}},
+		{"IPv6 loopback", "https://[::1]", "", nil, []string{"https://[::1]"}},
+		{"not http", "ftp://console.example.test", "", nil, []string{"ftp://console.example.test"}},
+		{"unset", "", "", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, refused := cpEgressHostsOf(c.public, c.internal)
+			if !slices.Equal(got, c.want) || !slices.Equal(refused, c.refused) {
+				t.Fatalf("cpEgressHostsOf(%q, %q) = %v, refused %v; want %v, refused %v",
+					c.public, c.internal, got, refused, c.want, c.refused)
+			}
+			p := newEgressPolicy(got)
+			for _, h := range got {
+				if !p.Allows(h) || !p.Allows(h+".") {
+					t.Errorf("%s is not admitted by its own entry", h)
+				}
+			}
+			for _, h := range []string{"other.example.test", "example.test", "x.console.example.test"} {
+				if p.Allows(h) {
+					t.Errorf("%s admitted by %v", h, got)
+				}
+			}
+		})
+	}
+}
+
+// A bracketed IPv6 literal is looked up in the same canonical form the built-in CP host
+// entry is stored in, so two spellings of one address get the same verdict.
+func TestNormalizeEgressHostCanonicalisesIPv6(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://[2001:DB8:0:0:0:0:0:5]:8443/x": "2001:db8::5",
+		"[2001:db8::0005]":                      "2001:db8::5",
+		"Example.test.":                         "example.test",
+	} {
+		if got := normalizeEgressHost(in); got != want {
+			t.Errorf("normalizeEgressHost(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

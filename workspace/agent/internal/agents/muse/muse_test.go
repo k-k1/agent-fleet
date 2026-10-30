@@ -223,7 +223,7 @@ func hasEnv(env []string, want string) bool {
 // is silent: the tool call fails with "bwrap: Failed to make / slave" while turn/completed
 // still says completed, so the session looks healthy and accomplishes nothing.
 func TestServeArgsCarryBothPostureFlags(t *testing.T) {
-	args := serveArgs()
+	args := serveArgs(false)
 	if args[0] != "serve" {
 		t.Errorf("args[0] = %q", args[0])
 	}

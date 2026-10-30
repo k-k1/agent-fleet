@@ -3,44 +3,19 @@ package sessionx
 import (
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// The Agent interface and its input/output types live in internal/agents
-// (docs/log/23 remaining item 1 Wave C); the opencode implementation is in
-// internal/agents/opencode (Wave D), codex in internal/agents/codex (Wave E) and claude in
-// internal/agents/claude (Wave F). This file keeps the registry and the shared live-state
-// helpers.
-
-// agentRegistry is the kind → agents.Agent registry. AgentOf falls back to claude
-// for an unknown or empty kind, matching the historical default (a session with no
-// recognized kind launches claude).
-var agentRegistry = map[string]agents.Agent{
-	session.KindClaude:   claude.New(),
-	session.KindOpencode: opencode.New(),
-	session.KindCodex:    codex.New(),
-	session.KindCursor:   cursor.New(),
-	session.KindKiro:     kiro.New(),
-	session.KindAgy:      agy.New(),
-	session.KindCopilot:  copilot.New(),
-	session.KindShell:    shellAgent{},
-	session.KindSSM:      ssmAgent{},
-	session.KindLcpp:     lcpp.New(),
-	session.KindMuse:     muse.New(),
-}
+// The kind registry is internal/agentreg (kind → agents.Agent) over internal/kinds (the
+// capability-free list of the same kinds). The functions below are its names in sessionx, kept
+// so the callers here and in package main read as before. This file also keeps the shared
+// live-state helpers.
 
 // SessionTurns reads a session's transcript through its kind's agent, Terminal and Managed
 // alike: the mirror's source, and chatx's for a scheduled run's answer (#1560).
@@ -49,21 +24,23 @@ func SessionTurns(m session.Meta) ([]transcript.Turn, bool) {
 	return td.Turns, ok
 }
 
-func AgentOf(kind string) agents.Agent {
-	if a, ok := agentRegistry[kind]; ok {
-		return a
-	}
-	return agentRegistry[session.KindClaude]
-}
+// AgentOf is agentreg.Of: the kind's agent, or claude's for an unknown or empty kind.
+func AgentOf(kind string) agents.Agent { return agentreg.Of(kind) }
 
-// NormalizeKind maps a create request's kind onto a registered one, defaulting the
-// unknown/empty/"claude" cases to claude (the historical create whitelist).
-func NormalizeKind(kind string) string {
-	if _, ok := agentRegistry[kind]; ok {
-		return kind
-	}
-	return session.KindClaude
-}
+// RegisteredAgent is agentreg.Lookup: AgentOf without the claude fallback.
+func RegisteredAgent(kind string) (agents.Agent, bool) { return agentreg.Lookup(kind) }
+
+// RegisteredKinds is agentreg.Kinds: every registered kind, sorted.
+func RegisteredKinds() []string { return agentreg.Kinds() }
+
+// NormalizeKind is agentreg.Normalize, the read-side fallback to claude.
+func NormalizeKind(kind string) string { return agentreg.Normalize(kind) }
+
+// ValidateCreateKind is agentreg.ValidateCreate, the create paths' exact-match gate.
+func ValidateCreateKind(kind string) error { return agentreg.ValidateCreate(kind) }
+
+// ManagedDefaultKind is agentreg.ManagedDefault.
+func ManagedDefaultKind(kind string) bool { return agentreg.ManagedDefault(kind) }
 
 // --- shared live-state helpers -------------------------------------------------
 
@@ -78,9 +55,6 @@ func SessionAlive(m session.Meta) bool {
 	return tmuxx.HasSession(session.TmuxName(m.Name))
 }
 
-// musePendingState is muse.PendingState, a variable so a test can stand in for a live handle.
-var musePendingState = muse.PendingState
-
 // readPane is tmuxx.ReadPane, replaceable in tests.
 var readPane = tmuxx.ReadPane
 
@@ -93,83 +67,36 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	if !alive {
 		return "stopped"
 	}
-	// opencode: derive state from its own store (the status plugin is unreliable) so the
-	// chat chip doesn't stick on "in progress" after a turn the plugin never reported
-	// idle for.
-	if m.Kind == session.KindOpencode {
-		if st := opencode.LiveState(m); st != "" {
+	// The kind's own verdict comes first: opencode's store (its status plugin is unreliable),
+	// agy's conversation DB, the copilot/cursor/kiro classifications and muse's live handle. A
+	// kind without hooks keeps the optimistic "working" /input stored without it, and muse's
+	// status file holds only turn start and end, so a waiting prompt would read "working".
+	live := liveStateTraits(m.Kind)
+	if live.State != nil {
+		if st := live.State(m); st != "" {
+			// Turn end. A kind with no Stop hook observes its completion only in this poll, so
+			// it persists idle AND fires the notification, or the operator's completion-report
+			// arm is never consumed and the report never arrives (docs/log/30 ②). MarkTurnEnd
+			// shares RecordSessionNotification with the hook route, so "which transition
+			// counts" stays one implementation. Gated on previous=="working" so repeated polls
+			// report once; a duplicate from two concurrent polls is absorbed by
+			// handleChatReport's disarm. Under managed the driver's runTurn already fired it
+			// and status is idle — no double fire. (The sessions list observes the same end,
+			// but only RECORDS when it happened — turn_end_poll.go.)
+			if live.PolledTurnEnd {
+				notifyPolledTurnEnd(m, st)
+			}
 			return st
 		}
-	}
-	// agy: no hooks — /input persists an optimistic "working" that nothing clears
-	// while an interactive prompt is up (the question/permission widget replaces the
-	// idle footer, so the claude-shaped heal below can't fire and the chat showed a
-	// blocked session as working). The conversation DB knows the whole state (last step
-	// status — agy/pending.go), so ask it first.
-	if m.Kind == session.KindAgy {
-		if st := agy.LiveState(m); st != "" {
-			// Turn end. agy has no Stop hook, so this poll is the only place the
-			// completion can be observed — persist idle AND fire the notification,
-			// or the operator's completion-report arm is never consumed and the report never
-			// arrives (docs/log/30 ②). MarkTurnEnd shares RecordSessionNotification with
-			// the hook route, so "which transition counts" stays one implementation.
-			// Gated on previous=="working" so repeated polls report once; a duplicate
-			// from two concurrent polls is absorbed by handleChatReport's disarm.
-			// (The sessions list observes the same end, but only RECORDS when it
-			// happened — turn_end_poll.go.)
-			notifyPolledTurnEnd(m, st)
-			return st
-		}
-		// No opinion: also what a stale "working" (agy.LiveState withdraws it after an hour
-		// with no tool running) turns into. The stored optimistic "working" must not stand in
-		// for it past the warm-up, or the chip says in progress forever; nothing is persisted
-		// and no notification fires, so a turn that really finishes later still reports.
-		sid := session.UUID(m.Dir, m.Name)
-		if status.LiveState(sid) == "working" && !status.RecentlyWorking(sid) {
-			return "idle"
-		}
-	}
-	// copilot: no hooks either — the classification derived from events.jsonl is the only
-	// state source (state.go; under managed the child process writes the same file, so the
-	// two agree). Like agy, this poll is the only place a turn's completion can be observed
-	// (the TUI route), so a working→idle transition fires MarkTurnEnd (docs/log/30 ②). Under
-	// managed the driver's runTurn already fired it and status is idle — no double fire.
-	if m.Kind == session.KindCopilot {
-		if st := copilot.LiveState(m); st != "" {
-			notifyPolledTurnEnd(m, st)
-			return st
-		}
-	}
-	// cursor: no hooks either — the state source is the classification of the JSONL
-	// transcript's tail (state.go). Same shape as copilot: this poll is the only place a
-	// turn's completion can be observed (the TUI route), so a working→idle transition fires
-	// MarkTurnEnd (docs/log/30 ②). Under managed (Track A2) the driver's runTurn already fired
-	// it and status is idle — no double fire.
-	if m.Kind == session.KindCursor {
-		if st := cursor.LiveState(m); st != "" {
-			notifyPolledTurnEnd(m, st)
-			return st
-		}
-	}
-	// kiro: no hooks — 2.14.1 has no Stop hook (the hook triggers are only AgentSpawn/
-	// PrePrompt/PreToolUse/PostToolUse; measured, docs/log/43 §5-1), so the state source is the
-	// TUI string contract (state.go). Same shape as cursor/copilot: this poll is the only place
-	// a turn's completion can be observed (the TUI route), so a working→idle transition fires
-	// MarkTurnEnd (docs/log/30 ②). A pending approval ("question") is not idle, so it passes
-	// through without firing. Under managed (Track A2) the driver's runTurn already fired it
-	// and status is idle — no double fire. When empty (the footer is not drawn yet) it falls
-	// back to the generic route (/input's optimistic working).
-	if m.Kind == session.KindKiro {
-		if st := kiro.LiveState(m); st != "" {
-			notifyPolledTurnEnd(m, st)
-			return st
-		}
-	}
-	// muse: the status file holds only turn start/end, so a waiting prompt reads "working".
-	// The live handle knows, and WireLive asks it the same way.
-	if m.Kind == session.KindMuse {
-		if st := musePendingState(m.Name); st != "" {
-			return st
+		// No opinion: also what agy's stale "working" (withdrawn after an hour with no tool
+		// running) turns into. The stored optimistic "working" must not stand in for it past
+		// the warm-up, or the chip says in progress forever; nothing is persisted and no
+		// notification fires, so a turn that really finishes later still reports.
+		if live.StaleWorkingIdle {
+			sid := session.UUID(m.Dir, m.Name)
+			if status.LiveState(sid) == "working" && !status.RecentlyWorking(sid) {
+				return "idle"
+			}
 		}
 	}
 	sid := session.UUID(m.Dir, m.Name)
@@ -180,22 +107,26 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	state := status.EffectiveModal(sid, status.LiveState(sid))
 	// codex: an Esc interrupt fires no Stop hook, so "working" outlives the turn. The badge
 	// (WireLive) reads the turn's end off the rollout; the chip reads the same.
-	if m.Kind == session.KindCodex && state == "working" && codex.MissedTurnEnd(m) {
+	exact := terminalTraits(m.Kind)
+	if exact.MissedTurnEnd != nil && state == "working" && exact.MissedTurnEnd(m) {
 		state = "idle"
 	}
 	// codex (Terminal): its hooks report only working/idle, so the request_user_input dialog
 	// leaves the turn "working". The badge (WireLive) and the free-text gate read the rollout
 	// for it; the chip reads the same, or it says "in progress" while sends are refused with
 	// question_pending.
-	if m.Kind == session.KindCodex && state == "working" && codex.TerminalModal(m) != "" {
+	if exact.TerminalQuestion != nil && state == "working" && exact.TerminalQuestion(m) != "" {
 		return "question"
 	}
-	isClaude := NormalizeKind(m.Kind) == session.KindClaude
+	// claude's traits (an empty kind reads as claude): the usage-limit menu, the expired login
+	// and the heal that reports a turn that died on an API error.
+	t := normalizedTerminalTraits(m.Kind)
+	usageLimits := t.UsageLimitMenu != nil
 	// The pane is read exactly once (tmuxx.ReadPane). heal=false (/output) still does not look
 	// at the pane, but claude's usage-limit modal has to be reported regardless of heal, so
 	// capture whenever either of those two needs it.
 	var pane tmuxx.PaneRead
-	if heal || isClaude {
+	if heal || usageLimits {
 		pane = readPane(m.Name)
 	}
 	// claude pins the pane on the usage-limit menu, waiting for a human (see the comment on
@@ -206,28 +137,24 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// (ahead of the usage-limit menu), for the same reason — when the mirror/chat chip and the
 	// list badge disagree, the user cannot tell which one is true. For the reason behind the
 	// order see the comment in WireLive (report the one waiting will not fix first).
-	if isClaude && claude.AuthExpired() {
+	if callTrue0(t.AuthExpired) {
 		if heal && state != "idle" {
-			claude.HealIdle(sid)
+			healIdle(t, sid)
 		}
 		return agents.StateAuth
 	}
-	if isClaude && pane.RateLimitMenu {
+	if usageLimits && pane.RateLimitMenu {
 		if heal && state != "idle" {
-			claude.HealIdle(sid)
+			healIdle(t, sid)
 		}
 		return agents.StateBlocked
 	}
-	// codex managed: a turn rejected/failed with usageLimitExceeded leaves the
-	// session sitting at idle, but re-sending will hit the same limit. Surface it as
-	// "waiting for the limit to lift" — there is no menu to dismiss and the window opens
-	// by waiting (the same
+	// A turn rejected or failed on a usage limit (codex Managed, muse) leaves the session
+	// sitting at idle, but re-sending will hit the same limit. Surface it as "waiting for the
+	// limit to lift": there is no menu to dismiss and the window opens by waiting (the same
 	// verdict as WireLive).
-	if m.DriverKind() == session.DriverManaged && NormalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
-		return agents.StateLimited
-	}
-	// muse: the same reading as its WireLive, from the handle's last turn error.
-	if m.Kind == session.KindMuse && state == "idle" && museRateLimited(m.Name) {
+	if live.RateLimited != nil && state == "idle" &&
+		(!live.RateLimitedManagedOnly || m.DriverKind() == session.DriverManaged) && live.RateLimited(m.Name) {
 		return agents.StateLimited
 	}
 	// Folding on pane.IdleSettled (not the raw pane.Idle) for the same reason as WireLive:
@@ -241,11 +168,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		// (docs/log/47). The evidence is specific to claude's jsonl format, so every other kind
 		// only removes the marker. NormalizeKind: an old session with an empty kind is claude
 		// too, and a raw comparison would miss it.
-		if isClaude {
-			claude.HealIdle(sid)
-		} else {
-			status.Remove(sid)
-		}
+		healIdle(t, sid)
 	} else if heal && state == "idle" && pane.Busy && claude.ReopenFromPane(sid) {
 		// Reverse-heal: the hook state reads idle (its "working" file was never written,
 		// or the self-heal above removed it during a transient prompt frame) but the pane
@@ -260,7 +183,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// so far reads idle. The same reinterpretation as the list (wireSession) is applied here —
 	// when the chip in the body disagrees with the list, the user cannot tell which one is true
 	// (docs/log/47 §4-9). Sending is not blocked (see the comment on agents.StateLimited).
-	if isClaude && alive && state == "idle" {
+	if usageLimits && alive && state == "idle" {
 		if limited, _, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			return limited
 		}

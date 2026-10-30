@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // backupFixture is a claude session with a meta, a finished turn on record and one log in its
@@ -65,6 +67,31 @@ func TestBuildLaunchRestoresDeletedLogFromBackup(t *testing.T) {
 	}
 	if !HadConversation(sid) {
 		t.Fatal("conversation marker lost")
+	}
+}
+
+// The launch reports a notice for a restore that happened — and only then: a resume of a log
+// that was never lost, and a second resume after the restore, say nothing.
+func TestBuildLaunchReportsRestoreNoticeOnce(t *testing.T) {
+	_, m, _, logPath := backupFixture(t, "restore-notice")
+	plain, err := launchOf(t, m)
+	if err != nil || len(plain.Notices) != 0 {
+		t.Fatalf("untouched log: notices %v, err %v; want none", plain.Notices, err)
+	}
+	mustBackup(t, m)
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := launchOf(t, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Notices) != 1 || restored.Notices[0] != agents.NoticeTranscriptRestored {
+		t.Fatalf("notices after a restore = %v, want [%s]", restored.Notices, agents.NoticeTranscriptRestored)
+	}
+	again, err := launchOf(t, m)
+	if err != nil || len(again.Notices) != 0 {
+		t.Fatalf("second resume: notices %v, err %v; want none", again.Notices, err)
 	}
 }
 
@@ -211,6 +238,34 @@ func TestStartFreshSetsAsideBackupAndRemoveClearsIt(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(slotDir + "*"); len(left) != 0 {
 		t.Fatalf("backup left after removal: %v", left)
+	}
+}
+
+// A fresh start replaces the conversation the restore notes talk about, so they go with it;
+// a StartFresh that finds the log in place changes nothing and keeps them.
+func TestStartFreshClearsRestoreNotesOnlyWhenItResets(t *testing.T) {
+	_, m, sid, logPath := backupFixture(t, "bk-fresh-notes")
+	mustBackup(t, m)
+	if err := os.Remove(logPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := launchOf(t, m); err != nil { // restores
+		t.Fatal(err)
+	}
+	if err := status.AddRestoreNote(sid); err != nil {
+		t.Fatal(err)
+	}
+	if started, err := StartFreshIfLost(sid); err != nil || started { // log is back: nothing to reset
+		t.Fatalf("StartFreshIfLost = %v, %v; want no reset", started, err)
+	}
+	if len(status.ReadRestoreNotes(sid)) != 1 {
+		t.Fatalf("a stale fresh request dropped the notes: %v", status.ReadRestoreNotes(sid))
+	}
+	if err := StartFresh(sid); err != nil {
+		t.Fatal(err)
+	}
+	if got := status.ReadRestoreNotes(sid); len(got) != 0 {
+		t.Fatalf("notes survived a fresh start: %v", got)
 	}
 }
 

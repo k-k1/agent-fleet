@@ -39,6 +39,10 @@ export interface Session {
   // dialog does not send it — the Agent reads a body without it as the user, so the Console
   // only ever writes this side of the pair (docs/log/89 §89.11).
   titleSetBy?: "user" | "parent" | string;
+  // Which session reviewed each plan FILE this planner wrote (the Agent's Meta.PlanReviewers),
+  // newest last. Only the reviewer's NAME is stored; the "Review again" shortcut labels it from
+  // the live list (features/mirror/reviewAgain.ts).
+  planReviewers?: { path: string; reviewer: string }[];
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
@@ -58,10 +62,15 @@ export interface Session {
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)
   backgroundBusy?: boolean; // idle by hook but a run_in_background task is still running
   backgroundBusyReason?: string;
+  // A Terminal session that can still "fork from here" (opencode 2 on af's shared serve). Absent =
+  // the Terminal route cannot; a managed session is judged by the kind alone (canBranchInSession).
+  forkAtTerminal?: boolean;
   // RFC3339: the Agent's newest sign that a working row is still moving (state file, state
   // source, pane repaint, live tool process). Read by the Control Plane's reaper, not drawn.
   progressAt?: string;
   stateSince?: string; // RFC3339, approximate: when a working row's current state began (admin forecast)
+  backgroundSince?: string; // RFC3339: when the current background-busy period began (admin forecast)
+  backgroundAgeSec?: number; // the same as an age on the Workspace's clock; what the reaper reads (#2338)
   progressAgeSec?: number; // the same instant as an age on the Workspace's clock; what the reaper reads
   // The reserved auto-resume instant (RFC3339), present only while state === "limited"
   // (waiting for a usage limit to reset). Empty = no resume is scheduled (auto-resume off,
@@ -97,6 +106,8 @@ export interface Session {
   // How far the create's initial prompt got (ADR 0100 decision 2). The studio pane offers a
   // resend on failed / unknown, and never while it is pending.
   initialPromptState?: "pending" | "delivered" | "failed" | "unknown";
+  // Why a failed initial prompt failed, when known: "auth_expired" = the Claude login has expired.
+  initialPromptReason?: string;
   // A move to another agent kind (ADR 0115 decision 11): `moving` names the target while the
   // move runs or waits for retry / cancel, `movedTo` once the target exists. Either closes the
   // session's input; only "resume here anyway" (POST …/move/reopen) clears movedTo.

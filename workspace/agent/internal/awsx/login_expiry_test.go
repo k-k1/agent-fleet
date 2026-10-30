@@ -105,6 +105,9 @@ func TestProfileStatesListAnExpiringLoginWithoutTokens(t *testing.T) {
 	if !p.Expiring || p.ExpiresAt != end.Format(time.RFC3339) || p.AccountID != "123456789012" || p.RoleName != "Dev" {
 		t.Fatalf("expiring login: %s", body)
 	}
+	if p.ExpiresInSec == nil || *p.ExpiresInSec > 600 || *p.ExpiresInSec < 540 {
+		t.Fatalf("expiresInSec = %v, want about ten minutes", p.ExpiresInSec)
+	}
 	if strings.Contains(body, "secret-") {
 		t.Fatalf("a token left the Agent: %s", body)
 	}

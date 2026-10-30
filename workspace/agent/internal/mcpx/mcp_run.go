@@ -128,7 +128,7 @@ func runCloudWatchMCP(extra []string) {
 		env = append(env, "AWS_REGION="+s.CloudWatch.Region, "AWS_DEFAULT_REGION="+s.CloudWatch.Region)
 	}
 	// SSM-linked profiles live in per-session isolated configs, not ~/.aws/config
-	// (session_ssm.go), so regenerate a durable ops config from the stored SSO
+	// (internal/agents/ssm/config.go), so regenerate a durable ops config from the stored SSO
 	// meta and point boto3 at it. Idempotent per spawn — survives clean-home.
 	if s.CloudWatch.StartURL != "" {
 		if err := WriteOpsAWSConfig("cloudwatch", s.CloudWatch.AWSProfileRef); err != nil {

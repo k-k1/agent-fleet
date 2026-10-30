@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
 )
 
 // Branch naming resolver (ADR 0103 decision 7). The Console and, later, the af MCP tool ask
@@ -38,13 +39,13 @@ func fetchBranchingModel(_ context.Context, ws, repo string) ([]byte, error) {
 	if err != nil {
 		return nil, branchrule.ErrNoConnection
 	}
-	endpoint := bitbucketAPIBase + "/2.0/repositories/" + url.PathEscape(ws) + "/" + url.PathEscape(repo) + "/branching-model"
+	endpoint := workitems.BitbucketAPIBase + "/2.0/repositories/" + url.PathEscape(ws) + "/" + url.PathEscape(repo) + "/branching-model"
 	var body []byte
 	get := func(a string) error {
 		b, status, err := gitx.BitbucketGetStatus(branchModelHTTPClient, a, endpoint)
 		switch {
 		case err != nil:
-			return fmt.Errorf("could not reach %s", bitbucketAPIBase)
+			return fmt.Errorf("could not reach %s", workitems.BitbucketAPIBase)
 		case status == http.StatusUnauthorized:
 			return gitx.ErrBitbucketUnauthorized
 		case status != http.StatusOK:

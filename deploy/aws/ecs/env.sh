@@ -235,6 +235,17 @@ af_stack_param() {
   echo "$v"
 }
 
+# af_stack_output_strict <stack> <key> — af_stack_output, except that a failed read (network,
+# permissions) returns 1 instead of "". Use it where "no such output" and "could not read" must
+# not be the same answer, e.g. a value whose absence switches something off.
+af_stack_output_strict() {
+  local v
+  v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$1" \
+    --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text 2>/dev/null)" || return 1
+  case "$v" in None) v="" ;; esac
+  echo "$v"
+}
+
 # af_stack_output <stack> <key>
 af_stack_output() {
   local v
@@ -242,6 +253,183 @@ af_stack_output() {
     --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text 2>/dev/null || true)"
   case "$v" in None) v="" ;; esac
   echo "$v"
+}
+
+# --- The egress gateway (00-network EgressRoute=gateway, ADR 0122) ---------------------------
+
+# af_gateway_state <network stack> — "on", "off" (GatewayEnabled=false: pause.sh scaled it to
+# zero), or nothing when the stack runs no gateway (nat-gateway, or older than EgressRoute).
+# A gateway stack older than GatewayEnabled has its gateway on.
+af_gateway_state() {
+  [ "$(af_stack_param "$1" EgressRoute)" = gateway ] || return 0
+  local v
+  v="$(af_stack_param "$1" GatewayEnabled)"
+  if [ "${v:-true}" = true ]; then echo on; else echo off; fi
+}
+
+# af_gateway_eni <network stack> — GatewayEni's id (empty when the stack has none).
+af_gateway_eni() {
+  local v
+  v="$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$1" \
+    --logical-resource-id GatewayEni --query 'StackResourceDetail.PhysicalResourceId' --output text 2>/dev/null || true)"
+  case "$v" in None) v="" ;; esac
+  echo "$v"
+}
+
+# af_gateway_instance <eni> — the instance GatewayEni is attached to (empty while it is not).
+# Fails when the interface cannot be read: "not attached" and "could not look" must differ.
+af_gateway_instance() {
+  local v
+  v="$("${AWS[@]}" ec2 describe-network-interfaces --network-interface-ids "$1" \
+    --query 'NetworkInterfaces[0].Attachment.[Status,InstanceId]' --output text 2>/dev/null)" || return 1
+  case "$v" in attached*i-*) echo "${v##*[[:space:]]}" ;; esac
+}
+
+# The scripts the gateway runs through SSM Run Command (AWS-RunShellScript), sent base64-encoded
+# so they need no JSON quoting. deploy/local/cfn-egress-gateway-test.py pins the names they share
+# with the user data and control-plane/internal/egressagent.
+#
+# Readiness. Ready means a policy Squid has APPLIED in the agent's current run: the mode file
+# carries the agent's "# mode: " header (the bootstrap file, which refuses everything, does not),
+# and the current invocation of the unit has logged a successful reload no older than the newer
+# of the two policy files: "policy applied" (a policy from the CP) or "reloaded Squid with the
+# policy on disk" (a run that started while the CP was down; when the CP then answers with the
+# same policy nothing changes and nothing more is logged). The header alone is only "written",
+# and a success logged before the files were last written may have been the bootstrap file's:
+# either way a failed or pending reload leaves Squid on the bootstrap policy. The journal stamps
+# a line when it receives it, after the reload and so after the files it read were written. A gateway paused part way (the drain below stopped
+# Squid and left its marker) gets Squid back; without the marker it is never started from here,
+# because during the boot it would run the package's default configuration.
+AF_GATEWAY_PROBE="$(cat <<'SH'
+if [ -e /run/af-egress-drained ]; then systemctl start squid && rm -f /run/af-egress-drained; fi
+systemctl is-active --quiet squid && systemctl is-active --quiet af-egress-agent || { echo af-gw-starting; exit 0; }
+inv=$(systemctl show -p InvocationID --value af-egress-agent)
+written=$(python3 -c 'import os, sys; print("%.6f" % max(os.stat(p).st_mtime for p in sys.argv[1:]))' \
+  /var/lib/af-egress-agent/af-mode.conf /var/lib/af-egress-agent/af-allow.txt 2>/dev/null)
+applied=$(journalctl -q -o short-unix _SYSTEMD_INVOCATION_ID="$inv" |
+  grep -E 'egress-agent: (policy applied|reloaded Squid with the policy on disk) \(' | tail -1 | cut -d' ' -f1)
+if grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf && [ -n "$written" ] && [ -n "$applied" ] &&
+   awk -v a="$applied" -v w="$written" 'BEGIN { exit !(a >= w) }'; then
+  echo af-gw-ready
+else
+  echo af-gw-up
+fi
+SH
+)"
+
+# Drain. Squid logs a tunnel when it closes, so it is stopped (closing every connection) once no
+# workspace runs; then every byte of its log and rotated logs must be under the offset the agent
+# committed after the CP accepted it (state.json, by the file's user.af-egress.gen xattr). Only
+# then may the scale-in destroy the disk. A Squid that did not stop is never drained: its log is
+# not final. Idempotent: it is asked again until it answers drained.
+AF_GATEWAY_DRAIN="$(cat <<'SH'
+touch /run/af-egress-drained || { echo 'af-gw-error: cannot write the drain marker'; exit 0; }
+systemctl stop squid || { echo 'af-gw-error: stopping Squid failed'; exit 0; }
+if systemctl is-active --quiet squid; then echo 'af-gw-error: Squid is still running'; exit 0; fi
+python3 - <<'PY'
+import glob, json, os
+log = '/var/log/squid/af-egress.log'
+try:
+    with open('/var/lib/af-egress-agent/state.json') as f:
+        offsets = json.load(f).get('offsets') or {}
+except (OSError, ValueError):
+    offsets = {}
+left = 0
+for p in glob.glob(log + '.*') + [log]:
+    try:
+        size = os.path.getsize(p)
+    except OSError:
+        continue
+    if size == 0:
+        continue
+    try:
+        gen = os.getxattr(p, 'user.af-egress.gen').decode()
+    except OSError:
+        gen = ''
+    left += max(size - offsets.get(gen, 0), 0)
+print('af-gw-drained' if left == 0 else 'af-gw-pending %d bytes not yet accepted by the CP' % left)
+PY
+SH
+)"
+
+# af_gateway_run <instance> <what> <script> — run a script on the gateway and print the af-gw-*
+# word it answered; nothing while the instance cannot answer (not registered with SSM yet).
+af_gateway_run() {
+  local cid out _ b64
+  b64="$(printf '%s\n' "$3" | base64 | tr -d '\n')"
+  cid="$("${AWS[@]}" ssm send-command --instance-ids "$1" --document-name AWS-RunShellScript \
+    --comment "agent-fleet egress gateway $2" \
+    --parameters "{\"commands\":[\"echo $b64 | base64 -d | bash\"]}" \
+    --query Command.CommandId --output text 2>/dev/null || true)"
+  case "$cid" in ""|None) return 0 ;; esac
+  for _ in $(seq 1 15); do
+    out="$("${AWS[@]}" ssm get-command-invocation --command-id "$cid" --instance-id "$1" \
+      --query '[Status,StandardOutputContent]' --output text 2>/dev/null || true)"
+    case "$out" in
+      Success*) printf '%s\n' "$out" | grep -o 'af-gw-[a-z]*' | head -1; return 0 ;;
+      ""|Pending*|InProgress*|Delayed*) sleep 2 ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+# af_gateway_drain <network stack> — before pause.sh scales the gateway in: wait until the CP has
+# accepted all of Squid's log (AF_GATEWAY_DRAIN_SEC, default 300; the agent backs off up to a
+# minute after a failed report). Fails, so the gateway and the CP stay up, when it cannot say so.
+# A gateway with no instance attached has no disk left to lose.
+af_gateway_drain() {
+  local eni iid out last deadline
+  eni="$(af_gateway_eni "$1")"
+  [ -n "$eni" ] || { echo "    egress gateway: $1 has no GatewayEni" >&2; return 1; }
+  deadline=$(( $(date +%s) + ${AF_GATEWAY_DRAIN_SEC:-300} ))
+  while :; do
+    if ! iid="$(af_gateway_instance "$eni")"; then
+      last="$eni could not be read (ec2:DescribeNetworkInterfaces)"
+    elif [ -z "$iid" ]; then
+      echo "    egress gateway: no instance has $eni attached: nothing to drain"
+      return 0
+    else
+      out="$(af_gateway_run "$iid" drain "$AF_GATEWAY_DRAIN")"
+      [ "$out" = af-gw-drained ] && return 0
+      last="$iid answers '${out:-nothing (SSM)}'"
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "    egress gateway: $last" >&2
+      return 1
+    fi
+    sleep "${AF_GATEWAY_POLL_SEC:-15}"
+  done
+}
+
+# af_gateway_wait <network stack> <up|ready> — wait for the egress gateway. up: an instance has
+# attached GatewayEni and Squid and the agent run. ready: the agent has also applied a first
+# policy; Squid refuses everything until then, and the policy comes from the CP, so `ready` can
+# only be reached once the CP is up. Bounded by AF_GATEWAY_WAIT_SEC (a boot installs packages
+# and pulls the CP image); on timeout it says what it saw last and fails.
+af_gateway_wait() {
+  local net="$1" want="$2" eni iid out last deadline
+  eni="$(af_gateway_eni "$net")"
+  [ -n "$eni" ] || { echo "    egress gateway: $net has no GatewayEni" >&2; return 1; }
+  deadline=$(( $(date +%s) + ${AF_GATEWAY_WAIT_SEC:-1200} ))
+  while :; do
+    if ! iid="$(af_gateway_instance "$eni")"; then
+      iid=""; last="$eni could not be read (ec2:DescribeNetworkInterfaces)"
+    elif [ -z "$iid" ]; then
+      last="$eni is not attached to an instance"
+    else
+      out="$(af_gateway_run "$iid" readiness "$AF_GATEWAY_PROBE")"
+      case "$out" in
+        af-gw-ready) return 0 ;;
+        af-gw-up) [ "$want" != up ] || return 0 ;;
+      esac
+      last="$iid answers '${out:-nothing (SSM)}'"
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "    egress gateway: $last" >&2
+      return 1
+    fi
+    sleep "${AF_GATEWAY_POLL_SEC:-20}"
+  done
 }
 
 # --- Does the restore point (the captured AF_IMAGE_TAG) actually exist? -------------
@@ -489,6 +677,238 @@ af_cfn_deploy() {
   fi
   "${AWS[@]}" cloudformation deploy --stack-name "$stack" \
     --template-file "$tpl" ${extra[@]+"${extra[@]}"} "$@"
+}
+
+# af_cfn_cs_drop <stack> <change set> — delete a change set this script built. Fails loudly: a
+# change set left behind is the thing a later run or an operator could execute by mistake.
+af_cfn_cs_drop() {
+  "${AWS[@]}" cloudformation delete-change-set --stack-name "$1" --change-set-name "$2" >/dev/null || {
+    echo "WARNING: change set $2 on $1 could not be deleted; delete it by hand:" >&2
+    echo "         aws cloudformation delete-change-set --stack-name $1 --change-set-name $2" >&2
+    return 1; }
+}
+
+# af_cfn_params_tsv — stdin: `--output json` of a Parameter list (a stack's or a change set's);
+# stdout: key, UsePreviousValue, ParameterValue, ResolvedValue per line, tab-separated, each
+# as its JSON text ("abc", "", null, true) or `-` when the field is absent. JSON text keeps
+# null, "" and the string "None" apart, and no field is ever empty, so `read` cannot swallow one.
+af_cfn_params_tsv() {
+  awk '
+    function val(s) { sub(/^ *"[A-Za-z]+": /, "", s); sub(/,$/, "", s); return s }
+    /^ *\{ *$/ { k = "-"; u = "-"; p = "-"; r = "-"; next }
+    /^ *"ParameterKey": /      { k = val($0); next }
+    /^ *"UsePreviousValue": /  { u = val($0); next }
+    /^ *"ParameterValue": /    { p = val($0); next }
+    /^ *"ResolvedValue": /     { r = val($0); next }
+    /^ *\},? *$/ { if (k != "-") printf "%s\t%s\t%s\t%s\n", k, u, p, r }
+  '
+}
+
+# af_cfn_shown <key> <value> — what may be printed of a parameter's value: parameters whose
+# names look like credentials are not NoEcho in every template, and diagnostics land in the
+# terminal and session logs. The key and the reason for a refusal stay visible.
+af_cfn_shown() {
+  case "$1" in *Secret*|*Password*|*Token*|*OauthKey*|*PrivateKey*) echo '***' ;; *) echo "$2" ;; esac
+}
+
+# af_cfn_cs_show <stack> <change set> <key>... — print what a clearing change set does (the
+# resource changes and the parameter diff against the live stack), and fail unless the keys it
+# clears are exactly <key>... and every other parameter is provably unchanged. Fails closed:
+#  - a value shown as **** (NoEcho) is never compared, since two masks are equal whatever is
+#    behind them; such a parameter passes only as UsePreviousValue=true;
+#  - UsePreviousValue keeps an SSM-typed parameter's key, not what it resolves to, so
+#    ResolvedValue must be the same on both sides (and present on both, if on either);
+#  - a read that fails is a failure, never "nothing to show".
+af_cfn_cs_show() {
+  local stack="$1" name="$2"; shift 2
+  local changes live cs k lk lv lr ck cu cv cr found cleared=() bad=() same=0 want act lid repl
+  changes="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+    --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output text)" || {
+    echo "ERROR: could not read the changes of $name on $stack." >&2; return 1; }
+  while IFS=$'\t' read -r act lid repl; do
+    if [ -n "$act" ] && [ "$act" != None ]; then echo "    · $act $lid (replacement: ${repl:-None})"; fi
+  done <<<"$changes"
+  live="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+    --query 'Stacks[0].Parameters' --output json)" || {
+    echo "ERROR: could not read the parameters of $stack." >&2; return 1; }
+  live="$(af_cfn_params_tsv <<<"$live")"
+  cs="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+    --query 'Parameters' --output json)" || {
+    echo "ERROR: could not read the parameters of $name on $stack." >&2; return 1; }
+  cs="$(af_cfn_params_tsv <<<"$cs")"
+  [ -n "$live" ] || { echo "ERROR: $stack reported no parameters." >&2; return 1; }
+  while IFS=$'\t' read -r lk _ lv lr; do
+    k="${lk#\"}"; k="${k%\"}"
+    found=0; cu=""; cv=""; cr=""
+    while IFS=$'\t' read -r ck cu cv cr; do
+      if [ "$ck" = "$lk" ]; then found=1; break; fi
+    done <<<"$cs"
+    if [ "$found" = 0 ]; then
+      # Left out of the change set: the template's Default applies, which is the clear.
+      case "$lv" in '""'|-|null) bad+=("$k (left out although it is already empty)") ;; *) cleared+=("$k") ;; esac
+    elif [ "$cu" = true ]; then
+      if [ "$lr" != "$cr" ]; then bad+=("$k (resolves to $(af_cfn_shown "$k" "$lr"), would resolve to $(af_cfn_shown "$k" "$cr"))")
+      else same=$((same + 1)); fi
+    elif [ "$lv" = '"****"' ] || [ "$cv" = '"****"' ]; then
+      bad+=("$k (a masked value, which cannot be compared, and the change set does not say UsePreviousValue)")
+    elif [ "$cv" = "$lv" ] && [ "$lr" = "$cr" ]; then
+      same=$((same + 1))
+    elif [ "$cv" = '""' ] && [ "$lv" != '""' ] && [ "$lv" != null ] && [ "$lv" != - ]; then
+      cleared+=("$k")
+    else
+      bad+=("$k ($(af_cfn_shown "$k" "$lv") -> $(af_cfn_shown "$k" "$cv"))")
+    fi
+  done <<<"$live"
+  while IFS=$'\t' read -r ck cu cv cr; do
+    [ -n "$ck" ] || continue
+    printf '%s\n' "$live" | cut -f1 | grep -qxF -- "$ck" || bad+=("$ck (not a parameter of $stack)")
+  done <<<"$cs"
+  for k in ${cleared[@]+"${cleared[@]}"}; do
+    lv="$(printf '%s\n' "$live" | awk -F'\t' -v k="\"$k\"" '$1==k{print $3; exit}')"
+    lv="${lv#\"}"; lv="${lv%\"}"
+    echo "    · parameter $k: '$(af_cfn_shown "$k" "$lv")' -> (empty)"
+  done
+  echo "    · parameters: $same others unchanged (UsePreviousValue)"
+  want=" $* "
+  for k in ${cleared[@]+"${cleared[@]}"}; do
+    case "$want" in *" $k "*) want="${want/ $k / }" ;; *) bad+=("$k (cleared, but not asked for)") ;; esac
+  done
+  for k in $want; do bad+=("$k (asked for, but not cleared by it)"); done
+  if [ ${#bad[@]} -gt 0 ]; then
+    for k in "${bad[@]}"; do echo "ERROR: $name: unexpected parameter change: $k" >&2; done
+    return 1
+  fi
+}
+
+# af_cfn_clear_params <stack> <capability> <key>... — make each <key> empty on a live stack and
+# leave every other parameter and the template as they are.
+#
+# In the #2763 rehearsal, `cloudformation deploy --parameter-overrides Key=` did not clear Key on
+# a live stack (it reported "No changes"). Why is not known: aws-cli 2.36 does send the override
+# as ParameterValue="", the same request create-change-set would make. So the value is not set
+# here at all: the key is left out of a change set on the stack's own template, which gives it
+# that template's Default, every other parameter is UsePreviousValue, and each key is read back.
+# The live template's Default must exist and be exactly "" (GetTemplateSummary), checked before
+# anything changes; a local template file may differ from what the stack runs. Call it after the
+# stack's deploy; a key that is already empty costs one read and nothing else. Every read that
+# fails is a failure, never "empty".
+#
+# AF_CLEAR_MODE picks what happens to the change set once it is built and shown (unset = execute,
+# which is what update.sh and standup.sh rely on; AF_DRY=1 still builds nothing):
+#   execute  run it, then read every key back
+#   keep     leave it for the operator (name in AF_CLEAR_CS_KEPT), change nothing
+#   discard  delete it, change nothing
+#   run      do not build: execute the change set named by AF_CLEAR_CS, but only if it is
+#            CREATE_COMPLETE/AVAILABLE and clears exactly these keys
+# Whatever the mode, a change set that did not build, is not exactly the clear, or could not be
+# started is deleted (one that is gone, unreadable or already running is left alone).
+af_cfn_clear_params() {
+  local stack="$1" cap="$2"; shift 2
+  local k v d todo=() keys json="" sep="" name mode st cstat cexec
+  AF_CLEAR_TODO=(); AF_CLEAR_CS_KEPT=""
+  for k in "$@"; do
+    v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
+      echo "ERROR: could not read $k of $stack, so it cannot be cleared. Re-run." >&2; return 1; }
+    case "$v" in ""|None) continue ;; esac
+    # JSON keeps an absent Default (null) apart from an empty one (""); compared as printed, so a
+    # Default of blanks (" ") is refused too.
+    d="$("${AWS[@]}" cloudformation get-template-summary --stack-name "$stack" \
+      --query "Parameters[?ParameterKey=='$k'] | [0].DefaultValue" --output json)" || {
+      echo "ERROR: could not read the template $stack runs, so $k cannot be cleared. Re-run." >&2; return 1; }
+    if [ "$d" != '""' ]; then
+      echo "ERROR: in the template $stack runs, $k's Default is $d, not \"\"; leaving it out would not clear it." >&2
+      return 1
+    fi
+    todo+=("$k")
+  done
+  [ ${#todo[@]} -gt 0 ] || return 0
+  if [ "${AF_DRY:-0}" = 1 ]; then
+    echo "DRY: clear ${todo[*]} on $stack (create-change-set --use-previous-template without them, the rest UsePreviousValue)"
+    return 0
+  fi
+  # shellcheck disable=SC2034  # read by clear-params.sh, which sources this file
+  AF_CLEAR_TODO=("${todo[@]}")
+  mode="${AF_CLEAR_MODE:-execute}"
+  case "$mode" in
+    execute|keep|discard) ;;
+    run)
+      name="${AF_CLEAR_CS:-}"
+      case "$name" in af-clear-?*) ;; *)
+        echo "ERROR: '$name' is not a change set this script built (af-clear-<time>)." >&2; return 1 ;;
+      esac
+      st="$("${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+        --query '[Status,ExecutionStatus]' --output text)" || {
+        echo "ERROR: change set $name of $stack could not be read (it does not exist, or the read failed); nothing was executed." >&2
+        return 1; }
+      IFS=$'\t' read -r cstat cexec <<<"$st" || true
+      if [ "${cstat:-}" != CREATE_COMPLETE ] || [ "${cexec:-}" != AVAILABLE ]; then
+        echo "ERROR: change set $name of $stack is ${cstat:-?}/${cexec:-?}, not CREATE_COMPLETE/AVAILABLE; nothing was executed." >&2
+        # Not one that has started to run: that one is not ours to delete.
+        case "${cexec:-}" in EXECUTE_*|"") ;; *) af_cfn_cs_drop "$stack" "$name" >&2 || true ;; esac
+        return 1
+      fi
+      echo "==> $stack: executing change set $name (clearing ${todo[*]})"
+      af_cfn_cs_show "$stack" "$name" "${todo[@]}" || {
+        echo "ERROR: change set $name was not built for exactly ${todo[*]}; nothing was executed." >&2
+        af_cfn_cs_drop "$stack" "$name" >&2 || true
+        return 1; }
+      ;;
+    *) echo "ERROR: AF_CLEAR_MODE '$mode' is not execute, keep, discard or run." >&2; return 1 ;;
+  esac
+  if [ "$mode" != run ]; then
+    keys="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query 'Stacks[0].Parameters[].ParameterKey' --output text)" || return 1
+    for k in $keys; do
+      case " ${todo[*]} " in *" $k "*) continue ;; esac
+      json="$json$sep{\"ParameterKey\":\"$k\",\"UsePreviousValue\":true}"; sep=","
+    done
+    name="af-clear-$(date +%s)"
+    echo "==> $stack: clearing ${todo[*]} (a change set on the current template; nothing else moves)"
+    "${AWS[@]}" cloudformation create-change-set --stack-name "$stack" --change-set-name "$name" \
+      --change-set-type UPDATE --use-previous-template --capabilities "$cap" \
+      --parameters "[$json]" >/dev/null || return 1
+    if ! "${AWS[@]}" cloudformation wait change-set-create-complete --stack-name "$stack" --change-set-name "$name"; then
+      # A change set that did not build (FAILED, e.g. "didn't contain changes") is not left behind.
+      echo "ERROR: the change set $name on $stack did not build:" >&2
+      "${AWS[@]}" cloudformation describe-change-set --stack-name "$stack" --change-set-name "$name" \
+        --query StatusReason --output text >&2 || true
+      af_cfn_cs_drop "$stack" "$name" >&2 || true
+      return 1
+    fi
+    # Nothing is executed or kept that the operator was not shown, or that is not exactly the clear.
+    af_cfn_cs_show "$stack" "$name" "${todo[@]}" || {
+      echo "ERROR: the change set $name on $stack is not exactly the clear of ${todo[*]}; nothing was executed." >&2
+      af_cfn_cs_drop "$stack" "$name" >&2 || true
+      return 1; }
+    case "$mode" in
+      discard)
+        af_cfn_cs_drop "$stack" "$name" || return 1
+        echo "    · dry run: change set $name deleted; nothing changed on $stack"
+        return 0 ;;
+      keep)
+        # shellcheck disable=SC2034  # read by clear-params.sh
+        AF_CLEAR_CS_KEPT="$name"
+        echo "    · change set $name kept; $stack is unchanged"
+        return 0 ;;
+    esac
+  fi
+  # A refused start leaves the change set unexecuted; once it has started, it is no longer ours to delete.
+  "${AWS[@]}" cloudformation execute-change-set --stack-name "$stack" --change-set-name "$name" >/dev/null || {
+    af_cfn_cs_drop "$stack" "$name" >&2 || true
+    return 1; }
+  "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$stack" || return 1
+  for k in "${todo[@]}"; do
+    v="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$stack" \
+      --query "Stacks[0].Parameters[?ParameterKey=='$k'].ParameterValue" --output text)" || {
+      echo "ERROR: the change set $name ran, but $k of $stack could not be read back. Check it by hand." >&2
+      return 1; }
+    case "$v" in ""|None) ;; *)
+      echo "ERROR: $k of $stack is still '$v' after the change set $name." >&2
+      return 1 ;;
+    esac
+  done
+  echo "    · $stack: ${todo[*]} now empty"
 }
 
 # af_params_file <slug> — file of captured Key=Value lines (one parameter per line).

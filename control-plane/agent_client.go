@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -50,6 +51,49 @@ var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTr
 // cannot be read in a few seconds is simply "not measurable this tick".
 var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
 
+// agentStatsMaxBytes bounds the stats body the CP will read.
+const agentStatsMaxBytes = 64 << 10
+
+// Bounds on the boot-install failures taken from an Agent. The Agent writes a closed set, but
+// the status file is the member's own and the CP persists and serves what it is given, so the
+// CP accepts only a short CLI-name-shaped key, one of the four reasons, and a handful of entries.
+const bootFailedMaxTools = 16
+
+// skipped_no_space is not a failure: the upgrade was skipped for lack of space and the installed
+// copy still runs (the Console shows it as such and does not flag the member).
+var bootFailedReasons = map[string]bool{"skipped_no_space": true, "no_space": true, "network": true, "checksum": true, "other": true}
+
+func validBootTool(s string) bool {
+	if s == "" || len(s) > 32 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizeBootFailed keeps the valid entries of in (an unknown reason reads as "other") and
+// never returns nil.
+func sanitizeBootFailed(in map[string]string) map[string]string {
+	out := map[string]string{}
+	for tool, reason := range in {
+		if len(out) >= bootFailedMaxTools {
+			break
+		}
+		if !validBootTool(tool) {
+			continue
+		}
+		if !bootFailedReasons[reason] {
+			reason = "other"
+		}
+		out[tool] = reason
+	}
+	return out
+}
+
 // agentStats asks the Agent for the workspace's own resource gauges — the only
 // source that works on a runtime the CP cannot see into (every ECS profile: no
 // docker binary, no cgroup for that workspace on the CP's host). The Agent reads
@@ -78,6 +122,8 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		// CP newer than the image it launched must degrade, not lie.
 		return nil, fmt.Errorf("agent /workspace/stats: %s", resp.Status)
 	}
+	// A stats body is a few hundred bytes. The cap keeps a misbehaving Agent from making the CP
+	// buffer an arbitrary response for a poll it runs on every member.
 	var body struct {
 		MemUsed      *uint64  `json:"mem_used"`
 		MemMax       *uint64  `json:"mem_max"`
@@ -85,8 +131,11 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 		OOMKillTotal *uint64  `json:"oom_kill_total"`
 		DiskUsed     *uint64  `json:"disk_used"`
 		DiskTotal    *uint64  `json:"disk_total"`
+		// Only failures, tool to reason; absent when none or unknown (Agent boot_install_status.go).
+		BootInstallFailed map[string]string `json:"boot_install_failed"`
+		MemPressure       *memPressure      `json:"mem_pressure"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, agentStatsMaxBytes)).Decode(&body); err != nil {
 		return nil, err
 	}
 	out := map[string]any{}
@@ -111,7 +160,37 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	if body.DiskTotal != nil {
 		out["disk_total"] = *body.DiskTotal
 	}
+	// An Agent from before the sampler sends none; one that cannot measure sends available=false.
+	// Either way the Console is told only what the Agent said, never a filled-in zero.
+	if body.MemPressure != nil {
+		out["mem_pressure"] = body.MemPressure
+	}
+	// Always present once the Agent has answered, possibly empty: "answered and nothing failed"
+	// must be told apart from "not asked", or a stored failure would outlive a clean start.
+	out["boot_install_failed"] = sanitizeBootFailed(body.BootInstallFailed)
 	return out, nil
+}
+
+// memPressure is the Agent's `mem_pressure` axis (ADR 0120 phase 0), passed through to the
+// Console. The json tags must stay identical to the Agent's mempressure.Wire; a drifted tag
+// arrives as an absent figure, which the Console shows as "-" and not as a wrong number.
+// Pointers and omitempty because an unreadable signal is absent, never zero.
+type memPressure struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+
+	SomeAvg10 *float64 `json:"some_avg10,omitempty"`
+	SomeAvg60 *float64 `json:"some_avg60,omitempty"`
+	FullAvg10 *float64 `json:"full_avg10,omitempty"`
+	FullAvg60 *float64 `json:"full_avg60,omitempty"`
+
+	WorkingSet  *uint64  `json:"working_set,omitempty"`
+	RefaultRate *float64 `json:"refault_rate,omitempty"`
+
+	AgentLatencyMs   *float64 `json:"agent_latency_ms,omitempty"`
+	AgentProbeFailed bool     `json:"agent_probe_failed,omitempty"`
+
+	SampledAtMs int64 `json:"sampled_at_ms,omitempty"`
 }
 
 // machineMeasured is what the workspace itself could establish about the machine it is
@@ -240,12 +319,12 @@ func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.I
 
 // holdsWorkspace reports whether anything in this read keeps the workspace from being
 // idle-stopped: session-less work, or a session that holdsWorkspace says must not be stopped.
-func (e agentSessionsEnvelope) holdsWorkspace() bool {
+func (e agentSessionsEnvelope) holdsWorkspace(bgMax time.Duration) bool {
 	if e.jobsRunning() {
 		return true
 	}
 	for _, s := range e.Sessions {
-		if holdsWorkspace(s) {
+		if holdsWorkspace(s, bgMax) {
 			return true
 		}
 	}

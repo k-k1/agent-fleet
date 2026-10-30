@@ -120,8 +120,14 @@ func TestProgressTrusted(t *testing.T) {
 		{session.Meta{Kind: session.KindCopilot}, true},
 		{session.Meta{Kind: session.KindKiro}, true},
 		{session.Meta{Kind: session.KindOpencode}, true},
-		{session.Meta{Kind: session.KindCodex, Driver: session.DriverManaged}, false},
-		{session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}, false},
+		// Managed: only the kinds whose driver signal was measured (progress_managed.go).
+		{session.Meta{Kind: session.KindCodex, Driver: session.DriverManaged}, true},
+		{session.Meta{Kind: session.KindOpencode, Driver: session.DriverManaged}, true},
+		{session.Meta{Kind: session.KindCursor, Driver: session.DriverManaged}, true},
+		{session.Meta{Kind: session.KindKiro, Driver: session.DriverManaged}, true},
+		{session.Meta{Kind: session.KindMuse, Driver: session.DriverManaged}, false},
+		{session.Meta{Kind: session.KindLcpp, Driver: session.DriverManaged}, false},
+		{session.Meta{Kind: session.KindCopilot, Driver: session.DriverManaged}, false},
 		// No measured signal: keep holding.
 		{session.Meta{Kind: session.KindMuse}, false},
 		{session.Meta{Kind: session.KindLcpp}, false},

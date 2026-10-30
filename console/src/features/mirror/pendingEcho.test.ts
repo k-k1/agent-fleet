@@ -120,6 +120,17 @@ describe("echoLanded", () => {
     ).toBe(false);
   });
 
+  // claude logs a mistyped slash command only as a CLI warning (errors.go cliWarning). It settles
+  // that command's echo, but not a plain prompt sent in the same window, which is still coming.
+  it("resolves a slash-command echo against a CLI warning, and only that", () => {
+    const warning = [
+      { role: "assistant", idx: 11, parts: [{ kind: "error", cause: "cli_warning" }] },
+      { role: "assistant", idx: 12, parts: [{ kind: "error", cause: "cli_warning" }] },
+    ];
+    expect(echoLanded({ text: "/issue_to_pr 通しで2827", sinceIdx: 10 }, warning, notNoise)).toBe(true);
+    expect(echoLanded({ text: "続けて", sinceIdx: 10 }, warning, notNoise)).toBe(false);
+  });
+
   it("does not resolve against an assistant turn whose parts are not errors", () => {
     expect(
       echoLanded({ text: "続けて", sinceIdx: 10 }, [{ role: "assistant", idx: 11, parts: [{ kind: "text" }] }], notNoise),

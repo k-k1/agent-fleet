@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -40,7 +40,7 @@ const (
 )
 
 // workItemProviders is the set a saved query may name. The Agent holds the adapters
-// (workspace/agent/workitems*.go); this is only the gate that stops a query being stored
+// (workspace/agent/internal/workitems); this is only the gate that stops a query being stored
 // which nothing could ever resolve.
 var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket": true}
 
@@ -50,6 +50,21 @@ var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket
 // separate workItemsAPI values but share the same memberships.
 var workItemFetchInFlight sync.Map // membershipID -> struct{}
 
+// resetWorkItemCommentCapability withdraws every cached row's posting capability for a membership
+// whose Bitbucket connection just changed or went away, and starts a new generation so a fetch that
+// began under the old connection cannot write its flags back (ReplaceWorkItemsAt). The generation
+// lives in the database, so it holds across Control Plane processes. The rows stay (the rail keeps
+// listing them); the next successful fetch under the new connection says what it may post.
+//
+// Not tied to the request: a client that hangs up must not leave the old capability in place.
+func resetWorkItemCommentCapability(ctx context.Context, st store.WorkItemStore, mid string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := st.BumpWorkItemCommentGen(ctx, mid); err != nil {
+		log.Printf("work items: withdrawing the comment capability of membership %s failed: %v", mid, err)
+	}
+}
+
 type workItemsAPI struct {
 	memberAuth
 	store store.WorkItemStore
@@ -58,7 +73,7 @@ type workItemsAPI struct {
 func newWorkItemsAPI(m *manager) workItemsAPI { return workItemsAPI{memberAuth{m}, m.store} }
 
 // workItemDTO is the wire shape of one cached row. Note what is absent: body, comments,
-// attachments. Those are read inside the session with `gh` / the Jira MCP.
+// attachments. Those are read inside the session with `gh` / the `jira` CLI.
 type workItemDTO struct {
 	ID       string   `json:"id"`
 	QueryID  string   `json:"queryId"`
@@ -75,6 +90,9 @@ type workItemDTO struct {
 	LabelColors map[string]string `json:"labelColors"`
 	Repo        string            `json:"repo"`
 	UpdatedAt   string            `json:"updatedAt"`
+	// Comments is the comment count from the provider's list response (GitHub, Bitbucket); null when
+	// the provider does not say (Jira) or the Agent predates the field. Never 0 for "unknown".
+	CommentCount *int `json:"commentCount"`
 	// Checks and Mergeable are a pull request's CI and merge-conflict status (#1113). A row the
 	// Agent did not read them for (an issue, a closed PR, Jira, Bitbucket, an older Agent) carries
 	// the zero values: an empty checks state and "".
@@ -83,6 +101,10 @@ type workItemDTO struct {
 	// Type is the tracker's issue type, which the branch-name resolver maps to a kind (ADR 0103
 	// decision 4). "" for a tracker without types, a pull request, or an older Agent.
 	Type string `json:"type"`
+	// CanComment is the Agent's word that the connection may post the report-back comment. Only
+	// Bitbucket rows depend on it; false for an older Agent or a scope never recorded, and the
+	// Console keeps such a row read-only.
+	CanComment bool `json:"canComment"`
 }
 
 // workItemChecksDTO is the head commit's checks folded into counts. State is "success" /
@@ -120,12 +142,27 @@ type workItemSessionDTO struct {
 	CreatedAt   string `json:"createdAt"`
 }
 
+// store.WorkItem.Comments is -1 when the count is unknown; the wire carries null.
+func commentCountOut(n int) *int {
+	if n < 0 {
+		return nil
+	}
+	return &n
+}
+
+func commentCountIn(p *int) int {
+	if p == nil || *p < 0 {
+		return -1
+	}
+	return *p
+}
+
 func workItemToDTO(w store.WorkItem) workItemDTO {
 	return workItemDTO{ID: w.ID, QueryID: w.QueryID, Provider: w.Provider, Kind: w.Kind,
 		Key: w.Key, Title: w.Title, State: w.State, URL: w.URL, Assignee: w.Assignee,
 		Labels: splitLabels(w.Labels), LabelColors: decodeLabelColors(w.LabelColors),
-		Repo: w.Repo, UpdatedAt: w.UpdatedAt,
-		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable, Type: w.ItemType}
+		Repo: w.Repo, UpdatedAt: w.UpdatedAt, CommentCount: commentCountOut(w.Comments),
+		Checks: decodeWorkItemChecks(w.Checks), Mergeable: w.Mergeable, Type: w.ItemType, CanComment: w.CanComment}
 }
 
 func workItemQueryToDTO(q store.WorkItemQuery) workItemQueryDTO {
@@ -347,6 +384,7 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	if len(due) == 0 {
 		return
 	}
+	gen, gerr := a.store.WorkItemCommentGen(ctx, mid)
 	rows, errs, truncs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
 	now := store.NowTS()
 	if err != nil {
@@ -365,6 +403,9 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 			// Keep a failed query's cached rows. Dropping them empties the rail on a
 			// single 401.
 			_ = a.store.MarkWorkItemQueryFetched(ctx, q.ID, now, msg)
+			// The kept rows no longer say what the current connection may post: a failed read can
+			// mean the connection changed or lost access.
+			_ = a.store.ClearWorkItemCanComment(ctx, mid, []string{q.ID})
 			continue
 		}
 		ok = append(ok, q.ID)
@@ -379,7 +420,15 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 		_ = a.store.SetWorkItemQueryMatchTotal(ctx, q.ID, truncs[q.ID])
 	}
 	if len(ok) > 0 {
-		_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
+		if gerr != nil {
+			// Without the generation there is no telling whether the connection changed.
+			for i := range items {
+				items[i].CanComment = false
+			}
+			_ = a.store.ReplaceWorkItems(ctx, mid, ok, items)
+			return
+		}
+		_ = a.store.ReplaceWorkItemsAt(ctx, mid, ok, items, gen)
 	}
 }
 
@@ -397,21 +446,23 @@ type agentWorkItemQuery struct {
 
 type agentWorkItemsResp struct {
 	Items []struct {
-		QueryID     string            `json:"queryId"`
-		Provider    string            `json:"provider"`
-		Kind        string            `json:"kind"`
-		Key         string            `json:"key"`
-		Title       string            `json:"title"`
-		State       string            `json:"state"`
-		URL         string            `json:"url"`
-		Assignee    string            `json:"assignee"`
-		Labels      []string          `json:"labels"`
-		LabelColors map[string]string `json:"labelColors"`
-		Repo        string            `json:"repo"`
-		UpdatedAt   string            `json:"updatedAt"`
-		Checks      workItemChecksDTO `json:"checks"`
-		Mergeable   string            `json:"mergeable"`
-		Type        string            `json:"type"`
+		QueryID      string            `json:"queryId"`
+		Provider     string            `json:"provider"`
+		Kind         string            `json:"kind"`
+		Key          string            `json:"key"`
+		Title        string            `json:"title"`
+		State        string            `json:"state"`
+		URL          string            `json:"url"`
+		Assignee     string            `json:"assignee"`
+		Labels       []string          `json:"labels"`
+		LabelColors  map[string]string `json:"labelColors"`
+		Repo         string            `json:"repo"`
+		UpdatedAt    string            `json:"updatedAt"`
+		CommentCount *int              `json:"commentCount"`
+		Checks       workItemChecksDTO `json:"checks"`
+		Mergeable    string            `json:"mergeable"`
+		Type         string            `json:"type"`
+		CanComment   bool              `json:"canComment"`
 	} `json:"items"`
 	Errors []struct {
 		QueryID string `json:"queryId"`
@@ -466,8 +517,8 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 			Provider: it.Provider, Kind: it.Kind, Key: it.Key, Title: it.Title,
 			State: it.State, URL: it.URL, Assignee: it.Assignee,
 			Labels: strings.Join(it.Labels, ","), LabelColors: encodeLabelColors(it.LabelColors),
-			Repo: it.Repo, UpdatedAt: it.UpdatedAt,
-			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable, ItemType: it.Type,
+			Repo: it.Repo, UpdatedAt: it.UpdatedAt, Comments: commentCountIn(it.CommentCount),
+			Checks: encodeWorkItemChecks(it.Checks), Mergeable: it.Mergeable, ItemType: it.Type, CanComment: it.CanComment,
 		})
 	}
 	errs := map[string]string{}
@@ -493,6 +544,10 @@ func (e *httpStatusError) Error() string { return e.msg }
 
 // --- comment back to the ticket ----------------------------------------------
 
+// workItemCommentMaxIn bounds the raw request the Console sends. The Agent accepts twice the
+// worst-case escaped growth of this (6 bytes per byte), so a body read here always fits there.
+const workItemCommentMaxIn = 256 << 10
+
 // comment relays a human-approved draft to the Agent, which holds the tokens.
 //
 // Requires a running Workspace and does NOT start one. Everywhere else in this file
@@ -500,12 +555,22 @@ func (e *httpStatusError) Error() string { return e.msg }
 // honest — posting is a write against someone else's tracker, so it happens when the
 // user is present and their workspace is up, not as a side effect of pressing a button
 // on a stopped one.
+//
+// Held to the merge route's standard (ADR 0061, ADR 0113): the request must be the Console's own
+// JSON request (the session cookie is SameSite=Lax, so a same-site page could otherwise send a
+// text/plain no-cors POST), and the Agent is told it is a member's press by a member-origin mark
+// signed over the exact body, because every session holds AGENT_TOKEN.
 func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if aerr := memberOriginRequestCheck(r); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	var in struct {
 		Provider string `json:"provider"`
 		Key      string `json:"key"`
 		Body     string `json:"body"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, workItemCommentMaxIn)
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
@@ -514,19 +579,40 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and body are required"})
 		return
 	}
+	// The mark speaks for the workspace's own member.
+	if res.ws.MembershipID == "" || res.ws.MembershipID != res.mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "only the workspace's own member can post from it"})
+		return
+	}
 	ctx := r.Context()
 	if res.rt.State(ctx) != "running" {
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
 			"start the workspace to post the comment (the tracker credentials live in it)"})
 		return
 	}
-	payload, _ := json.Marshal(in)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/work-items/comment", bytes.NewReader(payload))
+	// What is signed is what is sent: the normalised body, not the browser's bytes.
+	// HTML escaping is off: it would turn every "<" into six bytes and push a body the provider
+	// accepts past the Agent's cap.
+	var pb bytes.Buffer
+	enc := json.NewEncoder(&pb)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(in)
+	payload := bytes.TrimRight(pb.Bytes(), "\n")
+	const agentPath = "/work-items/comment"
+	mark, aerr := a.mgr.memberOriginSign(res, http.MethodPost, agentPath, "", payload, time.Now())
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+agentPath, bytes.NewReader(payload))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if mark != "" {
+		req.Header.Set(memberOriginHeader, mark)
+	}
 	if tok := res.rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
@@ -540,6 +626,13 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 	// refusal is the most informative thing here; rephrasing it in the CP erases whether
 	// the problem was permission or a missing issue.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// A comment is a write against someone else's tracker: record who pressed Post, where, and how
+	// it came out. The detail names the provider only: no token, no comment text.
+	if a.mgr != nil && a.mgr.store != nil {
+		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID,
+			ActorKind: "user", ActorID: res.ident.ID, Action: "work_item.comment", Target: in.Key,
+			Detail: "provider=" + in.Provider, HTTPStatus: resp.StatusCode, At: store.NowTS()})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
@@ -609,6 +702,112 @@ func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolv
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+// merge relays "merge this GitHub pull request" to the Agent (ADR 0061, 2026-10-25 note on #2632).
+//
+// The second human-gated write, and it is held to a stricter standard than the report comment:
+//   - It must be the Console's own JSON request. The session cookie is SameSite=Lax, so a page on
+//     a same-site host (a preview app) can send a text/plain no-cors POST with it; the check below
+//     runs before anything is read or signed (memberOriginRequestCheck, ADR 0113).
+//   - The Agent is told it is a member's press, not a session's: every session holds AGENT_TOKEN,
+//     so the Agent accepts this route only with a member-origin mark, signed here over the exact
+//     body, for the workspace's own member.
+//   - It requires a running Workspace and does NOT start one (the token lives there, and a merge
+//     is made when the member is present).
+//   - The Agent's answer passes through verbatim: GitHub's own refusal is what tells a moved head
+//     from a protected branch.
+//
+// GitHub only. Bitbucket is read-only (decision 19) and is refused here rather than at the Agent,
+// so an old and a new Agent behave the same. `sha` is mandatory: it is the head commit the panel
+// displayed, and without it the Agent would merge whatever the head is by now.
+func (a workItemsAPI) merge(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if aerr := memberOriginRequestCheck(r); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	var in struct {
+		Provider string `json:"provider"`
+		Key      string `json:"key"`
+		SHA      string `json:"sha"`
+		Method   string `json:"method"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	switch in.Provider {
+	case "", "github":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_provider", "merging is available for GitHub pull requests only"})
+		return
+	}
+	if strings.TrimSpace(in.Key) == "" || strings.TrimSpace(in.SHA) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and sha are required"})
+		return
+	}
+	switch in.Method {
+	case "merge", "squash", "rebase":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "method must be merge, squash or rebase"})
+		return
+	}
+	// The mark speaks for the workspace's own member.
+	if res.ws.MembershipID == "" || res.ws.MembershipID != res.mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "only the workspace's own member can merge from it"})
+		return
+	}
+	ctx := r.Context()
+	if res.rt.State(ctx) != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
+			"start the workspace to merge the pull request (the GitHub credentials live in it)"})
+		return
+	}
+	in.Provider = "github"
+	// What is signed is what is sent: the normalised body, not the browser's bytes.
+	payload, _ := json.Marshal(in)
+	const agentPath = "/work-items/merge"
+	mark, aerr := a.mgr.memberOriginSign(res, http.MethodPost, agentPath, "", payload, time.Now())
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+agentPath, bytes.NewReader(payload))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if mark != "" {
+		req.Header.Set(memberOriginHeader, mark)
+	}
+	if tok := res.rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "agent_unreachable", err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// An Agent from before this feature has no such route. Say so instead of letting a bare
+		// 404 read as a deleted pull request.
+		writeAPIErr(w, &apiError{http.StatusConflict, "agent_outdated",
+			"this workspace agent cannot merge pull requests yet — restart the workspace"})
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// A merge is a write against someone else's repository: leave a record of who pressed it,
+	// on what, and how it came out. The detail names no token and no message text.
+	if a.mgr != nil && a.mgr.store != nil {
+		_ = a.mgr.store.InsertAudit(context.Background(), store.AuditLog{ID: store.NewID(), TenantID: res.mv.TenantID,
+			ActorKind: "user", ActorID: res.ident.ID, Action: "work_item.merge", Target: in.Key,
+			Detail: "method=" + in.Method + " sha=" + in.SHA, HTTPStatus: resp.StatusCode, At: store.NowTS()})
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
@@ -786,10 +985,4 @@ func (a workItemsAPI) deleteSession(w http.ResponseWriter, r *http.Request, _ st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// sortQueriesByPosition keeps the rail order stable for callers that build their own
-// list (tests, and the rail's reorder path).
-func sortQueriesByPosition(rows []store.WorkItemQuery) {
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Position < rows[j].Position })
 }

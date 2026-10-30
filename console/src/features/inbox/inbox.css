@@ -34,6 +34,7 @@
 .inbox-attachment.inbox-placeholder { color: var(--muted); flex-direction: row; align-items: center; gap: 6px; }
 .inbox-attachment-head { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .inbox-recipe-repo code { font-size: 12px; }
+.inbox-session-attached { display: flex; flex-direction: column; gap: 4px; }
 .inbox-recipe-editor, .inbox-session-editor { display: flex; flex-direction: column; gap: 8px; }
 .inbox-recipe-hints { display: flex; flex-wrap: wrap; gap: 8px; }
 .inbox-recipe-hints .ui-field { flex: 1 1 120px; }

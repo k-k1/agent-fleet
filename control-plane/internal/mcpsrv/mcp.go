@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -37,7 +39,65 @@ const mcpSessionOutputTailBytes = 32 << 10
 // endpoint plus its tool registry/impls, converted receiver-only from config. Auth is
 // a Bearer PAT (authMCP), never the session gateway; everything it needs hangs off the
 // CP seam (store + runtime resolution — see deps.go).
-type API struct{ cp CP }
+type API struct {
+	cp    CP
+	oauth oauthChallenge
+	// memoryOnly makes this the /mcp/memory handler (#2764): it lists and runs the external
+	// memory tools and nothing else, and it accepts only tokens bound to it. A claude.ai
+	// connector to it is synced into every Claude Code session of the account, Workspace
+	// sessions included; those already hold the same memory through the local af server, so
+	// the leak hands them nothing new. The full /mcp would hand them any-session stop and delete.
+	memoryOnly bool
+}
+
+// MemoryPath is where the memory-only handler is served, below the full endpoint.
+const MemoryPath = "/mcp/memory"
+
+// MemoryOnly returns the handler set of the memory-only endpoint (MemoryPath).
+func (a API) MemoryOnly() API {
+	a.memoryOnly = true
+	return a
+}
+
+// patResource is the PAT binding this handler accepts.
+func (a API) patResource() string {
+	if a.memoryOnly {
+		return store.PATResourceMemory
+	}
+	return store.PATResourceMCP
+}
+
+// oauthChallenge is set when the CP serves an OAuth authorization server for /mcp (ADR 0118):
+// resource is the audience a token must be bound to, metadataURL the RFC 9728 document the 401
+// points clients at. Both empty means PAT only.
+type oauthChallenge struct{ resource, metadataURL string }
+
+// WithOAuth returns the handler set accepting OAuth access tokens bound to resource, and
+// answering 401 with the protected-resource-metadata challenge.
+func (a API) WithOAuth(resource, metadataURL string) API {
+	a.oauth = oauthChallenge{resource: resource, metadataURL: metadataURL}
+	return a
+}
+
+// oauthAccessPrefix marks an OAuth access token (control-plane/mcp_oauth_token.go).
+const oauthAccessPrefix = "afmcp_at_"
+
+// oauthIdle is how far a use of a token pushes its grant's idle deadline (ADR 0118 decision 5).
+const oauthIdle = 30 * 24 * time.Hour
+
+// challenge is the WWW-Authenticate value of a 401: bare Bearer while OAuth is off, otherwise
+// the RFC 9728 pointer. Omitting scope lets clients request the advertised scopes
+// instead of pinning their first grant to read before the member can choose.
+func (a API) challenge(presented bool) string {
+	if a.oauth.metadataURL == "" {
+		return "Bearer"
+	}
+	c := `Bearer resource_metadata="` + a.oauth.metadataURL + `"`
+	if presented {
+		c += `, error="invalid_token"`
+	}
+	return c
+}
 
 // New builds the /mcp handler set over the CP seam. The CP's own wiring is
 // control-plane/mcp_wiring.go.
@@ -54,7 +114,7 @@ func New(cp CP) API {
 		panic("mcpsrv: the CP's scope ladder does not rank " + scopeRead + " below " + scopeWrite +
 			" — pat.go's scope names changed and this package's copy did not follow")
 	}
-	return API{cp}
+	return API{cp: cp}
 }
 
 // The two scope tiers the tool table declares as a minimum. They are the PAT wire
@@ -69,6 +129,12 @@ const (
 // mcpPrincipal is the resolved caller behind a PAT for one MCP request.
 type mcpPrincipal struct {
 	patID, identityID, membershipID, scope string
+	// oauth marks a grant: patID then holds the grant id and clientID the OAuth client's.
+	oauth    bool
+	clientID string
+	// name is what the member named the connection: the OAuth client's registered name, or the
+	// PAT's name. It goes into the envelope send_to_session adds (#2542).
+	name string
 }
 
 // --- JSON-RPC 2.0 ---
@@ -103,26 +169,37 @@ func rpcErr(id json.RawMessage, code int, msg string) *rpcResponse {
 }
 
 // HandleMCP is the /mcp endpoint. Registered only when AF_MCP_ENABLED=true.
+//
+// Every request, refused ones included, ends in one log line and (once authenticated) one
+// ring entry — see mcp_calls.go. The record is written on the way out so it carries the
+// status the client actually got.
 func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet || r.Method == http.MethodDelete {
-		// No server-initiated stream / session teardown in the minimal server.
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+	tr := newCallTrace(r, a.endpoint())
+	sw := &statusWriter{ResponseWriter: w}
+	defer func() { a.finish(tr, sw.status) }()
+	w = sw
+
 	if r.Method != http.MethodPost {
+		// No server-initiated stream (GET) / session teardown (DELETE) in the minimal server.
+		// Answered before authentication, so it can only be logged, never attributed.
+		tr.rec.Reason = "method not allowed"
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	prin, aerr := a.authMCP(r)
+	prin, aerr := a.authMCP(r, tr)
 	if aerr != nil {
-		w.Header().Set("WWW-Authenticate", "Bearer")
+		if aerr.Status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", a.challenge(strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) != ""))
+		}
 		writeAPIErr(w, aerr)
 		return
 	}
+	tr.setPrincipal(prin)
 
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
+		tr.addParseError("empty request")
 		writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "empty request"))
 		return
 	}
@@ -131,13 +208,16 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 	if trimmed[0] == '[' {
 		var reqs []rpcRequest
 		if err := json.Unmarshal(trimmed, &reqs); err != nil {
+			tr.addParseError("parse error")
 			writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "parse error"))
 			return
 		}
 		var out []*rpcResponse
 		for _, req := range reqs {
 			// A batch is answered 200 as a whole: per-item HTTP status has nowhere to go.
-			if resp, _ := a.dispatchMCPHTTP(r, prin, req); resp != nil {
+			resp, _, it := a.dispatchTraced(r, prin, req)
+			tr.addItem(it)
+			if resp != nil {
 				out = append(out, resp)
 			}
 		}
@@ -151,10 +231,12 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 
 	var req rpcRequest
 	if err := json.Unmarshal(trimmed, &req); err != nil {
+		tr.addParseError("parse error")
 		writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "parse error"))
 		return
 	}
-	resp, status := a.dispatchMCPHTTP(r, prin, req)
+	resp, status, it := a.dispatchTraced(r, prin, req)
+	tr.addItem(it)
 	if resp == nil { // notification
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -170,43 +252,101 @@ func (a API) HandleMCP(w http.ResponseWriter, r *http.Request) {
 //
 // Initialize-era requests keep the previous behavior exactly: always 200.
 func (a API) dispatchMCPHTTP(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int) {
+	resp, status, _ := a.dispatchTraced(r, prin, req)
+	return resp, status
+}
+
+// dispatchTraced is dispatchMCPHTTP plus the record of what the message was and how it was answered.
+func (a API) dispatchTraced(r *http.Request, prin *mcpPrincipal, req rpcRequest) (*rpcResponse, int, CallItem) {
 	p := parseParamsMeta(req.Params)
 	era := eraOf(p)
+	impl, _ := clientDeclared(req, p)
+	ctx := withMCPCall(r.Context(), mcpCallInfo{patID: prin.patID, client: mcpClientName(r, p),
+		principalName: prin.name, impl: impl})
+	var resp *rpcResponse
+	status := http.StatusOK
 	if !era.Stateless {
-		return a.dispatchMCP(r.Context(), prin, req), http.StatusOK
+		resp = a.dispatchMCP(ctx, prin, req)
+	} else if vr, vs := validateStateless(r, req, p, era); vr != nil {
+		resp, status = vr, vs
+	} else {
+		resp = a.dispatchMCP(ctx, prin, req)
+		if resp != nil && resp.Error != nil && resp.Error.Code == rpcMethodNotFound {
+			status = http.StatusNotFound
+		}
 	}
-	if resp, status := validateStateless(r, req, p, era); resp != nil {
-		return resp, status
-	}
-	resp := a.dispatchMCP(r.Context(), prin, req)
-	if resp != nil && resp.Error != nil && resp.Error.Code == rpcMethodNotFound {
-		return resp, http.StatusNotFound
-	}
-	return resp, http.StatusOK
+	return resp, status, itemFor(req, p, era, resp, status)
 }
 
 // authMCP resolves the Bearer PAT to a principal, rejecting missing/unknown/
 // revoked/expired tokens. role is resolved live downstream (per call).
-func (a API) authMCP(r *http.Request) (*mcpPrincipal, *APIError) {
+//
+// Why a request was refused goes to tr.rec.Reason, which says more than the client is told
+// (an OAuth token for another resource answers the same "invalid token" as an unknown one).
+func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) {
 	auth := r.Header.Get("Authorization")
 	tok := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 	if tok == "" || tok == auth { // no/!Bearer prefix
+		tr.rec.Reason = "no bearer token presented"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "missing bearer token"}
+	}
+	if a.oauth.resource != "" && strings.HasPrefix(tok, oauthAccessPrefix) {
+		return a.authOAuth(r, tok, tr)
 	}
 	p, ok, err := a.cp.Store().GetPATByHash(r.Context(), a.cp.HashPAT(tok))
 	if err != nil {
+		tr.rec.Reason = "store error"
 		return nil, internalErr(err)
 	}
 	if !ok || p.RevokedAt != "" {
+		tr.rec.Reason = "pat unknown or revoked"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
 	if p.ExpiresAt != "" {
 		if exp, err := time.Parse(time.RFC3339, p.ExpiresAt); err == nil && time.Now().After(exp) {
+			tr.rec.Reason = "pat expired"
 			return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
 		}
 	}
+	// The binding is checked like an OAuth token's audience: each endpoint refuses the other's
+	// tokens, so a memory PAT never reaches the session tools and a full one never has to be
+	// handed to a client that only needs memory.
+	res := p.Resource
+	if res == "" {
+		res = store.PATResourceMCP
+	}
+	if res != a.patResource() {
+		tr.rec.Reason = "pat bound to another endpoint"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
 	_ = a.cp.Store().TouchPAT(r.Context(), p.ID) // best-effort last-used
-	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope}, nil
+	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope, name: p.Name}, nil
+}
+
+// authOAuth resolves an OAuth access token to the same principal a PAT gives, with the grant id
+// where the PAT id was. The token must be bound to this endpoint: a token the issuer minted for
+// anything else is refused here even though it is otherwise valid.
+func (a API) authOAuth(r *http.Request, tok string, tr *callTrace) (*mcpPrincipal, *APIError) {
+	now := time.Now()
+	g, ok, err := a.cp.Store().GetMCPOAuthAccess(r.Context(), a.cp.HashPAT(tok), now.Unix())
+	if err != nil {
+		tr.rec.Reason = "store error"
+		return nil, internalErr(err)
+	}
+	if !ok {
+		tr.rec.Reason = "oauth token unknown, expired or its grant ended"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
+	if g.Resource != a.oauth.resource {
+		tr.rec.Reason = "oauth token bound to another resource"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
+	_ = a.cp.Store().TouchMCPOAuthGrant(r.Context(), g.GrantID, now.Unix(), int64(oauthIdle.Seconds())) // best-effort, like TouchPAT
+	scope := scopeRead
+	if strings.Contains(" "+g.Scope+" ", " "+scopeWrite+" ") {
+		scope = scopeWrite
+	}
+	return &mcpPrincipal{patID: g.GrantID, identityID: g.IdentityID, membershipID: g.MembershipID, scope: scope, oauth: true, clientID: g.ClientID, name: g.ClientName}, nil
 }
 
 func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
@@ -219,13 +359,39 @@ func (a API) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest
 	return resp
 }
 
+// mcpInstructions is the server/discover `instructions` text. It goes to external models whatever
+// the user's display language is, so it stays English, and it names the three tool families
+// (sessions, shared agent memory, admin) so a model knows what to reach for.
+const mcpInstructions = "Agent Fleet operations MCP. It lets you observe and steer your own sessions, " +
+	"read the memory shared by every agent kind (memory_projects, memory_index, memory_search, memory_read), " +
+	"and, for administrators, manage workspaces."
+
+// mcpMemoryInstructions is mcpInstructions for the memory-only endpoint.
+const mcpMemoryInstructions = "Agent Fleet memory MCP. It serves only the memory shared by every agent kind " +
+	"(memory_projects, memory_index, memory_search, memory_read; memory_save and memory_forget with write access)."
+
+func (a API) instructions() string {
+	if a.memoryOnly {
+		return mcpMemoryInstructions
+	}
+	return mcpInstructions
+}
+
+// endpoint is the path this handler set serves, for the call record.
+func (a API) endpoint() string {
+	if a.memoryOnly {
+		return MemoryPath
+	}
+	return "/mcp"
+}
+
 func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	switch req.Method {
 	case "server/discover":
 		// 2026-07-28: servers MUST implement this. It replaces initialize as the way a
 		// client learns versions/capabilities, and is what a stdio client probes with.
-		return rpcOK(req.ID, mcpDiscoverResult("agent-fleet", "p3-6",
-			"Agent Fleet の運用 MCP。自分のセッションの観測・操縦と、管理者向けのワークスペース管理を提供する。"))
+		return rpcOK(req.ID, mcpDiscoverResult(serverInfo(a.identity(ctx)),
+			a.instructions()))
 	case "initialize":
 		// Initialize-era clients (2025-*) only. Removed in 2026-07-28, but a server that
 		// wants to serve both eras MAY keep it (SEP-2575 Backward Compatibility), and
@@ -241,7 +407,7 @@ func (a API) dispatchMCPMethod(ctx context.Context, prin *mcpPrincipal, req rpcR
 		return rpcOK(req.ID, map[string]any{
 			"protocolVersion": ver,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "agent-fleet", "version": "p3-6"},
+			"serverInfo":      serverInfo(a.identity(ctx)),
 		})
 	case "notifications/initialized", "notifications/cancelled":
 		return nil // notifications get no response
@@ -330,7 +496,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "send_to_session", minScope: scopeWrite,
-			desc: "Send a prompt to a session (drives the remote Claude). Returns immediately; poll get_session_status then get_session_output for the reply.",
+			desc: "Send a prompt to a session (drives the remote Claude). Returns immediately; poll get_session_status then get_session_output for the reply. The session sees it with a header naming this connection, so it knows the message came through MCP and not from the member typing; a prompt that itself starts with \"[agent-fleet:\" is refused. Not available for shell / ssm sessions.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -340,8 +506,11 @@ func memberTools() []mcpTool {
 				"required": []string{"name", "prompt"},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
-				body, _ := json.Marshal(map[string]string{"prompt": argStr(args, "prompt")})
-				return a.cp.AgentText(ctx, res.RT, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/input", body)
+				body, err := mcpInputBody(ctx, argStr(args, "prompt"))
+				if err != nil {
+					return "", err
+				}
+				return a.cp.AgentText(ctx, res.RT, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/mcp-input", body)
 			},
 		},
 		{
@@ -520,27 +689,27 @@ func memberTools() []mcpTool {
 		{
 			name: "list_models", minScope: scopeRead,
 			// model-id-lint:allow an example id in the tool description; it names no default.
-			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases; codex, opencode, agy, copilot, cursor and kiro return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing); cursor's is an account-linked catalog with effort folded into the model id; kiro's is account-linked and allows named models even on Free (default auto); lcpp needs no sign-in and returns the models in the deployment's own engine catalog (empty on a deployment with no engine); muse returns its signed-in account catalog. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`). The list already excludes models the user turned off in settings — never pass a model name from memory or an earlier conversation; a create_session naming an excluded model is rejected.",
+			desc: "List the launch-time models for `kind`. claude returns its fixed tier aliases; codex, opencode, agy, copilot, cursor and kiro return the live catalog reflecting the user's connected providers; copilot's reflects the account's Copilot plan (empty on Free = Auto only; omit model for auto routing); cursor's is an account-linked catalog with effort folded into the model id (omit model for Auto, which a Free plan allows); kiro's is account-linked and allows named models even on Free (default auto); lcpp needs no sign-in and returns the models in the deployment's own engine catalog (empty on a deployment with no engine); muse returns its signed-in account catalog. Before creating a session with a model override, call this and use a returned id. Resolve a user shorthand such as `terra` to its matching returned full id (for example `gpt-5.6-terra`). The list already excludes models the user turned off in settings — never pass a model name from memory or an earlier conversation; a create_session naming an excluded model is rejected.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
-				"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse"},
+				"kind": map[string]any{"type": "string", "description": joinKinds(modelKinds(), " | ", "")},
 			}, "required": []string{"kind"}},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
-				if kind != "claude" && kind != "codex" && kind != "opencode" && kind != "agy" && kind != "copilot" && kind != "cursor" && kind != "kiro" && kind != "lcpp" && kind != "muse" {
-					return "", fmt.Errorf("kind must be claude, codex, opencode, agy, copilot, cursor, kiro, lcpp or muse")
+				if !slices.Contains(modelKinds(), kind) {
+					return "", fmt.Errorf("kind must be %s", listKinds(modelKinds(), "or"))
 				}
 				return a.cp.AgentText(ctx, res.RT, "GET", "/agents/"+url.PathEscape(kind)+"/models", nil)
 			},
 		},
 		{
 			name: "create_session", minScope: scopeWrite,
-			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; Codex, OpenCode, Copilot, Cursor and Kiro sessions default to the managed driver, not TUI; lcpp and muse are always managed. If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). Before a model override (any kind), call list_models and use a returned model id; " + managedKindsSentence() + " If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
 					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro | lcpp | muse | shell. agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — initial_prompt and any string sent to it run verbatim as commands, so confirm the exact command with the user before launching or sending."},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
 					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
@@ -551,12 +720,15 @@ func memberTools() []mcpTool {
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
 				kind := argStr(args, "kind")
+				// Refused here, with the Workspace untouched, rather than left to the Agent.
+				if err := agentkinds.CheckCreateKind(kind); err != nil {
+					return "", err
+				}
 				driver := ""
-				// Kinds where tui vs managed is a real choice and an MCP caller (which cannot
-				// drive a pane) wants managed. lcpp and muse are absent on purpose: they have no
-				// tui route (Caps().ManagedOnly), and the Agent's create handler defaults an
-				// empty driver to managed for them (sessionx/session_handlers.go).
-				if kind == "codex" || kind == "opencode" || kind == "copilot" || kind == "cursor" || kind == "kiro" {
+				// An MCP caller cannot drive a pane, so it asks for managed wherever the Agent's
+				// registry says that is the default (the kind catalog snapshot). The match is
+				// exact; an alternate spelling never reaches this point (refused above).
+				if mcpManagedDefaultKinds[kind] {
 					driver = "managed"
 				}
 				body, _ := json.Marshal(map[string]any{
@@ -679,12 +851,29 @@ func memberTools() []mcpTool {
 // scope, and a demotion takes effect immediately (role is resolved live, not
 // frozen in the token). The capability filter is UX — authz is re-checked in
 // mcpToolCall before any admin tool runs.
+//
+// The memory-only endpoint stops after the memory tools. That is the whole of its boundary:
+// mcpToolCall picks from this list, so a session or admin tool is refused by name as well.
 func (a API) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	var out []mcpTool
-	for _, t := range memberTools() {
-		if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
-			out = append(out, t)
+	if !a.memoryOnly {
+		for _, t := range memberTools() {
+			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
+				out = append(out, t)
+			}
 		}
+	}
+	// mcpToolCall picks its tool out of this same list, so withholding the memory tools here
+	// is what refuses a call by name as well.
+	if a.tenantAllowsExternalMemory(ctx, prin) {
+		for _, t := range memoryTools() {
+			if a.cp.ScopeRank(prin.scope) >= a.cp.ScopeRank(t.minScope) {
+				out = append(out, t)
+			}
+		}
+	}
+	if a.memoryOnly {
+		return out
 	}
 	if ac, _ := a.adminPrincipal(ctx, prin); ac != nil && ac.isAdmin {
 		for _, t := range adminTools() {
@@ -926,7 +1115,12 @@ func adminTools() []mcpTool {
 		for k, v := range extra {
 			props[k] = v
 		}
-		return map[string]any{"type": "object", "properties": props, "required": required}
+		schema := map[string]any{"type": "object", "properties": props}
+		// A nil slice marshals as "required": null, which strict clients reject.
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return schema
 	}
 	empty := map[string]any{"type": "object", "properties": map[string]any{}}
 	return []mcpTool{

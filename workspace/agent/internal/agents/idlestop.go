@@ -53,12 +53,25 @@ func IdleGrace(env string, def time.Duration) time.Duration {
 // re-check under the lock found demand again, so the grace period restarts and the watch goes
 // on. With grace <= 0 no watch is armed at all.
 func WatchIdle(name string, needs func() int, stopIfIdle func() bool, grace time.Duration) {
+	WatchIdleUntil(nil, name, needs, stopIfIdle, grace)
+}
+
+// WatchIdleUntil is WatchIdle that also ends when quit is closed (a nil quit never fires). The
+// daemon supervisors never close it; tests do, so a watcher cannot outlive the test that armed it
+// and read the globals the next test swaps.
+func WatchIdleUntil(quit <-chan struct{}, name string, needs func() int, stopIfIdle func() bool, grace time.Duration) {
 	if grace <= 0 {
 		return
 	}
 	var idleSince time.Time
 	for {
-		time.Sleep(idleTick)
+		tick := time.NewTimer(idleTick)
+		select {
+		case <-quit:
+			tick.Stop()
+			return
+		case <-tick.C:
+		}
 		if needs() > 0 {
 			idleSince = time.Time{}
 			continue

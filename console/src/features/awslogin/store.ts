@@ -4,6 +4,7 @@
 // with Settings. An id the Agent does not list shows nothing.
 import { create } from "zustand";
 import { api, getTenant } from "../../core/api/client.ts";
+import { deadlineFrom } from "../cloudlogin/countdown.ts";
 
 export interface AwsLoginWaiter {
   session?: string;
@@ -19,6 +20,9 @@ export interface AwsLoginRequest {
   waiters: AwsLoginWaiter[];
   firstAt: string;
   lastAt: string;
+  /** When the Agent drops the request, on this browser's clock (deadlineFrom); null while a
+   *  login attempt for it runs, or when the Agent gave no countdown. */
+  deadline?: number | null;
 }
 
 /** A Settings profile whose cached login ends soon, as GET /api/aws-login/profiles lists it (#1029). */
@@ -29,6 +33,8 @@ export interface AwsProfileExpiry {
   roleName: string;
   /** The end the Agent knows, RFC 3339 UTC. The Agent decides "expiring" on its own clock. */
   expiresAt: string;
+  /** The same end on this browser's clock, from the Agent's seconds left (deadlineFrom). */
+  deadline?: number | null;
 }
 
 /** A Settings profile and its login, as GET /api/aws-login/profiles lists it (#1477). */
@@ -48,6 +54,8 @@ export interface AwsProfileState {
   /** The login's end when it cannot renew, RFC 3339 UTC; "" when no end is known. */
   expiresAt: string;
   expiring: boolean;
+  /** expiresAt on this browser's clock, from the Agent's seconds left (deadlineFrom). */
+  deadline?: number | null;
 }
 
 /** What a profile's login modal needs; a subset of both lists, so either can open it. */
@@ -114,7 +122,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
   modal: null,
   async refresh() {
     const tenant = getTenant();
-    let d: { requests?: AwsLoginRequest[]; error?: unknown } | null = null;
+    let d: { requests?: (AwsLoginRequest & { expiresInSec?: unknown })[]; error?: unknown } | null = null;
     try {
       d = await api("api/aws-login");
     } catch {
@@ -122,7 +130,8 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     }
     if (!d || d.error || !Array.isArray(d.requests)) return;
     if (getTenant() !== tenant) return; // asked under the previous tenant
-    set({ requests: d.requests });
+    const now = Date.now();
+    set({ requests: d.requests.map((r) => ({ ...r, deadline: deadlineFrom(r.expiresInSec, now) })) });
   },
   reset() {
     set({ requests: [], hidden: {}, modal: null, profiles: null, expiring: [], hiddenExpiry: {}, profileModal: null });
@@ -150,6 +159,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     }
     if (!d || d.error || !Array.isArray(d.profiles)) return null;
     if (getTenant() !== tenant) return null; // asked under the previous tenant
+    const now = Date.now();
     const profiles: AwsProfileState[] = [];
     for (const raw of d.profiles) {
       const p = raw as Record<string, unknown>;
@@ -163,11 +173,12 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
         source: typeof p.source === "string" ? p.source : "",
         expiresAt: typeof p.expiresAt === "string" ? p.expiresAt : "",
         expiring: p.expiring === true,
+        deadline: deadlineFrom(p.expiresInSec, now),
       });
     }
     const expiring: AwsProfileExpiry[] = profiles
       .filter((p) => p.expiring && p.expiresAt)
-      .map(({ name, label, accountId, roleName, expiresAt }) => ({ name, label, accountId, roleName, expiresAt }));
+      .map(({ name, label, accountId, roleName, expiresAt, deadline }) => ({ name, label, accountId, roleName, expiresAt, deadline }));
     set({ profiles, expiring });
     return expiring;
   },

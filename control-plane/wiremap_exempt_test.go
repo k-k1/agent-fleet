@@ -39,7 +39,7 @@ func wiremapExemptions() []wiremapExemption {
 		{
 			Func: "workspaceAPI.stats",
 			// workspaceStats in metrics.go merges the whole map that came from the
-			// Agent into containerStats()'s map with a for k, v := range. The key set
+			// Agent into containerStatsRun()'s map with a for k, v := range. The key set
 			// is whatever the Agent answered, so it is not statically determined, and
 			// converting to a struct would silently drop any field the Agent added.
 			// The header comment of wire_golden_test.go names this path as one the

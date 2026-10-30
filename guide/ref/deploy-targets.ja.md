@@ -1,7 +1,6 @@
 ---
 audience: "全員（operate/ には決定的）"
 source_of_truth: "この表（行は Control Plane が受け付ける runtime プロファイルと突き合わせ）"
-updated: "2026-10"
 ---
 
 # 配備形態 — どこに何が在るか
@@ -17,16 +16,30 @@ updated: "2026-10"
 | docker | ホストの Docker デーモン上のコンテナ | ホスト上の bind mount したディレクトリ | オンプレの既定。1 台をチームで共有する |
 | native | Docker を使わない、サンドボックスされたホストプロセス | ホスト上のディレクトリ | Docker を入れられない（素の WSL2 など）。**単独利用のみ**。コンテナ境界が無いので、共有モードでは起動を拒否する |
 | ecs | AWS ECS / Fargate のタスク | EFS | AWS で、インスタンスを管理したくない |
-| ecs-ec2 | プールから取った EC2 スロット上のタスク | ユーザー毎の EBS ボリューム | AWS で、起動レイテンシとディスク性能がインスタンス管理に見合う |
+| ecs-ec2 | プールから取った EC2 スロット上のタスク | ユーザー毎の EBS ボリューム | AWS で、起動レイテンシとディスク性能がインスタンス管理に見合う、または起動が多く Fargate の NAT 経由イメージ取得費用が無視できない（[選び方](../operate/01-choose.ja.md)） |
 | kubernetes | Kubernetes クラスタ上の、ワークスペース専用の StatefulSet の Pod | ユーザー毎の永続ボリューム（ブロックストレージ）。ログインと Claude の状態はもう 1 本の専用ボリューム | **プレビュー。** すでに Kubernetes を運用している、または Google Cloud で、使わないときは 0 台に縮むワークスペースが欲しい。最初に検証するクラスタは GKE Standard |
 
 > **プレビュー。** `kubernetes` ランタイムはプレビューです。GKE Standard クラスタで受け入れを確かめて
 > いますが、本番での利用はまだサポートしていません。既知の制約：このランタイムにはブラウザ機能が
-> ありません（ブラウザペインもヘッドレス Chromium もなし）。GKE では、始める前にリージョンの SSD
-> ディスク割り当てが配備に足りている必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。まだ測って
-> いるもの：ロードバランサが WebSocket を 24 時間で切ることが 1 日続くセッションにどう響くか
-> （[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。GKE で実測した費用は
-> [The bill](../../deploy/kubernetes/README.md#the-bill) にあります。
+> ありません（ブラウザペインもヘッドレス Chromium もなし）。ホームは 1 つのゾーンに置かれ、
+> バックアップされません。GKE では、始める前にリージョンの SSD ディスク割り当てが配備に足りている
+> 必要があります（[Preconditions](../../deploy/kubernetes/README.md#preconditions)）。ロードバランサは、
+> タイムアウトの設定にかかわらず、使用中の WebSocket を 24 時間で切ります
+> （[7. The load balancer](../../deploy/kubernetes/README.md#7-the-load-balancer)）。切れたあとの
+> ターミナルペインには `[disconnected]` と出て、クリックするかタブに戻るとつなぎ直します。シェルと
+> その tmux セッションは動き続けます。これは接続を強制的に切って確かめたもので、1 日待って確かめた
+> ものではありません。GKE で実測した費用は [The bill](../../deploy/kubernetes/README.md#the-bill) に
+> あります。試用や 1 チームで使うなら、`deploy/gcp/gke` の小さなゾーン構成（1 ゾーン、データベースの
+> 待機系なし）で、請求先アカウントの GKE の無料枠が残っていれば既定の構成の床のおよそ半分になります（ほかの
+> クラスタが無料枠を使っていれば、およそ 3 分の 2）。請求額ではなく、実測した単価からの見積もりです。数字と
+> その前提は `deploy/gcp/gke/README.md` の「Small profile」にあります。
+
+**Mac（Apple Silicon）では。** `docker` は Docker Desktop・OrbStack・colima の上で
+`deploy/compose/docker-compose.macos.yml` を重ねて動き、`native` は Linux VM（Lima または OrbStack の
+マシン）の中で `linux-arm64` パッケージとして動きます。どちらも macOS そのものの上では動きません。
+単独利用のみで、`127.0.0.1` で使います。何を確認したか・いつ確認し直すかは
+`deploy/macos/README.md`、手順は
+[deploy/compose/README.md](../../deploy/compose/README.md#macos-apple-silicon) の「macOS」にあります。
 
 `docker` は `local`、`ecs` は `aws`、`native` は `wsl`、`kubernetes` は `k8s` という綴りでも通ります。
 それ以外は**起動時に失敗**します（知らないうちに docker に切り替わったりしません）。
@@ -63,7 +76,7 @@ updated: "2026-10"
 
 ⁴ **自分の網の中ですでに動いている** ComfyUI を、環境変数 1 つで指すか、
 LAN の ComfyUI・借りたエンジン・OpenAI 互換のサーバを、エンジンの行として並べる
-（[operate/07](../operate/07-image-engine.ja.md)）。
+（[operate/08](../operate/08-image-engine.ja.md)）。
 
 ⁵ フリート自身の GPU を、要求が来たときに買う。Fargate に相当するものは無い。
 なお**どの形態でも**、セッションは**メンバー自身の CLI のプラン**（Codex /
@@ -71,7 +84,7 @@ Antigravity）で画像を生成できる。この行が指すのは**配備が�
 ことである。
 
 ⁶ `ecs-ec2` ではフリート自身の GPU。`docker`・`native`・`kubernetes` では、**自分の網の中ですでに
-動いている** llama.cpp を環境変数 1 つで指す（[operate/09](../operate/09-llm-lan.ja.md)）。
+動いている** llama.cpp を環境変数 1 つで指す（[operate/10](../operate/10-llm-lan.ja.md)）。
 
 ⁷ Control Plane 自身はメンバーの EFS のホームをマウントできないので、スタックが宣言した短い
 タスク（`30-ingress` の `HomeOpsTaskDef`）を起動し、それがファイルシステムをマウントして
@@ -137,7 +150,7 @@ EFS にあるので、ほかの形態と同じく残る。ただし、その中�
 その場で消す。どちらもログイン・接続・Claude の状態を残す。これらは専用の 2 本目のボリュームに
 あるからだ。ホームのボリューム自体は残る。
 
-¹⁴ 既定はオフで、運用者がスタックで有効にする（[operate/04](../operate/04-secure.ja.md#aws-kms-で保存時の鍵を守る)）。
+¹⁴ 既定はオフで、運用者がスタックで有効にする（[operate/12](../operate/12-keys.ja.md#aws-kms-で保存時の鍵を守る)）。
 有効にすると、切り替え後に Control Plane 自身が封じる秘密（MCP 接続のヘッダ、サインインのクライアント
 シークレット、エンジンのトークン、セッションの引き継ぎと共有）は AWS KMS の鍵で封じられ、KMS 鍵を無効に
 すると読めなくなる。メンバーが保存した資格情報の鍵が KMS で包まれるのは、切り替え後に鍵が初めて保存される
@@ -147,8 +160,8 @@ EFS にあるので、ほかの形態と同じく残る。ただし、その中�
 
 ## 手順の在り処
 
-[operate/](../operate/README.ja.md) を書き上げるまで、runbook は「操作する対象の隣」に
-あります。
+コマンドは runbook にあり、runbook は操作する対象の隣に置いています。何が起きるか、何に気をつけるかは
+[operate/](../operate/README.ja.md) で説明します。
 
 | 形態 | runbook |
 |---|---|

@@ -5,9 +5,11 @@ package codex
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 func stubSessionMCPDefs(t *testing.T, defs []mcpreg.ServerDef, err error) {
@@ -84,5 +86,50 @@ func TestThreadConfigDoesNotMutateSharedFeatures(t *testing.T) {
 	}
 	if again, _ := threadConfig("slot02")["features"].(map[string]any); again == nil {
 		t.Fatal("a later thread lost its features")
+	}
+}
+
+// A managed codex thread's shell calls get this session's throwaway directory through the
+// thread config, since the shared daemon's environment cannot differ per session.
+func TestThreadConfigSetsWorkDirForShellCalls(t *testing.T) {
+	stubSessionMCPDefs(t, nil, nil)
+	cfg := threadConfig("slot01")
+	pol, _ := cfg["shell_environment_policy"].(map[string]any)
+	set, _ := pol["set"].(map[string]any)
+	want := paths.SessionWorkDir("slot01")
+	if want == "" || set["AF_WORK_DIR"] != want {
+		t.Fatalf("shell_environment_policy.set = %v, want AF_WORK_DIR=%q", set, want)
+	}
+	if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+		t.Fatalf("the directory was not created: %v", err)
+	}
+	if other, _ := threadConfig("slot02")["shell_environment_policy"].(map[string]any); other["set"].(map[string]any)["AF_WORK_DIR"] == want {
+		t.Fatal("two sessions share one work dir")
+	}
+	// A name that could leave ~/.af-work gets no work dir.
+	if _, present := threadConfig("../x")["shell_environment_policy"]; present {
+		t.Fatal("an escaping name got a work dir")
+	}
+}
+
+// The thread's shell also learns which session it belongs to: the shared daemon's environment
+// carries no per-session AF_SESSION_NAME, and each session (a fork included) passes its own slot.
+func TestThreadConfigSetsSessionNameForShellCalls(t *testing.T) {
+	stubSessionMCPDefs(t, nil, nil)
+	t.Setenv("HOME", t.TempDir())
+	for _, slot := range []string{"slot01", "slot02"} {
+		pol, _ := threadConfig(slot)["shell_environment_policy"].(map[string]any)
+		set, _ := pol["set"].(map[string]any)
+		if set["AF_SESSION_NAME"] != slot || set["AF_WORK_DIR"] != paths.SessionWorkDir(slot) {
+			t.Fatalf("shell_environment_policy.set = %v, want AF_SESSION_NAME=%q beside AF_WORK_DIR", set, slot)
+		}
+	}
+	// An invalid identifier is never handed to the shell as a session name.
+	for _, bad := range []string{"", "../x", "a b", "a/b", "a\nb"} {
+		pol, _ := threadConfig(bad)["shell_environment_policy"].(map[string]any)
+		set, _ := pol["set"].(map[string]any)
+		if _, present := set["AF_SESSION_NAME"]; present {
+			t.Fatalf("slot %q was handed to the shell as a session name", bad)
+		}
 	}
 }

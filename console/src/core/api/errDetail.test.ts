@@ -25,6 +25,14 @@ beforeAll(async () => {
   client = await import("./client.ts");
 });
 
+describe("errText for Go-built error codes", () => {
+  it("words interaction_not_pending from the catalogue, not the server's English message", () => {
+    const text = client.errText({ code: "interaction_not_pending", message: "interaction x is not pending" });
+    expect(text).not.toContain("is not pending");
+    expect(text).not.toBe("");
+  });
+});
+
 describe("errDetail", () => {
   it("appends the server's message even for a code that has a translation", () => {
     const head = client.errText({ code: "memory_import_failed" });
@@ -49,5 +57,15 @@ describe("errDetail", () => {
 
   it("passes a plain string through unchanged", () => {
     expect(client.errDetail("plain")).toBe("plain");
+  });
+
+  // The refusal of a start whose CLI did not install carries its own localized sentence; the
+  // server's English message after it would say the same thing twice.
+  it("shows the localized cli_install text alone", () => {
+    const e = { code: "cli_install_no_space", message: "codex could not be installed when this workspace started because the home disk is full." };
+    const got = client.errDetail(e);
+    expect(got).toBe(client.errText(e));
+    expect(got).not.toContain("codex could not");
+    expect(got.length).toBeGreaterThan(20);
   });
 });

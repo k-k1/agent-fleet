@@ -233,6 +233,6 @@ func (s *Supervisor) retireAdopted(addr string) error {
 	s.stopping = false
 	s.mu.Unlock()
 	recordLifecycle("stopped", s.Generation(), "opencode major switched")
-	go reconcileAll("opencode major switched")
+	goReconcile("opencode major switched")
 	return nil
 }

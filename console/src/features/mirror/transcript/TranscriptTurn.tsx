@@ -14,13 +14,13 @@ import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
 import { prettyModel } from "../../../lib/modelName.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
-import { splitPastedImages } from "../../../lib/pastedImages.ts";
+import { splitCommandArgs, splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { looksForeign, translatableTexts, turnTranslateKey } from "../translate.ts";
 import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
-import { foldParts, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
+import { foldParts, mcpViaOf, peerIntentOf, peerSenderOf, spawnParentOf, spendOf, splitSessionEnvelope } from "./model.ts";
 import { paintTurnMarks } from "./markPaint.ts";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
@@ -140,6 +140,10 @@ function TranscriptTurnImpl({
   // create_session. Read the envelope first, like peer, so the badge survives a missing tag.
   const spawnParent = isUser ? spawnParentOf(turn.text ?? "") : null;
   const fromSpawn = isUser && (turn.source === "spawn" || !!spawnParent);
+  // MCP origin (#2542): a hosted assistant or PAT client sent this through send_to_session.
+  // Envelope first, like peer, so the badge survives a missing source tag.
+  const mcpVia = isUser ? mcpViaOf(turn.text ?? "") : null;
+  const fromMcp = isUser && (turn.source === "mcp" || !!mcpVia);
   // Copy and translate both follow what the reader can actually see. A folded turn hides its
   // work-process text (the intermediate replies between tool calls, e.g. "途中応答31件"), and
   // neither the clipboard nor a translation request should reach past that fold: the reader
@@ -155,7 +159,7 @@ function TranscriptTurnImpl({
   // A user turn is the reader's own words and is never offered — except a message another
   // session sent (peer, spawn): that one is written in whatever language the sending agent
   // drifted into, exactly like an answer. Only its body is sent; the envelope stays verbatim.
-  const fromSession = fromPeer || fromSpawn;
+  const fromSession = fromPeer || fromSpawn || fromMcp;
   const envelope = fromSession && !turn.bash && !turn.cmd ? splitSessionEnvelope(turn.text || "") : null;
   const tx = isUser ? (envelope?.body.trim() ? caps.translate : undefined) : caps.translate;
   const txTexts = !tx ? [] : envelope ? [envelope.body] : translatableTexts({ parts: visibleParts });
@@ -244,6 +248,31 @@ function TranscriptTurnImpl({
     flush();
     return out;
   };
+  // What the member attached to a prompt (split off by splitPastedImages): thumbnails for
+  // images, a name chip for anything else.
+  const renderAttachments = (images: string[], files: string[]) => (
+    <>
+      {images.length > 0 && caps.loadPastedImage && (
+        <div className="mt-imgs">
+          {images.map((nm) => (
+            <PastedThumb key={nm} name={nm} load={caps.loadPastedImage!} onOpen={caps.openImage} />
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
+        // Non-image attachments (drag & drop, or the + button): a name chip — the
+        // file itself lives under the session's pasted dir for the agent to read.
+        <div className="mt-attach-files">
+          {files.map((nm) => (
+            <span className="mt-attach-file" key={nm} title={nm}>
+              <FileIcon name={nm} />
+              <span className="mt-attach-file-name">{nm}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </>
+  );
   const renderUserFile = (p: Part, key: number) =>
     // Files the agent shared via SendUserFile, and the picture cards af's generate_image
     // synthesizes from its result — a panel; a card opens in a pane, an image card enlarges
@@ -307,6 +336,7 @@ function TranscriptTurnImpl({
           onOpen={caps.openPlan ? () => caps.openPlan!(item.p.plan || "") : undefined}
           onSendComments={caps.sendPlanComments ? () => caps.sendPlanComments!(item.p.plan || "") : undefined}
           sendDisabled={caps.planSendDisabled}
+          previewLinks={caps.previewLinks}
         />
       ) : item.p.kind === "userfile" ? (
         liftFiles ? null : renderUserFile(item.p, base + item.i)
@@ -321,6 +351,7 @@ function TranscriptTurnImpl({
           repo={caps.repo}
           onOpenFile={caps.openFile}
           workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
         />
       ) : item.p.kind === "delegation" ? (
         <DelegationCard key={base + item.i} p={item.p} agentName={agentName} />
@@ -351,6 +382,7 @@ function TranscriptTurnImpl({
               repo={caps.repo}
               onOpenFile={caps.openFile}
               workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
               // Marks are counted within this one part (docs/log/69 §69.3). The root comes from
               // the source turn rather than the block, so it points at the same place even when
               // a recipient's tail window differs.
@@ -375,6 +407,8 @@ function TranscriptTurnImpl({
   // the turn was cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
   // unattributed 「続けて」 in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
+  // Stalled-tree notice: the agent's automated check to a parent whose children are all idle.
+  const fromNotice = isUser && turn.source === "notice";
   // Chat-bridge origin (docs/log/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -392,8 +426,8 @@ function TranscriptTurnImpl({
         (turn.sidechain ? " sidechain" : "") +
         (fromOperator ? " from-operator" : "") +
         (fromSchedule ? " from-schedule" : "") +
-        (fromAutoResume ? " from-schedule" : "") +
-        (fromPeer ? " from-peer" : "") +
+        (fromAutoResume || fromNotice ? " from-schedule" : "") +
+        (fromPeer || fromMcp ? " from-peer" : "") +
         (chatProvider ? " from-chat" : "")
       }
       data-turn-idx={turn.idx}
@@ -425,11 +459,22 @@ function TranscriptTurnImpl({
             <Icon name="sync" /> {tr("mirror.from_auto_resume")}
           </span>
         )}
+        {fromNotice && (
+          <span className="mt-op mt-sched" title={tr("mirror.from_notice_title")}>
+            <Icon name="clock" /> {tr("mirror.from_notice")}
+          </span>
+        )}
         {fromPeer && (
           // Sent by another session (docs/log/58) — not the user, not the operator.
           <span className="mt-op mt-peer" title={tr("mirror.from_peer_title")}>
             <Icon name="arrow-swap" />{" "}
             {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
+          </span>
+        )}
+        {fromMcp && (
+          // Sent through /mcp by a hosted assistant or PAT client (#2542) — not the user.
+          <span className="mt-op mt-peer" title={tr("mirror.from_mcp_title")}>
+            <Icon name="plug" /> {mcpVia ? tr("mirror.from_mcp_named", { name: mcpVia }) : tr("mirror.from_mcp")}
           </span>
         )}
         {fromSpawn && (
@@ -506,7 +551,17 @@ function TranscriptTurnImpl({
           ))
         ) : isUser && turn.cmd ? (
           // A `/`-run slash command / skill invocation: a compact chip marking the action.
-          turn.parts.map((p, i) => <CmdChip key={i} name={p.text} args={p.info} />)
+          // Args sent with an attachment end with the machine-facing Read instruction and paths;
+          // split them off so the chip shows the user's words only.
+          turn.parts.map((p, i) => {
+            const { text, images, files } = splitCommandArgs(p.info || "");
+            return (
+              <Fragment key={i}>
+                <CmdChip name={p.text} args={text} />
+                {renderAttachments(images, files)}
+              </Fragment>
+            );
+          })
         ) : isUser ? (
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
@@ -522,31 +577,14 @@ function TranscriptTurnImpl({
                     repo={caps.repo}
                     onOpenFile={caps.openFile}
                     workItemRefs={caps.workItemRefs}
+          previewLinks={caps.previewLinks}
                     // A user bubble renders the block's text rather than its parts, so the root
                     // is empty on a block that folded two or more turns (see groupTurns).
                     markRoot={caps.marks ? turn.bodyRoot : undefined}
                     markKind=""
                   />
                 )}
-                {images.length > 0 && caps.loadPastedImage && (
-                  <div className="mt-imgs">
-                    {images.map((nm) => (
-                      <PastedThumb key={nm} name={nm} load={caps.loadPastedImage!} onOpen={caps.openImage} />
-                    ))}
-                  </div>
-                )}
-                {files.length > 0 && (
-                  // Non-image attachments (drag & drop, or the + button): a name chip — the
-                  // file itself lives under the session's pasted dir for the agent to read.
-                  <div className="mt-attach-files">
-                    {files.map((nm) => (
-                      <span className="mt-attach-file" key={nm} title={nm}>
-                        <FileIcon name={nm} />
-                        <span className="mt-attach-file-name">{nm}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {renderAttachments(images, files)}
               </>
             );
           })()

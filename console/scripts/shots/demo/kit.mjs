@@ -55,7 +55,7 @@ const COMMON_RE = [
     /^\/api\/agents\/([^/]+)\/models$/,
     (m) =>
       m[1] === "codex"
-        ? { models: [{ id: "gpt-5.6-luna", label: "gpt-5.6-luna", efforts: ["low", "medium", "high"], defaultEffort: "medium" }] }
+        ? { models: [{ id: "gpt-6-luna", label: "gpt-6-luna", efforts: ["low", "medium", "high"], defaultEffort: "medium" }] }
         : null,
   ],
 ];

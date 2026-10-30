@@ -174,3 +174,103 @@ func TestResolveResetAt(t *testing.T) {
 		}
 	})
 }
+
+// TestLimitInMessage pins the headless reading to the session markers: a window with its
+// reset, a spend cap without one, and the 429 that says it is not a usage limit.
+func TestLimitInMessage(t *testing.T) {
+	tokyo := mustLoc(t, "Asia/Tokyo")
+	now := time.Date(2026, 10, 26, 18, 0, 0, 0, tokyo)
+	cases := []struct {
+		name    string
+		msg     string
+		kind    LimitKind
+		resetAt time.Time
+		ok      bool
+	}{
+		{"session window", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", LimitWindow,
+			time.Date(2026, 10, 26, 19, 50, 0, 0, tokyo), true},
+		{"per-model window, no time", "You've reached your Fable 5 limit. Run /usage-credits to continue", LimitWindow, time.Time{}, true},
+		{"spend cap", "You've hit your org's monthly spend limit · run /usage-credits to raise it", LimitSpend, time.Time{}, true},
+		{"temporary 429", "API Error: 429 temporarily limiting requests (not your usage limit)", "", time.Time{}, false},
+		{"overloaded", "API Error: 529 Overloaded", "", time.Time{}, false},
+	}
+	for _, c := range cases {
+		kind, at, ok := limitInMessage(c.msg, now, nil)
+		if kind != c.kind || !at.Equal(c.resetAt) || ok != c.ok {
+			t.Errorf("%s: got (%q, %v, %v), want (%q, %v, %v)", c.name, kind, at, ok, c.kind, c.resetAt, c.ok)
+		}
+	}
+}
+
+// TestLimitInMessageWithCapture runs the headless reading with statusline captures present,
+// the case the router actually meets: a text with no time must not borrow one, and a banner
+// read just after its minute must not roll over to tomorrow.
+func TestLimitInMessageWithCapture(t *testing.T) {
+	tokyo := mustLoc(t, "Asia/Tokyo")
+	fiveHour := time.Date(2026, 10, 26, 21, 0, 0, 0, tokyo)
+	banner := "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
+
+	// A per-model limit names no time; the 5-hour window's reset is not its reset.
+	_, at, ok := limitInMessage("You've reached your Fable 5 limit. Run /usage-credits to continue",
+		time.Date(2026, 10, 26, 18, 0, 0, 0, tokyo), []time.Time{fiveHour})
+	if !ok || !at.IsZero() {
+		t.Errorf("time-less limit: got (%v, %v), want no reset", at, ok)
+	}
+
+	// Read one second past the minute with no capture: lifting now, not tomorrow.
+	_, at, _ = limitInMessage(banner, time.Date(2026, 10, 26, 19, 50, 1, 0, tokyo), nil)
+	if !at.IsZero() {
+		t.Errorf("banner just passed: reset = %v, want none (not tomorrow)", at)
+	}
+
+	// Read within the minute with the real instant captured: that instant.
+	instant := time.Date(2026, 10, 26, 19, 50, 37, 0, tokyo)
+	_, at, _ = limitInMessage(banner, time.Date(2026, 10, 26, 19, 50, 10, 0, tokyo), []time.Time{instant})
+	if !at.Equal(instant) {
+		t.Errorf("banner minute with capture: reset = %v, want %v", at, instant)
+	}
+
+	// Well before the clock: today's reset, as before.
+	_, at, _ = limitInMessage(banner, time.Date(2026, 10, 26, 18, 0, 0, 0, tokyo), []time.Time{fiveHour})
+	if want := time.Date(2026, 10, 26, 19, 50, 0, 0, tokyo); !at.Equal(want) {
+		t.Errorf("banner ahead: reset = %v, want %v", at, want)
+	}
+}
+
+func TestIsPerModelLimit(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"You've reached your Fable 5 limit. Run /usage-credits to continue or switch models": true,
+		"You've hit your session limit · resets 7:50pm (Asia/Tokyo)":                         false,
+		"You've hit your weekly limit · resets 9am (Asia/Tokyo)":                             false,
+		"You've hit your org's monthly spend limit · run /usage-credits to raise it":         false,
+	} {
+		if got := IsPerModelLimit(msg); got != want {
+			t.Errorf("IsPerModelLimit(%q) = %v, want %v", msg, got, want)
+		}
+	}
+}
+
+// TestBannerGated: for a limit without a menu the reset instant is trusted only when it came
+// from the banner. The statusline-capture fallback answers for the account's 5-hour/weekly
+// windows, and a per-model limit is a different window; the form that comes with a menu (an
+// account window) keeps using the capture.
+func TestBannerGated(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		ok     bool
+		menu   bool
+		want   bool
+	}{
+		{"no menu, capture only", "capture", true, false, false},
+		{"no menu, banner", "banner", true, false, true},
+		{"no menu, banner and capture", "banner+capture", true, false, true},
+		{"menu, capture only", "capture", true, true, true},
+		{"menu, nothing found", "", false, true, false},
+		{"no menu, nothing found", "", false, false, false},
+	} {
+		if got := bannerGated(tc.source, tc.ok, tc.menu); got != tc.want {
+			t.Errorf("%s: bannerGated = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

@@ -123,6 +123,16 @@ afterEach(() => {
 });
 
 describe("CommandPalette mode tabs", () => {
+  // The hint lives on its own line: inside the scrolling tab row it was pushed out of reach by
+  // every added tab (#2421).
+  it("keeps the mode-switch hint outside the scrolling tab row", () => {
+    const row = document.querySelector(".cp-modes")!;
+    const hint = document.querySelector(".cp-mode-hint")!;
+    expect(hint.textContent).toBeTruthy();
+    expect(row.contains(hint)).toBe(false);
+    expect(row.parentElement).toBe(hint.parentElement);
+  });
+
   // On a narrow screen the tab row scrolls sideways and Tab switching keeps focus in the input,
   // so the palette itself has to bring the selected tab into view.
   it("scrolls the selected tab into view when the mode changes", () => {
@@ -250,4 +260,50 @@ describe("CommandPalette conversations mode", () => {
     expect(searched.length).toBe(asked + 1);
     expect(snippets()).toEqual(["back"]);
   });
+});
+
+describe("CommandPalette conversations mode — PageDown on an empty list (#2412)", () => {
+  it("leaves the first hit selected when PageDown was pressed before the hits arrived", async () => {
+    // PageDown while the search has no rows must not park the selection at -1: the hits that
+    // land later would have no highlighted row and Enter would do nothing.
+    searchBody = { hits: [], indexing: true, indexed: 0, total: 9 };
+    await typeQuery("alpha");
+    act(() => {
+      input().dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    });
+    // The same query is asked again while indexing; the hits land without any new typing.
+    searchBody = { hits: [hit("fixer", 3, "alpha beta")], indexing: false, indexed: 9, total: 9 };
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3300));
+    });
+    expect(snippets()).toHaveLength(1);
+    expect(document.querySelector(".cp-item.sel")).not.toBeNull();
+    pressEnter();
+    expect(opened.map((o) => o.name)).toEqual(["fixer"]);
+  }, 10_000);
+});
+
+describe("CommandPalette conversations mode — arrow keys on an empty list (#2504)", () => {
+  it.each(["ArrowDown", "ArrowUp"])(
+    "leaves the first hit selected when %s was pressed before the hits arrived",
+    async (key) => {
+      // Same trap as PageDown: ArrowDown on zero rows computed min(1, -1) = -1, so the hits that
+      // landed later had no highlighted row and Enter did nothing.
+      opened.length = 0;
+      searchBody = { hits: [], indexing: true, indexed: 0, total: 9 };
+      await typeQuery("alpha");
+      act(() => {
+        input().dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+      searchBody = { hits: [hit("fixer", 3, "alpha beta")], indexing: false, indexed: 9, total: 9 };
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 3300));
+      });
+      expect(snippets()).toHaveLength(1);
+      expect(document.querySelector(".cp-item.sel")).not.toBeNull();
+      pressEnter();
+      expect(opened.map((o) => o.name)).toEqual(["fixer"]);
+    },
+    10_000,
+  );
 });

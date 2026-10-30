@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -48,6 +50,11 @@ func (a adminAPI) resolveMember(r *http.Request, slug, key string) (mem store.Me
 // returns a member's live Workspace resource usage: mem/CPU from cgroup and disk
 // from `du` on the home tree, plus the disk quota if one is set. Disk is reported
 // even while the container is stopped (the home path persists on the host).
+//
+// ?disk=0 skips the host-side du. The roster cards poll this for mem/CPU only and already
+// show the usage sampler's disk reading, so a du per card per poll would be cost for
+// nothing; absent (the member detail) keeps the full answer. Disk figures the Agent itself
+// returned (ECS statfs) are not removed: they cost nothing extra here.
 func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
 		return
@@ -70,6 +77,7 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	// seconds, and this laziness is what keeps a docker deployment from running
 	// `docker inspect` twice on every poll.
 	state := sync.OnceValue(func() string { return rt.State(ctx) })
+	readStart := time.Now()
 	out := workspaceStats(ctx, a.mgr, rt, state)
 	// The member detail is opened from a roster snapshot and polls only this, so the
 	// automatic-stop reason rides here: read from the snapshot, it outlived the restart
@@ -79,13 +87,49 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 			out["auto_stop"] = as
 		}
 	}
+	// Which CLIs failed to install on the last start. A running workspace the Agent answered
+	// for is authoritative (a clean start reports none); otherwise (stopped, unreachable, or a
+	// local docker deployment where the host-side read never asks the Agent) it is the sampler's
+	// stored outcome. The list stays out of the response when empty, and the detail renders only
+	// this key, so a stale snapshot on the client can never decide it.
+	live, answered := out["boot_install_failed"].(map[string]string)
+	delete(out, "boot_install_failed")
+	if answered {
+		// Persist what was just seen, stamped with when the read began, so a stop before the
+		// next sweep falls back to this outcome and not to an older one, and an older sweep
+		// that lands later is refused by the same ordering guard. The record is "the last
+		// start observed"; a start that began and ended between two reads is not seen at all.
+		raw := ""
+		if len(live) > 0 {
+			if b, err := json.Marshal(live); err == nil {
+				raw = string(b)
+			}
+		}
+		_ = a.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, raw, store.DiskObservedAt(readStart))
+	} else {
+		live = nil
+		if raw, err := a.mgr.store.GetWorkspaceBootFailed(ctx, ws.ID); err == nil && raw != "" {
+			_ = json.Unmarshal([]byte(raw), &live)
+		}
+	}
+	if len(live) > 0 {
+		out["boot_failed"] = live
+	}
 	// Disk prefers the host-side du. Where CP and Workspace share a host, that is the
 	// size of the home tree itself — the only figure readable while the container is
 	// stopped, which taking stock of stopped workspaces needs. On ECS the path is not on
 	// the CP at all, so out already carries the disk_used / disk_total the Agent
 	// returned from statfs (the persistent home's own EBS volume).
-	if used, ok := dirDiskUsage(ctx, a.mgr.rootedDataDir(ws)); ok {
-		out["disk_used"] = used
+	if r.URL.Query().Get("disk") != "0" {
+		// Never waits on du: a 178 GiB home took 13 s to walk and the detail polls every
+		// 4 s. The last sample is served with its age and a refresh runs in the
+		// background; with nothing sampled yet the answer is "pending", not 0.
+		if used, at, ok := dirDiskUsageNoWait(a.mgr.rootedDataDir(ws)); ok {
+			out["disk_used"] = used
+			out["disk_observed_at"] = at.UTC().Format(time.RFC3339)
+		} else if _, agent := out["disk_used"]; !agent {
+			out["disk_pending"] = true
+		}
 	}
 	if ul, ok, _ := a.mgr.store.GetUserLimit(ctx, mem.ID); ok && ul.DiskGB > 0 {
 		out["disk_quota"] = uint64(ul.DiskGB) * gib
@@ -113,19 +157,9 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rt := a.mgr.runtimeFor(ws, noSecretKeys)
 	if rt.State(ctx) == "running" {
+		readStart := time.Now()
 		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
-			rows := make([]store.SessionRow, 0, len(list))
-			for _, s := range list {
-				state := "stopped"
-				if s.Alive {
-					state = "running"
-				}
-				rows = append(rows, store.SessionRow{
-					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
-					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
-				})
-			}
-			_ = a.mgr.store.ReplaceSessions(ctx, ws.ID, rows)
+			_ = a.mgr.mirrorSessions(ctx, ws.ID, readStart, list)
 			writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
 			return
 		}

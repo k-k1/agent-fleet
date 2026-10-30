@@ -9,14 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -88,6 +85,9 @@ func gracefulShutdown(budget time.Duration) {
 	// A background English-slug one-shot (branch_slug_ai.go) is a CLI no request owns; cancel it
 	// rather than leave it running past the Agent's exit.
 	englishSlugs.shutdown(min(2*time.Second, time.Until(deadline)))
+	// The same for the memory review: no new helper call, and the one in flight is killed with
+	// its context rather than left as an orphaned CLI.
+	shutdownMemoryReview(min(2*time.Second, time.Until(deadline)))
 	// Carry pending interactions over (docs/log/75 §75.6.3, trigger 2). It must run
 	// BEFORE the aborts and the kills, because for everything but claude this is the
 	// last chance: claude's pending state stays in the home volume as pending-*, so a
@@ -99,26 +99,18 @@ func gracefulShutdown(budget time.Duration) {
 	// Tier 2 (workspace stop) is the only healthy path through here, so without this
 	// "stopping to save money" would also throw away a decision a person was in the
 	// middle of making (ADR 0055 decision 2).
-	promoteCarriedOnShutdown()
+	promoteCarried()
 	owned := ownedLiveSessions()
+	lifecycles := managedLifecycles()
 	// Managed sessions (docs/log/27 §10.2-8): deliver the abort that corresponds to a
 	// pane's C-c. The turn goroutine records cancelled and the status store returns to
-	// idle, so the anySessionWorking wait below clears on the same condition as tui.
-	opencode.AbortManaged()
-	codex.AbortManaged()
-	copilot.AbortManaged()
-	cursor.AbortManaged()
-	kiro.AbortManaged()
-	lcpp.AbortManaged()
-	muse.AbortManaged()
+	// idle, so the anySessionWorking wait below clears on the same condition as tui. Every
+	// kind is aborted before that wait and before any kind is shut down.
+	for _, lc := range lifecycles {
+		lc.Abort()
+	}
 	if len(owned) == 0 {
-		opencode.Serve().Shutdown()
-		codex.Serve().Shutdown()
-		copilot.Shutdown()
-		cursor.Shutdown()
-		kiro.Shutdown()
-		lcpp.Shutdown()
-		muse.Shutdown()
+		shutdownManaged(lifecycles)
 		return
 	}
 	for _, tn := range owned {
@@ -143,17 +135,30 @@ func gracefulShutdown(budget time.Duration) {
 	time.Sleep(time.Second)
 	// The aborts are done by now, so the shared daemons' drain returns immediately
 	// (they exit on SIGTERM).
-	opencode.Serve().Shutdown()
-	codex.Serve().Shutdown()
-	copilot.Shutdown()
-	cursor.Shutdown()
-	kiro.Shutdown()
-	lcpp.Shutdown()
-	muse.Shutdown()
+	shutdownManaged(lifecycles)
 	for _, tn := range owned {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 }
+
+// shutdownManaged shuts every managed kind down, in the order given.
+func shutdownManaged(lifecycles []agents.ManagedLifecycle) {
+	for _, lc := range lifecycles {
+		lc.Shutdown()
+	}
+}
+
+// shutdownMemoryReview stops the background memory review taking work and cancels the helper call
+// in flight (the run record keeps the interrupted attempt for the next start to settle).
+func shutdownMemoryReview(budget time.Duration) {
+	if memreview.DefaultLoop != nil {
+		memreview.DefaultLoop.Shutdown(budget)
+	}
+}
+
+// promoteCarried is promoteCarriedOnShutdown; a var so the ordering test can record when it
+// runs relative to the aborts.
+var promoteCarried = promoteCarriedOnShutdown
 
 // promoteCarriedOnShutdown snapshots every LIVE session's pending modal into the
 // carried store before the shutdown tears the panes and runtime handles down.
@@ -208,4 +213,21 @@ func anySessionWorking() bool {
 		}
 	}
 	return false
+}
+
+// managedLifecycles is every registered kind's ManagedLifecycle in internal/kinds order: the
+// order main starts the boot reconciles in, and the order gracefulShutdown aborts and then shuts
+// the kinds down in.
+func managedLifecycles() []agents.ManagedLifecycle {
+	var out []agents.ManagedLifecycle
+	for _, k := range kinds.All() {
+		a, ok := agentreg.Lookup(k)
+		if !ok {
+			continue
+		}
+		if c, ok := a.(agents.ManagedLifecycler); ok {
+			out = append(out, c.ManagedLifecycle())
+		}
+	}
+	return out
 }

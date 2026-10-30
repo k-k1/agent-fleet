@@ -766,3 +766,91 @@ func TestUnknownItemKindRendersWithFallbackText(t *testing.T) {
 		t.Errorf("part = %+v", p)
 	}
 }
+
+// The two kinds muse 1.4.11 added carry their facts in typed members, not in label or
+// fallbackText. A damagedRange must say what the log lost; it is the only trace of it.
+func TestDamagedRangeAndScheduledFireItemsRenderTheirFacts(t *testing.T) {
+	dr := item(msp.ItemKindDamagedRange, "d-1", 1)
+	dr.Status = msp.ItemStatusCompleted
+	dr.DamagedRange = &msp.DamagedRange{MissingRecords: 3, UnreadableLines: 2, ReadableAfterAt: "2026-10-20T00:00:00Z"}
+
+	sf := item(msp.ItemKindScheduledFire, "s-1", 1)
+	sf.Status = msp.ItemStatusCompleted
+	sf.JobID = sp("job-7")
+
+	turns := turnsFromItems([]msp.Item{dr, sf})
+	if len(turns) != 1 || len(turns[0].Parts) != 2 {
+		t.Fatalf("items were dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts
+	if p[0].Tool != "damagedRange" || p[0].Info != "session log damaged: 3 records missing, 2 unreadable lines" || p[0].Output != "" {
+		t.Errorf("damagedRange = %+v", p[0])
+	}
+	if p[1].Tool != "scheduledFire" || p[1].Info != "scheduled job job-7" {
+		t.Errorf("scheduledFire = %+v", p[1])
+	}
+
+	// The host's own one-liner still wins over the derived summary.
+	dr.FallbackText = sp("log damaged")
+	if got := turnsFromItems([]msp.Item{dr})[0].Parts[0].Info; got != "log damaged" {
+		t.Errorf("fallbackText overridden: %q", got)
+	}
+}
+
+// jobId is an unbounded string on the wire; the derived summary obeys the same one-line,
+// 80-rune Info limit as every other summary.
+func TestScheduledFireSummaryIsClipped(t *testing.T) {
+	sf := item(msp.ItemKindScheduledFire, "s-2", 1)
+	sf.Status = msp.ItemStatusCompleted
+	sf.JobID = sp(strings.Repeat("j", 1000) + "\nsecond line")
+	got := turnsFromItems([]msp.Item{sf})[0].Parts[0].Info
+	if strings.Contains(got, "\n") || len([]rune(got)) > 81 {
+		t.Errorf("Info not clipped: %d runes, newline=%v", len([]rune(got)), strings.Contains(got, "\n"))
+	}
+}
+
+// muse 1.4.12 reports how a backgrounded command ended as its own item, with the facts in a
+// typed member. overdueNotice has none and takes the host's fallbackText like any unknown kind.
+func TestBackgroundTerminalCompletionAndOverdueNoticeRender(t *testing.T) {
+	bc := item(msp.ItemKindBackgroundTerminalCompletion, "b-1", 1)
+	bc.Status = msp.ItemStatusCompleted
+	bc.BackgroundTerminalCompletion = &msp.BackgroundTerminalCompletion{
+		Command: "npm test", Output: "1 failed", TerminalStatus: "failed", ToolCallID: "call-1",
+	}
+
+	od := item(msp.ItemKindOverdueNotice, "o-1", 1)
+	od.Status = msp.ItemStatusCompleted
+	od.FallbackText = sp("scheduled job is overdue")
+
+	turns := turnsFromItems([]msp.Item{bc, od})
+	if len(turns) != 1 || len(turns[0].Parts) != 2 {
+		t.Fatalf("items were dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts
+	if p[0].Tool != "backgroundTerminalCompletion" || p[0].Info != "background command failed: npm test" {
+		t.Errorf("backgroundTerminalCompletion = %+v", p[0])
+	}
+	if p[1].Tool != "overdueNotice" || p[1].Info != "scheduled job is overdue" {
+		t.Errorf("overdueNotice = %+v", p[1])
+	}
+}
+
+// muse 1.4.14 serves the boundary checkpoint's transcript tail as one earlierHistory item in
+// place of the items it pruned; it has no label or fallbackText, so the count comes from the
+// typed member.
+func TestEarlierHistorySummaryCountsTheKeptMessages(t *testing.T) {
+	eh := item(msp.ItemKindEarlierHistory, "e-1", 1)
+	eh.Status = msp.ItemStatusCompleted
+	eh.EarlierHistory = &msp.EarlierHistory{Messages: []msp.EarlierHistoryMessage{
+		{Role: "user", Text: "hi"}, {Role: "assistant", Text: "hello"},
+	}}
+
+	turns := turnsFromItems([]msp.Item{eh})
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("item was dropped or split: %+v", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.Tool != "earlierHistory" || p.Info != "earlier history: 2 messages kept from before the checkpoint" {
+		t.Errorf("earlierHistory = %+v", p)
+	}
+}

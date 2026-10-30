@@ -636,6 +636,22 @@ echo "== case 18: cursor is reported but gets no red marker =="
 has cursor '`cursor` `1.2.0`'
 state_is red cursor ""
 
+echo "== case 18b: an advisory caps finding writes a row but never a red marker; success leaves it =="
+"$REPORT" advisory copilot 1.4.0 'caps drift probes'
+has copilot '<!-- cli-contract-caps copilot -->'
+has copilot 'advisory, no gate'
+state_is red copilot ""
+"$REPORT" success copilot
+has copilot '<!-- cli-contract-caps copilot -->'
+LATEST_COPILOT=1.5.0 "$REPORT" prune
+hasnt copilot '<!-- cli-contract-caps copilot -->'
+"$REPORT" advisory copilot 1.5.0
+has copilot '`copilot` `1.5.0`'
+"$REPORT" advisory-clear copilot
+hasnt copilot '<!-- cli-contract-caps copilot -->'
+state_is red copilot ""
+echo closed > "$STUB_ISSUES/$(issue_of copilot)/state"   # later cases expect no open copilot issue
+
 echo "== case 19: a body rewrite keeps the section (carry) =="
 printf 'fresh next step\n' > "$WORK/newbody.md"
 "$REPORT" carry "$(issue_of claude)" "$WORK/newbody.md"
@@ -937,5 +953,21 @@ releases agy=1.0.0:1.0.2               # a newer release replaced the one the ro
 sync_ok agy
 no_issue agy
 "$REPORT" fragments-clear agy
+
+echo "== case 34: an advisory caps row for latest keeps a current pin's issue open; a pass or a newer release lets it close =="
+for d in "$STUB_ISSUES"/1[0-9][0-9]; do echo closed > "$d/state"; done
+releases copilot=1.4.0:1.4.0
+"$REPORT" advisory copilot 1.4.0
+sync_ok copilot
+title_is copilot "copilot CLI: caps probes drifted on 1.4.0"
+has copilot 'gate nothing yet'
+state_is red copilot none   # still no marker (the earlier success cleared it to none)
+"$REPORT" advisory-clear copilot
+sync_ok copilot
+no_issue copilot
+"$REPORT" advisory copilot 1.4.0
+releases copilot=1.4.0:1.4.1           # a newer release replaced the one the row was about
+sync_ok copilot
+no_issue copilot
 
 echo "OK: one unreadable release source no longer stops the watcher"

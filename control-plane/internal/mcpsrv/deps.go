@@ -43,6 +43,14 @@ type CP interface {
 	// TokenSignMaster is the master the AF_MCP_TOKEN signing key is derived from.
 	TokenSignMaster() []byte
 
+	// ServerIdentity is the build version, brand label and public origin that
+	// serverInfo reports. The brand label can change at runtime, hence the context.
+	ServerIdentity(ctx context.Context) ServerIdentity
+
+	// CallLog is the per-replica ring of recent /mcp calls the member API reads back. It lives
+	// on the CP because that API is not part of this package; nil drops the records.
+	CallLog() *CallLog
+
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime
 	ResolveByMembership(ctx context.Context, identityID, membershipID string) (*Resolved, *APIError)
@@ -92,8 +100,8 @@ type CP interface {
 	HashPAT(token string) string
 	// TenantLimits parses tenant.limits JSON. mcpsrv only reports two of the quotas.
 	TenantLimits(raw string) (maxWorkspaces, maxSessions int)
-	// EgressDefaults is the product's built-in egress allowlist (egress_policy.go),
-	// reported verbatim by the list_allowlist tool.
+	// EgressDefaults is the built-in egress allowlist (egress_policy.go): the product
+	// defaults and the CP's own hosts, reported verbatim by the list_allowlist tool.
 	EgressDefaults() []string
 	// HostStats is the super_admin-only host load/memory reading (metrics.go).
 	HostStats() (load1 float64, ncpu int, memUsed, memTotal uint64)

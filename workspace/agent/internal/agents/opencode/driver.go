@@ -51,6 +51,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -154,21 +155,9 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if ses == "" {
 		ses = sids.Read(ocSid)
 	}
-	if ses != "" && !serveSessionExists(addr, ses, cwd) {
-		ses = "" // pruned/imported-away conversation — start fresh
-	}
-	if ses == "" {
-		if m.ForkFrom != "" {
-			ses, err = serveForkSession(addr, m.ForkFrom, cwd, m.ForkAt)
-		} else {
-			ses, err = serveCreateSession(addr, cwd, session.Display(m))
-		}
-		if err != nil {
-			return nil, err
-		}
-		// The same per-slot mapping claude/codex use: the read layer's activeSession
-		// consults it first, and with no plugin in managed mode the driver is the writer.
-		sids.Write(ocSid, ses)
+	ses, err = managedSession(addr, m, cwd, ocSid, ses)
+	if err != nil {
+		return nil, err
 	}
 
 	h.mu.Lock()
@@ -187,6 +176,37 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return h, nil
+}
+
+// managedSession returns the opencode session m runs in: ses when the daemon still has it, else a
+// fork of m.ForkFrom or a new one, recorded under ocSid. Either way it is stamped with m's name
+// for the shell's AF_WORK_DIR / AF_SESSION_NAME (agent-fleet-shared.js), and it fails when it
+// cannot: a fork carries its source's name, so a session left unstamped would run its shell as
+// that other session. The next Resume finds the recorded session and stamps it again.
+func managedSession(addr string, m session.Meta, cwd, ocSid, ses string) (string, error) {
+	var err error
+	if ses != "" && !serveSessionExists(addr, ses, cwd) {
+		ses = "" // pruned/imported-away conversation — start fresh
+	}
+	if ses == "" {
+		if m.ForkFrom != "" {
+			ses, err = serveForkSession(addr, m.ForkFrom, cwd, m.ForkAt)
+		} else {
+			ses, err = serveCreateSession(addr, cwd, session.Display(m))
+		}
+		if err != nil {
+			return "", err
+		}
+		// The same per-slot mapping claude/codex use: the read layer's activeSession
+		// consults it first, and with no plugin in managed mode the driver is the writer.
+		sids.Write(ocSid, ses)
+	}
+	if isV2() {
+		if err := tagManagedSession(addr, ses, m.Name); err != nil {
+			return "", fmt.Errorf("opencode session %s could not be named for its shell environment: %w", ses, err)
+		}
+	}
+	return ses, nil
 }
 
 // LiveHandle returns the session's handle without starting anything (agents.LiveHandles): the
@@ -238,7 +258,7 @@ func (managedDriver) RespondTerminal(m session.Meta, reply agents.InteractionRep
 		waiting = waiting || f.ID == reply.ID
 	}
 	if !waiting {
-		return fmt.Errorf("interaction %s は待機中ではありません: %w", reply.ID, errFormSettled)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
 	return respondForm(t.Addr, ses, reply)
 }
@@ -248,38 +268,75 @@ func (managedDriver) RespondTerminal(m session.Meta, reply agents.InteractionRep
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindOpencode,
+	Name:    "opencode",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
+}
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
+	}
+	// Terminal panes that survived an Agent restart are attached to the daemon too: adopt it (or
+	// start a replacement and put their environments back) rather than wait for a Console poll,
+	// which never comes for a session that has no managed handle.
+	managedKind.AfterReconcile = func(reason string) {
+		if sharedTerminals() > 0 {
+			ensureForTerminals(reason)
+		}
+	}
+}
+
+// Alive, Busy, HoldsEntry and Abort are what managed.Lifecycle asks of a handle.
+
+func (h *threadHandle) Alive() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.alive
+}
+
+func (h *threadHandle) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.tq().Len() > 0
+}
+
+func (h *threadHandle) HoldsEntry() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.tq().Head() != nil
+}
+
+func (h *threadHandle) Abort() {
+	h.mu.Lock()
+	running := h.running
+	h.mu.Unlock()
+	if running {
+		_ = h.interruptAll()
+	}
+}
+
 // handleFor returns the live handle for a session name, or nil.
 func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+	h, _ := managedKind.Get(name)
+	return h
 }
 
 // liveHandles snapshots the currently-alive handles.
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		h.mu.Lock()
-		alive := h.alive
-		h.mu.Unlock()
-		if alive {
-			out = append(out, h)
-		}
-	}
-	return out
-}
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // DropHandle detaches a managed session from its runtime handle (stop/halt/
 // archive): abort any running turn, clear the queue, forget the handle. The
 // conversation stays in the SQLite store — a later Resume reattaches.
 func DropHandle(name string) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		// A Terminal slot has no handle; its turn runs on the shared serve all the same, and
 		// closing the pane does not stop it.
 		if m, ok := session.ReadMeta(name); ok {
@@ -306,90 +363,92 @@ func DropHandle(name string) {
 
 // RemoveLedger drops a session's ClientMessageID ledger. Only for /stop, which discards
 // the slot's identity as well; halt/archive keep it because the session can resume.
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle — the
 // managed counterpart of tmuxx.HasSession for the sessions list.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.alive
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedBusy reports a turn is running or queued (graceful shutdown waits on this).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.tq().Len() > 0
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.tq().Head() != nil
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn — the managed counterpart of
 // graceful shutdown's per-pane Ctrl-C (docs/log/27 §10.2-8). It takes the same path as
 // ThreadHandle.Interrupt, so once the abort lands the turn goroutine records cancelled
 // and the status store returns to idle, releasing anySessionWorking's wait.
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.mu.Lock()
-		running := h.running
-		h.mu.Unlock()
-		if running {
-			_ = h.interruptAll()
-		}
-	}
-}
+func AbortManaged() { managedKind.Abort() }
+
+// Shutdown stops the shared daemon through its supervisor (Serve). Call it only after
+// AbortManaged, so the daemon's drain has no turn left to wait for.
+func Shutdown() { Serve().Shutdown() }
 
 // ReconcileManaged re-attaches managed opencode sessions after an Agent boot,
 // daemon restart or daemon death (§6). It covers every managed meta not already treated
 // as stopped, so the experience matches tui's tmux surviving an Agent restart. On failure
 // the session stays stopped and the user's resume click (/start) retries it.
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindOpencode || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
+
+// terminalEnsureBackoff is the wait before each further attempt ensureForTerminals makes, and
+// ensureTerminalServe, when set, replaces the attempt; vars so tests need no daemon. (A function
+// default for the latter would be an initialization cycle: Ensure can reach this reconcile.)
+var (
+	terminalEnsureBackoff = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+	ensureTerminalServe   func() error
+)
+
+// ensureForTerminals brings the shared serve up for the Terminal panes attached to it, retrying a
+// failed start. Nothing else retries for them: they have no managed handle, so no Console poll
+// calls Resume, and a single failed start would strand every pane until another one is launched
+// or the Agent restarts.
+// Seen on CI: a replacement serve stayed silent past serveStartTimeout after a restart, and the
+// same job passed when rerun.
+func ensureForTerminals(reason string) {
+	for i := 0; ; i++ {
+		var err error
+		if ensureTerminalServe != nil {
+			err = ensureTerminalServe()
+		} else {
+			_, _, err = Serve().Ensure()
 		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
+		if err == nil {
+			return
 		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("opencode managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-	}
-	// Terminal panes that survived an Agent restart are attached to the daemon too: adopt it (or
-	// start a replacement and put their environments back) rather than wait for a Console poll,
-	// which never comes for a session that has no managed handle.
-	if sharedTerminals() > 0 {
-		if _, _, err := Serve().Ensure(); err != nil {
+		// Not connected or disabled is a decision, not a hiccup: another attempt cannot change it.
+		if i == len(terminalEnsureBackoff) || errors.Is(err, ErrNotConnected) || Serve().Disabled() {
 			log.Printf("opencode: terminal sessions need the shared serve (%s): %v", reason, err)
+			return
+		}
+		log.Printf("opencode: terminal sessions need the shared serve (%s), retrying in %v: %v", reason, terminalEnsureBackoff[i], err)
+		time.Sleep(terminalEnsureBackoff[i])
+		if sharedTerminals() == 0 {
+			return
 		}
 	}
 }
 
 // reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }
+
+// reconcileInflight counts the reconciles started by goReconcile. Tests wait on it so a
+// reconcile that outlives the code that triggered it cannot read a package var after the test
+// has restored it; production never waits.
+var reconcileInflight sync.WaitGroup
+
+// goReconcile runs reconcileAll in the background, tracked by reconcileInflight.
+func goReconcile(reason string) {
+	reconcileInflight.Add(1)
+	go func() {
+		defer reconcileInflight.Done()
+		reconcileAll(reason)
+	}()
+}
 
 // --- thread handle -----------------------------------------------------------
 
@@ -444,6 +503,13 @@ type threadHandle struct {
 	// client's turn, which a retry status must never be attributed to.
 	turnSent bool
 	events   chan agents.Event
+
+	// act stamps every message the runtime sends for this handle, for the busy-row progress bound
+	// (ManagedProgress).
+	act agents.Activity
+	// tools holds the tool calls the runtime reported started and not finished: a silent tool
+	// sends nothing while it runs, so this is the only trace of it (progress_managed.go).
+	tools agents.InFlight
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -502,6 +568,7 @@ func (h *threadHandle) currentState() agents.TurnState {
 // blocked turn call (if any) unblocks with a transport error and keeps unknown until
 // reconcile resolves it.
 func (h *threadHandle) runtimeLost() {
+	h.tools.Unknown()
 	h.mu.Lock()
 	h.alive = false
 	h.compacting = false
@@ -986,7 +1053,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
 	if isV2() {
 		// A form, not a question: it is answered by field key and read again first (v2form.go).
@@ -1382,6 +1449,7 @@ func handleServeEvent(data []byte) {
 		}
 		ev.Type, ev.Properties = inner.Type, inner.Properties
 	}
+	noteProgress(ev.Type, ev.Properties)
 	switch ev.Type {
 	case "question.asked":
 		var q serveQuestion

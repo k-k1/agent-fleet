@@ -128,6 +128,20 @@ describe("TrackerTab", () => {
     expect(apiJSONMock).toHaveBeenCalledWith("api/connections/jira/site", "PUT", { cloudId: "cid-2" });
   });
 
+  const swBase = { connected: true, account: "A", site: "https://one.atlassian.net" };
+  it.each([
+    ["an OAuth connection that lacks them", { ...swBase, authKind: "oauth", softwareScopes: "missing" }, true],
+    ["an OAuth connection that holds them", { ...swBase, authKind: "oauth", softwareScopes: "granted" }, false],
+    ["an OAuth connection with unknown scopes", { ...swBase, authKind: "oauth" }, false],
+    ["an API token connection", { ...swBase, authKind: "token", softwareScopes: "missing" }, false],
+  ])("Jira Software scope notice for %s", async (_n, jira, shown) => {
+    apiMock.mockImplementation((p: string) =>
+      Promise.resolve(p === "api/git-oauth" ? { jira: { configured: true } } : conns(jira)),
+    );
+    await render();
+    expect(text().includes(t("tracker.jira_software_missing"))).toBe(shown);
+  });
+
   it("shows no picker when there is only one site", async () => {
     apiMock.mockImplementation((p: string) =>
       Promise.resolve(

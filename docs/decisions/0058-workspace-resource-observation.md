@@ -119,3 +119,10 @@ and stocktaking needs it.
   it — and on `ecs-ec2` it even gives **the capacity** (`du` has no denominator).
 - **Ride the gauges on `GET /healthz`.** Making the liveness response heavier changes what a timeout
   means when monitoring is slow. It gets its own endpoint.
+
+## Note 2026-10-25 (#2425)
+
+The member detail no longer waits on the host-side `du`: `GET .../members/{key}/stats` serves the last
+sample with `disk_observed_at` and refreshes it in the background (single-flight per home, 5-minute
+timeout, cancelled on CP shutdown). Before the first sample it answers `disk_pending` instead of a
+figure. The usage sampler's quota path still calls `du` synchronously under its own budget.

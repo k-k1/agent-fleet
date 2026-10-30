@@ -31,7 +31,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -69,9 +71,95 @@ const (
 	eraProbeTimeout = 2 * time.Second
 )
 
+// sessionBoundRequests is how many tools/list calls carry the session id of a stateful
+// legacy-era HTTP server. With two instances behind a balancer, 6 calls miss with
+// probability (1/2)^6; each pays its own TCP/TLS handshake, so keep it inside
+// defaultProbeTimeout.
+const sessionBoundRequests = 6
+
+// affinityBudget caps the extra session-bound requests (all but the first tools/list).
+const affinityBudget = 5 * time.Second
+
+// errSessionRejected is the verdict for a server that refuses the session id it just issued
+// (several instances, in-memory sessions, no affinity).
+const errSessionRejected = "The server rejected the session ID it just issued. It may be running as several instances without session affinity (routing a session to the same instance). Make the server stateless, or route every request of a session to the same instance"
+
+// errOAuthRequired is the Error of a recognised OAuth-protected server. The Console keys off
+// ProbeResult.OAuth, not this text; it is what an older Console shows, so it names where
+// sign-in happens today (the server's row) rather than anything the Console would explain.
+const errOAuthRequired = "This server requires OAuth sign-in. Choose OAuth as the authentication, save, then sign in from the server's row"
+
+// Stable failure codes of ProbeResult.Code. The Console renders them from its catalogues
+// (mcp.probe_err.<code>) with ProbeResult.Params; Error stays the English fallback for an
+// older Console or a caller that has no catalogue. Adding or renaming a code means changing
+// the Console's en and ja catalogues together.
+const (
+	codeUnsupportedTransport = "unsupported_transport" // params: transport
+	codeUnreachable          = "unreachable"
+	codeStartFailed          = "start_failed" // params: error
+	codeProcessExited        = "process_exited"
+	codeTimeout              = "timeout"      // params: timeoutMs
+	codeRPCRejected          = "rpc_rejected" // params: method, message
+	codeSSENoResponse        = "sse_no_response"
+	codeBadResponse          = "bad_response" // params: error
+	codeSessionRejected      = "session_rejected"
+	codeOAuthRequired        = "oauth_required"
+)
+
+// probeErr is an error that carries its ProbeResult code and parameters, so a failure raised
+// deep in an exchange keeps its identity up to the result.
+type probeErr struct {
+	code   string
+	params map[string]string
+	msg    string
+}
+
+func (e *probeErr) Error() string { return e.msg }
+
 // errProbeTimeout distinguishes "no answer in time" from "the process died", so the
-// era probe can fall back on the former and fail fast on the latter.
-var errProbeTimeout = errors.New("タイムアウトしました")
+// era probe can fall back on the former and fail fast on the latter. Probe adds the
+// timeoutMs parameter once it knows the budget.
+var errProbeTimeout error = &probeErr{code: codeTimeout, msg: "timed out"}
+
+// coded builds a failed result with a code, its parameters (key, value pairs) and the English
+// fallback text.
+func coded(code, msg string, kv ...string) ProbeResult {
+	r := ProbeResult{Error: msg, Code: code}
+	for i := 0; i+1 < len(kv); i += 2 {
+		if r.Params == nil {
+			r.Params = map[string]string{}
+		}
+		r.Params[kv[i]] = kv[i+1]
+	}
+	return r
+}
+
+// rejected is the failure for a JSON-RPC error answer to method.
+func rejected(method, message string) ProbeResult {
+	return coded(codeRPCRejected, fmt.Sprintf("%s was rejected: %s", method, message), "method", method, "message", message)
+}
+
+// failOf turns an exchange error into a result, keeping its code when it has one.
+func failOf(err error) ProbeResult {
+	var pe *probeErr
+	if errors.As(err, &pe) {
+		r := coded(pe.code, pe.msg)
+		for k, v := range pe.params {
+			if r.Params == nil {
+				r.Params = map[string]string{}
+			}
+			r.Params[k] = v
+		}
+		return r
+	}
+	return ProbeResult{Error: err.Error()}
+}
+
+// withDetail returns r with Detail set.
+func withDetail(r ProbeResult, detail string) ProbeResult {
+	r.Detail = detail
+	return r
+}
 
 // ProbeResult is the outcome of one connection test.
 type ProbeResult struct {
@@ -87,10 +175,18 @@ type ProbeResult struct {
 	// SupportedVersions is what server/discover advertised (stateless servers only).
 	SupportedVersions []string `json:"supportedVersions,omitempty"`
 	Error             string   `json:"error,omitempty"`
+	// Code and Params are the stable, language-free form of Error: the Console renders its
+	// own text from them (mcp.probe_err.<code>). Error is the English fallback for a Console
+	// that does not know the code. Empty when Error is the server's or the OS's own text.
+	Code   string            `json:"code,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
 	// Detail carries the server's stderr / response body tail on failure. Truncated,
 	// and shown verbatim to the user — a broken command usually explains itself there.
-	Detail    string `json:"detail,omitempty"`
-	ElapsedMS int64  `json:"elapsedMs"`
+	Detail string `json:"detail,omitempty"`
+	// OAuth is set when the server answered 401 as an OAuth-protected resource. OK stays
+	// false (nothing was listed), but the Console shows the report instead of a failure.
+	OAuth     *OAuthReport `json:"oauth,omitempty"`
+	ElapsedMS int64        `json:"elapsedMs"`
 }
 
 type rpcMsg struct {
@@ -216,11 +312,15 @@ func Probe(ctx context.Context, d ServerDef) ProbeResult {
 	case TransportHTTP:
 		res = probeHTTP(ctx, d)
 	default:
-		res = ProbeResult{Error: fmt.Sprintf("未対応のトランスポートです: %s", d.Transport)}
+		res = coded(codeUnsupportedTransport, fmt.Sprintf("unsupported transport: %s", d.Transport), "transport", string(d.Transport))
 	}
 	res.ElapsedMS = time.Since(start).Milliseconds()
 	if !res.OK && res.Error == "" {
-		res.Error = "接続できませんでした"
+		res = coded(codeUnreachable, "could not connect")
+		res.ElapsedMS = time.Since(start).Milliseconds()
+	}
+	if res.Code == codeTimeout {
+		res.Params = map[string]string{"timeoutMs": strconv.FormatInt(timeout.Milliseconds(), 10)}
 	}
 	return res
 }
@@ -241,10 +341,11 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 	if err != nil {
 		return ProbeResult{Error: err.Error()}
 	}
-	var errBuf bytes.Buffer
+	var errBuf lockedBuffer
 	cmd.Stderr = &errBuf
+	cmd.WaitDelay = probeWaitDelay
 	if err := cmd.Start(); err != nil {
-		return ProbeResult{Error: fmt.Sprintf("起動できませんでした: %v", err), Detail: tail(errBuf.String())}
+		return withDetail(coded(codeStartFailed, fmt.Sprintf("failed to start: %v", err), "error", err.Error()), tail(errBuf.String()))
 	}
 	defer func() {
 		_ = stdin.Close()
@@ -282,20 +383,24 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 				}
 			}
 			if err != nil {
-				readErr <- fmt.Errorf("応答がありませんでした（プロセスが終了しました）")
+				readErr <- &probeErr{code: codeProcessExited, msg: "no response (the process exited)"}
 				return
 			}
 		}
 	}()
 
-	fail := func(msg string) ProbeResult {
-		return ProbeResult{Error: msg, Detail: tail(errBuf.String())}
+	fail := func(r ProbeResult) ProbeResult { return withDetail(r, tail(errBuf.String())) }
+	// failErr reports a transport-level error (read, write, process exit). Once the
+	// probe budget is spent the context kill is the cause of all of them, so the
+	// answer is timeout whichever symptom surfaced first.
+	failErr := func(err error) ProbeResult {
+		return fail(failOf(budgetErr(ctx, err)))
 	}
 	exchangeCtx := func(c context.Context, id int, m rpcMsg) (rpcMsg, error) {
 		if err := writeRPC(stdin, m); err != nil {
-			return rpcMsg{}, err
+			return rpcMsg{}, classifyWriteErr(ctx, readErr, writeExitGrace, err)
 		}
-		return readRPCFor(c, msgs, readErr, id)
+		return readRPCFor(c, ctx, msgs, readErr, id)
 	}
 	exchange := func(id int, m rpcMsg) (rpcMsg, error) { return exchangeCtx(ctx, id, m) }
 
@@ -311,42 +416,48 @@ func probeStdio(ctx context.Context, d ServerDef) ProbeResult {
 		_ = json.Unmarshal(msg.Result, &dr)
 		msg, err = exchange(2, statelessReq(2, "tools/list"))
 		if err != nil {
-			return fail(err.Error())
+			return failErr(err)
 		}
 		if msg.Error != nil {
-			return fail(fmt.Sprintf("tools/list が拒否されました: %s", msg.Error.Message))
+			return fail(rejected("tools/list", msg.Error.Message))
 		}
 		res := okResult(dr.info(), msg.Result)
 		res.Revision, res.SupportedVersions = ProtocolVersion, dr.SupportedVersions
 		return res
 	case errors.Is(err, errProbeTimeout) && ctx.Err() == nil:
 		// Silence, but the overall budget is intact: a server that ignores unknown
-		// methods instead of answering -32601. Treat it as the legacy era.
+		// methods instead of answering -32601. Treat it as the legacy era, unless the
+		// server exited meanwhile: the era deadline may have beaten a pending EOF.
+		select {
+		case re := <-readErr:
+			return failErr(re)
+		default:
+		}
 	case err != nil:
-		return fail(err.Error()) // process died, or the whole probe timed out
+		return failErr(err) // process died, or the whole probe timed out
 	case !isLegacyEraSignal(msg.Error):
-		return fail(fmt.Sprintf("server/discover が拒否されました: %s", msg.Error.Message))
+		return fail(rejected("server/discover", msg.Error.Message))
 	}
 
 	// Legacy era: the full initialize handshake.
 	msg, err = exchange(3, rpcMsg{JSONRPC: "2.0", ID: 3, Method: "initialize", Params: legacyInitParams()})
 	if err != nil {
-		return fail(err.Error())
+		return failErr(err)
 	}
 	if msg.Error != nil {
-		return fail(fmt.Sprintf("initialize が拒否されました: %s", msg.Error.Message))
+		return fail(rejected("initialize", msg.Error.Message))
 	}
 	var ir legacyInitResult
 	_ = json.Unmarshal(msg.Result, &ir)
 	if err := writeRPC(stdin, rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}); err != nil {
-		return fail(err.Error())
+		return failErr(classifyWriteErr(ctx, readErr, writeExitGrace, err))
 	}
 	msg, err = exchange(4, rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}})
 	if err != nil {
-		return fail(err.Error())
+		return failErr(err)
 	}
 	if msg.Error != nil {
-		return fail(fmt.Sprintf("tools/list が拒否されました: %s", msg.Error.Message))
+		return fail(rejected("tools/list", msg.Error.Message))
 	}
 	res := okResult(ir.ServerInfo, msg.Result)
 	res.Revision = ProtocolVersionLegacy
@@ -362,14 +473,68 @@ func writeRPC(w io.Writer, m rpcMsg) error {
 	return err
 }
 
+// writeExitGrace bounds how long a failed write waits for the reader to report the exit
+// behind it. The kernel closes the pipe before the reader goroutine is scheduled, so an
+// EPIPE routinely arrives first; the grace only matters for a server that closed stdin
+// and keeps running.
+const writeExitGrace = 2 * time.Second
+
+// probeWaitDelay bounds the reap after the kill. A grandchild that inherited stderr (npx
+// spawning node) keeps the pipe open past the server's death, and Wait would otherwise
+// block on copying it until that grandchild exits.
+const probeWaitDelay = 2 * time.Second
+
+// classifyWriteErr names the cause of a failed write. A broken pipe means the server is
+// gone or going, so wait for the reader's exit error (or the budget) instead of
+// depending on goroutine scheduling; werr is returned only if neither shows up.
+func classifyWriteErr(budget context.Context, readErr <-chan error, grace time.Duration, werr error) error {
+	if budget.Err() != nil {
+		return errProbeTimeout // the write itself failed after the deadline
+	}
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case re := <-readErr:
+		return re
+	case <-budget.Done():
+	case <-t.C:
+	}
+	// The write failed inside the budget; running out of time while waiting for a
+	// diagnosis must not rewrite that into a timeout.
+	return &settledErr{werr}
+}
+
+// budgetErr maps a transport error to errProbeTimeout once the probe context has expired.
+func budgetErr(ctx context.Context, err error) error {
+	var se *settledErr
+	if ctx.Err() != nil && !errors.As(err, &se) {
+		return errProbeTimeout
+	}
+	return err
+}
+
+// settledErr is a failure that was decided within the budget; failErr leaves it alone
+// even if the context has expired by the time it is reported.
+type settledErr struct{ error }
+
+func (e *settledErr) Unwrap() error { return e.error }
+
 // readRPCFor waits for the response with the wanted id, discarding anything else that
-// arrives (late answers to an abandoned exchange, stray notifications).
-func readRPCFor(ctx context.Context, msgs <-chan rpcMsg, readErr <-chan error, wantID int) (rpcMsg, error) {
+// arrives (late answers to an abandoned exchange, stray notifications). ctx bounds this
+// wait (it may be a short sub-deadline); budget is the whole probe's context. Only the
+// budget expiring turns a reader error into a timeout — an exit seen under a mere
+// sub-deadline stays a process exit.
+func readRPCFor(ctx, budget context.Context, msgs <-chan rpcMsg, readErr <-chan error, wantID int) (rpcMsg, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return rpcMsg{}, errProbeTimeout
 		case err := <-readErr:
+			// The context kill closes stdout, so after the deadline both channels are
+			// ready and select picks at random: an expired context wins.
+			if budget.Err() != nil {
+				return rpcMsg{}, errProbeTimeout
+			}
 			return rpcMsg{}, err
 		case m := <-msgs:
 			if idEquals(m.ID, wantID) {
@@ -399,18 +564,44 @@ type httpExchange struct {
 	msg    rpcMsg
 	status int
 	raw    string
+	header http.Header
 }
 
 func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
+	// No cookie jar, on purpose: Claude Code never sends cookies back on MCP requests, so a
+	// probe honouring load-balancer cookie stickiness would pass where real sessions fail.
 	client := &http.Client{}
+	// Session-bound requests each open a new connection. A load balancer pins a kept-alive
+	// connection to one target, so reusing it hides the instance that does not know the
+	// session (measured: 10 presses of the test passed against two instances; new
+	// connections were rejected about half the time).
+	freshTransport := http.DefaultTransport.(*http.Transport).Clone()
+	freshTransport.DisableKeepAlives = true
+	fresh := &http.Client{Transport: freshTransport}
 	session := "" // legacy era only: 2026-07-28 removed Mcp-Session-Id entirely
 
+	// oauthFrom turns a 401 from any step of the test into the OAuth report when the server
+	// is OAuth-protected: a server may leave server/discover public and challenge only later.
+	oauthFrom := func(ex httpExchange) (ProbeResult, bool) {
+		if ex.status != http.StatusUnauthorized {
+			return ProbeResult{}, false
+		}
+		rep, ok := probeOAuth(ctx, d.URL, ex.header)
+		if !ok {
+			return ProbeResult{}, false
+		}
+		res := coded(codeOAuthRequired, errOAuthRequired)
+		res.OAuth = &rep
+		return res, true
+	}
+
+	reqCtx := ctx
 	post := func(m rpcMsg, stateless bool) (httpExchange, error) {
 		b, err := json.Marshal(m)
 		if err != nil {
 			return httpExchange{}, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, bytes.NewReader(b))
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, d.URL, bytes.NewReader(b))
 		if err != nil {
 			return httpExchange{}, err
 		}
@@ -432,7 +623,11 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		for k, v := range d.Headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := client.Do(req)
+		c := client
+		if session != "" && !stateless {
+			c = fresh
+		}
+		resp, err := c.Do(req)
 		if err != nil {
 			return httpExchange{}, err
 		}
@@ -441,11 +636,14 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 			session = sid
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProbeBody))
-		ex := httpExchange{status: resp.StatusCode, raw: string(body)}
+		ex := httpExchange{status: resp.StatusCode, raw: string(body), header: resp.Header}
 		if resp.StatusCode == http.StatusAccepted || len(bytes.TrimSpace(body)) == 0 {
 			return ex, nil // notification ack, or empty 200
 		}
 		ex.msg, err = decodeHTTPPayload(resp.Header.Get("Content-Type"), body)
+		if err != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+			err = nil // a plain-text error body: callers report the status and body tail instead
+		}
 		return ex, err
 	}
 
@@ -454,14 +652,14 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// modern error means "modern server, fix the request" — do NOT fall back then.
 	ex, err := post(statelessReq(1, "server/discover"), true)
 	if err != nil && ex.status == 0 {
-		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		return withDetail(failOf(err), tail(ex.raw))
+	}
+	if res, ok := oauthFrom(ex); ok {
+		return res
 	}
 	statelessServer := ex.msg.Error == nil && len(ex.msg.Result) > 0
 	if !statelessServer && isModernErr(ex.msg.Error) && !isLegacyEraSignal(ex.msg.Error) {
-		return ProbeResult{
-			Error:  fmt.Sprintf("server/discover が拒否されました: %s", ex.msg.Error.Message),
-			Detail: tail(ex.raw),
-		}
+		return withDetail(rejected("server/discover", ex.msg.Error.Message), tail(ex.raw))
 	}
 
 	if statelessServer {
@@ -469,10 +667,16 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		_ = json.Unmarshal(ex.msg.Result, &dr)
 		ex, err = post(statelessReq(2, "tools/list"), true)
 		if err != nil {
-			return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+			return withDetail(failOf(err), tail(ex.raw))
+		}
+		if res, ok := oauthFrom(ex); ok {
+			return res
+		}
+		if ex.status < 200 || ex.status >= 300 {
+			return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 		}
 		if ex.msg.Error != nil {
-			return ProbeResult{Error: fmt.Sprintf("tools/list が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
+			return withDetail(rejected("tools/list", ex.msg.Error.Message), tail(ex.raw))
 		}
 		res := okResult(dr.info(), ex.msg.Result)
 		res.Revision, res.SupportedVersions = ProtocolVersion, dr.SupportedVersions
@@ -482,32 +686,118 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	// Legacy era.
 	ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 3, Method: "initialize", Params: legacyInitParams()}, false)
 	if err != nil {
-		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
+		return withDetail(failOf(err), tail(ex.raw))
+	}
+	if res, ok := oauthFrom(ex); ok {
+		return res
 	}
 	if ex.status < 200 || ex.status >= 300 {
 		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 	}
 	if ex.msg.Error != nil {
-		return ProbeResult{Error: fmt.Sprintf("initialize が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
+		return withDetail(rejected("initialize", ex.msg.Error.Message), tail(ex.raw))
 	}
 	var ir legacyInitResult
 	_ = json.Unmarshal(ex.msg.Result, &ir)
-	if _, err = post(rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}, false); err != nil {
-		return ProbeResult{Error: err.Error()}
-	}
-	ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}}, false)
-	if err != nil {
-		return ProbeResult{Error: err.Error(), Detail: tail(ex.raw)}
-	}
-	if ex.status < 200 || ex.status >= 300 {
+	// A server that issued a session id is stateful. Several session-bound requests, not
+	// one: behind a load balancer without affinity a single request reaches the issuing
+	// instance with probability 1/N and the test would pass by luck.
+	stateful := session != ""
+	failStatus := func(ex httpExchange) ProbeResult {
+		if res, ok := oauthFrom(ex); ok {
+			return res
+		}
+		if stateful && sessionRejected(ex) {
+			return withDetail(coded(codeSessionRejected, errSessionRejected), fmt.Sprintf("HTTP %d: %s", ex.status, tail(ex.raw)))
+		}
 		return ProbeResult{Error: fmt.Sprintf("HTTP %d", ex.status), Detail: tail(ex.raw)}
 	}
-	if ex.msg.Error != nil {
-		return ProbeResult{Error: fmt.Sprintf("tools/list が拒否されました: %s", ex.msg.Error.Message), Detail: tail(ex.raw)}
+	ex, err = post(rpcMsg{JSONRPC: "2.0", Method: "notifications/initialized"}, false)
+	if err != nil {
+		return ProbeResult{Error: err.Error()}
 	}
+	if ex.status < 200 || ex.status >= 300 {
+		return failStatus(ex)
+	}
+	// The first tools/list is the real check and its answer is the result.
+	ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 4, Method: "tools/list", Params: map[string]any{}}, false)
+	if err != nil {
+		return withDetail(failOf(err), tail(ex.raw))
+	}
+	if ex.status < 200 || ex.status >= 300 {
+		return failStatus(ex)
+	}
+	if ex.msg.Error != nil {
+		return withDetail(rejected("tools/list", ex.msg.Error.Message), tail(ex.raw))
+	}
+	first := ex
+	if stateful {
+		// Affinity diagnosis on its own, smaller budget. Only a session rejection fails the
+		// test; a timeout, a 429 or any other trouble here is inconclusive, so a healthy
+		// but slow or rate-limited server is not reported as unreachable.
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, affinityBudget)
+		defer cancel()
+		for i := 1; i < sessionBoundRequests; i++ {
+			ex, err = post(rpcMsg{JSONRPC: "2.0", ID: 4 + i, Method: "tools/list", Params: map[string]any{}}, false)
+			if err != nil || ex.status < 200 || ex.status >= 300 {
+				if err == nil && sessionRejected(ex) {
+					return failStatus(ex)
+				}
+				break
+			}
+		}
+	}
+	ex = first
 	res := okResult(ir.ServerInfo, ex.msg.Result)
 	res.Revision = ProtocolVersionLegacy
 	return res
+}
+
+// sessionRejected reports whether ex is a server refusing a session id it issued: 404, or
+// a 400 whose body says the session is unknown.
+func sessionRejected(ex httpExchange) bool {
+	switch ex.status {
+	case http.StatusNotFound:
+		return true
+	case http.StatusBadRequest:
+		// Judge the error text only: a body that merely echoes a sessionId next to an
+		// unrelated complaint is not an unknown session.
+		msg := strings.ToLower(errorText(ex.raw))
+		if !strings.Contains(msg, "session") {
+			return false
+		}
+		for _, w := range []string{"not found", "unknown", "invalid", "expired", "no such", "not exist"} {
+			if strings.Contains(msg, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// errorText extracts the human-readable error message(s) from a response body: the
+// message-like fields of a JSON object (also under "error"), or the whole body when it
+// is not JSON.
+func errorText(raw string) string {
+	var obj map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &obj) != nil {
+		return raw
+	}
+	var parts []string
+	var collect func(m map[string]any)
+	collect = func(m map[string]any) {
+		for _, k := range []string{"message", "localizedMessage", "detail", "error", "error_description"} {
+			switch v := m[k].(type) {
+			case string:
+				parts = append(parts, v)
+			case map[string]any:
+				collect(v)
+			}
+		}
+	}
+	collect(obj)
+	return strings.Join(parts, " ")
 }
 
 // decodeHTTPPayload handles both shapes a Streamable HTTP server may answer with:
@@ -527,11 +817,11 @@ func decodeHTTPPayload(contentType string, body []byte) (rpcMsg, error) {
 				return m, nil
 			}
 		}
-		return rpcMsg{}, fmt.Errorf("SSE 応答に JSON-RPC 応答が含まれていません")
+		return rpcMsg{}, &probeErr{code: codeSSENoResponse, msg: "the SSE response contains no JSON-RPC response"}
 	}
 	var m rpcMsg
 	if err := json.Unmarshal(bytes.TrimSpace(body), &m); err != nil {
-		return rpcMsg{}, fmt.Errorf("応答を解釈できません: %v", err)
+		return rpcMsg{}, &probeErr{code: codeBadResponse, msg: fmt.Sprintf("cannot parse the response: %v", err), params: map[string]string{"error": err.Error()}}
 	}
 	return m, nil
 }
@@ -554,6 +844,26 @@ func okResult(info impl, toolsRaw json.RawMessage) ProbeResult {
 		res.Tools = append(res.Tools, t.Name)
 	}
 	return res
+}
+
+// lockedBuffer is the stderr sink of a stdio probe. os/exec copies a non-file Stderr in
+// its own goroutine until Wait returns, and the probe reads the tail on failures while the
+// server may still be running, so the stderr written so far is read under the same lock.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func tail(s string) string {

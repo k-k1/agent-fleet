@@ -86,6 +86,10 @@
   color: var(--ok);
   border-color: var(--ok);
 }
+.ws-power.starting:not(:disabled) {
+  color: var(--warn);
+  border-color: var(--warn);
+}
 .ws-power.off:not(:disabled) {
   color: var(--muted2);
 }
@@ -204,7 +208,7 @@
   position: relative;
   display: inline-flex;
 }
-/* The frame + color come from .kind-tag.kind-claude (same as the Sessions badge);
+/* The frame + color come from .kind-tag.kind (same as the Sessions badge);
    here we only reset the button chrome, drop the badge's row margin, and size the
    caret. */
 button.ws-usage-btn {
@@ -483,6 +487,8 @@ button.wu-manage {
 }
 .pv-actions {
   justify-content: flex-end;
+  /* Up to three buttons: on a phone-width popover they must wrap, not spill past its edge. */
+  flex-wrap: wrap;
 }
 /* The preview-subdomain row (docs/log/81): the left button is the port, the right one
    copies. The hostname itself goes in title so the popover does not widen. */

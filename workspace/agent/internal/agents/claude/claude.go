@@ -32,7 +32,8 @@ func (agentImpl) Kind() string { return session.KindClaude }
 // condition — whether a launch route can carry a fork point is answered per kind by
 // ResolveForkAt.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true, PermissionChoice: true}
+	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true, PermissionChoice: true,
+		MCPClient: agents.TriYes}
 }
 
 // ForkSource resolves this session's conversation id as the fork source, refusing when
@@ -105,16 +106,18 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// The slot held a conversation and its log is gone: never fall through to a blank
 	// `--session-id` start under the old session (see ErrTranscriptLost). Checked before
 	// anything else so an older slot log cannot stand in for a deleted live one.
+	var notices []string
 	if lostTranscript(sid) {
 		// The Agent's own copy of the log (backup.go) stands in for the deleted one. A restore
 		// that fails on I/O is returned as such: it is not evidence that there is no backup.
 		restored, err := RestoreTranscript(sid, m.CWD())
 		if err != nil {
-			return agents.LaunchPlan{}, fmt.Errorf("バックアップから会話ログを復元できませんでした: %w", err)
+			return agents.LaunchPlan{}, fmt.Errorf("%w: %w", ErrTranscriptRestore, err)
 		}
 		if !restored || lostTranscript(sid) {
 			return agents.LaunchPlan{}, ErrTranscriptLost
 		}
+		notices = append(notices, agents.NoticeTranscriptRestored)
 	}
 	if JSONLResumable(sid) {
 		// Covers slots that talked before the marker existed.
@@ -140,6 +143,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	return agents.LaunchPlan{
 		Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m)),
 		Cwd:     m.CWD(),
+		Notices: notices,
 	}, nil
 }
 
@@ -149,12 +153,16 @@ var readPane = tmuxx.ReadPane
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li := agents.LiveInfo{Resumable: true}
 	sid := session.UUID(m.Dir, m.Name)
-	li.RemoteURL = RemoteSessionURL(sid)
-	li.Context = latestContext(sid)
-	// Read for a stopped session too: on a card the last thing it said is the only clue to
-	// what it was doing, and that is most needed for the ones nobody has reopened. Both facts
-	// come out of one memoized read of the transcript's tail.
-	li.LastSay, li.TokenSpends = TailFacts(sid)
+	// All three are card facts and all three are empty without a transcript, so one possibly
+	// remembered miss stands in for three sweeps (display_miss.go).
+	if displayHasTranscript(sid, alive) {
+		li.RemoteURL = RemoteSessionURL(sid)
+		li.Context = latestContext(sid)
+		// Read for a stopped session too: on a card the last thing it said is the only clue
+		// to what it was doing, and that is most needed for the ones nobody has reopened.
+		// Both facts come out of one memoized read of the transcript's tail.
+		li.LastSay, li.TokenSpends = TailFacts(sid)
+	}
 	if alive {
 		// Default a live claude with no recorded event yet to idle (it sits at the
 		// prompt waiting for input). Hook events refine it.

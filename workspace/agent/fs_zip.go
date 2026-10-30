@@ -203,8 +203,6 @@ func ctxLimitErr(ctx context.Context) *fsAPIError {
 	return nil
 }
 
-var errZipGone = errors.New("client gone")
-
 // planZip walks the folder breadth first and returns what would be packed, or the reason it
 // cannot be. It is the early-rejection pass; the build re-checks everything against the bytes
 // it actually reads.

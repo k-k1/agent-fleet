@@ -28,6 +28,9 @@ regexes = [
   # control-plane/rewrap_keys_test.go before 85017c3cf: base64 of the literal "not-sealed",
   # a stored value no master key opens. Later commits use an af-test-fixture- value instead.
   '''bm90LXNlYWxlZA==''',
+  # materialize_drift_test.go and relay_test.go in 2edc93bc1 / f1bbfa34e: a fake relay key that
+  # is only counting hex digits, never a credential. Later commits use an af-test-fixture- value.
+  '''0123456789abcdef0123456789abcdef0123456789abcdef(0123456789abcdef)?''',
 ]
 
 [[allowlists]]
@@ -63,3 +66,20 @@ excluded, not the file."""
 condition = "AND"
 paths = ['''e2e/members_local_test\.go''']
 regexes = ['''AF_KEY_CUSTODIAN=kms''']
+
+[[allowlists]]
+description = """The GCS precondition name `ifGenerationMatch=0` in a comment of the GCS sink test. \
+generic-api-key reads `Match=0` after the `Key` in the preceding word as a key assignment; \
+it is a query parameter of the Storage API, not a credential."""
+condition = "AND"
+paths = ['''control-plane/egress_archive_gcs_test\.go''']
+regexes = ['''ifGenerationMatch=0''']
+
+[[allowlists]]
+description = """The `"idempotency_key":"cs_<64 hex>"` values in the MCP tools/call golden: \
+CreateSessionKey's deterministic hash of the golden call's own fields, recorded so the golden \
+proves create_session's request body is unchanged. It is derived from the call, not a credential. \
+Only that key shape is excluded, not the file."""
+condition = "AND"
+paths = ['''workspace/agent/internal/mcpx/testdata/mcp_tools/calls\.txt''']
+regexes = ['''cs_[0-9a-f]{64}''']

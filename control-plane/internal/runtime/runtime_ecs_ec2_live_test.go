@@ -633,27 +633,6 @@ func (l *liveEC2) azOf(rt *ecsEC2Runtime) string {
 	return aws.ToString(v.AvailabilityZone)
 }
 
-// waitSnapshot blocks until a snapshot completes. A near-empty 8 GiB home took ~60s
-// measured; a real 45 GiB one is 30–40 minutes, which is exactly why the product advances
-// hibernation one sweep at a time instead of waiting like this.
-func (l *liveEC2) waitSnapshot(id string, budget time.Duration) {
-	l.t.Helper()
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) {
-		out, err := l.ec2.DescribeSnapshots(l.ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{id}})
-		if err == nil && len(out.Snapshots) == 1 {
-			switch out.Snapshots[0].State {
-			case ec2types.SnapshotStateCompleted:
-				return
-			case ec2types.SnapshotStateError:
-				l.t.Fatalf("snapshot %s failed", id)
-			}
-		}
-		time.Sleep(10 * time.Second)
-	}
-	l.t.Fatalf("snapshot %s did not complete within %s", id, budget)
-}
-
 func (l *liveEC2) snapshotOfVolume(volumeID string) string {
 	out, err := l.ec2.DescribeVolumes(l.ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
 	if err != nil || len(out.Volumes) == 0 {
@@ -801,8 +780,8 @@ func TestECSEC2LiveScale(t *testing.T) {
 	// --- 2. the second AZ. An EBS volume never leaves its AZ, so a user whose home is
 	// there must get a slot there — including growing one, since every existing slot is in
 	// the other AZ and offering one would fail the attach. ---
-	// Which subnet is "the other AZ" is not a fixed one: a new home follows anyAZ(), which
-	// sorts the configured subnet IDs and takes the first — so the default AZ depends on
+	// Which subnet is "the other AZ" is not a fixed one: a new home follows poolAZs, which
+	// sorts the configured subnet IDs, and starts from the first — so the default AZ depends on
 	// the IDs AWS happened to hand out, not on the order in AF_ECS_SUBNETS (measured: with
 	// 1a listed first, every new home still landed in 1c). Pick the one the adapter did
 	// NOT choose, by looking at where the homes actually are.

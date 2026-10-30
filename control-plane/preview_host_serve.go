@@ -442,13 +442,11 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 		previewNotFound(w)
 		return
 	}
-	if !previewPortAllowed(st, port) {
-		// An unlisted port: the owner, with a live grant for it. Everyone else gets the
-		// 404 an unknown port gets.
-		if _, live := a.liveGrant(ctx, ws, port); !live || mv.MembershipID != ws.MembershipID {
-			previewNotFound(w)
-			return
-		}
+	// A port off the list is the owner's alone, under a live grant; everyone else gets the
+	// 404 an unknown port gets.
+	if !a.mgr.previewPortOpenableBy(ctx, ws, st, mv.MembershipID, port) {
+		previewNotFound(w)
+		return
 	}
 	// What gets baked in is the CALLER's own membership, never the owner's. A viewer's
 	// cookie says only "this person is opening this slug/port"; the permission is

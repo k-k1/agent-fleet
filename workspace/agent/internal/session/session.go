@@ -199,9 +199,11 @@ type Session struct {
 	// the list; the Control Plane's sessionWire has to carry them too or they vanish there.
 	Studio             string `json:"studio,omitempty"`
 	InitialPromptState string `json:"initialPromptState,omitempty"`
-	Repo               string `json:"repo"` // working dir basename (display)
-	WorkingCopyID      string `json:"workingCopyId,omitempty"`
-	Title              string `json:"title"` // user-supplied display title (optional, any kind)
+	// InitialPromptReason says why InitialPromptState is failed when the Agent knows (Meta's).
+	InitialPromptReason string `json:"initialPromptReason,omitempty"`
+	Repo                string `json:"repo"` // working dir basename (display)
+	WorkingCopyID       string `json:"workingCopyId,omitempty"`
+	Title               string `json:"title"` // user-supplied display title (optional, any kind)
 	// Moving / MovedTo mirror Meta's (ADR 0115 decision 11.7): the row of a source whose move
 	// is under way or pending offers retry and cancel, and a moved one says where the
 	// conversation went. The Control Plane's sessionWire has to carry them too.
@@ -212,15 +214,21 @@ type Session struct {
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
 	// the refusal itself is enforced at the Agent's rename endpoint, never on the wire.
 	TitleSetBy string `json:"titleSetBy,omitempty"`
-	Display    string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
-	Color      string `json:"color"`     // terminal background hue (hex); SSM carries its host color
-	Label      string `json:"label"`     // claude --name display name (claude only)
-	Started    string `json:"started"`   // "01/02 15:04" local time, for the list
-	CreatedAt  string `json:"createdAt"` // RFC3339
-	RemoteUrl  string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
-	State      string `json:"state"`     // claude live state: working | idle | question | ""
-	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable  bool   `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
+	// PlanReviewers mirrors Meta.PlanReviewers: which session reviewed each plan this one
+	// wrote. It rides the list so every device that reads the list offers "Review again";
+	// the Control Plane's sessionWire has to carry it too or it vanishes there. Always emitted
+	// (never omitted, [] when empty): its presence tells the Console this Agent knows the
+	// field, so an absent link means "unlinked", not "an older Agent".
+	PlanReviewers []PlanReviewer `json:"planReviewers"`
+	Display       string         `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
+	Color         string         `json:"color"`     // terminal background hue (hex); SSM carries its host color
+	Label         string         `json:"label"`     // claude --name display name (claude only)
+	Started       string         `json:"started"`   // "01/02 15:04" local time, for the list
+	CreatedAt     string         `json:"createdAt"` // RFC3339
+	RemoteUrl     string         `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
+	State         string         `json:"state"`     // claude live state: working | idle | question | ""
+	Alive         bool           `json:"alive"`     // true = live tmux session; false = stopped
+	Resumable     bool           `json:"resumable"` // false = stopped agent session whose working dir is gone (shell/ssm stay true)
 	// BackgroundBusy: state is idle (turn done) but work an earlier turn started is still
 	// running — claude: a run_in_background task under the pane; muse: a tool call still in
 	// progress; managed codex: a background terminal. Lets the Console mark a session that is
@@ -233,6 +241,13 @@ type Session struct {
 	// BackgroundBusy, this only chooses its wording, so an unknown
 	// (or dropped) value falls back to the generic "running in background".
 	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
+	// BackgroundSince (RFC3339) is when the current BackgroundBusy period began: the first poll
+	// that observed it, in memory (resets when the Agent restarts or the flag goes false).
+	// BackgroundAgeSec is its age on the Workspace's own clock, which is what the Control Plane
+	// compares with background_hold_max so that clock skew cannot lapse a row (#2338). Absent =
+	// not background-busy, or an older Agent: the CP then keeps holding.
+	BackgroundSince  string `json:"backgroundSince,omitempty"`
+	BackgroundAgeSec int    `json:"backgroundAgeSec,omitempty"`
 	// ProgressAt (RFC3339) is the newest sign that a working / compacting row is still doing
 	// something: its state file, the kind's own state source, a pane repaint, or a live tool
 	// process (now). The Control Plane stops letting a busy row hold the Workspace awake once
@@ -254,6 +269,11 @@ type Session struct {
 	// docs/log/47 §4-5). Display only, so the chip can say when it will move again; the
 	// waiting itself belongs to the CP's scheduled execution.
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	// ForkAtTerminal: a Terminal (CLI) session that can still fork from a past message, because
+	// its kind forks through an API this launch route reaches (opencode 2 on af's shared serve).
+	// The Console offers "fork from here" on a Terminal session only when it is set; managed
+	// sessions do not need it. Absent = not offered.
+	ForkAtTerminal bool `json:"forkAtTerminal,omitempty"`
 	// AuthOkAt is when the agent's login in force RIGHT NOW was written (RFC3339), claude
 	// only, empty when there is nothing to judge on (claude.AuthOKAt). Display only, and
 	// read against a TURN'S time rather than the clock: an error block whose turn is older
@@ -462,6 +482,15 @@ func ExactTarget(tn string) string { return "=" + tn }
 // working dir is usually gone, so it is listed as not resumable; shell and ssm sessions
 // stay resumable (shell falls back to home, ssm starts there). The dir is denylisted in the file
 // browser.
+// MaxPlanReviewers bounds Meta.PlanReviewers; the oldest link is dropped first.
+const MaxPlanReviewers = 16
+
+// PlanReviewer links one plan file of a planner session to the session that reviewed it.
+type PlanReviewer struct {
+	Path     string `json:"path"`
+	Reviewer string `json:"reviewer"`
+}
+
 type Meta struct {
 	Name string `json:"name"`
 	Dir  string `json:"dir"`
@@ -486,8 +515,15 @@ type Meta struct {
 	// is no way to express "off in settings, back on for this one session".
 	// It only takes effect at launch (a TUI needs a restart). A plan launch drops the
 	// bypass for every kind, so mode=plan still prompts even when this is true.
-	SkipPermissions *bool  `json:"skipPermissions,omitempty"`
-	Kind            string `json:"kind"`
+	SkipPermissions *bool `json:"skipPermissions,omitempty"`
+	// MuseContributorMode is the Muse Code contributor mode this session runs with (#2535),
+	// resolved from ui-prefs museContributorMode when the session is created and passed as
+	// `--contributor-mode` every time a host is spawned for it. It is recorded rather than read
+	// at each spawn because the flag is per process: a restart reading the current setting
+	// would move a conversation the member started with it off into product-improvement use.
+	// A meta written before the field existed reads false, which is off.
+	MuseContributorMode bool   `json:"museContributorMode,omitempty"`
+	Kind                string `json:"kind"`
 	// Driver selects the control route (docs/log/27): "" | "tui" = the traditional TUI
 	// inside tmux, "managed" = a shared runtime plus structured RPC (no pane). The default
 	// tui persists as "", keeping existing metas byte-identical on disk.
@@ -510,9 +546,15 @@ type Meta struct {
 	// Clearing the title resets this to "", for the same reason it re-opens auto-suggestion:
 	// the session is back in the state a fresh one is in, and nothing is being overwritten.
 	TitleSetBy string `json:"titleSetBy,omitempty"`
-	Color      string `json:"color"` // terminal background hue (hex); set at create (SSM host color)
-	Label      string `json:"label"` // claude --name (display); derived from Title at create/recreate
-	Repo       string `json:"repo"`  // working dir basename
+	// PlanReviewers remembers which session reviewed each plan FILE this session wrote, newest
+	// last, at most MaxPlanReviewers. It lives here (not in the browser) so the "Review again
+	// in <reviewer>" shortcut follows the user to another device. Only the reviewer's NAME is
+	// stored; the Console labels it from the live list, and a name that is no longer in the
+	// list is never offered.
+	PlanReviewers []PlanReviewer `json:"planReviewers,omitempty"`
+	Color         string         `json:"color"` // terminal background hue (hex); set at create (SSM host color)
+	Label         string         `json:"label"` // claude --name (display); derived from Title at create/recreate
+	Repo          string         `json:"repo"`  // working dir basename
 	// Branch is the git branch the working copy (Dir) was on when this session was
 	// created/recreated. Compared against Dir's current branch on each list to flag
 	// drift — a `git checkout` that slipped past the checkout guard (agent/manual
@@ -638,6 +680,11 @@ type Meta struct {
 	// a second persona turn, so none is offered. A pending left by a previous Agent process can
 	// never finish — RecoverPendingInitialPrompts turns it into unknown at start.
 	InitialPromptState string `json:"initialPromptState,omitempty"`
+	// InitialPromptReason names why the state is failed, when it is known: only
+	// InitialPromptReasonAuthExpired today. Empty for every other failure and for any other state;
+	// it is written just before the state settles to failed and cleared whenever a delivery
+	// starts again, so a stale reason never outlives its failure.
+	InitialPromptReason string `json:"initialPromptReason,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached
@@ -673,6 +720,10 @@ const (
 	InitialPromptFailed    = "failed"
 	InitialPromptUnknown   = "unknown"
 )
+
+// InitialPromptReasonAuthExpired is Meta.InitialPromptReason for a prompt that was not typed
+// because the workspace's Claude login has expired.
+const InitialPromptReasonAuthExpired = "auth_expired"
 
 // SSMMeta is the persisted, non-secret description of an SSM login target.
 type SSMMeta struct {

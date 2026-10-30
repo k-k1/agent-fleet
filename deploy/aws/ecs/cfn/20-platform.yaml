@@ -17,6 +17,16 @@ Parameters:
     Default: af.internal
     Description: Private DNS namespace for Service Connect (CP reaches Agents by
       <service>.<namespace>). Internal only.
+  EgressArchiveBucket:
+    Type: String
+    Default: ""
+    AllowedPattern: "^(af-[a-z0-9.-]{1,17}-egress-archive-[0-9]{12}-[a-z]{2}-[a-z]+-[0-9])?$"
+    Description: >-
+      10-data's EgressArchiveBucket output, set by standup.sh. Empty (default) = the CP task role
+      gets no archive grant. cfn/PARAMETERS.md, "The egress archive".
+
+Conditions:
+  HasEgressArchive: !Not [ !Equals [ !Ref EgressArchiveBucket, "" ] ]
 
 Resources:
   # --- CFN template staging ---
@@ -180,6 +190,11 @@ Resources:
               - Effect: Allow
                 Action: [ secretsmanager:GetSecretValue ]
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"
+              # AF_EGRESS_TOKEN for the CP task, when 00-network runs the egress gateway
+              # (EgressRoute=gateway generates af-<network stack>-egress-token-<eni>).
+              - Effect: Allow
+                Action: [ secretsmanager:GetSecretValue ]
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:af-*-egress-token-*"
 
   # --- IAM: workspace task role - Agent needs NO AWS APIs (least privilege) ---
   WsTaskRole:
@@ -265,7 +280,7 @@ Resources:
               # Two EFS tag writes, both on access points: CreateAccessPoint's Tags
               # (af-membership, af-role, Name, af-tenant), and the erase record a Clean home
               # keeps on the member's keep access point (af-home-erased-volumes,
-              # runtime_ecs_ec2.go writeEraseRecord). The key list is the fence: it is exactly
+              # runtime_ecs_ec2_release.go writeEraseRecord). The key list is the fence: it is exactly
               # what those two calls write, so the role can no longer put an arbitrary tag on
               # any EFS resource in the account. It does not tell this deployment's access
               # points from another's (they carry no af-pool). file-system/* is listed only
@@ -634,6 +649,16 @@ Resources:
                 Effect: Allow
                 Action: ssm:GetCommandInvocation
                 Resource: "*"
+              # The pool screen's "Stop slot (force)" (#2449): find the slot's unfinished CP
+              # commands and cancel them, and tell a wedged slot (SSM offline) from a healthy
+              # one. None of the three has a resource type to scope; none can run a command.
+              - Sid: SsmSlotForceStop
+                Effect: Allow
+                Action:
+                  - ssm:ListCommands
+                  - ssm:CancelCommand
+                  - ssm:DescribeInstanceInformation
+                Resource: "*"
               # iam:PassRole for the slot role is NOT here: 40-ec2-pool attaches it to this
               # role (CpSlotLaunchManagedPolicy), naming its own SlotRole. A pattern here such as
               # role/af-*-slot also matched every other deployment's slot role in the account,
@@ -720,6 +745,31 @@ Resources:
                 Action:
                   - polly:SynthesizeSpeech
                 Resource: "*"
+
+  # The CP's grant for the egress event archive, on the stack-owned bucket only. Managed, not
+  # inline: the CP role's inline policies share IAM's 10,240-character total (#1576). Calls
+  # are the ones control-plane/egress_archive_sink.go makes: PutObject; HeadObject (needs
+  # s3:GetObject) and GetObject; no delete, no list. ListBucket carries no s3:prefix
+  # condition on purpose: the check that turns HeadObject on an absent key into 404 instead
+  # of 403 has no prefix to match, and Exists treats a 403 as an error. The bucket holds only
+  # the archive. 00-network's S3Endpoint admits the same bucket; cfn-s3-endpoint-test.py pins it.
+  CpEgressArchivePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: HasEgressArchive
+    Properties:
+      ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-egress-archive-${AWS::Region}"
+      Roles: [ !Ref CpTaskRole ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ArchiveObjects
+            Effect: Allow
+            Action: [ "s3:PutObject", "s3:GetObject" ]
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${EgressArchiveBucket}/egress/*"
+          - Sid: ArchiveList
+            Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${EgressArchiveBucket}"
 
 Outputs:
   # The value must never be empty: an empty Export rolls the whole CREATE back at its final

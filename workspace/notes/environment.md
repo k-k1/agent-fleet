@@ -74,13 +74,29 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 - **Check before a big install** — `df -h ~`. The volume is shared with everything else you do,
   and caches grow without bound (`~/.npm`, `~/.cache` reach tens of GB).
 - **Where throwaway work goes**: `$AF_WORK_DIR` — `~/.af-work/<session>/`, which the Agent
-  creates when a Terminal (CLI) session launches and removes when the session is deleted (not
-  archived, not restored). Managed sessions do not get the variable yet (issue #978); there use
+  creates when a session launches and removes when the session is deleted (not archived, not
+  restored). Terminal (CLI) sessions get it from the launch environment; Managed sessions get it
+  per kind: the child process's environment for copilot, cursor, kiro and muse, and the thread
+  config (`shell_environment_policy.set`) for codex, whose one shared app-server cannot carry a
+  per-session value. lcpp's bash tool gets it from the harness runtime. Managed opencode (2.x)
+  gets it, with `$AF_SESSION_NAME`, through the session's own shell environment, which the Agent
+  puts there from the server's environment before each session's first shell command on a server
+  generation (#2710). opencode 1.x has no per-session channel, and a server started with
+  `AF_OPENCODE_TUI_STANDALONE=1` while no shared Terminal session exists has no env-gate
+  plugin mode, so both run without the variable.
+  Whenever `$AF_WORK_DIR` is actually empty (a directory that could not be created, or those
+  opencode cases), use
   `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
-  task is done. One directory
+  task is done (an unmarked directory is kept at boot but offered for deletion in Settings >
+  Machine). The name is the session's slug and a rename changes only the title, so the directory
+  never moves. One directory
   per session means the owner is obvious and one `rm -rf` cleans up; files dropped straight into
   `~` were measured at 190+ unowned directories in one home. Not `/tmp` (shared by every session,
   wiped on restart) and not `~/.cache`, which is for tools' own caches.
+  **`~/.af-work` is throwaway, never a place for files to keep** — tell members to keep their own
+  files elsewhere (`~/repos`, or a folder of their own in home). The boot prune removes only
+  orphaned directories the Agent marked (`.af-session-workdir`), logs each path, and leaves
+  unmarked ones for the member to remove from Settings > Machine.
 - **Reclaiming cache space** (all regenerable; the next build or install is slower once):
   `go clean -cache` (`~/.cache/go-build`), `npm cache clean --force` (`~/.npm/_cacache` — npm
   never evicts), `uv cache prune`. Do it only when no other session is mid-build — check

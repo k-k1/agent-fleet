@@ -39,13 +39,14 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	if err != nil {
 		return err
 	}
+	recordLaunchNotices(m, plan)
 	// Session-side MCP tools need a provider-neutral owner identity. Native IDs differ
 	// across CLIs, while this slug is stable for every Agent Fleet session.
 	plan.Env = append(plan.Env, "AF_SESSION_NAME="+m.Name)
 	// The session's throwaway directory (docs/log/116), created here so the path is real
 	// by the time the CLI reads it; removed when the session is deleted. A failure to create
 	// it does not block the launch — the variable is simply not set.
-	if wd := paths.SessionWorkDir(m.Name); wd != "" && os.MkdirAll(wd, 0o700) == nil {
+	if wd, err := paths.MakeSessionWorkDir(m.Name); err == nil {
 		plan.Env = append(plan.Env, "AF_WORK_DIR="+wd)
 	}
 	// Inject the database client environment (PG* / MYSQL_* / AF_DB_URL_POSTGRES) for
@@ -86,6 +87,19 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	return nil
 }
 
+// recordLaunchNotices stores what the launch told the mirror. It runs before the pane is
+// created: the restore it reports has already happened, and a failed tmux start must not
+// swallow the note, because the next resume finds the log in place and never restores again.
+func recordLaunchNotices(m session.Meta, plan agents.LaunchPlan) {
+	for _, n := range plan.Notices {
+		if n == agents.NoticeTranscriptRestored {
+			if err := status.AddRestoreNote(session.UUID(m.Dir, m.Name)); err != nil {
+				log.Printf("session %s: recording the transcript-restore note: %v", m.Name, err)
+			}
+		}
+	}
+}
+
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is
 // not currently alive — used on attach so a clicked-but-exited session relaunches
 // claude rather than the default shell. nil means the session is now running.
@@ -111,6 +125,11 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 		if !dok {
 			return fmt.Errorf("no driver for session %s (kind %q)", name, m.Kind)
 		}
+		// Only a start that would launch a process is refused; an already-alive session
+		// returned above and stays idempotent.
+		if ref := startRefusal(m.Kind); ref != nil {
+			return &StartRefusalError{ref}
+		}
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
 			log.Printf("managed resume %s: %v", name, err)
 			return err
@@ -135,6 +154,9 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	}
 	if !ok {
 		return fmt.Errorf("no meta for session %s", name)
+	}
+	if ref := startRefusal(m.Kind); ref != nil {
+		return &StartRefusalError{ref}
 	}
 	recallSettings(&m)
 	if err := startSessionTmux(m, ssmForce); err != nil {

@@ -36,6 +36,21 @@ const (
 type tuiMirrorContractSpec struct {
 	kind  string
 	agent agents.Agent
+	// models lists the launch-time models the capability probes may start with (the same
+	// call GET /agents/{kind}/models makes). nil = the kind has no listing.
+	models func() []agents.ModelChoice
+	// paneWorking reads "a turn is under way" off a captured pane, for a kind whose
+	// transcript is written only when the turn ends (cursor): WireLive then says nothing
+	// for the whole of a long turn. nil = WireLive alone decides.
+	paneWorking func(pane string) bool
+}
+
+// turnWorking is WireLive's "working", or the pane's when the kind supplies a reader.
+func turnWorking(spec tuiMirrorContractSpec, meta session.Meta, tn string) bool {
+	if spec.agent.WireLive(meta, true).State == "working" {
+		return true
+	}
+	return spec.paneWorking != nil && spec.paneWorking(tmuxx.CapturePane(tn))
 }
 
 func requireTUIContract(t *testing.T, ok bool, reason string) {
@@ -49,7 +64,11 @@ func requireTUIContract(t *testing.T, ok bool, reason string) {
 	t.Skip(reason)
 }
 
-func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
+// startTUIContractSession launches the kind through its production BuildLaunch in a private
+// tmux server and waits for the composer. suffix keeps session names apart when one test
+// starts several; model is meta.Model ("" = the CLI's default). stop kills the server and
+// must be deferred, not registered with t.Cleanup (see below).
+func startTUIContractSession(t *testing.T, spec tuiMirrorContractSpec, suffix, model string) (meta session.Meta, tn string, stop func()) {
 	t.Helper()
 	for _, bin := range []string{"tmux"} {
 		if _, err := exec.LookPath(bin); err != nil {
@@ -58,6 +77,9 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	}
 
 	name := fmt.Sprintf("contract-%s-%d", spec.kind, os.Getpid())
+	if suffix != "" {
+		name = fmt.Sprintf("contract-%s-%s-%d", spec.kind, suffix, os.Getpid())
+	}
 	// A fresh tmux server inherits this test process's isolated HOME and auth env;
 	// a pre-existing default server would retain the workspace's old environment and
 	// make BuildLaunch's trust/auth preparation invisible to the TUI child. The
@@ -65,22 +87,30 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	// this same isolated server without reimplementing any product command.
 	sock := fmt.Sprintf("af-tui-contract-%s-%d", spec.kind, os.Getpid())
 	t.Setenv("AF_TMUX_SOCKET", sock)
-	// This must be a defer, not t.Cleanup: each caller's isolated HOME is a
+	// stop must be deferred by the caller, not t.Cleanup: each caller's isolated HOME is a
 	// t.TempDir, whose cleanup may otherwise race Cursor's short-lived compiler
 	// cache writer after the test function has returned.  Defers run before
 	// testing.T's registered TempDir cleanup, and the socket is private to this
 	// contract, so killing its server cannot affect a production tmux session.
-	defer func() {
+	stop = func() {
 		_ = tmuxx.Cmd("kill-server").Run()
 		time.Sleep(750 * time.Millisecond)
+	}
+
+	// A Fatal below must not leave the server behind: the caller has no stop to defer yet.
+	started := false
+	defer func() {
+		if !started {
+			stop()
+		}
 	}()
 
-	meta := session.Meta{Name: name, Dir: t.TempDir(), Kind: spec.kind}
+	meta = session.Meta{Name: name, Dir: t.TempDir(), Kind: spec.kind, Model: model}
 	plan, err := spec.agent.BuildLaunch(meta, agents.LaunchOpts{})
 	if err != nil {
 		t.Fatalf("BuildLaunch: %v", err)
 	}
-	tn := session.TmuxName(name)
+	tn = session.TmuxName(name)
 	_ = tmuxx.Cmd("kill-session", "-t", tn).Run()
 	if out, err := tmuxx.Cmd("new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", plan.Cwd, plan.Program).CombinedOutput(); err != nil {
 		t.Fatalf("tmux new-session: %v: %s", err, out)
@@ -107,6 +137,20 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	// retain one tick here so this contract validates the real prompt route, not that
 	// transient UI race. submitPrompt covers the case where one tick is not enough.
 	time.Sleep(500 * time.Millisecond)
+	started = true
+	return meta, tn, stop
+}
+
+func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
+	t.Helper()
+	// The capability probes reuse each kind's own test (its auth and HOME isolation) and
+	// run as a separate workflow step, so a DRIFT is reported apart from a broken mirror.
+	if os.Getenv(capsProbesEnv) == "only" {
+		runTUICapsProbes(t, spec)
+		return
+	}
+	meta, tn, stop := startTUIContractSession(t, spec, "", "")
+	defer stop()
 
 	marker := "AF_" + strings.ToUpper(spec.kind) + "_TUI_MIRROR_OK"
 	prompt := "Reply with exactly: " + marker
@@ -118,7 +162,7 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 	// Always read production's Transcript/WireLive: that is the path /messages and the
 	// sessions poll use, so an answer that is merely visible in the TUI cannot produce a
 	// false green.
-	deadline = time.Now().Add(tuiContractTurnWait)
+	deadline := time.Now().Add(tuiContractTurnWait)
 	for time.Now().Before(deadline) {
 		live := spec.agent.WireLive(meta, true)
 		if live.State == "working" {
@@ -160,7 +204,7 @@ func submitPrompt(t *testing.T, spec tuiMirrorContractSpec, meta session.Meta, t
 		}
 		deadline := time.Now().Add(tuiContractSubmitWait)
 		for time.Now().Before(deadline) {
-			if spec.agent.WireLive(meta, true).State == "working" {
+			if turnWorking(spec, meta, tn) {
 				return true
 			}
 			if td, ok := spec.agent.Transcript(meta); ok && mirrorHasTurn(td.Turns, "user", marker) {

@@ -24,6 +24,9 @@ export interface Tenant {
   /** tier1 timeout used only while waiting on a human decision (docs/log/75).
    *  Empty = follow session_idle_timeout. */
   interaction_idle_timeout?: string;
+  /** How long one stretch of background work may hold the Workspace awake (#2338).
+   *  Empty = deploy default (2h), "0" = unbounded. */
+  background_hold_max?: string;
   // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
   // "" = deploy default, "0" = never). ADR 0045 decision 13-2.
   home_hibernate_after?: string;
@@ -89,6 +92,22 @@ export interface Member {
    *  still down after that stop. The member got a notification; this is the admin's only
    *  view of it short of the CP log. */
   auto_stop?: MemberAutoStop;
+  /** The CP's session mirror for this workspace (#2388): live = sessions the Agent reported
+   *  alive at the last refresh (0 while stopped), total = every mirrored session. observed_at is
+   *  when the mirror was last written, absent when it holds no rows. A DB read, not an Agent
+   *  call, so it can be minutes old. Absent from an older CP and for a member with no workspace. */
+  sessions?: { live: number; total: number; observed_at?: string };
+  /** workspaces.last_active_at (RFC 3339), absent when never set. */
+  last_active_at?: string;
+  /** The last home-disk reading the usage sampler took (#2388): used bytes, total bytes when the
+   *  reading has a denominator (absent for a deployment with no disk quota), and when it was
+   *  taken. Absent where nothing is measured (Fargate's working disk) and before the first
+   *  sample. A stopped workspace keeps its last reading, so observed_at is its age. */
+  disk?: { used: number; total?: number; observed_at?: string };
+  /** The CLIs whose install failed at the workspace's last start, tool to reason (no_space,
+   *  network, checksum, other). Absent when none failed or the Agent did not say, which is
+   *  never a failure. Taken with the disk reading, so a stopped card keeps the last start's. */
+  boot_failed?: Record<string, string>;
 }
 
 /** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" (phase: the last
@@ -115,7 +134,8 @@ export interface MemberIdle {
     session?: string;
     until?: string;
     /** kind "working": when the session's busy state began (approximate), and when the hold
-     *  stops counting if nothing moves. lapseAt is absent for an Agent that reports no progress. */
+     *  stops counting if nothing moves. lapseAt is absent for an Agent that reports no progress.
+     *  kind "background": since / lapseAt likewise, lapseAt absent when the bound is off. */
     since?: string;
     lapseAt?: string;
   }>;

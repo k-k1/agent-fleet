@@ -192,13 +192,45 @@ for s in cookie-secret master-key; do
 done
 [ -z "$(p30 GoogleClientId)" ] || have_ssm "$SSM_PREFIX/google-client-secret" || say_missing "no SSM $SSM_PREFIX/google-client-secret (GoogleClientId is set)"
 [ -z "$(p30 OidcClientId)" ]   || have_ssm "$SSM_PREFIX/oidc-client-secret"   || say_missing "no SSM $SSM_PREFIX/oidc-client-secret (OidcClientId is set)"
-[ -z "$(p30 GithubClientId)" ] || have_ssm "$SSM_PREFIX/github-client-secret" || say_missing "no SSM $SSM_PREFIX/github-client-secret (GithubClientId is set)"
+# github-client-secret is injected (30-ingress GithubLegacySecret) while GithubAllowedOrgs is set and the
+# dedicated sign-in App switch is off; GithubClientId alone was the older trigger and still is one.
+if [ "$(p30 GithubLoginSecret)" != on ] && { [ -n "$(p30 GithubClientId)" ] || [ -n "$(p30 GithubAllowedOrgs)" ]; }; then
+  have_ssm "$SSM_PREFIX/github-client-secret" || say_missing "no SSM $SSM_PREFIX/github-client-secret (GithubClientId or GithubAllowedOrgs is set)"
+fi
+# Each optional secret has its own switch (30-ingress): a Secrets entry for a parameter that
+# does not exist stops the CP task from starting.
+for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token; do
+  [ "$(p30 "${sw%%:*}")" != on ] || have_ssm "$SSM_PREFIX/${sw#*:}" || say_missing "no SSM $SSM_PREFIX/${sw#*:} (${sw%%:*}=on)"
+done
 
 if [ -n "$HOSTED_ZONE" ]; then
   "${AWS[@]}" route53 get-hosted-zone --id "$HOSTED_ZONE" >/dev/null 2>&1 \
     || say_missing "cannot look up hosted zone $HOSTED_ZONE (the ACM DNS validation and the alias go in there)"
 fi
 command -v crane >/dev/null || say_missing "no crane (needed to carry GHCR -> ECR with the index intact)"
+
+# The workspace egress address handed back (00-network GatewayEipAllocationId, #2728): it must
+# still exist, be the address captured with it (the ALB admits the gateway by that address), and
+# be held by nothing but this deployment's own gateway interface, or the association fails
+# half-way through the network stack. Only when the gateway is built (EgressRoute=gateway; the
+# template's default is nat-gateway): otherwise the stack does not use the address, which may
+# since have been released, and must not stop a NAT-only rebuild.
+gw_alloc="$(af_read_one_param 00-network GatewayEipAllocationId)"
+if [ -n "$gw_alloc" ] && [ "$(af_read_one_param 00-network EgressRoute)" = gateway ]; then
+  gw_addr="$(af_read_one_param 00-network GatewayEipAddress)"
+  gw_got="$("${AWS[@]}" ec2 describe-addresses --allocation-ids "$gw_alloc" \
+    --query 'Addresses[0].[PublicIp,NetworkInterfaceId]' --output text 2>/dev/null || true)"
+  read -r gw_ip gw_ni <<<"$gw_got" || true
+  case "${gw_ip:-None}" in
+    None) say_missing "GatewayEipAllocationId $gw_alloc is not an address in $AF_PROFILE/$AF_REGION (README, \"Egress gateway\")" ;;
+    "$gw_addr") ;;
+    *) say_missing "GatewayEipAddress '$gw_addr' is not the address of $gw_alloc ($gw_ip)" ;;
+  esac
+  case "${gw_ni:-None}" in
+    None|"$(af_gateway_eni "$AF_STACK_NETWORK")") ;;
+    *) say_missing "$gw_alloc ($gw_ip) is associated with $gw_ni, not this deployment's gateway interface" ;;
+  esac
+fi
 
 # Do the captured parameters still fit the templates as they are now?
 #
@@ -323,6 +355,41 @@ fi
 deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
   local stack="$1" tpl="$2" slug="$3"; shift 3
   af_read_params "$slug"
+  # A capture taken while pause.sh had the NAT gateway deleted records NatEnabled=false. A
+  # stand-up builds the deployment for use, so the gateway is always on (the template of a
+  # release that predates the parameter does not declare it, hence the grep).
+  if [ "$slug" = 00-network ] && grep -q '^  NatEnabled:' "$CFN_DIR/$tpl"; then
+    af_param_override NatEnabled true
+  fi
+  # The same for the egress gateway pause.sh scaled to zero (GatewayEnabled=false).
+  if [ "$slug" = 00-network ] && grep -q '^  GatewayEnabled:' "$CFN_DIR/$tpl"; then
+    af_param_override GatewayEnabled true
+  fi
+  # A LIVE network stack older than the S3 endpoint switch (#2716) may still have workspaces in
+  # its private subnets, whose own S3 the endpoint's policy would refuse: it gets "false", and
+  # switching it on stays the migration's last step (README, NAT bullet). A new stack, or a
+  # capture that names the switch, keeps the template default / the captured value.
+  if [ "$slug" = 00-network ] && grep -q '^  S3EndpointEnabled:' "$CFN_DIR/$tpl" &&
+     ! printf '%s\n' ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} | grep -q '^S3EndpointEnabled=' &&
+     af_stack_exists "$stack" && [ -z "$(af_stack_param "$stack" S3EndpointEnabled)" ]; then
+    af_param_override S3EndpointEnabled false
+  fi
+  if [ "$slug" = 20-platform ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
+    # Always named, empty included: an omitted parameter keeps its previous value, and an old
+    # grant would outlive a bucket that is gone.
+    af_param_override EgressArchiveBucket "${AF_ARCHIVE_BUCKET:-}"
+  fi
+  # A capture with EgressArchive=create from before a teardown: the retained bucket is still
+  # there and a second create of the same name fails. Reuse it (existing) unless this very
+  # stack already manages it.
+  if [ "$slug" = 10-data ] && [ "$AF_DRY" != 1 ] && printf '%s\n' ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} | grep -qx 'EgressArchive=create' &&
+     ! { af_stack_exists "$stack" && [ "$(af_stack_param "$stack" EgressArchive)" = create ]; }; then
+    arch_acct="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
+    if "${AWS[@]}" s3api head-bucket --bucket "af-${stack}-egress-archive-${arch_acct}-${AF_REGION}" >/dev/null 2>&1; then
+      echo "    · the archive bucket of $stack survived the teardown: EgressArchive=existing (the data is kept)"
+      af_param_override EgressArchive existing
+    fi
+  fi
   local caps=()
   [ $# -gt 0 ] && caps=(--capabilities "$@")
   echo "==> deploy $stack ($slug)"
@@ -338,10 +405,25 @@ deploy_stack() {  # deploy_stack <stack> <template> <slug> [capability...]
     ${caps[@]+"${caps[@]}"} \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
+  # The empty EgressArchiveBucket above is not trusted to clear a live stack's grant (#2763).
+  if [ "$slug" = 20-platform ] && [ -z "${AF_ARCHIVE_BUCKET:-}" ] && grep -q '^  EgressArchiveBucket:' "$CFN_DIR/$tpl"; then
+    af_cfn_clear_params "$stack" CAPABILITY_NAMED_IAM EgressArchiveBucket
+  fi
 }
 
-deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network
+deploy_stack "$AF_STACK_NETWORK"  00-network.yaml  00-network     CAPABILITY_IAM
 deploy_stack "$AF_STACK_DATA"     10-data.yaml     10-data     CAPABILITY_AUTO_EXPAND CAPABILITY_IAM
+# The egress archive bucket (#2732) is a fact of the data stack just deployed, so 20-platform's
+# grant and 30-ingress's URL both follow its output, never the capture (a rebuilt data stack
+# has a new bucket, or none). The deploy_stack call reads this variable for 20-platform only.
+AF_ARCHIVE_BUCKET=""
+if [ "$AF_DRY" != 1 ]; then
+  if ! AF_ARCHIVE_BUCKET="$(af_stack_output_strict "$AF_STACK_DATA" EgressArchiveBucket)"; then
+    echo "ERROR: could not read the EgressArchiveBucket output of $AF_STACK_DATA; stopping so that a" >&2
+    echo "       transient failure cannot switch the egress archive off. Re-run." >&2
+    exit 1
+  fi
+fi
 deploy_stack "$AF_STACK_PLATFORM" 20-platform.yaml 20-platform CAPABILITY_NAMED_IAM
 
 # --- 4) images (ECR starts out empty) ----------------------------------------
@@ -714,6 +796,41 @@ fi
 # would work and then builds x86_64 (measured — the CP that came up had runtimePlatform
 # x86_64). Some captures have no CpArch line at all, so the override has to add it.
 af_param_override CpArch "$CP_ARCH"
+# Workspace subnets (#2716): a rebuilt 00-network has new subnet ids, so the output, never the
+# capture. A network stack without the output passes nothing (workspaces in the private subnets).
+# What comes out empty here while a live 30-ingress still holds a value is cleared after its
+# deploy (ING_CLEAR, af_cfn_clear_params): leaving it out keeps the old value, and passing it
+# empty did not clear it in the #2763 rehearsal. So these reads must not swallow a failure.
+ING_CLEAR=()
+network_output() {  # <output>
+  af_stack_output_strict "$AF_STACK_NETWORK" "$1" || {
+    echo "ERROR: could not read the $1 output of $AF_STACK_NETWORK; stopping so that a transient" >&2
+    echo "       failure cannot clear it on $AF_STACK_INGRESS. Re-run." >&2
+    exit 1
+  }
+}
+af_param_drop WorkspaceSubnets
+if [ "$AF_DRY" != 1 ]; then
+  ws_subnets="$(network_output WorkspaceSubnets)"
+  if [ -n "$ws_subnets" ]; then af_param_override WorkspaceSubnets "$ws_subnets"; else ING_CLEAR+=(WorkspaceSubnets); fi
+fi
+# The egress gateway's proxy address and token secret (EgressRoute=gateway): outputs, never the
+# capture (a rebuilt network has a new interface and a new secret). Empty = no gateway.
+af_param_drop EgressProxyAddr
+af_param_drop EgressTokenSecretArn
+if [ "$AF_DRY" != 1 ]; then
+  eg_secret="$(network_output EgressTokenSecretArn)"
+  [ -n "$eg_secret" ] || ING_CLEAR+=(EgressProxyAddr EgressTokenSecretArn)
+  if [ -n "$eg_secret" ]; then
+    af_param_override EgressProxyAddr "$(af_stack_output "$AF_STACK_NETWORK" EgressProxyAddr)"
+    af_param_override EgressTokenSecretArn "$eg_secret"
+    echo "WARNING: $AF_STACK_NETWORK runs the egress gateway (EgressRoute=gateway). Workspaces egress" >&2
+    echo "         from its own address, not the NAT gateway's (#2728)." >&2
+  fi
+fi
+# The egress archive bucket (#2732): the data stack's output, never the capture. Empty = off.
+af_param_override EgressArchiveBucket "${AF_ARCHIVE_BUCKET:-}"
+[ "$AF_DRY" = 1 ] || [ -n "${AF_ARCHIVE_BUCKET:-}" ] || ING_CLEAR+=(EgressArchiveBucket)
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"
@@ -724,7 +841,7 @@ if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   # pool layer: deployments exist where it is passed straight to 30 (40's SlotAmiIdArm64
   # is empty while 30's Ec2SlotAmiArm64 holds an ami-…). Overwriting with an empty value
   # leaves a declared arm64 class with no arm64 AMI, and the CP refuses to start
-  # (runtime_ecs_ec2.go: "refuses to start when a declared arm64 class has no launch
+  # (runtime_ecs_ec2_pool.go: "refuses to start when a declared arm64 class has no launch
   # template to run on"). Keep the captured value instead.
   if [ -n "$ami" ]; then
     af_param_override Ec2SlotAmiArm64 "$ami"
@@ -741,6 +858,9 @@ else
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
     --no-fail-on-empty-changeset
+  if [ ${#ING_CLEAR[@]} -gt 0 ]; then
+    af_cfn_clear_params "$AF_STACK_INGRESS" CAPABILITY_NAMED_IAM "${ING_CLEAR[@]}"
+  fi
 fi
 
 # --- 7) did it come up? ------------------------------------------------------
@@ -758,6 +878,17 @@ if [ "$AF_DRY" != 1 ]; then
     - the CP task cannot be placed (CpArch vs the image architecture — unlikely if the check above passed)
     - the CP is stuck at startup: aws logs tail /af/$AF_STACK_INGRESS/cp --follow
 EOF
+  # The egress gateway refuses every workspace connection until its agent has a first policy,
+  # which it can only fetch from the CP that just came up.
+  if [ -n "${eg_secret:-}" ]; then
+    echo "==> egress gateway"
+    if af_gateway_wait "$AF_STACK_NETWORK" ready; then
+      echo "    ✓ interface attached, Squid and the agent running, first policy applied"
+    else
+      echo "⚠️  the egress gateway is not ready: workspaces have no egress until it is." >&2
+      echo "    On the instance: /var/log/af-egress-gateway.log, journalctl -u af-egress-agent (README, \"Egress gateway\")." >&2
+    fi
+  fi
 fi
 
 cat <<EOF

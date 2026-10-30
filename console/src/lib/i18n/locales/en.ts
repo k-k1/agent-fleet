@@ -11,6 +11,7 @@ import { aiassist } from "./en/aiassist.ts";
 import { assistant } from "./en/assistant.ts";
 import { chat } from "./en/chat.ts";
 import { common } from "./en/common.ts";
+import { engineadmin } from "./en/engineadmin.ts";
 import { engines } from "./en/engines.ts";
 import { errors } from "./en/errors.ts";
 import { fleetgraph } from "./en/fleetgraph.ts";
@@ -19,6 +20,7 @@ import { imggen } from "./en/imggen.ts";
 import { limits } from "./en/limits.ts";
 import { inbox } from "./en/inbox.ts";
 import { memo } from "./en/memo.ts";
+import { memory } from "./en/memory.ts";
 import { mirror } from "./en/mirror.ts";
 import { notifications } from "./en/notifications.ts";
 import { ops } from "./en/ops.ts";
@@ -37,6 +39,7 @@ export const en: Record<keyof typeof ja, string> = {
   ...errors,
   ...settings,
   ...tools,
+  ...memory,
   ...assistant,
   ...aiassist,
   ...sessions,
@@ -45,6 +48,7 @@ export const en: Record<keyof typeof ja, string> = {
   ...repos,
   ...viewer,
   ...admin,
+  ...engineadmin,
   ...ops,
   ...usage,
   ...notifications,

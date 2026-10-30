@@ -19,7 +19,7 @@ package main
 // screen could move it forward — "揃える" answered `none`, because the family's PART list (the
 // encoder and the VAE) was complete.
 //
-// Both are refused for new ingests now (engine_admin.go's destination check). This is the remedy
+// Both are refused for new ingests now (engine_admin_ingest.go's destination check). This is the remedy
 // for the rows that already exist, and it is a MOVE rather than a second download: the bytes are
 // this deployment's, they are already paid for, and `aws s3 mv` inside one bucket is a
 // server-side copy. Re-fetching 13.1 GB to put them 1 directory higher would be the same repair

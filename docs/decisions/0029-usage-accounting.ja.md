@@ -53,7 +53,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -92,6 +92,14 @@
 この表を忘れていた（develop を取り込む過程で気づいて直した）。3 度目のドリフトを本当に止めたいなら、
 規則を文章で持つのをやめて**列挙とカタログの一致を試験で固定する**しかない（`errcodes_catalog_test.go`
 が誤りコードに対してやっているのと同じ形）。
+
+**追記（2026-10-18）。** `feature` 行に `memory.review` を足した。`usagex/ledger.go` の
+`FeatureMemoryReview`、Console のカタログ項目、設定 → AI 支援の行と同じコミットで入れている。
+バックグラウンドのメモリレビュー（[ADR 0117](0117-background-memory-skill-review.ja.md) 決定 3）が
+窓ごとに行う 1 回のヘルパー呼び出しで、Agent の「ツールを全て拒否する」一発実行経路が書く。
+`trigger` は `auto` か `manual`、`ref` はレビュー対象のセッション名なので、使用量ビューでセッションごとの
+レビュー費用が分かる。オプトインで 1 日の呼び出し数にも上限があるため、Console は専用の色スロットを
+与えず「その他」に畳む。
 
 🔴 **`engine.image` は無い。無いことは欠落ではなく決定である。** 画像の応答はトークン数を持たない。
 画像が消費するのはピクセルで、それを見られるのはファイルを保存する Agent の側であり、そこは既に

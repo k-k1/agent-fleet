@@ -11,6 +11,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { PathLinkMenuHost } from "./PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { SelectionFloat } from "../../ui/SelectionFloat.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -18,6 +19,7 @@ import { useSelectionCapture } from "../../lib/selectionCapture.ts";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { applyQuoteMarks, selectionAnchor } from "./quoteMarks.ts";
 import {
@@ -73,6 +75,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
   const bodyRef = useRef<HTMLDivElement>(null);
+  const docRepo = useSessionsStore((s) => (session ? s.sessions.find((x) => x.name === session)?.repo ?? null : null));
   const key = session ? planKey(session, content || "") : null;
   const comments = usePlanComments(key);
   // The pill attached to a selection (null = hidden), and the comment input opened from it.
@@ -181,8 +184,14 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
       </ViewHead>
       <div className="md-scroll" ref={bodyRef} onMouseUp={() => capture()}>
         <PathLinkMenuHost>
+          <PortLinkMenuHost>
           <MarkdownView
             source={content || ""}
+            previewLinks
+            // The plan's own working copy decides what a bare #N means; a document with no
+            // session has no repository, so its #N stays text.
+            repo={docRepo}
+            workItemRefs
             onOpenFile={(path, line, column, openInNew) => {
               const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
               if (openInNew) openTargetInNew(target, true);
@@ -191,6 +200,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             // The click navigates there, so the file tree takes keyboard focus along with it.
             onOpenDir={(path) => revealInFiles(path, { focus: true })}
           />
+          </PortLinkMenuHost>
         </PathLinkMenuHost>
       </div>
 

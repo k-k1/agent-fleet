@@ -61,3 +61,12 @@ docs/36 実測記録）。認証は GitHub トークン（gh CLI アプリの OA
   緩和＋live テストが一次検知）、classic PAT（`ghp_`）非対応（フリートの GitHub
   OAuth は `gho_` を作るため通常は非該当）、TUI の plan モードチップ非表示
   （フッタにモード表示が無く検出不能）。
+
+### 注記 2026-10-23 — 決定 8 のフラグは導入済みの版に従う（#2576）
+
+copilot 1.0.103 は `--no-remote` を削除し（リモート操縦はセッション内の `/remote on` でのみ有効に
+なる）、`--no-remote-export` を `--sync-session=off` に改名した。各版は相手側の綴りを拒否して何も
+描画せずに終了するため、Terminal (CLI) の起動・ACP ドライバ・モデルプローブは `copilot --version`
+を読み（1 分キャッシュ）、1.0.103 未満では `--no-remote --no-remote-export`、以降は
+`--sync-session=off` を渡す。方針自体は変わらない。実測: TUI ミラー契約は 1.0.102 と 1.0.103 で
+緑、ACP の分岐契約は 1.0.103 で緑。

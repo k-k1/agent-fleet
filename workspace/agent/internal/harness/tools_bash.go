@@ -73,6 +73,7 @@ func runBash(ctx context.Context, rt *Runtime, argsJSON string) (string, error) 
 	// flow through the same runCtx.
 	c := exec.CommandContext(runCtx, "bash", "-c", cmd)
 	c.Dir = rt.Cwd
+	c.Env = rt.Env
 	var out bytes.Buffer
 	c.Stdout = &out
 	c.Stderr = &out

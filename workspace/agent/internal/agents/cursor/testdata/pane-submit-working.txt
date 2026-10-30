@@ -1,0 +1,30 @@
+
+
+  Cursor Agent
+  v2026.10.16-e3cb207
+  Tip: Use /config to customize Cursor settings and behavior.
+
+
+  say hello in one word
+
+
+ ⠀⠞ Working
+    Tip: Use /plan to plan execution and reach the right outcome faster.
+
+
+  → Add a follow-up                                                                 ctrl+c to stop
+
+
+  Auto
+  ~/proj
+
+
+
+
+
+
+
+
+
+
+

@@ -43,9 +43,11 @@ type idleHolder struct {
 	// Until is the pin's expiry, set only when Kind=="pin".
 	Until string `json:"until,omitempty"`
 	// Since is when the holding session's current busy state began (RFC3339), set when Kind ==
-	// "working" and the Agent reported it. Approximate; see session.Session.StateSince.
+	// "working" or "background" and the Agent reported it. Approximate; see session.Session.StateSince.
 	Since string `json:"since,omitempty"`
-	// LapseAt is when this "working" hold stops counting if nothing moves: the last sign of
+	// LapseAt is when a "background" hold stops counting (the period's start plus
+	// background_hold_max, on this process's clock); absent when the bound is off. For "working":
+	// when this hold stops counting if nothing moves: the last sign of
 	// progress plus busyProgressLapse, on this process's clock. Set only when the Agent reported
 	// a progress age (absent = the hold never lapses for this row).
 	LapseAt string `json:"lapseAt,omitempty"`
@@ -53,7 +55,7 @@ type idleHolder struct {
 
 // holdersOf builds the reasons not to stop from one sweep's session list and presence. A
 // pure function, fed the same inputs as the reaper's own decision and ordered the same way.
-func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, imageJobs int) []idleHolder {
+func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, imageJobs int, bgMax time.Duration) []idleHolder {
 	var out []idleHolder
 	for _, s := range sessions {
 		if !s.Alive {
@@ -65,8 +67,12 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs, im
 			// explains more than a turn that happens to be running right now, and it
 			// points at the action that ends it (remove the pin).
 			out = append(out, idleHolder{Kind: "pin", Session: s.Name, Until: s.KeepAwakeUntil})
+		case s.BackgroundBusy && !backgroundLapsed(s, bgMax):
+			// Same predicate as sessionActivityAt: a lapsed background row is not a holder.
+			out = append(out, backgroundHolder(s, now, bgMax))
 		case s.BackgroundBusy:
-			out = append(out, idleHolder{Kind: "background", Session: s.Name})
+			// Lapsed: no holder, and not the working arm below either — the reaper does not
+			// read state for a BackgroundBusy row.
 		case busyState(s.State) && !progressLapsed(s):
 			// Never enumerate state names here — go through the same predicate the
 			// reaper's busy check (sessionActivity) uses. Listing them by hand made
@@ -104,6 +110,16 @@ func workingHolder(s sessionWire, now time.Time) idleHolder {
 	h := idleHolder{Kind: "working", Session: s.Name, Since: s.StateSince}
 	if s.ProgressAt != "" {
 		h.LapseAt = now.Add(busyProgressLapse - time.Duration(s.ProgressAgeSec)*time.Second).Format(time.RFC3339)
+	}
+	return h
+}
+
+// backgroundHolder is the "background" holder for a row the reaper counts as busy. lapseAt comes
+// from the Agent-computed age and this process's clock, like workingHolder's.
+func backgroundHolder(s sessionWire, now time.Time, bgMax time.Duration) idleHolder {
+	h := idleHolder{Kind: "background", Session: s.Name, Since: s.BackgroundSince}
+	if bgMax > 0 && s.BackgroundSince != "" {
+		h.LapseAt = now.Add(bgMax - time.Duration(s.BackgroundAgeSec)*time.Second).Format(time.RFC3339)
 	}
 	return h
 }

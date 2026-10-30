@@ -169,6 +169,9 @@ export const errText = (error: ApiError | string | null | undefined): string => 
 // if this is dropped. Not appended when it repeats the same text.
 export const errDetail = (error: ApiError | string | null | undefined): string => {
   const head = errText(error);
+  // The cli_install_* wording already says what and why; the server's English sentence would
+  // only repeat it in the wrong language.
+  if (error && typeof error === "object" && error.code?.startsWith("cli_install_")) return head;
   const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
   return detail && detail !== head ? head + ": " + detail : head;
 };
@@ -1340,6 +1343,15 @@ export async function sessionPeerSend(
   const err = r?.error as ApiError | undefined;
   if (err) return { ok: false, message: errText(err) || t("err.send_failed"), code: String(err.code || "") };
   return { ok: true, queued: !!r?.queued };
+}
+
+/** sessionPlanReviewerSet links (or, with an empty `reviewer`, unlinks) the session that
+ *  reviewed the plan file `path` of `planner`, on the Agent, so every device offers "Review
+ *  again" (features/mirror/reviewAgain.ts). false = not stored (an old Agent has no such route,
+ *  or the call failed); the caller keeps its local copy either way. */
+export async function sessionPlanReviewerSet(planner: string, path: string, reviewer: string): Promise<boolean> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(planner)}/plan-reviewer`, "POST", { path, reviewer }).catch(() => null);
+  return !!r && !r.error;
 }
 
 /** sessionAlive reads whether the session is running NOW (null = the read failed). The session

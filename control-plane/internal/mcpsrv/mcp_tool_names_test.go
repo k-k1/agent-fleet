@@ -17,6 +17,7 @@ func TestToolNamesAreUniqueAcrossMemberAndAdmin(t *testing.T) {
 		}
 	}
 	check("memberTools", memberTools())
+	check("memoryTools", memoryTools())
 	check("adminTools", adminTools())
 }
 

@@ -1,7 +1,6 @@
 ---
 audience: "someone keeping a running deployment healthy"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-09"
 ---
 
 # 03. Day-to-Day Operations
@@ -114,45 +113,21 @@ The commands are in the runbook's "Upgrade" section.
   that stack is updated by hand; `update.sh` warns when it finds this (read-only check) and
   prints the change-set command. See `deploy/aws/ecs/README.md`, "Upgrade (runbook)" step 1a.
   The same finding is shown to super_admins as a banner on every section of the Console's
-  Admin screen ("no daily EFS backup"), so it is not lost if nobody reads the `update.sh`
+  Admin screen, opening "This deployment keeps member data on EFS (Persistence=retain) but its
+  data stack has no daily EFS backup", so it is not lost if nobody reads the `update.sh`
   output. `update.sh` records it in the ingress stack (parameter `EfsBackup`), and the banner
   clears at the first `update.sh` run that confirms the data stack has its backup. Never filled
   means no banner. If `update.sh` cannot read or evaluate the data stack it keeps the previous
-  verdict, so an existing banner stays until a run confirms the fix.
-
-### ecs-ec2: replacing slots after a launch template change
-
-A slot reads its user data only when it is launched, and a stopped workspace goes back to the
-same slot on its next Start, so a change to the slot launch template (a release's security
-setting, for example) does not reach the slots you already have. Replace them from the
-Console instead of terminating instances by hand.
-
-**Slots below `$Latest` are replaced automatically.** When a workspace starts and its home is on
-such a slot, that start moves it to a new slot exactly as a reservation does, but without the WS
-bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no new slot can be
-launched (capacity, quota) the start still succeeds on the old slot and tries again at a later
-start. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
-**older than $Latest · replaced at next start** on these slots. Set
-`AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane to turn this off. Reserve slots
-yourself when a workspace must never be put back on its old slot (then a start that cannot launch
-a new slot fails instead):
-
-1. **Settings → Admin → Slots** (super_admin). The **Template** column shows the launch template
-   version each slot was launched from, marked **older than $Latest** when it is.
-2. **Reserve all N for replacement…** lists the slots below `$Latest` and the workspace on each,
-   and reserves exactly those once you confirm. **Replace at next start** on a row reserves one
-   slot (a reserved row then shows the label "replaced at next start"); **Cancel replacement** takes it back. Every reservation is in the audit log
-   (`pool.slot_replace_reserve` / `pool.slot_replace_cancel`, with the workspace it moves).
-3. Nothing happens to a running workspace. Its member sees **Moves to a new slot** in the WS bar,
-   and their next stop → start launches a new slot from `$Latest`, moves the home onto it and
-   terminates the old one. That start is about 25 seconds longer than usual. Files, repos and
-   logins come along: the home is never deleted.
-4. If no new slot can be launched (capacity, quota), the start fails with the reason and the
-   reservation stays. The member is never put back on the reserved slot; retry later. A
-   reserved slot with no workspace on it is terminated by the sweeper.
-
-`deploy/aws/ecs/README.md`, "Moving retained slots onto new user data", has the details and how
-to verify the result.
+  verdict, so an existing banner stays until a run confirms the fix. The same read-only check runs
+  on its own as `deploy/aws/ecs/efs-backup-check.sh --profile <p> --region <r>`; it exits `0` only
+  when the backup is there or the deployment does not need one (`Persistence=delete`).
+  **On `ecs-ec2`, a release that changes the slot launch template** reaches the slots you already
+  have only when they are replaced ([chapter 11](11-slot-pool.md#ecs-ec2-replacing-slots-after-a-launch-template-change)).
+  **The network stack (`00-network`) is never updated by `update.sh`.** Coming from v0.34.x, it
+  is updated by hand first, in a window in which every running workspace is restarted: see
+  `deploy/aws/ecs/README.md`, "Upgrading from v0.34.x". Do not deploy the new network template
+  with its defaults: its S3 endpoint would refuse (AccessDenied) the S3 requests of every
+  workspace that has not been restarted yet.
 
 ## Installing into an air-gapped network
 
@@ -225,7 +200,7 @@ body on demand) is a second way to the same text; the other kinds have only the 
   their workspace, or it takes effect the next time a container is created.
 - A user's own additions do **not** belong in this layer. They go in each person's ⚙ Settings →
   Agent instructions, and fleet policy wins where the two conflict
-  ([member/06](../member/06-agents.md#agent-instructions-write-down-how-you-work-once)).
+  ([member/09](../member/09-agents.md#agent-instructions-write-down-how-you-work-once)).
 - **The always-loaded file's length is a per-session context cost.** Every agent reads it every
   time, so before adding to it, check that it is genuinely needed by everyone, every time; a
   topic file costs nothing until it is read. This layer cannot be delivered to cursor.
@@ -233,7 +208,7 @@ body on demand) is a second way to the same text; the other kinds have only the 
 ## opencode 2: Terminal sessions and the shared server
 
 With opencode 2, Terminal (CLI) sessions attach to the one opencode server the Workspace Agent
-runs ([member/06](../member/06-agents.md#how-opencode-2-differs)). To force a private server per
+runs ([member/09](../member/09-agents.md#opencode)). To force a private server per
 Terminal session instead (about 150-250 MB more memory per session, measured idle), start the
 Workspace Agent with this in its environment:
 
@@ -335,44 +310,111 @@ art as it serves it.
 
 ## Idle stop and force-stop
 
-- **A start that never finishes is stopped**: a Workspace that has been starting for
-  **30 minutes** with no task running (on ECS, typically a task the cluster refuses to
-  place) is stopped, so it no longer holds capacity and the user can press **Start** again
-  once the cause is fixed. The 30 minutes count from its last Start, or from when the
-  Control Plane first saw it starting if that is later (after a Control Plane restart, for
-  instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
-  one sample late. The member gets a notification in the Console's notification center saying
-  the start was stopped, with the last start phase (on `ecs-ec2`, why the task could not be
-  placed), the tenant's admins see the same reason on that member's roster row and member
-  detail until the next start, and the Control Plane log says so too (`start-deadline: stopped …`). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
-  `ecs-ec2` it is never shorter than the pool's own launch budget (`AF_ECS_EC2_CLAIM_TTL_SEC`,
-  `AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
-  it off too.
+### A start that never finishes
 
-- **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
-  and a Workspace with nothing running is stopped after **2 hours**. That is the default;
-  `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
-  Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
-  whole deployment). A stopped Workspace comes back when the user presses **Start**, and
-  `AF_AUTOSTART` (on by default) additionally starts it for the deliberate "I am using this
-  now" actions: creating, forking or resuming a session, answering a carried question, the
-  SSM node lookup. **Opening a terminal does not start it, and neither does reading or
-  reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
-  left open never keeps a Workspace warm. This is effective for
-  saving resources. For the meaning of the env vars, see
-  `deploy/compose/.env.example`; for how it works, see
-  `docs/build/09-deploy.md` §9.4. A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
-  Workspace awake only while it shows signs of life: if it has produced no output, state change or
-  running tool process for **1 hour**, it stops counting. That is a limit on time without any
-  change, not on total working time. For claude and agy a running tool process counts as life; for
-  codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
-  counter counts), so a silent tool under a pane that stays static for an hour can lapse, while a
-  stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
-  long silent work on those kinds. Managed sessions and the other kinds (muse, lcpp, shell, ssm) are not yet bounded this way, and background
-  work and the "do not auto-stop" pin are never subject to it.
-- **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
-  are outside compose management). To stop a specific Workspace for sure, a super_admin
-  force-stops it from the Admin panel in the Console. When the whole host must be brought fully
-  down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
-  `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
-  [06](06-diagnose.md)).
+**A start that never finishes is stopped**: a Workspace that has been starting for
+longer than the start deadline ([Limits and defaults](../ref/limits.md#set-by-the-deployment)) with no task running (on ECS, typically a task the cluster refuses to
+place) is stopped, so it no longer holds capacity and the user can press **Start** again
+once the cause is fixed. The deadline counts from its last Start, or from when the
+Control Plane first saw it starting if that is later (after a Control Plane restart, for
+instance), and it is checked once per usage sample (5 minutes), so the stop comes up to
+one sample late. The member gets a notification in the Console's notification center saying
+the start was stopped, with the last start phase (on `ecs-ec2`, why the task could not be
+placed), the tenant's admins see the same reason on that member's roster row and member
+detail until the next start, and the Control Plane log says so too (`start-deadline: stopped …`). `AF_WORKSPACE_START_DEADLINE` changes the limit and `0` turns it off; on
+`ecs-ec2` it is never shorter than the pool's own launch budget (`AF_ECS_EC2_CLAIM_TTL_SEC`,
+`AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
+it off too.
+
+### Automatic idle stop (scale-to-zero)
+
+An idle claude session is halted, and a Workspace with nothing running is stopped, after the
+defaults in [Limits and defaults](../ref/limits.md#set-by-the-deployment);
+`AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there) change it (per-tenant overrides are in the
+Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
+whole deployment). A tenant's values are the four fields under **Idle auto-stop** in its limits
+(**Session halt after**, **Halt when awaiting a decision**, **Max hold by background work**,
+**Workspace stop after**); an empty field follows the deployment default. This is effective for
+saving resources. For the meaning of the env vars, see
+`deploy/compose/.env.example`; for how it works, see
+`docs/build/09-deploy.md` §9.4.
+
+A stopped Workspace comes back when the user presses **Start**, and
+`AF_AUTOSTART` (on by default) additionally starts it for the deliberate "I am using this
+now" actions: creating, forking or resuming a session, answering a carried question, the
+SSM node lookup. **Opening a terminal does not start it, and neither does reading or
+reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
+left open never keeps a Workspace warm.
+
+### What keeps a Workspace awake
+
+Background work (a dev server or a
+`run_in_background` task started by an idle session) holds the Workspace for at most
+the background-hold limit ([default](../ref/limits.md#set-by-the-deployment); `AF_BACKGROUND_HOLD_MAX`, per tenant `background_hold_max`; `0` = unbounded);
+after that it no longer keeps the Workspace awake, and the "do not auto-stop" pin is the way to
+keep a genuinely long job.
+
+A Terminal claude, agy, codex, cursor, copilot, kiro or opencode session showing "working" keeps the
+Workspace awake only while it shows signs of life: if it has produced no output, state change or
+running tool process for the no-sign-of-life limit ([Limits and defaults](../ref/limits.md#fixed-in-the-product)), it stops counting. That is a limit on time without any
+change, not on total working time. For claude and agy a running tool process counts as life; for
+codex, cursor, copilot, kiro and opencode only a pane repaint does (a spinner or elapsed-time
+counter counts), so a silent tool under a pane that stays static that long can lapse, while a
+stuck session whose spinner keeps animating keeps holding. Use the "do not auto-stop" pin for
+long silent work on those kinds. A Managed cursor, kiro, codex or opencode session is bounded the same way, on the runtime's own sign of life: its last message for that session, or a running tool (an open tool call or item, or for cursor and kiro a tool process under the runtime). It was measured on cursor-agent 2026.10.16, kiro-cli 2.31.0, codex 0.163.0 and opencode 2.0.32 with a local shell tool;
+whenever the Agent cannot tell what is running (a restart, a reconnect, a failed process-table read) the session keeps holding. opencode 1.x and Managed muse, lcpp and copilot are not bounded this way (see ADR 0055, 2026-10-17 addendum).
+shell and ssm sessions never show "working", and muse and lcpp have no Terminal mode, so there is nothing of those kinds to bound. Background
+work and the "do not auto-stop" pin are never subject to it.
+
+### Force-stop (brute force)
+
+`docker compose down` **does not stop user Workspaces** (they
+are outside compose management). To stop a specific Workspace for sure, a super_admin
+force-stops it from the Admin panel in the Console. When the whole host must be brought fully
+down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
+`af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
+[06](06-diagnose.md)).
+
+## Pausing an idle deployment
+
+Stopping every Workspace leaves the deployment's floor billing: the Control Plane, the database,
+the NAT gateway, the load balancer. For a stretch nobody uses it, the AWS and GKE deployments each
+have a `pause.sh` that stops or removes what bills by the hour and keeps the data; `--up` brings
+the deployment back. To get as close to zero as possible, tear it down instead (`teardown.sh` on AWS,
+`terraform destroy` on GKE). What a teardown keeps depends on the deployment: on AWS a
+`Persistence=retain` deployment keeps the database's final snapshot, the EFS file system and its
+backup vault (and their storage cost) unless you pass `--purge-retained`; on GKE the deletion
+protections have to be lifted first, and the snapshots of the Control Plane's disk outlive the
+destroy. The runbooks' "Teardown" ([AWS](../../deploy/aws/ecs/README.md#teardown)) and "Tearing down"
+([GKE](../../deploy/kubernetes/README.md#tearing-down)) list what goes and what stays.
+
+Both scripts work the same way: without `--yes` a pause only prints its plan, `--dry-run` prints
+every write without making it, and `--status` shows what is running and what still bills, changing
+nothing. `--keep-db` leaves the database running.
+
+- **AWS (`ecs` / `ecs-ec2`)**: `deploy/aws/ecs/pause.sh --profile <p> --region <r>`. It stops the
+  running Workspaces (their sessions end), waits for the Control Plane to put the slots to sleep and
+  end the engines' GPU instances (`--fast` does it directly), stops the Control Plane, stops the RDS
+  instance and deletes the NAT gateway (`--keep-nat` keeps it). The gateway is deleted through the
+  network stack's `NatEnabled` parameter, never by hand (the stack would keep pointing at the deleted gateway), and the egress address is kept, so the
+  source IP is the same after `--up`. Nothing in a private subnet reaches out while it is gone. AWS
+  starts a stopped RDS instance again by itself after 7 days; the data stack's re-stop function
+  (`RdsRestopOnForcedStart`, on by default) stops it again while the instance carries the pause tag,
+  and an older data stack gets it with one deploy of that stack. With the egress gateway
+  (`EgressRoute=gateway`) it also stops the gateway instance before the Control Plane, keeping its
+  address, and `--up` waits until the gateway carries traffic again. `--up` brings back the NAT gateway,
+  the database and the Control Plane; members start their own Workspaces. The load balancer, EFS and
+  the database's storage keep billing.
+- **GKE (`kubernetes`)**: `deploy/gcp/gke/pause.sh --project <p> --location <region or zone> --prefix <name_prefix>`,
+  in a shell whose kubectl points at the cluster; it refuses a context whose server and CA are not
+  that cluster's. A running Workspace makes it refuse, unless `--stop-workspaces` stops them. It
+  scales the Control Plane to 0, empties the workspace pool and the system pool, and stops Cloud SQL,
+  which, unlike RDS, does not start itself again. The node counts are recorded on the Control Plane's
+  namespace and `--up` restores them; until then `terraform plan` reports the pools as drift. The GKE
+  management fee, the load balancer's forwarding rule, the Private Service Connect endpoint, Cloud NAT
+  and its address, the persistent disks and Cloud SQL's storage keep billing (measured in
+  `deploy/gcp/gke/README.md`, "Cost").
+
+The order each script follows and why, and what to check afterwards, are in the runbooks:
+[deploy/aws/ecs/README.md, "Lifecycle scripts"](../../deploy/aws/ecs/README.md#lifecycle-scripts-stand-up--pause--tear-down)
+and [deploy/kubernetes/README.md, "Pausing"](../../deploy/kubernetes/README.md#pausing).

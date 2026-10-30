@@ -43,6 +43,12 @@ func TestMemberOriginWireVector(t *testing.T) {
 // The CP signs exactly these routes, and each is a relayed route of the real mux.
 func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 	want := []string{
+		"POST /api/agents/memory-review/proposals/approve",
+		"POST /api/agents/memory-review/proposals/list",
+		"POST /api/agents/memory-review/proposals/reject",
+		"POST /api/agents/memory-review/proposals/reject-all",
+		"POST /api/agents/memory-review/run",
+		"POST /api/agents/memory-review/runs/revert",
 		"POST /api/agents/memory/af-import",
 		"POST /api/agents/memory/auto-sync",
 		"POST /api/agents/memory/entries/member-save",
@@ -53,6 +59,7 @@ func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 		"POST /api/agents/memory/import",
 		"POST /api/agents/memory/import/apply",
 		"POST /api/agents/memory/snapshots",
+		"PUT /api/env/ui-prefs",
 	}
 	var got []string
 	for k := range memberOriginRoutes {
@@ -572,5 +579,47 @@ func TestHashedUploadRefusedWhenNoDeadlineCanBeSet(t *testing.T) {
 	proxy.rest(rec, req, res)
 	if rec.Code != http.StatusInternalServerError || uploadsActive != 0 {
 		t.Fatalf("code %d, slots %d", rec.Code, uploadsActive)
+	}
+}
+
+// Every settings write is signed, a mark a browser sent on it is replaced, and the Agent receives
+// the same body: the Agent asks for the mark only when the write arms the memory review.
+func TestRelaySignsSettingsWrites(t *testing.T) {
+	var gotMark, gotBody, gotMethod string
+	proxy, res, _, cleanup := newFSProxyTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotMark, gotBody, gotMethod = r.Header.Get(memberOriginHeader), string(b), r.Method
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer cleanup()
+	t.Setenv(memberOriginKeyVersionEnv, "")
+	pub := memberOriginKey(proxy.mgr.tokenSignMaster(), 1).Public().(ed25519.PublicKey)
+	body := `{"agentMemory":true,"memoryReview":"propose"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/env/ui-prefs", strings.NewReader(body))
+	req.Header.Set(memberOriginHeader, "v1.forged.byTheBrowser")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	proxy.rest(rec, req, res)
+	if rec.Code != http.StatusOK || gotMethod != http.MethodPut || gotBody != body {
+		t.Fatalf("%d method %q body %q", rec.Code, gotMethod, gotBody)
+	}
+	c := decodeMark(t, pub, gotMark)
+	sum := sha256.Sum256([]byte(body))
+	if c.Method != "PUT" || c.Path != "/env/ui-prefs" || c.BodySHA256 != hex.EncodeToString(sum[:]) || c.Subject != "user1" {
+		t.Fatalf("claims = %+v", c)
+	}
+}
+
+// The Agent clamps AF_MEMORY_IMPORT_MAX to 128 MiB (memoryImportCeiling in workspace/agent, a
+// separate module) and adds 1 MiB of multipart framing; the spool limit must admit that body.
+// The Agent's values are copied here, so they are pinned by equality first: whoever changes the
+// real limit must also edit these constants and the Agent's test, which names this one.
+func TestMemberOriginUploadMaxCoversAgentCeiling(t *testing.T) {
+	const agentCeiling, agentFraming = 128 << 20, 1 << 20
+	if memberOriginUploadMax != 130<<20 {
+		t.Fatalf("memberOriginUploadMax is %d, want 130 MiB: update the Agent's memoryImportCeiling and both pinning tests together", memberOriginUploadMax)
+	}
+	if memberOriginUploadMax < agentCeiling+agentFraming {
+		t.Fatalf("memberOriginUploadMax %d is below the Agent ceiling %d + framing %d", memberOriginUploadMax, agentCeiling, agentFraming)
 	}
 }

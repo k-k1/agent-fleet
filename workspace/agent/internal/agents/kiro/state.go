@@ -19,6 +19,7 @@ package kiro
 // driveState's generic route (the optimistic working that /input pushes).
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -34,7 +35,23 @@ func LiveState(m session.Meta) string {
 	if m.DriverKind() == session.DriverManaged {
 		return managedLiveState(m)
 	}
-	return classifyPane(tmuxx.CapturePane(session.TmuxName(m.Name)))
+	pane := tmuxx.CapturePane(session.TmuxName(m.Name))
+	return stateFrom(pane, recorderPending(recorderPath(m.Name)))
+}
+
+// stateFrom folds the recorder's open approvals into the pane verdict (recorder.go). The
+// recorder only adds: an approval the scrape sees stays "question" whatever the file says,
+// so a missing file, a newer CLI that drops the lines, or an unrecognised line costs
+// nothing. An open recorder approval counts only while the pane is captured (a dead pane
+// never answers its request, and the file keeps it open forever) and is not drawn as the
+// idle composer (the idle placeholder never coexists with an approval panel, so the request
+// is stale and no card could be answered).
+func stateFrom(pane string, open []string) string {
+	st := classifyPane(pane)
+	if pane != "" && len(open) > 0 && st != "idle" {
+		return "question"
+	}
+	return st
 }
 
 // approvalDetail returns, in one line, what the TUI's approval panel is asking to approve (for
@@ -45,7 +62,18 @@ func LiveState(m session.Meta) string {
 // interpreted: what the carry-forward card shows is a fact, not a structured set of choices
 // (the place to answer yes or no is gone along with the pane).
 func approvalDetail(m session.Meta) string {
-	return approvalLine(tmuxx.CapturePane(session.TmuxName(m.Name)))
+	pane := tmuxx.CapturePane(session.TmuxName(m.Name))
+	return detailFrom(pane, recorderPending(recorderPath(m.Name)))
+}
+
+// detailFrom prefers the recorder's request title (the command asked about) and falls back
+// to the pane line. Same pane conditions as stateFrom.
+func detailFrom(pane string, open []string) string {
+	if pane != "" && len(open) > 0 && classifyPane(pane) != "idle" {
+		sort.Strings(open)
+		return open[0]
+	}
+	return approvalLine(pane)
 }
 
 func approvalLine(s string) string {
@@ -63,8 +91,8 @@ func approvalLine(s string) string {
 // footerWindow bounds classification to the composer footer region (the non-empty lines at the
 // bottom). Scanning the whole screen means that when the assistant quotes a contract phrase
 // such as "Kiro is working" in its prose, the working verdict persists after the return to
-// idle and MarkTurnEnd never fires (no completion report). paneMode (session_io.go) restricts
-// itself to paneTail for the same reason. The width is chosen to fit the footer plus the
+// idle and MarkTurnEnd never fires (no completion report). PaneMode (panemode.go) restricts
+// itself to agents.PaneTail for the same reason. The width is chosen to fit the footer plus the
 // approval panel (about 5 lines at most).
 const footerWindow = 8
 
@@ -91,7 +119,7 @@ func classifyPane(s string) string {
 	return ""
 }
 
-// tailLines returns the last n non-empty lines of s (the same shape as paneMode's paneTail).
+// tailLines returns the last n non-empty lines of s (the same shape as agents.PaneTail).
 func tailLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	var out []string

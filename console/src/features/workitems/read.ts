@@ -27,6 +27,9 @@ export interface WorkItem {
   /** "owner/name" when the provider has one — seeds the launch target. */
   repo: string;
   updatedAt: string;
+  /** Comment count from the provider's list response (GitHub, Bitbucket). null = unknown: Jira, an
+   * older CP or Agent, a row cached before the count existed. Not the same as a known 0. */
+  commentCount?: number | null;
   /** CI of an open pull request's head commit (#1113). An empty state is "not read or none ran":
    * issues, closed pull requests, Jira and Bitbucket rows, an older CP or Agent. */
   checks: WorkItemChecks;
@@ -36,6 +39,10 @@ export interface WorkItem {
    * tracker has none or an older CP or Agent sent the row. The branch-name resolver maps it to a
    * kind before the labels (ADR 0103 decision 4). */
   type?: string;
+  /** The Agent's word that this row's connection may post the report-back comment. Only Bitbucket
+   * rows depend on it (the scope is recorded per connection, #2709); absent or false when the
+   * scope is unknown or an older CP or Agent sent the row. */
+  canComment?: boolean;
 }
 
 export interface WorkItemQuery {
@@ -134,8 +141,11 @@ function normalizeItem(raw: unknown): WorkItem {
     labelColors: readLabelColors(r.labelColors),
     repo: str(r.repo),
     updatedAt: str(r.updatedAt),
+    commentCount: typeof r.commentCount === "number" && r.commentCount >= 0 ? r.commentCount : null,
     checks: readChecks(r.checks),
     mergeable: oneOf(r.mergeable, MERGEABLE),
+    // Strictly `true`: anything else (absent, null, "true") reads as "not granted".
+    canComment: r.canComment === true,
   };
 }
 
@@ -201,6 +211,20 @@ export interface WorkItemDetail {
   comments: number;
   reviews: WorkItemReview[];
   checks: WorkItemChecks;
+  /** The head commit this read was drawn from — what a merge sends back so that a pull request
+   * that moved since is refused. "" outside a GitHub pull request or from an older Agent. */
+  headSha: string;
+  /** GitHub's `mergeable_state`: "clean" | "blocked" | "behind" | "dirty" | "unstable" |
+   * "has_hooks" | "draft" | "unknown", "" when not a GitHub pull request or an older Agent. */
+  mergeableState: string;
+  /** The merge methods the repository allows ("merge" | "squash" | "rebase"). */
+  mergeMethods: string[];
+  /** The method the dialog starts on ("" when none is allowed). */
+  defaultMergeMethod: string;
+  /** The Agent's word that this connection is known to be able to merge here (push access, and a
+   * classic token's `repo` scope). Absent or false — including every token that reports no
+   * scopes — means no Merge button is drawn. */
+  canMerge: boolean;
 }
 
 /** Adopt one detail response. Every field is normalised for the same reason `normalizeItem`
@@ -242,9 +266,99 @@ export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | nul
             .filter((r) => r.name)
         : [],
       checks: readChecks(d.checks),
+      headSha: str(d.headSha),
+      mergeableState: str(d.mergeableState),
+      mergeMethods: Array.isArray(d.mergeMethods)
+        ? d.mergeMethods.filter((m): m is string => typeof m === "string" && MERGE_METHODS.includes(m))
+        : [],
+      defaultMergeMethod: oneOf(d.defaultMergeMethod, MERGE_METHODS),
+      // Only a literal true: a truthy string from a confused proxy must not draw a button.
+      canMerge: d.canMerge === true,
     },
   };
 }
+
+export interface MergeResult {
+  ok: boolean;
+  /** The Agent's error code ("head_changed", "not_mergeable", "workspace_stopped", ...). */
+  code: string;
+  /** The provider's or CP's own wording, for the failure line. */
+  message: string;
+}
+
+/** Adopt one POST /api/work-items/merge body. Only a literal `merged: true` is a success: any
+ * other 200 would be reported as a merge that did not happen. */
+export function readMergeResult(res: unknown): MergeResult {
+  const d = (res && typeof res === "object" ? res : {}) as Record<string, unknown> & { error?: ApiError | string };
+  if (d.merged === true && !d.error) return { ok: true, code: "", message: "" };
+  const e = d.error;
+  const code = e && typeof e === "object" && typeof e.code === "string" ? e.code : "";
+  const message = e && typeof e === "object" ? (typeof e.message === "string" ? e.message : "") : typeof e === "string" ? e : "";
+  return { ok: false, code, message };
+}
+
+export const MERGE_METHODS: readonly string[] = ["merge", "squash", "rebase"];
+
+/** `mergeable_state` values GitHub accepts a merge for, and that are also green: `unstable` (a
+ * non-required check is failing) would be accepted too but is deliberately not offered. */
+const MERGEABLE_STATES = ["clean", "has_hooks"];
+
+export interface MergeGate {
+  /** Draw the Merge button at all. False for Bitbucket, issues, a merged or closed pull request,
+   * a connection that cannot merge, and an Agent that sent no merge facts. */
+  show: boolean;
+  /** Press allowed. Only when GitHub says the merge would succeed. */
+  enabled: boolean;
+  /** i18n key of the reason shown next to a disabled button ("" when enabled). */
+  whyKey: MergeWhyKey | "";
+}
+
+export type MergeWhyKey =
+  | "wi.merge_why_draft"
+  | "wi.merge_why_blocked"
+  | "wi.merge_why_behind"
+  | "wi.merge_why_dirty"
+  | "wi.merge_why_unstable"
+  | "wi.merge_why_unknown"
+  | "wi.merge_why_other";
+
+const MERGE_WHY: Record<string, MergeWhyKey> = {
+  blocked: "wi.merge_why_blocked",
+  behind: "wi.merge_why_behind",
+  dirty: "wi.merge_why_dirty",
+  unstable: "wi.merge_why_unstable",
+  unknown: "wi.merge_why_unknown",
+  "": "wi.merge_why_unknown",
+};
+
+/** Whether, and how, the detail modal offers Merge. Pure so the rule is tested on its own: the
+ * button is a write against GitHub, and "when in doubt, do not draw it" is the whole policy. */
+export function mergeGate(d: WorkItemDetail | null): MergeGate {
+  const none: MergeGate = { show: false, enabled: false, whyKey: "" };
+  if (!d || d.provider !== "github" || d.kind !== "pr") return none;
+  if (d.merged || d.state === "done") return none;
+  if (!d.canMerge || !d.headSha || d.mergeMethods.length === 0) return none;
+  if (d.draft) return { show: true, enabled: false, whyKey: "wi.merge_why_draft" };
+  if (MERGEABLE_STATES.includes(d.mergeableState)) return { show: true, enabled: true, whyKey: "" };
+  const whyKey = MERGE_WHY[d.mergeableState] ?? "wi.merge_why_other";
+  return { show: true, enabled: false, whyKey };
+}
+
+/** Whether GitHub is still computing this pull request's mergeability, so the panel should read
+ * it again by itself. GitHub answers `mergeable: null` / `mergeable_state: "unknown"` for a few
+ * seconds after the base moves (another pull request merged into it) and only starts computing on
+ * that read, so a panel that reads once stays on "cannot tell" until it is reopened. Never for
+ * Bitbucket: it never answers, and polling it would only spend calls. */
+export function mergePending(d: WorkItemDetail | null): boolean {
+  if (!d || d.provider !== "github" || d.kind !== "pr") return false;
+  if (d.merged || d.state === "done" || d.draft) return false;
+  return d.mergeable === "unknown" || d.mergeableState === "unknown";
+}
+
+/** Delays before each automatic re-read while `mergePending` holds: about 26 s in total, which
+ * covers GitHub's usual few seconds with room to spare and bounds the provider calls one open
+ * panel can make. After the last one the panel offers a manual re-check instead. */
+export const MERGE_RECHECK_DELAYS_MS: readonly number[] = [2000, 3000, 5000, 8000, 8000];
 
 export interface WorkItemSearchResult {
   items: WorkItem[];
@@ -612,7 +726,7 @@ export function sanitizeBranch(raw: string): string {
  *
  * The body is NOT included by default. A ticket description is written by third
  * parties, so pasting it in by default is opening an injection path by default; instead
- * we say where it is and let the agent fetch it with `gh` / the Jira MCP. `withBody`
+ * we say where it is and let the agent fetch it with the `gh` / `jira` CLIs. `withBody`
  * (the dialog's opt-in checkbox) wraps whatever the caller managed to fetch in a quoted
  * block that states plainly it is data, not instructions.
  *
@@ -650,10 +764,13 @@ function readLine(item: WorkItem): string {
     case "github":
       return t("wi.prompt_read_github", { key: shortKey(item.key).replace("#", "") });
     case "jira":
-      return t("wi.prompt_read_jira");
+      return t("wi.prompt_read_jira", { key: shortKey(item.key) });
+    case "bitbucket":
+      // `bkt` ships in the Workspace image, so Bitbucket names a CLI the way GitHub and Jira do.
+      return t("wi.prompt_read_bitbucket", { id: shortKey(item.key).replace("#", "") });
     default:
-      // Bitbucket lands here. There is no in-session tool equivalent to `gh`, so the URL is all
-      // this can point at (docs/log/80 §80.19.5). The point is not to name a tool that is absent.
+      // An unknown provider has no CLI to name, so the URL is all this can point at
+      // (docs/log/80 §80.19.5). The point is not to name a tool that is absent.
       return t("wi.prompt_read_generic");
   }
 }
@@ -669,12 +786,14 @@ export function workItemLaunchBranch(o: { useExisting?: boolean; base: string; n
 
 /** Whether af can post the report comment back to this item's tracker.
  *
- * No control is offered for a provider that lacks the capability. Bitbucket was added read-only
- * (posting needs `pullrequest:write`, which means the tenant admin re-registering the connection
- * and everyone re-authorising — docs/log/80 §80.19.3), so a comment button on such a row would
- * always be refused once pressed. */
+ * No control is offered for a row that lacks the capability. GitHub and Jira always have it.
+ * Bitbucket needs `pullrequest:write`, so the row offers it only when the Agent reports the
+ * connection holds that scope (`canComment`). An unknown scope (an older Agent, never recorded)
+ * stays read-only: this must never be true for a token that lacks the scope, because the button
+ * would always be refused once pressed (#2709). */
 export function canComment(item: WorkItem): boolean {
-  return item.provider !== "bitbucket";
+  if (item.provider === "bitbucket") return item.canComment === true;
+  return true;
 }
 
 /** Session title suggestion: the key plus a trimmed title, so the rail and the session

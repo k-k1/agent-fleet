@@ -30,6 +30,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "handoff-late-session": "noti.kind_handoff_late_session",
   "arch-residue": "noti.kind_arch_residue",
   "memory-sync": "noti.kind_memory_sync",
+  "memory-review": "noti.kind_memory_review",
   "start-deadline": "noti.kind_start_deadline",
   "aws-login-required": "noti.kind_aws_login_required",
   "aws-sso-expiring": "noti.kind_aws_sso_expiring",
@@ -54,7 +55,7 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
-  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "memory-sync") return notificationWording(n).body;
+  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
   // The message is the point of a terminal notification; the kind label alone says nothing.
   if (n.kind === "terminal-notification") {
     const text = terminalNotificationText(n.payload);
@@ -286,10 +287,23 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       speech: text ? t("notif.terminal.speech", { name, text: text.slice(0, 80) }) : t("notif.terminal.speech_bare", { name }),
     };
   }
+  if (n.kind === "memory-review") {
+    // A background review left proposals in the queue (ADR 0117). The subject is the workspace and
+    // the counts are all the payload carries; the proposals are read, and decided, on Settings >
+    // Agent memory > Changes > Proposed.
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    const queued = num(n.payload.queued);
+    const pending = num(n.payload.pending) || queued;
+    return {
+      title: t("notif.memory_review.title", { n: pending }),
+      body: t("notif.memory_review.body", { queued, pending }),
+      speech: t("notif.memory_review.speech"),
+    };
+  }
   if (n.kind === "memory-sync") {
     // The Agent memory switch carried claude's native memory across by itself (#1972) and the run
     // left files the member has to look at. The subject is the workspace, so the counts are the
-    // whole message; the files are listed on Settings > Agent memory, never in the payload.
+    // whole message; the files are listed on Settings > Agent memory > Settings, never in the payload.
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     const params = { n: num(n.payload.leftovers), conflicts: num(n.payload.conflicts), secrets: num(n.payload.secrets) };
     const body = t("notif.memory_sync.body", params);

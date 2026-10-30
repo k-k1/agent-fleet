@@ -1190,9 +1190,6 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		log.Printf("engines: ingest %s failed: %s", j.ID, j.Message)
 		return
 	}
-	if storage := g.storageChecker(); storage != nil {
-		storage.invalidate(j.S3Key)
-	}
 	var req engineIngestRequest
 	if g.models == nil || json.Unmarshal([]byte(j.Spec), &req) != nil || req.ModelID == "" {
 		// The bytes are in the bucket; the row is not. A failed state keeps the panel from calling
@@ -1202,13 +1199,6 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		_ = g.store.PutEngineIngestJob(ctx, j)
 		log.Printf("engines: ingest %s: %s", j.ID, j.Message)
 		return
-	}
-	// A move empties its source, and a cached "present" there is exactly what the next parts plan
-	// would reuse — bytes it would then find gone at generation time.
-	if req.MoveFrom != "" {
-		if storage := g.storageChecker(); storage != nil {
-			storage.invalidate(req.MoveFrom)
-		}
 	}
 	if err := g.install(ctx, req, j.ID); err != nil {
 		j.State = store.EngineIngestFailed

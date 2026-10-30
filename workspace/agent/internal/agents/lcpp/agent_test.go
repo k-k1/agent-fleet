@@ -29,6 +29,7 @@ func TestAgentKindAndCaps(t *testing.T) {
 		CanFork:          true,
 		CanForkAt:        true,
 		PermissionChoice: true,
+		MCPClient:        agents.TriYes,
 	}
 	if got != want {
 		t.Fatalf("Caps() = %+v, want %+v", got, want)

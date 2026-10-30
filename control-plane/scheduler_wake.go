@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -70,6 +71,14 @@ func newWakeFirer(mgr *manager, settle, readyTimeout time.Duration) *wakeFirer {
 }
 
 func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time) (string, string, error) {
+	// A kind the Agent does not register is refused before the Workspace is woken for it. A row
+	// saved before create/update validated agent_kind can still carry one; it used to launch
+	// claude silently. An assistant fire ignores agent_kind.
+	if sch.SessionMode != "assistant" {
+		if err := agentkinds.CheckCreateKind(scheduleInjectKind(sch.AgentKind)); err != nil {
+			return "", "", fmt.Errorf("schedule agent_kind: %w", err)
+		}
+	}
 	// 1. membership -> resolved (no gateway headers; the MCP/memo-bridge path).
 	identityID, ok, err := f.mgr.store.IdentityIDForMembership(ctx, sch.MembershipID)
 	if err != nil {
@@ -274,16 +283,20 @@ func scheduleInjectKind(kind string) string {
 	return kind
 }
 
-// injectDriver mirrors the Agent-side rule: managed-driver kinds run paneless. lcpp and
-// muse are absent on purpose: they have no tui route (Caps().ManagedOnly), and the Agent's
-// create handler defaults an empty driver to managed for them.
+// managedDefaultKinds are the kinds a scheduled launch asks the managed driver for, derived
+// from the kind catalog snapshot. lcpp and muse (managed-only) are in it: the Agent defaults
+// them to managed anyway, so naming it changes nothing there. An older Agent that does not
+// register them folds the kind to claude: an empty driver would have launched a claude TUI,
+// managed is refused (driver_unsupported) — a refusal is the right answer to a kind it cannot run.
+var managedDefaultKinds = agentkinds.ManagedDefaultKinds()
+
+// injectDriver mirrors the Agent-side rule: managed-driver kinds run paneless. The match is
+// exact, so an alternate spelling gets no driver (the Agent falls it back to claude).
 func injectDriver(kind string) string {
-	switch kind {
-	case "codex", "opencode", "copilot", "cursor", "kiro":
+	if managedDefaultKinds[kind] {
 		return "managed"
-	default:
-		return ""
 	}
+	return ""
 }
 
 // scheduleSource is the injection-origin tag stamped on every prompt this scheduler

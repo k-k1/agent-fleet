@@ -148,6 +148,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"slot_class":            lim.SlotClass,
 			"session_idle_timeout":  lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"interaction_idle_timeout":        lim.InteractionIdleTimeout,
+			"background_hold_max":             lim.BackgroundHoldMax,
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
@@ -347,6 +348,54 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 			if hasRow {
 				if f, has := a.cp.IdleForecastFor(wsRow.ID); has && state == "running" {
 					row["idle"] = f
+				}
+			}
+			// Sessions and last activity, from the DB alone: the usage sampler keeps the session
+			// mirror fresh for every running workspace, so this handler makes no Agent or
+			// runtime call per member (a 30-member page stays one request). live is counted only
+			// while the workspace runs: a stopped one keeps its last mirrored "running" rows,
+			// which are not alive. observed_at is the mirror's own write time (the rows'
+			// last_seen); omitted when the mirror holds no rows, which says nothing about age.
+			if hasRow {
+				if wsRow.LastActiveAt != "" {
+					row["last_active_at"] = wsRow.LastActiveAt
+				}
+				if ss, err := a.cp.Store().ListSessions(r.Context(), wsRow.ID); err == nil {
+					live, observed := 0, ""
+					for _, s := range ss {
+						if state == "running" && s.State == "running" {
+							live++
+						}
+						if s.LastSeen > observed {
+							observed = s.LastSeen
+						}
+					}
+					sess := map[string]any{"live": live, "total": len(ss)}
+					if observed != "" {
+						sess["observed_at"] = observed
+					}
+					row["sessions"] = sess
+				}
+			}
+			// The last home-disk reading, from the DB (written by the usage sampler). Omitted when
+			// the workspace was never measured — Fargate's working disk, or not sampled yet —
+			// and total is omitted when the reading has no denominator.
+			if hasRow {
+				if d, ok, err := a.cp.Store().GetWorkspaceDisk(r.Context(), wsRow.ID); err == nil && ok {
+					disk := map[string]any{"used": d.Used, "observed_at": d.ObservedAt}
+					if d.Total > 0 {
+						disk["total"] = d.Total
+					}
+					row["disk"] = disk
+				}
+				// The CLIs whose install failed on the last start, tool to reason, kept apart
+				// from the disk reading so a runtime with no measured disk still flags it.
+				// Omitted when none was reported or the Agent did not say: never a false flag.
+				if raw, err := a.cp.Store().GetWorkspaceBootFailed(r.Context(), wsRow.ID); err == nil && raw != "" {
+					var bf map[string]string
+					if json.Unmarshal([]byte(raw), &bf) == nil && len(bf) > 0 {
+						row["boot_failed"] = bf
+					}
 				}
 			}
 			// The class the member's next start lands on (user → tenant default →
@@ -1407,7 +1456,10 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		// auth (docs/log/75 §75.5). "" => the tenant's session_idle_timeout, and the
 		// deployment default if that is unset too.
 		InteractionIdleTimeout string `json:"interaction_idle_timeout"`
-		WSIdleTimeout          string `json:"ws_idle_timeout"`
+		// How long one stretch of background work may hold the Workspace awake (#2338).
+		// "" => deployment default (2h), "0" => unbounded.
+		BackgroundHoldMax string `json:"background_hold_max"`
+		WSIdleTimeout     string `json:"ws_idle_timeout"`
 		// Tier-3 home hibernation (ecs-ec2 only): "" => deployment default, "0" => never.
 		HomeHibernateAfter string `json:"home_hibernate_after"`
 		// Tier-4 home backup (ecs-ec2 only): the tenant's RPO. Same resolution.
@@ -1456,7 +1508,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		}
 	}
 	// Reject unparseable durations up front (empty stays empty = use default).
-	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
+	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.BackgroundHoldMax, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
 		if v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
@@ -1492,6 +1544,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		SlotClass:                    a.tenantLimitsFor(r, t.ID).SlotClass,
 		SessionIdleTimeout:           body.SessionIdleTimeout,
 		InteractionIdleTimeout:       body.InteractionIdleTimeout,
+		BackgroundHoldMax:            body.BackgroundHoldMax,
 		WSIdleTimeout:                body.WSIdleTimeout,
 		HomeHibernateAfter:           body.HomeHibernateAfter,
 		HomeBackupEvery:              body.HomeBackupEvery,
@@ -1543,6 +1596,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, ident sto
 		"allowed_slot_classes":  body.AllowedSlotClasses,
 		"session_idle_timeout":  body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
 		"interaction_idle_timeout":        body.InteractionIdleTimeout,
+		"background_hold_max":             body.BackgroundHoldMax,
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,

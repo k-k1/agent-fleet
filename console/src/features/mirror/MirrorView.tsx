@@ -46,6 +46,7 @@ import { echoLanded } from "./pendingEcho.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal } from "./HandoffProposal.tsx";
+import { restoreNoteCards } from "./parts/RestoreNote.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
 import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
@@ -64,7 +65,9 @@ import { MarkStrip } from "./transcript/MarkStrip.tsx";
 import { targetLang } from "./translate.ts";
 import { useTranslate } from "./useTranslate.ts";
 import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
+import { mirrorWorkDir, SessionWorkDirProvider } from "../viewer/workDirContext.ts";
 import { PathLinkMenuHost } from "../viewer/PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 import { useMirrorState } from "./parts/useMirrorState.ts";
 import { useOlderHistory, useTranscriptPoll } from "./parts/useTranscriptPoll.ts";
 import { useMirrorActions } from "./parts/useMirrorActions.ts";
@@ -97,11 +100,15 @@ export function MirrorView(props: Parameters<typeof MirrorViewBody>[0]) {
   // Session slugs in the transcript open the session context menu (SessionLinkMenu.tsx), file
   // and folder links the path menu (PathLinkMenu.tsx).
   return (
-    <SessionLinkMenuHost>
-      <PathLinkMenuHost>
-        <MirrorViewBody {...props} />
-      </PathLinkMenuHost>
-    </SessionLinkMenuHost>
+    <SessionWorkDirProvider value={mirrorWorkDir(props.session, props.sessionMeta)}>
+      <SessionLinkMenuHost>
+        <PathLinkMenuHost>
+          <PortLinkMenuHost>
+            <MirrorViewBody {...props} />
+          </PortLinkMenuHost>
+        </PathLinkMenuHost>
+      </SessionLinkMenuHost>
+    </SessionWorkDirProvider>
   );
 }
 
@@ -171,7 +178,7 @@ function MirrorViewBody({
   const {
     turns, pendingSends, applyEchoes, loaded, handoffs, updateHandoff, termState, compactProg, retry, status, bgBusy,
     bgBusyReason, finalizing, busy, tasks, files, queuedPrompts, pendingPeers, queueShown, discardView, alive,
-    dirGone, pending, liveText, pendingPlan, pendingPerm, pendingApproval, carried, mode, agentCtx,
+    dirGone, pending, liveText, pendingPlan, pendingPerm, pendingApproval, carried, restoredAt, mode, agentCtx,
     suggestedTitle, titleActing, setManagedSettingsOpen, managedSettings, setForkAtTarget, draft, setDraft,
     dragging, setHistIdx, hasMore, loadingOlder, topSentinelRef, statusRef, tickRef, inputRef,
   } = st;
@@ -347,7 +354,10 @@ function MirrorViewBody({
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
-  const grouped = useMemo(() => groupWithQueue(turns, pendingSends, queueShown), [turns, pendingSends, queueShown]);
+  const grouped = useMemo(
+    () => groupWithQueue(turns, pendingSends, queueShown, restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite)),
+    [turns, pendingSends, queueShown, restoredAt],
+  );
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.
@@ -361,7 +371,7 @@ function MirrorViewBody({
   // "Fork from here" (docs/log/55). The conditions differ per kind (canBranchInSession);
   // without filtering here the button would either be pressable but always 400, or never
   // appear at all for claude.
-  const canForkAt = canBranchInSession(agent.caps, { managed, readOnly });
+  const canForkAt = canBranchInSession(agent.caps, { managed, readOnly, terminalForkAt: sessionMeta?.forkAtTerminal });
   const openForkAt = (turn: Group) => {
     if (!canBranchFrom(turn)) return;
     setForkAtTarget({
@@ -643,7 +653,7 @@ function MirrorViewBody({
               {tr("mirror.ws_stopped_history")}
             </div>
           )
-        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !pendingApproval && !carried && handoffs.length === 0 ? (
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !pendingApproval && !carried && handoffs.length === 0 && restoredAt.length === 0 ? (
           // handoffs.length === 0: with an empty transcript the proposals are the only
           // thing to show, and they now live inside renderGroups (which the empty branch
           // would skip).
@@ -658,7 +668,7 @@ function MirrorViewBody({
             caps={caps}
             working={busy}
             autoCollapseWork={atBottomRef.current}
-            inlineCards={handoffs.map((h) => ({
+            inlineCards={[...restoreNoteCards(restoredAt), ...handoffs.map((h) => ({
               at: h.created_at,
               node: (
                 <HandoffProposal
@@ -669,7 +679,7 @@ function MirrorViewBody({
                   onChange={(next) => updateHandoff(h.id, next)}
                 />
               ),
-            }))}
+            }))]}
           />
         )}
         <MirrorPendingCards

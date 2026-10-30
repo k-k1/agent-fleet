@@ -330,3 +330,41 @@ func runErr(t *testing.T, ledger, path string) error {
 	}
 	return err
 }
+
+// A binary build artifact (fontconfig's cache, #2600) is scanned like text: the fold
+// turns every non-alphanumeric byte into a separator, so a term can match across header
+// bytes by chance. The gate must keep catching that — the fix for the cache is to not
+// ship it, never to skip files that look binary or live under var/cache.
+func TestBinaryBytesAreScannedAndPathIsNotExempt(t *testing.T) {
+	dir := t.TempDir()
+	e, err := NewEntry(canary+" inc", "corp-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := filepath.Join(dir, "forbidden.sha256")
+	if err := os.WriteFile(ledger, []byte(e.String()+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	art := filepath.Join(dir, "dist")
+	cache := filepath.Join(art, "var", "cache", "fontconfig")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(cache, "0123-le64.cache-9")
+	noise := []byte{0x04, 0x00, 0xfe, 0x9a, 0x01}
+	clean := append(append([]byte{}, noise...), []byte("zarquon\x00\x01\xff")...)
+	if err := os.WriteFile(f, clean, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(ledger, "", false, "", false, []string{art}); err != nil {
+		t.Fatalf("binary without the term must pass: %v", err)
+	}
+	hit := append(append([]byte{}, noise...), []byte("zarquon\x00\x01\xffinc\x00")...)
+	if err := os.WriteFile(f, hit, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = run(ledger, "", false, "", false, []string{art})
+	if err == nil || exitCode(err) != 1 {
+		t.Fatalf("a term folded out of binary bytes must fail with exit 1, got %v", err)
+	}
+}

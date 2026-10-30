@@ -26,15 +26,30 @@ package mcpreg
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 )
+
+// The shape an OAuth server takes once the relay carries it (ADR 0119 decision 7).
+const (
+	relayDriftURL = "http://127.0.0.1:43117/mcp/mcp-0123456789abcdef"
+	relayDriftKey = "af-test-fixture-relay-key-0123456789abcdef"
+)
+
+func relayDriftDefNamed(name string, timeoutMS int) ServerDef {
+	return sessionDef(ServerDef{Name: name, Origin: OriginUser, Transport: TransportHTTP,
+		URL: relayDriftURL, Headers: map[string]string{RelayKeyHeader: relayDriftKey}, TimeoutMS: timeoutMS})
+}
+
+func relayDriftDef(timeoutMS int) ServerDef { return relayDriftDefNamed("afdrift", timeoutMS) }
 
 func cliBin(t *testing.T, name string) string {
 	t.Helper()
@@ -152,6 +167,14 @@ func TestDriftClaudeMatchesMCPAdd(t *testing.T) {
 			add: []string{"mcp", "add", "-s", "user", "-t", "http", "afdrift", "https://mcp.example.com/mcp",
 				"-H", "Authorization: Bearer t", "-H", "X-Team: sre"},
 		},
+		{
+			// What an OAuth server becomes (ADR 0119 decision 7): a plain-http loopback URL and the
+			// relay key as a custom header.
+			name: "relay",
+			def:  relayDriftDef(0),
+			add: []string{"mcp", "add", "-s", "user", "-t", "http", "afdrift", relayDriftURL,
+				"-H", RelayKeyHeader + ": " + relayDriftKey},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,6 +286,26 @@ func TestDriftCodexRemoteKeys(t *testing.T) {
 	}
 }
 
+// TestDriftCodexRelayEntry is TestDriftCodexRemoteKeys for the shape an OAuth server takes: a
+// plain-http loopback URL carrying the relay key as a custom header.
+func TestDriftCodexRelayEntry(t *testing.T) {
+	bin := cliBin(t, "codex")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	codexHome := filepath.Join(home, "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	if _, _, _, err := materializeCodex([]ServerDef{relayDriftDef(12000)}, nil); err != nil {
+		t.Fatalf("materializeCodex: %v", err)
+	}
+	tr, _ := codexListed(t, bin, codexHome, "afdrift")["transport"].(map[string]any)
+	if tr["type"] != "streamable_http" || tr["url"] != relayDriftURL {
+		t.Fatalf("the relay URL is not read back as streamable_http: %v", tr)
+	}
+	if hdr, _ := tr["http_headers"].(map[string]any); hdr[RelayKeyHeader] != relayDriftKey {
+		t.Fatalf("the relay key header did not get through: %v", tr)
+	}
+}
+
 // TestDriftCodexAcceptsUserFileWithAFBlocks: codex can still read the WHOLE file after af has
 // appended to a user's hand-written config. A duplicate TOML table or a broken append does not
 // merely cost one MCP server — codex itself stops starting.
@@ -313,25 +356,177 @@ func TestDriftOpencodeMatchesMCPAdd(t *testing.T) {
 			add: []string{"mcp", "add", "afdrift", "--url", "https://mcp.example.com/mcp",
 				"--header", "Authorization=Bearer t"},
 		},
+		{
+			name: "relay",
+			def:  relayDriftDef(0),
+			add: []string{"mcp", "add", "afdrift", "--url", relayDriftURL,
+				"--header", RelayKeyHeader + "=" + relayDriftKey},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cliHome := t.TempDir()
-			runCLI(t, []string{"HOME=" + cliHome, "XDG_CONFIG_HOME=" + filepath.Join(cliHome, ".config")},
-				bin, tc.add...)
-			want := serverEntry(t, filepath.Join(cliHome, ".config", "opencode", "opencode.jsonc"), "mcp", "afdrift")
+			cliEnv := opencodeSandboxEnv(cliHome)
+			cliDir := t.TempDir()
+			// opencode 2.x writes the PROJECT config (./opencode.json) unless told --global, so the
+			// CLI runs in a throwaway directory: without it the file lands in the repo checkout and
+			// the global one this test reads is never created.
+			add := tc.add
+			v2 := opencodeHasGlobalFlag(t, bin, cliDir, cliEnv)
+			if v2 {
+				add = append([]string{add[0], add[1], "--global"}, add[2:]...)
+			}
+			runCLIIn(t, cliDir, cliEnv, bin, add...)
+			want := opencodeCLIEntry(t, filepath.Join(cliHome, ".config", "opencode"), "afdrift")
 
 			afHome := t.TempDir()
 			t.Setenv("HOME", afHome)
 			if _, _, _, err := materializeOpencode([]ServerDef{tc.def}, nil); err != nil {
 				t.Fatalf("materializeOpencode: %v", err)
 			}
-			got := serverEntry(t, opencodeConfigPath(), "mcp", "afdrift")
+			got := opencodeCLIEntry(t, filepath.Dir(opencodeConfigPath()), "afdrift")
 
 			// "enabled" is just af spelling out opencode's own default (true).
-			requireSameKeys(t, "opencode", got, want, "enabled")
+			requireSameKeys(t, "opencode", opencodeDropDefaultEnabled(t, got), opencodeDropDefaultEnabled(t, want))
+
+			// The raw comparison above only proves the entries look alike. What production relies
+			// on is that the CLI READS af's layout (flat mcp.<name>, which 2.x accepts only as a
+			// compatibility path), so have the CLI resolve both files and compare what it sees. A
+			// CLI that stops reading af's file turns this red even when the raw entries still match.
+			wantSeen := opencodeResolvedEntry(t, bin, cliHome, "afdrift", v2)
+			gotSeen := opencodeResolvedEntry(t, bin, afHome, "afdrift", v2)
+			requireSameKeys(t, "opencode (as resolved by `debug config`)",
+				opencodeDropDefaultEnabled(t, gotSeen), opencodeDropDefaultEnabled(t, wantSeen))
 		})
 	}
+}
+
+// opencodeDropDefaultEnabled removes the spelling of opencode's default (enabled) from an
+// entry so the CLI's terse form and af's explicit one compare equal. It checks the VALUE
+// first: "enabled" must be true and "disabled" (what 2.x resolves enabled:true to) false, so
+// a server the CLI would switch off is never normalised away. The entry is copied.
+func opencodeDropDefaultEnabled(t *testing.T, e map[string]any) map[string]any {
+	t.Helper()
+	out := make(map[string]any, len(e))
+	for k, v := range e {
+		out[k] = v
+	}
+	if v, ok := out["enabled"]; ok && v != true {
+		t.Fatalf("opencode entry has enabled=%v, want true: %v", v, e)
+	}
+	if v, ok := out["disabled"]; ok && v != false {
+		t.Fatalf("opencode entry has disabled=%v, want false: %v", v, e)
+	}
+	delete(out, "enabled")
+	delete(out, "disabled")
+	return out
+}
+
+// opencodeSandboxEnv confines everything the CLI writes (config, data and its log, cache,
+// state) to home. HOME alone is not enough: an XDG_* variable set in the caller's
+// environment wins over it and points the CLI at the real user's directories.
+func opencodeSandboxEnv(home string) []string {
+	return []string{
+		"HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+		"XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"),
+		"XDG_CACHE_HOME=" + filepath.Join(home, ".cache"),
+		"XDG_STATE_HOME=" + filepath.Join(home, ".local", "state"),
+	}
+}
+
+// opencodeHasGlobalFlag reports whether `mcp add` knows --global (2.x). 1.x has no project
+// scope and writes the global file unconditionally. It runs sandboxed like the add itself.
+func opencodeHasGlobalFlag(t *testing.T, bin, dir string, env []string) bool {
+	t.Helper()
+	return strings.Contains(string(runCLIIn(t, dir, env, bin, "mcp", "add", "--help")), "--global")
+}
+
+// opencodeResolvedEntry has the CLI itself read home's global config (`debug config`) and
+// returns the named server as the CLI resolved it. 2.x reports a list of config sources whose
+// documents carry the normalised mcp.servers.<name>; 1.x prints the merged config with
+// mcp.<name>. 2.x answers through a background service, which is pinned to a free port inside
+// the sandbox and stopped on cleanup so neither another session's service nor a leftover one
+// is involved. v2 is whether the CLI is 2.x: there the isolation setup must succeed (failing
+// closed rather than reaching the default shared service); 1.x has no service at all.
+func opencodeResolvedEntry(t *testing.T, bin, home, name string, v2 bool) map[string]any {
+	t.Helper()
+	env := opencodeSandboxEnv(home)
+	dir := t.TempDir()
+	if v2 {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		l.Close()
+		// Registered before the service can start, so a failed set still stops whatever came up.
+		t.Cleanup(func() {
+			stop := exec.Command(bin, "service", "stop")
+			stop.Dir, stop.Env = dir, append(os.Environ(), env...)
+			if out, err := stop.CombinedOutput(); err != nil {
+				t.Errorf("opencode service stop: %v\n%s", err, out)
+			}
+		})
+		runCLIIn(t, dir, env, bin, "service", "set", "port", strconv.Itoa(port))
+	}
+	out := runCLIIn(t, dir, env, bin, "debug", "config")
+
+	var docs []struct {
+		Info struct {
+			MCP map[string]any `json:"mcp"`
+		} `json:"info"`
+	}
+	var merged struct {
+		MCP map[string]any `json:"mcp"`
+	}
+	var mcps []map[string]any
+	if json.Unmarshal(out, &docs) == nil {
+		for _, d := range docs {
+			mcps = append(mcps, d.Info.MCP)
+		}
+	} else if err := json.Unmarshal(out, &merged); err == nil {
+		mcps = append(mcps, merged.MCP)
+	} else {
+		t.Fatalf("opencode debug config: unparsable output: %v\n%s", err, out)
+	}
+	for _, mcp := range mcps {
+		if servers, ok := mcp["servers"].(map[string]any); ok {
+			mcp = servers
+		}
+		if e, ok := mcp[name].(map[string]any); ok {
+			return e
+		}
+	}
+	t.Fatalf("opencode did not resolve %q from %s:\n%s", name, home, out)
+	return nil
+}
+
+// opencodeCLIEntry reads one server out of the global config directory, whichever of the
+// two merged file names holds it and in whichever layout: 1.x writes mcp.<name>, 2.x writes
+// mcp.servers.<name> (and normalises the former to the latter when it reads). The entry
+// itself has the same shape in both, which is what is compared.
+func opencodeCLIEntry(t *testing.T, dir, name string) map[string]any {
+	t.Helper()
+	for _, file := range opencodeConfigNames {
+		b, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			continue
+		}
+		root := map[string]any{}
+		if err := json.Unmarshal(b, &root); err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		mcp, _ := root["mcp"].(map[string]any)
+		if servers, ok := mcp["servers"].(map[string]any); ok {
+			mcp = servers
+		}
+		if e, ok := mcp[name].(map[string]any); ok {
+			return e
+		}
+	}
+	t.Fatalf("no %q under mcp in any of %v in %s", name, opencodeConfigNames, dir)
+	return nil
 }
 
 // --- copilot: mcpServers.<name> in $COPILOT_HOME/mcp-config.json -----------------
@@ -356,6 +551,12 @@ func TestDriftCopilotMatchesMCPAdd(t *testing.T) {
 				TimeoutMS: 12000}),
 			add: []string{"mcp", "add", "--transport", "http", "--timeout", "12000",
 				"--header", "Authorization: Bearer t", "afdrift", "https://mcp.example.com/mcp"},
+		},
+		{
+			name: "relay",
+			def:  relayDriftDef(12000),
+			add: []string{"mcp", "add", "--transport", "http", "--timeout", "12000",
+				"--header", RelayKeyHeader + ": " + relayDriftKey, "afdrift", relayDriftURL},
 		},
 	}
 	for _, tc := range cases {
@@ -419,6 +620,14 @@ func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 			add: []string{"mcp", "add", "--scope", "workspace", "--name", "afdrift",
 				"--url", "https://mcp.example.com/mcp", "--timeout", "12000"},
 		},
+		{
+			// kiro's `mcp add` has no header option; the header part is af's own and was measured
+			// through a real turn (docs/log/48 §8.1), so the CLI side here is the URL alone.
+			name: "relay",
+			def:  relayDriftDef(12000),
+			add: []string{"mcp", "add", "--scope", "workspace", "--name", "afdrift",
+				"--url", relayDriftURL, "--timeout", "12000"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -433,7 +642,14 @@ func TestDriftKiroMatchesMCPAdd(t *testing.T) {
 			}
 			got := serverEntry(t, kiroMCPConfigPath(), "mcpServers", "afdrift")
 
-			requireSameKeys(t, "kiro", got, want)
+			// `kiro-cli mcp add` cannot write headers, so af's "headers" is the one key allowed to
+			// exist only on af's side; for the relay case it must carry the key.
+			requireSameKeys(t, "kiro", got, want, "headers")
+			if tc.name == "relay" {
+				if h, _ := got["headers"].(map[string]any); h[RelayKeyHeader] != relayDriftKey {
+					t.Fatalf("kiro: the relay key header is not in af's entry: %v", got)
+				}
+			}
 		})
 	}
 }
@@ -452,6 +668,7 @@ func TestDriftCursorReadsAFConfig(t *testing.T) {
 			Command: "/bin/echo", Args: []string{"a"}}),
 		sessionDef(ServerDef{Name: "afdriftremote", Origin: OriginUser, Transport: TransportHTTP,
 			URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+		relayDriftDefNamed("afdriftrelay", 0),
 	}
 	if _, _, _, err := materializeCursor(defs, nil); err != nil {
 		t.Fatalf("materializeCursor: %v", err)
@@ -461,7 +678,7 @@ func TestDriftCursorReadsAFConfig(t *testing.T) {
 	cmd.Dir = afHome
 	cmd.Env = append(os.Environ(), "HOME="+afHome)
 	out, _ := cmd.CombinedOutput()
-	for _, name := range []string{"afdriftlocal", "afdriftremote"} {
+	for _, name := range []string{"afdriftlocal", "afdriftremote", "afdriftrelay"} {
 		if !strings.Contains(string(out), name) {
 			t.Fatalf("cursor cannot read af's ~/.cursor/mcp.json (%q does not appear):\n%s", name, out)
 		}
@@ -493,6 +710,7 @@ func TestDriftAgyMatchesMCPAdd(t *testing.T) {
 			Command: "/bin/echo", Args: []string{"a", "b"}, Env: map[string]string{"K": "v"}}),
 		sessionDef(ServerDef{Name: "afdriftremote", Origin: OriginUser, Transport: TransportHTTP,
 			URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+		relayDriftDefNamed("afdriftrelay", 0),
 	}
 	if _, _, _, err := materializeAgy(defs, nil); err != nil {
 		t.Fatalf("materializeAgy: %v", err)
@@ -519,7 +737,7 @@ func TestDriftAgyMatchesMCPAdd(t *testing.T) {
 	cmd.Dir = afHome
 	cmd.Env = append(os.Environ(), agyDriftEnv(afHome)...)
 	out, _ := cmd.CombinedOutput() // an unreachable probe is reported in the table, not the exit code
-	for _, want := range []string{"afdrift", "afdriftremote", "https://mcp.example.com/mcp"} {
+	for _, want := range []string{"afdrift", "afdriftremote", "https://mcp.example.com/mcp", "afdriftrelay", relayDriftURL} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("agy cannot read af's mcp_config.json (%q does not appear):\n%s", want, out)
 		}

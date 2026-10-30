@@ -21,6 +21,9 @@ export interface Branch {
   subject?: string;
   default?: boolean;
   remote?: boolean;
+  /** Remote a remote-only row came from; echoed on checkout so a branch present on
+   * two remotes tracks the one shown here. */
+  remote_name?: string;
   current?: boolean;
   /** Another working copy that already has this branch checked out. git allows a
    * branch in one worktree at a time, so such a row is not a valid target for a
@@ -35,7 +38,7 @@ export const wtFolder = (p: string | undefined): string => (p || "").split("/").
 interface BranchListProps {
   branches: Branch[] | null;
   selected?: string;
-  onPick: (name: string) => void;
+  onPick: (name: string, branch: Branch) => void;
   busy?: string | boolean;
   disableActive?: boolean;
   autoFocus?: boolean;
@@ -87,7 +90,7 @@ export function BranchList({ branches, selected, onPick, busy, disableActive, au
                   type="button"
                   className={"branch-item" + (active ? " current" : "") + (holder ? " occupied" : "")}
                   disabled={!!busy || (active && disableActive) || (!!holder && !onOpenWorktree)}
-                  onClick={() => (holder ? onOpenWorktree?.(holder, b) : onPick(b.name))}
+                  onClick={() => (holder ? onOpenWorktree?.(holder, b) : onPick(b.name, b))}
                   title={holder ? tr("rp.branch_in_use_title", { folder: holder }) : b.date || ""}
                 >
                   <span className="bi-main">

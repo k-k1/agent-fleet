@@ -4,10 +4,11 @@ package main
 // lives here are not aliases but the two things that can only sit on the main side:
 //
 //   - The storage for "the four that cannot be copies" (below).
-//   - `mcpx.Configure`, which wires the 19 reverse mcpx → main dependencies as function
+//   - `mcpx.Configure`, which wires the 20 reverse mcpx → main dependencies as function
 //     values. mcpx cannot import main, so this is the only way (internal/mcpx/deps.go).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/ssm"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
@@ -52,6 +53,10 @@ func init() {
 		ShellSendTarget:   sessionx.ShellSendTarget,
 		SessionIsShell:    sessionx.SessionIsShell,
 
+		ManagedDefaultKind: sessionx.ManagedDefaultKind,
+		ValidateCreateKind: sessionx.ValidateCreateKind,
+		Kinds:              mcpKinds,
+
 		ReadUIPrefs:                uiprefs.Read,
 		EnsureClaudeSettingsWiring: sessionx.EnsureClaudeSettingsWiring,
 
@@ -61,7 +66,7 @@ func init() {
 		AgentFleetShareDir: agentFleetShareDir,
 		InstallGrafanaMCP:  installGrafanaMCP,
 
-		WriteSSMConfig: sessionx.WriteSSMConfig,
+		WriteSSMConfig: ssm.WriteSSMConfig,
 
 		WriteEnabled:              func() bool { return mcpWriteEnabled },
 		SetWriteEnabled:           func(v bool) { mcpWriteEnabled = v },
@@ -73,4 +78,15 @@ func init() {
 		ConvID:    func() string { return mcpConvID },
 		SetConvID: func(id string) { mcpConvID = id },
 	})
+}
+
+// mcpKinds is the registry as mcpx enumerates it in its tool texts.
+func mcpKinds() []mcpx.KindInfo {
+	kinds := sessionx.RegisteredKinds()
+	out := make([]mcpx.KindInfo, 0, len(kinds))
+	for _, k := range kinds {
+		out = append(out, mcpx.KindInfo{Kind: k, Default: k == sessionx.NormalizeKind(""),
+			ManagedOnly: sessionx.AgentOf(k).Caps().ManagedOnly, ManagedDefault: sessionx.ManagedDefaultKind(k)})
+	}
+	return out
 }

@@ -49,6 +49,7 @@ type moveRun struct {
 func moveRunEnv(t *testing.T, name string) *moveRun {
 	t.Helper()
 	d, m := moveEnv(t, name)
+	setLocale(t, "en") // the file's scaffolding follows the display language; the asserts read English
 	r := &moveRun{d: d, src: m, turns: []transcript.Turn{
 		{Role: "user", Text: "fix the flaky login test", Parts: []transcript.Part{{Kind: "text", Text: "fix the flaky login test"}}},
 		{Role: "assistant", Parts: []transcript.Part{{Kind: "text", Text: "Found the race in the fixture."}}},
@@ -335,6 +336,21 @@ func TestMoveRefusesAStoppedManagedCursorSource(t *testing.T) {
 	}
 }
 
+// Kiro read the handover file with no approval prompt, so it is a target; cursor stays refused
+// until it has been measured through the Managed driver.
+func TestMoveAcceptsKiroAndRefusesCursor(t *testing.T) {
+	r := moveRunEnv(t, "mvkiro")
+	a := mustMove(t, "mvkiro", session.KindKiro)
+	if len(r.creates) != 1 || r.creates[0].Kind != session.KindKiro || r.creates[0].name != a.Target.Name {
+		t.Fatalf("creates = %+v, answer target %q", r.creates, a.Target.Name)
+	}
+	r2 := moveRunEnv(t, "mvcurtgt")
+	rec := postMove(t, "mvcurtgt", "", `{"kind":"cursor"}`)
+	if e := decodeMove(t, rec); rec.Code != http.StatusBadRequest || e.Error.Code != "move_target_unsupported" || len(r2.creates) != 0 {
+		t.Fatalf("cursor: got %d %s, creates %+v", rec.Code, rec.Body.String(), r2.creates)
+	}
+}
+
 // Only another kind that can read the file is a target (decisions 5 and 9).
 func TestMoveRefusesTargetsThatCannotTakeIt(t *testing.T) {
 	r := moveRunEnv(t, "mvkind")
@@ -342,7 +358,6 @@ func TestMoveRefusesTargetsThatCannotTakeIt(t *testing.T) {
 		{session.KindCodex, "move_same_kind"},
 		{session.KindLcpp, "move_target_unsupported"},
 		{session.KindCursor, "move_target_unsupported"},
-		{session.KindKiro, "move_target_unsupported"},
 		{session.KindShell, "move_target_unsupported"},
 		{"nosuchkind", "bad_kind"},
 	}
@@ -539,7 +554,7 @@ func TestMovePreviewTellsTheDialogWhatMoves(t *testing.T) {
 		reasons[tg.Kind] = tg.Reason
 	}
 	want := map[string]string{session.KindClaude: "", session.KindCodex: moveTargetSameKind,
-		session.KindLcpp: moveTargetCannotRead, session.KindCursor: moveTargetNotMeasured, session.KindKiro: moveTargetNotMeasured}
+		session.KindLcpp: moveTargetCannotRead, session.KindCursor: moveTargetNotMeasured, session.KindKiro: ""}
 	for k, v := range want {
 		if got, ok := reasons[k]; !ok || got != v {
 			t.Errorf("target %s: reason %q (listed %v), want %q", k, got, ok, v)
@@ -833,15 +848,31 @@ func TestOrphanTargetIsStoppedByCancelNotDuplicatedByRetry(t *testing.T) {
 	}
 }
 
+// fixedSlugs makes randSlug draw from *slugs. The handed-out memory outlives a test (an hour), so
+// the second run in a process (-count=N) would find every fixed slug already taken and run the
+// list dry: the names in forgotten are cleared before and after.
+func fixedSlugs(t *testing.T, slugs *[]string, forgotten ...string) {
+	t.Helper()
+	forget := func() {
+		slugMu.Lock()
+		for _, s := range forgotten {
+			delete(slugHandedAt, s)
+			delete(slugBooked, s)
+		}
+		slugMu.Unlock()
+	}
+	forget()
+	prev := randSlug
+	randSlug = func() string { s := (*slugs)[0]; *slugs = (*slugs)[1:]; return s }
+	t.Cleanup(func() { randSlug = prev; forget() })
+}
+
 // A booked target name, held in memory or by a pending move's record across a restart, is
 // never handed to another session; it is free again once the move ends.
 func TestBookedMoveTargetIsNeverHandedOut(t *testing.T) {
 	pendingTestEnv(t)
 	slugs := []string{"sbooked", "sbooked", "sother1"}
-	prev := randSlug
-	next := func() string { s := slugs[0]; slugs = slugs[1:]; return s }
-	randSlug = next
-	t.Cleanup(func() { randSlug = prev })
+	fixedSlugs(t, &slugs, "sbooked", "sother1", "sother2", "sother3")
 	if got := bookMoveTarget(t.TempDir()); got != "sbooked" {
 		t.Fatalf("booked %q", got)
 	}
@@ -1014,10 +1045,8 @@ func TestTargetNameHeldByMovingAloneAndCancelWithoutARecord(t *testing.T) {
 	slugMu.Lock()
 	delete(slugHandedAt, target)
 	slugMu.Unlock()
-	prev := randSlug
 	slugs := []string{target, "sfresh1"}
-	randSlug = func() string { s := slugs[0]; slugs = slugs[1:]; return s }
-	t.Cleanup(func() { randSlug = prev })
+	fixedSlugs(t, &slugs, "sfresh1")
 	if got := allocSessionName(t.TempDir()); got != "sfresh1" {
 		t.Fatalf("handed out %q, which the source's meta names as its move target", got)
 	}
@@ -1099,8 +1128,23 @@ func TestTerminalRedeliveryNeedsEvidence(t *testing.T) {
 	outcome := make(chan string, 1)
 	typed := make(chan string, 1)
 	prev := typeMoveDelivery
-	typeMoveDelivery = func(name, prompt string) string { typed <- prompt; return <-outcome }
-	t.Cleanup(func() { typeMoveDelivery = prev })
+	// quit lets a failed test release a stub still waiting for its outcome, so the cleanup's join
+	// cannot wait on it forever.
+	quit := make(chan struct{})
+	typeMoveDelivery = func(name, prompt string) string {
+		select {
+		case typed <- prompt:
+		case <-quit:
+			return session.InitialPromptFailed
+		}
+		select {
+		case o := <-outcome:
+			return o
+		case <-quit:
+			return session.InitialPromptFailed
+		}
+	}
+	t.Cleanup(func() { close(quit); moveDeliverInflight.Wait(); typeMoveDelivery = prev })
 	settled := func() string {
 		t.Helper()
 		deadline := time.Now().Add(moveGuard)
@@ -1138,6 +1182,7 @@ func TestTerminalRedeliveryNeedsEvidence(t *testing.T) {
 	if st := settled(); st != session.InitialPromptDelivered {
 		t.Fatalf("state = %q", st)
 	}
+	moveDeliverInflight.Wait() // the goroutine removes the record after it settles the state
 	if _, ok := moveDeliveries.Read(target); ok {
 		t.Fatal("the record outlived a confirmed delivery")
 	}

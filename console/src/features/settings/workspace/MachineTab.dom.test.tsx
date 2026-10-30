@@ -175,6 +175,37 @@ describe("MachineView", () => {
     expect(text).toContain("メモリ不足でプロセスが強制終了");
   });
 
+  it("shows memory pressure beside the usage charts, and says so when it cannot be measured", async () => {
+    const base = { running: true, mem_used: 4294967296, mem_max: 6979321856, cpu_pct: 5 };
+    feed.setLatest({ ...base, mem_pressure: { available: true, some_avg10: 12, full_avg10: 3, agent_latency_ms: 7 } });
+    feed.sample();
+    feed.sample();
+    let text = await mount(ec2);
+    expect(text).toContain("メモリ逼迫");
+    expect(text).toContain("some 12%");
+    expect(text).toContain("full 3%");
+    expect(text).toContain("Agent 応答 7 ms");
+    expect(host!.querySelectorAll("svg.trend").length).toBe(3);
+  });
+
+  it("draws no pressure line when the Agent cannot measure it", async () => {
+    feed.setLatest({ running: true, mem_used: 1, mem_max: 10737418240, cpu_pct: 5, mem_pressure: { available: false, reason: "x" } });
+    feed.sample();
+    feed.sample();
+    const text = await mount(ec2);
+    expect(text).toContain("このマシンでは測定できません");
+    expect(text).not.toContain("some 0%");
+    expect(host!.querySelectorAll("svg.trend").length).toBe(2);
+  });
+
+  it("shows no pressure row for an Agent that predates the axis", async () => {
+    feed.setLatest({ running: true, mem_used: 1, mem_max: 10737418240, cpu_pct: 5 });
+    feed.sample();
+    feed.sample();
+    const text = await mount(ec2);
+    expect(text).not.toContain("メモリ逼迫");
+  });
+
   it("shows no usage block for a stopped workspace", async () => {
     feed.setLatest({ running: true, mem_used: 4294967296, mem_max: 6979321856, cpu_pct: 5 });
     feed.sample();

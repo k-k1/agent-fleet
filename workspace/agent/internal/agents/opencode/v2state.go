@@ -30,7 +30,11 @@ package opencode
 //     message. Its cost is on the compaction message, not on any assistant message.
 //   - Input typed while a turn runs waits in GET /api/session/{id}/inbox ({payload.text});
 //     an interrupt leaves it there.
-//   - There is no todo list in the v2 API or events (no route, no tool), so Tasks stays empty.
+//   - There is no todo route, event or table in the v2 API (measured on 2.1.4: none in /openapi.json).
+//     The `todowrite` tool exists there only behind the experimental.todo config flag, which
+//     defaults to false; with it off a call fails ("No tool named todowrite is currently
+//     available"). With it on the list is the newest completed todowrite call's input (v2Tasks),
+//     which is also how the opencode 2 TUI derives it. So Tasks is empty on a default config.
 //   - The question tool is a form there (v2form.go): pending questions come from the form list.
 //   - Fork copies keep time.created but get new ids, so a message older than its session is
 //     a copy whose cost the source session already reported (same rule as v1).
@@ -45,10 +49,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,6 +69,9 @@ import (
 type apiTarget struct {
 	Addr   string
 	Client *http.Client
+	// offline reads the conversation from opencode.db instead (v2store.go): the daemon is gone,
+	// so no request can be made. Addr and Client are empty then.
+	offline bool
 }
 
 // v2TargetFor says where slot m's state is read from, or false when it is read from opencode.db.
@@ -71,7 +80,7 @@ type apiTarget struct {
 // --standalone Terminal session keeps its state in the shared database file only, which is
 // still the v1 reader's path.
 var v2TargetFor = func(m session.Meta) (apiTarget, bool) {
-	if !isV2() {
+	if !v2Served() {
 		return apiTarget{}, false
 	}
 	if m.DriverKind() == session.DriverManaged || sharedSlot(m) {
@@ -103,6 +112,9 @@ var errV2Down = errors.New("opencode api: daemon recently unreachable")
 // get is a state read: short, and refused at once while the daemon is known to be down. A
 // transport failure (not an HTTP status) marks it down for v2DownFor.
 func (t apiTarget) get(path string, out any) error {
+	if t.offline {
+		return errV2Offline
+	}
 	v2Down.mu.Lock()
 	down := time.Now().Before(v2Down.until[t.Addr])
 	v2Down.mu.Unlock()
@@ -112,8 +124,7 @@ func (t apiTarget) get(path string, out any) error {
 	ctx, cancel := context.WithTimeout(context.Background(), v2StateTimeout)
 	defer cancel()
 	err := t.getCtx(ctx, path, out)
-	var se statusError
-	if err != nil && !errors.As(err, &se) {
+	if daemonGone(err) { // an answer that does not parse is not a daemon that is down
 		v2Down.mu.Lock()
 		v2Down.until[t.Addr] = time.Now().Add(v2DownFor)
 		v2Down.mu.Unlock()
@@ -124,6 +135,9 @@ func (t apiTarget) get(path string, out any) error {
 // getTurn is the read a waiting turn makes: the client's own timeout, and no down verdict, since
 // the turn counts its own consecutive failures.
 func (t apiTarget) getTurn(path string, out any) error {
+	if t.offline {
+		return errV2Offline
+	}
 	return t.getCtx(context.Background(), path, out)
 }
 
@@ -140,8 +154,19 @@ func (t apiTarget) getCtx(ctx context.Context, path string, out any) error {
 	if res.StatusCode != http.StatusOK {
 		return statusError(res.StatusCode)
 	}
-	return json.NewDecoder(res.Body).Decode(out)
+	// The body is read whole before it is parsed: a read that fails is a connection cut
+	// (bodyReadError), while a body that arrives complete and does not parse is the daemon's answer.
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return bodyReadError{err}
+	}
+	return json.Unmarshal(body, out)
 }
+
+// bodyReadError is an answer whose body could not be read to its end.
+type bodyReadError struct{ error }
+
+func (e bodyReadError) Unwrap() error { return e.error }
 
 // --- wire shapes ----------------------------------------------------------------
 
@@ -251,13 +276,13 @@ func sessionPath(ses string) string { return "/api/session/" + url.PathEscape(se
 // writes it on create), else the newest root conversation in its directory that this slot itself
 // can have opened (created after it, like activeSession on v1). nil when there is none yet.
 func (t apiTarget) v2Session(m session.Meta) (*v2SessionInfo, error) {
+	if t.offline {
+		return storeSession(m)
+	}
 	if id := sids.Read(session.UUID(m.Dir, m.Name)); id != "" {
-		var w struct {
-			Data v2SessionInfo `json:"data"`
-		}
-		switch err := t.get(sessionPath(id), &w); {
+		switch info, err := t.sessionInfo(id); {
 		case err == nil:
-			return &w.Data, nil
+			return info, nil
 		case !errors.Is(err, statusError(http.StatusNotFound)):
 			return nil, err
 		}
@@ -282,10 +307,27 @@ func (t apiTarget) v2Session(m session.Meta) (*v2SessionInfo, error) {
 	return best, nil
 }
 
+// sessionInfo is the record of conversation id.
+func (t apiTarget) sessionInfo(id string) (*v2SessionInfo, error) {
+	if t.offline {
+		return storeSessionByID(id)
+	}
+	var w struct {
+		Data v2SessionInfo `json:"data"`
+	}
+	if err := t.get(sessionPath(id), &w); err != nil {
+		return nil, err
+	}
+	return &w.Data, nil
+}
+
 const v2PageSize = 200
 
 // messages reads a whole conversation, oldest first.
 func (t apiTarget) messages(ses string) ([]v2Msg, error) {
+	if t.offline {
+		return storeMessages(ses)
+	}
 	var all []v2Msg
 	path := sessionPath(ses) + "/message?order=asc&limit=" + fmt.Sprint(v2PageSize)
 	for page := 0; page < 1000; page++ {
@@ -423,26 +465,64 @@ func queuedV2(t apiTarget, ses string) []string {
 }
 
 func readTranscriptV2(t apiTarget, m session.Meta) agents.TranscriptData {
-	info, err := t.v2Session(m)
+	c, err := t.conversation(m)
+	t, info, msgs := c.T, c.Info, c.Msgs
 	if err != nil || info == nil {
 		td := agents.TranscriptData{Path: t.Addr}
 		managedEnrich(m, &td)
 		return td
 	}
-	msgs, _ := t.messages(info.ID) // best-effort like readSession: the turns gathered so far
-	turns := v2Turns(t, info, msgs, false)
+	turns := v2Turns(c, false)
 	td := agents.TranscriptData{
 		Turns:      turns,
 		Path:       t.Addr + sessionPath(info.ID),
 		Mode:       v2Mode(info, msgs),
 		Queued:     queuedV2(t, info.ID),
 		Compacting: compactingV2(t, m),
-		// Tasks stays empty: opencode 2.0.28 has no todo route, event or tool (its tool list is
-		// edit glob grep question read shell skill subagent webfetch websearch write execute).
+		Tasks:      v2Tasks(msgs),
 	}
 	td.Pending = questionsV2(pendingFormsV2(t, m, info.ID))
 	managedEnrich(m, &td)
 	return td
+}
+
+// v2Tasks is the ToDo list: the todos of the newest completed `todowrite` call (the tool resends
+// the whole list every time, so the latest wins). nil when the conversation has none, which is
+// every conversation on a default config (the tool is behind experimental.todo, v2state.go header).
+func v2Tasks(msgs []v2Msg) []transcript.Task {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Type != "assistant" {
+			continue
+		}
+		for j := len(msgs[i].Content) - 1; j >= 0; j-- {
+			c := msgs[i].Content[j]
+			if c.Type != "tool" || c.Name != "todowrite" || c.State.Status != "completed" {
+				continue
+			}
+			var in struct {
+				Todos []struct {
+					Content string `json:"content"`
+					Status  string `json:"status"`
+				} `json:"todos"`
+			}
+			if json.Unmarshal(c.State.Input, &in) != nil {
+				continue
+			}
+			var out []transcript.Task
+			for n, td := range in.Todos {
+				if td.Content == "" {
+					continue
+				}
+				st := td.Status
+				if st == "" {
+					st = "pending"
+				}
+				out = append(out, transcript.Task{ID: strconv.Itoa(n + 1), Subject: td.Content, Status: st})
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 // v2Mode is the conversation's current agent normalized to "plan" | "normal", from the newest
@@ -465,12 +545,11 @@ func v2Mode(info *v2SessionInfo, msgs []v2Msg) string {
 }
 
 func usageTurnsV2(t apiTarget, m session.Meta) []transcript.Turn {
-	info, err := t.v2Session(m)
-	if err != nil || info == nil {
+	c, err := t.conversation(m)
+	if err != nil || c.Info == nil {
 		return nil
 	}
-	msgs, _ := t.messages(info.ID)
-	return v2Turns(t, info, msgs, true)
+	return v2Turns(c, true)
 }
 
 func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
@@ -492,18 +571,19 @@ func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
 
 // resolveForkAtV2 validates a mirror anchor against the slot's own conversation exactly like the
 // v1 reader does: the anchor must be a message of THIS conversation, and "include" moves it to
-// just before the next user message.
-func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (string, error) {
+// just before the next user message. source is the conversation it was resolved against, so the caller
+// can fork exactly that one (agents.ForkAtPinner).
+func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, source string, err error) {
 	info, err := t.v2Session(m)
 	if err != nil {
-		return "", fmt.Errorf("opencode の会話ストアを読めません")
+		return "", "", fmt.Errorf("opencode の会話ストアを読めません")
 	}
 	if info == nil {
-		return "", fmt.Errorf("分岐できる会話がまだありません")
+		return "", "", fmt.Errorf("分岐できる会話がまだありません")
 	}
 	msgs, err := t.messages(info.ID)
 	if err != nil {
-		return "", fmt.Errorf("opencode の会話ストアを読めません")
+		return "", "", fmt.Errorf("opencode の会話ストアを読めません")
 	}
 	idx := -1
 	for i, mm := range msgs {
@@ -515,17 +595,17 @@ func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (string, 
 	// A subagent turn lives in a child session, which this list does not contain, so it is
 	// refused here as "not found" along with a stray id.
 	if idx < 0 {
-		return "", fmt.Errorf("指定された分岐点がこの会話に見つかりません")
+		return "", "", fmt.Errorf("指定された分岐点がこの会話に見つかりません")
 	}
 	if !at.Include {
-		return at.Anchor, nil
+		return at.Anchor, info.ID, nil
 	}
 	for _, mm := range msgs[idx+1:] {
 		if mm.Type == "user" {
-			return mm.ID, nil
+			return mm.ID, info.ID, nil
 		}
 	}
-	return "", nil
+	return "", info.ID, nil
 }
 
 // --- messages → turns -----------------------------------------------------------
@@ -541,23 +621,12 @@ type v2Stamped struct {
 // rewriting each message in v1's stored shape and handing it to parseMessage: one reader decides
 // what a turn looks like on both majors. With usage set it also returns a CostOnly turn for every
 // billed message that shows nothing (an empty failed step, a compaction).
-func v2Turns(t apiTarget, info *v2SessionInfo, msgs []v2Msg, usage bool) []transcript.Turn {
+func v2Turns(c v2Conv, usage bool) []transcript.Turn {
 	win := modelWindowLookup()
-	cwd := info.Location.Directory
-	all := v2SessionTurns(msgs, cwd, info.Time.Created, false, usage, win)
-	for _, child := range v2Children(msgs) {
-		var cinfo struct {
-			Data v2SessionInfo `json:"data"`
-		}
-		born := int64(0)
-		if t.get(sessionPath(child), &cinfo) == nil {
-			born = cinfo.Data.Time.Created
-		}
-		cm, err := t.messages(child)
-		if err != nil && len(cm) == 0 {
-			continue
-		}
-		all = append(all, v2SessionTurns(cm, cwd, born, true, usage, win)...)
+	cwd := c.Info.Location.Directory
+	all := v2SessionTurns(c.Msgs, cwd, c.Info.Time.Created, false, usage, win)
+	for _, k := range c.Kids {
+		all = append(all, v2SessionTurns(k.Msgs, cwd, k.Born, true, usage, win)...)
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].created < all[j].created })
 	out := make([]transcript.Turn, len(all))

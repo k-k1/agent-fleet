@@ -8,7 +8,7 @@
 import { createPortal } from "react-dom";
 import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
-import { kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses } from "../../lib/sessionkind.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import type { Session } from "../../types/session.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -41,6 +41,9 @@ const StartStudioModal = lazy(() =>
   import("../imagegen/parts/StartStudioModal.tsx").then((m) => ({ default: m.StartStudioModal })),
 );
 
+// Loaded on first use too: it carries the skills viewer (Markdown renderer included).
+const RepoSkillsModal = lazy(() => import("./RepoSkillsModal.tsx").then((m) => ({ default: m.RepoSkillsModal })));
+
 // Provider display: known SaaS hosts get a friendly label; unknown slugs show as-is.
 const PROVIDER_LABEL: Record<string, string> = {
   github: "GitHub",
@@ -52,6 +55,8 @@ const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
 export interface RepoRowProps {
   r: Repo;
   kinds?: string[];
+  /** The workspace's Claude login has expired; forwarded to the launch dialog's notice. */
+  claudeExpired?: boolean;
   running?: boolean;
   active?: boolean;
   selected?: boolean;
@@ -65,7 +70,10 @@ export interface RepoRowProps {
   /** A folded node's own session summary, drawn as a second line under the name: the newest
    * live session, else the newest stopped one (muted). `others` names the remaining live ones
    * for the tally badge's tooltip. Display only — the row click still folds/unfolds. */
-  peek?: { s: Session; others: string[] };
+  peek?: { s: Session };
+  /** Names for the badge tooltip's "also running" list; independent of `peek` (no summary row
+   * when the node has no sessions of its own). */
+  alsoRunning?: string[];
   onOpen: (e?: RMouseEvent) => void;
   /** Plain click on the card toggles the node's fold (SCM moved to the right-click
    * menu). Ctrl/⌘/middle-click still opens Source Control in a split. */
@@ -115,7 +123,7 @@ function RepoPeek({ s }: { s: Session }) {
   const st = stateInfo(s);
   return (
     <span className={"repo-peek" + (s.alive ? "" : " stopped")} title={displayName(s)}>
-      <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+      <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="repo-peek-title">{displayName(s)}</span>
@@ -126,7 +134,7 @@ function RepoPeek({ s }: { s: Session }) {
   );
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, unread, peek, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, claudeExpired = false, running = true, active, selected, sess, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -143,6 +151,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const myShares = useMySharesStore((st) => st.shares);
   const isShared = myShares.some((sh) => (sh.scope.type === "repo" || sh.scope.type === "worktree") && sh.scope.key === r.workingCopyId);
@@ -320,7 +329,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               className="repo-sess-badge run"
               title={
                 tr("repo.sess_running", { n: sess.alive }) +
-                (peek && peek.others.length > 0 ? "\n" + tr("pj.peek_more", { names: peek.others.join("\n") }) : "")
+                (alsoRunning && alsoRunning.length > 0 ? "\n" + tr("pj.peek_more", { names: alsoRunning.join("\n") }) : "")
               }
             >
               ●{sess.alive}
@@ -541,6 +550,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 <Icon name="gear" /> {tr("repo.project_settings")}
               </button>
             </li>
+            {/* Read-only view of the skills this working copy gives each agent (#2795). */}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setSkillsOpen(true); }}>
+                <Icon name="book" /> {tr("repo.skills")}
+              </button>
+            </li>
             {/* Session sharing (docs/log/59): a working copy that cannot hold a persistent
                 marker (read-only, corrupted, …) has no workingCopyId and so cannot be a
                 repo/worktree-level share target (the same constraint as ShareCreateModal's
@@ -662,6 +677,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         />
       )}
       {projectOpen && <ProjectModal repo={r.name} onClose={() => setProjectOpen(false)} />}
+      {skillsOpen && (
+        <Suspense fallback={null}>
+          <RepoSkillsModal repo={r.name} onClose={() => setSkillsOpen(false)} />
+        </Suspense>
+      )}
       {shareOpen && r.workingCopyId && (
         <ShareCreateModal
           initialTarget={`${r.worktree ? "worktree" : "repo"}:${r.workingCopyId}`}
@@ -674,6 +694,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           branch={r.branch}
           path={r.path}
           kinds={agentKinds}
+          claudeExpired={claudeExpired}
           // From a worktree, only in-place launch is offered — spawning a worktree
           // OFF a worktree yields a confusing double-@ name off the wrong base. New
           // worktrees are created from the base clone (any base branch). SVN has no

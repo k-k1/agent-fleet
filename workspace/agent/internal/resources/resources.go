@@ -1,7 +1,7 @@
 // Package resources reads THIS workspace's own resource measurements (memory, CPU,
 // disk) from inside the container.
 //
-// Why on the Agent side. The CP's `containerStats` (control-plane/metrics.go) looks the
+// Why on the Agent side. The CP's `containerStatsRun` (control-plane/metrics.go) looks the
 // container id up with `docker inspect` and reads the host's
 // `/sys/fs/cgroup/system.slice/docker-<id>.scope` — a reading that only holds where CP
 // and the workspace sit on the same host. On ECS (Fargate and `ecs-ec2` alike) the CP
@@ -53,6 +53,12 @@ type Stats struct {
 	// walk like du, so it is cheap enough to call every time.
 	DiskUsed  *uint64 `json:"disk_used,omitempty"`
 	DiskTotal *uint64 `json:"disk_total,omitempty"`
+	// BootInstallFailed maps each CLI whose install failed on this start to the reason
+	// (no_space, network, checksum, other), or "skipped_no_space" for an upgrade skipped for
+	// lack of space whose installed copy still runs. It is filled by the caller, not by Read: the
+	// status file belongs to the entrypoint, not to the cgroup. Absent when nothing failed
+	// or the outcome is unknown, so the admin view never flags on a guess.
+	BootInstallFailed map[string]string `json:"boot_install_failed,omitempty"`
 }
 
 // Read returns the current observation. Every axis may fail independently — environments

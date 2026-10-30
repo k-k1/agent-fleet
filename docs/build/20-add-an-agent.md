@@ -1,7 +1,6 @@
 ---
 audience: "someone integrating a new CLI coding agent"
 source_of_truth: "the existing `internal/agents/<kind>` packages — copy the closest one"
-updated: "2026-09"
 ---
 
 # 20. Adding an agent kind
@@ -51,25 +50,24 @@ unless they name another tree.
 
 | Surface | Where | Notes |
 |---|---|---|
-| The kind constant and its registration | `Kind*` in `internal/session/session.go`; `agentRegistry` in `internal/sessionx/agent.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from `agentRegistry` silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
-| Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability the member sees until you have driven it end to end.** `Capabilities()` declares what the driver implements (§20.4) |
+| The kind constant and its registration | `Kind*` in `internal/session/session.go`; `registry` in `internal/agentreg/agentreg.go` and the same kind in `internal/kinds/kinds.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from the registry silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
+| Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability the member sees until you have driven it end to end.** `Capabilities()` declares what the driver implements (§20.4). `Caps()` is also what `GET /agents/kinds` serves (§20.7); a `Tri` field left unset reads `unverified`, never `no` |
 | Terminal launch | your package's `BuildLaunch`, returning `agents.LaunchPlan` | Environment goes in `LaunchPlan.Env`, **never prefixed onto the command** (§20.3). A managed-only kind returns `ErrNoTerminalRoute` |
 | Managed runtime | your `Driver`: `Resume` returns a `ThreadHandle` | Its shape follows the process model ([04 §4.3](04-agent.md)) |
-| Which driver a caller picks | Console: `managedDriver` and `terminalDriver` in `console/src/agents/registry.ts`. The in-container MCP `create_session` (`mcpStdioCall`). The CP: `create_session` in `control-plane/internal/mcpsrv/mcp.go` and `injectDriver` in `control-plane/scheduler_wake.go` | The agent defaults an unspecified driver to `tui`, so **a kind with both drivers that should start Managed is added to every caller**. A managed-only kind is defaulted by the agent, but the Console still needs `terminalDriver: false` |
-| Live state | hooks, a plugin, a poll of the CLI's store, or runtime events | Normalise into the status store: working / idle / question, plus `plan` and `permission` ([04 §4.4](04-agent.md)) |
+| Which driver a caller picks | Nothing to add by hand. The agent defaults an unspecified driver to `tui`, so **a kind with both drivers that should start Managed sets `Caps().ManagedDefault`**. The in-container `create_session` reads the registry, the CP's `create_session` and `injectDriver` read the catalog snapshot (`agentkinds.ManagedDefaultKinds`), and the Console reads `GET /api/agents/kinds` (`managedDriver` / `terminalDriver` in `console/src/agents/registry.ts` are getters over it, with `FALLBACK_KIND_FACTS` in `console/src/agents/kindCatalog.ts` answering until it loads) | A managed-only kind is defaulted by the agent and the Console derives `terminalDriver: false` from `managedOnly` |
+| Live state | hooks, a plugin, a poll of the CLI's store, or runtime events; a kind's own verdict beyond the status store is `agents.LiveStater` in `capabilities.go`; a kind whose usage limit can be seen (so the rate-limit sweep may book an auto-resume) implements `agents.UsageLimiter` | Normalise into the status store: working / idle / question, plus `plan` and `permission` ([04 §4.4](04-agent.md)). **A kind with no Stop hook sets `PolledTurnEnd`**, or its completion report never arrives |
 | Transcript | a reader behind `Agent.Transcript` | **Where the CLI keeps a readable, stable native store, read it; never copy the conversation into a store of ours.** The parsers stay separate. A kind with no such store owns one, as the two exceptions in [04 §4.3](04-agent.md) do |
-| Sign-in | the agent's `/connections/<kind>/…` handlers, **and** each route relayed by name in `control-plane/routes.go` (`restLogin` for a login flow) | No kind needs a CP callback ([08 §8.6](08-integrations.md)); a kind with nothing to sign in to has no flow |
+| Sign-in | the agent's `/connections/<kind>/…` handlers, **and** each route relayed by name in the CP: a row in `control-plane/relays_connections.go`, or `restLogin` in `routes.go` for a login flow | No kind needs a CP callback ([08 §8.6](08-integrations.md)); a kind with nothing to sign in to has no flow |
 | Credential location and the filesystem denylist | your package, plus `fsDeny` (`fs.go`) | Anything the CLI writes credentials or state into must be **hidden from the file browser** |
-| MCP | `internal/mcpreg`: a writer in `writerFor` and an entry in `MaterializedKinds` when the CLI reads a config file; `ServedKinds` when servers reach it another way (on the wire, or in-process); `knownKinds`, and `mcpKnownKinds` in `control-plane/internal/mcpsrv/mcp_server.go` | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
-| Agent instructions | `agent_instructions.go`: `instrSupportedKinds` and the per-kind apply, or `instrUnsupported` with a reason code | The Console's list of targets is built from these two lists. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`); list it in `instrSupportedKinds` with the `prompt` delivery, no path and `Applied` true, so its row is the switch the harness reads, and give it a preview case |
-| Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances. Some screens still switch on the kind name, so grep them (below) |
+| MCP | `internal/mcpreg`: a writer in `writerFor` and an entry in `MaterializedKinds` when the CLI reads a config file; `ServedKinds` when servers reach it another way (on the wire, or in-process); `Caps().MCPClient`. `knownKinds` is derived from `ServedKinds`, and the CP's `mcpKnownKinds` from the kind catalog snapshot (§20.7) | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
+| Agent instructions | `agents.Instructions` on the Agent (an `instructions_ops.go` in your package: shape, apply functions) and the kind in `instrSupportedKinds` (display order), or `instrUnsupported` with a reason code | The Console's list of targets is built from these two lists; `agent_instructions.go` has no per-kind switch left. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`): `prompt` delivery, no path, no apply functions |
+| Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances; the driver facts (`managedDriver`, `terminalDriver`) are read from the catalog, with `FALLBACK_KIND_FACTS` in `console/src/agents/kindCatalog.ts` answering until it loads. Some screens still switch on the kind name, so grep them (below) |
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
-The table is not a complete list of where kind names appear. Some lists are still kept
-by hand: for example the bracketed-paste kinds in `internal/sessionx/session_io.go`,
-`usageMeasuredForKind` in `usage_fold.go`, and `isDynamic` (the kinds with a live model
-catalogue) in `console/src/lib/agentModels.ts`.
+The table is not a complete list of where kind names appear. The Agent's measured-per-kind
+lists (`moveTargetKinds`, `oneShotKinds`, `usageMeasuredForKind`) are hand-kept on purpose,
+since they record a measurement and not a capability; each has a test that fails until a newly registered kind is classified (§20.7).
 Grep `workspace/agent`, `control-plane` and `console/src` for an existing kind with the
 same drivers as yours, and decide each hit.
 
@@ -207,7 +205,7 @@ A kind is not done when it runs. It is done when:
    `Capabilities()` matches what the driver implements (§20.4);
 2. [ref/agents.md](../../guide/ref/agents.md) has its column filled, and the two checks
    in §20.4 pass;
-3. [member/06-agents](../../guide/member/06-agents.md) tells a user how to connect it,
+3. [member/09-agents](../../guide/member/09-agents.md) tells a user how to connect it,
    using the Console's own words (`console/src/lib/i18n/locales/`);
 4. if the workspace image pins its CLI or host, its contract workflow exists, is
    registered with the release watcher, and has passed against a real release; otherwise
@@ -215,3 +213,136 @@ A kind is not done when it runs. It is done when:
    it (§20.5);
 5. if anything was settled that could plausibly be reopened — why this driver, why this
    id strategy — [decisions/](../decisions/) has the record.
+
+## 20.7 Checklist
+
+One line per touch point, so a reviewer can tick them off. It shrinks as kind lists move
+onto the catalog ([#1077](https://github.com/k-k1/agent-fleet/issues/1077)); §20.2 has
+the detail behind each line.
+
+**The kind catalog.** The agent serves `GET /agents/kinds` (`workspace/agent/agent_kinds.go`):
+one entry per registry key with its `Caps()`, the effective default driver, and
+whether it takes MCP servers and instructions. Capability answers are tri-state —
+`yes` / `no` / `unverified` — and a consumer treats `unverified` as unknown, not
+unsupported. The CP embeds a snapshot of it, `control-plane/internal/agentkinds/catalog.json`,
+because it validates tenant definitions with no workspace to ask. Never edit it by hand:
+
+```
+cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog .
+```
+
+**Rolling out a new kind: Agent first.** `TestKindCatalogSnapshot` fails in CI when the
+snapshot was not regenerated, but it cannot see a rollout in which the Control Plane is
+older than the Workspace image. The CP refuses a create whose kind is not in its snapshot
+(`bad_kind`, `agentkinds.CheckCreateKind`), so a CP that is still on the old snapshot
+refuses the new kind until it is updated, even though the new Agent would accept it.
+Deploy the Agent image first, or both together, and expect the refusal in between.
+
+**Required — every kind:**
+
+- [ ] `Kind*` constant in `internal/session/session.go`, an entry in `internal/agentreg`'s
+      `registry` and in `internal/kinds`' list; the key equals `Kind()`
+      (`TestRegisteredKindsSpellTheirOwnKind`) and the two lists agree
+      (`TestRegistryMatchesTheKindsList`); the `internal/kinds` entry carries the product label
+      the notification bridge writes (`""` for none), pinned by `TestLabels` in `kinds_test.go`
+- [ ] `Caps()` with every field decided, `MCPClient` included (`TestMCPClientKindsMatchRegistry`
+      fails on `unverified`) and `ManagedDefault` for a kind that should start Managed (the
+      CP and in-container callers follow it; `TestManagedDefaultKindFollowsTheRegistry` pins
+      the set)
+- [ ] the catalog snapshot regenerated (`TestKindCatalogSnapshot`), and
+      `testdata/wire.golden` if the catalog's shape changed; then the MCP tool goldens on both
+      sides, whose tool descriptions enumerate the kinds, the agent's through the snapshot:
+      `go test ./internal/mcpx -run 'TestToolListGolden|TestToolCallGolden' -update-tool-golden` in
+      `workspace/agent`, and the same with `./internal/mcpsrv` in `control-plane` (the package
+      before the flag, or `go test` builds the module root and rejects the flag). Run the agent's
+      tests with `-count=1` here: they read the CP's `catalog.json`, which the test cache does not
+      see change, and a cached `mcpx` passes with its golden out of date
+- [ ] the column in [ref/agents.md](../../guide/ref/agents.md) and in `ref/agents.ja.md` —
+      `scripts/docs-check.py` holds the `CAPS_ROWS` rows, MCP included, to `Caps()`, and the
+      Japanese table's marks to the English one's
+- [ ] instructions: `agents.Instructions` plus `instrSupportedKinds`, or `instrUnsupported`
+      with a reason, or `noInstructionTargets` for a kind that runs no CLI
+      (`TestInstructionsClassifyEveryRegisteredKind`; add the row to `legacyInstr` in
+      `agent_instructions_kinds_test.go` only to pin a new shape)
+- [ ] MCP: `MaterializedKinds` (and a writer) or `ServedKinds`, matching `Caps().MCPClient`;
+      the CP follows through the snapshot
+- [ ] model menu: `ListModels` (`agents.ModelLister`) in `internal/agents/<kind>/capabilities.go`,
+      which `GET /agents/{kind}/models` serves (`TestEveryAgentKindListsModels`)
+- [ ] the Console's fallback, used until `GET /api/agents/kinds` answers:
+      `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`; `MCP_KINDS` is derived from
+      it). `kindCatalog.test.ts` holds it, and `SESSION_KINDS`, equal to the catalog snapshot
+- [ ] the measured-per-kind lists, each held by a test that names the kind it is missing:
+      `usageMeasuredForKind` (`usage_fold.go`; `usageMeasuredByKind` in `kind_lists_test.go`),
+      move target (`moveTargetKinds` / `moveUnmeasuredTargets`; `moveClassification` in
+      `session_move_kinds_test.go`), and a chat provider or its entry in `noChatProvider`
+      (`kind_lists_test.go`; with one, `oneShotKinds` and `providerResumeHandles` in `chatx`
+      follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`.
+      `TestMoveTargetListsAreUnchanged` pins both move lists as literals, so a kind added to
+      either edits it too
+- [ ] a row in `wantRuntime` (`internal/sessionx/managed_runtime_test.go`) for every kind, `nil`
+      for one with no Managed runtime (`TestManagedRuntimeDispatchPinned`)
+- [ ] skills: `agents.SkillsLayouter` in `capabilities.go` for every agent kind,
+      `SkillsForeignOnly` when no native mechanism is confirmed
+      (`TestSkillsLayoutCoversEveryAgentKind`)
+
+**Kind-specific — only when the kind has the feature:**
+
+- [ ] Terminal: `BuildLaunch`, and the paste decision: `agents.PromptPaste` when the composer
+      eats an Enter that follows literal keys, otherwise the kind goes in `literalKinds` in
+      `prompt_paste_test.go` (measure it; `TestPromptPasteClassifiesEveryRegisteredKind` fails
+      for a kind in neither list); `agents.PaneModeReader` and `agents.ModalProbe` in
+      `capabilities.go` (`TestPaneModeReaderCoversEveryTerminalKind`,
+      `TestPromptBlockerCoversEveryTerminalKind`)
+- [ ] Managed: a `Driver`, `managedDrivers`, and `agents.ManagedRuntime` on the Agent
+      (`TestManagedRuntimeFollowsCaps` fails without it; its `wantRuntime` row names the package's
+      functions), and `agents.ManagedLifecycler` in `capabilities.go`: the Agent reconciles the kind at boot
+      and aborts and shuts it down on a stop, in `internal/kinds` order (add the kind's row to
+      `handWiredLifecycle` in `lifecycle_caps_test.go`)
+- [ ] sign-in handlers and their CP relays; credentials hidden by `fsDeny`
+- [ ] a `GET /connections` entry: `ConnectionStatus` (`agents.ConnectionStatuser`) in
+      `capabilities.go`, and the kind in `TestHandleConnectionsGetKeySet`'s key list
+- [ ] a pinned CLI: the version pin, a contract workflow and the release-watcher
+      registration (§20.5)
+
+**Display-only — the Console:**
+
+- [ ] `SESSION_KINDS` in `console/src/types/session.ts` (display order) and a descriptor in
+      `console/src/agents/registry.ts` (`caps`). A kind with no descriptor still renders, with a
+      generic icon, but is not launchable from the Console
+- [ ] colour, icon and wording; the i18n strings in both languages. The colour is a
+      `--kind-<slug>` token in both theme blocks of `console/src/styles/tokens.css` plus its
+      `.kind-<slug>` line in the map there (`kindCssMap.test.ts`)
+- [ ] `available()`: a kind that needs no connection changes the expected lists in
+      `availability.test.ts`, and one with `caps.launchableFromRepo` changes the `repoLaunchKinds`
+      literal in `derivedKindLists.test.ts`
+- [ ] the descriptor's list facts: `caps.liveModels` / `caps.concreteModel` (model picker),
+      `caps.skillsCatalog` (Settings > Skills), `caps.memberDefault` (equal to the CP's
+      `memberDefaultAgents`; `derivedKindLists.test.ts`), and `assistantRank` with
+      `caps.headlessChat` (the default assistant backend priority)
+
+## 20.8 Measuring what a new kind touches
+
+ADR 0124's figure for a new kind is measured by adding one, not by grepping an existing kind's
+name ([0124](../decisions/0124-second-refactor.md), addendum of 2026-10-29).
+`scripts/stub-kind-count.sh` applies the stub kind `zz` (`scripts/stub-kind/zz.patch`: a
+Terminal-only kind that registers and launches `bash -l`, with no MCP, instruction target, sign-in
+or pinned CLI) to a throwaway clone, inserts its column into `ref/agents`, regenerates the catalog
+snapshot and both modules' MCP tool goldens, and lists the files changed outside
+`internal/agents/zz` by category. The figure is the non-test, non-Markdown total.
+
+```
+scripts/stub-kind-count.sh            # count at HEAD
+scripts/stub-kind-count.sh --verify   # also run both Go modules, the Console and docs-check
+```
+
+Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
+guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until
+`--verify`'s steps pass there, then write the clone's diff back without the generated files and
+the `ref/agents` tables, which the script makes itself:
+
+```
+git -C <kept clone> add -A
+git -C <kept clone> diff --cached -- . ':!control-plane/internal/agentkinds/catalog.json' \
+  ':!control-plane/internal/mcpsrv/testdata' ':!workspace/agent/internal/mcpx/testdata' \
+  ':!guide/ref/agents.md' ':!guide/ref/agents.ja.md' > scripts/stub-kind/zz.patch
+```

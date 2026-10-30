@@ -1,6 +1,5 @@
 ---
 audience: "a tenant administrator managing resources and running sessions"
-updated: "2026-09"
 ---
 
 # 02. Resource limits, idle auto-stop, and the sessions overview
@@ -33,7 +32,7 @@ in the Admin modal and never appears for you. What you can read is the current v
 - **Inference engine model ingest**: whether this tenant's tenant_admins may take engine models in
   from Hugging Face, Civitai or a URL. Off by default. Even where it is granted, **the catalogue stays
   one per deployment** and the id of a model taken in is visible from every tenant
-  ([04](04-mcp-egress.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
+  ([why](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
 - **Inference engine use**: whether this tenant may use the deployment's self-hosted engines at all,
   one switch per role: **Allow using the self-hosted chat engine (llm)** and **Allow using the
   self-hosted image engine (image)**. Both are allowed by default, and a tenant nobody has touched
@@ -62,11 +61,42 @@ person can use each role right now (either place edits the same setting).
 - Switching back to **Every member** keeps the ticks, so restricting again restores the same list.
   Tick first and restrict afterwards, and nobody loses access in between.
 
+### Taking engine models in (only if your tenant was granted it)
+
+Putting a model into the deployment's engine catalogue (search for it, read the plan the card shows, press
+**take in**) is a deployment administrator's action by default. Where the operator grants it to your
+tenant (the **Inference engine model ingest** line under Limits & idle, above), you can do it too. The
+search and the plan card work exactly as they do on the operator's screen
+([how a model is taken in](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
+
+The grant covers **starting an ingest and nothing else**. These four stay super_admin whether it is
+granted or not:
+
+- **Enabling** a model (making it something members can choose)
+- Changing the image role's **selected checkpoint**
+- **Forgetting** a row
+- Registering the deployment's **Hugging Face token** and **Civitai token**
+
+Who accepted which licence is kept on the row: **which tenant, which person, when, and which
+licence**, and the audit log carries the same four. A model taken in by a super_admin has no tenant against
+it, which means "the operator accepted on behalf of the whole deployment".
+
+#### What a tenant administrator sees
+
+A tenant_admin of a granted tenant gets a reduced screen under **Tenant settings → "Inference
+engine models"** (not the Admin modal; that one is super_admin only). It holds four things:
+**the model search, the plan card, the bucket entries their own tenant's jobs produced, and the list
+of catalogue rows** (id, name, family, licence and on/off; **read-only**). What it does not hold:
+**the mode (disabled / on demand / always on), the GPU class, the state of the instance, enabling
+and selecting a model, forgetting a row, and the API tokens**: each of those decides what
+every *other* tenant runs, or who pays for the GPU. The bucket shows **that tenant's own objects
+only**, and a super_admin's do not appear in it (a super_admin's own screen shows the whole bucket).
+
 ### The limit board (you can set this)
 
 **Tenant settings → Limit board** decides whether the tenant's members may publish their
 usage-limit state to each other (ADR 0111). It is **on by default**, and even then every member
-is hidden until they choose to publish ([09 Working with others](../member/09-collaboration.md)).
+is hidden until they choose to publish ([12 Working with others](../member/12-collaboration.md)).
 Turn it off if your organisation does not want remaining quota shown at all: collection stops
 and the board is empty for everyone. The switch is recorded in the audit log.
 
@@ -79,7 +109,7 @@ those terms allow members to divide work this way is the tenant's judgement.
 What you can adjust is the per-member **session limit**. In the member detail, the
 **"Size and limits"** card (right under the resource meters) has a **"Change"** button; under
 **"Session limit"** you enter "Max sessions (0 = unlimited)", and once saved it applies to that
-person only. Members with a personal limit show "s≤ N" on their member row in the roster.
+person only. Members with a personal limit show "s≤ N" on their member card in the roster.
 
 Between a personal session limit and the tenant-wide limit, whichever is stricter kicks in first.
 
@@ -122,6 +152,10 @@ procedure on a deployment where the disk axis reads "Workspace home (persistent)
 3. **"Growing the home from N to M GiB"** under the card means it was accepted. **The workspace
    keeps running**; the extra room shows up on their side within a minute or so.
 
+The roster also flags this on its own: a card whose home disk is nearly full, or whose last start
+could not install a CLI, is listed under "Needs attention"
+([01-members.md](01-members.md#needs-attention)).
+
 Three constraints apply.
 
 - **It cannot go down.** Saving a smaller number leaves the existing home exactly as it is (cloud
@@ -159,6 +193,8 @@ The question to ask is what that person spends their time on.
 - The **tenant-wide default** is picked from the "Limits" page of the tenant settings.
 - A **per-member** choice is made from that member's "Set limits" panel, and it wins: members who
   chose for themselves are unaffected when you change the tenant default.
+- The roster card shows the instance type the member's next start lands on, whether it comes from
+  their own choice or the tenant default; hovering it shows the machine's name.
 - The memory number means the same thing in every machine. **The machine picks the ladder, memory
   picks the rung on it.**
 
@@ -187,19 +223,32 @@ that there is no room, and everything stays in the home directory as before.
 ## Idle auto-stop
 
 This is the mechanism that automatically folds up neglected environments (the settings are on the
-tenant-wide side, so they are super_admin's domain). It has two stages.
+tenant-wide side, so they are super_admin's domain). It has two stages, set by the four fields under
+**Idle auto-stop**.
 
 - **Session halt after**: a neglected session that no one has open is folded to
   "stopped (resumable)" once it exceeds this time. The conversation log remains, so it can be
   resumed later. A session left stopped for 7 days is moved to the archive (each user can change the period, or turn it off, in Settings → Agents → Session; the deployment's `AF_SESSION_STOPPED_TTL` sets it for users who leave that at Default). It is never deleted, so it
   can still be restored from there, and its working copy is left in place; a session locked
   against deletion stays in the list.
+- **Halt when awaiting a decision**: the same for an unattended session waiting on a person (a
+  question, a plan awaiting approval, a permission prompt, the usage-limit menu, an expired
+  login), on a clock of its own. Waiting does not keep the workspace running: **Workspace stop
+  after** still applies. Empty follows the tenant's **Session halt after** when that is set,
+  and otherwise the deployment's default for decision waits (which normally equals its session
+  default). Nothing is lost when one is folded: the answer is delivered on resume from the card
+  in the conversation.
+- **Max hold by background work**: how long background work (a dev server or a
+  `run_in_background` task that an idle session started) keeps the workspace from stopping.
+  Empty uses the deployment default ([Limits and defaults](../ref/limits.md#set-by-the-deployment)), `0` means no
+  limit; details in
+  [operate/03](../operate/03-run.md#what-keeps-a-workspace-awake).
 - **Workspace stop after**: a workspace with no one connected and no running sessions has its
   whole container stopped once it exceeds this time.
 
-The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deploy
-default (disabled by default), and `0` means explicitly disabled. For the details of the behavior,
-see the developer documentation.
+The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deployment
+default, unless the operator changed it, and `0` means explicitly disabled. The deployment-wide
+defaults are listed in [Limits and defaults](../ref/limits.md#set-by-the-deployment).
 
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
 they just start it again from the Console.
@@ -223,11 +272,11 @@ a stopped workspace shows no meters at all, including disk, which on those deplo
 the workspace's own volume rather than on a disk the platform can read while it is down.
 
 A workspace can also be stopped by the platform itself: a start that has not finished within
-the deployment's limit (30 minutes by default) is stopped so it stops holding capacity. Such a
-member's row in the roster says **"Workspace start stopped automatically"** (hover it for the
-reason), and the member detail shows the same heading with the limit, the last step the start
-reached (on AWS often why no machine could take the workspace, which is usually what needs
-fixing), and when it was stopped. The member got the same text as a notification. It stays
+the deployment's limit ([Limits and defaults](../ref/limits.md#set-by-the-deployment)) is stopped so it stops holding capacity. Such a
+member's card in the roster has the badge "Stopped automatically" and the chip **"Workspace start
+stopped automatically"** (hover the chip for the reason), and the member detail shows the same
+heading with the limit, the last step the start reached (on AWS often why no machine could take
+the workspace, which is usually what needs fixing), and when it was stopped. The member got the same text as a notification. It stays
 until the workspace is next started. The `list_workspaces` MCP tool returns it as `auto_stop`.
 
 ## Viewing sessions / getting the whole picture
@@ -246,14 +295,18 @@ what is running and whether resources are under pressure.
 ## Force-stopping a workspace
 
 When you want to stop a runaway session, or an environment left occupying resources, use
-**"Force-stop the workspace"** in the "Operations" section of the member detail (it can only be
-pressed while the workspace is running). After a confirmation dialog, that member's workspace
+**"Force-stop the workspace"** in the "Operations" section of the member detail (it can be
+pressed while the workspace is running or still starting; on a start that never finishes, it
+cancels that start). After a confirmation dialog, that member's workspace
 container stops. **The work (home) is not lost.** The member can start it again from the Console.
 It is strictly a "pause for now" operation, not destructive.
 
 Below it, ruled off under **"Cannot be undone"**, are exactly what the heading says: "Clean home",
-"Delete backups", "Remove member", "Destroy workspace" and "Delete member permanently" (a deployment
-shows only the ones it can perform). **All of them are yours to
+"Delete backups", "Remove member", "Destroy workspace" and "Delete this member". A deployment shows
+only the ones it can perform, and the member's state decides the rest: "Remove member" appears for
+a current member, while "Destroy workspace" and "Delete this member" appear only after removal,
+Destroy while the member still has a workspace and Delete once it is gone
+([01-members.md](01-members.md#removing-a-member)). **All of them are yours to
 run**. The point is that an employee leaving should not become a ticket for IT. Read what each
 confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
 measures** (the container is broken and restarting doesn't fix it, host-side intervention is

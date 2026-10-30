@@ -22,7 +22,9 @@ Order matches the template. Parameters not listed here are self-explanatory in i
 - [Public host and preview subdomains](#public-host-and-preview-subdomains)
 - [Control Plane task](#control-plane-task)
 - [Sign-in](#sign-in)
+- [Control Plane timers, GitHub sign-in extras and LAN / borrowed engines](#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)
 - [Alarms](#alarms)
+- [MCP (`/mcp`) and MCP OAuth](#mcp-mcp-and-mcp-oauth)
 
 ## Images and workspace defaults
 
@@ -73,6 +75,96 @@ survives) and for sizes above Fargate's ceilings — NOT for start latency: meas
 against Fargate's ~105s. The price is six resource kinds per workspace on a substrate with
 no production mileage. Requires the 40-ec2-pool stack and `Ec2SlotLaunchTemplate`. Falling
 back is this one value.
+
+### `WorkspaceSubnets`
+
+The `WorkspaceSubnets` output of 00-network, passed to the CP as `AF_ECS_WORKSPACE_SUBNETS`
+(#2716). Workspace task ENIs go there; the CP, the ecs-ec2 slot instances, the home task and
+the engines stay in the private subnets. The two subnet kinds differ only in their route
+table: the private one has the S3 gateway endpoint, whose policy admits only ECR layers, the
+AL2023 repositories, the SSM Agent update and ECS agent download buckets and the models bucket; the workspace one has no endpoint route, so a
+workspace's own S3 leaves through the NAT. On ecs-ec2 the image pull is made by the ECS
+agent through the slot instance's ENI, so it stays on the endpoint. A Fargate workspace pulls
+through its task ENI, so its pull crosses the NAT either way; it is moved too, because on the
+private route table its own S3 would meet the endpoint policy, which refuses (AccessDenied)
+rather than falls back to the NAT.
+
+It is a derived fact, not a choice: `standup.sh` and `update.sh` pass the network stack's
+output on every run (a rebuilt network has new subnet ids). Empty, the default, means
+workspaces in the private subnets, which is only right on a network stack without the
+endpoint. A deploy by hand must pass it: `WorkspaceSubnets=$(aws cloudformation
+describe-stacks --stack-name <network stack> --query "Stacks[0].Outputs[?OutputKey=='WorkspaceSubnets'].OutputValue" --output text)`.
+
+Every AZ of the private subnets needs a workspace subnet: the CP refuses to start a workspace
+in an AZ without one rather than fall back to the private subnet, and puts no new home there.
+An existing workspace moves on its next Start, which is why 00-network's `S3EndpointEnabled`
+stays `false` until every running workspace has been restarted (README, NAT bullet).
+
+### `EgressProxyAddr` / `EgressTokenSecretArn`
+
+00-network's outputs of the same names, present only with `EgressRoute=gateway` (ADR 0122,
+#2717; README, "Egress gateway"). Derived facts like `WorkspaceSubnets`: `standup.sh` and
+`update.sh` pass them (empty once the network is back on `nat-gateway`), and a deploy by hand
+must too. With `EgressTokenSecretArn` set:
+
+- the CP gets `AF_EGRESS_PROXY_ADDR` (the gateway interface's private address, `:3128`), so
+  workspace task definitions on both runtimes carry the proxy variables, with the task-role
+  credential and instance metadata addresses and the CP's internal host in `NO_PROXY`;
+- the CP gets `AF_EGRESS_TOKEN` from that Secrets Manager secret (`Secrets`, never
+  `Environment`; 20-platform's execution role reads `af-*-egress-token-*`), which turns on
+  ingest, the policy endpoint and the address recorder (#2674);
+- `EgressAgentConfig` writes `/af-egress/<NetworkStackName>/agent` (String: the CP image and
+  the public URL, no secret), which the gateway's agent reads at boot and every 10 minutes, so
+  a release reaches the agent without replacing the instance.
+
+### The egress archive
+
+`AF_EGRESS_ARCHIVE_URL` (#2699, ADR 0122) makes the CP write each past UTC day of raw egress
+events to an object store before it purges them. The templates wire an optional bucket that
+10-data owns (#2732); the default is no bucket and the archive stays off.
+
+| Stack | Parameter | Default | Meaning |
+|---|---|---|---|
+| 10-data | `EgressArchive` | empty | `create` makes the bucket `af-<data stack>-egress-archive-<account id>-<region>` and outputs `EgressArchiveBucket`. `existing` outputs the same name without managing a bucket: it reuses the one a former `create` left. Capture and restore carry it like any other input. |
+| 10-data | `EgressArchiveRetentionDays` | `365` | Days before S3 expires an archived day (prefix `egress/`). Only read with `EgressArchive=create`. |
+| 20-platform | `EgressArchiveBucket` | empty | The 10-data output. Non-empty adds the managed policy `CpEgressArchivePolicy` to the CP task role. |
+| 30-ingress | `EgressArchiveBucket` | empty | The same output. Non-empty sets `AF_EGRESS_ARCHIVE_URL=s3://<bucket>` on the CP. |
+
+The last two are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
+output after deploying it (never the capture, so a rebuilt data stack cannot leave a stale
+name) and names it for both stacks even when empty (an omitted parameter keeps its previous
+value), and `update.sh` passes it to the 20-platform change set and to 30-ingress, and clears
+both when the data stack no longer has the output. Both stop when the output cannot be read:
+the purger deletes events once the archive is off, so a failed read must not look like "none". A deploy by hand must pass it to both. The
+CP writes keys that start with `egress/` itself, so the URL has no prefix of its own.
+
+- **The bucket** blocks public access, encrypts with SSE-S3, has versioning off (the CP replaces
+  a day's object whole and never deletes), expires `egress/` after `EgressArchiveRetentionDays`
+  and aborts incomplete uploads after a day. A bucket policy refuses plain HTTP
+  (`aws:SecureTransport`). Bucket and policy are `Retain`: stack deletion, or switching
+  `create` to empty, leaves the archive behind, and `create` again would collide with it. Use
+  `EgressArchive=existing` to take it back (`standup.sh` does this by itself when the capture says
+  `create` and the bucket survived; it never deletes the archive). The name carries the region
+  because S3 names are global and stack names are per region. A data stack name longer than 17
+  characters does not fit S3's 63-character bucket name limit.
+- **The CP grant** is `s3:PutObject` and `s3:GetObject` on `<bucket>/egress/*` (HeadObject is
+  authorised by `GetObject`) and `s3:ListBucket` on the bucket, nothing else: no delete, and no
+  list of its own. `ListBucket` has no `s3:prefix` condition because the permission that turns
+  HeadObject on an absent key into a 404 instead of a 403 is checked without a prefix; the
+  sink treats a 403 as an error, not as "absent". The bucket holds only the archive. The
+  grant is a managed policy because the CP role's inline policies share IAM's 10,240-character
+  total (#1576).
+- **The S3 endpoint** (00-network) admits the same bucket by name pattern, because the CP runs
+  on the private route table and a refusal there is AccessDenied, not NAT traffic. The
+  statements `EgressArchiveObjects` and `EgressArchiveList` match
+  `af-*-egress-archive-<account id>-<region>` (the data stack name is not known to 00-network) and
+  require `s3:ResourceAccount` to be this account, as for the models bucket. An existing
+  00-network stack has to be updated for them before the first archive write, or the CP gets
+  AccessDenied and the purger keeps (does not delete) the events. Order: 00-network, 10-data
+  (`EgressArchive=create`), then `update.sh` (20-platform and 30-ingress).
+- **Bring your own bucket**: not supported by these templates. The endpoint policy would need a
+  parameter in 00-network for it, and a bucket outside this account would also fail the
+  `s3:ResourceAccount` condition. Use `file:///...` or an out-of-band setup if you need one.
 
 ## EC2 slot pool (`WsRuntime=ecs-ec2`)
 
@@ -169,14 +261,16 @@ clear error at the cap instead of growing the bill.
 How much of a slot is held back from the WORKSPACE so the instance's own daemons (dockerd,
 containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by it.
 
-- `auto` = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is capped at
-  6.4 GiB, and the Console prints that number with the instance beside it.
+- `auto` = a flat 2 GiB at every rung: an 8 GiB slot's workspace is capped at 6 GiB, and the Console prints
+  that number with the instance beside it. A fifth (1.6 GiB) left an 8 GiB box about 1.2 GiB
+  of real memory (the rung overstates MemTotal by ~5%), no more than its daemons use, and one
+  thrashed with the ECS and SSM agents going dark (#2451).
 - `off` = uncapped, which is what every deployment did before this existed — and what melted
   a live slot on 2026-08-27 (docs/log/64 §64.40): one workspace took enough anonymous memory
   that the kernel evicted all page cache, every daemon spent hours re-reading its own
   executable off disk, and the instance stopped answering the cluster while still looking healthy
   to EC2.
-- A plain number is that many MiB.
+- A plain number is that many MiB. `0` reserves nothing and caps the workspace at the full rung (not the same as `off`, and not auto).
 
 NOTE: this is part of the task definition, so changing it replaces the running task at the
 owner's next start, exactly as an image change does.
@@ -462,6 +556,18 @@ recommend cannot be expressed in this template at all.
 ⚠️ The Console side (`Cert` / `DnsRecord`) always stays on `HostedZoneId`; this only affects the
 preview certificate's validation and the wildcard A record.
 
+### Preview resources (`PreviewCert`, `PreviewDnsRecord`)
+
+Never touch the existing `Cert`: adding a SAN replaces the certificate, rebuilding the TLS the
+Console already serves just to add previews. A listener can pick extra certificates by SNI, so
+`PreviewCert` is attached as a second one, and turning previews off is then only a removal
+(ADR 0062 decision 4).
+
+One wildcard record covers every workspace and every port. Never write a record per
+workspace: that puts an API round trip and a propagation wait on every start and runs into the
+record-count quota. Zero issuance cost and zero propagation wait are the one plain win host
+mode has, and giving it up leaves only the complexity (ADR 0062 decision 5).
+
 ## Control Plane task
 
 ### `CpArch`
@@ -509,6 +615,8 @@ SSM SecureString path prefix holding the CP secrets, created out of band before 
 [the README](../README.md#prerequisites-once-per-account)). Params: `cookie-secret`,
 `master-key`, plus `google-client-secret` / `oidc-client-secret` / `github-client-secret`
 depending on the IdPs in use.
+Optional, each behind its own switch: `github-login-client-secret`, `comfy-api-key`,
+`remote-engine-token` ([below](#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)).
 
 ## Sign-in
 
@@ -634,7 +742,7 @@ ARN, so a grant on an alias would allow nothing.
 ⚠️ `AF_MASTER_KEY` stays required: values stored before the switch open with it until
 `af-cp rewrap-keys` re-seals them, and it still derives the workspace DEKs and the signing keys
 after that. Do not clear this parameter again while KMS-sealed values exist; the local
-custodian refuses them. The operator's side is `guide/operate/04-secure.md`, "Keys at rest on
+custodian refuses them. The operator's side is `guide/operate/12-keys.md`, "Keys at rest on
 AWS KMS".
 
 ### `WorkspaceDekRandom`
@@ -673,7 +781,18 @@ can need credentials reconnected (see 04-secure); unmigrated homes and old snaps
 per-workspace SSM parameter `secret-key-next` (deleted best-effort by the next start after confirm, or by Destroy) is under `/af-ws/*`: the CP role's
 `SsmWorkspaceParams` (20-platform: Put/Get/Delete) and the workspace execution role's `ssm-read`
 (GetParameters) already cover it, so no IAM statement was added. Operator view:
-`guide/operate/04-secure.md`, "A key of its own for each home".
+`guide/operate/12-keys.md`, "A key of its own for each home".
+
+### Home task (volume root)
+
+The file system ROOT, as uid 0, not the member's access point. A task definition's volumes
+cannot be overridden per RunTask, so one declared here cannot name a member's access point, and
+registering one per run would put RegisterTaskDefinition on this path and leave the RunTask
+grant below fencing nothing. The access point would also be too little: it pins uid 1000, which
+cannot remove the read-only trees toolchains leave (Go's module cache is 0555), and Destroy has
+to remove the access point's own root directory. The confinement is in the command instead: it
+refuses a membership id that is not one path element, refuses unless /mnt/efs is a mount, and
+only ever removes under /home/<id> and /claude-config/<id>.
 
 ### Home task grant
 
@@ -686,6 +805,140 @@ task's cost tags (af-membership, af-role, af-tenant) are authorized as ecs:TagRe
 task: only as part of a RunTask (ecs:CreateAction), so no task that exists can be retagged, only
 in this cluster, and only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace
 service. `deploy/local/cfn-cp-ec2-scope-test.py` holds the allowed calls and the denied ones.
+
+## MCP (`/mcp`) and MCP OAuth
+
+### `McpEnabled` / `McpOAuth` / `McpOAuthTrustedHosts`
+
+All three are off / empty by default and emit **no** environment entry when off, so a stack
+that predates them gains parameters and nothing else: the CP task keeps serving no `/mcp`.
+
+| Parameter | Values | CP variable it sets |
+|---|---|---|
+| `McpEnabled` | `off` (default), `on` | `AF_MCP_ENABLED=true` (the CP accepts exactly `true`) |
+| `McpOAuth` | `off` (default), `on` | `AF_MCP_OAUTH=1` (the CP accepts exactly `1`) |
+| `McpOAuthTrustedHosts` | empty (default) or a comma list of host names | `AF_MCP_OAUTH_TRUSTED_HOSTS` |
+
+`McpOAuth=on` needs `McpEnabled=on`: the CP serves the OAuth endpoints only when
+`AF_MCP_ENABLED=true`, `AF_MCP_OAUTH=1` and an `https` `PUBLIC_BASE_URL` all hold, and a Rule
+fails the stack operation for `McpOAuth=on` without `McpEnabled=on` rather than leaving every
+OAuth path answering 404. `PUBLIC_BASE_URL` here is always `https://<Fqdn>`.
+
+`McpOAuthTrustedHosts` empty = the CP's built-in list (`claude.ai,claude.com,chatgpt.com`).
+A super admin can override the list at runtime in the Admin modal (Deployment > MCP sign-in
+hosts); the saved list wins and this parameter is the fallback while nothing is saved. `none`
+leaves loopback clients only. Operator view: `guide/operate/04-secure.md`, "Sign-in for remote
+MCP clients".
+
+Turning it on (`update.sh` overrides only `ImageTag` and the facts it reads from the other
+stacks, so it is not the way to set these):
+
+```
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides McpEnabled=on McpOAuth=on
+```
+
+Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
+else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
+Template-size note: the template keeps about 1.2 KB under the 51,200-byte wall (see the
+README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
+parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
+required parameters line by line and reports every flow-style one as missing. Parameters have been paid
+for by moving prose out of the template, so the next one needs the same.
+
+### `SessionTtl` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
+
+Pass-throughs for CP variables the operator guide calls configurable and that had no ECS
+route. All three default to empty, and the CP treats an empty value as unset (`envx.DurationOr`,
+`envx.EmailSet`, `kmsCacheTTL`), so a stack that predates them behaves as before.
+
+| Parameter | CP variable | Empty means |
+|---|---|---|
+| `SessionTtl` | `AF_SESSION_TTL`, a Go duration (`72h`), how long the signed sign-in cookie stays valid | 168h |
+| `GithubAllowedEmails` | `AF_GITHUB_ALLOWED_EMAILS`, comma list admitted by GitHub sign-in besides the org / domain lists | nobody by email |
+| `KmsDataKeyCacheTtl` | `AF_KMS_DATA_KEY_CACHE_TTL`, a Go duration, `0s` = no cache (kms custodian only) | 5m |
+
+`GithubAllowedEmails` only matters while GitHub sign-in is on, which the template decides by
+`GithubAllowedOrgs`.
+
+## Control Plane timers, GitHub sign-in extras and LAN / borrowed engines
+
+### Timers
+
+| Parameter | CP variable | Empty means |
+|---|---|---|
+| `SessionIdleTimeout` | `AF_SESSION_IDLE_TIMEOUT`: idle time before a session is stopped | 1h |
+| `InteractionIdleTimeout` | `AF_INTERACTION_IDLE_TIMEOUT`: the same while the session waits on a human decision | the session timeout |
+| `WsIdleTimeout` | `AF_WS_IDLE_TIMEOUT`: idle time before a Workspace is stopped | 2h |
+| `PresenceIdleTimeout` | `AF_PRESENCE_IDLE_TIMEOUT`: how long a terminal with no keystrokes still counts as presence | 30m |
+| `BackgroundHoldMax` | `AF_BACKGROUND_HOLD_MAX`: upper bound on background work holding a Workspace awake | 2h |
+| `WorkspaceStartDeadline` | `AF_WORKSPACE_START_DEADLINE`: a start with no task running longer than this is stopped | 30m |
+| `UsageSampleInterval` | `AF_USAGE_SAMPLE_INTERVAL`: the usage sampler (also runs the start deadline) | 5m |
+
+Go durations (`90m`). `0` turns a timer off where the CP reads it with `intervalOff` (all seven);
+an unparseable value falls back to the default, so a typo does not stop the task. The idle timers
+only matter while the reaper runs (`AF_IDLE_SWEEP_INTERVAL`, not exposed). Behaviour:
+`guide/operate/03-run.md`; defaults: `guide/ref/limits.md`.
+
+### GitHub sign-in extras
+
+`GithubLoginClientId` (`AF_GITHUB_LOGIN_CLIENT_ID`) and the switch `GithubLoginSecret=on`
+(`AF_GITHUB_LOGIN_CLIENT_SECRET`, SSM `<SsmPrefix>/github-login-client-secret`) are a second OAuth
+App used only for signing in. Set both: the CP disables GitHub login without both halves. With the
+id set and the switch off, the CP falls back to `GITHUB_OAUTH_CLIENT_SECRET`
+(`github-client-secret`, wired by `GithubAllowedOrgs`). With the switch **on**, the dedicated App is
+the only one used: `github-client-secret` is then NOT injected (and `standup.sh` does not require
+it), so a stack with only `github-login-client-secret` in SSM starts. `GithubLabelJa` / `GithubLabelEn` rename the
+button (CP defaults: "GitHub でサインイン" / "Sign in with GitHub"; any value you pass is your input,
+the template itself stays ASCII). `GithubMembershipTtl` (default 10m) is how long a positive org-membership
+answer is cached and `GithubMembershipGrace` (default 1h) how long a stale one is still honoured when
+GitHub cannot be reached.
+
+### LAN and borrowed engines
+
+`LlmUrl` (`AF_LLM_URL`), `ComfyUrl` (`AF_COMFY_URL`) and `RemoteEngineUrl` (`AF_REMOTE_ENGINE_URL`)
+point the CP at engines somebody else runs; `RemoteEngineKeys` (`AF_REMOTE_ENGINE_KEYS`) is a comma
+list of the roles to borrow (empty = every role the far deployment offers). **Reachability:** the CP
+task runs in the stack's private subnets, so a LAN address works only when the VPC has a route and a
+security-group path to it (VPN, peering, Transit Gateway); nothing here creates one. The engines of
+`60-engines` are wired by `EnginesSsmParam` and need none of this.
+
+Secrets have their own switch each and are NEVER derived from the URL beside them:
+
+| Switch (default `off`) | CP variable | SSM SecureString read when `on` |
+|---|---|---|
+| `GithubLoginSecret` | `AF_GITHUB_LOGIN_CLIENT_SECRET` | `<SsmPrefix>/github-login-client-secret` |
+| `ComfyApiKey` | `AF_COMFY_API_KEY` | `<SsmPrefix>/comfy-api-key` |
+| `RemoteEngineToken` | `AF_REMOTE_ENGINE_TOKEN` | `<SsmPrefix>/remote-engine-token` |
+
+A ComfyUI URL without a key is a valid setup (the key is only for a reverse proxy in front of it).
+The CP borrows nothing (it logs the mismatch at boot) with only one of URL and token, so set `RemoteEngineUrl` and
+`RemoteEngineToken=on` together. The switch is explicit because a `Secrets` entry whose parameter
+does not exist stops the task from starting: create the parameter first
+(`aws ssm put-parameter --type SecureString --name <SsmPrefix>/comfy-api-key --value …`), then turn
+the switch on.
+
+**IAM.** No change. The execution role (`20-platform`, `ExecRole`, policy `ssm-read`) already
+grants `ssm:GetParameters` on `/af-cp/*` and `/af-ws/*`, with the AWS-managed `aws/ssm` key (no KMS
+grant). With the default `SsmPrefix=/af-cp` the three names above fall under it, which
+`cfn-cp-settings-env-test.py` checks. **A non-default `SsmPrefix` outside `/af-cp/` and `/af-ws/`
+is not covered, and that was already true for `cookie-secret` and `master-key`:** widen the
+execution role's `ssm-read` policy to your prefix (least privilege: the prefix, not `*`).
+
+### Not exposed: `WS_ENV`
+
+`WS_ENV` is a free-form `KEY=VAL,KEY=VAL` list copied into every Workspace container. An
+`Environment` entry would put whatever secrets it holds in the task definition in plain text, and
+a pass-through would be a way around the per-Workspace settings. Compose, Kubernetes and native
+keep it; ECS deliberately does not.
+
+Setting any of these (`update.sh` overrides only `ImageTag` and the facts it reads from the
+other stacks, `EfsBackup`, `WorkspaceSubnets`, `EgressProxyAddr`, `EgressTokenSecretArn` and `EgressArchiveBucket`, so it never does):
+
+```
+aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides WsIdleTimeout=4h ComfyUrl=http://10.0.0.5:8188 ComfyApiKey=on
+```
 
 ## Alarms
 
@@ -726,3 +979,122 @@ strip and a phone launcher. Two caveats worth knowing before you rely on it:
   it to pick up a change.
 - The login page carries the label too. That is deliberate — signing in to the wrong
   environment is what this parameter exists to prevent.
+
+## `00-network.yaml` — notes moved out of the template
+
+`00-network.yaml` is deployed by direct upload before the S3 hand-off bucket exists, so it
+cannot fall back to `--template-url` and has to stay under CloudFormation's 51,200-byte limit
+(`deploy/local/cfn-template-size-test.py` keeps 4 KiB of headroom). The explanations below used
+to be comments in the template; the template keeps the one-line invariants at the resource they
+guard and points here.
+
+### Workspace subnets
+
+The workspace task ENIs, and nothing else (#2716). They have a route table of their own because
+routing is per route table: the private one keeps the S3 endpoint for image pulls (the ECS agent
+on an ecs-ec2 slot pulls through the instance's ENI in a private subnet), while a workspace's own
+S3 leaves through the NAT, later the egress gateway of ADR 0122, where it can be recorded. One
+per AZ of the private subnets: the CP refuses a home in an AZ without one rather than fall back
+to the private subnet.
+
+### NAT egress address
+
+One NAT gateway (single-AZ) is the main standing cost. Enough for a dev loop; a prod environment
+would put one NAT per AZ. Workspaces egress to git and the model APIs through it.
+
+`NatEip` is retained on purpose. With `EgressRoute=nat-gateway` the address is the deployment's
+ONLY egress source IP (every workspace reaches git and the model APIs through it); with
+`EgressRoute=gateway` workspaces egress from `GatewayEip` instead and the NAT address is the CP's
+and the hosts' only, so a customer allow-lists BOTH addresses (#2728). Either way it is a value a
+customer registers in a corporate firewall allow-list. Releasing it silently cuts everyone's outbound traffic and the
+replacement is a different address, so the stack must never take it away: not on delete, not on
+replacement. Retaining it is also what makes the address reusable: hand it back as
+`NatEipAllocationId` and the rebuilt deployment egresses from the same IP.
+
+### S3 endpoint
+
+The gateway endpoint sits on the PRIVATE route table only (CP, ecs-ec2 slot hosts, engines,
+home-op tasks). ECR stores layer blobs in S3, so an ecs-ec2 cold pull (made by the ECS agent
+through the slot instance's ENI) stays off the NAT's data processing: about 918 MiB compressed per
+workspace image (`deploy/aws/ecs/README.md`). Workspace tasks are not on this route table
+(`WorkspaceRt`, which has the default route and no endpoint route; under `NatEnabled=false` the
+NAT route goes with the private one), so the policy never decides their S3. Fargate workspaces
+pull through their own task ENI and so still pull through the NAT.
+
+Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT used: at $0.01 per AZ
+per hour for each of 2 AZs they cost more than the NAT gateway they would relieve.
+
+### S3 endpoint policy
+
+Only what the stack itself needs is admitted. A request the policy denies does NOT fall back to
+the NAT: the S3 prefix-list route is more specific than `0.0.0.0/0`, so a same-region S3 request
+from a private subnet that the policy refuses is AccessDenied (S3 in another region is outside the
+prefix list and still leaves through the NAT). That is acceptable only because nothing a user
+drives runs on this route table. When the stack starts using another bucket from a private
+subnet, add it to the policy (`deploy/local/cfn-s3-endpoint-test.py` pins the list).
+
+- **`EcrLayerBucket`** — ECR serves layer blobs from an AWS-owned bucket in the region. This is
+  the resource AWS documents for the endpoint policy in "Amazon ECR interface VPC endpoints (AWS
+  PrivateLink)", section "Create a VPC endpoint for Amazon S3". Read-only.
+- **`Al2023Repos`** — the Amazon Linux 2023 package repositories (dnf on the ecs-ec2 slot
+  instances, which sit on the private route table). AWS documents the repo bucket as
+  `al2023-repos-<region>-de612dc2` ("Amazon Linux 2023 User Guide", "Package repository").
+  Read-only; nothing in the templates runs dnf today, so this keeps an operator's package install
+  or an AMI refresh from needing the NAT.
+- **`SsmAgentUpdate`** — SSM Agent updates on the slot and engine instances, which the CP drives
+  through SSM (home mount, unmount, stop recovery). AWS-UpdateSSMAgent, also as a State Manager
+  auto-update, reads the manifest and package from `amazon-ssm-<region>` and its document module
+  from `aws-ssm-<region>` ("SSM Agent communications with AWS managed S3 buckets", Systems Manager
+  User Guide). Without them the update is AccessDenied instead of using the NAT. The patching,
+  Distributor and Windows buckets of the same table are left out: nothing here uses them.
+- **`EcsAgentDownload`** — the ECS agent image, which ecs-init downloads before it starts the
+  agent when the instance's cache is missing or empty (ecs-init `cache.go`, `AgentCacheStatus` /
+  `DownloadAgent`): the partition bucket `amazon-ecs-agent` (in us-east-1, so on this endpoint
+  only in us-east-1) and the regional `amazon-ecs-agent-<region>`.
+- **`ModelsObjects` / `ModelsList`** — the optional models bucket of 60-engines
+  (`af-<engines stack>-models-<account>`): the CP lists and reads it, the ingest tasks write it and
+  the engine VMs read it. This stack cannot name the engines stack, so the stack-name part is a
+  wildcard. The account id in the name is not an ownership proof (anyone can create
+  `af-x-models-<this account id>` in their own account), so the statements also require
+  `s3:ResourceAccount` to be this account, which AWS sets from the bucket's owner. Other stacks'
+  buckets in this account match too; IAM on each role is what narrows them. The actions are the
+  union of what those IAM roles hold (IAM still decides per role); multipart and tagging are what
+  `aws s3 mv/cp` of a large model uses.
+- **`EgressArchiveObjects` / `EgressArchiveList`** — the optional egress event archive bucket of
+  10-data (`af-<data stack>-egress-archive-<account>-<region>`, ADR 0122): the CP puts and reads
+  one object per UTC day under `egress/` and checks it with HeadObject. Same-account test as the
+  models bucket, for the same reason.
+
+### Egress gateway
+
+The route follows instance replacement through a FIXED network interface: the workspace route
+table points at `GatewayEni`, which this stack owns together with its Elastic IP, and each
+instance the group launches attaches it at boot as its second interface. So the route target, the
+proxy address the CP hands to workspaces and the egress address never change, and no instance
+needs `ec2:ReplaceRoute` or address permissions. The price: the interface is bound to
+`PublicSubnet0`'s AZ, so the group launches there only, and during a replacement the route
+blackholes until the new instance has attached it (minutes).
+
+### Egress gateway group
+
+An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches
+`GatewayEni`. One AZ only (the interface's). Terminate before launch on every update: two
+instances cannot share the interface. `GatewayEnabled=false` (`pause.sh`) makes it a group of
+zero; the terminated instance releases `GatewayEni`, which keeps its address. `MaxSize` stays 1
+either way: the rolling update requires `MinInstancesInService` (0) below `MaxSize`, and an update
+to a paused group can carry a new launch template (the AMI is re-resolved).
+
+### ALB rules
+
+Workspaces reach the CP's public URL through the gateway now, and the agent ships to it, so a
+narrowed `AlbIngressCidr` must still admit the gateway's address: removing this rule cuts
+workspace -> CP and gateway agent -> CP. One rule per source of the
+address: a handed-in allocation's address is a parameter (`GatewayEipAddress`).
+
+### Egress token
+
+The bearer the gateway's agent and the CP share (`AF_EGRESS_TOKEN`). Generated in 00-network,
+never a parameter or an output: only its ARN travels (30-ingress `EgressTokenSecretArn`; the CP's
+execution role reads `af-*-egress-token-*`, 20-platform). A deleted secret keeps its name for its
+recovery window, so a name that repeated on gateway → nat-gateway → gateway would fail the second
+create; the interface id makes it new each time the gateway is created.

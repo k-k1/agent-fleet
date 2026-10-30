@@ -662,6 +662,15 @@
   color: var(--warn);
 }
 
+/* Merge row: the spinner while GitHub is still computing, and the manual re-check once the
+   automatic budget is spent. */
+.wi-dmerge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .wi-dbranches {
   display: flex;
   align-items: center;
@@ -746,4 +755,101 @@
 }
 .wi-dopen {
   text-decoration: none;
+}
+
+/* Placeholder for a fact the live read has not returned yet. Row height matches a text line so the
+   answer fills the row in place (#2631). */
+.wi-dskel {
+  display: block;
+  height: 10px;
+  width: 7em;
+  max-width: 60%;
+  border-radius: 4px;
+  background: var(--panel2);
+  animation: wi-dskel-pulse 1.2s ease-in-out infinite;
+}
+.wi-dfacts dd:has(> .wi-dskel) {
+  display: flex;
+  align-items: center;
+  min-height: 1.4em;
+}
+.wi-dstart-pending {
+  min-height: 150px;
+}
+.wi-dskel-head {
+  width: 5em;
+}
+.wi-dskel-field {
+  width: 100%;
+  max-width: none;
+  height: 26px;
+}
+@keyframes wi-dskel-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wi-dskel {
+    animation: none;
+  }
+}
+
+/* --- merge (ADR 0061, 2026-10-25 note on #2632) ----------------------------- */
+
+/* The reason beside the footer's Merge button. One line however long the wording: a wrapped note
+   would grow the footer and move the buttons when the live read answers (#2631); the whole text is
+   the element's title. */
+.wi-dmergewhy {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wi-dmergewhy.bad {
+  color: var(--warn);
+}
+/* Keeps Merge's room while the read is in flight, and when the answer says no button. */
+.wi-dmergehold {
+  visibility: hidden;
+}
+.wi-mname {
+  margin: 0 0 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wi-merr {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--err);
+  overflow-wrap: anywhere;
+}
+
+/* Unread marker (#2779): a dot before the key, and the comment count beside the time. */
+.wi-unread {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #3794ff);
+}
+.wi-comments {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wi-row.unread .wi-title {
+  font-weight: 600;
+}
+.wi-unread-total {
+  margin-left: 8px;
+  color: var(--accent, #3794ff);
 }

@@ -9,9 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -21,10 +19,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
@@ -33,11 +27,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/limitsnap"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // LcppLiveModels is lcpp's live-catalog seam: workspace/agent's main package (agent_models.go's
@@ -49,26 +41,33 @@ import (
 // catalog (docs/log/109).
 var LcppLiveModels func(ctx context.Context) []agents.ModelChoice
 
+// The other kinds' live catalogs, read by the create's model check. Behind seams only so a test
+// can pin that check's answers: each one shells out to its CLI (copilot starts a whole TUI), which
+// a test binary can neither assume nor afford.
+var (
+	codexModelsFn     = codex.Models
+	copilotModelsFn   = copilot.Models
+	opencodeModelsFn  = opencode.Models
+	opencodeRetiredFn = opencode.Retired
+)
+
+// managedRuntimeOf resolves a kind's Managed runtime (agents.ManagedRuntime). The match is
+// exact: no NormalizeKind and no AgentOf claude fallback, so an unknown or alternate spelling has
+// no runtime and every question below answers false / does nothing.
+func managedRuntimeOf(kind string) (agents.ManagedRuntimeOps, bool) {
+	a, _ := RegisteredAgent(kind)
+	r, ok := a.(agents.ManagedRuntime)
+	if !ok {
+		return agents.ManagedRuntimeOps{}, false
+	}
+	return r.ManagedRuntime(), true
+}
+
 // ManagedAlive reports a managed session's liveness — the runtime-handle
 // counterpart of tmuxx.HasSession (docs/log/27 P2/P3; each kind implements it in its own package).
 func ManagedAlive(m session.Meta) bool {
-	switch m.Kind {
-	case session.KindOpencode:
-		return opencode.ManagedAlive(m.Name)
-	case session.KindCodex:
-		return codex.ManagedAlive(m.Name)
-	case session.KindCopilot:
-		return copilot.ManagedAlive(m.Name)
-	case session.KindCursor:
-		return cursor.ManagedAlive(m.Name)
-	case session.KindKiro:
-		return kiro.ManagedAlive(m.Name)
-	case session.KindLcpp:
-		return lcpp.ManagedAlive(m.Name)
-	case session.KindMuse:
-		return muse.ManagedAlive(m.Name)
-	}
-	return false
+	rt, ok := managedRuntimeOf(m.Kind)
+	return ok && rt.Alive(m.Name)
 }
 
 // managedBusy reports a managed session has a turn running or queued — the refusal
@@ -76,46 +75,16 @@ func ManagedAlive(m session.Meta) bool {
 // stop -> drain -> resume, and never happens while busy, which leaves the drain to the
 // user waiting for idle).
 func managedBusy(m session.Meta) bool {
-	switch m.Kind {
-	case session.KindOpencode:
-		return opencode.ManagedBusy(m.Name)
-	case session.KindCodex:
-		return codex.ManagedBusy(m.Name)
-	case session.KindCopilot:
-		return copilot.ManagedBusy(m.Name)
-	case session.KindCursor:
-		return cursor.ManagedBusy(m.Name)
-	case session.KindKiro:
-		return kiro.ManagedBusy(m.Name)
-	case session.KindLcpp:
-		return lcpp.ManagedBusy(m.Name)
-	case session.KindMuse:
-		return muse.ManagedBusy(m.Name)
-	}
-	return false
+	rt, ok := managedRuntimeOf(m.Kind)
+	return ok && rt.Busy(m.Name)
 }
 
 // managedInFlight reports that a managed session's handle holds an entry it took from its queue
 // and has not settled (the drivers' ManagedInFlight). Unlike managedBusy, input still queued
 // does not count.
 func managedInFlight(m session.Meta) bool {
-	switch m.Kind {
-	case session.KindOpencode:
-		return opencode.ManagedInFlight(m.Name)
-	case session.KindCodex:
-		return codex.ManagedInFlight(m.Name)
-	case session.KindCopilot:
-		return copilot.ManagedInFlight(m.Name)
-	case session.KindCursor:
-		return cursor.ManagedInFlight(m.Name)
-	case session.KindKiro:
-		return kiro.ManagedInFlight(m.Name)
-	case session.KindLcpp:
-		return lcpp.ManagedInFlight(m.Name)
-	case session.KindMuse:
-		return muse.ManagedInFlight(m.Name)
-	}
-	return false
+	rt, ok := managedRuntimeOf(m.Kind)
+	return ok && rt.InFlight(m.Name)
 }
 
 // dropManagedRuntime detaches a managed session from its runtime — the equivalent of the
@@ -123,21 +92,8 @@ func managedInFlight(m session.Meta) bool {
 // forget the handle. The conversation's source of truth (SQLite / rollout) stays intact,
 // so a resume reconnects to it.
 func dropManagedRuntime(m session.Meta) {
-	switch m.Kind {
-	case session.KindOpencode:
-		opencode.DropHandle(m.Name)
-	case session.KindCodex:
-		codex.DropHandle(m.Name)
-	case session.KindCopilot:
-		copilot.DropHandle(m.Name)
-	case session.KindCursor:
-		cursor.DropHandle(m.Name)
-	case session.KindKiro:
-		kiro.DropHandle(m.Name)
-	case session.KindLcpp:
-		lcpp.DropHandle(m.Name)
-	case session.KindMuse:
-		muse.DropHandle(m.Name)
+	if rt, ok := managedRuntimeOf(m.Kind); ok {
+		rt.Drop(m.Name)
 	}
 }
 
@@ -145,21 +101,8 @@ func dropManagedRuntime(m session.Meta) {
 // it. Only purging a trash archive calls it (through RemoveManagedLedger): halt, archive and
 // the trash itself keep it, because each of those can still be resumed.
 func removeManagedLedger(m session.Meta) {
-	switch m.Kind {
-	case session.KindOpencode:
-		opencode.RemoveLedger(m.Name)
-	case session.KindCodex:
-		codex.RemoveLedger(m.Name)
-	case session.KindCopilot:
-		copilot.RemoveLedger(m.Name)
-	case session.KindCursor:
-		cursor.RemoveLedger(m.Name)
-	case session.KindKiro:
-		kiro.RemoveLedger(m.Name)
-	case session.KindLcpp:
-		lcpp.RemoveLedger(m.Name)
-	case session.KindMuse:
-		muse.RemoveLedger(m.Name)
+	if rt, ok := managedRuntimeOf(m.Kind); ok {
+		rt.RemoveLedger(m.Name)
 	}
 	agents.DropHeld(m.Name, agents.DropTrashed)
 	dropPendingPeers(m.Name, "purged from the trash")
@@ -290,6 +233,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		sessions = append(sessions, wireSession(m, false))
 	}
 	pruneOverviewFacts(func(name string) bool { _, ok := metas[name]; return ok })
+	// An archived or deleted session is never wired again, so its background period would
+	// otherwise stay in the map for the life of the Agent.
+	pruneBackgroundSince(func(name string) bool { m, ok := metas[name]; return ok && !m.Archived })
 	// Surface ORPHAN sessions: a live claude_* tmux session with no meta. These are
 	// invisible to the meta-driven list above, so the auto-namer would reuse their
 	// name and HandleCreateSession then fails with "session already running" — a
@@ -769,579 +715,30 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // createSession is the create after its body is decoded, so a move can create its target
 // in-process with the name it booked (CreateReq.name).
 func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
-	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
-	// spawn regime hangs off it. Resolved here; the refusals run further down.
-	spawnParent := ""
-	if origin, _, parent := CreateOrigin(&req); origin == session.OriginSession {
-		spawnParent = parent
-		// The child has to be able to tell this instruction from one its user typed
-		// (ADR 0073 decision 14). Applied before the idempotency key is derived, so the key
-		// covers what is actually delivered, and here rather than in the calling tool so it
-		// cannot be omitted or forged.
-		req.InitialPrompt = SpawnEnvelope(parent, req.InitialPrompt)
+	c := &createRun{w: w, r: r, req: &req}
+	if !c.validateKind() || !c.claim() {
+		return
 	}
-	// Idempotency guard (session_idempotency.go): collapse a retried / concurrent create
-	// onto the first one so a client that timed out mid-launch can't spawn a duplicate.
-	idemKey := createIdempotencyKey(&req)
-	committed := false
-	if idemKey != "" {
-		durable := req.IdempotencyDurable && strings.TrimSpace(req.IdempotencyKey) != ""
-		if prev, dup := createLedger.begin(idemKey, durable); dup {
-			switch prev.state {
-			case createDone:
-				// The identical create already succeeded — replay that session verbatim.
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set(createKeyHeader, idemKey)
-				w.Header().Set(createOutcomeHeader, "created")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write(prev.body)
-			case createAbandoned:
-				// The caller gave this key up (abandon) and may have started over.
-				httpx.WriteErr(w, http.StatusConflict, "create_abandoned", "this create was abandoned by its caller")
-			case createRefused:
-				// A refused durable key stays refused, so this answer is as true as the first.
-				w.Header().Set(createKeyHeader, idemKey)
-				w.Header().Set(createOutcomeHeader, "refused")
-				httpx.WriteErr(w, http.StatusConflict, "create_refused", "a create under this key was refused; start over under a new key")
-			case createUnknown:
-				httpx.WriteErr(w, http.StatusServiceUnavailable, "create_outcome_unknown", "the outcome of an earlier create under this key is unknown")
-			default:
-				// The first create is still launching (the timed-out client's retry, or a
-				// genuine double-fire). Refuse with a distinct code the MCP tool reconciles
-				// into the eventual session rather than surfacing as a retryable failure.
-				httpx.WriteErr(w, http.StatusConflict, "create_in_progress",
-					"同じ内容のセッションを作成中です。完了までお待ちください")
-			}
-			return
-		}
-		// This request owns the key, so its answer is the outcome under it: say so in headers
-		// a proxy in between would not write (createOutcomeWriter).
-		w = &createOutcomeWriter{ResponseWriter: w, key: idemKey}
-		// We own the inflight entry: clear it on any non-committed exit so a real failure
-		// doesn't wedge the key (a completed entry is kept for replay by ledger.fail).
-		defer func() {
-			if !committed {
-				createLedger.fail(idemKey)
-			}
-		}()
+	defer c.settleClaim()
+	if !c.refuseStart() {
+		return
 	}
-	// writeCreated finalizes a successful launch: cache the session for idempotent replay,
-	// mark the key committed (so the defer above won't clear it), then write the response.
-	writeCreated := func(m session.Meta) {
-		body := wireSession(m, true)
-		if idemKey != "" {
-			if b, err := json.Marshal(body); err == nil {
-				createLedger.complete(idemKey, b)
-				committed = true
-			}
-		}
-		httpx.WriteJSON(w, http.StatusCreated, body)
+	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
+	// create that is not a spawn.
+	defer c.slot.release()
+	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.resolveWorkingCopy() || !c.identify() {
+		return
 	}
-	// slot is this create's claim on one of the parent's child slots. Empty for every route
-	// that is not a spawn, and then every method is a plain meta write.
-	slot := &spawnSlot{}
-	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
-	// (clone / worktree), so a refused spawn leaves nothing behind.
-	//
-	// After the claim, because they must not answer a RETRY. A client whose create timed out
-	// re-sends the same request, and by then the first child exists: run the budget first and
-	// the retry is refused as "you already have three" instead of being replayed the session it
-	// actually created. The same for a create still in flight — the ledger answers that with
-	// create_in_progress, which the calling tool reconciles into the eventual session.
-	//
-	// The working-copy check is not here: it needs the RESOLVED dir (below), not the raw one.
-	if spawnParent != "" {
-		if ref := SpawnCreateRefusal(spawnParent, req.Kind); ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-		if err := reserveSpawnSlot(spawnParent); err != nil {
-			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
-			return
-		}
-		// The slot is handed over to the child's meta as that meta is written (spawnSlot.publish
-		// — the two are one atomic step). The defer is the failure net: every path that ends
-		// without a meta.
-		slot = &spawnSlot{parent: spawnParent}
-		defer slot.release()
-	}
-	title, ok := CleanTitle(req.Title)
+	meta, ok := c.armMeta()
 	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
 		return
 	}
-	if req.Mode != "" && req.Mode != "normal" && req.Mode != "plan" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
-		return
-	}
-	if req.SpendCapUSD != nil {
-		if _, ok := session.NormalizeSpendCap(*req.SpendCapUSD); !ok {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_spend_cap", spendCapRangeMsg)
-			return
-		}
-	}
-	// "Ask for tool approval" is only accepted for kinds whose pending approvals can be
-	// answered from the Console (docs/log/76). Ignoring it silently would leave the caller
-	// believing the session runs with approvals on, so refusing is the honest answer.
-	// Skipping (true) is the historical default and stays allowed for every kind.
-	if req.SkipPermissions != nil && !*req.SkipPermissions && !AgentOf(NormalizeKind(req.Kind)).Caps().PermissionChoice {
-		httpx.WriteErr(w, http.StatusBadRequest, "permission_choice_unsupported",
-			"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true")
-		return
-	}
-	// Driver validation up-front, before any side effect (clone / worktree). The default
-	// tui is normalized to "" when persisted, keeping metas byte-identical to existing ones —
-	// except for a kind with no Terminal(CLI) route at all (ADR 0093 decision 2), where an
-	// unspecified driver has to default to managed instead: leaving it "" would silently try
-	// to launch a tui session with no pane program.
-	driver := strings.TrimSpace(req.Driver)
-	if driver == "" && AgentOf(NormalizeKind(req.Kind)).Caps().ManagedOnly {
-		driver = session.DriverManaged
-	}
-	switch driver {
-	case "", session.DriverTUI:
-		driver = ""
-	case session.DriverManaged:
-		// docs/log/27 P2/P3: only kinds registered in driverOf (opencode / codex); claude
-		// is out of scope (ADR 0015). A raw req.Kind can still turn into claude through
-		// NormalizeKind further down, so never decide on it — normalize here and keep
-		// using the normalized value.
-		if _, ok := managedDrivers[NormalizeKind(req.Kind)]; !ok {
-			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
-				"managed ドライバはこの kind では利用できません")
-			return
-		}
-	default:
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
-		return
-	}
-	// lcpp can be turned off by the user's own display setting (ui-prefs lcppEnabled,
-	// docs/log/105 §106.2). registry.ts's available() is only the signpost that hides it from
-	// the launch menus; this is the actual gate, reached the same way as the model-hidden
-	// guard below (Console, the schedule, MCP create_session, or a direct POST /sessions all
-	// funnel through here) so turning lcpp off cannot be bypassed by any of them.
-	if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && !uiprefs.LcppEnabled() {
-		httpx.WriteErr(w, http.StatusForbidden, "lcpp_disabled",
-			"llama.cpp は設定でオフになっています。設定 > エージェント > llama.cpp でオンにしてください。")
-		return
-	}
-	// lcpp has no CLI-picked "own default" the way codex/opencode do. This is not because
-	// llama-server itself demands a model name on every request — measured live
-	// (docs/log/107's 2026-09-21 addendum), a single-model instance ignores the request's own
-	// `model` field entirely (any string, or none, answers 200) — it is the Agent's own
-	// requirement: a router deployment (`--models-max`, ADR 0093 decision 7's own measured
-	// `role: "router"`) DOES dispatch on this field, the id pins the session to one entry of
-	// the model list the launch menu itself is built from (there is no vendor "tier alias" the
-	// way claude has), and it is the Console's only record of which model a conversation
-	// believes it is talking to (engines.go's lcppMemberReachable doc comment: a member
-	// swapping the LAN box under an unchanged URL is served by whatever loaded now, silently,
-	// unless something recorded the name it meant to use). So unlike every other kind,
-	// req.Model=="" is never a valid launch here, and letting it through used to reach worktree
-	// creation and the managed driver before failing, with the session left holding only the
-	// user's own first message (docs/log/109). Refused up front, before any side effect, the
-	// same place the disabled/hidden-model guards already sit.
-	if kind := NormalizeKind(req.Kind); kind == session.KindLcpp && strings.TrimSpace(req.Model) == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_model",
-			"llama.cpp セッションにはモデルの指定が必須です（CLI 自身の既定は存在しません）")
-		return
-	}
-	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every
-	// kind, before any side effect (clone / worktree). This create is reached not only from
-	// the Console launch flow but from the schedule (CP scheduler) and MCP create_session,
-	// and narrowing the catalog alone lets an explicit id through, so this guard is the
-	// real one.
-	if kind := NormalizeKind(req.Kind); ModelHidden(kind, req.Model) {
-		httpx.WriteErr(w, http.StatusBadRequest, "model_hidden", hiddenModelError(strings.TrimSpace(req.Model)))
-		return
-	}
-	// For kinds with a live catalog, drop the hidden models from the candidate set too:
-	// resolveLiveModel expands an unambiguous short name into the full id, so without that
-	// a short name like "fab" would resolve to an excluded model.
-	if NormalizeKind(req.Kind) == session.KindCodex && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCodex, codex.Models()))
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	} else if NormalizeKind(req.Kind) == session.KindCopilot && strings.TrimSpace(req.Model) != "" {
-		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCopilot, copilot.Models()))
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	} else if NormalizeKind(req.Kind) == session.KindOpencode && strings.TrimSpace(req.Model) != "" {
-		ids := VisibleModelIDs(session.KindOpencode, opencode.Models())
-		choices := make([]agents.ModelChoice, 0, len(ids))
-		for _, id := range ids {
-			choices = append(choices, agents.ModelChoice{ID: id, Label: id})
-		}
-		model, err := resolveLiveModel(req.Model, choices)
-		if err != nil {
-			// A retired model needs its own wording: with the typo message the user never
-			// reaches the cause, since the id and the billing route are both right and
-			// only opencode.ai stopped offering it (models.go Retired).
-			if requested := strings.TrimSpace(req.Model); opencode.Retired(requested) {
-				httpx.WriteErr(w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
-				return
-			}
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	} else if NormalizeKind(req.Kind) == session.KindLcpp && strings.TrimSpace(req.Model) != "" {
-		// Membership check only, for consistency with the other live-catalog kinds above —
-		// never a rejection of an explicit id just because the catalog could not be reached
-		// (LcppLiveModels nil, or the member/deployment engine not answering): resolveLiveModel
-		// itself passes an empty catalog straight through unchanged (docs/log/109), which is
-		// the right call here too — the create-time guard above already refused "no model at
-		// all"; this only catches a typo'd or since-retired id when the catalog IS known.
-		var choices []agents.ModelChoice
-		if LcppLiveModels != nil {
-			choices = FilterVisibleModels(session.KindLcpp, LcppLiveModels(r.Context()))
-		}
-		model, err := resolveLiveModel(req.Model, choices)
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
-			return
-		}
-		req.Model = model
-	}
-	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
-	// the parent) and use it as the CWD, so a decided task branches into its own dir +
-	// session without touching the parent's running sessions.
-	if req.Worktree {
-		parent := strings.TrimSpace(req.Dir)
-		if parent == "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "worktree requires dir (the parent working copy)")
-			return
-		}
-		if !filepath.IsAbs(parent) {
-			parent = filepath.Join(homeDir(), parent)
-		}
-		// SVN has no worktree analog (docs/log/41): isolate parallel work by checking out a
-		// different path into its own folder instead. Refuse a worktree launch here with a
-		// clear message rather than letting ensureWorktree fail on the missing .git.
-		if isSvnRepo(parent) {
-			httpx.WriteErr(w, http.StatusBadRequest, "svn_no_worktree",
-				"svn working copies have no worktree; check out a different path into its own folder instead")
-			return
-		}
-		var dir string
-		var err error
-		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch
-		if req.UseExisting {
-			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
-			// remote) into the worktree. Reached from the launch dialog's existing-branch mode
-			// and from the SCM branch actions, as well as from a name collision.
-			base := strings.TrimSpace(req.Branch)
-			// git holds a branch in one worktree at a time. Refuse BEFORE any directory or
-			// fetch side effect, naming the copy that has it — worktree add would fail
-			// halfway through otherwise, with a message that doesn't say what to do next.
-			if occ := gitx.WorktreeBranches(parent)[base]; occ != "" {
-				gitx.WriteBranchInUse(w, base, occ)
-				return
-			}
-			gitx.EnsureBranchRef(parent, base) // branch pushed since our last fetch => fetch once
-			dir, err = gitx.EnsureWorktree(parent, base, "", "")
-			if err == nil {
-				gitx.FastForwardWorktree(dir) // start at the branch's current tip, not a stale one
-			}
-		} else {
-			// Branch naming is deferred: unless the client sends an explicit name we
-			// start on a throwaway branch temp/<slug> in a wip-<slug> folder (same
-			// slug). The user (or the LLM suggestion) renames the branch later — the
-			// folder stays put, so the session id holds.
-			nb := strings.TrimSpace(req.NewBranch)
-			if nb == "" {
-				slug := randSlug() // random → skip the collision check
-				nb = "temp/" + slug
-				folderSeg = "wip-" + slug
-			} else if local, remote := gitx.BranchNameStatus(parent, nb); local {
-				// A same-named local branch: -b would fail anyway, but stop with a clear
-				// message rather than git's raw error, and let the user pick another name.
-				httpx.WriteErr(w, http.StatusConflict, "branch_exists",
-					fmt.Sprintf("branch %q already exists locally; choose another name", nb))
-				return
-			} else if remote {
-				// A same-named PAST remote branch: -b would silently create a divergent
-				// local branch that collides at push. Refuse and let the user rename or
-				// work on the existing one (use_existing).
-				httpx.WriteErr(w, http.StatusConflict, "branch_exists_remote",
-					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
-				return
-			}
-			var start string
-			start, err = gitx.NewWorktreeStartPoint(parent, req.Branch) // base pushed since our last fetch => fetch once
-			if err == nil && strings.TrimSpace(req.NewBranch) != "" {
-				// The fetch above may have just brought in a same-named remote branch the
-				// check before it could not see; ask again (local refs only, no network).
-				if _, remote := gitx.BranchNameStatus(parent, nb); remote {
-					httpx.WriteErr(w, http.StatusConflict, "branch_exists_remote",
-						fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
-					return
-				}
-			}
-			if err == nil {
-				dir, err = gitx.EnsureWorktree(parent, start, nb, folderSeg)
-			}
-			if err == nil {
-				// Start at origin's tip, the same intent as fastForwardWorktree on the
-				// existing-branch path. An empty base means the parent's HEAD is the start
-				// point, so pull using the parent's current branch name.
-				base := strings.TrimSpace(req.Branch)
-				if base == "" {
-					// GitCurrentBranch answers "(detached)" when detached: there is
-					// nothing to pull from, so do nothing (passing that as a branch name
-					// only produces a confusing log line).
-					if b := gitx.GitCurrentBranch(parent); b != "(detached)" {
-						base = b
-					}
-				}
-				gitx.FastForwardNewWorktreeToOrigin(dir, base)
-			}
-		}
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
-			return
-		}
-		req.Dir = dir
-	} else if strings.TrimSpace(req.RemoteURL) != "" {
-		// Clone-then-start: ensure the repo exists and use it as the working dir.
-		dir, err := gitx.EnsureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadGateway, "clone_failed", err.Error())
-			return
-		}
-		req.Dir = dir
-	}
-	if req.Dir == "" {
-		req.Dir = homeDir()
-	} else if !filepath.IsAbs(req.Dir) {
-		// A relative dir (e.g. "projects/x" from the New Session directory picker) is
-		// resolved against home, mirroring the fs/tree browser's home-relative paths.
-		req.Dir = filepath.Join(homeDir(), req.Dir)
-	}
-	if fi, err := os.Stat(req.Dir); err != nil || !fi.IsDir() {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
-		return
-	}
-	// Two agents in one working copy (ADR 0073 decision 7). Checked HERE, against the resolved
-	// req.Dir, because that is the directory the session will actually run in: an empty dir
-	// becomes home and a relative one is joined onto home a few lines above, so comparing the
-	// raw request would let `dir: ""` walk straight past a session already running in home.
-	// A worktree launch has replaced req.Dir with the fresh worktree by now and cannot collide,
-	// which is why the check is scoped to the non-worktree case rather than the raw flag.
-	if spawnParent != "" && !req.Worktree {
-		ref, sharedDir := spawnWorkingCopyCheck(req.Dir, spawnParent, req.AllowSharedWorkingCopy)
-		if ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-		if sharedDir != "" {
-			// Launch through the canonical spelling so Meta.Dir matches what the delete and
-			// checkout guards compare, and tell the child it is not alone in the checkout. Taken
-			// from the check's own answer: a second liveness read could disagree.
-			req.Dir = sharedDir
-			req.InitialPrompt = SharedWorkingCopyWarning(spawnParent, req.InitialPrompt)
-		}
-	}
-	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.
-	// Validated AFTER Dir so a worktree launch checks the path inside the fresh worktree
-	// — the parent may well have a folder the new branch doesn't (or vice versa).
-	subdir, subdirOK := session.CleanSubdir(req.Subdir)
-	if !subdirOK {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir",
-			"subdir must be a relative path inside the working copy: "+req.Subdir)
-		return
-	}
-	if subdir != "" && !session.DirExists(filepath.Join(req.Dir, filepath.FromSlash(subdir))) {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_subdir",
-			"subdir does not exist: "+filepath.Join(req.Dir, filepath.FromSlash(subdir)))
-		return
-	}
-
-	// Identity is a freshly allocated random slug — NOT the client's name. It (and the
-	// sid it derives) can't collide with an archived/pruned session's jsonl, so a new
-	// session never accidentally --resumes a past conversation.
-	name := req.name
-	if name == "" {
-		name = allocSessionName(req.Dir)
-	} else if _, taken := session.ReadMeta(name); taken {
-		// A move's booked name is held against every allocation; a meta under it anyway is
-		// another session, which a create must never overwrite.
-		httpx.WriteErr(w, http.StatusConflict, "name_taken", "a session named "+name+" already exists")
-		return
-	}
-	// publish writes the meta. A move's target is written checked: the move commits, and stops
-	// its source, on the strength of that meta, and a target running without one is listed
-	// nowhere. Its first prompt follows the write, so a failed write leaves a target that has
-	// not been told to work.
-	publish := func(m session.Meta) bool {
-		if req.name == "" {
-			slot.publish(m)
-			return true
-		}
-		if err := writeMoveTargetMeta(m); err != nil {
-			log.Printf("move target %s: writing its meta: %v", name, err)
-			httpx.WriteErr(w, http.StatusInternalServerError, errCodeMetaWriteFailed, "the session started but its meta could not be written: "+err.Error())
-			return false
-		}
-		return true
-	}
-
-	kind := NormalizeKind(req.Kind)
-	// An SSM session with no client title defaults to "{host alias} @MMDD-HHMM" — a
-	// human-meaningful "target + timestamp" name (vs the generic {home-basename} @… fallback).
-	if kind == session.KindSSM && title == "" {
-		title = ssmDefaultTitle(req.SSMAlias, req.SSMTarget, time.Now())
-	}
-	label := ""
-	if AgentOf(kind).Caps().UsesLabel {
-		label = sessionLabelFor(req.Dir, title, name)
-	}
-	var ssm *session.SSMMeta
-	if kind == session.KindSSM {
-		if strings.TrimSpace(req.SSMTarget) == "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
-			return
-		}
-		ssm = &session.SSMMeta{
-			Profile: req.SSMProfile, Target: req.SSMTarget, Document: req.SSMDocument,
-			Region: req.SSMRegion, StartURL: req.SSOStartURL, SSORegion: req.SSORegion,
-			AccountID: req.SSOAccountID, RoleName: req.SSORoleName,
-			RoleARN: req.SSMRoleARN, SourceProfile: req.SSMSourceProfile, ExternalID: req.SSMExternalID,
-			RoleSessionName: req.SSMRoleSessionName, DurationSeconds: req.SSMDurationSeconds,
-		}
-		if ssm.Region == "" {
-			ssm.Region = ssm.SSORegion
-		}
-	}
-	studio := strings.TrimSpace(req.Studio)
-	if studio != "" {
-		// A studio is bound by a person pressing "attach an agent" in the studio pane. A session
-		// raising a child must not hand it someone's studio: the binding is what the studio's
-		// draft tools trust.
-		if spawnParent != "" {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_studio", "a session cannot start a session bound to an image studio")
-			return
-		}
-		if !paths.ValidIDSegment(studio) {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_studio", "invalid studio id: "+studio)
-			return
-		}
-	}
-	origin, originConv, originSession := CreateOrigin(&req)
-	meta := session.Meta{
-		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
-		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
-		Origin: origin, OriginConv: originConv, OriginSession: originSession,
-		Studio: studio, WorkItem: cleanWorkItemRef(req.WorkItem),
-	}
-	// pending from the first write of the meta: the pane must not offer a resend while the
-	// delivery below may still be typing (ADR 0100 decision 2).
-	if strings.TrimSpace(req.InitialPrompt) != "" {
-		meta.InitialPromptState = session.InitialPromptPending
-	}
-	// Armed here, before either launch path delivers the initial prompt (docs/log/85): the
-	// arm's instant is also the lower bound its completion evidence is cut by, and the launch
-	// task is precisely the work it is waiting for the end of.
-	if req.StopAfterTurn {
-		meta.StopAfterTurnAt = meta.CreatedAt
-	}
-	meta.SpendCapUSD = session.DefaultSpendCap()
-	if req.SpendCapUSD != nil {
-		meta.SpendCapUSD, _ = session.NormalizeSpendCap(*req.SpendCapUSD) // validated above
-	}
-	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
-	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
-	// one with report_to. Placed before the managed / tui split so both launch paths carry
-	// the same line.
-	if req.ReportTo != "" || req.delivery() != nil {
-		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
-	}
-	// The studio's own `session` is written BEFORE the session is published or launched (ADR
-	// 0100 decision 2 ③): a Managed create sends the persona synchronously below, and its first
-	// get_image_studio is refused unless the studio already names this session back.
-	if studio != "" {
-		if ref := bindStudioOnCreate(studio, meta); ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-	}
-	if meta.DriverKind() == session.DriverManaged {
-		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
-		// runtime. The first prompt needs no boot-screen scraping and can just be sent
-		// (§10.2-9 — idempotent through ClientMessageID).
-		d, _ := driverOf(meta)
-		h, err := mcpx.StartManagedSession(d, meta)
-		if err != nil {
-			unbindStudioAfterFailedLaunch(studio, name)
-			writeRuntimeErr(w, err)
-			return
-		}
-		if !publish(meta) {
-			return
-		}
-		recordFleetGraphBirth(meta)
-		req.managed = true
-		noteCreateOrigin(name, &req, spawnParent, origin)
-		// The row stays either way: a failed launch task is reported as before.
-		defer chatx.MarkInstrSent(name, req.instr)
-		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
-			if err := h.Send(agents.TurnInput{Prompt: p, Origin: createTurnOrigin(&req, spawnParent),
-				Instr: req.instr, Schedule: scheduleRefOf(req.Source, req.ScheduleID, req.ScheduleSlot)}); err != nil {
-				log.Printf("managed initial prompt %s: %v", name, err)
-				meta.InitialPromptState = session.InitialPromptFailed
-			} else {
-				markSessionWorking(name)
-				meta.InitialPromptState = session.InitialPromptDelivered
-			}
-			settleInitialPrompt(name, meta.InitialPromptState)
-		}
-		writeCreated(meta)
-		return
-	}
-	if err := launchTmuxFn(meta, req.SSMForceLogin); err != nil {
-		unbindStudioAfterFailedLaunch(studio, name)
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return
-	}
-	if !publish(meta) {
-		return
-	}
-	recordFleetGraphBirth(meta)
-
-	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
-	// against, and the turn can appear first (see noteCreateOrigin).
-	noteCreateOrigin(name, &req, spawnParent, origin)
-	// Optional launch task: deliver it once the CLI has booted (async — the create
-	// response returns the session immediately so the caller can start polling).
-	if strings.TrimSpace(req.InitialPrompt) != "" {
-		go deliverInitialPromptFn(name, req.InitialPrompt)
-	}
-
-	writeCreated(meta)
+	c.launch(meta)
 }
 
-// noteCreateOrigin remembers who a new session's launch task came from, so the mirror can badge
-// its first user turn instead of rendering it as something the user typed.
-//
-// It must run BEFORE either launch path delivers the prompt. The record is matched to the turn
-// by text when the turn appears, and delivery is asynchronous on the tui path and immediate on
-// the managed one — recording afterwards is a race that loses the badge exactly when the turn
-// arrives quickly. (It used to sit after delivery on both paths; ADR 0073 decision 14 moved it,
-// which is also what badgeOriginOf's comment was written in anticipation of.)
-//
-// docs/log/51 Phase 2: the instruction ledger row is raised only for report_to — even with no
-// initial_prompt, because the operator may steer the session by hand afterwards. The other two
-// branches record provenance only; there is nowhere for them to report to.
-// deliverInitialPromptFn is deliverInitialPrompt behind a seam. The ordering above — record,
-// THEN deliver — is a requirement, not an incidental line order (ADR 0073 decision 14), and the
-// only way to observe it from a test is to be the delivery.
+// deliverInitialPromptFn is deliverInitialPrompt behind a seam. The ordering noteCreateOrigin
+// documents — record, THEN deliver — is a requirement, not an incidental line order (ADR 0073
+// decision 14), and the only way to observe it from a test is to be the delivery.
 var deliverInitialPromptFn = deliverInitialPrompt
 
 // createTurnOrigin is the TurnInput origin of create_session's initial prompt. It follows
@@ -1369,6 +766,18 @@ func (req *CreateReq) delivery() *chatx.ScheduleDelivery {
 	return d
 }
 
+// noteCreateOrigin remembers who a new session's launch task came from, so the mirror can badge
+// its first user turn instead of rendering it as something the user typed.
+//
+// It must run BEFORE either launch path delivers the prompt. The record is matched to the turn
+// by text when the turn appears, and delivery is asynchronous on the tui path and immediate on
+// the managed one — recording afterwards is a race that loses the badge exactly when the turn
+// arrives quickly. (It used to sit after delivery on both paths; ADR 0073 decision 14 moved it,
+// which is also what badgeOriginOf's comment was written in anticipation of.)
+//
+// docs/log/51 Phase 2: the instruction ledger row is raised only for report_to — even with no
+// initial_prompt, because the operator may steer the session by hand afterwards. The other two
+// branches record provenance only; there is nowhere for them to report to.
 func noteCreateOrigin(name string, req *CreateReq, spawnParent, origin string) {
 	hasPrompt := strings.TrimSpace(req.InitialPrompt) != ""
 	switch {
@@ -1558,6 +967,12 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkUnsupportedKind, "this session type does not support forking")
 		return
 	}
+	// The fork launches a new process of this kind: refuse it, with the reason, while its CLI is
+	// missing, before anything is created.
+	if ref := startRefusal(src.Kind); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	// "Does point-forking exist at all" depends only on the request, so answer it before
 	// looking at the conversation's state. Later on, an `at` sent to an unsupported kind
 	// would come back with an unrelated reason such as "no conversation to fork yet",
@@ -1583,9 +998,15 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// never starts working.
 	// Stop when this fails: "asked for a point, got the whole conversation forked" arrives
 	// with plausible-looking history, so the user cannot notice the breakage.
-	var forkAt string
+	var forkAt, pinned string
 	if req.At != "" {
-		at, err := resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		var at string
+		var err error
+		if p, ok := ag.(agents.ForkAtPinner); ok {
+			at, pinned, err = p.ResolveForkAtPinned(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		} else {
+			at, err = resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
+		}
 		if err != nil {
 			code := errCodeForkBadAnchor
 			if errors.Is(err, agents.ErrForkAtRoute) {
@@ -1599,6 +1020,13 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	forkFrom, err := forker.ForkSource(src)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
+		return
+	}
+	// The point was resolved against `pinned`; forking another conversation with it (or, for a
+	// point that means "everything", forking one the user did not look at) is refused.
+	if pinned != "" && forkFrom != pinned {
+		httpx.WriteErr(w, http.StatusConflict, errCodeForkBadAnchor,
+			"the conversation changed while the fork point was being resolved; pick the message again")
 		return
 	}
 	forkName := allocSessionName(src.Dir)
@@ -1723,6 +1151,7 @@ func ForgetRuntime(m session.Meta) {
 	status.Remove(sid)
 	status.RemoveExit(m.Name)
 	status.RemoveCarried(sid)
+	status.RemoveRestoreNotes(sid)
 }
 
 // RemoveManagedLedger is removeManagedLedger for package main. The trash keeps the ledger (a
@@ -1995,6 +1424,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// Before the old identity is archived and killed: a recreate whose CLI is missing would only
+	// fail after destroying the running session.
+	if ref := startRefusal(m.Kind); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
 	// Captured BEFORE the kill below, same reason as HandleArchiveSession: once Archived is
@@ -2035,7 +1470,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
-		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
+		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
@@ -2118,6 +1553,7 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
+		MuseContributorMode: src.MuseContributorMode,
 		// The budget value carries over, the hit does not: the fork's spend starts from the
 		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
 		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),

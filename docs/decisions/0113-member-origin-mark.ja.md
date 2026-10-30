@@ -2,11 +2,15 @@
 
 [English](0113-member-origin-mark.md) | 日本語
 
-- Status: **accepted**（2026-10-12）。#1997 で実装：CP が中継する 3 ルートに署名し
-  （`control-plane/member_origin.go`）、Agent が検証して（`workspace/agent/internal/memberorigin`）、
-  メンバー専用のメモリ書き込みに印を必須とした。**エンドツーエンドでは未検証**：実装した Workspace では
-  実際の CP↔Agent を動かせなかった。両側は共通のワイヤーベクタでテストしている。
-- Tracking: #1997。Follow-ups: #2014。関連：[0108](0108-af-owned-agent-memory.ja.md) 決定 4・8（スイッチと、承認手順が境界に
+- Status: **accepted**（2026-10-12）。#1997 で実装し、最初のリリースは v0.31.0。#2014 と #2076（v0.31.0）、および v0.32.0 の 7 ルート
+  （設定の書き込みとメモリレビューの実行は #2348、提案の決定は #2353）で拡張した：CP が中継する 17 ルート（`control-plane/member_origin.go` の `memberOriginRoutes`。bundle の取り込みは本文のハッシュで署名）と、
+  CP 自身が行う引き継ぎの push に署名し、Agent が検証して（`workspace/agent/internal/memberorigin`）、メンバー専用の
+  書き込みに印を必須とした。`restore`、`claude-import`、`muse-import`、`claude-export` は決定により開いたまま
+  （2026-10-14 の注）。実際の CP と Agent で印を動かしているのは `e2e/handoff_test.go`（引き継ぎ push）と、
+  デプロイ済みの Console で Workspace の再起動後にメンバーが確かめた作成・編集・ピン留め（#1997）。
+  **本物のフリートで未確認：** 重なって動く Fargate の 2 タスク（#2018）、ブラウザからの大きな bundle のアップロード、
+  ほかの署名ルートの否定側の対照。両側は共通のワイヤーベクタでテストしている。
+- Tracking: #1997。Follow-ups: #2018（開いている：重なって動く Fargate の 2 タスク間での再生）。#2014 と #2076 はクローズ済み。関連：[0108](0108-af-owned-agent-memory.ja.md) 決定 4・8（スイッチと、承認手順が境界に
   ならない理由）／[0102](0102-aws-login-through-the-console.ja.md)（ルートが呼び手を区別できないときに結果を
   人の操作に結び付ける）／[07-security §7.2・§7.5](../build/07-security.ja.md)。
 
@@ -183,3 +187,9 @@ Follow-ups: #2076
   書き換えられる。印が決めるのは誰が import を始められるかであり、検証から読み込みまでの間の同一 uid による書き換えから
   取り込まれるバイトを守るものではない。ストアへの直接書き込みと同じ限界（脅威モデル「印がしないこと」）であり、新しい能力ではない。
   開いた／unlink 済みの記述子も `/proc/<pid>/fd` から開けるため、コードでは塞がない。
+
+## 追記 2026-10-25: Agent の import 上限を CP の退避上限に合わせて丸める (#2489)
+
+上の 130 MiB の退避上限は固定値だが、`AF_MEMORY_IMPORT_MAX` は Agent 側の設定なので、multipart 本文が 130 MiB を超える値にすると
+Agent に届く前に CP が 413 で断っていた。Agent は設定値を 128 MiB（130 MiB から multipart 用に予約した 1 MiB を引き、さらに 1 MiB の余裕を持たせた値）に
+丸め、警告を 1 回ログに出す。CP の上限は変えない。2 つのモジュールは定数を共有できないので、それぞれのテストで組を固定する。

@@ -18,6 +18,9 @@
 //   - talk    : full-text search over what was said in this workspace's sessions, every kind,
 //               running, stopped and archived (ADR 0110, GET /session-search). Server-filtered per
 //               keystroke like `file`; a hit opens its session scrolled to that turn.
+//   - memory  : Agent Fleet's own agent memory (ADR 0108): names and descriptions at once, text
+//               after a pause (member-search). Offered only while the memory switch is on. A hit
+//               opens Settings > Agent memory with that memory picked.
 //   - sfiles  : the files the ACTIVE session's agent edited (docs/log/68), joined with the
 //               working tree the same way the mirror's changed-files strip joins them.
 //               A different axis from `changed`, which is per working copy and cannot
@@ -31,7 +34,7 @@
 // on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command/opening
 // a file does NOT restore — it may move focus deliberately (e.g. focus a pane).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Kbd } from "../../ui/Kbd.tsx";
+import { Kbd, chordText } from "../../ui/Kbd.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { toast } from "../../ui/toast.ts";
 import { paletteCommands } from "../../lib/keys/registry.ts";
@@ -46,7 +49,7 @@ import { openSessionSearchHit, searchSessions, type SessionSearchHit, type Sessi
 import { useLayoutStore } from "../../layout/store.ts";
 import { useKeysStore } from "./store.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER, APP_PALETTE } from "./bindings.ts";
-import { eventChordString } from "../../lib/keys/chords.ts";
+import { eventChordString, reverseChord } from "../../lib/keys/chords.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -70,9 +73,14 @@ import { ensureWorkItems } from "../workitems/store.ts";
 import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { activePane } from "../../layout/ops.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { useSettingsUI } from "../settings/store.ts";
+import { keyOf, matchMemories, memoryTarget } from "../settings/memory/memorySearch.ts";
+import type { MemoryListed, MemorySearchHit } from "../settings/memory/memoryTypes.ts";
+import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPalette.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
-import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { sessionFolder, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
 import {
@@ -87,8 +95,8 @@ import {
 // `sessions` = the session list; `sfiles` = the active session's changed files. Their UI
 // labels are easy to confuse as well ("sessions" / "this session's changes"), so the mode
 // ids are kept deliberately unalike.
-type Mode = "sessions" | "command" | "changed" | "file" | "talk" | "sfiles";
-const MODES: Mode[] = ["sessions", "command", "changed", "file", "talk", "sfiles"];
+type Mode = "sessions" | "command" | "changed" | "file" | "talk" | "memory" | "sfiles";
+const MODES: Mode[] = ["sessions", "command", "changed", "file", "talk", "memory", "sfiles"];
 const MODE_LABEL: Record<Mode, MsgKey> = {
   sessions: "keys.palette.mode_sessions",
   command: "keys.palette.mode_command",
@@ -96,12 +104,15 @@ const MODE_LABEL: Record<Mode, MsgKey> = {
   sfiles: "keys.palette.mode_session",
   file: "keys.palette.mode_file",
   talk: "keys.palette.mode_talk",
+  memory: "keys.palette.mode_memory",
 };
 // Modes whose list the backend already filtered by the query: the client-side fuzzy filter
 // would only drop hits the server matched for reasons the row text does not show.
-const SERVER_FILTERED: ReadonlySet<Mode> = new Set<Mode>(["file", "talk"]);
+const SERVER_FILTERED: ReadonlySet<Mode> = new Set<Mode>(["file", "talk", "memory"]);
 // How often talk mode asks again while the Agent reports a first indexing pass in progress.
 const TALK_REPOLL_MS = 3000;
+// Memory mode: pause after the last keystroke before the body search is asked (the Memories view's own is 300).
+const MEMORY_SEARCH_MS = 250;
 // File search is rooted at ~/repos: the working-copy scope, so results are code files (the
 // backend excludes caches/packages), shown repo-relative like the changed-files mode.
 const FILE_ROOT = "repos";
@@ -125,6 +136,8 @@ interface Item {
   /** Set on a row of the talk mode: the row renders the hit (kind icon, session, when, and the
    * matching text) instead of the plain title + sub pill. */
   hit?: SessionSearchHit;
+  /** Set on a row of the memory mode: the row renders the memory (scope, pin, matching text). */
+  memory?: { m: MemoryListed; snippet?: string };
   /** Sessions mode: how deep the row sits under its family's root (0 = a root). Drawn as
    * indentation only while the query is empty; a filtered list is flat. */
   depth?: number;
@@ -275,7 +288,7 @@ function talkItem(h: SessionSearchHit, running: boolean): Item {
 function TalkRowBody({ h }: { h: SessionSearchHit }) {
   return (
     <>
-      <span className={"sess-kic kind-" + kindClass(h.kind)} title={kindLabel(h.kind)}>
+      <span className={"sess-kic " + kindClasses(h.kind)} title={kindLabel(h.kind)}>
         <Icon name={kindIcon(h.kind)} />
       </span>
       <span className="cp-talk-main">
@@ -290,6 +303,38 @@ function TalkRowBody({ h }: { h: SessionSearchHit }) {
         <span className="cp-talk-snippet">{h.snippet}</span>
       </span>
     </>
+  );
+}
+
+// One memory → a palette row. Enter opens Settings > Agent memory with it picked; a dialog has no
+// second pane to split into, so Ctrl/⌘+Enter does the same.
+function memoryItem(m: MemoryListed, snippet?: string): Item {
+  const where = m.scope === "user" ? t("keys.palette.memory_user") : (m.project?.display ?? "");
+  return {
+    id: `memory:${m.scope}:${m.project?.id ?? ""}:${m.name}`,
+    title: m.name,
+    sub: where,
+    search: m.name,
+    keys: [],
+    memory: { m, snippet },
+    run: () => useSettingsUI.getState().openSettings("memory:memories", { target: memoryTarget(m) }),
+  };
+}
+
+// The memory row's body: name, where it applies and its type, then the line that matched in its
+// text if that is what found it, else its description.
+function MemoryRowBody({ it }: { it: Item }) {
+  const { m, snippet } = it.memory!;
+  return (
+    <span className="cp-talk-main">
+      <span className="cp-talk-head">
+        {m.pinned && <Icon name="pinned" title={t("mem.md_f_pinned")} />}
+        <span className="cp-title">{m.name}</span>
+        <span className="cp-sub">{it.sub}</span>
+        {m.type && <span className="cp-talk-meta">{m.type}</span>}
+      </span>
+      <span className="cp-talk-snippet">{snippet || m.description}</span>
+    </span>
   );
 }
 
@@ -351,7 +396,7 @@ function SessionRowBody({ s, refHit, parentName }: { s: Session; refHit?: string
     <>
       {/* The rail's own kind square (sessions.css .sess-kic) — reused rather than
           restyled, so a new agent kind gets its colour here for free. */}
-      <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+      <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="cp-title">{displayName(s)}</span>
@@ -405,6 +450,14 @@ export function CommandPalette() {
   const [talk, setTalk] = useState<SessionSearchResult | null>(null); // null = searching (talk mode)
   const [talkErr, setTalkErr] = useState<string | null>(null); // the search could not run, and why
   const [talkRetry, setTalkRetry] = useState(0); // bumped by the retry button to run it again
+  const memoryOn = useSettings().agentMemory; // the opt-in switch (ADR 0108): off = no memory mode
+  const [memList, setMemList] = useState<MemoryList | null>(null); // null = loading (memory mode)
+  const [memHits, setMemHits] = useState<MemorySearchHit[]>([]); // body-search answer for `q`
+  const [memBusy, setMemBusy] = useState(false); // a body search is in flight
+  const [memListErr, setMemListErr] = useState<string | null>(null); // the list could not be read, and why
+  const [memSearchErr, setMemSearchErr] = useState<string | null>(null); // the body search could not run, and why
+  const memErr = memListErr ?? memSearchErr;
+  const [memRetry, setMemRetry] = useState(0); // bumped by the retry button / Enter to run both again
   // The session list's order is frozen (as an array of names) the moment the palette opens.
   // List polling keeps running while it is open, and one session entering the question
   // state reorders everything; since the selection is an index, the row under the cursor
@@ -417,13 +470,16 @@ export function CommandPalette() {
   const activeSessionName = activePane(layout)?.session ?? null;
   const activeKind = sessions.find((x) => x.name === activeSessionName)?.kind;
   const modes = MODES.filter(
-    (m) => m !== "sfiles" || (!!activeSessionName && !!activeKind && agentOf(activeKind).caps.transcript),
+    (m) =>
+      (m !== "sfiles" || (!!activeSessionName && !!activeKind && agentOf(activeKind).caps.transcript)) &&
+      (m !== "memory" || memoryOn),
   );
 
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const selRef = useRef<HTMLDivElement | null>(null);
   const modeTabRef = useRef<HTMLButtonElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const close = () => useKeysStore.getState().closePalette();
   // Cancel = close without running anything → hand focus back to whoever opened us.
@@ -555,6 +611,62 @@ export function CommandPalette() {
     [talk, running],
   );
 
+  // Switched off while the palette is on the memory mode: its tab is gone, so leave the mode.
+  useEffect(() => {
+    if (open && mode === "memory" && !memoryOn) setMode("sessions");
+  }, [open, mode, memoryOn]);
+
+  // Memory mode reads the list once per entry (the fields a query is matched against at once), and
+  // asks the body search per keystroke, debounced like talk. Both live in the workspace's Agent, so
+  // a stopped workspace asks nothing and the mode says why. A failure is kept apart from an empty
+  // answer: "no match" is a claim about the memories, and a search that never ran cannot make it.
+  const memoryLive = open && mode === "memory" && memoryOn && running;
+  useEffect(() => {
+    if (!memoryLive) return;
+    const ctl = new AbortController();
+    setMemList(null);
+    setMemListErr(null);
+    loadMemoryList(ctl.signal)
+      .then((l) => !ctl.signal.aborted && setMemList(l))
+      .catch((e: unknown) => {
+        if (ctl.signal.aborted) return;
+        setMemList({ entries: [], withheld: 0 });
+        setMemListErr(e instanceof Error ? e.message : String(e));
+      });
+    return () => ctl.abort();
+  }, [memoryLive, memRetry]);
+  useEffect(() => {
+    setMemHits([]); // an older query's lines must not sit under a newer one
+    setMemSearchErr(null);
+    const query = q.trim();
+    if (!memoryLive || !query) {
+      setMemBusy(false);
+      return;
+    }
+    const ctl = new AbortController();
+    setMemBusy(true);
+    const timer = setTimeout(() => {
+      searchMemoryBodies(query, ctl.signal)
+        .then((h) => !ctl.signal.aborted && setMemHits(h))
+        .catch((e: unknown) => {
+          if (!ctl.signal.aborted) setMemSearchErr(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => !ctl.signal.aborted && setMemBusy(false));
+    }, MEMORY_SEARCH_MS);
+    return () => {
+      ctl.abort();
+      clearTimeout(timer);
+    };
+  }, [memoryLive, q, memRetry]);
+  const memoryItems = useMemo<Item[]>(() => {
+    const query = q.trim().toLowerCase();
+    // A list read while the workspace ran outlives it: rows hidden behind the stopped message must
+    // not stay runnable, or Enter would open one.
+    if (!running || !memList || !query) return [];
+    const snippets = new Map(memHits.map((h) => [keyOf(h), h.snippets?.[0]]));
+    return matchMemories(memList.entries, memHits, query).map((m) => memoryItem(m, snippets.get(keyOf(m))));
+  }, [memList, memHits, q, running, locale]);
+
   // The session list, ordered by the `order` frozen when the palette opened.
   //  - A session missing from `order` (born while open) goes to the foot. Slotting it into
   //    the middle would cause exactly the row-swapping-under-the-cursor the freeze prevents.
@@ -639,7 +751,8 @@ export function CommandPalette() {
     (mode === "changed" && changed === null) ||
     (mode === "sfiles" && sessionFiles === null) ||
     (mode === "file" && fileHits === null && !!q.trim()) ||
-    (mode === "talk" && talk === null && !!q.trim());
+    (mode === "talk" && talk === null && !!q.trim()) ||
+    (mode === "memory" && running && !!q.trim() && !memErr && (memList === null || (memBusy && memoryItems.length === 0)));
   const items =
     mode === "sessions"
       ? q.trim()
@@ -653,7 +766,9 @@ export function CommandPalette() {
             ? (sessionFiles ?? [])
             : mode === "talk"
               ? talkItems
-              : (fileHits ?? []);
+              : mode === "memory"
+                ? memoryItems
+                : (fileHits ?? []);
   // A ticket-shaped query (#1665) finds the sessions tied to that reference first, whole-token
   // only; the fuzzy pass still runs for the rest, so `1662` keeps finding `feature/1662-…`.
   const filtered = useMemo(() => {
@@ -683,6 +798,13 @@ export function CommandPalette() {
         setSel(i);
         return;
       }
+      // The row is gone and the list shrank below the index: pull it back to the last row, or
+      // Enter acts on nothing until an arrow key. An empty list ends at 0, never -1.
+      const last = Math.max(0, filtered.length - 1);
+      if (i < 0 && sel > last) {
+        setSel(last);
+        return;
+      }
     }
     selTrack.current = { id: filtered[sel]?.id ?? null, q, mode, list: filtered };
   }, [filtered, sel, q, mode]);
@@ -708,6 +830,15 @@ export function CommandPalette() {
   const cycleMode = (dir: number) => {
     const i = modes.indexOf(mode);
     switchMode(modes[(i + dir + modes.length) % modes.length]);
+  };
+
+  // The hint names the chord that is bound right now: a rebind or macOS changes the text, and
+  // "Shift: back" is advertised only when the bound chord has a Shift twin to go backwards with.
+  const modeHint = () => {
+    const bound = boundChord(APP_PALETTE);
+    if (!bound) return t("keys.palette.mode_hint_tab");
+    const chord = chordText(bound);
+    return t(reverseChord(bound) ? "keys.palette.mode_hint" : "keys.palette.mode_hint_nobackward", { chord });
   };
 
   if (!open) return null;
@@ -745,7 +876,9 @@ export function CommandPalette() {
                     ? "keys.palette.placeholder_file"
                     : mode === "talk"
                       ? "keys.palette.placeholder_talk"
-                      : "keys.palette.placeholder",
+                      : mode === "memory"
+                        ? "keys.palette.placeholder_memory"
+                        : "keys.palette.placeholder",
           )}
           aria-label={t("keys.palette.aria")}
           autoComplete="off"
@@ -758,25 +891,47 @@ export function CommandPalette() {
             if (e.nativeEvent.isComposing) return;
             // Mode cycling: Tab / Shift+Tab, or re-pressing the palette chord (Ctrl/⌘+P by
             // default — boundChord so a rebind keeps working; preventDefault also stops the
-            // browser's print dialog on Ctrl+P).
+            // browser's print dialog on Ctrl+P). The chord plus Shift goes backwards; a bound
+            // chord that already has Shift has no reverse twin (reverseChord → "").
             const palChord = boundChord(APP_PALETTE);
+            const revChord = reverseChord(palChord);
             if (e.key === "Tab") {
               e.preventDefault();
               cycleMode(e.shiftKey ? -1 : 1);
+            } else if (revChord && eventChordString(e.nativeEvent) === revChord) {
+              e.preventDefault();
+              cycleMode(-1);
             } else if (palChord && eventChordString(e.nativeEvent) === palChord) {
               e.preventDefault();
               cycleMode(1);
             } else if (e.key === "ArrowDown") {
               e.preventDefault();
-              setSel((s) => Math.min(s + 1, filtered.length - 1));
+              setSel((s) => Math.min(s + 1, Math.max(0, filtered.length - 1)));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setSel((s) => Math.max(s - 1, 0));
+            } else if (
+              (e.key === "PageDown" || e.key === "PageUp") &&
+              !e.ctrlKey &&
+              !e.metaKey &&
+              !e.altKey
+            ) {
+              // Plain keys only: a modified Page key belongs to the browser / OS.
+              // Focus stays in the input, so the browser never scrolls the list itself: move
+              // the selection by the number of rows that fit, and the keep-visible effect
+              // scrolls. Row height comes from the selected row (rows are uniform enough).
+              e.preventDefault();
+              const rowH = selRef.current?.offsetHeight ?? 0;
+              const page = rowH > 0 ? Math.max(1, Math.floor((listRef.current?.clientHeight ?? 0) / rowH)) : 1;
+              setSel((s) =>
+                e.key === "PageDown" ? Math.min(s + page, Math.max(0, filtered.length - 1)) : Math.max(s - page, 0),
+              );
             } else if (e.key === "Enter") {
               e.preventDefault();
               // A failed conversation search has no row to run; Enter retries it instead, so the
               // keyboard reaches the retry without leaving the input (Tab cycles modes here).
               if (mode === "talk" && talkErr) setTalkRetry((n) => n + 1);
+              else if (mode === "memory" && memErr) setMemRetry((n) => n + 1);
               else run(filtered[sel], e.ctrlKey || e.metaKey); // Ctrl/⌘+Enter → new pane
             }
           }}
@@ -798,28 +953,36 @@ export function CommandPalette() {
               {t(MODE_LABEL[m])}
             </button>
           ))}
-          <span className="cp-mode-hint">{t("keys.palette.mode_hint")}</span>
         </div>
-        <div className="cp-list">
+        <div className="cp-mode-hint">{modeHint()}</div>
+        <div className="cp-list" ref={listRef}>
           {mode === "file" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.file_hint")}</div>
           ) : mode === "talk" && !q.trim() ? (
             <div className="cp-empty">{t("keys.palette.talk_hint")}</div>
-          ) : mode === "talk" && talkErr ? (
+          ) : mode === "memory" && !running ? (
+            <div className="cp-empty">{t("keys.palette.memory_ws_stopped")}</div>
+          ) : mode === "memory" && !q.trim() ? (
+            <div className="cp-empty">{t("keys.palette.memory_hint")}</div>
+          ) : (mode === "talk" && talkErr) || (mode === "memory" && memErr) ? (
             <div className="cp-empty cp-talk-err" role="alert">
-              {t("keys.palette.talk_failed", { reason: talkErr })}{" "}
+              {t("keys.palette.talk_failed", { reason: (mode === "talk" ? talkErr : memErr) ?? "" })}{" "}
               <button
                 type="button"
                 className="cp-talk-retry"
                 onMouseDown={(e) => e.preventDefault()} // keep focus in the search input
-                onClick={() => setTalkRetry((n) => n + 1)}
+                onClick={() => (mode === "talk" ? setTalkRetry : setMemRetry)((n) => n + 1)}
               >
                 {t("keys.palette.talk_retry")}
               </button>
             </div>
           ) : loading ? (
             <div className="cp-empty">
-              {t(mode === "file" || mode === "talk" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}
+              {t(
+                mode === "file" || mode === "talk" || mode === "memory"
+                  ? "keys.palette.file_searching"
+                  : "keys.palette.changed_loading",
+              )}
             </div>
           ) : filtered.length === 0 ? (
             <div className="cp-empty">
@@ -829,9 +992,11 @@ export function CommandPalette() {
                   ? t("keys.palette.session_empty")
                   : mode === "talk"
                     ? t("keys.palette.talk_empty")
-                  : mode === "sessions" && !q.trim()
-                    ? t("keys.palette.sessions_empty")
-                    : t("keys.palette.empty")}
+                    : mode === "memory"
+                      ? t("keys.palette.memory_empty")
+                      : mode === "sessions" && !q.trim()
+                        ? t("keys.palette.sessions_empty")
+                        : t("keys.palette.empty")}
             </div>
           ) : (
             filtered.map((it, i) => {
@@ -848,7 +1013,7 @@ export function CommandPalette() {
                   (it.session ? " cp-sess" : "") +
                   (it.session && !it.session.alive ? " cp-stopped" : "") +
                   (nested ? " cp-nested" : "") +
-                  (it.hit ? " cp-talk" : "")
+                  (it.hit || it.memory ? " cp-talk" : "")
                 }
                 onMouseMove={() => setSel(i)}
                 onMouseDown={(e) => {
@@ -860,6 +1025,8 @@ export function CommandPalette() {
                   <SessionRowBody s={it.session} refHit={it.refHit} parentName={nested ? undefined : it.parentName} />
                 ) : it.hit ? (
                   <TalkRowBody h={it.hit} />
+                ) : it.memory ? (
+                  <MemoryRowBody it={it} />
                 ) : (
                   <>
                     <span className="cp-title">{it.title}</span>
@@ -885,14 +1052,22 @@ export function CommandPalette() {
             {t("keys.palette.talk_indexing", { indexed: talk.indexed, total: talk.total })}
           </div>
         )}
+        {mode === "memory" && memList && memList.withheld > 0 && (
+          // Said once, as a count: a memory that failed the secret scan is never named here.
+          <div className="cp-talk-indexing" role="status">
+            {t("mem.br_withheld", { n: memList.withheld })}
+          </div>
+        )}
         {mode !== "command" && (
           <div className="cp-foot">
             <span>
-              <Kbd chord="enter" /> {t("keys.palette.open_here")}
+              <Kbd chord="enter" /> {t(mode === "memory" ? "keys.palette.memory_open" : "keys.palette.open_here")}
             </span>
-            <span>
-              <Kbd chord="mod+enter" /> {t("keys.palette.open_split")}
-            </span>
+            {mode !== "memory" && (
+              <span>
+                <Kbd chord="mod+enter" /> {t("keys.palette.open_split")}
+              </span>
+            )}
           </div>
         )}
       </div>

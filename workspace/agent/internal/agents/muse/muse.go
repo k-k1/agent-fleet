@@ -67,6 +67,7 @@ func (agentImpl) Caps() agents.Caps {
 		CanTranscript: true,
 		CanFork:       true,
 		CanForkAt:     true,
+		MCPClient:     agents.TriYes,
 	}
 }
 
@@ -130,6 +131,9 @@ func PendingState(name string) string {
 		return "question"
 	}
 }
+
+// LiveState is PendingState for m, in the shape agents.LiveStateTraits.State takes.
+func LiveState(m session.Meta) string { return PendingState(m.Name) }
 
 // BackgroundWork is the agents.BackgroundReporter read: a tool call an earlier turn left
 // running (background.go).

@@ -70,6 +70,10 @@
   transform-origin: 0 0;
   caret-color: CanvasText;
   z-index: 0;
+  /* The browser's find paints an opaque box behind a match, and the glyphs it stands for are on
+     the canvas below, so a plain composite hides exactly the word found. Multiplied onto the
+     white paper the box tints the page and the black glyphs stay readable. */
+  mix-blend-mode: multiply;
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
@@ -170,3 +174,62 @@
   flex: 1;
 }
 
+/* The pane's own find bar (PdfView). It floats over the top of the pages rather than taking a
+   row, so opening it does not move what the reader is looking at. */
+.pdfview-find {
+  position: absolute;
+  top: 6px;
+  right: 18px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  background: var(--bar);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+  font: 11px var(--mono);
+  color: var(--fg);
+}
+.pdfview-find input {
+  width: 16em;
+  padding: 2px 6px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.pdfview-find-count {
+  min-width: 4.5em;
+  text-align: center;
+  color: var(--muted);
+}
+.pdfview-find button {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 4px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pdfview-find button:hover:not(:disabled) {
+  border-color: var(--border);
+}
+.pdfview-find button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Find matches (pdfFindHighlight.ts). The text layer multiplies onto the paper, so these tint
+   the page and the glyphs on the canvas stay readable; the spans themselves stay transparent. */
+.pdfview-page .textLayer span::highlight(pdf-find) {
+  background-color: rgb(255 214 0 / 55%);
+  color: transparent;
+}
+.pdfview-page .textLayer span::highlight(pdf-find-current) {
+  background-color: rgb(255 140 0 / 85%);
+  color: transparent;
+}

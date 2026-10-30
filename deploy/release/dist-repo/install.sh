@@ -16,6 +16,7 @@
 #                     requires AF_VERSION)
 #   AF_NO_AUTOUPDATE  set to 1 to skip enabling the daily update timer (docs/log/42)
 #   AF_ARCH           amd64 | arm64 (default: this machine's; for testing)
+#   AF_OS             uname -s value (default: this machine's; for testing)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -26,7 +27,22 @@ VER="${AF_VERSION:-}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-[ "$(uname -s)" = Linux ] || die "Linux only (including WSL2)"
+# The workspace runs a Linux rootfs under bubblewrap, so a non-Linux host has no
+# native package at all; `uname -m` alone would hand a Mac the linux-arm64 tar.
+case "${AF_OS:-$(uname -s)}" in
+  Linux) ;;
+  Darwin)
+    # Read by someone who piped this from curl and has no checkout: commands and URLs only.
+    die "the native package needs a Linux kernel, so there is none for macOS.
+  A Mac with Apple Silicon is supported for a single user, in one of two ways:
+    - the Docker edition (Docker Desktop / OrbStack / colima):
+        curl -fsSL https://raw.githubusercontent.com/$REPO/main/install-compose.sh | bash
+      then follow \"macOS\" in the bundle's README.md
+      (https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-apple-silicon)
+    - inside a Linux VM (Lima, an OrbStack machine, ...): run this installer there,
+      then open http://localhost:8099 through the VM's port forward." ;;
+  *) die "Linux only (including WSL2); ${AF_OS:-$(uname -s)} is unsupported" ;;
+esac
 case "${AF_ARCH:-$(uname -m)}" in
   x86_64 | amd64) ARCH=amd64 ;;
   aarch64 | arm64) ARCH=arm64 ;;

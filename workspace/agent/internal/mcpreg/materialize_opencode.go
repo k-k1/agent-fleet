@@ -12,6 +12,12 @@ package mcpreg
 // i.e. the shape OpencodeServers already builds for the assistant chat, which also
 // sets "enabled": true — opencode's default, said out loud.
 //
+// opencode 2.x writes the same entries one level down (mcp.servers.<name>) and, in a
+// project directory, to ./opencode.json unless `mcp add --global` is given. It still reads
+// the flat mcp.<name> layout above and normalises it to mcp.servers (measured on 2.0.32 with
+// `opencode debug config`, which also maps "enabled": true to "disabled": false), so af keeps
+// writing the flat layout that both majors accept.
+//
 // Three opencode-specific facts, all measured on 1.18.7:
 //
 //   - opencode reads BOTH opencode.jsonc and opencode.json and MERGES them. So af has

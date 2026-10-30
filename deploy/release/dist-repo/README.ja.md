@@ -97,11 +97,15 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
 - **MCP は 3 方向**：①**組み込み連携**（PagerDuty / Grafana / CloudWatch /
   Agent Toolkit for AWS）を資格情報の入力だけで接続。②**自前の MCP サーバーを登録**
   （stdio / リモート HTTP）してアシスタントやセッションへ配布。値は封筒暗号で保存し、
-  サーバー起動時にだけ渡します。テナント管理者が全員へ配ることも、egress を絞った
-  デプロイで接続先ホストの承認を経由させることもできます。③**外部の Claude Code /
-  Claude Desktop から**、スコープと期限を持つトークンで自分のワークスペースを遠隔操作。
+  サーバー起動時にだけ渡します。OAuth が必要なサーバーには設定からサインインでき、
+  テナント管理者が全員へ配ることも、egress を絞ったデプロイで接続先ホストの承認を
+  経由させることもできます。③**外部から**、claude.ai・ChatGPT・Claude Code などの
+  MCP クライアントがサインイン（OAuth）か、スコープと期限を持つトークンで自分の
+  ワークスペースを操作。`/mcp/memory` なら Agent Fleet のメモリにだけ届きます。
 - **エージェントの振る舞いを組織として揃える**：フリート全体の方針（運用者が配布）と
   利用者ごとの指示を、エージェント種別をまたいで各 CLI の作法に合わせて配ります。
+  **Agent Fleet のメモリ**（オプトイン）は、どのエージェント種別も読み書きする
+  プロジェクトごとの共有メモリで、種別の切り替えや引き継ぎをまたいで残ります。
   エージェントが自分で貯める記憶（Claude の auto-memory / Codex の memories）は
   スナップショットで版管理し、必要なら任意の時点へ巻き戻せます。
 - **運用のしやすさ**：バックアップ / リストアスクリプト、forward-only の
@@ -186,6 +190,7 @@ Kiro はアシスタントチャットとしては**利用できません**（he
 | 状況 | 版 | 必要なもの |
 |---|---|---|
 | WSL2 や単一ユーザー Linux で個人利用・Docker なし | **Native**（下記） | unprivileged user namespaces が使える x86_64 または arm64 の Linux/WSL2（素の WSL2 は可）、`curl` か `wget`、ディスク ~1.5 GB。arm64 は CI でビルド・起動を確認しています。実機での報告を歓迎します |
+| Apple Silicon の Mac で単独利用（colima・OrbStack・Docker Desktop、および Lima と OrbStack の VM での native で確認済み） | macOS 用 overlay を重ねた **Docker Compose**、または Linux VM（Lima、OrbStack のマシン）の中の **Native** | Docker Desktop・OrbStack・colima のどれか。`127.0.0.1:8099` で単独利用。手順は [Compose README の「macOS」](https://github.com/k-k1/agent-fleet/blob/main/deploy/compose/README.md#macos-apple-silicon)。macOS で `install.sh` を実行するとインストールせずにこの 2 つを案内します。ほかの Mac での報告を歓迎します（[#2961](https://github.com/k-k1/agent-fleet/issues/2961)） |
 | 自社の Linux サーバでチーム利用 | **Docker Compose**（下記） | Docker Engine + `docker compose`、ホストに向けた公開ドメイン（自動 TLS。内部 CA フォールバックあり）、ログイン用の IdP クライアント（Google OAuth 2.0 クライアントまたは OIDC アプリ） |
 
 全版共通: 各ワークスペースの初回起動時にエージェント CLI のピン版導入で一度だけ

@@ -303,3 +303,29 @@ func TestEventsStreamPing(t *testing.T) {
 		t.Errorf("no ping in quiet stream; body=%q", raw)
 	}
 }
+
+// Two PSI readings that differ only by jitter must serialize identically, or every tick pushes
+// a stats frame for an idle workspace; and rounding must not turn an absent figure into a zero.
+func TestRoundStatsMemPressure(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	u := func(v uint64) *uint64 { return &v }
+	a, _ := json.Marshal(roundStats(map[string]any{"mem_pressure": &memPressure{
+		Available: true, SomeAvg10: f(1.2), SomeAvg60: f(0.6), AgentLatencyMs: f(2.2), WorkingSet: u(100<<20 + 5), SampledAtMs: 1,
+	}}))
+	b, _ := json.Marshal(roundStats(map[string]any{"mem_pressure": &memPressure{
+		Available: true, SomeAvg10: f(0.8), SomeAvg60: f(0.9), AgentLatencyMs: f(1.9), WorkingSet: u(100<<20 + 999), SampledAtMs: 2,
+	}}))
+	if string(a) != string(b) {
+		t.Errorf("jittered pressure differs after rounding: %s vs %s", a, b)
+	}
+	got := roundStats(map[string]any{"mem_pressure": &memPressure{Available: false, Reason: "x"}})["mem_pressure"].(*memPressure)
+	if got.SomeAvg10 != nil || got.FullAvg10 != nil || got.AgentLatencyMs != nil {
+		t.Errorf("rounding invented a figure: %+v", got)
+	}
+	// The input is not modified: the same map may be served again.
+	in := &memPressure{SomeAvg10: f(1.6)}
+	roundStats(map[string]any{"mem_pressure": in})
+	if *in.SomeAvg10 != 1.6 {
+		t.Errorf("input mutated: %v", *in.SomeAvg10)
+	}
+}

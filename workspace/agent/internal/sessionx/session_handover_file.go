@@ -15,7 +15,8 @@ import (
 
 // The handover file lives in the target's throwaway directory, ~/.af-work/<target>, never in
 // the working copy, so it cannot be committed (ADR 0115 decision 9). The path is computed from
-// the name, not read from $AF_WORK_DIR, because a managed target has no such variable.
+// the name, not read from $AF_WORK_DIR: this runs in the Agent, whose own environment belongs to
+// no session, and the target may not have started yet.
 
 const handoverPrefix, handoverSuffix = "handover-", ".md"
 
@@ -36,7 +37,20 @@ func WriteHandoverFile(target, source, md string) (string, error) {
 		return "", fmt.Errorf("handover: bad target name %q", target)
 	}
 	dest := filepath.Join(dir, HandoverFileName(source))
-	return dest, writeFileSynced(dest, []byte(md))
+	// A managed target's directory is made here, not at launch. It is marked as the Agent's
+	// own only when this call's Mkdir made it (unmarked just means the boot prune keeps it);
+	// the parent sync writeFileSynced would have done for a new directory is done here.
+	_, created, err := paths.MakeSessionWorkDirCreated(target)
+	if err != nil {
+		return dest, err
+	}
+	if err := writeFileSynced(dest, []byte(md)); err != nil {
+		return dest, err
+	}
+	if created {
+		return dest, syncDir(filepath.Dir(dir))
+	}
+	return dest, nil
 }
 
 // ListHandoverFiles names the handover files in a session's own directory, sorted. Those are
@@ -101,9 +115,19 @@ func CopyHandoverChain(source, target string) ([]string, error) {
 		return nil, err
 	}
 	var copied []string
+	madeDir := false
 	for _, n := range names {
 		if n == HandoverFileName(target) || n == HandoverFileName(source) {
 			continue
+		}
+		if len(copied) == 0 {
+			// The first copy makes target's directory (a Managed target has no launch to do
+			// it): through the shared helper, so it is marked as the Agent's own.
+			_, created, err := paths.MakeSessionWorkDirCreated(target)
+			if err != nil {
+				return copied, err
+			}
+			madeDir = created
 		}
 		b, err := os.ReadFile(filepath.Join(srcDir, n))
 		if err != nil {
@@ -113,6 +137,11 @@ func CopyHandoverChain(source, target string) ([]string, error) {
 			return copied, err
 		}
 		copied = append(copied, n)
+	}
+	if madeDir {
+		if err := syncDir(filepath.Dir(dstDir)); err != nil {
+			return copied, err
+		}
 	}
 	return copied, nil
 }
@@ -205,6 +234,9 @@ func RemoveHandoverFiles(target string, names []string) error {
 	}
 	if len(errs) > 0 {
 		return errors.Join(errs...)
+	}
+	if ents, err := os.ReadDir(dir); err == nil && len(ents) == 1 && ents[0].Name() == paths.SessionWorkDirMarker {
+		_ = os.Remove(filepath.Join(dir, paths.SessionWorkDirMarker))
 	}
 	_ = os.Remove(dir) // fails, harmlessly, when anything else is in it
 	return nil

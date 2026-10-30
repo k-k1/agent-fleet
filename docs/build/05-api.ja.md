@@ -1,7 +1,6 @@
 ---
 audience: "API の境界に触れる人"
 source_of_truth: "コード（本書は地図と普遍設計。個々の要求 / 応答の形は code-as-contract）"
-updated: "2026-09"
 ---
 
 # 05. API 境界と中継 — 契約はコードが正
@@ -32,7 +31,7 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
 | identity / tenant | `GET /api/whoami`・`GET /api/tenants`・`GET /api/version`・`GET/DELETE /api/me/login-methods`・`GET/PATCH /api/me/ui-state`（`?if_absent=1` はまだ無いキーだけを埋める。[ADR 0114](../decisions/0114-member-ui-state-in-the-cp.ja.md)） | CP | [03](03-control-plane.ja.md) |
 | events | `GET /api/events`（SSE。下記）| CP | [ADR 0084](../decisions/0084-engine-indicator-and-tenant-gate.ja.md) |
 | workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate,clean-home,attention}`・`GET /api/workspace/{stats,machine}` | CP（Runtime）。`stats` は CP がホストの cgroup を読めない所では Agent に聞く。`machine` は Agent の実測と設定上の宣言を並べて返す | [03](03-control-plane.ja.md) |
-| sessions | `GET/POST /api/sessions`・`DELETE /api/sessions/{name}`（ごみ箱へ。`?stop=1` で先に止める。`POST …/stop` はこの旧名）・ライフサイクル `POST …/{halt,recreate,archive,restore,fork,start,lock}`・意味論操作 `POST …/{turn,respond,settings,driver,plan-respond,carried-answer}`・端末操作 `POST …/{input,paste-image}`・`GET …/{status,output,messages,settings,skills,plan-file}`・`POST …/{keep-awake,stop-after-turn,spend-cap}`・`GET …/spend`（予算、#1054）・タイトル／ブランチ／マーク／翻訳／引き継ぎ提案・`GET /api/sessions/archived` | 生成・fork・start・carried-answer は CP のハンドラ（セッション上限と自動起動）を通ってから中継。他は中継 | [04](04-agent.ja.md) / [ADR 0101](../decisions/0101-session-delete-via-trash.ja.md) |
+| sessions | `GET/POST /api/sessions`・`DELETE /api/sessions/{name}`（ごみ箱へ。`?stop=1` で先に止める。`POST …/stop` はこの旧名）・ライフサイクル `POST …/{halt,recreate,archive,restore,fork,start,lock}`・意味論操作 `POST …/{turn,respond,settings,driver,plan-respond,carried-answer}`・端末操作 `POST …/{input,paste-image}`・`GET …/{status,output,messages,settings,skills,plan-file}`・`POST …/{keep-awake,stop-after-turn,spend-cap}`・`GET …/spend`（予算、#1054）・タイトル／ブランチ／マーク／翻訳／引き継ぎ提案・`GET /api/sessions/archived` | 生成・fork・start・carried-answer は CP のハンドラ（セッション上限と自動起動）を通ってから中継。他は中継。生成の `kind` は完全一致で、空なら claude、未登録（`Codex`・` codex`・`kiro-cli` など）は受け付け可能な kind を並べた `400 bad_kind` で断る（CP も Agent も同じ） | [04](04-agent.ja.md) / [ADR 0101](../decisions/0101-session-delete-via-trash.ja.md) |
 | ↳ fork の任意ボディ | `POST …/fork` は `{"at": <anchorId>, "include": bool}` を取ると**発言時点からの分岐**になる（[ADR 0039](../decisions/0039-fork-at-message.ja.md)）。省略時は会話まるごとの分岐で後方互換。**壊れた JSON は `400 bad_request`（黙って全体分岐に倒さない）**。分岐点が使えない＝`400 fork_bad_anchor`、その種別／実行方式に時点指定が無い＝`400 fork_at_unsupported` | CP はボディを素通しで中継 | [04](04-agent.ja.md) |
 | 共有と引き継ぎ | `/api/session-shares*`・`/api/shared-sessions*`（messages・marks・proposals）・`/api/session-share-proposals*`・`/api/session-handoff-offers*`・`GET /api/sessions/{name}/handoff-recipients`（`?context=skip` で push 判定を省く）・`GET /api/sessions/{name}/handoff-context`（判定のみ。所有者の Agent から） | CP。ACL は CP の DB にあり、所有者の Agent は CP 自身が読みに行く（§5.2）| [ADR 0050](../decisions/0050-transcript-marks.ja.md) / [ADR 0057](../decisions/0057-member-handoff.ja.md) |
 | repos (SCM) | `GET/POST /api/repos`・`POST /api/repos/svn`・取り込みジョブ `GET /api/repo-jobs`・`DELETE /api/repo-jobs/{id}`・取り込み元なしの新規作業コピー `POST /api/repos/init`（`{name}` → `201 {repo}`。mkdir + `git init` だけなので**同期**＝取り込みジョブを経由しない）・`/api/repos/{name}/{status,branches,checkout,fetch,ff,parent-ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates,skills,recreate,lock}`・`/api/repos/{name}/{svn-update,svn-cleanup,svn-auth,svn-log,svn-show,svn-changes,svn-diff}`・プロジェクト MCP `/api/repos/{name}/mcp*`・`GET/PUT /api/git/identity` | 中継 | [04](04-agent.ja.md) / [ADR 0059](../decisions/0059-repo-import-jobs.ja.md) |
@@ -44,7 +43,7 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
 | 画像生成 | `GET /api/imagegen/{status,jobs,props,history,knowledge}`・`POST /api/imagegen/{jobs,queue,groups/{id}}`・`DELETE /api/imagegen/jobs/{id}`・`POST/PUT /api/imagegen/knowledge`・スタジオ `/api/imagegen/studios*`（`bind`・`press`・`rewind`・`draft-log`・`persona`。スタジオの `PUT` は `If-Match` を運ぶ）| 中継。すべて素の REST で、投入は即答しペインがポーリングする。Agent のブロッキングな `POST /imagegen/generate` は MCP ツールの入口で、CP にルートは無い | [ADR 0081](../decisions/0081-image-generation-pane.ja.md) / [ADR 0100](../decisions/0100-image-generation-studio.ja.md) |
 | エンジン（メンバー）| `GET /api/engines/status` | CP。`engines` イベントストリームの REST フォールバック | [ADR 0084](../decisions/0084-engine-indicator-and-tenant-gate.ja.md) |
 | AWS ログイン | `GET /api/aws-login`・`POST /api/aws-login/{id}/{start,cancel}`・`GET /api/aws-login/{id}/attempts/{attempt}`・`GET /api/aws-login/profiles`・`POST /api/aws-login/profiles/{name}/start` とその試行のポーリング | 中継。start と試行のポーリングは接続のログインと同じく `409 workspace_starting` を返しうる | [ADR 0102](../decisions/0102-aws-login-through-the-console.ja.md) |
-| env / settings | `/api/env/{toolchains,ui-prefs,databases,jdk-install,node-install,tool-versions}`・`GET/PUT /api/env/ws-settings`・`POST /api/env/ws-settings/preview/reissue`・`/api/{claude,codex}/settings`・`GET /api/{claude,codex,copilot,muse}/usage`（agy は `GET /api/connections/agy/usage`）・`/api/agents/rtk`・`GET /api/agents/rtk/gain`・`GET /api/agents/{kind}/models`・`/api/user-notes*`・`GET /api/ai-assist/resolution` | `ws-settings` は CP（停止中も編集でき、起動時に適用）。他は中継 | [04](04-agent.ja.md) |
+| env / settings | `/api/env/{toolchains,ui-prefs,databases,jdk-install,node-install,tool-versions}`・`GET/PUT /api/env/ws-settings`・`POST /api/env/ws-settings/preview/reissue`・`/api/{claude,codex}/settings`・`GET /api/{claude,codex,copilot,muse}/usage`（agy は `GET /api/connections/agy/usage`）・`/api/agents/rtk`・`GET /api/agents/rtk/gain`・`GET /api/agents/{kind}/models`・`GET /api/agents/kinds`・`/api/user-notes*`・`GET /api/ai-assist/resolution` | `ws-settings` は CP（停止中も編集でき、起動時に適用）。他は中継 | [04](04-agent.ja.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`/api/memo-categories*`・`POST /api/memos/flush`・`POST /api/memos/paste-image`・`GET /api/memos/images/{file}`・`POST /api/memos/images/gc` | CP。flush と画像添付は Agent へ届く | [03](03-control-plane.ja.md) |
 | notifications | `GET /api/notifications`・`POST /api/notifications/{seen,usage-observations}` | CP。Agent の送信箱を CP が吸い上げる（§5.2）| [03](03-control-plane.ja.md) |
 | schedules | `GET /api/schedules`・`GET …/{id}/runs`・`PATCH/DELETE …/{id}`・`POST …/{id}/{pause,resume,run-now}`。**Console は一覧と編集だけで、作成は MCP ツール経由** | CP（DB とスケジューラ）| [ADR 0021](../decisions/0021-scheduled-execution.ja.md) |
@@ -104,7 +103,8 @@ membership 検証（§5.4）。「中継」は CP が呼び出しをそのまま
   （[07 §7.5](07-security.ja.md)）。
 - **パス規約: CP は `/api` を剥がして残りをそのまま転送する**
   （`/api/sessions/x/halt` → `<agent>/sessions/x/halt`）。**CP のルート表は明示的な許可リスト**で、
-  `control-plane/routes.go` に行が無い Agent のルートには Console から届かない。`console/src` に
+  CP の中継表（`control-plane/relays_*.go`。包んで登録するものは `routes.go`）に行が無い Agent の
+  ルートには Console から届かない。`console/src` に
   書かれた `api/...` のパスを受けられる CP のルートが無ければ `TestConsoleAPIPathsHaveCPRoutes`
   （`control-plane/console_routes_test.go`）が落ちる。`${…}` の段はルートのパラメータに、
   パラメータが無い位置ではどのリテラルの段にも一致する。中継は `.`・`..`・途中の空セグメントを
@@ -159,7 +159,10 @@ membership を解決し直す。
 | `/git/{slug}/{repo...}` | git トークン（Basic 認証）| 内部 git プロバイダ（[91](91-internal-git.ja.md)）|
 
 `POST /internal/egress` へ送り `GET /internal/egress/policy` を読むのは Workspace ではなく egress
-プロキシで、配備全体で 1 つの `AF_EGRESS_TOKEN` を使う（[07 §7.8](07-security.ja.md)）。
+プロキシで、配備全体で 1 つの `AF_EGRESS_TOKEN` を使う（[07 §7.8](07-security.ja.md)）。イベントには
+`id`・`at`（unix ミリ秒）・`source`・`dest` を付けられる。`id` のあるイベントは何度再送されても 1 回だけ
+保存し、`id` があっても正しい `source` か `at` が無いものは読み飛ばす。`GET /api/admin/egress/events?minutes=&limit=`
+（`super_admin`）は、その生のイベントを `attribution` と一致したアドレスの行つきで返す（[03](03-control-plane.ja.md)）。
 
 ## 5.3 中継の 5 経路
 
@@ -196,7 +199,8 @@ membership を解決し直す。
 
 ## 5.5 監査の書き込み点
 
-REST 中継は**変更系**の操作を 2xx のときに記録する（`auditActionTarget`）。対象は URL のパスか
+REST 中継は**変更系**の操作を 2xx のときに記録する（中継表 `control-plane/relays_*.go` の行の `audit` を
+`auditActionTarget` が読む）。対象は URL のパスか
 クエリから取る。例外は `PUT /api/fs/file` で、CP が検証済みの JSON 本文の `path` を使う。
 ファイルの内容は監査に残さない:
 

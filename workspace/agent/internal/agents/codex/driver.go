@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -83,8 +84,10 @@ func (managedDriver) Capabilities() agents.Capabilities {
 // with -c.
 var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 
-// threadConfig is the per-thread config: the features above, plus the MCP servers
-// scoped to THIS session (docs/log/27 §9.3.1).
+// threadConfig is the per-thread config: the features above, AF_SESSION_NAME and AF_WORK_DIR
+// for the thread's shell tool calls (shell_environment_policy.set — the shared app-server's own environment
+// cannot carry a per-session value), plus the MCP servers scoped to THIS session
+// (docs/log/27 §9.3.1).
 //
 // A managed session's MCP child is spawned by the one shared app-server, so the
 // process environment cannot carry a per-session AF_SESSION_NAME the way tmux does
@@ -101,6 +104,16 @@ var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 // registry — the session name degrades to the cwd fallback and nothing else changes.
 func threadConfig(slot string) map[string]any {
 	cfg := map[string]any{"features": threadFeatures}
+	set := map[string]any{}
+	if session.ValidName(slot) {
+		set[agents.SessionNameEnvVar] = slot
+	}
+	if wd := agents.SessionWorkDir(slot); wd != "" {
+		set[agents.WorkDirEnvVar] = wd
+	}
+	if len(set) > 0 {
+		cfg["shell_environment_policy"] = map[string]any{"set": set}
+	}
 	if servers, ok := threadMCPServers(slot); ok {
 		cfg["mcp_servers"] = servers
 	}
@@ -414,10 +427,57 @@ var _ agents.LiveHandles = managedDriver{}
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindCodex,
+	Name:    "codex",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
+}
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
+	}
+	// ReconcileClaim is read at each call: sessionx fills the seam after init.
+	managedKind.Claim = func(name string) (func(), bool) { return ReconcileClaim(name) }
+}
+
+// Alive, Busy, HoldsEntry and Abort are what managed.Lifecycle asks of a handle.
+
+func (h *threadHandle) Alive() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.alive
+}
+
+func (h *threadHandle) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.turnID != "" || h.tq().Len() > 0
+}
+
+func (h *threadHandle) HoldsEntry() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.turnID != "" || h.tq().Head() != nil
+}
+
+func (h *threadHandle) Abort() {
+	h.mu.Lock()
+	running := h.running
+	h.mu.Unlock()
+	if running {
+		_ = h.interruptAll()
+	}
+}
+
 func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+	h, _ := managedKind.Get(name)
+	return h
 }
 
 // handleByTid finds the live handle owning a codex thread id.
@@ -438,20 +498,7 @@ func handleByTid(tid string) *threadHandle {
 	return nil
 }
 
-func liveHandles() []*threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	var out []*threadHandle
-	for _, h := range handles {
-		h.mu.Lock()
-		alive := h.alive
-		h.mu.Unlock()
-		if alive {
-			out = append(out, h)
-		}
-	}
-	return out
-}
+func liveHandles() []*threadHandle { return managedKind.Live() }
 
 // DropHandle detaches a managed session from its runtime handle (stop / halt /
 // archive / exclusive switch): interrupt any running turn, unsubscribe the writer
@@ -459,11 +506,8 @@ func liveHandles() []*threadHandle {
 // the handle. The conversation's source of truth (the rollout) stays, and a later Resume
 // (or the TUI's `codex resume`, once the server has unloaded the thread) reattaches.
 func DropHandle(name string) {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		return
 	}
 	h.mu.Lock()
@@ -505,83 +549,36 @@ func DropHandle(name string) {
 
 // RemoveLedger drops a session's ClientMessageID ledger (/stop only, where the slot's
 // identity is discarded with it; halt/archive keep it because the session can resume).
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle — the
 // managed counterpart of tmuxx.HasSession for the sessions list.
-func ManagedAlive(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.alive
-}
+func ManagedAlive(name string) bool { return managedKind.Alive(name) }
 
 // ManagedBusy reports a turn is running or queued (the wait/refuse condition for a
 // graceful shutdown and for the exclusive switch).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.turnID != "" || h.tq().Len() > 0
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.turnID != "" || h.tq().Head() != nil
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // AbortManaged interrupts every running managed turn (the equivalent of graceful
 // shutdown's per-pane Ctrl-C, §10.2-8).
-func AbortManaged() {
-	for _, h := range liveHandles() {
-		h.mu.Lock()
-		running := h.running
-		h.mu.Unlock()
-		if running {
-			_ = h.interruptAll()
-		}
-	}
-}
+func AbortManaged() { managedKind.Abort() }
+
+// Shutdown stops the shared daemon through its supervisor (Serve). Call it only after
+// AbortManaged, so the daemon's drain has no turn left to wait for.
+func Shutdown() { Serve().Shutdown() }
 
 // ReconcileManaged re-attaches managed codex sessions after an Agent boot,
 // daemon restart or writer loss (§6). It covers every managed meta that is not treated as
 // stopped. On failure the session stays stopped and is retried when the user clicks resume
 // (/start).
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindCodex || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		release, ok := ReconcileClaim(m.Name)
-		if !ok {
-			continue // switching to Terminal, or already there: m was read before the switch
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("codex managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-		release()
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // ReconcileClaim is the seam package sessionx fills with its switch guard: ReconcileManaged
 // resumes from a meta it read before a switch to Terminal may have begun, so it takes the same
@@ -632,6 +629,11 @@ type threadHandle struct {
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
 
 	bg bgCache // the thread's background terminals, for BackgroundWork (background.go)
+
+	// act stamps every message the runtime sends for this handle, for the busy-row progress bound
+	// (ManagedProgress). items holds the items (tool calls, messages) started and not completed.
+	act   agents.Activity
+	items agents.InFlight
 }
 
 // tq returns the handle's queue, creating it on first use. Caller holds h.mu.
@@ -684,6 +686,7 @@ func (h *threadHandle) setState(st agents.TurnState) {
 // runtimeLost drops the handle to unknown (§6-1: the honest state on disconnect). The pump's
 // wait (if any) unblocks via turnEnd and keeps unknown until reconcile resolves it.
 func (h *threadHandle) runtimeLost() {
+	h.items.Unknown()
 	h.mu.Lock()
 	h.alive = false
 	h.state = agents.TurnUnknown
@@ -1146,7 +1149,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	inter, qids, reqID, cl := h.inter, h.interQ, h.interReq, h.interCl
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, agents.ErrInteractionNotPending)
 	}
 	switch reply.Decision {
 	case agents.DecisionCancel, agents.DecisionDeny:
@@ -1389,6 +1392,29 @@ func deliverUserInputRequest(c *appClient, reqID json.RawMessage, p userInputReq
 // appclient.go's readLoop). This is where the turn state machine (§4) is decided; the
 // pump receives the terminal state through turnEnd.
 func dispatchNotification(msg rpcMsg) {
+	// Any notification naming a thread is a sign of life for its handle. The account-wide ones
+	// (rate limits, MCP startup) name none and must not keep every session looking alive.
+	var named struct {
+		ThreadID string `json:"threadId"`
+		Item     struct {
+			ID string `json:"id"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(msg.Params, &named) == nil {
+		if h := handleByTid(named.ThreadID); h != nil {
+			h.act.Touch()
+			switch msg.Method {
+			case "turn/started", "turn/completed":
+				// A turn boundary seen on this connection: nothing from before it is still
+				// running, and the in-flight set is trustworthy again.
+				h.items.Reset()
+			case "item/started":
+				h.items.Add(named.Item.ID)
+			case "item/completed":
+				h.items.Done(named.Item.ID)
+			}
+		}
+	}
 	switch msg.Method {
 	case "turn/started":
 		var p struct {

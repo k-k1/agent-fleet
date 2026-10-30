@@ -75,7 +75,7 @@ func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Iden
 }
 
 // hostStatsWire is the GET /api/admin/host-stats response (the Console's `HostStats` in
-// console/src/app/WsBar.tsx).
+// console/src/app/wsbar/resourceStats.ts).
 //
 // was: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
 //
@@ -127,20 +127,22 @@ func (t *cpuTracker) pct(id string, usage uint64, now time.Time) (float64, bool)
 
 var cpuSamples = &cpuTracker{prev: map[string]cpuSample{}}
 
-// dockerContainerID returns the id of a RUNNING container, else "". docker inspect
-// resolves a stopped/exited container too, so we must gate on .State.Running —
-// otherwise containerStats reports a stopped workspace as running: a wrong "running" dot,
-// a hidden "stopped" notice, and an enabled force-stop button.
-func dockerContainerID(ctx context.Context, name string) string {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}}", name).Output()
+// dockerContainerRun returns the id of a RUNNING container, else "", plus a token naming this
+// run of the container: the id changes when the container is replaced and StartedAt when the
+// same one is restarted, so the token changes on either. Per-run state (the pressure sample)
+// is keyed on it. docker inspect resolves a stopped/exited container too, so it must gate on
+// .State.Running — otherwise containerStatsRun reports a stopped workspace as running: a
+// wrong "running" dot, a hidden "stopped" notice, and an enabled force-stop button.
+func dockerContainerRun(ctx context.Context, name string) (id, run string) {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}} {{.State.StartedAt}}", name).Output()
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	f := strings.Fields(string(out))
 	if len(f) < 2 || f[0] != "true" {
-		return ""
+		return "", ""
 	}
-	return f[1]
+	return f[1], strings.Join(f[1:], " ")
 }
 
 // cgroupScope is the host cgroup v2 path for a docker container under the systemd
@@ -272,13 +274,20 @@ func containerCPUPct(id, scope string) (float64, bool) {
 	return cpuSamples.pct(id, usage, time.Now())
 }
 
-// containerStats reads a container's live mem/CPU from its cgroup v2 scope,
+// hostStatsHook lets a test stand in for the docker host (no docker in CI); nil in production.
+var hostStatsHook func(ctx context.Context, name string) (map[string]any, string)
+
+// containerStatsRun reads a container's live mem/CPU from its cgroup v2 scope,
 // keyed by container name. Returns {running:false} when the container is gone,
 // {running:true} (no metrics) when the scope path is unreadable, or the full
-// {running, mem_used, mem_max?, cpu_pct?} otherwise. Shared by the own-workspace
-// chip and the admin per-member view.
-func containerStats(ctx context.Context, name string) map[string]any {
-	id := dockerContainerID(ctx, name)
+// {running, mem_used, mem_max?, cpu_pct?} otherwise, and the run token of the container it
+// read ("" when there is none). The token is internal: it never enters the map, so it is not
+// on the wire.
+func containerStatsRun(ctx context.Context, name string) (map[string]any, string) {
+	if hostStatsHook != nil {
+		return hostStatsHook(ctx, name)
+	}
+	id, run := dockerContainerRun(ctx, name)
 	if id == "" {
 		// Stopped: surface an OOM-kill of the container itself so the Console can say
 		// WHY it went down (crash / OOM) instead of guessing from the bare state.
@@ -289,14 +298,14 @@ func containerStats(ctx context.Context, name string) map[string]any {
 			}
 			out["exit_code"] = st.exitCode
 		}
-		return out
+		return out, ""
 	}
 	scope := cgroupScope(id)
 	memUsed, okMem := readCgroupUint(scope + "/memory.current")
 	if !okMem {
 		// Scope path absent (e.g. cgroupfs driver or a different layout): the
 		// container is up but we can't read it — degrade rather than 500.
-		return map[string]any{"running": true}
+		return map[string]any{"running": true}, run
 	}
 	out := map[string]any{"running": true, "mem_used": memUsed}
 	if memMax, ok := readCgroupUint(scope + "/memory.max"); ok {
@@ -313,12 +322,12 @@ func containerStats(ctx context.Context, name string) map[string]any {
 			out["oom_recent"] = true
 		}
 	}
-	return out
+	return out, run
 }
 
 // --- The runtime-neutral view (docs/log/63 §63.9) ---
 //
-// containerStats above only works where the CP and the workspace share a host:
+// containerStatsRun above only works where the CP and the workspace share a host:
 // it shells out to `docker inspect` and reads the host's cgroup tree. On every ECS
 // profile (Fargate and ecs-ec2) neither exists in the CP task, so it answered
 // running:false with no gauges at all — three "–" tiles under a workspace that was
@@ -339,7 +348,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 // pass a memoized one so it is paid at most once, and only when the local read
 // already failed.
 func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state func() string) map[string]any {
-	out := containerStats(ctx, rt.Name())
+	out, run := containerStatsRun(ctx, rt.Name())
 	if out["running"] != true {
 		// The Console disables force-stop on exactly this field, so a docker read that
 		// cannot see the container must not be the last word — on ECS it never can
@@ -354,7 +363,15 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	// mem_used is the marker for "the local read saw this workspace". Absent means
 	// the CP is not on the workspace's host; the Agent is then the only source.
 	// Asking a workspace that is not running would just burn a 5s timeout per tick.
-	if _, ok := out["mem_used"]; ok || out["running"] != true {
+	if _, ok := out["mem_used"]; ok {
+		// Local read won: only the pressure axis is the Agent's to add (metrics_pressure.go).
+		if mp := agentMemPressure(ctx, m, rt, run); mp != nil {
+			out["mem_pressure"] = mp
+		}
+		return out
+	}
+	if out["running"] != true {
+		memPressures.invalidate(rt.Name())
 		return out
 	}
 	s, err := m.agentStats(ctx, rt)
@@ -373,7 +390,30 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	if total, ok := out["oom_kill_total"].(uint64); ok && oomKills.observe(rt.Name(), total, time.Now()) {
 		out["oom_recent"] = true
 	}
+	// home_own: disk_used / disk_total describe this member's own volume (an EBS home), so a
+	// threshold on them means something. Everywhere else they are a statfs of the whole host or
+	// a shared EFS, where "your home is nearly full" would blame the member for other people's
+	// bytes. Absent means "do not warn", never "fine".
+	if homeIsOwnVolume(rt) {
+		out["home_own"] = true
+	}
 	return out
+}
+
+// ownHomeVolumer is the optional Runtime capability of a home that is one member's own
+// volume without the box being theirs (a per-user Kubernetes claim). Dedicated says more —
+// it also lets the Console show the host's RAM and cores as "your machine" — so it cannot
+// be borrowed for this.
+type ownHomeVolumer interface {
+	OwnHomeVolume() bool
+}
+
+func homeIsOwnVolume(rt runtime.Runtime) bool {
+	if mp, ok := rt.(machineProfiler); ok && mp.MachineProfile().Dedicated {
+		return true
+	}
+	oh, ok := rt.(ownHomeVolumer)
+	return ok && oh.OwnHomeVolume()
 }
 
 // stats serves the own-workspace resource chip. It is a workspaceAPI method, wrapped in
@@ -405,24 +445,58 @@ type diskSample struct {
 type diskUsageCache struct {
 	mu sync.Mutex
 	m  map[string]diskSample
+	// forgotten is when a key's home was last wiped: a du that STARTED before that moment is
+	// measuring files that are gone, so its result is not cached when it lands.
+	forgotten map[string]time.Time
+}
+
+// forget drops the cached size of a home that was just wiped and refuses to cache any du
+// still in flight from before the wipe.
+func (c *diskUsageCache) forget(key string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.m, key)
+	if c.forgotten == nil {
+		c.forgotten = map[string]time.Time{}
+	}
+	c.forgotten[key] = now
 }
 
 func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if s, ok := c.m[key]; ok && now.Sub(s.at) < diskTTL {
+	if s, ok := c.peek(key); ok && now.Sub(s.at) < diskTTL {
 		return s.bytes, true
 	}
 	return 0, false
 }
 
+// peek returns the cached sample whatever its age; the caller decides what stale means.
+func (c *diskUsageCache) peek(key string) (diskSample, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.m[key]
+	return s, ok
+}
+
 func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if f, ok := c.forgotten[key]; ok && now.Before(f) {
+		return
+	}
+	// A du that started earlier than the cached sample (a slow background one overtaken by
+	// a synchronous one) must not roll the figure and its timestamp back.
+	if cur, ok := c.m[key]; ok && now.Before(cur.at) {
+		return
+	}
 	c.m[key] = diskSample{bytes: bytes, at: now}
 }
 
 var diskUsages = &diskUsageCache{m: map[string]diskSample{}}
+
+// runDU is the du invocation, a variable so a test can make it slow.
+var runDU = func(ctx context.Context, home string) ([]byte, error) {
+	return exec.CommandContext(ctx, "du", "-sb", home).Output()
+}
 
 // dirDiskUsage returns the byte size of <dataDir>/home via `du -sb`, cached for
 // diskTTL per dataDir. Reports !ok when du fails (path gone, etc.).
@@ -433,7 +507,7 @@ func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 		return v, true
 	}
 
-	out, err := exec.CommandContext(ctx, "du", "-sb", home).Output()
+	out, err := runDU(ctx, home)
 	if err != nil {
 		return 0, false
 	}
@@ -447,4 +521,89 @@ func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 	}
 	diskUsages.put(home, v, now)
 	return v, true
+}
+
+// diskRefreshTimeout bounds one background du, so a hung filesystem costs a stuck child
+// for at most this long and then frees the single-flight slot for the next attempt.
+var diskRefreshTimeout = 5 * time.Minute
+
+// diskRefresher runs du off the request path: at most one per home, tied to a lifecycle
+// context so CP shutdown kills the child instead of leaving it walking the tree.
+type diskRefresher struct {
+	mu       sync.Mutex
+	inflight map[string]bool
+	wg       sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+}
+
+func newDiskRefresher() *diskRefresher {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &diskRefresher{inflight: map[string]bool{}, ctx: ctx, cancel: cancel}
+}
+
+var diskBG = newDiskRefresher()
+
+// stopDiskRefresh cancels every background du and waits (bounded) for the children to go.
+func stopDiskRefresh() {
+	diskBG.cancel()
+	done := make(chan struct{})
+	go func() { diskBG.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+	}
+}
+
+// kick starts a du for home unless one is already running or the refresher is stopped.
+func (r *diskRefresher) kick(home string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inflight[home] || r.ctx.Err() != nil {
+		return
+	}
+	r.inflight[home] = true
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		defer func() {
+			r.mu.Lock()
+			delete(r.inflight, home)
+			r.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(r.ctx, diskRefreshTimeout)
+		defer cancel()
+		// dirDiskUsage's own cache check is bypassed on purpose: the caller kicks only
+		// when the entry is stale, and put() stamps the START time so a wipe in between
+		// (forget) still refuses the result.
+		now := time.Now()
+		out, err := runDU(ctx, home)
+		if err != nil {
+			return
+		}
+		f := strings.Fields(string(out))
+		if len(f) == 0 {
+			return
+		}
+		if v, err := strconv.ParseUint(f[0], 10, 64); err == nil {
+			diskUsages.put(home, v, now)
+		}
+	}()
+}
+
+// dirDiskUsageNoWait is the request-path read of the home size: it never runs or waits on
+// du. It returns the last sample with the time it was taken, and starts a background
+// refresh when that sample is missing or older than diskTTL. !ok means nothing is known
+// yet (first call, or du keeps failing) — callers must report "pending", never 0, which
+// would read as an empty home.
+func dirDiskUsageNoWait(dataDir string) (bytes uint64, at time.Time, ok bool) {
+	home := dataDir + "/home"
+	s, have := diskUsages.peek(home)
+	if !have || time.Since(s.at) >= diskTTL {
+		diskBG.kick(home)
+	}
+	if !have {
+		return 0, time.Time{}, false
+	}
+	return s.bytes, s.at, true
 }

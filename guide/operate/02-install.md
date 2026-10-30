@@ -1,7 +1,6 @@
 ---
 audience: "someone standing a deployment up for the first time"
 source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
-updated: "2026-08"
 ---
 
 # 02. Initial Setup
@@ -271,11 +270,8 @@ available to the tenant's own administrator too: stopping should never wait for 
 Once `.env` is complete, create `DATA_DIR` and start with `docker compose up -d` (as-is if you
 use the prebuilt image, or with `--build` for a local build). The exact commands are in the
 runbook's "Quick start." After startup, follow the CP's logs and confirm the health check
-passes.
-
-```
-curl -s http://127.0.0.1:8099/healthz    # -> ok
-```
+passes: `/healthz` on the Control Plane's loopback port answers `ok` (the runbook's troubleshooting table
+has the exact check).
 
 If `ok` does not come back, or the CP does not come up at all, see "CP does not start" in
 [06-diagnose.md](06-diagnose.md).

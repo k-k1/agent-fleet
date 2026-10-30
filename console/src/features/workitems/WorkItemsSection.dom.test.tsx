@@ -18,7 +18,9 @@ const workItemQueryCreate = vi.fn();
 const bitbucketRepoList = vi.fn();
 const workItemDetail = vi.fn();
 const workItemSearch = vi.fn();
+const workItemMerge = vi.fn();
 vi.mock("./api.ts", () => ({
+  workItemMerge: (...a: unknown[]) => workItemMerge(...a),
   workItemSearch: (...a: unknown[]) => workItemSearch(...a),
   workItemList: (...a: unknown[]) => workItemList(...a),
   workItemDetail: (...a: unknown[]) => workItemDetail(...a),
@@ -57,6 +59,7 @@ const { WorkItemModalHost } = await import("./WorkItemModalHost.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useWorkItemStore } = await import("./store.ts");
 const { useWorkItemModal } = await import("./modal.ts");
+const { useSeenStore } = await import("./seen.ts");
 const { resolveWorkItemRef } = await import("./refs.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -142,6 +145,7 @@ beforeEach(() => {
   openTerminal.mockReset();
   useSessionsStore.setState({ sessions: [], refresh: vi.fn(async () => {}) });
   workItemList.mockReset();
+  workItemMerge.mockReset();
   workItemSearch.mockReset();
   workItemQueryCreate.mockReset();
   workItemQueryCreate.mockResolvedValue({ id: "new" });
@@ -150,6 +154,8 @@ beforeEach(() => {
   workItemDetail.mockReset();
   workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
   useWorkItemStore.getState().reset();
+  localStorage.clear();
+  useSeenStore.setState({ map: {} });
   useWorkItemModal.getState().close();
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
@@ -166,6 +172,30 @@ afterEach(() => {
 });
 
 describe("WorkItemsSection", () => {
+  // #2779: the first load seeds the baseline (nothing marked); a later move past it marks the row,
+  // says "comments" only when the count grew, and opening the detail clears it.
+  it("marks a row that moved since it was last seen, and clears it on open", async () => {
+    const payload = (over: Record<string, unknown>) => ({
+      items: [item({ commentCount: 2, ...over })], queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true,
+    });
+    workItemList.mockResolvedValue(payload({}));
+    await render();
+    expect(host.querySelectorAll(".wi-unread").length).toBe(0);
+    expect(host.querySelector(".wi-comments")?.textContent).toBe("2");
+    await act(async () => {
+      useWorkItemStore.getState().applyPush(payload({ updatedAt: "2026-08-27T00:00:00Z" }));
+    });
+    expect(host.querySelector(".wi-unread")?.getAttribute("title")).toBe(t("wi.unread_updated"));
+    expect(host.querySelector(".wi-unread-total")?.textContent).toBe(t("wi.unread_total", { n: 1 }));
+    await act(async () => {
+      useWorkItemStore.getState().applyPush(payload({ updatedAt: "2026-08-27T00:00:00Z", commentCount: 3 }));
+    });
+    expect(host.querySelector(".wi-unread")?.getAttribute("title")).toBe(t("wi.unread_comments"));
+    await openRow();
+    expect(host.querySelectorAll(".wi-unread").length).toBe(0);
+    expect(host.querySelector(".wi-unread-total")).toBeNull();
+  });
+
   it("shows cached rows while stopped, with the last-fetched stamp and the stopped note", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: false });
     await render();
@@ -1080,6 +1110,37 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(fold.textContent).toContain(t("wi.detail_start_head_pr"));
   });
 
+  it("reserves the live-only rows while the read is running, then fills them in place (#2631)", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await openPR();
+
+    const labels = (m: Element) => [...m.querySelectorAll(".wi-dfacts dt")].map((e) => e.textContent);
+    const live = [t("wi.detail_author"), t("wi.detail_branches"), t("wi.detail_merge"), t("wi.detail_diff"), t("wi.detail_checks")];
+    for (const l of live) expect(labels(modal)).toContain(l);
+    expect(modal.querySelectorAll(".wi-dfacts dd .wi-dskel").length).toBe(live.length);
+    // Placeholders are decoration: the status line is what is announced.
+    expect(modal.querySelector(".wi-dfacts dd .wi-dskel")?.closest("dd")?.getAttribute("aria-hidden")).toBe("true");
+    expect(modal.querySelector(".wi-dlive")?.getAttribute("role")).toBe("status");
+
+    await act(async () => release(detail));
+    expect(modal.querySelectorAll(".wi-dskel").length).toBe(0);
+    for (const l of live) expect(labels(modal)).toContain(l);
+    expect(modal.textContent).toContain("feature/x");
+  });
+
+  it("keeps the diff and CI rows' room when the answer has neither (#2631)", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await openPR();
+    const dts = () => [...modal.querySelectorAll(".wi-dfacts dt")].map((e) => e.textContent);
+    const from = (l: (string | null)[]) => l.slice(l.indexOf(t("wi.detail_branches")), l.indexOf(t("wi.detail_branches")) + 4);
+    await act(async () => release({ ...detail, additions: 0, deletions: 0, changedFiles: 0, checks: { state: "", total: 0, failed: 0, pending: 0 }, reviews: [], comments: 0 }));
+    expect(modal.querySelector(".wi-dskel")).toBeNull();
+    // Branches and merge are real; the empty diff and CI keep a blank row each.
+    expect(from(dts())).toEqual([t("wi.detail_branches"), t("wi.detail_merge"), "\u00a0", "\u00a0"]);
+  });
+
   it("keeps the cached row and says so when the workspace is stopped (it is never started for a panel)", async () => {
     workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
     const modal = await openPR();
@@ -1186,6 +1247,343 @@ describe("WorkItemDetailModal — a pull request", () => {
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().existingBranch).toBe("");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+});
+
+// Merging a GitHub pull request from the panel (ADR 0061, 2026-10-25 note on #2632). The button is
+// a write against GitHub, so what is pinned is when it is NOT there: Bitbucket, a connection that
+// cannot merge, and any state GitHub would refuse — plus that a press sends the SHA the panel
+// displayed, only after a confirm that names what will be merged.
+describe("WorkItemDetailModal — merging a GitHub pull request", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const pr = (over: Record<string, unknown> = {}) =>
+    item({ id: "pr1", kind: "pr", key: "acme/web#518", title: "埋め込みシェルを出す", url: "https://github.com/acme/web/pull/518", ...over });
+  const mergeable = {
+    provider: "github",
+    key: "acme/web#518",
+    kind: "pr",
+    title: "埋め込みシェルを出す",
+    state: "open",
+    url: "https://github.com/acme/web/pull/518",
+    author: "taro",
+    assignee: "",
+    labels: [],
+    repo: "acme/web",
+    updatedAt: "2026-09-11T01:00:00Z",
+    draft: false,
+    merged: false,
+    mergeable: "clean",
+    baseBranch: "develop",
+    headBranch: "feature/x",
+    additions: 1,
+    deletions: 1,
+    changedFiles: 1,
+    comments: 0,
+    reviews: [],
+    checks: { state: "success", total: 2, failed: 0, pending: 0 },
+    headSha: SHA,
+    mergeableState: "clean",
+    mergeMethods: ["merge", "squash"],
+    defaultMergeMethod: "merge",
+    canMerge: true,
+  };
+  const open = async (row = pr()) => {
+    workItemList.mockResolvedValue({ items: [row], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    await openRow();
+    return document.querySelector(".wi-dmodal")!;
+  };
+  const footer = (m: Element) => m.querySelector(".ui-modal-foot")!;
+  /** The visible Merge button; the invisible placeholder that holds its room is not it. */
+  const mergeBtn = (m: Element) =>
+    [...footer(m).querySelectorAll<HTMLButtonElement>("button:not(.wi-dmergehold)")].find((b) => b.textContent?.includes(t("wi.merge")) && !b.textContent.includes(t("common.cancel")));
+  const dialog = () => document.querySelector(".confirm");
+  const confirmBtn = () => document.querySelector<HTMLButtonElement>(".confirm-actions button[data-autofocus]")!;
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  it("draws an enabled Merge button when GitHub says the merge would succeed", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(false);
+    expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
+  });
+
+  it("opens a dialog naming the pull request, base ← head and the method, and merges nothing until confirmed", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    expect(workItemMerge).not.toHaveBeenCalled();
+    const d = dialog()!;
+    expect(d.textContent).toContain("acme/web#518");
+    expect(d.textContent).toContain("埋め込みシェルを出す");
+    const codes = [...d.querySelectorAll(".wi-dbranches code")].map((c) => c.textContent);
+    expect(codes).toEqual(["develop", "feature/x"]);
+    const sel = d.querySelector<HTMLSelectElement>("select")!;
+    expect([...sel.options].map((o) => o.value)).toEqual(["merge", "squash"]);
+    expect(sel.value).toBe("merge"); // the Agent's default
+    expect(d.textContent).toContain(SHA.slice(0, 7));
+  });
+
+  it("sends the displayed head SHA and the chosen method, then re-reads the pull request", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    const sel = dialog()!.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => {
+      sel.value = "squash";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    workItemDetail.mockResolvedValue({ ...mergeable, state: "done", merged: true });
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(workItemMerge).toHaveBeenCalledWith({ provider: "github", key: "acme/web#518", sha: SHA, method: "squash" });
+    expect(dialog()).toBeNull();
+    expect(workItemDetail).toHaveBeenCalledTimes(2); // the read after the merge
+    expect(modal.textContent).toContain(t("wi.detail_merge_merged"));
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_done"));
+    expect(mergeBtn(modal)).toBeUndefined(); // merged: nothing left to press
+  });
+
+  it("refuses a moved pull request: says nothing was merged and shows the latest", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ error: { code: "head_changed", message: "moved" } });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    workItemDetail.mockResolvedValue({ ...mergeable, headSha: "f".repeat(40) });
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(workItemDetail).toHaveBeenCalledTimes(2);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_head_changed"));
+  });
+
+  it("keeps the dialog open with GitHub's own words when the merge fails", async () => {
+    workItemDetail.mockResolvedValue(mergeable);
+    workItemMerge.mockResolvedValue({ error: { code: "not_mergeable", message: "GitHub did not accept the merge: Required status check" } });
+    const modal = await open();
+    await act(async () => mergeBtn(modal)!.click());
+    await act(async () => confirmBtn().click());
+    await settle();
+    expect(dialog()?.querySelector("[role=alert]")?.textContent).toContain("Required status check");
+  });
+
+  it.each([
+    ["blocked", "wi.merge_why_blocked"],
+    ["behind", "wi.merge_why_behind"],
+    ["dirty", "wi.merge_why_dirty"],
+    ["unstable", "wi.merge_why_unstable"],
+    // While the panel re-reads by itself (#3012); the spent-budget wording is tested below.
+    ["unknown", "wi.merge_why_checking"],
+    ["something_new", "wi.merge_why_other"],
+  ] as const)("disables Merge for %s and says why next to it", async (state, why) => {
+    workItemDetail.mockResolvedValue({ ...mergeable, mergeableState: state });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t(why));
+    await act(async () => mergeBtn(modal)!.click());
+    expect(dialog()).toBeNull();
+  });
+
+  it("disables Merge for a draft", async () => {
+    workItemDetail.mockResolvedValue({ ...mergeable, draft: true, state: "in_progress", mergeableState: "draft" });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_draft"));
+  });
+
+  it("draws no Merge button when the connection is not known to be able to merge", async () => {
+    workItemDetail.mockResolvedValue({ ...mergeable, canMerge: false });
+    const modal = await open();
+    expect(mergeBtn(modal)).toBeUndefined();
+    expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
+  });
+
+  it("draws no Merge button for an Agent that sends no merge facts, or no allowed method", async () => {
+    for (const patch of [{ canMerge: undefined, headSha: undefined, mergeMethods: undefined }, { mergeMethods: [] }, { headSha: "" }]) {
+      workItemDetail.mockResolvedValue({ ...mergeable, ...patch });
+      const modal = await open();
+      expect(mergeBtn(modal)).toBeUndefined();
+      await act(async () => root!.unmount());
+      root = createRoot(host);
+    }
+  });
+
+  it("never draws Merge on a Bitbucket row, even if the answer claims it can", async () => {
+    workItemDetail.mockResolvedValue({ ...mergeable, provider: "bitbucket", key: "ws/repo#3" });
+    const modal = await open(pr({ provider: "bitbucket", key: "ws/repo#3", url: "https://bitbucket.org/ws/repo/pull-requests/3" }));
+    expect(mergeBtn(modal)).toBeUndefined();
+    expect(footer(modal).querySelector(".wi-dmergehold")).toBeNull();
+  });
+
+  it("draws no Merge on a merged or closed pull request", async () => {
+    for (const patch of [{ merged: true, state: "done" }, { state: "done" }]) {
+      workItemDetail.mockResolvedValue({ ...mergeable, ...patch });
+      const modal = await open();
+      expect(mergeBtn(modal)).toBeUndefined();
+      await act(async () => root!.unmount());
+      root = createRoot(host);
+    }
+  });
+
+  it("does not offer Merge on an issue", async () => {
+    const modal = await open(item());
+    expect(workItemDetail).not.toHaveBeenCalled();
+    expect(mergeBtn(modal)).toBeUndefined();
+  });
+
+  it("shows Merge disabled with the stopped wording when the workspace is stopped, and sends nothing", async () => {
+    workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
+    const modal = await open();
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_stopped"));
+    await act(async () => mergeBtn(modal)!.click());
+    expect(workItemMerge).not.toHaveBeenCalled();
+  });
+
+  // #2631: the answer must not move the footer's other buttons. The slot Merge fills is reserved
+  // (invisibly) from the first render, so the same number of buttons stands in the footer before
+  // and after, whether or not the answer brings a button.
+  it("holds Merge's room in the footer while reading, so the answer does not move the buttons", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await open();
+    const count = () => footer(modal).querySelectorAll("button, a").length;
+    const before = count();
+    expect(footer(modal).querySelector(".wi-dmergehold")?.getAttribute("aria-hidden")).toBe("true");
+    expect(mergeBtn(modal)).toBeUndefined();
+    await act(async () => release(mergeable));
+    expect(count()).toBe(before);
+    expect(footer(modal).querySelector(".wi-dmergehold")).toBeNull();
+    expect(mergeBtn(modal)?.disabled).toBe(false);
+  });
+
+  it("keeps the room, drawing nothing, when the answer says no button", async () => {
+    let release: (v: unknown) => void = () => {};
+    workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const modal = await open();
+    const before = footer(modal).querySelectorAll("button, a").length;
+    await act(async () => release({ ...mergeable, canMerge: false }));
+    expect(footer(modal).querySelectorAll("button, a").length).toBe(before);
+    expect(footer(modal).querySelector(".wi-dmergehold")).not.toBeNull();
+  });
+
+  // Right after another pull request merges into the same base, GitHub answers "unknown" until it
+  // has recomputed (#3012). The panel re-reads by itself instead of waiting to be reopened.
+  describe("while GitHub is still computing mergeability", () => {
+    const unknown = { ...mergeable, mergeable: "unknown", mergeableState: "unknown" };
+    beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
+    afterEach(() => {
+      vi.restoreAllMocks(); // the timer spies, before the fakes they wrap go away
+      vi.useRealTimers();
+    });
+    const tick = async (ms: number) => {
+      await act(async () => {
+        vi.advanceTimersByTime(ms);
+      });
+      await settle();
+    };
+
+    it("shows a spinner, re-reads without blanking the panel, and enables Merge once GitHub decides", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).not.toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_checking"));
+      expect(mergeBtn(modal)?.disabled).toBe(true);
+
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await tick(2000);
+      expect(workItemDetail).toHaveBeenCalledTimes(2);
+      // In flight: the facts stay on screen, no skeletons.
+      expect(modal.textContent).toContain("feature/x");
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+
+      const status = modal.querySelector(".wi-dmerge [role=status]")!;
+      expect(status.textContent).toBe(t("wi.detail_merge_checking"));
+      await act(async () => release(mergeable));
+      await settle();
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
+      // The same live region carries the answer, so it is announced.
+      expect(modal.querySelector(".wi-dmerge [role=status]")).toBe(status);
+      expect(status.textContent).toBe(t("wi.detail_merge_clean"));
+      expect(mergeBtn(modal)?.disabled).toBe(false);
+      await tick(60000);
+      expect(workItemDetail).toHaveBeenCalledTimes(2); // decided: no more reads
+    });
+
+    it("stops after its budget and offers a manual re-check", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      for (let i = 0; i < 10; i++) await tick(10000);
+      expect(workItemDetail).toHaveBeenCalledTimes(6); // the open + five re-reads
+      expect(modal.querySelector(".wi-dmerge .codicon-spin")).toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_unknown"));
+      expect(footer(modal).querySelector(".wi-dmergewhy")?.textContent).toBe(t("wi.merge_why_unknown"));
+      const again = [...modal.querySelectorAll<HTMLButtonElement>(".wi-dmerge button")].find((b) => b.textContent === t("wi.detail_merge_recheck"))!;
+      workItemDetail.mockResolvedValue(mergeable);
+      await act(async () => again.click());
+      await tick(0);
+      expect(workItemDetail).toHaveBeenCalledTimes(7);
+      expect(mergeBtn(modal)?.disabled).toBe(false);
+    });
+
+    it("drops a poll in flight when a fresh read starts, even if both answers are unknown", async () => {
+      // The merge dialog stays open after a plain failure, so a second press re-reads the pull
+      // request while a poll from the first re-read may still be out.
+      // Under act() the fresh read's blanking commits on its own, so the batched case (blank +
+      // fast "unknown" in one commit) cannot be reproduced. What it depends on is observable
+      // instead: the poll's cleanup has already run when the fresh read is sent.
+      const setSpy = vi.spyOn(globalThis, "setTimeout");
+      const clearSpy = vi.spyOn(globalThis, "clearTimeout");
+      workItemDetail.mockResolvedValue(mergeable);
+      workItemMerge.mockResolvedValue({ error: { code: "provider_error", message: "boom" } });
+      const modal = await open();
+      await act(async () => mergeBtn(modal)!.click());
+      // The read after the failure: GitHub is recomputing.
+      workItemDetail.mockResolvedValue(unknown);
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(dialog()).not.toBeNull();
+      expect(modal.textContent).toContain(t("wi.detail_merge_checking"));
+      // The first poll goes out and hangs.
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      await tick(2000);
+      const calls = workItemDetail.mock.calls.length;
+      const pollIdx = setSpy.mock.calls.map((c) => c[1]).lastIndexOf(2000);
+      const pollTimer = setSpy.mock.results[pollIdx].value;
+      // A second failed press re-reads; the answer is unknown again, with a newer head.
+      const NEW = "f".repeat(40);
+      let cleanedFirst = false;
+      workItemDetail.mockImplementation(async () => {
+        cleanedFirst = clearSpy.mock.calls.some((c) => c[0] === pollTimer);
+        return { ...unknown, headSha: NEW, additions: 99 };
+      });
+      await act(async () => confirmBtn().click());
+      await settle();
+      expect(workItemDetail.mock.calls.length).toBe(calls + 1);
+      expect(cleanedFirst).toBe(true);
+      expect(modal.textContent).toContain("+99");
+      // The stale poll answers last: it must not paint the older pull request back.
+      await act(async () => release({ ...mergeable, additions: 1 }));
+      await settle();
+      expect(modal.textContent).toContain("+99");
+      expect(mergeBtn(modal)?.disabled).toBe(true);
+    });
+
+    it("stops re-reading when the panel closes", async () => {
+      workItemDetail.mockResolvedValue(unknown);
+      const modal = await open();
+      const cancel = [...footer(modal).querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("common.cancel"))!;
+      await act(async () => cancel.click());
+      expect(document.querySelector(".wi-dmodal")).toBeNull();
+      await tick(60000);
+      expect(workItemDetail).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -1501,6 +1899,51 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       await openRef("acme/web#7");
       await act(async () => startReview().click());
       expect(useLaunchTarget.getState().existingBranch).toBe("");
+    });
+
+    it("draws no layout before the kind of a #N reference is known (#2631)", async () => {
+      useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+      let release: (v: unknown) => void = () => {};
+      workItemDetail.mockImplementationOnce(() => new Promise((r) => (release = r)));
+      const modal = await openRef();
+
+      // Neither the issue layout's start section / "Start" button nor the note is there yet.
+      expect(modal.querySelector(".wi-dstart:not(.wi-dstart-pending)")).toBeNull();
+      expect(modal.querySelector(".wi-dref")).toBeNull();
+      expect(modal.querySelector(".wi-dlink")).toBeNull();
+      const foot = [...modal.querySelectorAll<HTMLButtonElement>(".ui-modal-foot button")].map((b) => b.textContent);
+      expect(foot).not.toContain(t("wi.start"));
+      expect(modal.querySelector(".ui-modal-foot .wi-dopen")).toBeNull();
+      expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("acme/web#7");
+      expect(modal.querySelectorAll(".wi-dfacts dd .wi-dskel").length).toBeGreaterThan(4);
+      expect(modal.querySelector(".wi-dlive")?.getAttribute("role")).toBe("status");
+
+      await act(async () => release(live({ kind: "pr", state: "open", headBranch: "f", baseBranch: "b" })));
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+      expect(modal.querySelector("details.wi-dfold")).not.toBeNull();
+      expect(modal.querySelector(".ui-modal-foot .wi-dopen")).not.toBeNull();
+    });
+
+    it("falls back and offers a retry when the request itself rejects (#2631)", async () => {
+      workItemDetail.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+      const foot = [...modal.querySelectorAll<HTMLButtonElement>(".ui-modal-foot button")].map((b) => b.textContent);
+      expect(foot).toContain(t("wi.start"));
+      const retry = modal.querySelector<HTMLButtonElement>(".wi-dlive button.linklike")!;
+      workItemDetail.mockResolvedValue(live({ kind: "pr", headBranch: "f", baseBranch: "b" }));
+      await act(async () => retry.click());
+      await settle();
+      expect(modal.querySelector(".ui-modal-foot .wi-dopen")).not.toBeNull();
+    });
+
+    it("falls back to the note and the start section once the read fails (#2631)", async () => {
+      workItemDetail.mockResolvedValue({ error: { code: "provider_error", message: "boom" } });
+      const modal = await openRef();
+      expect(modal.querySelector(".wi-dskel")).toBeNull();
+      expect(modal.querySelector(".wi-dstart")).not.toBeNull();
+      const foot = [...modal.querySelectorAll<HTMLButtonElement>(".ui-modal-foot button")].map((b) => b.textContent);
+      expect(foot).toContain(t("wi.start"));
     });
 
     it("falls back to the reference note when GitHub has no such item", async () => {

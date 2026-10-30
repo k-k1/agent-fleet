@@ -586,16 +586,20 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	if state == "working" || state == "idle" {
 		status.RemovePendingText(sid)
 	}
-	// The streamed reply lives for the whole turn, across its tool calls, so only the turn's end
-	// drops it. A final flush that lands after Stop re-creates the file; the reader never shows
-	// it once the turn is over, and the next turn's end removes it.
-	if state == "idle" {
-		status.RemoveLiveText(sid)
-	}
 	// Which turn is running, for the streamed reply: UserPromptSubmit and every PostToolUse carry
 	// the turn's prompt_id. A message streamed under another id is from an earlier turn — one that
 	// ended without Stop, or a flush that landed after it. A subagent's hooks are not this turn.
+	//
+	// The streamed reply is dropped here, when a turn with a new prompt_id starts, and not at
+	// Stop: claude runs Stop before it appends the turn's final assistant row, so removing it
+	// at Stop left a poll with neither the streamed text nor the row (measured: 0.4-0.5 s apart).
+	// A queued prompt fires UserPromptSubmit mid-turn with the SAME prompt_id, so comparing ids
+	// is what keeps that from wiping the reply being written.
 	if state == "working" && h.promptID != "" && h.agentID == "" {
+		// No recorded prompt says nothing about which turn the file belongs to; keep it.
+		if cur := status.ReadLivePrompt(sid); cur != "" && cur != h.promptID {
+			status.RemoveLiveText(sid)
+		}
 		status.WriteLivePrompt(sid, h.promptID)
 	}
 }

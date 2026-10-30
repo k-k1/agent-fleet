@@ -9,7 +9,7 @@
 // over the session meta, the terminal has only the meta.
 import type { Session } from "../../types/session.ts";
 import type { StateInfo } from "../../agents/registry.ts";
-import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel, kindShort } from "../../lib/sessionkind.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { Icon } from "../../ui/Icon.tsx";
 
@@ -24,7 +24,7 @@ export function PaneSessionChip({ session, state }: PaneSessionChipProps) {
     // The name ellipsizes in a narrow pane and the slug stays hidden (it is an
     // internal id) — the hover tip carries both in full.
     <span className="pane-session" title={displayName(session) + "\nID: " + session.name}>
-      <span className={"kind-tag kind-" + kindClass(session.kind)}>
+      <span className={"kind-tag " + kindClasses(session.kind)}>
         <Icon name={kindIcon(session.kind)} />
         <span className="kt-full">{kindLabel(session.kind)}</span>
         <span className="kt-short">{kindShort(session.kind)}</span>

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -243,6 +244,7 @@ func removeSessionSideFiles(name string) {
 	sessionx.RemoveHandoffProposals(name)
 	sessionx.RemoveSessionMarks(name)
 	removeSessionTranslations(name)
+	kiro.ForgetRecorder(name) // the kiro ACP recorder holds every ACP message of the session
 	// The throwaway directory ($AF_WORK_DIR) goes too: by definition nothing in it is
 	// meant to outlive the session (docs/log/116).
 	if wd := paths.SessionWorkDir(name); wd != "" {

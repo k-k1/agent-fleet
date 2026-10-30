@@ -10,9 +10,11 @@ import { useT, t, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { ProfileLoginModal, type LoginProfile } from "../../awslogin/ProfileLoginModal.tsx";
-import { useProfileLogout } from "../../awslogin/useProfileLogout.ts";
-import { validExternalId, validRoleArn, validSessionName } from "../../../lib/awsRoleChain.ts";
+import { useProfileLogout } from "../../awslogin/useProfileLogout.tsx";
+import { awsProfileName, validExternalId, validRoleArn, validSessionName } from "../../../lib/awsRoleChain.ts";
 import { useAwsLoginStore } from "../../awslogin/store.ts";
+import { useSettingsUI } from "../store.ts";
+import { AwsConfigImport } from "./AwsConfigImport.tsx";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -186,12 +188,9 @@ const emptyProfile: Record<string, string> = {
 const ASSUME_ROLE = "assume_role";
 const isChained = (p: any): boolean => p?.kind === ASSUME_ROLE;
 
-// awsProfileName mirrors the CP's ssmProfileName (control-plane/ssm.go): the ~/.aws profile
-// name a label becomes. The workspace keys a profile's sign-in by it (sso-session af-<name>),
-// so an edit that changes it leaves the profile signed out under its new name.
-export function awsProfileName(label: string): string {
-  return label.trim().replace(/[^A-Za-z0-9._@-]+/g, "-") || "ssm";
-}
+// The workspace keys a profile's sign-in by its AWS name (sso-session af-<name>), so an edit
+// that changes it leaves the profile signed out under its new name.
+export { awsProfileName };
 
 // Profiles saved with a new workspace name or a new portal, which need a fresh login before
 // the Agent's badge means anything: its states come from the last 5-minute poll and its token
@@ -249,6 +248,14 @@ function ProfileSection({
   const loggingOut = useAwsLoginStore((st) => st.loggingOut);
   // Bumped when reloginNeeded changes, which React cannot see.
   const [, setMarks] = useState(0);
+  // The ~/.aws/config import (issue #3010); openSettings("ssm:import") opens it from elsewhere.
+  const requested = useSettingsUI((s) => (s.settingsSection === "ssm" ? s.settingsView : null));
+  const [importOpen, setImportOpen] = useState(false);
+  useEffect(() => {
+    if (requested !== "import") return;
+    setImportOpen(true);
+    useSettingsUI.getState().clearSettingsView();
+  }, [requested]);
   // Each row's login state, from the Agent (absent while the workspace is stopped). Asked on
   // open and after the login modal closes; nothing polls.
   const [states, setStates] = useState<Record<string, string>>({});
@@ -566,7 +573,9 @@ function ProfileSection({
                 >
                   {tr("ssm.login")}
                 </button>
-                {p.name && !isChained(p) && !reloginNeeded.has(p.id) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
+                {/* A chain has no login of its own: its button ends the source's (after a confirmation that
+                    names the source and the chains following it), so it needs a source to end. */}
+                {p.name && !reloginNeeded.has(loginTarget(p).id) && !(isChained(p) && isChained(loginTarget(p))) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
                   <button
                     className="ghost ssm-logout"
                     title={tr("awslogin.logout_title")}
@@ -618,10 +627,16 @@ function ProfileSection({
       {open
         ? form
         : !editing && (
-            <button className="ghost ssm-add-toggle" onClick={startAdd}>
-              <Icon name="add" /> {tr("ssm.add_profile")}
-            </button>
+            <div className="flow">
+              <button className="ghost ssm-add-toggle" onClick={startAdd}>
+                <Icon name="add" /> {tr("ssm.add_profile")}
+              </button>
+              <button className="ghost ssm-import-toggle" onClick={() => setImportOpen(true)}>
+                <Icon name="cloud-upload" /> {tr("ssm.imp_open")}
+              </button>
+            </div>
           )}
+      {importOpen && <AwsConfigImport onClose={() => setImportOpen(false)} onImported={reload} />}
       {loginFor && (
         <ProfileLoginModal
           profile={loginFor}

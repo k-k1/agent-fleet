@@ -93,6 +93,7 @@ export function useTranscriptCaps({
       agentName,
       repo: sessionMeta?.repo ?? null,
       workItemRefs: true,
+      previewLinks: true,
       loadPastedImage: (name) => actsRef.current.loadPastedImage!(name),
       fileURL: (p) => actsRef.current.fileURL!(p),
       thumbURL: (p) => actsRef.current.thumbURL!(p),

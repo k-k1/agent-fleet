@@ -1,7 +1,6 @@
 ---
 audience: "worktree の依存とビルドキャッシュを扱う人"
 source_of_truth: "各節が名指すコード。コンテナ内の実測は、いつ・どこで測ったかを添えて記す"
-updated: "2026-09"
 ---
 
 # 93. Worktree の依存とビルドキャッシュ（言語別・実測）
@@ -46,7 +45,7 @@ worktree 間で依存ツリーを勝手にリンクする仕組みは無い。`n
 
 **`$AF_WS_SCRATCH` を受け取るのは誰か。** control plane がこれを設定するのは `ecs` アダプタだけ
 （`control-plane/internal/runtime/runtime_ecs.go` の `registerTaskDef`）。`ecs-ec2` アダプタは意図して
-入れない——そこではホームが既にローカルの EBS にある（`runtime_ecs_ec2.go` の、ADR 0045 決定 10-3 を
+入れない——そこではホームが既にローカルの EBS にある（`runtime_ecs_ec2_taskdef.go` の、ADR 0045 決定 10-3 を
 引く注記）。docker と native のアダプタも設定しない。workspace イメージは `/scratch` ディレクトリを作る
 （`workspace/Dockerfile`）ので docker や `ecs-ec2` にもあり、native の traditional モードはイメージを
 使わずホストでビルドした agent を動かす。つまりディレクトリがあることは何の目印にもならない: 2 つの

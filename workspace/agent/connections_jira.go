@@ -1,20 +1,15 @@
 package main
 
 import (
-	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -25,23 +20,16 @@ import (
 // container's encrypted store, exactly like the git tokens. The CP never sees them: it
 // hands queries down and gets non-secret rows back (ADR 0061).
 //
-// Why a connection is still required even though a Jira MCP server exists: the MCP
-// only runs inside a conversation, so it cannot produce the rail's list (and its
-// official remote flavour is OAuth, which docs/log/48 §0 puts out of af's scope). The two
-// are complements — this connection feeds the list, the MCP reads the body in-session.
-
-var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second}
-
-// jiraCloudAPIBase is Atlassian's OAuth-side API host. A var, not a const, for the same
-// reason bbTokenURL is one: the site resolution and the 3LO request path are real HTTP
-// conversations, and pointing them at a stub is the only honest way to pin them (there
-// is no Jira account in CI or in this workspace).
-var jiraCloudAPIBase = "https://api.atlassian.com"
+// Why the connection serves both the rail's list and the `jira` CLI's login, yet the list
+// is fetched over REST here rather than by shelling out to `jira`: this process is the
+// credential helper behind the CLI, so calling it would be a round trip through ourselves,
+// and the unattended refresh must not depend on the CLI's output format (see internal/workitems/workitems.go).
+// The two are complements — this connection feeds the list, the CLI reads the body in-session.
 
 // jiraStatus reports whether a Jira connection is stored — never the token. Site and
 // the resolved account name are echoed so the card can say WHICH Jira and WHO.
 func jiraStatus(s *secrets.Data) map[string]any {
-	if !jiraConnected(s.Jira) {
+	if !jirax.Connected(s.Jira) {
 		return map[string]any{"connected": false}
 	}
 	c := s.Jira
@@ -65,6 +53,9 @@ func jiraStatus(s *secrets.Data) map[string]any {
 		}
 		m["sites"] = sites
 		m["cloudId"] = c.CloudID
+	}
+	if v := jirax.SoftwareScopes(c); v != "" {
+		m["softwareScopes"] = v
 	}
 	return m
 }
@@ -96,38 +87,6 @@ func normalizeJiraSite(raw string) (string, error) {
 		return "", fmt.Errorf("site must use https")
 	}
 	return u.Scheme + "://" + u.Host, nil
-}
-
-// jiraAuthHeader is Basic on the API-token path and Bearer on the OAuth one.
-func jiraAuthHeader(c *secrets.JiraCreds) string {
-	if c.AuthKind == "oauth" {
-		return "Bearer " + c.AccessToken
-	}
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(c.Email+":"+c.Token))
-}
-
-// jiraAPIBase is where REST calls go — and the two paths do NOT agree.
-//
-// A 3LO token is not accepted by <site>.atlassian.net at all: it addresses the site
-// through api.atlassian.com/ex/jira/<cloudId>. Sending an OAuth request to the site host
-// fails as an auth error, which reads as "wrong token" rather than "wrong host".
-// c.Site stays the human-facing base (browse links) either way.
-func jiraAPIBase(c *secrets.JiraCreds) string {
-	if c.AuthKind == "oauth" {
-		return jiraCloudAPIBase + "/ex/jira/" + c.CloudID
-	}
-	return c.Site
-}
-
-// jiraConnected reports whether either path has usable credentials.
-func jiraConnected(c *secrets.JiraCreds) bool {
-	if c == nil {
-		return false
-	}
-	if c.AuthKind == "oauth" {
-		return c.AccessToken != "" || c.RefreshToken != ""
-	}
-	return c.Token != ""
 }
 
 // handlePutJiraConn stores the connection — but only after Jira accepts it.
@@ -201,7 +160,7 @@ func handleJiraOAuthStore(w http.ResponseWriter, r *http.Request) {
 		AuthKind: "oauth", AccessToken: req.AccessToken, RefreshToken: req.RefreshToken,
 		Expiry: time.Now().Unix() + exp,
 	}
-	sites, err := jiraAccessibleSites(c)
+	sites, err := jirax.AccessibleSites(c)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, errCodeConnJiraRejected, err.Error())
 		return
@@ -272,35 +231,6 @@ func handlePutJiraSite(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "that site is not in this authorization")
 }
 
-// jiraAccessibleSites asks which Jira sites the authorization covers. This is the one
-// call that goes to api.atlassian.com itself rather than to a site.
-func jiraAccessibleSites(c *secrets.JiraCreds) ([]secrets.JiraSite, error) {
-	body, status, err := jiraRequest(c, "GET", jiraCloudAPIBase+"/oauth/token/accessible-resources", nil)
-	if err != nil {
-		return nil, fmt.Errorf("could not reach %s", jiraCloudAPIBase)
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("atlassian answered %d for accessible-resources", status)
-	}
-	var rows []struct {
-		ID     string   `json:"id"`
-		URL    string   `json:"url"`
-		Name   string   `json:"name"`
-		Scopes []string `json:"scopes"`
-	}
-	if err := json.Unmarshal(body, &rows); err != nil {
-		return nil, err
-	}
-	out := make([]secrets.JiraSite, 0, len(rows))
-	for _, r := range rows {
-		if r.ID == "" || r.URL == "" {
-			continue
-		}
-		out = append(out, secrets.JiraSite{CloudID: r.ID, URL: strings.TrimRight(r.URL, "/"), Name: r.Name})
-	}
-	return out, nil
-}
-
 func handleDeleteJiraConn(w http.ResponseWriter, r *http.Request) {
 	s, err := secrets.Load()
 	if err != nil {
@@ -330,9 +260,9 @@ type jiraMe struct {
 // jiraMyself is GET /rest/api/3/myself, with its errors phrased for the connection card.
 func jiraMyself(c *secrets.JiraCreds) (jiraMe, error) {
 	var me jiraMe
-	body, status, err := jiraRequest(c, "GET", jiraAPIBase(c)+"/rest/api/3/myself", nil)
+	body, status, err := jirax.Request(c, "GET", jirax.APIBase(c)+"/rest/api/3/myself", nil)
 	if err != nil {
-		return me, fmt.Errorf("could not reach %s", jiraAPIBase(c))
+		return me, fmt.Errorf("could not reach %s", jirax.APIBase(c))
 	}
 	switch {
 	case status == http.StatusOK:
@@ -340,339 +270,12 @@ func jiraMyself(c *secrets.JiraCreds) (jiraMe, error) {
 		return me, fmt.Errorf("Jira rejected the credentials")
 	case status == http.StatusNotFound:
 		// A 404 usually means the host exists but is not a Jira, or the URL is wrong.
-		return me, fmt.Errorf("no Jira REST API at %s", jiraAPIBase(c))
+		return me, fmt.Errorf("no Jira REST API at %s", jirax.APIBase(c))
 	default:
 		return me, fmt.Errorf("Jira answered %d", status)
 	}
 	if json.Unmarshal(body, &me) != nil {
-		return jiraMe{}, fmt.Errorf("unexpected answer from %s", jiraAPIBase(c))
+		return jiraMe{}, fmt.Errorf("unexpected answer from %s", jirax.APIBase(c))
 	}
 	return me, nil
-}
-
-// jiraSearchWorkItems resolves one saved JQL query into rail rows.
-//
-// Two endpoints, on purpose. Atlassian replaced the classic
-// GET /rest/api/3/search with /rest/api/3/search/jql (token paging instead of
-// startAt/total), and which one a given site answers depends on when it was migrated.
-// We try the newer path and fall back on 404/410 — the issue shape is identical, so the
-// mapping below is shared. Guessing wrong in either direction would make the whole
-// provider look broken.
-func jiraSearchWorkItems(c *secrets.JiraCreds, queryID, jql string) ([]workItemOut, error) {
-	fields := "summary,status,assignee,labels,updated,issuetype"
-	q := "?jql=" + url.QueryEscape(jiraOrderedJQL(jql)) + "&maxResults=" + fmt.Sprint(workItemFetchPerQuery) + "&fields=" + url.QueryEscape(fields)
-	base := jiraAPIBase(c)
-	body, err := jiraGet(c, base+"/rest/api/3/search/jql"+q)
-	if isJiraNotFound(err) {
-		body, err = jiraGet(c, base+"/rest/api/3/search"+q)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return parseJiraSearchIssues(body, c.Site, queryID)
-}
-
-// jiraOrderedJQL appends `ORDER BY updated DESC` to a query that does not order itself
-// (docs/log/80 §80.18.6).
-//
-// Because the fetch is capped at workItemFetchPerQuery, an unordered JQL means WHICH
-// 50 rows survive is up to Jira. The rail says "the newest N" — the GitHub adapter passes
-// sort=updated&order=desc for exactly this reason — so an arbitrary cut would make the
-// rail lie. A user-written ORDER BY is left alone: they said what they wanted.
-func jiraOrderedJQL(jql string) string {
-	q := strings.TrimSpace(jql)
-	if q == "" {
-		return q
-	}
-	// "ORDER BY" may only appear at the end of a JQL query, so absorbing case and
-	// whitespace variation is enough to find it.
-	if jiraOrderBy.MatchString(q) {
-		return q
-	}
-	return q + " ORDER BY updated DESC"
-}
-
-var jiraOrderBy = regexp.MustCompile(`(?i)\border\s+by\b`)
-
-type jiraHTTPError struct {
-	code int
-	msg  string
-}
-
-func (e *jiraHTTPError) Error() string { return e.msg }
-
-func isJiraNotFound(err error) bool {
-	je, ok := err.(*jiraHTTPError)
-	return ok && (je.code == http.StatusNotFound || je.code == http.StatusGone)
-}
-
-// jiraGet issues one authenticated GET, renewing the OAuth access token when it is
-// expired or refused.
-//
-// Two triggers, not one. The expiry stamp catches the common case before spending a
-// round trip, and the 401 catches the cases the stamp cannot know about — a token
-// revoked from the Atlassian side, or a clock that disagrees. Retrying at most once
-// keeps a genuinely revoked authorization from looping.
-func jiraGet(c *secrets.JiraCreds, u string) ([]byte, error) {
-	if err := jiraEnsureFresh(c); err != nil {
-		return nil, err
-	}
-	body, status, err := jiraRequest(c, "GET", u, nil)
-	if err != nil {
-		return nil, err
-	}
-	if status == http.StatusUnauthorized && c.AuthKind == "oauth" {
-		if rerr := jiraRefreshNow(c); rerr == nil {
-			body, status, err = jiraRequest(c, "GET", u, nil)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	if status == http.StatusOK {
-		return body, nil
-	}
-	switch status {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, &jiraHTTPError{status, "Jira rejected the credentials (re-connect Jira)"}
-	case http.StatusBadRequest:
-		// A JQL syntax error lands here, and Jira's own explanation is the most helpful
-		// thing to pass through.
-		return nil, &jiraHTTPError{status, "Jira could not parse the JQL: " + jiraErrText(body)}
-	case http.StatusTooManyRequests:
-		return nil, &jiraHTTPError{status, "Jira rate limit reached"}
-	}
-	return nil, &jiraHTTPError{status, fmt.Sprintf("Jira answered %d", status)}
-}
-
-// jiraRequest performs one authenticated call and returns the body and status. It does
-// not interpret the status — callers differ on what a 404 means (a missing endpoint to
-// fall back from, versus a missing issue).
-func jiraRequest(c *secrets.JiraCreds, method, u string, payload []byte) ([]byte, int, error) {
-	var rdr io.Reader
-	if payload != nil {
-		rdr = strings.NewReader(string(payload))
-	}
-	req, err := http.NewRequest(method, u, rdr)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Authorization", jiraAuthHeader(c))
-	req.Header.Set("Accept", "application/json")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := jiraHTTPClient.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("could not reach Jira")
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	return body, resp.StatusCode, nil
-}
-
-// jiraFreshWindow renews slightly before the stamp says to. A token that expires while
-// the request is in flight comes back as a 401 that looks like a revoked authorization.
-const jiraFreshWindow = 60 * time.Second
-
-func jiraEnsureFresh(c *secrets.JiraCreds) error {
-	if c.AuthKind != "oauth" || c.Expiry == 0 {
-		return nil
-	}
-	if time.Now().Add(jiraFreshWindow).Unix() < c.Expiry {
-		return nil
-	}
-	return jiraRefreshNow(c)
-}
-
-// jiraRefreshMu serializes the refresh grant within this process, in front of the
-// cross-process lock jiraRefreshNow also takes.
-//
-// Not an optimisation — a correctness requirement of ROTATING refresh tokens, which
-// Atlassian now mandates for new integrations. Rotation means each refresh token is
-// single-use AND its reuse is treated as theft: presenting the same one twice can revoke
-// the whole chain, and the member sees Jira spontaneously disconnect. Two callers can
-// reach here at the same moment (a rail fetch and a post both notice the hour-old token),
-// so without this lock the normal case is two identical grants racing.
-var jiraRefreshMu sync.Mutex
-
-// jiraRefreshBudget bounds one renewal: the wait for the cross-process lock and the grant.
-// The jira wrapper blocks on `workspace-agent jira-cred`, so a holder that is stuck must
-// cost it a delay, not a hang.
-var jiraRefreshBudget = 30 * time.Second
-
-// jiraRefreshNow runs the refresh grant through the CP bridge and PERSISTS the result.
-//
-// The Agent and every `workspace-agent jira-cred` the jira wrapper starts are separate
-// processes holding the same refresh token, so the in-process mutex alone cannot keep a
-// rotated token from being presented twice; the "jira-refresh" store lock is what does.
-// Inside it the store is read again and is the only source: a caller whose token is no
-// longer the stored one adopts what another process renewed instead of exchanging, and a
-// caller whose token IS the stored one exchanges the stored refresh token, never its own
-// possibly stale copy.
-//
-// Atlassian rotates the refresh token: the response carries a new one and retires the
-// old. Not saving it strands the connection at the next expiry with nothing to renew, so
-// the store write is part of the refresh, not an afterthought.
-func jiraRefreshNow(c *secrets.JiraCreds) error {
-	jiraRefreshMu.Lock()
-	defer jiraRefreshMu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), jiraRefreshBudget)
-	defer cancel()
-	seen := c.AccessToken
-	return secrets.WithLockContext(ctx, "jira-refresh", func() error {
-		cur, err := secrets.LoadContext(ctx)
-		if err != nil {
-			return err
-		}
-		d := cur.Jira
-		if d == nil || d.AuthKind != "oauth" {
-			return fmt.Errorf("jira connection disappeared")
-		}
-		if d.AccessToken != "" && d.AccessToken != seen && d.Expiry > time.Now().Add(jiraFreshWindow).Unix() {
-			c.AccessToken, c.RefreshToken, c.Expiry = d.AccessToken, d.RefreshToken, d.Expiry
-			return nil
-		}
-		b := cur.GitOAuthBridge
-		if b == nil || b.BaseURL == "" || b.Token == "" {
-			return fmt.Errorf("no CP bridge to refresh the Jira token")
-		}
-		if d.RefreshToken == "" {
-			return fmt.Errorf("no refresh token stored (re-connect Jira)")
-		}
-		tok, err := gitx.RefreshOAuthViaCP(*b, "jira", d.RefreshToken)
-		if err != nil {
-			return err
-		}
-		next := tok.RefreshToken
-		if next == "" {
-			next = d.RefreshToken
-		}
-		exp := tok.ExpiresIn
-		if exp <= 0 {
-			exp = 3600
-		}
-		expiry := time.Now().Unix() + exp
-		// The grant has already spent the old refresh token, so the write gets its own
-		// deadline rather than whatever is left of the budget.
-		wctx, wcancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer wcancel()
-		err = secrets.UpdateContext(wctx, func(s *secrets.Data) error {
-			if s.Jira == nil || s.Jira.AuthKind != "oauth" {
-				return fmt.Errorf("jira connection disappeared")
-			}
-			s.Jira.AccessToken, s.Jira.RefreshToken, s.Jira.Expiry = tok.AccessToken, next, expiry
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		c.AccessToken, c.RefreshToken, c.Expiry = tok.AccessToken, next, expiry
-		return nil
-	})
-}
-
-// jiraErrText pulls the first errorMessages entry out of a Jira error body ("" when the
-// body is not the shape we expect — the caller already has the status code).
-func jiraErrText(body []byte) string {
-	var e struct {
-		ErrorMessages []string `json:"errorMessages"`
-	}
-	if json.Unmarshal(body, &e) == nil && len(e.ErrorMessages) > 0 {
-		return e.ErrorMessages[0]
-	}
-	return strings.TrimSpace(string(body))
-}
-
-// parseJiraSearchIssues maps a Jira search body onto the shared row shape. Split from
-// the HTTP call so the mapping is testable without a Jira (there is none in CI, and no
-// account in this workspace).
-func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, error) {
-	var jr struct {
-		Issues []struct {
-			Key    string `json:"key"`
-			Fields struct {
-				Summary string `json:"summary"`
-				Updated string `json:"updated"`
-				Status  struct {
-					Name           string `json:"name"`
-					StatusCategory struct {
-						Key string `json:"key"`
-					} `json:"statusCategory"`
-				} `json:"status"`
-				Assignee *struct {
-					DisplayName string `json:"displayName"`
-				} `json:"assignee"`
-				Labels    []string `json:"labels"`
-				IssueType *struct {
-					Name string `json:"name"`
-				} `json:"issuetype"`
-			} `json:"fields"`
-		} `json:"issues"`
-	}
-	if err := json.Unmarshal(body, &jr); err != nil {
-		return nil, err
-	}
-	out := make([]workItemOut, 0, len(jr.Issues))
-	for _, is := range jr.Issues {
-		assignee := ""
-		if is.Fields.Assignee != nil {
-			assignee = is.Fields.Assignee.DisplayName
-		}
-		// An issue without fields.labels leaves this nil, and a nil slice marshals to JSON
-		// null, which the receiver cannot treat as an array (this exact shape once crashed
-		// the Console).
-		labels := is.Fields.Labels
-		if labels == nil {
-			labels = []string{}
-		}
-		typ := ""
-		if is.Fields.IssueType != nil {
-			typ = is.Fields.IssueType.Name
-		}
-		out = append(out, workItemOut{
-			QueryID: queryID, Provider: "jira", Kind: "issue", Key: is.Key,
-			Title:    is.Fields.Summary,
-			State:    normalizeJiraState(is.Fields.Status.StatusCategory.Key),
-			URL:      site + "/browse/" + is.Key,
-			Assignee: assignee, Labels: labels, Type: typ, LabelColors: map[string]string{},
-			// Jira has no repository. The launch target comes from the query's repoHint,
-			// which is the project-to-working-copy mapping.
-			Repo: "", UpdatedAt: jiraTimeToRFC3339(is.Fields.Updated),
-		})
-	}
-	return out, nil
-}
-
-// normalizeJiraState maps Jira onto the shared vocabulary via the STATUS CATEGORY, not
-// the status name. Every Jira project renames its statuses ("In review", "Awaiting QA"),
-// but the category behind them is one of three fixed values — matching on names would
-// break on the first custom workflow.
-func normalizeJiraState(category string) string {
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "new", "undefined":
-		return "open"
-	case "indeterminate":
-		return "in_progress"
-	case "done":
-		return "done"
-	default:
-		return "other"
-	}
-}
-
-// jiraTimeToRFC3339 converts Jira's "2026-08-26T10:11:12.000+0900" to RFC3339. The rail
-// sorts on this string, so a value that does not parse is passed through rather than
-// dropped (a row with an odd stamp still beats no row).
-func jiraTimeToRFC3339(v string) string {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return ""
-	}
-	for _, layout := range []string{"2006-01-02T15:04:05.999-0700", time.RFC3339, time.RFC3339Nano} {
-		if t, err := time.Parse(layout, v); err == nil {
-			return t.UTC().Format(time.RFC3339)
-		}
-	}
-	return v
 }

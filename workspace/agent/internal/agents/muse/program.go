@@ -65,8 +65,25 @@ func DataHome() string { return filepath.Join(paths.HomeDir(), ".local", "share"
 //     says so and carries on — and this project keeps its conventions there. Trust is not on
 //     the wire (the string does not occur in the schema at all), so the flag is the only
 //     route (decision 12).
-func serveArgs() []string {
-	return []string{"serve", "--disable-sandbox", "--trust-workspace"}
+//
+//   - --contributor-mode: see ContributorModeArgs.
+func serveArgs(contributor bool) []string {
+	return append([]string{"serve", "--disable-sandbox", "--trust-workspace"}, ContributorModeArgs(contributor)...)
+}
+
+// ContributorModeArgs is the `--contributor-mode` pair every `muse serve` and `muse exec` AF spawns
+// carries (#2535); login, logout and `auth set` handle no conversation and take none. Since 1.4
+// the vendor's product-improvement use is a contributor MODE rather than the `-contributor`
+// model twins dataSharingModel looks for: measured on 1.4.11, `model/list` lists
+// no such row, with the mode on or off. The flag is sent explicitly in both directions because
+// it is the only route that never writes the member's own settings.json (`--help`: "never
+// persisted"), and because the host's answer with no flag and no setting was not observable
+// without a real turn — an explicit off does not depend on it.
+func ContributorModeArgs(on bool) []string {
+	if on {
+		return []string{"--contributor-mode", "on"}
+	}
+	return []string{"--contributor-mode", "off"}
 }
 
 // childEnv is the spawned host's environment: the parent's, plus the clamps that have an

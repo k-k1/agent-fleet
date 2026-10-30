@@ -17,8 +17,8 @@
 #     An update re-pushed to the same tag has zero template diff, so the CP keeps running the
 #     old task. The empty changeset is detected and turned into an ECS force-new-deployment.
 #  3. Workspaces do not update themselves. The adapter rebuilds the task definition on every
-#     Start, so a running workspace stays on the old image until it is stopped and started
-#     again. Who is in that state is listed at the end (in the Console the same fact reaches
+#     Start, so a running workspace picks the release up only when it is stopped and started
+#     again. Who is running now is listed at the end (in the Console the same fact reaches
 #     each user as the "restart required" badge on the WS bar —
 #     control-plane/runtime_ecs_stale.go).
 #  4. A release can need a NEW ECR repository and a new image in it, and CloudFormation will
@@ -240,6 +240,79 @@ af_efs_backup_check "$DATA_STACK" "$PROFILE" "$REGION"
 # EfsBackup, so an operator who never reads this output still sees the warning. Empty = unknown,
 # in which case the parameter is not passed at all.
 EFS_BACKUP_MARKER="$(af_efs_backup_marker "$AF_EFS_BACKUP_VERDICT" || true)"
+
+# Workspace subnets (#2716): a fact of the network stack, passed on every update so the CP
+# follows it. This script does not deploy 00-network, so a network stack older than the
+# subnets has no such output: nothing is passed and the workspaces stay where they are.
+NETWORK_STACK="$(af_stack_param "$STACK" NetworkStackName)"
+: "${NETWORK_STACK:=af-ecs-network}"
+WS_SUBNETS="$(af_stack_output "$NETWORK_STACK" WorkspaceSubnets)"
+# Every value below that comes out empty while the ingress stack still holds one is cleared after
+# the deploy by af_cfn_clear_params (env.sh): an empty --parameter-overrides value did not clear
+# one in the #2763 rehearsal. Before clearing, the empty answer is read again strictly, so a failed read stops the run
+# instead of moving workspaces back to the private subnets or dropping the egress proxy.
+CLEAR_INGRESS=()
+network_output_empty() {  # <output>: 0 when the network stack really has no such output
+  local v
+  v="$(af_stack_output_strict "$NETWORK_STACK" "$1")" || {
+    echo "ERROR: could not read the $1 output of $NETWORK_STACK; stopping so that a transient" >&2
+    echo "       failure cannot clear it on $STACK. Re-run." >&2
+    exit 1
+  }
+  [ -z "$v" ]
+}
+WS_SUBNETS_LIVE="$(af_stack_param "$STACK" WorkspaceSubnets)"
+WS_OVR=()
+if [ -n "$WS_SUBNETS" ]; then
+  WS_OVR=("WorkspaceSubnets=$WS_SUBNETS")
+elif [ -n "$WS_SUBNETS_LIVE" ] && network_output_empty WorkspaceSubnets; then
+  # 00-network went back to a template without workspace subnets: the ids the CP has are gone.
+  WS_OVR=("WorkspaceSubnets="); CLEAR_INGRESS+=(WorkspaceSubnets)
+fi
+# The egress gateway (EgressRoute=gateway, ADR 0122): its proxy address and token secret, also
+# facts of the network stack. Passed whenever the network has them or the ingress stack still
+# does, so switching back to nat-gateway clears them.
+EGRESS_ADDR="$(af_stack_output "$NETWORK_STACK" EgressProxyAddr)"
+EGRESS_SECRET="$(af_stack_output "$NETWORK_STACK" EgressTokenSecretArn)"
+EGRESS_OVR=()
+if [ -n "$EGRESS_SECRET" ] || [ -n "$(af_stack_param "$STACK" EgressTokenSecretArn)" ]; then
+  if [ -z "$EGRESS_SECRET" ] && network_output_empty EgressTokenSecretArn; then
+    CLEAR_INGRESS+=(EgressProxyAddr EgressTokenSecretArn)
+  fi
+  EGRESS_OVR=("EgressProxyAddr=$EGRESS_ADDR" "EgressTokenSecretArn=$EGRESS_SECRET")
+fi
+# The egress event archive bucket (#2732), a fact of the data stack like the two above: passed
+# when 10-data has one or the ingress stack still names one (so dropping the bucket clears it),
+# and not at all when the data stack is unknown. A failed read of the output stops the run: the
+# purger deletes events once the archive is off, so "could not read" must never mean "none".
+# 20-platform carries the CP's grant on it, so that stack's change set below gets it too.
+ARCHIVE_OVR=(); PLATFORM_ARCHIVE_OVR=(); PLATFORM_CLEAR=0
+if [ -n "$DATA_STACK" ]; then
+  if ! ARCHIVE_BUCKET="$(af_stack_output_strict "$DATA_STACK" EgressArchiveBucket)"; then
+    echo "ERROR: could not read the EgressArchiveBucket output of $DATA_STACK; stopping so that a" >&2
+    echo "       transient failure cannot switch the egress archive off. Re-run." >&2
+    exit 1
+  fi
+  if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$STACK" EgressArchiveBucket)" ]; then
+    ARCHIVE_OVR=("EgressArchiveBucket=$ARCHIVE_BUCKET")
+    [ -n "$ARCHIVE_BUCKET" ] || CLEAR_INGRESS+=(EgressArchiveBucket)
+  fi
+  if [ -n "$ARCHIVE_BUCKET" ] || [ -n "$(af_stack_param "$AF_STACK_PLATFORM" EgressArchiveBucket)" ]; then
+    PLATFORM_ARCHIVE_OVR=(--parameter-overrides "EgressArchiveBucket=$ARCHIVE_BUCKET")
+    [ -n "$ARCHIVE_BUCKET" ] || PLATFORM_CLEAR=1
+  fi
+fi
+if [ -z "$WS_SUBNETS" ]; then
+  cat >&2 <<EOF
+NOTE: $NETWORK_STACK has no WorkspaceSubnets output (its 00-network template has no workspace
+      subnets), so workspaces run in the private subnets. This script never deploys 00-network.
+      To move them, follow README "Upgrading from v0.34.x": 00-network with S3EndpointEnabled=false
+      through a change set, this script again, every running workspace stopped and started, and
+      only then S3EndpointEnabled=true. Do not deploy the new 00-network with its defaults:
+      S3EndpointEnabled defaults to true, and the endpoint's policy then refuses (AccessDenied) the
+      S3 requests of every workspace still in a private subnet.
+EOF
+fi
 # The pin only applies to the copy above. Said here, before anything runs, so a pin that would
 # otherwise do nothing is not mistaken for one that was checked.
 if [ -n "$COMFY_DIGEST" ] && { [ "$COMFY_REPAIR" != 1 ] || [ "$COMFY_PULLED" != 1 ]; }; then
@@ -312,13 +385,14 @@ fi
 if ! af_stack_exists "$AF_STACK_PLATFORM"; then
   echo "==> no $AF_STACK_PLATFORM stack — skipping 20-platform (standup.sh is what creates it)"
 elif [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $AF_STACK_PLATFORM --template-file $HERE/cfn/20-platform.yaml --no-execute-changeset"
+  echo "DRY: aws cloudformation deploy --stack-name $AF_STACK_PLATFORM --template-file $HERE/cfn/20-platform.yaml --no-execute-changeset${PLATFORM_ARCHIVE_OVR[*]:+ ${PLATFORM_ARCHIVE_OVR[*]}}"
   echo "     (then describe-change-set, printed here, and execute-change-set only when nothing is replaced)"
 else
   echo "==> 20-platform: building a change set for $AF_STACK_PLATFORM"
   set +e
   cs_out="$(af_cfn_deploy "$AF_STACK_PLATFORM" "$HERE/cfn/20-platform.yaml" \
-    --capabilities CAPABILITY_NAMED_IAM --no-execute-changeset --no-fail-on-empty-changeset 2>&1)"
+    --capabilities CAPABILITY_NAMED_IAM --no-execute-changeset --no-fail-on-empty-changeset \
+    ${PLATFORM_ARCHIVE_OVR[@]+"${PLATFORM_ARCHIVE_OVR[@]}"} 2>&1)"
   cs_rc=$?
   set -e
   printf '%s\n' "$cs_out" | while IFS= read -r l; do echo "    $l"; done
@@ -359,6 +433,10 @@ else
     "${AWS[@]}" cloudformation wait stack-update-complete --stack-name "$AF_STACK_PLATFORM"
     echo "    · $AF_STACK_PLATFORM updated"
   fi
+fi
+# The CP's grant on an archive bucket 10-data no longer has, not trusted to the empty value above.
+if [ "$PLATFORM_CLEAR" = 1 ] && af_stack_exists "$AF_STACK_PLATFORM"; then
+  af_cfn_clear_params "$AF_STACK_PLATFORM" CAPABILITY_NAMED_IAM EgressArchiveBucket
 fi
 
 # --- 1b) push (optional) ----------------------------------------------------
@@ -629,7 +707,7 @@ fi
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 deploy_out=""
 if [ "$DRY" = 1 ]; then
-  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}"
+  echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ImageTag=$VERSION${EFS_BACKUP_MARKER:+ EfsBackup=$EFS_BACKUP_MARKER}${WS_OVR[*]:+ ${WS_OVR[*]}}${EGRESS_OVR[*]:+ ${EGRESS_OVR[*]}}${ARCHIVE_OVR[*]:+ ${ARCHIVE_OVR[*]}}"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
@@ -639,11 +717,17 @@ else
   deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides "ImageTag=$VERSION" ${EFS_BACKUP_MARKER:+"EfsBackup=$EFS_BACKUP_MARKER"} \
+      ${WS_OVR[@]+"${WS_OVR[@]}"} ${EGRESS_OVR[@]+"${EGRESS_OVR[@]}"} \
+      ${ARCHIVE_OVR[@]+"${ARCHIVE_OVR[@]}"} \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e
   echo "$deploy_out"
   [ $rc -eq 0 ] || exit $rc
+fi
+# The values that went empty above (a network or data stack that no longer has them).
+if [ ${#CLEAR_INGRESS[@]} -gt 0 ]; then
+  af_cfn_clear_params "$STACK" CAPABILITY_NAMED_IAM "${CLEAR_INGRESS[@]}"
 fi
 
 # --- 3) what a mutable tag's "no changes" would drop (pitfall 2) -------------
@@ -663,10 +747,13 @@ if [ "$DRY" != 1 ]; then
 fi
 
 # --- 5) list the running workspaces (pitfall 3) ------------------------------
-# Nothing is stopped here; this only reports who is still running the old image.
+# Nothing is stopped here; this only reports who is running now.
 # Leave list-services' paging to the CLI (--max-items truncates silently and then reads as
-# "everyone was seen"). describe-services takes 10 at a time, so batch them.
-arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null || true)"
+# "everyone was seen"). describe-services takes 10 at a time, so batch them. A failed read
+# leaves the list short, so it is remembered (ws_enum_failed) and said with the subnet check.
+ws_enum_failed=0
+arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null)" \
+  || { arns=""; ws_enum_failed=1; }
 names=""
 for arn in $arns; do
   name="${arn##*/}"
@@ -679,12 +766,45 @@ while [ $# -gt 0 ]; do
   batch=""
   i=0
   while [ $# -gt 0 ] && [ $i -lt 10 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
+  # describe-services answers 200 with failures[] (or fewer services) for some it cannot
+  # describe; a batch that does not come back whole is an incomplete list, not fewer workspaces.
   # shellcheck disable=SC2086
-  # shellcheck disable=SC2016  # backticks are JMESPath's literal syntax, not a subshell
-  got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
-    --query 'services[?desiredCount>`0`].serviceName' --output text 2>/dev/null || true)"
-  running="$running $got"
+  r="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
+    --query "[length(failures), length(services), join(' ', services[?desiredCount>\`0\`].serviceName)]" \
+    --output text 2>/dev/null)" || { r=""; ws_enum_failed=1; }
+  IFS=$'\t' read -r nf ns got <<<"$r" || true
+  if [ -n "$r" ] && { [ "$nf" != 0 ] || [ "$ns" != "$i" ]; }; then ws_enum_failed=1; fi
+  running="$running ${got:-}"
 done
+
+# --- 5b) running workspaces still in a private subnet (#2763) ----------------
+# A task keeps its ENI until it is stopped, so after the network grows workspace subnets the
+# ones that were running stay where they were. With S3EndpointEnabled=true the endpoint policy
+# refuses their own S3 requests (AccessDenied, no NAT fallback); before it, they block the switch.
+ws_private=""; ws_unknown=""
+if [ -n "$WS_SUBNETS" ]; then
+  for n in $running; do
+    t="$("${AWS[@]}" ecs list-tasks --cluster "$CLUSTER" --service-name "$n" --desired-status RUNNING \
+      --query 'taskArns' --output text 2>/dev/null)" || { ws_unknown="$ws_unknown $n"; continue; }
+    case "$t" in ""|None) continue ;; esac
+    # One task at a time: describe-tasks answers 200 with a failures[] entry for a task it cannot
+    # describe, and a task without an ENI subnet is no answer either. Both are "unknown", never
+    # "moved".
+    state=""
+    for ta in $t; do
+      r="$("${AWS[@]}" ecs describe-tasks --cluster "$CLUSTER" --tasks "$ta" \
+        --query "[length(failures), length(tasks), (tasks[0].attachments[].details[?name=='subnetId'].value)[] | [0]]" \
+        --output text 2>/dev/null)" || { state=unknown; break; }
+      read -r nf nt s <<<"$r"
+      if [ "$nf" != 0 ] || [ "$nt" != 1 ] || [ -z "$s" ] || [ "$s" = None ]; then state=unknown; break; fi
+      case ",$WS_SUBNETS," in *",$s,"*) ;; *) state=private ;; esac
+    done
+    case "$state" in
+      unknown) ws_unknown="$ws_unknown $n" ;;
+      private) ws_private="$ws_private $n" ;;
+    esac
+  done
+fi
 
 # --- 6) the ecs-ec2 golden snapshot (the other thing an update quietly makes stale) ---------
 # It seeds a new user's home. When the image moves, the af-image mismatch makes the CP fall to
@@ -713,26 +833,51 @@ The Console (in each user's browser) shows "a new version is available" within a
 and a reload is all it takes (sessions are not interrupted).
 
 Workspaces are NOT replaced automatically. The adapter rebuilds the task definition on every
-Start, so anything running now keeps the old image until it is stopped and started again. The
-affected users get the "restart required" badge on the WS bar in their Console (they press it
-themselves — stopping kills their sessions).
+Start, so anything running now picks this release up only when it is stopped and started again
+(on a re-run of the same tag that is a forced redeploy, not a new image). Where the image did
+change, the affected users get the "restart required" badge on the WS bar in their Console
+(they press it themselves — stopping kills their sessions).
 
 Note: if nobody gets the badge, 20-platform is out of date. Without ecr:BatchGetImage on
    CpTaskRole the drift check falls to "unknown" and the badge just disappears, with no error.
    Step 1a above deploys it, so this only remains when that step was skipped or handed back.
 EOF
 if [ -n "${running// /}" ]; then
-  echo "Workspaces running now (on the old image until stopped and started again):"
+  echo "Workspaces running now (they pick up this release on their next Start):"
   for n in $running; do echo "  - $n"; done
 else
   echo "No workspaces are running (the next Start picks up the new image)."
+fi
+
+if [ -n "$WS_SUBNETS" ] && [ "$ws_enum_failed" = 1 ]; then
+  echo
+  echo "WARNING: the workspace services of $CLUSTER could not all be listed, so the check below for"
+  echo "         workspaces still in a private subnet is incomplete. Do not take it as \"none left\";"
+  echo "         re-run (--dry-run is enough) before 00-network gets S3EndpointEnabled=true."
+fi
+if [ -n "$WS_SUBNETS" ] && [ "$ws_enum_failed" = 0 ] && [ -z "${ws_private// /}" ] && [ -z "${ws_unknown// /}" ]; then
+  echo
+  echo "Still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS): none."
+fi
+if [ -n "${ws_private// /}" ] || [ -n "${ws_unknown// /}" ]; then
+  echo
+  if [ "$(af_stack_param "$NETWORK_STACK" S3EndpointEnabled)" = false ]; then
+    echo "WARNING: still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS). Stop and start each"
+    echo "         before 00-network gets S3EndpointEnabled=true (README \"Upgrading from v0.34.x\"):"
+  else
+    echo "WARNING: still in a private subnet, not in WorkspaceSubnets ($WS_SUBNETS), while $NETWORK_STACK"
+    echo "         has the S3 endpoint on: their own S3 requests are refused (AccessDenied) until each"
+    echo "         is stopped and started (README \"Upgrading from v0.34.x\"; rollback: S3EndpointEnabled=false):"
+  fi
+  for n in $ws_private; do echo "  - $n"; done
+  for n in $ws_unknown; do echo "  - $n (its task could not be read; check its ENI by hand)"; done
 fi
 
 case "${AF_EFS_BACKUP_VERDICT:-}" in
   ok|skip|"") ;;
   *) echo
      echo "REMINDER: ${DATA_STACK:-the data stack} still has no confirmed daily EFS backup (see the warning at the top;"
-     echo "          README \"EFS backup and restore\", \"Turning it on\")." >&2 ;;
+     echo "          README \"EFS backup and restore\", \"Turning it on\")." ;;
 esac
 
 if [ -n "${golden_stale// /}" ]; then

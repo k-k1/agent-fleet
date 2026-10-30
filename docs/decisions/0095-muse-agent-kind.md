@@ -3159,3 +3159,58 @@ needs a real turn; until that is measured the session.jsonl reader (#1696) stays
 
 The same cost applies again: the 1.4.8 bundle is red against a 1.4.7 binary until `MUSE_VERSION`
 moves; measured: 1.4.8 green, 1.4.7 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-20 — bundle bumped to 1.4.11-R6667.1 (#2394)
+
+`internal/msp/schema` and `types_gen.go` now carry the 1.4.11 export (fingerprint
+`sha256:f282ad16…`, equal to the release manifest's `msp_schema_fingerprint`). The contract's
+three breaks were new values in open enums: `ItemKind` gained `damagedRange` and
+`scheduledFire`, `SessionClosedReason` gained `leave`. Enums are bare strings, so nothing failed
+to decode; the question was only what the client does with them.
+
+- `leave` (a `session/leave` unload) is handled like `idle`: `session/closed` clears the session's
+  background work and the reason is never branched on, so it is neither an error nor a crash.
+- `scheduledFire` and `damagedRange` take the generic item path (ADR rule: unknown kinds render,
+  never vanish). Neither carries `label`/`fallbackText` by contract, so the mirror derives a
+  one-line summary from the typed members (`damagedRange`: records missing, unreadable lines;
+  `scheduledFire`: job id). A damaged log range is otherwise invisible.
+- The additive `session/leave`, recovery and monitor-inbox surface is generated but unused.
+
+The same cost applies again: the 1.4.11 bundle is red against a 1.4.10 binary until
+`MUSE_VERSION` moves; measured: 1.4.11 green, 1.4.10 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-23 — bundle bumped to 1.4.12-R6909.1 (#2575)
+
+`internal/msp/schema` and `types_gen.go` now carry the 1.4.12 export (fingerprint
+`sha256:cfdb6d25…`, equal to the release manifest's `msp_schema_fingerprint`). The contract's
+two breaks were new values in the open `ItemKind` enum: `backgroundTerminalCompletion` and
+`overdueNotice`.
+
+- `backgroundTerminalCompletion` reports how a backgrounded command ended, in a typed member
+  (command, terminal status, output). It takes the generic item path, and the mirror derives a
+  one-line summary from that member, so a command that failed after its turn ended is visible.
+- `overdueNotice` has no typed members and renders from `fallbackText` like any unknown kind.
+- The additive Computer Use approval facts, `blockedPrompt`, `checkpointBoundary` and the task
+  list's `command` / `executionMode` are generated but unused.
+
+The same cost applies again: the 1.4.12 bundle is red against a 1.4.11 binary until
+`MUSE_VERSION` moves; measured: 1.4.12 green, 1.4.11 red. The pin bump is cli-pin-bump's.
+
+### Note 2026-10-28 — bundle bumped to 1.4.14-R7309.1 (#2835)
+
+`internal/msp/schema` and `types_gen.go` now carry the 1.4.14 export (fingerprint
+`sha256:c94c3d1f…`, equal to the release manifest's `msp_schema_fingerprint`). The contract
+printed 33 notices that all read as compatible additions and still went red: the one break was
+buried under them, a new value `earlierHistory` in the open `ItemKind` enum, which the client
+decodes and switches on. The checker was right and is unchanged.
+
+- `earlierHistory` stands in for the items that opened in a checkpoint's pruned prefix and carries
+  the transcript tail in a typed member. It takes the generic item path, and the mirror derives
+  a one-line summary (message count) from that member.
+- The other additions (`SessionStartParams.spawnedBy` / `previousSessionId`,
+  `SessionResumeParams.modelId`, `TurnError.requestDenied`, `ViewPageParams.maxBytes`, the
+  runtime worktree types, queued inputs, held items) are generated but unused.
+
+The same cost applies again: the 1.4.14 bundle is red against a 1.4.13 binary until
+`MUSE_VERSION` moves (the pin bump is cli-pin-bump's), so this PR's own pin-run of
+`muse-contract.yml` is expected to be red.

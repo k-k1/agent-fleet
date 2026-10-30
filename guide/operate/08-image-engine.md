@@ -1,0 +1,312 @@
+---
+audience: "a deployment administrator who already runs a ComfyUI somewhere on the network and wants sessions to use it"
+source_of_truth: "the LAN ComfyUI panel under Admin → Inference engines, or the environment variables the Control Plane reads at startup; the runbook next to your target (`deploy/native/README.md`, `deploy/compose/.env.example`) for the exact syntax"
+---
+
+# 08. Image generation on your own ComfyUI
+
+English | [日本語](08-image-engine.ja.md)
+
+A session can generate an image from a prompt. Out of the box that runs on **the
+member's own CLI plan** (the ChatGPT login behind Codex, the Gemini/Antigravity
+login behind agy), and the fleet's own GPU engines are bought on AWS, so they exist
+on the `ecs-ec2` target only.
+
+This chapter is the third possibility: **a ComfyUI that is already running on your
+own network**, pointed at from a `compose`, `native` or `docker` deployment. It can be a GPU
+box under someone's desk, the Windows side of a WSL2 machine, or a shared server. The
+Control Plane relays to it, so no session has to know where it is or hold a
+credential for it.
+
+It is a URL (and optionally a key) and a model list you keep yourself. **The engine stays
+yours**: the Control Plane never starts it, never stops it, and never bills for it.
+A deployment is not limited to one of these either: a LAN ComfyUI, a borrowed engine
+and an OpenAI-compatible server can all be rows at once, and which one draws a given
+picture is a setting ([More than one image engine](#more-than-one-image-engine)).
+
+There is a fourth possibility, and it is a different chapter: if you already run an
+Agent Fleet on AWS, this deployment can **borrow that one's engines**:
+[09 Borrowing another deployment's engines](09-borrowed-engine.md). That covers the
+chat engine as well as the image one, and the far fleet does the waking and the
+paying.
+
+**What has been verified.** The `comfyui-lan.sh` script's docker commands, refusals and re-run behaviour are
+tested against a stand-in for docker, not on a real GPU host: the image starting under `--gpus`, the proxy
+accepting the key and a picture coming back have not been measured on a real machine. The
+OpenAI-compatible image row has only been exercised against the project's own test double. Treat both as
+unproven until you have run them.
+
+## Running the fleet's image on your GPU host
+
+If the machine does not run ComfyUI yet, you do not have to build one by hand.
+`deploy/comfyui-lan/comfyui-lan.sh` starts **the same pinned ComfyUI image the `ecs-ec2`
+image engine runs** under docker on that machine. The image is
+`ghcr.io/k-k1/agent-fleet/comfyui`, which anyone can pull, at the tag
+`deploy/aws/ecs/cfn/60-engines.yaml` pins as `ImageComfyImageTag`. The script reads that tag
+from the checkout it lives in. The workflow templates the sessions send were tested against
+this ComfyUI version.
+
+What the host needs: Linux on x86_64 (the image is built for amd64 only), Docker Engine, an
+NVIDIA driver (`nvidia-smi -L` lists the GPU), and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+which is what makes `docker run --gpus` work. If any of these is missing, the script stops and
+says which one before it changes anything. Clone this repository on the host, or copy the
+`deploy/comfyui-lan/` folder together with `deploy/aws/ecs/cfn/60-engines.yaml`, then run the script's `up`
+command with the two options below (`comfyui-lan.sh --help` lists all of them).
+
+- **`--models`** is mounted **read-only** as ComfyUI's `models/` folder, whose type folders are
+  `checkpoints/`, `diffusion_models/`, `clip/`, `text_encoders/`, `vae/` and `loras/`. The script creates
+  any missing type folders. Put each file directly in its type folder, as described in
+  [Registering the models by hand](#registering-the-models-by-hand). Copying the files in is
+  your job; nothing downloads them for you.
+- **`--bind`** is the host address the port is published on. The default is `127.0.0.1`,
+  which works only when the Control Plane runs on the same machine. For a CP on another
+  machine, give the host's LAN address. `0.0.0.0` (every interface) is refused unless you also
+  pass `--all-interfaces`. `--port` changes the port (default `8188`).
+- **`--api-key-file <file>`** puts a bearer-checking proxy (Caddy, the same image compose
+  uses) in front of ComfyUI, and ComfyUI itself is then not published at all. The file holds
+  one key of at least 24 characters, and only its owner may read it; a file the group or
+  others can read is refused. Give the CP the
+  same key, either in the panel's key field or as `AF_COMFY_API_KEY`. Every path needs the
+  key, `/system_stats` included, and that is the health check the CP sends it with. This is
+  the reverse proxy described in [The network is yours to close](#the-network-is-yours-to-close).
+- The container restarts with docker (`--restart unless-stopped`), and docker reports a
+  health state from `/system_stats`. `comfyui-lan.sh status` shows it.
+  `comfyui-lan.sh down` removes the containers and leaves the models and the image in place.
+  The script labels everything it creates and touches nothing else: a container or network
+  that already has its name (`af-comfyui-lan`, or `--name`) but not its label is refused, not
+  replaced.
+
+Then point the Control Plane at the address you bound, on port 8188 unless you changed it (next section).
+
+**Running it again is safe.** `up` with the same arguments changes nothing. A stopped
+container is started again, and a container is recreated only when its image or a setting
+changed: a changed proxy key, Caddyfile or Caddy image recreates the proxy alone.
+**Upgrading follows the deployment**: `git pull` brings a new `ImageComfyImageTag`,
+and the same `up` pulls that tag and recreates the container. `--pull` re-pulls the current tag
+and the proxy's Caddy image (tags can be pushed again), `--digest sha256:…` pins the image by digest, and `--build`
+builds `deploy/aws/ecs/comfyui/Dockerfile` at the pinned ComfyUI version on the host instead
+of pulling. Every option has an `AF_COMFY_LAN_*` environment variable as well (`--help` lists
+them), so you can keep a host's settings in one file and source it before each `up`. Pictures
+ComfyUI writes stay inside the container and are dropped when it is recreated.
+
+## Pointing the Control Plane at it
+
+There are two places to say where the ComfyUI is, and you need only one of them.
+
+**From the Console (no restart).** A super admin opens **Admin → Inference engines**, and the
+**LAN ComfyUI (image engine)** panel at the top of the page takes a URL and an optional bearer
+key. A save applies at once. The image row is rebuilt, so the panel's health answer is about the
+new URL straight away and sessions are told about the change. The key is stored encrypted, like
+the Hugging Face token, and is **write-only**: the panel shows whether a key is set, never its
+value, and offers **Remove key** to clear it. URLs that are not `http://` or `https://`, or that
+carry a user name or password, are refused. Put the bearer in the key field instead.
+
+**From the environment (read once at startup).** The two variables below. Changing either
+one is a CP restart.
+
+| Variable | Meaning |
+|---|---|
+| `AF_COMFY_URL` | Full URL including the port, as the CP sees it, e.g. `http://192.168.1.20:8188`. Setting it is what turns the route on. |
+| `AF_COMFY_API_KEY` | Optional. Sent upstream as `Authorization: Bearer`, on generation calls **and on the health check**. |
+
+**Which one wins.** Highest first:
+
+1. A **managed** `image` row in the engine stack's table (AWS). The panel shows the URL in
+   effect, offers no form, and says why. To use a LAN ComfyUI instead, take the role out of
+   the stack.
+2. The URL saved in the panel.
+3. `AF_COMFY_URL`.
+4. An external row of the inline table, or an engine borrowed from another fleet.
+
+**The key goes with its URL.** A URL saved in the panel is sent the panel's key, or no
+`Authorization` header at all when the panel holds none. It is **never** sent
+`AF_COMFY_API_KEY` or `AF_ENGINE_API_KEY_IMAGE`, because those were set for the host the
+environment names. The key is also never carried across a redirect: when the saved URL answers
+with a redirect to another scheme, host or port, the Control Plane refuses it instead of following
+it.
+
+**Remove panel setting** returns the image role, live, to whatever is next in the order above:
+`AF_COMFY_URL` with its own key, or else an external row of the inline table. If neither exists
+but `AF_REMOTE_ENGINE_URL` is set, an `image` engine borrowed from that fleet takes over on the
+next poll. Only when none of these exists does removing take the image engine away. Removing is
+therefore **not** a way to stop image generation; switch the engine **off** for that. The panel
+says which source is in effect and what removing would return to.
+
+Where to put the two environment variables depends on the target:
+
+| Target | Where |
+|---|---|
+| compose / docker | the `.env` next to the compose file (the CP service reads the whole file) |
+| native | the environment of `af start`, or `Environment=` in the systemd unit; see [deploy/native/README.md](../../deploy/native/README.md) |
+
+The server build of ComfyUI answers on loopback only until it is started with
+`--listen`, and the host firewall has to allow the port inbound from the machine
+running the CP. **ComfyUI Desktop on Windows is untested**: the setting that
+corresponds to `--listen` there has not been confirmed, so the procedure above is
+written for the server build.
+
+## More than one image engine
+
+Every image engine this deployment can reach is **a row in the engine table**, and the row
+is what a picture is routed by, not the kind of software behind it. `AF_COMFY_URL` is a
+shortcut that writes one such row for you, under the key `image`. Any further row is declared
+in the table itself: on `compose`, `native` and `docker` that is the inline `AF_ENGINES_JSON`
+the Control Plane reads once at startup; on AWS the table is the engine stack's.
+
+- **The order is the member's.** Under **Settings › Agents › "Image provider order"** each of
+  this deployment's engines appears **under its own name**, ranked beside the routes that run
+  on the member's own CLI plan. A request that names no engine walks that list and moves on
+  when one fails; the answer says which engine drew the picture instead. So "the ComfyUI under
+  my desk first, the borrowed one when that PC is off" is that list, with no extra setting.
+- **A request can name one.** `generate_image` takes a `provider`, and an engine row's key is
+  a valid value. A named engine does **not** fall through: that is how a session gets "use the
+  LAN one, and tell me when it is off".
+- **Two rows need two keys.** A borrowed role arrives under the far fleet's key, usually
+  `image`, and a key a local row already holds is not borrowed (the CP log says so once per
+  poll). A LAN ComfyUI that is to sit *beside* a borrowed `image` is therefore declared in
+  the table under a key of its own (`comfy-lan`, say) rather than through `AF_COMFY_URL`.
+- **An OpenAI-compatible image server is a row too.** Declare it once, on an `external` (or
+  `remote`) row, with `provider: "openai-compat"` (the row's shape is in
+  [deploy/native/README.md](../../deploy/native/README.md#more-than-one-engine-row)).
+
+  A bearer, if the server wants one, is read from `AF_ENGINE_API_KEY_<KEY>`, the row's key
+  upper-cased with every character that is not a letter or digit turned into `_`, so a row keyed
+  `oai-image` reads `AF_ENGINE_API_KEY_OAI_IMAGE`. Such a row has no files to stage and no family to
+  declare: the server holds its own weights.
+- **A row this build cannot serve is marked, not dropped.** The providers a Control Plane can
+  drive are `comfy` and `openai-compat`. A row naming anything else (`sdcpp`, retired) would make
+  the image tool disappear from sessions with no error anywhere, so **Admin → Inference
+  engines** marks that row and shows the provider name it carries; the fix is to repoint
+  the row.
+
+## What the modes mean here
+
+In the Console under **Admin → Inference engines** an engine like this shows as
+**externally managed**, and it takes only two settings: **on** and **off**. There is
+no "on demand": that setting buys and releases a cloud instance, and there is
+nothing here to buy.
+
+🔴 **"off" closes the route, it does not stop ComfyUI.** Sessions stop being offered
+the engine and requests are refused, and the machine on your network goes on doing
+exactly what it was doing. It is the same meaning "off" has for the speech engine
+when that is externally managed. Stopping the process is yours to do, on the host it
+runs on.
+
+The fields that describe a cloud instance (state, desired count, which instance, when it
+will stop) are **left out** rather than guessed at, because the deployment does not
+know them.
+
+## Registering the models by hand
+
+Nothing is taken in for you here: there is no ingest job and no S3 bucket, and nothing
+copies a file onto that machine. **The catalogue is a declaration you write.** For
+each model, register in the Console under **Admin → Inference engines**:
+
+- the **id** you want members to see,
+- its **`base_model`**: this is not a display name; it is what decides which
+  workflow is used, so a misspelling only surfaces when someone tries to generate,
+- the **file names**, spelled exactly as ComfyUI's loaders list them.
+
+A row missing a file for one of the roles it needs is marked **files missing**. That
+check reads your declaration only; it is not evidence that the file is on the disk.
+If you declare a name that is not there, the failure arrives at generation time.
+
+What the panel *can* do is read the names for you. On an externally managed ComfyUI row
+the button **"Look at this engine's files"** asks the engine, once, which checkpoint, LoRA
+and VAE files its loaders currently list, and offers each as a candidate (**"Add a row with
+this name"**). It runs only when you press it; nothing polls the machine on your network.
+What it cannot read is the family: ComfyUI does not publish `base_model`, so a candidate
+comes with at most a suggestion read off the file name, and the form refuses to write the
+row until you have chosen one: a wrong family would silence the row's only mark and fail
+minutes later at generation time. A borrowed row has nothing to look at here: its list is a
+read-only copy of the far catalogue.
+
+🔴 **Some checkpoints are published without a VAE, and the panel now tells you
+which.** Plenty of SDXL-family checkpoints on the model sites ship the UNet and the
+text encoders alone. Such a row passes every declaration check there is, switches
+the engine's checkpoint (1–2.5 minutes) and then fails **every** request with `VAE
+is invalid: None`, in the decode for a plain generate, in the encode for an edit.
+There is nothing a member can do about it: the tool has no VAE argument.
+
+The deployment reads the checkpoint's own header and says so:
+
+- a row whose file carries no VAE is marked, and **cannot be enabled** until it has
+  one;
+- the row's own button takes the family's standalone VAE in and attaches it under
+  the flag `--vae`: one press. If this deployment already holds that file, it is
+  attached without downloading anything;
+- when you take a new checkpoint in, the form offers the same second file, already
+  ticked, with its licence beside the checkpoint's own.
+
+What it does **not** do is guess. If the header could not be read (a `.ckpt`, a
+source that has gone away, an asset that refuses to be read anonymously), the row
+is left alone rather than marked: "nobody looked" is not "it has none". A family
+this deployment holds no default VAE for (SD3.5, whose stock autoencoder is in a
+gated repository) is marked and not offered a fix; there, declare the VAE yourself
+as a **second file on the same row, with the flag `--vae`**. That file is then what
+the workflow encodes and decodes with, in place of the checkpoint's own.
+
+🔴 **Put the files directly under ComfyUI's type folders**: `checkpoints/`,
+`diffusion_models/`, `clip/`, `vae/`, `loras/`. Only the part after the last `/` is
+handed to the loader, so a file in a subfolder (`checkpoints/sdxl/x.safetensors`)
+arrives as `x.safetensors` and fails with `Value not in list`. Subfolders are not
+supported yet.
+
+A row of the **Qwen-Image 2.1** family needs a ComfyUI of **v0.37.0 or newer** on that
+machine: the node it encodes with first appears there. On an older one the row registers
+and enables, and every request fails at the engine.
+
+## The network is yours to close
+
+On AWS the GPU engine is reachable from the Control Plane and nothing else, and a
+security group is what guarantees it. **On your own network there is no equivalent,
+and the deployment does not pretend there is.**
+
+Specifically: a workspace container reaches the rest of the network through NAT, so
+**a session can talk to ComfyUI directly**, bypassing the Control Plane. ComfyUI has
+no authentication of its own and its API includes calls that change things: queue a
+prompt, upload an image. Treat "only the CP can reach it" as false unless you have
+made it true.
+
+Two ways to make it true:
+
+- **Egress control in enforce mode** ([04 Securing it](04-secure.md)): a private
+  address that is not on the allowlist is refused. Note the caveat on that page:
+  the proxy can block, but nothing yet forces workspace traffic through it, so this is the
+  direction, not yet the answer.
+- **A reverse proxy in front of ComfyUI** that requires a bearer token, with that
+  token given to the Control Plane alone through `AF_COMFY_API_KEY`. This is the one
+  that works today. **The proxy must also let `/system_stats` through with the same
+  bearer**: that is the health check, and an engine that never looks healthy is an
+  engine that never answers. `comfyui-lan.sh --api-key-file` starts one that does
+  ([Running the fleet's image on your GPU host](#running-the-fleets-image-on-your-gpu-host)).
+
+Failing both, the honest position is that anyone with a session on this deployment
+can use that GPU, and you are relying on trusting them.
+
+## When it is down
+
+The Control Plane does not wait for an engine it does not own. A request made while
+ComfyUI is down is refused **immediately** with `503 engine_unavailable`, and the
+message names the URL that was tried and the health path. Nothing retries for
+minutes in the hope that an instance is still booting. That budget exists for a cloud
+instance being bought, and a machine on your network that is switched off does not
+come back because someone waited.
+
+So the two things to check, in order, are whether ComfyUI is running on that host
+and whether the CP can reach it on that address and port.
+
+## What the panel will and will not show you
+
+- **warm** is a liveness check taken **the moment you open the panel**: one request,
+  a two-second limit, cached for ten seconds. It means "it answered just now", not
+  "it has been up".
+- **There is no uptime history.** The heatmap is drawn from the samples a control
+  loop takes, and an externally managed engine has no control loop.
+- **No cost is attributed.** A machine on your own network has no hourly rate the
+  deployment could know, so nothing appears under cloud cost. What it costs you in
+  electricity is outside the deployment entirely.
+
+See [ref/deploy-targets.md](../ref/deploy-targets.md) for which target
+supports which of these.

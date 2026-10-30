@@ -290,7 +290,7 @@ func doForm(req *http.Request, what string) error {
 
 // errFormSettled: the form is not pending any more (answered or cancelled by somebody else, or
 // forgotten by the daemon), so there is nothing left to answer.
-var errFormSettled = errors.New("質問は既に確定しています")
+var errFormSettled = agents.ErrInteractionNotPending
 
 // formByID finds a waiting form. Caller holds h.mu.
 func (h *threadHandle) formByID(id string) *agents.Interaction {

@@ -15,13 +15,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Per-session skill list (docs/log/50 / ADR0034, made cross-agent in v2): what the mirror view's
 // skill picker can offer for the session the user is talking to right now. Source and invocation
-// form differ per kind (all measured 2026-07-28, docs/log/50 §7):
+// form differ per kind (all measured 2026-07-28, docs/log/50 §7); each kind states its own as an
+// agents.SkillsLayout (internal/agents/<kind>/capabilities.go):
 //   - claude:   .claude/skills + .claude/commands (project = the CWD chain, see claudeSkillDirs /
 //               user = claude.ConfigDir()) → "/name", plus the CLI's bundled skills (dataviz,
 //               simplify, …) from the SDK init frame as "cli" (§9)
@@ -110,56 +110,26 @@ func HandleRepoSkills(w http.ResponseWriter, r *http.Request) {
 // names the session whose running process can be asked for its native list; "" means there is
 // none, and those kinds answer from the filesystem alone.
 func enumerateSkills(kind, dir, cwd, live string) []sessionSkill {
-	// Native enumeration (what the kind's own CLI can discover and invoke) plus the other
-	// conventions' SKILL.md trees as foreign entries (the injection route — §8). shell/ssm have
-	// no chat, so they come back empty; the Console's caps gate is the first line of defence.
-	skills := []sessionSkill{}
-	var nativeConvs []string
-	switch kind {
-	case session.KindClaude:
-		skills = claudeSkills(cwd, dir)
-		skills = appendBundledSkills(skills, claudeBundledSkills())
-		nativeConvs = []string{".claude/skills"}
-	case session.KindCodex:
-		skills = codexSkills(cwd, dir)
-		nativeConvs = []string{".codex/skills", ".agents/skills"}
-	case session.KindOpencode:
-		skills = opencodeSkills(dir)
-	case session.KindCursor:
-		skills = cursorSkills(live, dir)
-	case session.KindMuse:
-		// Native enumeration over MSP (ADR 0095 P2-23): the session's own host answers
-		// `skill/list`, which covers muse's bundled skills, the member's own under
-		// ~/.config/muse/skills, plugin skills and the working copy's `.agents/skills/`.
-		//
-		// The fallback is the reason nativeConvs is set conditionally: with no live host there
-		// is no session to ask, and `.agents/skills` must then go back to being offered as a
-		// foreign entry (a plain "read this and follow it" prompt) rather than disappearing
-		// from the picker because a native list that does not exist claims to own it.
-		skills = museSkills(live)
-		if len(skills) > 0 {
-			nativeConvs = []string{".agents/skills"}
-		}
-	case session.KindKiro, session.KindCopilot, session.KindAgy, session.KindLcpp:
-		// No native enumeration: no user-invocable mechanism confirmed yet (§7). Foreign only.
-		// lcpp drives no CLI at all (ADR 0093 decision 5: "スキルは foreign のみ"), so it
-		// belongs in this same bucket rather than the default (no-skills) case below — the
-		// Console's picker and harness.SystemPrompt's own foreignSkillsPrompt (both read the
-		// same SKILL.md trees) must agree on what this kind can offer.
-		//
-	default:
-		return skills
+	// Native enumeration (what the kind's own CLI can discover and invoke, agents.SkillsLayout)
+	// plus the other conventions' SKILL.md trees as foreign entries (the injection route — §8).
+	// A kind without a layout (shell, ssm) has no chat and comes back empty; the Console's caps
+	// gate is the first line of defence.
+	l, ok := skillsLayoutOf(kind)
+	if !ok {
+		return []sessionSkill{}
 	}
-	ownNative := len(skills) > 0 // claude/codex scan their own root; muse's is in skill/list when live
-	// lcpp's own file tools refuse any path outside the session's CWD (harness resolvePath), so
-	// a tree above a Subdir CWD, a SKILL.md symlinked out of it or a user root would be offered
-	// and then fail to open. Every other kind reads through its CLI, which has no such fence.
+	skills, nativeConvs := layoutNativeSkills(l, dir, cwd, live)
+	ownNative := len(skills) > 0 // a scanned root, or the live list when there is one
+	// A kind fenced to its CWD (lcpp's file tools refuse any path outside it, harness
+	// resolvePath) would be offered a tree above a Subdir CWD, a SKILL.md symlinked out of it or
+	// a user root, and then fail to open it. Every other kind reads through its CLI, which has no
+	// such fence.
 	var readable func(string) bool
-	if kind == session.KindLcpp {
+	if l.FenceToCWD {
 		readable = func(p string) bool { return harness.Readable(cwd, p) }
 	}
 	skills = appendForeignSkills(skills, chainUp(cwd, dir), cwd, nativeConvs, readable)
-	if kind != session.KindLcpp {
+	if !l.FenceToCWD {
 		skills = appendUserForeignSkills(skills, kind, ownNative)
 	}
 	return skills
@@ -291,15 +261,6 @@ type userSkillRoot struct {
 	dir    func() string
 }
 
-// userSkillRoots are the member's own skills of the kinds that have a user root holding
-// claude-compatible SKILL.md trees (docs/log/50 §7.6). opencode's root is not here: it holds
-// nothing but the fleet skills, and opencode itself already reads ~/.claude/skills.
-var userSkillRoots = []userSkillRoot{
-	{session.KindClaude, ".claude", func() string { return filepath.Join(claude.ConfigDir(), "skills") }},
-	{session.KindCodex, ".codex", func() string { return filepath.Join(paths.CodexHome(), "skills") }},
-	{session.KindMuse, ".muse", muse.SkillsDir},
-}
-
 // appendUserForeignSkills adds the OTHER kinds' user-level skills the same way
 // appendForeignSkills adds the repository's: a skill set up for claude is then one pick away
 // from a codex or muse session too, with no copy anywhere. After the project entries, so a
@@ -315,7 +276,7 @@ func appendUserForeignSkills(skills []sessionSkill, kind string, ownNative bool)
 		seen[s.Name] = true
 	}
 	out := skills
-	for _, r := range userSkillRoots {
+	for _, r := range sharedSkillRoots() {
 		if r.kind == kind && ownNative {
 			continue
 		}
@@ -435,7 +396,8 @@ func under(base, p string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// claudeSkillDirs mirrors what the CLI itself discovers (measured 2026-09-12, docs/log/50 §10):
+// claudeSkillDirs (agents.SkillDirsCWDToHome) mirrors what the claude CLI itself discovers
+// (measured 2026-09-12, docs/log/50 §10):
 // claude reads <d>/.claude/skills and <d>/.claude/commands for the CWD and EVERY ancestor,
 // stopping before $HOME — $HOME/.claude is the personal root, which AF redirects to
 // CLAUDE_CONFIG_DIR, so it is scanned separately below. Deepest first: the nearer copy of a name
@@ -452,31 +414,15 @@ func claudeSkillDirs(cwd, dir string) []string {
 	return chainUp(cwd, dir)
 }
 
-// claudeSkills covers claude: the CWD chain's .claude directories (skills before commands within
-// one of them — claude has a single slash namespace) and then the user root. Levels above the
-// working copy are real to the CLI but belong to the environment rather than to this repo, so
-// they are labelled "user".
-func claudeSkills(cwd, dir string) []sessionSkill {
-	roots := []skillRoot{}
-	for _, d := range claudeSkillDirs(cwd, dir) {
-		src := "project"
-		if !under(dir, d) {
-			src = "user"
-		}
-		base := filepath.Join(d, ".claude")
-		roots = append(roots,
-			skillRoot{filepath.Join(base, "skills"), src, "skills"},
-			skillRoot{filepath.Join(base, "commands"), src, "commands"},
-		)
-	}
-	userBase := claude.ConfigDir()
-	return scanSkillRoots(append(roots,
-		skillRoot{filepath.Join(userBase, "skills"), "user", "skills"},
-		skillRoot{filepath.Join(userBase, "commands"), "user", "commands"},
-	), "/")
+// projectSkillRoots is the repository side of kind's discovery (its agents.SkillsLayout), in the
+// CLI's precedence order; the Repository "Skills" view (#2795) reads it, and the picker reads the
+// same layout, so the two cannot drift. Kinds with no repository roots return nothing.
+func projectSkillRoots(kind, cwd, dir string) []skillRoot {
+	l, _ := skillsLayoutOf(kind)
+	return layoutProjectRoots(l, cwd, dir)
 }
 
-// codexSkillDirs: codex resolves project skills from the CWD up to the GIT ROOT and no further,
+// codexSkillDirs (agents.SkillDirsCWDToGitRoot): codex resolves project skills from the CWD up to the GIT ROOT and no further,
 // and with no .git above the CWD it reads the CWD alone (measured 2026-09-12 on 0.154 — a
 // .codex/skills one level up was invisible, and visible right after a `git init`). So this cannot
 // use meta.Dir: an SVN working copy has no .git at all, and offering its skills as "$name" would
@@ -503,77 +449,23 @@ func gitRoot(p string) (string, bool) {
 	}
 }
 
-// codexSkills: the SKILL.md convention is claude-compatible (measured on 0.145 — frontmatter
-// name/description, $CODEX_HOME/skills auto-discovered, and on the repo side both .codex/skills
-// and .agents/skills, both recognized by `codex exec`). The bundled .system does not show up in a
-// flat scan of the user root (its SKILL.md files are not directly below it), so it is picked up
-// as a root of its own and marked with source "cli". Invocation is a "$name" mention, not a slash
-// — measured in the binary's system prompt: "names an available skill (with $SkillName …)".
-// .codex/skills also holds the links the skill bridge (docs/log/50 §8) laid to claude skills;
-// os.ReadFile follows them like any other file, so they need no special case.
-func codexSkills(cwd, dir string) []sessionSkill {
-	roots := []skillRoot{}
-	for _, d := range codexSkillDirs(cwd) {
-		src := "project"
-		if !under(dir, d) {
-			src = "user"
+// advertisedEntries turns a CLI's advertised commands into "cli" picker entries.
+func advertisedEntries(adv []agents.AdvertisedCommand, invoke string) []sessionSkill {
+	out := make([]sessionSkill, 0, len(adv))
+	for _, c := range adv {
+		if c.Name == "" || len(out) >= maxSessionSkills {
+			continue
 		}
-		roots = append(roots,
-			skillRoot{filepath.Join(d, ".codex", "skills"), src, "skills"},
-			skillRoot{filepath.Join(d, ".agents", "skills"), src, "skills"},
-		)
+		out = append(out, sessionSkill{
+			Name:        c.Name,
+			Description: c.Description,
+			Source:      "cli",
+			Type:        "command",
+			Invoke:      invoke + c.Name + " ",
+		})
 	}
-	home := paths.CodexHome()
-	return scanSkillRoots(append(roots,
-		skillRoot{filepath.Join(home, "skills"), "user", "skills"},
-		skillRoot{filepath.Join(home, "skills", ".system"), "cli", "skills"},
-	), "$")
-}
-
-// opencodeSkills enumerates command md files (the body is the prompt, the description comes from
-// frontmatter). Both the singular and the plural directory name exist in the wild (measured in
-// the 1.18.8 binary: the strings .opencode/command/deploy.md and .opencode/commands/).
-// .opencode/skills is for model invocation and slash invocation is unverified, so it is out of
-// scope (docs/log/50 §7). Still the working copy root rather than the CWD chain: opencode's own
-// command discovery under a Subdir has not been measured, and guessing either way would trade one
-// wrong answer for another (docs/log/50 §10, open point). Same for cursor, whose advertised list
-// is authoritative anyway.
-func opencodeSkills(dir string) []sessionSkill {
-	cfg := paths.OpencodeConfigDir()
-	return scanSkillRoots([]skillRoot{
-		{filepath.Join(dir, ".opencode", "command"), "project", "commands"},
-		{filepath.Join(dir, ".opencode", "commands"), "project", "commands"},
-		{filepath.Join(cfg, "command"), "user", "commands"},
-		{filepath.Join(cfg, "commands"), "user", "commands"},
-	}, "/")
-}
-
-// cursorSkills: the CLI's advertised list (ACP available_commands_update, shared by the driver
-// through agents.PublishCommands) is the only complete source — builtin skills, global, and the
-// project's commands/skills, all of it (measured 2026-07-28). Until it arrives (runtime not
-// started, or just after an agent restart) fall back to the project's filesystem conventions.
-func cursorSkills(live, dir string) []sessionSkill {
-	if adv := agents.AdvertisedCommands(live); len(adv) > 0 {
-		out := make([]sessionSkill, 0, len(adv))
-		for _, c := range adv {
-			if c.Name == "" || len(out) >= maxSessionSkills {
-				continue
-			}
-			out = append(out, sessionSkill{
-				Name:        c.Name,
-				Description: c.Description,
-				Source:      "cli",
-				Type:        "command",
-				Invoke:      "/" + c.Name + " ",
-			})
-		}
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-		return out
-	}
-	return scanSkillRoots([]skillRoot{
-		{filepath.Join(dir, ".cursor", "commands"), "project", "commands"},
-		{filepath.Join(dir, ".cursor", "skills"), "project", "skills"},
-	}, "/")
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // readSkillEntries reads <root>/*/SKILL.md. The invocation name is the frontmatter name, or the
@@ -618,32 +510,11 @@ func readSkillEntries(root, source string) []sessionSkill {
 // extension: in claude a subdirectory only shows up as a namespace label and is not part of the
 // name you type.
 func readCommandEntries(root, source string) []sessionSkill {
-	out := []sessionSkill{}
-	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // unreadable subtree — skip, don't abort the walk
-		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return nil
-		}
-		meta, _ := splitFrontmatter(string(b))
-		out = append(out, sessionSkill{
-			Name:         strings.TrimSuffix(d.Name(), ".md"),
-			Description:  meta["description"],
-			ArgumentHint: meta["argument-hint"],
-			Source:       source,
-			Type:         "command",
-		})
-		if len(out) >= maxSessionSkills {
-			return filepath.SkipAll
-		}
-		return nil
-	})
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	out := readCommandEntriesWithPath(root)
+	for i := range out {
+		// Path on a picker entry means "foreign, inject this file" — a native command has none.
+		out[i].Path, out[i].Source, out[i].Type = "", source, "command"
+	}
 	return out
 }
 

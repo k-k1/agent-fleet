@@ -2,11 +2,17 @@
 
 English | [日本語](0113-member-origin-mark.ja.md)
 
-- Status: **accepted** (2026-10-12), built with #1997: the CP signs three relayed routes
-  (`control-plane/member_origin.go`), the Agent verifies (`workspace/agent/internal/memberorigin`) and
-  requires the mark on the member-only memory writes. **Not verified end to end**: no real CP↔Agent run
-  was possible in the workspace this was built in; both halves are tested against a shared wire vector.
-- Tracking: #1997. Follow-ups: #2014. Related: [0108](0108-af-owned-agent-memory.md) decisions 4 and 8 (the switch, and why an
+- Status: **accepted** (2026-10-12). Built with #1997, first released in v0.31.0, extended by #2014 and #2076
+  (v0.31.0) and by seven routes in v0.32.0 (the settings write and memory review run, #2348; the proposal
+  decisions, #2353): the CP signs 17 relayed routes (`memberOriginRoutes` in `control-plane/member_origin.go`, with the bundle
+  import signed by body hash) and the handoff push it makes itself; the Agent verifies
+  (`workspace/agent/internal/memberorigin`) and requires the mark on the member-only writes. `restore`,
+  `claude-import`, `muse-import` and `claude-export` stay open by decision (2026-10-14 note). The mark is
+  exercised by a real CP and Agent in `e2e/handoff_test.go` (the handoff push), and on a deployed Console after a
+  workspace restart the member checked create, edit and pin (#1997). **Not run on a real fleet:** overlapping
+  Fargate tasks (#2018), and a large browser bundle upload or a negative control for the other signed routes.
+  Both halves are tested against a shared wire vector.
+- Tracking: #1997. Follow-ups: #2018 (open: replay across two overlapping Fargate tasks); #2014 and #2076 are closed. Related: [0108](0108-af-owned-agent-memory.md) decisions 4 and 8 (the switch, and why an
   approval step is not a boundary) / [0102](0102-aws-login-through-the-console.md) (binding a result to a
   person's press when a route cannot tell who called it) / [07-security §7.2, §7.5](../build/07-security.md#75-cp--agent-authentication).
 
@@ -200,3 +206,11 @@ Review notes on the above (same day):
   same limit as writing the store directly (Threat model, "What the mark does not do"), not a new
   capability, and it is not closed in code: an open or unlinked descriptor is reachable through
   `/proc/<pid>/fd` just the same.
+
+## Note 2026-10-25: the Agent's import cap is clamped to the CP spool limit (#2489)
+
+The 130 MiB spool cap above is a fixed ceiling, while `AF_MEMORY_IMPORT_MAX` is an Agent setting, so a
+value large enough for the multipart body to pass 130 MiB was refused by the CP with 413 before the Agent saw the upload. The
+Agent now clamps the setting to 128 MiB (the 130 MiB cap less the 1 MiB reserved for
+multipart framing, with another 1 MiB of headroom) and logs a warning once. The CP limit stays as it was. The modules cannot share the
+constant; each pins the pair in a test.

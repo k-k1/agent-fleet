@@ -445,6 +445,10 @@ func TestV2TurnWaitsForActiveToClear(t *testing.T) {
 // tried is forgotten, and the file keeps the one the live daemon holds.
 func TestFailedStartKeepsThePasswordOfTheLiveDaemon(t *testing.T) {
 	f := newFakeServe(t, 1, "P1")
+	// The probe that fails must be the last chance of the new password: on a PATH opencode 2 the
+	// shared-TUI policy keeps the live password across a start, the fake would accept the
+	// candidate and this start would succeed, so the host's major must not decide it.
+	useMajor(t, 1)
 	if err := persistServePassword("P1"); err != nil {
 		t.Fatal(err)
 	}

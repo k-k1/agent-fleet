@@ -19,15 +19,18 @@ import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.t
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { kindLabel, kindClass, kindIcon } from "../../../lib/sessionkind.ts";
+import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
-import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { fmtDateTime, relTime, DATETIME_FULL } from "../../../lib/intl.ts";
+import { useNow } from "../../../lib/useNow.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
+import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
+import { bootFailures, bootSkipped, diskFigureNote, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
@@ -163,6 +166,8 @@ export function MemberView({
     void loadBackups();
   }, [loadBackups]);
 
+  // The home-full flag keeps its hysteresis across polls (see nextMemberHomePressure).
+  const [homeFull, setHomeFull] = useState(false);
   const poll = useCallback(async () => {
     try {
       const [s, ss] = await Promise.all([api(`${base}/stats`), api(`${base}/sessions`)]);
@@ -171,6 +176,7 @@ export function MemberView({
       if (stSer !== statsSer.current) {
         statsSer.current = stSer;
         setStats(st);
+        setHomeFull((prev) => nextMemberHomePressure(prev, st));
       }
       const list = ss && ss.sessions ? ss.sessions : [];
       const ssSer = JSON.stringify(list);
@@ -203,6 +209,7 @@ export function MemberView({
     statsSer.current = "";
     sessSer.current = "";
     setStats(null);
+    setHomeFull(false);
     setSessions(null);
     poll();
     timer.current = setInterval(() => {
@@ -219,6 +226,17 @@ export function MemberView({
   // value as the denominator makes the ratio a lie — where a measurement exists, it is the
   // truth (docs/log/63 §63.9).
   const diskTotal = stats?.disk_total ?? stats?.disk_quota ?? null;
+  // What the last start's install said, from the poll alone: the CP answers with the running
+  // workspace's own report or, while stopped, the stored outcome. The roster snapshot in
+  // `member` is fixed at click time and must never decide it.
+  const bootFailed = bootFailures(stats?.boot_failed);
+  const bootSkippedTools = bootSkipped(stats?.boot_failed);
+  const homeFigures = homeFullFigures(stats);
+  const fmtGiB = (b: number) => (b / 1024 ** 3).toFixed(1);
+  const diskNote = diskFigureNote(stats);
+  // Re-rendered on a clock: an unchanged /stats body never reaches setStats, so without it the age would freeze.
+  const now = useNow(15000);
+  const diskAge = diskNote?.kind === "observed" ? tr("admin.roster_observed", { ago: relTime(diskNote.at, now) }) : "";
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
   // --- how to describe the three size axes on THIS runtime (ADR 0045 decision 21) ------
@@ -273,7 +291,16 @@ export function MemberView({
   const stop = async () => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/stop-workspace", "POST", { tenant_slug: slug, user_key: key });
+      const res = await apiJSON("api/admin/stop-workspace", "POST", { tenant_slug: slug, user_key: key }).catch(
+        () => ({ error: { code: "network" } }),
+      );
+      // A refusal (another lifecycle operation holds the workspace) stopped nothing: say so
+      // and keep the dialog, rather than closing it as if the workspace were stopping.
+      if (res?.error) {
+        toast(errText(res.error));
+        poll();
+        return;
+      }
       setConfirmStop(false);
       poll();
       onChanged();
@@ -483,7 +510,7 @@ export function MemberView({
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
-      {/* Auto-stop outlook (docs/log/75 P4). A roster row fits only one holder, so the detail
+      {/* Auto-stop outlook (docs/log/75 P4). A roster card fits only one holder, so the detail
           lists them all: "s5 is running" and "s3 is pinned" call for different next moves from
           the operator (wait, or ask for the pin to be released). */}
       <MemberIdleDetail idle={member.idle} state={member.state} />
@@ -517,7 +544,12 @@ export function MemberView({
           <ResTile
             label={tr("admin.res_disk")}
             value={stats?.disk_used != null ? fmtG(stats.disk_used) : "–"}
-            sub={diskTotal ? `/ ${fmtG(diskTotal)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : tr("admin.disk_home_sub")}
+            sub={
+              (diskTotal
+                ? `/ ${fmtG(diskTotal)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}`
+                : tr("admin.disk_home_sub")) +
+              (diskNote?.kind === "pending" ? ` · ${tr("admin.disk_pending")}` : diskAge ? ` · ${diskAge}` : "")
+            }
             ratio={diskRatio}
             warn={0.75}
             crit={0.9}
@@ -556,6 +588,28 @@ export function MemberView({
             </button>
           )}
         </div>
+        {/* Next to the size it is about: a full home or a failed install explains why a member
+            "with enough disk" cannot start a CLI. Text and icon, never colour alone. */}
+        {homeFull && running && homeFigures && (
+          <p className="ws-size-flag" role="status">
+            <Icon name="warning" />
+            {tr("admin.ws_home_full", { used: fmtGiB(homeFigures.used), total: fmtGiB(homeFigures.total) })}
+          </p>
+        )}
+        {bootFailed.length > 0 && (
+          <p className="ws-size-flag" role="status">
+            <Icon name="warning" />
+            {tr("admin.ws_boot_failed", {
+              list: bootFailed.map(([tool, reason]) => `${tool} (${tr(bootReasonKey(reason))})`).join(", "),
+            })}
+          </p>
+        )}
+        {bootSkippedTools.length > 0 && (
+          <p className="ws-size-flag" role="status">
+            <Icon name="warning" />
+            {tr("admin.ws_boot_skipped", { list: bootSkippedTools.join(", ") })}
+          </p>
+        )}
         {limitOpen && (
           <div className="limit-edit">
             {/* Which KIND of machine, above the numbers — it changes what the numbers
@@ -711,7 +765,7 @@ export function MemberView({
               const st = stateInfo(s);
               return (
                 <div key={s.name} className="adm-session">
-                  <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                  <span className={"kind-tag " + kindClasses(s.kind)}>
                     <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                   </span>
                   <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
@@ -763,7 +817,10 @@ export function MemberView({
             rule. Painting a pause the same red as wiping a home is what teaches people
             to read past the red. */}
         <div className="member-actions">
-          <button disabled={!running} onClick={() => setConfirmStop(true)}>
+          {/* Enabled while "starting" too: a start that never converges (an unplaceable task, a
+              slot that never registers) has no other exit, and the CP stops a converging start
+              cleanly on every runtime. */}
+          <button disabled={!memberStopAvailable(stats)} onClick={() => setConfirmStop(true)}>
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
           <button disabled={busy} onClick={() => setConfirmRotate(true)}>
@@ -821,7 +878,7 @@ export function MemberView({
           onCancel={() => setConfirmStop(false)}
           onConfirm={stop}
         >
-          <p>{tr("admin.stop_body", { slug })}</p>
+          <p>{tr(running ? "admin.stop_body" : "admin.stop_body_starting", { slug })}</p>
         </ConfirmDialog>
       )}
       {confirmRotate && (

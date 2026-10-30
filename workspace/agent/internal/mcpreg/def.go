@@ -10,12 +10,13 @@ package mcpreg
 
 import (
 	"fmt"
+	"net/netip"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // ServerDef is one registered MCP server. Alias, not a new type: handlers decode
@@ -54,19 +55,19 @@ var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$`)
 // configs. Letting a user register one of these would silently shadow the af tools.
 var reservedNames = map[string]bool{"af": true, "agent-fleet": true}
 
-var knownKinds = map[string]bool{
-	session.KindClaude: true, session.KindCodex: true, session.KindOpencode: true,
-	session.KindCursor: true, session.KindKiro: true, session.KindAgy: true,
-	session.KindCopilot: true,
-	// muse takes its servers on the wire rather than from a config file (ADR 0095 decision
-	// 11), which changes nothing here: this list is about which kinds a DEFINITION may name.
-	session.KindMuse: true,
-	// lcpp resolves ServerDefs itself, in-process, at the start of every turn
-	// (internal/agents/lcpp's own mcp.go calls ForSession directly) rather than through a
-	// materializer or the wire — a third shape, but the same non-effect on this list (ADR 0093
-	// decision 6, 段2 の MCP wiring).
-	session.KindLcpp: true,
-}
+// knownKinds are the kinds a definition may name: exactly the kinds that receive af's MCP
+// servers (ServedKinds), so the two cannot disagree. mcpreg cannot read the kind registry's
+// Caps.MCPClient itself (it sits below the kind packages: agents → transcript → mcpreg), so
+// sessionx's TestMCPClientKindsMatchRegistry holds this list to the registry instead. The
+// CP's admin validation derives its copy from the kind catalog snapshot
+// (control-plane/internal/agentkinds).
+var knownKinds = func() map[string]bool {
+	m := make(map[string]bool, len(ServedKinds))
+	for _, k := range ServedKinds {
+		m[k] = true
+	}
+	return m
+}()
 
 // ValidationError marks a refusal caused by the definition itself — the caller sent
 // something unusable, so it maps to a 400. Typed rather than string-sniffed so a
@@ -98,13 +99,24 @@ const (
 	CodeURLScheme       = "mcp_url_scheme"
 	CodeURLHost         = "mcp_url_host"
 	CodeURLCredentials  = "mcp_url_credentials"
+	CodeURLOwnMCP       = "mcp_url_own_endpoint"
+	CodeURLOwnMemory    = "mcp_url_own_memory_endpoint"
 	CodeHTTPNoCommand   = "mcp_http_no_command"
 	CodeEnvName         = "mcp_env_name_invalid"
 	CodeHeaderName      = "mcp_header_name_invalid"
 	CodeHeaderValue     = "mcp_header_value_invalid"
 	CodeKindUnknown     = "mcp_kind_unknown"
 	CodeTimeoutRange    = "mcp_timeout_range"
+	CodeAuthUnknown     = "mcp_auth_unknown"
+	CodeOAuthTransport  = "mcp_oauth_remote_only"
+	CodeOAuthHeader     = "mcp_oauth_authorization_header"
+	CodeOAuthUserSecret = "mcp_oauth_user_secret"
+	CodeOAuthClient     = "mcp_oauth_client_invalid"
+	CodeOAuthClientUser = "mcp_oauth_client_tenant_only"
 )
+
+// AuthOAuth marks a definition whose server is signed in to with OAuth.
+const AuthOAuth = "oauth"
 
 func invalid(code, format string, a ...any) error {
 	return &ValidationError{Code: code, Msg: fmt.Sprintf(format, a...)}
@@ -115,6 +127,25 @@ func invalid(code, format string, a ...any) error {
 var ErrTenantStdio error = &ValidationError{
 	Code: CodeTenantStdio,
 	Msg:  "tenant-distributed MCP servers cannot use stdio (remote only)",
+}
+
+// validTenantClient: the issuer is a URL the Agent would fetch metadata from (https, or http on
+// loopback) with no query or fragment, and the client id is RFC 6749 VSCHAR. Both come from the
+// CP and end up in an authorization URL and a token request.
+func validTenantClient(c secrets.MCPTenantClient) bool {
+	u, err := url.Parse(c.Issuer)
+	if !metadataURLUsable(u, err) || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if strings.TrimSpace(c.ClientID) == "" || len(c.ClientID) > 255 {
+		return false
+	}
+	for _, r := range c.ClientID {
+		if r < 0x20 || r > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // Validate checks a definition for internal consistency. It does NOT check
@@ -129,6 +160,33 @@ func Validate(d ServerDef) error {
 	// be swept as one of af's leftovers.
 	if reservedNames[strings.ToLower(d.Name)] || afNameRE.MatchString(strings.ToLower(d.Name)) {
 		return invalid(CodeNameReserved, "%q is a name reserved by Agent Fleet", d.Name)
+	}
+	switch d.Auth {
+	case "":
+	case AuthOAuth:
+		if d.Transport != TransportHTTP {
+			return invalid(CodeOAuthTransport, "OAuth sign-in is for remote servers only")
+		}
+		if len(d.Headers) > 0 {
+			return invalid(CodeOAuthHeader, "an OAuth server takes no static headers")
+		}
+		// Each member signs in for themselves, so there is no header value left for them to supply.
+		if d.UserSecret {
+			return invalid(CodeOAuthUserSecret, "an OAuth server asks members for no header values")
+		}
+		if d.OAuthClient != nil {
+			if d.Origin != OriginTenant {
+				return invalid(CodeOAuthClientUser, "only a tenant-distributed definition carries a pre-registered client")
+			}
+			if !validTenantClient(*d.OAuthClient) {
+				return invalid(CodeOAuthClient, "a pre-registered client needs a client id and an https issuer")
+			}
+		}
+	default:
+		return invalid(CodeAuthUnknown, "unknown authentication: %q", d.Auth)
+	}
+	if d.Auth != AuthOAuth && d.OAuthClient != nil {
+		return invalid(CodeOAuthClient, "a pre-registered client belongs to an OAuth server")
 	}
 	switch d.Transport {
 	case TransportStdio:
@@ -241,22 +299,47 @@ func HasSecrets(d ServerDef) bool {
 	return false
 }
 
+// bearerRe matches a header value that is an HTTP Bearer credential: the scheme (any
+// case) and a non-empty secret. The scheme survives masking so the Console can tell a
+// Bearer token from any other Authorization value and open the right editor.
+var bearerRe = regexp.MustCompile(`(?i)^(bearer)[ \t]+(\S.*)$`)
+
+// maskedBearerRe matches what maskValue produces for a Bearer credential, in any scheme
+// case. Only a header VALUE is ever compared against it, never an env value.
+var maskedBearerRe = regexp.MustCompile(`(?i)^bearer[ \t]+\*\*\*$`)
+
+// maskValue is the wire form of one stored header value: `Bearer ***` for a Bearer
+// credential (the scheme is kept as stored), MaskedValue for everything else.
+func maskValue(v string) string {
+	if m := bearerRe.FindStringSubmatch(v); m != nil {
+		return m[1] + " " + MaskedValue
+	}
+	return MaskedValue
+}
+
+// isMaskedHeader reports whether an incoming header value is a stand-in for the stored
+// one rather than a new secret.
+func isMaskedHeader(v string) bool {
+	return v == MaskedValue || maskedBearerRe.MatchString(v)
+}
+
 // Masked returns a copy safe to send to the Console: every secret VALUE becomes
 // MaskedValue while the keys stay visible (the user needs to see which headers and
-// env vars a server carries).
+// env vars a server carries). A header holding a Bearer credential keeps its scheme
+// (`Bearer ***`); every other value, including a non-Bearer Authorization, is `***`.
 func Masked(d ServerDef) ServerDef {
 	out := d
-	out.Env = maskMap(d.Env)
-	out.Headers = maskMap(d.Headers)
+	out.Env = maskMap(d.Env, func(string) string { return MaskedValue })
+	out.Headers = maskMap(d.Headers, maskValue)
 	return out
 }
 
-// maskMap replaces every value with MaskedValue — EXCEPT an empty one, which stays
+// maskMap replaces every value with mask(value) — EXCEPT an empty one, which stays
 // empty. An absent value is not a secret being withheld, it is a value nobody has
 // entered yet (a tenant user_secret definition arrives exactly like this), and masking it
 // would tell the Console a credential is stored when none is, leaving the member no way
 // to see that they are the ones who have to supply it.
-func maskMap(m map[string]string) map[string]string {
+func maskMap(m map[string]string, mask func(string) string) map[string]string {
 	if len(m) == 0 {
 		return nil
 	}
@@ -266,33 +349,34 @@ func maskMap(m map[string]string) map[string]string {
 			out[k] = ""
 			continue
 		}
-		out[k] = MaskedValue
+		out[k] = mask(v)
 	}
 	return out
 }
 
 // MergeSecrets resolves an incoming (masked) definition against the stored one: any
-// value still equal to MaskedValue keeps the stored value, everything else is taken
-// as a new secret. A key absent from the incoming map is a deletion.
+// value still equal to MaskedValue (a header may also send `Bearer ***`) keeps the
+// stored value, everything else is taken as a new secret. A key absent from the
+// incoming map is a deletion.
 func MergeSecrets(incoming, stored ServerDef) ServerDef {
 	out := incoming
-	out.Env = mergeMap(incoming.Env, stored.Env)
-	out.Headers = mergeMap(incoming.Headers, stored.Headers)
+	out.Env = mergeMap(incoming.Env, stored.Env, func(v string) bool { return v == MaskedValue })
+	out.Headers = mergeMap(incoming.Headers, stored.Headers, isMaskedHeader)
 	return out
 }
 
-func mergeMap(incoming, stored map[string]string) map[string]string {
+func mergeMap(incoming, stored map[string]string, masked func(string) bool) map[string]string {
 	if len(incoming) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(incoming))
 	for k, v := range incoming {
-		if v == MaskedValue {
+		if masked(v) {
 			if old, ok := stored[k]; ok {
 				out[k] = old
 				continue
 			}
-			// Masked with nothing behind it: drop rather than store a literal "***",
+			// Masked with nothing behind it: drop rather than store a literal "***" (or "Bearer ***"),
 			// which would otherwise be sent to the server as a real credential.
 			continue
 		}
@@ -317,11 +401,86 @@ func Ready(d ServerDef) bool {
 			return false
 		}
 		for _, v := range d.Headers {
-			if strings.TrimSpace(v) == "" || v == MaskedValue {
+			if strings.TrimSpace(v) == "" || isMaskedHeader(v) {
 				return false
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// ownMCPPath is where every deployment serves its external MCP endpoint, and
+// ownMemoryPath its memory-only endpoint.
+const (
+	ownMCPPath    = "/mcp"
+	ownMemoryPath = "/mcp/memory"
+)
+
+// RefuseOwnMCP refuses a URL that is this deployment's own /mcp endpoint (the public
+// or the internal CP base). That endpoint carries the member's full authority, so
+// registering it would lift the session surface's own-children-only, no-delete limits.
+// It is a guardrail against the self-loop, not a security boundary: it runs only when a
+// definition is created or edited, never when stored ones are loaded, and an unset base
+// refuses nothing. A different host, or another deployment, passes.
+//
+// The memory-only endpoint is refused as well: sessions already reach the same memory
+// through the local af server, so registering it only adds a second copy of those tools.
+func RefuseOwnMCP(raw string, bases ...string) error {
+	for _, b := range bases {
+		if SameMCPEndpoint(raw, b) {
+			return invalid(CodeURLOwnMCP, "this is this deployment's own /mcp endpoint: connecting it would give sessions the member's full /mcp authority")
+		}
+		if sameEndpointPath(raw, b, ownMemoryPath) {
+			return invalid(CodeURLOwnMemory, "this is this deployment's own /mcp/memory endpoint: sessions already have Agent Fleet memory through their local af tools")
+		}
+	}
+	return nil
+}
+
+// SameMCPEndpoint reports whether raw reaches base's /mcp endpoint. The scheme is
+// ignored, an absent port equals 80 and 443, hosts compare without a trailing dot and as
+// parsed IPs, and both paths are cleaned because the server's mux redirects /mcp/../mcp
+// and //mcp to /mcp. An empty or unparsable base never matches.
+func SameMCPEndpoint(raw, base string) bool { return sameEndpointPath(raw, base, ownMCPPath) }
+
+// sameEndpointPath is SameMCPEndpoint for any path below base.
+func sameEndpointPath(raw, base, endpoint string) bool {
+	if strings.TrimSpace(base) == "" {
+		return false
+	}
+	a, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	b, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || b.Hostname() == "" || a.Hostname() == "" {
+		return false
+	}
+	return endpointHost(a) == endpointHost(b) && endpointPort(a) == endpointPort(b) &&
+		cleanEndpointPath(a.Path) == cleanEndpointPath(b.Path)+endpoint
+}
+
+func cleanEndpointPath(p string) string {
+	if c := path.Clean("/" + p); c != "/" {
+		return c
+	}
+	return ""
+}
+
+func endpointHost(u *url.URL) string {
+	h := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if ip, err := netip.ParseAddr(h); err == nil {
+		return ip.Unmap().String()
+	}
+	return h
+}
+
+func endpointPort(u *url.URL) string {
+	switch p := u.Port(); p {
+	case "", "80", "443":
+		return ""
+	default:
+		return p
+	}
 }

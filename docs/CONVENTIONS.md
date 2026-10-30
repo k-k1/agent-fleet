@@ -59,7 +59,6 @@ Every file under `guide/` and `docs/build/` starts like this:
 ---
 audience: "who this is for, in one clause"
 source_of_truth: "what is authoritative if this file disagrees with it"
-updated: "2026-09"
 ---
 
 # Title
@@ -69,6 +68,10 @@ English | [日本語](title.ja.md)
 
 **Always double-quote the values** — a `source_of_truth` value contains colons and
 commas.
+
+There is no `updated` field: `git log` already records when a page changed, and a
+hand-kept month went stale on a dozen chapters. `check_header` leaves a stray `updated:`
+alone, but nothing reads it.
 
 This is information for the writer and for CI, not something the reader came for, so it
 does not belong in prose. The Console splits front matter off and renders it as a
@@ -97,6 +100,14 @@ side to believe.
   reader sees in the Console are the correct words. Environment variable names,
   internal kind identifiers, API paths and source file paths are not allowed in prose —
   quote them in a code block if you genuinely must show one. Checked by CI.
+- **A label the reader is told to click is written bold and quoted** — `**"Stop"**` in
+  English, `「**停止する**」` in Japanese — and must exist in the Console's catalogue of the
+  same language (`console/src/lib/i18n/locales/`). Bold without quotes is emphasis and
+  is not checked. A quoted bold that is deliberately not a label (a message to type, text
+  the Control Plane prints) goes in `scripts/docs-label-allowlist.txt`. Checked by CI
+  (`check_labels`).
+- **A chapter longer than 600 lines draws a warning** (`CHAPTER_LINE_BUDGET`); it never
+  fails the build. Split it when a natural seam exists.
 - **`guide/operate/` may use commands, paths and variables** — its reader is at a shell.
 - **`guide/ref/` is the screen-term-to-implementation-term table itself**, so both
   vocabularies appear there.

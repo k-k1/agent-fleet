@@ -89,11 +89,11 @@ func TestUserTurnAppendedSinceNewFile(t *testing.T) {
 	}
 }
 
-// TestPromptAcceptedSince covers the second shape a delivered prompt takes: typed while
+// TestPromptStateSince covers the second shape a delivered prompt takes: typed while
 // the previous turn is still running, claude QUEUES it (a queue-operation line carrying
 // the prompt) and no user line follows for minutes. Treating that as unconfirmed made the
 // self-heal retype the whole prompt — a double injection.
-func TestPromptAcceptedSince(t *testing.T) {
+func TestPromptStateSince(t *testing.T) {
 	const (
 		sid    = "66666666-6666-4666-8666-666666666666"
 		prompt = "追修正の再レビューをお願いします。worktree の 5 件です"
@@ -114,15 +114,42 @@ func TestPromptAcceptedSince(t *testing.T) {
 	t.Run("queued prompt counts", func(t *testing.T) {
 		p := setup(t)
 		snap := TranscriptSnapshot(sid)
-		if PromptAcceptedSince(sid, snap, prompt) {
-			t.Fatal("nothing appended yet")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptAbsent {
+			t.Fatalf("nothing appended yet, got %v", got)
 		}
 		line, _ := json.Marshal(map[string]any{
 			"type": "queue-operation", "operation": "enqueue", "content": prompt,
 		})
 		appendJSONL(t, p, string(line)+"\n")
-		if !PromptAcceptedSince(sid, snap, prompt) {
-			t.Fatal("a queued prompt IS delivered — retyping it would double-inject")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptQueued {
+			t.Fatalf("an enqueue record alone is queued (received, no turn), got %v", got)
+		}
+	})
+
+	t.Run("queued prompt whose turn starts is started", func(t *testing.T) {
+		p := setup(t)
+		snap := TranscriptSnapshot(sid)
+		enq, _ := json.Marshal(map[string]any{
+			"type": "queue-operation", "operation": "enqueue", "content": prompt,
+		})
+		appendJSONL(t, p, string(enq)+"\n")
+		// The running turn's own tool result is a user line too: it must not start ours.
+		appendJSONL(t, p, `{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}`+"\n")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptQueued {
+			t.Fatalf("a tool_result user line must not start the queued prompt, got %v", got)
+		}
+		echo, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user",
+			"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "Search result: " + prompt}}}})
+		appendJSONL(t, p, string(echo)+"\n")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptQueued {
+			t.Fatalf("a tool_result echoing the prompt must not start it, got %v", got)
+		}
+		usr, _ := json.Marshal(map[string]any{
+			"type": "user", "message": map[string]any{"role": "user", "content": prompt},
+		})
+		appendJSONL(t, p, string(usr)+"\n")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptStarted {
+			t.Fatalf("the replayed user line starts the queued prompt, got %v", got)
 		}
 	})
 
@@ -136,8 +163,8 @@ func TestPromptAcceptedSince(t *testing.T) {
 			"content": "<task-notification>\n<task-id>abc</task-id>\n</task-notification>",
 		})
 		appendJSONL(t, p, string(line)+"\n")
-		if PromptAcceptedSince(sid, snap, prompt) {
-			t.Fatal("claude's internal enqueue must not pass for the typed prompt")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptAbsent {
+			t.Fatalf("claude's internal enqueue must not pass for the typed prompt, got %v", got)
 		}
 	})
 
@@ -145,8 +172,101 @@ func TestPromptAcceptedSince(t *testing.T) {
 		p := setup(t)
 		snap := TranscriptSnapshot(sid)
 		appendJSONL(t, p, `{"type":"user","message":{"content":"whatever"}}`+"\n")
-		if !PromptAcceptedSince(sid, snap, prompt) {
-			t.Fatal("a user turn is the primary evidence and must still count")
+		if got := PromptStateSince(sid, snap, prompt); got != PromptStarted {
+			t.Fatalf("a user turn is the primary evidence and must still count, got %v", got)
+		}
+	})
+
+	t.Run("a slash command stored rewritten counts", func(t *testing.T) {
+		p := setup(t)
+		snap := TranscriptSnapshot(sid)
+		usr, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user",
+			"content": "<command-message>scout</command-message>\n<command-name>/scout</command-name>\n<command-args>today</command-args>"}})
+		appendJSONL(t, p, string(usr)+"\n")
+		if got := PromptStateSince(sid, snap, "/scout today"); got != PromptStarted {
+			t.Fatalf("a slash command with arguments must still count (a miss retypes it), got %v", got)
+		}
+	})
+
+	// #2741: a resumed session replays the notification of a background task that ended while
+	// it was stopped. That turn's user lines are claude's own, and reading them as the typed
+	// prompt reported a peer message delivered that never arrived.
+	t.Run("lines claude writes itself do not count", func(t *testing.T) {
+		for name, line := range map[string]map[string]any{
+			"task notification": {"type": "user", "message": map[string]any{"role": "user",
+				"content": "<task-notification>\n<task-id>b1</task-id>\n<status>killed</status>\n</task-notification>"}},
+			"meta line": {"type": "user", "isMeta": true, "message": map[string]any{"role": "user",
+				"content": "Caveat: the messages below were generated by the user while running local commands."}},
+			"tool result": {"type": "user", "message": map[string]any{"role": "user",
+				"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}}}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				p := setup(t)
+				snap := TranscriptSnapshot(sid)
+				b, _ := json.Marshal(line)
+				appendJSONL(t, p, string(b)+"\n")
+				if got := PromptStateSince(sid, snap, prompt); got != PromptAbsent {
+					t.Fatalf("a line claude wrote itself must not pass for the typed prompt, got %v", got)
+				}
+			})
+		}
+	})
+}
+
+// The review of #2741: claude's own lines are set aside BEFORE any text match. A notification
+// that quotes an earlier peer envelope carries the same head as the new message (the envelope
+// opens every peer message from one sender alike), and so does an isMeta line echoing it; read
+// by their text they passed for the typed prompt, as started or as queued.
+func TestPromptStateSinceIgnoresClaudeLinesQuotingThePrompt(t *testing.T) {
+	const (
+		sid    = "88888888-8888-4888-8888-888888888888"
+		prompt = "[agent-fleet:peer from=sparent intent=question reply=required] did you push?"
+		quoted = "[agent-fleet:peer from=sparent intent=request reply=only-if-blocked] push it"
+	)
+	setup := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		t.Setenv("CLAUDE_CONFIG_DIR", dir)
+		proj := filepath.Join(dir, "projects", "-q")
+		if err := os.MkdirAll(proj, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(proj, sid+".jsonl")
+		writeJSONL(t, p, `{"type":"assistant","message":{"content":[]}}`+"\n")
+		return p
+	}
+	notification := "<task-notification>\n<task-id>m1</task-id>\n<output>" + quoted + "</output>\n</task-notification>"
+	for name, lines := range map[string][]map[string]any{
+		"notification user line": {{"type": "user", "message": map[string]any{"role": "user", "content": notification}}},
+		"notification enqueue":   {{"type": "queue-operation", "operation": "enqueue", "content": notification}},
+		"notification enqueue then its user line": {
+			{"type": "queue-operation", "operation": "enqueue", "content": notification},
+			{"type": "user", "message": map[string]any{"role": "user", "content": notification}},
+		},
+		"notification in a record of another type": {{"type": "attachment", "attachment": map[string]any{"type": "queued_command"}, "content": notification}},
+		"meta line": {{"type": "user", "isMeta": true, "message": map[string]any{"role": "user", "content": quoted}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := setup(t)
+			snap := TranscriptSnapshot(sid)
+			for _, l := range lines {
+				b, _ := json.Marshal(l)
+				appendJSONL(t, p, string(b)+"\n")
+			}
+			if got := PromptStateSince(sid, snap, prompt); got != PromptAbsent {
+				t.Fatalf("claude's own line quoting the prompt's head: got %v, want absent", got)
+			}
+		})
+	}
+
+	t.Run("a typed prompt that mentions the tag still counts", func(t *testing.T) {
+		p := setup(t)
+		snap := TranscriptSnapshot(sid)
+		typed := prompt + " (the <task-notification> line came first)"
+		b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": typed}})
+		appendJSONL(t, p, string(b)+"\n")
+		if got := PromptStateSince(sid, snap, typed); got != PromptStarted {
+			t.Fatalf("got %v, want started", got)
 		}
 	})
 }

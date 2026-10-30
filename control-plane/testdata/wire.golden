@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 375
+# count: 389
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -21,8 +21,10 @@ agentCatalogWire.delta bool
 agentCatalogWire.sessions[].alive bool
 agentCatalogWire.sessions[].archived bool,omitempty
 agentCatalogWire.sessions[].authOkAt string,omitempty
+agentCatalogWire.sessions[].backgroundAgeSec number,omitempty
 agentCatalogWire.sessions[].backgroundBusy bool
 agentCatalogWire.sessions[].backgroundBusyReason string,omitempty
+agentCatalogWire.sessions[].backgroundSince string,omitempty
 agentCatalogWire.sessions[].branch string,omitempty
 agentCatalogWire.sessions[].branchDrift bool,omitempty
 agentCatalogWire.sessions[].carried string,omitempty
@@ -36,10 +38,12 @@ agentCatalogWire.sessions[].driver string,omitempty
 agentCatalogWire.sessions[].exitCode number,omitempty
 agentCatalogWire.sessions[].exitReason string,omitempty
 agentCatalogWire.sessions[].exitSignal number,omitempty
+agentCatalogWire.sessions[].forkAtTerminal bool,omitempty
 agentCatalogWire.sessions[].generatedImages number,omitempty
 agentCatalogWire.sessions[].generatedImagesPath string,omitempty
 agentCatalogWire.sessions[].handoffPending bool,omitempty
 agentCatalogWire.sessions[].inboxOrigin raw,omitempty
+agentCatalogWire.sessions[].initialPromptReason string,omitempty
 agentCatalogWire.sessions[].initialPromptState string,omitempty
 agentCatalogWire.sessions[].keepAwakeUntil string,omitempty
 agentCatalogWire.sessions[].kind string
@@ -51,6 +55,8 @@ agentCatalogWire.sessions[].moving string,omitempty
 agentCatalogWire.sessions[].name string
 agentCatalogWire.sessions[].origin string,omitempty
 agentCatalogWire.sessions[].originSession string,omitempty
+agentCatalogWire.sessions[].planReviewers[].path string
+agentCatalogWire.sessions[].planReviewers[].reviewer string
 agentCatalogWire.sessions[].ports [number],omitempty
 agentCatalogWire.sessions[].pr raw,omitempty
 agentCatalogWire.sessions[].progressAgeSec number,omitempty
@@ -245,8 +251,10 @@ scheduleDTO.worktree string,omitempty
 sessionWire.alive bool
 sessionWire.archived bool,omitempty
 sessionWire.authOkAt string,omitempty
+sessionWire.backgroundAgeSec number,omitempty
 sessionWire.backgroundBusy bool
 sessionWire.backgroundBusyReason string,omitempty
+sessionWire.backgroundSince string,omitempty
 sessionWire.branch string,omitempty
 sessionWire.branchDrift bool,omitempty
 sessionWire.carried string,omitempty
@@ -260,10 +268,12 @@ sessionWire.driver string,omitempty
 sessionWire.exitCode number,omitempty
 sessionWire.exitReason string,omitempty
 sessionWire.exitSignal number,omitempty
+sessionWire.forkAtTerminal bool,omitempty
 sessionWire.generatedImages number,omitempty
 sessionWire.generatedImagesPath string,omitempty
 sessionWire.handoffPending bool,omitempty
 sessionWire.inboxOrigin raw,omitempty
+sessionWire.initialPromptReason string,omitempty
 sessionWire.initialPromptState string,omitempty
 sessionWire.keepAwakeUntil string,omitempty
 sessionWire.kind string
@@ -275,6 +285,8 @@ sessionWire.moving string,omitempty
 sessionWire.name string
 sessionWire.origin string,omitempty
 sessionWire.originSession string,omitempty
+sessionWire.planReviewers[].path string
+sessionWire.planReviewers[].reviewer string
 sessionWire.ports [number],omitempty
 sessionWire.pr raw,omitempty
 sessionWire.progressAgeSec number,omitempty
@@ -324,10 +336,12 @@ usageTotal.running_secs number
 usageTotal.tenant string
 usageTotal.user_key string
 workItemDTO.assignee string
+workItemDTO.canComment bool
 workItemDTO.checks.failed number
 workItemDTO.checks.pending number
 workItemDTO.checks.state string
 workItemDTO.checks.total number
+workItemDTO.commentCount number
 workItemDTO.id string
 workItemDTO.key string
 workItemDTO.kind string

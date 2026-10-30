@@ -79,12 +79,22 @@ export function spawnParentOf(text: string): string | null {
   return SPAWN_ENVELOPE_RE.exec(text)?.[1] ?? null;
 }
 
+// mcpViaOf reads the connection's name out of the envelope the Agent prepends to a prompt that
+// arrived over /mcp (session_mcp.go mcpEnvelope, #2542): a hosted assistant or PAT client, not the
+// member. Same two-source reasoning as peerSenderOf — the "mcp" source tag comes from a separate
+// store that can be missing, and the envelope is always there. The value is the Agent's sanitised
+// token (no spaces or brackets), so the match is everything up to the next space or "]".
+const MCP_ENVELOPE_RE = /^\[agent-fleet:mcp via=([^\s\]]+)/;
+export function mcpViaOf(text: string): string | null {
+  return MCP_ENVELOPE_RE.exec(text)?.[1] ?? null;
+}
+
 // splitSessionEnvelope separates the envelope line AF prepends to a message from another session
-// (peer or spawn) from the message itself. The body is what a reader may want translated; the
+// (peer or spawn) or from an MCP client from the message itself. The body is what a reader may want translated; the
 // envelope is machine-facing — its keys are parsed back by peerSenderOf / peerIntentOf — and must
 // reach the screen untouched, so it is never sent to the translator. A text with no envelope (a
 // claude-native cross-session message, docs/log/58 §58.16) is all body.
-const SESSION_ENVELOPE_RE = /^\[agent-fleet:(?:peer|spawn) [^\]]*\][ \t]*(?:\r?\n)*/;
+const SESSION_ENVELOPE_RE = /^\[agent-fleet:(?:peer|spawn|mcp) [^\]]*\][ \t]*(?:\r?\n)*/;
 export function splitSessionEnvelope(text: string): { head: string; body: string } {
   const m = SESSION_ENVELOPE_RE.exec(text);
   if (!m) return { head: "", body: text };
@@ -179,7 +189,9 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
   const name = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
   if (!name || !name[1].trim()) return null;
   const args = s.match(/<command-args>([\s\S]*?)<\/command-args>/);
-  return { name: name[1].trim(), args: args ? args[1].trim() : "" };
+  // The image studio's signal is appended to a slash command too (composerSend), and it lands
+  // inside the args, where withoutStudioSignal does not look.
+  return { name: name[1].trim(), args: args ? stripStudioSignal(args[1]).trim() : "" };
 }
 
 // composerHistory is what ↑/↓ and reverse-i-search walk in the composer: the prompts the user
@@ -188,7 +200,7 @@ export function parseCommand(t: Turn): { name: string; args: string } | null {
 // composer:
 //   * a turn with a source tag — the operator, a chat bridge, a schedule, auto-resume, another
 //     session (session_injections.go); "" is the only value that means the user's own input;
-//   * a peer/spawn envelope with no tag yet (fetched before the injection record, or claude's
+//   * a peer/spawn/mcp envelope with no tag yet (fetched before the injection record, or claude's
 //     own cross-session channel before the parser named it);
 //   * compaction summaries, sidechain (subagent) turns and isNoise's system lines.
 // A slash command / skill run is kept in its re-typeable "/name args" form, and the image
@@ -201,6 +213,8 @@ export function composerHistory(turns: Turn[]): string[] {
   const out: string[] = [];
   for (const t of turns) {
     if (t.role !== "user" || t.source || t.compact || t.sidechain) continue;
+    // An mcp envelope is never the member's words, even when its body opens with "/".
+    if (mcpViaOf(t.text || "") !== null) continue;
     const slash = parseCommand(t);
     let s = "";
     if (slash) s = slash.name + (slash.args ? " " + slash.args : "");
@@ -309,9 +323,9 @@ function originsOf(t: Turn, parts: Part[]): string[] {
 // alone is not enough: a queued bubble on the claude TUI route and a pending echo carry none,
 // and there the envelope is the only mark.
 function fromSession(t: { source?: string; text?: string }): boolean {
-  if (t.source === "peer" || t.source === "spawn") return true;
+  if (t.source === "peer" || t.source === "spawn" || t.source === "mcp") return true;
   const text = t.text || "";
-  return peerSenderOf(text) !== null || spawnParentOf(text) !== null;
+  return peerSenderOf(text) !== null || spawnParentOf(text) !== null || mcpViaOf(text) !== null;
 }
 
 // groupTurns folds consecutive same-role turns into one block (concatenating their
@@ -323,8 +337,14 @@ function fromSession(t: { source?: string; text?: string }): boolean {
 // the footer shows. claude/codex write one turn as many rows — thinking, each tool call,
 // then the answer — so the first row is the moment the model started, minutes or a day
 // before the text being read. The footer must not claim that as the reply's time.
-export function groupTurns(turns: Turn[]): Group[] {
+//
+// `breaks` are instants (ms epoch) a block must not span: a row stamped before one and the
+// next stamped at or after it start separate blocks, even for the same role. The mirror passes
+// the times the Agent restored the log from backup, so a note placed at that time has the
+// restored history before it and the continuation after it, not one merged assistant block.
+export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
   const out: Group[] = [];
+  let lastMs = NaN; // timestamp of the newest row folded into the last block
   for (const raw of turns) {
     const t = withoutStudioSignal(raw);
     // A child agent's raw prompt, reasoning, chatter and tool log are implementation
@@ -335,10 +355,14 @@ export function groupTurns(turns: Turn[]): Group[] {
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
+    const ms = t.ts ? Date.parse(t.ts) : NaN;
+    const crossesBreak = breaks.some((b) => lastMs < b && b <= ms);
+    if (Number.isFinite(ms)) lastMs = ms;
     // A compaction summary, a `!` bash-command block, and a `/` command chip are each
     // standalone — never merged into an adjacent turn (nor a normal turn into them).
     if (
       last &&
+      !crossesBreak &&
       last.role === t.role &&
       last.sidechain === !!t.sidechain &&
       !last.compact &&

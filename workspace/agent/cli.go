@@ -10,8 +10,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afmemory"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jirax"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
@@ -98,6 +100,12 @@ var subcommands = []subcommand{
 		run:      runInstallJDK,
 	},
 	{
+		name:     "java-home",
+		operands: "<major>",
+		summary:  "print the JAVA_HOME a Temurin major resolves to (newest patch across both JDK dirs)",
+		run:      runJavaHome,
+	},
+	{
 		name:    "install-chromium",
 		summary: "download the pinned chromium + CJK font for the browser pane",
 		run:     runInstallChromium,
@@ -140,6 +148,22 @@ var subcommands = []subcommand{
 		name:    "install-muse",
 		summary: "download the pinned Muse Code binary into the home volume",
 		run:     runInstallMuse,
+	},
+	{
+		// Removes superseded copilot / cursor versions from home. The entrypoint runs it ahead of
+		// the boot-install when free space is short; the Agent runs the same pass at its own boot.
+		name:    "prune-cli-versions",
+		summary: "remove old copilot and cursor versions left in home",
+		hidden:  true,
+		run:     runPruneCLIVersions,
+	},
+	{
+		// Removes Node.js patches install-node installed that a newer patch of the same
+		// major supersedes. The entrypoint runs it after install-node, before any session.
+		name:    "prune-node-versions",
+		summary: "remove superseded Node.js patches install-node left in home",
+		hidden:  true,
+		run:     runPruneNodeVersions,
 	},
 	{
 		// Opt-in to opencode 2 beside the pinned 1.x: a private npm prefix, ~200 MB, never
@@ -196,11 +220,51 @@ var subcommands = []subcommand{
 	},
 	{
 		// The Jira connection for the PATH wrapper at /usr/local/bin/jira, renewed when an
-		// OAuth token is about to expire. See jira_cred.go.
+		// OAuth token is about to expire. See internal/jirax/jira_cred.go.
 		name:    "jira-cred",
 		summary: "Jira site, login and token for the jira wrapper",
 		hidden:  true,
-		run:     runJiraCred,
+		run:     jirax.RunCred,
+	},
+	{
+		// The project's issue types for `jira issue create`, which reads them from the config
+		// only. See internal/jirax/jira_issue_types.go.
+		name:    "jira-issue-types",
+		summary: "Jira project issue types as a jira config fragment",
+		hidden:  true,
+		run:     jirax.RunIssueTypes,
+	},
+	{
+		// Candidate issues after a timed-out `jira issue create`, for the PATH wrapper at
+		// /usr/local/bin/jira. See internal/jirax/jira_find_created.go.
+		name:    "jira-find-created",
+		summary: "recently created Jira issues with an exact summary",
+		hidden:  true,
+		run:     jirax.RunFindCreated,
+	},
+	{
+		// `jira issue comment add|edit|delete` for the PATH wrapper at /usr/local/bin/jira:
+		// edit and delete are missing from jira-cli, add is sent as ADF. See internal/jirax/jira_comment.go.
+		name:    "jira-comment",
+		summary: "Jira comment add / edit / delete for the jira wrapper",
+		hidden:  true,
+		run:     jirax.RunComment,
+	},
+	{
+		// The description of `jira issue create|edit`, set as ADF for the PATH wrapper at
+		// /usr/local/bin/jira. See internal/jirax/jira_description.go.
+		name:    "jira-description",
+		summary: "Jira issue description for the jira wrapper",
+		hidden:  true,
+		run:     jirax.RunDescription,
+	},
+	{
+		// Whether a create must carry its description, asked before the wrapper creates an issue
+		// without one. See internal/jirax/jira_description_required.go.
+		name:    "jira-description-required",
+		summary: "whether a Jira issue type requires a description at create",
+		hidden:  true,
+		run:     jirax.RunDescriptionRequired,
 	},
 	{
 		// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary,
@@ -230,6 +294,12 @@ var subcommands = []subcommand{
 		summary: "agy hook: record the conversation id and working/idle state",
 		hidden:  true,
 		run:     agy.RunHook,
+	},
+	{
+		name:    cursor.HookSubcommand,
+		summary: "cursor hook: record a completed Terminal turn's token usage in the ledger",
+		hidden:  true,
+		run:     cursor.RunHook,
 	},
 	{
 		name:    claude.PushHookSubcommand,

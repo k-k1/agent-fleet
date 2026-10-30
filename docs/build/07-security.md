@@ -1,7 +1,6 @@
 ---
 audience: "anyone touching authentication, crypto, isolation, audit or egress"
 source_of_truth: "the code (this is the boundaries and the intent)"
-updated: "2026-10"
 ---
 
 # 07. Security — threat model, authentication, crypto, audit
@@ -108,7 +107,7 @@ This table is what separates one member's workspace from another's, and from the
 |---|---|---|---|---|
 | Files between users | the member's home, bind-mounted from `<WS_DATA>/[<slug>/]<key>/home`. **No other user's home is mounted at all** | EFS access points per membership (`/home/<membership>`, `/claude-config/<membership>`) fixing the root directory; one uid/gid for everyone (`AF_ECS_POSIX_UID` / `_GID`) | the member's own EBS volume, attached to a slot that serves **one member at a time** ([decisions/0045](../decisions/0045-ec2-persistent-workspace.md) decision 8) and mounted by the CP over SSM. The Claude state and the kept dotfiles stay on EFS access points | one pair of claims per workspace, referenced by that workspace's StatefulSet alone, `ReadWriteOncePod` where the storage driver supports it. Members have no Kubernetes API access to the workspace namespace: whoever can create pods there can mount any claim |
 | Process and memory | one membership, one container: `--memory` (`WS_MEMORY`, default `1g`, overridable per workspace), `--cpus` when set | one task; Fargate shares no kernel between tasks | one task per slot, memory capped below the slot's size (`AF_ECS_EC2_HOST_RESERVE_MB`). `/tmp` is a tmpfs, because the slot's root volume outlives its previous member | one pod per workspace, with CPU, memory and ephemeral-storage requests and limits from the workspace sizing. `/tmp` is an `emptyDir` with a size limit. The ephemeral-storage limit is enforced by eviction after the fact, so node disk headroom and a disk-pressure alert do the rest |
-| Network | a network per workspace (`af-net-…`), so containers cannot reach each other; the agent is published on the host's loopback only | `awsvpc`: each task has its own ENI in the workspace security group, which admits the agent port from the CP's security group only — never from another workspace — and assigns no public IP. Outbound is open (§7.8) | the same as ecs. The slot's own security group has no ingress | NetworkPolicies, enforced only by a CNI that implements them: the agent port admits the CP's pods only; egress to cluster DNS, to the CP's workspace-only listener, and to the internet minus private, link-local and the cluster's own ranges. Outbound is open otherwise (§7.8) |
+| Network | a network per workspace (`af-net-…`), so containers cannot reach each other; the agent is published on the host's loopback only | `awsvpc`: each task has its own ENI in the workspace security group, which admits the agent port from the CP's security group only — never from another workspace — and assigns no public IP. Outbound is open, unless `EgressRoute=gateway` sends it through the egress gateway (§7.8) | the same as ecs. The slot's own security group has no ingress | NetworkPolicies, enforced only by a CNI that implements them: the agent port admits the CP's pods only; egress to cluster DNS, to the CP's workspace-only listener, and to the internet minus private, link-local and the cluster's own ranges. Outbound is open otherwise (§7.8) |
 | Privileges | not privileged; runs as `dev`. **`SYS_ADMIN` is added to the bounding set** so Chromium's setuid sandbox can create namespaces; the image build fails if any other setuid/setgid binary remains, so `dev` itself holds no effective capability | no privileged mode, no added capabilities (Fargate cannot add `SYS_ADMIN`, so there is no browser: `BrowserUnavailable`) | not privileged; **`SYS_ADMIN` is added to the agent container's bounding set** (task definition `linuxParameters.capabilities`) for the same reason as docker, because the slot's Docker default seccomp profile otherwise refuses the namespaces and Chromium dies at startup; the image keeps `chrome-sandbox` the only setuid path. Two slot measures go with it (`cfn/40-ec2-pool.yaml` user data): `user.max_user_namespaces=0`, so `SYS_ADMIN` is reachable only through the setuid helper and no other process can create user namespaces (measured: `unshare -U` fails with ENOSPC, browser-smoke still passes), and the home volume mounted `nosuid,nodev`. `kernel.unprivileged_bpf_disabled` (1) and `kernel.perf_event_paranoid` (2) were measured already strict on AL2023 and are left alone. Slots are not patched in place: kernel fixes arrive by AMI refresh plus slot replacement, and both measures reach only slots launched after the template carries them | the `restricted` Pod Security Standard, enforced on the namespace by a label the CP cannot change: not privileged, non-root, no added capabilities, no host namespaces, no `hostPath` — Fargate's level, so no `SYS_ADMIN` for Chromium |
 | Cloud identity | none | the task role `WsTaskRole` has **no policy at all**; `AGENT_TOKEN` and the DEK arrive through the task definition's `secrets` (SSM, read by the execution role) | the same task role. The slot's instance role carries ECS registration, SSM management, image pull and logs only | none: no service account token is mounted, and no IAM grant names the namespace or its service account. On GKE every workspace pool serves the GKE metadata server and egress to `169.254.0.0/16` is denied. `AGENT_TOKEN`, the DEK and the minted tokens arrive in a per-workspace Secret through `envFrom`; Secrets are encrypted in etcd (Cloud KMS on GKE) |
 | Sensitive state | the agent's plaintext state is moved to a second mount (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`) **outside the file browser's reach**; the encrypted store stays in the home behind the agent's denylist (`fsDeny`) | the same — the image and the agent are common | the same | the same, on the second claim |
@@ -377,7 +376,11 @@ data from a place they should not**.
   [09 §9.3](09-deploy.md)). Its client is the connection's own address whatever the hop
   count says, and it removes the identity header and every forwarded-for/-host/-proto
   header before a handler runs — a workspace that connects to it can name neither a user
-  nor a source address. It serves only the token-authenticated routes listed above.
+  nor a source address. It serves only the token-authenticated routes listed above. On
+  `docker` it binds the docker0 gateway address, which every workspace on the host reaches and
+  no LAN interface carries; a workspace gains nothing there that the public URL does not give
+  it, since every route still asks for that membership's own token (a wildcard bind on
+  `docker` is logged as a warning at start).
 - **Escape hatches against locking yourself out**: a deployment administrator is exempt;
   a save that would shut out the editor's current address is refused
   (`would_lock_out`); and so is a save when the forwarded-for header arrives while no
@@ -488,7 +491,7 @@ credentials as exposed and rotate them.
   when KMS does. The same custodian seals the tenant secrets above and the session handoff
   and share payloads. Values sealed before a switch to KMS are opened by the local custodian,
   chosen by their format, never by a KMS failure; `af-cp rewrap-keys` re-seals them under KMS
-  in one pass (2026-10-10 addendum, [operate/04](../../guide/operate/04-secure.md#re-sealing-values-stored-before-the-switch)).
+  in one pass (2026-10-10 addendum, [operate/12](../../guide/operate/12-keys.md#re-sealing-values-stored-before-the-switch)).
 - ⚠️ **The honest limit**: with the local custodian the KEK derives from the master key, so
   the effective strength equals a single master key. With KMS, disabling the key shreds what
   was sealed after the switch — but the workspace DEK itself is still derived from the master
@@ -535,17 +538,50 @@ Implemented:
   refuse them in every mode.
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
+  Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed
+  interval, no backoff) and keeps a batch until the CP answers 2xx, sending it in chunks
+  under the CP's 1 MiB body limit. A retry after a timeout or a half-recorded batch counts
+  rows twice, so counts are approximate. While the CP is unreachable the proxy holds at most
+  5000 distinct host/verdict buckets; the overflow is reported as `dropped` and audited as
+  `egress.dropped`. Pending counts live in memory and are lost when the proxy restarts.
 - **The allowlist is versioned** (`egress_allowlist`: active / proposed / retired) with a
   deployment-wide mode (`egress_mode`). **An AI may only propose; a human approves** —
-  nothing is applied automatically.
+  nothing is applied automatically. The served policy (`GET /internal/egress/policy`) also
+  always carries the CP's own hosts, those of `PUBLIC_BASE_URL` and `AF_CP_INTERNAL_URL`
+  (`cpEgressHosts`), as exact hosts outside that table: a workspace reaches the public base
+  through the egress path (on the AWS gateway its 443 is intercepted whatever `NO_PROXY` says),
+  so no allowlist edit may cut it off from its CP (#2742). The Admin list shows them as built-in.
+  The entry is a whole host (any port or path), it lifts none of the gateway's port and
+  internal-address refusals, and a URL whose host is not one exact name, or is an IPv6 literal
+  (#2754), is not admitted and is logged at start.
 - **Enforce blocks at the proxy**: outside the allowlist the answer is a 403.
 - `AF_EGRESS_PROXY_ADDR` injects the proxy variables (`http_proxy`, `https_proxy`,
-  `no_proxy`) into every workspace, on every target.
+  `no_proxy`, and their upper-case forms) into every workspace, on every target. `docker`,
+  `native` and Kubernetes pass the whole deployment env on; `ecs` and `ecs-ec2` take only
+  these variables (the ones generated from `AF_EGRESS_PROXY_ADDR`, never a same-named `WS_ENV` entry), because they deliberately do not pass `WS_ENV` (it may hold a
+  credential and a task definition's plain environment is readable). Where
+  `AF_CP_INTERNAL_URL` is set, its host joins `NO_PROXY` on docker, Kubernetes, ecs and ecs-ec2, and
+  ecs / ecs-ec2 add the task and instance metadata addresses (`169.254.170.2`,
+  `169.254.169.254`) too, since the proxy refuses link-local destinations. A per-start
+  variable of the same name wins over the deployment-wide one.
 
-**What is missing is the fence.** Nothing forces a workspace's traffic through the
-proxy: there is no internal-only network on `docker` and no egress rule on the AWS
-security groups, and no deployment template runs the proxy. A process that ignores the
-proxy variables goes straight out, so **enforce does not yet constrain a workspace**.
+**The fence exists on AWS only, behind an option.** With `00-network`'s
+`EgressRoute=gateway` ([ADR 0122](../decisions/0122-egress-gateway.md)), the workspace
+route table's default route leads to an egress gateway (Squid, with nftables for what
+Squid does not see): internet-bound TCP 80 and 443 go through Squid, so a workspace
+has no other way to the internet and **enforce constrains it**. It is a preview,
+verified on a test deployment only, and its limits are part of the design: enforce
+decides on the HTTP Host or the TLS SNI, so an allowed name reaches any public
+address on 443; DNS to the VPC resolver passes unrecorded; other internet-bound
+traffic, git over SSH and direct DNS elsewhere included, is dropped; traffic inside
+the VPC (the CP, EFS on 2049) follows the security groups and never passes the
+gateway; and workspaces leave from the gateway's own address, not the NAT gateway's ("Egress gateway" in
+[deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md)).
+
+Everywhere else the fence is missing: there is no internal-only network on `docker`,
+`native` shares the host's network, Kubernetes' NetworkPolicy admits the internet, and
+AWS's default `EgressRoute=nat-gateway` sends workspaces straight to the NAT gateway. A process that ignores the proxy
+variables goes straight out, so **enforce does not constrain a workspace there**.
 The staged rollout stays the design — observe in log-only mode, harden the allowlist
 from what you measured, and only then switch to enforce.
 
@@ -562,8 +598,8 @@ from what you measured, and only then switch to enforce.
    real revocation of the workspace DEK waits for random DEKs (§7.6).
 4. **Supply chain** — provenance and regular updates for what is baked into the
    workspace image ([04](04-agent.md)).
-5. **Egress enforcement does not constrain workspaces yet** — the proxy blocks, but no
-   network fence routes a workspace through it (§7.8,
-   [#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
+5. **Egress enforcement constrains workspaces only on AWS with `EgressRoute=gateway`**
+   (a preview) — elsewhere the proxy blocks, but no network fence routes a workspace
+   through it (§7.8, [#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
 6. The outward-facing threat model and the vulnerability reporting channel are
    [SECURITY.md](../../SECURITY.md).

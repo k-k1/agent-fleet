@@ -16,6 +16,7 @@ import { Button } from "../../../ui/Button.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useSettings } from "../../../lib/settings.ts";
+import { WizardFrame, GroupedPreview, Findings, type WizardStep } from "./memoryWizard.tsx";
 import { IMPORT_BATCH } from "./memoryClaudeImport.tsx";
 import type { ClaudeImportResult, MuseImportItem, MuseImportPreview, MuseImportSource, MuseImportStatus, MuseScope } from "./memoryTypes.ts";
 
@@ -26,7 +27,7 @@ const reasonLabel = (r: string): string => tMaybe("mem.mi_reason_" + r) ?? tMayb
 // A select value names the scope and the directory: two scopes can share a directory name.
 const srcKey = (s: { scope: MuseScope; dir: string }) => s.scope + "|" + s.dir;
 
-export function MuseImportPanel({ reload, onChanged }: { reload: number; onChanged: () => void }) {
+export function MuseImportPanel({ reload, onChanged, onClose }: { reload: number; onChanged: () => void; onClose?: () => void }) {
   const tr = useT();
   const toast = useToast();
   const enabled = useSettings().agentMemory;
@@ -40,6 +41,12 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [again, setAgain] = useState(0);
+  const [result, setResult] = useState<string | null>(null);
+  // The outcome is both toasted and kept in the frame until another source is picked.
+  const notify = (msg: string, opts?: { kind?: "success" }) => {
+    toast(msg, opts);
+    setResult(msg);
+  };
 
   const load = useCallback(async (signal: AbortSignal) => {
     const res = await api("api/agents/memory/muse-import");
@@ -74,11 +81,13 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
 
   const pick = (k: string) => {
     setKey(k);
+    setResult(null);
     setIntoUser(false);
     void loadPreview(k, false);
   };
   const pickUser = (on: boolean) => {
     setIntoUser(on);
+    setResult(null);
     void loadPreview(key, on);
   };
 
@@ -105,7 +114,7 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
           items,
         });
         if (res?.error) {
-          toast(errDetail(res.error));
+          notify(errDetail(res.error));
           return;
         }
         for (const r of (res?.results ?? []) as ClaudeImportResult[]) {
@@ -114,12 +123,12 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
         }
         setProgress({ done: Math.min(at + IMPORT_BATCH, todo.length), total: todo.length });
       }
-      toast(tr(skipped ? "mem.ci_done_skipped" : "mem.ci_done", { n: imported, skipped }), {
+      notify(tr(skipped ? "mem.ci_done_skipped" : "mem.ci_done", { n: imported, skipped }), {
         kind: skipped ? undefined : "success",
       });
     } catch {
       // The request may or may not have reached the Agent: re-read what is there now.
-      toast(tr("mem.ci_failed"));
+      notify(tr("mem.ci_failed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -147,53 +156,11 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
     secret: tr("mem.mi_status_secret"),
     invalid: tr("mem.mi_status_invalid"),
   };
-  const group = (st: MuseImportStatus) => {
-    const items = (preview?.items ?? []).filter((i) => i.status === st);
-    if (items.length === 0) return null;
-    return (
-      <details key={st} open={st === "new" || st === "update" || st === "secret"} className="mem-ci-group">
-        <summary>
-          <span className={"mem-badge ci-" + st}>{statusLabel[st]}</span> {items.length}
-        </summary>
-        <ul className="mem-ci-items">
-          {items.map((i) => (
-            <li key={i.name + "|" + (i.path ?? "")}>
-              <span className="mem-af-name">{i.name}</span>
-              {i.path && <span className="muted"> ({i.path})</span>}
-              {i.derived && <span className="mem-badge"> {tr("mem.mi_derived_badge")}</span>}
-              {i.shared && <span className="mem-badge"> {tr("mem.mi_shared_badge")}</span>}
-              {st === "update" && i.sourceModified && i.afUpdated && (
-                <span className="muted">
-                  {" · "}
-                  {tr("mem.mi_update_times", {
-                    muse: fmtDateTime(i.sourceModified, DATETIME_FULL),
-                    af: fmtDateTime(i.afUpdated, DATETIME_FULL),
-                  })}
-                </span>
-              )}
-              {(st === "invalid" || st === "diverged") && i.reason && (
-                <span className="muted"> · {reasonLabel(i.reason)}</span>
-              )}
-              {st === "secret" && (
-                <ul className="mem-findings">
-                  {(i.findings ?? []).map((f, n) => (
-                    <li key={n}>
-                      <code>{f.rule}</code> {tr("mem.af_secret_line", { line: f.line })} <code>{f.hint}</code>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
-      </details>
-    );
-  };
+  const waiting = !!key && (!key.startsWith("personal|") || intoUser);
+  const step: WizardStep = busy ? "apply" : result ? "result" : preview ? "confirm" : waiting ? "preview" : "source";
 
   return (
-    <div className="mem-ci">
-      <h4>{tr("mem.mi_title")}</h4>
-      <p className="muted ds-hint">{tr("mem.mi_intro")}</p>
+    <WizardFrame title={tr("mem.mi_title")} intro={tr("mem.mi_intro")} step={step} busy={busy} result={result} onClose={onClose}>
       {loadErr && <p className="mem-warn">{loadErr}</p>}
       {withheld > 0 && <p className="mem-warn">{tr("mem.mi_withheld_sources", { n: withheld })}</p>}
       {sources === null ? (
@@ -230,7 +197,36 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
           </p>
           {(preview.items ?? []).some((i) => i.derived) && <p className="muted ds-hint">{tr("mem.mi_derived_note")}</p>}
           {(preview.items ?? []).some((i) => i.shared) && <p className="mem-warn">{tr("mem.mi_shared_warn")}</p>}
-          {STATUSES.map(group)}
+          <GroupedPreview
+            items={preview.items ?? []}
+            order={STATUSES}
+            statusOf={(i) => i.status}
+            label={(st) => statusLabel[st as MuseImportStatus]}
+            badge={(st) => "ci-" + st}
+            open={(st) => st === "new" || st === "update" || st === "secret"}
+            keyOf={(i) => i.name + "|" + (i.path ?? "")}
+            renderItem={(i, st) => (
+              <>
+                <span className="mem-af-name">{i.name}</span>
+                {i.path && <span className="muted"> ({i.path})</span>}
+                {i.derived && <span className="mem-badge"> {tr("mem.mi_derived_badge")}</span>}
+                {i.shared && <span className="mem-badge"> {tr("mem.mi_shared_badge")}</span>}
+                {st === "update" && i.sourceModified && i.afUpdated && (
+                  <span className="muted">
+                    {" · "}
+                    {tr("mem.mi_update_times", {
+                      muse: fmtDateTime(i.sourceModified, DATETIME_FULL),
+                      af: fmtDateTime(i.afUpdated, DATETIME_FULL),
+                    })}
+                  </span>
+                )}
+                {(st === "invalid" || st === "diverged") && i.reason && (
+                  <span className="muted"> · {reasonLabel(i.reason)}</span>
+                )}
+                {st === "secret" && <Findings findings={i.findings} />}
+              </>
+            )}
+          />
           {(preview.withheld ?? 0) > 0 && (
             <p className="mem-warn">{tr("mem.ci_withheld_files", { n: preview.withheld ?? 0 })}</p>
           )}
@@ -249,6 +245,6 @@ export function MuseImportPanel({ reload, onChanged }: { reload: number; onChang
           </div>
         </>
       )}
-    </div>
+    </WizardFrame>
   );
 }

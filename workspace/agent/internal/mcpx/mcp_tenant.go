@@ -18,6 +18,7 @@ package mcpx
 // Fail-closed here would make MCP vanish from every member's session on a CP blip.
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -54,11 +55,24 @@ func syncMCPTenant(why string) mcpreg.TenantFetchResult {
 	if res.Dropped > 0 {
 		log.Printf("mcp tenant sync (%s): dropped %d definition(s) refused by local validation", why, res.Dropped)
 	}
+	endTenantGrants(context.Background(), why, res.EndedOAuth)
 	if res.Changed {
 		log.Printf("mcp tenant sync (%s): %d server(s), materializing", why, res.Servers)
 		MaterializeAll()
 	}
 	return res
+}
+
+// endTenantGrants disconnects the sign-ins a fetch ended, before the configs are rewritten:
+// the tenant took the server away or pointed it elsewhere, and a grant belongs to the URL it
+// was made for. Revocation at the authorization server is best effort, as on a member's own
+// edit (HandleServerUpdate).
+func endTenantGrants(ctx context.Context, why string, ids []string) {
+	for _, id := range ids {
+		if _, err := mcpreg.DisconnectOAuth(ctx, id); err != nil {
+			log.Printf("mcp tenant sync (%s): %s: ending the sign-in failed: %v", why, id, err)
+		}
+	}
 }
 
 // HandleTenantRefresh (POST /mcp-servers/tenant-refresh) pulls the tenant set now and
@@ -75,6 +89,7 @@ func HandleTenantRefresh(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "mcp_tenant_fetch_failed", err.Error())
 		return
 	}
+	endTenantGrants(r.Context(), "refresh", res.EndedOAuth)
 	if res.Changed {
 		MaterializeAll()
 	}

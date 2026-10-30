@@ -39,6 +39,7 @@ import { AgentsTab } from "./agents/AgentsTab.tsx";
 import { AssistantTab } from "./personal/AssistantTab.tsx";
 import { AiAssistTab } from "./personal/AiAssistTab.tsx";
 import { InstructionsTab } from "./personal/InstructionsTab.tsx";
+import { SkillsTab } from "./personal/SkillsTab.tsx";
 import { TtsTab } from "./personal/TtsTab.tsx";
 import { GitTab } from "./connect/GitTab.tsx";
 import { SsmTab } from "./workspace/SsmTab.tsx";
@@ -54,6 +55,7 @@ import { BackupTab } from "./workspace/BackupTab.tsx";
 import { NotificationsTab } from "./personal/NotificationsTab.tsx";
 import { LimitBoardView } from "../limits/LimitBoardView.tsx";
 import { MemoryTab } from "./memory/MemoryTab.tsx";
+import { MemorySnapshotsTab } from "./memory/MemorySnapshotsTab.tsx";
 // The usage tab is a thin wrapper around the features/usage view, kept independent of the modal
 // so the same view can be promoted to a pane unchanged (docs/log/46 §5).
 import { UsageView } from "../usage/UsageView.tsx";
@@ -86,11 +88,17 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       // rather than a chat.
       ["aiassist", "set.tab_aiassist"],
       ["instructions", "set.tab_instructions"],
+      // Personal skills (#2792): the other half of "what the member set up for every session",
+      // next to the instructions.
+      ["skills", "set.tab_skills"],
       // Agent memory sits next to the instructions rather than under workspace infra:
       // both answer "what does the agent carry into a session", one written by the member
       // and one accumulated by the agent. That its bytes live in the workspace does not
       // place it — the instructions are stored Agent-side too.
       ["memory", "set.tab_memory"],
+      // Two objects, two entries (#2324): "memory" is Agent Fleet's own shared memory (ADR 0108),
+      // this one is the version control of each kind's native memory (ADR 0022).
+      ["memorysnapshots", "set.tab_memory_snapshots"],
     ],
   },
   {
@@ -103,13 +111,20 @@ export const GROUPS: { key: string; label: string; items: [string, string][] }[]
       ["tracker", "set.tab_tracker"],
       ["chat", "set.tab_chat"],
       ["mcp", "set.tab_mcp"],
-      ["tokens", "set.tab_tokens"],
       // AWS SSM registers an SSO profile and the hosts to log into — an external
       // connection like the ones above it, not a property of the workspace.
       ["ssm", "set.tab_ssm"],
       // Google Cloud profiles (ADR 0107) sit beside the AWS ones: the same kind of connection.
       ["gcp", "set.tab_gcp"],
     ],
+  },
+  {
+    // Inbound: what drives this Workspace from outside (PATs, OAuth-connected apps via /mcp).
+    // Kept out of "connections", whose every other tab is outbound. The section key stays
+    // "tokens" so openSettings("tokens") and the remembered tab keep working.
+    key: "outside",
+    label: "set.group_outside",
+    items: [["tokens", "set.tab_tokens"]],
   },
   {
     key: "workspace",
@@ -154,7 +169,10 @@ export function SettingsDialog() {
   // Ignored by the desktop two-pane layout (CSS).
   // A request with a scroll target opens straight into its section: the target lives inside
   // the detail view, and scrolling to an element under display:none does nothing.
-  const [entered, setEntered] = useState(() => useSettingsUI.getState().settingsTarget !== null);
+  const [entered, setEntered] = useState(() => {
+    const st = useSettingsUI.getState();
+    return st.settingsTarget !== null || st.settingsView !== null;
+  });
   // A detail view gets its own history layer above Modal's close layer. Therefore the
   // first device/browser back returns to this list and the second closes the modal.
   useBackClose(() => setEntered(false), mobileMatches() && entered);
@@ -175,6 +193,18 @@ export function SettingsDialog() {
     }
   }, [settingsSection]);
 
+  // A request naming a view of a section ("memory:settings") opens that section's detail on a
+  // phone even when the section is already the current one, where the effect above sees no change.
+  const settingsView = useSettingsUI((s) => s.settingsView);
+  const mountedSettingsView = useRef(false);
+  useEffect(() => {
+    if (!mountedSettingsView.current) {
+      mountedSettingsView.current = true;
+      return;
+    }
+    if (settingsView) setEntered(true);
+  }, [settingsView]);
+
   // Remember the last-opened section (localStorage) so reopening lands here; the store's
   // openSettings() restores it on the next open (first-ever open defaults to Display).
   useEffect(() => {
@@ -189,6 +219,10 @@ export function SettingsDialog() {
   }, [section]);
 
   const pick = (key: string) => {
+    // Mirror the rail choice into the store: the follow-effect above only fires when the
+    // requested section changes, so a stale store value would swallow a later
+    // openSettings() back to the section the rail just left (cross-tab links).
+    useSettingsUI.setState({ settingsSection: key });
     setSection(key);
     setEntered(true);
   };
@@ -218,6 +252,7 @@ export function SettingsDialog() {
                       key={key}
                       type="button"
                       className={"settings-rail-item" + (section === key ? " active" : "")}
+                      data-section={key}
                       aria-current={section === key ? "page" : undefined}
                       onClick={() => pick(key)}
                     >
@@ -241,6 +276,7 @@ export function SettingsDialog() {
             {section === "assistant" && <AssistantTab />}
             {section === "aiassist" && <AiAssistTab />}
             {section === "instructions" && <InstructionsTab />}
+            {section === "skills" && <SkillsTab />}
             {section === "tts" && <TtsTab />}
             {section === "notifications" && <NotificationsTab />}
             {section === "limits" && <LimitBoardView />}
@@ -251,6 +287,7 @@ export function SettingsDialog() {
                 runtime, so even a deployment with no AWS bill knows when it was running. */}
             {section === "uptime" && <MyUptimeView />}
             {section === "memory" && <MemoryTab />}
+            {section === "memorysnapshots" && <MemorySnapshotsTab />}
             {section === "machine" && <MachineTab />}
             {section === "env" && <EnvTab />}
             {section === "database" && <DatabaseTab />}

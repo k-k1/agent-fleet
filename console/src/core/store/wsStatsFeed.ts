@@ -21,6 +21,38 @@
 import { useSyncExternalStore } from "react";
 import { api, getTenant } from "../api/client.ts";
 import { onPush, pushHealthy } from "../push/events.ts";
+import { toast } from "../../ui/toast.ts";
+import { t } from "../../lib/i18n/index.ts";
+import { nextHomeDiskPressure } from "./homeDiskPressure.ts";
+
+/** The Agent's `mem_pressure` axis for one sample (ADR 0120 phase 0, measure only). `available:
+ *  false` means the Agent could not measure pressure here: that is not "no pressure", and no
+ *  figure is present then. Percentages are the share of wall time tasks stalled on memory. */
+export interface MemPressureSample {
+  available: boolean;
+  some10: number | null;
+  full10: number | null;
+  /** The Agent's own loopback request latency (ms); high while PSI is high is the "Agent goes
+   *  silent" shape the data is collected for. */
+  latencyMs: number | null;
+  probeFailed: boolean;
+}
+
+/** Reads the wire axis defensively: an older Agent sends none (null), and a figure that is not a
+ *  number is absent, never zero. */
+export function memPressureOf(d: any): MemPressureSample | null {
+  const m = d && d.mem_pressure;
+  if (!m || typeof m !== "object") return null;
+  const num = (v: any) => (typeof v === "number" && isFinite(v) ? v : null);
+  const available = m.available === true;
+  return {
+    available,
+    some10: available ? num(m.some_avg10) : null,
+    full10: available ? num(m.full_avg10) : null,
+    latencyMs: num(m.agent_latency_ms),
+    probeFailed: m.agent_probe_failed === true,
+  };
+}
 
 /** One reading. cpu/mem are null for a GAP — a tick whose value could not be established.
  *  Charts must break the line there rather than joining across it. */
@@ -38,6 +70,8 @@ export interface StatSample {
    *  Carried per sample rather than read live so the section can still say "it happened,
    *  and it happened HERE" after the flag itself has expired. */
   oom: boolean;
+  /** null = the Agent reported no such axis (older Agent) or the tick is a gap. */
+  memPressure: MemPressureSample | null;
 }
 
 const SAMPLE_MS = 4000; // the CP's own event tick; sampling faster would only repeat values
@@ -51,6 +85,10 @@ let tenant = "";
 let timer = 0;
 let viewers = 0;
 let polling = false;
+// Whether the home volume is currently short of space, as last judged from a usable reading. Kept
+// across gaps in the stream (a gap is not a recovery), so the notice is raised once per crossing
+// and not again when the stream comes back.
+let homePressure = false;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -59,6 +97,7 @@ function emit(): void {
 }
 
 function reset(): void {
+  homePressure = false;
   samples = [];
   latest = null;
   latestAt = 0;
@@ -72,6 +111,27 @@ function believable(now: number): boolean {
   if (pushHealthy()) return true;
   // Polling fallback: trust our own reading for a couple of intervals, then admit ignorance.
   return now - latestAt < 3 * SAMPLE_MS;
+}
+
+// noticeHomePressure raises the "home is nearly full" toast once each time the pressure level
+// goes up. Only where the CP says the figure is this member's own volume (home_own): on a shared
+// host the statfs is everybody's, and warning the member about it would blame them for bytes
+// they did not write. Not on every sample: a sticky toast refreshed every 4 s is noise.
+function noticeHomePressure(d: any): void {
+  if (!d || !d.running || d.home_own !== true) return;
+  if (typeof d.disk_used !== "number" || typeof d.disk_total !== "number") return;
+  const next = nextHomeDiskPressure(homePressure, d.disk_used, d.disk_total);
+  if (next && !homePressure) {
+    const gib = (n: number) => (n / 1024 ** 3).toFixed(1);
+    // toast() reports whether a provider took it; if not yet, stay un-pressured and try next tick.
+    if (!toast(t("disk.home_low", { free: gib(d.disk_total - d.disk_used), total: gib(d.disk_total) }), {
+      kind: "warn",
+      duration: 0,
+      persist: true,
+      key: "home-disk-low",
+    })) return;
+  }
+  homePressure = next;
 }
 
 // now is injectable so a test can lay out a realistic series in time; production always
@@ -94,8 +154,10 @@ function sample(now = Date.now()): void {
     diskUsed: running && typeof d.disk_used === "number" ? d.disk_used : null,
     diskTotal: running && typeof d.disk_total === "number" ? d.disk_total : null,
     oom: !!(running && d.oom_recent),
+    memPressure: running ? memPressureOf(d) : null,
   });
   if (samples.length > CAP) samples = samples.slice(-CAP);
+  noticeHomePressure(d);
   emit();
 
   // Only reach for the network when the push channel cannot answer and somebody is looking.
@@ -160,6 +222,7 @@ function subscribeViewer(fn: () => void): () => void {
 // drive it without a DOM timer.
 export const __test = {
   reset: () => {
+    homePressure = false;
     samples = [];
     latest = null;
     latestAt = 0;

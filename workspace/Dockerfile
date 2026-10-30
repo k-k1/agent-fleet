@@ -157,7 +157,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
 # **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
 # 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
-ARG CHROMIUM_VERSION=155.0.8059.79-1~deb13u1
+ARG CHROMIUM_VERSION=156.0.8078.73-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
@@ -325,7 +325,7 @@ RUN set -eux; \
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 ARG BAKE_RTK=1
-ARG RTK_VERSION=1.0.1
+ARG RTK_VERSION=1.1.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -361,10 +361,15 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.302
-ARG OPENCODE_VERSION=2.0.32
-ARG CODEX_VERSION=0.163.0
-ARG COPILOT_VERSION=1.0.98
+ARG CLAUDE_CODE_VERSION=2.1.312
+ARG OPENCODE_VERSION=2.2.2
+# The opencode 2 release `workspace-agent install-opencode2` installs while OPENCODE_VERSION is
+# 1.x (a rollback). It is not installed here; it is only recorded in versions.json. Keep it equal
+# to OPENCODE_VERSION while that is 2.x: cli-pin-bump.sh moves both, so a rollback (set
+# OPENCODE_VERSION=1.19.0, nothing else) leaves it at the last 2.x the contracts passed on.
+ARG OPENCODE_V2_VERSION=2.2.2
+ARG CODEX_VERSION=0.166.0
+ARG COPILOT_VERSION=1.0.105
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
 # 2.x (which also installs an `opencode2` bin). The pin has been 2.x since the v2 cut-over
 # (#2101); rolling back is OPENCODE_VERSION=1.19.0, nothing else (docs/log/119). entrypoint.sh,
@@ -396,10 +401,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.4.0
-ARG AGY_RELEASE_BUILD=5281842794987520
-ARG AGY_SHA256_X64=fd96967583c1eed94733c039638fa59b71ddbd823c75ebc8dd0e677463565aad
-ARG AGY_SHA256_ARM64=cf953adcc69f87d00d71f97c3f35dc723a8669a350accf9a199df781f0523f56
+ARG AGY_VERSION=1.4.10
+ARG AGY_RELEASE_BUILD=5501573669978112
+ARG AGY_SHA256_X64=ed0526231e3916b6cc1b025cf356862e88cc036e27c3c5eae5a580495fc79773
+ARG AGY_SHA256_ARM64=107b7499ca90018ab2b6c1b636cdec4251dfd836656526845e354be1bfe05eba
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -443,9 +448,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.10.14-941492e
-ARG CURSOR_SHA256_X64=6f6bf39dd2df29dcd38643cdfab0155ce71699953889f732deec123f6562bb2d
-ARG CURSOR_SHA256_ARM64=cbba40d90d7f699874e133a5c15bf3854cee006565bd3bb00a6c79b49d62b0d0
+ARG CURSOR_VERSION=2026.10.22-27dcf5f
+ARG CURSOR_SHA256_X64=85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294
+ARG CURSOR_SHA256_ARM64=22a36df9720830668ccd4d707e5190204ab9c8a0efb2f068cc914895f804d3ec
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -485,9 +490,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.31.1
-ARG KIRO_SHA256_X64=47972b933825d5cf1f0b218c36863862df11f12dab2c864f041051f4cada58be
-ARG KIRO_SHA256_ARM64=d8b1e47bee2e5950b437aa85b347989d15b5fb41883b70f8c17ee2e361d77406
+ARG KIRO_VERSION=2.35.1
+ARG KIRO_SHA256_X64=9896a0849ea6abe259f7b3e742d6637dd413bbd8d6fa0afdf241c6c5614d4366
+ARG KIRO_SHA256_ARM64=59758f69080a341184c520aa34d2245c24ae4d3859f231f591f477709420851f
 # Muse Code（kind="muse"、ADR 0095 決定 8）。プロプライエタリなので **配布イメージには
 # 入らない**（BAKE_AGENT_CLIS=0 既定・理由は本ファイル冒頭と NOTICE）。既定の経路は
 # per-user のオンデマンド導入（workspace-agent install-muse）で、ここのピンは
@@ -505,9 +510,9 @@ ARG KIRO_SHA256_ARM64=d8b1e47bee2e5950b437aa85b347989d15b5fb41883b70f8c17ee2e361
 # MUSE_VERSION と両 arch の sha を揃えて書き換え）。実測 362,440,920 B / 323,360,856 B（1.4.1-R4503.1）。
 # ⚠️ 版文字列は `Muse Code 1.3.0 (1.3.0-R3401.1)`＝**括弧内のビルド id** がピンと突合する値。
 # agy の `tr -dc '0-9.'` 流儀だと `-R3401.1` が落ちて毎回不一致になる（install_muse.go）。
-ARG MUSE_VERSION=1.4.10-R6427.1
-ARG MUSE_SHA256_X64=decefc0fb33c48ee43419c3e72ac2dbc781743868611074c7292807f5960dfcf
-ARG MUSE_SHA256_ARM64=2e5afa5e8560c1565185249af2d27b3e97aaf351d3d32275b8e410be702dce35
+ARG MUSE_VERSION=1.4.14-R7309.1
+ARG MUSE_SHA256_X64=0809aac7cb58d18f5022b6d05e02aa1974683c0ec430e5f04d25b60ed17de2da
+ARG MUSE_SHA256_ARM64=3dc39b8fa26f9963cc2038f2966c0932ed5a39f0f9efb39cc0266a261cbbcf76
 # Postgres供給ピン（ADR 0086 P0 供給レーン）: Zonky embedded-postgres 17.11.0 jar のハッシュ。
 # sha256 は `curl -sfL <jar-url> | sha256sum` で確認した値。
 # 他メジャー（16/17/18）は install-postgres が Maven Central の .sha256 サイドカーで動的に取得する。
@@ -612,10 +617,10 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}"; gcloud_sha="${GCLOUD_SHA256_ARM64}" ;; \
       *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha=""; gcloud_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","bkt":"%s","jira":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","bkt":"%s","jira":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s","opencode_v2":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$BKT_VERSION" "$JIRA_CLI_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
-      "$GCLOUD_VERSION" "$gcloud_sha" \
+      "$GCLOUD_VERSION" "$gcloud_sha" "$OPENCODE_V2_VERSION" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
@@ -802,6 +807,15 @@ RUN find / -xdev -type f -perm /6000 ! -path /usr/lib/chromium/chrome-sandbox \
     fi \
  && test -z "$(find / -xdev -type f -perm /6000 \
       ! -path /usr/lib/chromium/chrome-sandbox -print -quit)"
+
+# fontconfig's binary cache under /var/cache/fontconfig is written by the apt trigger at
+# build time and carries mtimes and checksums, so its bytes differ on every build. The
+# release scanner folds every byte, so a short forbidden term can match inside it by
+# chance and fail a publish (#2600). Drop it last, after the final apt-get / fc-cache:
+# fontconfig rebuilds it on first use into ~/.cache/fontconfig (the dir is root-owned and
+# the process runs as dev); measured ~0.2s once per home for DejaVu + Noto CJK.
+# workspace/dockerfile-fontconfig-cache-test.sh pins this step's position.
+RUN rm -rf /var/cache/fontconfig/*
 
 USER dev
 WORKDIR /home/dev

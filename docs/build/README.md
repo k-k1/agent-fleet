@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the code — a new contributor, a future maintainer, or an agent session"
 source_of_truth: "the code (this shelf is the map and the design intent)"
-updated: "2026-09"
 ---
 
 # Building Agent Fleet

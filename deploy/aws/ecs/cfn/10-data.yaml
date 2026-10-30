@@ -82,10 +82,35 @@ Parameters:
       create = a KMS key for the Control Plane's key custodian (ADR 0005), output as
       CustodianKmsKeyArn for 30-ingress. none (default) = the local custodian, or a key
       you manage yourself. See cfn/PARAMETERS.md.
+  EgressArchive:
+    Type: String
+    Default: ""
+    AllowedValues: [ "", create, existing ]
+    Description: >-
+      create = a bucket for the Control Plane's raw egress event archive (AF_EGRESS_ARCHIVE_URL,
+      ADR 0122), output as EgressArchiveBucket for 20-platform and 30-ingress. existing = the
+      retained bucket a former create left (same name, not managed here). Empty (default) = off.
+      See cfn/PARAMETERS.md, "The egress archive".
+  EgressArchiveRetentionDays:
+    Type: Number
+    Default: 365
+    MinValue: 1
+    Description: Days an archived egress day is kept before S3 expires it (EgressArchive=create only).
+  RdsRestopOnForcedStart:
+    Type: String
+    Default: "true"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      true = stop the RDS instance again when AWS starts it by itself after 7 stopped days
+      (RDS-EVENT-0154), but only while pause.sh's af-paused tag is on it. AWS cannot be
+      told not to start it; this is the only way to keep a long pause cheap.
 
 Conditions:
+  RestopOn: !Equals [ !Ref RdsRestopOnForcedStart, "true" ]
   IsRetain: !Equals [ !Ref Persistence, retain ]
   CreateCustodianKey: !Equals [ !Ref CustodianKmsKey, create ]
+  CreateEgressArchive: !Equals [ !Ref EgressArchive, create ]
+  HasEgressArchive: !Or [ !Condition CreateEgressArchive, !Equals [ !Ref EgressArchive, existing ] ]
   IsProvisionedTp: !Equals [ !Ref EfsThroughputMode, provisioned ]
 
 Resources:
@@ -252,6 +277,125 @@ Resources:
       DeletionProtection: !If [ IsRetain, true, false ]
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-db" } ]
 
+  # Re-stop of a long-paused database. AWS starts any RDS instance that has been stopped for
+  # 7 days and sends RDS-EVENT-0154; nothing here can prevent that, so the event is caught and
+  # the instance stopped again (the 7-day clock restarts). It acts ONLY while the instance
+  # carries af-paused=true, which pause.sh sets when it stops the database and removes before
+  # it starts it again: without that, an operator who ran `pause.sh --up` while the forced
+  # start was in flight would have the database stopped under a running Control Plane.
+  # Re-checked on every poll and once more right before the stop, so removing the tag
+  # mid-wait also cancels it. RDS has no compare-and-stop, so what is left is bounded, not
+  # excluded: the last tag read and the stop call both run on a client with 3 s connect /
+  # 5 s read timeouts and no SDK retries, and pause.sh --up waits longer than that after
+  # clearing the tag before it reads the status, then reads it again once the CP is up and
+  # fails if the database is not available. A timeout limits how long the caller waits, not
+  # whether a request already sent takes effect, so a stop whose response was lost can still
+  # land after --up; the final check turns that into a loud failure, and running --up again
+  # starts the database.
+  # RDS-EVENT-0088 (started) is caught too: the wait below is bounded by the Lambda timeout
+  # and its two async retries (about 46 minutes), and a start that takes longer would
+  # otherwise be missed. The tag means "paused": a tagged instance is stopped whenever it
+  # is seen running, so remove the tag (or run pause.sh --up) to keep one up on purpose.
+  RestopRole:
+    Type: AWS::IAM::Role
+    Condition: RestopOn
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: "sts:AssumeRole" }
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: restop-own-db-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ "rds:DescribeDBInstances", "rds:ListTagsForResource", "rds:StopDBInstance" ]
+                Resource: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:${Db}"
+  RestopFunction:
+    Type: AWS::Lambda::Function
+    Condition: RestopOn
+    Properties:
+      Description: !Sub "af-${AWS::StackName} stop the paused database again after RDS's 7-day forced start"
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RestopRole.Arn
+      Timeout: 900
+      MemorySize: 128
+      Environment:
+        Variables: { DB_ID: !Ref Db }
+      Code:
+        ZipFile: |
+          import os
+          import time
+          import boto3
+          from botocore.config import Config
+
+          rds = boto3.client("rds")
+          # The last tag read and the stop must not arrive late (see the template comment).
+          rds_fast = boto3.client("rds", config=Config(
+              connect_timeout=3, read_timeout=5, retries={"max_attempts": 0}))
+          DB = os.environ["DB_ID"]
+
+
+          def paused(arn, client=rds):
+              tags = client.list_tags_for_resource(ResourceName=arn)["TagList"]
+              return {t["Key"]: t["Value"] for t in tags}.get("af-paused") == "true"
+
+
+          def handler(event, context):
+              while True:
+                  i = rds.describe_db_instances(DBInstanceIdentifier=DB)["DBInstances"][0]
+                  if not paused(i["DBInstanceArn"]):
+                      print("not paused by pause.sh, leaving it running")
+                      return "skipped"
+                  st = i["DBInstanceStatus"]
+                  if st in ("stopped", "stopping"):
+                      return "already " + st
+                  if st == "available" and paused(i["DBInstanceArn"], rds_fast):
+                      try:
+                          rds_fast.stop_db_instance(DBInstanceIdentifier=DB)
+                          print("stopping " + DB)
+                          return "stopping"
+                      except Exception as e:
+                          # Not a code for "already stopping": the state may be backing-up
+                          # or modifying. Look again; the next pass settles it.
+                          if "InvalidDBInstanceState" not in str(e):
+                              raise
+                          print("stop refused, polling again: " + str(e))
+                  if context.get_remaining_time_in_millis() < 60000:
+                      raise RuntimeError("still " + st + ", giving up for a retry")
+                  time.sleep(20)
+  RestopLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: RestopOn
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${RestopFunction}"
+      RetentionInDays: 30
+  RestopRule:
+    Type: AWS::Events::Rule
+    Condition: RestopOn
+    Properties:
+      Description: RDS started the database by itself after 7 stopped days (RDS-EVENT-0154), or it finished starting (RDS-EVENT-0088)
+      EventPattern:
+        source: [ aws.rds ]
+        detail-type: [ "RDS DB Instance Event" ]
+        detail:
+          EventID: [ RDS-EVENT-0154, RDS-EVENT-0088 ]
+          SourceIdentifier: [ !Ref Db ]
+      Targets:
+        - { Id: restop, Arn: !GetAtt RestopFunction.Arn }
+  RestopPermission:
+    Type: AWS::Lambda::Permission
+    Condition: RestopOn
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref RestopFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt RestopRule.Arn
+
   # The key custodian's KMS key (ADR 0005, control-plane/custodian_kms.go). It lives with
   # the data it protects: every data key in the database is unreadable without it, so it
   # follows Persistence like RDS, and a deleted one is only scheduled (30 days to cancel).
@@ -299,7 +443,69 @@ Resources:
       AliasName: !Sub "alias/af-${AWS::StackName}-custodian"
       TargetKeyId: !Ref CustodianKey
 
+  # --- Egress event archive (ADR 0122; cfn/PARAMETERS.md, "The egress archive") ---
+  # The name must match 00-network's S3Endpoint pattern af-*-egress-archive-<account>-<region>,
+  # or the CP's write is AccessDenied at the endpoint; the region keeps one name per region
+  # (S3 names are global). Retain: the archive is what the purger deletes
+  # events against. Versioning stays off (the CP replaces a day's object whole); the CP never
+  # deletes, so S3 expiry is the only retention.
+  EgressArchiveBucket:
+    Type: AWS::S3::Bucket
+    Condition: CreateEgressArchive
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "af-${AWS::StackName}-egress-archive-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-archived-days
+            Status: Enabled
+            Prefix: egress/
+            ExpirationInDays: !Ref EgressArchiveRetentionDays
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+      Tags: [ { Key: af-role, Value: egress-archive } ]
+
+  # Refuses plain HTTP: SSE-S3 and the public access block do not. Retained with the bucket, so
+  # a switch from create to existing leaves it in place.
+  EgressArchiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: CreateEgressArchive
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Bucket: !Ref EgressArchiveBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt EgressArchiveBucket.Arn
+              - !Sub "${EgressArchiveBucket.Arn}/*"
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+
 Outputs:
+  EgressArchiveBucket:
+    Condition: HasEgressArchive
+    Description: Pass to 20-platform and 30-ingress as EgressArchiveBucket (standup.sh / update.sh do).
+    Value: !Sub "af-${AWS::StackName}-egress-archive-${AWS::AccountId}-${AWS::Region}"
+  RdsRestopFunction:
+    Condition: RestopOn
+    Description: Lambda that stops the paused database again after RDS's 7-day forced start.
+    Value: !Ref RestopFunction
   EfsId:
     Value: !Ref FileSystem
     Export: { Name: !Sub "${AWS::StackName}-EfsId" }

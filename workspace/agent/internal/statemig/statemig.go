@@ -70,6 +70,11 @@ var Entries = []string{
 	// A move target's first prompt until it is known to have arrived (session_move_deliver.go).
 	// Introduced directly under AgentStateDir.
 	"session-move-delivery",
+	// Per-session kiro ACP recorder files (agents/kiro recorder.go). Recreated at every
+	// launch, so nothing is lost by leaving it behind; listed because the drift test
+	// requires every store under AgentStateDir to be named. Introduced directly under
+	// AgentStateDir.
+	"kiro-acp",
 	"session-report",
 	"session-resume",
 	"session-translations",
@@ -77,6 +82,9 @@ var Entries = []string{
 	"codex-released-threads.json",
 	"session-handoffs",
 	"carried-interaction",
+	// One stamp per time a deleted claude log was restored from backup (status/restore_notes.go).
+	// Introduced directly under AgentStateDir.
+	"transcript-restore-notes",
 	"pending-question",
 	"pending-plan",
 	"pending-perm",
@@ -108,6 +116,9 @@ var Entries = []string{
 	// An open PreCompact on a Terminal codex session (codex.MarkCompacting). Introduced
 	// directly under AgentStateDir; it never existed under .config.
 	"codex-compacting",
+	// codex's SQLite databases, moved off an NFS ~/.codex (codex.RelocateSQLite). Introduced
+	// directly under AgentStateDir; it never existed under .config.
+	"codex-sqlite",
 	"opencode-sid",
 	// How each opencode Terminal slot was launched (opencode.slotModes). Introduced directly under
 	// AgentStateDir.
@@ -124,6 +135,7 @@ var Entries = []string{
 	"agy-hook",
 	"agy-launch",
 	"agy-hooks.lock",
+	"cursor-hooks.lock",
 	"codex-msgledger",
 	"opencode-msgledger",
 	"copilot-msgledger",

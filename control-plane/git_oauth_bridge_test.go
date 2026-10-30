@@ -100,6 +100,32 @@ func TestGitOAuthBridgeRefreshesWithTheTenantsSecretAndReturnsNoSecret(t *testin
 	}
 }
 
+// #2709: Bitbucket's own scope list rides back to the Agent (the work-item comment gate), and
+// an answer that names none stays empty rather than being invented.
+func TestGitOAuthBridgeRelaysTheGrantedScopes(t *testing.T) {
+	_, mgr, mv := bridgeEnv(t)
+	answer := `{"access_token":"fresh","expires_in":7200,"scopes":"account repository pullrequest:write"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	old := bbTokenURL
+	bbTokenURL = srv.URL
+	defer func() { bbTokenURL = old }()
+	tok := mintGitOAuthToken(gitOAuthSignKey(mgr.tokenSignMaster()), mv.MembershipID)
+	for _, want := range []string{"account repository pullrequest:write", ""} {
+		w := bridgeCall(mgr, tok, `{"refresh_token":"member-refresh"}`)
+		var out bbRefreshToken
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("refresh: %d %s", w.Code, w.Body.String())
+		}
+		if out.Scopes != want {
+			t.Fatalf("scopes = %q, want %q (%s)", out.Scopes, want, w.Body.String())
+		}
+		answer = `{"access_token":"fresh","expires_in":7200}`
+	}
+}
+
 // The tenant comes from the token, never the request — otherwise one member could
 // refresh against another tenant's OAuth app.
 func TestGitOAuthBridgeRejectsAForeignOrAbsentToken(t *testing.T) {

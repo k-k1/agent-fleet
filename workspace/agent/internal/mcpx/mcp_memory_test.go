@@ -369,3 +369,16 @@ func TestMemorySaveReturnsGuidanceWarnings(t *testing.T) {
 		}
 	}
 }
+
+// memory_read says that an omitted scope searches the project, then the user scope (#2775).
+func TestMemoryReadDescriptionSaysOmittedScopeSearchesBoth(t *testing.T) {
+	for _, tool := range mcpStdioMemoryTools() {
+		if tool["name"] == "memory_read" {
+			if d := tool["description"].(string); !strings.Contains(d, "Omit scope when unsure: the project is searched first, then the user scope") {
+				t.Errorf("memory_read description: %s", d)
+			}
+			return
+		}
+	}
+	t.Fatal("no memory_read tool")
+}

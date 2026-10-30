@@ -43,11 +43,13 @@ func BackgroundBusy(name string) bool {
 	if root == 0 {
 		return false
 	}
-	tab := procx.Snapshot()
-	kids := map[int][]int{}
-	for pid, pi := range tab {
-		kids[pi.PPID] = append(kids[pi.PPID], pid)
-	}
+	return backgroundBusyIn(root, procx.Snapshot())
+}
+
+// backgroundBusyIn is the pure core of BackgroundBusy, split out so it can be tested
+// against a fixtured proc table.
+func backgroundBusyIn(root int, tab map[int]procInfo) bool {
+	kids := procx.Children(tab)
 	// BFS the descendants of the pane root (root itself excluded).
 	seen := map[int]bool{root: true}
 	queue := append([]int(nil), kids[root]...)
@@ -69,9 +71,12 @@ func BackgroundBusy(name string) bool {
 		if shellComm[pi.Comm] {
 			continue // a shell wrapper; its real child is judged on its own
 		}
-		if pi.Comm == "claude" || isClaudeProc(pid) {
-			continue // claude itself (native comm, or node whose cmdline names claude),
-			// momentarily R while redrawing — or our own agent (MCP helper).
+		if procIsClaude(pid, pi) {
+			continue // claude itself, momentarily R while redrawing
+		}
+		if isMCPHelper(pid, pi, tab) {
+			continue // our long-lived MCP helper under claude; any other workspace-agent
+			// invocation (af-aws-exec, af-db, …) is real work and is judged below.
 		}
 		return true
 	}
@@ -173,11 +178,11 @@ func backgroundShellBusyIn(root int, tab map[int]procInfo) bool {
 	return false
 }
 
-// procIsClaude reports whether pid is a claude process. claude's node process sets
+// procIsClaude reports whether pid is the claude CLI. claude's node process sets
 // its comm to "claude" (or "claude.exe"), so that alone decides it without a /proc
-// read; isClaudeProc is the fallback for a node whose comm stayed "node".
+// read; isClaudeCLI is the fallback for a node whose comm stayed "node".
 func procIsClaude(pid int, pi procInfo) bool {
-	return pi.Comm == "claude" || pi.Comm == "claude.exe" || isClaudeProc(pid)
+	return pi.Comm == "claude" || pi.Comm == "claude.exe" || isClaudeCLI(pid, pi)
 }
 
 // subtreeHasClaude reports whether any descendant of pid is a claude process, used to
@@ -200,15 +205,45 @@ func subtreeHasClaude(pid int, kids map[int][]int, tab map[int]procInfo) bool {
 	return false
 }
 
-// isClaudeProc skips the claude CLI itself (node running claude) and our own agent
-// binary (the MCP helper), so neither is mistaken for a background task.
-func isClaudeProc(pid int) bool {
+// procArgv returns pid's argv, or nil when it cannot be read. A variable so tests can
+// fixture a proc table without colliding with real pids.
+var procArgv = func(pid int) []string {
 	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
-	if err != nil {
+	if err != nil || len(b) == 0 {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(b), "\x00"), "\x00")
+}
+
+// isClaudeCLI recognises a claude whose comm stayed "node" (or another JS runtime) by
+// the script it runs: argv[1] is the claude launcher or lives in the claude-code package.
+//
+// Never match "claude" anywhere in the cmdline: a forked subshell of claude's Bash
+// wrapper carries the shell-snapshot path under the claude config dir in its cmdline,
+// and workspace-agent is not claude. The comm gate keeps those out too.
+func isClaudeCLI(pid int, pi procInfo) bool {
+	switch pi.Comm {
+	case "node", "nodejs", "bun":
+	default:
 		return false
 	}
-	cl := strings.ReplaceAll(string(b), "\x00", " ")
-	return strings.Contains(cl, "claude") || strings.Contains(cl, "workspace-agent")
+	argv := procArgv(pid)
+	if len(argv) < 2 {
+		return false
+	}
+	script := argv[1]
+	return filepath.Base(script) == "claude" || strings.Contains(script, "/claude-code/")
+}
+
+// isMCPHelper reports whether pid is `workspace-agent mcp-stdio` spawned directly by
+// claude: long-lived, mostly idle, and not work. Any other workspace-agent subcommand
+// (aws-exec, gcloud-exec, db, memory) under a background shell is the work itself.
+func isMCPHelper(pid int, pi procInfo, tab map[int]procInfo) bool {
+	if !procIsClaude(pi.PPID, tab[pi.PPID]) {
+		return false
+	}
+	f := strings.Fields(strings.Join(procArgv(pid), " "))
+	return len(f) >= 2 && filepath.Base(f[0]) == "workspace-agent" && f[1] == "mcp-stdio"
 }
 
 // In-process background agents — a run_in_background subagent (Task/Explore/…) or a

@@ -118,7 +118,7 @@ func (agentImpl) Kind() string { return session.KindCodex }
 // a past turn via `thread/fork`'s lastTurnId (docs/log/55) — app-server only, so the handler
 // refuses a point fork for a CLI-route session (`codex fork <id>` has no such argument).
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 // ForkSource resolves this session's codex conversation id as the fork source —

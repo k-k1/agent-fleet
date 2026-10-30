@@ -32,6 +32,14 @@ describe("workspace store applyPush", () => {
     useWorkspaceStore.setState({ state: "running", bootPhase: "" });
   });
 
+  it("adopts docsRoot from a push and clears it when absent", () => {
+    useWorkspaceStore.setState({ state: "running", docsRoot: "" });
+    useWorkspaceStore.getState().applyPush({ state: "running", docsRoot: "/data/ws/docs" });
+    expect(useWorkspaceStore.getState().docsRoot).toBe("/data/ws/docs");
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().docsRoot).toBe("");
+  });
+
   it("adopts browserUnavailable from a push, even mid-transition, and clears it when absent", () => {
     useWorkspaceStore.setState({ state: "starting…", browserUnavailable: "" });
     useWorkspaceStore.getState().applyPush({ state: "running", browserUnavailable: "kubernetes" });
@@ -228,5 +236,46 @@ describe("workspace store refresh: browserUnavailable", () => {
     fetchMock.mockImplementation(() => Promise.resolve(answer({ state: "running" })));
     await useWorkspaceStore.getState().refresh();
     expect(useWorkspaceStore.getState().browserUnavailable).toBe("");
+  });
+});
+
+// A stop the CP refuses (a Recreate / Clean home holds the workspace) must reach the member.
+describe("workspace store stop", () => {
+  const reply = (status: number, body: unknown) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      statusText: "",
+      headers: { get: () => "application/json" },
+      text: () => Promise.resolve(JSON.stringify(body)),
+    }) as unknown as Response;
+
+  it("toasts the CP's refusal", async () => {
+    toastMock.mockReset();
+    useWorkspaceStore.setState({ state: "starting", bootPhase: "" });
+    fetchMock.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        String(args[0]).includes("workspace/stop")
+          ? reply(409, { error: { code: "workspace_operation_in_progress", message: "busy with another operation" } })
+          : reply(200, { state: "starting" }),
+      ),
+    );
+    await useWorkspaceStore.getState().stop();
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(String(toastMock.mock.calls[0][0]).length).toBeGreaterThan(0);
+  });
+
+  it("toasts when the request gets no answer, and stays quiet on success", async () => {
+    toastMock.mockReset();
+    useWorkspaceStore.setState({ state: "starting", bootPhase: "" });
+    fetchMock.mockImplementation((...args: unknown[]) =>
+      String(args[0]).includes("workspace/stop") ? Promise.reject(new TypeError("network")) : Promise.resolve(reply(200, { state: "starting" })),
+    );
+    await useWorkspaceStore.getState().stop();
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    toastMock.mockReset();
+    fetchMock.mockImplementation(() => Promise.resolve(reply(200, { state: "stopped" })));
+    await useWorkspaceStore.getState().stop();
+    expect(toastMock).not.toHaveBeenCalled();
   });
 });

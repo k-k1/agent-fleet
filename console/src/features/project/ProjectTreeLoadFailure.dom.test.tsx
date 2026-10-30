@@ -94,6 +94,39 @@ describe("repos rail on a failed load", () => {
     expect(hasAdd()).toBe(false);
   });
 
+  it("promises a retry only while the workspace runs", async () => {
+    await render();
+    expect(empty()).toContain("Retrying");
+    await setWs("starting");
+    expect(empty()).toContain("reach");
+    expect(empty()).not.toContain("Retrying");
+  });
+
+  it("shows a terminal error, not the retry hint, when a running workspace answers 4xx", async () => {
+    answer = () => ({ error: { code: "unauthorized", status: 401 } });
+    await render();
+    expect(empty()).toContain("Couldn't load the repository list");
+    expect(empty()).not.toContain("Retrying");
+    expect(empty()).not.toContain("reach");
+    expect(hasAdd()).toBe(false);
+  });
+
+  it("shows the terminal error for a non-JSON answer too ({})", async () => {
+    answer = () => ({});
+    await render();
+    expect(empty()).toContain("Couldn't load the repository list");
+    expect(empty()).not.toContain("Retrying");
+  });
+
+  it("does not blame the connection for a kept list after a 4xx", async () => {
+    useReposStore.setState({ repos: REPOS, loadState: "ok" });
+    answer = () => ({ error: { code: "unauthorized", status: 401 } });
+    await render();
+    const note = host.querySelector(".proj-sub-empty")?.textContent ?? "";
+    expect(note).toContain("last known");
+    expect(note).not.toContain("reach");
+  });
+
   it("says the workspace is stopped, without Add", async () => {
     useWorkspaceStore.setState({ state: "stopped" });
     await render();

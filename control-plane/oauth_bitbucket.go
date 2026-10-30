@@ -177,6 +177,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scopes       string `json:"scopes"` // space-separated; the Agent records it for the work-item comment gate
 		Error        string `json:"error"`
 		ErrorDesc    string `json:"error_description"`
 	}
@@ -194,13 +195,17 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// /internal/git-oauth/bitbucket/refresh instead (git_oauth_bridge.go).
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
-		"expires_in": tok.ExpiresIn,
+		"expires_in": tok.ExpiresIn, "scopes": strings.TrimSpace(tok.Scopes),
 	})
-	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
+	res, aerr := c.mgr.resolveFull(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {
 		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
 		return
 	}
+	rt := res.rt
+	// Withdraw the cached posting capability before and after the Agent stores the new token (#2709).
+	resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
+	defer resetWorkItemCommentCapability(r.Context(), c.mgr.store, res.mv.MembershipID)
 	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	if rt.Token() != "" {
@@ -243,6 +248,10 @@ type bbStrings struct {
 	stateMismatch, noCode, notConfigured, staleAgent                         string
 	tokenExchangeFailed, workspaceResolveFailed, saveUnreachable, saveFailed string
 	success                                                                  string
+	// codeConsumed / tryAgain / backLink serve the Jira callback: the code is single-use,
+	// so a retried exchange that Atlassian already honoured can only be fixed by starting
+	// over, and the page has to say where.
+	codeConsumed, tryAgain, backLink string
 }
 
 func oauthCallbackText(lang, provider string) bbStrings {
@@ -257,6 +266,9 @@ func oauthCallbackText(lang, provider string) bbStrings {
 			saveUnreachable:        "Save failed (can't reach the Workspace Agent — is the Workspace running?): ",
 			saveFailed:             "Save failed: ",
 			success:                provider + " connection complete. Close this tab and return to the Console.",
+			codeConsumed:           provider + " already used this authorization code, or it has expired. Start the connection again from the Console (Settings > Connections).",
+			tryAgain:               "This is often a temporary network problem. Start the connection again from the Console (Settings > Connections).",
+			backLink:               "Back to the Console",
 		}
 	}
 	return bbStrings{
@@ -269,12 +281,23 @@ func oauthCallbackText(lang, provider string) bbStrings {
 		saveUnreachable:        "保存に失敗（Workspace Agent に到達できません。Workspace は起動していますか）: ",
 		saveFailed:             "保存に失敗: ",
 		success:                provider + " 接続が完了しました。このタブを閉じて Console に戻ってください。",
+		codeConsumed:           provider + " がこの認可コードをすでに使用したか、期限が切れています。Console（設定 > 接続）から接続をやり直してください。",
+		tryAgain:               "一時的なネットワークの問題のことがあります。Console（設定 > 接続）から接続をやり直してください。",
+		backLink:               "Console に戻る",
 	}
 }
 
 func bbCallbackPage(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, "<!doctype html><meta charset=utf-8><body style=\"font:16px system-ui;padding:2rem;background:#1e1e1e;color:#ddd\">%s</body>", html.EscapeString(msg))
+}
+
+// bbCallbackPageLink is bbCallbackPage plus a way back: a member who lands here from the
+// provider's redirect has no other tab to return to.
+func bbCallbackPageLink(w http.ResponseWriter, msg, linkText string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, "<!doctype html><meta charset=utf-8><body style=\"font:16px system-ui;padding:2rem;background:#1e1e1e;color:#ddd\"><p>%s</p><p><a href=\"/\" style=\"color:#8ab4f8\">%s</a></p></body>",
+		html.EscapeString(msg), html.EscapeString(linkText))
 }
 
 func randHex(n int) string {

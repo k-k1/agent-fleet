@@ -9,14 +9,16 @@ import { createRoot, type Root } from "react-dom/client";
 const state = vi.hoisted(() => ({ tenant: "acme" }));
 const api = vi.fn();
 const apiJSON = vi.fn();
+const raw = vi.fn();
 vi.mock("../../../core/api/client.ts", async (importActual) => ({
   ...(await importActual<typeof import("../../../core/api/client.ts")>()),
   api: (...args: unknown[]) => api(...args),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
+  raw: (...args: unknown[]) => raw(...args),
   getTenant: () => state.tenant,
 }));
 
-import { BundleAfPanel, BUNDLE_BATCH } from "./memoryBundleImport.tsx";
+import { BundleAfPanel, BundleImportWizard, BundleAfPointer, BUNDLE_BATCH } from "./memoryBundleImport.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { t } from "../../../lib/i18n/index.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
@@ -56,6 +58,7 @@ afterEach(() => {
   host = null;
   api.mockReset();
   apiJSON.mockReset();
+  raw.mockReset();
   document.body.innerHTML = "";
 });
 
@@ -246,5 +249,189 @@ describe("an apply that outlives its panel", () => {
     await flush();
     const btn = Array.from(host.querySelectorAll("button")).find((b) => (b.textContent ?? "").includes(String(BUNDLE_BATCH + 5)));
     expect(btn?.hasAttribute("disabled")).toBe(true);
+  });
+});
+
+// Import & export > Agent Fleet memory from a bundle: the file is the wizard's source step.
+describe("BundleImportWizard", () => {
+  const afPreview = {
+    importId: "20261014T093000Z",
+    hasAF: true,
+    scopes: [{ source: "src-1", display: "demo", target, match: "id", counts: { new: 1 }, items: [item("a", "new")] }],
+  };
+  const upload = async (file = new File(["x"], "mem.bundle")) => {
+    const input = host!.querySelector<HTMLInputElement>("input[type=file]")!;
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+  };
+  const mountWizard = async (onChanged = () => {}, onClose?: () => void) => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <BundleImportWizard onChanged={onChanged} onClose={onClose} />
+        </ToastProvider>,
+      );
+    });
+    await flush();
+  };
+  const reply = (body: unknown, ok = true) => ({ ok, json: async () => body });
+
+  it("starts at the source step and asks for nothing before a file is chosen", async () => {
+    await mountWizard();
+    expect(raw).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
+    expect(host!.querySelector(".mem-wiz-step.current")?.textContent).toBe(t("mem.wz_step_source"));
+  });
+
+  it("receives the file through the snapshot upload, previews its Agent Fleet memory and imports it", async () => {
+    raw.mockResolvedValue(reply({ importId: "20261014T093000Z", format: "bundle" }));
+    api.mockResolvedValue(afPreview);
+    const changed = vi.fn();
+    await mountWizard(changed);
+    await upload();
+    const [url, init] = raw.mock.calls[0];
+    expect(url).toBe("api/agents/memory/import");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "X-AF-Console": "1" });
+    expect(init.body.get("file").name).toBe("mem.bundle");
+    expect(api.mock.calls[0][0]).toBe("api/agents/memory/af-import/preview?importId=20261014T093000Z");
+    expect(host!.querySelector(".mem-wiz-step.current")?.textContent).toBe(t("mem.wz_step_confirm"));
+    const apply = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("mem.bi_apply", { n: 1 }));
+    apiJSON.mockResolvedValue({ results: [{ scope: "src-1", name: "a", result: "imported" }] });
+    await act(async () => apply!.click());
+    await flush();
+    expect(apiJSON.mock.calls[0][0]).toBe("api/agents/memory/af-import?importId=20261014T093000Z");
+    expect(apiJSON.mock.calls[0][2].items).toEqual([{ scope: "src-1", target: "demo-1", name: "a", sourceHash: "h-a" }]);
+    expect(changed).toHaveBeenCalled();
+    expect(host!.querySelector(".mem-wiz-step.current")?.textContent).toBe(t("mem.wz_step_result"));
+  });
+
+  it("turns a tar.gz away: it holds no Agent Fleet memory", async () => {
+    raw.mockResolvedValue(reply({ importId: "x", format: "tar" }));
+    await mountWizard();
+    await upload();
+    expect(host!.textContent).toContain(t("mem.bi_not_bundle"));
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it("says so when the bundle holds no Agent Fleet memory", async () => {
+    raw.mockResolvedValue(reply({ importId: "x", format: "bundle" }));
+    api.mockResolvedValue({ importId: "x", hasAF: false, scopes: [] });
+    await mountWizard();
+    await upload();
+    expect(host!.textContent).toContain(t("mem.bi_none"));
+  });
+
+  it("shows a refused upload and leaves nothing to apply", async () => {
+    raw.mockResolvedValue(reply({ error: { message: "too big" } }, false));
+    await mountWizard();
+    await upload();
+    expect(host!.querySelector(".mem-warn")).toBeTruthy();
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  // What the Console does when the tenant changes: the client's tenant and the store move together.
+  const switchOwner = async (slug: string) => {
+    state.tenant = slug;
+    await act(async () => useTenantStore.setState({ tenant: slug }));
+  };
+
+  it("drops an upload that answers after the tenant changed, and never previews its import id", async () => {
+    let release: (v: unknown) => void = () => {};
+    raw.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    await mountWizard();
+    await upload();
+    await switchOwner("globex");
+    release(reply({ importId: "20261014T093000Z", format: "bundle" }));
+    await flush();
+    expect(api).not.toHaveBeenCalled();
+    expect(host!.querySelector<HTMLInputElement>("input[type=file]")!.disabled).toBe(false);
+    expect(host!.querySelector(".mem-wiz-step.current")?.textContent).toBe(t("mem.wz_step_source"));
+  });
+
+  it("never hands a received import id to another owner's preview", async () => {
+    raw.mockResolvedValue(reply({ importId: "20261014T093000Z", format: "bundle" }));
+    api.mockResolvedValue(afPreview);
+    await mountWizard();
+    await upload();
+    expect(api).toHaveBeenCalledTimes(1);
+    api.mockClear();
+    await switchOwner("globex");
+    await flush();
+    expect(api).not.toHaveBeenCalled();
+    expect(host!.querySelector(".mem-wiz-step.current")?.textContent).toBe(t("mem.wz_step_source"));
+  });
+
+  it("forgets the received import when the owner changes, and unlocks after an apply that outlived it", async () => {
+    raw.mockResolvedValue(reply({ importId: "20261014T093000Z", format: "bundle" }));
+    api.mockResolvedValue(afPreview);
+    await mountWizard();
+    await upload();
+    let release: (v: unknown) => void = () => {};
+    apiJSON.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const apply = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("mem.bi_apply", { n: 1 }));
+    await act(async () => apply!.click());
+    expect(host!.querySelector<HTMLInputElement>("input[type=file]")!.disabled).toBe(true);
+    await switchOwner("globex");
+    release({ results: [] });
+    await flush();
+    expect(host!.querySelector<HTMLInputElement>("input[type=file]")!.disabled).toBe(false);
+    expect(host!.querySelector(".mem-wiz-step.current")?.textContent).toBe(t("mem.wz_step_source"));
+    expect(host!.textContent).not.toContain(t("mem.bi_apply", { n: 1 }));
+  });
+
+  it("keeps the outcome in the frame: imported, partly skipped, refused and failed", async () => {
+    raw.mockResolvedValue(reply({ importId: "20261014T093000Z", format: "bundle" }));
+    api.mockResolvedValue(afPreview);
+    const outcome = async (resp: () => unknown) => {
+      await mountWizard();
+      await upload();
+      apiJSON.mockImplementationOnce(async () => resp());
+      const apply = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("mem.bi_apply", { n: 1 }));
+      await act(async () => apply!.click());
+      await flush();
+      const text = host!.querySelector(".mem-wiz-result")?.textContent;
+      act(() => root!.unmount());
+      host!.remove();
+      return text;
+    };
+    expect(await outcome(() => ({ results: [{ scope: "src-1", name: "a", result: "imported" }] }))).toBe(t("mem.bi_done", { n: 1, skipped: 0 }));
+    expect(await outcome(() => ({ results: [{ scope: "src-1", name: "a", result: "skipped" }] }))).toBe(t("mem.bi_done_skipped", { n: 0, skipped: 1 }));
+    expect(await outcome(() => ({ error: { message: "refused" } }))).toContain("refused");
+    expect(await outcome(() => { throw new Error("net"); })).toBe(t("mem.bi_failed"));
+  });
+
+  it("Cancel leaves the wizard", async () => {
+    const close = vi.fn();
+    await mountWizard(() => {}, close);
+    const cancel = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === t("common.cancel"));
+    await act(async () => cancel!.click());
+    expect(close).toHaveBeenCalled();
+  });
+});
+
+// Memory snapshots > Export & import no longer holds the import; it points at Import & export.
+describe("BundleAfPointer", () => {
+  const mountPointer = async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<BundleAfPointer importId="20261014T093000Z" />));
+    await flush();
+  };
+  it("points at Import & export when the bundle carries Agent Fleet memory", async () => {
+    api.mockResolvedValue({ importId: "x", hasAF: true, scopes: [] });
+    await mountPointer();
+    expect(host!.textContent).toContain(t("mem.bi_pointer"));
+    expect(host!.querySelector("button")).toBeTruthy();
+  });
+  it("draws nothing for a bundle without it", async () => {
+    api.mockResolvedValue({ importId: "x", hasAF: false, scopes: [] });
+    await mountPointer();
+    expect(host!.textContent).toBe("");
   });
 });

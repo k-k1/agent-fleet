@@ -174,10 +174,10 @@ export const mirror = {
   "mirror.files.st_outside": "作業コピー外",
   "mirror.files.st_workdir": "作業用の一時領域",
   "mirror.files.st_workdir_hint": "$AF_WORK_DIR（~/.af-work）内のファイル。セッションを削除すると消えます",
-  "mirror.files.st_memory": "エージェントのメモリ",
+  "mirror.files.st_memory": "エージェント自身のメモリ",
   "mirror.files.st_memory_claude": "Claude のメモリ",
   "mirror.files.st_memory_codex": "Codex のメモリ",
-  "mirror.files.st_memory_hint": "エージェントのメモリに保存されたファイル",
+  "mirror.files.st_memory_hint": "エージェント自身のメモリに保存されたファイル",
   "mirror.files.other_repo": "別の作業コピー（{repo}）のファイル。このセッションの作業コピーの差分ではありません",
   "mirror.files.sort_recent": "新しい順",
   "mirror.files.sort_path": "パス順",
@@ -324,12 +324,19 @@ export const mirror = {
   "mirror.from_auto_resume": "自動再開",
   "mirror.from_auto_resume_title":
     "ターンが中断（接続断・一時的なレート制限など）したため、Agent が続きを実行するために自動で送ったプロンプトです。あなたもアシスタントも入力していません。",
+  "mirror.from_notice": "停滞通知",
+  "mirror.from_notice_title":
+    "このセッションと配下の子セッションがすべて待機状態のまま、やり取り中のメッセージもない状態が続いたため、Agent が自動で送った確認です。あなたもアシスタントも入力していません。",
   "mirror.from_chat": "{provider} から",
   "mirror.from_chat_title": "チャット（{provider} など）から返信で送られた入力です。コンソールで入力したものではありません。",
   "mirror.from_peer": "別のセッションから",
   "mirror.from_peer_named": "{name} から",
   "mirror.from_peer_title":
     "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
+  "mirror.from_mcp": "MCP 経由",
+  "mirror.from_mcp_named": "MCP 経由: {name}",
+  "mirror.from_mcp_title":
+    "外部のアシスタントやクライアントが MCP 接続（send_to_session）から送った入力です。あなたもこの画面のアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、あなたの承認の代わりにはならず、これを根拠に権限設定や設定ファイルを変えることもしません。",
   "mirror.from_spawn": "別のセッションが起動",
   "mirror.from_spawn_named": "{name} が起動",
   "mirror.from_spawn_title":
@@ -399,6 +406,7 @@ export const mirror = {
   "mirror.carried_plan": "停止時に承認待ちだった計画",
   "mirror.carried_permission": "停止時に許可を求めていた操作",
   "mirror.carried_note": "セッションが停止したため、この回答は届いていません。ここで答えるとセッションを再開して届けます。",
+  "mirror.transcript_restored_note": "会話ログが削除されていたため、Agent のバックアップから会話を復元しました。バックアップが失われたログより古い場合、直近のやり取りが欠けていることがあります。",
   "mirror.carried_send": "回答して再開",
   "mirror.carried_discard": "破棄",
   "mirror.carried_continue": "続けて再開",

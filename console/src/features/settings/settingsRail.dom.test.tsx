@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import source from "./SettingsDialog.tsx?raw";
 import { GROUPS } from "./SettingsDialog.tsx";
+import { t } from "../../lib/i18n/index.ts";
 
 /** Every .ts/.tsx under a directory, recursively. */
 function* walk(dir: string): Generator<string> {
@@ -31,9 +32,26 @@ describe("settings rail", () => {
     expect(groupOf("ssm")).toBe("connections");
     // Agent memory is what the agent carries into a session, next to the instructions.
     expect(groupOf("memory")).toBe("personal");
+    // Memory snapshots is a second entry in the same group, right after Agent memory (#2324):
+    // two objects, two entries.
+    expect(groupOf("memorysnapshots")).toBe("personal");
+    const personal = GROUPS.find((g) => g.key === "personal")!.items.map(([k]) => k);
+    expect(personal.indexOf("memorysnapshots")).toBe(personal.indexOf("memory") + 1);
     // Databases belong to the workspace, not to the toolchains they used to hang off:
     // they hold a member's data and are created and destroyed (ADR 0086).
     expect(groupOf("database")).toBe("workspace");
+  });
+
+  // MCP tokens are inbound (outside → Workspace); every Connections tab is outbound (#2680).
+  // The section key stays "tokens" so openSettings("tokens") and the remembered tab survive.
+  it("keeps the inbound MCP tokens tab out of Connections, in its own group", () => {
+    expect(groupOf("tokens")).toBe("outside");
+    expect(groupOf("mcp")).toBe("connections");
+    const outside = GROUPS.find((g) => g.key === "outside")!;
+    expect(outside.items).toEqual([["tokens", "set.tab_tokens"]]);
+    expect(GROUPS.map((g) => g.key)).toEqual(["personal", "connections", "outside", "workspace"]);
+    expect(t("set.group_outside")).toBe("Outside access");
+    expect(t("set.tab_mcp")).toContain("used by sessions");
   });
 
   it("has a renderer for every item in the rail", () => {
@@ -41,6 +59,13 @@ describe("settings rail", () => {
       (k) => !source.includes(`section === "${k}"`),
     );
     expect(missing).toEqual([]);
+  });
+
+  it("labels the two memory entries with their own names", () => {
+    const items = GROUPS.flatMap((g) => g.items);
+    expect(items).toContainEqual(["memory", "set.tab_memory"]);
+    expect(items).toContainEqual(["memorysnapshots", "set.tab_memory_snapshots"]);
+    expect(t("set.tab_memory")).not.toBe(t("set.tab_memory_snapshots"));
   });
 
   it("names every section exactly once", () => {
@@ -61,7 +86,7 @@ describe("settings rail", () => {
     // http URL under jsdom, so it cannot be turned into a path here.
     for (const path of walk(process.cwd() + "/src")) {
       if (path.includes(".test.")) continue;
-      for (const m of readFileSync(path, "utf8").matchAll(/openSettings\("([a-z]+)"\)/g)) {
+      for (const m of readFileSync(path, "utf8").matchAll(/openSettings\("([a-z]+)(?::[a-z]+)?"\)/g)) {
         seen++;
         if (!keys.has(m[1])) bad.push(`${path}: ${m[1]}`);
       }

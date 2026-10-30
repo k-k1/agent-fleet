@@ -41,5 +41,5 @@ func TestKiroTUIMirrorContract(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	runTUIMirrorContract(t, tuiMirrorContractSpec{kind: session.KindKiro, agent: kiro.New()})
+	runTUIMirrorContract(t, tuiMirrorContractSpec{kind: session.KindKiro, agent: kiro.New(), models: kiro.Models})
 }

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"io"
 	"net/http"
@@ -140,9 +142,13 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		bbCallbackPage(w, t.notConfigured)
 		return
 	}
-	tok, err := jiraExchangeCode(key, secret, code, c.jiraRedirectURI())
+	tok, err := jiraExchangeCode(r.Context(), key, secret, code, c.jiraRedirectURI())
 	if err != nil {
-		bbCallbackPage(w, t.tokenExchangeFailed+err.Error())
+		if jiraCodeConsumed(err) {
+			bbCallbackPageLink(w, t.codeConsumed, t.backLink)
+			return
+		}
+		bbCallbackPageLink(w, t.tokenExchangeFailed+err.Error()+" "+t.tryAgain, t.backLink)
 		return
 	}
 	// The CP forwards and forgets. It does not resolve the cloud id, does not call the
@@ -156,7 +162,11 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
 		return
 	}
-	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/jira/oauth", strings.NewReader(string(payload)))
+	// The tokens are in hand, so a slow Agent costs a retry from Settings, not data. Bound
+	// the wait: agentHTTPClient alone would hold this tab for 2 minutes.
+	actx, acancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer acancel()
+	areq, _ := http.NewRequestWithContext(actx, "PUT", rt.Endpoint()+"/connections/jira/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	if rt.Token() != "" {
 		areq.Header.Set("Authorization", "Bearer "+rt.Token())
@@ -190,29 +200,33 @@ type jiraTokenResp struct {
 }
 
 // jiraExchangeCode runs the authorization-code grant. JSON body, not form+Basic.
-func jiraExchangeCode(key, secret, code, redirect string) (jiraTokenResp, error) {
+//
+// Transport errors and transient statuses (transientStatus) are retried (jiraExchangeRetry). The code is single-use:
+// when Atlassian consumed it and only the response was lost, the retry gets invalid_grant,
+// which the callback shows as "start the connection again" (jiraCodeConsumed).
+func jiraExchangeCode(ctx context.Context, key, secret, code, redirect string) (jiraTokenResp, error) {
 	body, _ := json.Marshal(map[string]string{
 		"grant_type": "authorization_code", "client_id": key, "client_secret": secret,
 		"code": code, "redirect_uri": redirect,
 	})
-	req, err := http.NewRequest("POST", jiraTokenURL, strings.NewReader(string(body)))
+	status, raw, err := jiraExchangeRetry.post(ctx, body)
 	if err != nil {
 		return jiraTokenResp{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := bbHTTPClient.Do(req)
-	if err != nil {
-		return jiraTokenResp{}, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	var out jiraTokenResp
 	_ = json.Unmarshal(raw, &out)
 	if out.AccessToken == "" {
-		return jiraTokenResp{}, &httpStatusError{resp.StatusCode, strings.TrimSpace(string(raw))}
+		return jiraTokenResp{}, &httpStatusError{status, clipBody(raw)}
 	}
 	if out.ExpiresIn <= 0 {
 		out.ExpiresIn = 3600
 	}
 	return out, nil
+}
+
+// jiraCodeConsumed reports a permanent refusal of the code itself. The only remedy is a
+// fresh authorization, so the page says that instead of echoing the raw body.
+func jiraCodeConsumed(err error) bool {
+	var se *httpStatusError
+	return errors.As(err, &se) && se.code >= 400 && se.code < 500 && strings.Contains(se.msg, "invalid_grant")
 }

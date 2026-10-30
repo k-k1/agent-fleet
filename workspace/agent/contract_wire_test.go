@@ -66,7 +66,7 @@ func agentContractFamilies() []contractFamily {
 			binding: branchInfoBinding,
 			tsPath:  "../../console/src/features/repos/BranchList.tsx",
 			tsName:  "Branch",
-			tsKeys:  keySet("name", "unix", "date", "subject", "default", "remote", "current", "worktree_path"),
+			tsKeys:  keySet("name", "unix", "date", "subject", "default", "remote", "remote_name", "current", "worktree_path"),
 			tsOnly: map[string]string{
 				// Not a gap: the sibling `remoteBranch` (internal/gitx/git_remote.go:42)
 				// emits `json:"default"`, and BranchList draws local and remote with the same
@@ -127,7 +127,7 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/settings/memory/memoryTypes.ts",
 			tsName:  "MemoryChange",
 			tsKeys: keySet("commit", "at", "op", "scope", "project", "name", "authorKind",
-				"authorSession", "revertOf", "latest", "live", "revertible", "purgedBefore"),
+				"authorSession", "revertOf", "reviewRun", "latest", "live", "revertible", "purgedBefore"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{},
 		},
@@ -278,7 +278,7 @@ var transcriptTurnBinding = map[string]string{
 var agentMemChangeViewBinding = map[string]string{
 	"Commit": "commit", "At": "at", "Op": "op", "Scope": "scope", "Project": "project",
 	"Name": "name", "AuthorKind": "authorKind", "AuthorSession": "authorSession",
-	"RevertOf": "revertOf", "Latest": "latest", "Live": "live", "Revertible": "revertible",
+	"RevertOf": "revertOf", "ReviewRun": "reviewRun", "Latest": "latest", "Live": "live", "Revertible": "revertible",
 	"PurgedBefore": "purgedBefore",
 }
 
@@ -320,7 +320,7 @@ var chatMessageBinding = map[string]string{
 
 var branchInfoBinding = map[string]string{
 	"Name": "name", "Remote": "remote", "Unix": "unix", "Date": "date",
-	"Subject": "subject", "Current": "current", "WorktreePath": "worktree_path",
+	"Subject": "subject", "Current": "current", "WorktreePath": "worktree_path", "RemoteName": "remote_name",
 }
 
 var cleanupManifestBinding = map[string]string{

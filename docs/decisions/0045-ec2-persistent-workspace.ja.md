@@ -1608,3 +1608,40 @@ CP の環境変数 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS`（既定 ON。`false
 スロットを確保したあとの失敗（解放・切り離し）は、予約と同じく起動を失敗させ、次の起動でやり直す。
 柵が 2 つある。スイーパーは空きの古いスロットに、占有の再読の*前*に専用の `af-slot-retire` タグ（管理者の `af-slot-replace` ではない。競り勝った起動は自動の入れ替えのままで、pill も出ず、容量不足なら戻る）を書く（配置側の `slotNowReserved` と再読が、決定 33 と同じく交わる）。どのホームも確保せず起動から 10 分たった `af-replaces-home` のスロットも退役させるので、起動の応答が失われても置き去りにならない。戻す前には古いスロットの予約を読み直す（起動の失敗中に入った予約は、起動を失敗させる）。応答が失われた起動は、置き去りにせず `af-replaces-home` で拾って使う。
 コード: `runtime_ecs_ec2_slot_replace.go`（`replaceReservedSlot(…, automatic)`・`slotRetiring`）。
+
+**注記（2026-10-20, #2383）: home がいっぱいなことが見えるようになり、boot-install は入りきらないものを始めなくなった。** entrypoint は CLI ごとの
+boot-install 結果（ok / skipped / failed と理由 `no_space` / `network` / `checksum` / `other`）を `/tmp/af-boot-<uid>/install.tsv`（専用ディレクトリ）に書く（home には置かない。
+満杯の home には書けないため）。Agent は `/env/tool-versions` の `bootInstall` として返し、設定 › ツールチェーンは `—` の代わりに「インストール失敗: <理由>」を
+出す。専有ボックスでは CP が stats フレームに `home_own` を付け、Console は空き 2 GiB 未満または使用率 90% 超を超えるたびに通知を 1 回出す（空き 3 GiB 超かつ
+85% 未満で再武装）。entrypoint はインストールの前に古い CLI バージョンを削除し（`workspace-agent prune-cli-versions`）、パッケージ 1 つあたり 300 MiB の空きが
+ないときは npm インストールを行わず、入っているものを残す。ローカル tarball で実測: 1 つを置き換え 1 つが失敗する `npm install -g` は、置き換えたものを
+ロールバックして旧版を残すが、失敗したパッケージの `bin` リンクが残る。ロールバック自体の本物の ENOSPC は再現していない。未対応: テナント管理者への
+フラグ表示、理由つきのセッション開始拒否（フォローアップ: #2398）。
+
+**注記（2026-10-20, #2398 前半）: テナント管理者に home の満杯と boot-install の失敗が見えるようになった。** Agent は CP がすでにポーリングしている
+`/workspace/stats` に `boot_install_failed`（ツール名→理由、失敗のみ。短い CLI 名形のキーに限る）を足す。読むのはステータスファイルの
+stat 1 回と最大 8 KiB の read だけで、home には触れず、メンバーごとの新しい呼び出しも増えない。CP は読む本文の大きさを制限し、
+妥当な名前と 4 つの理由だけを採り、使用量サンプラーは結果をディスク測定値とは独立した専用テーブル `workspace_boot_install` に保存する。
+そのためディスクを測らない構成も含め全ランタイムで記録され、失敗のない応答で取り下げられる。DB だけで描くメンバー一覧が失敗した起動を旗立てし、
+停止中のカードは直近の起動の結果を保つ。メンバー詳細のポーリングは、稼働中はワークスペース自身の報告（読み取り開始時刻を付けて保存するので、次の掃引前に停止しても見たものが残る。記録は「最後に観測した起動」で、2 回の読み取りの間に始まって終わった起動は観測されない）、そうでなければ保存済みの結果を返し
+（ローカル docker はこの経路で Agent を読まない）、Console はそれだけを描く。詳細は、メンバー向け通知と同じ数字とヒステリシス
+（`homeDiskPressure.ts`）で home の使用率超過も旗立てするが、`home_own` が true で稼働中のときだけ。一覧の既存のディスクゲージは従来の 85% / 95% のまま。
+管理者への通知は付けない。理由つきのセッション開始拒否は未対応（フォローアップ: #2398）。
+
+**注記（2026-10-20, #2398 後半）: CLI のインストールに失敗した kind のセッション開始は、理由を示して拒否される。** Agent は CLI を起動する場所で
+`cliInstallRefusal`（boot_install_status.go）を呼ぶ: create（冪等性の確保の後。再送は従来どおりセッションを返し、durable キーは拒否で確定する）、保存済みセッションの `/start`、ランタイムを起動しうる managed の入力すべて（turn・input・answer・bridge・carried: `resumeManaged`）、実行方式の切替、fork、recreate（古いセッションをアーカイブする前）。拒否するのは、今回の起動のステータスファイルでその kind のツールが
+`failed` と記録されており、**かつ** いまバイナリが無いときだけ（PATH・焼き込みディレクトリ・`~/.local/bin` の実行可能な通常ファイル、または `AGENT_<KIND>_CMD` / `_BIN` のような起動の上書きを見るので、CLI が現れた時点で古い失敗は
+止めなくなる）。`skipped`・`ok`・状態の不明/なし・別ツールの失敗・boot-install の対象でない kind はそのまま開始できる。応答は 409 で、コードは
+`cli_install_<no_space|network|checksum|other>`、メッセージは kind と理由を挙げた英文。Console はコードを自前の en/ja 文言（`err.cli_install_*`、
+英文は付けない）に対応づけるので、文は閲覧者の言語に従い、create_session とスケジューラには英文が届く。新しい状態の取得元は足さない
+（`/env/tool-versions` が返すのと同じファイル）。実際に home が満杯の環境では未確認。
+
+**2026-10-21 追記（決定 28、#2451）:** `auto` のホスト予約は、全ラングで一律 2048 MiB になった
+（8 GiB ラングの 1/5 では実メモリの余裕が約 1230 MiB しか残らず、常駐デーモンの実測 1.2〜1.4 GiB に対して足りず、
+実機でスラッシングした）。`off`、明示の `<n>` は変わらない。
+
+**2026-10-22 追記（#2503）:** `AF_ECS_EC2_HOST_RESERVE_MB=0` の明示は、コードコメントが昔から言っていたとおりになった。予約なしで、ワークスペースはフルラングで頭打ちになる。従来は `auto`（2 GiB）として読まれていた。`auto`／未設定／解釈不能の扱いは変わらず、無制限なのは引き続き `off` だけ。
+
+**注記（2026-10-21、#2448）：Stop は、バックグラウンドで収束中の Start より優先される。** `Stop` はまずワークスペースの Start カウントを進め（`abortStarts`、`homeLockClaim` 配下）、そのあと desiredCount を 0 にし、phase と claim を消すので、`State()` はすぐ `stopped` を返す。バックグラウンド側（`converge`/`launch`）は各ステップの境目でそのカウントを確認し、desiredCount を上げる呼び出しの直前には同じロックのもとで確認する（`underStart`）。追い越された Start は claim にも phase にも触れず静かに終わる（`errStartSuperseded`）。home は通常の Stop と同じくアタッチ・マウントされたまま残る。対象外：`placeHome` の最中に Stop が入ると、その呼び出しが書いた claim が TTL まで残ることがある。実 AWS では未検証。
+
+**追記（2026-10-21, #2449）: 動かないスロットをプール画面から強制停止できる。隔離はしない。** `POST /api/admin/ec2-pool/slots/{id}/force-stop`（super_admin）は、ECS エージェントが接続し SSM がオンラインのスロットを、body で上書きしない限り拒否し（停止済み・隔離済みも拒否）、ランタイム自身の `Stop`（`homeLockClaim` 下の `abortStarts`）で載っている Start を打ち切り、CP 自身の未実行 SSM コマンド（コメント `agent-fleet slot volume`）を取り消し、`StopInstances` を送ります。停止はまず通常（動かない箱でも home がマウントされたままのことがあり、Force は電源断と同じ）で、3 分後に Force で再送しますが、同じ起動のまま `stopping` のインスタンス（LaunchTime で照合）に限ります。`stopping` 中の再押下ならすぐ Force です。**決定: 隔離せず、Start の経路にも手を入れない。** スロットは `af-role=slot` のまま home も載ったままなので、メンバーの次の Start が既存の経路で同じ停止中のスロットを起こします。再起動で詰まりが解け、スロットの ECS エージェントが再接続して、そこに STOPPING のまま残っていたタスクを報告します（#2447）。ECS のコンテナインスタンスは登録解除しません。STOPPING のまま残るタスクはプール画面に出し（`stopping_task`）、解消は自動化しません。証拠として箱を残すのは隔離（決定 20・23）の役目で、動かないスロットを隔離へ回す仕組みは #2450 です。IAM は `ssm:ListCommands` / `ssm:CancelCommand` / `ssm:DescribeInstanceInformation`（`SsmSlotForceStop`）。実 AWS では未検証。

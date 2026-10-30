@@ -78,6 +78,9 @@ export const errors = {
   "err.codex_releasing":
     "codex がまだこの会話を手放していません（停止から通常 1 分ほど）。少し待ってからもう一度お試しください。",
   "err.driver_switching": "実行方式を切り替えています。切り替えが終わってからもう一度お試しください。",
+  "err.interaction_not_pending":
+    "この質問は既に回答済みか、取り消されています。画面を更新して最新の状態を確認してください。",
+  "err.transcript_restore_failed": "バックアップから会話ログを復元できませんでした",
   "err.codex_stop_first":
     "codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）。",
   "err.not_running": "セッションが停止しています。再開してから送信してください。",
@@ -90,6 +93,10 @@ export const errors = {
   "err.member_origin_unavailable": "ワークスペースのエージェントが起動直後か、再起動が必要です。1 分ほど待ってから再試行してください。",
   "err.too_many_uploads": "別のメモリのインポートが実行中です。完了してから再度お試しください。",
   "err.upload_timeout": "アップロードが止まったか、時間がかかりすぎました。もう一度お試しください。",
+  "err.cli_install_no_space": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。home ディスクが満杯です。空きを作ってからワークスペースを再起動してください。",
+  "err.cli_install_network": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ネットワークエラーです。ワークスペースを再起動してもう一度お試しください。",
+  "err.cli_install_checksum": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。ダウンロードがチェックサムと一致しませんでした。ワークスペースを再起動してもう一度お試しください。",
+  "err.cli_install_other": "ワークスペースの起動時に、このエージェントの CLI をインストールできませんでした。設定 › ツールチェーンとワークスペースのログを確認してください。",
   "err.runtime_failed": "エージェントを起動できませんでした。しばらく待ってから再試行してください。",
   // ↑ は「待てば直る」失敗のための文言。共有 daemon が未認証で起こされなかった場合は
   // 待っても直らないので、runtime_failed に潰さず専用コードで出す（workspace/agent の
@@ -183,6 +190,23 @@ export const errors = {
   "err.mcp_url_scheme": "URL は http / https で指定してください",
   "err.mcp_url_host": "URL にホストがありません",
   "err.mcp_url_credentials": "URL に資格情報を埋め込まないでください（ヘッダを使ってください）",
+  "err.mcp_url_own_endpoint": "これはこのデプロイ自身の /mcp エンドポイントです。接続するとセッションにあなたの /mcp の全権限（任意セッションの操作・削除・管理ツール）が渡るため登録できません。別の Agent Fleet デプロイなら接続できます",
+  "err.mcp_url_own_memory_endpoint": "これはこのデプロイ自身の /mcp/memory エンドポイントです。セッションは組み込みの af ツールで Agent Fleet のメモリをすでに使えるため、接続しても同じツールが重複するだけです。",
+  "err.mcp_auth_unknown": "その認証方式は不明です",
+  "err.mcp_oauth_remote_only": "OAuth のサインインはリモートサーバー専用です",
+  "err.mcp_oauth_authorization_header": "OAuth のサーバーには固定のヘッダを付けられません。外すか、別の認証を選んでください",
+  "err.mcp_oauth_client_invalid": "テナントのクライアントには、クライアント ID と https の URL の認可サーバー（issuer）が必要です。OAuth のサーバーにだけ設定できます",
+  "err.mcp_oauth_client_tenant_only": "テナントが登録したクライアントは、テナント配布のサーバーにだけ設定できます",
+  "err.mcp_oauth_secret_reenter": "クライアントシークレットを入力し直してください。issuer かクライアント ID が変わったか、シークレットが保存されていません",
+  "err.mcp_oauth_user_secret": "OAuth のサーバーでは、メンバーにヘッダの値を入力させられません。「認証の値は各メンバーが入力する」を外すか、別の認証を選んでください",
+  "err.oauth_not_required": "このサーバーは OAuth を求めていません",
+  "err.oauth_discovery_failed": "サーバーの OAuth メタデータを使えませんでした。接続テストで理由を確認してください",
+  "err.as_endpoints_unusable": "認可サーバーの認可エンドポイントかトークンエンドポイントが無いか、https ではありません",
+  "err.registration_failed": "認可サーバーが動的クライアント登録を拒否しました",
+  "err.not_oauth_server": "サインインできるのは、登録済みのリモートサーバーだけです",
+  "err.bad_authorize_url": "認可のアドレスを使えません",
+  "err.no_public_base_url": "サインインにはこの環境の公開アドレス（PUBLIC_BASE_URL）が必要です。運用担当に連絡してください",
+  "err.workspace_unreachable": "ワークスペースに接続できません。起動していますか？",
   "err.mcp_http_no_command": "リモートサーバーにコマンド / 引数 / 環境変数は指定できません",
   "err.mcp_env_name_invalid": "環境変数名が不正です",
   "err.mcp_header_name_invalid": "ヘッダ名が不正です",
@@ -263,7 +287,7 @@ export const errors = {
   "err.memory_not_found": "そのメモリはありません",
   "err.memory_conflict": "メモリが先に更新されています。読み直してからやり直してください",
   "err.memory_no_project": "このセッションには作業コピーが無いため、プロジェクトのメモリを使えません",
-  "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ）",
+  "err.memory_disabled": "Agent Fleet のメモリは設定でオフになっています（設定 → エージェントメモリ → 設定）",
   "err.tenant_idp_link_claim_required":
     "この配備には、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
     "「同一アカウントの見分け方」を指定しないと、すでにこの配備を使っている人が全員サインインできなくなります（メールアドレス重複として拒否されます）。",
@@ -327,7 +351,6 @@ export const errors = {
   "err.engine_files_missing": "そのモデルファミリーのワークフローが読むファイルが、この行に揃っていません",
   "err.engine_vae_missing": "このチェックポイントは VAE を同梱していないので、そのままでは生成が必ず失敗します",
   "err.engine_slot_filled": "その役割にはすでにファイルがあります。入れ替えるなら置き換えとして実行してください",
-  "err.engine_vae_unreadable": "チェックポイントのヘッダを読めなかったので、VAE の有無は分かりません",
   "err.engine_no_source": "この行には配布元のページが記録されていないので、名前や作例を取りにいけません",
   "err.engine_discover_unsupported": "この行は外部の ComfyUI ではないので、モデルの発見はできません",
   "err.engine_discover_unreachable": "その機械に問い合わせられませんでした（電源が入っていないか、ネットワークに繋がっていません）",

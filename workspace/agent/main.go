@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -16,11 +17,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/lcpp"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/muse"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -33,6 +29,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
@@ -123,6 +121,24 @@ func serve() {
 			log.Printf("state: migration: %v", err)
 		}
 	}
+	// codex's SQLite databases off an NFS ~/.codex (#3013), before anything below can start a
+	// codex process. Exported here and into every tmux launch, so the app-server, image
+	// generation, Terminal sessions and a codex a member types in a pane all open the same copy;
+	// two codex processes on two copies would each show a different thread list.
+	// The tmux server takes the value on every launch either way: one that outlived an earlier
+	// boot still carries that boot's value (or none) in its global environment.
+	dir, note := codex.RelocateSQLite()
+	if dir != "" {
+		_ = os.Setenv(codex.SQLiteHomeEnv, dir)
+	}
+	if v := os.Getenv(codex.SQLiteHomeEnv); v != "" {
+		tmuxx.AddLaunchEnv(nil, []string{codex.SQLiteHomeEnv + "=" + v})
+	} else {
+		tmuxx.AddLaunchEnv([]string{codex.SQLiteHomeEnv}, nil)
+	}
+	if note != "" {
+		log.Print(note)
+	}
 	// Re-seal the credential store under the home's own key when the CP sent one, before
 	// anything below reads or writes the store.
 	secretsKeyState, secretsKeyNext = secrets.MigrateKey(), secrets.NextKeyInUse()
@@ -168,6 +184,16 @@ func serve() {
 	// Chromium attach; a random suffix makes that collision go away, and rotating it
 	// per boot means even a deliberate one is shaken off by a restart.
 	log.Printf("mcp: af server name for this boot = %s", mcpreg.RotateAFServerName())
+	// The relay for OAuth-protected MCP servers (ADR 0119 decision 6) has to be listening before
+	// the materialization below: an OAuth definition is written into a config only as the
+	// relay's URL, and only while something answers there. Fail-open: without it those
+	// servers are simply not written, as before the relay existed.
+	if stopRelay, err := mcpreg.StartRelay(); err != nil {
+		log.Printf("mcp relay: not started: %v (OAuth MCP servers are left out of sessions)", err)
+	} else {
+		defer stopRelay()
+		mcpreg.OnGrantChange = mcpx.MaterializeAll
+	}
 	// Write the MCP registry into each CLI's own config (docs/log/48 P3) so the servers a
 	// user registered are live from container start — including for a CLI they launch
 	// by hand in a terminal, which never passes through the session launch hook.
@@ -261,13 +287,10 @@ func serve() {
 	agents.SweepHeld()
 	// Peer messages waiting for a user's answer (#1031) get their delivery loops back.
 	sessionx.ResumePendingPeers()
-	go opencode.ReconcileManaged("agent boot")
-	go codex.ReconcileManaged("agent boot")
-	go copilot.ReconcileManaged("agent boot")
-	go cursor.ReconcileManaged("agent boot")
-	go kiro.ReconcileManaged("agent boot")
-	go lcpp.ReconcileManaged("agent boot")
-	go muse.ReconcileManaged("agent boot")
+	// Started in internal/kinds order (managedLifecycles).
+	for _, lc := range managedLifecycles() {
+		go lc.Reconcile("agent boot")
+	}
 	// Assistant-conversation slugs (docs/log/38 assistant triggering): stamp "a…" slugs onto
 	// conversations created before the field existed, so schedules/operator tools can
 	// address every conversation. One-time per store state; cheap when nothing to do.
@@ -299,6 +322,14 @@ func serve() {
 	// The Agent memory switch's import / write-back of claude's native memory (#1972). Level
 	// triggered: starting it is what resumes a run a restart interrupted.
 	memoryx.AutoSyncStart()
+	// The background memory review (ADR 0117): level triggered like the loop above, so starting it
+	// is also what resumes a review a restart interrupted. It does nothing while the memory
+	// review is off.
+	memreview.DefaultLoop = memreview.NewLoop(sessionx.MemoryReviewSource{})
+	memoryx.SetForgetHooks(memreview.ForgetHooks())
+	memreview.OnQueued = notifyMemoryReview
+	memreview.ResolveBackend, memreview.WarmBackend = chatx.ResolveDenyAllCached, chatx.WarmDenyAllKind
+	memreview.DefaultLoop.Start(context.Background())
 
 	// Automatic recovery of a claude session stopped by a rate limit (docs/log/47 §4-4):
 	// dismiss the menu on its default ("wait for the reset") and hand the CP a one-shot
@@ -312,6 +343,10 @@ func serve() {
 	// for sessions with no assistant conversation too, and only reaches the assistant or
 	// the user as a report when it gives up.
 	sessionx.StartAbortResumeWatch()
+
+	// Nudge a parent session once when it and all its live children have sat idle with nothing
+	// in flight (stalled_tree.go). Its own loop: it must work while nobody has a screen open.
+	sessionx.StartStalledTreeWatch()
 
 	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
 	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch
@@ -333,6 +368,10 @@ func serve() {
 	// bound user's thread replies back into sessions. No-op until a user opts into receive
 	// (Discord.Receive) — bounds the WSS connection to opted-in users only.
 	sessionx.StartBridgeReceiver()
+
+	// Memory-pressure sampler (ADR 0120 phase 0): measure only, no behaviour change.
+	// AF_MEM_PRESSURE=off disables it.
+	mempressure.Start(addr)
 
 	// af-db idle-stop: polls every 60 s and stops servers with no client backends for 30 min.
 	afdb.StartIdleLoop()

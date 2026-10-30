@@ -104,6 +104,33 @@ type Caps struct {
 	// terminal route like every other kind today" — leave it unset unless a kind truly has no
 	// pane program, or these three places start behaving differently for it.
 	ManagedOnly bool
+	// ManagedDefault marks a kind where tui vs managed is a real choice and a caller that
+	// cannot drive a pane (MCP create_session, the scheduler) should get managed when it names
+	// no driver. A ManagedOnly kind needs no flag: it has nothing else.
+	ManagedDefault bool
+	// MCPClient says whether the kind's sessions receive af's MCP servers, and so whether an
+	// MCP definition may be scoped to it (mcpreg.ServedKinds, the CP's admin validation). The
+	// zero value reads "unverified", never "no": a kind that has not said is not refused
+	// quietly — the catalog test fails instead.
+	MCPClient Tri
+}
+
+// Tri is a capability answer that keeps "not measured" apart from "measured: no". The zero
+// value is TriUnverified, so a field a kind never set cannot be read as "unsupported".
+type Tri string
+
+const (
+	TriUnverified Tri = ""
+	TriYes        Tri = "yes"
+	TriNo         Tri = "no"
+)
+
+// Wire is the value the kind catalog serves: "yes" / "no" / "unverified".
+func (t Tri) Wire() string {
+	if t == TriUnverified {
+		return "unverified"
+	}
+	return string(t)
 }
 
 // LaunchOpts carries the per-launch inputs that aren't in session.Meta.
@@ -123,7 +150,18 @@ type LaunchPlan struct {
 	// /proc/*/cmdline and tmux's pane_start_command, readable by anything in the
 	// container.
 	Env []string
+	// Notices are user-visible facts the launch itself caused (the Notice* keys). The
+	// caller records them for the mirror; nil for a launch that has nothing to say, which
+	// is every kind but the ones that name a notice below.
+	Notices []string
 }
+
+// Notice keys a LaunchPlan can carry. The Console owns the wording per key.
+const (
+	// NoticeTranscriptRestored: the conversation log was gone and the Agent's backup copy
+	// was put back. Reported only for a restore that succeeded.
+	NoticeTranscriptRestored = "transcript_restored"
+)
 
 // LiveInfo is the slice of a wire Session whose values depend on the kind and live
 // state. wireSession fills the static fields and asks the agent for this.
@@ -178,6 +216,33 @@ type Agent interface {
 // ended and the caller must skip its own kill.
 type GracefulStopper interface {
 	GracefulStop(m session.Meta) bool
+}
+
+// ManagedRuntime is an optional Agent capability: the kind keeps Managed runtime handles, keyed
+// by session name, and sessionx reaches them only through this. Every kind with a Managed route
+// (Caps().ManagedOnly / ManagedDefault, or a managedDrivers entry) must implement it — a kind
+// that does not reads as stopped and idle, and stop / halt / archive leave its runtime running
+// (sessionx's TestManagedRuntimeFollowsCaps).
+type ManagedRuntime interface {
+	ManagedRuntime() ManagedRuntimeOps
+}
+
+// ManagedRuntimeOps are the kind package's own handle functions. They are function values
+// rather than methods so a test can pin, by identity, which package each kind dispatches to.
+// Every field is required.
+type ManagedRuntimeOps struct {
+	// Alive: a live runtime handle exists (the Managed counterpart of tmux has-session).
+	Alive func(name string) bool
+	// Busy: a turn is running or queued — the refusal condition for an exclusive driver switch.
+	Busy func(name string) bool
+	// InFlight: the handle holds an entry it took from its queue and has not settled; input
+	// still queued does not count.
+	InFlight func(name string) bool
+	// Drop aborts the running turn and forgets the handle; the conversation's own store stays,
+	// so a resume reconnects to it.
+	Drop func(name string)
+	// RemoveLedger drops the ClientMessageID ledger, and the slot's identity with it.
+	RemoveLedger func(name string)
 }
 
 // ModelChoice is one launch-time model option for the Console's model picker:
@@ -397,6 +462,24 @@ type ForkAtResolver interface {
 	ResolveForkAt(m session.Meta, at ForkPoint) (string, error)
 }
 
+// TerminalForkAtter is implemented by a kind whose Terminal (CLI) sessions can take a fork point
+// on some launch routes only. ForkAtOnTerminal answers for one session, as it is now; "when in
+// doubt, false". It is a hint for the Console's affordance (session wire: forkAtTerminal), never
+// the gate: ResolveForkAt still decides, because the route can change between the two.
+type TerminalForkAtter interface {
+	ForkAtOnTerminal(m session.Meta) bool
+}
+
+// ForkAtPinner is a ForkAtResolver that also names the conversation the point was resolved
+// against ("" = not known). The fork handler forks exactly that one: ForkSource reads the current
+// conversation again, and a Terminal pane can switch conversation (/new, reconnect) between the two
+// reads, which would pair a point from one conversation with the source of another. A point that
+// resolves to "" (the whole conversation) cannot be checked afterwards, so the pair has to be
+// fixed here.
+type ForkAtPinner interface {
+	ResolveForkAtPinned(m session.Meta, at ForkPoint) (point, source string, err error)
+}
+
 // ForkPoint is what the user pointed at, before any per-engine translation.
 type ForkPoint struct {
 	// Anchor is the transcript.Turn.AnchorID of the USER turn the user clicked.
@@ -431,4 +514,70 @@ type NoGenericTranscript struct{}
 
 func (NoGenericTranscript) Transcript(session.Meta) (TranscriptData, bool) {
 	return TranscriptData{}, false
+}
+
+// PromptPaste is an optional Agent capability: the kind's composer needs a prompt as a
+// bracketed paste rather than literal keys, for the texts PasteNeeded answers true. A kind
+// without it gets literal send-keys. sessionx resolves it by exact registry key, so an alias or
+// alternate spelling gets literal keys, as an unregistered kind always did.
+type PromptPaste interface {
+	// PasteNeeded reports whether text must reach the composer as a paste.
+	PasteNeeded(text string) bool
+}
+
+// PasteAlways is the PromptPaste answer for a kind that wants every prompt pasted (measured
+// per kind: a literal Enter right after the text is eaten by the TUI's paste coalescing).
+func PasteAlways(string) bool { return true }
+
+// How a kind receives the member's instructions (InstructionsShape.Delivery). The Console
+// picks its wording from the value.
+const (
+	DeliveryFile    = "file"    // drop a file AF owns outright
+	DeliveryCompose = "compose" // compose into a file shared with others, between markers
+	DeliveryConfig  = "config"  // an AF-owned file, referenced from the CLI's own config
+	DeliveryPrompt  = "prompt"  // no artifact: AF's own harness folds it into the system prompt
+)
+
+// What instrState checks on disk to say an instruction is "applied" (InstructionsShape.Measure).
+const (
+	MeasureBlock  = "block"  // the user-notes block is present in Path
+	MeasureFile   = "file"   // Path exists
+	MeasureConfig = "config" // Path exists and the CLI's config refers to it
+	MeasurePrompt = "prompt" // nothing on disk: what is saved is what the next turn sends
+)
+
+// InstructionsShape is where one kind's instructions go. Delivery and Measure are separate on
+// purpose: claude drops an AF-owned file's worth of text (DeliveryFile) into a CLAUDE.md the
+// member also writes, so "applied" has to be the block's presence, not the file's.
+type InstructionsShape struct {
+	Delivery, Measure string
+	// Path is the artifact the state row shows; "" for DeliveryPrompt.
+	Path string
+	// PreviewBlock names the marker block of Path the Console's preview shows ("user-notes"),
+	// for a kind whose file also carries other text it should not echo. "" means the whole file.
+	PreviewBlock string
+}
+
+// Instructions is an optional Agent capability: the kind takes the member's instructions
+// (Settings > Agent instructions). A kind without it is either listed as unsupported with a
+// reason or runs no agent CLI. The agent resolves it by exact registry key
+// (workspace/agent agent_instructions.go).
+type Instructions interface {
+	Instructions() InstructionsOps
+}
+
+// InstructionsOps are the kind package's own apply functions. Each func-valued field may be nil
+// where the kind has nothing to write there; the body of every apply is "" to remove.
+type InstructionsOps struct {
+	// Shape is evaluated per call: opencode's depends on the installed major version.
+	Shape func() InstructionsShape
+	// Fleet composes the baked workspace guide; nil for a kind that gets it from the image
+	// (claude's managed policy) or builds its own system prompt.
+	Fleet func(fleet string) error
+	// SkillsDir is the user skills root the fleet topic files are registered in; nil when the
+	// CLI has none to write into.
+	SkillsDir func() string
+	// User writes the member's instructions; Memory the memory guidance. nil for lcpp, whose
+	// harness reads both on every turn.
+	User, Memory func(body string) error
 }

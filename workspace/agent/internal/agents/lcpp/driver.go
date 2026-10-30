@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/managed"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpc"
@@ -187,10 +188,53 @@ func (managedDriver) LiveHandle(m session.Meta) (agents.ThreadHandle, bool) {
 var handlesMu sync.Mutex
 var handles = map[string]*threadHandle{}
 
+// managedKind is the shared scaffold over this registry (managed.Lifecycle); its hooks are set in
+// init because they reach the registry themselves.
+var managedKind = &managed.Lifecycle[*threadHandle]{
+	Kind:    session.KindLcpp,
+	Name:    "lcpp",
+	Mu:      &handlesMu,
+	Handles: &handles,
+	Ledger:  ledger,
+}
+
+func init() {
+	managedKind.Resume = func(m session.Meta) error {
+		_, err := managedDriver{}.Resume(m)
+		return err
+	}
+}
+
+// Alive, Busy, HoldsEntry and Abort are what managed.Lifecycle asks of a handle. Alive is always
+// true: Resume creates and fully settles the handle before registering it, so a registered
+// handle IS a live one.
+
+func (h *threadHandle) Alive() bool { return true }
+
+func (h *threadHandle) Busy() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.q.Len() > 0
+}
+
+func (h *threadHandle) HoldsEntry() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.running || h.q.Head() != nil
+}
+
+func (h *threadHandle) Abort() {
+	h.mu.Lock()
+	running := h.running
+	h.mu.Unlock()
+	if running {
+		_ = h.interruptAll()
+	}
+}
+
 func handleFor(name string) *threadHandle {
-	handlesMu.Lock()
-	defer handlesMu.Unlock()
-	return handles[name]
+	h, _ := managedKind.Get(name)
+	return h
 }
 
 // ManagedAlive reports whether name has a live handle. Unlike a child-process kind there is no
@@ -200,30 +244,14 @@ func ManagedAlive(name string) bool { return handleFor(name) != nil }
 
 // ManagedBusy reports a turn running or queued (the refusal condition an exclusive driver
 // switch would use — lcpp has no switch target, ManagedOnly, but kept for parity/tests).
-func ManagedBusy(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.q.Len() > 0
-}
+func ManagedBusy(name string) bool { return managedKind.Busy(name) }
 
 // ManagedInFlight reports that the handle holds an entry it took from the queue and has not
 // settled. The pump gives its move-gate lease back once the runtime has the input, which can be
 // before the runtime's own record (and so DriveState) shows the turn; a move asks this, under the
 // exclusive gate, so it never starts in that window (ADR 0115 decision 11.2). Entries still
 // queued do not count: the move carries them.
-func ManagedInFlight(name string) bool {
-	h := handleFor(name)
-	if h == nil {
-		return false
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.running || h.q.Head() != nil
-}
+func ManagedInFlight(name string) bool { return managedKind.InFlight(name) }
 
 // DropHandle detaches a managed session from its runtime: interrupt any running turn and
 // forget the handle. The store on disk is untouched, so a later Resume reattaches to the same
@@ -235,11 +263,8 @@ func DropHandle(name string) { dropHandle(name) }
 // behind — a test's own cleanup, before the next test reuses the package-global map — can wait
 // for it instead of guessing a delay.
 func dropHandle(name string) <-chan struct{} {
-	handlesMu.Lock()
-	h := handles[name]
-	delete(handles, name)
-	handlesMu.Unlock()
-	if h == nil {
+	h, ok := managedKind.Take(name)
+	if !ok {
 		return nil
 	}
 	_ = h.interruptAll()
@@ -285,26 +310,11 @@ func (h *threadHandle) closeIdleResources() {
 }
 
 // RemoveLedger drops the ClientMessageID ledger (/stop only — halt/archive can be resumed).
-func RemoveLedger(name string) { ledger.Remove(name) }
+func RemoveLedger(name string) { managedKind.RemoveLedger(name) }
 
 // AbortManaged interrupts every running managed turn (shutdown.go's Ctrl-C equivalent for the
 // managed route).
-func AbortManaged() {
-	handlesMu.Lock()
-	hs := make([]*threadHandle, 0, len(handles))
-	for _, h := range handles {
-		hs = append(hs, h)
-	}
-	handlesMu.Unlock()
-	for _, h := range hs {
-		h.mu.Lock()
-		running := h.running
-		h.mu.Unlock()
-		if running {
-			_ = h.interruptAll()
-		}
-	}
-}
+func AbortManaged() { managedKind.Abort() }
 
 // Shutdown has nothing of its own to release (no child process, no daemon) — kept only for
 // parity with the other kinds' boot/shutdown wiring (shutdown.go calls it unconditionally).
@@ -316,20 +326,7 @@ func Shutdown() {}
 // at-boot counterpart to the lazy settle a user's next /turn would otherwise trigger. Unlike a
 // child-process kind there is no runtime to actually restart; this only resolves any status
 // left stuck on "working" by a crash mid-turn.
-func ReconcileManaged(reason string) {
-	d := managedDriver{}
-	for _, m := range session.ListMetas() {
-		if m.Kind != session.KindLcpp || m.DriverKind() != session.DriverManaged || m.Archived {
-			continue
-		}
-		if m.StoppedAt != "" && handleFor(m.Name) == nil {
-			continue // deliberately stopped — resume only on user action
-		}
-		if _, err := d.Resume(m); err != nil {
-			log.Printf("lcpp managed: reconcile %s (%s): %v", m.Name, reason, err)
-		}
-	}
-}
+func ReconcileManaged(reason string) { managedKind.Reconcile(reason) }
 
 // --- thread handle ---------------------------------------------------------------
 
@@ -648,6 +645,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 
 	rt := &harness.Runtime{
 		Cwd:          h.cwd,
+		Env:          agents.WithSessionEnv(os.Environ(), h.name),
 		Plan:         settings.Mode == "plan",
 		AskUser:      h.askUser,
 		Todos:        todos,
@@ -922,7 +920,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	inter, ch := h.inter, h.replyCh
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID || ch == nil {
-		return fmt.Errorf("interaction %s は待機中ではありません", reply.ID)
+		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, agents.ErrInteractionNotPending)
 	}
 	select {
 	case ch <- reply:
@@ -968,12 +966,6 @@ func (h *threadHandle) setState(st agents.TurnState) {
 	}
 	h.mu.Unlock()
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
-}
-
-func (h *threadHandle) currentState() agents.TurnState {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.state
 }
 
 // emit never blocks a state transition (drop on overflow) — the same convention every other

@@ -3,6 +3,7 @@
 import { useReposStore } from "../repos/store.ts";
 import { originOf } from "../workitems/refs.ts";
 import { PathLinkMenuHost } from "./PathLinkMenu.tsx";
+import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
 import { MarkdownView, type MarkdownViewProps } from "./MarkdownView.tsx";
 import { repoOfFilePath } from "./repoOfPath.ts";
 
@@ -17,7 +18,9 @@ export function FileMarkdownView(props: Omit<MarkdownViewProps, "repo" | "workIt
   const linkable = useReposStore((s) => !!repo && !nestedRepo && originOf(s.repos.find((r) => r.name === repo)) !== null);
   return (
     <PathLinkMenuHost>
-      <MarkdownView {...rest} basePath={filePath} repo={repo} workItemRefs={linkable} />
+      <PortLinkMenuHost>
+        <MarkdownView {...rest} basePath={filePath} repo={repo} workItemRefs={linkable} previewLinks />
+      </PortLinkMenuHost>
     </PathLinkMenuHost>
   );
 }

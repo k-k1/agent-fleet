@@ -117,6 +117,23 @@ describe("Google Cloud login toast and modal", () => {
     expect(codeField()).toBeNull();
   });
 
+  it("names the project and account as fields and counts down to the Agent's deadline", async () => {
+    listed = [{ ...prod, account: "", expiresInSec: 61 }];
+    await render(<GcpLoginHost />);
+    const toast = document.querySelector(".ui-toast")!;
+    expect(toast.querySelector(".login-toast-name")?.textContent).toBe("Production");
+    const fields = Array.from(toast.querySelectorAll(".login-toast-field")).map((f) => f.textContent);
+    expect(fields).toEqual(["Projectprod-project", "Accountchosen at login"]);
+    expect(toast.textContent).toContain("Request withdrawn in 1:01");
+    expect(toast.querySelector(".login-toast-countdown.is-soon")).toBeNull();
+    // The toast is a live region; a line that changes every second must stay out of it.
+    expect(toast.closest("[aria-live]")).not.toBeNull();
+    expect(toast.querySelector(".login-toast-countdown")?.getAttribute("aria-hidden")).toBe("true");
+    await tick(2000);
+    expect(toast.textContent).toContain("Request withdrawn in 0:59");
+    expect(toast.querySelector(".login-toast-countdown.is-soon")).not.toBeNull();
+  });
+
   it("never adopts an attempt or a URL named anywhere but its own press", async () => {
     // A list entry (or a forged notification) carrying an attempt id and a URL.
     listed = [{ ...prod, attempt: "att9", url: URL_ }];

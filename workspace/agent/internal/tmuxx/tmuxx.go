@@ -30,6 +30,13 @@ func SetLaunchEnv(unset, set []string) {
 	launchUnset, launchSet = unset, set
 }
 
+// AddLaunchEnv adds to what SetLaunchEnv set, for a boot step that decides later. The same
+// rule holds: before any session is launched.
+func AddLaunchEnv(unset, set []string) {
+	launchUnset = append(launchUnset, unset...)
+	launchSet = append(launchSet, set...)
+}
+
 func withLaunchEnv(args []string) []string {
 	if len(launchUnset) == 0 && len(launchSet) == 0 {
 		return args
@@ -191,10 +198,10 @@ func spinnerActive(s string) bool {
 var modeFooterRe = regexp.MustCompile(`(?m)^\s*(?:\x{23F5}\x{23F5}|\x{23F8}) .*\bon\b`)
 
 // ClaudeModeFooter reports whether s carries claude's permission-mode footer strip,
-// regardless of WHICH mode is named. It is paneMode's (session_io.go) last line of defence
-// against reading an added or renamed mode name as "footer not drawn" — paneMode's empty
-// string is also the launch-seed readiness gate, so a misread costs the first prompt a
-// 30-second wait.
+// regardless of WHICH mode is named. It is the last line of defence of claude's PaneMode
+// (internal/agents/claude) against reading an added or renamed mode name as "footer not
+// drawn" — an empty PaneMode is also the launch-seed readiness gate, so a misread costs the
+// first prompt a 30-second wait.
 func ClaudeModeFooter(s string) bool { return modeFooterRe.MatchString(s) }
 
 // atPromptFooter reports whether the capture shows claude's input-box footer — the
@@ -242,6 +249,36 @@ func CLIStartedAfter(tn string) (time.Time, bool) {
 		return start, ok
 	}
 	return time.Unix(sec, 0), true
+}
+
+// PaneLaunch identifies the launch running in session tn's pane. id is tmux's creation stamp,
+// the pane id and the pane process's pid read verbatim, so it stays equal for as long as that
+// launch lives and changes with the next one; at is when it started, as CLIRecordsSince puts
+// it. Compare launches by id, never by at: where /proc has the start, at is recomputed against
+// the clock on every read and moves by milliseconds between two reads of one launch.
+func PaneLaunch(tn string) (id string, at time.Time, ok bool) {
+	out, err := Cmd("list-panes", "-t", session.ExactTarget(tn), "-F", "#{session_created} #{pane_pid} #{pane_id}").Output()
+	if err != nil {
+		return "", time.Time{}, false
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	f := strings.Fields(first)
+	if len(f) == 0 {
+		return "", time.Time{}, false
+	}
+	sec, err := strconv.ParseInt(f[0], 10, 64)
+	if err != nil || sec <= 0 {
+		return "", time.Time{}, false
+	}
+	at = time.Unix(sec+1, 0)
+	if len(f) > 1 {
+		if pid, err := strconv.Atoi(f[1]); err == nil {
+			if start, ok := ProcessStart(pid); ok {
+				at = start
+			}
+		}
+	}
+	return strings.Join(f, " "), at, true
 }
 
 // paneStart reads tmux session tn's creation stamp (whole seconds) and, where /proc has it,

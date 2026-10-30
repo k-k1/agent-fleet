@@ -654,6 +654,11 @@ func (c config) authGate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Likewise for /mcp-oauth while it is not served.
+		if (r.URL.Path == mcpOAuthAuthorize || r.URL.Path == mcpOAuthConsent) && !c.mgr.mcpOAuthServed.Load() {
+			next.ServeHTTP(w, r)
+			return
+		}
 		claims, ok := c.session(r)
 		if !ok {
 			if wantsHTML(r) {

@@ -1,7 +1,9 @@
 package gitx
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -52,6 +54,8 @@ type bitbucketStoreReq struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
+	// Scopes is what Bitbucket granted, forwarded by the CP. An older CP sends none.
+	Scopes string `json:"scopes,omitempty"`
 	// Key/Secret are the tenant's OAuth app. The CP stopped sending them in docs/log/71
 	// §71.8 — the refresh grant runs there now — and they are accepted-and-ignored
 	// rather than removed so an older CP talking to this Agent still connects instead
@@ -82,7 +86,7 @@ func HandleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	}
 	c := secrets.BitbucketCreds{
 		AccessToken: req.AccessToken, RefreshToken: req.RefreshToken,
-		Expiry: time.Now().Unix() + exp,
+		Expiry: time.Now().Unix() + exp, Scopes: strings.TrimSpace(req.Scopes),
 	}
 	if err := writeBitbucketCreds(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
@@ -159,41 +163,90 @@ type cpRefreshedToken struct {
 	ExpiresIn    int64  `json:"expires_in"`
 }
 
+// CPRefreshedToken names the bridge answer for callers outside this package.
+type CPRefreshedToken = cpRefreshedToken
+
 // RefreshOAuthViaCP runs one provider's refresh grant through the CP bridge. The
 // provider is a path segment (bitbucket / jira, docs/log/80 §80.17) — the bridge token and
 // base URL are shared, because what the bridge authorizes is "refresh THIS member's
 // tokens", not one provider's.
 //
-// Bounded on purpose: this call sits in front of every git clone once the access token
-// is near expiry (and in front of every work item refresh for Jira), so a hung CP must
-// fail rather than wedge the caller. The CP's own retries fit inside this budget.
+// This wrapper has no production caller (Jira uses RefreshOAuthViaCPContext, Bitbucket
+// refreshBitbucketViaCP); it stays as the fixed-20 s, single-attempt form.
 func RefreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return RefreshOAuthViaCPContext(ctx, b, provider, refreshToken)
+}
+
+// CPRefreshStatusError is a non-200 answer from the CP bridge, so a caller can tell
+// the CP's own "upstream unreachable" (502/503/504) from a definitive refusal (4xx).
+type CPRefreshStatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *CPRefreshStatusError) Error() string {
+	return fmt.Sprintf("cp refresh failed: %d: %s", e.Status, e.Body)
+}
+
+// CPRefreshTransient reports whether err means the grant may or may not have reached
+// the provider: a transport failure or deadline before any answer, or the CP's
+// 502/503/504. Anything else (a 4xx such as invalid_grant, a malformed 200) is final.
+func CPRefreshTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var se *CPRefreshStatusError
+	if errors.As(err, &se) {
+		return se.Status == http.StatusBadGateway || se.Status == http.StatusServiceUnavailable ||
+			se.Status == http.StatusGatewayTimeout
+	}
+	var ne *cpRefreshNetError
+	return errors.As(err, &ne)
+}
+
+// cpRefreshNetError marks an error from the HTTP round trip itself (no response).
+type cpRefreshNetError struct{ err error }
+
+func (e *cpRefreshNetError) Error() string { return e.err.Error() }
+func (e *cpRefreshNetError) Unwrap() error { return e.err }
+
+// RefreshOAuthViaCPContext is RefreshOAuthViaCP bounded by ctx alone (no fixed client
+// timeout), so a caller with its own budget can size each attempt to what is left.
+func RefreshOAuthViaCPContext(ctx context.Context, b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
 	if refreshToken == "" {
 		return cpRefreshedToken{}, fmt.Errorf("no refresh token stored")
 	}
 	body, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
-	req, err := http.NewRequest("POST",
+	req, err := http.NewRequestWithContext(ctx, "POST",
 		strings.TrimRight(b.BaseURL, "/")+"/internal/git-oauth/"+provider+"/refresh", strings.NewReader(string(body)))
 	if err != nil {
 		return cpRefreshedToken{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+b.Token)
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return cpRefreshedToken{}, err
+		return cpRefreshedToken{}, &cpRefreshNetError{err}
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return cpRefreshedToken{}, fmt.Errorf("cp refresh failed: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil && resp.StatusCode == http.StatusOK {
+		// The body was cut after a 200: the grant most likely went through.
+		return cpRefreshedToken{}, &cpRefreshNetError{err}
 	}
+	if resp.StatusCode != http.StatusOK {
+		return cpRefreshedToken{}, &CPRefreshStatusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+	}
+	// A 200 whose body is unusable is treated like a cut body: the CP most likely
+	// completed the exchange, so the caller must be allowed to present the same token again.
 	var out cpRefreshedToken
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return cpRefreshedToken{}, err
+		return cpRefreshedToken{}, &cpRefreshNetError{err}
 	}
 	if out.AccessToken == "" {
-		return cpRefreshedToken{}, fmt.Errorf("cp refresh returned no access_token")
+		return cpRefreshedToken{}, &cpRefreshNetError{fmt.Errorf("cp refresh returned no access_token")}
 	}
 	return out, nil
 }
@@ -230,6 +283,7 @@ func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secret
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scopes       string `json:"scopes"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return c, err
@@ -240,6 +294,9 @@ func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secret
 	c.AccessToken = out.AccessToken
 	if out.RefreshToken != "" {
 		c.RefreshToken = out.RefreshToken
+	}
+	if sc := strings.TrimSpace(out.Scopes); sc != "" {
+		c.Scopes = sc // a refresh that names no scopes keeps what was recorded
 	}
 	exp := out.ExpiresIn
 	if exp == 0 {
@@ -292,6 +349,7 @@ func refreshBitbucketDirect(c secrets.BitbucketCreds) (secrets.BitbucketCreds, e
 			AccessToken  string `json:"access_token"`
 			RefreshToken string `json:"refresh_token"`
 			ExpiresIn    int64  `json:"expires_in"`
+			Scopes       string `json:"scopes"`
 		}
 		derr := json.NewDecoder(resp.Body).Decode(&out)
 		resp.Body.Close()
@@ -304,6 +362,9 @@ func refreshBitbucketDirect(c secrets.BitbucketCreds) (secrets.BitbucketCreds, e
 		c.AccessToken = out.AccessToken
 		if out.RefreshToken != "" {
 			c.RefreshToken = out.RefreshToken
+		}
+		if sc := strings.TrimSpace(out.Scopes); sc != "" {
+			c.Scopes = sc
 		}
 		exp := out.ExpiresIn
 		if exp == 0 {

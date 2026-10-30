@@ -362,6 +362,27 @@ func Require(maxBody int64, next http.Handler) http.Handler {
 	})
 }
 
+// RequireBody is Require for a handler that needs the mark only for SOME of what a request does
+// (a settings write that merely might turn a sensitive feature on): the caller has read body and
+// passes it back. It verifies the mark exactly as Require does and answers the error itself, and
+// returns false when the request must not go on.
+func RequireBody(w http.ResponseWriter, r *http.Request, body []byte) bool {
+	if _, err := Verify(r, body); err != nil {
+		var e *Error
+		if errors.As(err, &e) {
+			httpx.WriteErr(w, e.Status, e.Code, e.Msg)
+		} else {
+			httpx.WriteErr(w, http.StatusForbidden, CodeInvalid, err.Error())
+		}
+		return false
+	}
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		httpx.WriteErr(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "member writes take application/json")
+		return false
+	}
+	return true
+}
+
 // RefuseUnverified answers 403 and returns false when the request carries no verified mark.
 func RefuseUnverified(w http.ResponseWriter, r *http.Request) bool {
 	if _, ok := FromContext(r.Context()); ok {

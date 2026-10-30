@@ -1,7 +1,6 @@
 ---
 audience: "「あの処理はどのファイルか」を探している人"
 source_of_truth: "コード"
-updated: "2026-09"
 ---
 
 # 90. コードマップ
@@ -31,7 +30,8 @@ updated: "2026-09"
 （たとえば CP の `registerEngineRoutes`、agent の `browserx.RegisterRoutes`）。だからメソッドと
 パス（たとえば `"GET /api/admin/engines"`）をモジュール全体で grep する。登録している行がハンドラ名を
 示し、ハンドラ名がファイルかパッケージを教えてくれる（`sessionx.HandleCreateSession` なら
-`internal/sessionx`）。`testdata/routes.golden` は `TestRouteTableGolden` が組んだ
+`internal/sessionx`）。Agent へ中継するだけの CP のルートは `relays_*.go` の表の 1 行で、ハンドラは
+`agentProxyAPI.rest`（`proxy.go`）。監査と署名の有無もその行が持つ。`testdata/routes.golden` は `TestRouteTableGolden` が組んだ
 ルート表である。CP では環境変数で切り替わる登録（MCP・native の自己更新・エンジンゲートウェイ）を
 すべて有効にして採っているので、一部の配備にしか無いものも含めて、配備が提供しうる全ルートが載っている。各ルートの用途は [05](05-api.ja.md)。
 
@@ -48,7 +48,7 @@ updated: "2026-09"
 ## 90.3 `control-plane/`
 
 配線は `main.go`。`control-plane egress-proxy` で同じバイナリが egress のフォワードプロキシとして
-動く。CP の大半はモジュール直下の `package main` で、関心事ごとに名前の接頭辞をそろえたファイル群に
+動き、`control-plane egress-agent` で egress ゲートウェイ上のエージェントとして動く。CP の大半はモジュール直下の `package main` で、関心事ごとに名前の接頭辞をそろえたファイル群に
 分かれている。切り出せた系統は `internal/` にある。一覧は `ls control-plane/internal` で、
 パッケージのファイル冒頭のコメント（と、あれば `deps.go`）が中身を言う。CP のイメージは
 `control-plane/Dockerfile` で、リポジトリ直下をコンテキストにしてビルドする（直下の `.dockerignore`）。
@@ -61,12 +61,12 @@ updated: "2026-09"
 | Workspace のライフサイクル | `workspace_*.go`・`agent_client.go`・`agent_dial.go`。Runtime アダプタ（docker・native・ecs・ecs-ec2）は `internal/runtime`（[03 §3.3](03-control-plane.ja.md#33-manager-と-runtime-抽象)）|
 | agent への中継 | `proxy.go`（REST・SSE ストリーム・端末の WebSocket）・`preview*.go`・`browser.go`・`fs_file_proxy.go` |
 | Console への push チャネル | `events.go` |
-| ストア | `internal/store`: `store.go` がポート、`store_sql.go` が共通 SQL、`store_sqlite.go` と `store_postgres.go` が方言で、それぞれ自分の migrations ディレクトリを embed する（[06 §6.1](06-data.ja.md#61-ストア構成)）|
+| ストア | `internal/store`: `store.go` がポート（`Store` の合併）、各ドメインの行型・サブインターフェース・SQL は `store_<domain>.go` にまとまり、`store_sql.go` が共通 SQL、`store_sqlite.go` と `store_postgres.go` が方言で、それぞれ自分の migrations ディレクトリを embed する（[06 §6.1](06-data.ja.md#61-ストア構成)）|
 | 鍵 | `custodian.go`・`dek.go` |
 | 内部 git | `internal_git*.go`・`git_http.go`・`git_lfs*.go`・`git_gc.go`（[91](91-internal-git.ja.md)）|
 | egress | `egress*.go`（[03 §3.8](03-control-plane.ja.md#38-egress-統制の-cp-側)）|
 | agent が `/internal/` 配下で呼ぶ口 | `*_bridge.go`。たとえば docs・メモ・定時実行・AWS プロファイル（[05 §5.2](05-api.ja.md#52-内部面cp--agent)）|
-| 監査・メトリクス・使用量・費用 | `audit.go`（読む側。書く側は `proxy.go` の `auditActionTarget`）・`claude_audit.go`・`metrics.go`・`usage*.go`・`cloudcost.go`・`cost_*.go` |
+| 監査・メトリクス・使用量・費用 | `audit.go`（読む側。書く側は `auditActionTarget` で、分類は `relays_*.go` の各行の `audit`）・`claude_audit.go`・`metrics.go`・`usage*.go`・`cloudcost.go`・`cost_*.go` |
 | メモ・通知・定時実行 | `memo*.go`・`notification.go`・`schedule*.go`・`scheduler*.go`（[03 §3.6](03-control-plane.ja.md#36-memo-キュー)・[§3.7](03-control-plane.ja.md#37-バックグラウンドジョブ)）|
 | MCP | `internal/mcpsrv`（`/mcp` のツールサーバとテナントのサーバ配布）と `mcp_wiring.go`（[03 §3.5](03-control-plane.ja.md#35-mcp-サーバ)）|
 | 自前エンジン | `engines.go` と `engine_*.go`。Workspace が呼ぶゲートウェイは `engine_gateway.go`（[03 §3.9](03-control-plane.ja.md#39-自前エンジン)）|
@@ -87,7 +87,7 @@ updated: "2026-09"
 | 関心事 | どこから探すか |
 |---|---|
 | セッション: ライフサイクル・tmux・driver 切替・ターン・IO・transcript・タイトル・spawn・peer | `internal/sessionx`。セッションのモデル（ワイヤ・メタデータ・`Kind*` 定数）は `internal/session`、生きた状態のストアは `internal/status` |
-| 1 つのエージェント種別 | `internal/agents/<kind>`（エージェント CLI ごとに 1 パッケージ。shell と ssm は `internal/sessionx/agent_shell_ssm.go`）。種別の登録は `agentRegistry`（`internal/sessionx/agent.go`）。共通のインタフェースは `internal/agents`。種別の追加は [20](20-add-an-agent.ja.md) と [04 §4.3](04-agent.ja.md#43-エージェント種別を統合する型) |
+| 1 つのエージェント種別 | `internal/agents/<kind>`（種別ごとに 1 パッケージ。shell と ssm も含む）。種別の登録は `internal/agentreg`（kind → Agent）で、capability を持たない種別の一覧が `internal/kinds`。こちらはエージェントのパッケージより下のパッケージ（bridge・mcpreg）からも import できる。共通のインタフェースは `internal/agents`。種別の追加は [20](20-add-an-agent.ja.md) と [04 §4.3](04-agent.ja.md#43-エージェント種別を統合する型) |
 | managed 専用の種別（`internal/agents` の `ManagedOnly`）| lcpp: `internal/harness` とその MCP クライアント `internal/mcpc`。muse: `internal/msp`（プロトコル）|
 | チャットとアシスタント | `internal/chatx`・`internal/assistants`。組み込みの知識（`knowledge/af-usage.md`）を embed するのは `assistants.go` |
 | チャットブリッジ | `internal/bridge`・`bridge_operator.go`・`connections_slack.go` |
@@ -103,7 +103,7 @@ updated: "2026-09"
 | 画像生成 | `internal/imagegen` |
 | 自前エンジン | `engines.go` |
 | フリート俯瞰図 | `internal/fleetgraph` |
-| ワークアイテム | `workitems*.go`・`connections_jira.go` |
+| ワークアイテム | `internal/workitems`・`connections_jira.go`・`internal/jirax`（Jira の REST クライアントと `jira` ラッパー用の `jira-*` サブコマンド） |
 | 秘密情報 | `internal/secrets`（[04 §4.8](04-agent.ja.md#48-秘密情報agent-の責務)）|
 | 端末と preview | `terminal*.go`・`preview.go` |
 | 後片付け | `cleanup_*.go`・`leftovers.go`・`tool_caches.go`・`cli_version_prune.go` |
@@ -138,6 +138,8 @@ updated: "2026-09"
 | `notes/` | そのトピックファイル（イメージでは `/usr/local/share/agent-fleet/notes/`）。ポリシーの索引が指す手順 |
 | `af-db.sh`・`af-aws-exec.sh`・`af-scratch.sh`・`af-arch-repair.sh` | `PATH` 上の `af-*` コマンド。最初の 2 つは `workspace-agent` を exec するだけ |
 | `gh-auth-wrapper.sh`・`bkt-auth-wrapper.sh`・`jira-auth-wrapper.sh`・`svn-auth-wrapper.sh` | 本物より前に `gh`・`bkt`・`jira`・`svn` として置かれ、いずれも Console で保存した資格情報を使えるようにする（`bkt-auth-wrapper-test.sh` と `jira-auth-wrapper-test.sh` がそれぞれのラッパーを固定する） |
+| `entrypoint-boot-install-test.sh` | `entrypoint.sh` の lean boot-install 節をスタブ相手に実行し、rtk／agy／cursor の導入が途中で失敗したら WARN を出し、マーカーを書かず、次回起動で再導入されることを固定する |
+| `entrypoint-boot-status-test.sh` | 同じ節を実行し、Agent が返す CLI ごとのステータスファイルとその理由の分類、空き容量不足時のスキップ、インストール前に走る prune を固定する |
 | `jvm.Dockerfile` | 共有 JDK ディレクトリを作る（`deploy/local/provision-jvm.sh`）|
 | `opencode-plugin/`・`tmux.conf` | opencode のプラグインと tmux の設定 |
 | `.dockerignore` | ⚠️ `**/*.md` を除外したうえで、ビルドに要るものを戻している。**イメージや agent バイナリが embed する markdown を足す前に読むこと** |

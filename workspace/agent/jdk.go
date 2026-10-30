@@ -13,7 +13,7 @@ import (
 )
 
 // JDK provisioning (docs/09-deploy portability). JDKs come from two sources,
-// searched in this priority order:
+// listed here in priority order (javaHomeFor leaves that order only for a newer patch):
 //
 //  1. /usr/lib/jvm — provided by the deployment: baked into the image, or (the
 //     local Docker default) bind-mounted read-only from the host's shared JDK dir
@@ -27,6 +27,10 @@ import (
 // while giving every runtime (incl. ECS) a common, writable place to add JDKs on
 // demand — consistent with the Console's JAVA_HOME (toolchain) selection.
 
+// jvmSystemRoot is the deployment-provided JDK dir; a var so tests can point it at a
+// temp tree.
+var jvmSystemRoot = "/usr/lib/jvm"
+
 // jvmHomeRoot is the per-user JDK dir on the home volume.
 func jvmHomeRoot() string {
 	return filepath.Join(homeDir(), ".local", "share", "agent-fleet", "jvm")
@@ -35,7 +39,7 @@ func jvmHomeRoot() string {
 // jvmSearchDirs lists JDK roots in priority order (deployment-provided first, then
 // the home volume that install-jdk populates).
 func jvmSearchDirs() []string {
-	return []string{"/usr/lib/jvm", jvmHomeRoot()}
+	return []string{jvmSystemRoot, jvmHomeRoot()}
 }
 
 // installableJava are the Temurin majors install-jdk can fetch on demand (Adoptium
@@ -121,23 +125,97 @@ func sortMajors(seen map[string]bool) []string {
 	return out
 }
 
-// javaHomeFor resolves a major to a concrete JAVA_HOME across the search dirs
-// (priority order), or "" when that major is not installed anywhere FOR THIS
-// ARCHITECTURE.
+// javaHomeFor resolves a major to a concrete JAVA_HOME across the search dirs, or ""
+// when that major is not installed anywhere FOR THIS ARCHITECTURE.
+//
+// Priority order decides, except that a candidate whose recorded version is newer
+// than the current pick replaces it. Without that, `install-jdk 21` lands the latest
+// patch in the home volume and JAVA_HOME stays on an older /usr/lib/jvm tree forever.
+// Only a provable upgrade moves the pick: an unreadable version on either side keeps
+// the priority order, so a hand-placed tree never displaces a known one by accident.
 //
 // Do not go back to "glob, sort, take the first". Both sources name their
 // directories temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so on
 // an arm64 workspace holding a home that was filled on x86 the sorted-first entry
 // is always the unusable one (docs/log/70 §70.5.1).
+//
+// The entrypoint resolves its own JAVA_HOME through `workspace-agent java-home`, so
+// this is the one place the rule lives.
 func javaHomeFor(major string) string {
+	best, bestVer := "", ""
 	for _, dir := range jvmSearchDirs() {
 		m, _ := filepath.Glob(filepath.Join(dir, "temurin-"+major+"-jdk*"))
 		sort.Strings(m)
-		if hit := pickArchJDK(m); hit != "" {
-			return hit
+		hit := pickArchJDK(m)
+		if hit == "" {
+			continue
+		}
+		v := jdkVersion(hit)
+		if best == "" || (bestVer != "" && v != "" && compareJDKVersions(v, bestVer) > 0) {
+			best, bestVer = hit, v
+		}
+	}
+	return best
+}
+
+// jdkVersion returns the SEMANTIC_VERSION a JDK tree records in its release file
+// ("21.0.11+10", "8.0.492+9"), or "" when the file or the key is missing.
+// SEMANTIC_VERSION rather than JAVA_VERSION because the latter is "1.8.0_492" on 8 and
+// carries no build number on any major.
+func jdkVersion(home string) string {
+	b, err := os.ReadFile(filepath.Join(home, "release"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "SEMANTIC_VERSION="); ok {
+			return strings.Trim(v, `"`)
 		}
 	}
 	return ""
+}
+
+// compareJDKVersions orders two JDK semantic versions numerically: the dotted part
+// first, then the build after "+". Text after the build number is ignored, so
+// Adoptium's "21.0.13+9.0.LTS" compares equal to a release file's "21.0.13+9".
+// A missing or non-numeric field counts as 0.
+func compareJDKVersions(a, b string) int {
+	pa, pb := jdkVersionFields(a), jdkVersionFields(b)
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y int
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// jdkVersionFields splits "21.0.11+10" into [21 0 11 0 10]: the dotted part padded to
+// four fields (17.0.4.1 exists) so the build number always lands in the same slot.
+func jdkVersionFields(v string) []int {
+	ver, build, _ := strings.Cut(v, "+")
+	out := make([]int, 4, 5)
+	for i, f := range strings.Split(ver, ".") {
+		if i >= len(out) {
+			break
+		}
+		out[i], _ = strconv.Atoi(f)
+	}
+	digits := build
+	if i := strings.IndexFunc(build, func(r rune) bool { return r < '0' || r > '9' }); i >= 0 {
+		digits = build[:i]
+	}
+	n, _ := strconv.Atoi(digits)
+	return append(out, n)
 }
 
 // pickArchJDK chooses this architecture's JDK out of one directory's matches:
@@ -202,9 +280,13 @@ func installJDK(major string) (string, error) {
 		return "", err
 	}
 	root := jvmHomeRoot()
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	// Held for the whole install, from any process (the CLI included), so an uninstall
+	// cannot stage away a tree this install is about to place or has just placed.
+	unlock, _, err := installLock(root, true)
+	if err != nil {
 		return "", err
 	}
+	defer unlock()
 	// Download to a temp tarball, extract into a staging dir, then atomically swap
 	// it into place — a failed/half download never corrupts an existing JDK.
 	tgz, err := os.CreateTemp(root, ".jdk-*.tgz")
@@ -245,6 +327,22 @@ func installJDK(major string) (string, error) {
 	out, _ := exec.Command(filepath.Join(dest, "bin", "java"), "-version").CombinedOutput()
 	fmt.Fprintf(os.Stderr, "[install-jdk] installed at %s\n%s", dest, string(out))
 	return dest, nil
+}
+
+// runJavaHome is `workspace-agent java-home <major>`: print the JAVA_HOME the major
+// resolves to (javaHomeFor), exit 1 when it is not installed for this architecture.
+// The entrypoint uses it so the container-start JAVA_HOME and the per-session one
+// cannot disagree.
+func runJavaHome(args []string) {
+	if len(args) < 1 || !majorOnlyRe.MatchString(args[0]) {
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent java-home <major>   (e.g. 21)")
+		os.Exit(2)
+	}
+	jh := javaHomeFor(args[0])
+	if jh == "" {
+		os.Exit(1)
+	}
+	fmt.Println(jh)
 }
 
 func runCmd(name string, args ...string) error {

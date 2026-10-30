@@ -39,7 +39,19 @@ func (agentImpl) Kind() string { return session.KindOpencode }
 // takes a messageID (docs/log/55). That route only exists on the managed driver, so the
 // handler refuses a point fork for a CLI-route session rather than silently widening it.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, ManagedDefault: true, MCPClient: agents.TriYes}
+}
+
+// ForkAtOnTerminal reports whether a Terminal session of this kind can fork at a past message.
+func (agentImpl) ForkAtOnTerminal(m session.Meta) bool { return forkAtOnSharedTerminal(m) }
+
+// forkAtOnSharedTerminal is whether a point fork of Terminal session m can reach the serve API:
+// its pane is attached to af's serve (sharedSlot) AND the fork's own launch will use the serve
+// too (sharedTUI). Either alone is not enough: a standalone pane has no API to read the
+// conversation through, and a launch that falls back to --standalone cannot cut at a point, so
+// BuildLaunch refuses it rather than copy the whole conversation.
+func forkAtOnSharedTerminal(m session.Meta) bool {
+	return sharedSlot(m) && sharedTUI()
 }
 
 // ForkSource resolves this session's current opencode conversation as the fork
@@ -75,14 +87,24 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 // opencode's fork endpoint takes the messageID as-is and stops copying at the first
 // message that sorts >= it (docs/log/55 §55.2), so the anchor needs no translation — the work
 // here is refusing the anchors that would branch something other than what was pointed at.
-func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+func (a agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
+	point, _, err := a.ResolveForkAtPinned(m, at)
+	return point, err
+}
+
+// ResolveForkAtPinned is ResolveForkAt plus the conversation the point was resolved against
+// ("" when the route does not name it: opencode 1.x).
+func (agentImpl) ResolveForkAtPinned(m session.Meta, at agents.ForkPoint) (string, string, error) {
 	anchor := at.Anchor
 	if anchor == "" {
-		return "", errors.New("分岐点が指定されていません")
+		return "", "", errors.New("分岐点が指定されていません")
 	}
 	// Only the serve API takes a fork point; `--session <src> --fork` has no such argument.
-	if m.DriverKind() != session.DriverManaged {
-		return "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッションでのみ利用できます",
+	// A managed session talks to it directly and a Terminal pane attached to af's shared serve
+	// forks through the same endpoint (buildSharedLaunch).
+	if m.DriverKind() != session.DriverManaged && !forkAtOnSharedTerminal(m) {
+		return "", "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッション、"+
+			"または opencode 2 の共有サーバに接続したターミナルでのみ利用できます",
 			agents.ErrForkAtRoute)
 	}
 	if t, ok := v2TargetFor(m); ok {
@@ -90,32 +112,33 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 	}
 	db, ok := openRO()
 	if !ok {
-		return "", errors.New("opencode の会話ストアを読めません")
+		return "", "", errors.New("opencode の会話ストアを読めません")
 	}
 	defer db.Close()
 	ses := activeSession(db, m)
 	if ses == "" {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", "", errors.New("分岐できる会話がまだありません")
 	}
 	var owner string
 	if err := db.QueryRow(`SELECT session_id FROM message WHERE id = ?`, anchor).Scan(&owner); err != nil {
-		return "", errors.New("指定された分岐点がこの会話に見つかりません")
+		return "", "", errors.New("指定された分岐点がこの会話に見つかりません")
 	}
 	// A sidechain (subagent) turn lives in a CHILD session, so its id is not part of the
 	// parent's ordering at all: forking the parent "at" it would cut at an unrelated
 	// place. The mirror only offers the affordance on the user's own turns, but the
 	// anchor arrives from the client and has to be checked here too.
 	if owner != ses {
-		return "", errors.New("サブエージェントの発言からは分岐できません")
+		return "", "", errors.New("サブエージェントの発言からは分岐できません")
 	}
 	if !at.Include {
-		return anchor, nil
+		return anchor, "", nil
 	}
 	// "continue from this message" means up to just before the NEXT user message, so every
 	// assistant message in between (the answer and its tool round trips) is carried over.
 	// No next user message means this was the last exchange, and the whole conversation ("")
 	// is the right answer: keeping everything is exactly what that asks for.
-	return nextUserMessageID(db, ses, anchor)
+	next, err := nextUserMessageID(db, ses, anchor)
+	return next, "", err
 }
 
 // nextUserMessageID returns the id of the first user message that sorts after anchor in

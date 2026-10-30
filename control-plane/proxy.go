@@ -17,181 +17,6 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// auditActionTarget classifies a proxied request as an auditable CHANGE operation
-// (M1 audit, docs/log/20 §A / §E.1: file, git, session mutations). Read-only and other
-// non-mutating calls return ok=false. Target is taken from the URL only (path value
-// or query), never the request body — so no secrets are read (docs §A.6).
-func auditActionTarget(r *http.Request) (action, target string, ok bool) {
-	p := r.URL.Path
-	q := r.URL.Query()
-	name := r.PathValue("name") // repo / session name for {name} routes ("" otherwise)
-	switch r.Method {
-	case http.MethodPut:
-		if p == "/api/fs/file" {
-			target, ok := r.Context().Value(fsPutAuditTargetContextKey{}).(string)
-			return "fs.file.put", target, ok && target != ""
-		}
-	case http.MethodPost:
-		switch {
-		case p == "/api/fs/upload":
-			return "fs.upload", q.Get("path"), true
-		case p == "/api/fs/mkdir":
-			return "fs.mkdir", q.Get("path"), true
-		case p == "/api/fs/newfile":
-			return "fs.newfile", q.Get("path"), true
-		case p == "/api/fs/rename":
-			return "fs.rename", q.Get("from") + " → " + q.Get("to"), true
-		case p == "/api/repos":
-			return "repo.clone", "", true
-		case p == "/api/repos/svn":
-			return "repo.svn.checkout", "", true
-		case name != "" && strings.HasSuffix(p, "/svn-update"):
-			return "repo.svn.update", name, true
-		case name != "" && strings.HasSuffix(p, "/svn-cleanup"):
-			return "repo.svn.cleanup", name, true
-		case name != "" && strings.HasSuffix(p, "/svn-auth"):
-			// Storing a credential for this working copy's server. The target is the
-			// working copy; the credential itself is in the body, which is never read.
-			return "repo.svn.auth", name, true
-		case name != "" && strings.HasSuffix(p, "/commit"):
-			return "git.commit", name, true
-		case name != "" && strings.HasSuffix(p, "/discard"):
-			return "git.discard", name, true
-		case name != "" && strings.HasSuffix(p, "/checkout"):
-			return "git.checkout", name, true
-		case name != "" && strings.HasSuffix(p, "/fetch"):
-			return "git.fetch", name, true
-		case name != "" && strings.HasSuffix(p, "/ff"):
-			return "git.ff", name, true
-		case name != "" && strings.HasSuffix(p, "/parent-ff"):
-			return "git.parent_ff", name, true
-		case p == "/api/agents/memory/snapshots":
-			// Manual snapshot of the agent memory (docs/log/39).
-			return "memory.snapshot", "", true
-		case p == "/api/agents/memory/import":
-			// Receipt into refs/imports; live is not touched yet.
-			return "memory.import", "", true
-		case p == "/api/agents/memory/import/apply":
-			// Applying an imported tree to live; which lineage comes from the URL hint.
-			return "memory.import.apply", q.Get("importId"), true
-		case p == "/api/agents/memory/restore":
-			// Rollback (docs/log/39 stage 4). The Console repeats the source rev in the
-			// query as an audit hint, because the body is never read (§A.6). The body's
-			// rev/at/scope is what actually governs, and what happened is recorded in the
-			// repo's restore commit (AF-Restore-Rev / -Scope).
-			return "memory.restore", q.Get("rev"), true
-		case p == "/api/agents/memory/entries/revert":
-			// ADR 0108: undoing or forgetting one AF memory change. Like restore, the Console
-			// repeats the commit in the query as the audit hint; the body governs.
-			// Only a commit id is copied into the ledger: the hint is free text the Agent never
-			// reads, so anything else is recorded as an empty target.
-			return "memory.entry.revert", auditCommitHint(q.Get("commit")), true
-		case p == "/api/agents/memory/entries/pin":
-			// #1703: the member pins or unpins a memory. The Console repeats the project id in the query;
-			// only an id-shaped value is recorded, never the free-text memory name.
-			return "memory.entry.pin", auditProjectHint(q.Get("project")), true
-		case p == "/api/agents/memory/entries/member-save":
-			// #1997: the member writes a memory by hand. Same id-shaped project hint as the pin;
-			// the memory name is free text and never copied into the ledger.
-			return "memory.entry.save", auditProjectHint(q.Get("project")), true
-		case p == "/api/agents/memory/entries/purge":
-			// #1982: the member rewrites the memory history to drop one memory's past revisions.
-			// Same id-shaped project hint as the save; the memory name is never copied.
-			return "memory.entry.purge", auditProjectHint(q.Get("project")), true
-		case p == "/api/agents/memory/entries/project-move":
-			// #1984: the member moves an orphaned project's memories into another project. The
-			// Console repeats the source project id in the query; only an id-shaped value is
-			// recorded, never a memory name.
-			return "memory.project.move", auditProjectHint(q.Get("project")), true
-		case p == "/api/agents/memory/claude-import":
-			// ADR 0108 decision 6: the one-time import of claude's memory writes the store. The
-			// Console repeats the project id in the query; only an id-shaped value is recorded.
-			return "memory.claude_import", auditProjectHint(q.Get("project")), true
-		case p == "/api/agents/memory/af-import":
-			// #1983: the member imports AF memory out of a bundle into this workspace's store. The
-			// Console repeats the import id in the query; only an id-shaped value is recorded.
-			return "memory.af_import", auditImportHint(q.Get("importId")), true
-		case p == "/api/agents/memory/auto-sync":
-			// #1972: the Agent memory switch imports / writes back by itself, so nothing else
-			// passes through here for those runs (the Agent has no channel to this ledger; each
-			// memory change is a commit by the member in the 0022 history). What does pass is
-			// the member's part: the Console wakes the run once the confirmation flipped the
-			// switch, retries a failed write-back, or gives it up. The Console repeats the action
-			// (and the direction of a wake) in the query; only those words are recorded.
-			return "memory.auto_sync", auditAutoSyncHint(q.Get("action"), q.Get("to")), true
-		case p == "/api/agents/memory/muse-import":
-			// #1991: the one-time import of muse's project memory writes the store; the project id
-			// in the query is the only value recorded, as for the claude import.
-			return "memory.muse_import", auditProjectHint(q.Get("project")), true
-		case p == "/api/agents/memory/claude-export":
-			// #1914: the write-back changes claude's store. The Console repeats the project id in
-			// the query; only an id-shaped value is recorded.
-			return "memory.claude_export", auditProjectHint(q.Get("project")), true
-		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/logout"):
-			return "aws.logout", "profile: " + name, true
-		case strings.HasPrefix(p, "/api/aws-login/profiles/") && strings.HasSuffix(p, "/start"):
-			// #1028: the Settings row's press names the profile in the path, and there is no
-			// request. Matched before the request form, which would take "profiles" for an id.
-			return "aws.login.start", "profile: " + name, true
-		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/start"):
-			// ADR 0102. The request id is from the URL; the profile is only the Console's
-			// hint in the query (the Agent decides from the id alone), so it is labelled one.
-			// The code never passes through here.
-			return "aws.login.start", awsLoginAuditTarget(p, q), true
-		case strings.HasPrefix(p, "/api/aws-login/") && strings.HasSuffix(p, "/cancel"):
-			return "aws.login.cancel", awsLoginAuditTarget(p, q), true
-		case strings.HasPrefix(p, "/api/gcp-login/"):
-			// ADR 0107 decision 3: the press, the cancel and the code, never the code itself.
-			return gcpLoginAudit(r, p, q)
-		case p == "/api/sessions":
-			return "session.create", "", true
-		case name != "" && strings.HasSuffix(p, "/fork"):
-			return "session.fork", name, true
-		case name != "" && p == "/api/sessions/"+name+"/move":
-			return "session.move", name, true
-		case name != "" && strings.HasPrefix(p, "/api/sessions/"+name+"/move/"):
-			// retry, cancel, reopen and deliver (ADR 0115 decisions 1, 11.4 and 11.6); the preview
-			// is a GET.
-			return "session.move." + strings.TrimPrefix(p, "/api/sessions/"+name+"/move/"), name, true
-		case name != "" && strings.HasSuffix(p, "/stop"):
-			// /stop is the old name of deleting a session (it moves it to the trash, ADR 0101),
-			// so it is recorded as the delete it is.
-			return "session.delete", name, true
-		}
-	case http.MethodGet:
-		// Reads are not audited, with one exception: memory export is the only path that
-		// carries someone's personal memory out of the environment, and without a record
-		// of who exported what format when there is nothing to trace afterwards
-		// (docs/log/39 stage 4). The target is the format only — no body, no content.
-		if p == "/api/agents/memory/export" {
-			return "memory.export", q.Get("format"), true
-		}
-	case http.MethodDelete:
-		switch {
-		case p == "/api/fs/delete":
-			return "fs.delete", q.Get("path"), true
-		case strings.HasPrefix(p, "/api/repo-jobs/"):
-			// Cancel / dismiss an import job (docs/log/78). The target is the job id,
-			// taken from the URL alone.
-			return "repo.job.cancel", strings.TrimPrefix(p, "/api/repo-jobs/"), true
-		case name != "" && p == "/api/repos/"+name:
-			return "repo.delete", name, true
-		case name != "" && p == "/api/sessions/"+name:
-			// Deleting a session (to the trash, ADR 0101). Before, the Console deleted through
-			// /stop, which was audited; moving it to DELETE must not drop it from the log.
-			return "session.delete", name, true
-		}
-	}
-	return "", "", false
-}
-
-// awsLoginAuditTarget names an AWS login request by its id, with the profile hint the
-// Console sends.
-func awsLoginAuditTarget(p string, q url.Values) string {
-	id, _, _ := strings.Cut(strings.TrimPrefix(p, "/api/aws-login/"), "/")
-	return id + " (profile hint: " + q.Get("profile") + ")"
-}
-
 // agentProxyAPI is the set of pass-through proxies to the Workspace Agent. Resolution
 // comes from the embedded memberAuth (wrapped in withResolved at registration; tenantSel
 // absorbs the terminal/WS case where the tenant is chosen by query param). Its only
@@ -296,9 +121,14 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 
 	var bufferedResponse []byte
 	var fsPutOutcome string
-	if r.Method == http.MethodPut && r.URL.Path == "/api/fs/file" {
-		// PUT errors are deliberately small JSON envelopes. Read only a bounded
-		// prefix before the audit decision so write_state_unknown cannot be lost,
+	// Two error envelopes decide the audit: a file write that may have landed, and an approved
+	// review proposal that was published although clearing it from the queue failed (the commit
+	// exists, so the approval must be on record even if the member never retries).
+	reviewApprove := r.Method == http.MethodPost && r.URL.Path == "/api/agents/memory-review/proposals/approve" &&
+		resp.StatusCode == http.StatusInternalServerError
+	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || reviewApprove {
+		// These errors are deliberately small JSON envelopes. Read only a bounded
+		// prefix before the audit decision so the outcome cannot be lost,
 		// while still forwarding an unexpectedly larger upstream response.
 		bufferedResponse, _ = io.ReadAll(io.LimitReader(resp.Body, (64<<10)+1))
 		if len(bufferedResponse) <= 64<<10 {
@@ -312,15 +142,19 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 			}
 		}
 	}
+	reviewPublishedUncleared := reviewApprove && fsPutOutcome == reviewDecisionIncompleteCode
 
 	// M1 audit (docs/log/20): record a successful change operation. actor/tenant come from
 	// the resolved request; best-effort with a detached context so a client disconnect
 	// during the body copy below can't cancel the write.
 	if action, target, ok := auditActionTarget(r); ok &&
 		((resp.StatusCode >= 200 && resp.StatusCode < 300) ||
-			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown)) {
+			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown) ||
+			reviewPublishedUncleared) {
 		detail := ""
-		if fsPutOutcome == errCodeFSWriteStateUnknown {
+		if reviewPublishedUncleared {
+			detail = "published_queue_not_cleared"
+		} else if fsPutOutcome == errCodeFSWriteStateUnknown {
 			detail = "write_state_unknown"
 		} else if strings.HasPrefix(action, "gcp.login.") {
 			// ADR 0107 decision 3: the audit says the call came through the relay; the
@@ -591,6 +425,31 @@ var agentMemProjectIDRe = regexp.MustCompile(`^[a-z0-9._-]{1,40}-[0-9a-f]{12}$`)
 // auditProjectHint keeps a project-id-shaped audit hint and drops anything else.
 func auditProjectHint(s string) string {
 	if agentMemProjectIDRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// reviewDecisionIncompleteCode is the Agent's answer to an approval that published the memory but
+// could not clear the proposal from its queue (workspace/agent/internal/memreview). It is the
+// Agent's code, not one the CP emits, so it is not an errcodes.go entry.
+const reviewDecisionIncompleteCode = "decision_incomplete"
+
+var auditSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
+
+// auditSessionNameHint keeps a session-name-shaped audit hint and drops anything else.
+func auditSessionNameHint(s string) string {
+	if auditSessionNameRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+var auditReviewIDRe = regexp.MustCompile(`^[0-9a-f]{20}$`)
+
+// auditReviewIDHint keeps a review proposal or run id (20 hex characters) and drops anything else.
+func auditReviewIDHint(s string) string {
+	if auditReviewIDRe.MatchString(s) {
 		return s
 	}
 	return ""

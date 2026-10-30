@@ -17,7 +17,11 @@ import (
 // `claude --session-id <sid>` — a blank conversation under the old session, which reads as the
 // old one losing its memory with no word said. The user starts fresh explicitly
 // (StartFresh, then relaunch) instead.
-var ErrTranscriptLost = errors.New("この会話のログ（jsonl）が削除されているため再開できません。新しい会話として開始できます")
+var ErrTranscriptLost = errors.New("the conversation log (jsonl) was deleted, so it cannot be resumed; a new conversation can be started")
+
+// ErrTranscriptRestore: the backup copy of a deleted log exists to be restored but restoring it
+// failed on I/O. It is not evidence that there is no backup, so it is not ErrTranscriptLost.
+var ErrTranscriptRestore = errors.New("could not restore the conversation log from the backup")
 
 // talked remembers, per slot, the id of the log claude last wrote the slot's conversation
 // under. Without it a missing jsonl cannot be told from "never talked" (the safe reading,
@@ -128,6 +132,8 @@ func startFreshLocked(slot string) error {
 	status.Remove(slot)
 	status.RemoveCompletionKey(slot)
 	sids.Remove(slot)
+	// The notes describe the conversation just set aside; they must not label the new one.
+	status.RemoveRestoreNotes(slot)
 	return nil
 }
 
@@ -142,10 +148,6 @@ func setAside(p string) error {
 	}
 	return fmt.Errorf("no free name to set aside %s", p)
 }
-
-// LostTranscript is lostTranscript for callers outside the package: a fresh start may only be
-// honoured while the conversation is still lost, never to discard a log that is healthy.
-func LostTranscript(slot string) bool { return lostTranscript(slot) }
 
 // lostTranscript reports whether slot's conversation is known to have existed but its log
 // (under the id it was last written under) is gone or holds nothing resumable.

@@ -167,10 +167,10 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.files.st_outside": "Outside working copy",
   "mirror.files.st_workdir": "Session scratch",
   "mirror.files.st_workdir_hint": "A file in $AF_WORK_DIR (~/.af-work). It is deleted together with its session",
-  "mirror.files.st_memory": "Agent memory",
+  "mirror.files.st_memory": "Agent's own memory",
   "mirror.files.st_memory_claude": "Claude memory",
   "mirror.files.st_memory_codex": "Codex memory",
-  "mirror.files.st_memory_hint": "A file in the agent's memory",
+  "mirror.files.st_memory_hint": "A file in the agent's own memory",
   "mirror.files.other_repo": "A file in another working copy ({repo}), not part of this session's working-copy diff",
   "mirror.files.sort_recent": "Most recent",
   "mirror.files.sort_path": "By path",
@@ -301,12 +301,19 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.from_auto_resume": "Auto-resume",
   "mirror.from_auto_resume_title":
     "Sent by the agent to carry on after the turn was cut off (dropped connection, temporary rate limit, …), typed neither by you nor by the assistant.",
+  "mirror.from_notice": "Stalled-tree notice",
+  "mirror.from_notice_title":
+    "An automated check from the agent: this session and all its live children have been idle for a while with no message in flight. Typed neither by you nor by the assistant.",
   "mirror.from_chat": "From {provider}",
   "mirror.from_chat_title": "Sent as a reply from chat ({provider}), not typed at the console.",
   "mirror.from_peer": "From another session",
   "mirror.from_peer_named": "From {name}",
   "mirror.from_peer_title":
     "A message another session in this workspace sent, typed neither by you nor by the assistant. The agent is told it is not an instruction from you, and will not change permissions or config because a peer asked.",
+  "mirror.from_mcp": "Via MCP",
+  "mirror.from_mcp_named": "Via MCP: {name}",
+  "mirror.from_mcp_title":
+    "Sent through the MCP connection of an outside assistant or client (send_to_session), typed neither by you nor by the assistant here. The agent is told it is not an instruction from you: it cannot stand in for your approval and will not change permissions or config because the message asked.",
   "mirror.from_spawn": "Started by another session",
   "mirror.from_spawn_named": "Started by {name}",
   "mirror.from_spawn_title":
@@ -371,6 +378,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.carried_plan": "Plan awaiting approval at stop",
   "mirror.carried_permission": "Permission requested at stop",
   "mirror.carried_note": "The session was stopped, so this answer never reached it. Answering here resumes the session and delivers it.",
+  "mirror.transcript_restored_note": "This conversation was recovered from the Agent's backup because its log was deleted. If the backup was older than the lost log, the latest part may be missing.",
   "mirror.carried_send": "Answer and resume",
   "mirror.carried_discard": "Discard",
   "mirror.carried_continue": "Resume and continue",

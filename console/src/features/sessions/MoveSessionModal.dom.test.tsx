@@ -30,6 +30,7 @@ const opened: string[] = [];
 vi.mock("./open.ts", () => ({ openSessionByName: (n: string) => opened.push(n) }));
 
 const { MoveSessionModal } = await import("./MoveSessionModal.tsx");
+const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { useSessionsStore } = await import("./store.ts");
 const { setCachedConns } = await import("../repos/connsCache.ts");
 const { t } = await import("../../lib/i18n/index.ts");
@@ -201,6 +202,16 @@ describe("MoveSessionModal: before the move", () => {
     expect(document.querySelector(".move-peers")?.textContent).toContain("進み具合は？");
     expect(document.querySelector(".move-size")?.textContent).toContain("300.0 KiB");
     expect(document.querySelector(".move-size")?.textContent).toContain(t("move.size_over"));
+  });
+
+  it("re-reads the driver facts when the kind catalog lands while the dialog is open", async () => {
+    routes[PREVIEW] = preview();
+    await render();
+    const toggle = () => [...document.querySelectorAll(".seg-btn")].find((b) => b.textContent?.includes(t("launch.driver_managed")));
+    expect(toggle()?.classList.contains("active")).toBe(true); // the first offered target defaults to managed
+    await act(async () => setKindCatalog(parseKindCatalog({ kinds: ["codex", "opencode"].map((kind) => ({ kind, managedOnly: false, managedDefault: false, mcpClient: "yes" })) })));
+    expect(toggle()).toBeUndefined(); // the catalog says the offered kinds have no managed default
+    await act(async () => setKindCatalog(null));
   });
 
   it("warns before moving a Managed cursor source that its mirror empties", async () => {

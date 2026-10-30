@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -42,7 +43,7 @@ func (agentImpl) Kind() string { return session.KindCursor }
 // supported: transcript.go reads the Claude Code-compatible JSONL, which cursor
 // appends live in the TUI/-p routes.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+	return agents.Caps{CanTranscript: true, PermissionChoice: true, ManagedDefault: true, MCPClient: agents.TriYes}
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
@@ -60,7 +61,17 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		}
 		sids.Write(session.UUID(m.Dir, m.Name), chatID)
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
+	// The stop hook is where a Terminal turn's tokens come from (hooks.go). The command embeds
+	// this binary's path, so re-assert the entry before cursor reads it; a failure only costs the
+	// usage numbers, never the launch.
+	if err := EnsureHooks(); err != nil {
+		log.Printf("cursor: stop hook not installed, usage stays unmeasured: %v", err)
+	}
+	// A store that exists but cannot be read counts as a chat with a model of its own: guessing
+	// Auto there would override the model cursor restores by itself.
+	st, exists, ok := chatStore(chatID)
+	model := launchModel(m.Model, exists && (!ok || st.LastUsedModel != ""))
+	return agents.LaunchPlan{Program: buildProgram(model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
@@ -110,7 +121,7 @@ func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	if h == nil {
 		return agents.PendingModal{}, false
 	}
-	detail := h.pendingPermission()
+	detail := h.PendingPermission()
 	if detail == "" {
 		return agents.PendingModal{}, false
 	}

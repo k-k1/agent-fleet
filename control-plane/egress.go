@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,12 +27,25 @@ import (
 // egressIngest is the wire body the proxy POSTs.
 type egressIngest struct {
 	Events []egressEvent `json:"events"`
+	// Dropped is how many observations the proxy discarded while the CP was unreachable
+	// (its pending-bucket cap was full), so the loss shows up in the audit ledger.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 type egressEvent struct {
 	Host    string `json:"host"`
 	Allowed bool   `json:"allowed"`
 	Count   int    `json:"count"`
+	// The fields below come from the egress gateway (ADR 0122, addendum 2026-10-24); the
+	// own proxy sends none of them. ID is the sender's key for this observation (the
+	// gateway uses its log position), so a resent batch is stored and counted once. At is
+	// unix milliseconds, Source the address the connection came from, Dest the address it
+	// went to. An event with an ID is kept raw and attributed later; without one it only
+	// feeds the daily aggregate.
+	ID     string `json:"id,omitempty"`
+	At     int64  `json:"at,omitempty"`
+	Source string `json:"source,omitempty"`
+	Dest   string `json:"dest,omitempty"`
 }
 
 // egressAuditDedup collapses would-block audit rows to one per (day, host) so a
@@ -66,10 +82,12 @@ func (a egressAPI) tokenOK(r *http.Request) bool {
 }
 
 // egressStore is the narrow store view the egress feature needs: observation
-// aggregation + allowlist (EgressStore), the admin-action / observe audit rows
-// (AuditStore) and the egress_mode setting (SettingsStore).
+// aggregation + allowlist (EgressStore), raw events and their attribution
+// (EgressAttributionStore), the admin-action / observe audit rows (AuditStore) and the
+// egress_mode setting (SettingsStore).
 type egressStore interface {
 	store.EgressStore
+	store.EgressAttributionStore
 	store.AuditStore
 	store.SettingsStore
 }
@@ -89,10 +107,18 @@ type egressAPI struct {
 	proxy string
 	dedup *egressAuditDedup
 	store egressStore
+	// infra is AF_EGRESS_INFRA_CIDRS: source ranges attributed to the stack itself rather
+	// than reported as unattributed (egress_attribution.go).
+	infra []netip.Prefix
+	// retention is AF_EGRESS_EVENT_RETENTION_DAYS as a duration: an id-carrying event older
+	// than this is refused (egress_purge.go). Zero keeps every event and refuses none.
+	retention time.Duration
+	// now is the clock the retention bound is read against; nil is time.Now.
+	now func() time.Time
 }
 
-func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup) egressAPI {
-	return egressAPI{memberAuth{m}, token, proxy, dedup, m.store}
+func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup, infra []netip.Prefix) egressAPI {
+	return egressAPI{memberAuth: memberAuth{m}, token: token, proxy: proxy, dedup: dedup, store: m.store, infra: infra}
 }
 
 // auditAdmin records a deployment-wide admin action (docs/log/20 M3: allowlist/mode edits
@@ -105,10 +131,10 @@ func (a egressAPI) auditAdmin(ctx context.Context, ident store.Identity, action,
 }
 
 // effectivePolicy is what the proxy enforces: the built-in product-critical defaults
-// (docs/log/20 §B.5) plus every ACTIVE allowlist entry, and the deployment egress mode
-// (log-only unless set to enforce).
+// (docs/log/20 §B.5), the CP's own hosts, every ACTIVE allowlist entry, and the deployment
+// egress mode (log-only unless set to enforce).
 func (a egressAPI) effectivePolicy(ctx context.Context) (entries []string, enforce bool) {
-	entries = append(entries, defaultEgressAllowlist...)
+	entries = a.mgr.egressBuiltin()
 	if extra, err := a.store.EffectiveAllowlist(ctx); err == nil {
 		entries = append(entries, extra...)
 	}
@@ -130,7 +156,10 @@ func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
 
 // ingest (POST /internal/egress) receives a batch of observations from the
 // egress proxy. Deployment-internal: authenticated by the shared AF_EGRESS_TOKEN bearer
-// (not a user session — it is authGate-exempt). Best-effort: a bad row is skipped.
+// (not a user session — it is authGate-exempt). A malformed row is skipped and the audit
+// insert is best-effort, but a store failure answers 500 so the proxy keeps the batch and
+// retries. A row with an ID is stored once however often it is resent; a row without one,
+// recorded before the failure, is counted again on that retry (at-least-once).
 func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 	if !a.tokenOK(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -142,21 +171,114 @@ func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.Background()
-	day := time.Now().UTC().Format("2006-01-02")
+	clock := time.Now
+	if a.now != nil {
+		clock = a.now
+	}
+	now := clock().UTC()
+	day := now.Format("2006-01-02")
+	// Dedup on id only holds while the row exists, and the purge deletes rows past the
+	// retention window. An event older than the window, or than the floor a purge has
+	// persisted (RecordEgressEvent checks that one, for every CP and every retention setting),
+	// is therefore refused, not stored and not counted: it could be the resend of one already
+	// purged and counted. It is still answered with a 2xx, or the gateway would resend it for
+	// ever.
+	var oldest int64
+	expired := 0
+	var notBefore int64
+	if a.retention > 0 {
+		notBefore = now.Add(-a.retention).UnixMilli()
+	}
+	defer func() {
+		if expired > 0 {
+			log.Printf("egress ingest: refused %d events older than the %s retention window (oldest at %s)",
+				expired, a.retention, time.UnixMilli(oldest).UTC().Format(time.RFC3339))
+		}
+	}()
 	for _, e := range body.Events {
 		host := strings.ToLower(strings.TrimSpace(e.Host))
+		if e.ID != "" {
+			ev, ok := rawEgressEvent(e, host)
+			if !ok {
+				log.Printf("egress ingest: skipping event %q without a source address or time", e.ID)
+				continue
+			}
+			if ev.At < notBefore {
+				if expired == 0 || ev.At < oldest {
+					oldest = ev.At
+				}
+				expired++
+				continue
+			}
+			// Counted under the day it happened, not the day it arrived: a batch the gateway
+			// resends after an outage belongs to the day of the connections.
+			evDay := time.UnixMilli(ev.At).UTC().Format("2006-01-02")
+			inserted, err := a.store.RecordEgressEvent(ctx, evDay, ev, now.UnixMilli())
+			if err != nil {
+				if errors.Is(err, store.ErrEgressEventExpired) {
+					if expired == 0 || ev.At < oldest {
+						oldest = ev.At
+					}
+					expired++
+					continue
+				}
+				log.Printf("egress ingest: record event %s: %v", e.ID, err)
+				http.Error(w, "record failed", http.StatusInternalServerError)
+				return
+			}
+			if inserted && host != "" {
+				a.auditWouldBlock(ctx, evDay, host, e.Allowed)
+			}
+			continue
+		}
 		if host == "" || e.Count <= 0 {
 			continue
 		}
-		_ = a.store.RecordEgress(ctx, day, host, e.Allowed, e.Count)
-		if !e.Allowed && a.dedup != nil && a.dedup.firstToday(day, host) {
-			_ = a.store.InsertAudit(ctx, store.AuditLog{
-				ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
-				Action: "egress.observe", Target: host, Detail: "would-block (log-only)", At: store.NowTS(),
-			})
+		if err := a.store.RecordEgress(ctx, day, host, e.Allowed, e.Count); err != nil {
+			log.Printf("egress ingest: record %s: %v", host, err)
+			http.Error(w, "record failed", http.StatusInternalServerError)
+			return
 		}
+		a.auditWouldBlock(ctx, day, host, e.Allowed)
+	}
+	if body.Dropped > 0 {
+		_ = a.store.InsertAudit(ctx, store.AuditLog{
+			ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
+			Action: "egress.dropped", Target: "egress-proxy",
+			Detail: strconv.Itoa(body.Dropped) + " observations dropped while the CP was unreachable", At: store.NowTS(),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditWouldBlock records the first would-block observation of a host per day.
+func (a egressAPI) auditWouldBlock(ctx context.Context, day, host string, allowed bool) {
+	if allowed || a.dedup == nil || !a.dedup.firstToday(day, host) {
+		return
+	}
+	_ = a.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
+		Action: "egress.observe", Target: host, Detail: "would-block (log-only)", At: store.NowTS(),
+	})
+}
+
+// rawEgressEvent validates a gateway event. The source address and the time are what
+// attribution joins on, so an event missing either cannot be attributed and is refused
+// rather than stored under a guess. A connection with no name (a bare address, no SNI)
+// is still an event: host may be empty.
+func rawEgressEvent(e egressEvent, host string) (store.EgressEvent, bool) {
+	src, err := netip.ParseAddr(strings.TrimSpace(e.Source))
+	if err != nil || e.At <= 0 {
+		return store.EgressEvent{}, false
+	}
+	count := e.Count
+	if count <= 0 {
+		count = 1
+	}
+	return store.EgressEvent{
+		ID: e.ID, At: e.At, Source: src.Unmap().String(), Dest: strings.TrimSpace(e.Dest),
+		Host: host, Allowed: e.Allowed, Count: count,
+	}, true
 }
 
 // stats (GET /api/admin/egress?days=N) serves aggregated egress stats
@@ -201,7 +323,7 @@ func (a egressAPI) allowlistList(w http.ResponseWriter, r *http.Request, _ store
 			"reason": e.Reason, "added_by": e.AddedBy, "added_at": e.AddedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"allowlist": out, "defaults": defaultEgressAllowlist})
+	writeJSON(w, http.StatusOK, map[string]any{"allowlist": out, "defaults": defaultEgressAllowlist, "builtin": a.mgr.cpEgressHosts()})
 }
 
 // allowlistAdd (POST /api/admin/egress/allowlist) adds an ACTIVE entry.

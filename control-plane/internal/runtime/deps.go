@@ -58,6 +58,11 @@ type Config struct {
 	SessionCmd string
 	// ExtraEnv is the shared KEY=VAL env every workspace container gets.
 	ExtraEnv []string
+	// EgressProxyEnv is the proxy variables the CP generated from AF_EGRESS_PROXY_ADDR,
+	// already contained in ExtraEnv. The ECS adapters take this and nothing else from the
+	// deployment env: ExtraEnv also holds the operator's WS_ENV, which they deliberately do
+	// not pass on, and a WS_ENV entry named https_proxy must not slip through by its key.
+	EgressProxyEnv []string
 	// AuthMode is "dev" | "proxy". The native adapter refuses anything but "dev".
 	AuthMode string
 	// RootDataDir re-bases a workspace's on-disk root onto the CURRENT data root.
@@ -74,6 +79,9 @@ type Config struct {
 	// OnSlotAutoReplace is told when ecs-ec2 moved a home off a slot below the launch
 	// template's $Latest on its own (#1934), so the CP can audit it. nil = not recorded.
 	OnSlotAutoReplace func(context.Context, SlotAutoReplace)
+	// OnAddressesReleasing is told the addresses a docker or Kubernetes workspace holds just
+	// before Stop takes them away (egress attribution). nil = not recorded.
+	OnAddressesReleasing AddressReleaseHook
 }
 
 // rootedDataDir is the adapters' way in. A nil RootDataDir means "the stored path is

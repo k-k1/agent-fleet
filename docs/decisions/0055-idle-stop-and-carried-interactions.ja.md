@@ -233,3 +233,76 @@ opencode 1.18）を tmux ペインで動かし、無出力のツール `sleep 12
   実行中のツールプロセスは生存信号に数えない。ペインが 1 時間静止したままの無出力ツールは失効し得て、
   スピナーが動き続ける固まったセッションは無期限に抱える（安全側）。また現在の poll でペインを取得
   できなかった場合は古い経過秒ではなく「回答なし」を返す。
+
+## 注記（2026-10-17）: muse・lcpp・shell・ssm には上限をかけるべき Terminal 行が無い（#1943）
+
+2026-10-09 の追記では Terminal の muse・lcpp・shell・ssm が未計測のままだった。コードを読むと、
+どれも busy な Terminal 行になり得ないため、計測すべきペイン・ツールの信号自体が存在しない。
+
+- shell と ssm: `shellAgent.WireLive` / `ssmAgent.WireLive`（`sessionx/agent_shell_ssm.go`）は
+  `LiveInfo{Resumable: true}` を返すので、一覧の `State` は常に空。`/input` が書く楽観的な
+  「working」印（`markSessionWorking`、kind で絞っていない）はこの 2 kind では読み戻されない。
+  busy になれない行は busy 経路で Workspace を抱えない。
+- muse と lcpp: `Caps.ManagedOnly` と `BuildLaunch` の無条件拒否（ADR 0093 決定 2、ADR 0095）。
+  作成は既定で Managed、Terminal への切替は拒否される（`session_handlers.go`、`session_driver.go`）。
+  Managed 行としてしか存在せず、それは #1942 の範囲。計測はしていない（lcpp はローカル LLM が必要、
+  muse には再描画するペインが無い）。
+
+`progressTrusted` は変更せず、4 kind とも false のまま（従来の安全側の挙動）。前提はテストで固定した
+（`progress_untrusted_kinds_test.go`）: shell/ssm は「working」印が保存されていても busy を一覧に
+出さない、muse/lcpp は managed 専用のまま、4 kind とも全信号が古く長い無出力ツールがある行は
+進捗の回答を返さない。いずれかに Terminal 経路や busy 状態が加わったら、この注記を開き直して
+個別に計測すること。
+
+## 追記（2026-10-17）: 上限が managed の cursor・kiro・codex・opencode に届く（#1942）
+
+managed セッションにはペインが無いので、前 2 つの追記で使った信号はありません。Agent 自身の
+managed ドライバ（本物の spawn / Resume / Send の経路。CLI が許す限り使い捨ての HOME）でランタイムを動かし、
+モデルに無出力の `sleep 120` を実行させて 5 秒ごとに観測しました。
+
+| kind（バージョン） | ランタイムのメッセージは新しいままか | それに代わる信号 | 観測 |
+|---|---|---|---|
+| cursor（cursor-agent 2026.10.16） | いいえ。t=5 秒に ACP 通知が 22 件、次は t=125 秒 | ACP 子プロセスの下にある、自分が session leader のツールプロセス（`procx.ToolProcessIn`） | t=5〜120 秒の 24 サンプルすべてで有り、前後は無し |
+| kiro（kiro-cli 2.31.0） | いいえ。通知は合計 3 件で、最後はツール終了の 112 秒前 | ランタイムの下にあり、ランタイムと同じプロセスグループにいる（session leader ではない）プロセス（`procx.GroupToolIn`）。leader 規則は終始 false | sleep 中の 24 サンプルすべてで有り、前後は無し |
+| codex（0.163.0） | はい。モデルが実行中のコマンドを polling するため、スレッドの item の started / completed が 30〜35 秒ごとに届く | そのセッションのスレッドを名指しする最後の通知と、開始済みで未完了の item（コマンド自身の item は開始時に開き、sleep 後に閉じた） | 40 秒を超える間隔なし |
+| opencode（2.0.32） | いいえ。120 秒間まったく無し。サーバ全体のストリームも同様（heartbeat も無い） | `session.tool.called` ... `session.tool.success` の組（call id で対応付け） | sleep の間ずっと呼び出しが開いたまま |
+
+- 決定: managed の cursor・kiro・codex・opencode が `progressAgeSec` を報告する。Agent は、status ファイルの
+  mtime とドライバ自身の信号（`agents.ManagedProgressReporter`）の新しい方を採る。ドライバの信号は、そのセッションに
+  関するランタイムの最後のメッセージ、または上表の信号が「ツール実行中」と言う間は「いま」。
+  生きたハンドルが無い、またはランタイムから一度も聞いていないときは答えず、従来どおり抱える。
+  1 時間の失効と CP 側は変えない。
+- 「観測できない」を「ツールが無い」とは読まない。プロセス表にランタイムの子プロセスが無ければ（/proc の読み取り失敗を含む）
+  答えない。cursor と kiro はプロトコル上の未完了ツール呼び出し（`tool_call` から `completed` / `failed` まで）も追う。
+  MCP サーバのツールや常駐ヘルパ内の処理はプロセス表に何も残さないため。codex は未完了の item、opencode は未完了の
+  ツール呼び出しを追う。いずれの集合も、新しい接続・リプレイ・adopt したデーモン・ランタイム喪失の後は不明とし、
+  生きたストリームでターン境界を見るまで不明のまま（行は抱え続ける）。opencode は `session.tool.progress` からも呼び出しを復元する。
+- codex と opencode は 1 つのデーモンを全セッションで共有するため、プロセス表からツールを帰属させられない。
+  代わりにイベントストリームを使う。opencode の信号は 2.x だけにあり、1.x には刻印せず従来どおり抱える。
+  終了イベントを取りこぼしたツール呼び出しは、そのステップか実行が終わった時点で捨てるので、ターンを超えて
+  行を留め続けることはない。
+- 信号を実測できなかったため対象外: managed の muse（実測した Workspace でログインしていない）、lcpp（プロセス内
+  エンジンで、メッセージを返すランタイムが無い）、copilot（Copilot にログインしていない）。これらは従来どおり
+  抱え続ける。ターミナルの muse / lcpp / shell / ssm は #1943。#1942 はこれらのために開いたままにする。
+- 注意: kind ごとにモデルも CLI のバージョンも 1 つだけの実測。cursor と kiro はローカル shell ツールだけを実測しており、
+  未完了呼び出しの追跡はプロトコルに従うが外部 MCP ツールでは実測していない。cursor・kiro・opencode は固まったツールと長いツールを
+  区別できないので、そのツールが生きている間は抱える（安全側）。CLI のバージョンを上げるときは再実測する。
+
+## 追記（2026-10-18）: バックグラウンド作業がコンテナを抱える時間に上限を置く（#2338）
+
+2026-10-07 の追記で `backgroundBusy` は進捗の失効から除外され、上限が一切無くなっていた。検出器はジョブとサーバを区別
+できない。開発サーバのラッパー shell（`bash -> npm -> vite`、Gradle クライアント JVM）はサーバが動く限り生き続け、CPU
+時間でも区別できない（アイドルの Spring Boot も多少は CPU を使う）。そのため `npm run dev` を起動してアイドルになった
+セッションは、誰かが止めるまで Workspace を抱え続けた。
+
+- 決定: Agent は `backgroundBusy` を報告する全 kind について、`backgroundSince`（`backgroundBusy` を最初に観測した poll。
+  メモリ上、false になったら消す）と `backgroundAgeSec`（Agent の時計での経過秒）を載せる。CP は両方を中継し、
+  `background_hold_max` を超えた `backgroundBusy` 行を、失効した working 行と同じ `activityUnknown` に分類する。
+  Workspace を抱えず、tier 1 も畳まない（従来畳まなかった行を新たに halt することは無い）。keep-awake ピンは従来どおり
+  最初に判定し、上限の対象にならない。本当に長いジョブを残す手段はピンである。
+- `background_hold_max` はテナントごとの上限（`""` = デプロイ既定 `AF_BACKGROUND_HOLD_MAX`、2h。`0` = 無制限）。経過秒が
+  無い（古い Agent）場合は従来どおり抱える。アイドル時計とプレゼンスは変えないので、使われているサーバは残る。
+- 予報の `background` holder は `since` と `lapseAt` を持ち、reaper と同じ `backgroundLapsed` 述語を通る（決定 11）。
+  ヒートマップのサンプラーも同じ述語を使う。
+- Agent が再起動すると期間は最初からになる。再起動のたびに上限がリセットされるので、上限より短い間隔で再起動が続けば保持は延び続けうる。
+- 未実施: メンバー向けバッジ、および再開時に「アイドル停止でバックグラウンドタスクが終了した」ことをセッションへ伝えること。

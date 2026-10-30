@@ -17,6 +17,7 @@ import { openRepoScm } from "../scm/open.ts";
 import { openSharedSession } from "../sharing/open.ts";
 import { receivedOfferState } from "../sharing/handoffStore.ts";
 import { useSchedulesStore } from "../schedules/store.ts";
+import { useSettingsUI } from "../settings/store.ts";
 import { destinationShown, opensConversation, unseenConversationEventIDs, unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 import { notificationEffectOn, notificationRow } from "./effects.ts";
@@ -207,7 +208,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     // Unshared or archived while the recipient's launch still holds it (#2058): the shared view
     // has nothing to accept, and the give-back lives in the inbox.
     if (state === "recovery") {
-      toast(tr("noti.handoff_recovery", { inbox: tr("handoff.inbox_title") }), { kind: "warn" });
+      toast(tr("noti.handoff_recovery", { inbox: tr("inbox.handoffs") }), { kind: "warn" });
       return { opened: false, handoffClosed: true };
     }
     openSharedSession(n.payload.catalogId, split);
@@ -219,6 +220,11 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // resolution below, which would end in an unrelated "session not in the list" warning.
   if (n.target.type === "schedule" && n.target.id) {
     useSchedulesStore.getState().revealSchedule(n.target.id);
+    return { opened: true };
+  }
+  // The background memory review's proposals are decided in one place (ADR 0117 decision 6).
+  if (n.kind === "memory-review") {
+    useSettingsUI.getState().openSettings("memory:changes");
     return { opened: true };
   }
   // Anything left whose target is not a session has nowhere to go, and must not fall through:

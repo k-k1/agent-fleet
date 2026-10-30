@@ -29,5 +29,5 @@ func TestCopilotTUIMirrorContract(t *testing.T) {
 	t.Setenv("COPILOT_HOME", filepath.Join(home, ".copilot"))
 	t.Setenv("COPILOT_GITHUB_TOKEN", token)
 
-	runTUIMirrorContract(t, tuiMirrorContractSpec{kind: session.KindCopilot, agent: copilot.New()})
+	runTUIMirrorContract(t, tuiMirrorContractSpec{kind: session.KindCopilot, agent: copilot.New(), models: copilot.Models})
 }

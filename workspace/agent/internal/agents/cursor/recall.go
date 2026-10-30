@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -24,19 +25,73 @@ import (
 // no prompt after it is lost by cursor itself), `mode` the moment shift+tab changes it, and
 // a resume without `--model` / `--plan` restores both — while passing them wins.
 func (agentImpl) RecallSettings(m session.Meta) agents.RecalledSettings {
-	chatID := sids.Read(session.UUID(m.Dir, m.Name))
-	if chatID == "" {
-		return agents.RecalledSettings{}
-	}
-	hits, _ := filepath.Glob(filepath.Join(Home(), "chats", "*", chatID, "store.db"))
-	if len(hits) == 0 {
-		return agents.RecalledSettings{}
-	}
-	st, ok := readChatMeta(hits[0])
+	st, ok := storedChatMeta(m)
 	if !ok {
 		return agents.RecalledSettings{}
 	}
 	return recallFrom(st, m.Model, cachedModelIDs())
+}
+
+// RecordedModel is the model id store.db holds for the chat, as written ("default" read as
+// "auto"), or "" when nothing is recorded. Unlike RecallSettings it is not mapped through the
+// catalog or the meta, so a contract can compare what cursor itself kept with what was
+// requested.
+func (agentImpl) RecordedModel(m session.Meta) string {
+	st, ok := storedChatMeta(m)
+	if !ok {
+		return ""
+	}
+	return recordedModelOf(st)
+}
+
+// RecordedModelMissing says why RecordedModel is empty: no store.db yet, an unreadable one, or
+// a meta row without lastUsedModel (its key names are listed; the values are never read out,
+// the row holds the chat's blob key). "" when a model is recorded.
+func (agentImpl) RecordedModelMissing(m session.Meta) string {
+	st, exists, ok := chatStore(sids.Read(session.UUID(m.Dir, m.Name)))
+	return recordedMissingWhy(st, exists, ok)
+}
+
+func recordedMissingWhy(st chatMeta, exists, ok bool) string {
+	switch {
+	case !exists:
+		return "no store.db for the chat"
+	case !ok:
+		return "store.db could not be read"
+	case recordedModelOf(st) != "":
+		return ""
+	}
+	return "store.db meta has no lastUsedModel; keys: " + strings.Join(st.Keys, ",")
+}
+
+func recordedModelOf(st chatMeta) string {
+	if st.LastUsedModel == "default" {
+		return "auto"
+	}
+	return st.LastUsedModel
+}
+
+func storedChatMeta(m session.Meta) (chatMeta, bool) {
+	return chatMetaFor(sids.Read(session.UUID(m.Dir, m.Name)))
+}
+
+func chatMetaFor(chatID string) (chatMeta, bool) {
+	st, _, ok := chatStore(chatID)
+	return st, ok
+}
+
+// chatStore reads the chat's store.db: exists is false while cursor has none for it (a chat
+// that has not started yet), ok is false when there is none or it could not be read.
+func chatStore(chatID string) (st chatMeta, exists, ok bool) {
+	if chatID == "" {
+		return chatMeta{}, false, false
+	}
+	hits, _ := filepath.Glob(filepath.Join(Home(), "chats", "*", chatID, "store.db"))
+	if len(hits) == 0 {
+		return chatMeta{}, false, false
+	}
+	st, ok = readChatMeta(hits[0])
+	return st, true, ok
 }
 
 // chatMeta is the part of store.db's meta row this reads. The row also holds the chat's
@@ -44,6 +99,8 @@ func (agentImpl) RecallSettings(m session.Meta) agents.RecalledSettings {
 type chatMeta struct {
 	Mode          string `json:"mode"`
 	LastUsedModel string `json:"lastUsedModel"`
+	// Keys are the field names the row carries, for a diagnostic only.
+	Keys []string `json:"-"`
 }
 
 func readChatMeta(path string) (chatMeta, bool) {
@@ -64,6 +121,12 @@ func readChatMeta(path string) (chatMeta, bool) {
 	if json.Unmarshal(raw, &st) != nil {
 		return chatMeta{}, false
 	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	for k := range fields {
+		st.Keys = append(st.Keys, k)
+	}
+	sort.Strings(st.Keys)
 	return st, true
 }
 

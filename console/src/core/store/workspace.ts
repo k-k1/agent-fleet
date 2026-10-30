@@ -76,6 +76,10 @@ interface WorkspaceStore {
    * (control-plane/internal/runtime/browser_support.go); the browser entry points read it
    * through features/browser/availability.ts. */
   browserUnavailable: string;
+  /** Where this workspace's agent serves the user guide from when that is not the image's
+   * fixed path (native runtime without a rootfs; control-plane workspacePayload), or "" for
+   * the fixed path. Read through lib/guideDocs.ts. */
+  docsRoot: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
    * "…" transition is never clobbered — while busy only bootPhase updates (the
@@ -88,6 +92,7 @@ interface WorkspaceStore {
     slotReplace?: boolean;
     homeWipeFailed?: string;
     browserUnavailable?: string;
+    docsRoot?: string;
   }): void;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -115,6 +120,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   reason: "",
   homeWipeFailed: "",
   browserUnavailable: "",
+  docsRoot: "",
 
   async refresh() {
     const stamp = pushStamp("workspace");
@@ -145,6 +151,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         reason: "",
         homeWipeFailed: w.homeWipeFailed || "",
         browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "",
+        docsRoot: typeof w.docsRoot === "string" ? w.docsRoot : "",
       });
     } catch {
       set({ state: "unknown" }); // network drop: keep the previous reason; the next poll settles it
@@ -154,7 +161,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   applyPush(w) {
     const cur = get().state;
     // A property of the runtime, not of the lifecycle, so it lands even while busy.
-    set({ browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "" });
+    set({
+      browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "",
+      docsRoot: typeof w.docsRoot === "string" ? w.docsRoot : "",
+    });
     if (wsBusy(cur)) {
       if (cur === "starting…" || cur === "recreating…") set({ bootPhase: w.bootPhase || "" });
       return;
@@ -206,10 +216,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // poll skips mid-stop — otherwise a second click re-issues the stop / a poll
     // clobbers the state during the multi-second docker stop.
     set({ state: "stopping…" });
+    // A refusal comes back as {error} JSON (another lifecycle operation holds the workspace):
+    // say so, or the confirmation closes and the state just returns to what it was.
     try {
-      await api("api/workspace/stop", { method: "POST" });
+      const r = await api("api/workspace/stop", { method: "POST" });
+      if (r?.error) toast(errText(r.error) || t("wsbar.stop_failed"), { kind: "error" });
     } catch {
-      /* settled by the refresh below */
+      toast(t("wsbar.stop_failed"), { kind: "error" }); // no answer: the refresh below shows the real state
     }
     await get().refresh();
   },

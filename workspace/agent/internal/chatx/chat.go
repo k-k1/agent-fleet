@@ -217,19 +217,23 @@ type ChatConversation struct {
 	// never persisted). Used by the auto-turn model (Settings > Assistant): only the
 	// boilerplate turns that process a report run on a lightweight model, while user turns
 	// and compaction summary turns keep the conversation's own model. The caller
-	// (runReportAutoTurn) sets it right before send and clears it right after. claude only
-	// (via chatModel — codex/opencode read c.Model directly).
+	// (runReportAutoTurn) raises it around the send and the routing decisions for that send,
+	// and clears it before anything else. claude only: chatModelFor ignores it for any other
+	// kind, so it may stay raised while the turn moves to another backend.
 	// Note: the prompt cache is per model, so an overridden turn does not ride the
 	// conversation model's cache — auto turns are sporadic and cold anyway (measured), so
 	// the unit-price gain dominates.
 	modelOverride string
+	// turnStart is when the current provider call began (StartTurn). Never persisted. A
+	// success reported for this call does not lift a park set after it (routehealth).
+	turnStart time.Time
 }
 
 // StartTurn resets the per-turn scratch state. Called at the top of every provider
 // send/sendStream — including the ones that end up not reporting a model at all, so a
 // previous call in the same request (an auto-compaction turn, a retry after recovery)
 // cannot leak its model into this turn's message.
-func (c *ChatConversation) StartTurn() { c.TurnModel = "" }
+func (c *ChatConversation) StartTurn() { c.TurnModel, c.turnStart = "", routeNow() }
 
 // NoteTurnModel records the model that actually drove this turn. Providers call it at
 // their success point only.
@@ -494,8 +498,8 @@ func chatModel(c *ChatConversation) string {
 // contract implemented here is what the settings screen promises ("If priority falls back to
 // another CLI, that CLI uses its row's model"). A provider only has to pass its own kind.
 func chatModelFor(c *ChatConversation, kind string) string {
-	if c.modelOverride != "" {
-		return c.modelOverride // auto-turn model (the caller sets it on claude turns only)
+	if c.modelOverride != "" && kind == session.KindClaude {
+		return c.modelOverride // the auto-turn model is claude's alone
 	}
 	if c.Agent != "" && kind != c.Agent {
 		return ResolveChatModel(kind, "")

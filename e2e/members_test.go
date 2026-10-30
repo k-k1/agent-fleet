@@ -767,28 +767,6 @@ func randHex(t *testing.T, n int) string {
 	return hex.EncodeToString(b)
 }
 
-// freePortRange returns the first of n consecutive ports that are free right now.
-func freePortRange(t *testing.T, n int) int {
-	t.Helper()
-	for try := 0; try < 50; try++ {
-		base := freePort(t)
-		ok := true
-		for p := base + 1; p < base+n && ok; p++ {
-			l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
-			if err != nil {
-				ok = false
-				break
-			}
-			l.Close()
-		}
-		if ok {
-			return base
-		}
-	}
-	t.Fatalf("no %d consecutive free ports found", n)
-	return 0
-}
-
 // decode sends a request as m, fails unless the status is want, and unmarshals the body
 // into out.
 func decode(t *testing.T, m *member, method, path string, body any, want int, out any) {

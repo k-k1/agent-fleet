@@ -1,7 +1,6 @@
 ---
 audience: "someone changing the workspace agent, or adding an agent kind"
 source_of_truth: "the code (this is a map and a statement of intent)"
-updated: "2026-09"
 ---
 
 # 04. The workspace agent
@@ -231,7 +230,7 @@ and each declares its process model in `Capabilities.ProcessModel`
 - **The "Managed by default" users see comes from the callers.** The Console's launch
   UI starts a kind whose registry entry has `managedDriver: true`
   (`console/src/agents/registry.ts`) as managed. The in-container MCP `create_session`
-  sends `managed` for codex, opencode, copilot, cursor and kiro (`mcpStdioCall`), and
+  sends `managed` for codex, opencode, copilot, cursor and kiro (`create_session` in `mcp_fleet_spawn.go`), and
   so do the CP's own callers: its MCP `create_session` (`control-plane/internal/mcpsrv/mcp.go`)
   and the scheduler's `injectDriver` (`control-plane/scheduler_wake.go`). A bare
   `POST /sessions` with no driver gets `tui`.
@@ -460,9 +459,11 @@ The same approach as cmux.
   - claude takes it through `--mcp-config`, codex through `-c mcp_servers.af.*`,
     opencode through `OPENCODE_CONFIG`, and agy through its server list. cursor, lcpp
     and muse chats get none.
-  - **Read-only by default** (`mcpStdioTools`). `--write` adds the writing tools
-    (`mcpStdioWriteTools`): starting, steering, stopping and deleting sessions, memos,
-    schedules, browser control, and cleanup.
+  - **Read-only by default**. `--write` adds the writing tools: starting, steering,
+    stopping and deleting sessions, memos, schedules, browser control, and cleanup.
+  - Each tool is one `toolSpec` in its family's file (`internal/mcpx/mcp_toolspec.go`): its
+    schema per surface, its call-side gate, how its arguments are decoded and its handler.
+    The advertised lists and the dispatch are derived from it.
   - **The gate is the visible tool set, not a permission prompt.** This is deliberately
     a separate implementation and scope from the CP's MCP endpoint.
 - **A second, narrower server is materialised into the interactive CLIs** as the
@@ -717,7 +718,9 @@ the split ([09](09-deploy.md)).
     nothing is mounted, so it is the only root there.
 
   `JAVA_HOME` follows the Settings → Toolchains choice, and the lookup prefers the
-  workspace's own architecture (`jvmSearchDirs`). Node is installed per version by
+  workspace's own architecture (`jvmSearchDirs`). A major present in both roots resolves
+  to the newer patch, so a re-run of `install-jdk` updates it (`javaHomeFor`; the
+  entrypoint asks `workspace-agent java-home` rather than repeating the rule). Node is installed per version by
   `workspace-agent install-node` into nvm's layout.
 - **Layer order**: the heavy, rarely-changing layers come first. The frequently-changing
   copies (the agent binary, the entrypoint, the plugin, the notes) come last, so a

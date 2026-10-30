@@ -107,6 +107,30 @@ func StaleAFServerName(name string, keep map[string]bool) bool {
 	return !keep[name] && afNameRE.MatchString(name)
 }
 
+// StaleLegacyAFEntry reports whether an entry registered under the bare name `af` is af's
+// own leftover from before names rotated, so a materializer may remove it. command and args
+// are the entry's launch line, flattened by the caller from whatever shape its CLI uses.
+//
+// The bare name is a name users and repositories may legitimately use for their own server,
+// and the ledger has lost it, so the name alone proves nothing: only an entry that runs THIS
+// Agent's binary as `mcp-stdio` is af's. Anything else under `af` is left strictly alone.
+// Left in place, the entry launches a second stdio server (old flags, fewer tools) beside the
+// rotated one in every session.
+func StaleLegacyAFEntry(name string, keep map[string]bool, command string, args []string) bool {
+	if name != BuiltinAF || keep[name] || len(args) == 0 || args[0] != "mcp-stdio" {
+		return false
+	}
+	return isAgentBinary(command)
+}
+
+// isAgentBinary reports whether command is a path this Agent runs from: the running
+// executable, the one written into configs, or the installed one. A file merely NAMED
+// workspace-agent elsewhere is someone else's — the name alone proves nothing.
+func isAgentBinary(command string) bool {
+	return command != "" && (command == paths.ConfigExePath() ||
+		command == paths.ExePath() || command == paths.InstalledExePath())
+}
+
 // afClientToolRE matches the name a CLIENT sees for one of af's own tools. A client
 // namespaces an MCP tool by its server, and the server name is what rotates every boot, so
 // the transcript layer cannot compare against a constant.

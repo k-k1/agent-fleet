@@ -149,3 +149,11 @@
   padding: 12px 14px;
   overflow: auto;
 }
+/* Loopback URL wired to the workspace preview: opens the port in the preview (↗ would promise a
+   plain new tab). A port nothing listens on is dimmed but still opens. */
+.markdown a.preview-link {
+  cursor: pointer;
+}
+.markdown a.preview-link.pv-idle {
+  opacity: 0.55;
+}

@@ -40,6 +40,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useWorkItemStore } from "../workitems/store.ts";
+import { setSetting, getSettings } from "../../lib/settings.ts";
 import { resetWaitingLedgerForTest } from "../sessions/waiting.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -271,6 +272,36 @@ describe("command palette — ticket references (#1665)", () => {
     expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("busy");
   });
 
+  it("pulls the highlight back into range when its row disappears and the list shrinks below it", () => {
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("note1"), session("note2"), session("note3")] });
+    });
+    mount();
+    type("note");
+    const input = document.querySelector<HTMLInputElement>(".cp-input")!;
+    const key = (k: string) => act(() => void input.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
+    key("ArrowDown");
+    key("ArrowDown");
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note3");
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("note1")] });
+    });
+    expect(titles()).toEqual(["note1"]);
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+    // An emptied list must still highlight the first row once rows come back.
+    act(() => {
+      useSessionsStore.setState({ sessions: [] });
+    });
+    expect(titles()).toEqual([]);
+    act(() => {
+      useSessionsStore.setState({ sessions: [session("note1")] });
+    });
+    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+    opened.length = 0;
+    key("Enter");
+    expect(opened).toEqual(["note1"]);
+  });
+
   it("does not let a prefix of the number match", () => {
     mount();
     type("#166");
@@ -417,6 +448,181 @@ describe("command palette — session families (#1887)", () => {
       type("zanzibar");
       expect(titles().sort()).toEqual(["Zanzibar orchestrator", "newWaitingChild", "oldWorkingChild"]);
       expect(rowOf("newWaitingChild").querySelector(".cp-sess-parent")?.textContent).toContain("Zanzibar orchestrator");
+    });
+  });
+});
+
+describe("command palette — reverse mode chord and paging (#2412)", () => {
+  // Modes offered here: sessions, command, changed, file, talk (sfiles needs an active session).
+  const activeTab = () => document.querySelector(".cp-mode.on")?.textContent;
+  const tabs = () => [...document.querySelectorAll(".cp-mode")].map((el) => el.textContent);
+  const press = (init: KeyboardEventInit & { isComposing?: boolean }) =>
+    act(() => {
+      document.querySelector<HTMLInputElement>(".cp-input")!.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+    });
+  const pressCancelable = (init: KeyboardEventInit) => {
+    const ev = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+    act(() => {
+      document.querySelector<HTMLInputElement>(".cp-input")!.dispatchEvent(ev);
+    });
+    return ev;
+  };
+  const chordP = { code: "KeyP", key: "p", ctrlKey: true };
+  const selTitle = () => document.querySelector(".cp-item.sel .cp-title")?.textContent;
+
+  afterEach(() => setSetting("keybindings", {}));
+
+  it("Ctrl+Shift+P goes to the previous mode and wraps from the first to the last", () => {
+    mount();
+    const all = tabs();
+    expect(activeTab()).toBe(all[0]);
+    const ev = pressCancelable({ ...chordP, shiftKey: true });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(activeTab()).toBe(all[all.length - 1]);
+    pressCancelable({ ...chordP, shiftKey: true });
+    expect(activeTab()).toBe(all[all.length - 2]);
+  });
+
+  it("Ctrl+P still goes forward", () => {
+    mount();
+    const all = tabs();
+    press(chordP);
+    expect(activeTab()).toBe(all[1]);
+  });
+
+  it("does not offer the session-files mode in either direction without an active session", () => {
+    mount();
+    expect(tabs()).toHaveLength(5);
+    for (let n = 0; n < 5; n++) press({ ...chordP, shiftKey: true });
+    expect(activeTab()).toBe(tabs()[0]);
+  });
+
+  it("derives the reverse chord from a rebound palette chord", () => {
+    setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "alt+o" });
+    mount();
+    const all = tabs();
+    // The old chord no longer cycles; the rebound one does, and so does its Shift twin.
+    press({ ...chordP, shiftKey: true });
+    expect(activeTab()).toBe(all[0]);
+    press({ code: "KeyO", key: "o", altKey: true, shiftKey: true });
+    expect(activeTab()).toBe(all[all.length - 1]);
+    press({ code: "KeyO", key: "o", altKey: true });
+    expect(activeTab()).toBe(all[0]);
+  });
+
+  it("has no reverse chord when the bound chord already contains Shift, and forward keeps working", () => {
+    setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "mod+shift+k" });
+    mount();
+    const all = tabs();
+    const rev = pressCancelable({ code: "KeyK", key: "k", ctrlKey: true, shiftKey: true, altKey: true });
+    expect(rev.defaultPrevented).toBe(false);
+    expect(activeTab()).toBe(all[0]);
+    press({ code: "KeyK", key: "k", ctrlKey: true, shiftKey: true });
+    expect(activeTab()).toBe(all[1]);
+    press({ key: "Tab", shiftKey: true });
+    expect(activeTab()).toBe(all[0]);
+  });
+
+  describe("mode hint", () => {
+    const hint = () => document.querySelector(".cp-mode-hint")?.textContent;
+
+    it("names the bound chord and offers Shift: back", () => {
+      mount();
+      expect(hint()).toContain("Tab / Ctrl+P to switch (Shift: back)");
+    });
+
+    it("follows a rebound chord", () => {
+      setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "alt+o" });
+      mount();
+      expect(hint()).toContain("Tab / Alt+O to switch (Shift: back)");
+      expect(hint()).not.toContain("Ctrl+P");
+    });
+
+    it("drops Shift: back when the bound chord already has Shift", () => {
+      setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "mod+shift+k" });
+      mount();
+      expect(hint()).toContain("Tab / Ctrl+Shift+K to switch");
+      expect(hint()).not.toContain("Shift: back");
+    });
+
+    it("names only Tab when the palette chord is unbound", () => {
+      setSetting("keybindings", { ...getSettings().keybindings, "app.palette": "" });
+      mount();
+      expect(hint()).toContain("Tab to switch");
+      expect(hint()).not.toContain("Ctrl");
+    });
+  });
+
+  describe("PageUp / PageDown", () => {
+    // jsdom has no layout: 5 rows fit (100px list / 20px row).
+    const proto = HTMLElement.prototype;
+    const savedClient = Object.getOwnPropertyDescriptor(proto, "clientHeight");
+    const savedOffset = Object.getOwnPropertyDescriptor(proto, "offsetHeight");
+    beforeEach(() => {
+      Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => 100 });
+      Object.defineProperty(proto, "offsetHeight", { configurable: true, get: () => 20 });
+      useSessionsStore.setState({
+        sessions: Array.from({ length: 12 }, (_, i) => session("s" + String(i).padStart(2, "0"), { state: "working" })),
+      });
+      useNotificationStore.setState({ items: [] });
+    });
+    afterEach(() => {
+      if (savedClient) Object.defineProperty(proto, "clientHeight", savedClient);
+      else delete (proto as unknown as Record<string, unknown>).clientHeight;
+      if (savedOffset) Object.defineProperty(proto, "offsetHeight", savedOffset);
+      else delete (proto as unknown as Record<string, unknown>).offsetHeight;
+    });
+    const selIndex = () => titles().indexOf(selTitle() ?? "");
+
+    it("moves the highlight by one visible page and clamps at both ends", () => {
+      mount();
+      expect(selIndex()).toBe(0);
+      const ev = pressCancelable({ key: "PageDown" });
+      expect(ev.defaultPrevented).toBe(true);
+      expect(selIndex()).toBe(5);
+      press({ key: "PageDown" });
+      expect(selIndex()).toBe(10);
+      press({ key: "PageDown" });
+      expect(selIndex()).toBe(11);
+      press({ key: "PageUp" });
+      expect(selIndex()).toBe(6);
+      press({ key: "PageUp" });
+      press({ key: "PageUp" });
+      expect(selIndex()).toBe(0);
+    });
+
+    it("opens the row PageDown landed on with Enter", () => {
+      mount();
+      const fifth = titles()[5];
+      press({ key: "PageDown" });
+      opened.length = 0;
+      press({ key: "Enter" });
+      expect(opened).toEqual([fifth]);
+    });
+
+    it("moves by at least one row when the list has no measurable height", () => {
+      Object.defineProperty(proto, "clientHeight", { configurable: true, get: () => 0 });
+      mount();
+      press({ key: "PageDown" });
+      expect(selIndex()).toBe(1);
+    });
+
+    it("leaves modified Page keys to the browser / OS", () => {
+      mount();
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+        const ev = pressCancelable({ key: "PageDown", ...mod });
+        expect(ev.defaultPrevented).toBe(false);
+      }
+      expect(selIndex()).toBe(0);
+    });
+
+    it("does nothing while an IME composition is in progress", () => {
+      mount();
+      const ev = pressCancelable({ key: "PageDown", isComposing: true });
+      expect(ev.defaultPrevented).toBe(false);
+      expect(selIndex()).toBe(0);
+      pressCancelable({ ...chordP, shiftKey: true, isComposing: true });
+      expect(activeTab()).toBe(tabs()[0]);
     });
   });
 });
