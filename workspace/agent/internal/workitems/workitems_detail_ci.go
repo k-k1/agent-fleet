@@ -25,7 +25,9 @@ import (
 
 // githubFoldExtraChecks adds commit statuses, unfinished workflow runs and unreported required
 // contexts to out.Checks, which already holds the folded check runs (checkRunsBody).
-func githubFoldExtraChecks(token, base, key, head string, out *workItemDetailOut, checkRunsBody []byte) {
+func githubFoldExtraChecks(
+	token, base, key, head string, out *workItemDetailOut, checkRunsBody []byte,
+) {
 	reported, suites, complete := githubCheckRunNames(checkRunsBody)
 	c := out.Checks
 	sha := url.PathEscape(head)
@@ -49,7 +51,8 @@ func githubFoldExtraChecks(token, base, key, head string, out *workItemDetailOut
 	}
 	get(&statusBody, fmt.Sprintf("%s/commits/%s/status?per_page=%d", base, sha, workItemDetailChecks))
 	if judge {
-		get(&runsBody, fmt.Sprintf("%s/actions/runs?head_sha=%s&per_page=%d", base, sha, workItemDetailChecks))
+		runsURL := fmt.Sprintf("%s/actions/runs?head_sha=%s&per_page=%d", base, sha, workItemDetailChecks)
+		get(&runsBody, runsURL)
 		if out.BaseBranch != "" {
 			esc := strings.ReplaceAll(url.PathEscape(out.BaseBranch), "%2F", "/")
 			get(&rulesBody, fmt.Sprintf("%s/rules/branches/%s", base, esc))
@@ -121,7 +124,9 @@ func githubFoldExtraChecks(token, base, key, head string, out *workItemDetailOut
 // belong to.
 //
 // complete is false when the page read is not the whole list (total_count says more exist).
-func githubCheckRunNames(body []byte) (names map[string]bool, suites map[int64]bool, complete bool) {
+func githubCheckRunNames(
+	body []byte,
+) (names map[string]bool, suites map[int64]bool, complete bool) {
 	names, suites = map[string]bool{}, map[int64]bool{}
 	var cr struct {
 		TotalCount int `json:"total_count"`
