@@ -211,7 +211,7 @@ function applicable(file: SshFile, name: string): { hits: Hit[]; barrier: boolea
       const pos = b.patterns.filter((p) => !p.startsWith("!"));
       const negated = b.patterns.some((p) => p.startsWith("!") && sshGlob(p.slice(1), name));
       if (negated || !pos.some((p) => sshGlob(p, name))) continue;
-      own = pos.some((p) => !hasSshWildcard(p) && p.toLowerCase() === name.toLowerCase());
+      own = pos.some((p) => !hasSshWildcard(p) && p === name);
     }
     for (const l of b.lines) {
       if (l.key === "include") barrier = true;
@@ -241,6 +241,8 @@ function evaluate(file: SshFile, name: string): Pick<SshEntry, "reason" | "insta
     // %h is the HostName after its own expansion, else the name as typed.
     const hn = first("hostname");
     let host = name;
+    // Without a HostName here, a later Match or Include could still supply one.
+    if (!hn && barrier) return { ...none, reason: { code: "barrier" } };
     if (hn) {
       if (hn.afterBarrier) return { ...none, reason: { code: "barrier" } };
       if (!hn.own) return { ...none, reason: { code: "inherited", key: "HostName" } };
@@ -268,6 +270,14 @@ export function readSshConfig(file: SshFile): NativeSsh {
     kind,
     reason,
   });
+  // Count before evaluating: each host walks every block, so the cap has to stop the work, not
+  // just the result.
+  let rowsUpper = 0;
+  for (const b of file.blocks) {
+    rowsUpper += b.kind === "host" ? b.patterns.length : b.kind === "match" ? 1 : 0;
+    rowsUpper += b.lines.filter((l) => l.key === "include").length;
+  }
+  if (rowsUpper > MAX_ENTRIES) return { entries: [], secrets: false, bomStripped: file.bomStripped, tooMany: true };
   for (const b of file.blocks) {
     for (const l of b.lines) {
       const text = (l.key + " " + l.args).toLowerCase();
@@ -281,10 +291,11 @@ export function readSshConfig(file: SshFile): NativeSsh {
         entries.push({ ...nonHost(b.line, "pattern", { code: "negation" }), id: "pattern:" + b.line + "#" + i });
       } else if (hasSshWildcard(pat)) {
         entries.push({ ...nonHost(b.line, "pattern", { code: "wildcard" }), id: "pattern:" + b.line + "#" + i });
-      } else if (!seen.has(pat.toLowerCase())) {
-        // A name listed in several blocks is one host to OpenSSH: one row, evaluated over all of them.
-        seen.add(pat.toLowerCase());
-        entries.push({ ...blank, id: "host:" + pat.toLowerCase(), line: b.line, kind: "host", name: pat, display: shownAlias(pat), ...evaluate(file, pat) });
+      } else if (!seen.has(pat)) {
+        // A name listed in several blocks is one host to OpenSSH (names are case-sensitive): one
+        // row, evaluated over all of them.
+        seen.add(pat);
+        entries.push({ ...blank, id: "host:" + pat, line: b.line, kind: "host", name: pat, display: shownAlias(pat), ...evaluate(file, pat) });
       }
     });
   }

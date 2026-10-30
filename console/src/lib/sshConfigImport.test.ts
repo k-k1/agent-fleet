@@ -215,3 +215,36 @@ describe("secrets", () => {
     expect(read(text).secrets).toBe(true);
   });
 });
+
+describe("review round 1 regressions", () => {
+  const first = `ProxyCommand aws ssm start-session --target i-11111111111111111 --document-name AWS-StartSSHSession --profile first`;
+  const second = `Host web\n  ProxyCommand aws ssm start-session --target i-22222222222222222 --document-name AWS-StartSSHSession --profile prod\n`;
+  it("Host names are case-sensitive: a negation of another case does not drop the earlier block", () => {
+    const p = preview(`Host * !WEB\n  ${first}\n` + second);
+    expect(code(p, "web")).toBe("inherited");
+  });
+  it("names differing only by case are separate hosts", () => {
+    const p = preview(host("Web", CMD + " --profile prod") + host("web", CMD + " --profile prod"));
+    expect(p.rows.filter((r) => r.kind === "host")).toHaveLength(2);
+  });
+  it("refuses the whole file for a single-quoted or escaped Host word", () => {
+    expect(parseSshConfig(`Host 'web'\n  ${first}\n` + second)).toEqual({ ok: false, error: { code: "bad_quote", line: 1 } });
+    expect(parseSshConfig("Host we\\b\n")).toMatchObject({ ok: false });
+    expect(parseSshConfig("Host web # it's fine\n")).toMatchObject({ ok: true });
+  });
+  it("%h falls back to the Host name only when no later Match or Include could set HostName", () => {
+    const own = `Host i-11111111111111111\n  ProxyCommand ${CMD} --profile prod\n`;
+    expect(code(preview(own + `Match all\n  HostName i-22222222222222222\n`), "i-11111111111111111")).toBe("barrier");
+    expect(code(preview(own + `Include more\n`), "i-11111111111111111")).toBe("barrier");
+    expect(row(preview(own + `Match all\n  User x\n`), "i-11111111111111111").status).toBe("create");
+    // A HostName already fixed above keeps the entry importable.
+    const fixed = `Host a\n  HostName ${I1}\n  ProxyCommand ${CMD} --profile prod\nMatch all\n  HostName ${I2}\n`;
+    expect(row(preview(fixed), "a").instanceId).toBe(I1);
+  });
+  it("stops before evaluating when there are too many rows", () => {
+    const n = 501;
+    const cfg = readSshConfig((parseSshConfig("Host h\n".repeat(n)) as any).file);
+    expect(cfg).toMatchObject({ tooMany: true, entries: [] });
+    expect(readSshConfig((parseSshConfig("Host h\n".repeat(500)) as any).file).tooMany).toBe(false);
+  });
+});

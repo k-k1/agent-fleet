@@ -710,7 +710,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.ssh_paste": "Or paste its contents here",
   "ssm.ssh_err_bad_line": "Line {line}: not a \"Keyword value\" line. OpenSSH cannot read this file either.",
   "ssm.ssh_err_missing_args": "Line {line}: Host or Match without arguments. OpenSSH cannot read this file either.",
-  "ssm.ssh_err_bad_quote": "Line {line}: a quote is left open. OpenSSH cannot read this file either.",
+  "ssm.ssh_err_bad_quote": "Line {line}: a quote is left open, or a single quote or backslash is used (this reader does not support them). OpenSSH cannot read this file either.",
   "ssm.ssh_too_many": "Too many entries ({max} at most). Split the file and read it in parts.",
   "ssm.ssh_secrets": "This text contains something that looks like an access key or token. It was not used. Do not paste this text anywhere else.",
   "ssm.ssh_bom": "A leading BOM was removed before reading.",

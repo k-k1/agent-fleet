@@ -215,7 +215,7 @@ AF へ移る妨げとして「作り込んだ AWS プロファイルを設定画
 **first-match-wins の扱い。** 上にある `Host *` やパターンから来た値は拒否（`inherited`）。`ProxyCommand` / `ProxyJump` /
 `HostName` / `CanonicalizeHostname` を設定する `Match` や、`Include` より後ろの値も拒否（`barrier`、中身が見えないため
 先に決められた可能性が消せない）。これらを設定しない `Match` と、値より後ろの `Match` / `Include` は影響しない。
-ホスト名の比較は大文字小文字を区別しない（当てはまるブロックを多めに見積もる＝拒否側に倒す）。
+ホスト名の比較は大文字小文字を区別する（ssh_config(5) の通り。畳むと否定パターンの一致まで増え、本来効く先行ブロックを落とす）。Host の単一引用符・バックスラッシュは OpenSSH が別に解釈するのでファイルごと拒否する。`%h` で HostName がなく、後ろに HostName を設定しうる Match / Include があるときも拒否する。行数の上限は評価の前に数える。
 
 **接続方式の変更。** トンネル（`AWS-StartSSHSession`）をシェルのブックマークにするので、作る行すべてに
 「SSH トンネルではなく SSM シェル」と表示し、プレビューの下に注意を出す。`User` / `IdentityFile` / `Port` などは名前だけ出す（値は出さない）。

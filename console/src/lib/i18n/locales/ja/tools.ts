@@ -707,7 +707,7 @@ export const tools = {
   "ssm.ssh_paste": "または内容をここに貼り付け",
   "ssm.ssh_err_bad_line": "{line} 行目：「キーワード 値」の形ではありません。OpenSSH でもこのファイルは読めません。",
   "ssm.ssh_err_missing_args": "{line} 行目：Host / Match に引数がありません。OpenSSH でもこのファイルは読めません。",
-  "ssm.ssh_err_bad_quote": "{line} 行目：引用符が閉じていません。OpenSSH でもこのファイルは読めません。",
+  "ssm.ssh_err_bad_quote": "{line} 行目：引用符が閉じていないか、単一引用符またはバックスラッシュが使われています（取り込みでは未対応）。OpenSSH でもこのファイルは読めません。",
   "ssm.ssh_too_many": "エントリが多すぎます（最大 {max} 件）。ファイルを分けて読み込んでください。",
   "ssm.ssh_secrets": "アクセスキーやトークンらしきものが含まれています。使っていません。このテキストを他の場所に貼らないでください。",
   "ssm.ssh_bom": "先頭の BOM を取り除いてから読みました。",

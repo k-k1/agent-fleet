@@ -54,6 +54,10 @@ const WORD_RE = /^(?:"([^"]*)"|([^\s"]+))/;
 function words(args: string): string[] | null {
   const out: string[] = [];
   let rest = args.trim();
+  // OpenSSH also strips single quotes and reads backslash escapes in these words; this reader
+  // does not, and a name read differently would skip the blocks that really apply to it, so
+  // the whole file is refused instead.
+  if (/['\\]/.test(rest.split(/(?:^|\s)#/)[0])) return null;
   while (rest) {
     if (rest.startsWith("#")) break;
     const m = WORD_RE.exec(rest);
@@ -98,15 +102,15 @@ export function parseSshConfig(text: string): { ok: true; file: SshFile } | { ok
   return { ok: true, file: { blocks, bomStripped } };
 }
 
-/** ssh's pattern match: `*` and `?` are the only wildcards; case-insensitive here, which
- *  over-approximates which blocks apply (the safe side for a reader that refuses on doubt). */
+/** ssh's pattern match: `*` and `?` are the only wildcards, and matching is case-sensitive
+ *  (ssh_config(5): "arguments are case-sensitive"; a case-folded match would also widen a
+ *  negation and drop a block that does apply). */
 export function sshGlob(pattern: string, name: string): boolean {
   const re = pattern
-    .toLowerCase()
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*")
     .replace(/\?/g, ".");
-  return new RegExp("^" + re + "$").test(name.toLowerCase());
+  return new RegExp("^" + re + "$").test(name);
 }
 
 export const hasSshWildcard = (p: string): boolean => /[*?]/.test(p);
