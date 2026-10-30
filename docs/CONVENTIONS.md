@@ -289,6 +289,14 @@ hardware that has not happened, and a residual that a review left.
 - **The record points at the issue, once.** An ADR lists its follow-ups on one line —
   `Follow-ups: #123, #124` — under the Status line; a journal closes its residual list
   with the issue numbers. Adding that line is not a rewrite of a frozen file.
+- **Label it when you file it** (`gh issue create --label …`). Pick one type —
+  `bug`, `enhancement` or `documentation` — and one priority: `priority: high` for data
+  integrity, user-facing regressions or operational risk, `priority: medium` for planned
+  work after those, `priority: low` for deferred work. Add `follow-up` for something a
+  merged change left behind and `needs-live-run` when it can only be closed by a run on
+  real hardware or a deployment. The issue forms under `.github/ISSUE_TEMPLATE/` set the
+  type for issues filed on github.com; `gh issue create` does not use them, and neither
+  sets a priority.
 - **Code comments do not cite issues.** A comment carries the reason, not the history
   (see `AGENTS.md`).
 - **An issue is published the moment it is filed**, and it bypasses the secret and

@@ -1,0 +1,16 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What happens, and what you expected instead. No hostnames, account IDs, tokens or customer names.
+    validations:
+      required: true
+  - type: textarea
+    id: cause
+    attributes:
+      label: Root cause or reproduction
+      description: The code path, or the steps that reproduce it. Leave blank if not yet known.
