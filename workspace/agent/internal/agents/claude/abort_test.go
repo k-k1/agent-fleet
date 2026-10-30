@@ -79,6 +79,10 @@ func TestAbortedTurnClassification(t *testing.T) {
 		// accident. The verdict is the same either way, but unless the classification is the
 		// intended one, changing the default side later breaks it silently.
 		{"session limit", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0, false},
+		// Measured sutgu3b (2026-10-30, claude 2.1.314): the 5-hour window reworded,
+		// missing every marker until "5-hour limit" was added (issue #3065).
+		{"5-hour limit", "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)", 429, false},
+		{"5 hour limit, no hyphen", "You've hit your 5 hour limit · resets 1:50am (Asia/Tokyo)", 429, false},
 		{"prompt too long", "Prompt is too long · the request is ~242785 tokens (limit 200000) but this conversation is longer", 400, false},
 		// Measured 2026-08-05 (a g3-manage session in another workspace): claude 2.1.x's
 		// stream watchdog with its internal retries used up — wording the corpus did not
@@ -370,6 +374,10 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 	}{
 		{"per-model limit", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", 429), true, LimitWindow},
 		{"account window", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), true, LimitWindow},
+		// Measured sutgu3b (2026-10-30, claude 2.1.314, issue #3065): the reworded
+		// 5-hour window opened no episode until "5-hour limit" was added.
+		{"5-hour window", apiErr("You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)", 429), true, LimitWindow},
+		{"5 hour window, no hyphen", apiErr("You've hit your 5 hour limit · resets 1:50am (Asia/Tokyo)", 429), true, LimitWindow},
 		// Measured corpus (2026-08-20): it matches none of the three existing words, so the
 		// weekly one alone opened no episode.
 		{"weekly window", apiErr("You've hit your weekly limit · resets 9am (Asia/Tokyo)", 429), true, LimitWindow},
