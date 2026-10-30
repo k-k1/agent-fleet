@@ -129,3 +129,35 @@ becomes a source. **The sink stays the CP's existing CRUD (`api/gcp/profiles`).*
 4. Re-read the current list before writing and send nothing when it cannot be read (the executor rule of decision 5).
 
 Decision 6 holds. Procedure: [docs/79 §9.4](../log/79-settings-export-import.md#94-gcloud-の構成を読む3017-第-2-部2026-10-30).
+
+## Addendum (2026-10-30) — reading a laptop's `~/.ssh/config` for SSM hosts (#3017, part 1)
+
+The same source/sink split: `~/.ssh/config` is read in the browser, the sink is `planSsmImport` and the existing
+`POST api/ssm/hosts`. What differs from the AWS file is that an entry is **not a record**.
+
+1. **A tunnel becomes a shell, and the preview says so.** The usual entry is an SSH session over an SSM tunnel
+   (`AWS-StartSSHSession`); an Agent Fleet host is an `aws ssm start-session` shell with no SSH user, key or port.
+   Only that document is accepted, every created row is labelled as converted, and `User` / `IdentityFile` / `Port`
+   and the like are named as not carried over.
+2. **Read ssh_config(5) as OpenSSH does.** The first value per keyword wins across all matching blocks, so a host is
+   importable only when its `ProxyCommand` (and `HostName` when `%h` needs it) is the first value and comes from a
+   block naming the host exactly. A value inherited from a pattern, or following a `Match` that sets a deciding
+   keyword or any `Include`, is refused rather than guessed.
+3. **A `ProxyCommand` is data, never a program.** It is not executed, not kept past the reader, not shown and not
+   sent; it is accepted only as an exact static grammar (`aws ssm start-session` with a fixed option set), and a
+   reason names no part of it.
+4. **The AWS profile comes from Settings, by AWS name** (the Phase 1 name conversion), or from the member's pick.
+
+No server change and no new endpoint. Procedure: [docs/79 §9.5](../log/79-settings-export-import.md).
+
+## Addendum (2026-10-30) — exporting Settings AWS profiles as `~/.aws/config` (#3017, part 3)
+
+The reverse direction is built from allowed fields only, never by concatenating stored values: the CP checks an SSO
+profile's fields more loosely than the Agent does, so a stored value may hold what an INI reader takes for a new key
+or section. A renderer checks every value against the Agent's allowlists, applies the Agent's own rules about which
+rows are exported (reserved `default`, name collisions leave out both sides, an SSO row needs an account and a role,
+a role row needs an exported source), reports each left-out row with a reason that names a field and never a value,
+and refuses to produce text whose lines are not of the shapes it writes. The result is "what Agent Fleet can
+express", not the inverse of an import, so it is offered as a fragment to merge by hand under a name that cannot be
+mistaken for `~/.aws/config`. Still no server change. The sso-session name is decided in one function, so sign-ins
+that several profiles share (a later decision) change the export in one place.

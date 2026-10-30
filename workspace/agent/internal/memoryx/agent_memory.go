@@ -177,32 +177,44 @@ type agentMemGitRunner func(args ...string) (string, error)
 // ~/repos) but inspected through vcsDir and run: the muse import passes a pinned handle's
 // /proc path, so what git answers is about the directory it opened, not about the path.
 func agentMemProjectWith(label, vcsDir string, run agentMemGitRunner) *agentMemProject {
+	p, _ := agentMemProjectIdent(label, vcsDir, run)
+	return p
+}
+
+// agentMemProjectIdent is agentMemProjectWith that also says whether the id comes from the
+// repository's identity. False for a git directory whose identity could not be resolved: its id
+// is derived from the path and cannot be compared with another project's. Always true for
+// svn and for no VCS (the path is all there is).
+func agentMemProjectIdent(label, vcsDir string, run agentMemGitRunner) (p *agentMemProject, identified bool) {
 	dir := label
 	if dir == "" {
-		return nil
+		return nil, false
 	}
 	repos := gitx.ReposRoot()
 	rel, err := filepath.Rel(repos, dir)
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
-		return nil
+		return nil, false
 	}
 	root, key, vcs := filepath.Clean(dir), filepath.Clean(dir), projcfg.DetectVCS(vcsDir)
+	identified = true
 	if vcs == projcfg.VCSGit {
 		if r, k := agentMemGitIdentityWith(run); k != "" {
 			root, key = r, k
+		} else {
+			identified = false
 		}
 	}
 	display := filepath.Base(root)
 	if r, err := filepath.Rel(repos, root); err == nil && !strings.HasPrefix(r, "..") {
 		display = filepath.ToSlash(r)
 	}
-	p := &agentMemProject{ID: agentMemProjectID(key), Root: root, VCS: vcs, Display: display}
+	p = &agentMemProject{ID: agentMemProjectID(key), Root: root, VCS: vcs, Display: display}
 	if vcs == projcfg.VCSGit {
 		if raw, err := run("remote", "get-url", "origin"); err == nil {
 			p.Remote = agentMemNormalizeRemote(raw)
 		}
 	}
-	return p
+	return p, identified
 }
 
 // agentMemGitIdentity returns the repository's main working tree (for display) and its key:
@@ -214,17 +226,32 @@ func agentMemGitIdentity(dir string) (root, key string) {
 }
 
 func agentMemGitIdentityWith(run agentMemGitRunner) (root, key string) {
-	common, err := run("rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || common == "" {
-		return "", ""
+	// One process for the three answers: a large workspace resolves a hundred clones and each
+	// process counts (#3061). A name with a line break, or any error, takes the separate calls.
+	var common, top, gitDir string
+	gotGitDir := false
+	if out, err := run("rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel", "--absolute-git-dir"); err == nil {
+		if lines := strings.Split(out, "\n"); len(lines) == 3 && strings.TrimSpace(lines[0]) != "" && strings.TrimSpace(lines[1]) != "" {
+			// Trimmed as gitx.Run trims a single answer: the id is derived from this text.
+			common, top, gitDir, gotGitDir = strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), strings.TrimSpace(lines[2]), true
+		}
 	}
-	top, err := run("rev-parse", "--show-toplevel")
-	if err != nil || top == "" {
-		return "", ""
+	if !gotGitDir {
+		var err error
+		common, err = run("rev-parse", "--path-format=absolute", "--git-common-dir")
+		if err != nil || common == "" {
+			return "", ""
+		}
+		top, err = run("rev-parse", "--show-toplevel")
+		if err != nil || top == "" {
+			return "", ""
+		}
+		if g, err := run("rev-parse", "--absolute-git-dir"); err == nil {
+			gitDir, gotGitDir = g, true
+		}
 	}
 	root = filepath.Clean(top)
-	gitDir, err := run("rev-parse", "--absolute-git-dir")
-	if err == nil && filepath.Clean(gitDir) != filepath.Clean(common) {
+	if gotGitDir && filepath.Clean(gitDir) != filepath.Clean(common) {
 		// A linked worktree: the main one is git's first entry, when it is a real checkout.
 		if out, err := run("worktree", "list", "--porcelain"); err == nil {
 			first, _, _ := strings.Cut(out, "\n")

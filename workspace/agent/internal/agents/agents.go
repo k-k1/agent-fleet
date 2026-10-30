@@ -437,6 +437,20 @@ type UsageReader interface {
 	UsageTurns(m session.Meta) []transcript.Turn
 }
 
+// SubagentUsageReader is an optional Agent capability: the transcripts a session's subagents
+// write apart from its own (claude's subagents/ and Workflow agents). A usage figure that
+// reads only the session's transcript leaves them out. Kinds that write a subagent inline, or
+// not at all, do not implement it.
+type SubagentUsageReader interface {
+	// SubagentLogs lists the session's subagent transcripts grouped by agent: one group per
+	// agent, holding every copy of its transcript found on disk.
+	SubagentLogs(m session.Meta) [][]string
+	// SubagentTurns parses one group in full, the copies merged, every turn marked Sidechain.
+	// An error means a file could not be read, never that the agent spent nothing; turns that
+	// come back with one are what the readable copies hold, to use but not to cache.
+	SubagentTurns(paths []string) ([]transcript.Turn, error)
+}
+
 // Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves
 // the source session's provider-native conversation id (claude sid / opencode ses_… /
 // codex session uuid) for the new session's ForkFrom, or an error when there is no

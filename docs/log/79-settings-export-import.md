@@ -222,3 +222,57 @@ AF へ移る妨げとして「作り込んだ AWS プロファイルを設定画
 - gcloud は `ConfigParser()` の既定（BasicInterpolation）で読むので、値に `%` を含むファイルは展開結果が読めない。補間は実装せず、ファイル全体を理由つきで断る（誤ったアカウントを取り込まないため）。`disable_credentials` は gcloud の真偽値の綴りだけ通し、不明な綴りは断る。構成名は gcloud の規則（末尾 `-` も有効）に合わせ、label の段階で直させる。5xx は作成結果不明として止める（CP は INSERT 後の一覧再読込で 500 を返しうる）。
 
 残り：実機での目視（#3017 は第 1 部 ssh-config が別 PR）。この PR は実フリートでは未確認。
+
+### 9.5 `~/.ssh/config` から SSM ホストを読む（#3017 第 1 部、2026-10-30 追記）
+
+決定は ADR 0060 の同日付の追記（`~/.ssh/config`）。
+
+| 段 | 置き場 | 役割 |
+|----|--------|------|
+| 読む | `console/src/lib/sshConfigIni.ts` | ssh_config(5) の行形式（`Keyword args` / `Keyword=args`、`Host` / `Match` がブロックを開く、継続行なし）。AWS の INI とは別の読み手。ブロックはファイル順のまま持つ |
+| 意味づけ | `console/src/lib/sshConfigImport.ts` `readSshConfig` | ホスト名ごとに、当てはまるブロックを順に通して最初の値を取り（OpenSSH と同じ）、`ProxyCommand` を固定文法で検証して**捨てる**。残るのはインスタンス ID・プロファイル名・リージョンだけ |
+| 解決 | 同 `resolveSshImport` | Settings のプロファイルと AWS 名（`awsProfileName`）で突き合わせ、別名の重複・既存を見る。編集のたびに走り直す |
+| 計画・実行 | `planSsmImport` / `ssmImportExec.ts` | 第 1 段と共用。ホストだけのプランを流す |
+| 画面 | `SshConfigImport.tsx`（`AwsConfigImport.tsx` には触れず別部品） | AWS タブのボタン |
+
+**受け付ける形（これだけ）。** 具体的な 1 名の `Host`、`ProxyCommand` が `aws ssm start-session`
+（`sh -c "…"` で包んだ形も可）で、`--target`（`i-…` / `mi-…`、または `%h` = `HostName` の値、なければ `Host` 名）・
+`--document-name AWS-StartSSHSession`・`--parameters portNumber=%p`（または 22）・`--profile`・`--region` を各 1 回まで。
+拒否して理由を出すもの：他のドキュメント、他のオプション、他の `%`、シェル構文、`ProxyJump`、
+`CanonicalizeHostname`、ワイルドカード・否定（行として 1 つずつ表示）、`Match`・`Include`。
+
+**first-match-wins の扱い。** 上にある `Host *` やパターンから来た値は拒否（`inherited`）。`ProxyCommand` / `ProxyJump` /
+`HostName` / `CanonicalizeHostname` を設定する `Match` や、`Include` より後ろの値も拒否（`barrier`、中身が見えないため
+先に決められた可能性が消せない）。これらを設定しない `Match` と、値より後ろの `Match` / `Include` は影響しない。
+ホスト名の比較は大文字小文字を区別する（ssh_config(5) の通り。畳むと否定パターンの一致まで増え、本来効く先行ブロックを落とす）。Host の単一引用符・バックスラッシュは OpenSSH が別に解釈するのでファイルごと拒否する。`%h` で HostName がなく、後ろに HostName を設定しうる Match / Include があるときも拒否する。行数の上限は評価の前に数える。
+
+**接続方式の変更。** トンネル（`AWS-StartSSHSession`）をシェルのブックマークにするので、作る行すべてに
+「SSH トンネルではなく SSM シェル」と表示し、プレビューの下に注意を出す。`User` / `IdentityFile` / `Port` などは名前だけ出す（値は出さない）。
+
+**値を出さない・送らない。** ProxyCommand は実行しない。読み取り部で捨て、プレビュー・リクエスト・ログのどこにも
+出ない（DOM テストで、ProxyCommand 内のトークン・IdentityFile のパス・`SetEnv` の鍵がどこにも現れないのを確かめた）。
+
+変異確認：`inherited` の判定と未知オプションの拒否を外すと、該当するテストが落ちるのを見た。
+実機では未確認（実フリートでの目視は残り）。
+
+残り：gcloud の構成の取り込み（第 2 部）、`~/.aws/config` への書き出し（第 3 部）：#3017。
+
+### 9.6 `~/.aws/config` として書き出す（#3017 第 3 部、2026-10-30 追記）
+
+決定は ADR 0060 の同日付の追記（書き出し）。
+
+- 置き場：`console/src/lib/awsConfigExport.ts`（純粋な描画器 `renderAwsConfig`）、`AwsConfigExport.tsx`（AWS タブのボタン）。
+  入力は `GET api/ssm/profiles` の行。新しいエンドポイントなし、送信なし。
+- **検証してから書く。** CP は SSO 行の項目を Agent より緩く見る（開始 URL は `https://\S+` で通る）ので、保存値を
+  そのまま連結すると鍵やセクションを紛れ込ませられる。値はすべて Agent の許可リスト（`agents/ssm/config.go`）で
+  確かめ、通らない行は除外して項目名だけを理由に出す（値は出さない）。さらに出力の全行が描画器の書く形のどれかに
+  合うことを `assertSafe` で確かめ、合わなければ投げる（ダウンロードさせない）。
+- **除外の規則は Agent と同じ。** `default`（予約）、同じ AWS 名になる複数ラベルは全部除外
+  （`aws_profiles_bridge.go`）、アカウント・ロールの片方または両方がない SSO 行（`IncompleteReason`）、
+  引き受け元が除外・不在・SSO でないロール行。理由はすべて画面に出す。
+- **置き換えと取り違えない。** ファイル名は `agent-fleet-aws-profiles.aws-config-fragment.txt`（`config` ではない）、
+  先頭コメントと画面に「手で取り込む断片で置き換えではない」と書く。ラベルはファイルに入れない（コメントにも）。
+- **ADR 0125（共有サインイン）の足場。** sso-session の名前の決め方は `sessionOf()` の 1 か所で、`[sso-session]` は名前ごとに
+  1 回だけ出す。サインインを共有する行が入ったら、この関数を変えるだけで共有セッションの書き出しになる（今は実装しない）。
+- 往復：描画結果を第 1 段の読み手に通すと、同じプロファイルが「作成」と判定されるのをテストで確かめた。
+  変異確認：許可リストの検査を外すと 8 件が落ちる。実機では未確認。

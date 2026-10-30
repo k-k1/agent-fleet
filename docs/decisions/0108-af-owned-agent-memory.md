@@ -963,3 +963,28 @@ the same commit as the memory, so racing saves start it once); none is refused a
 are refused with their ids and `project` chosen from `memory_projects`, which now also lists them with a count of 0. A
 project that holds memory still wins over a working copy with the same remote. Reads and forgets never create anything,
 and read-only mode refuses before resolving. The Console's **New memory** keeps the restriction (#3032).
+
+## Note (2026-10-30): the live working-copy search reads in two phases (#3045)
+
+The search behind "orphaned" and behind starting a project from a clone (`agentMemLiveProjects`) timed out (20 s) on a
+workspace with 129 clones and answered with an empty map, so no project read as live. Reading every tree is too slow
+(800k entries took 20-30 s on its own), so the search now has two phases. Phase one walks everything outside working
+copies and, inside a git working copy, everything git does not ignore (one `git ls-files -z --others --ignored
+--exclude-standard --directory` per clone), at any depth, nested clones included. Phase two walks the ignored content
+(`node_modules`, build output) and svn working copies, until 12 s into the search. What it does not reach makes the
+answer incomplete (`complete=false`), so no project is called orphaned and no remote is chosen as unique from it. A
+timeout also keeps the map found so far instead of an empty one: a project known to be live stays live, in the list and
+as the target of a save that names its id. The 2026-10-14 note's limits (unreadable directory, unresolved identity,
+budget, now shared by both phases) are unchanged. Each directory's identity is computed once per search.
+
+## Note (2026-10-30): the live search never enters dependency stores (#3061)
+
+With the two-phase search of the note above, a workspace with heavy dependency trees did not finish phase two in its
+12 s window, so the answer stayed incomplete: a save by `repository` was refused and an orphaned project could not be
+moved. The search now never enters, at any depth, a directory named `node_modules`, `.venv`, `venv`, `.gradle`,
+`.pnpm-store` or `.cache` (`agentMemLiveSkip`), and skipping one does not make the answer incomplete. A working copy
+inside a dependency store or a build-tool cache is not a layout anyone uses, and both decisions the answer backs (one
+clone has this remote, a project has no clone left) still go through a preview or a named project. Every other
+unread directory, a git-ignored one included, still makes the answer incomplete. A clone cloned into such a directory
+is found only as a session's directory. The identity of a working copy now takes one `git rev-parse` for its three
+paths instead of three, which was the larger cost per clone once the stores were skipped.

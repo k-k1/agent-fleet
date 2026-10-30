@@ -3,8 +3,10 @@ package claude
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -74,6 +76,113 @@ func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) 
 		}
 	}
 	return fallback, fallbackPath, matched
+}
+
+// SubagentTurns parses one subagent or Workflow-agent transcript for usage — every copy of one
+// agent, a group from SubagentUsageLogs — every turn marked Sidechain. Claude writes these
+// beside the session's own transcript and never into it, so a usage figure read from
+// TranscriptRead alone leaves out everything the session delegated.
+//
+// Copies are merged line by line: a line is kept once by its uuid and the rest are put in time
+// order before the turns are collected, so a response found in two copies is counted once (the
+// requestId dedup runs over the merged lines) while a call only one copy holds still counts.
+// Neither copy is assumed to be the complete one: a newer mtime proves nothing about that.
+//
+// Unlike CollectTurns it has no 1 MiB cap: the cap keeps the newest turns, so a long agent's
+// oldest calls would drop out and its spend would fall as it grew. A read error is returned,
+// not read as an empty agent, so a caller that caches the result does not keep a hole. When
+// only some copies fail, the turns of the readable ones come back with the error: a partial
+// figure the caller may use but must not cache.
+func SubagentTurns(paths []string) ([]transcript.Turn, error) {
+	var copies [][][]byte
+	var readErr error
+	for _, p := range paths {
+		ls, err := readJSONLLinesErr(p)
+		if err != nil {
+			// One unreadable copy must not hide the others, the running one among them.
+			readErr = errors.Join(readErr, err)
+			continue
+		}
+		copies = append(copies, ls)
+	}
+	if len(copies) == 0 {
+		return nil, readErr
+	}
+	lines := copies[0]
+	if len(copies) > 1 {
+		lines = mergeCopies(copies)
+	}
+	turns := collectTurns(lines, 0, len(lines), false, false)
+	for i := range turns {
+		turns[i].Sidechain = true // an agent's context is its own, never the session's fill
+	}
+	return turns, readErr
+}
+
+// mergeCopies joins copies of one transcript: a line whose uuid an earlier line had is dropped,
+// and the rest are stable-sorted by timestamp. A line with no parseable timestamp takes the
+// previous line's in its own copy, so it stays where its copy put it: sorted as the zero time it
+// would jump to the front and merge the two turns it separated.
+func mergeCopies(copies [][][]byte) [][]byte {
+	type keyed struct {
+		line []byte
+		at   time.Time
+	}
+	seen := map[string]bool{}
+	var out []keyed
+	for _, lines := range copies {
+		var last time.Time
+		for _, ln := range lines {
+			var ev struct {
+				UUID      string `json:"uuid"`
+				Timestamp string `json:"timestamp"`
+			}
+			_ = json.Unmarshal(ln, &ev)
+			if at, err := time.Parse(time.RFC3339Nano, ev.Timestamp); err == nil {
+				last = at
+			}
+			if ev.UUID != "" {
+				if seen[ev.UUID] {
+					continue
+				}
+				seen[ev.UUID] = true
+			}
+			out = append(out, keyed{ln, last})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].at.Before(out[j].at) })
+	merged := make([][]byte, len(out))
+	for i, k := range out {
+		merged[i] = k.line
+	}
+	return merged
+}
+
+// SubagentUsageLogs is SubagentLogs grouped by agent. subagentBases can name the subagents
+// directory under more than one project directory, and an agent found in two of them is one
+// agent: pricing each copy would charge its spend twice. SubagentTurns merges a group.
+func SubagentUsageLogs(sid string) [][]string {
+	var out [][]string
+	at := map[string]int{}
+	for _, p := range SubagentLogs(sid) {
+		rel := subagentRel(p)
+		if i, ok := at[rel]; ok {
+			out[i] = append(out[i], p)
+			continue
+		}
+		at[rel] = len(out)
+		out = append(out, []string{p})
+	}
+	return out
+}
+
+// subagentRel is an agent transcript's path below its subagents directory, which names the
+// agent (agent ids are random per agent).
+func subagentRel(p string) string {
+	if i := strings.LastIndex(p, string(filepath.Separator)+"subagents"+string(filepath.Separator)); i >= 0 {
+		return p[i:]
+	}
+	return p
 }
 
 // lastLineWhere returns the LAST line of p that ok accepts, scanning backwards. It reads
@@ -160,13 +269,19 @@ func windowLines(f *os.File, size, w int64) ([][]byte, bool) {
 // in "\n", so cut anything past the last one and let the next poll read the line once it is
 // whole.
 func readJSONLLines(p string) [][]byte {
+	lines, _ := readJSONLLinesErr(p)
+	return lines
+}
+
+// readJSONLLinesErr is readJSONLLines for a caller that must tell a read error from an empty file.
+func readJSONLLinesErr(p string) ([][]byte, error) {
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	i := bytes.LastIndexByte(b, '\n')
 	if i < 0 {
-		return nil // nothing but a partially-written first line
+		return nil, nil // nothing but a partially-written first line
 	}
 	var out [][]byte
 	for _, ln := range strings.Split(string(b[:i+1]), "\n") {
@@ -174,7 +289,7 @@ func readJSONLLines(p string) [][]byte {
 			out = append(out, []byte(ln))
 		}
 	}
-	return out
+	return out, nil
 }
 
 // HasConversation reports whether the lines include a real user/assistant turn
@@ -354,17 +469,18 @@ func MessageTextFrom(lines [][]byte, start time.Time) (string, bool) {
 // Console reconciles that from the whole-transcript CollectInteractionAnswers map, which
 // the /messages handler sends alongside these turns and patches on by qid.
 func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
-	return collectTurns(lines, lo, hi, false)
+	return collectTurns(lines, lo, hi, false, true)
 }
 
 // CollectAllTurns is CollectTurns over the whole file for an export (#2183): no 1 MiB cap,
 // which would silently drop the oldest turns, and every tool call carries its result as
 // Output. The mirror never shows ordinary tool results, so only this path pays for them.
 func CollectAllTurns(lines [][]byte) []transcript.Turn {
-	return collectTurns(lines, 0, len(lines), true)
+	return collectTurns(lines, 0, len(lines), true, false)
 }
 
-func collectTurns(lines [][]byte, lo, hi int, all bool) []transcript.Turn {
+// all attaches every tool call's result as Output; capped stops at 1 MiB of text, newest kept.
+func collectTurns(lines [][]byte, lo, hi int, all, capped bool) []transcript.Turn {
 	if lo < 0 {
 		lo = 0
 	}
@@ -438,7 +554,7 @@ func collectTurns(lines [][]byte, lo, hi int, all bool) []transcript.Turn {
 		}
 		t.Parts = transcript.SplicePendingImages(t.Parts, gen)
 		turns = append(turns, t)
-		if budget += len(t.Text); !all && budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
+		if budget += len(t.Text); capped && budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
 			break
 		}
 	}

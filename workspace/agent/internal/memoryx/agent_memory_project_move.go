@@ -33,7 +33,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/projcfg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -113,99 +112,236 @@ func agentMemRootGoneProbe(repos, rel string) bool {
 }
 
 var (
-	// agentMemLiveBudget bounds the directories one search reads, agentMemLiveTimeout its time.
+	// agentMemLiveBudget bounds the directories one search reads, both phases together, agentMemLiveTimeout its time.
 	// Past either the answer is "incomplete" and nothing is called orphaned.
 	agentMemLiveBudget  = 100000
 	agentMemLiveTimeout = 20 * time.Second
+	// agentMemLiveSoft is when phase two of the search stops reading; it leaves time for the
+	// session directories and for the answer inside agentMemLiveTimeout.
+	agentMemLiveSoft = 12 * time.Second
 )
+
+// agentMemLiveSkip names the dependency stores the search never enters, at any depth, and whose
+// being skipped does not make the answer incomplete: a working copy inside one is not a layout
+// anyone uses, and both decisions the answer backs (one clone has this remote, a project has no
+// clone left) still go through a preview or a named project. Everything else that is not read
+// makes the answer incomplete. A directory named like this that is itself a working copy still counts as one; only what
+// is inside it is not entered. Changing the list changes what members can rely on: update the ADR 0108 note.
+var agentMemLiveSkip = map[string]bool{
+	"node_modules": true,
+	".venv":        true,
+	"venv":         true,
+	".gradle":      true,
+	".pnpm-store":  true,
+	".cache":       true,
+}
 
 // agentMemLiveProjects maps the working copies to their projects, by id: every directory under
 // ~/repos with a .git or .svn entry, found at any depth, inside other working copies and behind
 // symlinks included, and every session's working directory. A project with a live working copy
 // is never orphaned, whatever its recorded root says. complete=false says something could not be
 // ruled out: a directory that could not be read, a repository whose identity could not be
-// resolved, or the budget or time of the search ran out.
+// resolved, or the budget or time of the search ran out. The map then holds what was found, so a
+// project known to be live stays live; only "nothing else exists" is withdrawn.
+//
+// The directories of agentMemLiveSkip are not entered. The search runs in two phases because reading every tree of a large workspace takes longer than
+// the time allowed (800k entries: 20-30 s, #3045). Phase one walks everything outside working
+// copies and, inside a git working copy, everything git does not ignore. Phase two walks the
+// ignored content (node_modules, build output) and svn working copies, until agentMemLiveSoft:
+// what it did not reach makes the answer incomplete rather than guessed empty.
 func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 	type result struct {
 		live     map[string]*agentMemProject
 		complete bool
 	}
+	st := &agentMemLiveState{live: map[string]*agentMemProject{}}
 	done := make(chan result, 1)
 	go func() {
-		l, c := agentMemLiveSearch()
-		done <- result{l, c}
+		c := agentMemLiveSearch(st)
+		done <- result{st.snapshot(), c}
 	}()
 	select {
 	case r := <-done:
 		return r.live, r.complete
 	case <-time.After(agentMemLiveTimeout):
-		return map[string]*agentMemProject{}, false
+		return st.snapshot(), false
 	}
 }
 
-func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
-	live = map[string]*agentMemProject{}
+// agentMemLiveState is the map a search fills, readable by the caller that gives up waiting.
+type agentMemLiveState struct {
+	mu   sync.Mutex
+	live map[string]*agentMemProject
+}
+
+func (s *agentMemLiveState) put(p *agentMemProject) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.live[p.ID] == nil {
+		s.live[p.ID] = p
+	}
+}
+
+func (s *agentMemLiveState) snapshot() map[string]*agentMemProject {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]*agentMemProject, len(s.live))
+	for k, v := range s.live {
+		out[k] = v
+	}
+	return out
+}
+
+// agentMemLiveRunner is the git runner of the live search, replaceable by a test that counts calls.
+var agentMemLiveRunner = func(dir string) agentMemGitRunner {
+	return func(args ...string) (string, error) { return gitx.Run(dir, args...) }
+}
+
+// agentMemIgnoredDirs lists the directories git ignores in a working copy, by absolute path.
+// ok=false when git could not say. NUL-separated and untrimmed: without -z git quotes names with
+// non-ASCII or control characters, and a quoted name never matches a directory.
+func agentMemIgnoredDirs(dir string) (map[string]bool, bool) {
+	out, err := gitx.Cmd(dir, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory").Output()
+	if err != nil {
+		return nil, false
+	}
+	ign := map[string]bool{}
+	for _, name := range strings.Split(string(out), "\x00") {
+		if rel, ok := strings.CutSuffix(name, "/"); ok && rel != "" {
+			ign[filepath.Join(dir, filepath.FromSlash(rel))] = true
+		}
+	}
+	return ign, true
+}
+
+func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 	complete = true
+	start := time.Now()
+	// resolved holds the directories whose identity was computed, by cleaned path: a session's
+	// directory the walk already found costs nothing. Not by real path: an id derived from the
+	// path (svn, no VCS) differs between a symlink and its target, and each must be live.
+	resolved := map[string]bool{}
 	add := func(dir string) {
-		p := agentMemProjectFor(dir)
+		dir = filepath.Clean(dir)
+		if resolved[dir] {
+			return
+		}
+		resolved[dir] = true
+		p, identified := agentMemProjectIdent(dir, dir, agentMemLiveRunner(dir))
 		if p == nil {
 			return
 		}
-		if p.VCS == projcfg.VCSGit {
-			if _, key := agentMemGitIdentity(dir); key == "" {
-				// The id would be derived from the path, not the repository: it cannot be compared.
-				complete = false
-			}
+		if !identified {
+			// The id would be derived from the path, not the repository: it cannot be compared.
+			complete = false
 		}
-		if live[p.ID] == nil {
-			live[p.ID] = p
-		}
+		st.put(p)
 	}
+	// ign is the set of directories git ignores in the working copy the item lies in: phase one
+	// only. An item of the deferred phase is walked whole.
+	type item struct {
+		dir string
+		ign map[string]bool
+	}
+	var deferred []item
 	visited := map[string]bool{}
-	queue := []string{gitx.ReposRoot()}
-	reads := 0
-	for len(queue) > 0 {
-		dir := queue[0]
-		queue = queue[1:]
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
+	// walk reads one directory and returns its subdirectories to read next, split by phase.
+	walk := func(cur item, whole bool) (next, later []item, ok bool) {
+		if real, err := filepath.EvalSymlinks(cur.dir); err == nil {
 			if visited[real] {
-				continue
+				return nil, nil, true
 			}
 			visited[real] = true
 		}
-		if reads++; reads > agentMemLiveBudget {
-			complete = false
-			break
-		}
-		ents, err := os.ReadDir(dir)
+		ents, err := os.ReadDir(cur.dir)
 		if err != nil {
 			// Not knowing what is below is not knowing there is nothing below.
 			complete = false
-			continue
+			return nil, nil, true
 		}
 		for _, e := range ents {
 			if e.Name() == ".git" {
 				continue // git's own directory holds no working copy; a .git entry is the marker below
 			}
-			d := filepath.Join(dir, e.Name())
-			st, err := os.Stat(d)
-			switch {
-			case err != nil && !errors.Is(err, fs.ErrNotExist):
-				complete = false
+			d := filepath.Join(cur.dir, e.Name())
+			if e.Type()&fs.ModeSymlink != 0 {
+				st, err := os.Stat(d)
+				switch {
+				case err != nil && !errors.Is(err, fs.ErrNotExist):
+					complete = false
+					continue
+				case err != nil || !st.IsDir():
+					continue // a dangling link or a file
+				}
+			} else if !e.IsDir() {
 				continue
-			case err != nil || !st.IsDir():
-				continue // a dangling link or a file
 			}
+			isGit, isCopy := false, false
 			for _, marker := range []string{".git", ".svn"} {
 				if _, err := os.Lstat(filepath.Join(d, marker)); err == nil {
-					add(d)
+					isCopy, isGit = true, marker == ".git"
 					break
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					complete = false
 				}
 			}
-			queue = append(queue, d)
+			if agentMemLiveSkip[e.Name()] {
+				// The directory may itself be a working copy; only its content is not entered.
+				if isCopy {
+					add(d)
+				}
+				continue
+			}
+			switch {
+			case whole:
+				if isCopy {
+					add(d)
+				}
+				next = append(next, item{d, nil})
+			case isCopy && isGit:
+				add(d)
+				if ign, ok := agentMemIgnoredDirs(d); ok {
+					next = append(next, item{d, ign})
+				} else {
+					later = append(later, item{d, nil})
+				}
+			case isCopy:
+				add(d) // svn says nothing of what it ignores: its content is phase two
+				later = append(later, item{d, nil})
+			case cur.ign[d]:
+				later = append(later, item{d, nil})
+			default:
+				next = append(next, item{d, cur.ign})
+			}
 		}
+		return next, later, true
+	}
+	queue := []item{{gitx.ReposRoot(), nil}}
+	reads := 0
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if reads++; reads > agentMemLiveBudget {
+			complete = false
+			break
+		}
+		next, later, _ := walk(cur, false)
+		queue = append(queue, next...)
+		deferred = append(deferred, later...)
+	}
+	for len(deferred) > 0 {
+		if time.Since(start) > agentMemLiveSoft {
+			complete = false
+			break
+		}
+		if reads++; reads > agentMemLiveBudget {
+			complete = false
+			break
+		}
+		cur := deferred[0]
+		deferred = deferred[1:]
+		next, _, _ := walk(cur, true)
+		deferred = append(deferred, next...)
 	}
 	for _, m := range session.ListMetas() {
 		if m.Dir != "" {
@@ -214,7 +350,7 @@ func agentMemLiveSearch() (live map[string]*agentMemProject, complete bool) {
 			}
 		}
 	}
-	return live, complete
+	return complete
 }
 
 // agentMemProjectRow is one project of the store as the Console lists it.
