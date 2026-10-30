@@ -150,9 +150,9 @@ func branchNameSchema() map[string]any {
 func branchTools() []toolSpec {
 	return []toolSpec{{
 		name: mcpToolBranchName, session: branchNameSchema, ownArgs: true,
-		handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+		handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 			return mcpBranchName(req.ID, p.Args)
-		},
+		}),
 	}}
 }
 

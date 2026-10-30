@@ -1,6 +1,9 @@
 package mcpx
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // Every spec is one tool: a unique name, the same name inside each schema it advertises, a
 // surface to be advertised on and a handler. The dispatch finds a spec by name, so a second
@@ -14,8 +17,22 @@ func TestToolSpecsAreWellFormed(t *testing.T) {
 				t.Errorf("tool name %q is empty or declared twice", spec.name)
 			}
 			seen[spec.name] = true
-			if spec.handle == nil {
+			if spec.handle.call == nil || spec.handle.newArgs == nil {
 				t.Errorf("%s: no handler", spec.name)
+			}
+			if spec.handle.newArgs != nil {
+				rt := reflect.TypeOf(spec.handle.newArgs())
+				if rt.Kind() != reflect.Ptr || rt.Elem().Kind() != reflect.Struct {
+					t.Errorf("%s: args type %v is not a pointer to a struct", spec.name, rt)
+				} else {
+					// encoding/json names the embedded type in UnmarshalTypeError.Field
+					// ("nameArg.name"), which would change the type-error text on the wire.
+					for i := 0; i < rt.Elem().NumField(); i++ {
+						if rt.Elem().Field(i).Anonymous {
+							t.Errorf("%s: %v embeds %s; repeat its fields instead", spec.name, rt.Elem(), rt.Elem().Field(i).Name)
+						}
+					}
+				}
 			}
 			if spec.operator == nil && spec.session == nil {
 				t.Errorf("%s: advertised on no surface", spec.name)

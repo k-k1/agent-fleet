@@ -27,11 +27,48 @@ type toolSpec struct {
 	// guesses a name must not reach the handler.
 	refuse func() string
 	// ownArgs marks a handler that decodes p.Args itself (or forwards it verbatim), so its
-	// argument TYPES are not mcpCallArgs' business (it is still filled, best effort, for the
-	// fields the handler does read): running the union decode over it would refuse a legitimate
-	// call whose field shares a name with a union field of another type.
+	// argument TYPES are not the call check's business (its args struct is still filled, best
+	// effort, for the fields the handler does read): a type error there is the handler's or the
+	// downstream's to report, not a refusal ahead of it.
 	ownArgs bool
-	handle  func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte
+	handle  toolHandler
+}
+
+// toolHandler is a handler bound to the argument struct it reads. Each tool declares its own
+// struct next to its handler, so a tool with a new argument edits its own family file only.
+type toolHandler struct {
+	// newArgs returns a pointer to a zero args struct for the call check to decode into.
+	newArgs func() any
+	call    func(req mcpReq, p toolCallParams, a any) []byte
+}
+
+// handler binds h to its argument type A, which json.Unmarshal fills from the call's arguments
+// (the field tags are the wire names; a pointer field tells "omitted" from a zero value).
+func handler[A any](h func(req mcpReq, p toolCallParams, a *A) []byte) toolHandler {
+	return toolHandler{
+		newArgs: func() any { return new(A) },
+		call: func(req mcpReq, p toolCallParams, a any) []byte {
+			return h(req, p, a.(*A))
+		},
+	}
+}
+
+// noArgs is the args type of a handler that reads none of the call's arguments (it takes none,
+// or decodes p.Args itself).
+type noArgs struct{}
+
+// The args structs below are shared by the many tools that take only that one argument. A
+// struct that adds fields repeats the field instead of embedding these: encoding/json puts the
+// embedded type's name in the type-error text ("nameArg.name"), and that text is wire.
+
+// nameArg is the "name" of the session (or working copy) a tool acts on.
+type nameArg struct {
+	Name string `json:"name"`
+}
+
+// idArg is the "id" in a tool's path: a schedule, a memo or a cleanup archive.
+type idArg struct {
+	ID string `json:"id"`
 }
 
 // toolCallParams is what a handler gets of tools/call's params: the tool name, and the

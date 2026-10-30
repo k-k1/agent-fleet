@@ -848,6 +848,35 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 	return offer, true
 }
 
+// imageGenCallArgs is generate_image's wire arguments (ADR 0069). Op/Size/Background/Count are
+// passed through as the caller wrote them: what a provider cannot honour is REPORTED in the
+// result's warnings, so narrowing them here would hide exactly what the user needs to see.
+type imageGenCallArgs struct {
+	Op             string   `json:"op"`
+	Provider       string   `json:"provider"`
+	Prompt         string   `json:"prompt"`
+	Model          string   `json:"model"`
+	Size           string   `json:"size"`
+	AspectRatio    string   `json:"aspect_ratio"`
+	Background     string   `json:"background"`
+	Count          int      `json:"count"`
+	Inputs         []string `json:"inputs"`
+	Mask           string   `json:"mask"`
+	Seed           *int64   `json:"seed"`
+	NegativePrompt string   `json:"negative_prompt"`
+	// Strength is a pointer so that 0 arrives at the Agent as the request it is and is
+	// refused there by value, instead of reading here as "not given" and becoming the default.
+	Strength *float64 `json:"strength"`
+	// Loras (ADR 0072 decision 5, phase P3). Passed on as written for the same reason as the
+	// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
+	// BY NAME, which is a better answer than a silently shortened list.
+	Loras []imageGenLoraArg `json:"loras"`
+	// Params is the sampler overlay, and a POINTER for the same reason Strength is: an absent
+	// object and an empty one are not the same request, and which of the four a family reads
+	// is answered downstream in warnings rather than guessed at here.
+	Params *imageGenParamsArg `json:"params"`
+}
+
 // imageGenTools is generate_image, its schema built from offer. The call side is refused without
 // --image-gen for the same reason as the peer tools: the advertised set is the scope boundary,
 // and a guessed name in tools/call must not reach a route that spends the user's plan quota.
@@ -861,14 +890,14 @@ func imageGenTools(offer imageGenOffer) []toolSpec {
 			}
 			return ""
 		},
-		handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+		handle: handler(func(req mcpReq, p toolCallParams, a *imageGenCallArgs) []byte {
 			return mcpGenerateImage(req, imageGenArgs{
 				op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 				aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
 				inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
 				negativePrompt: a.NegativePrompt, strength: a.Strength, params: a.Params,
 			})
-		},
+		}),
 	}}
 }
 

@@ -369,3 +369,22 @@ for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.g
 ```
 
 **Reopen** only if a cross-kind fix has to land in these methods again.
+
+## Addendum (2026-10-30) — workspace MCP tools decode into their own argument struct (#2902)
+
+The union `mcpCallArgs` is gone. `toolSpec.handle` is a `toolHandler`, built by
+`handler(func(req, p, a *T) []byte)`: the call check decodes the arguments into a fresh `T`
+that the handler reads, and `T` lives in the tool's family file. A new argument therefore edits
+that file only. `noArgs` marks a handler that reads none, and `ownArgs` keeps its meaning (a type
+error is the handler's, not a refusal ahead of it).
+
+Two constraints came out of it. The type-error text is wire (`invalid argument "name" for ...`,
+the call golden pins it), and `encoding/json` puts an embedded type's name into
+`UnmarshalTypeError.Field` (`nameArg.name`), so the args structs repeat a shared field instead of
+embedding it; `TestToolSpecsAreWellFormed` refuses an embedded field. `TestMCPArgsSchemaAndDecoderAgree`
+now holds each tool's args struct to exactly the properties that tool advertises, in both
+directions, so a field that drifts back into a shared struct fails it.
+
+One edge moved: a `tools/call` for a name with no spec used to get a type-mismatch refusal
+decoded through the union ahead of `unknown tool`; it now gets `unknown tool` directly, because
+there is no struct to decode into. A name that is not a tool is not in any golden.

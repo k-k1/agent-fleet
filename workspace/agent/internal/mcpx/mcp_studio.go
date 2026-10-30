@@ -342,9 +342,9 @@ func studioNoArgs() map[string]any {
 
 // studioTools are offered only to a session bound to an image studio (ADR 0100 decision 3).
 func studioTools() []toolSpec {
-	handle := func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+	handle := handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 		return mcpStudioCall(req, p.Name, p.Args)
-	}
+	})
 	return []toolSpec{
 		{name: "get_image_studio", session: func() map[string]any {
 			return map[string]any{

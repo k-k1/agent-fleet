@@ -32,13 +32,13 @@ func memoTools() []toolSpec {
 					"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 				}
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				out, err := cpMemoDo(http.MethodGet, "/internal/memos", nil)
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "add_memo",
@@ -95,13 +95,13 @@ func memoTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				out, err := cpMemoDo(http.MethodPost, "/internal/memos", []byte(p.Args))
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "update_memo",
@@ -155,7 +155,7 @@ func memoTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
@@ -164,7 +164,7 @@ func memoTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "delete_memo",
@@ -186,7 +186,7 @@ func memoTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *idArg) []byte {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
@@ -195,7 +195,7 @@ func memoTools() []toolSpec {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 		{
 			name: "flush_memos",
@@ -221,13 +221,13 @@ func memoTools() []toolSpec {
 				}
 				return ""
 			},
-			handle: func(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+			handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 				out, err := cpMemoDo(http.MethodPost, "/internal/memos/flush", []byte(p.Args))
 				if err != nil {
 					return mcpToolErr(req.ID, err.Error())
 				}
 				return mcpTextResult(req.ID, out)
-			},
+			}),
 		},
 	}
 }

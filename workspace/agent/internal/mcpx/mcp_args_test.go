@@ -114,12 +114,14 @@ func TestClosestProp(t *testing.T) {
 	}
 }
 
-// unionTags is the json tags of mcpCallArgs.
-func unionTags() map[string]bool {
+// argTags is the json tags of a tool's args struct. No field is embedded: encoding/json names
+// the type in UnmarshalTypeError.Field for a promoted field ("nameArg.name"), which would
+// change the type-error text a caller reads.
+func argTags(rt reflect.Type) map[string]bool {
 	tags := map[string]bool{}
-	rt := reflect.TypeOf(mcpCallArgs{})
 	for i := 0; i < rt.NumField(); i++ {
-		if tag := strings.Split(rt.Field(i).Tag.Get("json"), ",")[0]; tag != "" && tag != "-" {
+		f := rt.Field(i)
+		if tag := strings.Split(f.Tag.Get("json"), ",")[0]; tag != "" && tag != "-" {
 			tags[tag] = true
 		}
 	}
@@ -145,14 +147,14 @@ func sampleFor(schema map[string]any) any {
 	return nil
 }
 
-// Schema and decoder cannot drift: every property an advertised tool declares must be a field
-// of the union the handler decodes (otherwise it is advertised and silently dropped), and every
-// field of the union must be declared by some advertised tool (otherwise it is dead, or a
-// parameter nobody is told about). Each property is also decoded with a value of its declared
-// type, which is what the type-mismatch refusal would otherwise turn on a legitimate call.
+// Schema and decoder cannot drift: the args struct a tool's handler decodes into has exactly
+// the fields the tool advertises. A property with no field is advertised and silently dropped;
+// a field with no property is dead, or a parameter nobody is told about, or another tool's
+// argument that crept back into a shared struct. Each property is also decoded with a value of
+// its declared type, which is what the type-mismatch refusal would otherwise turn on a
+// legitimate call. A tool is judged across every surface variant it is advertised in.
 func TestMCPArgsSchemaAndDecoderAgree(t *testing.T) {
-	tags := unionTags()
-	declared := map[string]bool{}
+	declared := map[string]map[string]bool{}
 	walkAdvertisedToolVariants(t, func(t *testing.T, tools []map[string]any) {
 		for _, tool := range tools {
 			name := tool["name"].(string)
@@ -171,13 +173,22 @@ func TestMCPArgsSchemaAndDecoderAgree(t *testing.T) {
 				t.Errorf("%s: schema has no enumerable properties; the call-side check would skip it", name)
 				continue
 			}
+			spec, ok := toolNamed(name)
+			if !ok {
+				t.Errorf("%s: advertised but has no spec", name)
+				continue
+			}
+			if spec.ownArgs {
+				continue
+			}
+			if declared[name] == nil {
+				declared[name] = map[string]bool{}
+			}
+			tags := argTags(reflect.TypeOf(spec.handle.newArgs()).Elem())
 			for k := range keys {
-				declared[k] = true
-				if toolOwnsArgs(name) {
-					continue
-				}
+				declared[name][k] = true
 				if !tags[k] {
-					t.Errorf("%s: advertised property %q has no field in mcpCallArgs, so the decoder would drop it", name, k)
+					t.Errorf("%s: advertised property %q has no field in %T, so the decoder would drop it", name, k, spec.handle.newArgs())
 					continue
 				}
 				prop, _ := rawProps[k].(map[string]any)
@@ -186,21 +197,23 @@ func TestMCPArgsSchemaAndDecoderAgree(t *testing.T) {
 					continue
 				}
 				body, _ := json.Marshal(map[string]any{k: v})
-				var a mcpCallArgs
-				if msg := mcpCheckCallArgs(name, body, &a); msg != "" {
+				if msg := mcpCheckCallArgs(name, body, spec.handle.newArgs()); msg != "" {
 					t.Errorf("%s: %q declared as %v but the check refuses a value of that type: %s", name, k, prop["type"], msg)
 				}
 			}
 		}
 	})
-	var dead []string
-	for tag := range tags {
-		if !declared[tag] {
-			dead = append(dead, tag)
+	for name, props := range declared {
+		spec, _ := toolNamed(name)
+		var dead []string
+		for tag := range argTags(reflect.TypeOf(spec.handle.newArgs()).Elem()) {
+			if !props[tag] {
+				dead = append(dead, tag)
+			}
 		}
-	}
-	sort.Strings(dead)
-	if len(dead) > 0 {
-		t.Errorf("mcpCallArgs fields no advertised tool declares: %v", dead)
+		sort.Strings(dead)
+		if len(dead) > 0 {
+			t.Errorf("%s: %T fields the tool does not advertise: %v", name, spec.handle.newArgs(), dead)
+		}
 	}
 }

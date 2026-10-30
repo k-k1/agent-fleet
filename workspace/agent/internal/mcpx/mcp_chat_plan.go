@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// chatPlanArgs is set_chat_plan's (get_chat_plan takes none): the full work plan pinned to the
+// conversation.
+type chatPlanArgs struct {
+	Plan string `json:"plan"`
+}
+
 // chatPlanTools are the work plan pinned to the operator's own conversation (docs/log/33
 // stage 5, option D), under --write.
 func chatPlanTools() []toolSpec {
@@ -25,7 +31,9 @@ func chatPlanTools() []toolSpec {
 					"長い作業の再開時や、計画に沿っているか確かめたいときに読むこと（会話履歴を読み直すより安い）。",
 				"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 			}
-		}, operatorWrite: true, refuse: refuse, handle: mcpChatPlan},
+		}, operatorWrite: true, refuse: refuse, handle: handler(func(req mcpReq, p toolCallParams, _ *noArgs) []byte {
+			return mcpChatPlan(req, p, &chatPlanArgs{})
+		})},
 		{name: "set_chat_plan", operator: func() map[string]any {
 			return map[string]any{
 				"name": "set_chat_plan",
@@ -45,7 +53,7 @@ func chatPlanTools() []toolSpec {
 					"required": []string{"plan"},
 				},
 			}
-		}, operatorWrite: true, refuse: refuse, handle: mcpChatPlan},
+		}, operatorWrite: true, refuse: refuse, handle: handler(mcpChatPlan)},
 	}
 }
 
@@ -56,7 +64,7 @@ func chatPlanTools() []toolSpec {
 // The read is under the --write gate too: both tools are advertised only in the write set, so
 // this follows the existing rule that the advertised set is the scope boundary (af_report,
 // docs/log/19 Q2).
-func mcpChatPlan(req mcpReq, p toolCallParams, a *mcpCallArgs) []byte {
+func mcpChatPlan(req mcpReq, p toolCallParams, a *chatPlanArgs) []byte {
 	if convID() == "" {
 		return mcpToolErr(req.ID, "この経路には会話が結び付いていないため、作業計画は扱えません")
 	}
