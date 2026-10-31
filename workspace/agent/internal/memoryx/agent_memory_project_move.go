@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -119,6 +120,9 @@ var (
 	// agentMemLiveSoft is when phase two of the search stops reading; it leaves time for the
 	// session directories and for the answer inside agentMemLiveTimeout.
 	agentMemLiveSoft = 12 * time.Second
+	// agentMemLiveWorkers caps the git processes the search runs at once. Fixed and small: the
+	// host is shared and memory-constrained, and every process of a clone is short.
+	agentMemLiveWorkers = 4
 )
 
 // agentMemLiveSkip names the dependency stores the search never enters, at any depth, and whose
@@ -154,7 +158,9 @@ func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 		live     map[string]*agentMemProject
 		complete bool
 	}
-	st := &agentMemLiveState{live: map[string]*agentMemProject{}}
+	st := &agentMemLiveState{live: map[string]*agentMemProject{}, stop: make(chan struct{})}
+	// Closing stop on the way out makes an abandoned search stop spawning git processes.
+	defer close(st.stop)
 	done := make(chan result, 1)
 	go func() {
 		c := agentMemLiveSearch(st)
@@ -172,6 +178,17 @@ func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 type agentMemLiveState struct {
 	mu   sync.Mutex
 	live map[string]*agentMemProject
+	// stop is closed when the caller no longer waits; nil (never ready) for a search run directly.
+	stop chan struct{}
+}
+
+func (s *agentMemLiveState) stopped() bool {
+	select {
+	case <-s.stop:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *agentMemLiveState) put(p *agentMemProject) {
@@ -214,20 +231,64 @@ func agentMemIgnoredDirs(dir string) (map[string]bool, bool) {
 	return ign, true
 }
 
+// forEach runs work(i) for i in [0,n) on at most agentMemLiveWorkers goroutines and
+// calls apply(i) on the caller's goroutine in index order, as soon as item i is done: results
+// land in the same order a sequential search would produce them, whatever the scheduling, and a
+// timeout finds the finished prefix already applied. It returns false when the search was
+// abandoned; every worker then stops before its next item (an item already running finishes).
+func (s *agentMemLiveState) forEach(n int, work, apply func(i int)) bool {
+	if n == 0 {
+		return true
+	}
+	done := make([]chan struct{}, n)
+	for i := range done {
+		done[i] = make(chan struct{})
+	}
+	var next atomic.Int64
+	workers := min(max(agentMemLiveWorkers, 1), n)
+	for w := 0; w < workers; w++ {
+		go func() {
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= n || s.stopped() {
+					return
+				}
+				work(i)
+				close(done[i])
+			}
+		}()
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case <-done[i]:
+			apply(i)
+		case <-s.stop:
+			return false
+		}
+	}
+	return true
+}
+
 func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 	complete = true
 	start := time.Now()
 	// resolved holds the directories whose identity was computed, by cleaned path: a session's
 	// directory the walk already found costs nothing. Not by real path: an id derived from the
 	// path (svn, no VCS) differs between a symlink and its target, and each must be live.
+	// resolved, visited and complete belong to this goroutine alone; the workers of forEach only
+	// fill the slots of their own job.
 	resolved := map[string]bool{}
-	add := func(dir string) {
+	// claim says whether dir's identity is still to be computed, and marks it.
+	claim := func(dir string) bool {
 		dir = filepath.Clean(dir)
 		if resolved[dir] {
-			return
+			return false
 		}
 		resolved[dir] = true
-		p, identified := agentMemProjectIdent(dir, dir, agentMemLiveRunner(dir))
+		return true
+	}
+	// record files the identity of a claimed directory.
+	record := func(p *agentMemProject, identified bool) {
 		if p == nil {
 			return
 		}
@@ -242,6 +303,19 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 	type item struct {
 		dir string
 		ign map[string]bool
+	}
+	// child is one subdirectory found by walk, with the git work it needs.
+	type child struct {
+		dir           string
+		isCopy, isGit bool
+		skipped       bool // a dependency store: only its own identity counts
+		ident         bool // the identity is to be computed (claimed)
+		wantIgn       bool // phase one of a git working copy: list what it ignores
+		// results, filled by a worker
+		p          *agentMemProject
+		identified bool
+		ign        map[string]bool
+		ignOK      bool
 	}
 	var deferred []item
 	visited := map[string]bool{}
@@ -259,6 +333,7 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 			complete = false
 			return nil, nil, true
 		}
+		var kids []*child
 		for _, e := range ents {
 			if e.Name() == ".git" {
 				continue // git's own directory holds no working copy; a .git entry is the marker below
@@ -276,43 +351,59 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 			} else if !e.IsDir() {
 				continue
 			}
-			isGit, isCopy := false, false
+			k := &child{dir: d}
 			for _, marker := range []string{".git", ".svn"} {
 				if _, err := os.Lstat(filepath.Join(d, marker)); err == nil {
-					isCopy, isGit = true, marker == ".git"
+					k.isCopy, k.isGit = true, marker == ".git"
 					break
 				} else if !errors.Is(err, fs.ErrNotExist) {
 					complete = false
 				}
 			}
-			if agentMemLiveSkip[e.Name()] {
-				// The directory may itself be a working copy; only its content is not entered.
-				if isCopy {
-					add(d)
-				}
-				continue
+			k.skipped = agentMemLiveSkip[e.Name()]
+			// A skipped directory may itself be a working copy; only its content is not entered.
+			if k.isCopy {
+				k.ident = claim(d)
+			}
+			k.wantIgn = !k.skipped && !whole && k.isGit
+			kids = append(kids, k)
+		}
+		// The git work of every child at once, bounded; the results are applied in directory order.
+		okAll := st.forEach(len(kids), func(i int) {
+			k := kids[i]
+			if k.ident {
+				k.p, k.identified = agentMemProjectIdent(k.dir, k.dir, agentMemLiveRunner(k.dir))
+			}
+			if k.wantIgn {
+				k.ign, k.ignOK = agentMemIgnoredDirs(k.dir)
+			}
+		}, func(i int) {
+			k := kids[i]
+			if k.ident {
+				record(k.p, k.identified)
+			}
+			if k.skipped {
+				return
 			}
 			switch {
 			case whole:
-				if isCopy {
-					add(d)
-				}
-				next = append(next, item{d, nil})
-			case isCopy && isGit:
-				add(d)
-				if ign, ok := agentMemIgnoredDirs(d); ok {
-					next = append(next, item{d, ign})
+				next = append(next, item{k.dir, nil})
+			case k.isCopy && k.isGit:
+				if k.ignOK {
+					next = append(next, item{k.dir, k.ign})
 				} else {
-					later = append(later, item{d, nil})
+					later = append(later, item{k.dir, nil})
 				}
-			case isCopy:
-				add(d) // svn says nothing of what it ignores: its content is phase two
-				later = append(later, item{d, nil})
-			case cur.ign[d]:
-				later = append(later, item{d, nil})
+			case k.isCopy:
+				later = append(later, item{k.dir, nil}) // svn says nothing of what it ignores: its content is phase two
+			case cur.ign[k.dir]:
+				later = append(later, item{k.dir, nil})
 			default:
-				next = append(next, item{d, cur.ign})
+				next = append(next, item{k.dir, cur.ign})
 			}
+		})
+		if !okAll {
+			return nil, nil, false
 		}
 		return next, later, true
 	}
@@ -325,7 +416,10 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 			complete = false
 			break
 		}
-		next, later, _ := walk(cur, false)
+		next, later, ok := walk(cur, false)
+		if !ok {
+			return false
+		}
 		queue = append(queue, next...)
 		deferred = append(deferred, later...)
 	}
@@ -340,13 +434,16 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 		}
 		cur := deferred[0]
 		deferred = deferred[1:]
-		next, _, _ := walk(cur, true)
+		next, _, ok := walk(cur, true)
+		if !ok {
+			return false
+		}
 		deferred = append(deferred, next...)
 	}
 	for _, m := range session.ListMetas() {
 		if m.Dir != "" {
-			if _, err := os.Stat(m.Dir); err == nil {
-				add(m.Dir)
+			if _, err := os.Stat(m.Dir); err == nil && claim(m.Dir) {
+				record(agentMemProjectIdent(m.Dir, m.Dir, agentMemLiveRunner(m.Dir)))
 			}
 		}
 	}
