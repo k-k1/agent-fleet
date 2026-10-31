@@ -128,6 +128,25 @@ describe("repo import (docs/log/78)", () => {
     expect(useReposStore.getState().repos.map((r) => r.name)).toEqual(["new-project"]);
   });
 
+  // The Control Plane never reads the body, so the name rides in the query for the audit row.
+  it("repeats the name as a query hint on init and clone, URL-encoded", async () => {
+    const urls: string[] = [];
+    fetchMock.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if ((opts?.method || "GET") === "POST") {
+        urls.push(String(url));
+        return json({ repo: { name: "a b" }, job: { id: "rj9", kind: "git", name: "a b", state: "done", startedAt: "x" } });
+      }
+      return json({ repos: [], jobs: [] });
+    });
+    const { initRepo } = await import("./clone.ts");
+    await initRepo("a b", vi.fn());
+    await cloneRepo({ remote_url: "https://git.example/app.git", branch: "", name: "a b" }, vi.fn());
+    await cloneRepo({ remote_url: "https://git.example/app.git", branch: "", name: "" }, vi.fn());
+    expect(urls[0]).toMatch(/api\/repos\/init\?name=a%20b$/);
+    expect(urls[1]).toMatch(/api\/repos\?name=a%20b$/);
+    expect(urls[2]).toMatch(/api\/repos$/);
+  });
+
   it("is refused with 409 for an existing name, and is not reported as success", async () => {
     fetchMock.mockImplementation(async () => json({ error: { code: "exists", message: "repo already exists: docs" } }, 409));
     const { initRepo } = await import("./clone.ts");

@@ -44,6 +44,11 @@ function revealNewRepo(name: string): void {
 }
 
 // startImport posts the request and returns the accepted job, or an error message.
+// nameHint is the audit hint the Control Plane records as the target; the body stays authoritative.
+function nameHint(name?: string): string {
+  return name ? "?name=" + encodeURIComponent(name) : "";
+}
+
 async function startImport(path: string, body: unknown): Promise<{ job?: RepoJob; err?: string }> {
   let res: { error?: unknown; job?: RepoJob };
   try {
@@ -88,7 +93,8 @@ export async function cloneRepo(
   req: CloneRequest,
   toast: (msg: string) => void,
 ): Promise<{ ok: boolean; name: string }> {
-  const { job, err } = await startImport("api/repos", {
+  // The name in the query is only the audit hint; the Agent acts on the body.
+  const { job, err } = await startImport("api/repos" + nameHint(req.name), {
     remote_url: req.remote_url,
     branch: req.branch,
     name: req.name,
@@ -111,7 +117,7 @@ export async function initRepo(
 ): Promise<{ ok: boolean; name: string }> {
   let res: { error?: unknown; repo?: { name?: string } };
   try {
-    res = await apiJSON("api/repos/init", "POST", { name });
+    res = await apiJSON("api/repos/init" + nameHint(name), "POST", { name });
   } catch (e) {
     toast(t("rp.init_failed", { err: String(e) }));
     return { ok: false, name: "" };

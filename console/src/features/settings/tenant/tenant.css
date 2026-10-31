@@ -654,6 +654,11 @@
   border-color: #7a5320;
 }
 
+.audit-action.cat-cleanup {
+  color: #2fb5a8;
+  border-color: #1f6b64;
+}
+
 .audit-action.cat-session {
   color: #3fb950;
   border-color: #256a30;

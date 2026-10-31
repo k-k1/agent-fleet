@@ -445,6 +445,15 @@ func auditSessionNameHint(s string) string {
 	return ""
 }
 
+// auditRepoNameHint keeps a repository-name-shaped audit hint (one safe path segment, as
+// validRepoName decides) and drops anything else. The Agent acts on the body's name, never this.
+func auditRepoNameHint(s string) string {
+	if validRepoName(s) {
+		return s
+	}
+	return ""
+}
+
 var auditReviewIDRe = regexp.MustCompile(`^[0-9a-f]{20}$`)
 
 // auditReviewIDHint keeps a review proposal or run id (20 hex characters) and drops anything else.
