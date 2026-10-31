@@ -239,7 +239,7 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 		// The same slot mapping as the TUI route's hook capture (RememberSid): the read
 		// layer's rolloutPath (sids.Read) and the exclusive switch (one conversation kept
 		// across cli⇄managed) both ride on it.
-		sids.Write(slotSid, tid)
+		RememberSid(slotSid, tid)
 	}
 	// A stop had the observer stay off this thread (release.go); the managed session owns it
 	// again now.

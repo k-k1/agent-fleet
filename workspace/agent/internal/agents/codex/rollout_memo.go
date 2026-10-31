@@ -23,8 +23,8 @@ import (
 //     delivery checks); a remembered absence would hide a rollout that appeared a moment later.
 //     remember() refuses to store "" and remembered() refuses to serve it; both are kept on
 //     purpose, as in claude/jsonl_memo.go.
-//   - A hit is re-searched after rolloutMemoTTL, so a rollout that moved or a newer duplicate
-//     (the newest-mtime choice) is picked up without manual invalidation.
+//   - A newer duplicate (the newest-mtime choice) is picked up at once by RememberSid's forget();
+//     rolloutMemoTTL re-searches anyway as the backstop for a rollout that moved.
 //
 // The key carries the sessions root: HOME moves in tests and between users.
 type rolloutMemo struct {
