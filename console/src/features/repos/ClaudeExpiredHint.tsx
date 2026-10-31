@@ -10,7 +10,7 @@ export function ClaudeExpiredHint({ kind, expired }: { kind: string; expired: bo
   return (
     <span className="ui-field-hint">
       {tr("start.claude_expired")}
-      <button type="button" className="linklike" onClick={openAgentsSettings}>
+      <button type="button" className="linklike" onClick={() => openAgentsSettings()}>
         {tr("mirror.error_auth_action")}
       </button>
     </span>
