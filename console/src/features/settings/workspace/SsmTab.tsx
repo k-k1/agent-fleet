@@ -972,7 +972,11 @@ function ProfileSection({
             className="ghost ssm-share-open"
             disabled={busy || chosen.length < 2 || !chosenPortalOk}
             title={chosen.length < 2 ? tr("ssm.share_need_two") : !chosenPortalOk ? tr("ssm.share_mixed") : undefined}
-            onClick={() => setShareGroup(chosen)}
+            onClick={() => {
+              // A login made in another tab since this page loaded counts for the proposal.
+              loadStates();
+              setShareGroup(chosen);
+            }}
           >
             {tr("ssm.share_open")}
           </button>

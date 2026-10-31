@@ -91,7 +91,7 @@ fix a role's session length (900–3600 seconds). Renaming a source keeps the ro
   sharing one login on your machine share one here (see *Shared sign-ins* below): a profile that uses
   `[sso-session <name>]` gets the sign-in `<name>`; an older profile with `sso_start_url` inline gets one sign-in per
   portal (start URL and SSO region), named after the first part of the portal's host (`d-1234567890` for
-  `https://d-1234567890.awsapps.com/start`). Type another name to change it for every row that shared it, or clear it
+  `https://d-1234567890.awsapps.com/start`). Type another name to change it for every row that shared the same login on your machine, or clear it
   to give the profile a login of its own. A name that is not 1–61 letters, digits and `.` `_` `@` `-`, one an
   existing sign-in of yours holds for another start URL or SSO region, and one that another profile of yours with a
   login of its own already logs in under, are each shown on the row with the reason; fix the name or untick the row.

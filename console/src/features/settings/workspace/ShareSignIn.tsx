@@ -9,15 +9,17 @@
 // What a request carries is the profile's own fields (groupBody) and the sign-in's name; no
 // token, cache content or other row is read.
 import { useRef, useState } from "react";
-import { rawJSON } from "../../../core/api/client.ts";
+import { api, rawJSON } from "../../../core/api/client.ts";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import {
+  groupable,
   groupBody,
   nameProblem,
   proposeName,
   signInSaveError,
+  toCandidate,
   writeOrder,
   type GroupCandidate,
   type NameProblem,
@@ -60,6 +62,8 @@ export function ShareSignIn({
   const [group] = useState(members);
   const [name, setName] = useState(() => proposeName(members, live));
   const [busy, setBusy] = useState(false);
+  // A refusal found when the run re-read the CP (a message key), shown until the next run.
+  const [stale, setStale] = useState<MsgKey | "">("");
   const [progress, setProgress] = useState<[number, number] | null>(null);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   // Whether the group took over a login that works now, decided when the first run starts: a
@@ -70,31 +74,56 @@ export function ShareSignIn({
   // After a run the name is fixed: the sign-in exists (or the first write failed and the member
   // may still change it).
   const nameLocked = busy || joinedCount > 0;
-  const problem = nameProblem(
-    name.trim(),
-    group,
-    others.filter((o) => !group.some((g) => g.name === o.name)),
-    signIns,
-  );
+  // `others` already leaves out the group by id (the parent's list): a name filter here would
+  // hide an outsider that renders the same workspace name as a member.
+  const problem = nameProblem(name.trim(), group, others, signIns);
   const named = group.find((p) => p.name === name.trim());
   const existing = signIns.find((si) => si.name === name.trim());
 
   const run = async () => {
     const signIn = name.trim();
     if (problem || busy) return;
-    const todo = writeOrder(
-      group.filter((p) => outcomes[p.id]?.status !== "joined"),
-      signIn,
-    );
-    if (keeps.current === null) {
-      keeps.current = existing ? signInLive(signIn) : !!named && !named.nameCollides && live(named.name);
-    }
     setBusy(true);
+    setStale("");
+    // Re-read what the CP holds now: another tab may have created the sign-in elsewhere or moved
+    // a profile's portal since the dialog opened, and the writes would then act on old values.
+    const [pr, sr] = await Promise.all([api("api/ssm/profiles").catch(() => null), api("api/ssm/sign-ins").catch(() => null)]);
+    if (!Array.isArray(pr) || !Array.isArray(sr)) {
+      setStale("ssm.share_unread");
+      setBusy(false);
+      return;
+    }
+    const freshSignIns: SsmSignIn[] = sr.filter((x: any) => typeof x?.name === "string");
+    const byId = new Map<string, any>(pr.map((p: any) => [String(p.id), p]));
+    const pending = group.filter((p) => outcomes[p.id]?.status !== "joined");
+    const fresh: typeof group = [];
+    for (const p of pending) {
+      const row = byId.get(p.id);
+      const c = row && groupable(row) ? toCandidate(row) : null;
+      if (!c || c.startUrl !== p.startUrl || c.ssoRegion !== p.ssoRegion) {
+        setStale("ssm.share_stale");
+        setBusy(false);
+        return;
+      }
+      fresh.push(c);
+    }
+    const freshOthers = pr.filter((p: any) => groupable(p) && !group.some((g) => g.id === String(p.id))).map(toCandidate);
+    const again = nameProblem(signIn, fresh, freshOthers, freshSignIns);
+    if (again) {
+      setStale(PROBLEM_KEYS[again]);
+      setBusy(false);
+      return;
+    }
+    const todo = writeOrder(fresh, signIn);
+    const have = freshSignIns.find((si) => si.name === signIn);
+    if (keeps.current === null) {
+      keeps.current = have ? signInLive(signIn) : !!named && !named.nameCollides && live(named.name);
+    }
     const next: Record<string, Outcome> = { ...outcomes };
     const joined: string[] = [];
     // Until one write has landed the sign-in may not exist: if that first write fails, the others
     // would fail the same way, so the run stops with nothing changed.
-    let created = !!existing || joinedCount > 0;
+    let created = !!have || joinedCount > 0;
     let stopped = false;
     try {
       for (let i = 0; i < todo.length; i++) {
@@ -178,6 +207,11 @@ export function ShareSignIn({
               : named && !named.nameCollides && live(named.name)
                 ? tr("ssm.share_keeps", { name: named.name })
                 : tr("ssm.share_fresh")}
+          </p>
+        )}
+        {stale && (
+          <p className="ssm-load-err ssm-share-stale" role="alert">
+            {tr(stale)}
           </p>
         )}
         {ran && (

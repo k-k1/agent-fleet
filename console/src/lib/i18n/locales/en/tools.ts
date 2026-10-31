@@ -644,6 +644,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.share_r_not_run": "{label}: not sent.",
   "ssm.share_partial": "Only {done} of {total} profiles are in {name}; the others keep the sign-in they had. Retry to move them, or edit them one by one.",
   "ssm.share_done": "All {total} profiles now share {name}.",
+  "ssm.share_stale": "Your profiles changed in another tab (a profile moved, was deleted or changed portal). Close this dialog, reload the list and select again.",
+  "ssm.share_unread": "The current profiles and sign-ins could not be read, so nothing was changed. Try again.",
   "ssm.edit_profile_note_1": "The workspace updates ",
   "ssm.edit_profile_note_2": " within 5 minutes, or at once when you press Log in. Sessions already open keep the old settings.",
   "ssm.edit_host_title": "Edit this host",

@@ -641,6 +641,8 @@ export const tools = {
   "ssm.share_r_not_run": "{label}: 送っていません。",
   "ssm.share_partial": "{total} 個のうち {done} 個だけが {name} に入りました。残りは元のサインインのままです。やり直すか、1 つずつ編集してください。",
   "ssm.share_done": "{total} 個すべてが {name} を共有しています。",
+  "ssm.share_stale": "別のタブでプロファイルが変更されました（移動・削除・ポータルの変更）。このダイアログを閉じて一覧を読み込み直し、もう一度選んでください。",
+  "ssm.share_unread": "現在のプロファイルとサインインを読めなかったため、何も変更していません。もう一度試してください。",
   "ssm.edit_profile_note_1": "ワークスペースの ",
   "ssm.edit_profile_note_2": " は 5 分以内か、「ログイン」を押した時点で更新されます。開いているセッションは古い設定のままです。",
   "ssm.edit_host_title": "このホストを編集",

@@ -104,6 +104,9 @@ export function nameProblem(
   if (!name) return "empty";
   if (!SIGN_IN_NAME_RE.test(name)) return "invalid";
   const have = signIns.find((si) => si.name === name);
+  // Two members that render the same workspace name: the first write leaves the other one a
+  // profile of its own with the sign-in's name, which the CP refuses; no order avoids it.
+  if (group.filter((g) => g.name === name).length > 1) return "taken";
   if (have && (have.startUrl !== group[0].startUrl || have.ssoRegion !== group[0].ssoRegion)) return "mismatch";
   if (others.some((o) => o.name === name)) return "taken";
   return null;

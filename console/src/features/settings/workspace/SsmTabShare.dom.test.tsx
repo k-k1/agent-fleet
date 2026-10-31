@@ -266,4 +266,44 @@ describe("Share one sign-in", () => {
     expect(seen).not.toContain("TOKENSENTINEL");
     for (const w of writes) expect(Object.keys(w.body).sort()).toEqual(["accountId", "confirmBeforeUse", "label", "region", "roleName", "signIn", "ssoRegion", "startUrl"]);
   });
+
+  it("refuses a name an unticked profile renders too, even when a member renders the same name", async () => {
+    profiles.push(prof("pe", "a b", { name: "a-b" }), prof("pf", "a-b"));
+    await mount();
+    await pick("a b");
+    await pick("c");
+    await open();
+    await type(nameInput(), "a-b");
+    expect(dlg().textContent).toContain(t("ssm.share_p_taken"));
+    expect(doBtn().disabled).toBe(true);
+  });
+
+  it("refuses a group holding two profiles that render the sign-in's name, before any write", async () => {
+    profiles.push(prof("pe", "a b", { name: "a-b" }), prof("pf", "a-b"));
+    await mount();
+    await pick("a b");
+    await pick("a-b");
+    await open();
+    await type(nameInput(), "a-b");
+    expect(dlg().textContent).toContain(t("ssm.share_p_taken"));
+    expect(doBtn().disabled).toBe(true);
+    expect(writes).toHaveLength(0);
+  });
+
+  it("re-reads before writing: a portal changed in another tab, or a sign-in created there, stops the run", async () => {
+    await mount();
+    await pick("a");
+    await pick("c");
+    await open();
+    profiles.find((x) => x.id === "pa")!.startUrl = "https://moved.awsapps.com/start";
+    await type(nameInput(), "team");
+    await run();
+    expect(writes).toHaveLength(0);
+    expect(dlg().textContent).toContain(t("ssm.share_stale"));
+    profiles.find((x) => x.id === "pa")!.startUrl = PORTAL.startUrl;
+    signIns.push({ id: "g", name: "team", ...PORTAL, startUrl: "https://other.awsapps.com/start", createdAt: "", profiles: ["pz"] });
+    await run();
+    expect(writes).toHaveLength(0);
+    expect(dlg().textContent).toContain(t("ssm.share_p_mismatch"));
+  });
 });
