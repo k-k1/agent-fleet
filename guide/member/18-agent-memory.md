@@ -367,7 +367,8 @@ link back.
 - **Choosing the project**: the tools take `repository`, the output of `git remote get-url origin` in the
   repository the agent is working in. Agent Fleet matches it against each project's remote (`memory_projects` lists
   them), so `https://`, `ssh://` and `git@host:owner/repo` spellings, a trailing `.git` or `/`, and the case of the
-  host all find the same project. `project` (an id from `memory_projects`) still works; if both are given they must
+  host all find the same project. A project's `remote` exactly as `memory_projects` lists it
+  (`github.com/owner/repo`) is accepted too. `project` (an id from `memory_projects`) still works; if both are given they must
   name the same project. A remote that matches no project, or more than one, is refused with a message saying so (a
   project that holds no memory yet is started by the first save when exactly one working copy of that remote is
   cloned under `~/repos` in the workspace; with none, or with several, the save is refused: clone the repository
