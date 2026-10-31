@@ -112,6 +112,27 @@ func TestRolloutPathResearchesAfterTheTTLAndKeepsTheNewest(t *testing.T) {
 	}
 }
 
+// A remembered hit that still Lstats must not be re-globbed once the old 60 s TTL has passed;
+// only a failed Lstat or forget() triggers a search.
+func TestRolloutPathDoesNotReglobAfterTheOldTTLWhileItLstats(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	want := putRollout(t, "01", memoID)
+	n := countGlobs(t)
+	rolloutPath(memoID)
+	key := filepath.Join(os.Getenv("HOME"), ".codex", "sessions") + "\x00" + memoID
+	rolloutPaths.mu.Lock()
+	h := rolloutPaths.seen[key]
+	h.at = time.Now().Add(-30 * time.Minute)
+	rolloutPaths.seen[key] = h
+	rolloutPaths.mu.Unlock()
+	if got := rolloutPath(memoID); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if *n != 1 {
+		t.Fatalf("globbed %d times, want 1 (no re-glob while the path Lstats)", *n)
+	}
+}
+
 // A new question appended after the cached scan must be seen: the cache key is the file's size
 // and mtime, and an append changes both.
 func TestPendingQuestionIDNoticesAQuestionAppendedAfterTheCachedScan(t *testing.T) {

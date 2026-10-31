@@ -23,8 +23,18 @@ import (
 //     delivery checks); a remembered absence would hide a rollout that appeared a moment later.
 //     remember() refuses to store "" and remembered() refuses to serve it; both are kept on
 //     purpose, as in claude/jsonl_memo.go.
-//   - A newer duplicate (the newest-mtime choice) is picked up at once by RememberSid's forget();
-//     rolloutMemoTTL re-searches anyway as the backstop for a rollout that moved.
+//   - A remembered path that still Lstats is served until rolloutMemoTTL, not re-globbed every
+//     minute: a refresh costs a full sweep of the network mount per id, and the Lstat already
+//     catches a rollout that moved or was deleted.
+//   - A newer duplicate (the newest-mtime choice) is picked up at once by RememberSid's forget(),
+//     which the hook capture and the managed driver's new-thread / fork path both reach. Not every
+//     route is proven to: the Terminal route's `codex resume` / `codex fork` report only through
+//     the next hook, a managed resume of a known thread calls no forget, and a thread resumed by
+//     another app-server client never does. Resume appends to the existing rollout and a fork gets a
+//     new id (so a new key), as far as the repo's measurements go, but nothing here rules out a
+//     codex version writing a second file for the same id. So the TTL stays as a backstop, an hour
+//     long: a duplicate can show up late for at most that long, and the sweep cost is one per id
+//     per hour instead of one per minute.
 //
 // The key carries the sessions root: HOME moves in tests and between users.
 type rolloutMemo struct {
@@ -50,7 +60,7 @@ func (m *rolloutMemo) forget(codexID string) {
 
 // Like claude's memos, both tables below grow by one small entry per session the agent ever
 // saw; one process per workspace holds tens of sessions, so they are not worth evicting.
-const rolloutMemoTTL = 60 * time.Second
+const rolloutMemoTTL = time.Hour
 
 var rolloutPaths rolloutMemo
 
