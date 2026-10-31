@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -410,5 +411,29 @@ func TestAgentMemoryLiveForEachStopsWhenAbandoned(t *testing.T) {
 	}
 	if after := runtime.NumGoroutine(); after > before+1 {
 		t.Errorf("goroutines %d -> %d: workers leaked", before, after)
+	}
+}
+
+// One worker and four find exactly the same projects, down to the Root a shared id keeps.
+func TestAgentMemoryLiveSearchSameResultForAnyWorkerCount(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	liveScanFixture(t, filepath.Join(home, "repos"), 10, 0)
+	old := agentMemLiveWorkers
+	t.Cleanup(func() { agentMemLiveWorkers = old })
+	var snaps []map[string]agentMemProject
+	for _, w := range []int{1, 4} {
+		agentMemLiveWorkers = w
+		live, complete := agentMemLiveProjects()
+		if !complete {
+			t.Fatalf("workers=%d: incomplete", w)
+		}
+		m := map[string]agentMemProject{}
+		for id, p := range live {
+			m[id] = *p
+		}
+		snaps = append(snaps, m)
+	}
+	if !reflect.DeepEqual(snaps[0], snaps[1]) {
+		t.Fatalf("results differ:\n1: %v\n4: %v", snaps[0], snaps[1])
 	}
 }

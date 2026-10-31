@@ -410,6 +410,9 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 	queue := []item{{gitx.ReposRoot(), nil}}
 	reads := 0
 	for len(queue) > 0 {
+		if st.stopped() {
+			return false
+		}
 		cur := queue[0]
 		queue = queue[1:]
 		if reads++; reads > agentMemLiveBudget {
@@ -432,6 +435,9 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 			complete = false
 			break
 		}
+		if st.stopped() {
+			return false
+		}
 		cur := deferred[0]
 		deferred = deferred[1:]
 		next, _, ok := walk(cur, true)
@@ -441,6 +447,9 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 		deferred = append(deferred, next...)
 	}
 	for _, m := range session.ListMetas() {
+		if st.stopped() {
+			return false
+		}
 		if m.Dir != "" {
 			if _, err := os.Stat(m.Dir); err == nil && claim(m.Dir) {
 				record(agentMemProjectIdent(m.Dir, m.Dir, agentMemLiveRunner(m.Dir)))
