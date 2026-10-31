@@ -7,6 +7,8 @@ package sessionx
 // status is a cheap polling primitive, while this reads and folds whole transcripts.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"net/http"
 	"time"
@@ -311,4 +313,20 @@ func AggregateUsage(turns []transcript.Turn) sessionUsage {
 	}
 	fold()
 	return u
+}
+
+// UsageSourceOf is the transcript the usage fold reads, with a short digest of what it covers
+// (empty: nothing to fingerprint) and a loader whose ok=false means the turns may be stale. A
+// kind without agents.UsageSourcer is read by UsageTurns, never skippable and always ok.
+func UsageSourceOf(m session.Meta) (stamp string, turns func() ([]transcript.Turn, bool)) {
+	if us, ok := AgentOf(m.Kind).(agents.UsageSourcer); ok {
+		if src, ok := us.UsageSource(m); ok {
+			if src.Stamp != "" {
+				sum := sha256.Sum256([]byte(src.Stamp))
+				stamp = hex.EncodeToString(sum[:8])
+			}
+			return stamp, src.Turns
+		}
+	}
+	return "", func() ([]transcript.Turn, bool) { return UsageTurns(m), true }
 }

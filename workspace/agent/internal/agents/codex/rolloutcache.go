@@ -66,12 +66,19 @@ var rolloutCache sync.Map // rollout path -> *rolloutEntry
 // from what we have, which is what the Console wants — a poll that fails must not blank a
 // conversation.
 func withRollout(path, slot string, fn func(*rolloutParser)) bool {
+	found, _ := withRolloutFresh(path, slot, fn)
+	return found
+}
+
+// withRolloutFresh is withRollout that also reports whether the parse fn saw is up to date with
+// the file: false when a read failed and the cached parse was served instead.
+func withRolloutFresh(path, slot string, fn func(*rolloutParser)) (found, fresh bool) {
 	if path == "" {
-		return false
+		return false, false
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
-		return false
+		return false, false
 	}
 	// used is stamped at creation, not at first read: the sweep below runs before this
 	// entry is locked, and a zero timestamp reads as "idle since the epoch" — it would
@@ -85,6 +92,7 @@ func withRollout(path, slot string, fn func(*rolloutParser)) bool {
 	e := v.(*rolloutEntry)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	fresh = true
 	if fi.Size() < e.off {
 		e.p = nil // truncated: whatever this is, it is not what we were reading
 	}
@@ -92,8 +100,9 @@ func withRollout(path, slot string, fn func(*rolloutParser)) bool {
 		if err := e.fold(path); err != nil {
 			if e.p == nil {
 				rolloutCache.Delete(path) // nothing was ever folded — don't cache the failure
-				return false
+				return false, false
 			}
+			fresh = false
 			// A transient failure over a parse we already hold: serve what we have.
 		} else if slot != "" {
 			persistViewImages(e.p.turns, slot)
@@ -101,7 +110,7 @@ func withRollout(path, slot string, fn func(*rolloutParser)) bool {
 	}
 	e.used = time.Now()
 	fn(e.p)
-	return true
+	return true, fresh
 }
 
 // fold brings the entry up to date from path, in one open: the head is read first as the

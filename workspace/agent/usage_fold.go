@@ -71,6 +71,11 @@ type usageFoldMark struct {
 	// their Groups counts from the first VISIBLE turn, a number that shifts once the head
 	// becomes visible (see rebaseCappedMark).
 	Uncapped bool `json:"uncapped,omitempty"`
+	// Stamp is the digest sessionx.UsageSourceOf gives for the transcript source as it stood BEFORE the last fold
+	// that fully succeeded (taken before the parse, so growth during it shows as a change next
+	// time). While it is unchanged the transcript is not parsed again. Empty: never recorded
+	// (older state.json, or a kind with no cheap stamp), so the next pass parses once.
+	Stamp string `json:"stamp,omitempty"`
 }
 
 type usageFoldState struct {
@@ -378,13 +383,41 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
 		return 0, false, nil // shell/ssm have no transcript
 	}
-	n, err := foldSessionUsageWithTurns(m, st, sessionx.UsageTurns(m), includeTrailing)
-	if err != nil {
-		return n, false, err
+	// The stamp is taken before the parse: a write that lands during it changes the stamp, so
+	// it is parsed again next pass instead of being recorded as seen.
+	stamp, load := foldUsageSource(m)
+	skip := stamp != "" && !includeTrailing && st.Sessions[m.Name].Stamp == stamp
+	n, seen := 0, false
+	if !skip {
+		turns, ok := load()
+		// An empty or incomplete read (a file that would not open, a cached parse that could not
+		// be brought up to date) is never recorded as seen: the next pass reads again.
+		seen = ok && len(turns) > 0
+		var err error
+		if n, err = foldSessionUsageWithTurns(m, st, turns, includeTrailing); err != nil {
+			return n, false, err
+		}
 	}
+	// The subagent sources carry their own stamps (usageAgentMark.Stamp), so this stays cheap
+	// for a session whose files have not changed.
 	sub, subDirty, err := foldSubagentUsage(m, st, sessionx.SubagentUsageSources(m))
-	return n + sub, n > 0 || subDirty, err
+	dirty := n > 0 || subDirty
+	if err == nil && seen && stamp != "" {
+		// A session whose turns are all one open trailing turn has no mark yet; the empty one
+		// created here is deliberate (nothing folded, stamp only) and changes no watermark.
+		mark := st.Sessions[m.Name]
+		if mark.Stamp != stamp {
+			mark.Stamp = stamp
+			st.Sessions[m.Name] = mark
+			dirty = true
+		}
+	}
+	return n + sub, dirty, err
 }
+
+// foldUsageSource is the seam the tests use to count transcript parses and to write between the
+// stamp and the parse.
+var foldUsageSource = sessionx.UsageSourceOf
 
 // subagentMarkKey names one subagent transcript's watermark. The session name is in it, so a
 // recreated name cannot meet its predecessor's; the id is the agent's own (its path below the

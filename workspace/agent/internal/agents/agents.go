@@ -437,6 +437,25 @@ type UsageReader interface {
 	UsageTurns(m session.Meta) []transcript.Turn
 }
 
+// UsageSource is the session's own transcript as the usage fold reads it, with a fingerprint of
+// what that read covers. Stamp is empty when there is nothing to fingerprint. Turns reports
+// ok=false when any file it needed could not be read in full, or a cached parse could not be
+// brought up to date: the turns are then possibly stale and the caller must not record the stamp
+// as seen.
+type UsageSource struct {
+	Stamp string
+	Turns func() (turns []transcript.Turn, ok bool)
+}
+
+// UsageSourcer is an optional Agent capability: UsageSource, built from Stat calls on the kind's
+// memoized path lookups (no directory sweep beyond the one lookup the read itself needs, no
+// read). The stamp is taken before the read, from the same paths the read uses. ok=false means
+// "no cheap source": the fold parses with UsageTurns as it always did. A kind that cannot promise
+// the stamp covers everything its read touches, and report a failed read, must not implement it.
+type UsageSourcer interface {
+	UsageSource(m session.Meta) (UsageSource, bool)
+}
+
 // TextReader is an optional Agent capability: the turns as a reader of their text (the search
 // index) wants them, when UsageReader's differ — claude, whose usage turns carry no text.
 type TextReader interface {

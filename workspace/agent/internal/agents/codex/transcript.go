@@ -1676,12 +1676,19 @@ func openQuestions(path string) map[string]string {
 // path (for diagnostics). ok is always true (codex supports generic transcript); an
 // absent rollout (no conversation yet) yields nil turns, which the chat shows as empty.
 func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
+	td, _ := readTranscriptFresh(m)
+	return td, true
+}
+
+// readTranscriptFresh is readTranscript that also reports whether the turns reflect the whole
+// rollout (false: a read failed and a cached parse was served, or there is no rollout).
+func readTranscriptFresh(m session.Meta) (agents.TranscriptData, bool) {
 	slot := session.UUID(m.Dir, m.Name)
 	cxid := sids.Read(slot)
 	compacting := isCompacting(m)
 	path := rolloutPath(cxid)
 	td := agents.TranscriptData{Path: path, Compacting: compacting}
-	withRollout(path, slot, func(p *rolloutParser) {
+	_, fresh := withRolloutFresh(path, slot, func(p *rolloutParser) {
 		var since time.Time
 		if _, open := p.openAsk(); open {
 			since = terminalSince(m) // only when there is a question to bound: it runs tmux
@@ -1689,7 +1696,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		td.Turns, td.Tasks, td.Pending, td.Mode = p.snapshot(since)
 	})
 	managedEnrich(m, &td)
-	return td, true
+	return td, fresh
 }
 
 // rolloutCompletedAfter reports whether codex recorded the end of the current turn —
