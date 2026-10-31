@@ -1,4 +1,4 @@
-// An `auth_expired` send refusal must hand the member a way into the Claude login, because a
+// An `auth_expired` send refusal must hand the member a way into the refused agent's login, because a
 // member with no session has no transcript error card to click. Every other failure stays a
 // plain toast.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -58,6 +58,21 @@ describe("toastSendFailure", () => {
 
     await act(async () => root!.render(<>{claudeNode}</>));
     expect(host.textContent).toContain("Claude");
+  });
+
+  it("falls back to claude wording, key and card when the kind is absent or junk", async () => {
+    const sink = vi.fn();
+    toastSendFailure(sink, { code: "auth_expired" }, "fallback");
+    toastSendFailure(sink, { code: "auth_expired" }, "fallback", "???");
+    const calls = sink.mock.calls as [ReactNode, { key?: string }][];
+    expect(calls[0][1].key).toBe("auth-expired:claude");
+    for (const [i, [node]] of calls.entries()) {
+      await act(async () => root!.render(<>{node}</>));
+      expect(host.textContent).toContain("Claude");
+      act(() => useSettingsUI.getState().closeSettings());
+      await act(async () => host.querySelector("button")!.click());
+      expect(useSettingsUI.getState().settingsTarget, `call ${i}`).toBe("claude");
+    }
   });
 
   it("keeps any other failure a plain toast", () => {

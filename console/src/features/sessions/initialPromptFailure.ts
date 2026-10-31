@@ -1,4 +1,4 @@
-// The one place a create-time initial prompt that failed because the Claude login expired turns
+// The one place a create-time initial prompt that failed because the agent login (the session's kind) expired turns
 // into a toast. The Agent settles the prompt in the background, long after the create call
 // returned, and with the login already dead it settles within milliseconds of the create — so the
 // first list that carries the session may already say failed, with no pending in between. The

@@ -1,5 +1,5 @@
 // The one place a failed send turns into a toast. An `auth_expired` refusal (the Agent's
-// promptBlocker: the workspace's Claude login is dead) gets a sticky toast with a
+// promptBlocker: the refused session's agent login is dead; claude when the kind is unknown) gets a sticky toast with a
 // Re-authenticate button, because a member with no session has no other way to the login
 // flow: the transcript's error card only appears after a turn failed with a 401, and with the
 // credentials already dead no turn ever starts. Every other failure stays a plain toast.
@@ -17,18 +17,17 @@ const INITIAL_PROMPT_TOAST_KEY = "initial-prompt-auth-expired";
 
 type ToastSink = (message: ReactNode, opts?: ToastOptions) => unknown;
 
-// An absent kind means the caller cannot tell which agent was refused; only claude's
-// wording and card are honest defaults there (the refusal began as claude's).
-const kindOrClaude = (kind?: string) => kind || "claude";
-
+// An absent or unknown kind resolves to claude through agentOf: the caller cannot tell which
+// agent was refused, and claude's wording and card are the honest default.
 // Compared through the registry rather than a kind literal: ADR 0124 caps those outside it, and
 // agentOf already resolves "no kind" (and junk) to claude.
+const sendToastKey = (kind?: string) => `${TOAST_KEY}:${agentOf(kind).id}`;
 const isClaude = (kind?: string) => agentOf(kind) === agentOf(undefined);
 
 /** openAgentsSettings opens Settings on the Agents section, scrolled to the card of `kind`
  *  (default claude), where that agent's login lives. */
 export function openAgentsSettings(kind?: string): void {
-  useSettingsUI.getState().openSettings("agents", { target: kindOrClaude(kind) });
+  useSettingsUI.getState().openSettings("agents", { target: agentOf(kind).id });
 }
 
 /** authExpiredText is the refusal sentence for `kind`. Claude keeps its own catalogue entry; any
@@ -44,8 +43,9 @@ export function initialPromptAuthExpiredText(tr: ReturnType<typeof useT>, name: 
     : tr("start.initial_prompt_auth_expired_kind", { name, agent: kindDisplayName(kind) });
 }
 
-export function AuthExpiredToast({ text, toastKey = TOAST_KEY, kind }: { text?: string; toastKey?: string; kind?: string }) {
+export function AuthExpiredToast({ text, toastKey, kind }: { text?: string; toastKey?: string; kind?: string }) {
   const tr = useT();
+  const key = toastKey ?? sendToastKey(kind);
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
@@ -55,7 +55,7 @@ export function AuthExpiredToast({ text, toastKey = TOAST_KEY, kind }: { text?: 
         type="button"
         className="update-toast-btn"
         onClick={() => {
-          dismissToast(toastKey);
+          dismissToast(key);
           openAgentsSettings(kind);
         }}
       >
@@ -75,7 +75,7 @@ export function toastSendFailure(
 ): void {
   if (fail.code === AUTH_EXPIRED_CODE) {
     // Keyed per kind: a claude and a codex refusal at once are two different problems.
-    const key = `${TOAST_KEY}:${kindOrClaude(kind)}`;
+    const key = sendToastKey(kind);
     toast(<AuthExpiredToast kind={kind} toastKey={key} />, { kind: "error", duration: 0, key });
     return;
   }
