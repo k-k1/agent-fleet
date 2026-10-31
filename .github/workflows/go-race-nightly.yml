@@ -1,0 +1,51 @@
+# Whole-module Go race detector run for both modules (#3124). Too slow for a PR (measured
+# -race -p 2 on a loaded 8-core host: workspace/agent ~10 min, control-plane well over an
+# hour because of its root package and internal/store), so it runs nightly and on demand;
+# ci.yml's go-race job covers the goroutine-heavy packages on every PR.
+#
+# Packages that already fail under -race are excluded below so the run goes red only for a
+# NEW race. Remove an entry when its package is fixed.
+# Known-red packages are tracked in #3143.
+name: go-race-nightly
+
+on:
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-race-nightly
+  cancel-in-progress: false
+
+jobs:
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: workspace/agent
+            exclude: 'internal/(awsx|gcpx|jirax|cloudruns)$'
+          - module: control-plane
+            # The root package has one known race (TestEngineDiscoverProbeCachesWithinTTL).
+            exclude: 'control-plane$'
+    name: race (${{ matrix.module }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: go test -race
+        working-directory: ${{ matrix.module }}
+        env:
+          EXCLUDE: ${{ matrix.exclude }}
+        run: |
+          set -euo pipefail
+          pkgs=$(go list ./... | grep -Ev "$EXCLUDE")
+          # shellcheck disable=SC2086
+          go test -race -p 2 -count=1 -timeout 120m $pkgs

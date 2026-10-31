@@ -281,6 +281,9 @@ The product is **two Go modules**, run separately (`e2e/` and the release scanne
 (cd workspace/agent && go test -timeout 20m ./...)
 ```
 
+- CI also runs the race detector: `ci.yml`'s `go-race` job on the goroutine-heavy packages
+  of both modules (the packages are listed in its matrix), and `go-race-nightly.yml` on whole
+  modules. Locally: `go test -race -p 2 ./internal/memoryx/` (about 5 minutes).
 - The CP side carries many `httptest`-based smoke tests (audit, egress, the internal
   git smart-HTTP and LFS, among others). The Postgres tests skip themselves unless
   `AF_TEST_DATABASE_URL` is set, and CI does not set it.
