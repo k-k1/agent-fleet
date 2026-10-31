@@ -28,7 +28,10 @@ func memSearchSave(t *testing.T, c agentMemCaller, name, desc, body string, at t
 // memSeedMany stores n memories as one commit instead of n saves. A save costs five git
 // processes (ls-files, add, commit, rev-parse, gc --auto), which on a loaded host made a
 // 500-memory fixture take a minute. The files, staging copies and primed scan cache are what
-// n saves leave behind; the save path itself is covered by the tests that call agentMemSave.
+// n saves leave behind; the save path itself is covered by the tests that call agentMemSave
+// and TestMemSeedManyMatchesSave pins the two together. Test-only: it assumes a fresh store,
+// unused names and a test that never reads history (no AF-* commit trailers, `add -A` sweeps
+// the whole store, and no tomb, secret-scan or project.json step runs).
 func memSeedMany(t *testing.T, c agentMemCaller, n int, req func(i int) agentMemSaveReq, at func(i int) time.Time) {
 	t.Helper()
 	if err := memoryEnsureRepo(); err != nil {
@@ -72,6 +75,49 @@ func memSeedMany(t *testing.T, c agentMemCaller, n int, req func(i int) agentMem
 	}
 	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", "agent-memory: seed"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The seed must leave what a save leaves: the same file and staging bytes, and a primed scan
+// cache. Each variant runs in its own environment, so the bytes are compared across stores.
+func TestMemSeedManyMatchesSave(t *testing.T) {
+	at := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	req := agentMemSaveReq{Name: "same", Description: "about builds", Type: "project", Body: "body\nmore"}
+	read := func(seed bool) (file, staged []byte) {
+		t.Helper()
+		agentMemTestEnv(t)
+		c := agentMemCallerT(t, "claude-main")
+		runs := agentMemScanRuns.Load()
+		if seed {
+			memSeedMany(t, c, 1, func(int) agentMemSaveReq { return req }, func(int) time.Time { return at })
+		} else if _, err := agentMemSave(c, req, at); err != nil {
+			t.Fatal(err)
+		}
+		rel, err := agentMemScopeDir(agentMemDefaultScope("", c), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel += "/same.md"
+		if file, err = os.ReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(rel))); err != nil {
+			t.Fatal(err)
+		}
+		if staged, err = os.ReadFile(filepath.Join(memoryStagingDir(), agentMemRepoPrefix, filepath.FromSlash(rel))); err != nil {
+			t.Fatal(err)
+		}
+		before := agentMemScanRuns.Load()
+		if _, err := agentMemListIndex(c, 0); err != nil {
+			t.Fatal(err)
+		}
+		if n := agentMemScanRuns.Load() - before; n != 0 {
+			t.Errorf("seed=%v: %d files rescanned on the first read (scan runs since start: %d)", seed, n, before-runs)
+		}
+		return file, staged
+	}
+	var f1, s1, f2, s2 []byte
+	t.Run("save", func(t *testing.T) { f1, s1 = read(false) })
+	t.Run("seed", func(t *testing.T) { f2, s2 = read(true) })
+	if string(f1) != string(f2) || string(s1) != string(s2) {
+		t.Errorf("seed differs from save:\nsave file:\n%s\nseed file:\n%s", f1, f2)
 	}
 }
 
@@ -213,10 +259,14 @@ func TestAgentMemorySearchLatency(t *testing.T) {
 	memSeedMany(t, c, 500, func(i int) agentMemSaveReq {
 		return agentMemSaveReq{Name: fmt.Sprintf("mem-%03d", i), Description: fmt.Sprintf("memory %d about builds", i), Body: body + fmt.Sprintf("unique%d", i)}
 	}, func(i int) time.Time { return now.Add(time.Duration(i) * time.Minute) })
-	// A save primes the scan cache, so the first read after the writes does not rescan.
+	// memSeedMany primes the scan cache as a save does, so the first read does not rescan.
 	t0 := time.Now()
+	runs := agentMemScanRuns.Load()
 	if _, err := agentMemListIndex(c, 0); err != nil {
 		t.Fatal(err)
+	}
+	if n := agentMemScanRuns.Load() - runs; n != 0 {
+		t.Fatalf("%d files rescanned on the first read after seeding", n)
 	}
 	t.Logf("index of 500 (untouched path, first read): %v", time.Since(t0))
 	for _, q := range []string{"builds", "builds", "builds tests ordinary", "builds nosuchword"} {
