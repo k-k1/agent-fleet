@@ -45,19 +45,51 @@ func gateEnv(t *testing.T) map[string]Profile {
 }
 
 // gate runs the gate in the background and returns its result channel.
-func gate(settings map[string]Profile, profile, sess string, wait time.Duration) chan error {
+//
+// The run is joined when the test ends. A run that outlives its test keeps polling and refiles
+// its request into whatever HOME the next test has set (HOME is process-wide), where it shows
+// up as an extra request in the Console's list or as a request "filed past the wait". Cleanup
+// ends a run still waiting by removing its session, which ConfirmGate treats as "ended", and
+// then waits for the goroutine. It runs before gateEnv's own cleanups (LIFO), so HOME and the
+// hooks are still the test's while the run unwinds.
+func gate(t *testing.T, settings map[string]Profile, profile, sess string, wait time.Duration) chan error {
+	t.Helper()
 	ch := make(chan error, 1)
+	done := make(chan struct{})
+	sessDir := os.Getenv("AF_SESSIONS_DIR") // read now: a later test step may repoint it
 	go func() {
+		defer close(done)
 		_, err := ConfirmGate(ConfirmOptions{Settings: settings, Profile: profile, Session: sess, Wait: wait, Command: "aws"})
 		ch <- err
 	}()
+	t.Cleanup(func() {
+		_ = os.RemoveAll(sessDir)
+		select {
+		case <-done:
+		case <-time.After(gateJoinBudget):
+			t.Error("a background gate run did not end after its session was removed")
+		}
+	})
 	return ch
 }
+
+// gateJoinBudget and gateSlack are wall-clock budgets that only separate "returned" from
+// "never returns"; none of the assertions depends on them being tight. gateJoinBudget bounds a
+// wait for something that ends within a few polls (10 ms) when nothing is wrong; gateSlack is
+// the bound for something that must merely happen eventually; gateAtOnce is the bound for a run
+// that must end at once (a held lock, a denial hold, no session), against a Wait chosen far above
+// it so that a gate that did wait would overshoot it by a wide margin.
+const (
+	gateJoinBudget = 20 * time.Second
+	gateSlack      = 10 * time.Second
+	gateAtOnce     = 3 * time.Second
+	gateLongWait   = 60 * time.Second
+)
 
 // pending waits for the Console's list to show n requests and returns them.
 func pending(t *testing.T, n int) []ConfirmRequestWire {
 	t.Helper()
-	for i := 0; i < 300; i++ {
+	for i := 0; i < int(gateJoinBudget/(10*time.Millisecond)); i++ {
 		rec := httptest.NewRecorder()
 		HandleConfirmList(rec, httptest.NewRequest("GET", "/aws-confirm", nil))
 		if strings.Count(rec.Body.String(), `"id":"`) == n {
@@ -89,7 +121,7 @@ func answer(t *testing.T, id, verb string, relayed bool) int {
 
 func TestConfirmGateApproves(t *testing.T) {
 	s := gateEnv(t)
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	reqs := pending(t, 1)
 	if reqs[0].Session != "s1" || len(reqs[0].Targets) != 1 || reqs[0].Targets[0].AccountID != "123456789012" || reqs[0].Targets[0].RoleName != "Dev" {
 		t.Fatalf("request = %+v", reqs[0])
@@ -112,7 +144,7 @@ func TestConfirmGateApproves(t *testing.T) {
 
 func TestConfirmGateDenialAndTimeout(t *testing.T) {
 	s := gateEnv(t)
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	reqs := pending(t, 1)
 	answer(t, reqs[0].ID, "deny", true)
 	if err := <-ch; !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "denied") {
@@ -120,7 +152,7 @@ func TestConfirmGateDenialAndTimeout(t *testing.T) {
 	}
 	// Within the hold a new run is denied at once and files nothing new.
 	start := time.Now()
-	if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: 5 * time.Second}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > time.Second {
+	if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: gateLongWait}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > gateAtOnce {
 		t.Fatalf("held run = %v after %s", err, time.Since(start))
 	}
 
@@ -143,7 +175,7 @@ func TestConfirmGateNeedsASession(t *testing.T) {
 	s := gateEnv(t)
 	for _, sess := range []string{"", "nosuch", "../x"} {
 		start := time.Now()
-		if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: sess, Wait: 5 * time.Second}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > time.Second {
+		if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: sess, Wait: gateLongWait}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > gateAtOnce {
 			t.Fatalf("session %q: %v", sess, err)
 		}
 	}
@@ -157,7 +189,7 @@ func TestConfirmGateNeedsASession(t *testing.T) {
 // profile, a new session of the same name, or another profile asks again.
 func TestConfirmGrantScope(t *testing.T) {
 	s := gateEnv(t)
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	answer(t, pending(t, 1)[0].ID, "approve", true)
 	if err := <-ch; err != nil {
 		t.Fatal(err)
@@ -214,7 +246,7 @@ func TestConfirmTargetsOfChains(t *testing.T) {
 	d.SourceProfile = "admin-src"
 	both["deploy"] = d
 	confirmSettings = func() map[string]Profile { return both }
-	ch := gate(both, "admin-src", "s1", 5*time.Second)
+	ch := gate(t, both, "admin-src", "s1", gateLongWait)
 	answer(t, pending(t, 1)[0].ID, "approve", true)
 	if err := <-ch; err != nil {
 		t.Fatal(err)
@@ -232,7 +264,7 @@ func TestConfirmTargetsOfChains(t *testing.T) {
 // did not come through the CP's relay is reported as such.
 func TestConfirmRequestFollowsSettings(t *testing.T) {
 	s := gateEnv(t)
-	gate(s, "prod-admin", "s1", 200*time.Millisecond)
+	gate(t, s, "prod-admin", "s1", 200*time.Millisecond)
 	reqs := pending(t, 1)
 	edited := map[string]Profile{}
 	for k, v := range s {
@@ -248,7 +280,7 @@ func TestConfirmRequestFollowsSettings(t *testing.T) {
 	}
 
 	confirmSettings = func() map[string]Profile { return s }
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	answer(t, pending(t, 1)[0].ID, "approve", false)
 	if err := <-ch; err != nil {
 		t.Fatal(err)
@@ -269,7 +301,7 @@ func mustJSON(t *testing.T, b []byte, v any) {
 // instead of re-asking forever with what it read at its start.
 func TestConfirmGateEndsWhenSettingsChangeWhileWaiting(t *testing.T) {
 	s := gateEnv(t)
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	pending(t, 1)
 	edited := map[string]Profile{}
 	for k, v := range s {
@@ -284,7 +316,7 @@ func TestConfirmGateEndsWhenSettingsChangeWhileWaiting(t *testing.T) {
 		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
 			t.Fatalf("run = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(gateSlack):
 		t.Fatal("the run kept waiting on what it read at its start")
 	}
 }
@@ -293,7 +325,7 @@ func TestConfirmGateEndsWhenSettingsChangeWhileWaiting(t *testing.T) {
 // listed and cannot be approved, and its waiting run ends.
 func TestConfirmStaleSessionCannotBeApproved(t *testing.T) {
 	s := gateEnv(t)
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	id := pending(t, 1)[0].ID
 	session.WriteMeta(session.Meta{Name: "s1", Kind: session.KindShell, Dir: "/w", CreatedAt: "2026-10-31T12:00:00Z"})
 	if c := answer(t, id, "approve", true); c != http.StatusNotFound {
@@ -305,7 +337,7 @@ func TestConfirmStaleSessionCannotBeApproved(t *testing.T) {
 		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "ended") {
 			t.Fatalf("run = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(gateSlack):
 		t.Fatal("the old session's run kept waiting")
 	}
 	if ents, _ := os.ReadDir(confirmDir("grants")); len(ents) != 0 {
@@ -317,14 +349,14 @@ func TestConfirmStaleSessionCannotBeApproved(t *testing.T) {
 // nothing.
 func TestConfirmGateBoundsTheLockWait(t *testing.T) {
 	s := gateEnv(t)
-	unlock, err := lockConfirm(time.Now().Add(time.Second))
+	unlock, err := lockConfirm(time.Now().Add(gateSlack))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unlock()
 	start := time.Now()
 	_, gerr := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: 100 * time.Millisecond})
-	if !errors.Is(gerr, ErrConfirmRequired) || time.Since(start) > time.Second {
+	if !errors.Is(gerr, ErrConfirmRequired) || time.Since(start) > gateAtOnce {
 		t.Fatalf("gate = %v after %s", gerr, time.Since(start))
 	}
 	ents, _ := os.ReadDir(confirmDir("requests"))
@@ -346,7 +378,7 @@ func TestDenyHoldIsPerProfile(t *testing.T) {
 	d.SourceProfile = "admin-src"
 	both["deploy"] = d
 	confirmSettings = func() map[string]Profile { return both }
-	ch := gate(both, "deploy", "s1", 5*time.Second)
+	ch := gate(t, both, "deploy", "s1", gateLongWait)
 	reqs := pending(t, 1)
 	if len(reqs[0].Targets) != 2 {
 		t.Fatalf("targets = %+v", reqs[0].Targets)
@@ -356,8 +388,8 @@ func TestDenyHoldIsPerProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	_, err := ConfirmGate(ConfirmOptions{Settings: both, Profile: "admin-src", Session: "s1", Wait: 5 * time.Second})
-	if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "denied") || time.Since(start) > time.Second {
+	_, err := ConfirmGate(ConfirmOptions{Settings: both, Profile: "admin-src", Session: "s1", Wait: gateLongWait})
+	if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "denied") || time.Since(start) > gateAtOnce {
 		t.Fatalf("the source alone = %v after %s", err, time.Since(start))
 	}
 }
@@ -398,7 +430,7 @@ func TestConfirmGrantDoesNotSkipTheSettingsCheck(t *testing.T) {
 	// The grant lands while the run waits, together with a Settings change.
 	os.Remove(grantPath(inc, target.ProfileID))
 	confirmSettings = func() map[string]Profile { return s }
-	ch := gate(s, "prod-admin", "s1", 5*time.Second)
+	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	pending(t, 1)
 	confirmSettings = func() map[string]Profile { return edited }
 	grant()
@@ -407,7 +439,7 @@ func TestConfirmGrantDoesNotSkipTheSettingsCheck(t *testing.T) {
 		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
 			t.Fatalf("grant landing with a Settings change = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(gateSlack):
 		t.Fatal("the run never ended")
 	}
 }
