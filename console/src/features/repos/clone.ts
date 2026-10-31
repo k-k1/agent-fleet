@@ -11,6 +11,7 @@
 // The job's state is now the only truth, so a dropped connection cannot affect the outcome.
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { deriveRepoName, sanitizeSeg } from "../../lib/reponame.ts";
 import { useReposStore } from "./store.ts";
 import { useRepoJobsStore, type RepoJob } from "./jobs.ts";
 import { useFilesStore } from "../files/store.ts";
@@ -43,12 +44,21 @@ function revealNewRepo(name: string): void {
   useFilesStore.getState().revealInFiles("repos/" + name);
 }
 
-// startImport posts the request and returns the accepted job, or an error message.
 // nameHint is the audit hint the Control Plane records as the target; the body stays authoritative.
-function nameHint(name?: string): string {
+function nameHint(name: string): string {
   return name ? "?name=" + encodeURIComponent(name) : "";
 }
 
+// cloneFolderName is the folder the Agent will create: the explicit name, else the one it
+// derives from the URL (and new branch), mirroring HandleCloneRepo.
+function cloneFolderName(req: CloneRequest): string {
+  const explicit = (req.name || "").trim();
+  if (explicit) return explicit;
+  const nb = (req.new_branch || "").trim();
+  return deriveRepoName(req.remote_url) + (nb ? "-" + sanitizeSeg(nb) : "");
+}
+
+// startImport posts the request and returns the accepted job, or an error message.
 async function startImport(path: string, body: unknown): Promise<{ job?: RepoJob; err?: string }> {
   let res: { error?: unknown; job?: RepoJob };
   try {
@@ -93,8 +103,7 @@ export async function cloneRepo(
   req: CloneRequest,
   toast: (msg: string) => void,
 ): Promise<{ ok: boolean; name: string }> {
-  // The name in the query is only the audit hint; the Agent acts on the body.
-  const { job, err } = await startImport("api/repos" + nameHint(req.name), {
+  const { job, err } = await startImport("api/repos" + nameHint(cloneFolderName(req)), {
     remote_url: req.remote_url,
     branch: req.branch,
     name: req.name,

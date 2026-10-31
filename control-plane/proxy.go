@@ -445,10 +445,15 @@ func auditSessionNameHint(s string) string {
 	return ""
 }
 
-// auditRepoNameHint keeps a repository-name-shaped audit hint (one safe path segment, as
-// validRepoName decides) and drops anything else. The Agent acts on the body's name, never this.
+// auditRepoNameRe is the folder-name rule the Agent applies to a new working copy
+// (workspace/agent/internal/gitx repoNameRe). It admits no control or format characters, no "/"
+// and no leading ".", so a name it accepts cannot traverse or spoof the audit view.
+var auditRepoNameRe = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}._@-]{0,95}$`)
+
+// auditRepoNameHint keeps a name the Agent would accept as a working-copy folder and drops
+// anything else. It is the client's claim, never checked against the body the Agent acts on.
 func auditRepoNameHint(s string) string {
-	if validRepoName(s) {
+	if auditRepoNameRe.MatchString(s) {
 		return s
 	}
 	return ""

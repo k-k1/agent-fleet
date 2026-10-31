@@ -144,7 +144,10 @@ describe("repo import (docs/log/78)", () => {
     await cloneRepo({ remote_url: "https://git.example/app.git", branch: "", name: "" }, vi.fn());
     expect(urls[0]).toMatch(/api\/repos\/init\?name=a%20b$/);
     expect(urls[1]).toMatch(/api\/repos\?name=a%20b$/);
-    expect(urls[2]).toMatch(/api\/repos$/);
+    // No explicit name: the hint is the folder the Agent derives from the URL (and new branch).
+    expect(urls[2]).toMatch(/api\/repos\?name=app$/);
+    await cloneRepo({ remote_url: "git@host:org/app.git", branch: "", name: " ", new_branch: "feat/x" }, vi.fn());
+    expect(urls[3]).toMatch(/api\/repos\?name=app-feat-x$/);
   });
 
   it("is refused with 409 for an existing name, and is not reported as success", async () => {
