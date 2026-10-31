@@ -36,6 +36,9 @@ func ValidLinkRole(role string) bool {
 // anything longer is a paste gone wrong that would ride every session listing.
 const maxLinkKey = 200
 
+// LinkRoleRank orders roles as AddLink does: higher replaces lower. 0 for a role it does not know.
+func LinkRoleRank(role string) int { return linkRank[role] }
+
 // MaxLinks bounds Meta.Links. The meta is read by every session listing, and an agent that
 // links in a loop must not be able to grow it without end.
 const MaxLinks = 50
@@ -144,6 +147,9 @@ func AddLink(m *Meta, l WorkItemLink) bool {
 // branch-name resolver still renders from it. A removed GitHub item is also remembered in
 // Meta.Unlinked, so the session list does not link the branch's PR again on its next poll.
 func RemoveLink(m *Meta, provider, key string) bool {
+	if m.WorkItem != nil && strings.EqualFold(m.WorkItem.Provider, provider) && strings.EqualFold(m.WorkItem.Key, key) {
+		return false
+	}
 	changed := false
 	if strings.EqualFold(provider, "github") && !IsUnlinked(*m, key) {
 		if len(m.Unlinked) >= MaxLinks {

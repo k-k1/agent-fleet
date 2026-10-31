@@ -459,6 +459,10 @@ type CreateReq struct {
 	// recorded in the meta so a later rename through POST /repos/{name}/branch-name keeps
 	// {ref} and the kind. Every other launch leaves it nil.
 	WorkItem *session.WorkItemRef `json:"work_item,omitempty"`
+	// links / unlinked are a moved session's links (session_move.go), set in-process only: no
+	// client can hand a new session links it did not earn.
+	links    []session.WorkItemLink
+	unlinked []string
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	// SSMAlias: the host bookmark's alias (CP disambiguates it with the profile when it
@@ -615,9 +619,17 @@ func cleanWorkItemRef(in *session.WorkItemRef) *session.WorkItemRef {
 	if in == nil || strings.TrimSpace(in.Key) == "" {
 		return nil
 	}
+	// Provider in lower case and a Jira key in upper case, as links are keyed (#3134), so a launch
+	// item matches the same item linked any other way. A bare GitHub number is left bare: {ref}
+	// renders from it.
+	provider := strings.ToLower(clipRunes(strings.TrimSpace(in.Provider), 32))
+	key := clipRunes(strings.TrimSpace(in.Key), 200)
+	if provider == "jira" {
+		key = strings.ToUpper(key)
+	}
 	out := &session.WorkItemRef{
-		Provider: clipRunes(strings.TrimSpace(in.Provider), 32),
-		Key:      clipRunes(strings.TrimSpace(in.Key), 200),
+		Provider: provider,
+		Key:      key,
 		Title:    clipRunes(strings.TrimSpace(in.Title), 300),
 		Type:     clipRunes(strings.TrimSpace(in.Type), 64),
 	}

@@ -137,7 +137,7 @@ func branchNameSchema() map[string]any {
 					"type": "object", "additionalProperties": false,
 					"description": "The issue / ticket to name the branch for",
 					"properties": map[string]any{
-						"provider": map[string]any{"type": "string", "description": "github, jira, ..."},
+						"provider": map[string]any{"type": "string", "description": "github, jira or bitbucket. Omitted: PROJ-12 is taken as jira, anything else as github, so pass it for bitbucket"},
 						"key":      map[string]any{"type": "string", "description": "Issue number or ticket key, e.g. 1128 or PROJ-12"},
 						"title":    map[string]any{"type": "string"},
 						"type":     map[string]any{"type": "string"},

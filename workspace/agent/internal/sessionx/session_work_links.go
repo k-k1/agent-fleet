@@ -172,9 +172,10 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		if s.OriginSession != "" && dirOf[s.OriginSession] == s.Dir {
 			role = session.LinkWatching
 		}
-		// Already linked at this role or above: nothing to write. A watching link left from when
-		// the session shared its parent's copy still goes through AddLink, which raises it.
-		if cur, held := linkRole(s.Links, "github", key); held && (cur != session.LinkWatching || role == session.LinkWatching) {
+		// Already linked at this role or above: nothing to write. A weaker link (watching from when
+		// the copy was shared, reviewing before the session took the branch over) goes through
+		// AddLink, which raises it; an unknown role from a hand-edited meta ranks lowest.
+		if cur, held := linkRole(s.Links, "github", key); held && session.LinkRoleRank(cur) >= session.LinkRoleRank(role) {
 			continue
 		}
 		l := session.WorkItemLink{Provider: "github", Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339)}

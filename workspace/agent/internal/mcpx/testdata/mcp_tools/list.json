@@ -642,7 +642,7 @@
                 "type": "array"
               },
               "provider": {
-                "description": "github, jira, ...",
+                "description": "github, jira or bitbucket. Omitted: PROJ-12 is taken as jira, anything else as github, so pass it for bitbucket",
                 "type": "string"
               },
               "title": {
@@ -886,6 +886,10 @@
                 "type": "string"
               },
               "title": {
+                "type": "string"
+              },
+              "type": {
+                "description": "The tracker's item type, e.g. Bug or Story (picks the branch prefix)",
                 "type": "string"
               }
             },

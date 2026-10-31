@@ -113,3 +113,10 @@ func TestRemovingAGitHubLinkIsRememberedUntilLinkedAgain(t *testing.T) {
 		t.Fatalf("unlinked=%v, want o/r#7 forgotten", m.Unlinked)
 	}
 }
+
+func TestRemovingTheLaunchItemChangesNothing(t *testing.T) {
+	m := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#45"}}
+	if RemoveLink(&m, "GitHub", "O/R#45") || len(m.Unlinked) != 0 {
+		t.Fatalf("removing the launch item reported a change: unlinked=%v", m.Unlinked)
+	}
+}

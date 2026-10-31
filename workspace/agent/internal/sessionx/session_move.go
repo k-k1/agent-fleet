@@ -592,6 +592,9 @@ func moveCreateReq(src session.Meta, rec moveRecord) CreateReq {
 		name: rec.Target, Kind: rec.Kind, Model: rec.Model, Driver: rec.Driver,
 		Dir: src.Dir, Subdir: src.Subdir, Title: src.Title, Color: src.Color,
 		InitialPrompt: moveInitialPrompt(src, rec.File),
+		// The target continues the same work, so it keeps the tickets and PRs the source was
+		// linked to (#3134), the launch item included.
+		WorkItem: src.WorkItem, links: src.Links, unlinked: src.Unlinked,
 	}
 }
 

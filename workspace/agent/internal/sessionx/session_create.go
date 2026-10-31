@@ -591,7 +591,11 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
 		MuseContributorMode: c.kind == session.KindMuse && uiprefs.MuseContributorMode(),
 	}
-	inheritLinks(&meta)
+	if len(req.links) > 0 || len(req.unlinked) > 0 {
+		meta.Links, meta.Unlinked = req.links, req.unlinked
+	} else {
+		inheritLinks(&meta)
+	}
 	// pending from the first write of the meta: the pane must not offer a resend while the
 	// delivery in launch may still be typing (ADR 0100 decision 2).
 	if strings.TrimSpace(req.InitialPrompt) != "" {

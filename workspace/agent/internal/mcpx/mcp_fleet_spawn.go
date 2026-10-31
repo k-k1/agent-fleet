@@ -127,6 +127,8 @@ type spawnWorkItem struct {
 	Provider string `json:"provider"`
 	Key      string `json:"key"`
 	Title    string `json:"title"`
+	// Type is the tracker's item type (Bug, Story, ...): branch naming picks the prefix from it.
+	Type string `json:"type"`
 }
 
 // spawnWorkItemOf validates and normalizes create_session's work_item; nil when none was given.
@@ -139,7 +141,7 @@ func spawnWorkItemOf(in *spawnWorkItem) (*spawnWorkItem, error) {
 	if !ok {
 		return nil, fmt.Errorf("work_item: provider must be github, jira or bitbucket, and key owner/repo#N or PROJ-12 (got %q %q)", in.Provider, in.Key)
 	}
-	return &spawnWorkItem{Provider: provider, Key: key, Title: strings.TrimSpace(in.Title)}, nil
+	return &spawnWorkItem{Provider: provider, Key: key, Title: strings.TrimSpace(in.Title), Type: strings.TrimSpace(in.Type)}, nil
 }
 
 // fleetSpawnTools are the tools that start sessions, and the two only a session's own children
@@ -279,6 +281,7 @@ func fleetSpawnTools() []toolSpec {
 									"provider": map[string]any{"type": "string", "enum": []string{"github", "jira", "bitbucket"}},
 									"key":      map[string]any{"type": "string", "description": "owner/repo#45 or PROJ-12"},
 									"title":    map[string]any{"type": "string"},
+									"type":     map[string]any{"type": "string", "description": "The tracker's item type, e.g. Bug or Story (picks the branch prefix)"},
 								},
 								"required": []string{"provider", "key"},
 							},
@@ -407,7 +410,7 @@ func fleetSpawnTools() []toolSpec {
 					body["spend_cap_usd"] = *a.SpendCapUSD
 				}
 				if wi != nil {
-					body["work_item"] = map[string]any{"provider": wi.Provider, "key": wi.Key, "title": wi.Title}
+					body["work_item"] = map[string]any{"provider": wi.Provider, "key": wi.Key, "title": wi.Title, "type": wi.Type}
 				}
 				reqBody, _ := json.Marshal(body)
 				// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The

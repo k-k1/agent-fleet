@@ -181,3 +181,47 @@ func TestCreateFingerprintCountsTheWorkItemOnlyWhenPresent(t *testing.T) {
 		t.Fatal("an empty work item changed the fingerprint of a launch without one")
 	}
 }
+
+func TestRecordBranchPRsRaisesReviewingToWorkingButNotWorkingToWatching(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "rv1", Dir: "/wt/rv", Kind: session.KindClaude,
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#7", Role: session.LinkReviewing}}})
+	session.WriteMeta(session.Meta{Name: "par9", Dir: "/wt/sh", Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: "kid9", Dir: "/wt/sh", Kind: session.KindClaude, OriginSession: "par9",
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#8", Role: session.LinkWorking}}})
+	m, _ := session.ReadMeta("rv1")
+	k, _ := session.ReadMeta("kid9")
+	rows := []session.Session{
+		{Name: "rv1", Dir: "/wt/rv", PR: &branchpr.PR{Number: 7, State: "open", URL: "https://github.com/o/r/pull/7"}, Links: session.LinksOf(m)},
+		{Name: "par9", Dir: "/wt/sh"},
+		{Name: "kid9", Dir: "/wt/sh", OriginSession: "par9", PR: &branchpr.PR{Number: 8, State: "open", URL: "https://github.com/o/r/pull/8"}, Links: session.LinksOf(k)},
+	}
+	recordBranchPRs(rows, time.Now())
+	if l := rows[0].Links; len(l) != 1 || l[0].Role != session.LinkWorking {
+		t.Fatalf("rv1 links=%+v, want reviewing raised to working", l)
+	}
+	if l := rows[2].Links; len(l) != 1 || l[0].Role != session.LinkWorking {
+		t.Fatalf("kid9 links=%+v, want working kept (never lowered to watching)", l)
+	}
+}
+
+func TestMoveCarriesTheLaunchItemAndLinks(t *testing.T) {
+	src := session.Meta{Name: "src1", Dir: "/wt/a",
+		WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-1"},
+		Links:    []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkReviewing}},
+		Unlinked: []string{"o/r#9"}}
+	req := moveCreateReq(src, moveRecord{Target: "dst1", Kind: session.KindClaude})
+	if req.WorkItem == nil || req.WorkItem.Key != "PROJ-1" || len(req.links) != 1 || len(req.unlinked) != 1 {
+		t.Fatalf("move request work_item=%+v links=%+v unlinked=%v, want the source's", req.WorkItem, req.links, req.unlinked)
+	}
+}
+
+func TestCleanWorkItemRefKeysJiraAsLinksDo(t *testing.T) {
+	got := cleanWorkItemRef(&session.WorkItemRef{Provider: " Jira ", Key: "proj-12"})
+	if got.Provider != "jira" || got.Key != "PROJ-12" {
+		t.Fatalf("cleanWorkItemRef = %+v, want jira PROJ-12", got)
+	}
+	if got := cleanWorkItemRef(&session.WorkItemRef{Provider: "github", Key: "#45"}); got.Key != "#45" {
+		t.Fatalf("a bare GitHub number became %q; {ref} renders from it", got.Key)
+	}
+}
