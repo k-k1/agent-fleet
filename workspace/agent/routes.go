@@ -28,6 +28,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usageall"
 )
 
 // buildMux returns a mux with every Agent route registered (docs/log/23 P0-2). Keeping it
@@ -484,6 +485,8 @@ func buildMux() *http.ServeMux {
 	// the wire (ADR 0095 decision 10), so a workspace with no muse session running answers
 	// "signed in, nothing observed".
 	mux.HandleFunc("GET /muse/usage", muse.HandleUsage)
+	// Every chip above (and agy's) in one response, for the WS bar's single poll (#3127).
+	mux.HandleFunc("GET /usage/all", usageall.Handle)
 	mux.HandleFunc("GET /codex/settings", codex.HandleSettingsGet)
 	mux.HandleFunc("PUT /codex/settings", codex.HandleSettingsPut)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.

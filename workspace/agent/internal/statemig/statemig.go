@@ -161,6 +161,9 @@ var Entries = []string{
 	// The limit board's login-epoch ledger and its HMAC key (internal/limitepoch, ADR 0111
 	// decision 6). Introduced directly under AgentStateDir; it never existed under .config.
 	"limit-epochs.json",
+	// The last observed usage of every agent kind (internal/usagestore, #3127). Introduced
+	// directly under AgentStateDir; it never existed under .config.
+	"usage-last.json",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
 	"bridge-sent",

@@ -15,10 +15,34 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+// `api` answers per kind endpoint, as each test sets it. The chips read through the shared
+// GET /usage/all (#3127), so that one is composed from the per-kind answers the way the Agent
+// composes it — every kind's payload under kinds.<kind>, a failed kind left out — and the fold
+// is exercised over the real single-response path. allCalls counts those shared reads.
 const api = vi.fn();
+const KIND_ENDPOINTS: Record<string, string> = {
+  claude: "api/claude/usage",
+  codex: "api/codex/usage",
+  muse: "api/muse/usage",
+  copilot: "api/copilot/usage",
+  agy: "api/connections/agy/usage",
+};
+let allCalls = 0;
+function serveAll(path: string) {
+  allCalls++;
+  const forced = path.includes("refresh=1") ? new URLSearchParams(path.split("?")[1]).get("kind") : null;
+  return Promise.all(
+    Object.entries(KIND_ENDPOINTS).map(([kind, ep]) =>
+      Promise.resolve(api(ep + (kind === forced ? "?refresh=1" : ""))).then(
+        (body) => [kind, body] as const,
+        () => [kind, undefined] as const,
+      ),
+    ),
+  ).then((rows) => ({ kinds: Object.fromEntries(rows.filter(([, b]) => b != null)) }));
+}
 vi.mock("../core/api/client.ts", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  api: (...args: unknown[]) => api(...args),
+  api: (...args: unknown[]) => (String(args[0]).startsWith("api/usage/all") ? serveAll(String(args[0])) : api(...args)),
 }));
 // Reset notifications subscribe to their own timers and toasts; the chips' placement is
 // what is under test.
@@ -101,6 +125,7 @@ beforeEach(() => {
   localStorage.clear();
   setSettings({ usageChipsPinned: [], usageChipsFolded: [] });
   api.mockReset();
+  allCalls = 0;
   api.mockImplementation((path: string) => {
     if (path.startsWith("api/claude/usage")) return Promise.resolve(calm(14, 70));
     if (path.startsWith("api/codex/usage")) return Promise.resolve(calm(33, 27));
@@ -140,11 +165,16 @@ describe("WS bar usage chips: folding", () => {
 
   it("moves the folded chips into the popover without re-fetching them", async () => {
     await mount();
+    // All five chips, bar and fold alike, were read by one shared request.
+    expect(allCalls).toBe(1);
+    // ...and none fell back to its own endpoint (that would be five more per-kind reads).
+    expect(api.mock.calls.length).toBe(Object.keys(KIND_ENDPOINTS).length);
     const callsBefore = api.mock.calls.length;
     await act(async () => foldBtn()!.click());
     expect(folded()).toEqual(["Muse", "Copilot", "Antigravity"]);
     expect(bar()).toEqual(["Claude", "Codex"]); // and they did not leave the bar
     expect(api.mock.calls.length).toBe(callsBefore); // moved, not re-mounted
+    expect(allCalls).toBe(1);
   });
 
   it("leaves a signed-out agent out of the count entirely", async () => {

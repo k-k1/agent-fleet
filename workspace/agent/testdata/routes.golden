@@ -415,6 +415,7 @@ GET /share-operations/{key}
 GET /skills/catalog
 GET /skills/file
 POST /ssm/instances
+GET /usage/all
 GET /usage/series
 GET /user-notes
 PUT /user-notes

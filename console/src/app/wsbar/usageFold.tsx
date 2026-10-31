@@ -20,7 +20,7 @@ import { REMAINING_SOURCES, USAGE_SOURCES } from "./usageSources.ts";
 // which is why each one reports itself up here instead of the group asking.
 //
 // A folded chip is not unmounted — it stays exactly where it was in the tree, keeping its
-// reading and its 5-minute poll, and renders through a portal into the popover's body. So
+// reading and its share of the tenant's one usage poll, and renders through a portal into the popover's body. So
 // "+N" is a move, not a second fetch: unmounting it would cost an extra request per open
 // and, worse, the group could not know a hidden chip had gone near its cap.
 interface ChipReport {

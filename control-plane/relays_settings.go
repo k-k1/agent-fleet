@@ -14,6 +14,8 @@ var settingsRelays = []agentRelay{
 	{route: "GET /api/copilot/usage"},
 	// muse subscription quota (WsBar chip) — proxied to the Agent (ADR 0095 decision 10).
 	{route: "GET /api/muse/usage"},
+	// Every usage chip's payload in one response (#3127): the WS bar polls this once.
+	{route: "GET /api/usage/all"},
 	// codex / opencode rtk toggle — proxied to the Agent.
 	{route: "GET /api/agents/rtk"},
 	{route: "PUT /api/agents/rtk"},
