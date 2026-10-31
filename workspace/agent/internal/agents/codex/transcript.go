@@ -61,19 +61,21 @@ func rolloutPath(codexID string) string {
 	}
 	root := filepath.Join(paths.HomeDir(), ".codex", "sessions")
 	// Y/M/D are three glob levels; the filename ends with the session id.
-	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "rollout-*"+codexID+".jsonl"))
-	if err != nil || len(matches) == 0 {
-		return ""
-	}
-	// Normally exactly one; if several matched (id collision is astronomically unlikely),
-	// prefer the newest so a resumed session's latest rollout wins.
-	best, bestMod := matches[0], jsonlMtime(matches[0])
-	for _, m := range matches[1:] {
-		if mt := jsonlMtime(m); mt.After(bestMod) {
-			best, bestMod = m, mt
+	return rolloutPaths.lookup(root+"\x00"+codexID, func() string {
+		matches, err := rolloutGlob(filepath.Join(root, "*", "*", "*", "rollout-*"+codexID+".jsonl"))
+		if err != nil || len(matches) == 0 {
+			return ""
 		}
-	}
-	return best
+		// Normally exactly one; if several matched (id collision is astronomically unlikely),
+		// prefer the newest so a resumed session's latest rollout wins.
+		best, bestMod := matches[0], jsonlMtime(matches[0])
+		for _, m := range matches[1:] {
+			if mt := jsonlMtime(m); mt.After(bestMod) {
+				best, bestMod = m, mt
+			}
+		}
+		return best
+	})
 }
 
 // wrapperPairs are injected context blocks that Codex may record with role=user.
@@ -1584,14 +1586,48 @@ func PendingQuestionID(m session.Meta) string {
 	if path == "" {
 		return ""
 	}
+	askedAt := openQuestions(path)
+	if len(askedAt) == 0 {
+		return ""
+	}
+	// Asked only now, so the tmux round trip is paid only when a question is open.
+	var since time.Time
+	if m.DriverKind() != session.DriverManaged {
+		t, ok := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
+		if !ok {
+			return "" // no pane, no dialog
+		}
+		since = t
+	}
+	for id, ts := range askedAt {
+		if askedSince(ts, since) {
+			return id
+		}
+	}
+	return ""
+}
+
+// openQuestions returns the request_user_input calls (call id -> timestamp) still open at the
+// end of the rollout's tail. The result is shared with the cache: callers must not mutate it.
+func openQuestions(path string) map[string]string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	questionScansMu.Lock()
+	c, ok := questionScans[path]
+	questionScansMu.Unlock()
+	if ok && c.size == fi.Size() && c.mtime.Equal(fi.ModTime()) {
+		return c.askedAt
+	}
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return nil
 	}
 	defer f.Close()
 	const tail = 256 << 10
 	off := int64(0)
-	if fi, err := f.Stat(); err == nil && fi.Size() > tail {
+	if fi.Size() > tail {
 		off = fi.Size() - tail
 	}
 	b := make([]byte, tail)
@@ -1629,24 +1665,10 @@ func PendingQuestionID(m session.Meta) string {
 			clear(askedAt)
 		}
 	}
-	if len(askedAt) == 0 {
-		return ""
-	}
-	// Asked only now, so the tmux round trip is paid only when a question is open.
-	var since time.Time
-	if m.DriverKind() != session.DriverManaged {
-		t, ok := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
-		if !ok {
-			return "" // no pane, no dialog
-		}
-		since = t
-	}
-	for id, ts := range askedAt {
-		if askedSince(ts, since) {
-			return id
-		}
-	}
-	return ""
+	questionScansMu.Lock()
+	questionScans[path] = questionScan{size: fi.Size(), mtime: fi.ModTime(), askedAt: askedAt}
+	questionScansMu.Unlock()
+	return askedAt
 }
 
 // readTranscript reads a codex session's normalized chat turns plus the rollout
