@@ -363,18 +363,13 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.316
 ARG OPENCODE_VERSION=2.2.5
-# The opencode 2 release `workspace-agent install-opencode2` installs while OPENCODE_VERSION is
-# 1.x (a rollback). It is not installed here; it is only recorded in versions.json. Keep it equal
-# to OPENCODE_VERSION while that is 2.x: cli-pin-bump.sh moves both, so a rollback (set
-# OPENCODE_VERSION=1.19.0, nothing else) leaves it at the last 2.x the contracts passed on.
-ARG OPENCODE_V2_VERSION=2.2.5
 ARG CODEX_VERSION=0.166.0
 ARG COPILOT_VERSION=1.0.105
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
-# 2.x (which also installs an `opencode2` bin). The pin has been 2.x since the v2 cut-over
-# (#2101); rolling back is OPENCODE_VERSION=1.19.0, nothing else (docs/log/119). entrypoint.sh,
-# deploy/local/cli-drift-check.sh, .github/workflows/release-gate.yml and
-# .github/actions/setup-agent-cli apply the same rule.
+# 2.x (which also installs an `opencode2` bin). Only 2.x is supported (ADR 0127): a rollback is an
+# earlier 2.x pin, never a 1.x one. entrypoint.sh, deploy/local/cli-drift-check.sh,
+# .github/workflows/release-gate.yml and .github/actions/setup-agent-cli apply the same rule, so
+# the `opencode-ai` branch leaves all of them in one change.
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       case "${OPENCODE_VERSION%%.*}" in 0|1) oc_pkg=opencode-ai ;; *) oc_pkg=@opencode/cli ;; esac; \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -617,10 +612,10 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}"; gcloud_sha="${GCLOUD_SHA256_ARM64}" ;; \
       *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha=""; gcloud_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","bkt":"%s","jira":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s","opencode_v2":"%s"}\n' \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","bkt":"%s","jira":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s"}\n' \
       "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$BKT_VERSION" "$JIRA_CLI_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
-      "$GCLOUD_VERSION" "$gcloud_sha" "$OPENCODE_V2_VERSION" \
+      "$GCLOUD_VERSION" "$gcloud_sha" \
       > /usr/local/share/agent-fleet/versions.json
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`

@@ -28,17 +28,9 @@ func RunAttach(args []string) {
 	}
 }
 
-// attachBinEnv carries the opencode binary a pane was launched for, set only under the opt-in.
-const attachBinEnv = "AF_OPENCODE_BIN"
-
 // execTUI replaces the process with opencode; a var so a test can observe the argv.
 var execTUI = func(argv, environ []string) error {
-	// The launch that built this pane named its binary; the switch is not read again here.
-	name := "opencode"
-	if v := envValue(environ, attachBinEnv); v != "" {
-		name = v
-	}
-	bin, err := exec.LookPath(name)
+	bin, err := exec.LookPath("opencode")
 	if err != nil {
 		return err
 	}

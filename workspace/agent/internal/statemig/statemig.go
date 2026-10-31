@@ -98,8 +98,8 @@ var Entries = []string{
 	// Archives being built for a folder download (fs_zip.go). Introduced directly under
 	// AgentStateDir, and empty between requests; listed only so the drift check stays honest.
 	"zip-export",
-	// The opencode 2 opt-in's switch and the record of how the serve was started
-	// (opencode/optin.go, optin_serve.go). Introduced directly under AgentStateDir.
+	// The removed opencode 2 opt-in's switch and serve record (ADR 0127). Nothing writes them
+	// any more; an older workspace may still hold them. Introduced directly under AgentStateDir.
 	"opencode-major",
 	"opencode-serve.json",
 	// The lock that serialises the first opencode 2 start on a 1.x database

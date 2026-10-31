@@ -27,7 +27,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -225,16 +224,10 @@ func launchOverridden(kind string) bool {
 // cliPresent reports whether kind's CLI can be run now. It looks at what a launch would run, not
 // only at the status file: the failure recorded at start goes stale the moment the CLI is
 // installed by hand or by a later start. The default binary is looked up where the entrypoint's own
-// cli_present does plus PATH; an override of the launch and the opencode 2 opt-in binary count too.
+// cli_present does plus PATH; an override of the launch counts too.
 func cliPresent(kind, cmd string) bool {
 	if launchOverridden(kind) {
 		return true
-	}
-	// opencode launches the private opt-in binary only while opencode.UseV2 says so (chosen,
-	// installed and the PATH one still 1.x); otherwise the PATH one is what runs, and a private
-	// install left behind by an earlier choice must not stand in for it.
-	if kind == "opencode" && opencode.UseV2() {
-		return execFile(opencode.V2Binary())
 	}
 	if _, err := exec.LookPath(cmd); err == nil {
 		return true

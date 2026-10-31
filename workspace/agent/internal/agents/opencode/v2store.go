@@ -42,7 +42,7 @@ func v2Served() bool {
 // do not say so: an import that stopped half way leaves a v2 schema beside the v1 rows, and those
 // conversations are still read from the v1 tables until a v2 start finishes the job.
 func storeIsV2() bool {
-	path := specDBPath(CurrentLaunch())
+	path := dbPath()
 	db, ok := openRODB(path)
 	if !ok {
 		return false
@@ -140,7 +140,7 @@ func (t apiTarget) conversation(m session.Meta) (v2Conv, error) {
 
 // openV2Store opens the database the v2 opencode of this workspace writes.
 func openV2Store() (*sql.DB, error) {
-	db, ok := openRODB(specDBPath(CurrentLaunch()))
+	db, ok := openRODB(dbPath())
 	if !ok {
 		return nil, errors.New("opencode store: not found")
 	}

@@ -22,7 +22,7 @@ import (
 // openTestStore opens (creating it) the workspace's opencode.db with the v2 tables.
 func openTestStore(t *testing.T) *sql.DB {
 	t.Helper()
-	path := specDBPath(CurrentLaunch())
+	path := dbPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestV2StoreMissingIsAnEmptyChat(t *testing.T) {
 	if got, ok := readTranscript(m); !ok || len(got.Turns) != 0 {
 		t.Fatalf("no store: %+v %v", got, ok)
 	}
-	path := specDBPath(CurrentLaunch())
+	path := dbPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
@@ -269,7 +269,7 @@ func TestV2NotServedOverAnUnmigratedV1Store(t *testing.T) {
 	if v2Served() {
 		t.Fatal("no database at all: served as v2")
 	}
-	path := specDBPath(CurrentLaunch())
+	path := dbPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {

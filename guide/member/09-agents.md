@@ -213,10 +213,8 @@ billing, top up the account; for a key, replace it on the agent's card ([21](21-
 The image runs opencode 2. A workspace that used opencode 1 keeps its conversations: the
 first time opencode 2 starts there, it converts opencode's database in place and imports the
 existing sessions once, with the same session ids, so they resume in Managed and Terminal (CLI)
-sessions alike. Conversations started under opencode 2 are not visible to opencode 1, so going
-back later loses them. If your administrator has pinned the image back to opencode 1, the
-`AGENTS.md`, shared-server, question-form and ToDo points above do not apply
-([operate/03](../operate/03-run.md#going-back-to-opencode-1)).
+sessions alike. opencode 1 is no longer supported
+([operate/03](../operate/03-run.md#when-an-opencode-release-misbehaves)).
 
 ## GitHub Copilot
 

@@ -28,7 +28,7 @@ func buildProgram(model, mode string, ocid string, fork bool) string {
 	return buildProgramFor(CurrentLaunch(), model, mode, ocid, fork)
 }
 
-// buildProgramFor is buildProgram against one reading of the opt-in switch.
+// buildProgramFor is buildProgram against one reading of the installed opencode.
 func buildProgramFor(spec LaunchSpec, model, mode string, ocid string, fork bool) string {
 	if spec.Major() >= 2 {
 		return buildProgramV2(spec, model, mode, ocid, fork)

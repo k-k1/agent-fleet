@@ -30,7 +30,7 @@ import (
 var migrationWait = 30 * time.Minute
 
 // startMigrationServe starts a throwaway `opencode serve` on a free loopback port against the
-// database spec launches with, and returns its address, the basic-auth password, a channel that
+// workspace's database, and returns its address, the basic-auth password, a channel that
 // closes when the process exits and a stop func. A var so tests can stand in for the binary.
 var startMigrationServe = func(spec LaunchSpec) (addr, password string, exited <-chan struct{}, stop func(), err error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -44,7 +44,7 @@ var startMigrationServe = func(spec LaunchSpec) (addr, password string, exited <
 		return "", "", nil, nil, err
 	}
 	cmd := exec.Command(spec.Bin, "serve", "--hostname", "127.0.0.1", "--port", port)
-	cmd.Env = append(append(withoutEnv(os.Environ(), "AF_SESSION_SID", "AF_SESSION_NAME"), spec.processEnv()...),
+	cmd.Env = append(withoutEnv(os.Environ(), "AF_SESSION_SID", "AF_SESSION_NAME"),
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	cmd.Dir = paths.HomeDir()
 	if err := cmd.Start(); err != nil {
@@ -66,14 +66,6 @@ var startMigrationServe = func(spec LaunchSpec) (addr, password string, exited <
 
 func migrationLock() string {
 	return filepath.Join(paths.AgentStateDir(), "opencode-v2-migration.lock")
-}
-
-// specDBPath is the database the opencode of spec opens.
-func specDBPath(spec LaunchSpec) string {
-	if spec.V2 {
-		return V2DBPath()
-	}
-	return filepath.Join(paths.HomeDir(), ".local", "share", "opencode", "opencode.db")
 }
 
 // needsMigration reads the database itself, so a restored or replaced file is judged on what it
@@ -126,7 +118,7 @@ func EnsureMigrated(spec LaunchSpec) error {
 	if spec.Maj < 2 {
 		return nil
 	}
-	db := specDBPath(spec)
+	db := dbPath()
 	if !needsMigration(db) {
 		return nil
 	}

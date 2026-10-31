@@ -110,8 +110,8 @@ var spec2 = LaunchSpec{Maj: 2, Bin: "opencode"}
 // conversation that exists and started a new one. EnsureMigrated must not return before the
 // status says "completed".
 func TestEnsureMigratedWaitsForTheImport(t *testing.T) {
-	optInHome(t)
-	db := specDBPath(spec2)
+	isolatedHome(t)
+	db := dbPath()
 	seedDB(t, db, 2, false)
 	f := &fakeMigration{script: []string{"{\"status\":\"required\"}", running, running}}
 	useFakeMigration(t, db, f)
@@ -136,8 +136,8 @@ func TestEnsureMigratedOnlyCompletedIsSuccess(t *testing.T) {
 		{"unknown", `{"status":"weird"}`, "weird"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			optInHome(t)
-			db := specDBPath(spec2)
+			isolatedHome(t)
+			db := dbPath()
 			seedDB(t, db, 1, false)
 			useFakeMigration(t, db, &fakeMigration{final: tc.status})
 			err := EnsureMigrated(spec2)
@@ -150,8 +150,8 @@ func TestEnsureMigratedOnlyCompletedIsSuccess(t *testing.T) {
 		})
 	}
 	t.Run("required never starts", func(t *testing.T) {
-		optInHome(t)
-		db := specDBPath(spec2)
+		isolatedHome(t)
+		db := dbPath()
 		seedDB(t, db, 1, false)
 		useFakeMigration(t, db, &fakeMigration{final: `{"status":"required"}`})
 		old := migrationWait
@@ -166,8 +166,8 @@ func TestEnsureMigratedOnlyCompletedIsSuccess(t *testing.T) {
 // The database decides, not a record of an earlier look at its path: restoring a pre-upgrade copy
 // over an imported one (the documented rollback) makes the next start import it again.
 func TestEnsureMigratedFollowsTheDatabaseContent(t *testing.T) {
-	optInHome(t)
-	db := specDBPath(spec2)
+	isolatedHome(t)
+	db := dbPath()
 	f := &fakeMigration{}
 	useFakeMigration(t, db, f)
 
@@ -197,7 +197,7 @@ func TestEnsureMigratedFollowsTheDatabaseContent(t *testing.T) {
 }
 
 func TestEnsureMigratedSkipsOpencode1(t *testing.T) {
-	optInHome(t)
+	isolatedHome(t)
 	db := filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode", "opencode.db")
 	seedDB(t, db, 2, false)
 	f := &fakeMigration{}
@@ -209,8 +209,8 @@ func TestEnsureMigratedSkipsOpencode1(t *testing.T) {
 
 // Concurrent first starts (the serve, a chat run, a models listing) share one import.
 func TestEnsureMigratedSerialisesConcurrentCallers(t *testing.T) {
-	optInHome(t)
-	db := specDBPath(spec2)
+	isolatedHome(t)
+	db := dbPath()
 	seedDB(t, db, 2, false)
 	f := &fakeMigration{script: []string{running, running, running, running}}
 	useFakeMigration(t, db, f)
@@ -233,8 +233,8 @@ func TestEnsureMigratedSerialisesConcurrentCallers(t *testing.T) {
 }
 
 func TestEnsureMigratedTimeoutFails(t *testing.T) {
-	optInHome(t)
-	db := specDBPath(spec2)
+	isolatedHome(t)
+	db := dbPath()
 	seedDB(t, db, 1, false)
 	useFakeMigration(t, db, &fakeMigration{final: running})
 	old := migrationWait
@@ -248,8 +248,8 @@ func TestEnsureMigratedTimeoutFails(t *testing.T) {
 // A throwaway server that dies (a broken install, a port taken) fails the caller at once instead
 // of holding it for the whole wait.
 func TestEnsureMigratedFailsFastWhenTheServerExits(t *testing.T) {
-	optInHome(t)
-	seedDB(t, specDBPath(spec2), 1, false)
+	isolatedHome(t)
+	seedDB(t, dbPath(), 1, false)
 	old := startMigrationServe
 	t.Cleanup(func() { startMigrationServe = old })
 	startMigrationServe = func(LaunchSpec) (string, string, <-chan struct{}, func(), error) {
@@ -267,8 +267,8 @@ func TestEnsureMigratedFailsFastWhenTheServerExits(t *testing.T) {
 // needsMigration, for instance) must delay the record, not drop it: a dropped record read as
 // "not imported" and started a second import.
 func TestEnsureMigratedRecordsCompletionDespiteAReader(t *testing.T) {
-	optInHome(t)
-	db := specDBPath(spec2)
+	isolatedHome(t)
+	db := dbPath()
 	seedDB(t, db, 1, false)
 	rd, err := sql.Open("sqlite", "file:"+db)
 	if err != nil {

@@ -86,8 +86,6 @@ type Supervisor struct {
 	askedStop *exec.Cmd
 	// watching: one zero-demand watcher (agents.WatchIdle, idlestop.go) is running.
 	watching bool
-	// key is launchKey() as of the daemon's start (or adoption): which opencode it is.
-	key string
 }
 
 var supervisor = &Supervisor{}
@@ -283,12 +281,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	if s.Disabled() {
 		return "", 0, errors.New("opencode serve is disabled (AF_OPENCODE_SERVE_DISABLE=1)")
 	}
-	// One reading of the switch for this start: the replacement check, the binary, the
-	// database and the recorded key all come from it.
+	// One reading for this start: the binary and the migration check both come from it.
 	spec := CurrentLaunch()
-	if err := s.retireStaleFor(spec.Key); err != nil {
-		return "", 0, err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	addr := serveAddr()
@@ -303,7 +297,6 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		s.cmd = nil
 		s.up = true
 		s.stopping = false
-		s.key = adoptedKey()
 		s.armIdleWatchLocked()
 		go s.monitorEvents(addr, s.gen)
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
@@ -328,8 +321,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// unless the new daemon proves it holds this one, so a failed start (or an Ensure that
 	// raced a slow-but-alive daemon) cannot lock the Agent out of it.
 	prevPassword := servePassword()
-	// Decided once, from this start's reading: the password policy and the environment flag must
-	// agree, and a second read could see the switch after it flipped.
+	// Decided once: the password policy and the environment flag must agree, and a second read
+	// could see a Terminal slot come or go in between.
 	sharedWanted := sharedTUIFor(spec) || sharedTerminals() > 0
 	password, err := nextServePassword(prevPassword, sharedWanted)
 	if err != nil {
@@ -378,8 +371,6 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			s.cmd = cmd
 			s.up = true
 			s.stopping = false
-			s.key = spec.Key
-			noteServeStart(cmd.Process.Pid, s.key)
 			gen := s.gen
 			s.armIdleWatchLocked()
 			go s.waitDaemon(cmd, tail, gen)
