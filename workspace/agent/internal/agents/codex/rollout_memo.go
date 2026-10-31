@@ -23,8 +23,19 @@ import (
 //     delivery checks); a remembered absence would hide a rollout that appeared a moment later.
 //     remember() refuses to store "" and remembered() refuses to serve it; both are kept on
 //     purpose, as in claude/jsonl_memo.go.
-//   - A newer duplicate (the newest-mtime choice) is picked up at once by RememberSid's forget();
-//     rolloutMemoTTL re-searches anyway as the backstop for a rollout that moved.
+//   - A remembered path that still Lstats is served until rolloutMemoTTL: a refresh costs a full
+//     sweep of the network mount per id, so it runs at most once per id per TTL, and the Lstat
+//     already catches a rollout that moved or was deleted.
+//   - TTL is the ONLY thing that picks up a newer duplicate for the same id in the resident
+//     Agent. The session-status hook (RememberSid) runs in a short-lived `workspace-agent
+//     session-status` process, so its forget() clears that process's empty memo, never the
+//     Agent's. The managed driver's RememberSid call passes a new thread id (start / fork),
+//     which matches no remembered key. A managed resume of a known thread, the Terminal route's
+//     `codex resume` / `codex fork`, and a thread resumed by another app-server client call no
+//     forget at all. The repo's measurements say resume appends to the existing rollout and a
+//     fork gets a new id (a new key), but nothing rules out a codex version writing a second file
+//     for the same id. Never drop the TTL on the belief that forget covers it; a late duplicate
+//     is bounded by the hour.
 //
 // The key carries the sessions root: HOME moves in tests and between users.
 type rolloutMemo struct {
@@ -50,7 +61,7 @@ func (m *rolloutMemo) forget(codexID string) {
 
 // Like claude's memos, both tables below grow by one small entry per session the agent ever
 // saw; one process per workspace holds tens of sessions, so they are not worth evicting.
-const rolloutMemoTTL = 60 * time.Second
+const rolloutMemoTTL = time.Hour
 
 var rolloutPaths rolloutMemo
 

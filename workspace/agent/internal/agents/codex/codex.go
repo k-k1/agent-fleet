@@ -102,9 +102,10 @@ func terminalCompacting(slot string) bool {
 // session-status hook entrypoint in package main when codex's hook JSON carries
 // its own session_id.
 //
-// It also drops the remembered rollout path for codexID: a hook reporting the id is the moment
-// a resume or fork may have started a newer rollout for it, and the memo would otherwise keep
-// answering with the older file until its TTL ran out.
+// It also drops the remembered rollout path for codexID, but only in the calling process: the
+// session-status hook runs in its own short-lived process, so there it clears an empty memo and
+// does not reach the resident Agent's. The Agent's own caller (the managed driver) passes a new
+// thread id. A newer rollout for a known id is therefore picked up by rolloutMemoTTL, not here.
 func RememberSid(slotSid, codexID string) {
 	sids.Write(slotSid, codexID)
 	rolloutPaths.forget(codexID)
