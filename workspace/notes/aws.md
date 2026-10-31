@@ -194,6 +194,10 @@ Inside the command:
   other credentials (after `assume-role`, say) and then used `--profile`. Use the new credentials
   without `--profile`, or split the step into its own `af-aws-exec`.
 
+Profiles in one shared sign-in (Settings > AWS profiles/SSM) share one login: a request for any of
+them is one request named after the sign-in, one approval signs every member in, and a logout signs
+every member out. Tell the user the sign-in's name when it is given.
+
 The Console login never shows a code the user did not start: the code is created only when they
 press "Log in" in the Console (in the toast's dialog, or on the profile's row in Settings > AWS
 profiles/SSM), and only that tab shows it. **Never run `aws sso login` or

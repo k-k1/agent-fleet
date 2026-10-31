@@ -39,6 +39,34 @@ describe("renderAwsConfig", () => {
     expect(r.included.map((x) => x.name)).toEqual(["prod", "deploy"]);
     expect(r.excluded).toEqual([]);
   });
+  it("writes the members of a shared sign-in under its one sso-session, as the Agent names it", () => {
+    const r = renderAwsConfig([sso("a", "prod", { signIn: "corp" }), sso("b", "stg", { signIn: "corp", accountId: "333333333333" }), sso("c", "solo")]);
+    expect(r.text.match(/^\[sso-session af-corp\]$/gm)).toHaveLength(1);
+    expect(r.text).toContain("[profile prod]\nsso_session = af-corp\n");
+    expect(r.text).toContain("[profile stg]\nsso_session = af-corp\n");
+    expect(r.text).toContain("[sso-session af-solo]");
+    // A name outside the Control Plane's rule never names a section.
+    const bad = renderAwsConfig([sso("a", "prod", { signIn: "x]\n[profile evil" })]);
+    expect(bad.text).toContain("[profile prod]\nsso_session = af-prod\n");
+    expect(bad.text).not.toContain("evil");
+  });
+  it("leaves out every profile of an sso-session two owners or two portals would share, and their chains", () => {
+    const other = "https://other.awsapps.com/start";
+    // A sign-in "team" beside a profile named team (an older Control Plane can leave both).
+    let r = renderAwsConfig([sso("a", "prod", { signIn: "team" }), sso("b", "team", { startUrl: other }), role("c", "deploy", "b")]);
+    expect(r.included).toEqual([]);
+    expect(reasons(r)).toEqual({ prod: "session_conflict", team: "session_conflict", deploy: "source_excluded" });
+    // Members whose portal copies disagree.
+    r = renderAwsConfig([sso("a", "prod", { signIn: "corp" }), sso("b", "stg", { signIn: "corp", ssoRegion: "eu-west-1" })]);
+    expect(reasons(r)).toEqual({ prod: "session_conflict", stg: "session_conflict" });
+    // A member left out for its name still takes the profile of the sign-in's name with it.
+    r = renderAwsConfig([sso("a", "x", { signIn: "team" }), sso("d", "X", { signIn: "team" }), sso("b", "team", { startUrl: other })]);
+    expect(r.included).toEqual([]);
+    expect(reasons(r).team).toBe("session_conflict");
+    // Control: one sign-in, one portal, one section.
+    r = renderAwsConfig([sso("a", "prod", { signIn: "team" }), sso("b", "stg", { signIn: "team" })]);
+    expect(r.included.map((x) => x.name)).toEqual(["prod", "stg"]);
+  });
   it("a role's region is its own, else its source's region, else the source's SSO region (the Agent's chainRegion)", () => {
     const at = (srcRegion: string, roleRegion: string) => {
       const t = renderAwsConfig([sso("a", "prod", { region: srcRegion }), role("b", "deploy", "a", { region: roleRegion })]).text;

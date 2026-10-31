@@ -2,6 +2,7 @@
 // request modal (ADR 0102 decision 3): nothing starts on open, and the modal shows only the
 // code of the attempt its own press created. There is no request behind it, so there is
 // nothing to cancel, and no cancel hold stops it.
+import { useEffect, useRef } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
@@ -26,14 +27,20 @@ export const REFUSALS: Record<string, MsgKey> = {
 
 // onLoggedIn fires when this modal's own attempt finishes signed in. The Agent re-reads Settings
 // before it starts one, so the login is for the row as saved, not for the last poll's copy.
+// onRefused gets the Agent's refusal code; startNow starts at once, for a press the member already
+// made on another profile of the same shared sign-in (ADR 0125) that the Agent refused.
 export function ProfileLoginModal({
   profile,
   onClose,
   onLoggedIn,
+  onRefused,
+  startNow,
 }: {
   profile: LoginProfile;
   onClose: () => void;
   onLoggedIn?: () => void;
+  onRefused?: (code: string) => void;
+  startNow?: boolean;
 }) {
   const tr = useT();
   const refresh = useAwsLoginStore((s) => s.refresh);
@@ -47,6 +54,18 @@ export function ProfileLoginModal({
     onLoggedIn?.();
   });
   const refusal = a.phase === "failed" ? REFUSALS[a.errorCode] : undefined;
+  const started = useRef(false);
+  useEffect(() => {
+    if (!startNow || started.current) return;
+    started.current = true;
+    a.start();
+  }, [startNow, a]);
+  const told = useRef("");
+  useEffect(() => {
+    if (a.phase !== "failed" || !a.errorCode || told.current === a.errorCode) return;
+    told.current = a.errorCode;
+    onRefused?.(a.errorCode);
+  }, [a.phase, a.errorCode, onRefused]);
   return (
     <Modal title={tr("awslogin.modal_title", { profile: profile.label || profile.name })} onClose={onClose}>
       <div className="ui-modal-body">

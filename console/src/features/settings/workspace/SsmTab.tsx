@@ -18,6 +18,7 @@ import { AwsConfigImport } from "./AwsConfigImport.tsx";
 import { SshConfigImport } from "./SshConfigImport.tsx";
 import { AwsConfigExport } from "./AwsConfigExport.tsx";
 import { RecentCloudRuns } from "../../cloudruns/cloudRuns.tsx";
+import { SIGN_IN_NAME_RE, signInSaveError, type SsmSignIn } from "./ssmSignIns.ts";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -40,7 +41,10 @@ export async function postJSON(path: string, method: string, body: unknown, toas
     return false;
   }
   if (!res.ok) {
-    toast(t("ssm.save_failed_http", { status: res.status, detail: await failDetail(res) }));
+    const j = await res.json().catch(() => null);
+    // A sign-in refusal (ADR 0125) says what to do about it in the member's words.
+    const known = signInSaveError(j?.error?.code);
+    toast(known ? t(known) : t("ssm.save_failed_http", { status: res.status, detail: failDetailOf(res, j) }));
     return false;
   }
   return true;
@@ -75,10 +79,6 @@ function profileInUse(aliases: string[], dependents: string[] = []): string {
   return t("ssm.profile_in_use", { n: aliases.length, hosts: aliases.join(", ") });
 }
 
-async function failDetail(res: Response): Promise<string> {
-  return failDetailOf(res, await res.json().catch(() => null));
-}
-
 function failDetailOf(res: Response, j: any): string {
   return j?.error?.message ? " — " + j.error.message : res.status === 404 ? t("ssm.save_failed_404") : "";
 }
@@ -107,6 +107,9 @@ export function SsmTab() {
   const tr = useT();
   const [profiles, setProfiles] = useState<any[] | null>(null);
   const [hosts, setHosts] = useState<any[] | null>(null);
+  // The member's shared sign-ins (ADR 0125). A failed or older answer leaves none: the profiles
+  // still list, each with the sign-in name the CP gives it.
+  const [signIns, setSignIns] = useState<SsmSignIn[]>([]);
   const profileLabelRef = useRef<HTMLInputElement>(null);
   // The profile add-form open state is lifted here so the host form's "add a profile"
   // CTA (「プロファイルを追加」) can expand it (and scroll to it) when none exists yet.
@@ -130,6 +133,11 @@ export function SsmTab() {
         .catch((e: any) => setErr(String(e?.message || e)));
     load("api/ssm/profiles", setProfiles, setProfilesErr);
     load("api/ssm/hosts", setHosts, setHostsErr);
+    api("api/ssm/sign-ins")
+      .then((d) => {
+        if (Array.isArray(d)) setSignIns(d.filter((x) => typeof x?.id === "string" && typeof x?.name === "string"));
+      })
+      .catch(() => {});
   }, []);
   useEffect(reload, [reload]);
 
@@ -149,6 +157,7 @@ export function SsmTab() {
       </p>
       <ProfileSection
         profiles={profiles}
+        signIns={signIns}
         loadErr={profilesErr}
         hosts={hosts}
         reload={reload}
@@ -187,6 +196,12 @@ const emptyProfile: Record<string, string> = {
   durationSeconds: "",
   // "true" when the profile asks for confirmation before use (ADR 0126); pick() stringifies.
   confirmBeforeUse: "",
+  // The shared sign-in (ADR 0125): signInMode "" is a sign-in of its own (today's portal
+  // fields), "join" one of the member's sign-ins named by signIn, "new" a new one of that name.
+  signIn: "",
+  signInMode: "",
+  // "1" once the Sign-in choice was changed in this form: only then does a save send signIn.
+  signInTouched: "",
 };
 
 // The assume-role profile type (issue #1109): no portal of its own, it assumes a role from
@@ -226,6 +241,7 @@ type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
 
 function ProfileSection({
   profiles,
+  signIns,
   loadErr,
   hosts,
   reload,
@@ -234,6 +250,7 @@ function ProfileSection({
   setOpen,
 }: {
   profiles: any[] | null;
+  signIns: SsmSignIn[];
   loadErr: string;
   hosts: any[] | null;
   reload: () => void;
@@ -249,7 +266,15 @@ function ProfileSection({
   // The row being edited; its form replaces the row's details. Never open together with
   // the add form, which shares f.
   const [editing, setEditing] = useState<any | null>(null);
-  const [loginFor, setLoginFor] = useState<(LoginProfile & { id: string }) | null>(null);
+  // ids: the profiles a login clears the relogin mark of (every member of a sign-in).
+  // next: further members of a sign-in to log in through when the Agent refuses this one as not
+  // exported; startNow: the member already pressed Log in.
+  const [loginFor, setLoginFor] = useState<
+    (LoginProfile & { id: string; ids?: string[]; signIn?: string; next?: (LoginProfile & { id: string })[]; startNow?: boolean }) | null
+  >(null);
+  // The sign-in whose name and portal are being edited on its header.
+  const [editingSignIn, setEditingSignIn] = useState<SsmSignIn | null>(null);
+  const [sf, setSf] = useState({ name: "", startUrl: "", ssoRegion: "" });
   const logout = useProfileLogout();
   const loggingOut = useAwsLoginStore((st) => st.loggingOut);
   // Bumped when reloginNeeded changes, which React cannot see.
@@ -267,15 +292,23 @@ function ProfileSection({
   // Each row's login state, from the Agent (absent while the workspace is stopped). Asked on
   // open and after the login modal closes; nothing polls.
   const [states, setStates] = useState<Record<string, string>>({});
+  // The same for each shared sign-in, by its name (one login for every member).
+  const [signInStates, setSignInStates] = useState<Record<string, string>>({});
   const loadStates = useCallback(() => {
     api("api/aws-login/profiles")
       .then((d) => {
         // No prototype: a profile named "__proto__" would otherwise set it instead of a key.
         const m: Record<string, string> = Object.create(null);
         for (const p of Array.isArray(d?.profiles) ? d.profiles : []) m[String(p.name)] = String(p.state);
+        const g: Record<string, string> = Object.create(null);
+        for (const si of Array.isArray(d?.signIns) ? d.signIns : []) g[String(si.name)] = String(si.state);
         setStates(m);
+        setSignInStates(g);
       })
-      .catch(() => setStates({}));
+      .catch(() => {
+        setStates({});
+        setSignInStates({});
+      });
   }, []);
   useEffect(loadStates, [loadStates]);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -283,9 +316,13 @@ function ProfileSection({
   const chainedForm = f.kind === ASSUME_ROLE;
   const duration = f.durationSeconds.trim();
   const durationOk = duration === "" || (/^\d+$/.test(duration) && Number(duration) >= 900 && Number(duration) <= 3600);
+  const joining = f.signInMode === "join";
+  const newSignIn = f.signInMode === "new";
+  const joined = joining ? signIns.find((x) => x.name === f.signIn) : undefined;
+  const portalOk = /^https:\/\//.test(f.startUrl.trim()) && !!f.ssoRegion.trim();
   const valid = chainedForm
     ? f.label.trim() && f.sourceProfileId && validRoleArn(f.roleArn.trim()) && validExternalId(f.externalId.trim()) && validSessionName(f.sessionName.trim()) && durationOk
-    : f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
+    : f.label.trim() && (joining ? !!joined : portalOk && (!newSignIn || SIGN_IN_NAME_RE.test(f.signIn.trim())));
   // The profiles an assume-role profile can start from: SSO profiles, never another chained one.
   const sources = (profiles || []).filter((p) => !isChained(p) && p.id !== editing?.id);
   // Why a row cannot log in from here (null when it can; "" when a CP too old to send the
@@ -322,13 +359,37 @@ function ProfileSection({
   }, [profiles, editing]);
   const startAdd = () => {
     setEditing(null);
+    setEditingSignIn(null);
     setF(emptyProfile);
     setOpen(true);
   };
   const startEdit = (p: any) => {
     setOpen(false);
-    setF(pick(p, emptyProfile));
+    setEditingSignIn(null);
+    setF({ ...pick(p, emptyProfile), signInMode: p.signIn ? "join" : "" });
     setEditing(p);
+  };
+  // The sign-in the profile is in after the save ("" for its own). An edit that did not touch the
+  // Sign-in choice keeps the sign-in the Control Plane holds: the form's copy may be stale (another
+  // tab moved the profile), so it is neither sent nor assumed.
+  const signInTouched = !editing || f.signInTouched === "1";
+  const nextSignIn = chainedForm ? "" : !signInTouched ? String(editing?.signIn || "") : joining || newSignIn ? f.signIn.trim() : "";
+  const live = (st: string | undefined) => st === "signed_in" || st === "renew";
+  // Whether the saved profile needs a new login before its badge means anything. Joining a sign-in
+  // that is signed in uses its login; a new sign-in named after a profile of its own that is
+  // signed in now, on the same portal, takes that login over (ADR 0125 decision D). Leaving a
+  // sign-in, any other new sign-in, and a rename or portal change of a profile of its own do not.
+  const needsLogin = (body: Record<string, unknown>): boolean => {
+    if (!editing || chainedForm || isChained(editing)) return false;
+    const was = String(editing.signIn || "");
+    if (nextSignIn !== was) {
+      if (!nextSignIn) return true;
+      if (joining) return !live(signInStates[nextSignIn]);
+      const named = (profiles || []).find((x) => !isChained(x) && !x.signIn && x.name === nextSignIn);
+      return !(named && live(states[named.name]) && !authMoved(named, body as any));
+    }
+    if (nextSignIn) return false;
+    return awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as any);
   };
   // An edit keeps the profile's id, so the hosts that use it follow; delete and re-add
   // would leave them on an id that no longer exists (ssm_host.profile_id has no FK).
@@ -350,23 +411,26 @@ function ProfileSection({
           }
         : {
             label: f.label.trim(),
-            startUrl: f.startUrl.trim(),
-            ssoRegion: f.ssoRegion.trim(),
+            // Joining takes the sign-in's portal: the CP refuses any other (sign_in_mismatch).
+            startUrl: joining ? "" : f.startUrl.trim(),
+            ssoRegion: joining ? "" : f.ssoRegion.trim(),
             accountId: f.accountId.trim(),
             roleName: f.roleName.trim(),
             region: f.region.trim(),
             confirmBeforeUse: f.confirmBeforeUse === "true",
+            // A name joins that sign-in or creates it; "" leaves the one the profile was in. Left
+            // out when the choice was not touched, so the CP keeps what it holds.
+            ...(!signInTouched ? {} : joining || newSignIn ? { signIn: f.signIn.trim() } : editing?.signIn ? { signIn: "" } : {}),
           };
       const ok = editing
         ? await postJSON(`api/ssm/profiles/${encodeURIComponent(editing.id)}`, "PUT", body, toast)
         : await postJSON("api/ssm/profiles", "POST", body, toast);
       if (!ok) return;
-      if (
-        editing &&
-        !chainedForm &&
-        (awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as any))
-      ) {
+      if (editing && needsLogin(body)) {
         reloginNeeded.add(editing.id);
+        setMarks((n) => n + 1);
+      } else if (editing && !chainedForm && nextSignIn !== String(editing.signIn || "") && reloginNeeded.delete(editing.id)) {
+        // Moved into a login that works now: the mark was about the login it left.
         setMarks((n) => n + 1);
       }
       close();
@@ -418,7 +482,12 @@ function ProfileSection({
   // issued by the old one.
   const was = editing ? awsProfileName(String(editing.label || "")) : "";
   const now = awsProfileName(f.label);
-  const portalChanged = !!editing && !chainedForm && !isChained(editing) && authMoved(editing, { startUrl: f.startUrl.trim(), ssoRegion: f.ssoRegion.trim() });
+  // The sign-in this edit leaves the profile in ("" for its own): moving into, out of or between
+  // sign-ins changes which login the profile uses, and a member's own name and portal no longer
+  // decide it.
+  const signInMoved = !!editing && !chainedForm && !isChained(editing) && String(editing.signIn || "") !== nextSignIn;
+  const portalChanged =
+    !!editing && !chainedForm && !isChained(editing) && !nextSignIn && authMoved(editing, { startUrl: f.startUrl.trim(), ssoRegion: f.ssoRegion.trim() });
   const kindSelect = (
     <Field label={tr("ssm.f_kind")} hint={tr("ssm.f_kind_hint")}>
       <select className="cinput" value={f.kind || "sso"} onChange={set("kind")}>
@@ -476,6 +545,46 @@ function ProfileSection({
               autoFocus
             />
           </Field>
+          <Field label={tr("ssm.f_sign_in")} wide hint={tr("ssm.f_sign_in_hint")}>
+            <select
+              className="cinput ssm-sign-in-select"
+              value={newSignIn ? "new" : joining ? "join:" + f.signIn : "own"}
+              onChange={(e) => {
+                const v = e.target.value;
+                setF((p) =>
+                  v === "new"
+                    ? { ...p, signInMode: "new", signIn: "", signInTouched: "1" }
+                    : v.startsWith("join:")
+                      ? { ...p, signInMode: "join", signIn: v.slice(5), signInTouched: "1" }
+                      : { ...p, signInMode: "", signIn: "", signInTouched: "1" },
+                );
+              }}
+            >
+              <option value="own">{tr("ssm.sign_in_own")}</option>
+              {signIns.map((si) => (
+                <option key={si.id} value={"join:" + si.name}>
+                  {si.name}
+                </option>
+              ))}
+              {/* A profile in a sign-in this page has not loaded yet still shows its own. */}
+              {joining && !joined && <option value={"join:" + f.signIn}>{f.signIn}</option>}
+              <option value="new">{tr("ssm.sign_in_new")}</option>
+            </select>
+          </Field>
+          {newSignIn && (
+            <Field label={tr("ssm.f_sign_in_name")} req hint={tr("ssm.f_sign_in_name_hint")}>
+              <input className="cinput ssm-sign-in-name" placeholder="my-company" value={f.signIn} onChange={set("signIn")} />
+            </Field>
+          )}
+          {joining ? (
+            joined && (
+              <div className="ssm-meta ssm-sign-in-portal">
+                <Meta k={tr("ssm.meta_sso_region")} v={joined.ssoRegion} />
+                <Meta k="start URL" v={joined.startUrl} wide />
+              </div>
+            )
+          ) : (
+            <>
           <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
             <RegionSelect value={f.ssoRegion} onChange={setVal("ssoRegion")} emptyLabel={tr("ssm.region_select")} />
           </Field>
@@ -498,6 +607,8 @@ function ProfileSection({
               onChange={set("startUrl")}
             />
           </Field>
+            </>
+          )}
           <Field label={tr("ssm.f_account_id")} hint={tr("ssm.f_optional_login_pick")}>
             <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
           </Field>
@@ -523,7 +634,11 @@ function ProfileSection({
       </fieldset>
       {editing && (
         <div className="field-help ssm-edit-notes">
-          {was !== now ? (
+          {signInMoved ? (
+            <p className="ssm-edit-warn ssm-edit-signin-warn">
+              {nextSignIn ? tr("ssm.edit_signin_join_warn", { signIn: nextSignIn }) : tr("ssm.edit_signin_leave_warn", { from: String(editing.signIn) })}
+            </p>
+          ) : !nextSignIn && was !== now ? (
             <p className="ssm-edit-warn">{tr("ssm.edit_rename_warn", { from: was, to: now })}</p>
           ) : (
             portalChanged && <p className="ssm-edit-warn">{tr("ssm.edit_portal_warn")}</p>
@@ -549,6 +664,259 @@ function ProfileSection({
     </div>
   );
 
+  // Profiles of a shared sign-in are listed under its header (ADR 0125 decision 6); the rest,
+  // chains included, as rows of their own. A sign-in the list of sign-ins does not name (an
+  // older or failed answer) still groups its members, with nothing to edit.
+  const ungrouped = (profiles || []).filter((p) => isChained(p) || !p.signIn);
+  const groups: { si: SsmSignIn; members: any[] }[] = signIns.map((si) => ({
+    si,
+    members: (profiles || []).filter((p) => !isChained(p) && p.signIn === si.name),
+  }));
+  for (const p of profiles || []) {
+    if (isChained(p) || !p.signIn || groups.some((g) => g.si.name === p.signIn)) continue;
+    groups.push({
+      si: { id: "", name: String(p.signIn), startUrl: String(p.startUrl || ""), ssoRegion: String(p.ssoRegion || ""), createdAt: "", profiles: [] },
+      members: (profiles || []).filter((x) => !isChained(x) && x.signIn === p.signIn),
+    });
+  }
+
+  // The header's own form: the sign-in's name and portal (PUT /api/ssm/sign-ins/{id}).
+  const startEditSignIn = (si: SsmSignIn) => {
+    setOpen(false);
+    setEditing(null);
+    setSf({ name: si.name, startUrl: si.startUrl, ssoRegion: si.ssoRegion });
+    setEditingSignIn(si);
+  };
+  const sfValid = SIGN_IN_NAME_RE.test(sf.name.trim()) && /^https:\/\//.test(sf.startUrl.trim()) && !!sf.ssoRegion.trim();
+  const saveSignIn = async () => {
+    const si = editingSignIn;
+    if (!si || !sfValid) return;
+    const next = { name: sf.name.trim(), startUrl: sf.startUrl.trim(), ssoRegion: sf.ssoRegion.trim() };
+    const renamed = next.name !== si.name;
+    const moved = next.startUrl !== si.startUrl || next.ssoRegion !== si.ssoRegion;
+    const members = (profiles || []).filter((p) => !isChained(p) && p.signIn === si.name);
+    // Both sign every member out (a rename moves the login to a new key, a new portal makes the
+    // old token unusable), so the member says yes to that first.
+    if (renamed || moved) {
+      const ok = await askConfirm({
+        title: tr("ssm.sign_in_save_title", { signIn: si.name }),
+        body: (
+          <>
+            {renamed && <p>{tr("ssm.sign_in_rename_warn", { from: si.name, to: next.name })}</p>}
+            {moved && <p>{tr("ssm.sign_in_portal_warn")}</p>}
+            <p>{tr("ssm.sign_in_members_out", { profiles: members.map((m) => String(m.label)).join(", ") || "-" })}</p>
+          </>
+        ),
+        confirmLabel: tr("common.save"),
+      });
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      const ok = await postJSON(`api/ssm/sign-ins/${encodeURIComponent(si.id)}`, "PUT", next, toast);
+      if (!ok) return;
+      if (renamed || moved) {
+        for (const m of members) reloginNeeded.add(m.id);
+        setMarks((n) => n + 1);
+      }
+      setEditingSignIn(null);
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const signInForm = (
+    <div className="ssm-frm ssm-frm-edit ssm-signin-form">
+      <fieldset className="ssm-fieldset" disabled={busy}>
+        <FieldGroup>
+          <Field label={tr("ssm.f_sign_in_name")} req hint={tr("ssm.f_sign_in_name_hint")}>
+            <input className="cinput ssm-signin-name" value={sf.name} onChange={(e) => setSf((x) => ({ ...x, name: e.target.value }))} autoFocus />
+          </Field>
+          <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
+            <RegionSelect value={sf.ssoRegion} onChange={(v) => setSf((x) => ({ ...x, ssoRegion: v }))} emptyLabel={tr("ssm.region_select")} />
+          </Field>
+          <Field label="start URL" req wide>
+            <input
+              className="cinput ssm-signin-url"
+              placeholder="https://my-company.awsapps.com/start"
+              value={sf.startUrl}
+              onChange={(e) => setSf((x) => ({ ...x, startUrl: e.target.value }))}
+            />
+          </Field>
+        </FieldGroup>
+      </fieldset>
+      <div className="ssm-frm-foot">
+        <button className="primary ssm-signin-save" disabled={busy || !sfValid} onClick={saveSignIn}>
+          {tr("common.save")}
+        </button>
+        <button className="ghost" disabled={busy} onClick={() => setEditingSignIn(null)}>
+          {tr("common.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+
+  // A sign-in's header: its name, portal and one login state, Log in and Log out, and the edit
+  // of its name and portal. The login runs as a member the workspace can log in with; the Agent
+  // logs in the sign-in's one sso-session, for every member.
+  const renderSignIn = (si: SsmSignIn, members: any[]) => {
+    // Every member the workspace could log in through. The first is tried; one the member's own
+    // ~/.aws holds back is refused by the Agent (not_exported), and the next is tried instead.
+    const candidates = members.filter((m) => m.name && !m.nameCollides && m.accountId && m.roleName);
+    const loginMember = candidates[0];
+    const asLogin = (m: any) => ({ id: String(m.id), name: String(m.name), label: si.name, accountId: String(m.accountId), roleName: String(m.roleName) });
+    const relogin = members.some((m) => reloginNeeded.has(m.id));
+    const st = signInStates[si.name];
+    return (
+      <li key={"sign-in:" + si.name} className="ssm-item ssm-signin">
+        <div className="ssm-item-head ssm-signin-head">
+          <span className="ssm-alias">{si.name}</span>
+          <span className="ssm-signin-tag">{tr("ssm.sign_in_tag", { n: members.length })}</span>
+          {relogin ? (
+            <span className="ssm-login-state relogin" title={tr("ssm.state_relogin_title")}>
+              {tr("ssm.state_relogin")}
+            </span>
+          ) : (
+            STATE_KEYS[st] && (
+              <span className={"ssm-login-state " + st} title={tr(STATE_KEYS[st].title)}>
+                {tr(STATE_KEYS[st].label)}
+              </span>
+            )
+          )}
+          <button
+            className="ghost ssm-login ssm-signin-login"
+            title={loginMember ? tr("ssm.sign_in_login_title", { signIn: si.name }) : tr("ssm.login_off_incomplete")}
+            disabled={busy || !loginMember}
+            onClick={() =>
+              loginMember &&
+              setLoginFor({ ...asLogin(loginMember), ids: members.map((m) => String(m.id)), signIn: si.name, next: candidates.slice(1).map(asLogin) })
+            }
+          >
+            {tr("ssm.login")}
+          </button>
+          {loginMember && !relogin && (st === "signed_in" || st === "renew") && (
+            <button
+              className="ghost ssm-logout ssm-signin-logout"
+              title={tr("awslogin.logout_title")}
+              disabled={busy || loggingOut[loginMember.name] === true}
+              onClick={() => void logout(loginMember, candidates.slice(1).map((m) => String(m.name))).then((done) => done && loadStates())}
+            >
+              {tr("awslogin.logout")}
+            </button>
+          )}
+          <button
+            className="ghost ssm-edit ssm-signin-edit"
+            title={tr("ssm.sign_in_edit_title")}
+            disabled={busy || !si.id || editingSignIn?.id === si.id}
+            onClick={() => startEditSignIn(si)}
+          >
+            {tr("ssm.edit")}
+          </button>
+        </div>
+        {editingSignIn?.id === si.id ? (
+          signInForm
+        ) : (
+          <div className="ssm-meta">
+            <Meta k={tr("ssm.meta_sso_region")} v={si.ssoRegion} />
+            <Meta k="start URL" v={si.startUrl} wide />
+          </div>
+        )}
+        {members.length > 0 ? (
+          <ul className="ssm-list ssm-signin-members">{members.map((m) => renderRow(m, true))}</ul>
+        ) : (
+          <p className="muted">{tr("ssm.sign_in_empty")}</p>
+        )}
+      </li>
+    );
+  };
+
+  // One profile's row. A member of a shared sign-in (grouped) has no login of its own: its
+  // header logs in, out and shows the state once for every member, and holds the portal.
+  const renderRow = (p: any, grouped: boolean) => (
+    <li key={p.id} className={"ssm-item" + (grouped ? " ssm-member" : "")}>
+      <div className="ssm-item-head">
+        <span className="ssm-alias">{p.label}</span>
+        {grouped ? null : reloginNeeded.has(p.id) ? (
+          <span className="ssm-login-state relogin" title={tr("ssm.state_relogin_title")}>
+            {tr("ssm.state_relogin")}
+          </span>
+        ) : (
+          p.name &&
+          STATE_KEYS[states[p.name]] && (
+          <span
+            className={"ssm-login-state " + states[p.name]}
+            title={tr(STATE_KEYS[states[p.name]].title)}
+          >
+            {tr(STATE_KEYS[states[p.name]].label)}
+          </span>
+          )
+        )}
+        {!grouped && (
+          <button
+            className="ghost ssm-login"
+            title={loginOff(p) || tr("ssm.login_title")}
+            disabled={busy || loginOff(p) !== null}
+            onClick={() => {
+              const t0 = loginTarget(p);
+              setLoginFor({ id: t0.id, name: t0.name, label: t0.label, accountId: t0.accountId, roleName: t0.roleName });
+            }}
+          >
+            {tr("ssm.login")}
+          </button>
+        )}
+        {/* A chain has no login of its own: its button ends the source's (after a confirmation that
+            names the source and the chains following it), so it needs a source to end. */}
+        {!grouped && p.name && !reloginNeeded.has(loginTarget(p).id) && !(isChained(p) && isChained(loginTarget(p))) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
+          <button
+            className="ghost ssm-logout"
+            title={tr("awslogin.logout_title")}
+            disabled={busy || loggingOut[p.name] === true}
+            onClick={() => void logout(p).then((done) => done && loadStates())}
+          >
+            {tr("awslogin.logout")}
+          </button>
+        )}
+        <button
+          className="ghost ssm-edit"
+          title={tr("ssm.edit_profile_title")}
+          disabled={busy || editing?.id === p.id}
+          onClick={() => startEdit(p)}
+        >
+          {tr("ssm.edit")}
+        </button>
+        <button className="ghost danger ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(p.id)}>
+          {tr("common.delete")}
+        </button>
+      </div>
+      {editing?.id === p.id ? (
+        form
+      ) : (
+        isChained(p) ? (
+          <div className="ssm-meta">
+            <Meta k={tr("ssm.meta_account")} v={p.accountId} />
+            <Meta k={tr("ssm.meta_source")} v={(profiles || []).find((x) => x.id === p.sourceProfileId)?.label || tr("ssm.source_missing")} />
+            <Meta k={tr("ssm.meta_default_region")} v={p.region} />
+            <Meta k={tr("ssm.f_role_arn")} v={p.roleArn} wide />
+            {p.externalId && <Meta k={tr("ssm.f_external_id")} v={p.externalId} />}
+            {p.sessionName && <Meta k={tr("ssm.f_session_name")} v={p.sessionName} />}
+            {p.durationSeconds ? <Meta k={tr("ssm.f_duration")} v={String(p.durationSeconds)} /> : null}
+            {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
+          </div>
+        ) : (
+        <div className="ssm-meta">
+          <Meta k={tr("ssm.meta_account")} v={p.accountId} />
+          <Meta k={tr("ssm.meta_role")} v={p.roleName} />
+          <Meta k={tr("ssm.meta_default_region")} v={p.region} />
+          {/* A member's portal is the sign-in's, shown once on its header. */}
+          {!grouped && <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />}
+          {!grouped && <Meta k="start URL" v={p.startUrl} wide />}
+          {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
+        </div>
+        )
+      )}
+    </li>
+  );
+
   return (
     <section className="ds-group">
       <div className="ds-title">{tr("ssm.profile_cat")}</div>
@@ -564,87 +932,8 @@ function ProfileSection({
         <p className="muted">{tr("ssm.profile_empty")}</p>
       ) : (
         <ul className="ssm-list">
-          {profiles.map((p) => (
-            <li key={p.id} className="ssm-item">
-              <div className="ssm-item-head">
-                <span className="ssm-alias">{p.label}</span>
-                {reloginNeeded.has(p.id) ? (
-                  <span className="ssm-login-state relogin" title={tr("ssm.state_relogin_title")}>
-                    {tr("ssm.state_relogin")}
-                  </span>
-                ) : (
-                  p.name &&
-                  STATE_KEYS[states[p.name]] && (
-                  <span
-                    className={"ssm-login-state " + states[p.name]}
-                    title={tr(STATE_KEYS[states[p.name]].title)}
-                  >
-                    {tr(STATE_KEYS[states[p.name]].label)}
-                  </span>
-                  )
-                )}
-                <button
-                  className="ghost ssm-login"
-                  title={loginOff(p) || tr("ssm.login_title")}
-                  disabled={busy || loginOff(p) !== null}
-                  onClick={() => {
-                    const t0 = loginTarget(p);
-                    setLoginFor({ id: t0.id, name: t0.name, label: t0.label, accountId: t0.accountId, roleName: t0.roleName });
-                  }}
-                >
-                  {tr("ssm.login")}
-                </button>
-                {/* A chain has no login of its own: its button ends the source's (after a confirmation that
-                    names the source and the chains following it), so it needs a source to end. */}
-                {p.name && !reloginNeeded.has(loginTarget(p).id) && !(isChained(p) && isChained(loginTarget(p))) && (states[p.name] === "signed_in" || states[p.name] === "renew") && (
-                  <button
-                    className="ghost ssm-logout"
-                    title={tr("awslogin.logout_title")}
-                    disabled={busy || loggingOut[p.name] === true}
-                    onClick={() => void logout(p).then((done) => done && loadStates())}
-                  >
-                    {tr("awslogin.logout")}
-                  </button>
-                )}
-                <button
-                  className="ghost ssm-edit"
-                  title={tr("ssm.edit_profile_title")}
-                  disabled={busy || editing?.id === p.id}
-                  onClick={() => startEdit(p)}
-                >
-                  {tr("ssm.edit")}
-                </button>
-                <button className="ghost danger ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(p.id)}>
-                  {tr("common.delete")}
-                </button>
-              </div>
-              {editing?.id === p.id ? (
-                form
-              ) : (
-                isChained(p) ? (
-                  <div className="ssm-meta">
-                    <Meta k={tr("ssm.meta_account")} v={p.accountId} />
-                    <Meta k={tr("ssm.meta_source")} v={(profiles || []).find((x) => x.id === p.sourceProfileId)?.label || tr("ssm.source_missing")} />
-                    <Meta k={tr("ssm.meta_default_region")} v={p.region} />
-                    <Meta k={tr("ssm.f_role_arn")} v={p.roleArn} wide />
-                    {p.externalId && <Meta k={tr("ssm.f_external_id")} v={p.externalId} />}
-                    {p.sessionName && <Meta k={tr("ssm.f_session_name")} v={p.sessionName} />}
-                    {p.durationSeconds ? <Meta k={tr("ssm.f_duration")} v={String(p.durationSeconds)} /> : null}
-                    {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
-                  </div>
-                ) : (
-                <div className="ssm-meta">
-                  <Meta k={tr("ssm.meta_account")} v={p.accountId} />
-                  <Meta k={tr("ssm.meta_role")} v={p.roleName} />
-                  <Meta k={tr("ssm.meta_default_region")} v={p.region} />
-                  <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />
-                  <Meta k="start URL" v={p.startUrl} wide />
-                  {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
-                </div>
-                )
-              )}
-            </li>
-          ))}
+          {ungrouped.map((p) => renderRow(p, false))}
+          {groups.map(({ si, members }) => renderSignIn(si, members))}
         </ul>
       )}
       {open
@@ -670,13 +959,31 @@ function ProfileSection({
       {exportOpen && <AwsConfigExport onClose={() => setExportOpen(false)} />}
       {loginFor && (
         <ProfileLoginModal
+          key={loginFor.name}
           profile={loginFor}
+          startNow={loginFor.startNow}
+          onRefused={(code) => {
+            if (code !== "not_exported" || !loginFor.signIn || !loginFor.next?.length) return;
+            // The next member starts at once only while the Agent still lists it in the sign-in the
+            // member pressed Log in for; one moved to another sign-in meanwhile would log that in.
+            const cur = loginFor;
+            void api("api/aws-login/profiles")
+              .then((d) => {
+                const inSignIn = (n: string) =>
+                  (Array.isArray(d?.profiles) ? d.profiles : []).some((x: any) => x?.name === n && !x?.source && x?.signIn === cur.signIn);
+                const left = (cur.next || []).filter((x) => inSignIn(x.name));
+                const [nx, ...rest] = left;
+                if (nx) setLoginFor((now) => (now === cur ? { ...nx, ids: cur.ids, signIn: cur.signIn, next: rest, startNow: true } : now));
+              })
+              .catch(() => {});
+          }}
           onClose={() => {
             setLoginFor(null);
             loadStates();
           }}
           onLoggedIn={() => {
             reloginNeeded.delete(loginFor.id);
+            for (const id of loginFor.ids || []) reloginNeeded.delete(id);
             setMarks((n) => n + 1);
           }}
         />

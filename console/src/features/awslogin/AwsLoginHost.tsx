@@ -10,7 +10,7 @@
 // and once a minute only while such a toast is up, so a re-login withdraws it.
 import { useEffect, useMemo, useRef } from "react";
 import { dismissToast, toast } from "../../ui/toast.ts";
-import { useT } from "../../lib/i18n/index.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { ToastCountdown, ToastIdentity } from "../cloudlogin/LoginToastParts.tsx";
 import { AwsLoginModal } from "./AwsLoginModal.tsx";
@@ -63,17 +63,27 @@ function AwsIdentity({ name, accountId, roleName }: { name: string; accountId: s
   );
 }
 
+// The shared sign-in a request logs in (ADR 0125): one login serves every profile waiting on it.
+// "" for a profile with a login of its own, or an Agent that predates sign-ins.
+function signInLine(r: AwsLoginRequest): string {
+  if (typeof r.signIn !== "string" || !r.signIn) return "";
+  const n = Array.isArray(r.profiles) ? r.profiles.filter((x) => typeof x === "string").length : 0;
+  return t("awslogin.toast_signin", { signIn: r.signIn, n: Math.max(n, 1) });
+}
+
 function AwsLoginToast({ r }: { r: AwsLoginRequest }) {
   const tr = useT();
   const open = useAwsLoginStore((s) => s.open);
   // Read live: the toast is re-issued only when what it names changes, not on every poll.
   const deadline = useAwsLoginStore((s) => s.requests.find((x) => x.id === r.id)?.deadline ?? null);
   const who = waitersLine(r);
+  const signIn = signInLine(r);
   return (
     <span className="update-toast">
       <span className="update-toast-txt">
         <span>{tr("awslogin.toast_title")}</span>
         <AwsIdentity name={r.label || r.profile} accountId={r.accountId} roleName={r.roleName} />
+        {signIn && <span className="update-toast-sub aws-toast-signin">{signIn}</span>}
         {who && <span className="update-toast-sub">{tr("awslogin.toast_who", { who })}</span>}
         <ToastCountdown deadline={deadline} text={(time) => tr("awslogin.toast_expires_in", { time })} />
       </span>
@@ -115,7 +125,7 @@ export function AwsLoginHost() {
     const next = new Map<string, string>();
     for (const r of visible) {
       const key = toastKey(r.id);
-      const sig = JSON.stringify([r.label, r.profile, r.accountId, r.roleName, waitersLine(r)]);
+      const sig = JSON.stringify([r.label, r.profile, r.accountId, r.roleName, waitersLine(r), signInLine(r)]);
       if (shown.current.get(key) === sig) {
         next.set(key, sig);
       } else if (toast(<AwsLoginToast r={r} />, { kind: "info", duration: 0, key, onClose: () => hide(r.id) })) {
