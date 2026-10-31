@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1608,7 +1609,7 @@ func PendingQuestionID(m session.Meta) string {
 }
 
 // openQuestions returns the request_user_input calls (call id -> timestamp) still open at the
-// end of the rollout's tail. The result is shared with the cache: callers must not mutate it.
+// end of the rollout's tail. The caller gets its own copy.
 func openQuestions(path string) map[string]string {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -1618,7 +1619,7 @@ func openQuestions(path string) map[string]string {
 	c, ok := questionScans[path]
 	questionScansMu.Unlock()
 	if ok && c.size == fi.Size() && c.mtime.Equal(fi.ModTime()) {
-		return c.askedAt
+		return maps.Clone(c.askedAt) // a copy: the cached map must stay the cache's own
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -1666,7 +1667,7 @@ func openQuestions(path string) map[string]string {
 		}
 	}
 	questionScansMu.Lock()
-	questionScans[path] = questionScan{size: fi.Size(), mtime: fi.ModTime(), askedAt: askedAt}
+	questionScans[path] = questionScan{size: fi.Size(), mtime: fi.ModTime(), askedAt: maps.Clone(askedAt)}
 	questionScansMu.Unlock()
 	return askedAt
 }

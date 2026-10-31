@@ -3,6 +3,7 @@ package codex
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,19 @@ type rolloutHit struct {
 	at   time.Time
 }
 
+// forget drops every remembered path for codexID, whatever its sessions root.
+func (m *rolloutMemo) forget(codexID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.seen {
+		if strings.HasSuffix(k, "\x00"+codexID) {
+			delete(m.seen, k)
+		}
+	}
+}
+
+// Like claude's memos, both tables below grow by one small entry per session the agent ever
+// saw; one process per workspace holds tens of sessions, so they are not worth evicting.
 const rolloutMemoTTL = 60 * time.Second
 
 var rolloutPaths rolloutMemo

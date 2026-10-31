@@ -101,11 +101,11 @@ func TestRolloutPathResearchesAfterTheTTLAndKeepsTheNewest(t *testing.T) {
 	if got := rolloutPath(memoID); got != first {
 		t.Fatalf("inside TTL: got %q, want the remembered %q", got, first)
 	}
+	key := filepath.Join(os.Getenv("HOME"), ".codex", "sessions") + "\x00" + memoID
 	rolloutPaths.mu.Lock()
-	for k, h := range rolloutPaths.seen {
-		h.at = time.Now().Add(-2 * rolloutMemoTTL)
-		rolloutPaths.seen[k] = h
-	}
+	h := rolloutPaths.seen[key]
+	h.at = time.Now().Add(-2 * rolloutMemoTTL)
+	rolloutPaths.seen[key] = h
 	rolloutPaths.mu.Unlock()
 	if got := rolloutPath(memoID); got != newer {
 		t.Fatalf("after TTL: got %q, want the newest %q", got, newer)
@@ -143,5 +143,54 @@ func TestPendingQuestionIDNoticesAQuestionAppendedAfterTheCachedScan(t *testing.
 	f.Close()
 	if got := PendingQuestionID(m); got != "" {
 		t.Fatalf("question answered: got %q, want none", got)
+	}
+}
+
+// RememberSid is where a resume/fork reports the id; the older remembered rollout must not
+// outlive it.
+func TestRememberSidDropsTheRememberedRollout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	first := putRollout(t, "01", memoID)
+	rolloutPath(memoID)
+	newer := putRollout(t, "02", memoID)
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(newer, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if got := rolloutPath(memoID); got != first {
+		t.Fatalf("before RememberSid: got %q, want the remembered %q", got, first)
+	}
+	RememberSid("slot-"+memoID, memoID)
+	if got := rolloutPath(memoID); got != newer {
+		t.Fatalf("after RememberSid: got %q, want %q", got, newer)
+	}
+}
+
+// Pins the cache itself: with size and mtime unchanged the scan is not repeated, so a rewrite
+// that keeps both (which an append-only rollout never does) is deliberately not seen.
+func TestPendingQuestionIDServesTheCachedScanWhileSizeAndMtimeHold(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "cx-memo2", Dir: t.TempDir(), Kind: session.KindCodex, Driver: "managed"}
+	asked := askUser("2026-09-30T02:25:47.331Z", "call_q", "Which animal?")
+	writeSlotRollout(t, m, memoID, taskStarted("2026-09-30T02:25:41.600Z", "t1"), asked)
+	if got := PendingQuestionID(m); got != "call_q" {
+		t.Fatalf("got %q, want call_q", got)
+	}
+	p := rolloutPath(memoID)
+	fi, _ := os.Stat(p)
+	// Same length, no question: 'call_q' -> same-size garbage line.
+	body := make([]byte, fi.Size())
+	for i := range body {
+		body[i] = ' '
+	}
+	body[len(body)-1] = '\n'
+	if err := os.WriteFile(p, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if got := PendingQuestionID(m); got != "call_q" {
+		t.Fatalf("size+mtime unchanged: got %q, want the cached call_q", got)
 	}
 }

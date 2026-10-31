@@ -101,7 +101,14 @@ func terminalCompacting(slot string) bool {
 // RememberSid records the slot sid → codex session id mapping. Called from the
 // session-status hook entrypoint in package main when codex's hook JSON carries
 // its own session_id.
-func RememberSid(slotSid, codexID string) { sids.Write(slotSid, codexID) }
+//
+// It also drops the remembered rollout path for codexID: a hook reporting the id is the moment
+// a resume or fork may have started a newer rollout for it, and the memo would otherwise keep
+// answering with the older file until its TTL ran out.
+func RememberSid(slotSid, codexID string) {
+	sids.Write(slotSid, codexID)
+	rolloutPaths.forget(codexID)
+}
 
 // New returns the codex Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
