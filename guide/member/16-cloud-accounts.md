@@ -87,8 +87,16 @@ fix a role's session length (900–3600 seconds). Renaming a source keeps the ro
   anywhere else. Ask for `~/.aws/config` only, never `~/.aws/credentials`.
 - A file the AWS CLI cannot read (a section or key given twice, a key before any section) is refused with its line
   number.
-- **Each Settings profile signs in on its own.** Twenty profiles that shared one `sso-session` on your machine need
-  twenty logins here; the preview shows the count (#3014 tracks sharing one login).
+- **Sign-ins follow your machine's.** Each SSO profile row has a **Sign-in** name, proposed so that profiles
+  sharing one login on your machine share one here (see *Shared sign-ins* below): a profile that uses
+  `[sso-session <name>]` gets the sign-in `<name>`; an older profile with `sso_start_url` inline gets one sign-in per
+  portal (start URL and SSO region), named after the first part of the portal's host (`d-1234567890` for
+  `https://d-1234567890.awsapps.com/start`). Type another name to change it for every row that shared the same login on your machine, or clear it
+  to give the profile a login of its own. A name that is not 1–61 letters, digits and `.` `_` `@` `-`, one an
+  existing sign-in of yours holds for another start URL or SSO region, and one that another profile of yours with a
+  login of its own already logs in under, are each shown on the row with the reason; fix the name or untick the row.
+  The preview counts the logins needed: one per new sign-in, plus one per profile with a login of its own. When your
+  sign-ins cannot be read, the preview says so and every profile is imported with a login of its own.
 - A profile without a region uses its SSO region (a role: its source's); on your machine an environment variable
   may have set it. The preview shows which region each row gets.
 - Importing again with the same choices creates nothing new. If a run stops halfway, read the file again: what was
@@ -183,6 +191,16 @@ and every assume-role profile that follows one of them; the confirmation lists t
 out: a rename moves the login to a new name, and a token from the old portal is never used for the new one. The
 confirmation says so and names the members; afterwards they show **Log in again**.
 
+**Grouping profiles you already have.** Tick the profiles with a login of their own (the box at the start of each
+row; **SSO profiles only**), then press **Share one sign-in** under the list. They must have the same start URL and
+SSO region; otherwise the button stays off and says why. The dialog proposes the name of a member that is signed in
+now, so the group keeps that login (below); you can type another name. It checks the name before saving: a name that
+is not valid, one of an existing sign-in on another portal, or one of a profile you did not tick that keeps its own
+login is refused in words. Each profile is saved with the same save as the form, the first one creating the
+sign-in. **If a save fails part way, the dialog stays open** and lists every profile as moved or not, with the
+reason; the ones that failed keep the sign-in they had, and **Retry** moves only them. Nothing is left half done
+without showing it.
+
 **Keeping a login when you group.** When the sign-in takes the name of a profile that is signed in now, that
 profile's login becomes the sign-in's and nobody has to log in again. With any other name the sign-in starts
 signed out and needs one login. Leaving a sign-in (choose **Its own sign-in**) gives the profile a login of its own
@@ -190,8 +208,8 @@ again, so it needs a login too.
 
 Limits:
 
-- Nothing is grouped for you. Two profiles with the same portal and no sign-in, or in two sign-ins, still log in
-  separately.
+- Nothing is grouped behind your back. Apart from the import's proposal, which you see and can change in the
+  preview, two profiles with the same portal and no sign-in, or in two sign-ins, still log in separately.
 - An SSM host's **Log in again** on a member drops the shared login, so every member is signed out.
 - If your own `~/.aws/config` defines `[sso-session af-<sign-in>]`, every member of that sign-in is held back
   (`af-aws-exec --list` says why), as with a profile name of your own.
@@ -200,7 +218,8 @@ Limits:
   for a new login.
 - Logging out of a sign-in also removes a member's own login from before it joined, but only when it is certain
   that login was that member's and nothing else uses its name.
-- The import from `~/.aws/config` does not put profiles in a sign-in yet: join them afterwards in each profile's form.
+- The import from `~/.aws/config` puts profiles in a sign-in as proposed above; a profile it creates joins the
+  sign-in of that name if you have one on the same portal.
 
 ### Profile type: assume a role from another profile
 

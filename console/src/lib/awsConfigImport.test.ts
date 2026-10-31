@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseAwsIni } from "./awsConfigIni.ts";
-import { readAwsConfig, resolveImport, toImportSection, type RowEdit } from "./awsConfigImport.ts";
+import { hostLabel, readAwsConfig, resolveImport, toImportSection, type ExistingSignIn, type RowEdit } from "./awsConfigImport.ts";
 import { planSsmImport } from "./settingsBundle.ts";
 
 const URL = "https://corp.awsapps.com/start";
@@ -12,8 +12,8 @@ function read(text: string) {
   if (!r.ok) throw new Error("parse failed");
   return readAwsConfig(r.file);
 }
-function preview(text: string, existing: any[] = [], edits: Record<string, RowEdit> = {}) {
-  return resolveImport(read(text), existing, edits);
+function preview(text: string, existing: any[] = [], edits: Record<string, RowEdit> = {}, signIns: ExistingSignIn[] | null = []) {
+  return resolveImport(read(text), existing, edits, signIns);
 }
 const row = (p: ReturnType<typeof preview>, name: string) => p.rows.find((r) => r.name === name)!;
 
@@ -34,13 +34,14 @@ describe("readAwsConfig / resolveImport — SSO", () => {
       effectiveRegion: "us-east-1",
     });
     expect(row(p, "old")).toMatchObject({ status: "create", effectiveRegion: "eu-west-1" });
-    expect(p.logins).toBe(2);
+    // Both name the same portal ("corp" is the session's name and the host label), so one sign-in.
+    expect(p.logins).toBe(1);
     expect(p.laptopSignIns).toBe(2);
   });
 
   it("counts one laptop sign-in for profiles sharing an sso-session", () => {
     const p = preview(SESSION + ssoProfile("a") + ssoProfile("b", "222222222222"));
-    expect(p.logins).toBe(2);
+    expect(p.logins).toBe(1);
     expect(p.laptopSignIns).toBe(1);
   });
 
@@ -342,5 +343,86 @@ describe("resolveImport — names", () => {
     let text = SESSION;
     for (let i = 0; i < 501; i++) text += ssoProfile("p" + i);
     expect(read(text).tooMany).toBe(true);
+  });
+});
+
+// ADR 0125 decision 6 / B: the import proposes the laptop's sign-ins.
+describe("resolveImport — shared sign-ins", () => {
+  const legacy = (name: string, url: string, region = "us-east-1", account = "1") =>
+    `[profile ${name}]\nsso_start_url = ${url}\nsso_region = ${region}\nsso_account_id = ${account}\nsso_role_name = R\n`;
+  const signInOf = (p: ReturnType<typeof preview>, n: string) => (row(p, n).entry as any).signIn;
+
+  it("defaults an sso-session profile to signIn = the session's name, and counts one login per sign-in", () => {
+    const p = preview(SESSION + ssoProfile("a") + ssoProfile("b", "222222222222"));
+    expect(signInOf(p, "a")).toBe("corp");
+    expect(signInOf(p, "b")).toBe("corp");
+    expect(toImportSection(p).profiles.map((e) => e.signIn)).toEqual(["corp", "corp"]);
+  });
+
+  it("names a legacy profile's sign-in after its portal's host label, one per start URL and region", () => {
+    const a = "https://d-1234567890.awsapps.com/start";
+    const p = preview(legacy("x", a) + legacy("y", a, "us-east-1", "2") + legacy("z", "https://other.awsapps.com/start"));
+    expect(signInOf(p, "x")).toBe("d-1234567890");
+    expect(signInOf(p, "y")).toBe("d-1234567890");
+    expect(signInOf(p, "z")).toBe("other");
+    expect(p.logins).toBe(2);
+  });
+
+  it("proposes no name for a host label outside the allowlist", () => {
+    expect(hostLabel("https://a~b.example.com/start")).toBe("");
+    expect(hostLabel("https://" + "a".repeat(62) + ".example.com/start")).toBe("");
+    expect(hostLabel("https://d-1.awsapps.com/start")).toBe("d-1");
+  });
+
+  it("blocks a session name outside the allowlist until a name is typed or it is cleared, never echoing it", () => {
+    const long = "s".repeat(62);
+    const text = `[sso-session ${long}]\nsso_start_url = ${URL}\nsso_region = us-east-1\n[profile a]\nsso_session = ${long}\nsso_account_id = 1\nsso_role_name = R\n`;
+    const p = preview(text);
+    expect(row(p, "a")).toMatchObject({ status: "blocked", reason: { code: "sign_in_invalid" }, signInName: "" });
+    expect(JSON.stringify(p.rows.map((r) => [r.signInName, r.reason]))).not.toContain(long);
+    expect(row(preview(text, [], { a: { signIn: "team" } }), "a")).toMatchObject({ status: "create", signInName: "team" });
+    const own = row(preview(text, [], { a: { signIn: "" } }), "a");
+    expect(own.status).toBe("create");
+    expect((own.entry as any).signIn).toBeUndefined();
+    expect(row(preview(text, [], { a: { signIn: "bad name" } }), "a").reason).toEqual({ code: "sign_in_invalid" });
+  });
+
+  it("blocks a name an existing sign-in holds for another portal (sign_in_mismatch), and joins one on the same portal", () => {
+    const other = { name: "corp", startUrl: "https://other.awsapps.com/start", ssoRegion: "us-east-1" };
+    const p = preview(SESSION + ssoProfile("a"), [], {}, [other]);
+    expect(row(p, "a")).toMatchObject({ status: "blocked", reason: { code: "sign_in_mismatch" } });
+    expect(row(preview(SESSION + ssoProfile("a"), [], { a: { signIn: "corp2" } }, [other]), "a").status).toBe("create");
+    const same = preview(SESSION + ssoProfile("a"), [], {}, [{ name: "corp", startUrl: URL, ssoRegion: "us-east-1" }]);
+    expect(row(same, "a")).toMatchObject({ status: "create", signInJoins: true });
+    expect(same.logins).toBe(0);
+  });
+
+  it("blocks a name that an existing profile with its own sign-in already logs in under (sign_in_name_taken)", () => {
+    const mine = { id: "p1", kind: "sso", label: "corp", startUrl: "https://z.awsapps.com/start", ssoRegion: "us-east-1", accountId: "9", roleName: "R" };
+    const p = preview(SESSION + ssoProfile("a"), [mine]);
+    expect(row(p, "a")).toMatchObject({ status: "blocked", reason: { code: "sign_in_name_taken", other: "corp" } });
+    // The same profile already in a sign-in keeps no name of its own.
+    expect(row(preview(SESSION + ssoProfile("a"), [{ ...mine, signIn: "other" }]), "a").status).toBe("create");
+  });
+
+  it("blocks, among the creations, one name on two portals and a name a cleared row logs in under; unticking frees it", () => {
+    const text =
+      legacy("x", "https://d-1.awsapps.com/start") +
+      legacy("y", "https://d-1.awsapps.com/start", "eu-west-1", "2");
+    const p = preview(text);
+    expect(row(p, "x").reason).toEqual({ code: "sign_in_mismatch" });
+    expect(row(p, "y").reason).toEqual({ code: "sign_in_mismatch" });
+    const un = preview(text, [], { y: { selected: false } });
+    expect(row(un, "x").status).toBe("create");
+    const taken = preview(SESSION + ssoProfile("a") + ssoProfile("corp", "2"), [], { corp: { signIn: "" } });
+    expect(row(taken, "a").reason).toEqual({ code: "sign_in_name_taken", other: "corp" });
+    expect(row(taken, "corp").status).toBe("create");
+  });
+
+  it("proposes and sends no sign-in when the member's sign-ins could not be read", () => {
+    const p = preview(SESSION + ssoProfile("a"), [], { a: { signIn: "typed" } }, null);
+    expect(p.signInsUnknown).toBe(true);
+    expect(row(p, "a")).toMatchObject({ status: "create", signInName: "" });
+    expect((row(p, "a").entry as any).signIn).toBeUndefined();
   });
 });

@@ -370,3 +370,15 @@ a profile is never quietly ungrouped, and a profile never shares a login it was 
   call from a Settings sync.
 - **D. Taken: the recommended option.** **A sign-in named after a member.** Recommended: the Console proposes it whenever a member is signed in,
   so grouping costs no login. The alternative is always the laptop or typed name, with one fresh login.
+
+## Notes
+
+- **2026-10-31, Console grouping and import default (#3077).** Decisions 6, 7/D and B are built, with no new
+  endpoint. Two details the decisions left open:
+  - **Write order.** Grouping writes one `PUT /api/ssm/profiles/{id}` per profile. The member whose profile name
+    equals the sign-in's name is written first: until it has moved in, it is a profile with a sign-in of its own
+    carrying the sign-in's name, which the store refuses (`sign_in_name_taken`). A run that ends half done stays
+    on screen, profile by profile, and its retry moves only the rest.
+  - **Import portals.** The import compares portals exactly (start URL and SSO region as written), as the store
+    does, so one name on two spellings of a portal shows `sign_in_mismatch` in the preview instead of a 409 at
+    save time. A legacy profile whose portal equals an `sso-session`'s joins that sign-in when the names agree.

@@ -12,8 +12,10 @@ import {
   MAX_BYTES,
   MAX_PROFILES,
   readAwsConfig,
+  loginsOf,
   resolveImport,
   toImportSection,
+  type ExistingSignIn,
   type ImportRow,
   type NativeConfig,
   type Reason,
@@ -21,7 +23,8 @@ import {
   safeKey,
 } from "../../../lib/awsConfigImport.ts";
 import { planSsmImport } from "../../../lib/settingsBundle.ts";
-import { executeSsmPlan, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
+import { executeSsmPlan, loadSignIns, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
+import { signInSaveError } from "./ssmSignIns.ts";
 
 type Tr = ReturnType<typeof useT>;
 
@@ -40,6 +43,8 @@ export function reasonText(tr: Tr, r: Reason): string {
     case "source_unselected":
     case "source_missing":
       return tr(("ssm.imp_r_" + r.code) as MsgKey, { name: r.source || "?" });
+    case "sign_in_name_taken":
+      return tr("ssm.imp_r_sign_in_name_taken", { name: r.other });
     case "label_taken":
     case "label_dup":
     case "name_collision":
@@ -56,6 +61,8 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [err, setErr] = useState("");
   const [cfg, setCfg] = useState<NativeConfig | null>(null);
   const [existing, setExisting] = useState<any[]>([]);
+  // The member's sign-ins (null = unreadable: nothing is proposed, see resolveImport).
+  const [signIns, setSignIns] = useState<ExistingSignIn[] | null>([]);
   const [edits, setEdits] = useState<Record<string, RowEdit>>({});
   const [busy, setBusy] = useState(false);
   // True while read() waits for the current profile lists. The raw text is already dropped by
@@ -69,11 +76,16 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [ranLogins, setRanLogins] = useState<{ logins: number; signins: number } | null>(null);
   const cancelRef = useRef(false);
 
-  const preview = useMemo(() => (cfg ? resolveImport(cfg, existing, edits) : null), [cfg, existing, edits]);
+  const preview = useMemo(() => (cfg ? resolveImport(cfg, existing, edits, signIns) : null), [cfg, existing, edits, signIns]);
   const creating = preview ? preview.rows.filter((r) => r.status === "create").length : 0;
   const ignored = preview ? preview.rows.reduce((n, r) => n + (r.reason ? 0 : r.ignored.length), 0) : 0;
 
   const edit = (name: string, e: RowEdit) => setEdits((all) => ({ ...all, [name]: { ...all[name], ...e } }));
+  // The sign-in name is one choice per laptop sign-in: rows that shared an sso-session (or a
+  // portal) on the machine keep sharing it, so a fix is typed once.
+  const editSignIn = (r: ImportRow, name: string) => {
+    for (const o of preview?.rows ?? []) if (o.kind === "sso" && o.signIn === r.signIn) edit(o.name, { signIn: name });
+  };
 
   const read = async (source: string) => {
     // A second Read (or a file pick) while the lists load must not start another load.
@@ -103,12 +115,13 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
     readingRef.current = true;
     setReading(true);
     try {
-      const lists = await loadSsmLists();
+      const [lists, si] = await Promise.all([loadSsmLists(), loadSignIns()]);
       if (!lists) {
         setErr(tr("ssm.imp_unread"));
         return;
       }
       setExisting(lists.profiles);
+      setSignIns(si);
       setEdits({});
       setCfg(native);
     } finally {
@@ -124,12 +137,12 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
     try {
       // Re-read what exists now, so a retry after a partial run, or a change made in another
       // tab, is planned against the truth rather than the list the preview was built on.
-      const lists = await loadSsmLists();
+      const [lists, si] = await Promise.all([loadSsmLists(), loadSignIns()]);
       if (!lists) {
         setErr(tr("ssm.imp_unread"));
         return;
       }
-      const fresh = resolveImport(cfg!, lists.profiles, edits);
+      const fresh = resolveImport(cfg!, lists.profiles, edits, si);
       const plan = planSsmImport(toImportSection(fresh), lists.profiles, []);
       setProgress([0, plan.profiles.length]);
       const rows = await executeSsmPlan(plan, lists.profiles, {
@@ -141,10 +154,11 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
       const made = fresh.rows.filter((r) => r.status === "create" && r.kind === "sso" && ssoLabels.has(r.label));
       const ok = new Set(rows.filter((x) => x.outcome === "created").map((x) => x.label));
       const done = made.filter((r) => ok.has(r.label));
-      setRanLogins({ logins: done.length, signins: new Set(done.map((r) => r.signIn)).size });
+      setRanLogins({ logins: loginsOf(done, si), signins: new Set(done.map((r) => r.signIn)).size });
       onImported();
-      const after = await loadSsmLists();
+      const [after, afterSi] = await Promise.all([loadSsmLists(), loadSignIns()]);
       if (after) setExisting(after.profiles);
+      setSignIns(afterSi);
     } finally {
       setBusy(false);
       setProgress(null);
@@ -229,9 +243,14 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
             ) : (
               <ul className="ssm-list aws-import-rows">
                 {preview.rows.map((r) => (
-                  <Row key={r.line} tr={tr} r={r} e={edits[r.name] || {}} preview={preview} edit={edit} busy={busy} />
+                  <Row key={r.line} tr={tr} r={r} e={edits[r.name] || {}} preview={preview} edit={edit} editSignIn={editSignIn} busy={busy} />
                 ))}
               </ul>
+            )}
+            {preview.signInsUnknown && (
+              <p className="warn-text" role="status">
+                {tr("ssm.imp_sign_ins_unknown")}
+              </p>
             )}
             <p className="field-help">
               {tr("ssm.imp_summary", { create: creating, logins: preview.logins, signins: preview.laptopSignIns })}
@@ -263,6 +282,7 @@ function Row({
   e,
   preview,
   edit,
+  editSignIn,
   busy,
 }: {
   tr: Tr;
@@ -270,6 +290,7 @@ function Row({
   e: RowEdit;
   preview: NonNullable<ReturnType<typeof resolveImport>>;
   edit: (name: string, e: RowEdit) => void;
+  editSignIn: (r: ImportRow, name: string) => void;
   busy: boolean;
 }) {
   // A row the file itself rules out has nothing a member could change here.
@@ -311,6 +332,19 @@ function Row({
               onChange={(e) => edit(r.name, { label: e.target.value })}
             />
           </label>
+          {r.kind === "sso" && !preview.signInsUnknown && (
+            <label className="ssm-fld">
+              <span>{tr("ssm.imp_sign_in")}</span>
+              <input
+                className="cinput ssm-imp-signin"
+                value={e.signIn ?? r.signInName}
+                placeholder={tr("ssm.imp_sign_in_own")}
+                disabled={busy}
+                spellCheck={false}
+                onChange={(ev) => editSignIn(r, ev.target.value)}
+              />
+            </label>
+          )}
           {r.kind === "assume_role" && (
             <label className="ssm-fld">
               <span>{tr("ssm.imp_duration")}</span>
@@ -355,6 +389,13 @@ function Row({
               })}
             </span>
           )}
+          {r.kind === "sso" && !preview.signInsUnknown && r.status === "create" && (
+            <span>
+              {r.signInName
+                ? tr(r.signInJoins ? "ssm.imp_meta_sign_in_join" : "ssm.imp_meta_sign_in", { name: r.signInName })
+                : tr("ssm.imp_meta_sign_in_own")}
+            </span>
+          )}
           <span>
             {r.region ? tr("ssm.imp_region", { region: r.effectiveRegion }) : tr("ssm.imp_region_default", { region: r.effectiveRegion })}
           </span>
@@ -386,6 +427,8 @@ function Results({ tr, rows }: { tr: Tr; rows: ExecRow[] }) {
       {rows.map((r, i) => (
         <li key={i} className={r.outcome}>
           {tr(("ssm.imp_o_" + r.outcome) as MsgKey, { label: r.label, code: r.code ?? "" })}
+          {/* A sign-in refusal says what to change, in the member's words. */}
+          {r.outcome === "failed" && signInSaveError(r.code) && <> {tr(signInSaveError(r.code)!)}</>}
         </li>
       ))}
     </ul>

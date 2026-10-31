@@ -18,7 +18,8 @@ import { AwsConfigImport } from "./AwsConfigImport.tsx";
 import { SshConfigImport } from "./SshConfigImport.tsx";
 import { AwsConfigExport } from "./AwsConfigExport.tsx";
 import { RecentCloudRuns } from "../../cloudruns/cloudRuns.tsx";
-import { SIGN_IN_NAME_RE, signInSaveError, type SsmSignIn } from "./ssmSignIns.ts";
+import { SIGN_IN_NAME_RE, groupable, samePortal, signInSaveError, toCandidate, type SsmSignIn } from "./ssmSignIns.ts";
+import { ShareSignIn } from "./ShareSignIn.tsx";
 
 // SsmTab manages the member's own AWS profiles and SSM hosts (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -284,6 +285,11 @@ function ProfileSection({
   const [importOpen, setImportOpen] = useState(false);
   const [sshImportOpen, setSshImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // "Share one sign-in": the ungrouped profiles ticked for it, and the dialog that moves them.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // The group is fixed when the dialog opens: its rows leave the ticked set as they move, and the
+  // dialog has to keep listing them (with what happened to each) until it is closed.
+  const [shareGroup, setShareGroup] = useState<ReturnType<typeof toCandidate>[] | null>(null);
   useEffect(() => {
     if (requested !== "import") return;
     setImportOpen(true);
@@ -668,6 +674,19 @@ function ProfileSection({
   // chains included, as rows of their own. A sign-in the list of sign-ins does not name (an
   // older or failed answer) still groups its members, with nothing to edit.
   const ungrouped = (profiles || []).filter((p) => isChained(p) || !p.signIn);
+  // Ungrouped SSO profiles can be ticked to share one sign-in. Ticks of rows that have since
+  // left the list (grouped elsewhere, deleted) are dropped when read.
+  const groupables = ungrouped.filter(groupable);
+  const shareable = groupables.length >= 2;
+  const chosen = groupables.filter((p) => picked.has(p.id)).map(toCandidate);
+  const chosenPortalOk = samePortal(chosen);
+  const togglePick = (id: string, on: boolean) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      if (on) n.add(id);
+      else n.delete(id);
+      return n;
+    });
   const groups: { si: SsmSignIn; members: any[] }[] = signIns.map((si) => ({
     si,
     members: (profiles || []).filter((p) => !isChained(p) && p.signIn === si.name),
@@ -835,6 +854,16 @@ function ProfileSection({
   const renderRow = (p: any, grouped: boolean) => (
     <li key={p.id} className={"ssm-item" + (grouped ? " ssm-member" : "")}>
       <div className="ssm-item-head">
+        {!grouped && shareable && groupable(p) && (
+          <input
+            type="checkbox"
+            className="ssm-share-pick"
+            aria-label={tr("ssm.share_pick", { label: String(p.label) })}
+            checked={picked.has(p.id)}
+            disabled={busy}
+            onChange={(e) => togglePick(p.id, e.target.checked)}
+          />
+        )}
         <span className="ssm-alias">{p.label}</span>
         {grouped ? null : reloginNeeded.has(p.id) ? (
           <span className="ssm-login-state relogin" title={tr("ssm.state_relogin_title")}>
@@ -936,6 +965,24 @@ function ProfileSection({
           {groups.map(({ si, members }) => renderSignIn(si, members))}
         </ul>
       )}
+      {chosen.length > 0 && (
+        <div className="flow ssm-share-bar">
+          <span className="muted">{tr("ssm.share_bar", { n: chosen.length })}</span>
+          <button
+            className="ghost ssm-share-open"
+            disabled={busy || chosen.length < 2 || !chosenPortalOk}
+            title={chosen.length < 2 ? tr("ssm.share_need_two") : !chosenPortalOk ? tr("ssm.share_mixed") : undefined}
+            onClick={() => {
+              // A login made in another tab since this page loaded counts for the proposal.
+              loadStates();
+              setShareGroup(chosen);
+            }}
+          >
+            {tr("ssm.share_open")}
+          </button>
+          {chosen.length >= 2 && !chosenPortalOk && <span className="field-help">{tr("ssm.share_mixed")}</span>}
+        </div>
+      )}
       {open
         ? form
         : !editing && (
@@ -954,6 +1001,25 @@ function ProfileSection({
               </button>
             </div>
           )}
+      {shareGroup && (
+        <ShareSignIn
+          members={shareGroup}
+          others={(profiles || []).filter((p) => groupable(p) && !shareGroup.some((g) => g.id === p.id)).map(toCandidate)}
+          signIns={signIns}
+          live={(n) => live(states[n])}
+          signInLive={(n) => live(signInStates[n])}
+          onChanged={(joined, keeps) => {
+            // A group that took over no working login starts signed out: say so on its header.
+            if (!keeps) for (const id of joined) reloginNeeded.add(id);
+            else for (const id of joined) reloginNeeded.delete(id);
+            setPicked((s) => new Set([...s].filter((id) => !joined.includes(id))));
+            setMarks((n) => n + 1);
+            reload();
+            loadStates();
+          }}
+          onClose={() => setShareGroup(null)}
+        />
+      )}
       {importOpen && <AwsConfigImport onClose={() => setImportOpen(false)} onImported={reload} />}
       {sshImportOpen && <SshConfigImport onClose={() => setSshImportOpen(false)} onImported={reload} />}
       {exportOpen && <AwsConfigExport onClose={() => setExportOpen(false)} />}

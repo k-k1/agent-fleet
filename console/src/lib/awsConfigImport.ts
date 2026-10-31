@@ -61,6 +61,8 @@ export const RE = {
   account: /^[0-9]{1,20}$/,
   role: /^[A-Za-z0-9+=,.@_-]{1,64}$/,
   profile: /^[A-Za-z0-9._@-]{1,64}$/,
+  // The Control Plane's rule for a sign-in name (store.SignInNameRe): it becomes af-<name>.
+  signIn: /^[A-Za-z0-9._@-]{1,61}$/,
 };
 
 export type Reason =
@@ -84,7 +86,13 @@ export type Reason =
   | { code: "name_too_long" }
   | { code: "label_taken"; other: string }
   | { code: "label_dup"; other: string }
-  | { code: "name_collision"; other: string };
+  | { code: "name_collision"; other: string }
+  // The sign-in name (ADR 0125) is outside the allowlist, names another portal, or is the name
+  // of a profile that keeps a sign-in of its own. The name itself is never carried: it came
+  // from the file.
+  | { code: "sign_in_invalid" }
+  | { code: "sign_in_mismatch" }
+  | { code: "sign_in_name_taken"; other: string };
 
 interface SsoFields {
   startUrl: string;
@@ -108,6 +116,12 @@ export interface NativeProfile {
   sso?: SsoFields;
   /** The laptop's sign-in this profile shares: its sso_session, or the legacy start URL. */
   signIn?: string;
+  /** The name the import proposes for the Settings sign-in (ADR 0125): the sso_session's name,
+   *  or for a legacy profile the portal's host label. "" = none (own sign-in). */
+  signInName?: string;
+  /** The sso_session's name is outside the sign-in allowlist, so no name is proposed and the
+   *  row needs one typed (the refused text is not kept: it came from the file). */
+  signInBad?: boolean;
   roleArn?: string;
   sourceProfile?: string;
   externalId?: string;
@@ -237,6 +251,8 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
         merged.set(k, v);
       }
       base.signIn = "session:" + sessionName;
+      if (RE.signIn.test(sessionName)) base.signInName = sessionName;
+      else base.signInBad = true;
     } else {
       base.signIn = "url:" + val(o, "sso_start_url").replace(/\/+$/, "");
     }
@@ -265,6 +281,9 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
     ] as const) {
       if (!re.test(v)) return fail({ code: "invalid", key: k });
     }
+    // A legacy profile (no sso_session) gets the portal's host label as its proposed sign-in
+    // (ADR 0125 decision B); a host whose label is outside the allowlist proposes none.
+    if (!has(o, "sso_session")) base.signInName = hostLabel(sso.startUrl);
     // The service region stays the profile's own (botocore's scoped config, checked above): the
     // session's keys join only the SSO sign-in, so a region only the session sets is not used.
     base.sso = sso;
@@ -297,6 +316,14 @@ function classify(name: string, line: number, o: Map<string, IniValue>, sessions
   return fail({ code: "no_auth" });
 }
 
+/** The first label of the portal's host (`d-1234567890` of https://d-1234567890.awsapps.com/start),
+ *  or "" when it is not a valid sign-in name. */
+export function hostLabel(startUrl: string): string {
+  const m = /^https:\/\/([^/:?#]+)/.exec(startUrl);
+  const label = m ? m[1].split(".")[0] : "";
+  return RE.signIn.test(label) ? label : "";
+}
+
 /** A member's change to one row in the preview. */
 export interface RowEdit {
   selected?: boolean;
@@ -306,6 +333,8 @@ export interface RowEdit {
   /** The existing Settings SSO profile chosen as the source of a role whose source_profile the
    *  file does not define. */
   sourceId?: string;
+  /** The Settings sign-in name typed for an SSO row ("" = give it a sign-in of its own). */
+  signIn?: string;
 }
 
 export type RowStatus = "create" | "exists" | "blocked" | "unselected";
@@ -319,6 +348,10 @@ export interface ImportRow extends NativeProfile {
   entry?: SsmProfileEntry;
   /** For an "exists" row: the existing Settings row it matched. */
   existingId?: string;
+  /** The sign-in the SSO row will join or create ("" = its own), after the member's edit. */
+  signInName: string;
+  /** An existing Settings sign-in of that name on the same portal: the row joins it. */
+  signInJoins?: boolean;
   /** For a role row whose source resolved: where it came from. "picked" means the member chose
    *  it, not that the sign-in was verified to be the laptop's. */
   source?: { via: "file" | "existing" | "picked"; label: string };
@@ -331,9 +364,11 @@ export interface ImportPreview {
   rows: ImportRow[];
   /** Existing Settings SSO profiles a role row may be pointed at. */
   sourceChoices: { id: string; label: string; awsName: string; startUrl: string; ssoRegion: string; accountId: string; roleName: string }[];
-  /** New independent logins the import implies: one per created SSO profile (a role signs in
-   *  through its source). */
+  /** New logins the import implies: one per new sign-in plus one per created SSO profile with a
+   *  sign-in of its own (a role signs in through its source). */
   logins: number;
+  /** The sign-in list could not be read: no sign-in is proposed and the rows get their own. */
+  signInsUnknown: boolean;
   /** How many sign-ins those profiles shared on the laptop. */
   laptopSignIns: number;
 }
@@ -344,7 +379,15 @@ type Source = { via: "file" | "existing" | "picked"; label: string; key: string;
 
 /** Resolve the native profiles against the member's existing Settings profiles (the CP list,
  *  as returned by GET api/ssm/profiles) and the preview's edits. Re-run on every edit. */
-export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<string, RowEdit>): ImportPreview {
+export function resolveImport(
+  cfg: NativeConfig,
+  existing: any[],
+  edits: Record<string, RowEdit>,
+  signIns: ExistingSignIn[] | null = [],
+): ImportPreview {
+  // null = the member's sign-ins could not be read (an older Control Plane, or a failed GET):
+  // nothing is proposed or sent, so no row is silently grouped under a name nobody checked.
+  const signInsByName = new Map((signIns || []).map((si) => [si.name, si]));
   const ex = (existing || []).map((p) => ({
     id: String(p?.id ?? ""),
     label: String(p?.label ?? "").trim(),
@@ -363,6 +406,23 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
   const byName = new Map(cfg.profiles.map((p) => [p.name, p]));
   const keyOf = (p: NativeProfile) => ssoKey(p.sso);
 
+  // What keeps an SSO row from joining or creating the sign-in it names, judged against the
+  // member's existing Settings rows only (the clash among the creations is clashesOf's).
+  const signInReason = (row: ImportRow, p: NativeProfile, e: RowEdit | undefined): Reason | null => {
+    const name = row.signInName;
+    if (e?.signIn === undefined && p.signInBad) return { code: "sign_in_invalid" };
+    if (!name) return null;
+    if (!RE.signIn.test(name)) return { code: "sign_in_invalid" };
+    const have = signInsByName.get(name);
+    if (have) {
+      if (have.startUrl !== p.sso!.startUrl || have.ssoRegion !== p.sso!.ssoRegion) return { code: "sign_in_mismatch" };
+      row.signInJoins = true;
+    }
+    // A profile that keeps a sign-in of its own renders the same sso-session name.
+    const own = ex.find((x) => x.kind === "sso" && !x.raw?.signIn && awsProfileName(x.label) === name);
+    return own ? { code: "sign_in_name_taken", other: own.label } : null;
+  };
+
   // One pass of the resolution, with `clashed` = rows blocked by a clash among the creations.
   const pass = (clashed: Map<string, Reason>): ImportRow[] => {
     const rowOf = new Map<string, ImportRow>();
@@ -370,7 +430,9 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
       const e = edits[p.name] || {};
       const label = (e.label ?? p.display).trim();
       const awsName = awsProfileName(label);
-      const row: ImportRow = { ...p, label, awsName, selected: e.selected ?? true, status: "blocked", effectiveRegion: p.region };
+      const typed = e.signIn !== undefined ? e.signIn.trim() : undefined;
+      const signInName = signIns && p.kind === "sso" ? (typed ?? p.signInName ?? "") : "";
+      const row: ImportRow = { ...p, label, awsName, signInName, selected: e.selected ?? true, status: "blocked", effectiveRegion: p.region };
       if (p.reason) return { ...row, reason: p.reason };
       if (!label) return { ...row, reason: { code: "label_empty" } };
       if (awsName === "default") return { ...row, reason: { code: "name_default" } };
@@ -395,7 +457,7 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
       rowOf.set(p.name, row);
       if (row.reason) continue;
       row.effectiveRegion = p.region || p.sso!.ssoRegion;
-      const entry: SsmProfileEntry = { label: row.label, ...p.sso!, region: p.region };
+      const entry: SsmProfileEntry = { label: row.label, ...p.sso!, region: p.region, ...(row.signInName ? { signIn: row.signInName } : {}) };
       const hits = exByLabel.get(ci(row.label));
       if (hits) {
         const same = hits.find((h) => h.kind === "sso" && h.key === keyOf(p));
@@ -404,6 +466,11 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
           row.effectiveRegion = same.region || same.ssoRegion;
           Object.assign(row, { status: "exists", entry: { ...entry, label: same.label }, existingId: same.id });
         } else row.reason = { code: "label_taken", other: hits[0].label };
+        continue;
+      }
+      const bad = row.selected && signIns ? signInReason(row, p, edits[p.name]) : null;
+      if (bad) {
+        Object.assign(row, { reason: bad, entry });
         continue;
       }
       finish(row, entry);
@@ -511,6 +578,18 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
         else if (o.awsName === r.awsName) out.set(r.name, { code: "name_collision", other: o.label });
       }
     }
+    // Sign-ins among the creations: one name has one portal, and no name is also the name of a
+    // profile that keeps a sign-in of its own (the CP refuses both, ADR 0125 decisions 1 and 3).
+    for (const r of pool) {
+      if (out.has(r.name) || r.kind !== "sso" || !r.signInName) continue;
+      const portal = (x: ImportRow) => x.sso!.startUrl + "\n" + x.sso!.ssoRegion;
+      if (pool.some((o) => o !== r && o.kind === "sso" && o.signInName === r.signInName && portal(o) !== portal(r))) {
+        out.set(r.name, { code: "sign_in_mismatch" });
+        continue;
+      }
+      const own = pool.find((o) => o.kind === "sso" && !o.signInName && o.awsName === r.signInName);
+      if (own) out.set(r.name, { code: "sign_in_name_taken", other: own.label });
+    }
     return out;
   };
   const same = (a: Map<string, Reason>, b: Map<string, Reason>) => a.size === b.size && [...a.keys()].every((k) => b.has(k));
@@ -546,9 +625,25 @@ export function resolveImport(cfg: NativeConfig, existing: any[], edits: Record<
         accountId: String(e.raw?.accountId ?? ""),
         roleName: String(e.raw?.roleName ?? ""),
       })),
-    logins: created.length,
+    logins: loginsOf(created, signIns),
+    signInsUnknown: signIns === null,
     laptopSignIns: new Set(created.map((r) => r.signIn)).size,
   };
+}
+
+/** The member's sign-in as GET api/ssm/sign-ins lists it (only what the preview compares). */
+export interface ExistingSignIn {
+  name: string;
+  startUrl: string;
+  ssoRegion: string;
+}
+
+/** The logins the SSO rows need: one per sign-in that does not exist yet, plus one per row with a
+ *  sign-in of its own. A row that joins an existing sign-in needs none of its own. */
+export function loginsOf(rows: { signInName: string }[], signIns: ExistingSignIn[] | null): number {
+  const have = new Set((signIns || []).map((si) => si.name));
+  const fresh = new Set(rows.filter((r) => r.signInName && !have.has(r.signInName)).map((r) => r.signInName));
+  return fresh.size + rows.filter((r) => !r.signInName).length;
 }
 
 /** The rows to create, in the planner's shape. */
