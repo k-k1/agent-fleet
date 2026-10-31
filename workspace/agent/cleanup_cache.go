@@ -26,7 +26,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/homeusage"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -272,4 +275,87 @@ func walkSize(dir string, budget *int) (bytes int64, files int) {
 		return nil
 	})
 	return bytes, files
+}
+
+// --- the whole-home breakdown (internal/homeusage) ---------------------------------------
+//
+//   POST /cleanup/home/measure → start one walk in the background (single flight)
+//   GET  /cleanup/home         → {running, scanned, result}: result is the last finished walk
+//
+// Never on the 4-second stats path (docs/log/116); the walk itself is homeusage's.
+
+var homeUsageRunner homeusage.Runner
+
+// homeRoots lists the classified directories for home. The tool-cache rows come from
+// toolCaches, so a GOCACHE pointed to another place inside home is still filed where the
+// button would empty it. One pointed outside home is not walked and is left out rather than
+// listed with a zero; the Tool caches section still measures it.
+func homeRoots(home string) map[string]homeusage.Root {
+	at := func(rel ...string) string { return filepath.Join(append([]string{home}, rel...)...) }
+	r := map[string]homeusage.Root{
+		at(".cache"):                   {Cat: homeusage.CatToolCache, Part: ".cache"},
+		at(".npm"):                     {Cat: homeusage.CatToolCache, Part: ".npm"},
+		at(".gradle"):                  {Cat: homeusage.CatToolCache, Part: ".gradle"},
+		at(".m2"):                      {Cat: homeusage.CatToolCache, Part: ".m2"},
+		at("go", "pkg", "mod"):         {Cat: homeusage.CatToolCache, Part: "go/pkg/mod"},
+		at(".bun", "install", "cache"): {Cat: homeusage.CatToolCache, Part: ".bun/install/cache"},
+		at(".cargo", "registry"):       {Cat: homeusage.CatToolCache, Part: ".cargo/registry"},
+		at(".local"):                   {Cat: homeusage.CatTools, Part: ".local"},
+		at(".nvm"):                     {Cat: homeusage.CatTools, Part: ".nvm"},
+		at(".bun"):                     {Cat: homeusage.CatTools, Part: ".bun"},
+		at("go"):                       {Cat: homeusage.CatTools, Part: "go"},
+		at(".sdkman"):                  {Cat: homeusage.CatTools, Part: ".sdkman"},
+		at(".jdks"):                    {Cat: homeusage.CatTools, Part: ".jdks"},
+		at(".rustup"):                  {Cat: homeusage.CatTools, Part: ".rustup"},
+		at(".cargo"):                   {Cat: homeusage.CatTools, Part: ".cargo"},
+		at(".pyenv"):                   {Cat: homeusage.CatTools, Part: ".pyenv"},
+		at(".android"):                 {Cat: homeusage.CatTools, Part: ".android"},
+		at(".af-work"):                 {Cat: homeusage.CatAfWork, Part: ".af-work"},
+		paths.AgentDataDir():           {Cat: homeusage.CatAgent, Part: ".local/share/agent-fleet"},
+		sessionx.CacheRoot():           {Cat: homeusage.CatAgent, Part: ".cache/agent-fleet"},
+		cleanupStoreDir():              {Cat: homeusage.CatTrash, Part: "trash", Reclaimable: true},
+		gitx.ReposRoot():               {Cat: homeusage.CatSource, Part: "repos"},
+	}
+	for _, c := range toolCaches {
+		if d := c.dir(); strings.HasPrefix(d, home+string(filepath.Separator)) {
+			r[d] = homeusage.Root{Cat: homeusage.CatToolCache, Part: c.Name, Reclaimable: true}
+		}
+	}
+	return r
+}
+
+// homeUsageConfig wires the walk to this Agent's places and its af-work judgement, so the
+// orphans it marks are exactly what the leftovers button removes.
+func homeUsageConfig() homeusage.Config {
+	home := homeDir()
+	return homeusage.Config{
+		Home: home, Repos: gitx.ReposRoot(), AfWork: filepath.Join(home, ".af-work"),
+		Roots: homeRoots(home),
+		Place: func(abs string) homeusage.Place {
+			p := placeOf(abs)
+			return homeusage.Place{Path: p.Path, Browse: p.Browse}
+		},
+		AfWorkOrphans: func() (map[string]bool, bool) {
+			if _, ok := afWorkKnownNames(); !ok {
+				return nil, false
+			}
+			orphans := map[string]bool{}
+			for _, l := range afWorkLeftovers(home, afWorkRoots(home), nil) {
+				orphans[l.name] = true
+			}
+			return orphans, true
+		},
+	}
+}
+
+// handleHomeUsage (GET /cleanup/home).
+func handleHomeUsage(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, homeUsageRunner.Snapshot())
+}
+
+// handleMeasureHomeUsage (POST /cleanup/home/measure). 202 whether it started a walk or one
+// was already running: either way the caller polls GET for the result.
+func handleMeasureHomeUsage(w http.ResponseWriter, r *http.Request) {
+	homeUsageRunner.Start(homeUsageConfig)
+	httpx.WriteJSON(w, http.StatusAccepted, homeUsageRunner.Snapshot())
 }

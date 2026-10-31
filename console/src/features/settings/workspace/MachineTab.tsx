@@ -1,16 +1,14 @@
 import { useEffect, useState } from "react";
-import type { MouseEvent as RMouseEvent } from "react";
 import { api } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
 import { useSettingsUI } from "../store.ts";
 import { useSessionUI } from "../../sessions/ui.ts";
-import { useFilesStore } from "../../files/store.ts";
-import { useLeftRail } from "../../../core/store/leftRail.ts";
-import { openGallery } from "../../gallery/open.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
+import { PlaceLine, type Place } from "./machinePlace.tsx";
+import { HomeBreakdownSection } from "./HomeBreakdownSection.tsx";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { TrendChart } from "../../../ui/TrendChart.tsx";
@@ -152,6 +150,7 @@ export function MachineView({ d }: { d: WsMachine }) {
         <p className="muted ds-note">{tr("machine.note_who_changes")}</p>
       </section>
       {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} own={own} />}
+      {d.running && <HomeBreakdownSection own={own} />}
       {d.running && <DiskSection />}
       {d.running && <ToolCacheSection />}
       {d.running && <LeftoverSection />}
@@ -283,14 +282,6 @@ function PressureChart({ samples, spanMs }: { samples: StatSample[]; spanMs: num
   );
 }
 
-/** Where a figure lives (usagePlace in cleanup_cache.go): path to read ("~/…"), browse = the
- *  same folder relative to the browse root, which the file tree and the gallery take ("" or
- *  absent when it is outside the root, or the Agent predates the field). */
-interface Place {
-  path?: string;
-  browse?: string;
-}
-
 // The /cleanup/usage answer (workspace/agent/cleanup_cache.go).
 interface CleanupUsage {
   cache?: { bytes: number; files: number; parts?: ({ name: string; bytes: number; files: number } & Place)[] } & Place;
@@ -302,48 +293,6 @@ interface CleanupUsage {
 
 /** Cache parts that hold pictures, so "open in the gallery" means something. */
 const IMAGE_PARTS = new Set(["generated", "thumbs", "codex-view-image", "pasted", "memo-images"]);
-
-/** Ctrl/⌘ and the middle button open beside, as everywhere else in the Console. */
-const besideClick = (e: RMouseEvent) => e.ctrlKey || e.metaKey || e.button === 1;
-
-// PlaceLine — a figure's folder: the path (a click opens that folder in the left pane's file
-// tree and focuses it) and, for picture folders, the way into the gallery. Both leave the
-// settings modal first — what they open is behind it.
-function PlaceLine({ place, gallery }: { place?: Place; gallery?: boolean }) {
-  const tr = useT();
-  const closeSettings = useSettingsUI((s) => s.closeSettings);
-  if (!place?.path) return null;
-  const browse = place.browse;
-  const reveal = () => {
-    if (!browse) return;
-    closeSettings();
-    useLeftRail.getState().ensureOpen();
-    useFilesStore.getState().revealInFiles(browse, { focus: true });
-  };
-  const toGallery = (e: RMouseEvent) => {
-    if (!browse) return;
-    closeSettings();
-    openGallery(browse, { newPane: besideClick(e) });
-  };
-  return (
-    <span className="mv-place">
-      {browse ? (
-        <button type="button" className="mv-path" title={tr("machine.disk_reveal", { path: place.path })} onClick={reveal}>
-          {place.path}
-        </button>
-      ) : (
-        <span className="mv-path is-static" title={place.path}>
-          {place.path}
-        </span>
-      )}
-      {gallery && browse && (
-        <Button small icon="file-media" onClick={toGallery} onAuxClick={toGallery}>
-          {tr("machine.disk_open_gallery")}
-        </Button>
-      )}
-    </span>
-  );
-}
 
 // DiskSection — what Agent Fleet itself has piled up on the disk, and the way to the
 // cleanup that gives it back.
