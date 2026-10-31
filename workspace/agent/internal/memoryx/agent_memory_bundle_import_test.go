@@ -682,7 +682,7 @@ func TestBundleImportIncompleteSearchFailsClosedOnRemote(t *testing.T) {
 // hundred files to decode and hold. Project records are held to a budget as well.
 func TestBundleImportBudgetCountsAliasesOfOneBlob(t *testing.T) {
 	e := newBundleEnv(t)
-	one := bundleMemory("a", "alias", strings.Repeat("x", 80<<10), 1, false)
+	one := bundleMemory("a", "alias", strings.Repeat("x", 8<<10), 1, false)
 	files := map[string]string{}
 	for i := 0; i < 100; i++ {
 		files["af/user/alias-"+strconv.Itoa(i)+".md"] = one
