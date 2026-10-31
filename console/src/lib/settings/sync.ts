@@ -120,6 +120,8 @@ function recordOwner(owner: string): void {
 let prefsLoaded = false;
 // Local changes made before that read succeeded. Sent once, all together, as soon as it does.
 let savePending = false;
+// Only ever true in tests (set by cancelPrefsTimersForTest); production never calls it.
+let testQuiesced = false;
 let hydrateRetry: ReturnType<typeof setTimeout> | null = null;
 let hydrateAttempt = 0;
 // Left unfetched, changes would never sync, so retry a few times independently, starting from a
@@ -128,7 +130,7 @@ let hydrateAttempt = 0;
 const HYDRATE_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 function scheduleHydrateRetry(): void {
-  if (prefsLoaded || hydrateRetry) return;
+  if (prefsLoaded || hydrateRetry || testQuiesced) return;
   if (hydrateAttempt >= HYDRATE_RETRY_MS.length) {
     // Out of automatic retries with a change still waiting: it has not reached the Agent.
     if (savePending) setSyncState("failed");
@@ -160,6 +162,7 @@ function markPrefsLoaded(): void {
 }
 
 export function scheduleServerSave(): void {
+  if (testQuiesced) return; // between tests: see cancelPrefsTimersForTest
   if (!prefsLoaded) {
     savePending = true;
     // A failure stays shown until something lands; otherwise the change is waiting for the read.
@@ -198,10 +201,18 @@ export function scheduleServerSave(): void {
   }, 600);
 }
 
+/** Test hook: lift the quiesce set by cancelPrefsTimersForTest when the next test starts. */
+export function resumePrefsTimersForTest(): void {
+  testQuiesced = false;
+}
+
 /** Test hook: cancel the debounced save and the hydrate retry, drop the queued change, and
  *  return what was still pending. A timer left running fires after its test, in another file's
  *  module environment (a different `apiJSON` mock, or none). Never called in production. */
 export function cancelPrefsTimersForTest(): { save: boolean; hydrateRetry: boolean } {
+  // Until the next test starts, nothing may arm a timer again: an async tail of the finished test
+  // (or an afterAll) would otherwise create one that outlives the file.
+  testQuiesced = true;
   const pending = { save: saveTimer !== null, hydrateRetry: hydrateRetry !== null };
   if (saveTimer) clearTimeout(saveTimer);
   if (hydrateRetry) clearTimeout(hydrateRetry);
@@ -223,6 +234,8 @@ if (import.meta.env.MODE === "test") {
   const key = Symbol.for("af.prefsTimerHooks");
   const g = globalThis as any;
   (g[key] ??= new Set<typeof cancelPrefsTimersForTest>()).add(cancelPrefsTimersForTest);
+  const resumeKey = Symbol.for("af.prefsTimerResumeHooks");
+  (g[resumeKey] ??= new Set<typeof resumePrefsTimersForTest>()).add(resumePrefsTimersForTest);
 }
 
 function warnPrefsSaveFailed(err: unknown): void {
