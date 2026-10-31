@@ -3,7 +3,8 @@ import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "../parts/providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
+import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 
@@ -27,10 +28,18 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
     try {
       const res = await api("api/connections/cursor/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.cursor_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
+        toast(
+          tr("agents.cursor_auth_failed", {
+            msg: res?.error ? errDetail(res.error) : "",
+          }),
+        );
         return;
       }
-      setFlow({ url: res.url, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
+      setFlow({
+        url: res.url,
+        flow_id: res.flow_id,
+        status: tr("git.oauth_waiting"),
+      });
       poll({
         deadlineMs: 10 * 60 * 1000,
         firstDelayMs: 3000,
@@ -38,7 +47,9 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
         step: async () => {
           let p;
           try {
-            p = await apiJSON("api/connections/cursor/poll", "POST", { flow_id: res.flow_id });
+            p = await apiJSON("api/connections/cursor/poll", "POST", {
+              flow_id: res.flow_id,
+            });
           } catch {
             p = null;
           }
@@ -54,6 +65,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
       setBusy(false);
     }
   };
+  const reauth = useReauth("cursor", reload, setBusy);
   const disconnect = async () => {
     await raw("api/connections/cursor", { method: "DELETE" });
     setFlow(null);
@@ -74,17 +86,20 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
         <ConnPaused />
       ) : unsupported ? (
         <div className="p-desc">{tr("agents.cursor_unsupported", { reason: st?.reason || "" })}</div>
+      ) : flow ? (
+        // Before the connection state: re-auth opens the flow while the refetch that clears
+        // "connected" is still on its way (or failed).
+        <div className="p-body">
+          {/* No pasted code — cursor approves entirely in the browser, then self-polls. */}
+          <DeviceSteps url={flow.url} status={flow.status} />
+        </div>
       ) : st?.connected ? (
         <div className="p-who">
           <span className="p-em" title={st.email || ""}>
             {st.email || "Cursor"}
           </span>
+          <ReauthButton disabled={busy} onClick={() => void reauth(startLogin)} />
           <DisconnectButton onClick={disconnect} />
-        </div>
-      ) : flow ? (
-        <div className="p-body">
-          {/* No pasted code — cursor approves entirely in the browser, then self-polls. */}
-          <DeviceSteps url={flow.url} status={flow.status} />
         </div>
       ) : (
         <>

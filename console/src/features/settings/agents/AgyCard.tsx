@@ -3,7 +3,8 @@ import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
+import { useReauth } from "../parts/useReauth.ts";
 import { CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
 export function AgyCard({
@@ -31,9 +32,15 @@ export function AgyCard({
   const start = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/agy/start", "POST", { method });
+      const res = await apiJSON("api/connections/agy/start", "POST", {
+        method,
+      });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.agy_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
+        toast(
+          tr("agents.agy_auth_failed", {
+            msg: res?.error ? errDetail(res.error) : "",
+          }),
+        );
         return;
       }
       window.open(res.url, "_blank", "noopener");
@@ -51,7 +58,10 @@ export function AgyCard({
     if (!c) return;
     setBusy(true);
     try {
-      const r = await apiJSON("api/connections/agy/complete", "POST", { flow_id: flow.flow_id, code: c });
+      const r = await apiJSON("api/connections/agy/complete", "POST", {
+        flow_id: flow.flow_id,
+        code: c,
+      });
       if (r && r.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;
@@ -63,6 +73,7 @@ export function AgyCard({
       setBusy(false);
     }
   };
+  const reauth = useReauth("agy", reload, setBusy);
   const disconnect = async () => {
     await raw("api/connections/agy", { method: "DELETE" });
     reload();
@@ -90,14 +101,6 @@ export function AgyCard({
         <ConnPaused />
       ) : unsupported ? (
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
-      ) : st?.connected ? (
-        <div className="p-who">
-          <span className="p-em" title={st.email || tr("conn.connected")}>
-            {st.email || tr("conn.connected")}
-          </span>
-          {st.plan && <span className="p-pl">{st.plan}</span>}
-          <DisconnectButton onClick={disconnect} />
-        </div>
       ) : flow ? (
         <>
           <div className="p-desc">{tr("agents.agy_desc_flow")}</div>
@@ -132,6 +135,15 @@ export function AgyCard({
             </div>
           </div>
         </>
+      ) : st?.connected ? (
+        <div className="p-who">
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <ReauthButton disabled={busy} onClick={() => void reauth(start)} />
+          <DisconnectButton onClick={disconnect} />
+        </div>
       ) : (
         <>
           <div className="p-desc">{tr("agents.agy_desc")}</div>

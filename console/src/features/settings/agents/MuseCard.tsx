@@ -3,7 +3,8 @@ import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "../parts/providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
+import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 
@@ -66,7 +67,11 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
       const res = await api("api/connections/muse/install", { method: "POST" });
       if (!res || res.error) {
         setInstalling("error");
-        toast(tr("agents.muse_install_failed", { msg: res?.error ? errDetail(res.error) : "" }));
+        toast(
+          tr("agents.muse_install_failed", {
+            msg: res?.error ? errDetail(res.error) : "",
+          }),
+        );
         return;
       }
       if (res.state === "done") {
@@ -110,10 +115,19 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
     try {
       const res = await api("api/connections/muse/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.muse_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
+        toast(
+          tr("agents.muse_auth_failed", {
+            msg: res?.error ? errDetail(res.error) : "",
+          }),
+        );
         return;
       }
-      setFlow({ url: res.url, user_code: res.user_code, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
+      setFlow({
+        url: res.url,
+        user_code: res.user_code,
+        flow_id: res.flow_id,
+        status: tr("git.oauth_waiting"),
+      });
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
@@ -121,7 +135,9 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
         step: async () => {
           let p;
           try {
-            p = await apiJSON("api/connections/muse/poll", "POST", { flow_id: res.flow_id });
+            p = await apiJSON("api/connections/muse/poll", "POST", {
+              flow_id: res.flow_id,
+            });
           } catch {
             p = null;
           }
@@ -148,7 +164,9 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
   const saveKey = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/muse/api-key", "POST", { key: key.trim() });
+      const res = await apiJSON("api/connections/muse/api-key", "POST", {
+        key: key.trim(),
+      });
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(res.error) }));
         return;
@@ -161,6 +179,15 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
     }
   };
 
+  const reauth = useReauth("muse", reload, setBusy);
+  // Signs in the way the card was connected: the device flow for an account sign-in, the key
+  // form for a pasted API key (`metered`). The device flow would silently move a metered
+  // workspace onto the subscription, and the key route refuses while a sign-in exists.
+  const reauthMuse = () =>
+    reauth(async () => {
+      if (st?.metered) setMode("key");
+      else await startLogin();
+    });
   const disconnect = async () => {
     await raw("api/connections/muse", { method: "DELETE" });
     setFlow(null);
@@ -180,38 +207,6 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
     >
       {!running ? (
         <ConnPaused />
-      ) : st?.connected ? (
-        <>
-          <div className="p-who">
-            <span className="p-em" title={st.email || ""}>
-              {st.email || st.name || "Muse Code"}
-            </span>
-            <DisconnectButton onClick={disconnect} />
-          </div>
-          {/* Which credential, and what it costs. Only said when it is NOT the subscription: a
-              plain account sign-in needs no note, and a note on every card teaches nothing. */}
-          {st.metered && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_metered")}</p>}
-          {st.env_key && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_env_key")}</p>}
-        </>
-      ) : unsupported ? (
-        <>
-          <div className="p-desc">{tr("agents.muse_install_desc")}</div>
-          <div className="p-body">
-            {installing === "installing" ? (
-              <p className="ps-note ps-note-warn">{tr("agents.muse_installing")}</p>
-            ) : (
-              <>
-                <div className="p-opts">
-                  <button type="button" className="p-opt" disabled={busy} onClick={install}>
-                    <span className="p-opt-t">{tr("agents.muse_install")}</span>
-                    <span className="p-opt-s">{tr("agents.muse_install_note")}</span>
-                  </button>
-                </div>
-                {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.muse_install_error")}</p>}
-              </>
-            )}
-          </div>
-        </>
       ) : flow ? (
         <div className="p-body">
           {/* Device flow: a URL with the code embedded plus the code on its own, to compare in the
@@ -241,6 +236,39 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
             </button>
           </div>
         </div>
+      ) : st?.connected ? (
+        <>
+          <div className="p-who">
+            <span className="p-em" title={st.email || ""}>
+              {st.email || st.name || "Muse Code"}
+            </span>
+            <ReauthButton disabled={busy} onClick={() => void reauthMuse()} />
+            <DisconnectButton onClick={disconnect} />
+          </div>
+          {/* Which credential, and what it costs. Only said when it is NOT the subscription: a
+              plain account sign-in needs no note, and a note on every card teaches nothing. */}
+          {st.metered && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_metered")}</p>}
+          {st.env_key && <p className="ps-note ps-note-warn p-card-note">{tr("agents.muse_env_key")}</p>}
+        </>
+      ) : unsupported ? (
+        <>
+          <div className="p-desc">{tr("agents.muse_install_desc")}</div>
+          <div className="p-body">
+            {installing === "installing" ? (
+              <p className="ps-note ps-note-warn">{tr("agents.muse_installing")}</p>
+            ) : (
+              <>
+                <div className="p-opts">
+                  <button type="button" className="p-opt" disabled={busy} onClick={install}>
+                    <span className="p-opt-t">{tr("agents.muse_install")}</span>
+                    <span className="p-opt-s">{tr("agents.muse_install_note")}</span>
+                  </button>
+                </div>
+                {installing === "error" && <p className="ps-note ps-note-warn">{tr("agents.muse_install_error")}</p>}
+              </>
+            )}
+          </div>
+        </>
       ) : (
         <>
           <div className="p-desc">{tr("agents.muse_desc")}</div>
@@ -274,7 +302,10 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
           ) : (
             <>
               <p className="ps-note ps-note-warn">
-                {tr("agents.muse_update_avail", { cur: inst.version || "?", pin: inst.pin || "?" })}
+                {tr("agents.muse_update_avail", {
+                  cur: inst.version || "?",
+                  pin: inst.pin || "?",
+                })}
               </p>
               <div className="p-opts">
                 <button type="button" className="p-opt" disabled={busy} onClick={install}>
