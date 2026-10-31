@@ -89,8 +89,14 @@ type usageAgentMark struct {
 	// Seq numbers the rows written for this agent: the Idx of the next row is Seq+1. It is the
 	// ledger's own replay guard (usage_dedup.go), unrelated to the transcript's order.
 	Seq int `json:"seq"`
-	// Turns is every turn recorded so far, with the totals written for it.
+	// Turns is every turn recorded so far, with the totals written for it. Empty once the mark is
+	// retired (Total set).
 	Turns []usageAgentTurn `json:"turns,omitempty"`
+	// Total is the sum of what was written for every turn, kept instead of Turns once the agent
+	// has been quiet for usageAgentQuiet (retireAgentMark). A retired mark has no event ids, so a
+	// later change is folded as the difference between the transcript's sum and Total: exact in
+	// token and cost sums, but written as one row stamped with the newest turn.
+	Total *usageAgentTurn `json:"total,omitempty"`
 	// Pending is the batch being written: it is saved before the append, so a crash or a failed
 	// save in between replays the identical rows (same Idx, same time), which the ledger's
 	// dedup drops when they had already landed. Recomputing the difference instead would pick
@@ -102,9 +108,10 @@ type usageAgentMark struct {
 }
 
 // usageAgentTurn is one recorded turn: hashes (usageEventHash) of every event id it has held
-// and the totals written for it so far.
+// and the totals written for it so far. In usageAgentMark.Total it is the sum over all turns
+// and IDs is empty.
 type usageAgentTurn struct {
-	IDs         []string `json:"ids"`
+	IDs         []string `json:"ids,omitempty"`
 	In          int      `json:"in,omitempty"`
 	Out         int      `json:"out,omitempty"`
 	CacheRead   int      `json:"cr,omitempty"`
@@ -131,6 +138,12 @@ var (
 	usageFoldedAt    time.Time   // last fold-on-read (throttle; touched under usageFoldGate)
 	usageFoldPeriod  = time.Minute
 )
+
+// usageAgentQuiet is how long an agent transcript must be untouched before its mark drops the
+// per-event ids (retireAgentMark). Correctness does not depend on the value: a retired mark still
+// folds any later change exactly. It only decides how long the fine-grained form (one row per
+// turn) is kept.
+var usageAgentQuiet = 24 * time.Hour
 
 func usageStatePath() string { return filepath.Join(usagex.Dir(), "state.json") }
 
@@ -407,6 +420,10 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 			st.Subagents[key] = mark
 			dirty = true
 		} else if seen && mark.Stamp == src.Stamp {
+			if retireAgentMark(&mark, src) {
+				st.Subagents[key] = mark
+				dirty = true
+			}
 			continue // untouched since the last fold
 		}
 		turns, rerr := src.Turns()
@@ -416,59 +433,14 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 			log.Printf("usage: fold %s subagent: %v", m.Name, rerr)
 			continue
 		}
-		next := usageAgentMark{Seq: mark.Seq, Turns: slices.Clone(mark.Turns), Stamp: src.Stamp}
-		at := map[string]int{} // event id hash -> index in next.Turns
-		for i, t := range next.Turns {
-			for _, h := range t.IDs {
-				at[h] = i
-			}
-		}
-		agent := usageAgentID(src.ID)
+		var next usageAgentMark
 		var out []usagex.Record
-		for _, r := range foldTurnRows(turns, true) {
-			if r.Orphan {
-				continue
-			}
-			ids := rowEventIDs(r)
-			i, known := -1, false
-			for _, h := range ids {
-				if j, ok := at[h]; ok {
-					i, known = j, true
-					break
-				}
-			}
-			var was usageAgentTurn
-			if known {
-				was = next.Turns[i]
-			}
-			delta := r
-			delta.Tokens.In -= was.In
-			delta.Tokens.Out -= was.Out
-			delta.Tokens.CacheRead -= was.CacheRead
-			delta.Tokens.CacheCreate -= was.CacheCreate
-			delta.CostUSD -= was.CostUSD
-			if delta.Tokens != (usagex.Tokens{}) || delta.CostUSD != 0 {
-				next.Seq++
-				delta.Idx = next.Seq
-				out = append(out, usageRecordOf(m, delta, agent))
-			}
-			now := usageAgentTurn{IDs: ids, In: r.Tokens.In, Out: r.Tokens.Out,
-				CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD}
-			if !known {
-				i = len(next.Turns)
-				next.Turns = append(next.Turns, now)
-			} else {
-				for _, h := range was.IDs { // keep what the turn has held
-					if !slices.Contains(now.IDs, h) {
-						now.IDs = append(now.IDs, h)
-					}
-				}
-				next.Turns[i] = now
-			}
-			for _, h := range now.IDs {
-				at[h] = i
-			}
+		if mark.Total != nil {
+			next, out = foldRetiredAgent(m, mark, src, turns)
+		} else {
+			next, out = foldAgentTurns(m, mark, src, turns)
 		}
+		retireAgentMark(&next, src)
 		if len(out) == 0 {
 			st.Subagents[key] = next
 			dirty = true
@@ -490,6 +462,125 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 		dirty = true
 	}
 	return total, dirty, nil
+}
+
+// retireAgentMark replaces a quiet agent's per-turn ids with the sum of its turns (Total) and
+// reports whether it changed the mark. Quiet is the transcript's newest copy being older than
+// usageAgentQuiet; a mark with a batch in flight, or one whose source has no mtime, is left
+// alone. The ids exist so a later read can tell which turns it has already written; once the file
+// has stopped changing no read comes, and if one does, foldRetiredAgent needs only the sum.
+func retireAgentMark(mark *usageAgentMark, src sessionx.SubagentSource) bool {
+	if mark.Total != nil || len(mark.Pending) > 0 || len(mark.Turns) == 0 ||
+		src.ModTime.IsZero() || time.Since(src.ModTime) < usageAgentQuiet {
+		return false
+	}
+	var sum usageAgentTurn
+	for _, t := range mark.Turns {
+		sum.add(t)
+	}
+	mark.Total, mark.Turns = &sum, nil
+	return true
+}
+
+func (a *usageAgentTurn) add(t usageAgentTurn) {
+	a.In += t.In
+	a.Out += t.Out
+	a.CacheRead += t.CacheRead
+	a.CacheCreate += t.CacheCreate
+	a.CostUSD += t.CostUSD
+}
+
+// foldRetiredAgent folds a change to an agent whose mark was retired: one row carrying the
+// difference between the transcript's sum over all turns and Total. Token and cost sums stay
+// exact (the ledger adds rows); the row is stamped with the newest turn instead of each turn's own.
+// The sum is over the same rows foldAgentTurns would have recorded, so Total never drifts from it.
+func foldRetiredAgent(m session.Meta, mark usageAgentMark, src sessionx.SubagentSource, turns []transcript.Turn) (usageAgentMark, []usagex.Record) {
+	next := usageAgentMark{Seq: mark.Seq, Total: &usageAgentTurn{}, Stamp: src.Stamp}
+	var last usageTurnRow
+	for _, r := range foldTurnRows(turns, true) {
+		if r.Orphan {
+			continue
+		}
+		next.Total.add(usageAgentTurn{In: r.Tokens.In, Out: r.Tokens.Out, CacheRead: r.Tokens.CacheRead,
+			CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD})
+		if last.TS == "" || laterUsageTS(last.TS, r.TS) == r.TS {
+			last = r
+		}
+	}
+	// A read that lacks turns (a copy that could not be read whole) must not take back what was
+	// written: the per-turn form never subtracts a missing turn either.
+	was := mark.Total
+	next.Total.In, next.Total.Out = max(next.Total.In, was.In), max(next.Total.Out, was.Out)
+	next.Total.CacheRead, next.Total.CacheCreate = max(next.Total.CacheRead, was.CacheRead), max(next.Total.CacheCreate, was.CacheCreate)
+	next.Total.CostUSD = max(next.Total.CostUSD, was.CostUSD)
+	delta := last
+	delta.Tokens = usagex.Tokens{In: next.Total.In - was.In, Out: next.Total.Out - was.Out,
+		CacheRead: next.Total.CacheRead - was.CacheRead, CacheCreate: next.Total.CacheCreate - was.CacheCreate}
+	delta.CostUSD = next.Total.CostUSD - was.CostUSD
+	if delta.Tokens == (usagex.Tokens{}) && delta.CostUSD == 0 {
+		return next, nil
+	}
+	next.Seq++
+	delta.Idx = next.Seq
+	return next, []usagex.Record{usageRecordOf(m, delta, usageAgentID(src.ID))}
+}
+
+// foldAgentTurns is the per-turn difference of an agent whose mark still holds its event ids.
+func foldAgentTurns(m session.Meta, mark usageAgentMark, src sessionx.SubagentSource, turns []transcript.Turn) (usageAgentMark, []usagex.Record) {
+	next := usageAgentMark{Seq: mark.Seq, Turns: slices.Clone(mark.Turns), Stamp: src.Stamp}
+	at := map[string]int{} // event id hash -> index in next.Turns
+	for i, t := range next.Turns {
+		for _, h := range t.IDs {
+			at[h] = i
+		}
+	}
+	agent := usageAgentID(src.ID)
+	var out []usagex.Record
+	for _, r := range foldTurnRows(turns, true) {
+		if r.Orphan {
+			continue
+		}
+		ids := rowEventIDs(r)
+		i, known := -1, false
+		for _, h := range ids {
+			if j, ok := at[h]; ok {
+				i, known = j, true
+				break
+			}
+		}
+		var was usageAgentTurn
+		if known {
+			was = next.Turns[i]
+		}
+		delta := r
+		delta.Tokens.In -= was.In
+		delta.Tokens.Out -= was.Out
+		delta.Tokens.CacheRead -= was.CacheRead
+		delta.Tokens.CacheCreate -= was.CacheCreate
+		delta.CostUSD -= was.CostUSD
+		if delta.Tokens != (usagex.Tokens{}) || delta.CostUSD != 0 {
+			next.Seq++
+			delta.Idx = next.Seq
+			out = append(out, usageRecordOf(m, delta, agent))
+		}
+		now := usageAgentTurn{IDs: ids, In: r.Tokens.In, Out: r.Tokens.Out,
+			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD}
+		if !known {
+			i = len(next.Turns)
+			next.Turns = append(next.Turns, now)
+		} else {
+			for _, h := range was.IDs { // keep what the turn has held
+				if !slices.Contains(now.IDs, h) {
+					now.IDs = append(now.IDs, h)
+				}
+			}
+			next.Turns[i] = now
+		}
+		for _, h := range now.IDs {
+			at[h] = i
+		}
+	}
+	return next, out
 }
 
 // rowEventIDs is the short hashes of every event id of a folded turn; a transcript without

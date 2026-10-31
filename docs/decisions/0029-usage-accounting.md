@@ -384,3 +384,26 @@ finish: the dedup drops it when it had landed, and a recomputed difference would
 A delta row adds a row to the turn count of the usage view; its token and cost sums are exact.
 The mark holds a 128-bit hash per event of each agent in `state.json` (a 32-bit one collides near
 1% at 10,000 events, and a collision reads another turn as recorded).
+
+## Addendum (2026-10-31) — a quiet agent's mark keeps its totals, not its event ids
+
+The per-agent marks above held a hash per event for the life of the session, so `state.json`
+grew with the total subagent event count (#3081; measured 184 KB → 1.9 MB, 23,728 hashes).
+The ids exist so a later read can tell which turns it has already written. Once an agent's
+newest transcript copy is older than `usageAgentQuiet` (24 h) the mark is retired
+(`retireAgentMark`): `turns` is replaced by `total`, the sum of what was written. A later
+change to a retired agent is folded as one row, the difference between the transcript's sum
+and `total` (`foldRetiredAgent`), stamped with the newest turn.
+
+- **Safe by construction, not by the 24 h.** Ledger rows are summed, so the difference of sums
+  is exactly what the per-turn form would have added in total; a late older turn, growth of the
+  newest turn and a new turn all land once. Only the per-row timestamps are coarser. A read that
+  lacks turns cannot lower `total` (clamped), as the per-turn form never subtracts a missing turn.
+- `pending` and `seq` are untouched, so an interrupted batch replays as before. A `state.json`
+  without `total` loads as it did and retires when quiet.
+- A retired mark is a few dozen bytes: the file still grows with the number of agents, no
+  longer with their events.
+- Marks of archived sessions are **not** dropped: archived transcripts are still read by the
+  fold, so a dropped mark would re-fold the agent from its first turn and count it twice.
+  Retirement covers them. Rolling back to a build without this note reads a retired mark as
+  having no turns and would fold the agent again.
