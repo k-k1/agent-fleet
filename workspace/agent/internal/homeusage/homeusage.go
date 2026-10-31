@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,9 +230,13 @@ func newWalker(cfg Config, tracked map[string]map[string]bool, scanned *atomic.I
 	w.afWork = w.resolve(cfg.Home, cfg.AfWork)
 	// A root is matched by the path the walk meets, so a root that is itself a link (a
 	// ~/.cache moved to another disk) is keyed by its target, or named in Elsewhere.
+	// Sorted, first one wins: two roots resolving to one folder must not swap categories
+	// from one walk to the next with map order.
 	w.roots = make(map[string]Root, len(cfg.Roots))
-	for dir, r := range cfg.Roots {
-		w.roots[w.resolve(cfg.Home, dir)] = r
+	for _, dir := range slices.Sorted(maps.Keys(cfg.Roots)) {
+		if k := w.resolve(cfg.Home, dir); w.roots[k] == (Root{}) {
+			w.roots[k] = cfg.Roots[dir]
+		}
 	}
 	sort.Strings(w.elsewhere)
 	return w, nil
@@ -316,7 +321,7 @@ func (w *walker) resolve(home, dir string) string {
 	}
 	if !inside {
 		name := dir
-		if rel, err := filepath.Rel(home, dir); err == nil && !strings.HasPrefix(rel, "..") {
+		if rel, err := filepath.Rel(home, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			name = "~/" + filepath.ToSlash(rel)
 		}
 		if !slices.Contains(w.elsewhere, name) {
