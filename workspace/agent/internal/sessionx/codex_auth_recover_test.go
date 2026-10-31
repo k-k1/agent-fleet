@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -205,5 +206,42 @@ func TestCodexEpisodeIgnoresRefreshLockShortcuts(t *testing.T) {
 	authResumeAttempt(f.m, arState(t, f.m.Name), a, f.failedAt.Add(authResumeRefreshForceAfter+time.Minute))
 	if watched != 0 || len(f.ab.sent) != 0 {
 		t.Fatalf("fast watch %d, resumes %v: the claude shortcuts ran for a codex episode", watched, f.ab.sent)
+	}
+}
+
+// noTurnCodex answers the login capability with a failure that has no turn behind it.
+type noTurnCodex struct {
+	agents.Agent
+	at time.Time
+}
+
+func (n noTurnCodex) AuthTraits() agents.AuthTraits {
+	return agents.AuthTraits{
+		LastFailure: func(session.Meta) (agents.AuthFailure, bool) {
+			return agents.AuthFailure{Msg: "[error] unauthorized", At: n.at, NoTurn: true}, true
+		},
+		CredentialsWrittenAt: func() time.Time { return n.at.Add(time.Hour) }, // already renewed
+	}
+}
+
+// A login that rejected turn/start leaves no instruction in the thread: even renewed, nothing
+// is sent, and the open episode is closed.
+func TestAuthResumeStepSkipsNoTurnFailure(t *testing.T) {
+	f := newCxAuthFixture(t, "cxar50", cxAuthErr(cxRevoked, `"unauthorized"`), time.Hour)
+	old, _ := RegisteredAgent(session.KindCodex)
+	t.Cleanup(agentreg.SwapForTest(session.KindCodex, noTurnCodex{Agent: old, at: f.failedAt}))
+	_ = authResumeStates.Write(f.m.Name, authResumeState{At: f.failedAt.Format(time.RFC3339), Kind: session.KindCodex})
+	setAbortResumePref(t, true)
+
+	a, ok := abortInfoFor(f.m)
+	if !ok || !a.Auth {
+		t.Fatalf("abortInfoFor = %+v %v", a, ok)
+	}
+	authResumeStep(f.m, a, ok, f.failedAt.Add(2*time.Hour))
+	if len(f.ab.sent) != 0 {
+		t.Fatalf("resumed a turn that never existed: %v", f.ab.sent)
+	}
+	if _, open := authResumeStates.Read(f.m.Name); open {
+		t.Fatal("the episode is still open")
 	}
 }

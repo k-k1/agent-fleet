@@ -136,9 +136,6 @@ func authResumeStep(m session.Meta, a claude.Abort, ok bool, now time.Time) {
 		}
 		return
 	}
-	if !SessionAlive(m) {
-		return // a stopped session is resumed by starting it, not by typing into it
-	}
 	if t, rec := authRecovererOf(m.Kind); rec && t.LastFailure != nil {
 		if f, has := t.LastFailure(m); has && f.NoTurn {
 			// The login rejected turn/start itself: the thread holds no record of the user's
@@ -149,6 +146,9 @@ func authResumeStep(m session.Meta, a claude.Abort, ok bool, now time.Time) {
 			}
 			return
 		}
+	}
+	if !SessionAlive(m) {
+		return // a stopped session is resumed by starting it, not by typing into it
 	}
 	if !uiprefs.AbortAutoResume() {
 		return // off: the failure was reported as before and the user drives the recovery
