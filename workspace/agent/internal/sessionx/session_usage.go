@@ -7,11 +7,8 @@ package sessionx
 // status is a cheap polling primitive, while this reads and folds whole transcripts.
 
 import (
-	"fmt"
 	"math"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -84,7 +81,7 @@ func HandleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		u := AggregateUsage(UsageTurns(m))
-		addSubagentUsage(&u, SubagentUsageTurns(m))
+		addSubagentUsage(&u, m)
 		u.Name, u.Display, u.Kind = m.Name, session.Display(m), string(m.Kind)
 		overlayKiroLiveUsage(m, &u)
 		overlayMuseLiveUsage(m, &u)
@@ -206,7 +203,7 @@ type SubagentSource struct {
 }
 
 // SubagentUsageSources lists the session's subagent transcripts for the ledger fold, from the
-// same discovery SubagentUsageTurns uses. A group whose files are gone is left out.
+// same discovery the usage fold uses. A group whose files are gone is left out.
 func SubagentUsageSources(m session.Meta) []SubagentSource {
 	sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader)
 	if !ok {
@@ -214,49 +211,38 @@ func SubagentUsageSources(m session.Meta) []SubagentSource {
 	}
 	var out []SubagentSource
 	for _, paths := range sr.SubagentLogs(m) {
-		var live []string
-		var stamp strings.Builder
-		var mod time.Time
-		for _, p := range paths {
-			if fi, err := os.Stat(p); err == nil {
-				live = append(live, p)
-				fmt.Fprintf(&stamp, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
-				if fi.ModTime().After(mod) {
-					mod = fi.ModTime()
-				}
-			}
-		}
+		live, stamp, mod := liveStamp(paths)
 		if len(live) == 0 {
 			continue
 		}
 		out = append(out, SubagentSource{
-			ID: sr.SubagentID(paths), Stamp: stamp.String(), ModTime: mod,
+			ID: sr.SubagentID(paths), Stamp: stamp, ModTime: mod,
 			Turns: func() ([]transcript.Turn, error) { return sr.SubagentTurns(live) },
 		})
 	}
 	return out
 }
 
-// SubagentUsageTurns is every subagent transcript of the session, one slice per agent. A file
-// that cannot be read is left out: this is an on-demand figure, read again on the next call.
-func SubagentUsageTurns(m session.Meta) [][]transcript.Turn {
-	var out [][]transcript.Turn
-	for _, paths := range SubagentLogs(m) {
-		if turns, _ := SubagentTurns(m, paths); len(turns) > 0 {
-			out = append(out, turns)
-		}
-	}
-	return out
-}
+// subagentUsageFolds caches each subagent's folded consumption for the all-sessions usage read
+// (see SubagentFolds).
+var subagentUsageFolds = NewSubagentFolds[cumulativeUsage](10 * time.Minute)
 
 // addSubagentUsage adds the subagents' consumption to the session's cumulative figure and
 // reports it on its own as well. Each agent is folded alone: every event re-reports only its
 // own agent's context, so folding two agents' interleaved events together would keep one
-// agent's input snapshot and drop the other's.
-func addSubagentUsage(u *sessionUsage, subagents [][]transcript.Turn) {
+// agent's input snapshot and drop the other's. An agent that cannot be read is left out: this
+// is an on-demand figure, read again on the next call.
+func addSubagentUsage(u *sessionUsage, m session.Meta) {
+	agents := subagentUsageFolds.Fold(m, time.Now(), func(turns []transcript.Turn) cumulativeUsage {
+		return AggregateUsage(turns).Cumulative
+	})
+	addSubagentCumulative(u, agents)
+}
+
+func addSubagentCumulative(u *sessionUsage, agents []cumulativeUsage) {
 	var sub cumulativeUsage
-	for _, turns := range subagents {
-		sub.add(AggregateUsage(turns).Cumulative)
+	for _, c := range agents {
+		sub.add(c)
 	}
 	if sub == (cumulativeUsage{}) {
 		return
