@@ -91,6 +91,10 @@ type authResumeState struct {
 	DeliverTries int    `json:"deliverTries,omitempty"` // attempts that never got through
 	LastTry      string `json:"lastTry,omitempty"`      // the latest attempt, successful or not
 	GaveUp       string `json:"gaveUp,omitempty"`       // non-empty = handed back to the user
+	// Kind is the session's kind when it is a recoverer kind (agents.AuthRecoverer), which says
+	// whose credentials mtime the renewal is read from. Empty = claude, so claude's stored
+	// episodes and its tests are unchanged.
+	Kind string `json:"kind,omitempty"`
 }
 
 var authResumeStates = fstore.JSON[authResumeState](paths.AgentStateDir, "session-auth-resume", ".json")
@@ -149,6 +153,9 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 	if st.At == "" {
 		st.At = abortEpisodeStart(a, now)
 		st.Msg = a.Msg
+		if _, ok := authRecovererOf(m.Kind); ok {
+			st.Kind = m.Kind
+		}
 		// Persist on opening, for the same reason as the retryable path: every branch below
 		// returns early, so without this the episode would be reborn on every sweep and the
 		// attempt count would never survive.
@@ -164,7 +171,7 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 	if st.GaveUp != "" {
 		return
 	}
-	if refreshEpisodeRestarted(st, a) {
+	if refreshEpisodeRestarted(st, a) || authFailureRepeated(st, a) {
 		// A new failure inside one episode that the refresh-lock shortcuts must not inherit: the
 		// kind changed (a forced resume after a refresh-lock error that then died on a revoked
 		// login, or the reverse), or another refresh-lock failure landed after the episode's
@@ -248,7 +255,7 @@ func authResumeRenewed(st authResumeState, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	ok := authResumeNow()
+	ok := authOKAtFor(st)
 	if ok.IsZero() {
 		return false // nothing to judge on (no credentials file, an environment token)
 	}
@@ -257,6 +264,32 @@ func authResumeRenewed(st authResumeState, now time.Time) bool {
 		settle = authResumeRefreshSettle
 	}
 	return ok.After(at) && !now.Before(ok.Add(settle))
+}
+
+// authOKAtFor is the login moment the episode is judged on: claude's, or the recoverer kind's
+// own credentials file.
+func authOKAtFor(st authResumeState) time.Time {
+	if st.Kind != "" {
+		if t, ok := authRecovererOf(st.Kind); ok && t.CredentialsWrittenAt != nil {
+			return t.CredentialsWrittenAt()
+		}
+		return time.Time{}
+	}
+	return authResumeNow()
+}
+
+// authFailureRepeated reports that a recoverer kind's turn failed on the login AGAIN after the
+// episode's clock: the resume (or the user's own retry) died the same way, so the credentials
+// that were judged renewed are not the fix. The clock moves to the new failure, and the next
+// resume waits for a credential written after IT; attempts and LastTry are kept, so the cap and
+// the backoff still count what was spent. Without this a revoked login would be resumed once
+// per backoff until the cap, on a credentials file that is newer than the first failure only.
+func authFailureRepeated(st authResumeState, a claude.Abort) bool {
+	if st.Kind == "" || a.At.IsZero() {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, st.At)
+	return err == nil && a.At.Truncate(time.Second).After(at)
 }
 
 // refreshEpisodeRestarted reports that a, the failure now at the tail, is not the one this open

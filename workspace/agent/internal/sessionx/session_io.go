@@ -911,12 +911,12 @@ func typeInitialPrompt(name, prompt string) string {
 	// Settling failed instead keeps the loss visible (the same refusal promptBlocker gives).
 	// An unreadable meta reads as claude, as an empty kind does (normalizedTerminalTraits); a
 	// meta that failed to decode may hold a partial kind, so it is not consulted.
-	authKind := ""
-	if m, ok := session.ReadMeta(name); ok {
-		authKind = m.Kind
+	authMeta, ok := session.ReadMeta(name)
+	if !ok {
+		authMeta = session.Meta{}
 	}
-	if callTrue0(normalizedTerminalTraits(authKind).AuthExpired) {
-		log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
+	if authExpiredFor(authMeta) {
+		log.Printf("initial prompt NOT typed for %s: the login has expired", name)
 		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
 	}
@@ -1121,6 +1121,11 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
+	// A turn that died on a recoverer kind's login (codex): refuse on that ground before any
+	// modal, as claude's expiry below does. Nothing but a re-authentication clears it.
+	if authBlockedFor(meta) {
+		return agents.StateAuth
+	}
 	// A kind whose modals never reach the status store reads them where they live
 	// (agents.ModalProbe), by exact registry key.
 	if a, _ := RegisteredAgent(meta.Kind); a != nil {
@@ -1192,7 +1197,7 @@ func blockedErrMessage(state string) string {
 	case "model_switch":
 		return "codex is offering to switch to a smaller model near the usage limit; answer it in the terminal (typed text would be taken by the menu and the Enter would switch the model)"
 	case agents.StateAuth:
-		return "the claude login for this workspace has expired; re-authenticate in the Console (account menu > Settings > Connections > Agents, Claude card) (a prompt sent now would be accepted by the TUI but never start a turn)"
+		return "the login of this session's agent has expired or was revoked; re-authenticate in the Console (account menu > Settings > Connections > Agents, that agent's card) (a prompt sent now would not start a turn)"
 	}
 	return "the session is showing an interactive prompt (" + state + "); answer it from the Console, not free text"
 }

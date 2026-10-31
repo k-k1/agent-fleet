@@ -414,3 +414,17 @@ regenerates; without it the count read 16. Not a full `--verify` (busy host): th
 passes the `kinds`, `sessionx`, `agentreg`, `mcpx` and root packages of the agent and the CP's
 `mcpsrv` and `agentkinds`. `usageMeasuredByKind` and `noChatProvider` stay: nothing declares their
 "none" answer per kind, and a case line for it would raise the kind-literal ceiling.
+
+## Note (2026-10-31): login recovery through `agents.AuthRecoverer` (#3021 stage 3)
+
+codex gained the live `auth` state, the `auth_expired` send refusal and the auto-resume after a
+re-authentication without a new `kind == "claude"` branch. `agents.AuthRecoverer` is the small
+per-kind seam: `LastFailure` (the newest turn ended on the login, with its time) and
+`CredentialsWrittenAt` (a credentials file's mtime). `sessionx/auth_recover.go` reads it by exact
+registry key; claude does not implement it and keeps `TerminalTraits.AuthExpired` / `claude.Abort`.
+The rule is the one claude already had: a session is resumed once the credentials were written
+after the failed turn, never on the CLI's own "login status". `authResumeState.Kind` records which
+kind's file the episode is judged on (empty = claude, so stored episodes and claude's tests are
+untouched). For recoverer kinds a repeated login failure moves the episode clock to the new
+failure, so a login that was "renewed" with something still revoked does not loop on the 5-minute
+backoff until the cap.

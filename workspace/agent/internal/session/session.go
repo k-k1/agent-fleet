@@ -275,7 +275,7 @@ type Session struct {
 	// sessions do not need it. Absent = not offered.
 	ForkAtTerminal bool `json:"forkAtTerminal,omitempty"`
 	// AuthOkAt is when the agent's login in force RIGHT NOW was written (RFC3339), claude
-	// only, empty when there is nothing to judge on (claude.AuthOKAt). Display only, and
+	// and codex, empty when there is nothing to judge on (claude.AuthOKAt). Display only, and
 	// read against a TURN'S time rather than the clock: an error block whose turn is older
 	// than this has already been re-authenticated, so the mirror stops offering a fix for
 	// something the user has already fixed (docs/log/47 §4-11).

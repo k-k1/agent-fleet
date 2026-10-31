@@ -651,6 +651,9 @@ func (h *threadHandle) tq() *agents.TurnQueue {
 func (h *threadHandle) setLastError(e codexError) {
 	h.mu.Lock()
 	ce := e
+	if ce.at.IsZero() {
+		ce.at = time.Now()
+	}
 	h.lastErr = &ce
 	h.mu.Unlock()
 }

@@ -188,6 +188,10 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		if at := claude.AuthOKAt(); !at.IsZero() {
 			s.AuthOkAt = at.Format(time.RFC3339)
 		}
+	} else if t, ok := authRecovererOf(m.Kind); ok && t.CredentialsWrittenAt != nil {
+		if at := t.CredentialsWrittenAt(); !at.IsZero() {
+			s.AuthOkAt = at.Format(time.RFC3339)
+		}
 	}
 	if t, ok := AgentOf(m.Kind).(agents.TerminalForkAtter); ok && m.DriverKind() != session.DriverManaged {
 		s.ForkAtTerminal = t.ForkAtOnTerminal(m)
