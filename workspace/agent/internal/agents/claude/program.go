@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -206,8 +205,7 @@ func rawJSONLPathsIn(id, cwd string) []string {
 		if p := guessProjectPath(cwd, id+".jsonl"); p != "" {
 			return []string{p}
 		}
-		m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", id+".jsonl"))
-		return m
+		return sweepProjects(ConfigDir(), "projects", "*", id+".jsonl")
 	})
 }
 

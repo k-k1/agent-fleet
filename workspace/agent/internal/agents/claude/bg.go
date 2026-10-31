@@ -367,8 +367,7 @@ func subagentBases(sid string) []string {
 		if len(dirs) == 0 {
 			// No transcript found, so nothing here is evidence of where claude writes for
 			// this session — this is the original sweep.
-			m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid, "subagents"))
-			return m
+			return sweepProjects(ConfigDir(), "projects", "*", sid, "subagents")
 		}
 		var out []string
 		for _, d := range dirs {

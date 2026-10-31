@@ -27,9 +27,11 @@ const (
 	displayMissTTLStopped = 10 * time.Minute
 )
 
+// missMemo remembers misses for ttlLive / ttlStopped (each instance sets both).
 type missMemo struct {
-	mu   sync.Mutex
-	seen map[string]missEntry
+	mu                  sync.Mutex
+	seen                map[string]missEntry
+	ttlLive, ttlStopped time.Duration
 }
 
 type missEntry struct {
@@ -44,9 +46,9 @@ func (m *missMemo) holds(key string, alive bool, now time.Time) bool {
 	if !ok || e.alive != alive {
 		return false
 	}
-	ttl := displayMissTTLStopped
+	ttl := m.ttlStopped
 	if alive {
-		ttl = displayMissTTLLive
+		ttl = m.ttlLive
 	}
 	return now.Sub(e.at) < ttl
 }
@@ -66,7 +68,7 @@ func (m *missMemo) forget(key string) {
 	delete(m.seen, key)
 }
 
-var displayMisses missMemo
+var displayMisses = missMemo{ttlLive: displayMissTTLLive, ttlStopped: displayMissTTLStopped}
 
 // displayHasTranscript reports whether sid has a transcript, for the session card only. A false
 // may be up to displayMissTTLLive / displayMissTTLStopped old; never call it from anything that

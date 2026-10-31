@@ -380,16 +380,29 @@ func usageMeasuredForKind(kind string) string {
 // the number of logical turns folded. includeTrailing=true only when the transcript is
 // known not to grow any further (deletion, archiving). Requires usageFoldMu.
 func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) (int, bool, error) {
+	return foldSessionUsageMode(m, st, includeTrailing, false)
+}
+
+// foldSessionUsageMode is foldSessionUsageLocked with force: an explicit refresh does not trust
+// a live session's remembered miss, so a turn that finished before the press reaches the ledger.
+// An archived session cannot grow, so its memo stays trusted and a refresh costs no sweeps.
+func foldSessionUsageMode(m session.Meta, st *usageFoldState, includeTrailing, force bool) (int, bool, error) {
 	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
 		return 0, false, nil // shell/ssm have no transcript
+	}
+	// A kind that remembers "no transcript, no subagent transcripts" lets a settled pass skip
+	// both discoveries; deletion / archiving (includeTrailing) always looks.
+	if !includeTrailing && !(force && !m.Archived) && sessionx.UsageMissHeld(m) {
+		return 0, false, nil
 	}
 	// The stamp is taken before the parse: a write that lands during it changes the stamp, so
 	// it is parsed again next pass instead of being recorded as seen.
 	stamp, load := foldUsageSource(m)
 	skip := stamp != "" && !includeTrailing && st.Sessions[m.Name].Stamp == stamp
-	n, seen := 0, false
+	n, seen, empty := 0, false, false
 	if !skip {
 		turns, ok := load()
+		empty = ok && len(turns) == 0
 		// An empty or incomplete read (a file that would not open, a cached parse that could not
 		// be brought up to date) is never recorded as seen: the next pass reads again.
 		seen = ok && len(turns) > 0
@@ -400,7 +413,11 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 	}
 	// The subagent sources carry their own stamps (usageAgentMark.Stamp), so this stays cheap
 	// for a session whose files have not changed.
-	sub, subDirty, err := foldSubagentUsage(m, st, sessionx.SubagentUsageSources(m))
+	srcs := sessionx.SubagentUsageSources(m)
+	sub, subDirty, err := foldSubagentUsage(m, st, srcs)
+	if err == nil && empty && stamp == "" && len(srcs) == 0 && n == 0 && !subDirty {
+		sessionx.UsageMissNote(m)
+	}
 	dirty := n > 0 || subDirty
 	if err == nil && seen && stamp != "" {
 		// A session whose turns are all one open trailing turn has no mark yet; the empty one
@@ -842,10 +859,14 @@ func laterUsageTS(cur, next string) string {
 //     deduplication (usage_dedup.go).
 //  2. It never holds the lock for long (see the usageFoldMu note above).
 func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
+	return commitSessionUsageFoldMode(m, includeTrailing, false)
+}
+
+func commitSessionUsageFoldMode(m session.Meta, includeTrailing, force bool) (int, error) {
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
 	st := readUsageFoldState()
-	n, dirty, err := foldSessionUsageLocked(m, &st, includeTrailing)
+	n, dirty, err := foldSessionUsageMode(m, &st, includeTrailing, force)
 	if !dirty {
 		return 0, err // st untouched, so there is nothing to rewrite
 	}
@@ -861,7 +882,9 @@ func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
 // so past session consumption is picked up retroactively and no dedicated backfill path is
 // needed. Archived sessions are included: their transcripts are still there and the
 // consumption really happened.
-func foldAllSessionUsage() int {
+func foldAllSessionUsage() int { return foldAllSessions(false) }
+
+func foldAllSessions(force bool) int {
 	if !usagex.Enabled() {
 		return 0
 	}
@@ -870,7 +893,7 @@ func foldAllSessionUsage() int {
 		// Keep folding the rest when one session fails: one broken transcript stopping
 		// measurement for the whole fleet is worse. What is missed is never dropped
 		// silently, it always goes to the log.
-		c, err := commitSessionUsageFold(m, false)
+		c, err := commitSessionUsageFoldMode(m, false, force)
 		if err != nil {
 			log.Printf("usage: fold %s: %v", m.Name, err)
 		}
@@ -928,7 +951,7 @@ func startFoldSessionUsage(force bool) bool {
 	}
 	go func() {
 		defer usageFoldRunning.Store(false)
-		foldAllSessionUsage()
+		foldAllSessions(force)
 	}()
 	return true
 }
