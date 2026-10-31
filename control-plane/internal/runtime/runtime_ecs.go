@@ -857,12 +857,10 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 	if e.cfg.sessionCmd != "" {
 		env = append(env, ecstypes.KeyValuePair{Name: aws.String("AGENT_SESSION_CMD"), Value: aws.String(e.cfg.sessionCmd)})
 	}
-	// The task size's memory (MiB), the limit this adapter asks Fargate for.
-	if mi, err := strconv.ParseInt(e.memory, 10, 64); err == nil {
-		if v := memoryLimitValue(mi * mib); v != "" {
-			env = append(env, ecstypes.KeyValuePair{Name: aws.String(MemoryLimitEnv), Value: aws.String(v)})
-		}
-	}
+	// MemoryLimitEnv is deliberately not set here: the container definition carries no memory of
+	// its own (only the task does), so the container's cgroup reads memory.max "max" and the
+	// Agent would report a false disagreement on every Fargate workspace. Unknown until a real
+	// task shows where the limit lands.
 	for _, kv := range e.extraEnv {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			env = append(env, ecstypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)})

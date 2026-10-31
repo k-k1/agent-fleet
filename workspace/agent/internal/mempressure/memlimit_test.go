@@ -52,3 +52,21 @@ func TestVerifiedSamplerWireCarriesMemMaxAgreement(t *testing.T) {
 		t.Fatalf("wire = %+v", w)
 	}
 }
+
+func TestCheckMemoryMaxReadsTheDirectoryOnlyWhenVerified(t *testing.T) {
+	dir := fixture(t, map[string]string{"memory.max": "4294967296\n"})
+	const req = "4294967296"
+	if got, _ := CheckMemoryMax(Boundary{OK: true}, dir, req); got != AgreeMatch {
+		t.Errorf("verified, matching file: %q", got)
+	}
+	if got, _ := CheckMemoryMax(Boundary{OK: true}, dir, "1073741824"); got != AgreeMismatch {
+		t.Errorf("verified, different file: %q", got)
+	}
+	if got, _ := CheckMemoryMax(Boundary{OK: true}, dir+"/missing", req); got != AgreeUnknown {
+		t.Errorf("verified, unreadable file: %q", got)
+	}
+	// Someone else's cgroup would agree here; it must not be reported.
+	if got, d := CheckMemoryMax(Boundary{Reason: "host root"}, dir, req); got != AgreeUnknown || d == "" {
+		t.Errorf("unverified boundary: %q (%q)", got, d)
+	}
+}

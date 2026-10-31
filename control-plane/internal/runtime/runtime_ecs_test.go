@@ -268,7 +268,6 @@ func TestECSEndpointNameToken(t *testing.T) {
 func TestECSStartCreatesEverything(t *testing.T) {
 	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
 	rt := newTestECS(fe, ff, fs)
-	rt.memory = "2048" // the per-workspace task size the factory would have set
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -335,9 +334,9 @@ func TestECSStartCreatesEverything(t *testing.T) {
 	if len(browserEnv) != 1 || browserEnv[0] != "ecs" {
 		t.Errorf("%s entries = %q, want exactly [ecs]", BrowserUnavailableEnv, browserEnv)
 	}
-	// rt.memory above is 2048 MiB.
-	if got := ecsEnvValue(c0.Environment, MemoryLimitEnv); got != "2147483648" {
-		t.Errorf("%s = %q, want the task's 2048 MiB in bytes", MemoryLimitEnv, got)
+	// The task has a size but the container has no limit of its own, so the Agent is not told one.
+	if got := ecsEnvValue(c0.Environment, MemoryLimitEnv); got != "" {
+		t.Errorf("%s = %q on Fargate, want it absent (unknown)", MemoryLimitEnv, got)
 	}
 	if agentGrace != "25" {
 		t.Errorf("AGENT_STOP_GRACE_SEC = %q, want 25 (grace - safety margin)", agentGrace)

@@ -442,10 +442,11 @@ leaves the axis absent. The semantics stay the Agent's. Follow-ups: #2837.
 ## Note (2026-10-31)
 
 Decision 1's `memory.max` agreement is now recorded. Each adapter that requests a limit passes it to the
-Agent as `AF_WS_MEMORY_LIMIT_BYTES` (docker `--memory`, the Fargate task size, the ecs-ec2 container cap, the
-kubernetes pod limit; native and an uncapped ecs-ec2 rung set nothing). The Agent compares it with the
+Agent as `AF_WS_MEMORY_LIMIT_BYTES` (docker `--memory`, the ecs-ec2 container cap, the kubernetes pod limit; native,
+Fargate and an uncapped ecs-ec2 rung set nothing). The Agent compares it with the
 resolved cgroup's `memory.max` (the kernel's page rounding allowed) and reports `agree` / `disagree` /
 `unknown` in its log and as `memory_max_agreement` on the `mem_pressure` axis. It is informational: a
-mismatch never fails the start or turns the axis off, and "not told" is `unknown`. Not yet checked on a real
-runtime; on Fargate the limit may sit on the task cgroup rather than the container's, which would read as
-`disagree`. Follow-ups: #2816.
+mismatch never fails the start or turns the axis off, and "not told" is `unknown`; so is any cgroup the
+boundary check did not accept. Fargate is not told: its container definition has no memory of its own, so the
+limit sits on the task cgroup and the container's `memory.max` would read `max`, a false `disagree`. Not yet
+checked on a real runtime. Follow-ups: #2816, #3110.

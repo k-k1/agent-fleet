@@ -2,6 +2,7 @@ package mempressure
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -59,4 +60,16 @@ func CompareMemoryMax(requested, memMax string) (Agreement, string) {
 		return AgreeMatch, fmt.Sprintf("memory.max %d matches the requested %d bytes", got, want)
 	}
 	return AgreeMismatch, fmt.Sprintf("memory.max is %d bytes but the runtime asked for %d", got, want)
+}
+
+// CheckMemoryMax is the wiring: it reads dir/memory.max and compares it with the requested limit,
+// but only for a cgroup the boundary check accepted. A directory that is not verified as this
+// container's own says nothing about this container's limit, so it is unknown, never agree or
+// disagree.
+func CheckMemoryMax(b Boundary, dir, requested string) (Agreement, string) {
+	if !b.OK {
+		return AgreeUnknown, "cgroup not verified as this container's own"
+	}
+	raw, _ := os.ReadFile(dir + "/memory.max")
+	return CompareMemoryMax(requested, string(raw))
 }

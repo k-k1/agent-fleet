@@ -220,7 +220,9 @@ func parseNodeSelector(s string) (map[string]string, error) {
 	return out, nil
 }
 
-// parseDockerBytes reads a docker --memory value ("4g", "512m", "1073741824").
+// parseDockerBytes reads a docker --memory value ("4g", "512m", "1073741824"). It does not take
+// the forms docker also accepts ("4gb", "1.5g", "4t"): the memory-limit env then goes unreported,
+// which the Agent reads as unknown.
 func parseDockerBytes(s string) (int64, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	mult := int64(1)
