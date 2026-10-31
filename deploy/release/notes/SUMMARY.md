@@ -13,6 +13,36 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.38.0](0.38.0.md) — 2026-10-31
+
+**CLI pins** — Claude Code 2.1.316, Codex 0.166.0, Antigravity 1.4.12, Kiro 2.37.0, OpenCode 2.2.5
+
+**New / Improved**
+
+- **[AWS profiles]** Profiles on one IAM Identity Center portal share one sign-in (one login and logout); existing profiles grouped with Share one sign-in, imports propose it ([#3014](https://github.com/k-k1/agent-fleet/issues/3014), [#3077](https://github.com/k-k1/agent-fleet/issues/3077))
+- **[AWS profiles]** `af-aws-exec` runs shown in the calling session with account, role and region; SSM pane prints its identity; per-profile confirm before use in each session ([#3050](https://github.com/k-k1/agent-fleet/issues/3050), [#3064](https://github.com/k-k1/agent-fleet/issues/3064))
+- **[Settings]** Import `~/.aws/config`, `~/.ssh/config` (SSM hosts) and gcloud configurations with a preview, read in the browser; export AWS profiles as a `~/.aws/config` fragment ([#3010](https://github.com/k-k1/agent-fleet/issues/3010), [#3017](https://github.com/k-k1/agent-fleet/issues/3017))
+- **[workspace]** Settings › Machine breaks the whole home volume down by category ([#3083](https://github.com/k-k1/agent-fleet/issues/3083))
+- **[codex]** Re-authenticate button, revoked login reported as a login problem, prompts refused until sign-in, then the session resumes ([#3021](https://github.com/k-k1/agent-fleet/issues/3021))
+- **[workspace]** An archived session's `~/.af-work` folder is removed 7 days after archiving ([#3105](https://github.com/k-k1/agent-fleet/issues/3105))
+- **[agent memory]** Outside saves by `repository` can start a project for a cloned repository and accept the `memory_projects` remote form; working-copy search no longer times out on large workspaces ([#3032](https://github.com/k-k1/agent-fleet/issues/3032), [#3098](https://github.com/k-k1/agent-fleet/issues/3098), [#3045](https://github.com/k-k1/agent-fleet/issues/3045), [#3061](https://github.com/k-k1/agent-fleet/issues/3061))
+- **[cloud login]** AWS / Google Cloud login toasts show profile, account and role as fields and count down ([#3023](https://github.com/k-k1/agent-fleet/issues/3023))
+- **[work items]** A PR whose mergeability GitHub is still computing shows it is being checked and re-checks ([#3012](https://github.com/k-k1/agent-fleet/issues/3012))
+- **[codex / ecs-ec2]** Codex SQLite databases kept on the home volume, not EFS ([#3013](https://github.com/k-k1/agent-fleet/issues/3013))
+- **[audit]** More Console actions audited (session archive / restore / recreate, branch delete, staging, repository create) ([#2883](https://github.com/k-k1/agent-fleet/issues/2883), [#3104](https://github.com/k-k1/agent-fleet/issues/3104))
+
+**Fixed**
+
+- **[usage / budget]** Claude subagent and Workflow-agent turns and a long session's oldest turns were not counted, so budgets did not stop subagent-heavy sessions; cursor Terminal turns also counted as unmeasured ([#3051](https://github.com/k-k1/agent-fleet/issues/3051), [#3054](https://github.com/k-k1/agent-fleet/issues/3054), [#3055](https://github.com/k-k1/agent-fleet/issues/3055), [#2495](https://github.com/k-k1/agent-fleet/issues/2495))
+- **[claude]** The reworded 5-hour usage limit was not recognised as a usage limit ([#3065](https://github.com/k-k1/agent-fleet/issues/3065))
+- **[editor]** Selected text and some syntax colours unreadable in the dark theme ([#3020](https://github.com/k-k1/agent-fleet/issues/3020), [#3046](https://github.com/k-k1/agent-fleet/issues/3046))
+- **[work items]** PR panel showed CI passed while a workflow was queued or a status had not reported ([#2992](https://github.com/k-k1/agent-fleet/issues/2992))
+- **[sessions]** Stopping a Managed Cursor session recorded a crash; a Codex / OpenCode server exiting on its own recorded stopped ([#2996](https://github.com/k-k1/agent-fleet/issues/2996), [#3004](https://github.com/k-k1/agent-fleet/issues/3004))
+- **[approvals]** An approval clicked as it timed out was reported approved although nothing ran ([#2964](https://github.com/k-k1/agent-fleet/issues/2964))
+- **[MCP]** `create_session`'s first prompt lacked the Via MCP marking ([#3027](https://github.com/k-k1/agent-fleet/issues/3027))
+- **[worktrees]** A worktree made from a worktree got a nested folder name ([#2991](https://github.com/k-k1/agent-fleet/issues/2991))
+- **[UI prefs sync / viewer]** Settings stored empty on a device could break pages; the PDF find bar sometimes opened without focus ([#2970](https://github.com/k-k1/agent-fleet/issues/2970), [#2972](https://github.com/k-k1/agent-fleet/issues/2972))
+
 ## [0.37.0](0.37.0.md) — 2026-10-30
 
 **CLI pins** — Antigravity 1.4.10, OpenCode 2.2.1

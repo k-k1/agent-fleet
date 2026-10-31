@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.38.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.38.0) — 2026-10-31
+
+同じ IAM Identity Center ポータルを使う Settings の AWS プロファイルが 1 回のログインを共有でき、
+`af-aws-exec` の実行は呼び出したセッションに表示され、手元の `~/.aws/config`・`~/.ssh/config`・gcloud の
+構成を Settings に取り込めます。
+
 ## [0.37.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.37.0) — 2026-10-30
 
 Apple Silicon の Mac に単独利用で対応し、並べたターミナルのペインの文字が互いに崩れなくなり、Cursor の

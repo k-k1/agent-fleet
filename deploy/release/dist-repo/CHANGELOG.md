@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.38.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.38.0) — 2026-10-31
+
+Settings AWS profiles on one IAM Identity Center portal can share a single login, every
+`af-aws-exec` run shows in the session that made it, and your own `~/.aws/config`, `~/.ssh/config`
+and gcloud configurations can be imported into Settings.
+
 ## [0.37.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.37.0) — 2026-10-30
 
 A Mac with Apple Silicon is supported for a single user, terminal panes side by side no longer
