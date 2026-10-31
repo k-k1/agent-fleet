@@ -321,8 +321,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// unless the new daemon proves it holds this one, so a failed start (or an Ensure that
 	// raced a slow-but-alive daemon) cannot lock the Agent out of it.
 	prevPassword := servePassword()
-	// Decided once, from this start's reading: the password policy and the environment flag must
-	// agree, and a second read could see the switch after it flipped.
+	// Decided once: the password policy and the environment flag must agree, and a second read
+	// could see a Terminal slot come or go in between.
 	sharedWanted := sharedTUIFor(spec) || sharedTerminals() > 0
 	password, err := nextServePassword(prevPassword, sharedWanted)
 	if err != nil {

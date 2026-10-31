@@ -367,9 +367,9 @@ ARG CODEX_VERSION=0.166.0
 ARG COPILOT_VERSION=1.0.105
 # opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
 # 2.x (which also installs an `opencode2` bin). Only 2.x is supported (ADR 0127): a rollback is an
-# earlier 2.x pin, never a 1.x one. entrypoint.sh,
-# deploy/local/cli-drift-check.sh, .github/workflows/release-gate.yml and
-# .github/actions/setup-agent-cli apply the same rule.
+# earlier 2.x pin, never a 1.x one. entrypoint.sh, deploy/local/cli-drift-check.sh,
+# .github/workflows/release-gate.yml and .github/actions/setup-agent-cli apply the same rule, so
+# the `opencode-ai` branch leaves all of them in one change.
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       case "${OPENCODE_VERSION%%.*}" in 0|1) oc_pkg=opencode-ai ;; *) oc_pkg=@opencode/cli ;; esac; \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \

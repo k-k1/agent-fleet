@@ -1,7 +1,9 @@
 package opencode
 
 import (
+	"net"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -55,8 +57,7 @@ func TestV1LaunchClearsAStaleSharedSlotMode(t *testing.T) {
 
 // A Supervisor an earlier test armed leaves its zero-demand watcher polling terminalSlots; the next
 // stubTerminalSlots must end it before writing the var, or -race reports the write against the
-// watcher's read (seen as TestRetiringAnAdoptedDaemonDrainsItsBusyTerminals failing after
-// TestEnsureStartsServeWithPassword).
+// watcher's read.
 func TestStubbingTerminalSlotsEndsLeftoverIdleWatchers(t *testing.T) {
 	prev := agents.IdleTickForTest(time.Millisecond)
 	t.Cleanup(func() { idleWatch.stop(); agents.IdleTickForTest(prev) })
@@ -70,4 +71,14 @@ func TestStubbingTerminalSlotsEndsLeftoverIdleWatchers(t *testing.T) {
 		stubTerminalSlots(t, func() []session.Meta { return nil })
 		time.Sleep(20 * time.Millisecond)
 	})
+}
+
+func freePortForTest(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
 }

@@ -18,15 +18,15 @@ without a rollback. The `opencode` kind still carries two kinds of 1.x support, 
   instruction file, the plugins, the store reader, the npm package and the CI. The point of the branches was
   that setting `OPENCODE_VERSION=1.19.0` alone rolls the image back.
 - **The opt-in** (`install-opencode2`, `opencode-major`, `AF_OPENCODE_MAJOR`). It installed opencode 2 into a
-  private prefix with its own database, so that a workspace on the 1.x pin could try it. `PinnedV2()` makes it
-  inert while the pin is 2.x, so it has had no job since the cut-over.
+  private prefix with its own database, so that a workspace on the 1.x pin could try it. It turns itself off
+  while the pin is 2.x, so it has had no job since the cut-over.
 
 The rollback path is weaker than it looks. Measured on the cut-over (docs/log/119): a 1.x opencode on a
 database that 2.x has migrated sees only the conversations from before the upgrade. Everything created on 2.x
 is invisible to it. So a rollback loses every conversation made since the upgrade.
 
 The defaults also lean the wrong way now. `serveMajor()` answers 1 until a probe says otherwise, and
-`pathMajor()` answers 1 when neither the package nor the pin can be read. So code that runs before the first
+`installedMajor()` answers 1 when neither the package nor the pin can be read. So code that runs before the first
 probe takes the 1.x branch on an image that has no 1.x.
 
 ## Decision
@@ -77,4 +77,6 @@ workspace may hold.
   (`useMajor(t, 1)`) are deleted.
 - A standalone opencode slot is always opencode 2, so the Console's question keys can use the opencode 2 form
   contract for it as well.
-- The work lands in phases, one PR each, listed in #3132. The opt-in goes first: nothing reaches it.
+- The work lands in phases, one PR each, listed in #3132. The opt-in goes first: nothing reaches it. This
+  record describes the end state: until the later phases land, the 1.x paths are still in the code, and the
+  refusal in decision 1 is not in place yet.
