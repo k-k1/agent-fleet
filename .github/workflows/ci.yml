@@ -223,6 +223,37 @@ jobs:
         working-directory: .
         run: cd control-plane && ../scripts/vet-build-tags.sh
 
+  # Race detector on the packages with background goroutines, kept to a scope that fits a PR
+  # (#3124). A separate job, so the gated test jobs keep their wall time; do not list it as a
+  # required check. Measured -race -p 2 on a loaded 8-core host: memoryx 271 s, sessionx
+  # 183 s, opencode 74 s, memreview 68 s; control-plane runtime 52 s, mcpsrv 302 s. The whole
+  # modules are far costlier (control-plane's internal/store alone 900 s, its root package
+  # over 45 min), so they run in go-race-nightly.yml instead.
+  go-race:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: workspace/agent
+            packages: ./internal/memoryx/ ./internal/sessionx/ ./internal/memreview/ ./internal/agents/opencode/
+          - module: control-plane
+            packages: ./internal/runtime/ ./internal/mcpsrv/
+    name: go-race (${{ matrix.module }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: go test -race
+        working-directory: ${{ matrix.module }}
+        # -timeout: memoryx alone is ~5 min without -race on a loaded host.
+        run: go test -race -p 2 -count=1 -timeout 20m ${{ matrix.packages }}
+
   workspace-agent:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
