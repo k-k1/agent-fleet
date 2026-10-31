@@ -22,6 +22,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -52,6 +53,11 @@ type codexError struct {
 	// the rollout's task_complete record, so withLastError adds no copy of it; a turn/start
 	// rejection has none.
 	turnID string
+	// at is when the failure was recorded (setLastError), the clock the login recovery
+	// compares auth.json's mtime with.
+	at time.Time
+	// started is when the turn began (the handle's mark), zero when unknown.
+	started time.Time
 }
 
 // decodeCodexError parses a TurnError payload (turn.error's raw bytes). ok is false when

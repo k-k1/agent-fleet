@@ -630,7 +630,7 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 		return
 	}
 	if st := promptBlocker(meta.Name); st != "" {
-		writeBlockedErr(w, st)
+		writeBlockedErr(w, st, meta.Kind)
 		return
 	}
 	d, ok := driverOf(meta)
@@ -727,7 +727,11 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// scheduler injections, MCP drive tools); decisions must go through {keys}/{seq}
 	// (tui), /plan-respond (plan) or /respond (managed). See promptBlocker.
 	if st := promptBlocker(name); st != "" {
-		writeBlockedErr(w, st)
+		blockedKind := ""
+		if bm, ok := session.ReadMeta(name); ok {
+			blockedKind = bm.Kind
+		}
+		writeBlockedErr(w, st, blockedKind)
 		return "", false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
@@ -911,12 +915,16 @@ func typeInitialPrompt(name, prompt string) string {
 	// Settling failed instead keeps the loss visible (the same refusal promptBlocker gives).
 	// An unreadable meta reads as claude, as an empty kind does (normalizedTerminalTraits); a
 	// meta that failed to decode may hold a partial kind, so it is not consulted.
-	authKind := ""
-	if m, ok := session.ReadMeta(name); ok {
-		authKind = m.Kind
+	authMeta, ok := session.ReadMeta(name)
+	if !ok {
+		authMeta = session.Meta{}
 	}
-	if callTrue0(normalizedTerminalTraits(authKind).AuthExpired) {
-		log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
+	if authExpiredFor(authMeta) {
+		if _, rec := authRecovererOf(authMeta.Kind); rec {
+			log.Printf("initial prompt NOT typed for %s: the %s login has expired", name, authMeta.Kind)
+		} else {
+			log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
+		}
 		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
 	}
@@ -1121,6 +1129,11 @@ func promptBlocker(name string) string {
 	if !ok {
 		return ""
 	}
+	// A turn that died on a recoverer kind's login (codex): refuse on that ground before any
+	// modal, as claude's expiry below does. Nothing but a re-authentication clears it.
+	if authBlockedFor(meta) {
+		return agents.StateAuth
+	}
 	// A kind whose modals never reach the status store reads them where they live
 	// (agents.ModalProbe), by exact registry key.
 	if a, _ := RegisteredAgent(meta.Kind); a != nil {
@@ -1197,9 +1210,22 @@ func blockedErrMessage(state string) string {
 	return "the session is showing an interactive prompt (" + state + "); answer it from the Console, not free text"
 }
 
-// writeBlockedErr answers a free-text send that a pending interaction refuses.
-func writeBlockedErr(w http.ResponseWriter, state string) {
-	httpx.WriteErr(w, http.StatusConflict, blockedErrCode(state), blockedErrMessage(state))
+// blockedErrMessageFor is blockedErrMessage naming the session's own agent where the refusal is
+// about its login: claude keeps its text, a recoverer kind gets its own card.
+func blockedErrMessageFor(kind, state string) string {
+	if state == agents.StateAuth {
+		if _, rec := authRecovererOf(kind); rec {
+			k := NormalizeKind(kind)
+			return "the " + k + " login has expired or was revoked; re-authenticate in the Console (account menu > Settings > Connections > Agents, " + k + " card) (a prompt sent now would not start a turn)"
+		}
+	}
+	return blockedErrMessage(state)
+}
+
+// writeBlockedErr answers a free-text send that a pending interaction refuses; kind is the
+// refused session's.
+func writeBlockedErr(w http.ResponseWriter, state, kind string) {
+	httpx.WriteErr(w, http.StatusConflict, blockedErrCode(state), blockedErrMessageFor(kind, state))
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately

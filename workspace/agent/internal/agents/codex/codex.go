@@ -282,6 +282,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		if isCompacting(m) {
 			li.State = "compacting"
 		}
+		// A turn that died on the login (Managed and Terminal alike): sending again reproduces
+		// the failure until auth.json is rewritten, so the row says "re-authenticate" instead
+		// of idle. Clears by itself the moment the credentials are rewritten.
+		if li.State == "idle" && (agentImpl{}).AuthTraits().Blocked(m) {
+			li.State = agents.StateAuth
+		}
 		if m.DriverKind() == session.DriverManaged {
 			// Under managed the handle's Interaction is authoritative for questions (it
 			// recovers through redelivery of the server request, §12.3) — more accurate
@@ -370,21 +376,7 @@ const rolloutLifecycleTail = 256 << 10
 // the last rolloutLifecycleTail bytes of path, or "" when the window holds none (one tool
 // output can fill it).
 func rolloutTailLifecycle(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	off := int64(0)
-	if fi, err := f.Stat(); err == nil && fi.Size() > rolloutLifecycleTail {
-		off = fi.Size() - rolloutLifecycleTail
-	}
-	b := make([]byte, rolloutLifecycleTail)
-	n, _ := f.ReadAt(b, off)
-	lines := bytes.Split(b[:n], []byte("\n"))
-	if off > 0 && len(lines) > 0 {
-		lines = lines[1:] // the first line of a mid-file read is likely partial
-	}
+	lines := rolloutTailLines(path)
 	for i := len(lines) - 1; i >= 0; i-- {
 		var ev struct {
 			Type    string `json:"type"`
@@ -401,6 +393,27 @@ func rolloutTailLifecycle(path string) string {
 		}
 	}
 	return ""
+}
+
+// rolloutTailLines is the complete lines of the last rolloutLifecycleTail bytes of path; nil
+// when it cannot be read.
+func rolloutTailLines(path string) [][]byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	off := int64(0)
+	if fi, err := f.Stat(); err == nil && fi.Size() > rolloutLifecycleTail {
+		off = fi.Size() - rolloutLifecycleTail
+	}
+	b := make([]byte, rolloutLifecycleTail)
+	n, _ := f.ReadAt(b, off)
+	lines := bytes.Split(b[:n], []byte("\n"))
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // the first line of a mid-file read is likely partial
+	}
+	return lines
 }
 
 func (agentImpl) ClearResume(sid string) {

@@ -143,6 +143,11 @@ func DriveState(m session.Meta, alive, heal bool) string {
 		}
 		return agents.StateAuth
 	}
+	// A recoverer kind's (codex) turn that died on the login: the same verdict as its WireLive,
+	// for an idle session only (a turn running now is a resume that is already under way).
+	if state == "idle" && authBlockedFor(m) {
+		return agents.StateAuth
+	}
 	if usageLimits && pane.RateLimitMenu {
 		if heal && state != "idle" {
 			healIdle(t, sid)

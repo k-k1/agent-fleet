@@ -187,6 +187,13 @@ func abortInfoFor(m session.Meta) (claude.Abort, bool) {
 	if NormalizeKind(m.Kind) == session.KindClaude {
 		return claudeAbortInfo(session.UUID(m.Dir, m.Name))
 	}
+	// A kind that reads its own login failure (codex, Managed and Terminal): blocked, not
+	// retryable, and handed to authResumeStep through Auth.
+	if t, ok := authRecovererOf(m.Kind); ok && t.LastFailure != nil {
+		if f, ok := t.LastFailure(m); ok {
+			return claude.Abort{Msg: f.Msg, Auth: true, At: f.At}, true
+		}
+	}
 	if m.DriverKind() != session.DriverManaged || (m.Kind != session.KindCodex && m.Kind != session.KindOpencode) {
 		return claude.Abort{}, false
 	}

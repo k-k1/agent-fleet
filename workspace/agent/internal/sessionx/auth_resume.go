@@ -91,6 +91,10 @@ type authResumeState struct {
 	DeliverTries int    `json:"deliverTries,omitempty"` // attempts that never got through
 	LastTry      string `json:"lastTry,omitempty"`      // the latest attempt, successful or not
 	GaveUp       string `json:"gaveUp,omitempty"`       // non-empty = handed back to the user
+	// Kind is the session's kind when it is a recoverer kind (agents.AuthRecoverer), which says
+	// whose credentials mtime the renewal is read from. Empty = claude, so claude's stored
+	// episodes and its tests are unchanged.
+	Kind string `json:"kind,omitempty"`
 }
 
 var authResumeStates = fstore.JSON[authResumeState](paths.AgentStateDir, "session-auth-resume", ".json")
@@ -132,6 +136,17 @@ func authResumeStep(m session.Meta, a claude.Abort, ok bool, now time.Time) {
 		}
 		return
 	}
+	if t, rec := authRecovererOf(m.Kind); rec && t.LastFailure != nil {
+		if f, has := t.LastFailure(m); has && f.NoTurn {
+			// The login rejected turn/start itself: the thread holds no record of the user's
+			// instruction, so "continue" would run whatever came before it. The send block
+			// still lifts on re-authentication; the instruction is the user's to repeat.
+			if _, open := authResumeStates.Read(m.Name); open {
+				authResumeStates.Remove(m.Name)
+			}
+			return
+		}
+	}
 	if !SessionAlive(m) {
 		return // a stopped session is resumed by starting it, not by typing into it
 	}
@@ -149,12 +164,15 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 	if st.At == "" {
 		st.At = abortEpisodeStart(a, now)
 		st.Msg = a.Msg
+		if _, ok := authRecovererOf(m.Kind); ok {
+			st.Kind = m.Kind
+		}
 		// Persist on opening, for the same reason as the retryable path: every branch below
 		// returns early, so without this the episode would be reborn on every sweep and the
 		// attempt count would never survive.
 		_ = authResumeStates.Write(m.Name, st)
 		log.Printf("auth-resume: the turn of %s died on the login (%s) — waiting for it to be renewed", m.Name, a.Msg)
-		if claude.RefreshStuck(a.Msg) {
+		if stuckFor(st.Kind, a.Msg) {
 			// claude does not say why the lock was contended, so record what can be seen from
 			// outside while it is still fresh.
 			log.Printf("auth-resume: %s refresh lock state: %s", m.Name, claude.RefreshLockSnapshot(now))
@@ -164,7 +182,7 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 	if st.GaveUp != "" {
 		return
 	}
-	if refreshEpisodeRestarted(st, a) {
+	if refreshEpisodeRestarted(st, a) || authFailureRepeated(st, a) {
 		// A new failure inside one episode that the refresh-lock shortcuts must not inherit: the
 		// kind changed (a forced resume after a refresh-lock error that then died on a revoked
 		// login, or the reverse), or another refresh-lock failure landed after the episode's
@@ -175,7 +193,7 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 		st.At = abortEpisodeStart(a, now)
 		_ = authResumeStates.Write(m.Name, st)
 		log.Printf("auth-resume: a new failure of %s restarted the episode (%s)", m.Name, a.Msg)
-		if claude.RefreshStuck(a.Msg) {
+		if stuckFor(st.Kind, a.Msg) {
 			authResumeFastWatch(m, st)
 		}
 	}
@@ -193,6 +211,11 @@ func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now t
 		chatx.SetAutoResumeAttempts(m.Name, st.Attempts)
 		log.Printf("auth-resume: giving up on %s (the login error came back %d times)", m.Name, st.Attempts)
 		_ = authResumeStates.Write(m.Name, st)
+		return
+	}
+	if st.Kind != "" && authBlockedFor(m) {
+		// The kind's own verdict at full precision: the episode clock above is stored to the
+		// second, so a credential written in the failure's second would read as renewed.
 		return
 	}
 	if !authResumeRenewed(st, now) && !authResumeForced(st, now) {
@@ -248,24 +271,54 @@ func authResumeRenewed(st authResumeState, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	ok := authResumeNow()
+	ok := authOKAtFor(st)
 	if ok.IsZero() {
 		return false // nothing to judge on (no credentials file, an environment token)
 	}
 	settle := authResumeSettle
-	if claude.RefreshStuck(st.Msg) {
+	if stuckFor(st.Kind, st.Msg) {
 		settle = authResumeRefreshSettle
 	}
 	return ok.After(at) && !now.Before(ok.Add(settle))
 }
 
+// stuckFor is claude.RefreshStuck for an episode of claude (empty kind) only: the refresh-lock
+// shortcuts read claude's lock and credentials, so a recoverer kind's message never takes them.
+func stuckFor(kind, msg string) bool { return kind == "" && claude.RefreshStuck(msg) }
+
+// authOKAtFor is the login moment the episode is judged on: claude's, or the recoverer kind's
+// own credentials file.
+func authOKAtFor(st authResumeState) time.Time {
+	if st.Kind != "" {
+		if t, ok := authRecovererOf(st.Kind); ok && t.CredentialsWrittenAt != nil {
+			return t.CredentialsWrittenAt()
+		}
+		return time.Time{}
+	}
+	return authResumeNow()
+}
+
+// authFailureRepeated reports that a recoverer kind's turn failed on the login AGAIN after the
+// episode's clock: the resume (or the user's own retry) died the same way, so the credentials
+// that were judged renewed are not the fix. The clock moves to the new failure, and the next
+// resume waits for a credential written after IT; attempts and LastTry are kept, so the cap and
+// the backoff still count what was spent. Without this a revoked login would be resumed once
+// per backoff until the cap, on a credentials file that is newer than the first failure only.
+func authFailureRepeated(st authResumeState, a claude.Abort) bool {
+	if st.Kind == "" || a.At.IsZero() {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, st.At)
+	return err == nil && a.At.Truncate(time.Second).After(at)
+}
+
 // refreshEpisodeRestarted reports that a, the failure now at the tail, is not the one this open
 // episode was started for, in a way that matters to the refresh-lock shortcuts.
 func refreshEpisodeRestarted(st authResumeState, a claude.Abort) bool {
-	if claude.RefreshStuck(st.Msg) != claude.RefreshStuck(a.Msg) {
+	if stuckFor(st.Kind, st.Msg) != stuckFor(st.Kind, a.Msg) {
 		return true
 	}
-	if !claude.RefreshStuck(a.Msg) || a.At.IsZero() {
+	if !stuckFor(st.Kind, a.Msg) || a.At.IsZero() {
 		return false
 	}
 	at, err := time.Parse(time.RFC3339, st.At)
@@ -283,7 +336,7 @@ func refreshEpisodeRestarted(st authResumeState, a claude.Abort) bool {
 // onto them), and a credential written moments ago must settle first, as authResumeRenewed
 // demands, since that write may be a sign-in still being wired up.
 func authResumeForced(st authResumeState, now time.Time) bool {
-	if !claude.RefreshStuck(st.Msg) {
+	if !stuckFor(st.Kind, st.Msg) {
 		return false
 	}
 	at, err := time.Parse(time.RFC3339, st.At)
@@ -320,7 +373,7 @@ func startRefreshWatch(m session.Meta, _ authResumeState) {
 // refreshWatchStep is one poll of startRefreshWatch; done ends the watch.
 func refreshWatchStep(m session.Meta, now time.Time) (done bool) {
 	st, has := authResumeStates.Read(m.Name)
-	if !has || st.GaveUp != "" || !claude.RefreshStuck(st.Msg) {
+	if !has || st.GaveUp != "" || !stuckFor(st.Kind, st.Msg) {
 		return true
 	}
 	at, err := time.Parse(time.RFC3339, st.At)
@@ -341,7 +394,7 @@ func refreshWatchStep(m session.Meta, now time.Time) (done bool) {
 	// over then restarted the episode, and its own watcher request was refused because this one
 	// holds the key. Carry on for that episode instead of leaving it to the 30s sweep.
 	next, has := authResumeStates.Read(m.Name)
-	return !(has && next.GaveUp == "" && claude.RefreshStuck(next.Msg) && next.At != st.At)
+	return !(has && next.GaveUp == "" && stuckFor(next.Kind, next.Msg) && next.At != st.At)
 }
 
 // authResumeDue applies the backoff between attempts. The FIRST attempt has no delay of its

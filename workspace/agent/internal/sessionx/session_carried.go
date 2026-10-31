@@ -263,7 +263,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 	// selection in that modal (the misdelivery class in docs/build/92).
 	if SessionAlive(m) {
 		if blocked := promptBlocker(name); blocked != "" {
-			writeBlockedErr(w, blocked)
+			writeBlockedErr(w, blocked, m.Kind)
 			return
 		}
 	} else if err := ensureSessionTmux(lease, name, false); err != nil {

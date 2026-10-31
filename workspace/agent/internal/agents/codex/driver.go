@@ -617,15 +617,16 @@ type threadHandle struct {
 	dropped bool
 	// q is the input queue and the whole of ADR 0105's stop rules (agents.TurnQueue); every
 	// call holds mu. Read it through tq.
-	q        *agents.TurnQueue
-	settings agents.ThreadSettings
-	curModel string              // latest effective model (from settings/updated and thread responses; required as collaborationMode.settings.model on a mode switch)
-	inter    *agents.Interaction // pending question (the contents of waiting_interaction)
-	interQ   []string            // question ids (keys of the answer map, same order as Interaction.Questions)
-	interReq json.RawMessage     // JSON-RPC id of the server request (scoped to the interCl connection)
-	interCl  *appClient
-	events   chan agents.Event
-	lastErr  *codexError // failure detail of the last turn (errors.go); managedEnrich appends
+	q             *agents.TurnQueue
+	settings      agents.ThreadSettings
+	curModel      string              // latest effective model (from settings/updated and thread responses; required as collaborationMode.settings.model on a mode switch)
+	inter         *agents.Interaction // pending question (the contents of waiting_interaction)
+	interQ        []string            // question ids (keys of the answer map, same order as Interaction.Questions)
+	interReq      json.RawMessage     // JSON-RPC id of the server request (scoped to the interCl connection)
+	interCl       *appClient
+	events        chan agents.Event
+	turnStartedAt time.Time   // when runTurn began the current/last turn (the failure's start for the login recovery)
+	lastErr       *codexError // failure detail of the last turn (errors.go); managedEnrich appends
 	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
 
 	bg bgCache // the thread's background terminals, for BackgroundWork (background.go)
@@ -651,6 +652,12 @@ func (h *threadHandle) tq() *agents.TurnQueue {
 func (h *threadHandle) setLastError(e codexError) {
 	h.mu.Lock()
 	ce := e
+	if ce.at.IsZero() {
+		ce.at = time.Now()
+	}
+	if ce.started.IsZero() {
+		ce.started = h.turnStartedAt
+	}
 	h.lastErr = &ce
 	h.mu.Unlock()
 }
@@ -908,6 +915,9 @@ func (h *threadHandle) runTurn(t *agents.Taken, gen int, lease *lifegate.Lease) 
 	in := t.In
 	agents.MarkTurnStartRun(h.slotSid, in)
 	h.clearLastError() // a new turn starting means the previous turn's synthetic error is done
+	h.mu.Lock()
+	h.turnStartedAt = time.Now()
+	h.mu.Unlock()
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
 	cl, tid := h.client, h.tid
