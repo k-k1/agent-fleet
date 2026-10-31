@@ -112,9 +112,10 @@ func TestRolloutPathResearchesAfterTheTTLAndKeepsTheNewest(t *testing.T) {
 	}
 }
 
-// A remembered hit that still Lstats must not be re-globbed once the old 60 s TTL has passed;
-// only a failed Lstat or forget() triggers a search.
-func TestRolloutPathDoesNotReglobAfterTheOldTTLWhileItLstats(t *testing.T) {
+// A remembered hit that still Lstats is served well past a minute: repeating a full sweep of the
+// network mount per id every few minutes is what the memo exists to stop. Only a failed Lstat,
+// forget() or the long backstop TTL triggers a search.
+func TestRolloutPathServesALstattingHitWellPastAMinute(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	want := putRollout(t, "01", memoID)
 	n := countGlobs(t)
