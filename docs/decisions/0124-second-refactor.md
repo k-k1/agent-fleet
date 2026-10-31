@@ -428,3 +428,5 @@ kind's file the episode is judged on (empty = claude, so stored episodes and cla
 untouched). For recoverer kinds a repeated login failure moves the episode clock to the new
 failure, so a login that was "renewed" with something still revoked does not loop on the 5-minute
 backoff until the cap.
+
+Follow-ups: #3122 (the Console's `auth_expired` toast and re-auth target are still Claude-only).

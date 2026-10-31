@@ -36,8 +36,13 @@ func TestRolloutAuthFailure(t *testing.T) {
 		if ok != c.want {
 			t.Errorf("%s: ok = %v, want %v", c.name, ok, c.want)
 		}
-		if ok && !f.At.Equal(time.Date(2026, 10, 30, 2, 1, 0, 900_000_000, time.UTC)) {
-			t.Errorf("%s: At = %v", c.name, f.At)
+		// At is the failed turn's START when the tail holds it, else its end.
+		wantAt := time.Date(2026, 10, 30, 2, 1, 0, 900_000_000, time.UTC)
+		if c.name == "revoked login" {
+			wantAt = time.Date(2026, 10, 30, 2, 1, 0, 0, time.UTC)
+		}
+		if ok && !f.At.Equal(wantAt) {
+			t.Errorf("%s: At = %v, want %v", c.name, f.At, wantAt)
 		}
 	}
 }
@@ -88,5 +93,47 @@ func TestAuthTraitsBlockedByCredentialsMtime(t *testing.T) {
 	h.setLastError(codexError{label: "usageLimitExceeded", message: "You've hit your usage limit."})
 	if impl.AuthTraits().Blocked(m) {
 		t.Fatal("usage limit entered the auth state")
+	}
+}
+
+// Another session refreshing the shared auth.json DURING a turn makes that turn fail on the
+// token it just lost ("already used"). The credentials were written after the turn started, so
+// the login is alive and nothing may be blocked.
+func TestAuthFailureJudgedFromTurnStart(t *testing.T) {
+	f, ok := rolloutAuthFailure([][]byte{
+		taskStarted("2026-10-30T02:01:00.000Z", "t2"),
+		taskFailed("2026-10-30T02:01:05.000Z", "t2", `{"message":"Your refresh token was already used. Please log out and sign in again.","codex_error_info":"other"}`),
+	})
+	if !ok {
+		t.Fatal("not recognised as an auth failure")
+	}
+	written := time.Date(2026, 10, 30, 2, 1, 4, 800_000_000, time.UTC) // between start and end
+	tr := agents.AuthTraits{
+		LastFailure:          func(session.Meta) (agents.AuthFailure, bool) { return f, true },
+		CredentialsWrittenAt: func() time.Time { return written },
+	}
+	if tr.Blocked(session.Meta{}) {
+		t.Fatal("credentials rewritten during the failed turn: want not blocked")
+	}
+	written = time.Date(2026, 10, 30, 1, 0, 0, 0, time.UTC)
+	if !tr.Blocked(session.Meta{}) {
+		t.Fatal("credentials older than the turn: want blocked")
+	}
+}
+
+// A login rejected at turn/start has no turn behind it: blocked, but flagged so nothing resumes
+// onto a thread that never received the instruction.
+func TestManagedTurnStartRejectionIsNoTurn(t *testing.T) {
+	m := session.Meta{Name: "cxauth2", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	h := newCodexTestHandle(t, nil, m.Name)
+	registerCodexTestHandle(t, h)
+	h.setLastError(codexError{label: "unauthorized", message: revokedLoginMsg})
+	f, ok := LastAuthFailure(m)
+	if !ok || !f.NoTurn {
+		t.Fatalf("LastAuthFailure = %+v ok=%v, want NoTurn", f, ok)
+	}
+	h.setLastError(codexError{label: "unauthorized", message: revokedLoginMsg, turnID: "t9"})
+	if f, ok := LastAuthFailure(m); !ok || f.NoTurn {
+		t.Fatalf("a failed turn: %+v ok=%v, want a real turn", f, ok)
 	}
 }

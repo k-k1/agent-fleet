@@ -19,7 +19,14 @@ type AuthRecoverer interface {
 // AuthFailure is a turn that ended on the login: the error text and when the turn ended.
 type AuthFailure struct {
 	Msg string
-	At  time.Time
+	// At is when the failed turn STARTED when that is known, else when it ended. A login that
+	// really failed was not rewritten during the turn, but another session may refresh the
+	// shared credentials mid-turn and make this turn fail on the token it just lost: judging on
+	// the start reads that login as alive.
+	At time.Time
+	// NoTurn: the login rejected the turn before any turn existed (turn/start itself), so the
+	// thread holds no record of the instruction and a resume would not repeat it.
+	NoTurn bool
 }
 
 // AuthTraits is one kind's login-failure evidence.

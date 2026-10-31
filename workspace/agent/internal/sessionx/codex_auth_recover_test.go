@@ -125,8 +125,8 @@ func TestCodexNonAuthErrorsDoNotEnterAuthState(t *testing.T) {
 func TestCodexAuthResumeWaitsForCredentialsWrittenAfterFailure(t *testing.T) {
 	f := newCxAuthFixture(t, "cxar20", cxAuthErr(cxRevoked, `"unauthorized"`), time.Hour)
 	a, ok := abortInfoFor(f.m)
-	if !ok || !a.Auth || a.Retryable || !a.At.Equal(f.failedAt) {
-		t.Fatalf("abortInfoFor = %+v ok=%v, want a blocked auth abort at the failed turn", a, ok)
+	if !ok || !a.Auth || a.Retryable || !a.At.Equal(f.failedAt.Add(-time.Second)) {
+		t.Fatalf("abortInfoFor = %+v ok=%v, want a blocked auth abort starting at the failed turn's start", a, ok)
 	}
 	for _, d := range []time.Duration{time.Second, time.Hour, 48 * time.Hour} {
 		authResumeAttempt(f.m, arState(t, f.m.Name), a, f.failedAt.Add(d))
@@ -188,5 +188,22 @@ func TestCodexAuthResumeDoesNotLoopOnRepeatedFailure(t *testing.T) {
 	authResumeAttempt(f.m, arState(t, f.m.Name), a2, now)
 	if len(f.ab.sent) != 2 {
 		t.Fatalf("after re-auth: sent %d, want 2", len(f.ab.sent))
+	}
+}
+
+// claude's refresh-lock shortcuts (fast watch, forced resume on claude's credentials) must not
+// fire for a codex episode whose message happens to carry claude's stem.
+func TestCodexEpisodeIgnoresRefreshLockShortcuts(t *testing.T) {
+	f := newCxAuthFixture(t, "cxar40", cxAuthErr(cxRevoked, `"unauthorized"`), time.Hour)
+	a, _ := abortInfoFor(f.m)
+	a.Msg = "[error] unauthorized: " + "refresh your login" + " " + cxRevoked
+	watched := 0
+	orig := authResumeFastWatch
+	authResumeFastWatch = func(session.Meta, authResumeState) { watched++ }
+	t.Cleanup(func() { authResumeFastWatch = orig })
+
+	authResumeAttempt(f.m, arState(t, f.m.Name), a, f.failedAt.Add(authResumeRefreshForceAfter+time.Minute))
+	if watched != 0 || len(f.ab.sent) != 0 {
+		t.Fatalf("fast watch %d, resumes %v: the claude shortcuts ran for a codex episode", watched, f.ab.sent)
 	}
 }

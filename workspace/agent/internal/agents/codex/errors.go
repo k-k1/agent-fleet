@@ -56,6 +56,8 @@ type codexError struct {
 	// at is when the failure was recorded (setLastError), the clock the login recovery
 	// compares auth.json's mtime with.
 	at time.Time
+	// started is when the turn began (the handle's mark), zero when unknown.
+	started time.Time
 }
 
 // decodeCodexError parses a TurnError payload (turn.error's raw bytes). ok is false when

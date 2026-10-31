@@ -630,7 +630,7 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 		return
 	}
 	if st := promptBlocker(meta.Name); st != "" {
-		writeBlockedErr(w, st)
+		writeBlockedErr(w, st, meta.Kind)
 		return
 	}
 	d, ok := driverOf(meta)
@@ -727,7 +727,11 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 	// scheduler injections, MCP drive tools); decisions must go through {keys}/{seq}
 	// (tui), /plan-respond (plan) or /respond (managed). See promptBlocker.
 	if st := promptBlocker(name); st != "" {
-		writeBlockedErr(w, st)
+		blockedKind := ""
+		if bm, ok := session.ReadMeta(name); ok {
+			blockedKind = bm.Kind
+		}
+		writeBlockedErr(w, st, blockedKind)
 		return "", false
 	}
 	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
@@ -916,7 +920,11 @@ func typeInitialPrompt(name, prompt string) string {
 		authMeta = session.Meta{}
 	}
 	if authExpiredFor(authMeta) {
-		log.Printf("initial prompt NOT typed for %s: the login has expired", name)
+		if _, rec := authRecovererOf(authMeta.Kind); rec {
+			log.Printf("initial prompt NOT typed for %s: the %s login has expired", name, authMeta.Kind)
+		} else {
+			log.Printf("initial prompt NOT typed for %s: the claude login has expired", name)
+		}
 		noteInitialPromptReason(name, session.InitialPromptReasonAuthExpired)
 		return session.InitialPromptFailed
 	}
@@ -1197,14 +1205,27 @@ func blockedErrMessage(state string) string {
 	case "model_switch":
 		return "codex is offering to switch to a smaller model near the usage limit; answer it in the terminal (typed text would be taken by the menu and the Enter would switch the model)"
 	case agents.StateAuth:
-		return "the login of this session's agent has expired or was revoked; re-authenticate in the Console (account menu > Settings > Connections > Agents, that agent's card) (a prompt sent now would not start a turn)"
+		return "the claude login for this workspace has expired; re-authenticate in the Console (account menu > Settings > Connections > Agents, Claude card) (a prompt sent now would be accepted by the TUI but never start a turn)"
 	}
 	return "the session is showing an interactive prompt (" + state + "); answer it from the Console, not free text"
 }
 
-// writeBlockedErr answers a free-text send that a pending interaction refuses.
-func writeBlockedErr(w http.ResponseWriter, state string) {
-	httpx.WriteErr(w, http.StatusConflict, blockedErrCode(state), blockedErrMessage(state))
+// blockedErrMessageFor is blockedErrMessage naming the session's own agent where the refusal is
+// about its login: claude keeps its text, a recoverer kind gets its own card.
+func blockedErrMessageFor(kind, state string) string {
+	if state == agents.StateAuth {
+		if _, rec := authRecovererOf(kind); rec {
+			k := NormalizeKind(kind)
+			return "the " + k + " login has expired or was revoked; re-authenticate in the Console (account menu > Settings > Connections > Agents, " + k + " card) (a prompt sent now would not start a turn)"
+		}
+	}
+	return blockedErrMessage(state)
+}
+
+// writeBlockedErr answers a free-text send that a pending interaction refuses; kind is the
+// refused session's.
+func writeBlockedErr(w http.ResponseWriter, state, kind string) {
+	httpx.WriteErr(w, http.StatusConflict, blockedErrCode(state), blockedErrMessageFor(kind, state))
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately
