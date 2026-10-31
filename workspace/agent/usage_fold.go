@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -61,6 +62,11 @@ type usageFoldMark struct {
 	// logical turn sequence, so neither a count nor a timestamp can say which are new; Groups and
 	// LastTS ignore them. Rare (a billed call with nothing to display, alone in its turn).
 	OrphanKeys []string `json:"orphanKeys,omitempty"`
+	// Uncapped marks a watermark whose Groups counts from the first turn of the whole
+	// transcript. Marks written while the claude reader was capped at the newest 1 MiB lack it:
+	// their Groups counts from the first VISIBLE turn, a number that shifts once the head
+	// becomes visible (see rebaseCappedMark).
+	Uncapped bool `json:"uncapped,omitempty"`
 }
 
 type usageFoldState struct {
@@ -320,6 +326,7 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []transcript.Turn, includeTrailing bool) (int, error) {
 	mark := st.Sessions[m.Name]
 	rows := foldTurnRows(turns, includeTrailing)
+	mark = rebaseCappedMark(m, mark, rows)
 	fresh := unfoldedTurnRows(rows, mark)
 	if len(fresh) == 0 {
 		// Includes the case where the transcript shrank (archive restore, a manual edit,
@@ -378,6 +385,7 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	// The watermark only goes up (a flip to a shorter transcript must not lower it).
 	next := usageFoldMark{
 		Groups:     max(mark.Groups, groups),
+		Uncapped:   true,
 		LastTS:     mark.LastTS,
 		LastIdx:    mark.LastIdx,
 		OrphanKeys: mark.OrphanKeys,
@@ -391,6 +399,28 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	}
 	st.Sessions[m.Name] = next
 	return len(out), nil
+}
+
+// rebaseCappedMark renumbers a claude watermark written under the capped reader. That reader
+// dropped the oldest turns of a long transcript, so its Groups counted from the first visible
+// turn; the uncapped reader numbers from the true first turn, k higher where k turns were
+// hidden. Compared as is, the k newest turns would sit past Groups and be folded a second
+// time. The transcript line of the last folded turn (LastIdx, an absolute index for claude)
+// says how many turns are already behind the watermark in the new numbering. The hidden head
+// was never in the ledger and stays out of it: appending it now would carry Idx values that
+// collide with rows already written.
+func rebaseCappedMark(m session.Meta, mark usageFoldMark, rows []usageTurnRow) usageFoldMark {
+	if _, ok := sessionx.AgentOf(m.Kind).(agents.LegacyCappedUsage); !ok || mark.Uncapped || mark.Groups == 0 || mark.LastIdx == 0 {
+		return mark
+	}
+	behind := 0
+	for _, r := range rows {
+		if !r.Orphan && r.LastIdx <= mark.LastIdx {
+			behind++
+		}
+	}
+	mark.Groups = max(mark.Groups, behind)
+	return mark
 }
 
 // orphanLedgerKey is a cost-only row's ledger Key ("" for a logical turn). The session name is

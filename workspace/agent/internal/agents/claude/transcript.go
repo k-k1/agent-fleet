@@ -479,6 +479,38 @@ func CollectAllTurns(lines [][]byte) []transcript.Turn {
 	return collectTurns(lines, 0, len(lines), true, false)
 }
 
+// CollectUsageTurns is the turn list for token accounting (budget, get_session_usage, the
+// ledger fold): the whole file, no 1 MiB cap, because the cap keeps only the newest turns and
+// a long session would silently lose its oldest spend. Accounting reads only roles, usage
+// fields, timestamps and ids, so no tool result is resolved and the text and parts of every
+// turn are dropped as it is parsed, which keeps a huge transcript from being held as text.
+// The one part kept is a cliWarning's, which IsCLIWarning needs to tell it from a response.
+func CollectUsageTurns(lines [][]byte) []transcript.Turn {
+	turns := []transcript.Turn{}
+	// Same one-usage-record-per-requestId rule as collectTurns: the newest row of a response
+	// keeps the numbers, so the walk is newest→oldest here too.
+	seenReq := map[string]bool{}
+	for i := len(lines) - 1; i >= 0; i-- {
+		t, ok := parseTurn(lines[i], i)
+		if !ok {
+			continue
+		}
+		if t.ReqID != "" {
+			if seenReq[t.ReqID] {
+				t.InTok, t.OutTok, t.CacheRead, t.CacheCreate = 0, 0, 0, 0
+			}
+			seenReq[t.ReqID] = true
+		}
+		if !IsCLIWarning(t) {
+			t.Parts = nil
+		}
+		t.Text = ""
+		turns = append(turns, t)
+	}
+	slices.Reverse(turns)
+	return turns
+}
+
 // all attaches every tool call's result as Output; capped stops at 1 MiB of text, newest kept.
 func collectTurns(lines [][]byte, lo, hi int, all, capped bool) []transcript.Turn {
 	if lo < 0 {

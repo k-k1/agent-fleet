@@ -1,6 +1,8 @@
 package sessionx
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -130,5 +132,26 @@ func TestAddSubagentUsage(t *testing.T) {
 	addSubagentUsage(&none, nil)
 	if none.Subagents != nil {
 		t.Fatalf("a session that delegated nothing must not report a subagents field: %+v", none.Subagents)
+	}
+}
+
+// A transcript with more than 1 MiB of assistant text: the usage turns cover all of it, so the
+// cumulative spend is the sum of the parts, where the chat view's capped parse loses the head.
+func TestAggregateUsageOverCapTranscript(t *testing.T) {
+	big := strings.Repeat("x", 100<<10)
+	var lines [][]byte
+	const n, in, out = 30, 50, 7
+	for i := 0; i < n; i++ {
+		lines = append(lines,
+			[]byte(`{"type":"user","message":{"content":"q"}}`),
+			[]byte(fmt.Sprintf(`{"type":"assistant","requestId":"r%d","message":{"usage":{"input_tokens":%d,"output_tokens":%d},"content":[{"type":"text","text":"%s"}]}}`, i, in, out, big)),
+		)
+	}
+	want := n * (in + out)
+	if got := AggregateUsage(claude.CollectUsageTurns(lines)).Cumulative; got.Turns != n || got.Spend != want {
+		t.Errorf("uncapped: turns=%d spend=%d, want %d / %d", got.Turns, got.Spend, n, want)
+	}
+	if got := AggregateUsage(claude.CollectTurns(lines, 0, len(lines))).Cumulative; got.Spend >= want {
+		t.Errorf("fixture does not exceed the chat cap: capped spend=%d", got.Spend)
 	}
 }

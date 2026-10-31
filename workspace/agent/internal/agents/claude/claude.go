@@ -256,6 +256,21 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 
 func (agentImpl) ClearResume(sid string) { _ = StartFresh(sid) }
 
+// UsageTurns implements agents.UsageReader: every turn, usage fields only.
+func (agentImpl) UsageTurns(m session.Meta) []transcript.Turn {
+	lines, _, _ := TranscriptRead(session.UUID(m.Dir, m.Name))
+	return CollectUsageTurns(lines)
+}
+
+// TextTurns implements agents.TextReader: the chat view's capped parse (newest 1 MiB of text).
+func (agentImpl) TextTurns(m session.Meta) []transcript.Turn {
+	lines, _, _ := TranscriptRead(session.UUID(m.Dir, m.Name))
+	return CollectTurns(lines, 0, len(lines))
+}
+
+// LegacyCappedUsage implements agents.LegacyCappedUsage.
+func (agentImpl) LegacyCappedUsage() {}
+
 // SubagentLogs implements agents.SubagentUsageReader.
 func (agentImpl) SubagentLogs(m session.Meta) [][]string {
 	return SubagentUsageLogs(session.UUID(m.Dir, m.Name))
@@ -266,7 +281,12 @@ func (agentImpl) SubagentTurns(paths []string) ([]transcript.Turn, error) {
 	return SubagentTurns(paths)
 }
 
-var _ agents.SubagentUsageReader = agentImpl{}
+var (
+	_ agents.SubagentUsageReader = agentImpl{}
+	_ agents.UsageReader         = agentImpl{}
+	_ agents.TextReader          = agentImpl{}
+	_ agents.LegacyCappedUsage   = agentImpl{}
+)
 
 // RemoteSessionURL derives the claude.ai Remote Control page for sid from its
 // jsonl "bridge-session" line (written when RC connects). The web URL is
