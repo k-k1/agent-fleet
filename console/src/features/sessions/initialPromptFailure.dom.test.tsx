@@ -21,8 +21,8 @@ const dismissMock = vi.fn();
 const { noteInitialPromptFailures, resetInitialPromptFailuresForTest } = await import("./initialPromptFailure.ts");
 import type { Session } from "../../types/session.ts";
 
-const s = (state: Session["initialPromptState"], reason?: string, name = "child-1"): Session =>
-  ({ name, kind: "claude", alive: true, initialPromptState: state, initialPromptReason: reason }) as Session;
+const s = (state: Session["initialPromptState"], reason?: string, name = "child-1", kind = "claude"): Session =>
+  ({ name, kind, alive: true, initialPromptState: state, initialPromptReason: reason }) as Session;
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -43,6 +43,21 @@ afterEach(async () => {
 });
 
 describe("noteInitialPromptFailures", () => {
+  it("names the refused session's agent and opens its card for a codex refusal, claude unchanged", async () => {
+    const { useSettingsUI } = await import("../settings/store.ts");
+    noteInitialPromptFailures([s("pending", undefined, "cx", "codex"), s("pending", undefined, "cl")]);
+    noteInitialPromptFailures([s("failed", "auth_expired", "cx", "codex"), s("failed", "auth_expired", "cl")]);
+    expect(toastMock).toHaveBeenCalledTimes(2);
+    const [cx, cl] = toastMock.mock.calls.map((c) => c[0] as ReactNode);
+    await act(async () => root!.render(<>{cx}</>));
+    expect(host.textContent).toContain("Codex");
+    expect(host.textContent).not.toContain("Claude");
+    await act(async () => host.querySelector("button")!.click());
+    expect(useSettingsUI.getState().settingsTarget).toBe("codex");
+    await act(async () => root!.render(<>{cl}</>));
+    expect(host.textContent).toContain("Claude");
+  });
+
   it("toasts the reason, sticky, when a pending prompt settles failed with auth_expired", async () => {
     noteInitialPromptFailures([s("pending")]);
     expect(toastMock).not.toHaveBeenCalled();

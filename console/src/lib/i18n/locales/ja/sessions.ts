@@ -707,6 +707,8 @@ export const sessions = {
   "start.register_there": "で登録してください。",
   "start.initial_prompt_auth_expired":
     "{name} への最初の指示は送られませんでした。このワークスペースの Claude のログインが期限切れです。再認証してから、もう一度指示を送ってください。",
+  "start.initial_prompt_auth_expired_kind":
+    "{name} への最初の指示は送られませんでした。このワークスペースの {agent} のログインが期限切れです。再認証してから、もう一度指示を送ってください。",
   "start.claude_expired": "このワークスペースの Claude のログインが期限切れのため、今送った指示ではターンが始まりません。起動してペインで /login を実行することもできます。または ",
   "start.ssm_search_ph": "ホスト名・インスタンス ID で検索…",
   "start.select_host": "— ホストを選択 —",
