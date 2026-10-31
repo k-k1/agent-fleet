@@ -7,11 +7,8 @@ package sessionx
 // status is a cheap polling primitive, while this reads and folds whole transcripts.
 
 import (
-	"fmt"
 	"math"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -214,23 +211,12 @@ func SubagentUsageSources(m session.Meta) []SubagentSource {
 	}
 	var out []SubagentSource
 	for _, paths := range sr.SubagentLogs(m) {
-		var live []string
-		var stamp strings.Builder
-		var mod time.Time
-		for _, p := range paths {
-			if fi, err := os.Stat(p); err == nil {
-				live = append(live, p)
-				fmt.Fprintf(&stamp, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
-				if fi.ModTime().After(mod) {
-					mod = fi.ModTime()
-				}
-			}
-		}
+		live, stamp, mod := liveStamp(paths)
 		if len(live) == 0 {
 			continue
 		}
 		out = append(out, SubagentSource{
-			ID: sr.SubagentID(paths), Stamp: stamp.String(), ModTime: mod,
+			ID: sr.SubagentID(paths), Stamp: stamp, ModTime: mod,
 			Turns: func() ([]transcript.Turn, error) { return sr.SubagentTurns(live) },
 		})
 	}

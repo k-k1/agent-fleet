@@ -131,6 +131,11 @@ func TestAddSubagentUsageIsCachedAndStable(t *testing.T) {
 	f := newFoldFixture(t, "fold3080e")
 	mod := time.Now().Add(-time.Hour).Truncate(time.Second)
 	f.write(t, foldUserLine("2026-10-31T09:01:00Z")+foldUsageLine("2026-10-31T09:01:01Z", "r1", 10, 5), mod)
+	t.Cleanup(func() {
+		subagentUsageFolds.mu.Lock()
+		delete(subagentUsageFolds.m, f.m.Name)
+		subagentUsageFolds.mu.Unlock()
+	})
 	var a, b sessionUsage
 	addSubagentUsage(&a, f.m)
 	f.write(t, foldUserLine("2026-10-31T09:01:00Z")+foldUsageLine("2026-10-31T09:01:01Z", "r1", 10, 9), mod)

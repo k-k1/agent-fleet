@@ -56,24 +56,20 @@ func (c *SubagentFolds[T]) Fold(m session.Meta, now time.Time, fold func([]trans
 		prev.agents = nil
 	}
 	next := subagentFoldSession[T]{createdAt: m.CreatedAt, agents: make(map[string]subagentFoldEntry[T], len(groups)), used: now}
+	if prev.used.After(now) { // a concurrent call with a later clock reading wrote first
+		next.used = prev.used
+	}
 	var out []T
 	for _, paths := range groups {
 		// Stat before reading: a file that grows in between is read with more than the cached
 		// size says, so the next call sees a different stamp and reads it again.
-		var live []string
-		var stamp strings.Builder
-		for _, p := range paths {
-			if fi, err := os.Stat(p); err == nil {
-				live = append(live, p)
-				fmt.Fprintf(&stamp, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
-			}
-		}
+		live, stamp, _ := liveStamp(paths)
 		if len(live) == 0 {
 			continue
 		}
 		key := strings.Join(paths, "\x00")
 		e, ok := prev.agents[key]
-		if !ok || e.stamp != stamp.String() {
+		if !ok || e.stamp != stamp {
 			turns, err := SubagentTurns(m, live)
 			switch {
 			case err != nil && len(turns) == 0:
@@ -94,7 +90,7 @@ func (c *SubagentFolds[T]) Fold(m session.Meta, now time.Time, fold func([]trans
 				out = append(out, fold(turns))
 				continue
 			}
-			e = subagentFoldEntry[T]{stamp: stamp.String(), val: fold(turns)}
+			e = subagentFoldEntry[T]{stamp: stamp, val: fold(turns)}
 		}
 		next.agents[key] = e
 		out = append(out, e.val)
@@ -129,4 +125,21 @@ func (c *SubagentFolds[T]) Len(name string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.m[name].agents)
+}
+
+// liveStamp stats each copy of one agent's transcript: the copies that exist, a stamp of their
+// paths, sizes and mtimes, and the newest mtime. The ledger fold and the usage caches share it so
+// they cannot disagree on when an agent has changed.
+func liveStamp(paths []string) (live []string, stamp string, mod time.Time) {
+	var sb strings.Builder
+	for _, p := range paths {
+		if fi, err := os.Stat(p); err == nil {
+			live = append(live, p)
+			fmt.Fprintf(&sb, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
+			if fi.ModTime().After(mod) {
+				mod = fi.ModTime()
+			}
+		}
+	}
+	return live, sb.String(), mod
 }
