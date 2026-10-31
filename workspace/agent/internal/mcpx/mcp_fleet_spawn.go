@@ -117,6 +117,31 @@ type createSessionArgs struct {
 	// SpendCapUSD is the child's per-child budget (#1054). A pointer: omitted means the
 	// user's default, which the Agent applies; an explicit 0 means none.
 	SpendCapUSD *float64 `json:"spend_cap_usd"`
+	// WorkItem is the ticket the child is started for (#3134): recorded as its launch item, so
+	// its row and the item show the link and branch_name renders from it. Omitted, a child of a
+	// session watches its parent's items instead.
+	WorkItem *spawnWorkItem `json:"work_item"`
+}
+
+type spawnWorkItem struct {
+	Provider string `json:"provider"`
+	Key      string `json:"key"`
+	Title    string `json:"title"`
+	// Type is the tracker's item type (Bug, Story, ...): branch naming picks the prefix from it.
+	Type string `json:"type"`
+}
+
+// spawnWorkItemOf validates and normalizes create_session's work_item; nil when none was given.
+func spawnWorkItemOf(in *spawnWorkItem) (*spawnWorkItem, error) {
+	if in == nil || strings.TrimSpace(in.Key) == "" {
+		return nil, nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(in.Provider))
+	key, ok := session.NormalizeLinkKey(provider, in.Key, "")
+	if !ok {
+		return nil, fmt.Errorf("work_item: provider must be github, jira or bitbucket, and key owner/repo#N or PROJ-12 (got %q %q)", in.Provider, in.Key)
+	}
+	return &spawnWorkItem{Provider: provider, Key: key, Title: strings.TrimSpace(in.Title), Type: strings.TrimSpace(in.Type)}, nil
 }
 
 // fleetSpawnTools are the tools that start sessions, and the two only a session's own children
@@ -249,6 +274,17 @@ func fleetSpawnTools() []toolSpec {
 							"subdir":                    map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
 							"report_back":               map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
 							"spend_cap_usd":             map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
+							"work_item": map[string]any{
+								"type": "object", "additionalProperties": false,
+								"description": "The issue or ticket the child works on (optional). Omitted, the child watches the items you were started for or work on",
+								"properties": map[string]any{
+									"provider": map[string]any{"type": "string", "enum": []string{"github", "jira", "bitbucket"}},
+									"key":      map[string]any{"type": "string", "description": "owner/repo#45 or PROJ-12"},
+									"title":    map[string]any{"type": "string"},
+									"type":     map[string]any{"type": "string", "description": "The tracker's item type, e.g. Bug or Story (picks the branch prefix)"},
+								},
+								"required": []string{"provider", "key"},
+							},
 						},
 					},
 				}
@@ -332,7 +368,18 @@ func fleetSpawnTools() []toolSpec {
 						return mcpToolErr(req.ID, err.Error())
 					}
 				}
+				// The child's ticket is checked before anything is created and stored in the inbox's
+				// key shape, or its launch item would never match the item it names (#3134). A bare
+				// number is refused: the child's repository is not settled yet.
+				wi, err := spawnWorkItemOf(a.WorkItem)
+				if err != nil {
+					return mcpToolErr(req.ID, err.Error())
+				}
 				idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, model, effort, initialPrompt, worktree, a.Branch, a.NewBranch, shared)
+				if wi != nil {
+					// The same launch for another ticket is another child, not a retry of this one.
+					idemKey = CreateSessionKey(idemKey, "work_item", wi.Provider, wi.Key, "", "", "", false, "", "", false)
+				}
 				body := map[string]any{
 					"dir":             a.Dir,
 					"subdir":          a.Subdir,
@@ -361,6 +408,9 @@ func fleetSpawnTools() []toolSpec {
 				}
 				if a.SpendCapUSD != nil {
 					body["spend_cap_usd"] = *a.SpendCapUSD
+				}
+				if wi != nil {
+					body["work_item"] = map[string]any{"provider": wi.Provider, "key": wi.Key, "title": wi.Title, "type": wi.Type}
 				}
 				reqBody, _ := json.Marshal(body)
 				// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The

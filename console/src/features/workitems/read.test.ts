@@ -23,6 +23,7 @@ import {
   relTime,
   repoForItem,
   sessionsForItem,
+  sessionsOnItem,
   shortKey,
   sortWorkItems,
   stateTone,
@@ -433,6 +434,33 @@ describe("sessionsForItem", () => {
     ];
     expect(sessionsForItem(led, "acme/web#45").map((s) => s.sessionName)).toEqual(["sk7f3q9"]);
     expect(sessionsForItem(led, "acme/web#1")).toEqual([]);
+  });
+});
+
+describe("sessionsOnItem", () => {
+  it("adds live sessions linked to the item after the ledger, once each and with their role", () => {
+    const led = [
+      { id: "1", provider: "jira", itemKey: "PROJ-1", sessionName: "sparent", repo: "web", branch: "b", createdAt: "" },
+    ];
+    const live = [
+      { name: "sparent", links: [{ provider: "jira", key: "PROJ-1", role: "started" as const }] },
+      { name: "skid", repo: "web", branch: "k", createdAt: "c", links: [{ provider: "jira", key: "PROJ-1", role: "watching" as const, at: "t" }] },
+      // Same key on another provider is another item.
+      { name: "sother", links: [{ provider: "github", key: "PROJ-1", role: "working" as const }] },
+      { name: "snone" },
+    ];
+    const got = sessionsOnItem(led, live, "jira", "PROJ-1");
+    expect(got.map((r) => [r.sessionName, r.role])).toEqual([
+      ["sparent", undefined],
+      ["skid", "watching"],
+    ]);
+    expect(got[1]).toMatchObject({ id: "link:skid", repo: "web", branch: "k", createdAt: "t" });
+  });
+
+  it("matches provider and key regardless of case and drops a role it does not know", () => {
+    const live = [{ name: "s1", links: [{ provider: "GitHub", key: "Acme/Web#45", role: "odd" as never }] }];
+    const got = sessionsOnItem([], live, "github", "acme/web#45");
+    expect(got.map((r) => [r.sessionName, r.role])).toEqual([["s1", undefined]]);
   });
 });
 

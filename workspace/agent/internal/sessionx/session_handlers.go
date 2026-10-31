@@ -262,7 +262,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		dirBranch[dir] = b
 		return dirInfo{branch: b, worktree: wt}
 	})
-	annotateLinks(sessions, dirBranch, time.Now())
+	linkedAt := time.Now()
+	annotateLinks(sessions, dirBranch, linkedAt)
+	recordBranchPRs(sessions, linkedAt)
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	// repoJobs and imageJobs are the only channels telling the CP "no session, but the
@@ -457,6 +459,10 @@ type CreateReq struct {
 	// recorded in the meta so a later rename through POST /repos/{name}/branch-name keeps
 	// {ref} and the kind. Every other launch leaves it nil.
 	WorkItem *session.WorkItemRef `json:"work_item,omitempty"`
+	// links / unlinked are a moved session's links (session_move.go), set in-process only: no
+	// client can hand a new session links it did not earn.
+	links    []session.WorkItemLink
+	unlinked []string
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	// SSMAlias: the host bookmark's alias (CP disambiguates it with the profile when it
@@ -613,9 +619,17 @@ func cleanWorkItemRef(in *session.WorkItemRef) *session.WorkItemRef {
 	if in == nil || strings.TrimSpace(in.Key) == "" {
 		return nil
 	}
+	// Provider in lower case and a Jira key in upper case, as links are keyed (#3134), so a launch
+	// item matches the same item linked any other way. A bare GitHub number is left bare: {ref}
+	// renders from it.
+	provider := strings.ToLower(clipRunes(strings.TrimSpace(in.Provider), 32))
+	key := clipRunes(strings.TrimSpace(in.Key), 200)
+	if provider == "jira" {
+		key = strings.ToUpper(key)
+	}
 	out := &session.WorkItemRef{
-		Provider: clipRunes(strings.TrimSpace(in.Provider), 32),
-		Key:      clipRunes(strings.TrimSpace(in.Key), 200),
+		Provider: provider,
+		Key:      key,
 		Title:    clipRunes(strings.TrimSpace(in.Title), 300),
 		Type:     clipRunes(strings.TrimSpace(in.Type), 64),
 	}
@@ -1509,7 +1523,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
 		// The same slot keeps its studio (ADR 0100 decision 2); rebindStudioOnRecreate below moves
 		// the studio's own `session` over, or drops this copy when it cannot.
-		Studio: m.Studio, WorkItem: m.WorkItem,
+		Studio: m.Studio, WorkItem: m.WorkItem, Links: m.Links, Unlinked: m.Unlinked,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
@@ -1594,8 +1608,9 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
-		// The fork works in the same working copy, so it renames the same branch for the same item.
-		WorkItem: src.WorkItem,
+		// The fork works in the same working copy, so it renames the same branch for the same item,
+		// and is on the same tickets and PRs.
+		WorkItem: src.WorkItem, Links: src.Links, Unlinked: src.Unlinked,
 		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
 		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the

@@ -336,5 +336,13 @@ func createIdempotencyKey(r *CreateReq) string {
 		h.Write([]byte(f))
 		h.Write([]byte{0})
 	}
+	// Only when present, so every fingerprint without a work item stays what it was: the same
+	// launch for another ticket is another session (#3134).
+	if wi := r.WorkItem; wi != nil && strings.TrimSpace(wi.Key) != "" {
+		for _, f := range []string{"work_item", wi.Provider, wi.Key} {
+			h.Write([]byte(f))
+			h.Write([]byte{0})
+		}
+	}
 	return "fp_" + hex.EncodeToString(h.Sum(nil))
 }

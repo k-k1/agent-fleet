@@ -395,6 +395,7 @@
   color: var(--fg);
 }
 .sess-pr,
+.sess-item,
 .sess-port {
   flex: none;
   display: inline-flex;
@@ -411,13 +412,27 @@
   white-space: nowrap;
 }
 .sess-pr:hover,
+.sess-item:hover,
 .sess-port:hover {
   background: var(--btn);
   color: var(--fg);
 }
 .sess-pr > .codicon,
+.sess-item > .codicon,
 .sess-ports > .codicon {
   font-size: 12px;
+}
+/* Linked items (#3134) keep the muted text of the line; only the role icon tells them apart,
+   and a watched item is the faintest because it is the one this session does not act on. */
+.sess-items {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 1px;
+  min-width: 0;
+}
+.sess-item.role-watching {
+  opacity: 0.75;
 }
 /* One globe for the group rather than one per port: at the rail's narrowest a per-port icon
    pushed the third port onto a line of its own. */

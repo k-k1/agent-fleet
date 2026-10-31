@@ -931,6 +931,10 @@ type sessionWire struct {
 	// pane (#1062). Absent here, every row loses them. No DB-mirror column: a port is only real
 	// while the session runs.
 	Ports []int `json:"ports,omitempty"`
+	// Links: the work items and PRs the session is linked to (#3134). Relayed as raw JSON: the
+	// CP reads nothing in it. Absent here, every row loses its links. No DB-mirror column yet,
+	// so a stopped Workspace's rows show none.
+	Links json.RawMessage `json:"links,omitempty"`
 	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
 	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
 	// it is the only link there is — a worktree's folder and branch carry a random slug.
