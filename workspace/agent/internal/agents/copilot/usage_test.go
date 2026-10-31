@@ -2,7 +2,12 @@ package copilot
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 )
 
 // Real copilot_internal/user payload (trimmed to the fields we read), captured
@@ -84,5 +89,59 @@ func TestQuotaOrderPremiumFirst(t *testing.T) {
 	res := buildUsage(u)
 	if len(res.Quotas) != 2 || res.Quotas[0].ID != "premium_interactions" {
 		t.Fatalf("premium should sort first: %+v", res.Quotas)
+	}
+}
+
+// Right after an Agent restart there is no cache; when the first fetch fails the chip shows
+// the reading stored before the restart rather than going blank (#3127), and the limit
+// snapshot reports it too.
+func TestFailedFirstFetchServesTheStoredReading(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetPublished(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	prevURL := usageURL
+	usageURL = srv.URL
+	tokenMu.Lock()
+	prevTok, prevAt := tokenVal, tokenAt
+	tokenVal, tokenAt = "tok-a", time.Now()
+	tokenMu.Unlock()
+	usageMu.Lock()
+	prevCached, prevUsageAt := usageCached, usageAt
+	usageCached, usageAt = nil, time.Time{}
+	usageMu.Unlock()
+	t.Cleanup(func() {
+		usageURL = prevURL
+		tokenMu.Lock()
+		tokenVal, tokenAt = prevTok, prevAt
+		tokenMu.Unlock()
+		usageMu.Lock()
+		usageCached, usageAt = prevCached, prevUsageAt
+		usageMu.Unlock()
+	})
+	observed := time.Now().Add(-2 * time.Hour)
+	usagestore.Record("copilot", identityOf("tok-a"), observed, &usageResult{
+		Plan: "individual", ResetsAt: "2099-01-01T00:00:00Z",
+		Quotas: []QuotaSnap{{ID: "chat", RemainingPct: 60}},
+	})
+
+	publishToken("tok-a")
+	if lr := LimitReading(); len(lr.Windows) != 1 || lr.Windows[0].UsedPct != 40 {
+		t.Errorf("limit reading before any fetch = %+v, want the stored pool at 40%% used", lr)
+	}
+
+	rec := httptest.NewRecorder()
+	HandleUsage(rec, httptest.NewRequest(http.MethodGet, "/copilot/usage", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["ok"] != true || out["plan"] != "individual" {
+		t.Fatalf("usage = %+v, want the stored reading", out)
+	}
+	if age, _ := out["ageSec"].(float64); age < 7000 {
+		t.Errorf("ageSec = %v, want the stored observation's age", out["ageSec"])
 	}
 }

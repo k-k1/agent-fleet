@@ -16,7 +16,7 @@ import { AGY_USAGE, COPILOT_USAGE, type RemainingSource } from "./usageSources.t
 // agent isn't signed in (authed:false), same rule as the generic chip.
 export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tenant: string | null }) {
   const tr = useT();
-  const { usage, refreshing, refresh } = useUsage(tenant, src.endpoint);
+  const { usage, refreshing, refresh } = useUsage(tenant, src);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));

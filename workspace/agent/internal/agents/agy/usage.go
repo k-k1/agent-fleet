@@ -6,6 +6,9 @@
 package agy
 
 import (
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagewin"
 )
 
@@ -85,6 +89,35 @@ func SignedIn() bool {
 	return err == nil && !fi.IsDir()
 }
 
+var (
+	emailMu   sync.Mutex
+	emailLast string
+)
+
+// accountEmail names the signed-in Google account from the token file's id_token_email, for
+// usagestore's account check. A file that exists but does not parse keeps the last answer, so
+// one torn read is not taken for a sign-in to another account.
+func accountEmail() string {
+	emailMu.Lock()
+	defer emailMu.Unlock()
+	b, err := os.ReadFile(tokenPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		emailLast = ""
+		return ""
+	}
+	if err != nil {
+		return emailLast
+	}
+	var f struct {
+		Email string `json:"id_token_email"`
+	}
+	if json.Unmarshal(b, &f) != nil {
+		return emailLast
+	}
+	emailLast = f.Email
+	return emailLast
+}
+
 // HandleUsage serves GET /connections/agy/usage for the Console's AgyCard.
 // Always 200 with {ok, authed, …} so the card can degrade in place.
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
@@ -95,11 +128,18 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	usageMu.Lock()
 	defer usageMu.Unlock()
 	if usageCached == nil || time.Since(usageAt) > usageCacheTTL || r.URL.Query().Get("refresh") != "" {
-		res, err := scrapeUsage()
+		res, err := scrape()
 		if err != nil {
 			out := map[string]any{"ok": false, "authed": true, "error": err.Error()}
 			// Serve the stale cache alongside the error so a transient scrape
-			// failure doesn't blank an already-shown gauge.
+			// failure doesn't blank an already-shown gauge. Right after an Agent restart there
+			// is no cache yet, so the reading stored before the restart stands in.
+			if usageCached == nil {
+				var stored usageResult
+				if at, ok := usagestore.Load("agy", accountEmail(), &stored); ok {
+					usageCached, usageAt = &stored, at
+				}
+			}
 			if usageCached != nil {
 				out["ok"] = true
 				out["account"], out["plan"], out["groups"] = usageCached.Account, usageCached.Plan, adjustGroups(usageCached.Groups, time.Now())
@@ -109,6 +149,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		usageCached, usageAt = res, time.Now()
+		usagestore.Record("agy", accountEmail(), usageAt, res)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
@@ -181,6 +222,9 @@ var (
 // away from real working copies, and is pre-trusted so the prompt never renders
 // (our own empty dir — nothing to trust but itself); answering it interactively
 // is only the fallback, same as scrapeContext.
+// scrape is scrapeUsage; a var only so a test can stand in for the TUI.
+var scrape = scrapeUsage
+
 func scrapeUsage() (*usageResult, error) {
 	dir := filepath.Join(os.TempDir(), "af-agy-usage")
 	if err := os.MkdirAll(dir, 0o700); err != nil {

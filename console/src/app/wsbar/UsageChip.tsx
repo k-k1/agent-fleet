@@ -18,7 +18,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
   const tr = useT();
   const fiveLabel = tr(src.fiveLabelKey);
   const weekLabel = tr(src.weekLabelKey);
-  const { usage, refreshing, refresh } = useUsage(tenant, src.endpoint);
+  const { usage, refreshing, refresh } = useUsage(tenant, src);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));

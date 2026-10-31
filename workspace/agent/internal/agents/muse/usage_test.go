@@ -240,3 +240,41 @@ func TestQuotaWindowWithoutLengthIsNotRolled(t *testing.T) {
 		t.Errorf("resetsAt = %v, want the recorded instant", w["resetsAt"])
 	}
 }
+
+// After an Agent restart no muse host is running and nothing is pushed, so the chip has only
+// what usagestore kept: the last reading, with its real age (#3127).
+func TestUsageSurvivesARestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	resetQuota(t)
+	writeAuth(t, accountJSON)
+	installedMuse(t)
+	observed := time.Now().Add(-90 * time.Minute)
+	resetAt := time.Now().Add(2 * time.Hour).UnixMilli()
+	recordQuota(msp.SubscriptionUsage{ObservedAtMs: observed.UnixMilli(), Tier: "pro",
+		Window: msp.SubscriptionUsageWindow{UsedPercent: 37, WindowDurationMins: 300, ResetsAtMs: resetAt},
+		Weekly: msp.SubscriptionUsageWeekly{UsedPercent: 12, ResetsAtMs: resetAt}})
+
+	quotaMu.Lock()
+	quotaSeen = nil // the restart: this process never received the push
+	quotaMu.Unlock()
+
+	out := usageJSON(t)
+	if out["ok"] != true {
+		t.Fatalf("usage = %+v, want the stored reading", out)
+	}
+	if fh, _ := out["fiveHour"].(map[string]any); fh["pct"] != float64(37) {
+		t.Errorf("fiveHour = %v, want 37%%", out["fiveHour"])
+	}
+	if age, _ := out["ageSec"].(float64); age < 85*60 {
+		t.Errorf("ageSec = %v, want the observation's age (~90 min), not the load time", out["ageSec"])
+	}
+	if lr := LimitReading(); len(lr.Windows) != 2 || !lr.Windows[0].ObservedAt.Equal(time.UnixMilli(observed.UnixMilli()).UTC()) {
+		t.Errorf("limit reading = %+v, want both stored windows at their observation time", lr)
+	}
+
+	// Another account signs in: the previous one's reading is not this one's.
+	writeAuth(t, `{"schema_version":1,"providers":{"meta":{"access_token":"dca:X","mechanism":"oauth","user_email":"other@example.com"}}}`)
+	if out := usageJSON(t); out["ok"] != false {
+		t.Errorf("usage after a re-login = %+v, want no reading", out)
+	}
+}

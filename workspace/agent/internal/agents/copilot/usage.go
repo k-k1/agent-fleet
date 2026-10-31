@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 )
 
 // planLabel turns the internal-API fields into a human tier for the chip. copilot_plan
@@ -56,7 +57,8 @@ func planLabel(plan, sku string) string {
 // premium_interactions has has_quota=false; on paid plans premium_interactions is the main
 // pool. Only the pools with has_quota=true are passed to the frontend.
 
-const usageURL = "https://api.github.com/copilot_internal/user"
+// A var only so a test can point it at a local server.
+var usageURL = "https://api.github.com/copilot_internal/user"
 
 // QuotaSnap is one credit pool the account has (chat / completions /
 // premium_interactions). RemainingPct is 0–100 remaining (not used), matching the
@@ -107,7 +109,11 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			out := map[string]any{"ok": false, "authed": true, "error": err.Error()}
 			// stale-if-error: keep an already-shown gauge rather than blanking it on a
-			// transient failure.
+			// transient failure. Right after an Agent restart there is no cache yet, so the
+			// reading stored before the restart stands in (same account only).
+			if usageCached == nil {
+				usageCached, usageAt = storedUsage(tok)
+			}
 			if usageCached != nil {
 				out["ok"] = true
 				out["user"] = usageCached.User
@@ -120,6 +126,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 		}
 		usageCached, usageAt = res, time.Now()
 		usagePublished.Store(&usagePub{res: res, at: usageAt, token: tok})
+		usagestore.Record("copilot", identityOf(tok), usageAt, res)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
@@ -132,6 +139,21 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 		"quotas":     usageCached.Quotas,
 		"ageSec":     int(time.Since(usageAt).Seconds()),
 	})
+}
+
+// identityOf names the account a gh token belongs to, for limitepoch and usagestore. The token
+// itself only ever reaches them as an HMAC input.
+func identityOf(tok string) string { return "token:" + tok }
+
+// storedUsage is the reading usagestore kept for the account tok signs in to, nil when there is
+// none.
+func storedUsage(tok string) (*usageResult, time.Time) {
+	var res usageResult
+	at, ok := usagestore.Load("copilot", identityOf(tok), &res)
+	if !ok {
+		return nil, time.Time{}
+	}
+	return &res, at
 }
 
 // internalUser mirrors the fields we read from copilot_internal/user.

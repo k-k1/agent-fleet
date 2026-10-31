@@ -66,6 +66,9 @@ func TestAdjustWindow(t *testing.T) {
 func TestHandleUsage(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	// A fresh HOME: usagestore lives under it, and an earlier test's capture kept there would
+	// be served as this one's (#3127).
+	t.Setenv("HOME", t.TempDir())
 
 	get := func() map[string]any {
 		rec := httptest.NewRecorder()
@@ -293,5 +296,36 @@ func TestHandleUsageMarksStaleWindow(t *testing.T) {
 	sd, _ := out["sevenDay"].(map[string]any)
 	if sd == nil || sd["stale"] == true || sd["pct"].(float64) != 65 {
 		t.Errorf("live window must pass through unflagged: %+v", out["sevenDay"])
+	}
+}
+
+// The capture file is the claude chip's own persistence; when it is gone (CLAUDE_CONFIG_DIR
+// moved, the file cleaned up) the copy kept in usagestore stands in (#3127).
+func TestHandleUsageFallsBackToTheStoredCapture(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	t.Setenv("HOME", t.TempDir())
+	writeCreds(t, dir, "tok-123")
+	// The store is keyed by the signed-in account; without one it is not used at all.
+	if err := os.WriteFile(claudeJSONPath(), []byte(`{"oauthAccount":{"accountUuid":"acct-1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(3 * time.Hour).Unix()
+	captureFromStatusLine([]byte(`{"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":` +
+		strconv.FormatInt(future, 10) + `}}}`))
+	if c, _ := currentCapture(); c == nil {
+		t.Fatal("no capture")
+	}
+	if err := os.Remove(usageCapturePath()); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	HandleUsage(rec, httptest.NewRequest(http.MethodGet, "/claude/usage", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if fh, _ := out["fiveHour"].(map[string]any); out["ok"] != true || fh == nil || fh["pct"].(float64) != 40 {
+		t.Fatalf("usage = %+v, want the stored 40%%", out)
 	}
 }

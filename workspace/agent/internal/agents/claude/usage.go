@@ -32,7 +32,7 @@ type usageWindow struct {
 // before the first capture (a fresh session that hasn't made an API call yet).
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	authed := oauthToken() != ""
-	cap, at := readCapturedUsage()
+	cap, at := currentCapture()
 
 	out := map[string]any{"ok": false, "authed": authed}
 	// Plan (subscription tier) + account for the chip's popover — the rate_limits capture

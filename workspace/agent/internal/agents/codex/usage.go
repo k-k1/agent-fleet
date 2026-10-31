@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/limitepoch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagewin"
 )
 
@@ -543,7 +544,44 @@ const observedFreshSkipSec = 10
 func readUsageWith(ctx context.Context) usage {
 	local := readUsage()
 	acct, ok := accountUsage(ctx)
-	return pickUsage(local, acct, ok)
+	return withStored(pickUsage(local, acct, ok))
+}
+
+// storedReading is what usagestore keeps for codex: the windows as recorded, never as
+// adjustWindow rolled them.
+type storedReading struct {
+	FiveHour *recordedWindow `json:"fiveHour,omitempty"`
+	SevenDay *recordedWindow `json:"sevenDay,omitempty"`
+	PlanType string          `json:"planType,omitempty"`
+}
+
+// withStored keeps a reading in usagestore, or — when none of the three sources has one, as
+// after the rollouts were cleaned out and the account view is unreachable — answers with the
+// one stored for the account signed in now.
+func withStored(u usage) usage {
+	id := accountIdentity()
+	if u.OK {
+		s := storedReading{PlanType: u.PlanType}
+		if u.FiveHour != nil && u.FiveHour.raw.ResetsAt > 0 {
+			s.FiveHour = &u.FiveHour.raw
+		}
+		if u.SevenDay != nil && u.SevenDay.raw.ResetsAt > 0 {
+			s.SevenDay = &u.SevenDay.raw
+		}
+		usagestore.Record("codex", id, u.ObservedAt, s)
+		return u
+	}
+	var s storedReading
+	at, ok := usagestore.Load("codex", id, &s)
+	if !ok {
+		return u
+	}
+	r, ok := classifyWindows(s.FiveHour, s.SevenDay, s.PlanType)
+	if !ok {
+		return u
+	}
+	r.ObservedAt, r.AgeSec = at, int(time.Since(at).Seconds())
+	return r
 }
 
 // pickUsage is the choice itself, kept apart from the fetching so it can be tested without a

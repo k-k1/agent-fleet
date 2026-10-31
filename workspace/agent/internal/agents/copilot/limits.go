@@ -39,9 +39,16 @@ func LimitReading() limitobs.Reading {
 	tok := *tp
 	r := limitobs.Reading{}
 	if tok != "" {
-		r.Identity = "token:" + tok
+		r.Identity = identityOf(tok)
 	}
 	p := usagePublished.Load()
+	if tok != "" && p == nil {
+		// Nothing fetched since the Agent started: the reading stored before the restart, if it
+		// is this account's.
+		if res, at := storedUsage(tok); res != nil {
+			p = &usagePub{res: res, at: at, token: tok}
+		}
+	}
 	if tok == "" || p == nil || p.token != tok {
 		return r
 	}

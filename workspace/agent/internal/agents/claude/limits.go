@@ -15,7 +15,7 @@ import (
 // the snapshot must not wait on anything.
 func LimitReading() limitobs.Reading {
 	r := limitobs.Reading{Identity: accountID()}
-	c, _ := readCapturedUsage()
+	c, _ := currentCapture()
 	if c == nil {
 		return r
 	}

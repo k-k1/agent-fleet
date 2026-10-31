@@ -37,6 +37,7 @@ vi.mock("../../lib/intl.ts", async (importOriginal) => {
 import { AgyUsageChip, CopilotUsageChip, RemainingUsageChip } from "./RemainingUsageChip.tsx";
 import { AGY_USAGE, COPILOT_USAGE, type RemainingSource } from "./usageSources.ts";
 import { UsageChipFold } from "./usageFold.tsx";
+import { USAGE_ALL } from "./usageAll.ts";
 import { useSessionsStore } from "../../features/sessions/store.ts";
 import { useUiOpen } from "../../core/store/uiOpen.ts";
 import { setSettings } from "../../lib/settings.ts";
@@ -204,7 +205,15 @@ function unpack(g: Golden, id: string): Step[] {
 // One run: mount the chip, then walk it through the interactions, recording after each.
 async function trace(src: RemainingSource, reply: Reply, impl: Impl, mode: "bare" | "group" | "folded"): Promise<Step[]> {
   api.mockReset();
-  api.mockImplementation((p: string) => answer(reply, p.includes("refresh=1")));
+  // The chips read through the shared GET /usage/all (#3127). The Agent answers that with the
+  // kind's own payload under kinds.<kind>, and leaves out a kind whose read failed — which the
+  // chip treats exactly as the old failed read: no change.
+  api.mockImplementation((p: string) => {
+    if (!p.startsWith(USAGE_ALL)) return answer(reply, p.includes("refresh=1"));
+    const refreshed = p.includes("refresh=1") && p.includes(`kind=${src.kind}`);
+    if (reply.kind === "reject") return Promise.resolve({ kinds: {} });
+    return answer(reply, refreshed).then((body: unknown) => ({ kinds: body == null ? {} : { [src.kind]: body } }));
+  });
   setSettings({ usageChipsPinned: [], usageChipsFolded: mode === "folded" ? [src.kind] : [] });
   const layouts: string[] = [];
   host = document.createElement("div");
@@ -217,7 +226,12 @@ async function trace(src: RemainingSource, reply: Reply, impl: Impl, mode: "bare
       step,
       html: host!.innerHTML,
       layout: layouts.at(-1) ?? null,
-      calls: api.mock.calls.map((c) => String(c[0])).filter((c) => c.startsWith(src.endpoint)),
+      // A /usage/all read stands for the chip's own endpoint, so the golden still says when the
+      // chip read and when it forced a refresh.
+      calls: api.mock.calls
+        .map((c) => String(c[0]))
+        .map((c) => (c.startsWith(USAGE_ALL) ? src.endpoint + (c.includes(`kind=${src.kind}`) ? "?refresh=1" : "") : c))
+        .filter((c) => c.startsWith(src.endpoint)),
     });
   const chipBtn = () => host!.querySelector<HTMLButtonElement>(".ws-usage-btn");
   const click = async (el: Element | null | undefined) => {
