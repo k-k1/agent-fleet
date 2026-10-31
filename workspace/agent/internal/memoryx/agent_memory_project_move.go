@@ -158,7 +158,15 @@ func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 		live     map[string]*agentMemProject
 		complete bool
 	}
-	st := &agentMemLiveState{live: map[string]*agentMemProject{}, stop: make(chan struct{})}
+	// The limits are read here, on the caller's goroutine, and travel with st: a search abandoned
+	// by the timeout below keeps running and must not read the package variables afterwards.
+	st := &agentMemLiveState{
+		live:   map[string]*agentMemProject{},
+		stop:   make(chan struct{}),
+		budget: agentMemLiveBudget,
+		soft:   agentMemLiveSoft,
+	}
+	timeout := agentMemLiveTimeout
 	// Closing stop on the way out makes an abandoned search stop spawning git processes.
 	defer close(st.stop)
 	done := make(chan result, 1)
@@ -169,7 +177,7 @@ func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 	select {
 	case r := <-done:
 		return r.live, r.complete
-	case <-time.After(agentMemLiveTimeout):
+	case <-time.After(timeout):
 		return st.snapshot(), false
 	}
 }
@@ -180,6 +188,10 @@ type agentMemLiveState struct {
 	live map[string]*agentMemProject
 	// stop is closed when the caller no longer waits; nil (never ready) for a search run directly.
 	stop chan struct{}
+	// budget and soft are agentMemLiveBudget and agentMemLiveSoft as they were when the search
+	// began; read-only afterwards.
+	budget int
+	soft   time.Duration
 }
 
 func (s *agentMemLiveState) stopped() bool {
@@ -415,7 +427,7 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 		}
 		cur := queue[0]
 		queue = queue[1:]
-		if reads++; reads > agentMemLiveBudget {
+		if reads++; reads > st.budget {
 			complete = false
 			break
 		}
@@ -427,11 +439,11 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 		deferred = append(deferred, later...)
 	}
 	for len(deferred) > 0 {
-		if time.Since(start) > agentMemLiveSoft {
+		if time.Since(start) > st.soft {
 			complete = false
 			break
 		}
-		if reads++; reads > agentMemLiveBudget {
+		if reads++; reads > st.budget {
 			complete = false
 			break
 		}
