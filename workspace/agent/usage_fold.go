@@ -20,6 +20,8 @@ package main
 // deletion.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -27,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -71,6 +74,42 @@ type usageFoldMark struct {
 
 type usageFoldState struct {
 	Sessions map[string]usageFoldMark `json:"sessions"`
+	// Subagents is one watermark per subagent / Workflow agent transcript, keyed by
+	// subagentMarkKey. Each agent is its own row sequence (its own Idx numbering and its own
+	// dedup entry), so folding them never renumbers a turn of the session's main sequence.
+	Subagents map[string]usageAgentMark `json:"subagents,omitempty"`
+}
+
+// usageAgentMark is the watermark of one subagent transcript. It is identity-based, not a
+// count: the copies of an agent are merged by timestamp, so a later copy can put an older turn
+// in front, or fill in events of a turn already recorded, and the newest turn grows after it
+// was recorded. A turn is told apart by the uuid of its first or last event, and what was
+// written for it is kept, so every fold writes exactly the difference.
+type usageAgentMark struct {
+	// Seq numbers the rows written for this agent: the Idx of the next row is Seq+1. It is the
+	// ledger's own replay guard (usage_dedup.go), unrelated to the transcript's order.
+	Seq int `json:"seq"`
+	// Turns is every turn recorded so far, with the totals written for it.
+	Turns []usageAgentTurn `json:"turns,omitempty"`
+	// Pending is the batch being written: it is saved before the append, so a crash or a failed
+	// save in between replays the identical rows (same Idx, same time), which the ledger's
+	// dedup drops when they had already landed. Recomputing the difference instead would pick
+	// up growth in between and write a different row under the same Idx.
+	Pending []usagex.Record `json:"pending,omitempty"`
+	// Stamp is the transcript's size and mtime at the last fold: while it is unchanged the file
+	// is not read again.
+	Stamp string `json:"stamp,omitempty"`
+}
+
+// usageAgentTurn is one recorded turn: hashes (usageEventHash) of every event id it has held
+// and the totals written for it so far.
+type usageAgentTurn struct {
+	IDs         []string `json:"ids"`
+	In          int      `json:"in,omitempty"`
+	Out         int      `json:"out,omitempty"`
+	CacheRead   int      `json:"cr,omitempty"`
+	CacheCreate int      `json:"cc,omitempty"`
+	CostUSD     float64  `json:"cost,omitempty"`
 }
 
 // There are three separate locks. Merging them would undo the point of making
@@ -96,13 +135,16 @@ var (
 func usageStatePath() string { return filepath.Join(usagex.Dir(), "state.json") }
 
 func readUsageFoldState() usageFoldState {
-	st := usageFoldState{Sessions: map[string]usageFoldMark{}}
+	st := usageFoldState{Sessions: map[string]usageFoldMark{}, Subagents: map[string]usageAgentMark{}}
 	b, err := os.ReadFile(usageStatePath())
 	if err != nil {
 		return st
 	}
 	if json.Unmarshal(b, &st) != nil || st.Sessions == nil {
 		st.Sessions = map[string]usageFoldMark{}
+	}
+	if st.Subagents == nil {
+		st.Subagents = map[string]usageAgentMark{}
 	}
 	return st
 }
@@ -138,6 +180,9 @@ type usageTurnRow struct {
 	// input tokens it is additive: each row is one LLM call's own cost, never a re-report.
 	CostUSD float64
 	LastIdx int // transcript line number of the last event (diagnostic)
+	// IDs is the uuid of every event of the turn. A copy found later can add events anywhere
+	// in it, so a turn is recognised by any one of them.
+	IDs []string
 	// Orphan marks a cost-only row: the reported cost of CostOnly turns that no logical turn on
 	// their side took in before the next boundary. It is outside the logical turn sequence (Idx
 	// stays 0, so the watermark's Groups never moves) and is identified by OrphanKey, the
@@ -249,6 +294,9 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			cur.Model = t.Model
 		}
 		cur.LastIdx = t.Idx
+		if t.AnchorID != "" {
+			cur.IDs = append(cur.IDs, t.AnchorID)
+		}
 	}
 	if includeTrailing {
 		fold()
@@ -312,12 +360,166 @@ func usageMeasuredForKind(kind string) string {
 // foldSessionUsageLocked writes one session's unfolded portion to the ledger and returns
 // the number of logical turns folded. includeTrailing=true only when the transcript is
 // known not to grow any further (deletion, archiving). Requires usageFoldMu.
-func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) (int, error) {
+func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) (int, bool, error) {
 	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
-		return 0, nil // shell/ssm have no transcript
+		return 0, false, nil // shell/ssm have no transcript
 	}
-	return foldSessionUsageWithTurns(m, st, sessionx.UsageTurns(m), includeTrailing)
+	n, err := foldSessionUsageWithTurns(m, st, sessionx.UsageTurns(m), includeTrailing)
+	if err != nil {
+		return n, false, err
+	}
+	sub, subDirty, err := foldSubagentUsage(m, st, sessionx.SubagentUsageSources(m))
+	return n + sub, n > 0 || subDirty, err
 }
+
+// subagentMarkKey names one subagent transcript's watermark. The session name is in it, so a
+// recreated name cannot meet its predecessor's; the id is the agent's own (its path below the
+// subagents directory).
+func subagentMarkKey(m session.Meta, id string) string { return m.Name + "\x00" + id }
+
+// foldSubagentUsage folds each subagent / Workflow agent transcript on its own, after the
+// session's own sequence. Folding them into that sequence would renumber turns already in the
+// ledger, so each agent has its own watermark (usageAgentMark) and its own Idx numbering, and
+// its rows carry the agent id so the aggregation's dedup keeps one entry per agent, not per row.
+// Rows stay Ref = session name and Sidechain, so the per-session figure is the one the budget
+// prices (spendOfRows).
+//
+// A turn is recorded by identity, not by position, and with the totals written for it, so each
+// fold writes exactly the difference. Nothing in an agent's file says it is finished, so the
+// newest turn is folded as it stands and its growth is added later; the copies of an agent are
+// merged by timestamp, so a copy found later can put an older turn first, or fill events into a
+// turn already recorded; positions shift, event uuids do not. A turn is matched by any of its
+// event ids, so events added anywhere in it do not make it a new turn. The batch is saved
+// as Pending before it is appended (see usageAgentMark). An agent with no mark folds from its
+// first turn, which is exact for a session that predates this change; an orphan (cost-only) row
+// never occurs in a claude subagent file and is not folded here. dirty reports a change to st
+// even when no row was written.
+func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.SubagentSource) (total int, dirty bool, err error) {
+	for _, src := range srcs {
+		key := subagentMarkKey(m, src.ID)
+		mark, seen := st.Subagents[key]
+		if len(mark.Pending) > 0 {
+			// An earlier pass saved this batch and did not finish it.
+			if err := usagex.AppendRows(mark.Pending); err != nil {
+				return total, dirty, err
+			}
+			mark.Pending = nil
+			st.Subagents[key] = mark
+			dirty = true
+		} else if seen && mark.Stamp == src.Stamp {
+			continue // untouched since the last fold
+		}
+		turns, rerr := src.Turns()
+		if rerr != nil {
+			// A copy could not be read: what came back may lack the newest turns, and the next
+			// pass reads it again. Nothing is written for this agent now.
+			log.Printf("usage: fold %s subagent: %v", m.Name, rerr)
+			continue
+		}
+		next := usageAgentMark{Seq: mark.Seq, Turns: slices.Clone(mark.Turns), Stamp: src.Stamp}
+		at := map[string]int{} // event id hash -> index in next.Turns
+		for i, t := range next.Turns {
+			for _, h := range t.IDs {
+				at[h] = i
+			}
+		}
+		agent := usageAgentID(src.ID)
+		var out []usagex.Record
+		for _, r := range foldTurnRows(turns, true) {
+			if r.Orphan {
+				continue
+			}
+			ids := rowEventIDs(r)
+			i, known := -1, false
+			for _, h := range ids {
+				if j, ok := at[h]; ok {
+					i, known = j, true
+					break
+				}
+			}
+			var was usageAgentTurn
+			if known {
+				was = next.Turns[i]
+			}
+			delta := r
+			delta.Tokens.In -= was.In
+			delta.Tokens.Out -= was.Out
+			delta.Tokens.CacheRead -= was.CacheRead
+			delta.Tokens.CacheCreate -= was.CacheCreate
+			delta.CostUSD -= was.CostUSD
+			if delta.Tokens != (usagex.Tokens{}) || delta.CostUSD != 0 {
+				next.Seq++
+				delta.Idx = next.Seq
+				out = append(out, usageRecordOf(m, delta, agent))
+			}
+			now := usageAgentTurn{IDs: ids, In: r.Tokens.In, Out: r.Tokens.Out,
+				CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate, CostUSD: r.CostUSD}
+			if !known {
+				i = len(next.Turns)
+				next.Turns = append(next.Turns, now)
+			} else {
+				for _, h := range was.IDs { // keep what the turn has held
+					if !slices.Contains(now.IDs, h) {
+						now.IDs = append(now.IDs, h)
+					}
+				}
+				next.Turns[i] = now
+			}
+			for _, h := range now.IDs {
+				at[h] = i
+			}
+		}
+		if len(out) == 0 {
+			st.Subagents[key] = next
+			dirty = true
+			continue
+		}
+		// Save the batch before it is appended, then append, then drop it from the mark.
+		saved := next
+		saved.Pending = out
+		st.Subagents[key] = saved
+		if err := writeUsageFoldState(*st); err != nil {
+			st.Subagents[key] = mark
+			return total, dirty, err
+		}
+		if err := usagex.AppendRows(out); err != nil {
+			return total, true, err // Pending stays: the next pass replays it
+		}
+		st.Subagents[key] = next
+		total += len(out)
+		dirty = true
+	}
+	return total, dirty, nil
+}
+
+// rowEventIDs is the short hashes of every event id of a folded turn; a transcript without
+// uuids (not claude's own files) falls back to a stand-in from what the row holds.
+func rowEventIDs(r usageTurnRow) []string {
+	ids := r.IDs
+	if len(ids) == 0 {
+		ids = []string{fmt.Sprintf("ts:%s#%d", r.TS, r.LastIdx)}
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		h := usageEventHash(id)
+		if !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// usageEventHash is a recorded event id: 128 bits of its SHA-256. The agent's whole set of
+// event hashes is one lookup table, so a collision would read another turn as a recorded one and
+// subtract its totals; 32 bits collide near 1% at 10,000 events (measured with two real uuids).
+func usageEventHash(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:16])
+}
+
+// usageAgentID is the id a ledger record carries for a subagent transcript: a hash, so the
+// path stays out of the ledger and the indefinite dedup region.
+func usageAgentID(id string) string { return usageRefKey("agent\x00" + id) }
 
 // foldSessionUsageWithTurns is the body with the transcript load split off, so idempotency
 // can be verified without a real transcript. The returned int is the number of rows
@@ -345,33 +547,9 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 		log.Printf("usage: fold %s: transcript flipped from %d to %d logical turns (taking the delta by timestamp)",
 			m.Name, mark.Groups, groups)
 	}
-	origin, originConv := session.OriginOf(m), m.OriginConv
-	measured := usageMeasuredForKind(m.Kind)
 	out := make([]usagex.Record, 0, len(fresh))
 	for _, r := range fresh {
-		rec := usagex.Record{
-			TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
-			Origin: origin, OriginConv: originConv, Kind: m.Kind,
-			Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx,
-			Key: orphanLedgerKey(m, r),
-			In:  r.Tokens.In, Out: r.Tokens.Out,
-			CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate,
-			Spend:    usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
-			CostUSD:  r.CostUSD,
-			OK:       true,
-			Measured: measured,
-		}
-		if rec.TS == "" {
-			rec.TS = time.Now().UTC().Format(time.RFC3339)
-		}
-		if r.Model != "" {
-			// The model the transcript reported is the measured value. It is a raw id
-			// including the version, so it is kept in model_raw as well.
-			rec.Model, rec.ModelRaw, rec.ModelSrc = r.Model, r.Model, usagex.ModelReported
-		} else {
-			rec.Model, rec.ModelSrc = usagex.ModelFallback(m.Model)
-		}
-		out = append(out, rec)
+		out = append(out, usageRecordOf(m, r, ""))
 	}
 	// If the rows could not be written, do not advance the watermark. The same turns come
 	// back as a delta on the next pass, so what was missed is always recovered once the
@@ -421,6 +599,35 @@ func rebaseCappedMark(m session.Meta, mark usageFoldMark, rows []usageTurnRow) u
 	}
 	mark.Groups = max(mark.Groups, behind)
 	return mark
+}
+
+// usageRecordOf is the ledger record of one folded row. agent is "" for the session's own
+// transcript, else the id of the subagent transcript it came from.
+func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
+	origin, originConv := session.OriginOf(m), m.OriginConv
+	rec := usagex.Record{
+		TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
+		Origin: origin, OriginConv: originConv, Kind: m.Kind,
+		Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx, Agent: agent,
+		Key: orphanLedgerKey(m, r),
+		In:  r.Tokens.In, Out: r.Tokens.Out,
+		CacheRead: r.Tokens.CacheRead, CacheCreate: r.Tokens.CacheCreate,
+		Spend:    usagex.Spend(r.Tokens.In, r.Tokens.CacheCreate, r.Tokens.Out),
+		CostUSD:  r.CostUSD,
+		OK:       true,
+		Measured: usageMeasuredForKind(m.Kind),
+	}
+	if rec.TS == "" {
+		rec.TS = time.Now().UTC().Format(time.RFC3339)
+	}
+	if r.Model != "" {
+		// The model the transcript reported is the measured value. It is a raw id
+		// including the version, so it is kept in model_raw as well.
+		rec.Model, rec.ModelRaw, rec.ModelSrc = r.Model, r.Model, usagex.ModelReported
+	} else {
+		rec.Model, rec.ModelSrc = usagex.ModelFallback(m.Model)
+	}
+	return rec
 }
 
 // orphanLedgerKey is a cost-only row's ledger Key ("" for a logical turn). The session name is
@@ -501,16 +708,16 @@ func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
 	st := readUsageFoldState()
-	n, err := foldSessionUsageLocked(m, &st, includeTrailing)
-	if err != nil || n == 0 {
-		return 0, err // n==0 leaves st untouched, so there is nothing to rewrite
+	n, dirty, err := foldSessionUsageLocked(m, &st, includeTrailing)
+	if !dirty {
+		return 0, err // st untouched, so there is nothing to rewrite
 	}
-	if err := writeUsageFoldState(st); err != nil {
+	if werr := writeUsageFoldState(st); werr != nil {
 		// The rows are already on disk. Silently reporting success here means nobody
 		// notices when the next pass appends the same turns again.
-		return n, err
+		return n, werr
 	}
-	return n, nil
+	return n, err // a subagent failure after progress: what was folded is recorded
 }
 
 // foldAllSessionUsage folds every session's delta. The first run starts from watermark 0,
@@ -599,12 +806,17 @@ func finalizeSessionUsage(m session.Meta) {
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
 	st := readUsageFoldState()
-	if _, err := foldSessionUsageLocked(m, &st, true); err != nil {
+	if _, _, err := foldSessionUsageLocked(m, &st, true); err != nil {
 		log.Printf("usage: finalize %s: %v", m.Name, err)
 	}
 	// The ledger has the ref baked in already, so a deleted session's watermark is not
 	// kept: keeping it grows state.json monotonically with sessions that no longer exist.
 	delete(st.Sessions, m.Name)
+	for k := range st.Subagents {
+		if strings.HasPrefix(k, m.Name+"\x00") {
+			delete(st.Subagents, k)
+		}
+	}
 	if err := writeUsageFoldState(st); err != nil {
 		log.Printf("usage: finalize %s: watermark: %v", m.Name, err)
 	}

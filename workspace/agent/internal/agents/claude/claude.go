@@ -276,6 +276,14 @@ func (agentImpl) SubagentLogs(m session.Meta) [][]string {
 	return SubagentUsageLogs(session.UUID(m.Dir, m.Name))
 }
 
+// SubagentID implements agents.SubagentUsageReader.
+func (agentImpl) SubagentID(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return subagentRel(paths[0])
+}
+
 // SubagentTurns implements agents.SubagentUsageReader.
 func (agentImpl) SubagentTurns(paths []string) ([]transcript.Turn, error) {
 	return SubagentTurns(paths)

@@ -106,6 +106,11 @@ type Record struct {
 	// in between re-appends — so the aggregation reads (ref, Idx) to drop duplicates
 	// (usage_dedup.go). It is not a dimension, so it stays out of usageKey.
 	Idx int `json:"idx,omitempty"`
+	// Agent names the subagent / Workflow transcript a Sidechain row came from (a hash of its
+	// path below the subagents directory). Idx numbers each agent's turns on their own, so
+	// (Ref, Agent, Idx) is the row's identity and the dedup keeps one entry per agent. Empty
+	// for the session's own transcript.
+	Agent string `json:"agent,omitempty"`
 	// Key is the stable accounting identity of a row outside the (ref, Idx) sequence — a
 	// cost-only session row, keyed by the agent's own message id. The aggregation counts one row
 	// per Key, so a re-append after a crash before the watermark write is dropped like a

@@ -457,6 +457,9 @@ type SubagentUsageReader interface {
 	// SubagentLogs lists the session's subagent transcripts grouped by agent: one group per
 	// agent, holding every copy of its transcript found on disk.
 	SubagentLogs(m session.Meta) [][]string
+	// SubagentID names one group from SubagentLogs by what stays the same when a copy is added
+	// or the project directory changes (claude: its path below the subagents directory).
+	SubagentID(paths []string) string
 	// SubagentTurns parses one group in full, the copies merged, every turn marked Sidechain.
 	// An error means a file could not be read, never that the agent spent nothing; turns that
 	// come back with one are what the readable copies hold, to use but not to cache.

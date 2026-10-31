@@ -7,8 +7,12 @@ package sessionx
 // status is a cheap polling primitive, while this reads and folds whole transcripts.
 
 import (
+	"fmt"
 	"math"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -190,6 +194,47 @@ func SubagentTurns(m session.Meta, paths []string) ([]transcript.Turn, error) {
 		return sr.SubagentTurns(paths)
 	}
 	return nil, nil
+}
+
+// SubagentSource is one subagent transcript as the ledger fold reads it: a stable id, a stamp
+// that changes whenever a copy does, and a loader, so an unchanged file is never parsed.
+type SubagentSource struct {
+	ID      string
+	Stamp   string // size and mtime of every copy
+	ModTime time.Time
+	Turns   func() ([]transcript.Turn, error)
+}
+
+// SubagentUsageSources lists the session's subagent transcripts for the ledger fold, from the
+// same discovery SubagentUsageTurns uses. A group whose files are gone is left out.
+func SubagentUsageSources(m session.Meta) []SubagentSource {
+	sr, ok := AgentOf(m.Kind).(agents.SubagentUsageReader)
+	if !ok {
+		return nil
+	}
+	var out []SubagentSource
+	for _, paths := range sr.SubagentLogs(m) {
+		var live []string
+		var stamp strings.Builder
+		var mod time.Time
+		for _, p := range paths {
+			if fi, err := os.Stat(p); err == nil {
+				live = append(live, p)
+				fmt.Fprintf(&stamp, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
+				if fi.ModTime().After(mod) {
+					mod = fi.ModTime()
+				}
+			}
+		}
+		if len(live) == 0 {
+			continue
+		}
+		out = append(out, SubagentSource{
+			ID: sr.SubagentID(paths), Stamp: stamp.String(), ModTime: mod,
+			Turns: func() ([]transcript.Turn, error) { return sr.SubagentTurns(live) },
+		})
+	}
+	return out
 }
 
 // SubagentUsageTurns is every subagent transcript of the session, one slice per agent. A file

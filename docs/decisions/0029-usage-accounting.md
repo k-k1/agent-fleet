@@ -358,3 +358,29 @@ turn, which the uncapped numbering shifts. `rebaseCappedMark` renumbers such a m
 transcript line of its last folded turn (`LastIdx`), and marks written from now on carry
 `uncapped`. The hidden head is not folded afterwards: its `Idx` values would collide with rows
 already in the ledger.
+
+## Addendum (2026-10-31) — the ledger folds subagent and Workflow-agent transcripts
+
+Claude writes subagent and Workflow-agent transcripts beside the session's own, and the ledger
+took in only the main one (#3054), so the usage view undercounted a session that delegated
+while the budget (which prices them since #3051) did not. Merging their turns into the
+session's sequence would have renumbered turns already folded, so each agent transcript is its
+own row sequence instead (`foldSubagentUsage`): a watermark per agent in `state.json`
+(`subagents`, keyed by session name and the agent's path below `subagents/`), its own `Idx`
+numbering, and an `agent` field on the record (a hash of that path). The reader's dedup keys
+such a row by `(ref, agent)`, one entry per agent. `Ref` stays the session name and rows stay
+`sidechain`. An agent with no watermark is folded from its first turn, which is exact for a
+session that predates this change; the session's own watermark is not touched.
+
+The agent watermark is by turn identity, not position, and keeps the totals written for each
+turn, so every fold writes exactly the difference. Nothing in an agent's file says it is
+finished, so its newest turn is folded as it stands and its growth is added later as a delta
+row. The copies of an agent are merged by timestamp, so a copy found later can put an older
+turn first or fill events into a recorded turn; a turn is recognised by any of its event uuids,
+so events added anywhere in it, at both ends at once included, do not make a second turn.
+The batch about to be
+appended is saved in the mark first (`pending`) and replayed identically if the pass did not
+finish: the dedup drops it when it had landed, and a recomputed difference would not match it.
+A delta row adds a row to the turn count of the usage view; its token and cost sums are exact.
+The mark holds a 128-bit hash per event of each agent in `state.json` (a 32-bit one collides near
+1% at 10,000 events, and a collision reads another turn as recorded).
