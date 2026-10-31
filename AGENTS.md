@@ -122,8 +122,12 @@ container is busy.
 
 ```
 (cd control-plane   && go test ./...)      # add -p 2 when memory is tight
-(cd workspace/agent && go test ./...)
+(cd workspace/agent && go test -timeout 20m ./...)
 ```
+
+`workspace/agent/internal/memoryx` alone takes about 5 minutes (real git processes and
+regexp scans, run serially because the tests use `t.Setenv`) and crosses `go test`'s
+default 10-minute timeout on a busy host, so pass `-timeout 20m` for the module.
 
 Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; in a Workspace,
 `af-db url` provides one — see `docs/build/10-development.md` §10.4. No Docker in the workspace.

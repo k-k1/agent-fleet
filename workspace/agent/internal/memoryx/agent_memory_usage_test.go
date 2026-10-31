@@ -210,8 +210,8 @@ func TestAgentMemoryPinsOverBudgetStayWithinIt(t *testing.T) {
 	_, _, _ = agentMemTestEnv(t)
 	c := agentMemCallerT(t, "claude-main")
 	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
-	long := strings.Repeat("x", 70)
-	const n = 60
+	long := strings.Repeat("x", 300)
+	const n = 24
 	for i := 0; i < n; i++ {
 		name := "pin-" + strings.Repeat("0", 3-len(itoa(i))) + itoa(i)
 		if _, err := agentMemSave(c, agentMemSaveReq{Name: name, Description: long, Type: "project", Body: "b"}, now); err != nil {
