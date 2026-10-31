@@ -581,9 +581,9 @@ administrator's to set.
   the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
 - **Leftover files**, meaning things nothing reads again: throwaway profiles that killed headless Chromium
   runs left under `~/.config/chromium-headless` and `~/.cache/chromium-headless`, `~/.af-work` folders
-  whose session (in the trash included) and working copy are gone, Node.js patches a newer patch of the
+  whose session (in the trash included) and working copy are gone or whose session was archived 7 or more days ago, Node.js patches a newer patch of the
   same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
-  them each time it starts; this section is for a workspace that runs for weeks without a restart.
+  them each time it starts and once a day after that; this section is for a workspace that runs for weeks without a restart.
   **"Measure"** counts what would go now, and **"Delete"** removes one kind right away, without a
   confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
   process or changed within the last hour is kept. The Agent log names every folder it removes.
@@ -591,7 +591,9 @@ administrator's to set.
   removes only the session folders it created itself (they carry a hidden `.af-session-workdir` marker).
   A folder you made there by hand, or one created before the marker existed, is never removed at
   startup; it is counted here and goes only when you press **"Delete"**. Keep anything you care about
-  elsewhere, for example under `~/repos` or a folder of your own in your home directory.
+  elsewhere, for example under `~/repos` or a folder of your own in your home directory. An archived
+  session's folder is removed 7 days after you archive it (sessions that were archived before this existed
+  get their 7 days from the first pass that sees them); a locked session's folder stays.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchains

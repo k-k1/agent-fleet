@@ -244,7 +244,7 @@ export const sessions = {
   "sess.tidy_orphans_title": "その他のセッションを整理",
   "sess.tidy_orphans_body": "作業コピーのないセッションを整理します（{parts}）。",
   "sess.tidy_orphans_alive": "実行中 {count} 件を含みます。",
-  "sess.tidy_orphans_restore": "アーカイブ分は会話を保持し、あとで<0>復帰できます</0>。",
+  "sess.tidy_orphans_restore": "アーカイブ分は会話を保持し、あとで<0>復帰できます</0>。作業用フォルダ（~/.af-work の下）はアーカイブの 7 日後に削除されます。",
   "sess.tidy_orphans_trash": "shell/ssm はごみ箱へ移り、掃除のごみ箱から戻せます。",
   "sess.stop_title": "セッションを停止",
   "sess.stop_body": "「{name}」を停止します。会話は保持され、あとで再開できます。",

@@ -220,7 +220,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 				if cur.Locked || cur.Archived {
 					return false
 				}
-				cur.Archived = true
+				markArchived(cur)
 				return true
 			})
 			if wrote {
@@ -1299,6 +1299,22 @@ func stampHalted(m session.Meta) session.Meta {
 	return m
 }
 
+// markArchived puts m on the shelf. A row that is already archived keeps its date: archiving
+// twice must not push back the removal of its ~/.af-work folder.
+func markArchived(m *session.Meta) {
+	if !m.Archived || m.ArchivedAt == "" {
+		m.ArchivedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	m.Archived = true
+}
+
+// clearArchived takes m off the shelf; the date goes with it so a later archive starts a new
+// week.
+func clearArchived(m *session.Meta) {
+	m.Archived = false
+	m.ArchivedAt = ""
+}
+
 // HandleArchiveSession hides a session from the active list but KEEPS its meta (and
 // jsonl), so it can be restored later. Kills the live tmux session if any. This is
 // the non-destructive counterpart to delete (which moves the session to the trash).
@@ -1351,7 +1367,7 @@ func ArchiveSession(m session.Meta) {
 	// ListMetas), and writing it back would roll back a lock set meanwhile — or bring back a
 	// session deleted meanwhile.
 	if _, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
-		cur.Archived = true
+		markArchived(cur)
 		// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
 		// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
 		// session again at the end of a turn nobody armed.
@@ -1389,7 +1405,7 @@ func RestoreSession(name string) (session.Meta, bool) {
 	// Under the meta lock, on the meta as it is now: a lock set, or a delete, since the read
 	// above must not be rolled back (ADR 0101).
 	m, ok := UpdateSessionMeta(name, func(m *session.Meta) bool {
-		m.Archived = false
+		clearArchived(m)
 		m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
 		return true
 	})
@@ -1473,7 +1489,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// roll back a lock set meanwhile (issue #950). Gone meanwhile = deleted, and a recreate of a
 	// deleted session would bring its slot back, so stop here.
 	if _, ok := UpdateSessionMeta(m.Name, func(cur *session.Meta) bool {
-		cur.Archived = true
+		markArchived(cur)
 		return true
 	}); !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
@@ -1548,7 +1564,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 // failed launch took seconds, and a lock set meanwhile must survive (issue #950).
 func unarchiveAfterFailedRecreate(name string) {
 	if _, ok := UpdateSessionMeta(name, func(cur *session.Meta) bool {
-		cur.Archived = false
+		clearArchived(cur)
 		return true
 	}); ok {
 		fleetgraph.RecordArchived(name, false)

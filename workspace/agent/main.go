@@ -303,6 +303,7 @@ func serve() {
 	go pruneOldCLIVersionsAtBoot()
 	// Throwaway chromium profiles, orphaned ~/.af-work dirs, superseded node / kiro versions.
 	go pruneLeftoversAtBoot()
+	go pruneLeftoversDaily(leftoverInterval, nil) // nil stop: runs for the life of the Agent
 
 	mux := buildMux()
 

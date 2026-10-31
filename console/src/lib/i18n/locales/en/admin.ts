@@ -779,7 +779,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.stage1_run_title": "Tidy every stopped session (archived ones can be restored from the archive browser)",
   "clean.stage1_empty": "No stopped sessions to tidy.",
   "clean.stage1_confirm_title": "Tidy all stopped sessions",
-  "clean.stage1_confirm_body": "Will {parts}. Archived sessions can be restored from the archive browser (the shelf), and shell/ssm moved to the trash from the cleanup trash.",
+  "clean.stage1_confirm_body": "Will {parts}. Archived sessions can be restored from the archive browser (the shelf), and shell/ssm moved to the trash from the cleanup trash. An archived session's scratch folder (~/.af-work/<name>) is removed 7 days after archiving; the conversation stays.",
   "clean.stage2_title": "② Delete working copies & branches",
   "clean.stage2_run": "Delete all safe",
   "clean.stage2_run_title": "Delete only what is graded safe (merged & clean)",

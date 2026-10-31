@@ -29,7 +29,7 @@ working copies are removed only by "Delete the working copy" below or by cleanup
 **A session left stopped moves to the archive on its own after 7 days** (change the period, or turn it off, in [Settings → Agents](20-settings.md#agents); shortening it archives the sessions already past the new period on the next list refresh), so the everyday list
 does not fill up with work that is over. It is a move, not a deletion: the conversation is intact
 and you restore it from the archive list exactly as if you had archived it yourself. **Nothing
-leaves the archive on its own**: a session is only ever removed for good when someone deletes it
+leaves the archive on its own** (apart from the scratch folder, 7 days after archiving, see below): a session is only ever removed for good when someone deletes it
 from the cleanup modal, and even then it goes to the bin first. So, to keep something, archive it
 (or lock it, which also keeps the row in the everyday list); to be rid of it, delete it. Leaving
 it alone never destroys it.
@@ -99,7 +99,9 @@ readable, but it cannot resume until the folder is recreated; see below), and sh
 it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
-browser). "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
+browser). The conversation stays on the shelf, but the session's scratch folder (`~/.af-work/<session name>`,
+what agents use as `$AF_WORK_DIR`) is removed 7 days after archiving; restoring clears the date and the
+session gets a fresh folder when it launches. A locked session's folder is kept. "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
 
 You can also ask the Fleet Operator to do the same survey and tidy-up from chat
 ([11](11-many-sessions.md)).

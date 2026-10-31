@@ -565,6 +565,10 @@ type Meta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
+	// ArchivedAt is when the session went onto the shelf (RFC3339); "" while it is live and on
+	// a row archived before the field existed. The af-work prune stamps such a row the first
+	// time it sees it, and removes ~/.af-work/<name> once the stamp is a week old.
+	ArchivedAt string `json:"archivedAt,omitempty"`
 	// Locked pins the session against deletion: /stop (forgetting the meta), DELETE
 	// /sessions/{name}, the stopped-TTL auto prune and being taken down together with a
 	// deleted working copy are all refused while it is locked (archiving is reversible, so
