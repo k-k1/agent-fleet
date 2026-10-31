@@ -157,9 +157,7 @@ func TestSessionSpendCountsSubagentTranscripts(t *testing.T) {
 	if sp := sessionSpend(m); !spendNear(sp.USD, 22.50) {
 		t.Fatalf("spend with an unreadable agent = %v, want 22.50", sp.USD)
 	}
-	subagentRowsCache.Lock()
-	_, cached := subagentRowsCache.m[m.Name].agents[unreadable]
-	subagentRowsCache.Unlock()
+	_, cached := subagentRowsCache.Cached(m.Name, unreadable)
 	if cached {
 		t.Fatal("a failed read was cached; the agent would never be read again")
 	}
@@ -185,10 +183,8 @@ func TestSubagentRowsCacheDropsIdleSessions(t *testing.T) {
 	gone, live := meta("idle3051a"), meta("idle3051b")
 	subagentSpendRowsAt(gone, now)
 	subagentSpendRowsAt(live, now.Add(subagentRowsIdle+time.Minute))
-	subagentRowsCache.Lock()
-	_, kept := subagentRowsCache.m[gone.Name]
-	_, livePresent := subagentRowsCache.m[live.Name]
-	subagentRowsCache.Unlock()
+	kept, _ := subagentRowsCache.Cached(gone.Name, "")
+	livePresent, _ := subagentRowsCache.Cached(live.Name, "")
 	if kept || !livePresent {
 		t.Fatalf("idle session kept=%v, live session present=%v; want false, true", kept, livePresent)
 	}
@@ -218,9 +214,7 @@ func TestSessionSpendUsesReadableCopiesOfAnAgent(t *testing.T) {
 	if sp := sessionSpend(m); !spendNear(sp.USD, 5) {
 		t.Fatalf("spend = %v, want the readable copy's $5", sp.USD)
 	}
-	subagentRowsCache.Lock()
-	n := len(subagentRowsCache.m[m.Name].agents)
-	subagentRowsCache.Unlock()
+	n := subagentRowsCache.Len(m.Name)
 	if n != 0 {
 		t.Fatal("a partial read was cached as complete")
 	}

@@ -113,9 +113,9 @@ func TestAddSubagentUsage(t *testing.T) {
 		{Role: "assistant", Model: "claude-fable-5", InTok: 10, CacheCreate: 5, OutTok: 20},
 	})
 	ctx := *u.Context
-	addSubagentUsage(&u, [][]transcript.Turn{
-		{{Role: "assistant", Sidechain: true, InTok: 100, CacheRead: 7, OutTok: 1}},
-		{{Role: "assistant", Sidechain: true, InTok: 200, CacheCreate: 3, OutTok: 2}},
+	addSubagentCumulative(&u, []cumulativeUsage{
+		AggregateUsage([]transcript.Turn{{Role: "assistant", Sidechain: true, InTok: 100, CacheRead: 7, OutTok: 1}}).Cumulative,
+		AggregateUsage([]transcript.Turn{{Role: "assistant", Sidechain: true, InTok: 200, CacheCreate: 3, OutTok: 2}}).Cumulative,
 	})
 	want := cumulativeUsage{Turns: 2, InTok: 300, OutTok: 3, CacheRead: 7, CacheCreate: 3, Spend: 306}
 	if u.Subagents == nil || *u.Subagents != want {
@@ -129,7 +129,7 @@ func TestAddSubagentUsage(t *testing.T) {
 	}
 
 	none := AggregateUsage(nil)
-	addSubagentUsage(&none, nil)
+	addSubagentCumulative(&none, nil)
 	if none.Subagents != nil {
 		t.Fatalf("a session that delegated nothing must not report a subagents field: %+v", none.Subagents)
 	}

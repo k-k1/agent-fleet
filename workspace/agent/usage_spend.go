@@ -10,11 +10,7 @@ package main
 // read, and adding its rows to a transcript sum would count every turn twice.
 
 import (
-	"fmt"
-	"os"
 	"sort"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -27,32 +23,14 @@ func sessionSpend(m session.Meta) session.Spend {
 	return spendOfRows(m, foldTurnRows(sessionx.UsageTurns(m), true), subagentSpendRows(m))
 }
 
-// subagentRowsEntry is one agent's transcripts folded into rows, valid while every copy keeps
-// the size and mtime recorded in stamp.
-type subagentRowsEntry struct {
-	stamp string
-	rows  []usageTurnRow
-}
+// subagentRowsCache holds each session's subagent transcripts already folded into priced rows.
+// The budget sweep prices a capped session every spendCacheTTL: re-reading a Workflow run's
+// hundred-odd agents each time costs tens of megabytes per tick on network storage, while only
+// the agents still running ever change. The usage view keeps its own instance of the same
+// cache (sessionx; the same rules), so both read the same files by the same rules.
+var subagentRowsCache = sessionx.NewSubagentFolds[[]usageTurnRow](subagentRowsIdle)
 
-// subagentRowsCache holds each session's subagent transcripts already folded, keyed by session
-// name and then by agent (its copies' paths). A Workflow run leaves a hundred or more of them, and the budget sweep
-// prices a capped session every spendCacheTTL: re-reading them all each time costs tens of
-// megabytes per tick on network storage, while only the agents still running ever change.
-var subagentRowsCache = struct {
-	sync.Mutex
-	m map[string]subagentRowsCacheSession
-}{m: map[string]subagentRowsCacheSession{}}
-
-type subagentRowsCacheSession struct {
-	createdAt string // a recreated name is a new session; never serve its predecessor's rows
-	agents    map[string]subagentRowsEntry
-	used      time.Time
-}
-
-// subagentRowsIdle drops a session's folded rows once nobody has priced it for this long. A
-// stopped, archived or deleted session leaves the budget sweep and is never read again, and
-// without this its rows would stay until the Agent restarts. A session priced after that is
-// re-read in full once.
+// subagentRowsIdle drops a session's folded rows once nobody has priced it for this long.
 const subagentRowsIdle = 10 * time.Minute
 
 // subagentSpendRows folds each of the session's subagent transcripts on its own (an agent
@@ -63,69 +41,12 @@ func subagentSpendRows(m session.Meta) []usageTurnRow {
 }
 
 func subagentSpendRowsAt(m session.Meta, now time.Time) []usageTurnRow {
-	groups := sessionx.SubagentLogs(m)
-	subagentRowsCache.Lock()
-	prev := subagentRowsCache.m[m.Name]
-	subagentRowsCache.Unlock()
-	if prev.createdAt != m.CreatedAt {
-		prev.agents = nil
-	}
-	next := subagentRowsCacheSession{createdAt: m.CreatedAt, agents: make(map[string]subagentRowsEntry, len(groups)), used: now}
 	var rows []usageTurnRow
-	for _, paths := range groups {
-		// Stat before reading: a file that grows in between is read with more than the cached
-		// size says, so the next call sees a different stamp and reads it again.
-		var live []string
-		var stamp strings.Builder
-		for _, p := range paths {
-			if fi, err := os.Stat(p); err == nil {
-				live = append(live, p)
-				fmt.Fprintf(&stamp, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
-			}
-		}
-		if len(live) == 0 {
-			continue
-		}
-		key := strings.Join(paths, "\x00")
-		e, ok := prev.agents[key]
-		if !ok || e.stamp != stamp.String() {
-			turns, err := sessionx.SubagentTurns(m, live)
-			switch {
-			case err != nil && len(turns) == 0:
-				// Not cached, so the next call reads it again; until then the last good fold
-				// stands in, an undercount of only what was appended since.
-				if ok {
-					next.agents[key] = e
-					rows = append(rows, e.rows...)
-				}
-				continue
-			case err != nil:
-				// Some copies read: price what they hold now, but keep the last complete fold
-				// under its old stamp, so the next call reads every copy again and a later
-				// total failure still has it to fall back on.
-				if ok {
-					next.agents[key] = e
-				}
-				rows = append(rows, foldTurnRows(turns, true)...)
-				continue
-			}
-			e = subagentRowsEntry{stamp: stamp.String(), rows: foldTurnRows(turns, true)}
-		}
-		next.agents[key] = e
-		rows = append(rows, e.rows...)
+	for _, r := range subagentRowsCache.Fold(m, now, func(turns []transcript.Turn) []usageTurnRow {
+		return foldTurnRows(turns, true)
+	}) {
+		rows = append(rows, r...)
 	}
-	subagentRowsCache.Lock()
-	if len(next.agents) == 0 {
-		delete(subagentRowsCache.m, m.Name)
-	} else {
-		subagentRowsCache.m[m.Name] = next
-	}
-	for name, c := range subagentRowsCache.m {
-		if now.Sub(c.used) > subagentRowsIdle {
-			delete(subagentRowsCache.m, name)
-		}
-	}
-	subagentRowsCache.Unlock()
 	return rows
 }
 
