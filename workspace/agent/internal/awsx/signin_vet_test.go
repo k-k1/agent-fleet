@@ -665,3 +665,37 @@ func TestUnusableAtStartIsNotTakenAsCompatible(t *testing.T) {
 		t.Fatalf("control: the compatible case publishes: %v", err)
 	}
 }
+
+// D1 through the real route: the member's own sso-session for another portal, with its token,
+// appears after HandleLoginStart checked the request and before the attempt registers (while
+// the CLI is being found). The staged login must not replace the member's token.
+func TestPendingStartCannotTakeAnotherPortalAsCompatible(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	req, _, err := logins.FileCancel("a", "af-team", CacheState{}, LoginWaiter{Profile: "a", Target: teamTarget(sp).id()}, nil, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin, state := fakeLoginCLI(t, "af-team", sp, "landed")
+	os.WriteFile(filepath.Join(state, "approve"), nil, 0o600) // the CLI exits 0 as soon as it wrote
+	old := LoginAWSBin
+	LoginAWSBin = func() (string, error) {
+		ownTeamSession(t, s)
+		token(t, "af-team", "https://mine.awsapps.com/start", "us-east-1", "theirs")
+		return bin, nil
+	}
+	t.Cleanup(func() { LoginAWSBin = old })
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/aws-login/"+req.ID+"/start", nil)
+	r.SetPathValue("id", req.ID)
+	HandleLoginStart(rec, r)
+	if a := logins.Current("af-team"); a != nil {
+		waitExited(t, a)
+	}
+	if got, _ := os.ReadFile(ssoCachePath("af-team")); !strings.Contains(string(got), "theirs") {
+		t.Fatalf("start = %d; the member's token was replaced: %s", rec.Code, got)
+	}
+	if rec.Code == http.StatusOK {
+		t.Fatalf("a login started over another portal's own sso-session: %s", rec.Body.String())
+	}
+}
