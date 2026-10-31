@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -192,12 +191,10 @@ func TestCLIInstallRefusalHintMatchesTheCause(t *testing.T) {
 	}
 }
 
-// The private opencode 2 install counts only while it is the one a launch would pick: chosen,
-// installed and the PATH opencode still 1.x. After the pin moves to 2.x the launch uses the PATH
-// binary, so a private install left behind must not hide that binary's failed install.
-func TestCLIInstallRefusalOpencodePrivateV2OnlyWhenSelected(t *testing.T) {
+// The private install the removed opencode 2 opt-in left in a home is never launched, so it must
+// not hide the failed install of the opencode a launch runs.
+func TestCLIInstallRefusalIgnoresOpencodeOptInLeftover(t *testing.T) {
 	home := isolateCLIs(t)
-	t.Setenv(opencode.MajorEnv, "2")
 	writeBootStatus(t, "opencode\tfailed\tno_space\n")
 	private := filepath.Join(home, ".local", "share", "agent-fleet", "opencode2", "node_modules", "@opencode", "cli", "bin", "opencode.exe")
 	if err := os.MkdirAll(filepath.Dir(private), 0o755); err != nil {
@@ -206,26 +203,6 @@ func TestCLIInstallRefusalOpencodePrivateV2OnlyWhenSelected(t *testing.T) {
 	if err := os.WriteFile(private, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	pathOpencode := func(version string) {
-		dir := filepath.Join(t.TempDir(), "pkg")
-		if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"opencode-ai","version":"`+version+`"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		bin := filepath.Join(dir, "bin", "opencode")
-		if err := os.WriteFile(bin, []byte("x"), 0o644); err != nil { // not on PATH and not executable: only the major is read from it
-			t.Fatal(err)
-		}
-		t.Cleanup(opencode.SetBinaryForTest(bin))
-	}
-
-	pathOpencode("1.4.0") // pinned 1.x: the private opt-in is what launches
-	if ref := cliInstallRefusal("opencode"); ref != nil {
-		t.Errorf("refused though the private opencode 2 is the selected launch: %+v", ref)
-	}
-	pathOpencode("2.0.28") // pin moved to 2.x: the private tree is inert, the PATH binary runs
 	if ref := cliInstallRefusal("opencode"); ref == nil {
 		t.Error("a private opencode 2 left behind hid the failed install of the PATH opencode")
 	}

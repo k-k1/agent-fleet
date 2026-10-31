@@ -46,8 +46,7 @@ func env() []string {
 	return CurrentLaunch().Env()
 }
 
-// keyEnv is the provider keys and the engine token: what env documents, before the opt-in's
-// own variables are added.
+// keyEnv is the provider keys and the engine token: what env documents.
 func keyEnv() []string {
 	if UsagePref() == UsageOff {
 		return nil

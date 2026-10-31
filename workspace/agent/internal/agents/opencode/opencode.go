@@ -204,7 +204,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// verified on tmux 3.3a) so the keys never appear in the command string /
 	// /proc/*/cmdline / pane_start_command.
 	ocSid := session.UUID(m.Dir, m.Name)
-	// One reading of the opt-in switch for the whole launch: binary, database and program agree.
+	// One reading for the whole launch: the migration check and the program agree on the major.
 	spec := CurrentLaunch()
 	if err := EnsureMigrated(spec); err != nil {
 		return agents.LaunchPlan{}, err
@@ -223,18 +223,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			return agents.LaunchPlan{}, err
 		}
 		if ok {
-			if spec.V2 {
-				// The pane's attach step runs the binary this launch was built for.
-				plan.Env = append(plan.Env, attachBinEnv+"="+spec.Bin)
-			}
 			return agents.LaunchPlan{Program: plan.Program, Cwd: m.CWD(), Env: mergeCommandEnv(envs, plan.Env)}, nil
 		}
 	} else if spec.Major() >= 2 {
 		markSlotMode(ocSid, modeStandalone)
 	} else {
-		// A pane launched on 1.x is never attached to the serve. Without this a record left by an
-		// earlier opencode 2 launch of the slot (the opt-in was on then) would make a later switch
-		// back to 2 count this 1.x pane as a dependent of the 2.x serve.
+		// A pane launched on 1.x is never attached to the serve, so a record left by an earlier
+		// opencode 2 launch of the slot must not count it as a dependent of a 2.x serve.
 		slotModes.Remove(ocSid)
 	}
 	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured

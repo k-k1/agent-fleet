@@ -34,7 +34,7 @@ func TestContractFirstStartWaitsForV1Migration(t *testing.T) {
 	home := t.TempDir()
 	for k, v := range map[string]string{"HOME": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"),
 		"XDG_DATA_HOME": filepath.Join(home, ".local", "share"), "XDG_STATE_HOME": filepath.Join(home, ".local", "state"),
-		"XDG_CACHE_HOME": filepath.Join(home, ".cache"), MajorEnv: ""} {
+		"XDG_CACHE_HOME": filepath.Join(home, ".cache")} {
 		t.Setenv(k, v)
 	}
 	t.Setenv("OPENCODE_DISABLE_AUTOUPDATE", "true")

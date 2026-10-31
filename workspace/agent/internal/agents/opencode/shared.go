@@ -339,11 +339,6 @@ type sharedPlan struct {
 // half-prepared session would attach to the wrong conversation.
 func buildSharedLaunch(spec LaunchSpec, m session.Meta, sid string) (plan sharedPlan, ok bool, err error) {
 	addr, _, eerr := ensureServe()
-	// ensure follows the switch as it is now; a launch built for another reading must not attach
-	// to that daemon.
-	if CurrentLaunch().Key != spec.Key {
-		return sharedPlan{}, false, errors.New("opencode: the opencode 2 switch changed while the session was launching; launch it again")
-	}
 	if eerr != nil {
 		log.Printf("opencode: %s: shared serve unavailable, launching --standalone: %v", m.Name, eerr)
 		markSlotMode(sid, modeStandalone)

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/assistants"
 )
 
@@ -125,7 +124,7 @@ func v2Home(t *testing.T, llm string) string {
 	home := t.TempDir()
 	for k, v := range map[string]string{"HOME": home, "XDG_CONFIG_HOME": filepath.Join(home, ".config"),
 		"XDG_DATA_HOME": filepath.Join(home, ".local", "share"), "XDG_STATE_HOME": filepath.Join(home, ".local", "state"),
-		"XDG_CACHE_HOME": filepath.Join(home, ".cache"), opencode.MajorEnv: ""} {
+		"XDG_CACHE_HOME": filepath.Join(home, ".cache")} {
 		t.Setenv(k, v)
 	}
 	t.Setenv("OPENCODE_DISABLE_AUTOUPDATE", "true")
