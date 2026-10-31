@@ -243,6 +243,18 @@ func GitHubRepoOf(origin string) string {
 	return p
 }
 
+// BitbucketRepoOf is GitHubRepoOf for bitbucket.org: "workspace/repo", "" for any other host.
+func BitbucketRepoOf(origin string) string {
+	if _, host := gitProviderHost(origin); host != "bitbucket.org" {
+		return ""
+	}
+	p := gitRemotePath(origin)
+	if strings.Count(p, "/") != 1 {
+		return ""
+	}
+	return p
+}
+
 // gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
 // hosts collapse to a short slug the Console can badge/icon; anything else returns the
 // bare host as the slug so self-hosted remotes still identify. ("", "") when no host.

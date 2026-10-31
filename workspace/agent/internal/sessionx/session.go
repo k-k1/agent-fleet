@@ -152,6 +152,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// notifies. Read for stopped rows as well — a folded session with an unlaunched
 		// handoff is the one nobody reopens.
 		HandoffPending: handoffPending(m.Name),
+		Links:          session.LinksOf(m),
 	}
 	// What this session has generated (ADR 0080 decision 8). Read for stopped rows too: the
 	// images outlive the session by up to 30 days and the gallery reads them through the file

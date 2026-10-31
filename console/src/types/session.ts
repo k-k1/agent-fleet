@@ -158,6 +158,10 @@ export interface Session {
   // link into the browser pane (#1062). Live sessions only; another session's server never
   // appears here.
   ports?: number[];
+  // Work items and PRs this session is linked to (#3134), the launch item first as "started".
+  // Keys have the work-item inbox's shape: "owner/repo#45" on GitHub and Bitbucket, "PROJ-12"
+  // on Jira. Read from the meta, so a stopped row has them too.
+  links?: SessionWorkLink[];
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible
@@ -330,6 +334,17 @@ export interface SsmHost {
 }
 
 /** The pull request a session row links to (#1062). */
+export type SessionWorkLinkRole = "started" | "created" | "working" | "reviewing" | "watching";
+
+export interface SessionWorkLink {
+  provider: string;
+  key: string;
+  role: SessionWorkLinkRole;
+  title?: string;
+  url?: string;
+  at?: string;
+}
+
 export interface SessionPR {
   number: number;
   state: "open" | "merged" | "closed";

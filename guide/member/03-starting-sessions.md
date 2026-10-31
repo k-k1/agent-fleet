@@ -198,6 +198,13 @@ workspace is stopped.
   nothing is written for you. On a Bitbucket pull request the button appears only when the
   connection is known to hold the pull request write scope (`pullrequest:write`; see
   [15](15-external-services.md)); otherwise Agent Fleet only reads from Bitbucket.
+- A session is linked to more than the ticket it was started from. A session started by another
+  session watches its parent's tickets; an agent that names its branch after a ticket with
+  `branch_name` is working on it; the pull request of a session's branch is linked to it; and an
+  agent can link itself to a ticket or pull request with the af tool `link_work_item`. The linked
+  items appear on the session's row (click one to open its details), and the details list every
+  running session linked to the item with how it is linked. While the workspace is stopped, rows
+  show no linked items and the details list only the sessions started from the item.
 
 While the workspace runs the list refreshes about every 5 minutes; **⟳** fetches immediately.
 

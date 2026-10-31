@@ -90,3 +90,17 @@ func TestGitHubRepoOf(t *testing.T) {
 		}
 	}
 }
+
+func TestBitbucketRepoOf(t *testing.T) {
+	cases := map[string]string{
+		"git@bitbucket.org:ws/app.git":          "ws/app",
+		"https://user@bitbucket.org/ws/app.git": "ws/app",
+		"https://github.com/o/r":                "",
+		"https://bitbucket.org/ws":              "",
+	}
+	for in, want := range cases {
+		if got := BitbucketRepoOf(in); got != want {
+			t.Errorf("BitbucketRepoOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

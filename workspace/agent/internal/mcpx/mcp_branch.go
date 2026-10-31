@@ -71,6 +71,14 @@ func mcpBranchName(id json.RawMessage, raw json.RawMessage) []byte {
 	if err != nil {
 		return mcpToolErr(id, branchNameErr(a, err))
 	}
+	// Naming a branch after an item is the clearest sign this session is about to work on it
+	// (#3134). Only for the caller's own working copy: a name asked for another repository is
+	// often for a child that will do the work.
+	if ownerErr == nil && a.Item != nil {
+		if own, err := sessionWorkingCopy(owner); err == nil && own == a.Repo {
+			linkBranchItem(owner, a.Item)
+		}
+	}
 	return mcpTextResult(id, out)
 }
 
@@ -145,13 +153,19 @@ func branchNameSchema() map[string]any {
 	}
 }
 
-// branchTools is part of every session's surface: it only reads the rules, and a session that
-// cannot ask is the one that falls back to a hard-coded style.
+// branchTools is part of every session's surface: branch_name only reads the rules, and a
+// session that cannot ask is the one that falls back to a hard-coded style; link_work_item
+// writes nothing but the caller's own row.
 func branchTools() []toolSpec {
 	return []toolSpec{{
 		name: mcpToolBranchName, session: branchNameSchema, ownArgs: true,
 		handle: handler(func(req mcpReq, p toolCallParams, a *noArgs) []byte {
 			return mcpBranchName(req.ID, p.Args)
+		}),
+	}, {
+		name: mcpToolLinkWorkItem, session: linkWorkItemSchema,
+		handle: handler(func(req mcpReq, p toolCallParams, a *linkWorkItemArgs) []byte {
+			return mcpLinkWorkItem(req.ID, a)
 		}),
 	}}
 }

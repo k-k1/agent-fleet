@@ -262,7 +262,9 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		dirBranch[dir] = b
 		return dirInfo{branch: b, worktree: wt}
 	})
-	annotateLinks(sessions, dirBranch, time.Now())
+	linkedAt := time.Now()
+	annotateLinks(sessions, dirBranch, linkedAt)
+	recordBranchPRs(sessions, linkedAt)
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	// repoJobs and imageJobs are the only channels telling the CP "no session, but the

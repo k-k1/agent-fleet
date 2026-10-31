@@ -378,6 +378,9 @@ type Session struct {
 	// only, attributed by the process's AF_SESSION_NAME, so another session's server never
 	// shows here (internal/listenports).
 	Ports []int `json:"ports,omitempty"`
+	// Links are the work items and PRs the session is linked to, the launch item first as
+	// "started" (#3134, LinksOf). Read from the meta alone, so a stopped row has them too.
+	Links []WorkItemLink `json:"links,omitempty"`
 	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
 	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
 	// usually set from inside the conversation (the MCP tool) where the user only sees prose
@@ -699,6 +702,10 @@ type Meta struct {
 	// rename through POST /repos/{name}/branch-name keeps {ref} and the kind. nil for every
 	// other launch.
 	WorkItem *WorkItemRef `json:"workItem,omitempty"`
+	// Links are the session's other work items and PRs, each with its role (#3134, links.go).
+	// Written only through AddLink / RemoveLink, which keep one link per item and the list
+	// bounded.
+	Links []WorkItemLink `json:"links,omitempty"`
 	// Moving names the session this one is being moved to (ADR 0115 decision 11), MovedTo the
 	// session it was moved to once that exists. Either closes the session's input: every path
 	// that can start a turn or a process on it refuses through internal/lifegate. They are on

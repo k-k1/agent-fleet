@@ -702,6 +702,7 @@ export function WorkItemDetailModal({
                       <span className="wi-dname">{ref.title || s.sessionName}</span>
                       {ref.title ? <span className="wi-dslug">{s.sessionName}</span> : null}
                       {s.branch ? <span className="wi-dbranch">{s.branch}</span> : null}
+                      {s.role && <span className="wi-dtag">{tr(`wi.link_role.${s.role}`)}</span>}
                       {ref.state === "archived" && <span className="wi-dtag">{tr("wi.session_archived")}</span>}
                       {ref.state === "gone" && <span className="wi-dtag">{tr("wi.session_deleted")}</span>}
                     </button>

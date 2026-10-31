@@ -1717,6 +1717,50 @@
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   -> GET /sessions/usage?name=child01
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## link_work_item absent
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"link_work_item is only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /sessions/slot01/links {"provider":"","key":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## link_work_item empty {}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"link_work_item is only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /sessions/slot01/links {"provider":"","key":""}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
+## link_work_item unknown {"zz_unknown":1}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"link_work_item is only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"unknown argument \"zz_unknown\" for link_work_item","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item not-object [1]
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid arguments for link_work_item: arguments must be a JSON object","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item badtype-key {"key":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"key\" for link_work_item: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item badtype-provider {"provider":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"provider\" for link_work_item: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item badtype-remove {"remove":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"remove\" for link_work_item: got a JSON array, want bool","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item badtype-role {"role":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"role\" for link_work_item: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item badtype-title {"title":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"title\" for link_work_item: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item badtype-url {"url":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"url\" for link_work_item: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+## link_work_item full {"key":"v","provider":"github","remove":true,"role":"working","title":"v","url":"v"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"link_work_item is only offered to a session","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  -> POST /sessions/slot01/links {"provider":"github","key":"v","role":"working","title":"v","url":"v","remove":true}
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## list_assistants absent
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントは他アシスタントへの相談を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}

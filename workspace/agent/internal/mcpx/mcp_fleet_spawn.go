@@ -117,6 +117,16 @@ type createSessionArgs struct {
 	// SpendCapUSD is the child's per-child budget (#1054). A pointer: omitted means the
 	// user's default, which the Agent applies; an explicit 0 means none.
 	SpendCapUSD *float64 `json:"spend_cap_usd"`
+	// WorkItem is the ticket the child is started for (#3134): recorded as its launch item, so
+	// its row and the item show the link and branch_name renders from it. Omitted, a child of a
+	// session watches its parent's items instead.
+	WorkItem *spawnWorkItem `json:"work_item"`
+}
+
+type spawnWorkItem struct {
+	Provider string `json:"provider"`
+	Key      string `json:"key"`
+	Title    string `json:"title"`
 }
 
 // fleetSpawnTools are the tools that start sessions, and the two only a session's own children
@@ -249,6 +259,16 @@ func fleetSpawnTools() []toolSpec {
 							"subdir":                    map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
 							"report_back":               map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
 							"spend_cap_usd":             map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
+							"work_item": map[string]any{
+								"type": "object", "additionalProperties": false,
+								"description": "The issue or ticket the child works on (optional). Omitted, the child watches the items you were started for or work on",
+								"properties": map[string]any{
+									"provider": map[string]any{"type": "string", "enum": []string{"github", "jira", "bitbucket"}},
+									"key":      map[string]any{"type": "string", "description": "owner/repo#45 or PROJ-12"},
+									"title":    map[string]any{"type": "string"},
+								},
+								"required": []string{"provider", "key"},
+							},
 						},
 					},
 				}
@@ -361,6 +381,9 @@ func fleetSpawnTools() []toolSpec {
 				}
 				if a.SpendCapUSD != nil {
 					body["spend_cap_usd"] = *a.SpendCapUSD
+				}
+				if wi := a.WorkItem; wi != nil && strings.TrimSpace(wi.Key) != "" {
+					body["work_item"] = map[string]any{"provider": strings.TrimSpace(wi.Provider), "key": strings.TrimSpace(wi.Key), "title": wi.Title}
 				}
 				reqBody, _ := json.Marshal(body)
 				// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The
