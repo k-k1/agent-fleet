@@ -193,7 +193,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts, take?: H
         when_ready: true,
       }).catch(() => ({ error: { message: t("err.network") } }));
       if (del?.error) {
-        if (del.error.code === AUTH_EXPIRED_CODE) toastSendFailure(toast, { code: del.error.code }, "");
+        if (del.error.code === AUTH_EXPIRED_CODE) toastSendFailure(toast, { code: del.error.code }, "", kind);
         else toast(t("rp.first_prompt_failed", { err: errText(del.error) }));
       }
     }

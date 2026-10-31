@@ -697,6 +697,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "start.register_there": "to register one.",
   "start.initial_prompt_auth_expired":
     "The first prompt for {name} was not sent: this workspace's Claude login has expired. Re-authenticate it, then send the task again.",
+  "start.initial_prompt_auth_expired_kind":
+    "The first prompt for {name} was not sent: this workspace's {agent} login has expired. Re-authenticate it, then send the task again.",
   "start.claude_expired": "This workspace's Claude login has expired, so a prompt sent now would not start a turn. You can still launch and run /login in the pane, or ",
   "start.ssm_search_ph": "Search by host name / instance ID…",
   "start.select_host": "— select a host —",

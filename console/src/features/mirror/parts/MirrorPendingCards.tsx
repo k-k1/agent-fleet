@@ -59,7 +59,7 @@ export function MirrorPendingCards({
           onReviewPlanAgain={reviewCarriedPlanAgain}
           reviewAgainName={rereview?.label}
           busy={rereviewing}
-          onError={(m, code) => toastSendFailure(toast, { message: m, code }, m)}
+          onError={(m, code) => toastSendFailure(toast, { message: m, code }, m, sessionMeta?.kind)}
           onDone={() => setCarried(null)}
           translate={translate}
         />

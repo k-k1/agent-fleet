@@ -10,7 +10,7 @@
 // of the same name, so a scope change drops both the observations and the sticky toasts shown
 // for the old scope.
 import { getTenant, getUser } from "../../core/api/client.ts";
-import { initialPromptToastKey, toastInitialPromptAuthExpired } from "../../lib/authExpiredToast.tsx";
+import { initialPromptAuthExpiredText, initialPromptToastKey, toastInitialPromptAuthExpired } from "../../lib/authExpiredToast.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import type { Session } from "../../types/session.ts";
@@ -52,7 +52,7 @@ export function noteInitialPromptFailures(list: Session[]): void {
     next.set(s.name, st);
     if (baselined && st === "failed" && s.initialPromptReason === REASON_AUTH_EXPIRED && seen.get(s.name) !== "failed") {
       shown.add(initialPromptToastKey(now, s.name));
-      toastInitialPromptAuthExpired(toast, now, s.name, tr("start.initial_prompt_auth_expired", { name: s.name }));
+      toastInitialPromptAuthExpired(toast, now, s.name, initialPromptAuthExpiredText(tr, s.name, s.kind), s.kind);
     }
   }
   seen = next;

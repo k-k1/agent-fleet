@@ -43,6 +43,23 @@ describe("toastSendFailure", () => {
     expect(s.settingsTarget).toBe("claude");
   });
 
+  it("names codex and opens the codex card for a refused codex send; keys differ per kind", async () => {
+    const sink = vi.fn();
+    toastSendFailure(sink, { code: "auth_expired" }, "fallback", "codex");
+    toastSendFailure(sink, { code: "auth_expired" }, "fallback", "claude");
+    const [[codexNode, codexOpts], [claudeNode, claudeOpts]] = sink.mock.calls as [ReactNode, { key?: string }][];
+    expect(codexOpts.key).not.toBe(claudeOpts.key);
+
+    await act(async () => root!.render(<>{codexNode}</>));
+    expect(host.textContent).toContain("Codex");
+    expect(host.textContent).not.toContain("Claude");
+    await act(async () => host.querySelector("button")!.click());
+    expect(useSettingsUI.getState().settingsTarget).toBe("codex");
+
+    await act(async () => root!.render(<>{claudeNode}</>));
+    expect(host.textContent).toContain("Claude");
+  });
+
   it("keeps any other failure a plain toast", () => {
     const sink = vi.fn();
     toastSendFailure(sink, { code: "question_pending", message: "answer it first" }, "fallback");

@@ -301,7 +301,7 @@ function MirrorViewBody({
     }
   }, [readOnly, alive, termState]);
 
-  const actions = useMirrorActions({ session, running, managed, toast, st, scroll });
+  const actions = useMirrorActions({ session, kind: sessionMeta?.kind, running, managed, toast, st, scroll });
   const { wsDown, postKeys, draftBusy, dropPendingPeer, restoreDiscard, closeDiscard } = actions;
 
   const input = composerInput({ session, settings, signal, agent, managed, readOnly, toast, st, sendPrompt: actions.sendPrompt });
