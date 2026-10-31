@@ -155,7 +155,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
 // (super_admin: whole deployment, optionally filtered by ?tenant=; tenant_admin:
 // their tenant). Historical, so it's fetched on demand + manual refresh, not polled.
 
-const auditCat = (action: string) => action.split(".")[0]; // fs | git | repo | session | egress
+const auditCat = (action: string) => action.split(".")[0]; // fs | git | repo | cleanup | session | egress
 const fmtAt = (iso: string) => {
   if (!iso) return "";
   const d = new Date(iso);

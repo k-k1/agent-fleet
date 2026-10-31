@@ -445,6 +445,20 @@ func auditSessionNameHint(s string) string {
 	return ""
 }
 
+// auditRepoNameRe is the folder-name rule the Agent applies to a new working copy
+// (workspace/agent/internal/gitx repoNameRe). It admits no control or format characters, no "/"
+// and no leading ".", so a name it accepts cannot traverse or spoof the audit view.
+var auditRepoNameRe = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N}._@-]{0,95}$`)
+
+// auditRepoNameHint keeps a name the Agent would accept as a working-copy folder and drops
+// anything else. It is the client's claim, never checked against the body the Agent acts on.
+func auditRepoNameHint(s string) string {
+	if auditRepoNameRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
 var auditReviewIDRe = regexp.MustCompile(`^[0-9a-f]{20}$`)
 
 // auditReviewIDHint keeps a review proposal or run id (20 hex characters) and drops anything else.
