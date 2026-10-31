@@ -190,6 +190,8 @@ type memPressure struct {
 	AgentLatencyMs   *float64 `json:"agent_latency_ms,omitempty"`
 	AgentProbeFailed bool     `json:"agent_probe_failed,omitempty"`
 
+	MemoryMaxAgreement string `json:"memory_max_agreement,omitempty"`
+
 	SampledAtMs int64 `json:"sampled_at_ms,omitempty"`
 }
 

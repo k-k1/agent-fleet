@@ -220,7 +220,9 @@ func parseNodeSelector(s string) (map[string]string, error) {
 	return out, nil
 }
 
-// parseDockerBytes reads a docker --memory value ("4g", "512m", "1073741824").
+// parseDockerBytes reads a docker --memory value ("4g", "512m", "1073741824"). It does not take
+// the forms docker also accepts ("4gb", "1.5g", "4t"): the memory-limit env then goes unreported,
+// which the Agent reads as unknown.
 func parseDockerBytes(s string) (int64, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	mult := int64(1)
@@ -884,6 +886,9 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 	}
 	if k.cfg.sessionCmd != "" {
 		env = append(env, kEnvVar{Name: "AGENT_SESSION_CMD", Value: k.cfg.sessionCmd})
+	}
+	if k.memBytes > 0 {
+		env = append(env, kEnvVar{Name: MemoryLimitEnv, Value: strconv.FormatInt(k.memBytes, 10)})
 	}
 	res := kResources{
 		Requests: map[string]string{"ephemeral-storage": kubeEphemeralRequest},

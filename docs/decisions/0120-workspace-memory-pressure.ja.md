@@ -401,3 +401,14 @@ docker では Control Plane のローカル cgroup 読み取りが Agent に問�
 他のゲージはローカル読み取りのままで、Agent のエラー時は軸が欠落する。意味づけは Agent が持ち続ける。
 
 フォローアップ：#2837。
+
+## 追記（2026-10-31）
+
+決定 1 の `memory.max` の一致確認を記録するようにした。上限を要求するアダプタ（docker の `--memory`、ecs-ec2 の
+コンテナ上限、kubernetes の pod 上限）は、その値を `AF_WS_MEMORY_LIMIT_BYTES` として
+Agent に渡す（native、Fargate、上限なしの ecs-ec2 のランクは何も設定しない）。Agent はこれを解決した cgroup の
+`memory.max` と比べ（カーネルのページ丸めは許容）、結果 `agree` / `disagree` / `unknown` をログと
+`mem_pressure` 軸の `memory_max_agreement` に出す。情報提供のみで、不一致でも起動は失敗せず軸も止まらない。
+「渡されていない」と、境界確認を通らなかった cgroup も `unknown`。Fargate には渡さない：コンテナ定義に
+独自のメモリがなく上限はタスクの cgroup にあるため、コンテナの `memory.max` は `max` と読めて誤った
+`disagree` になる。実ランタイムでは未確認。フォローアップ：#2816、#3110。

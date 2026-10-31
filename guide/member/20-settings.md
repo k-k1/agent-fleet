@@ -557,6 +557,9 @@ administrator's to set.
   kernel), the row says "Cannot be measured on this machine" instead of drawing a calm line.
   An operator can switch the sampler off by starting the workspace with `AF_MEM_PRESSURE=off` in its
   environment (exactly `off`; any other value, or none, leaves it on); the row is then not shown.
+  The Control Plane also passes the memory limit it asked the runtime for as `AF_WS_MEMORY_LIMIT_BYTES`
+  (bytes; absent where no limit is requested). The Agent compares it with its cgroup's `memory.max` and
+  writes "agree", "disagree" or "unknown" to its log; a disagreement never stops the sampler.
 - **Where home went**: all of your home broken down by category: working-copy source, build output
   inside working copies (`node_modules`, `.next`, `target`, `.gradle`, `build`, `dist` that hold no tracked
   file), tool caches (`~/.cache`, `~/.npm`, `~/.gradle`, `~/.m2`, …), runtimes and tools (`~/.local`,

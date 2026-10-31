@@ -431,6 +431,9 @@ func TestKubePodTemplateIsRestrictedAndCarriesNoSecret(t *testing.T) {
 		envOf[BrowserUnavailableEnv] != "kubernetes" {
 		t.Errorf("template env = %v", envOf)
 	}
+	if envOf[MemoryLimitEnv] != "3221225472" {
+		t.Errorf("%s = %q, want the pod's memory limit", MemoryLimitEnv, envOf[MemoryLimitEnv])
+	}
 	if c.Resources.Limits["memory"] != "3221225472" || c.Resources.Limits["cpu"] != "500m" || c.Resources.Limits["ephemeral-storage"] == "" {
 		t.Errorf("limits = %v", c.Resources.Limits)
 	}

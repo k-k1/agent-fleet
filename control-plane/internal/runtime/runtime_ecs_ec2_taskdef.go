@@ -200,6 +200,10 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 	if e.base.cfg.sessionCmd != "" {
 		env = append(env, ecstypes.KeyValuePair{Name: aws.String("AGENT_SESSION_CMD"), Value: aws.String(e.base.cfg.sessionCmd)})
 	}
+	// The container's hard cap (set below) in bytes; absent when the rung is uncapped.
+	if v := memoryLimitValue(e.memCapMiB * mib); v != "" {
+		env = append(env, ecstypes.KeyValuePair{Name: aws.String(MemoryLimitEnv), Value: aws.String(v)})
+	}
 	for _, kv := range e.base.extraEnv {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			env = append(env, ecstypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)})

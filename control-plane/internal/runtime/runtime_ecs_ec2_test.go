@@ -1768,6 +1768,14 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 	if v, ok := env[BrowserUnavailableEnv]; ok {
 		t.Errorf("%s = %q on ecs-ec2: the browser is available there", BrowserUnavailableEnv, v)
 	}
+	// The Agent is told the container cap, or nothing when the rung is uncapped.
+	if c.Memory == nil {
+		if v, ok := env[MemoryLimitEnv]; ok {
+			t.Errorf("%s = %q on an uncapped container", MemoryLimitEnv, v)
+		}
+	} else if want := strconv.FormatInt(int64(*c.Memory)*mib, 10); env[MemoryLimitEnv] != want {
+		t.Errorf("%s = %q, want %q (the container's hard cap)", MemoryLimitEnv, env[MemoryLimitEnv], want)
+	}
 }
 
 // Occupancy is derived, never stored: a slot whose home device is taken, and a slot
@@ -5223,6 +5231,10 @@ func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
 	if res := aws.ToInt32(c.MemoryReservation); res >= limit {
 		t.Errorf("MemoryReservation %d is not below the hard limit %d", res, limit)
 	}
+	// The Agent is told the cap in bytes: 6144 MiB, spelled out so a wrong unit shows.
+	if got := ecsEnvValue(c.Environment, MemoryLimitEnv); got != "6442450944" {
+		t.Errorf("%s = %q, want 6442450944", MemoryLimitEnv, got)
+	}
 }
 
 // A deployment that has switched the cap off must produce exactly the task definition
@@ -5240,6 +5252,9 @@ func TestECSEC2UncappedTaskDefinitionOmitsMemory(t *testing.T) {
 	}
 	if m := h.ecs.regCalls[0].ContainerDefinitions[0].Memory; m != nil {
 		t.Errorf("container Memory = %d, want unset", *m)
+	}
+	if got := ecsEnvValue(h.ecs.regCalls[0].ContainerDefinitions[0].Environment, MemoryLimitEnv); got != "" {
+		t.Errorf("%s = %q on an uncapped container, want absent", MemoryLimitEnv, got)
 	}
 }
 

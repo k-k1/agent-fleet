@@ -42,6 +42,8 @@ func Start(agentAddr string) {
 		b.Reason = "cgroup not verified as this container's own: " + b.Reason
 	}
 	logBoundary(b)
+	b.MemMax, b.MemMaxDetail = CheckMemoryMax(b, cgroupDir(), os.Getenv(RequestedLimitEnv))
+	logMemMax(b)
 	s := New(cgroupDir(), b, liveSources(agentAddr),
 		NewSeries(paths.AgentStateDir()+"/mem-pressure/series.jsonl", 0))
 	defMu.Lock()
