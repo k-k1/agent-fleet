@@ -102,3 +102,16 @@ func TestKindsAreIndependent(t *testing.T) {
 		t.Errorf("copilot: %+v ok=%v", c, ok)
 	}
 }
+
+// A kind that cannot name its account must not share one entry between every such account.
+func TestEmptyIdentityUsesNoStore(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	Record("agy", "", time.Now().Add(-time.Minute), reading{Pct: 3})
+	var r reading
+	if _, ok := Load("agy", "", &r); ok {
+		t.Fatal("a reading was stored and served under an empty identity")
+	}
+	if _, err := os.Stat(storePath()); err == nil {
+		t.Error("an empty identity wrote the store")
+	}
+}

@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -9,7 +11,15 @@ import (
 // answers with the reading kept in usagestore, re-adjusted at read time and with its real age
 // (#3127).
 func TestWithStoredFallsBackToTheLastReading(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// The store is keyed by the signed-in account; without one it is not used at all.
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"tokens":{"account_id":"acct-1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if u := withStored(usage{}); u.OK {
 		t.Fatalf("nothing stored yet, got %+v", u)
 	}

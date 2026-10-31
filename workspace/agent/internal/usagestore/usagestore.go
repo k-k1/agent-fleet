@@ -12,7 +12,8 @@
 //
 // The account is recorded as the limitepoch epoch, never the identity itself. A reading is
 // returned only while that epoch is still the current account's, so a re-login to another
-// account never shows the previous one's numbers.
+// account never shows the previous one's numbers. A kind that cannot name its account ("")
+// uses no store at all: two accounts that both read as "" would share one entry.
 //
 // Only the Agent process writes the file; the statusline subprocess keeps its own capture.
 package usagestore
@@ -93,7 +94,7 @@ func save() {
 // older reading overwriting a newer one is a chip that walks backwards. Nothing is written when
 // nothing changed, so a poll that re-reads the same capture costs no disk write.
 func Record(kind, identity string, observedAt time.Time, data any) {
-	if observedAt.IsZero() {
+	if observedAt.IsZero() || identity == "" {
 		return
 	}
 	st, ok := limitepoch.Current(kind, identity, time.Now())
@@ -115,9 +116,12 @@ func Record(kind, identity string, observedAt time.Time, data any) {
 }
 
 // Load decodes kind's stored observation into v and returns when it was observed. ok is false
-// when nothing is stored, when it was stored under another account than the one identity names
-// now, or when it predates that account's first sighting.
+// when nothing is stored, when identity is empty, when it was stored under another account than
+// the one identity names now, or when it predates that account's first sighting.
 func Load(kind, identity string, v any) (observedAt time.Time, ok bool) {
+	if identity == "" {
+		return time.Time{}, false
+	}
 	st, okE := limitepoch.Current(kind, identity, time.Now())
 	if !okE {
 		return time.Time{}, false

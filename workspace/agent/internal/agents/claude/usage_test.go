@@ -306,6 +306,10 @@ func TestHandleUsageFallsBackToTheStoredCapture(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", dir)
 	t.Setenv("HOME", t.TempDir())
 	writeCreds(t, dir, "tok-123")
+	// The store is keyed by the signed-in account; without one it is not used at all.
+	if err := os.WriteFile(claudeJSONPath(), []byte(`{"oauthAccount":{"accountUuid":"acct-1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	future := time.Now().Add(3 * time.Hour).Unix()
 	captureFromStatusLine([]byte(`{"rate_limits":{"five_hour":{"used_percentage":40,"resets_at":` +
 		strconv.FormatInt(future, 10) + `}}}`))
