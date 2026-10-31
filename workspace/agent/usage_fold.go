@@ -153,7 +153,13 @@ var usageAgentQuiet = 24 * time.Hour
 
 func usageStatePath() string { return filepath.Join(usagex.Dir(), "state.json") }
 
+// usageStateDecodes counts decodes of state.json (the seam tests use to prove a pass decodes once).
+var usageStateDecodes atomic.Int64
+
+// readUsageFoldState decodes state.json afresh and hands out a value nobody else holds. The fold
+// itself goes through loadUsageFoldStateLocked instead.
 func readUsageFoldState() usageFoldState {
+	usageStateDecodes.Add(1)
 	st := usageFoldState{Sessions: map[string]usageFoldMark{}, Subagents: map[string]usageAgentMark{}}
 	b, err := os.ReadFile(usageStatePath())
 	if err != nil {
@@ -168,22 +174,110 @@ func readUsageFoldState() usageFoldState {
 	return st
 }
 
+// usageStateCache is the decoded state.json kept between sessions of a pass. Every writer is this
+// process under usageFoldMu, so the file is decoded once and then only Stat-ed (one getattr per
+// session instead of a read and a decode of a file that grows with sessions and subagent
+// transcripts). Stat stays as the guard because an outside edit or a restored file must not be
+// served stale. The cache lives for one pass (foldAllSessions drops it at the end): a
+// decoded state held between passes would cost memory on a host that has little, to save one
+// decode a minute.
+//
+// The commit works on the cached value itself (no copy, so a pass stays linear), and that is
+// sound because the value is CHECKED OUT: loadUsageFoldStateLocked takes it out of the cache,
+// and only the two clean outcomes put it back — persistUsageFoldStateLocked after a successful
+// write of exactly that value, and releaseUsageFoldStateLocked when the commit changed nothing
+// and failed at nothing. An error, a failed write or a panic never returns it, so the next
+// session decodes from disk. Nothing else holds it: readUsageFoldState gives its callers a fresh
+// value, and any other writer (writeUsageFoldState) drops the cache. Requires usageFoldMu.
+var usageStateCache struct {
+	path string
+	info os.FileInfo
+	st   *usageFoldState
+}
+
+func dropUsageStateCache() { usageStateCache.st, usageStateCache.info = nil, nil }
+
+// usageStateLease says which file a checked-out state was taken from; info nil means it is not
+// cacheable (no file).
+type usageStateLease struct {
+	path string
+	info os.FileInfo
+}
+
+// loadUsageFoldStateLocked checks the state out: the cached one while state.json is the file it
+// was taken from, else a fresh decode. Requires usageFoldMu.
+func loadUsageFoldStateLocked() (*usageFoldState, usageStateLease) {
+	path := usageStatePath()
+	fi, err := os.Stat(path)
+	if err != nil {
+		dropUsageStateCache()
+		st := readUsageFoldState() // an absent file is an empty state, which is not cached
+		return &st, usageStateLease{}
+	}
+	if st := usageStateCache.st; st != nil && usageStateCache.path == path &&
+		os.SameFile(fi, usageStateCache.info) && fi.Size() == usageStateCache.info.Size() &&
+		fi.ModTime().Equal(usageStateCache.info.ModTime()) {
+		dropUsageStateCache() // checked out until a clean outcome returns it
+		return st, usageStateLease{path, fi}
+	}
+	dropUsageStateCache()
+	// The Stat precedes the read, so a change that lands in between shows as a mismatch next time.
+	st := readUsageFoldState()
+	return &st, usageStateLease{path, fi}
+}
+
+// releaseUsageFoldStateLocked returns a checked-out state that the commit left exactly as the
+// file has it. Requires usageFoldMu.
+func releaseUsageFoldStateLocked(st *usageFoldState, l usageStateLease) {
+	if l.info != nil {
+		usageStateCache.path, usageStateCache.info, usageStateCache.st = l.path, l.info, st
+	}
+}
+
+// persistUsageFoldStateLocked writes st, which must be the value loadUsageFoldStateLocked gave
+// out, and on success makes it the cache; a failed write leaves no cache. Requires usageFoldMu.
+func persistUsageFoldStateLocked(st *usageFoldState) error {
+	fi, err := writeUsageFoldStateInfo(*st) // drops the cache
+	if err != nil {
+		return err
+	}
+	usageStateCache.path, usageStateCache.info, usageStateCache.st = usageStatePath(), fi, st
+	return nil
+}
+
 // writeUsageFoldState replaces the watermark with tmp+rename. Errors are never swallowed:
 // proceeding as if a failed write had succeeded makes the next pass re-append the rows
 // already written, i.e. double counting.
 func writeUsageFoldState(st usageFoldState) error {
+	_, err := writeUsageFoldStateInfo(st)
+	return err
+}
+
+// writeUsageFoldStateInfo is writeUsageFoldState that also returns the new file's FileInfo,
+// taken from the temp file before the rename: a rename keeps inode and mtime, and statting after
+// it could describe a file a writer outside the lock put there in between.
+func writeUsageFoldStateInfo(st usageFoldState) (os.FileInfo, error) {
+	dropUsageStateCache() // whatever happens next, the file is no longer what the cache holds
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := os.MkdirAll(usagex.Dir(), 0o700); err != nil {
-		return err
+		return nil, err
 	}
 	tmp := usageStatePath() + ".tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
-		return err
+		return nil, err
 	}
-	return os.Rename(tmp, usageStatePath()) // a crash mid-write must not leave broken state
+	fi, err := os.Stat(tmp)
+	if err != nil {
+		return nil, err
+	}
+	// a crash mid-write must not leave broken state
+	if err := os.Rename(tmp, usageStatePath()); err != nil {
+		return nil, err
+	}
+	return fi, nil
 }
 
 // usageTurnRow is one logical turn folded out of a transcript. It is the output of a pure
@@ -865,12 +959,15 @@ func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
 func commitSessionUsageFoldMode(m session.Meta, includeTrailing, force bool) (int, error) {
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
-	st := readUsageFoldState()
-	n, dirty, err := foldSessionUsageMode(m, &st, includeTrailing, force)
+	st, lease := loadUsageFoldStateLocked()
+	n, dirty, err := foldSessionUsageMode(m, st, includeTrailing, force)
 	if !dirty {
+		if err == nil {
+			releaseUsageFoldStateLocked(st, lease)
+		}
 		return 0, err // st untouched, so there is nothing to rewrite
 	}
-	if werr := writeUsageFoldState(st); werr != nil {
+	if werr := persistUsageFoldStateLocked(st); werr != nil {
 		// The rows are already on disk. Silently reporting success here means nobody
 		// notices when the next pass appends the same turns again.
 		return n, werr
@@ -888,6 +985,11 @@ func foldAllSessions(force bool) int {
 	if !usagex.Enabled() {
 		return 0
 	}
+	defer func() {
+		usageFoldMu.Lock()
+		dropUsageStateCache()
+		usageFoldMu.Unlock()
+	}()
 	n := 0
 	for _, m := range session.ListMetas() {
 		// Keep folding the rest when one session fails: one broken transcript stopping
@@ -965,8 +1067,8 @@ func finalizeSessionUsage(m session.Meta) {
 	}
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
-	st := readUsageFoldState()
-	if _, _, err := foldSessionUsageLocked(m, &st, true); err != nil {
+	st, _ := loadUsageFoldStateLocked()
+	if _, _, err := foldSessionUsageLocked(m, st, true); err != nil {
 		log.Printf("usage: finalize %s: %v", m.Name, err)
 	}
 	// The ledger has the ref baked in already, so a deleted session's watermark is not
@@ -977,7 +1079,7 @@ func finalizeSessionUsage(m session.Meta) {
 			delete(st.Subagents, k)
 		}
 	}
-	if err := writeUsageFoldState(st); err != nil {
+	if err := persistUsageFoldStateLocked(st); err != nil {
 		log.Printf("usage: finalize %s: watermark: %v", m.Name, err)
 	}
 }
