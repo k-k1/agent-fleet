@@ -125,7 +125,7 @@ container is busy.
 (cd workspace/agent && go test -timeout 20m ./...)
 ```
 
-`workspace/agent/internal/memoryx` alone takes about 5 minutes (real git processes and
+`workspace/agent/internal/memoryx` alone takes about 5 minutes, up to ~8 under load (real git processes and
 regexp scans, run serially because the tests use `t.Setenv`) and crosses `go test`'s
 default 10-minute timeout on a busy host, so pass `-timeout 20m` for the module.
 

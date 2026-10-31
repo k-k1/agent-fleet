@@ -211,6 +211,8 @@ func TestAgentMemoryPinsOverBudgetStayWithinIt(t *testing.T) {
 	c := agentMemCallerT(t, "claude-main")
 	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 	long := strings.Repeat("x", 300)
+	// Each index line is ~200 B (the description is cut to 150 runes), so n lines must exceed
+	// the 4 KiB budget; do not lower n without redoing that sum.
 	const n = 24
 	for i := 0; i < n; i++ {
 		name := "pin-" + strings.Repeat("0", 3-len(itoa(i))) + itoa(i)
