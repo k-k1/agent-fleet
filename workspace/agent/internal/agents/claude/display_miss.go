@@ -27,9 +27,11 @@ const (
 	displayMissTTLStopped = 10 * time.Minute
 )
 
+// missMemo remembers misses for ttlLive / ttlStopped; a zero field means the display TTL.
 type missMemo struct {
-	mu   sync.Mutex
-	seen map[string]missEntry
+	mu                  sync.Mutex
+	seen                map[string]missEntry
+	ttlLive, ttlStopped time.Duration
 }
 
 type missEntry struct {
@@ -44,9 +46,12 @@ func (m *missMemo) holds(key string, alive bool, now time.Time) bool {
 	if !ok || e.alive != alive {
 		return false
 	}
-	ttl := displayMissTTLStopped
+	ttl, other := displayMissTTLStopped, m.ttlStopped
 	if alive {
-		ttl = displayMissTTLLive
+		ttl, other = displayMissTTLLive, m.ttlLive
+	}
+	if other > 0 {
+		ttl = other
 	}
 	return now.Sub(e.at) < ttl
 }

@@ -456,6 +456,18 @@ type UsageSourcer interface {
 	UsageSource(m session.Meta) (UsageSource, bool)
 }
 
+// UsageMissMemo is an optional Agent capability for the usage fold ONLY: it may remember that a
+// session had neither a transcript nor subagent transcripts, so a pass over a session that
+// never talked costs no directory sweep. The fold is accounting with a watermark that catches up,
+// so a remembered miss only delays the first turn's accounting; no other reader (resume, delivery,
+// reports, the reaper) may consult it.
+type UsageMissMemo interface {
+	// UsageMissHeld reports a remembered miss that is still trusted.
+	UsageMissHeld(m session.Meta) bool
+	// UsageMissNote records that this pass found no transcript and no subagent transcripts.
+	UsageMissNote(m session.Meta)
+}
+
 // TextReader is an optional Agent capability: the turns as a reader of their text (the search
 // index) wants them, when UsageReader's differ — claude, whose usage turns carry no text.
 type TextReader interface {

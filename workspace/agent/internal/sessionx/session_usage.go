@@ -315,6 +315,21 @@ func AggregateUsage(turns []transcript.Turn) sessionUsage {
 	return u
 }
 
+// UsageMissHeld reports that the usage fold may skip m this pass: the kind remembers a recent
+// pass that found no transcript and no subagent transcripts (agents.UsageMissMemo). Only the
+// usage fold may ask.
+func UsageMissHeld(m session.Meta) bool {
+	mm, ok := AgentOf(m.Kind).(agents.UsageMissMemo)
+	return ok && mm.UsageMissHeld(m)
+}
+
+// UsageMissNote records the miss UsageMissHeld later answers from.
+func UsageMissNote(m session.Meta) {
+	if mm, ok := AgentOf(m.Kind).(agents.UsageMissMemo); ok {
+		mm.UsageMissNote(m)
+	}
+}
+
 // UsageSourceOf is the transcript the usage fold reads, with a short digest of what it covers
 // (empty: nothing to fingerprint) and a loader whose ok=false means the turns may be stale. A
 // kind without agents.UsageSourcer is read by UsageTurns, never skippable and always ok.

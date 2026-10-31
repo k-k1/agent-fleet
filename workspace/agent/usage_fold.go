@@ -383,13 +383,19 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
 		return 0, false, nil // shell/ssm have no transcript
 	}
+	// A kind that remembers "no transcript, no subagent transcripts" lets a settled pass skip
+	// both discoveries; deletion / archiving (includeTrailing) always looks.
+	if !includeTrailing && sessionx.UsageMissHeld(m) {
+		return 0, false, nil
+	}
 	// The stamp is taken before the parse: a write that lands during it changes the stamp, so
 	// it is parsed again next pass instead of being recorded as seen.
 	stamp, load := foldUsageSource(m)
 	skip := stamp != "" && !includeTrailing && st.Sessions[m.Name].Stamp == stamp
-	n, seen := 0, false
+	n, seen, empty := 0, false, false
 	if !skip {
 		turns, ok := load()
+		empty = ok && len(turns) == 0
 		// An empty or incomplete read (a file that would not open, a cached parse that could not
 		// be brought up to date) is never recorded as seen: the next pass reads again.
 		seen = ok && len(turns) > 0
@@ -400,7 +406,11 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 	}
 	// The subagent sources carry their own stamps (usageAgentMark.Stamp), so this stays cheap
 	// for a session whose files have not changed.
-	sub, subDirty, err := foldSubagentUsage(m, st, sessionx.SubagentUsageSources(m))
+	srcs := sessionx.SubagentUsageSources(m)
+	sub, subDirty, err := foldSubagentUsage(m, st, srcs)
+	if err == nil && empty && stamp == "" && len(srcs) == 0 && n == 0 && !subDirty {
+		sessionx.UsageMissNote(m)
+	}
 	dirty := n > 0 || subDirty
 	if err == nil && seen && stamp != "" {
 		// A session whose turns are all one open trailing turn has no mark yet; the empty one
