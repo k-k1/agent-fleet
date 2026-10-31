@@ -21,6 +21,8 @@ type skipFixture struct {
 	sid    string
 	parses int
 	born   time.Time
+	// beforeLoad runs once, between the stamp and the parse.
+	beforeLoad func()
 }
 
 func newSkipFixture(t *testing.T) *skipFixture {
@@ -34,15 +36,25 @@ func newSkipFixture(t *testing.T) *skipFixture {
 	f.sid = session.UUID(f.m.Dir, f.m.Name)
 	f.proj = filepath.Join(cfg, "projects", "p1")
 	f.main = filepath.Join(f.proj, f.sid+".jsonl")
-	orig := foldUsageTurns
-	foldUsageTurns = func(m session.Meta) []transcript.Turn { f.parses++; return orig(m) }
-	t.Cleanup(func() { foldUsageTurns = orig })
+	orig := foldUsageSource
+	foldUsageSource = func(m session.Meta) (string, func() ([]transcript.Turn, bool)) {
+		stamp, load := orig(m)
+		return stamp, func() ([]transcript.Turn, bool) {
+			f.parses++
+			if h := f.beforeLoad; h != nil {
+				f.beforeLoad = nil
+				h()
+			}
+			return load()
+		}
+	}
+	t.Cleanup(func() { foldUsageSource = orig })
 	return f
 }
 
 func (f *skipFixture) at(d time.Duration) string { return f.born.Add(d).Format(time.RFC3339Nano) }
 
-// write appends to (or creates) p and moves its mtime on, so a same-size rewrite still differs.
+// write appends to (or creates) p.
 func (f *skipFixture) write(p, body string) {
 	f.t.Helper()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -194,10 +206,67 @@ func TestFoldSkipNoStampWhenAppendFails(t *testing.T) {
 	}
 }
 
-// A kind with no stamp falls back to parsing every pass.
+// A kind with a transcript but no stamper is parsed on every pass.
 func TestFoldSkipKindWithoutStampStillParses(t *testing.T) {
-	if _, ok := sessionx.UsageStamp(session.Meta{Name: "x", Kind: session.KindShell}); ok {
-		t.Fatal("a kind with no stamper reported one")
+	f := newSkipFixture(t)
+	f.m.Kind = session.KindOpencode
+	if stamp, _ := sessionx.UsageSourceOf(f.m); stamp != "" {
+		t.Fatalf("opencode reported a stamp %q", stamp)
+	}
+	f.fold()
+	f.fold()
+	if f.parses != 2 {
+		t.Fatalf("parses = %d over two folds, want 2", f.parses)
+	}
+}
+
+// The stamp is taken before the parse: a turn written between the two is not recorded as seen,
+// so the next pass reads again and folds it exactly once.
+func TestFoldSkipStampIsTakenBeforeTheParse(t *testing.T) {
+	f := newSkipFixture(t)
+	f.write(f.main, claudeUserLine(f.at(0))+claudeUsageLine(f.at(time.Minute), "r1", 1000, 10)+claudeUserLine(f.at(2*time.Minute)))
+	f.beforeLoad = func() {
+		f.write(f.main, claudeUsageLine(f.at(3*time.Minute), "r2", 2000, 20)+claudeUserLine(f.at(4*time.Minute)))
+	}
+	f.fold()
+	f.fold()
+	if f.parses != 2 {
+		t.Fatalf("parses = %d, want 2 (the write during the first parse must force a re-read)", f.parses)
+	}
+	f.fold()
+	if f.parses != 2 {
+		t.Fatalf("parses = %d after settling, want 2", f.parses)
+	}
+	if own, _ := f.rows(); own != 2 {
+		t.Fatalf("ledger holds %d rows, want 2 (each once)", own)
+	}
+}
+
+// A read that fails after Stat succeeded must not be recorded as seen: with a sibling jsonl the
+// failed newest file falls through to the older one, and the stamp already describes the new
+// state. The turn written meanwhile has to arrive once reading works again.
+func TestFoldSkipUnreadableNewestSiblingIsNotSeen(t *testing.T) {
+	f := newSkipFixture(t)
+	old := filepath.Join(filepath.Join(filepath.Dir(f.proj), "p2"), f.sid+".jsonl")
+	f.write(old, claudeUserLine(f.at(0))+claudeUsageLine(f.at(time.Second), "o1", 5, 1)+claudeUserLine(f.at(2*time.Second)))
+	if err := os.Chtimes(old, f.born, f.born); err != nil {
+		t.Fatal(err)
+	}
+	f.write(f.main, claudeUserLine(f.at(time.Minute))+claudeUsageLine(f.at(2*time.Minute), "r1", 1000, 10)+claudeUserLine(f.at(3*time.Minute)))
+	f.fold()
+	own0, _ := f.rows()
+	f.write(f.main, claudeUsageLine(f.at(4*time.Minute), "r2", 2000, 20)+claudeUserLine(f.at(5*time.Minute)))
+	if err := os.Chmod(f.main, 0); err != nil {
+		t.Fatal(err)
+	}
+	f.fold() // Stat passes, the read fails: the older sibling's turns come back
+	if err := os.Chmod(f.main, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.fold()
+	f.fold()
+	if own, _ := f.rows(); own != own0+1 {
+		t.Fatalf("ledger rows = %d, want %d: the turn written before the failed read was lost", own, own0+1)
 	}
 }
 

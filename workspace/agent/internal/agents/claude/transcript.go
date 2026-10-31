@@ -61,21 +61,33 @@ func jsonlMtime(p string) time.Time {
 // when none has real turns yet.
 func TranscriptRead(sid string) (lines [][]byte, path string, matched []string) {
 	matched = jsonlByMtime(sid)
+	lines, path, _ = readConversation(matched)
+	return lines, path, matched
+}
+
+// readConversation is TranscriptRead's choice over an mtime-ordered list. readOK is false when a
+// file it had to read failed to read: what comes back may then be another sibling's content, so a
+// caller that records "seen" must not.
+func readConversation(matched []string) (lines [][]byte, path string, readOK bool) {
 	if len(matched) == 0 {
-		return nil, "", nil
+		return nil, "", true
 	}
+	readOK = true
 	var fallback [][]byte
 	fallbackPath := matched[0]
 	for i, p := range matched {
-		ls := readJSONLLines(p)
+		ls, err := readJSONLLinesErr(p)
+		if err != nil {
+			readOK = false
+		}
 		if i == 0 {
 			fallback = ls
 		}
 		if HasConversation(ls) {
-			return ls, p, matched
+			return ls, p, readOK
 		}
 	}
-	return fallback, fallbackPath, matched
+	return fallback, fallbackPath, readOK
 }
 
 // SubagentTurns parses one subagent or Workflow-agent transcript for usage — every copy of one

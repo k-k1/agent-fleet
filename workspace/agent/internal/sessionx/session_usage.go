@@ -315,19 +315,18 @@ func AggregateUsage(turns []transcript.Turn) sessionUsage {
 	return u
 }
 
-// UsageStamp fingerprints the transcript source UsageTurns would parse, as a short digest, so
-// the fold can tell an unchanged transcript without opening it. ok=false: the kind has no cheap
-// stamp (it does not implement agents.UsageStamper) or its source cannot be named right now, and
-// the caller must parse.
-func UsageStamp(m session.Meta) (string, bool) {
-	us, ok := AgentOf(m.Kind).(agents.UsageStamper)
-	if !ok {
-		return "", false
+// UsageSourceOf is the transcript the usage fold reads, with a short digest of what it covers
+// (empty: nothing to fingerprint) and a loader whose ok=false means the turns may be stale. A
+// kind without agents.UsageSourcer is read by UsageTurns, never skippable and always ok.
+func UsageSourceOf(m session.Meta) (stamp string, turns func() ([]transcript.Turn, bool)) {
+	if us, ok := AgentOf(m.Kind).(agents.UsageSourcer); ok {
+		if src, ok := us.UsageSource(m); ok {
+			if src.Stamp != "" {
+				sum := sha256.Sum256([]byte(src.Stamp))
+				stamp = hex.EncodeToString(sum[:8])
+			}
+			return stamp, src.Turns
+		}
 	}
-	raw, ok := us.UsageStamp(m)
-	if !ok {
-		return "", false
-	}
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:8]), true
+	return "", func() ([]transcript.Turn, bool) { return UsageTurns(m), true }
 }
