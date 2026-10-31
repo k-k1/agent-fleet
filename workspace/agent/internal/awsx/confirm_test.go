@@ -56,13 +56,14 @@ func gate(t *testing.T, settings map[string]Profile, profile, sess string, wait 
 	t.Helper()
 	ch := make(chan error, 1)
 	done := make(chan struct{})
+	sessDir := os.Getenv("AF_SESSIONS_DIR") // read now: a later test step may repoint it
 	go func() {
 		defer close(done)
 		_, err := ConfirmGate(ConfirmOptions{Settings: settings, Profile: profile, Session: sess, Wait: wait, Command: "aws"})
 		ch <- err
 	}()
 	t.Cleanup(func() {
-		_ = os.RemoveAll(os.Getenv("AF_SESSIONS_DIR"))
+		_ = os.RemoveAll(sessDir)
 		select {
 		case <-done:
 		case <-time.After(gateJoinBudget):
@@ -75,11 +76,13 @@ func gate(t *testing.T, settings map[string]Profile, profile, sess string, wait 
 // gateJoinBudget and gateSlack are wall-clock budgets that only separate "returned" from
 // "never returns"; none of the assertions depends on them being tight. gateJoinBudget bounds a
 // wait for something that ends within a few polls (10 ms) when nothing is wrong; gateSlack is
-// the bound for a run that must end at once, against a Wait chosen far above it so that a gate
-// that did wait would overshoot by a wide margin.
+// the bound for something that must merely happen eventually; gateAtOnce is the bound for a run
+// that must end at once (a held lock, a denial hold, no session), against a Wait chosen far above
+// it so that a gate that did wait would overshoot it by a wide margin.
 const (
 	gateJoinBudget = 20 * time.Second
 	gateSlack      = 10 * time.Second
+	gateAtOnce     = 3 * time.Second
 	gateLongWait   = 60 * time.Second
 )
 
@@ -149,7 +152,7 @@ func TestConfirmGateDenialAndTimeout(t *testing.T) {
 	}
 	// Within the hold a new run is denied at once and files nothing new.
 	start := time.Now()
-	if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: gateLongWait}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > gateSlack {
+	if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: gateLongWait}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > gateAtOnce {
 		t.Fatalf("held run = %v after %s", err, time.Since(start))
 	}
 
@@ -172,7 +175,7 @@ func TestConfirmGateNeedsASession(t *testing.T) {
 	s := gateEnv(t)
 	for _, sess := range []string{"", "nosuch", "../x"} {
 		start := time.Now()
-		if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: sess, Wait: gateLongWait}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > gateSlack {
+		if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: sess, Wait: gateLongWait}); !errors.Is(err, ErrConfirmRequired) || time.Since(start) > gateAtOnce {
 			t.Fatalf("session %q: %v", sess, err)
 		}
 	}
@@ -353,7 +356,7 @@ func TestConfirmGateBoundsTheLockWait(t *testing.T) {
 	defer unlock()
 	start := time.Now()
 	_, gerr := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: 100 * time.Millisecond})
-	if !errors.Is(gerr, ErrConfirmRequired) || time.Since(start) > gateSlack {
+	if !errors.Is(gerr, ErrConfirmRequired) || time.Since(start) > gateAtOnce {
 		t.Fatalf("gate = %v after %s", gerr, time.Since(start))
 	}
 	ents, _ := os.ReadDir(confirmDir("requests"))
@@ -386,7 +389,7 @@ func TestDenyHoldIsPerProfile(t *testing.T) {
 	}
 	start := time.Now()
 	_, err := ConfirmGate(ConfirmOptions{Settings: both, Profile: "admin-src", Session: "s1", Wait: gateLongWait})
-	if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "denied") || time.Since(start) > gateSlack {
+	if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "denied") || time.Since(start) > gateAtOnce {
 		t.Fatalf("the source alone = %v after %s", err, time.Since(start))
 	}
 }
