@@ -250,7 +250,7 @@ func TestAgentMemoryExternalRepositoryAcceptsListedRemote(t *testing.T) {
 	if remote != "github.com/k-k1/Alpha" {
 		t.Fatalf("listed remote = %q in %s", remote, out)
 	}
-	for i, repo := range []string{remote, "GitHub.com/k-k1/Alpha"} {
+	for i, repo := range []string{remote, "GitHub.com/k-k1/Alpha", "github.com/k-k1/Alpha.git"} {
 		name := fmt.Sprintf("via-listed-%d", i)
 		code, out := extSave(t, map[string]any{"scope": "project", "repository": repo, "name": name})
 		if code != 200 || !strings.Contains(out, `"project":"`+a.Project.ID+`"`) {
@@ -262,7 +262,7 @@ func TestAgentMemoryExternalRepositoryAcceptsListedRemote(t *testing.T) {
 		}
 	}
 	for _, repo := range []string{
-		"foo/bar", "./k-k1/alpha", "github.com/k-k1", "github.com", "github.com/", "github.com/k-k1/",
+		"foo/bar", "./k-k1/alpha", "github.com/k-k1", "github.com/.git", "github.com", "github.com/", "github.com/k-k1/",
 		"git.example.com/team/repo", "tok:x@github.com/k-k1/alpha",
 		"github.com/k-k1/alpha?x=1", "/github.com/k-k1/alpha", "ghe.example.com/k-k1/alpha",
 	} {

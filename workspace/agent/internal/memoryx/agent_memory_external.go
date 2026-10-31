@@ -204,7 +204,7 @@ func agentMemExternalResolve(project, repository string) (agentMemExternalTarget
 		switch {
 		case len(found) == 0:
 			return t, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound,
-				"no project of this memory has the remote %q and no working copy of it is cloned in the workspace: clone the repository under ~/repos in the workspace first, or check memory_projects (its `repository` column)", want)
+				"no project of this memory has the remote %q and no working copy of it is cloned in the workspace: clone the repository under ~/repos in the workspace first, or check memory_projects (its `remote` column)", want)
 		case !complete:
 			return t, memoryErrf(http.StatusConflict, errCodeMemoryConflict,
 				"the working copies under ~/repos could not all be read, so the project for the remote %q cannot be chosen safely: try again, or pass `project` from memory_projects", want)
@@ -233,8 +233,8 @@ func agentMemNormalizedRemoteForm(raw string) string {
 	if !ok || !forgeHosts[host] || strings.Count(path, "/") < 1 {
 		return ""
 	}
-	out := host + "/" + path
-	if !agentMemRemoteOK(out) {
+	out := strings.TrimSuffix(host+"/"+path, ".git") // models tend to append .git, as the URL forms allow
+	if !agentMemRemoteOK(out) || strings.Count(out, "/") < 2 {
 		return ""
 	}
 	return out
