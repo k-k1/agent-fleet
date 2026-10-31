@@ -1,6 +1,9 @@
 package session
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeLinkKey(t *testing.T) {
 	cases := []struct {
@@ -79,5 +82,34 @@ func TestInheritedLinksTakesStartedAndWorkingOnly(t *testing.T) {
 		if l.Role != LinkWatching || l.At != "now" {
 			t.Fatalf("inherited link %+v, want watching at now", l)
 		}
+	}
+}
+
+func TestLinksCompareKeysCaseInsensitivelyAndBoundTheirLength(t *testing.T) {
+	var m Meta
+	AddLink(&m, WorkItemLink{Provider: "github", Key: "O/R#45", Role: LinkWatching})
+	if AddLink(&m, WorkItemLink{Provider: "github", Key: "o/r#45", Role: LinkWatching}) || len(m.Links) != 1 {
+		t.Fatalf("O/R#45 and o/r#45 became two links: %+v", m.Links)
+	}
+	long := "o/" + strings.Repeat("r", 200) + "#1"
+	if _, ok := NormalizeLinkKey("github", long, ""); ok {
+		t.Fatal("a key longer than 200 bytes was accepted")
+	}
+}
+
+func TestRemovingAGitHubLinkIsRememberedUntilLinkedAgain(t *testing.T) {
+	m := Meta{Links: []WorkItemLink{{Provider: "github", Key: "o/r#7", Role: LinkWorking}}}
+	if !RemoveLink(&m, "github", "O/R#7") || len(m.Links) != 0 || !IsUnlinked(m, "o/r#7") {
+		t.Fatalf("after remove: links=%+v unlinked=%v", m.Links, m.Unlinked)
+	}
+	// Removing what is not linked still records it: the branch's PR may only be linked later.
+	if !RemoveLink(&m, "github", "o/r#8") || !IsUnlinked(m, "o/r#8") {
+		t.Fatalf("unlinked=%v, want o/r#8 remembered", m.Unlinked)
+	}
+	if RemoveLink(&m, "jira", "PROJ-1") || len(m.Unlinked) != 2 {
+		t.Fatalf("a Jira removal of nothing changed the meta: %v", m.Unlinked)
+	}
+	if !ForgetUnlinked(&m, "o/r#7") || IsUnlinked(m, "o/r#7") {
+		t.Fatalf("unlinked=%v, want o/r#7 forgotten", m.Unlinked)
 	}
 }

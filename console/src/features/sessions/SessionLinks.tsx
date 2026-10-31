@@ -13,7 +13,7 @@ import { PortOpen } from "../preview/PortOpen.tsx";
 import { useWorkItemStore } from "../workitems/store.ts";
 import { useWorkItemModal } from "../workitems/modal.ts";
 import { resolveWorkItemRef } from "../workitems/refs.ts";
-import { CHECK_ICON, LINK_ROLE_ICON, PR_ICON, prChecks, prStateKey, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
+import { CHECK_ICON, LINK_ROLE_ICON, PR_ICON, knownRole, prChecks, prStateKey, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
 import type { Session, SessionWorkLink } from "../../types/session.ts";
 
 /** Ports drawn before the rest fold behind "+N": one line at the rail's narrowest. */
@@ -113,18 +113,19 @@ function WorkLinkChip({ link }: { link: SessionWorkLink }) {
     );
     useWorkItemModal.getState().openDetail(item, { reference });
   };
+  const role = knownRole(link.role);
   return (
     <button
       type="button"
-      className={"sess-item role-" + link.role}
+      className={"sess-item" + (role ? " role-" + role : "")}
       title={tr("srow.link_title", {
         key: link.key,
-        role: tr(`srow.link_role.${link.role}`),
+        role: role ? tr(`srow.link_role.${role}`) : "",
         title: link.title ? ` — ${link.title}` : "",
       })}
       onClick={open}
     >
-      <Icon name={LINK_ROLE_ICON[link.role] || "link"} />
+      <Icon name={role ? LINK_ROLE_ICON[role] : "link"} />
       {link.key}
     </button>
   );

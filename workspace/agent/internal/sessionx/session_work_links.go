@@ -54,7 +54,7 @@ func HandleSessionLink(w http.ResponseWriter, r *http.Request) {
 			"provider must be github, jira or bitbucket, and key owner/repo#N, #N inside that repository, or PROJ-12")
 		return
 	}
-	role := strings.TrimSpace(req.Role)
+	role := strings.ToLower(strings.TrimSpace(req.Role))
 	if role == "" {
 		role = session.LinkWorking
 	}
@@ -62,21 +62,25 @@ func HandleSessionLink(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_role", "role must be working, reviewing, watching or created")
 		return
 	}
-	changed := false
+	changed, found := false, false
 	m, _ = UpdateSessionMeta(name, func(m *session.Meta) bool {
+		found = true
 		if req.Remove {
 			changed = session.RemoveLink(m, provider, key)
 		} else {
+			// Linking an item by hand undoes an earlier removal of it.
+			forgot := session.ForgetUnlinked(m, key)
 			changed = session.AddLink(m, session.WorkItemLink{
 				Provider: provider, Key: key, Role: role,
 				Title: clipRunes(strings.TrimSpace(req.Title), 300), URL: linkURL(req.URL),
 				At: time.Now().UTC().Format(time.RFC3339),
-			})
+			}) || forgot
 		}
 		return changed
 	})
-	if !changed {
-		m, _ = session.ReadMeta(name)
+	if !found {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, linkResp{Name: name, Changed: changed, Links: linksOrEmpty(session.LinksOf(m))})
 }
@@ -161,15 +165,24 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 			continue
 		}
 		key, ok := prLinkKey(s.PR)
-		if !ok || hasLink(s.Links, "github", key) {
+		if !ok {
 			continue
 		}
 		role := session.LinkWorking
 		if s.OriginSession != "" && dirOf[s.OriginSession] == s.Dir {
 			role = session.LinkWatching
 		}
+		// Already linked at this role or above: nothing to write. A watching link left from when
+		// the session shared its parent's copy still goes through AddLink, which raises it.
+		if cur, held := linkRole(s.Links, "github", key); held && (cur != session.LinkWatching || role == session.LinkWatching) {
+			continue
+		}
 		l := session.WorkItemLink{Provider: "github", Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339)}
-		if m, wrote := UpdateSessionMeta(s.Name, func(m *session.Meta) bool { return session.AddLink(m, l) }); wrote {
+		// A PR unlinked by hand stays unlinked. Checked on the meta itself: the wire does not carry
+		// the removals, so such a row costs one meta read per poll and no write.
+		if m, wrote := UpdateSessionMeta(s.Name, func(m *session.Meta) bool {
+			return !session.IsUnlinked(*m, key) && session.AddLink(m, l)
+		}); wrote {
 			s.Links = session.LinksOf(m)
 		}
 	}
@@ -189,11 +202,12 @@ func prLinkKey(pr *branchpr.PR) (string, bool) {
 	return session.NormalizeLinkKey("github", parts[0]+"/"+parts[1]+"#"+parts[3], "")
 }
 
-func hasLink(links []session.WorkItemLink, provider, key string) bool {
+// linkRole is the role links holds provider/key at, and whether it holds it at all.
+func linkRole(links []session.WorkItemLink, provider, key string) (string, bool) {
 	for _, l := range links {
-		if strings.EqualFold(l.Provider, provider) && l.Key == key {
-			return true
+		if session.SameLinkItem(l, provider, key) {
+			return l.Role, true
 		}
 	}
-	return false
+	return "", false
 }

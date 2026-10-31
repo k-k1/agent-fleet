@@ -124,3 +124,60 @@ func TestRecordBranchPRsLinksTheBranchPROnceAndOnlyWatchesForASharingChild(t *te
 		t.Fatalf("a steady list rewrote the link: %+v -> %+v", m1.Links, m2.Links)
 	}
 }
+
+func TestUnlinkedBranchPRStaysUnlinkedUntilLinkedByHand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	stubLinkRepo(t, nil)
+	session.WriteMeta(session.Meta{Name: "un1", Dir: "/wt/u", Kind: session.KindClaude})
+	pr := &branchpr.PR{Number: 7, State: "open", URL: "https://github.com/o/r/pull/7"}
+	poll := func() []session.WorkItemLink {
+		m, _ := session.ReadMeta("un1")
+		rows := []session.Session{{Name: "un1", Dir: "/wt/u", PR: pr, Links: session.LinksOf(m)}}
+		recordBranchPRs(rows, time.Now())
+		return rows[0].Links
+	}
+	if l := poll(); len(l) != 1 {
+		t.Fatalf("first poll links=%+v, want the branch PR", l)
+	}
+	if w, l := postLink(t, "un1", `{"provider":"GitHub","key":"o/r#7","remove":true}`); w.Code != http.StatusOK || len(l) != 0 {
+		t.Fatalf("remove: status=%d links=%+v", w.Code, l)
+	}
+	if l := poll(); len(l) != 0 {
+		t.Fatalf("the next poll linked the removed PR again: %+v", l)
+	}
+	if _, l := postLink(t, "un1", `{"provider":"github","key":"o/r#7","role":"Reviewing"}`); len(l) != 1 || l[0].Role != session.LinkReviewing {
+		t.Fatalf("relink links=%+v, want reviewing (role case ignored)", l)
+	}
+	if m, _ := session.ReadMeta("un1"); len(m.Unlinked) != 0 {
+		t.Fatalf("relinking left the removal on record: %v", m.Unlinked)
+	}
+}
+
+func TestRecordBranchPRsRaisesAWatchingLinkOnceTheCopyIsItsOwn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "mv1", Dir: "/wt/own", Kind: session.KindClaude,
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#7", Role: session.LinkWatching}}})
+	m, _ := session.ReadMeta("mv1")
+	rows := []session.Session{{Name: "mv1", Dir: "/wt/own", PR: &branchpr.PR{Number: 7, State: "open", URL: "https://github.com/O/R/pull/7"}, Links: session.LinksOf(m)}}
+	recordBranchPRs(rows, time.Now())
+	if l := rows[0].Links; len(l) != 1 || l[0].Role != session.LinkWorking {
+		t.Fatalf("links=%+v, want the one link raised to working", l)
+	}
+}
+
+func TestCreateFingerprintCountsTheWorkItemOnlyWhenPresent(t *testing.T) {
+	base := CreateReq{ReportTo: "conv1", Dir: "/repos/app", InitialPrompt: "fix it"}
+	plain := createIdempotencyKey(&base)
+	a, b := base, base
+	a.WorkItem = &session.WorkItemRef{Provider: "jira", Key: "PROJ-1"}
+	b.WorkItem = &session.WorkItemRef{Provider: "jira", Key: "PROJ-2"}
+	ka, kb := createIdempotencyKey(&a), createIdempotencyKey(&b)
+	if ka == plain || ka == kb {
+		t.Fatalf("fingerprints plain=%s PROJ-1=%s PROJ-2=%s: a work item must change it", plain, ka, kb)
+	}
+	empty := base
+	empty.WorkItem = &session.WorkItemRef{}
+	if createIdempotencyKey(&empty) != plain {
+		t.Fatal("an empty work item changed the fingerprint of a launch without one")
+	}
+}

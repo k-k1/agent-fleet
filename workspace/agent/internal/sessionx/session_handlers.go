@@ -1511,7 +1511,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
 		// The same slot keeps its studio (ADR 0100 decision 2); rebindStudioOnRecreate below moves
 		// the studio's own `session` over, or drops this copy when it cannot.
-		Studio: m.Studio, WorkItem: m.WorkItem,
+		Studio: m.Studio, WorkItem: m.WorkItem, Links: m.Links, Unlinked: m.Unlinked,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
@@ -1596,8 +1596,9 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
-		// The fork works in the same working copy, so it renames the same branch for the same item.
-		WorkItem: src.WorkItem,
+		// The fork works in the same working copy, so it renames the same branch for the same item,
+		// and is on the same tickets and PRs.
+		WorkItem: src.WorkItem, Links: src.Links, Unlinked: src.Unlinked,
 		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
 		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the

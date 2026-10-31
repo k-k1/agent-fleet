@@ -456,6 +456,12 @@ describe("sessionsOnItem", () => {
     ]);
     expect(got[1]).toMatchObject({ id: "link:skid", repo: "web", branch: "k", createdAt: "t" });
   });
+
+  it("matches provider and key regardless of case and drops a role it does not know", () => {
+    const live = [{ name: "s1", links: [{ provider: "GitHub", key: "Acme/Web#45", role: "odd" as never }] }];
+    const got = sessionsOnItem([], live, "github", "acme/web#45");
+    expect(got.map((r) => [r.sessionName, r.role])).toEqual([["s1", undefined]]);
+  });
 });
 
 describe("promptForItem — how to read the body, per provider", () => {

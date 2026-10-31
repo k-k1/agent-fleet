@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchrule"
 )
@@ -52,12 +54,26 @@ func linkBranchItem(owner string, item *branchrule.Item) {
 	if owner == "" || item == nil || strings.TrimSpace(item.Key) == "" {
 		return
 	}
-	provider := strings.TrimSpace(item.Provider)
-	if provider == "" {
-		provider = "github"
+	body, _ := json.Marshal(linkWorkItemArgs{Provider: itemProvider(item), Key: item.Key, Role: "working", Title: item.Title})
+	// Short, because branch_name waits for it and the name is already in hand.
+	_, _ = agentDoTimeout(http.MethodPost, "/sessions/"+url.PathEscape(owner)+"/links", body, linkBranchTimeout)
+}
+
+const linkBranchTimeout = 3 * time.Second
+
+// jiraKeyShape is a Jira key as an agent may type it; NormalizeLinkKey upper-cases it.
+var jiraKeyShape = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*$`)
+
+// itemProvider is the item's provider, or, when branch_name was given none, the one its key's
+// shape names: PROJ-12 is Jira, anything else is taken to be GitHub.
+func itemProvider(item *branchrule.Item) string {
+	if p := strings.TrimSpace(item.Provider); p != "" {
+		return p
 	}
-	body, _ := json.Marshal(linkWorkItemArgs{Provider: provider, Key: item.Key, Role: "working", Title: item.Title})
-	_, _ = agentDo(http.MethodPost, "/sessions/"+url.PathEscape(owner)+"/links", body)
+	if jiraKeyShape.MatchString(strings.TrimSpace(item.Key)) {
+		return "jira"
+	}
+	return "github"
 }
 
 func linkWorkItemSchema() map[string]any {

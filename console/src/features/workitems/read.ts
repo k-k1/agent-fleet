@@ -3,6 +3,7 @@
 // Kept free of React and of the API client so the parts that decide what the rail says
 // (state tone, "last fetched", the seeded first prompt, the branch name) are testable on
 // their own — they are the feature, the section is just their frame.
+import { knownRole, sameWorkItem } from "../sessions/sessionLinks.ts";
 import type { Session, SessionWorkLinkRole } from "../../types/session.ts";
 import type { ApiError } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
@@ -835,7 +836,7 @@ export function sessionsOnItem(
   const named = new Set(out.map((r) => r.sessionName));
   for (const s of sessions) {
     if (named.has(s.name)) continue;
-    const link = (s.links || []).find((l) => l.provider === provider && l.key === key);
+    const link = (s.links || []).find((l) => sameWorkItem(l, provider, key));
     if (!link) continue;
     named.add(s.name);
     out.push({
@@ -846,7 +847,7 @@ export function sessionsOnItem(
       repo: s.repo || "",
       branch: s.branch || "",
       createdAt: link.at || s.createdAt || "",
-      role: link.role,
+      role: knownRole(link.role) ?? undefined,
     });
   }
   return out;

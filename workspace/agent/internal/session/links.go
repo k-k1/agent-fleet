@@ -32,6 +32,10 @@ func ValidLinkRole(role string) bool {
 	return role != LinkStarted && linkRank[role] > 0
 }
 
+// maxLinkKey matches the launch item's key clip (cleanWorkItemRef): a key is an identifier, and
+// anything longer is a paste gone wrong that would ride every session listing.
+const maxLinkKey = 200
+
 // MaxLinks bounds Meta.Links. The meta is read by every session listing, and an agent that
 // links in a loop must not be able to grow it without end.
 const MaxLinks = 50
@@ -60,6 +64,9 @@ var (
 // repo would collide across every repository.
 func NormalizeLinkKey(provider, key, repo string) (string, bool) {
 	provider, key = strings.ToLower(strings.TrimSpace(provider)), strings.TrimSpace(key)
+	if len(key) > maxLinkKey {
+		return "", false
+	}
 	re, known := linkProvRes[provider]
 	if !known {
 		return "", false
@@ -82,7 +89,7 @@ func LinksOf(m Meta) []WorkItemLink {
 	}
 	out := make([]WorkItemLink, 0, len(m.Links)+1)
 	if wi := m.WorkItem; wi != nil {
-		out = append(out, WorkItemLink{Provider: wi.Provider, Key: wi.Key, Role: LinkStarted, Title: wi.Title})
+		out = append(out, WorkItemLink{Provider: strings.ToLower(wi.Provider), Key: wi.Key, Role: LinkStarted, Title: wi.Title})
 	}
 	for _, l := range m.Links {
 		if m.WorkItem != nil && sameItem(l, m.WorkItem.Provider, m.WorkItem.Key) {
@@ -93,9 +100,15 @@ func LinksOf(m Meta) []WorkItemLink {
 	return out
 }
 
+// sameItem compares case-insensitively on both parts: GitHub and Bitbucket owner/repo names are,
+// and a Jira key is upper-cased by NormalizeLinkKey anyway, so "O/R#45" from a PR URL and
+// "o/r#45" typed by an agent are one item.
 func sameItem(l WorkItemLink, provider, key string) bool {
-	return strings.EqualFold(l.Provider, provider) && l.Key == key
+	return strings.EqualFold(l.Provider, provider) && strings.EqualFold(l.Key, key)
 }
+
+// SameLinkItem is sameItem for callers outside the package.
+func SameLinkItem(l WorkItemLink, provider, key string) bool { return sameItem(l, provider, key) }
 
 // AddLink records l on m. It reports whether m changed: an item already held with an equal or
 // stronger role only fills a missing title or URL, and the launch item is never duplicated.
@@ -128,11 +141,41 @@ func AddLink(m *Meta, l WorkItemLink) bool {
 }
 
 // RemoveLink drops the link to provider/key. The launch item cannot be removed here: the
-// branch-name resolver still renders from it.
+// branch-name resolver still renders from it. A removed GitHub item is also remembered in
+// Meta.Unlinked, so the session list does not link the branch's PR again on its next poll.
 func RemoveLink(m *Meta, provider, key string) bool {
+	changed := false
+	if strings.EqualFold(provider, "github") && !IsUnlinked(*m, key) {
+		if len(m.Unlinked) >= MaxLinks {
+			m.Unlinked = m.Unlinked[1:]
+		}
+		m.Unlinked = append(m.Unlinked, key)
+		changed = true
+	}
 	for i, l := range m.Links {
 		if sameItem(l, provider, key) {
 			m.Links = append(m.Links[:i:i], m.Links[i+1:]...)
+			return true
+		}
+	}
+	return changed
+}
+
+// IsUnlinked reports whether the GitHub item key was removed by hand (RemoveLink).
+func IsUnlinked(m Meta, key string) bool {
+	for _, k := range m.Unlinked {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// ForgetUnlinked drops key from Meta.Unlinked: linking an item again by hand undoes the removal.
+func ForgetUnlinked(m *Meta, key string) bool {
+	for i, k := range m.Unlinked {
+		if strings.EqualFold(k, key) {
+			m.Unlinked = append(m.Unlinked[:i:i], m.Unlinked[i+1:]...)
 			return true
 		}
 	}

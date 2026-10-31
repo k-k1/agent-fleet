@@ -504,7 +504,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "portopen.btn.subdomain": "Open in new tab",
   "portopen.temp_badge": "temporary",
   "portopen.temp_hint": "Opened temporarily. It closes when the running server stops or the workspace restarts.",
-  "srow.links": "Pull request and listening ports",
+  "srow.links": "Pull request, linked items and listening ports",
   "srow.ports_more": "Show {n} more ports",
   "srow.link_title": "{key} — {role}{title} (opens the item)",
   "srow.links_more": "Show {n} more linked items",

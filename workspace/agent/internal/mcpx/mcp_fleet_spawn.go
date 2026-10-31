@@ -129,6 +129,19 @@ type spawnWorkItem struct {
 	Title    string `json:"title"`
 }
 
+// spawnWorkItemOf validates and normalizes create_session's work_item; nil when none was given.
+func spawnWorkItemOf(in *spawnWorkItem) (*spawnWorkItem, error) {
+	if in == nil || strings.TrimSpace(in.Key) == "" {
+		return nil, nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(in.Provider))
+	key, ok := session.NormalizeLinkKey(provider, in.Key, "")
+	if !ok {
+		return nil, fmt.Errorf("work_item: provider must be github, jira or bitbucket, and key owner/repo#N or PROJ-12 (got %q %q)", in.Provider, in.Key)
+	}
+	return &spawnWorkItem{Provider: provider, Key: key, Title: strings.TrimSpace(in.Title)}, nil
+}
+
 // fleetSpawnTools are the tools that start sessions, and the two only a session's own children
 // can be steered with. create_session is the operator's under --write and a session's under
 // --fleet-spawn, one handler for both.
@@ -352,7 +365,18 @@ func fleetSpawnTools() []toolSpec {
 						return mcpToolErr(req.ID, err.Error())
 					}
 				}
+				// The child's ticket is checked before anything is created and stored in the inbox's
+				// key shape, or its launch item would never match the item it names (#3134). A bare
+				// number is refused: the child's repository is not settled yet.
+				wi, err := spawnWorkItemOf(a.WorkItem)
+				if err != nil {
+					return mcpToolErr(req.ID, err.Error())
+				}
 				idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, model, effort, initialPrompt, worktree, a.Branch, a.NewBranch, shared)
+				if wi != nil {
+					// The same launch for another ticket is another child, not a retry of this one.
+					idemKey = CreateSessionKey(idemKey, "work_item", wi.Provider, wi.Key, "", "", "", false, "", "", false)
+				}
 				body := map[string]any{
 					"dir":             a.Dir,
 					"subdir":          a.Subdir,
@@ -382,8 +406,8 @@ func fleetSpawnTools() []toolSpec {
 				if a.SpendCapUSD != nil {
 					body["spend_cap_usd"] = *a.SpendCapUSD
 				}
-				if wi := a.WorkItem; wi != nil && strings.TrimSpace(wi.Key) != "" {
-					body["work_item"] = map[string]any{"provider": strings.TrimSpace(wi.Provider), "key": strings.TrimSpace(wi.Key), "title": wi.Title}
+				if wi != nil {
+					body["work_item"] = map[string]any{"provider": wi.Provider, "key": wi.Key, "title": wi.Title}
 				}
 				reqBody, _ := json.Marshal(body)
 				// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The

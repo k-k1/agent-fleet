@@ -512,7 +512,7 @@ export const sessions = {
   "portopen.btn.subdomain": "新しいタブで開く",
   "portopen.temp_badge": "一時",
   "portopen.temp_hint": "一時的に開いているポートです。起動中のサーバーが止まるか、再起動すると閉じます。",
-  "srow.links": "プルリクエストと待ち受けポート",
+  "srow.links": "プルリクエスト・紐づいた項目・待ち受けポート",
   "srow.ports_more": "残り {n} 個のポートを表示",
   "srow.link_title": "{key}：{role}{title}（項目を開く）",
   "srow.links_more": "残り {n} 件の紐づいた項目を表示",
