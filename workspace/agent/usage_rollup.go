@@ -263,11 +263,17 @@ func aggregateUsageRows(rows []usagex.Record, seen map[string]bool) map[usageKey
 // so they pair per (kind, ref): the n-th hook row of a ref measures the n-th still-unmeasured fold
 // call of that ref, in append order. A fold row left without a hook row stays unmeasured, and
 // a hook row left without a fold row changes nothing. Rows are marked in place; the stored
-// ledger is untouched. rows must already be deduplicated (one hook row per generation).
+// ledger is untouched.
+//
+// Only the main thread's feature=session fold rows are candidates: a same-ref engine.* row or a
+// subagent row is not the turn the hook measured. Pairing by count is approximate in
+// attribution: an aborted or failed turn has a fold row but no hook row, so the mark can land
+// on an earlier turn, shifting measured/unmeasured between model and time-bucket dimensions
+// (the totals stay right). rows must already be deduplicated (one hook row per generation).
 func pairCursorHookTurns(rows []usagex.Record) {
 	hooks := map[string]int{}
 	for _, r := range rows {
-		if r.TokensOnly && r.Ref != "" && r.Measured != usagex.MeasuredNone {
+		if r.TokensOnly && r.Feature == usagex.FeatureSession && r.Ref != "" && r.Measured != usagex.MeasuredNone {
 			hooks[r.Kind+"\x00"+r.Ref]++
 		}
 	}
@@ -276,7 +282,8 @@ func pairCursorHookTurns(rows []usagex.Record) {
 	}
 	for i, r := range rows {
 		k := r.Kind + "\x00" + r.Ref
-		if r.TokensOnly || r.Measured != usagex.MeasuredNone || hooks[k] <= 0 {
+		if r.TokensOnly || r.Feature != usagex.FeatureSession || r.Agent != "" ||
+			r.Measured != usagex.MeasuredNone || hooks[k] <= 0 {
 			continue
 		}
 		hooks[k]--
