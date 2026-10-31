@@ -263,15 +263,7 @@ func stubStudioAgent(t *testing.T, states ...string) *[]string {
 func TestAgentTrialToggleNeedsNoReList(t *testing.T) {
 	withSessionSurface(t, "slot01")
 	bindStudioForTest(t, "slot01", false)
-	mcpAdvertised.mu.Lock()
-	oldNames, oldFP := mcpAdvertised.names, mcpAdvertised.fp
-	mcpAdvertised.names, mcpAdvertised.fp = nil, ""
-	mcpAdvertised.mu.Unlock()
-	t.Cleanup(func() {
-		mcpAdvertised.mu.Lock()
-		mcpAdvertised.names, mcpAdvertised.fp = oldNames, oldFP
-		mcpAdvertised.mu.Unlock()
-	})
+	isolateAdvertised(t)
 
 	listed := string(dispatchMCPStdio([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
 	if !strings.Contains(listed, `"run_image_trial"`) {

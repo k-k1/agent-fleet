@@ -32,10 +32,7 @@ func memoryTestEnv(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	oldSource := mcpSourceSession
 	mcpSourceSession = "owner01"
-	mcpAdvertised.mu.Lock()
-	oldNames := mcpAdvertised.names
-	mcpAdvertised.names = nil
-	mcpAdvertised.mu.Unlock()
+	isolateAdvertised(t)
 	oldMemory, oldHook := mcpAgentMemoryEnabled, memoryx.AgentMemoryEnabled
 	mcpAgentMemoryEnabled = true
 	memoryx.AgentMemoryEnabled = func() bool { return true }
@@ -51,9 +48,6 @@ func memoryTestEnv(t *testing.T) {
 	t.Cleanup(func() {
 		mcpAgentMemoryEnabled, memoryx.AgentMemoryEnabled = oldMemory, oldHook
 		mcpSourceSession = oldSource
-		mcpAdvertised.mu.Lock()
-		mcpAdvertised.names = oldNames
-		mcpAdvertised.mu.Unlock()
 		if oldDeps.ErrCodeBadRequest != "" {
 			memoryx.Configure(oldDeps)
 		}

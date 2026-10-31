@@ -9,13 +9,25 @@ import (
 	"testing"
 )
 
-// forgetAdvertised clears what the last tools/list recorded (mcpAdvertised). Tests share one
-// process, so a list served by one of them would otherwise decide the call-side scope check in
-// the next — which is the very thing that check is supposed to read.
+// forgetAdvertised clears everything the last tools/list recorded (mcpAdvertised: names, the
+// fingerprint and the argument property sets). Tests share one process, so a list served by one
+// of them would otherwise decide the call-side scope check in the next — which is the very thing
+// that check is supposed to read.
 func forgetAdvertised() {
 	mcpAdvertised.mu.Lock()
-	mcpAdvertised.names = nil
+	mcpAdvertised.names, mcpAdvertised.fp, mcpAdvertised.props = nil, "", nil
 	mcpAdvertised.mu.Unlock()
+}
+
+// isolateAdvertised starts the test from "nothing listed yet" and leaves it that way. Any test
+// that serves a tools/list, or calls rememberAdvertised itself, must use it (or
+// t.Cleanup(forgetAdvertised)): the record is package-level state, and one left behind makes the
+// next test's create_session / generate_image call fail as "not advertised" under -count>1 or
+// -shuffle.
+func isolateAdvertised(t *testing.T) {
+	t.Helper()
+	forgetAdvertised()
+	t.Cleanup(forgetAdvertised)
 }
 
 func stdioDispatch(t *testing.T, body string) map[string]any {
