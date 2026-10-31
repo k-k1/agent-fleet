@@ -103,6 +103,9 @@ func buildHome(t *testing.T) string {
 	writeSized(t, filepath.Join(sessionx.CleanupArchiveDir(), "20260101-000000-s.tar.gz"), 13000)
 	writeSized(t, filepath.Join(sessionx.CacheRoot(), "images", "i.png"), 4000)
 	writeSized(t, filepath.Join(home, "notes.txt"), 2000)
+	// Loose files beside the working copies and the af-work folders are no copy and no folder.
+	writeSized(t, filepath.Join(home, "repos", "stray.txt"), 1000)
+	writeSized(t, filepath.Join(home, ".af-work", "loose-file"), 1000)
 
 	// A hard link counts once, wherever it is met first.
 	writeSized(t, filepath.Join(home, ".npm", "_cacache", "big"), 70000)
@@ -164,18 +167,32 @@ func TestMeasureHomeClassifiesEveryByteOnce(t *testing.T) {
 		t.Fatalf("the linked node_modules was followed: %+v", wt)
 	}
 
+	// Exact figures per category, so a nested root filed under its parent (the Agent's cache
+	// inside ~/.cache, its data inside ~/.local) shows here even though the total still adds up.
+	below := func(p, nested string) int64 { return allocated(t, p) - allocated(t, nested) }
+	if got, want := homeCat(u, homeusage.CatToolCache).Bytes,
+		below(filepath.Join(home, ".cache"), sessionx.CacheRoot())+allocated(t, filepath.Join(home, ".gradle"))+allocated(t, filepath.Join(home, ".npm")); got != want {
+		t.Fatalf("tool_cache = %d, want %d", got, want)
+	}
+	if got, want := homeCat(u, homeusage.CatTools).Bytes, below(filepath.Join(home, ".local"), paths.AgentDataDir()); got != want {
+		t.Fatalf("tools = %d, want %d", got, want)
+	}
+	if got, want := homeCat(u, homeusage.CatAgent).Bytes,
+		below(paths.AgentDataDir(), sessionx.CleanupArchiveDir())+allocated(t, sessionx.CacheRoot()); got != want {
+		t.Fatalf("agent = %d, want %d", got, want)
+	}
+	for _, r := range u.Repos {
+		if r.Name == "stray.txt" {
+			t.Fatal("a file under ~/repos became a working copy")
+		}
+	}
+
 	tc := homeCat(u, homeusage.CatToolCache)
 	if tc.Reclaimable != allocated(t, filepath.Join(home, ".cache", "go-build"))+allocated(t, filepath.Join(home, ".npm", "_cacache")) {
 		t.Fatalf("tool cache reclaimable = %d (parts %+v)", tc.Reclaimable, tc.Parts)
 	}
 	if tr := homeCat(u, homeusage.CatTrash); tr.Bytes == 0 || tr.Reclaimable != tr.Bytes {
 		t.Fatalf("trash = %+v", tr)
-	}
-	if ag := homeCat(u, homeusage.CatAgent); ag.Bytes < allocated(t, sessionx.CacheRoot()) {
-		t.Fatalf("agent = %+v", ag)
-	}
-	if tl := homeCat(u, homeusage.CatTools); tl.Bytes == 0 {
-		t.Fatalf("tools = %+v", tl)
 	}
 
 	if !u.AfWorkJudged || len(u.AfWork) != 2 {
@@ -234,5 +251,23 @@ func TestMeasureHomeAfWorkUnjudgedWithoutSessionStore(t *testing.T) {
 	}
 	if aw := homeCat(u, homeusage.CatAfWork); aw.Reclaimable != 0 {
 		t.Fatalf("reclaimable = %d", aw.Reclaimable)
+	}
+}
+
+// A tool cache pointed outside home is never walked, so it is no root: listing it would show
+// a zero for a cache that may hold gigabytes.
+func TestHomeRootsLeaveOutCachesOutsideHome(t *testing.T) {
+	home, _ := isolateLeftovers(t)
+	for _, c := range toolCaches {
+		t.Setenv(c.env, "")
+	}
+	outside := t.TempDir()
+	t.Setenv("GOCACHE", outside)
+	r := homeRoots(home)
+	if _, ok := r[outside]; ok {
+		t.Fatal("a GOCACHE outside home is a root")
+	}
+	if _, ok := r[filepath.Join(home, ".cache", "uv")]; !ok {
+		t.Fatal("uv inside home is no root")
 	}
 }

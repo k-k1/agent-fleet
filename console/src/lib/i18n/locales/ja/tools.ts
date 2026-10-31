@@ -551,6 +551,8 @@ export const tools = {
   "machine.home_show_top": "大きいものだけ表示",
   "machine.home_measured": "{when} に計測（{secs} 秒）。",
   "machine.home_measuring": "計測中… {count} 件",
+  "machine.home_more_parts": "ほかに小さいものが {count} 件あります（上の数字に含まれます）。",
+  "machine.home_elsewhere": "{name} は home の外かほかのディスクにあるため、ここには数えていません。",
   "machine.home_remeasure": "もう一度計測",
   "machine.home_approximate": "ハードリンクが多すぎて追いきれず、一部のファイルを重複して数えている可能性があります。",
   "machine.home_unreadable": "{count} 個のフォルダを読めませんでした。その中身はどの数字にも入っていません。",

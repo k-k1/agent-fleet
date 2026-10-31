@@ -554,6 +554,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.home_show_top": "Show the largest only",
   "machine.home_measured": "Measured {when}, in {secs} s.",
   "machine.home_measuring": "Measuring… {count} entries",
+  "machine.home_more_parts": "…and {count} smaller ones, included in the figure above.",
+  "machine.home_elsewhere": "{name} is outside home or on another disk, so it is not counted here.",
   "machine.home_remeasure": "Measure again",
   "machine.home_approximate": "Some hard-linked files may be counted more than once: there were too many to track.",
   "machine.home_unreadable": "{count} folders could not be read and are in no figure.",

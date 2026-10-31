@@ -187,8 +187,43 @@ describe("HomeBreakdownSection", () => {
   });
 
   it("hides itself on an Agent without the endpoint", async () => {
+    answers.byPath["api/cleanup/home"] = { error: { code: "http_404", status: 404 } };
     const text = await mount();
     expect(text).toBe("");
+  });
+
+  it("stays, says so and can retry when the Agent answers with any other error", async () => {
+    answers.byPath["api/cleanup/home"] = { error: { code: "http_502", status: 502 } };
+    const text = await mount();
+    expect(text).toContain("home の内訳を読み込めませんでした");
+    const measure = buttons().find((b) => b.textContent === "測る")!;
+    expect(measure.disabled).toBe(false);
+    answers.byPath["api/cleanup/home/measure"] = { running: true, scanned: 0, result: null };
+    await act(async () => {
+      measure.click();
+    });
+    expect(answers.calls).toContain("POST api/cleanup/home/measure");
+    expect(host!.textContent).not.toContain("読み込めませんでした");
+  });
+
+  it("names a folder it could not count, and the parts it did not list", async () => {
+    const many = {
+      ...result,
+      elsewhere: ["repos"],
+      categories: [
+        {
+          key: "tool_cache",
+          bytes: 6 * GiB,
+          files: 1,
+          reclaimable: 0,
+          parts: ["a", "b", "c", "d", "e", "f"].map((name) => ({ name, bytes: GiB })),
+        },
+      ],
+    };
+    answers.byPath["api/cleanup/home"] = { running: false, scanned: 0, result: many };
+    const text = await mount();
+    expect(text).toContain("~/repos は home の外かほかのディスクにあるため");
+    expect(text).toContain("ほかに小さいものが 2 件あります");
   });
 
   it("tells a shared home that freeing it moves the filesystem figure less", async () => {

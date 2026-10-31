@@ -9,7 +9,7 @@ import { useSessionUI } from "../../sessions/ui.ts";
 import { Row } from "../parts/controls.tsx";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
 
-// The /cleanup/home answer (workspace/agent/home_usage.go).
+// The /cleanup/home answer (workspace/agent/internal/homeusage).
 interface HomePart extends Place {
   name: string;
   bytes: number;
@@ -45,6 +45,8 @@ export interface HomeUsage {
   truncated?: boolean;
   approximate?: boolean;
   unreadable?: number;
+  /** "repos" / "af_work" when that folder is outside home or on another disk, so not counted. */
+  elsewhere?: string[];
   measured_at: string;
   elapsed_ms: number;
 }
@@ -87,9 +89,15 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
     try {
       const res = await api(init ? "api/cleanup/home/measure" : "api/cleanup/home", init);
       if (!alive.current) return;
-      // An Agent older than the endpoint answers with an error.
-      if (!res || res.error || typeof res.running !== "boolean") {
+      // A 404, or an answer without the shape, means an Agent older than the endpoint. Any
+      // other error (a 502 while the Agent restarts, a refused POST) is a failure to say, and
+      // the button stays to retry.
+      if (res?.error?.status === 404 || (res && !res.error && typeof res.running !== "boolean")) {
         setUnsupported(true);
+        return;
+      }
+      if (!res || res.error) {
+        setFailed(true);
         return;
       }
       setFailed(false);
@@ -184,6 +192,13 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
                       <PlaceLine place={p} />
                     </Row>
                   ))}
+                {(c.parts || []).filter((p) => p.bytes > 0).length > TOP_PARTS && (
+                  <p className="muted ds-note hb-hint">
+                    {tr("machine.home_more_parts", {
+                      count: (c.parts || []).filter((p) => p.bytes > 0).length - TOP_PARTS,
+                    })}
+                  </p>
+                )}
               </div>
             ))}
 
@@ -241,13 +256,18 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
           </p>
           {u.truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
           {u.approximate && <p className="muted ds-note">{tr("machine.home_approximate")}</p>}
+          {u.elsewhere?.map((k) => (
+            <p key={k} className="muted ds-note">
+              {tr("machine.home_elsewhere", { name: k === "repos" ? "~/repos" : label(k) })}
+            </p>
+          ))}
           {!!u.unreadable && <p className="muted ds-note">{tr("machine.home_unreadable", { count: u.unreadable })}</p>}
         </>
       ) : (
         st && !running && <p className="muted ds-note">{tr("machine.home_never")}</p>
       )}
       <div className="mv-actions">
-        <Button small icon="refresh" onClick={() => read({ method: "POST" })} disabled={!st || running}>
+        <Button small icon="refresh" onClick={() => read({ method: "POST" })} disabled={running}>
           {running
             ? tr("machine.home_measuring", { count: st?.scanned ?? 0 })
             : u

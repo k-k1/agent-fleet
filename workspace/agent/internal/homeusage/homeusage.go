@@ -17,6 +17,7 @@ package homeusage
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,7 +80,9 @@ var categoryOrder = []string{
 // The figure is an estimate of what a later cleanup could take; that cleanup judges each
 // directory again (ignored, untracked, not in use) before it deletes anything.
 // A directory of that name holding a tracked file is source instead (this repository tracks
-// docs/build/), which is why each working copy's file list is read once before the walk.
+// docs/build/), which is why each working copy's file list is read once before the walk. A
+// submodule's or nested repository's own tracked build/ is not in the outer list and counts as
+// output: a known overstatement, small next to node_modules.
 var regenerableNames = map[string]bool{
 	"node_modules": true, ".next": true, "target": true, ".gradle": true, "build": true, "dist": true,
 }
@@ -87,14 +90,19 @@ var regenerableNames = map[string]bool{
 const (
 	// maxEntries caps one walk; past it the figures are lower bounds (truncated).
 	maxEntries = 20_000_000
-	// maxInodes caps the hard-link ledger. Past it a further hard link counts every
-	// time it is met, which overstates rather than stops; it is said as approximate.
-	maxInodes  = 2_000_000
+	// maxInodes caps the hard-link ledger, roughly 25 MB of map at the cap on a memory-tight
+	// host. Past it a further hard link counts every time it is met, which overstates rather
+	// than stops; it is said as approximate.
+	maxInodes  = 500_000
 	gitTimeout = 20 * time.Second
+	// gitWorkers reads that many working copies' file lists at once: one at a time, a hundred
+	// copies hold the walk (and its progress figure) still for minutes.
+	gitWorkers = 4
 )
 
 // --- the answer ---------------------------------------------------------------------------
 
+// Part is one named root inside a category (a tool-cache row, ~/.gradle, …).
 type Part struct {
 	Name        string `json:"name"`
 	Bytes       int64  `json:"bytes"`
@@ -102,6 +110,7 @@ type Part struct {
 	Place
 }
 
+// Category is one of the Cat* buckets every byte of home falls in.
 type Category struct {
 	Key   string `json:"key"`
 	Bytes int64  `json:"bytes"`
@@ -134,6 +143,7 @@ type AfWork struct {
 	Place
 }
 
+// Usage is one finished walk.
 type Usage struct {
 	Total      int64      `json:"total"`
 	Files      int        `json:"files"`
@@ -147,9 +157,12 @@ type Usage struct {
 	// Approximate = the hard-link ledger filled up, so some hard links count more than once.
 	Approximate bool `json:"approximate,omitempty"`
 	// Unreadable counts directories the walk could not list; what they hold is in no figure.
-	Unreadable int    `json:"unreadable,omitempty"`
-	MeasuredAt string `json:"measured_at"`
-	ElapsedMs  int64  `json:"elapsed_ms"`
+	Unreadable int `json:"unreadable,omitempty"`
+	// Elsewhere names the special folders ("repos", "af_work") the walk could not count
+	// because they live outside home or on another filesystem (a symlink, a mount).
+	Elsewhere  []string `json:"elsewhere,omitempty"`
+	MeasuredAt string   `json:"measured_at"`
+	ElapsedMs  int64    `json:"elapsed_ms"`
 }
 
 // --- the walk -----------------------------------------------------------------------------
@@ -173,6 +186,7 @@ type walker struct {
 	approximate bool
 	truncated   bool
 	unreadable  int
+	elsewhere   []string
 
 	cats  map[string]*Category
 	parts map[string]map[string]*Part // category → part name → tally
@@ -210,6 +224,8 @@ func newWalker(cfg Config, tracked map[string]map[string]bool, scanned *atomic.I
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
 		w.dev = uint64(st.Dev)
 	}
+	w.repos = w.resolve(cfg.Home, cfg.Repos, "repos")
+	w.afWork = w.resolve(cfg.Home, cfg.AfWork, "af_work")
 	return w, nil
 }
 
@@ -267,6 +283,35 @@ func (w *walker) group(m map[string]*groupTally, k string) *groupTally {
 		m[k] = g
 	}
 	return g
+}
+
+// resolve returns the path the walk will meet dir at. A dir that is a link into home is met
+// at its target; one that resolves outside home or onto another filesystem is never met, so
+// it is named in Elsewhere instead of silently counting nothing.
+func (w *walker) resolve(home, dir, name string) string {
+	if dir == "" {
+		return ""
+	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return dir // missing: nothing to count, nothing to say
+	}
+	realHome, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		realHome = home
+	}
+	inside := strings.HasPrefix(real, realHome+string(filepath.Separator))
+	if fi, err := os.Stat(real); inside && err == nil {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && w.dev != 0 && uint64(st.Dev) != w.dev {
+			inside = false
+		}
+	}
+	if !inside {
+		w.elsewhere = append(w.elsewhere, name)
+		return dir
+	}
+	// The walk starts at home as given; map the target back under it.
+	return filepath.Join(home, real[len(realHome):])
 }
 
 // walk visits dir's entries; dir itself has been counted by the caller.
@@ -329,7 +374,7 @@ func (w *walker) child(dir, p, name string, isDir bool, s walkState) walkState {
 		}
 	}
 	switch {
-	case dir == w.repos:
+	case dir == w.repos && isDir:
 		cs.repo, cs.rel = name, ""
 		cs.cat, cs.part, cs.partPath, cs.reclaimable = CatSource, "", "", false
 	case s.repo != "":
@@ -344,7 +389,7 @@ func (w *walker) child(dir, p, name string, isDir bool, s walkState) walkState {
 			}
 		}
 	}
-	if dir == w.afWork {
+	if dir == w.afWork && isDir {
 		cs.afWork = name
 	}
 	return cs
@@ -353,7 +398,7 @@ func (w *walker) child(dir, p, name string, isDir bool, s walkState) walkState {
 func (w *walker) result() *Usage {
 	u := &Usage{
 		Total: w.total, Files: w.files, Truncated: w.truncated, Approximate: w.approximate,
-		Unreadable: w.unreadable, Categories: []Category{}, Repos: []Repo{}, AfWork: []AfWork{},
+		Unreadable: w.unreadable, Elsewhere: w.elsewhere, Categories: []Category{}, Repos: []Repo{}, AfWork: []AfWork{},
 	}
 	for _, k := range categoryOrder {
 		c := w.cats[k]
@@ -449,15 +494,30 @@ func TrackedDirs(ctx context.Context, dir string) (map[string]bool, bool) {
 func Measure(ctx context.Context, cfg Config, scanned *atomic.Int64) (*Usage, error) {
 	start := time.Now()
 	tracked := map[string]map[string]bool{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	names := make(chan string)
+	for range gitWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := range names {
+				if t, ok := TrackedDirs(ctx, filepath.Join(cfg.Repos, n)); ok {
+					mu.Lock()
+					tracked[n] = t
+					mu.Unlock()
+				}
+			}
+		}()
+	}
 	ents, _ := os.ReadDir(cfg.Repos)
 	for _, e := range ents {
-		if !e.IsDir() {
-			continue
-		}
-		if t, ok := TrackedDirs(ctx, filepath.Join(cfg.Repos, e.Name())); ok {
-			tracked[e.Name()] = t
+		if e.IsDir() {
+			names <- e.Name()
 		}
 	}
+	close(names)
+	wg.Wait()
 	w, err := newWalker(cfg, tracked, scanned)
 	if err != nil {
 		return nil, err
@@ -518,7 +578,18 @@ func (r *Runner) Start(cfg func() Config) (started bool) {
 	r.started = time.Now()
 	r.scanned.Store(0)
 	go func() {
-		u, err := Measure(context.Background(), cfg(), &r.scanned)
+		var u *Usage
+		var err error
+		func() {
+			// A panic must still end the run: otherwise running stays true for good and the
+			// Console polls "measuring…" until the Agent restarts.
+			defer func() {
+				if p := recover(); p != nil {
+					err = fmt.Errorf("walk panicked: %v", p)
+				}
+			}()
+			u, err = Measure(context.Background(), cfg(), &r.scanned)
+		}()
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		r.running = false

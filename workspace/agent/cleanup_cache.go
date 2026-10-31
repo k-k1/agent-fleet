@@ -287,7 +287,9 @@ func walkSize(dir string, budget *int) (bytes int64, files int) {
 var homeUsageRunner homeusage.Runner
 
 // homeRoots lists the classified directories for home. The tool-cache rows come from
-// toolCaches so a GOCACHE pointed elsewhere is still found where the button would empty it.
+// toolCaches, so a GOCACHE pointed to another place inside home is still filed where the
+// button would empty it. One pointed outside home is not walked and is left out rather than
+// listed with a zero; the Tool caches section still measures it.
 func homeRoots(home string) map[string]homeusage.Root {
 	at := func(rel ...string) string { return filepath.Join(append([]string{home}, rel...)...) }
 	r := map[string]homeusage.Root{
@@ -315,7 +317,9 @@ func homeRoots(home string) map[string]homeusage.Root {
 		gitx.ReposRoot():               {Cat: homeusage.CatSource, Part: "repos"},
 	}
 	for _, c := range toolCaches {
-		r[c.dir()] = homeusage.Root{Cat: homeusage.CatToolCache, Part: c.Name, Reclaimable: true}
+		if d := c.dir(); strings.HasPrefix(d, home+string(filepath.Separator)) {
+			r[d] = homeusage.Root{Cat: homeusage.CatToolCache, Part: c.Name, Reclaimable: true}
+		}
 	}
 	return r
 }
