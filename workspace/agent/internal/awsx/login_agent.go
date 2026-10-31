@@ -429,6 +429,11 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		target = want
 	}
 	_, fleetUsed := keyOwner(loginSettings(), UsableNow(), ssoSession)
+	if !fleetUsed && heldBackElsewhere(ssoSession, target) {
+		// The member's own files hold the key for another portal or owner: not the compatible case.
+		os.RemoveAll(dir)
+		return nil, errors.New("your own ~/.aws files use this sign-in's sso-session for another sign-in; the login was not started")
+	}
 	reg, unregister := registerAttempt(target, fleetUsed)
 	cfg := filepath.Join(dir, "config")
 	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {

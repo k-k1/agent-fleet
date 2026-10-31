@@ -629,3 +629,39 @@ func TestForcedSSMReloginKeepsAHeldBackKeysLogin(t *testing.T) {
 		t.Fatalf("forced re-login = %v, member's token kept %v", err, exists(ssoCachePath("af-team")))
 	}
 }
+
+// D1: an attempt that started while the key was not Agent Fleet's is published only in the
+// compatible case, the member's own definition matching Settings; another portal's own
+// sso-session (which also makes the key unusable) keeps its token.
+func TestUnusableAtStartIsNotTakenAsCompatible(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	target := teamTarget(sp)
+	staged := ssoCacheIn(t.TempDir(), "af-team")
+	os.MkdirAll(filepath.Dir(staged), 0o700)
+	b, _ := json.Marshal(map[string]string{"accessToken": "landed", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"startUrl": sp.StartURL, "region": sp.SSORegion})
+	os.WriteFile(staged, b, 0o600)
+	ownTeamSession(t, s)
+	token(t, "af-team", "https://mine.awsapps.com/start", "us-east-1", "theirs")
+	if _, err := startLoginAttempt("/bin/false", "af-team", "", sp); err == nil {
+		t.Fatal("a login started over another portal's own sso-session")
+	}
+	reg, unregister := registerAttempt(target, false)
+	defer unregister()
+	if err := bindLanding(reg, "af-team", target, staged); err == nil {
+		t.Fatal("a landing was published over another portal's own sso-session")
+	}
+	if got, _ := os.ReadFile(ssoCachePath("af-team")); !strings.Contains(string(got), "theirs") {
+		t.Fatalf("the member's token was replaced: %s", got)
+	}
+
+	// The compatible case: the member's own section is Settings' portal.
+	cfg, _ := os.ReadFile(ConfigPath())
+	same := strings.NewReplacer("https://mine.awsapps.com/start", sp.StartURL, "us-east-1", sp.SSORegion).Replace(string(cfg))
+	os.WriteFile(ConfigPath(), []byte(same), 0o600)
+	os.Rename(ssoCachePath("af-team"), ssoCachePath("af-team")+".theirs")
+	if err := bindLanding(reg, "af-team", target, staged); err != nil {
+		t.Fatalf("control: the compatible case publishes: %v", err)
+	}
+}

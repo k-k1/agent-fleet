@@ -416,10 +416,12 @@ func bindLanding(reg uint64, session string, target keyBinding, staged string) e
 	if !ok || !want.sameTarget(target) || !present || url != target.StartURL || region != target.SSORegion {
 		return errors.New(settingsChangedLogin)
 	}
-	if fleetUsed {
-		if _, still := keyOwner(settings, UsableNow(), session); !still {
-			return errors.New("your own ~/.aws files define this sign-in's sso-session now; the login was not saved")
-		}
+	// A key Agent Fleet does not use now is published to only as the compatible case: the
+	// member's own files define it the way Settings does. Not being usable is no evidence of
+	// that, since another portal's own definition holds the key back too; what the key holds
+	// and how the member's files define it decide (heldBackElsewhere, read-only).
+	if _, usable := keyOwner(settings, UsableNow(), session); !usable && (fleetUsed || heldBackElsewhere(session, want)) {
+		return errors.New("your own ~/.aws files define this sign-in's sso-session now; the login was not saved")
 	}
 	b, err := os.ReadFile(staged)
 	if err != nil {
