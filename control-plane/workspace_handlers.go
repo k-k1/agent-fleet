@@ -1254,6 +1254,7 @@ func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *
 		"SSORegion": src.SSORegion, "AccountID": src.AccountID, "RoleName": src.RoleName,
 	}
 	ssmChainJSON(p, src, req, [5]string{"SourceProfile", "RoleARN", "ExternalID", "RoleSessionName", "DurationSeconds"})
+	ssmSignInJSON(src, req, "ssoSession", "ssoOwnerId")
 	body, _ := json.Marshal(req)
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))

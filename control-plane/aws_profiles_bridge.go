@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -99,6 +100,11 @@ type awsProfileWire struct {
 	// ConfirmBeforeUse: af-aws-exec asks the member in the Console before the first use in a
 	// session, and the profile is not written to ~/.aws/config (ADR 0126 decisions 4 to 6).
 	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
+	// SignIn and SignInID name the shared sign-in an SSO profile is in (ADR 0125): its
+	// sso-session is af-<SignIn>. Absent for a sign-in of its own. An Agent that predates them
+	// renders af-<Name> with the copied portal: a separate login, never another member's.
+	SignIn   string `json:"signIn,omitempty"`
+	SignInID string `json:"signInId,omitempty"`
 }
 
 // awsProfilesVersionHeader names the bridge version on both sides (ADR 0126 decision 8). An
@@ -192,14 +198,27 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 		n := ssmProfileName(p.Label)
 		labels[n] = append(labels[n], p.Label)
 	}
+	collided := sessionCollisions(rows)
 	out := make([]awsProfileWire, 0, len(rows))
 	var conflicts []awsProfileConflict
+	reported := map[string]bool{}
+	report := func(name string, ls []string) {
+		if !reported[name] {
+			reported[name] = true
+			conflicts = append(conflicts, awsProfileConflict{Name: name, Labels: ls})
+		}
+	}
 	for _, p := range rows {
 		name := ssmProfileName(p.Label)
 		if ls := labels[name]; len(ls) > 1 {
-			if ls[0] == p.Label {
-				conflicts = append(conflicts, awsProfileConflict{Name: name, Labels: ls})
-			}
+			report(name, ls)
+			continue
+		}
+		// Every profile left out for an sso-session collision is reported under its own name:
+		// an Agent refuses a run of a name in conflicts (checkAmbiguous), also one that predates
+		// sign-ins or runs from a block an earlier sync left.
+		if ls, ok := collided[p.ID]; ok {
+			report(name, ls)
 			continue
 		}
 		if ssmKindOf(p) == store.SSMKindAssumeRole {
@@ -208,6 +227,10 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 			// rather than written with a source_profile that names something else.
 			src, ok := byID[p.SourceProfileID]
 			if !ok || ssmKindOf(src) != store.SSMKindSSO {
+				continue
+			}
+			if ls, gone := collided[src.ID]; gone {
+				report(name, append([]string{p.Label}, ls...))
 				continue
 			}
 			out = append(out, awsProfileWire{
@@ -221,7 +244,54 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 		out = append(out, awsProfileWire{
 			ID: p.ID, Name: name, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
 			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, ConfirmBeforeUse: p.ConfirmUse,
+			SignIn: p.SignInName, SignInID: p.SignInID,
 		})
 	}
 	return out, conflicts
+}
+
+// sessionCollisions finds the SSO profiles whose sso-session name another owner renders too
+// (ADR 0125 decision 2): a sign-in named like a profile with a sign-in of its own. The store
+// refuses that state, but rows an older binary wrote after a rollback can hold it. It is worked
+// out over every SSO row, before any other exclusion, so a collision is never hidden by a row
+// that is left out for another reason; and it holds whatever the portals, since two equal
+// portals under one name would share a login nobody asked to share. Members of one sign-in
+// render one name by design and are no collision. It returns, by profile id, the labels of
+// every profile on that sso-session.
+func sessionCollisions(rows []store.SSMProfile) map[string][]string {
+	type owners struct {
+		ids    map[string]bool
+		labels []string
+		rows   []string
+	}
+	bySession := map[string]*owners{}
+	for _, p := range rows {
+		if ssmKindOf(p) != store.SSMKindSSO {
+			continue
+		}
+		session, owner := ssmProfileName(p.Label), "profile:"+p.ID
+		if p.SignInID != "" {
+			session, owner = p.SignInName, "sign-in:"+p.SignInID
+		}
+		o := bySession[session]
+		if o == nil {
+			o = &owners{ids: map[string]bool{}}
+			bySession[session] = o
+		}
+		o.ids[owner] = true
+		o.labels = append(o.labels, p.Label)
+		o.rows = append(o.rows, p.ID)
+	}
+	out := map[string][]string{}
+	for _, o := range bySession {
+		if len(o.ids) < 2 {
+			continue
+		}
+		ls := append([]string{}, o.labels...)
+		sort.Strings(ls)
+		for _, id := range o.rows {
+			out[id] = ls
+		}
+	}
+	return out
 }

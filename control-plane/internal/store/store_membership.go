@@ -342,6 +342,7 @@ func membershipCascade(membershipID string) []struct {
 		// write either commits before the profile DELETE takes its lock, and the host
 		// DELETE below sees the host, or waits and then finds its profile gone.
 		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
+		{`DELETE FROM ssm_sign_in WHERE membership_id=?`, id},
 		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
 		{`DELETE FROM gcp_profiles WHERE membership_id=?`, id},
 		{`DELETE FROM schedule_run WHERE membership_id=?`, id},

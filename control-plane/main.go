@@ -229,6 +229,7 @@ func main() {
 	if err := st.Migrate(ctx); err != nil {
 		log.Fatalf("db migrate: %v", err)
 	}
+	reconcileSSMSignIns(ctx, st)
 	mgr.store = st
 	mgr.tenantLogin = newTenantLoginCache(st)
 	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built

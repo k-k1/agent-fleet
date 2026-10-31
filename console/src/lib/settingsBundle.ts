@@ -58,6 +58,9 @@ export interface SsmProfileEntry {
   /** The profile asks for confirmation before use (ADR 0126). Carried so a gate never drops
    *  out through an export and import; absent when off, so other entries' bytes are unchanged. */
   confirmBeforeUse?: boolean;
+  /** The shared sign-in an SSO profile is in (ADR 0125), by name: the import joins it or creates
+   *  it from the entry's portal. Absent for a sign-in of its own. */
+  signIn?: string;
 }
 
 export interface SsmHostEntry {
@@ -167,6 +170,7 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
             roleName: str(p?.roleName),
             region: str(p?.region),
             ...(p?.confirmBeforeUse === true ? { confirmBeforeUse: true } : {}),
+            ...(str(p?.signIn) ? { signIn: str(p.signIn) } : {}),
           },
     ),
     hosts: (hosts || []).map((h) => ({
@@ -399,6 +403,7 @@ export function planSsmImport(
       region: str(raw?.region),
     };
     if (raw?.confirmBeforeUse === true) p.confirmBeforeUse = true;
+    if (!chained && str(raw?.signIn)) p.signIn = str(raw.signIn);
     if (chained) {
       p.kind = "assume_role";
       p.source = str(raw?.source);
