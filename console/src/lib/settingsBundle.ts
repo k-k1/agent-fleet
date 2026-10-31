@@ -55,6 +55,9 @@ export interface SsmProfileEntry {
   externalId?: string;
   sessionName?: string;
   durationSeconds?: number;
+  /** The profile asks for confirmation before use (ADR 0126). Carried so a gate never drops
+   *  out through an export and import; absent when off, so other entries' bytes are unchanged. */
+  confirmBeforeUse?: boolean;
 }
 
 export interface SsmHostEntry {
@@ -154,6 +157,7 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
             externalId: str(p?.externalId),
             sessionName: str(p?.sessionName),
             ...(Number(p?.durationSeconds) > 0 ? { durationSeconds: Number(p.durationSeconds) } : {}),
+            ...(p?.confirmBeforeUse === true ? { confirmBeforeUse: true } : {}),
           }
         : {
             label: str(p?.label),
@@ -162,6 +166,7 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
             accountId: str(p?.accountId),
             roleName: str(p?.roleName),
             region: str(p?.region),
+            ...(p?.confirmBeforeUse === true ? { confirmBeforeUse: true } : {}),
           },
     ),
     hosts: (hosts || []).map((h) => ({
@@ -393,6 +398,7 @@ export function planSsmImport(
       roleName: str(raw?.roleName),
       region: str(raw?.region),
     };
+    if (raw?.confirmBeforeUse === true) p.confirmBeforeUse = true;
     if (chained) {
       p.kind = "assume_role";
       p.source = str(raw?.source);

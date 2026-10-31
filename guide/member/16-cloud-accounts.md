@@ -260,6 +260,21 @@ runs of every session under "Recent runs". The line never holds the command's ar
 It is there so you can see what ran, and it is not an audit: the session is the one the run reported, which the
 command can change, and a command run with plain `aws` leaves no line.
 
+**Confirm before use.** A profile can be set to "Confirm before use" in its form in Settings > AWS profiles/SSM.
+`af-aws-exec` then asks you before that profile's first use in each session, before it fetches any credential: a card
+in the session's conversation (or a toast when that conversation is not on screen) names the session, the profile,
+its account and role, with **Allow for this session** and **Deny**. An approval lasts 8 hours or until the session
+ends, and only for the profile as it is now: editing its account, role or portal asks again. Denied or not answered
+in time, the command does not run and af-aws-exec exits with 4; an unanswered request stays up for 15 minutes, so you
+can still allow it and the agent's next run goes through. A role chained from a profile set this way asks for that
+profile too. Such a profile is not written to `~/.aws/config`, so a plain `aws --profile` cannot use it; run it with
+`af-aws-exec`.
+
+What it does not do: it catches mistakes and use you would not notice, not an agent that sets out to get around it.
+An agent can answer the request through the workspace's own interface (the conversation line then says "approved
+without the Console"), or reuse a login that another profile on the same sign-in keeps open. A profile that stays
+behind a sign-in of its own, logged out after use, still needs your device-code approval every time.
+
 **A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
 SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
 read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the

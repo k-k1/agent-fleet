@@ -50,6 +50,9 @@ import { restoreNoteCards } from "./parts/RestoreNote.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
 import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
 import { cloudRunCards } from "../cloudruns/cloudRuns.tsx";
+import { MirrorConfirmCards } from "../awsconfirm/AwsConfirmCard.tsx";
+import { useAwsConfirmStore } from "../awsconfirm/store.ts";
+import { useDisplayed } from "../awsconfirm/useDisplayed.ts";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/log/59). What the
@@ -187,6 +190,11 @@ function MirrorViewBody({
   // position restore, floating pills, prepending older history) lives in parts/useMirrorScroll.
   // Called before the TTS hook because that needs bodyRef.
   const scroll = useMirrorScroll();
+  // While this mirror is on screen, its session's confirmation requests (ADR 0126) show here as
+  // cards instead of as toasts. Mounted is not enough: a phone keeps hidden columns mounted.
+  const onScreen = useDisplayed(scroll.mirrorRef);
+  const mirrorShown = useAwsConfirmStore((s) => s.mirrorShown);
+  useEffect(() => (readOnly || !onScreen ? undefined : mirrorShown(session)), [session, readOnly, onScreen, mirrorShown]);
   const { bodyRef, atBottomRef } = scroll;
 
   // --- Karaoke read-aloud (turnTts, docs/log/24) -------------------------------------
@@ -705,6 +713,7 @@ function MirrorViewBody({
 
       {aboveComposer}
       <PendingPeersNotice items={pendingPeers} onDrop={(id) => void dropPendingPeer(id)} />
+      {!readOnly && <MirrorConfirmCards session={session} />}
       {managed && !readOnly && running && !composerBlock && (
         <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />
       )}

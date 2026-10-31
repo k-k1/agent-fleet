@@ -469,4 +469,6 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "cloudruns.recent_help": "The latest af-aws-exec runs in this workspace, with the profile, account, role and region each one ran as. The session is the one the run reported, which the command can change, and a command run with plain aws leaves no row: this list is for seeing what ran, not an audit. Arguments are never recorded.",
   "cloudruns.recent_empty": "No af-aws-exec runs yet.",
   "cloudruns.load_failed": "Could not load the recent runs: {msg}",
+  "cloudruns.refused_confirm": "not run: confirmation not given",
+  "cloudruns.outside_console": "approved without the Console",
 };

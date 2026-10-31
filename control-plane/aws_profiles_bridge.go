@@ -75,6 +75,9 @@ func verifyAWSProfilesToken(signKey []byte, token string) (membershipID string, 
 // derived here with ssmProfileName so it is the same name an SSM session's isolated
 // config uses — and therefore the same sso-session, whose cached login is shared.
 type awsProfileWire struct {
+	// ID is the Settings row's id: a confirmation grant is keyed by it, never by the name a
+	// relabel or a recreated profile can reuse (ADR 0126 decision 5).
+	ID        string `json:"id,omitempty"`
 	Name      string `json:"name"`
 	Label     string `json:"label"`
 	StartURL  string `json:"startUrl"`
@@ -93,7 +96,18 @@ type awsProfileWire struct {
 	ExternalID      string `json:"externalId,omitempty"`
 	SessionName     string `json:"sessionName,omitempty"`
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	// ConfirmBeforeUse: af-aws-exec asks the member in the Console before the first use in a
+	// session, and the profile is not written to ~/.aws/config (ADR 0126 decisions 4 to 6).
+	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
 }
+
+// awsProfilesVersionHeader names the bridge version on both sides (ADR 0126 decision 8). An
+// Agent that sends it understands confirmBeforeUse; the CP answers with it, so an Agent can
+// tell this answer from an older CP's, which carries no gates.
+const (
+	awsProfilesVersionHeader = "X-AF-AWS-Profiles"
+	awsProfilesVersion       = "2"
+)
 
 // awsProfilesResponse is the body of GET /internal/aws-profiles.
 type awsProfilesResponse struct {
@@ -130,7 +144,33 @@ func (a awsProfilesBridgeAPI) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ps, conflicts := awsProfilesWire(rows)
+	if r.Header.Get(awsProfilesVersionHeader) != awsProfilesVersion {
+		// An Agent that predates the gate would ignore confirmBeforeUse and write the profile
+		// to ~/.aws/config ungated. It gets none of the gated profiles instead: unusable there,
+		// never ungated.
+		ps = withoutGated(ps)
+	}
+	w.Header().Set(awsProfilesVersionHeader, awsProfilesVersion)
 	writeJSON(w, http.StatusOK, awsProfilesResponse{Profiles: ps, Conflicts: conflicts})
+}
+
+// withoutGated drops the gated profiles, and the chains whose source is gated: such a chain
+// runs on its source's role, which is what the gate protects.
+func withoutGated(ps []awsProfileWire) []awsProfileWire {
+	gated := map[string]bool{}
+	for _, p := range ps {
+		if p.ConfirmBeforeUse {
+			gated[p.Name] = true
+		}
+	}
+	out := ps[:0:0]
+	for _, p := range ps {
+		if p.ConfirmBeforeUse || (p.SourceProfile != "" && gated[p.SourceProfile]) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // awsProfileConflict names a profile name that two or more Settings labels sanitize to
@@ -171,15 +211,16 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 				continue
 			}
 			out = append(out, awsProfileWire{
-				Name: name, Label: p.Label, AccountID: p.AccountID, Region: p.Region,
+				ID: p.ID, Name: name, Label: p.Label, AccountID: p.AccountID, Region: p.Region,
 				Kind: store.SSMKindAssumeRole, RoleARN: p.RoleARN, SourceProfile: ssmProfileName(src.Label),
 				ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds,
+				ConfirmBeforeUse: p.ConfirmUse,
 			})
 			continue
 		}
 		out = append(out, awsProfileWire{
-			Name: name, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
-			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region,
+			ID: p.ID, Name: name, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
+			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, ConfirmBeforeUse: p.ConfirmUse,
 		})
 	}
 	return out, conflicts

@@ -190,6 +190,11 @@ var Entries = []string{
 	// af-aws-exec's run rows (ADR 0126). Introduced directly under AgentStateDir, so run()
 	// no-ops on a source that was never there.
 	"cloud-runs",
+	// "Confirm before use" (ADR 0126): requests and grants, the usable set of the last AWS
+	// sync, and the withheld profiles' configs. Introduced directly under AgentStateDir.
+	"aws-confirm",
+	"aws-usable.json",
+	"aws-gated",
 	// Per-boot / per-run state of the CLIs themselves.
 	"mcp-output-cursor",
 	"mcp-af-name",

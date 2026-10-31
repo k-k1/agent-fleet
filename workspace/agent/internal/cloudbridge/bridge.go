@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,7 +41,13 @@ type Conflict struct {
 type List[P any] struct {
 	Profiles  []P        `json:"profiles"`
 	Conflicts []Conflict `json:"conflicts"`
+	// Versioned is true when the CP answered with the bridge's Version (never on the wire).
+	Versioned bool `json:"-"`
 }
+
+// ErrOlderCP reports an answer without the bridge's Version after a versioned one was
+// cached: an older Control Plane (a rollback) answered, and its list is not applied.
+var ErrOlderCP = errors.New("an older Control Plane answered without the profile version; keeping the last list it gave")
 
 // Bridge is one backend's pull. P is its profile as the CP sends it.
 type Bridge[P any] struct {
@@ -58,6 +65,11 @@ type Bridge[P any] struct {
 	Target string
 	// ErrOff reports that this deployment injects no bridge.
 	ErrOff error
+	// VersionHeader and Version, when set, are sent with every pull, and a CP that knows them
+	// answers with the same header. Once a versioned answer has been cached, an unversioned
+	// one (an older CP after a rollback) is never applied: it may lack fields whose absence
+	// loosens what the list allows (ADR 0126 decision 8), and it is answered from the cache.
+	VersionHeader, Version string
 }
 
 // Configured reports whether the deployment injects the bridge: a CP URL and a token.
@@ -77,6 +89,9 @@ func (b *Bridge[P]) Fetch() (List[P], error) {
 		return List[P]{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if b.Version != "" {
+		req.Header.Set(b.VersionHeader, b.Version)
+	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return List[P]{}, err
@@ -90,6 +105,7 @@ func (b *Bridge[P]) Fetch() (List[P], error) {
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return List[P]{}, fmt.Errorf("CP %s response is not JSON: %w", b.What, err)
 	}
+	wire.Versioned = b.Version != "" && resp.Header.Get(b.VersionHeader) == b.Version
 	return wire, nil
 }
 
@@ -127,6 +143,11 @@ func (b *Bridge[P]) Pull(lock func() (func(), error), apply func(List[P]) error)
 	}
 	defer unlock()
 	l, err := b.Fetch()
+	if err == nil && b.Version != "" && !l.Versioned {
+		if cached, ok := b.Cached(); ok && cached.Versioned {
+			err = ErrOlderCP
+		}
+	}
 	if err != nil {
 		cached, ok := b.Cached()
 		if !ok {
@@ -178,6 +199,8 @@ type cacheFile[P any] struct {
 	Owner     string     `json:"owner"`
 	Profiles  []P        `json:"profiles"`
 	Conflicts []Conflict `json:"conflicts,omitempty"`
+	// Versioned is List.Versioned of the cached list.
+	Versioned bool `json:"versioned,omitempty"`
 }
 
 // owner is the digest the cache is bound to ("" when there is no bridge token).
@@ -192,7 +215,7 @@ func (b *Bridge[P]) owner() string {
 
 // SaveCache writes l as the last list the CP gave, bound to the current token.
 func (b *Bridge[P]) SaveCache(l List[P]) error {
-	data, err := json.Marshal(cacheFile[P]{Owner: b.owner(), Profiles: l.Profiles, Conflicts: l.Conflicts})
+	data, err := json.Marshal(cacheFile[P]{Owner: b.owner(), Profiles: l.Profiles, Conflicts: l.Conflicts, Versioned: l.Versioned})
 	if err != nil {
 		return err
 	}
@@ -217,7 +240,7 @@ func (b *Bridge[P]) Cached() (List[P], bool) {
 	if json.Unmarshal(data, &c) != nil || c.Owner == "" || c.Owner != b.owner() {
 		return List[P]{}, false
 	}
-	return List[P]{Profiles: c.Profiles, Conflicts: c.Conflicts}, true
+	return List[P]{Profiles: c.Profiles, Conflicts: c.Conflicts, Versioned: c.Versioned}, true
 }
 
 func writeAtomic(path string, data []byte) error {

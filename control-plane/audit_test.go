@@ -55,6 +55,13 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/aws-login/profiles/prod/logout", "prod", "aws.logout", "profile: prod", true},
 		{"GET", "/api/aws-login/profiles", "", "", "", false},
 		{"GET", "/api/aws-runs", "", "", "", false},
+		// ADR 0126 decision 5: the member's answer to a confirmation request is audited; the list
+		// is a read.
+		{"POST", "/api/aws-confirm/0123456789abcdef01234567/approve?profile=prod-admin&session=s1", "", "aws.use.approve",
+			"0123456789abcdef01234567 (profile hint: prod-admin, session hint: s1)", true},
+		{"POST", "/api/aws-confirm/0123456789abcdef01234567/deny?profile=prod-admin&session=s1", "", "aws.use.deny",
+			"0123456789abcdef01234567 (profile hint: prod-admin, session hint: s1)", true},
+		{"GET", "/api/aws-confirm", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the
 		// attempt by its reference only. Polls and lists are reads.

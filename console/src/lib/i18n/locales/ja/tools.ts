@@ -1339,4 +1339,8 @@ export const tools = {
   "gcplogin.logout_failed": "ログアウトできませんでした: {msg}",
   "gcplogin.logout_unreadable": "いまワークスペースからプロファイルのログイン状態を読めなかったため、何もログアウトしていません。少し待ってからもう一度試してください。",
   "gcplogin.logout_account_changed": "確認の後でプロファイルのアカウントが変わったため、何もログアウトしていません。一覧を見直してからもう一度試してください。",
+  "ssm.f_confirm_use": "使用前に確認",
+  "ssm.f_confirm_use_hint": "af-aws-exec は、各セッションでこのプロファイルを初めて使う前に Console で確認を求めます。プロファイルは ~/.aws/config に書かれません（af-aws-exec を通して実行してください）。間違いや気付かれない使用を防ぐもので、わざと回り込もうとするエージェントは、たとえば同じサインインのほかのプロファイルが保っているログインを使って回り込めます。",
+  "ssm.meta_confirm_use": "使用前に確認",
+  "ssm.meta_confirm_use_on": "オン",
 };

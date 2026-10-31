@@ -49,6 +49,8 @@ const (
 
 // Profile is one exported profile as the CP sends it.
 type Profile struct {
+	// ID is the Settings row's id, which confirmation grants are keyed by (ADR 0126).
+	ID        string `json:"id,omitempty"`
 	Name      string `json:"name"`
 	Label     string `json:"label"`
 	StartURL  string `json:"startUrl"`
@@ -65,6 +67,9 @@ type Profile struct {
 	ExternalID      string `json:"externalId,omitempty"`
 	SessionName     string `json:"sessionName,omitempty"`
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
+	// ConfirmBeforeUse makes af-aws-exec ask the member in the Console before the profile's
+	// first use in a session, and keeps it out of ~/.aws/config (ADR 0126 decisions 4 to 6).
+	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
 }
 
 // KindAssumeRole is Profile.Kind of a role-chaining profile.
@@ -73,9 +78,30 @@ const KindAssumeRole = "assume_role"
 // Chained reports whether p assumes a role from another Settings profile.
 func (p Profile) Chained() bool { return p.Kind == KindAssumeRole }
 
+// Usable is every profile af-aws-exec may run: the exported and the withheld ones.
+func (r SyncResult) Usable() []string {
+	return append(append([]string{}, r.Exported...), r.Withheld...)
+}
+
+// bridge headers: the version this Agent understands (ADR 0126 decision 8). A CP that knows it
+// sends the gate and answers with it; an older CP's answer is never applied after a versioned
+// one (cloudbridge.ErrOlderCP).
+const (
+	profilesVersionHeader = "X-AF-AWS-Profiles"
+	profilesVersion       = "2"
+)
+
 // SyncResult reports one sync for the log and for `af-aws-exec --list`.
 type SyncResult struct {
 	Exported []string // profile names now in the managed block
+	// Withheld are profiles that passed every rule Exported did but are not written to the
+	// managed block: they ask for confirmation before use, or are chains whose source does
+	// (ADR 0126 decision 6). af-aws-exec runs them from their own config (GatedConfigPath).
+	// Usable is Exported plus Withheld.
+	Withheld []string
+	// withheldINI is the config text of each withheld profile: its sections, and a chain's
+	// source's.
+	withheldINI map[string]string
 	// Shadowed are profiles not exported because ~/.aws/config or ~/.aws/credentials
 	// already defines a profile of that name, or because the name is "default" (see
 	// render). A collision with the member's own sso-session is SessionShadowed.
@@ -120,7 +146,7 @@ type Conflict = cloudbridge.Conflict
 // bridge pulls the AWS profiles from the CP.
 var bridge = &cloudbridge.Bridge[Profile]{Path: "/internal/aws-profiles", TokenEnv: "AF_AWS_PROFILES_TOKEN",
 	What: "AWS profiles", CacheFile: "aws-settings.json", OwnerLabel: "af-aws-profiles-cache/v1",
-	Target: "~/.aws/config", ErrOff: ErrBridgeOff}
+	Target: "~/.aws/config", ErrOff: ErrBridgeOff, VersionHeader: profilesVersionHeader, Version: profilesVersion}
 
 // ConfigPath is the file the AWS CLI and SDKs read by default. AWS_CONFIG_FILE is
 // deliberately not honoured: a shell that exported it for one session would otherwise
@@ -223,6 +249,11 @@ func applyLocked(path, target string, ps []Profile) (SyncResult, error) {
 	if err != nil {
 		return res, err
 	}
+	// The usable set and the withheld profiles' configs are written under the same lock as
+	// the block, and before it: a reader never sees a profile usable whose config is missing.
+	if err := writeUsable(res); err != nil {
+		return res, err
+	}
 	if next == string(old) {
 		return res, nil
 	}
@@ -309,6 +340,7 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	// Role-chaining profiles come after the SSO profiles they assume from, once it is known
 	// which of those are exported.
 	var chained []Profile
+	ssoINI := map[string]string{}
 	byName := map[string]Profile{}
 	for _, p := range ps {
 		byName[p.Name] = p
@@ -353,12 +385,19 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.DefaultClash[p.Name] = why
 			continue
 		}
+		ssoINI[p.Name] = ini
+		if p.ConfirmBeforeUse {
+			withhold(&res, p.Name, ini)
+			continue
+		}
 		body.WriteString("\n")
 		body.WriteString(ini)
 		res.Exported = append(res.Exported, p.Name)
 	}
+	// A chain may assume from any usable SSO profile; one whose source is withheld is itself
+	// withheld, since its source_profile would name a profile the file does not have.
 	exportedSSO := map[string]bool{}
-	for _, n := range res.Exported {
+	for _, n := range append(append([]string{}, res.Exported...), res.Withheld...) {
 		exportedSSO[n] = true
 	}
 	for _, p := range chained {
@@ -389,6 +428,10 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 			res.DefaultClash[p.Name] = why
 			continue
 		}
+		if p.ConfirmBeforeUse || src.ConfirmBeforeUse {
+			withhold(&res, p.Name, ssoINI[src.Name]+"\n"+ini)
+			continue
+		}
 		body.WriteString("\n")
 		body.WriteString(ini)
 		res.Exported = append(res.Exported, p.Name)
@@ -409,6 +452,16 @@ func render(old, credentials string, ps []Profile) (string, SyncResult, error) {
 	b.WriteString(body.String())
 	b.WriteString("\n" + blockEnd + "\n")
 	return b.String(), res, nil
+}
+
+// withhold records a usable profile that is not written to the managed block, with the config
+// text af-aws-exec runs it from.
+func withhold(res *SyncResult, name, ini string) {
+	if res.withheldINI == nil {
+		res.withheldINI = map[string]string{}
+	}
+	res.Withheld = append(res.Withheld, name)
+	res.withheldINI[name] = ini
 }
 
 // chainRegion is the region of a role-chaining profile: its own, else its source's (the SSO
@@ -703,7 +756,11 @@ func ExportedIn(path string) []string {
 	if err != nil {
 		return nil
 	}
-	s := string(b)
+	return exportedInText(string(b))
+}
+
+// exportedInText is ExportedIn of a config's text.
+func exportedInText(s string) []string {
 	i := strings.Index(s, blockBegin)
 	if i < 0 {
 		return nil

@@ -31,6 +31,9 @@ const (
 	// --no-login, or a Console login still waiting): an agent hands it to the member as
 	// "log in", so nothing else may use it.
 	ExitLoginRequired = 3
+	// ExitConfirmRequired means the profile asks for the member's confirmation before use and
+	// it was not given: denied, not answered in time, or no session to tie it to (ADR 0126).
+	ExitConfirmRequired = 4
 )
 
 // Wrapper is one wrapper command.

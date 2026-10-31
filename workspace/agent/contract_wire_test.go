@@ -31,6 +31,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
@@ -126,9 +127,31 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/cloudruns/cloudRunsModel.ts",
 			tsName:  "CloudRun",
 			tsKeys: keySet("id", "provider", "session", "startedAt", "endedAt", "profile", "account", "role", "region", "source",
-				"program", "service", "operation", "refused"),
+				"program", "service", "operation", "approvedOutsideConsole", "refused"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{},
+		},
+
+		// A "confirm before use" request (ADR 0126 decision 5), GET /aws-confirm.
+		{
+			name:    "awsx.ConfirmRequestWire",
+			goType:  reflect.TypeOf(awsx.ConfirmRequestWire{}),
+			binding: confirmRequestBinding,
+			tsPath:  "../../console/src/features/awsconfirm/store.ts",
+			tsName:  "AwsConfirmRequest",
+			tsKeys:  keySet("id", "session", "targets", "commands", "firstAt", "lastAt", "expiresInSec"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
+		},
+		{
+			name:    "awsx.ConfirmTargetWire",
+			goType:  reflect.TypeOf(awsx.ConfirmTargetWire{}),
+			binding: confirmTargetBinding,
+			tsPath:  "../../console/src/features/awsconfirm/store.ts",
+			tsName:  "AwsConfirmTarget",
+			tsKeys:  keySet("profile", "label", "accountId", "roleName", "region", "source"),
+			tsOnly:  map[string]string{},
+			goOnly:  map[string]string{},
 		},
 
 		// One row of the AF memory change list (ADR 0108).
@@ -321,10 +344,21 @@ var memoryImportPreviewBinding = map[string]string{
 	"SecretScanFailed": "secretScanFailed",
 }
 
+var confirmRequestBinding = map[string]string{
+	"ID": "id", "Session": "session", "Targets": "targets", "Commands": "commands", "FirstAt": "firstAt",
+	"LastAt": "lastAt", "ExpiresInSec": "expiresInSec",
+}
+
+var confirmTargetBinding = map[string]string{
+	"Profile": "profile", "Label": "label", "AccountID": "accountId", "RoleName": "roleName", "Region": "region",
+	"Source": "source",
+}
+
 var cloudRunRowBinding = map[string]string{
 	"ID": "id", "Provider": "provider", "Session": "session", "StartedAt": "startedAt", "EndedAt": "endedAt",
 	"Profile": "profile", "Account": "account", "Role": "role", "Region": "region", "Source": "source",
-	"Program": "program", "Service": "service", "Operation": "operation", "Refused": "refused",
+	"Program": "program", "Service": "service", "Operation": "operation", "ApprovedOutsideConsole": "approvedOutsideConsole",
+	"Refused": "refused",
 }
 
 var browserPageBinding = map[string]string{
@@ -362,7 +396,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 15 {
+	if len(fams) != 17 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

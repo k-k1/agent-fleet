@@ -147,7 +147,7 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 	case res.Incomplete[name] != "":
 		httpx.WriteErr(w, http.StatusConflict, "incomplete_profile", res.Incomplete[name])
 		return
-	case !slices.Contains(res.Exported, name):
+	case !slices.Contains(res.Usable(), name):
 		// Shadowed by the member's own ~/.aws, held back by [DEFAULT], or refused by the
 		// INI allowlist: the same checks af-aws-exec passes before it files a request, so
 		// the login never writes a token under an af-<name> key a section of theirs uses.
@@ -222,7 +222,7 @@ func profileLoginState(ssoSession string, now time.Time) string {
 func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	out := []profileLoginStateWire{}
-	exported := ExportedIn(ConfigPath())
+	exported := UsableNow()
 	settings := loginSettings()
 	for name, sp := range settings {
 		if sp.Chained() {
