@@ -10,8 +10,21 @@ import (
 )
 
 // sessionMetaFor is the Meta behind fixture()'s sid.
-func sessionMetaFor(sid, cwd string) session.Meta {
-	return session.Meta{Name: "slot01", Dir: cwd, Kind: session.KindClaude}
+func sessionMetaFor(t *testing.T, sid, cwd string) session.Meta {
+	t.Helper()
+	m := session.Meta{Name: "slot01", Dir: cwd, Kind: session.KindClaude}
+	if session.UUID(m.Dir, m.Name) != sid {
+		t.Fatalf("fixture sid %s is not the session's", sid)
+	}
+	return m
+}
+
+// freshFoldMisses swaps in an empty memo for the test and restores the old one after.
+func freshFoldMisses(t *testing.T) {
+	t.Helper()
+	old := foldMisses
+	foldMisses = &missMemo{ttlLive: foldMissTTLLive, ttlStopped: foldMissTTLArchived}
+	t.Cleanup(func() { foldMisses = old })
 }
 
 // The usage fold's remembered miss must not leak into any reader that decides something
@@ -19,8 +32,8 @@ func sessionMetaFor(sid, cwd string) session.Meta {
 // remembered its miss, still goes to the disk.
 func TestFoldMissDoesNotLeakIntoBackgroundReaders(t *testing.T) {
 	sid, cwd, subDir := fixture(t, 10)
-	m := sessionMetaFor(sid, cwd)
-	foldMisses = missMemo{ttlLive: foldMissTTLLive, ttlStopped: foldMissTTLArchived}
+	m := sessionMetaFor(t, sid, cwd)
+	freshFoldMisses(t)
 	(agentImpl{}).UsageMissNote(m)
 	if !(agentImpl{}).UsageMissHeld(m) {
 		t.Fatal("the miss was not remembered")
@@ -45,8 +58,8 @@ func TestFoldMissDoesNotLeakIntoBackgroundReaders(t *testing.T) {
 
 func TestFoldMissExpiresAndFollowsArchive(t *testing.T) {
 	sid, cwd, _ := fixture(t, 1)
-	m := sessionMetaFor(sid, cwd)
-	foldMisses = missMemo{ttlLive: foldMissTTLLive, ttlStopped: foldMissTTLArchived}
+	m := sessionMetaFor(t, sid, cwd)
+	freshFoldMisses(t)
 	key := foldMissKey(m)
 	now := time.Now()
 	foldMisses.note(key, true, now.Add(-foldMissTTLLive))
@@ -61,5 +74,23 @@ func TestFoldMissExpiresAndFollowsArchive(t *testing.T) {
 	m.Archived = false
 	if (agentImpl{}).UsageMissHeld(m) {
 		t.Error("a miss seen while archived answered for the restored session")
+	}
+}
+
+// Archived entries are noted up to half a TTL old, so a batch noted in one pass spreads out.
+func TestFoldMissArchivedNoteIsJittered(t *testing.T) {
+	freshFoldMisses(t)
+	m := session.Meta{Name: "j", Dir: t.TempDir(), Kind: session.KindClaude, Archived: true}
+	seen := map[time.Time]bool{}
+	for i := 0; i < 20; i++ {
+		(agentImpl{}).UsageMissNote(m)
+		e := foldMisses.seen[foldMissKey(m)]
+		if age := time.Since(e.at); age > foldMissTTLArchived/2+time.Second {
+			t.Fatalf("noted %v old, beyond half the TTL", age)
+		}
+		seen[e.at] = true
+	}
+	if len(seen) < 2 {
+		t.Fatal("no jitter")
 	}
 }

@@ -56,10 +56,9 @@ func TestFoldMissSubagentAppearingLaterIsFolded(t *testing.T) {
 	f.fold()
 	agent := filepath.Join(f.proj, f.sid, "subagents", "agent-late.jsonl")
 	f.write(agent, claudeUserLine(f.at(0))+claudeUsageLine(f.at(time.Minute), "a1", 2000, 20))
-	if f.fold(); true {
-		if _, side := f.rows(); side != 0 {
-			t.Fatalf("a held miss still folded %d sidechain rows; the test no longer exercises the memo", side)
-		}
+	f.fold()
+	if _, side := f.rows(); side != 0 {
+		t.Fatalf("a held miss still folded %d sidechain rows; the test no longer exercises the memo", side)
 	}
 	f.m.Archived = false // restored: the remembered miss is discarded
 	f.fold()
@@ -80,5 +79,39 @@ func TestFoldMissIgnoredWhenSettling(t *testing.T) {
 	}
 	if _, side := f.rows(); side != 1 {
 		t.Fatalf("sidechain rows = %d after a settling fold, want 1", side)
+	}
+}
+
+// An explicit refresh (force) folds a live session's turn despite a remembered miss, and an
+// archived one stays at zero sweeps.
+func TestFoldMissForceBypassesLiveMemoOnly(t *testing.T) {
+	f := newSkipFixture(t)
+	f.decoys(5)
+	if _, err := commitSessionUsageFoldMode(f.m, false, false); err != nil {
+		t.Fatal(err)
+	}
+	f.write(filepath.Join(f.proj, f.sid, "subagents", "agent-late.jsonl"),
+		claudeUserLine(f.at(0))+claudeUsageLine(f.at(time.Minute), "a1", 2000, 20))
+	f.fold() // not forced: held
+	if _, side := f.rows(); side != 0 {
+		t.Fatalf("held live miss folded %d rows", side)
+	}
+	if _, err := commitSessionUsageFoldMode(f.m, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, side := f.rows(); side != 1 {
+		t.Fatalf("forced fold of a live session: %d sidechain rows, want 1", side)
+	}
+
+	g := newSkipFixture(t)
+	g.decoys(5)
+	g.m.Archived = true
+	g.fold()
+	before := claude.ProjectSweeps()
+	if _, err := commitSessionUsageFoldMode(g.m, false, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := claude.ProjectSweeps() - before; got != 0 {
+		t.Fatalf("forced fold of an archived miss made %d sweeps, want 0", got)
 	}
 }

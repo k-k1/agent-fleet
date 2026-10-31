@@ -46,7 +46,7 @@ func TestWireLiveRemembersMissForCardOnly(t *testing.T) {
 }
 
 func TestDisplayMissExpiresAndFollowsLiveness(t *testing.T) {
-	var m missMemo
+	m := missMemo{ttlLive: displayMissTTLLive, ttlStopped: displayMissTTLStopped}
 	now := time.Now()
 	m.note("k", true, now)
 	if !m.holds("k", true, now.Add(displayMissTTLLive-time.Second)) {
