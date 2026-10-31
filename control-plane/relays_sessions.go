@@ -42,6 +42,8 @@ var sessionRelays = []agentRelay{
 	{route: "DELETE /api/cleanup/cache/{feature}"},
 	{route: "GET /api/cleanup/tool-caches"},
 	{route: "DELETE /api/cleanup/tool-caches/{name}"},
+	{route: "GET /api/cleanup/home"},
+	{route: "POST /api/cleanup/home/measure"}, // starts a read-only walk (#3083)
 	{route: "GET /api/cleanup/leftovers"},
 	{route: "DELETE /api/cleanup/leftovers/{kind}"},
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used

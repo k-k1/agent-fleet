@@ -126,6 +126,8 @@ GET /cleanup/archives
 DELETE /cleanup/archives/{id}
 POST /cleanup/archives/{id}/restore
 DELETE /cleanup/cache/{feature}
+GET /cleanup/home
+POST /cleanup/home/measure
 GET /cleanup/leftovers
 DELETE /cleanup/leftovers/{kind}
 GET /cleanup/tool-caches

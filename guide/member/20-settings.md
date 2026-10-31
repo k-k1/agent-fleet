@@ -557,6 +557,15 @@ administrator's to set.
   kernel), the row says "Cannot be measured on this machine" instead of drawing a calm line.
   An operator can switch the sampler off by starting the workspace with `AF_MEM_PRESSURE=off` in its
   environment (exactly `off`; any other value, or none, leaves it on); the row is then not shown.
+- **Where home went**: all of your home broken down by category: working-copy source, build output
+  inside working copies (`node_modules`, `.next`, `target`, `.gradle`, `build`, `dist` that hold no tracked
+  file), tool caches (`~/.cache`, `~/.npm`, `~/.gradle`, `~/.m2`, …), runtimes and tools (`~/.local`,
+  `~/.nvm`, …), `~/.af-work`, the trash, Agent Fleet's own data, and the rest. Each category says how much
+  the cleanups that exist today can free and where; build output has no cleanup of its own yet. Below it,
+  the working copies with the most build output and every `~/.af-work` folder with its size and last
+  change. **"Measure"** walks home in the background — a few minutes on a large one — and the screen keeps
+  the last result. Counted like `du -sx ~`: allocated space, hard links once, no symlink followed and no
+  other disk such as `/scratch`.
 - **Disk used by Agent Fleet**: what Agent Fleet itself keeps under `~/.cache/agent-fleet`, broken
   down (generated images, thumbnails, pasted and attached files, …), how much of it belongs to deleted
   sessions, and the size of the cleanup trash. Generated images expire after 30 days and thumbnails after

@@ -1105,3 +1105,46 @@ button.mv-path:focus-visible {
 .ssm-confirm-use .field-help {
   display: block;
 }
+
+/* Home breakdown (HomeBreakdownSection): each category's share of home as a thin bar after
+   its size, so the one that filled the disk stands out before any number is read. */
+.hb-bar {
+  flex: 1;
+  max-width: 160px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.hb-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.hb-reclaim {
+  margin-left: 8px;
+}
+
+.hb-hint {
+  margin: 0 0 4px 12px;
+}
+
+.hb-subtitle {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hb-regen {
+  white-space: nowrap;
+}
+
+.hb-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+}
