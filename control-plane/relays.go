@@ -258,8 +258,23 @@ func auditRepoBranchDelete(r *http.Request) (string, string, bool) {
 	if name == "" {
 		return "", "", false
 	}
-	if b := r.URL.Query().Get("branch"); auditBranchRe.MatchString(b) {
-		return "repo.branch.delete", name + ": " + b, true
+	q := r.URL.Query()
+	target := name
+	if b := q.Get("branch"); auditBranchRe.MatchString(b) {
+		target = name + ": " + b
 	}
-	return "repo.branch.delete", name, true
+	// The Agent also deletes the branch on origin for these two spellings, a far wider reach.
+	if rm := q.Get("remote"); rm == "1" || rm == "true" {
+		target += " (remote)"
+	}
+	return "repo.branch.delete", target, true
+}
+
+// auditSessionStart records a relaunch; fresh=1 starts a new conversation and sets the old one aside.
+func auditSessionStart(r *http.Request) (string, string, bool) {
+	name := r.PathValue("name")
+	if r.URL.Query().Get("fresh") == "1" {
+		name += " (fresh)"
+	}
+	return "session.start", name, r.PathValue("name") != ""
 }

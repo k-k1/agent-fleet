@@ -371,7 +371,7 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 	}
 	var diffs []string
 	for k, o := range results {
-		if route, _, _ := strings.Cut(k, " <- "); auditedAfterTheFreeze[route] {
+		if route, _, _ := strings.Cut(k, " <- "); auditedAfterTheFreeze[route] || auditAddedSinceTheFreeze[route] {
 			continue
 		}
 		if o.got != o.want {
@@ -396,11 +396,18 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 
 // auditedAfterTheFreeze are golden routes the relay table audits that did not exist when the
 // switch above was frozen, so it cannot classify them. TestAuditActionTarget pins what each is
-// audited as instead. Only a new route belongs here, never one the frozen switch knows.
+// audited as instead. Only a route that did not exist at the freeze belongs here; a route the
+// frozen switch knew and chose not to audit goes in auditAddedSinceTheFreeze.
 var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/aws-confirm/{id}/approve": true, // ADR 0126 decision 5
 	"POST /api/aws-confirm/{id}/deny":    true,
-	// #2883
+}
+
+// auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch
+// classified as not audited; they were put under audit on purpose later (#2883). The comparison
+// skips them, and TestAuditAddedRoutesWereUnauditedWhenFrozen proves the frozen switch still
+// says "not audited" for each, so the skip cannot hide a drift.
+var auditAddedSinceTheFreeze = map[string]bool{
 	"POST /api/sessions/{name}/archive":       true,
 	"POST /api/sessions/{name}/restore":       true,
 	"POST /api/sessions/{name}/recreate":      true,
@@ -482,4 +489,19 @@ func sortedTrue(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestAuditAddedRoutesWereUnauditedWhenFrozen — each route added to the audit later was one the
+// frozen switch did not audit, for every filling of its wildcards.
+func TestAuditAddedRoutesWereUnauditedWhenFrozen(t *testing.T) {
+	for route := range auditAddedSinceTheFreeze {
+		method, _, _ := strings.Cut(route, " ")
+		for _, path := range sweepPaths(route) {
+			r := httptest.NewRequest(method, path, nil)
+			r.SetPathValue("name", "x1") // the frozen switch keys most of its cases on {name}
+			if a, tg, ok := frozenAuditActionTarget(r); ok {
+				t.Errorf("%s (%s): the frozen switch audits it as %s|%s", route, path, a, tg)
+			}
+		}
+	}
 }

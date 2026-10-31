@@ -88,6 +88,9 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/repos/foo/unstage", "foo", "git.unstage", "foo", true},
 		{"DELETE", "/api/repos/foo/branch?branch=feature/x", "foo", "repo.branch.delete", "foo: feature/x", true},
 		{"DELETE", "/api/repos/foo/branch?branch=a%20b%0Ac", "foo", "repo.branch.delete", "foo", true},
+		{"DELETE", "/api/repos/foo/branch?branch=feature/x&remote=1", "foo", "repo.branch.delete", "foo: feature/x (remote)", true},
+		{"DELETE", "/api/repos/foo/branch?branch=feature/x&remote=0", "foo", "repo.branch.delete", "foo: feature/x", true},
+		{"POST", "/api/sessions/s1/start?fresh=1", "s1", "session.start", "s1 (fresh)", true},
 		{"POST", "/api/repos/foo/gitflow/init", "foo", "repo.gitflow.init", "foo", true},
 		{"POST", "/api/repos/foo/mcp/apply", "foo", "repo.mcp.apply", "foo", true},
 		// Not auditable (reads, non-change mutations, unlisted ops):
@@ -157,5 +160,37 @@ func TestAuditStoreScope(t *testing.T) {
 	}
 	if t1[0].HTTPStatus != http.StatusAccepted {
 		t.Fatalf("audit http_status=%d want=%d", t1[0].HTTPStatus, http.StatusAccepted)
+	}
+}
+
+// TestAuditArchiveRoutes pins the archive-id routes: a real id is the target, an odd shape is an
+// empty target and the row is still written.
+func TestAuditArchiveRoutes(t *testing.T) {
+	good := "20261031-120000-feat-x-2"
+	for _, c := range []struct{ method, path, id, action, want string }{
+		{"POST", "/api/cleanup/archives/x/restore", good, "cleanup.archive.restore", good},
+		{"DELETE", "/api/cleanup/archives/x", good, "cleanup.archive.purge", good},
+		{"POST", "/api/cleanup/archives/x/restore", "a b", "cleanup.archive.restore", ""},
+		{"DELETE", "/api/cleanup/archives/x", strings.Repeat("a", 81), "cleanup.archive.purge", ""},
+	} {
+		r := httptest.NewRequest(c.method, c.path, nil)
+		r.SetPathValue("id", c.id)
+		act, tgt, ok := auditArchiveByID(c.action)(r)
+		if act != c.action || tgt != c.want || !ok {
+			t.Errorf("%s %q: got (%q,%q,%v)", c.method, c.id, act, tgt, ok)
+		}
+		// And through the real table row, so a wrong action name in it is caught.
+		mux := http.NewServeMux()
+		var ga, gt string
+		pat := c.method + " /api/cleanup/archives/{id}"
+		if c.method == "POST" {
+			pat += "/restore"
+		}
+		mux.HandleFunc(pat, func(_ http.ResponseWriter, rr *http.Request) { ga, gt, _ = auditActionTarget(rr) })
+		rr := httptest.NewRequest(c.method, strings.Replace(c.path, "/x", "/"+strings.ReplaceAll(c.id, " ", "%20"), 1), nil)
+		mux.ServeHTTP(httptest.NewRecorder(), rr)
+		if ga != c.action || gt != c.want {
+			t.Errorf("table row %s %q: got (%q,%q)", c.method, c.id, ga, gt)
+		}
 	}
 }

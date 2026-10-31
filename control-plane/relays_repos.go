@@ -5,7 +5,7 @@ package main
 var repoRelays = []agentRelay{
 	{route: "GET /api/repos"},
 	{route: "POST /api/repos", audit: auditAs("repo.clone", nil)},
-	{route: "POST /api/repos/init", audit: auditAs("repo.init", nil)}, // new working copy with no import source (mkdir + git init)
+	{route: "POST /api/repos/init", audit: auditAs("repo.init", nil)}, // the name is only in the body, which is never read (as repo.clone); #3104 tracks a hint; new working copy with no import source (mkdir + git init)
 	{route: "DELETE /api/repos/{name}", audit: auditByName("repo.delete")},
 	{route: "GET /api/repos/{name}/recreate"}, // deleted worktree back at its path (#1040)
 	{route: "POST /api/repos/{name}/recreate", audit: auditByName("repo.recreate")},

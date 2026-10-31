@@ -142,7 +142,7 @@ var sessionRelays = []agentRelay{
 	// login presses through restLoginFlow because the attempt lives only in the Agent's memory.
 	{route: "POST /api/sessions", audit: auditAs("session.create", nil), wrapped: true},
 	{route: "POST /api/sessions/{name}/fork", audit: auditByName("session.fork"), wrapped: true},
-	{route: "POST /api/sessions/{name}/start", audit: auditByName("session.start"), wrapped: true},
+	{route: "POST /api/sessions/{name}/start", audit: auditSessionStart, wrapped: true},
 	{route: "POST /api/sessions/{name}/move", audit: auditByName("session.move"), wrapped: true},
 	{route: "POST /api/sessions/{name}/move/retry", audit: auditByName("session.move.retry"), wrapped: true},
 	{route: "POST /api/aws-login/{id}/start", audit: auditAWSLogin, wrapped: true},
