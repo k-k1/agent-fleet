@@ -779,7 +779,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.stage1_run_title": "Tidy every stopped session (archived ones can be restored from the archive browser)",
   "clean.stage1_empty": "No stopped sessions to tidy.",
   "clean.stage1_confirm_title": "Tidy all stopped sessions",
-  "clean.stage1_confirm_body": "Will {parts}. Archived sessions can be restored from the archive browser (the shelf), and shell/ssm moved to the trash from the cleanup trash.",
+  "clean.stage1_confirm_body": "Will {parts}. Archived sessions can be restored from the archive browser (the shelf), and shell/ssm moved to the trash from the cleanup trash. An archived session's scratch folder (~/.af-work/<name>) is removed 7 days after archiving; the conversation stays.",
   "clean.stage2_title": "② Delete working copies & branches",
   "clean.stage2_run": "Delete all safe",
   "clean.stage2_run_title": "Delete only what is graded safe (merged & clean)",
@@ -853,7 +853,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.purge_restore_incomplete": "A restore of this archive stopped part way. Restore it again, then delete it.",
   // Candidate reasons — the Agent sends only the clean.reason.* key (ADR 0033).
   "clean.reason.locked": "Locked (delete-protected; not a cleanup target until unlocked)",
-  "clean.reason.archived": "Archived (never deleted automatically; delete to reclaim, recoverable)",
+  "clean.reason.archived": "Archived (never deleted automatically, but its ~/.af-work folder is removed after 7 days; delete to reclaim, recoverable)",
   "clean.reason.stopped": "Stopped (resumable). Archive it to clear the list once it's finished (left alone, it moves to the archive when the window is up)",
   "clean.reason.ephemeral": "Stopped shell/ssm (no conversation to keep). Deleting tidies it up",
   "clean.reason.orphan_pane": "Orphan (running pane with no metadata). Attach or tidy it in the Console",

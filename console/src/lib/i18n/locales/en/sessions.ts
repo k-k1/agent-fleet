@@ -236,7 +236,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "sess.tidy_orphans_title": "Tidy other sessions",
   "sess.tidy_orphans_body": "Tidies sessions with no working copy ({parts}).",
   "sess.tidy_orphans_alive": "Includes {count} running.",
-  "sess.tidy_orphans_restore": "Archived ones keep their conversation and can be <0>restored</0> later.",
+  "sess.tidy_orphans_restore": "Archived ones keep their conversation and can be <0>restored</0> later. Their scratch folder under ~/.af-work is removed 7 days after archiving.",
   "sess.tidy_orphans_trash": "Shell/ssm go to the trash and can be restored from the cleanup trash.",
   "sess.stop_title": "Stop session",
   "sess.stop_body": "Stop “{name}”. The conversation is kept and can be resumed later.",

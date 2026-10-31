@@ -74,8 +74,9 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
 - **Check before a big install** — `df -h ~`. The volume is shared with everything else you do,
   and caches grow without bound (`~/.npm`, `~/.cache` reach tens of GB).
 - **Where throwaway work goes**: `$AF_WORK_DIR` — `~/.af-work/<session>/`, which the Agent
-  creates when a session launches and removes when the session is deleted (not archived, not
-  restored). Terminal (CLI) sessions get it from the launch environment; Managed sessions get it
+  creates when a session launches and removes when the session is deleted, or 7 days after it is archived
+  (restoring clears the date; launch recreates an emptied folder). A locked session's folder, an
+  unmarked one and one in use or changed within the hour stay. Terminal (CLI) sessions get it from the launch environment; Managed sessions get it
   per kind: the child process's environment for copilot, cursor, kiro and muse, and the thread
   config (`shell_environment_policy.set`) for codex, whose one shared app-server cannot carry a
   per-session value. lcpp's bash tool gets it from the harness runtime. Managed opencode (2.x)
@@ -94,9 +95,9 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   `~` were measured at 190+ unowned directories in one home. Not `/tmp` (shared by every session,
   wiped on restart) and not `~/.cache`, which is for tools' own caches.
   **`~/.af-work` is throwaway, never a place for files to keep** — tell members to keep their own
-  files elsewhere (`~/repos`, or a folder of their own in home). The boot prune removes only
-  orphaned directories the Agent marked (`.af-session-workdir`), logs each path, and leaves
-  unmarked ones for the member to remove from Settings > Machine.
+  files elsewhere (`~/repos`, or a folder of their own in home). The boot prune, which also runs once a day, removes only
+  orphaned directories (and those of sessions archived 7+ days ago) the Agent marked
+  (`.af-session-workdir`), logs each path, and leaves unmarked ones for the member to remove from Settings > Machine.
 - **Reclaiming cache space** (all regenerable; the next build or install is slower once):
   `go clean -cache` (`~/.cache/go-build`), `npm cache clean --force` (`~/.npm/_cacache` — npm
   never evicts), `uv cache prune`. Do it only when no other session is mid-build — check

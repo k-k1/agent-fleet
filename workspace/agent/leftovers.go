@@ -44,6 +44,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 // leftoverKind is one kind of leftover the prune knows how to judge.
@@ -59,6 +60,9 @@ type leftoverKind struct {
 	candidates func(home string, roots []string, pins map[string]string) []leftover
 	// place is the folder the Console shows for the row.
 	place func(home string) string
+	// prepare, when set, runs at the start of every prune (not of a survey) for what the
+	// judgement needs written first (af-work stamps archived sessions that have no date).
+	prepare func()
 }
 
 // leftover is one directory to remove, plus files beside it that go with it.
@@ -69,6 +73,9 @@ type leftover struct {
 	// needsConfirm = the boot pass leaves it alone and only the Settings button removes it:
 	// the directory is not provably ours (af-work without the Agent's marker).
 	needsConfirm bool
+	// stillDue, when set, is asked again right before the removal: the verdict was reached
+	// from a listing, and the state it rested on (an archived session) may have changed since.
+	stillDue func() bool
 }
 
 func (l leftover) path() string { return filepath.Join(l.root, l.name) }
@@ -76,7 +83,7 @@ func (l leftover) path() string { return filepath.Join(l.root, l.name) }
 var leftoverKinds = []leftoverKind{
 	{Name: "chromium", mention: "chrom", roots: chromiumProfileRoots, candidates: chromiumLeftovers,
 		place: func(h string) string { return filepath.Join(h, ".config", "chromium-headless") }},
-	{Name: "af-work", mention: ".af-work", roots: afWorkRoots, candidates: afWorkLeftovers,
+	{Name: "af-work", mention: ".af-work", roots: afWorkRoots, candidates: afWorkLeftovers, prepare: stampArchivedSessions,
 		place: func(h string) string { return filepath.Join(h, ".af-work") }},
 	{Name: "node", mention: "node", roots: func(string) []string { return []string{nvmNodeRoot()} }, candidates: nodeLeftovers,
 		place: func(string) string { return nvmNodeRoot() }},
@@ -171,12 +178,20 @@ type leftoverRemoved struct {
 func (k leftoverKind) prune(home string, pins map[string]string, boot bool) (leftoverRemoved, error) {
 	res := leftoverRemoved{Kind: k.Name}
 	var firstErr error
+	if k.prepare != nil {
+		k.prepare()
+	}
 	for _, l := range k.pruneable(home, pins) {
 		if boot && l.needsConfirm {
 			continue
 		}
 		budget := toolCacheMaxEntries
 		bytes, _ := leftoverSize(l, &budget)
+		// After the size walk, right before the removal: the walk is the long part, and a
+		// restore landing during it must still keep the folder.
+		if l.stillDue != nil && !l.stillDue() {
+			continue
+		}
 		if err := removeLeftover(l.path()); err != nil {
 			log.Printf("leftovers: remove %s: %v", l.path(), err)
 			if firstErr == nil {
@@ -208,7 +223,27 @@ func workspacePins() (map[string]string, bool) {
 	return pins, true
 }
 
-// pruneLeftoversAtBoot is the boot entry point.
+// leftoverInterval is how often the unattended pass runs after the boot one: Agents stay up
+// for weeks, and an archived session's folder comes due while one is running.
+const leftoverInterval = 24 * time.Hour
+
+// pruneLeftoversDaily runs the unattended pass every interval until stop closes. It shares
+// leftoverMu with the boot pass and the Settings button, so no two of them judge or remove at
+// once; a tick that finds one running waits for it and then judges afresh.
+func pruneLeftoversDaily(interval time.Duration, stop <-chan struct{}) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			pruneLeftoversAtBoot()
+		}
+	}
+}
+
+// pruneLeftoversAtBoot is the unattended pass: run at boot and again by pruneLeftoversDaily.
 func pruneLeftoversAtBoot() {
 	pins, ok := workspacePins()
 	if !ok {
@@ -306,18 +341,27 @@ func pidAlive(pid int) bool {
 
 func afWorkRoots(home string) []string { return []string{filepath.Join(home, ".af-work")} }
 
-// afWorkLeftovers takes the directories no session and no working copy is named after.
-// Deleting a session removes its directory already (removeSessionSideFiles); what is left
-// predates that, or was keyed by a working copy that is gone.
+// archivedScratchTTL is how long an archived session's ~/.af-work/<name> lives after the
+// session was archived.
+const archivedScratchTTL = 7 * 24 * time.Hour
+
+// afWorkLeftovers takes the directories no session and no working copy is named after, plus
+// the folder of each session archived archivedScratchTTL ago or more. Deleting a session
+// removes its directory already (removeSessionSideFiles); what is left predates that, was
+// keyed by a working copy that is gone, or belongs to a session on the shelf.
 //
 // Only a directory carrying paths.SessionWorkDirMarker (written where the Agent creates it)
 // is removed at boot; any other is a candidate for the Settings button alone, because members
 // put their own folders there and a restart must not delete them silently.
+//
+// Kept whatever the age: a locked session's folder, and a folder named like a working copy or
+// like another session's working directory (Managed sessions key it by working copy).
 func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
-	known, ok := afWorkKnownNames()
+	scan, ok := scanAfWorkSessions()
 	if !ok {
 		return nil
 	}
+	known := scan.known
 	repos, err := os.ReadDir(gitx.ReposRoot())
 	if err != nil && !os.IsNotExist(err) {
 		return nil
@@ -329,22 +373,101 @@ func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
 	for _, root := range roots {
 		ents, _ := os.ReadDir(root)
 		for _, e := range ents {
-			if e.IsDir() && !known[e.Name()] {
-				_, err := os.Lstat(filepath.Join(root, e.Name(), paths.SessionWorkDirMarker))
-				out = append(out, leftover{root: root, name: e.Name(), needsConfirm: err != nil})
+			if !e.IsDir() || known[e.Name()] {
+				continue
 			}
+			_, err := os.Lstat(filepath.Join(root, e.Name(), paths.SessionWorkDirMarker))
+			l := leftover{root: root, name: e.Name(), needsConfirm: err != nil}
+			if scan.expired[e.Name()] {
+				name := e.Name()
+				l.stillDue = func() bool { return archivedScratchDue(name) }
+			}
+			out = append(out, l)
 		}
 	}
 	return out
 }
 
-// afWorkKnownNames collects every session name (live and in the trash) and each live
+// afWorkScan is what one read of the session store says about ~/.af-work.
+type afWorkScan struct {
+	// known holds every name whose folder stays: sessions that are live, locked, in the trash
+	// or archived less than archivedScratchTTL ago (or with no usable date yet), and each live
+	// session's working-copy name.
+	known map[string]bool
+	// expired holds archived, unlocked sessions whose date is archivedScratchTTL old. Their
+	// own name is left out of known; their working-copy name is not.
+	expired map[string]bool
+	// unstamped names the archived sessions with no usable archivedAt.
+	unstamped []string
+}
+
+// archivedScratchDue reads name's meta as it is now: still archived, unlocked and dated a
+// week ago or more. A restore that raced the listing makes it false.
+func archivedScratchDue(name string) bool {
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return false
+	}
+	return m.Archived && !m.Locked && archivedAtDue(m.ArchivedAt)
+}
+
+// archivedAtDue says whether an archivedAt stamp is old enough. An empty, unparseable or
+// future value is not: when in doubt the folder stays.
+func archivedAtDue(stamp string) bool {
+	t, err := time.Parse(time.RFC3339, stamp)
+	return err == nil && pruneNow().Sub(t) >= archivedScratchTTL
+}
+
+// archivedStampFutureSlack is how far past now a stamp may sit before it is taken as written
+// by a clock that was wrong, not as a date.
+const archivedStampFutureSlack = 24 * time.Hour
+
+// stampArchivedSessions gives every archived session that has no date "now", so a session
+// archived before archivedAt existed goes a week after the rollout, not at the first boot. The
+// date is written through the session lock onto the meta as it is at that moment (a stale
+// snapshot written back would undo a lock or bring back a deleted session). Nothing is
+// stamped when the session store cannot be read in full.
+func stampArchivedSessions() {
+	scan, ok := scanAfWorkSessions()
+	if !ok {
+		return
+	}
+	for _, name := range scan.unstamped {
+		sessionx.UpdateSessionMeta(name, func(cur *session.Meta) bool {
+			if !cur.Archived || cur.ArchivedAt != "" && !archivedStampUnusable(cur.ArchivedAt) {
+				return false
+			}
+			cur.ArchivedAt = pruneNow().UTC().Format(time.RFC3339)
+			return true
+		})
+	}
+}
+
+// archivedStampUnusable: unparseable, or further ahead of now than a clock step explains. The
+// next stamping pass replaces it with now, so a bad clock cannot keep a folder for ever.
+func archivedStampUnusable(stamp string) bool {
+	t, err := time.Parse(time.RFC3339, stamp)
+	return err != nil || t.Sub(pruneNow()) > archivedStampFutureSlack
+}
+
+// afWorkKnownNames is scanAfWorkSessions reduced to the names that stay. ok=false when any
+// record cannot be read or parsed.
+func afWorkKnownNames() (map[string]bool, bool) {
+	scan, ok := scanAfWorkSessions()
+	if !ok {
+		return nil, false
+	}
+	return scan.known, true
+}
+
+// scanAfWorkSessions collects every session name (live and in the trash) and each live
 // session's working-copy name. ok=false when any record cannot be read or parsed:
 // session.ListMetas and listCleanupArchives skip such a record silently, and WriteMeta is not
 // atomic, so a meta caught mid-write would make that session's directory look orphaned.
 // Without a readable session store every name looks orphaned, so that is false too.
-func afWorkKnownNames() (map[string]bool, bool) {
-	known := map[string]bool{}
+func scanAfWorkSessions() (afWorkScan, bool) {
+	scan := afWorkScan{known: map[string]bool{}, expired: map[string]bool{}}
+	known := scan.known
 	read := func(dir string, into func([]byte) bool) bool {
 		ents, err := os.ReadDir(dir)
 		if err != nil {
@@ -369,13 +492,21 @@ func afWorkKnownNames() (map[string]bool, bool) {
 		if json.Unmarshal(b, &m) != nil || m.Name == "" {
 			return false
 		}
-		known[m.Name] = true
+		switch {
+		case m.Archived && !m.Locked && archivedAtDue(m.ArchivedAt):
+			scan.expired[m.Name] = true
+		default:
+			known[m.Name] = true
+			if m.Archived && (m.ArchivedAt == "" || archivedStampUnusable(m.ArchivedAt)) {
+				scan.unstamped = append(scan.unstamped, m.Name)
+			}
+		}
 		if m.Dir != "" {
 			known[filepath.Base(m.Dir)] = true
 		}
 		return true
 	}) {
-		return nil, false
+		return afWorkScan{}, false
 	}
 	trash := cleanupStoreDir()
 	if _, err := os.Stat(trash); err == nil || !os.IsNotExist(err) {
@@ -389,10 +520,10 @@ func afWorkKnownNames() (map[string]bool, bool) {
 			}
 			return true
 		}) {
-			return nil, false
+			return afWorkScan{}, false
 		}
 	}
-	return known, true
+	return scan, true
 }
 
 // --- node -------------------------------------------------------------------------------

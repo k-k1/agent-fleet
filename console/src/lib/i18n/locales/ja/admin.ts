@@ -776,7 +776,7 @@ export const admin = {
   "clean.stage1_run_title": "停止中のセッションをすべて整理します（アーカイブは後からアーカイブ一覧で復帰できます）",
   "clean.stage1_empty": "整理する停止中セッションはありません。",
   "clean.stage1_confirm_title": "停止中セッションをまとめて整理",
-  "clean.stage1_confirm_body": "{parts}します。アーカイブしたセッションはアーカイブ一覧から、ごみ箱へ移した shell/ssm は掃除のごみ箱から戻せます。",
+  "clean.stage1_confirm_body": "{parts}します。アーカイブしたセッションはアーカイブ一覧から、ごみ箱へ移した shell/ssm は掃除のごみ箱から戻せます。アーカイブしたセッションの作業用フォルダ（~/.af-work/<name>）は、アーカイブの 7 日後に削除されます（会話は残ります）。",
   "clean.stage2_title": "② 作業コピー・ブランチを削除",
   "clean.stage2_run": "安全なものを一括削除",
   "clean.stage2_run_title": "「安全」（マージ済み・クリーン等）と判定されたものだけを削除します",
@@ -850,7 +850,7 @@ export const admin = {
   "clean.purge_restore_incomplete": "このアーカイブの復元が途中で止まっています。もう一度「復元」してから削除してください。",
   // 掃除候補の「理由」（Agent は clean.reason.* のキーだけを返す・ADR 0033）。
   "clean.reason.locked": "ロック中（削除保護。解除するまで掃除対象外）",
-  "clean.reason.archived": "アーカイブ済み（自動では消えない。削除で回収可・復元可）",
+  "clean.reason.archived": "アーカイブ済み（自動では消えない。ただし ~/.af-work のフォルダは 7 日後に削除。削除で回収可・復元可）",
   "clean.reason.stopped": "停止中（再開可能）。完了していればアーカイブで一覧から整理（放置でも期限が来ればアーカイブへ移る）",
   "clean.reason.ephemeral": "停止中の shell/ssm（残す会話なし）。削除で片付きます",
   "clean.reason.orphan_pane": "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",

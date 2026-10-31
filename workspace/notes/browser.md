@@ -46,7 +46,7 @@ correctly) are baked in: use `chromium --headless` or point an automation librar
 - For a one-off run, pass `--user-data-dir="$AF_WORK_DIR/chromium"` (or a folder under it). Without
   one, Chromium makes a ~84M throwaway profile under `~/.config/chromium-headless/scoped_dir*` and
   removes it only on a clean exit, so every killed or timed-out run leaves one in home for good; under
-  `$AF_WORK_DIR` it goes with the session.
+  `$AF_WORK_DIR` it goes with the session (deleted, or 7 days after it is archived).
 - dbus / GPU errors on stderr are normal noise. Judge success by the exit status and the file that
   was written, not by clean stderr.
 
