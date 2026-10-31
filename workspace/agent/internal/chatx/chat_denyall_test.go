@@ -217,8 +217,8 @@ func TestOneShotDenyAllRefusesAProbeItCannotTrust(t *testing.T) {
 //
 // The budget is a wall-clock deadline that starts before the fake CLI's shell does. It has to be
 // far longer than a loaded host needs to fork and run the script's first lines: at 300ms the
-// probe was sometimes killed before it recorded its invocation, and the "exactly one run"
-// check below failed although the code under test was right (measured: a 1ms budget fails it
+// probe was sometimes killed before it recorded its invocation, and the run-count
+// check failed although the code under test was right (measured: a 1ms budget fails it
 // every time with the same message). The fake sleeps well past the budget, so the budget
 // is what ends the probe. The error text pins that path, so any other failure of the probe
 // cannot pass for the timeout.
