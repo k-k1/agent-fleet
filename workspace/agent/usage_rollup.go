@@ -254,6 +254,43 @@ func aggregateUsageRows(rows []usagex.Record, seen map[string]bool) map[usageKey
 	return out
 }
 
+// pairCursorHookTurns marks the fold's measured=none call row of a turn as measured
+// when a tokens-only row (today only cursor's stop hook, Key "cursor-stop:<generation>") reported that turn.
+// Without it the turn is counted twice in coverage: once as a call the hook measured, once as
+// an unmeasured call (#2495).
+//
+// The two rows share no id (the fold's Call is a fresh UUID, the hook's is the generation id),
+// so they pair per (kind, ref): the n-th hook row of a ref measures the n-th still-unmeasured fold
+// call of that ref, in append order. A fold row left without a hook row stays unmeasured, and
+// a hook row left without a fold row changes nothing. Rows are marked in place; the stored
+// ledger is untouched.
+//
+// Only the main thread's feature=session fold rows are candidates: a same-ref engine.* row or a
+// subagent row is not the turn the hook measured. Pairing by count is approximate in
+// attribution: an aborted or failed turn has a fold row but no hook row, so the mark can land
+// on an earlier turn, shifting measured/unmeasured between model and time-bucket dimensions
+// (the totals stay right). rows must already be deduplicated (one hook row per generation).
+func pairCursorHookTurns(rows []usagex.Record) {
+	hooks := map[string]int{}
+	for _, r := range rows {
+		if r.TokensOnly && r.Feature == usagex.FeatureSession && r.Ref != "" && r.Measured != usagex.MeasuredNone {
+			hooks[r.Kind+"\x00"+r.Ref]++
+		}
+	}
+	if len(hooks) == 0 {
+		return
+	}
+	for i, r := range rows {
+		k := r.Kind + "\x00" + r.Ref
+		if r.TokensOnly || r.Feature != usagex.FeatureSession || r.Agent != "" ||
+			r.Measured != usagex.MeasuredNone || hooks[k] <= 0 {
+			continue
+		}
+		hooks[k]--
+		rows[i].Measured = usagex.MeasuredPartial
+	}
+}
+
 // usageCallRepresentatives picks, per call, the index of the row that carries the count.
 func usageCallRepresentatives(rows []usagex.Record) map[string]int {
 	rep := make(map[string]int, len(rows))
@@ -369,12 +406,17 @@ func ensureUsageRollups() {
 		seen := map[string]bool{} // call dedup is shared per file
 		byDay := map[string][]usagex.Record{}
 		var days []string
+		kept := make([]usagex.Record, 0, len(rawRows))
 		for _, r := range rawRows {
-			ts := usageRowTime(r, fileDay)
-			if !dd.accept(r, ts) {
+			if !dd.accept(r, usageRowTime(r, fileDay)) {
 				dropped++ // re-append of rows written before the watermark could be updated
 				continue
 			}
+			kept = append(kept, r)
+		}
+		pairCursorHookTurns(kept)
+		for _, r := range kept {
+			ts := usageRowTime(r, fileDay)
 			d := ts.Format("2006-01-02")
 			if _, ok := byDay[d]; !ok {
 				days = append(days, d)

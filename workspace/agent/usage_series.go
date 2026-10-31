@@ -452,14 +452,18 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 		rows := usagex.ReadDay(fileDay)
 		seen := map[string]bool{} // call dedup is per file (one call lives inside one file)
 		byBucket := map[string][]usagex.Record{}
+		kept := make([]usagex.Record, 0, len(rows))
 		for _, r := range rows {
-			ts := usageRowTime(r, fileDay)
 			// Pass this before narrowing by range. If which row counts as "the first one"
 			// changed with the query range, the same day's total would move just because the
 			// range was changed.
-			if !dd.accept(r, ts) {
-				continue
+			if dd.accept(r, usageRowTime(r, fileDay)) {
+				kept = append(kept, r)
 			}
+		}
+		pairCursorHookTurns(kept)
+		for _, r := range kept {
+			ts := usageRowTime(r, fileDay)
 			day := ts.Format("2006-01-02")
 			if !inDayRange(day) {
 				continue
