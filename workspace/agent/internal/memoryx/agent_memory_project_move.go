@@ -165,6 +165,9 @@ func agentMemLiveProjects() (map[string]*agentMemProject, bool) {
 		stop:   make(chan struct{}),
 		budget: agentMemLiveBudget,
 		soft:   agentMemLiveSoft,
+		// workers and runner are replaced by tests too, so they are read once here as well.
+		workers: agentMemLiveWorkers,
+		runner:  agentMemLiveRunner,
 	}
 	timeout := agentMemLiveTimeout
 	// Closing stop on the way out makes an abandoned search stop spawning git processes.
@@ -188,10 +191,13 @@ type agentMemLiveState struct {
 	live map[string]*agentMemProject
 	// stop is closed when the caller no longer waits; nil (never ready) for a search run directly.
 	stop chan struct{}
-	// budget and soft are agentMemLiveBudget and agentMemLiveSoft as they were when the search
-	// began; read-only afterwards.
-	budget int
-	soft   time.Duration
+	// The tunables a test may replace (agentMemLiveBudget, agentMemLiveSoft, agentMemLiveWorkers,
+	// agentMemLiveRunner) as they were when the search began; read-only afterwards, so an
+	// abandoned search never reads the package variables.
+	budget  int
+	soft    time.Duration
+	workers int
+	runner  func(dir string) agentMemGitRunner
 }
 
 func (s *agentMemLiveState) stopped() bool {
@@ -257,7 +263,7 @@ func (s *agentMemLiveState) forEach(n int, work, apply func(i int)) bool {
 		done[i] = make(chan struct{})
 	}
 	var next atomic.Int64
-	workers := min(max(agentMemLiveWorkers, 1), n)
+	workers := min(max(s.workers, 1), n)
 	for w := 0; w < workers; w++ {
 		go func() {
 			for {
@@ -384,7 +390,7 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 		okAll := st.forEach(len(kids), func(i int) {
 			k := kids[i]
 			if k.ident {
-				k.p, k.identified = agentMemProjectIdent(k.dir, k.dir, agentMemLiveRunner(k.dir))
+				k.p, k.identified = agentMemProjectIdent(k.dir, k.dir, st.runner(k.dir))
 			}
 			if k.wantIgn {
 				k.ign, k.ignOK = agentMemIgnoredDirs(k.dir)
@@ -464,7 +470,7 @@ func agentMemLiveSearch(st *agentMemLiveState) (complete bool) {
 		}
 		if m.Dir != "" {
 			if _, err := os.Stat(m.Dir); err == nil && claim(m.Dir) {
-				record(agentMemProjectIdent(m.Dir, m.Dir, agentMemLiveRunner(m.Dir)))
+				record(agentMemProjectIdent(m.Dir, m.Dir, st.runner(m.Dir)))
 			}
 		}
 	}

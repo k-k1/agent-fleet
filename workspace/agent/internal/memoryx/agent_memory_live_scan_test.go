@@ -376,7 +376,7 @@ func TestAgentMemoryLiveSearchRunsGitInParallelWithinTheCap(t *testing.T) {
 // Results are applied in index order whatever order the workers finish in, so the first-wins
 // put of a shared project id never depends on scheduling.
 func TestAgentMemoryLiveForEachAppliesInOrder(t *testing.T) {
-	st := &agentMemLiveState{stop: make(chan struct{})}
+	st := &agentMemLiveState{stop: make(chan struct{}), workers: agentMemLiveWorkers}
 	const n = 24
 	var got []int
 	ok := st.forEach(n, func(i int) { time.Sleep(time.Duration(n-i) * time.Millisecond) }, func(i int) { got = append(got, i) })
@@ -392,7 +392,7 @@ func TestAgentMemoryLiveForEachAppliesInOrder(t *testing.T) {
 
 // An abandoned search stops: no new item starts once stop is closed, and the workers exit.
 func TestAgentMemoryLiveForEachStopsWhenAbandoned(t *testing.T) {
-	st := &agentMemLiveState{stop: make(chan struct{})}
+	st := &agentMemLiveState{stop: make(chan struct{}), workers: agentMemLiveWorkers}
 	var started atomic.Int64
 	before := runtime.NumGoroutine()
 	go func() { time.Sleep(30 * time.Millisecond); close(st.stop) }()
