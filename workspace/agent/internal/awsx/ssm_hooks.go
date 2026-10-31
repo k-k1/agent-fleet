@@ -73,7 +73,41 @@ func checkSSMMeta(settings map[string]Profile, usable []string, s session.SSMMet
 		return key, false, ErrSSMSettingsChanged
 	}
 	_, ours := keyOwner(settings, usable, key)
+	if !ours && heldBackElsewhere(key, owner) {
+		return key, false, ErrSSMKeyHeldBack
+	}
 	return key, ours, nil
+}
+
+// ErrSSMKeyHeldBack refuses an SSM pane, discovery or forced re-login whose key Settings owns but
+// does not use now (the member's own files define it, or a collision holds it back), when what
+// the key holds is for another portal or owner: the pane's config would read that token.
+var ErrSSMKeyHeldBack = errors.New("your own ~/.aws files use this profile's sso-session for another sign-in; " +
+	"rename it there, or open the profile from your own config")
+
+// heldBackElsewhere reports whether key, which Settings gives owner but does not use now, holds
+// or is defined for something else: a token or a binding for another portal or owner, or the
+// member's own [sso-session] section for another portal (a config that cannot be read counts).
+// It only reads: a held-back key's cache is the member's.
+func heldBackElsewhere(key string, owner keyBinding) bool {
+	if url, region, present := tokenPortal(key); present && (url != owner.StartURL || region != owner.SSORegion) {
+		return true
+	}
+	var got keyBinding
+	if readJSON(bindingPath(key), &got) && !got.sameTarget(owner) {
+		return true
+	}
+	keys := map[string]string{}
+	if err := readINISection(ConfigPath(), configPicker("sso-session", key), keys); err != nil {
+		return true
+	}
+	if u, ok := keys["sso_start_url"]; ok && strings.TrimRight(u, "/") != owner.StartURL {
+		return true
+	}
+	if r, ok := keys["sso_region"]; ok && r != owner.SSORegion {
+		return true
+	}
+	return false
 }
 
 // vetSSMLogin vets the key the pane or discovery is about to read, refusing a meta Settings no
@@ -93,9 +127,14 @@ func vetSSMLogin(s session.SSMMeta) error {
 // shared sign-in this signs every member out; the Console says so before the press.
 func forgetSSMLogin(s session.SSMMeta) error {
 	settings, usable := loginSettings(), UsableNow()
-	session, _, err := checkSSMMeta(settings, usable, s)
+	session, ours, err := checkSSMMeta(settings, usable, s)
 	if err != nil {
 		return err
+	}
+	if _, owned := settingsOwner(settings, session); owned && !ours {
+		// Settings owns the key but does not use it now: what it holds is the member's, and a
+		// forced re-login must not delete it.
+		return ErrSSMKeyHeldBack
 	}
 	gate := logins.Gate(session)
 	gate.Lock()

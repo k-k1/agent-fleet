@@ -428,7 +428,8 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		}
 		target = want
 	}
-	reg, unregister := registerAttempt(target)
+	_, fleetUsed := keyOwner(loginSettings(), UsableNow(), ssoSession)
+	reg, unregister := registerAttempt(target, fleetUsed)
 	cfg := filepath.Join(dir, "config")
 	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {
 		unregister()

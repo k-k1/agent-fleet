@@ -214,7 +214,7 @@ func TestLandingBindsOnlyItsTarget(t *testing.T) {
 	b, _ := json.Marshal(map[string]string{"accessToken": "tok", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 		"startUrl": sp.StartURL, "region": sp.SSORegion})
 	os.WriteFile(staged, b, 0o600)
-	reg, unregister := registerAttempt(target)
+	reg, unregister := registerAttempt(target, true)
 	defer unregister()
 	if err := bindLanding(reg, "af-team", target, staged); err != nil || !exists(ssoCachePath("af-team")) {
 		t.Fatalf("control: an unchanged target publishes: %v", err)

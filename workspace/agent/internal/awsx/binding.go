@@ -303,6 +303,8 @@ func vetAll(settings map[string]Profile, usable []string) error {
 type runningAttempt struct {
 	attempt *cloudlogin.Attempt
 	target  keyBinding
+	// fleetUsed: Agent Fleet used the key when the attempt started (keyOwner over UsableNow).
+	fleetUsed bool
 }
 
 // attempts holds the running login attempts by a registration number of their own, taken before
@@ -315,13 +317,14 @@ var (
 	attemptSeq uint64
 )
 
-// registerAttempt records target before its attempt starts; the returned func drops it.
-func registerAttempt(target keyBinding) (uint64, func()) {
+// registerAttempt records target, and whether Agent Fleet used its key then, before its
+// attempt starts; the returned func drops it.
+func registerAttempt(target keyBinding, fleetUsed bool) (uint64, func()) {
 	attemptsMu.Lock()
 	defer attemptsMu.Unlock()
 	attemptSeq++
 	id := attemptSeq
-	attempts[id] = &runningAttempt{target: target}
+	attempts[id] = &runningAttempt{target: target, fleetUsed: fleetUsed}
 	return id, func() {
 		attemptsMu.Lock()
 		delete(attempts, id)
@@ -341,12 +344,16 @@ func attachAttempt(id uint64, a *cloudlogin.Attempt) bool {
 	return ok
 }
 
-// registered reports whether registration id is still running for its target.
-func registered(id uint64) bool {
+// registered reports whether registration id is still running for its target, and whether
+// Agent Fleet used its key when it started.
+func registered(id uint64) (fleetUsed, ok bool) {
 	attemptsMu.Lock()
 	defer attemptsMu.Unlock()
-	_, ok := attempts[id]
-	return ok
+	ra, ok := attempts[id]
+	if !ok {
+		return false, false
+	}
+	return ra.fleetUsed, true
 }
 
 // endStaleAttempts ends each running attempt whose target the current Settings does not name,
@@ -379,16 +386,24 @@ const settingsChangedLogin = "Settings changed during the login; log in again"
 // bindLanding publishes the token a login attempt wrote to its staging cache (staged) as
 // session's token, bound to target, inside the key's exclusive lock: only while the attempt is
 // still registered (a sync or a replace did not end it), Settings still gives the key that owner
-// and portal, and the token is for that portal. Anything else leaves the real cache as it was;
-// the staged token goes with the attempt's directory. An attempt's CLI therefore never writes
-// where a reader, af-aws-exec or a plain aws, could take its token before it is bound.
+// and portal, Agent Fleet still uses the key if it did when the attempt started (the member's own
+// files may have taken it meanwhile, and their token is not to be overwritten), and the token is
+// for that portal. Anything else leaves the real cache as it was; the staged token goes with the
+// attempt's directory. An attempt's CLI therefore never writes where a reader, af-aws-exec or a
+// plain aws, could take its token before it is bound.
+//
+// The binding and the token are two files, so the order is what keeps a failure safe: a token
+// that is not this target's is retired first, then the binding is written, then the token. A
+// failure at any step leaves either the former state of this same target or a binding with no
+// token, which a run treats as "log in".
 func bindLanding(reg uint64, session string, target keyBinding, staged string) error {
 	unlock, err := logins.LockKey(session, false)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if !registered(reg) {
+	fleetUsed, ok := registered(reg)
+	if !ok {
 		return errors.New(settingsChangedLogin)
 	}
 	settings := loginSettings()
@@ -401,30 +416,35 @@ func bindLanding(reg uint64, session string, target keyBinding, staged string) e
 	if !ok || !want.sameTarget(target) || !present || url != target.StartURL || region != target.SSORegion {
 		return errors.New(settingsChangedLogin)
 	}
+	if fleetUsed {
+		if _, still := keyOwner(settings, UsableNow(), session); !still {
+			return errors.New("your own ~/.aws files define this sign-in's sso-session now; the login was not saved")
+		}
+	}
 	b, err := os.ReadFile(staged)
 	if err != nil {
 		return err
 	}
 	var got keyBinding
-	if readJSON(bindingPath(session), &got) && !got.sameTarget(want) {
-		// Role credentials a former owner took through this key are not this login's.
-		for _, r := range got.Roles {
-			if err := os.Remove(ssoRoleCachePath(r[0], r[1], session)); err != nil && !os.IsNotExist(err) {
-				return err
-			}
+	bound := readJSON(bindingPath(session), &got)
+	if !bound || !got.sameTarget(want) {
+		// What the key holds now is not provably this target's: the token, the role credentials
+		// a former owner took through it, and its binding go before anything is written.
+		if err := retireKey(session, got.Roles); err != nil {
+			return err
 		}
 		got.Roles = nil
 	}
 	for _, r := range got.Roles {
 		want.Roles = addRole(want.Roles, r[0], r[1])
 	}
+	if err := writeJSONAtomic(bindingPath(session), want); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(ssoCachePath(session)), 0o700); err != nil {
 		return err
 	}
-	if err := writeAtomic(ssoCachePath(session), b, 0o600); err != nil {
-		return err
-	}
-	return writeJSONAtomic(bindingPath(session), want)
+	return writeAtomic(ssoCachePath(session), b, 0o600)
 }
 
 // forgetLeftovers revokes and deletes the per-profile tokens the members of session kept from

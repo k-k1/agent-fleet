@@ -75,10 +75,10 @@ func TestRenamedAttemptIsEndedBySyncVetting(t *testing.T) {
 	keep := logins.Begin("af-team", "", "a", func() {})
 	gone := logins.Begin("af-gone", "", "x", func() {})
 	t.Cleanup(func() { keep.End(cloudlogin.PhaseFailed, ""); gone.End(cloudlogin.PhaseFailed, "") })
-	r1, u1 := registerAttempt(teamTarget(sp))
+	r1, u1 := registerAttempt(teamTarget(sp), true)
 	defer u1()
 	attachAttempt(r1, keep)
-	r2, u2 := registerAttempt(keyBinding{Session: "af-gone", Owner: "sign-in:g9", StartURL: sp.StartURL, SSORegion: sp.SSORegion})
+	r2, u2 := registerAttempt(keyBinding{Session: "af-gone", Owner: "sign-in:g9", StartURL: sp.StartURL, SSORegion: sp.SSORegion}, true)
 	defer u2()
 	attachAttempt(r2, gone)
 	if err := vetAll(s, UsableNow()); err != nil {
@@ -90,7 +90,7 @@ func TestRenamedAttemptIsEndedBySyncVetting(t *testing.T) {
 	if !keep.Live() {
 		t.Fatal("an attempt whose target still holds was ended")
 	}
-	if registered(r2) {
+	if _, ok := registered(r2); ok {
 		t.Fatal("the ended attempt is still registered")
 	}
 }
@@ -510,5 +510,122 @@ func TestLegacyRoleCacheCannotBeUsedWithoutTokenOrBinding(t *testing.T) {
 	}
 	if exists(legacy) {
 		t.Fatal("role credentials of unknown portal survived")
+	}
+}
+
+// ownTeamSession puts the member's own [sso-session af-team] for portal Y in front of the block,
+// which holds back every member of the sign-in.
+func ownTeamSession(t *testing.T, s map[string]Profile) {
+	t.Helper()
+	own := "[sso-session af-team]\nsso_start_url = https://mine.awsapps.com/start\nsso_region = us-east-1\n"
+	b, _ := os.ReadFile(ConfigPath())
+	if err := os.WriteFile(ConfigPath(), append([]byte(own), b...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The next sync drops the block's own section, as a member's sso-session holds the members back.
+	if res, err := Apply(ConfigPath(), []Profile{s["a"], s["b"]}); err != nil || len(res.SessionShadowed) != 2 {
+		t.Fatalf("re-apply = %+v %v", res, err)
+	}
+}
+
+// C1: a held-back key is only read, never vetted, but a pane, discovery or forced re-login is
+// refused when it holds or is defined for another portal; the force deletes nothing.
+func TestSSMHeldBackKeyCannotUseOrDropAnotherPortalsLogin(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	meta := session.SSMMeta{Profile: "a", StartURL: sp.StartURL, SSORegion: sp.SSORegion, AccountID: sp.AccountID,
+		RoleName: sp.RoleName, SSOSession: "af-team", SSOOwnerID: "g1"}
+	ownTeamSession(t, s)
+	if err := vetSSMLogin(meta); !errors.Is(err, ErrSSMKeyHeldBack) {
+		t.Fatalf("own section for another portal, no token: %v", err)
+	}
+	token(t, "af-team", "https://mine.awsapps.com/start", "us-east-1", "theirs")
+	if err := vetSSMLogin(meta); !errors.Is(err, ErrSSMKeyHeldBack) {
+		t.Fatalf("another portal's token: %v", err)
+	}
+	if err := forgetSSMLogin(meta); !errors.Is(err, ErrSSMKeyHeldBack) || !exists(ssoCachePath("af-team")) {
+		t.Fatalf("forced re-login = %v, member's token kept %v", err, exists(ssoCachePath("af-team")))
+	}
+}
+
+// C2: a binding that cannot be written publishes no token, so a later owner has nothing to adopt.
+func TestLandingBindingWriteFailureCannotPublishTheToken(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	target := teamTarget(sp)
+	staged := ssoCacheIn(t.TempDir(), "af-team")
+	os.MkdirAll(filepath.Dir(staged), 0o700)
+	b, _ := json.Marshal(map[string]string{"accessToken": "landed", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"startUrl": sp.StartURL, "region": sp.SSORegion})
+	os.WriteFile(staged, b, 0o600)
+	reg, unregister := registerAttempt(target, true)
+	defer unregister()
+	// The bindings directory refuses new files: nothing to retire, but the binding cannot be written.
+	dir := filepath.Dir(bindingPath("af-team"))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(dir, 0o500)
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := bindLanding(reg, "af-team", target, staged); err == nil {
+		t.Fatal("control: the binding write failed")
+	}
+	if exists(ssoCachePath("af-team")) {
+		t.Fatal("a token was published without its binding")
+	}
+	os.Chmod(dir, 0o700)
+	next := map[string]Profile{}
+	for k, v := range s {
+		v.SignInID = "g2"
+		next[k] = v
+	}
+	if accepted(t, next, "af-team") {
+		t.Fatal("another owner adopted the failed landing")
+	}
+}
+
+// C3: a landing started while Agent Fleet used the key is not published once the member's own
+// files took it, and their token stays as it was.
+func TestLandingCannotOverwriteASessionThatBecameMemberOwned(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	target := teamTarget(sp)
+	staged := ssoCacheIn(t.TempDir(), "af-team")
+	os.MkdirAll(filepath.Dir(staged), 0o700)
+	b, _ := json.Marshal(map[string]string{"accessToken": "landed", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		"startUrl": sp.StartURL, "region": sp.SSORegion})
+	os.WriteFile(staged, b, 0o600)
+	reg, unregister := registerAttempt(target, true)
+	defer unregister()
+	ownTeamSession(t, s)
+	token(t, "af-team", "https://mine.awsapps.com/start", "us-east-1", "theirs")
+	if err := bindLanding(reg, "af-team", target, staged); err == nil {
+		t.Fatal("a landing was published over the member's own sso-session")
+	}
+	if got, _ := os.ReadFile(ssoCachePath("af-team")); !strings.Contains(string(got), "theirs") {
+		t.Fatalf("the member's token was replaced: %s", got)
+	}
+}
+
+// C1: a forced re-login never deletes what a held-back key holds, even when the member's own
+// sso-session points at the same portal (the pane itself may still use it).
+func TestForcedSSMReloginKeepsAHeldBackKeysLogin(t *testing.T) {
+	s := teamSettings(t)
+	sp := s["a"]
+	own := "[sso-session af-team]\nsso_start_url = " + sp.StartURL + "\nsso_region = " + sp.SSORegion + "\n"
+	b, _ := os.ReadFile(ConfigPath())
+	os.WriteFile(ConfigPath(), append([]byte(own), b...), 0o600)
+	// The next sync drops the block's own [sso-session af-team]: the member's holds the members back.
+	if res, err := Apply(ConfigPath(), []Profile{s["a"], s["b"]}); err != nil || len(res.SessionShadowed) != 2 {
+		t.Fatalf("re-apply = %+v %v", res, err)
+	}
+	token(t, "af-team", sp.StartURL, sp.SSORegion, "theirs")
+	meta := session.SSMMeta{Profile: "a", StartURL: sp.StartURL, SSORegion: sp.SSORegion, AccountID: sp.AccountID,
+		RoleName: sp.RoleName, SSOSession: "af-team", SSOOwnerID: "g1"}
+	if err := vetSSMLogin(meta); err != nil {
+		t.Fatalf("control: the same portal's held-back key opens: %v", err)
+	}
+	if err := forgetSSMLogin(meta); !errors.Is(err, ErrSSMKeyHeldBack) || !exists(ssoCachePath("af-team")) {
+		t.Fatalf("forced re-login = %v, member's token kept %v", err, exists(ssoCachePath("af-team")))
 	}
 }
