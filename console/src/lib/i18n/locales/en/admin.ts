@@ -853,7 +853,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.purge_restore_incomplete": "A restore of this archive stopped part way. Restore it again, then delete it.",
   // Candidate reasons — the Agent sends only the clean.reason.* key (ADR 0033).
   "clean.reason.locked": "Locked (delete-protected; not a cleanup target until unlocked)",
-  "clean.reason.archived": "Archived (never deleted automatically; delete to reclaim, recoverable)",
+  "clean.reason.archived": "Archived (never deleted automatically, but its ~/.af-work folder is removed after 7 days; delete to reclaim, recoverable)",
   "clean.reason.stopped": "Stopped (resumable). Archive it to clear the list once it's finished (left alone, it moves to the archive when the window is up)",
   "clean.reason.ephemeral": "Stopped shell/ssm (no conversation to keep). Deleting tidies it up",
   "clean.reason.orphan_pane": "Orphan (running pane with no metadata). Attach or tidy it in the Console",

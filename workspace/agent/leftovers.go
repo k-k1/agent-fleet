@@ -185,11 +185,13 @@ func (k leftoverKind) prune(home string, pins map[string]string, boot bool) (lef
 		if boot && l.needsConfirm {
 			continue
 		}
+		budget := toolCacheMaxEntries
+		bytes, _ := leftoverSize(l, &budget)
+		// After the size walk, right before the removal: the walk is the long part, and a
+		// restore landing during it must still keep the folder.
 		if l.stillDue != nil && !l.stillDue() {
 			continue
 		}
-		budget := toolCacheMaxEntries
-		bytes, _ := leftoverSize(l, &budget)
 		if err := removeLeftover(l.path()); err != nil {
 			log.Printf("leftovers: remove %s: %v", l.path(), err)
 			if firstErr == nil {
@@ -416,6 +418,10 @@ func archivedAtDue(stamp string) bool {
 	return err == nil && pruneNow().Sub(t) >= archivedScratchTTL
 }
 
+// archivedStampFutureSlack is how far past now a stamp may sit before it is taken as written
+// by a clock that was wrong, not as a date.
+const archivedStampFutureSlack = 24 * time.Hour
+
 // stampArchivedSessions gives every archived session that has no date "now", so a session
 // archived before archivedAt existed goes a week after the rollout, not at the first boot. The
 // date is written through the session lock onto the meta as it is at that moment (a stale
@@ -437,9 +443,11 @@ func stampArchivedSessions() {
 	}
 }
 
+// archivedStampUnusable: unparseable, or further ahead of now than a clock step explains. The
+// next stamping pass replaces it with now, so a bad clock cannot keep a folder for ever.
 func archivedStampUnusable(stamp string) bool {
-	_, err := time.Parse(time.RFC3339, stamp)
-	return err != nil
+	t, err := time.Parse(time.RFC3339, stamp)
+	return err != nil || t.Sub(pruneNow()) > archivedStampFutureSlack
 }
 
 // afWorkKnownNames is scanAfWorkSessions reduced to the names that stay. ok=false when any

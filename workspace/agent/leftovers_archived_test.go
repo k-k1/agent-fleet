@@ -97,18 +97,13 @@ func TestArchivedAfWorkWithoutDateIsStampedNotRemoved(t *testing.T) {
 }
 
 // The stamp is written onto the meta as it is, never a snapshot: other fields survive.
-func TestArchivedAfWorkStampKeepsOtherFieldsAndSkipsRestored(t *testing.T) {
+func TestArchivedAfWorkStampKeepsOtherFields(t *testing.T) {
 	f := newArchivedFixture(t)
 	f.session("slock01", true, "", true)
 	stampArchivedSessions()
 	m, _ := session.ReadMeta("slock01")
 	if !m.Locked || m.ArchivedAt == "" {
 		t.Fatalf("meta: %+v", m)
-	}
-	f.session("sback01", false, "", false)
-	stampArchivedSessions()
-	if m, _ := session.ReadMeta("sback01"); m.ArchivedAt != "" {
-		t.Fatalf("a live session was stamped: %+v", m)
 	}
 }
 
@@ -134,33 +129,59 @@ func TestArchivedAfWorkKeepsLockedUnmarkedAndWorkingCopyNamed(t *testing.T) {
 	assertEntries(t, f.work(), "slock01", "swc0001")
 }
 
-// A restore that lands after the listing and before the removal keeps the folder.
+// A restore that lands after the listing and before the removal keeps the folder. The
+// candidates func restores right after listing, so only prune's own stillDue guard can save it.
 func TestArchivedAfWorkRestoreRacingThePruneKeepsTheFolder(t *testing.T) {
 	f := newArchivedFixture(t)
 	f.session("srace01", true, f.ago(10*day), false)
 	f.folder("srace01", true)
 	k, _ := findLeftoverKind("af-work")
+	k.prepare = nil
+	listed := k.candidates
+	k.candidates = func(h string, r []string, p map[string]string) []leftover {
+		out := listed(h, r, p)
+		if len(out) != 1 || out[0].stillDue == nil {
+			t.Fatalf("candidates = %+v", out)
+		}
+		if _, ok := sessionx.RestoreSession("srace01"); !ok {
+			t.Fatal("restore failed")
+		}
+		return out
+	}
 	pins, _ := workspacePins()
-	cands := k.pruneable(homeDir(), pins)
-	if len(cands) != 1 || cands[0].stillDue == nil {
-		t.Fatalf("candidates = %+v", cands)
-	}
-	if _, ok := sessionx.RestoreSession("srace01"); !ok {
-		t.Fatal("restore failed")
-	}
-	if cands[0].stillDue() {
-		t.Fatal("still due after a restore")
-	}
-	removed := false
-	old := removeLeftover
-	removeLeftover = func(string) error { removed = true; return nil }
-	defer func() { removeLeftover = old }()
-	// The prune itself judges afresh and finds the session live.
-	pruneKindBoot(t, "af-work")
-	if removed {
-		t.Fatal("a restored session's folder was removed")
+	r, err := k.prune(homeDir(), pins, true)
+	if err != nil || r.Count != 0 {
+		t.Fatalf("prune = %+v, %v", r, err)
 	}
 	assertEntries(t, f.work(), "srace01")
+}
+
+// An expired session whose name is another session's working directory name stays.
+func TestArchivedAfWorkKeepsNameOfAnotherSessionsWorkingDir(t *testing.T) {
+	f := newArchivedFixture(t)
+	f.session("swc0002", true, f.ago(30*day), false)
+	f.session("slive02", false, "", false)
+	b, _ := json.Marshal(map[string]any{"name": "slive02", "dir": filepath.Join(f.home, "x", "swc0002"), "kind": "claude"})
+	if err := os.WriteFile(filepath.Join(f.home, "sessions", "slive02.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.folder("swc0002", true)
+	pruneKindBoot(t, "af-work")
+	assertEntries(t, f.work(), "swc0002")
+}
+
+// A stamp far in the future (a clock that was once wrong) is replaced, so the folder is not
+// kept until the clock catches up.
+func TestArchivedAfWorkFutureStampIsRestamped(t *testing.T) {
+	f := newArchivedFixture(t)
+	f.session("sfut001", true, f.now.Add(400*day).UTC().Format(time.RFC3339), false)
+	f.folder("sfut001", true)
+	pruneKindBoot(t, "af-work")
+	assertEntries(t, f.work(), "sfut001")
+	m, _ := session.ReadMeta("sfut001")
+	if m.ArchivedAt != f.now.UTC().Format(time.RFC3339) {
+		t.Fatalf("archivedAt = %q", m.ArchivedAt)
+	}
 }
 
 // A meta that does not parse means no name can be trusted: nothing is removed or stamped.

@@ -593,7 +593,7 @@ administrator's to set.
   startup; it is counted here and goes only when you press **"Delete"**. Keep anything you care about
   elsewhere, for example under `~/repos` or a folder of your own in your home directory. An archived
   session's folder is removed 7 days after you archive it (sessions that were archived before this existed
-  get their 7 days from the first pass that sees them); a locked session's folder stays.
+  get their 7 days from the first pass that sees them); a locked session's folder stays while it is locked.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchains

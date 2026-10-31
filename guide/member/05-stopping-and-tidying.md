@@ -100,8 +100,9 @@ it only ever covers sessions that are already gone for good.
 
 Archived sessions are a "shelf" that cleanup does not touch (restore them from the archive
 browser). The conversation stays on the shelf, but the session's scratch folder (`~/.af-work/<session name>`,
-what agents use as `$AF_WORK_DIR`) is removed 7 days after archiving; restoring clears the date and the
-session gets a fresh folder when it launches. A locked session's folder is kept. "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
+what agents use as `$AF_WORK_DIR`) is removed 7 days after archiving; restoring clears the date (restore within 7
+days and the folder is kept; one already removed is created afresh at the next launch). A locked session's
+folder is kept while it is locked; once unlocked, the next pass removes it if the 7 days are already up. "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
 
 You can also ask the Fleet Operator to do the same survey and tidy-up from chat
 ([11](11-many-sessions.md)).
