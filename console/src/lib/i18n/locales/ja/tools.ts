@@ -793,6 +793,7 @@ export const tools = {
   "ssm.exp_r_source_missing": "引き受け元のプロファイルがもうありません",
   "ssm.exp_r_source_not_sso": "引き受け元が SSO プロファイルではありません",
   "ssm.exp_r_source_excluded": "引き受け元「{name}」が除外されています",
+  "ssm.exp_r_session_conflict": "sso-session {session} が別のサインイン・プロファイル・ポータルとも共有になります。名前かポータルがそろうまで両方を除外します",
   "ssm.add_profile": "プロファイルを追加",
   "ssm.req_note": "は必須",
   "ssm.term_color": "端末の色",

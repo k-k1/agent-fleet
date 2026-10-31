@@ -38,7 +38,8 @@ export type ExportReason =
   | { code: "invalid"; field: string }
   | { code: "source_missing" }
   | { code: "source_not_sso" }
-  | { code: "source_excluded"; source: string };
+  | { code: "source_excluded"; source: string }
+  | { code: "session_conflict"; session: string };
 
 export interface ExportedRow {
   label: string;
@@ -132,6 +133,25 @@ export function renderAwsConfig(rows: any[]): AwsConfigExport {
     else if (!RE.profile.test(p.name)) excluded.set(p, { code: "name_invalid" });
   }
   const isRole = (p: Prepared) => p.row?.kind === "assume_role";
+  // One sso-session name serves one owner and one portal (ADR 0125), as the Agent and the bridge
+  // hold it: a sign-in's members and a profile of their name (an older Control Plane can leave
+  // both), or members whose portal copies disagree, would otherwise share one section and log in
+  // to whichever portal came first. Decided from every SSO row as stored, before any other
+  // exclusion, so a row left out for its name still takes its session's others with it.
+  const owners = new Map<string, Set<string>>();
+  const portals = new Map<string, Set<string>>();
+  for (const p of list) {
+    if (isRole(p)) continue;
+    const s = sessionOf(p.name, str(p.row?.signIn), str(p.row?.startUrl), str(p.row?.ssoRegion));
+    const owner = SIGN_IN_NAME_RE.test(str(p.row?.signIn)) ? "sign-in:" + str(p.row?.signIn) : "profile:" + p.name;
+    owners.set(s.name, (owners.get(s.name) || new Set()).add(owner));
+    portals.set(s.name, (portals.get(s.name) || new Set()).add(s.startUrl.replace(/\/+$/, "") + " " + s.ssoRegion));
+  }
+  for (const p of list) {
+    if (isRole(p) || excluded.has(p)) continue;
+    const s = sessionOf(p.name, str(p.row?.signIn), "", "").name;
+    if (owners.get(s)!.size > 1 || portals.get(s)!.size > 1) excluded.set(p, { code: "session_conflict", session: s });
+  }
   // SSO rows first: a role row is judged by what became of its source.
   for (const p of list) if (!excluded.has(p) && !isRole(p)) {
     const bad = ssoProblem(p.row);

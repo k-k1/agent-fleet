@@ -796,6 +796,7 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.exp_r_source_missing": "its source profile no longer exists",
   "ssm.exp_r_source_not_sso": "its source is not an SSO profile",
   "ssm.exp_r_source_excluded": "its source \"{name}\" is left out",
+  "ssm.exp_r_session_conflict": "its sso-session {session} would also serve another sign-in, profile or portal; both are left out until the names or portals agree",
   "ssm.add_profile": "Add profile",
   "ssm.req_note": "required",
   "ssm.term_color": "Terminal color",

@@ -21,6 +21,8 @@ export function exportReasonText(tr: Tr, r: ExportReason): string {
       return tr("ssm.exp_r_invalid", { field: r.field });
     case "source_excluded":
       return tr("ssm.exp_r_source_excluded", { name: r.source });
+    case "session_conflict":
+      return tr("ssm.exp_r_session_conflict", { session: r.session });
     default:
       return tr(("ssm.exp_r_" + r.code) as MsgKey);
   }

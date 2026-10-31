@@ -200,6 +200,8 @@ const emptyProfile: Record<string, string> = {
   // fields), "join" one of the member's sign-ins named by signIn, "new" a new one of that name.
   signIn: "",
   signInMode: "",
+  // "1" once the Sign-in choice was changed in this form: only then does a save send signIn.
+  signInTouched: "",
 };
 
 // The assume-role profile type (issue #1109): no portal of its own, it assumes a role from
@@ -265,7 +267,11 @@ function ProfileSection({
   // the add form, which shares f.
   const [editing, setEditing] = useState<any | null>(null);
   // ids: the profiles a login clears the relogin mark of (every member of a sign-in).
-  const [loginFor, setLoginFor] = useState<(LoginProfile & { id: string; ids?: string[] }) | null>(null);
+  // next: further members of a sign-in to log in through when the Agent refuses this one as not
+  // exported; startNow: the member already pressed Log in.
+  const [loginFor, setLoginFor] = useState<
+    (LoginProfile & { id: string; ids?: string[]; next?: (LoginProfile & { id: string })[]; startNow?: boolean }) | null
+  >(null);
   // The sign-in whose name and portal are being edited on its header.
   const [editingSignIn, setEditingSignIn] = useState<SsmSignIn | null>(null);
   const [sf, setSf] = useState({ name: "", startUrl: "", ssoRegion: "" });
@@ -363,6 +369,28 @@ function ProfileSection({
     setF({ ...pick(p, emptyProfile), signInMode: p.signIn ? "join" : "" });
     setEditing(p);
   };
+  // The sign-in the profile is in after the save ("" for its own). An edit that did not touch the
+  // Sign-in choice keeps the sign-in the Control Plane holds: the form's copy may be stale (another
+  // tab moved the profile), so it is neither sent nor assumed.
+  const signInTouched = !editing || f.signInTouched === "1";
+  const nextSignIn = chainedForm ? "" : !signInTouched ? String(editing?.signIn || "") : joining || newSignIn ? f.signIn.trim() : "";
+  const live = (st: string | undefined) => st === "signed_in" || st === "renew";
+  // Whether the saved profile needs a new login before its badge means anything. Joining a sign-in
+  // that is signed in uses its login; a new sign-in named after a profile of its own that is
+  // signed in now, on the same portal, takes that login over (ADR 0125 decision D). Leaving a
+  // sign-in, any other new sign-in, and a rename or portal change of a profile of its own do not.
+  const needsLogin = (body: Record<string, unknown>): boolean => {
+    if (!editing || chainedForm || isChained(editing)) return false;
+    const was = String(editing.signIn || "");
+    if (nextSignIn !== was) {
+      if (!nextSignIn) return true;
+      if (joining) return !live(signInStates[nextSignIn]);
+      const named = (profiles || []).find((x) => !isChained(x) && !x.signIn && x.name === nextSignIn);
+      return !(named && live(states[named.name]) && !authMoved(named, body as any));
+    }
+    if (nextSignIn) return false;
+    return awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as any);
+  };
   // An edit keeps the profile's id, so the hosts that use it follow; delete and re-add
   // would leave them on an id that no longer exists (ssm_host.profile_id has no FK).
   const save = async () => {
@@ -391,19 +419,14 @@ function ProfileSection({
             region: f.region.trim(),
             confirmBeforeUse: f.confirmBeforeUse === "true",
             // A name joins that sign-in or creates it; "" leaves the one the profile was in. Left
-            // out otherwise, so a save that does not touch the sign-in keeps what the CP holds.
-            ...(joining || newSignIn ? { signIn: f.signIn.trim() } : editing?.signIn ? { signIn: "" } : {}),
+            // out when the choice was not touched, so the CP keeps what it holds.
+            ...(!signInTouched ? {} : joining || newSignIn ? { signIn: f.signIn.trim() } : editing?.signIn ? { signIn: "" } : {}),
           };
       const ok = editing
         ? await postJSON(`api/ssm/profiles/${encodeURIComponent(editing.id)}`, "PUT", body, toast)
         : await postJSON("api/ssm/profiles", "POST", body, toast);
       if (!ok) return;
-      if (
-        editing &&
-        !chainedForm &&
-        (String(editing.signIn || "") !== String(body.signIn || "") ||
-          (!body.signIn && (awsProfileName(String(editing.label || "")) !== awsProfileName(String(body.label)) || authMoved(editing, body as any))))
-      ) {
+      if (editing && needsLogin(body)) {
         reloginNeeded.add(editing.id);
         setMarks((n) => n + 1);
       }
@@ -459,7 +482,6 @@ function ProfileSection({
   // The sign-in this edit leaves the profile in ("" for its own): moving into, out of or between
   // sign-ins changes which login the profile uses, and a member's own name and portal no longer
   // decide it.
-  const nextSignIn = chainedForm ? "" : joining || newSignIn ? f.signIn.trim() : "";
   const signInMoved = !!editing && !chainedForm && !isChained(editing) && String(editing.signIn || "") !== nextSignIn;
   const portalChanged =
     !!editing && !chainedForm && !isChained(editing) && !nextSignIn && authMoved(editing, { startUrl: f.startUrl.trim(), ssoRegion: f.ssoRegion.trim() });
@@ -528,10 +550,10 @@ function ProfileSection({
                 const v = e.target.value;
                 setF((p) =>
                   v === "new"
-                    ? { ...p, signInMode: "new", signIn: "" }
+                    ? { ...p, signInMode: "new", signIn: "", signInTouched: "1" }
                     : v.startsWith("join:")
-                      ? { ...p, signInMode: "join", signIn: v.slice(5) }
-                      : { ...p, signInMode: "", signIn: "" },
+                      ? { ...p, signInMode: "join", signIn: v.slice(5), signInTouched: "1" }
+                      : { ...p, signInMode: "", signIn: "", signInTouched: "1" },
                 );
               }}
             >
@@ -735,7 +757,11 @@ function ProfileSection({
   // of its name and portal. The login runs as a member the workspace can log in with; the Agent
   // logs in the sign-in's one sso-session, for every member.
   const renderSignIn = (si: SsmSignIn, members: any[]) => {
-    const loginMember = members.find((m) => m.name && !m.nameCollides && m.accountId && m.roleName);
+    // Every member the workspace could log in through. The first is tried; one the member's own
+    // ~/.aws holds back is refused by the Agent (not_exported), and the next is tried instead.
+    const candidates = members.filter((m) => m.name && !m.nameCollides && m.accountId && m.roleName);
+    const loginMember = candidates[0];
+    const asLogin = (m: any) => ({ id: String(m.id), name: String(m.name), label: si.name, accountId: String(m.accountId), roleName: String(m.roleName) });
     const relogin = members.some((m) => reloginNeeded.has(m.id));
     const st = signInStates[si.name];
     return (
@@ -760,14 +786,7 @@ function ProfileSection({
             disabled={busy || !loginMember}
             onClick={() =>
               loginMember &&
-              setLoginFor({
-                id: loginMember.id,
-                ids: members.map((m) => String(m.id)),
-                name: loginMember.name,
-                label: si.name,
-                accountId: loginMember.accountId,
-                roleName: loginMember.roleName,
-              })
+              setLoginFor({ ...asLogin(loginMember), ids: members.map((m) => String(m.id)), next: candidates.slice(1).map(asLogin) })
             }
           >
             {tr("ssm.login")}
@@ -777,7 +796,7 @@ function ProfileSection({
               className="ghost ssm-logout ssm-signin-logout"
               title={tr("awslogin.logout_title")}
               disabled={busy || loggingOut[loginMember.name] === true}
-              onClick={() => void logout(loginMember).then((done) => done && loadStates())}
+              onClick={() => void logout(loginMember, candidates.slice(1).map((m) => String(m.name))).then((done) => done && loadStates())}
             >
               {tr("awslogin.logout")}
             </button>
@@ -937,7 +956,13 @@ function ProfileSection({
       {exportOpen && <AwsConfigExport onClose={() => setExportOpen(false)} />}
       {loginFor && (
         <ProfileLoginModal
+          key={loginFor.name}
           profile={loginFor}
+          startNow={loginFor.startNow}
+          onRefused={(code) => {
+            const [nx, ...rest] = loginFor.next || [];
+            if (code === "not_exported" && nx) setLoginFor({ ...nx, ids: loginFor.ids, next: rest, startNow: true });
+          }}
           onClose={() => {
             setLoginFor(null);
             loadStates();

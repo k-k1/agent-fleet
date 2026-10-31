@@ -16,14 +16,17 @@ import { REFUSALS } from "./ProfileLoginModal.tsx";
 import { useAwsLoginStore, type AwsLoginTarget } from "./store.ts";
 
 /** Returns a function that asks, logs out and says how it went; it resolves true once logged out. */
-export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) => Promise<boolean> {
+// others: further members of the same shared sign-in (ADR 0125) to log out through when the Agent
+// refuses p as not exported (the member's own ~/.aws can hold back one member and not another);
+// they share one login, so the one confirmation covers them.
+export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">, others?: string[]) => Promise<boolean> {
   const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
   const logoutProfile = useAwsLoginStore((s) => s.logoutProfile);
   const refreshExpiry = useAwsLoginStore((s) => s.refreshExpiry);
   return useCallback(
-    async (p) => {
+    async (p, others = []) => {
       // The list the confirmation names must be the Agent's answer to this very ask, not the
       // store's: without it the confirmation could leave out a chain the logout signs out.
       // A failed ask returns null and leaves the previous list in the store, which must not be
@@ -72,7 +75,11 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) 
         danger: true,
       });
       if (!ok) return false;
-      const r = await logoutProfile(target.name);
+      let r = await logoutProfile(target.name);
+      for (const name of signIn ? others : []) {
+        if (r.ok || r.code !== "not_exported") break;
+        r = await logoutProfile(name);
+      }
       // Another press of the same profile is already running; its toast will say how it went.
       if (!r.ok && r.code === "busy") return false;
       if (!r.ok) {

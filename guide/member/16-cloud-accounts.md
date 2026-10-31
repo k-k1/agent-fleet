@@ -142,6 +142,8 @@ The dialog lists every profile that was **left out**, with the reason:
 - an SSO profile without both an account and a role;
 - a value the AWS config cannot hold (every value is checked against the same rules the workspace uses before it is
   written, so a stored value cannot add a setting or a section of its own);
+- profiles whose `sso-session` would also serve another sign-in, another profile or another portal (a sign-in and a
+  profile of the same name, or members whose portals differ): all of them, until the names or portals agree;
 - a role whose source profile is itself left out, missing, or not an SSO profile.
 
 Each SSO profile is written with its own `sso-session` (`af-<name>`), so each needs its own login on your machine too.

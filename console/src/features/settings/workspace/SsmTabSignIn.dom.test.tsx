@@ -16,6 +16,10 @@ let signIns: Json[] = [];
 let states: Json = {};
 let writeReply: { ok: boolean; status: number; body: unknown } = { ok: true, status: 200, body: {} };
 let confirmAnswer = true;
+// Login starts and logouts the Agent refuses as not exported, by profile name.
+const notExported = new Set<string>();
+const starts: string[] = [];
+const logouts: string[] = [];
 
 vi.mock("../../../core/api/client.ts", () => ({
   getTenant: () => "",
@@ -25,10 +29,20 @@ vi.mock("../../../core/api/client.ts", () => ({
     if (path === "api/ssm/sign-ins") return signIns;
     if (path === "api/aws-login/profiles") return states;
     if (path === "api/aws-login") return { requests: [] };
-    if (path.endsWith("/logout")) return { revoked: true, profiles: ["a", "b"] };
+    if (path.endsWith("/logout")) {
+      const name = decodeURIComponent(path.split("/").slice(-2)[0]);
+      logouts.push(name);
+      if (notExported.has(name)) return { error: { code: "not_exported", message: "not in ~/.aws/config" } };
+      return { revoked: true, profiles: ["a", "b"] };
+    }
     return {};
   }),
-  apiJSON: vi.fn(async () => ({ attempt: "a1" })),
+  apiJSON: vi.fn(async (path: string) => {
+    const name = decodeURIComponent(path.split("/").slice(-2)[0]);
+    starts.push(name);
+    if (notExported.has(name)) return { error: { code: "not_exported", message: "not in ~/.aws/config" } };
+    return { attempt: "a1" };
+  }),
   raw: vi.fn(),
   rawJSON: vi.fn(async (path: string, method: string, body: Json) => {
     writes.push({ path, method, body });
@@ -117,6 +131,9 @@ beforeEach(() => {
   };
   writeReply = { ok: true, status: 200, body: {} };
   confirmAnswer = true;
+  notExported.clear();
+  starts.length = 0;
+  logouts.length = 0;
   resetReloginMarks();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -207,6 +224,65 @@ describe("SsmTab shared sign-ins", () => {
     await click(btn(own, t("ssm.edit")));
     await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
     expect(writes[0].body).not.toHaveProperty("signIn");
+  });
+
+  it("a member's edit that does not touch the sign-in keeps the CP's (another tab may have moved it) and needs no login", async () => {
+    await mount();
+    const a = Array.from(host.querySelectorAll<HTMLElement>("li.ssm-member"))[0];
+    await click(btn(a, t("ssm.edit")));
+    await type(field(".ssm-frm input[placeholder='123456789012']"), "111111111111");
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes[0]).toMatchObject({ path: "api/ssm/profiles/p1", method: "PUT" });
+    expect(writes[0].body).not.toHaveProperty("signIn");
+    expect(header()!.querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_signed_in"));
+  });
+
+  it("joining a signed-in sign-in, or naming a new one after a signed-in profile on its portal, needs no new login", async () => {
+    states = {
+      profiles: [
+        { name: "a", state: "signed_in", signIn: "team" },
+        { name: "b", state: "signed_in", signIn: "team" },
+        { name: "solo", state: "signed_in" },
+      ],
+      signIns: [{ name: "team", state: "signed_in", profiles: ["a", "b"] }],
+    };
+    await mount();
+    const soloRow = () => Array.from(host.querySelectorAll<HTMLElement>("li.ssm-item:not(.ssm-member):not(.ssm-signin)"))[0];
+    await click(btn(soloRow(), t("ssm.edit")));
+    await type(field("select.ssm-sign-in-select"), "join:team");
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes[0].body).toMatchObject({ signIn: "team" });
+    expect(soloRow().querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_signed_in"));
+
+    // Decision D: a sign-in named after solo, which is signed in, on solo's portal.
+    await click(btn(soloRow(), t("ssm.edit")));
+    await type(field("select.ssm-sign-in-select"), "new");
+    await type(field("input.ssm-sign-in-name"), "solo");
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes[1].body).toMatchObject({ signIn: "solo", startUrl: PORTAL.startUrl });
+    expect(soloRow().querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_signed_in"));
+
+    // Control: a new sign-in of another name starts signed out.
+    await click(btn(soloRow(), t("ssm.edit")));
+    await type(field("select.ssm-sign-in-select"), "new");
+    await type(field("input.ssm-sign-in-name"), "fresh");
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(soloRow().querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_relogin"));
+  });
+
+  it("logs in and out through the next member when the Agent refuses the first as not exported", async () => {
+    notExported.add("a");
+    await mount();
+    await click(header()!.querySelector<HTMLButtonElement>("button.ssm-signin-login")!);
+    const modal = () => document.querySelector<HTMLElement>(".ui-modal")!;
+    await click(btn(modal(), t("awslogin.start")));
+    await act(async () => {});
+    expect(starts).toEqual(["a", "b"]);
+    expect(modal().textContent).toContain("b");
+    await click(btn(modal(), t("awslogin.close")));
+    await click(header()!.querySelector<HTMLButtonElement>("button.ssm-signin-logout")!);
+    expect(logouts).toEqual(["a", "b"]);
+    expect(confirms).toHaveLength(1);
   });
 
   it.each([
