@@ -31,6 +31,7 @@ const { MuseCard } = await import("./MuseCard.tsx");
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const calls: string[] = [];
+let startFails = false;
 
 const reauthButton = () => host?.querySelector<HTMLButtonElement>("button.conn-reauth") ?? null;
 
@@ -70,6 +71,7 @@ const cards: Record<string, { mount: Mounter; start: string; shows: string }> = 
 
 beforeEach(() => {
   calls.length = 0;
+  startFails = false;
   raw.mockImplementation((path: string, init?: { method?: string }) => {
     calls.push(`${init?.method || "GET"} ${path}`);
     return Promise.resolve(new Response("{}"));
@@ -79,11 +81,13 @@ beforeEach(() => {
     calls.push(call);
     return Promise.resolve(
       path.endsWith("/start")
-        ? {
-            url: "https://login.example.test/auth?c=ZZZ-999",
-            user_code: "ZZZ-999",
-            flow_id: "f1",
-          }
+        ? startFails
+          ? { error: "boom" }
+          : {
+              url: "https://login.example.test/auth?c=ZZZ-999",
+              user_code: "ZZZ-999",
+              flow_id: "f1",
+            }
         : {},
     );
   };
@@ -140,6 +144,64 @@ describe.each(Object.keys(cards))("%s card re-authenticate", (kind) => {
     expect(calls.filter((x) => x.includes("/start"))).toEqual([]);
     expect(reload).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0][0]).toContain("HTTP 502");
+  });
+
+  // The sign-out already happened: a start that fails must not leave a dead flow view, and the
+  // button has to come back so the member can try again.
+  it("shows no flow and re-enables the button when the start fails after the sign-out", async () => {
+    startFails = true;
+    const reload = vi.fn();
+    await c.mount(connected, reload);
+    await act(async () => {
+      reauthButton()!.click();
+    });
+    expect(calls.filter((x) => x.includes("/start"))).toEqual([c.start]);
+    expect(host?.querySelector(c.shows)).toBeNull();
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(reauthButton()!.disabled).toBe(false);
+    // Once the refetch lands the ordinary disconnected card (with its connect action) shows.
+    act(() => root?.unmount());
+    host?.remove();
+    await c.mount({ connected: false, supported: true });
+    expect(reauthButton()).toBeNull();
+    expect(host?.querySelector("button.p-opt, .flow button")).toBeTruthy();
+  });
+
+  it("runs one re-authentication at a time and blocks Disconnect meanwhile", async () => {
+    let release: (r: Response) => void = () => {};
+    raw.mockImplementationOnce((path: string, init?: { method?: string }) => {
+      calls.push(`${init?.method || "GET"} ${path}`);
+      return new Promise<Response>((res) => (release = res));
+    });
+    await c.mount(connected);
+    await act(async () => {
+      reauthButton()!.click();
+    });
+    expect(reauthButton()!.disabled).toBe(true);
+    expect(host?.querySelector<HTMLButtonElement>("button.conn-disconnect")!.disabled).toBe(true);
+    await act(async () => {
+      reauthButton()!.click();
+    });
+    await act(async () => {
+      release(new Response("{}"));
+    });
+    expect(calls.filter((x) => x.startsWith("DELETE"))).toEqual([`DELETE api/connections/${kind}`]);
+    expect(calls.filter((x) => x.includes("/start"))).toEqual([c.start]);
+  });
+
+  // The sign-out already happened, so the flow view must offer a way back to the ordinary card.
+  it("lets the flow be cancelled", async () => {
+    await c.mount(connected);
+    await act(async () => {
+      reauthButton()!.click();
+    });
+    const cancel = [...(host?.querySelectorAll("button") ?? [])].find((b) => b.textContent === "Cancel");
+    expect(cancel).toBeTruthy();
+    await act(async () => {
+      cancel!.click();
+    });
+    expect(host?.querySelector(c.shows)).toBeNull();
   });
 });
 

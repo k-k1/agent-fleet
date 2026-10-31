@@ -28,18 +28,10 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
     try {
       const res = await api("api/connections/cursor/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(
-          tr("agents.cursor_auth_failed", {
-            msg: res?.error ? errDetail(res.error) : "",
-          }),
-        );
+        toast(tr("agents.cursor_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
-      setFlow({
-        url: res.url,
-        flow_id: res.flow_id,
-        status: tr("git.oauth_waiting"),
-      });
+      setFlow({ url: res.url, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 10 * 60 * 1000,
         firstDelayMs: 3000,
@@ -47,9 +39,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
         step: async () => {
           let p;
           try {
-            p = await apiJSON("api/connections/cursor/poll", "POST", {
-              flow_id: res.flow_id,
-            });
+            p = await apiJSON("api/connections/cursor/poll", "POST", { flow_id: res.flow_id });
           } catch {
             p = null;
           }
@@ -92,6 +82,11 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
         <div className="p-body">
           {/* No pasted code — cursor approves entirely in the browser, then self-polls. */}
           <DeviceSteps url={flow.url} status={flow.status} />
+          <div className="flow">
+            <button className="ghost" onClick={() => setFlow(null)}>
+              {tr("common.cancel")}
+            </button>
+          </div>
         </div>
       ) : st?.connected ? (
         <div className="p-who">
@@ -99,7 +94,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: any;
             {st.email || "Cursor"}
           </span>
           <ReauthButton disabled={busy} onClick={() => void reauth(startLogin)} />
-          <DisconnectButton onClick={disconnect} />
+          <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (
         <>

@@ -32,15 +32,9 @@ export function AgyCard({
   const start = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/agy/start", "POST", {
-        method,
-      });
+      const res = await apiJSON("api/connections/agy/start", "POST", { method });
       if (!res || res.error || !res.url) {
-        toast(
-          tr("agents.agy_auth_failed", {
-            msg: res?.error ? errDetail(res.error) : "",
-          }),
-        );
+        toast(tr("agents.agy_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
       window.open(res.url, "_blank", "noopener");
@@ -58,10 +52,7 @@ export function AgyCard({
     if (!c) return;
     setBusy(true);
     try {
-      const r = await apiJSON("api/connections/agy/complete", "POST", {
-        flow_id: flow.flow_id,
-        code: c,
-      });
+      const r = await apiJSON("api/connections/agy/complete", "POST", { flow_id: flow.flow_id, code: c });
       if (r && r.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;
@@ -102,6 +93,8 @@ export function AgyCard({
       ) : unsupported ? (
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
       ) : flow ? (
+        // Before the connection state: re-auth opens the flow while the refetch that clears
+        // "connected" is still on its way (or failed).
         <>
           <div className="p-desc">{tr("agents.agy_desc_flow")}</div>
           <div className="p-body">
@@ -132,6 +125,15 @@ export function AgyCard({
               <button disabled={busy} onClick={complete}>
                 {tr("agents.complete")}
               </button>
+              <button
+                className="ghost"
+                onClick={() => {
+                  setFlow(null);
+                  setCode("");
+                }}
+              >
+                {tr("common.cancel")}
+              </button>
             </div>
           </div>
         </>
@@ -142,7 +144,7 @@ export function AgyCard({
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
           <ReauthButton disabled={busy} onClick={() => void reauth(start)} />
-          <DisconnectButton onClick={disconnect} />
+          <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (
         <>

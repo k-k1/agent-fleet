@@ -41,6 +41,10 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
   const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [mode, setMode] = useState<"idle" | "key">("idle");
   const [key, setKey] = useState("");
+  // The key form was opened by re-authentication, so it may show over a status that still reads
+  // connected (the refetch has not landed). Without this flag a login made elsewhere while the
+  // ordinary key form is open would be hidden behind the form.
+  const [keyReauth, setKeyReauth] = useState(false);
   const [busy, setBusy] = useState(false);
   // { installed, version, pin, updateAvailable } — the version facts behind the update
   // affordance. muse is managed-only, so unlike kiro there is no launch guard to re-pin
@@ -67,11 +71,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
       const res = await api("api/connections/muse/install", { method: "POST" });
       if (!res || res.error) {
         setInstalling("error");
-        toast(
-          tr("agents.muse_install_failed", {
-            msg: res?.error ? errDetail(res.error) : "",
-          }),
-        );
+        toast(tr("agents.muse_install_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
       if (res.state === "done") {
@@ -115,19 +115,10 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
     try {
       const res = await api("api/connections/muse/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(
-          tr("agents.muse_auth_failed", {
-            msg: res?.error ? errDetail(res.error) : "",
-          }),
-        );
+        toast(tr("agents.muse_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
-      setFlow({
-        url: res.url,
-        user_code: res.user_code,
-        flow_id: res.flow_id,
-        status: tr("git.oauth_waiting"),
-      });
+      setFlow({ url: res.url, user_code: res.user_code, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
@@ -135,9 +126,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
         step: async () => {
           let p;
           try {
-            p = await apiJSON("api/connections/muse/poll", "POST", {
-              flow_id: res.flow_id,
-            });
+            p = await apiJSON("api/connections/muse/poll", "POST", { flow_id: res.flow_id });
           } catch {
             p = null;
           }
@@ -164,15 +153,14 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
   const saveKey = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/muse/api-key", "POST", {
-        key: key.trim(),
-      });
+      const res = await apiJSON("api/connections/muse/api-key", "POST", { key: key.trim() });
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(res.error) }));
         return;
       }
       setKey("");
       setMode("idle");
+      setKeyReauth(false);
       reload();
     } finally {
       setBusy(false);
@@ -185,13 +173,16 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
   // workspace onto the subscription, and the key route refuses while a sign-in exists.
   const reauthMuse = () =>
     reauth(async () => {
-      if (st?.metered) setMode("key");
-      else await startLogin();
+      if (st?.metered) {
+        setKeyReauth(true);
+        setMode("key");
+      } else await startLogin();
     });
   const disconnect = async () => {
     await raw("api/connections/muse", { method: "DELETE" });
     setFlow(null);
     setMode("idle");
+    setKeyReauth(false);
     reload();
   };
 
@@ -208,12 +199,19 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
       {!running ? (
         <ConnPaused />
       ) : flow ? (
+        // Before the connection state: re-auth opens the flow while the refetch that clears
+        // "connected" is still on its way (or failed).
         <div className="p-body">
           {/* Device flow: a URL with the code embedded plus the code on its own, to compare in the
               browser. muse polls Meta itself, so there is nothing to paste back. */}
           <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
+          <div className="flow">
+            <button className="ghost" onClick={() => setFlow(null)}>
+              {tr("common.cancel")}
+            </button>
+          </div>
         </div>
-      ) : mode === "key" ? (
+      ) : mode === "key" && (!st?.connected || keyReauth) ? (
         <div className="p-body">
           {/* 🔴 The warning comes BEFORE the field, not after a failure: this route destroys an
               account sign-in and moves the workspace onto metered billing, and the member should
@@ -231,7 +229,13 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
             <button disabled={busy || !key.trim()} onClick={saveKey}>
               {tr("conn.connect")}
             </button>
-            <button className="ghost" onClick={() => setMode("idle")}>
+            <button
+              className="ghost"
+              onClick={() => {
+                setMode("idle");
+                setKeyReauth(false);
+              }}
+            >
               {tr("common.back")}
             </button>
           </div>
@@ -243,7 +247,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
               {st.email || st.name || "Muse Code"}
             </span>
             <ReauthButton disabled={busy} onClick={() => void reauthMuse()} />
-            <DisconnectButton onClick={disconnect} />
+            <DisconnectButton disabled={busy} onClick={disconnect} />
           </div>
           {/* Which credential, and what it costs. Only said when it is NOT the subscription: a
               plain account sign-in needs no note, and a note on every card teaches nothing. */}
@@ -302,10 +306,7 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
           ) : (
             <>
               <p className="ps-note ps-note-warn">
-                {tr("agents.muse_update_avail", {
-                  cur: inst.version || "?",
-                  pin: inst.pin || "?",
-                })}
+                {tr("agents.muse_update_avail", { cur: inst.version || "?", pin: inst.pin || "?" })}
               </p>
               <div className="p-opts">
                 <button type="button" className="p-opt" disabled={busy} onClick={install}>

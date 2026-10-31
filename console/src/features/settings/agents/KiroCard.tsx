@@ -53,11 +53,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
       const res = await api("api/connections/kiro/install", { method: "POST" });
       if (!res || res.error) {
         setInstalling("error");
-        toast(
-          tr("agents.kiro_install_failed", {
-            msg: res?.error ? errDetail(res.error) : "",
-          }),
-        );
+        toast(tr("agents.kiro_install_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
       if (res.state === "done") {
@@ -102,19 +98,10 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
     try {
       const res = await api("api/connections/kiro/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(
-          tr("agents.kiro_auth_failed", {
-            msg: res?.error ? errDetail(res.error) : "",
-          }),
-        );
+        toast(tr("agents.kiro_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
       }
-      setFlow({
-        url: res.url,
-        user_code: res.user_code,
-        flow_id: res.flow_id,
-        status: tr("git.oauth_waiting"),
-      });
+      setFlow({ url: res.url, user_code: res.user_code, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
@@ -122,9 +109,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
         step: async () => {
           let p;
           try {
-            p = await apiJSON("api/connections/kiro/poll", "POST", {
-              flow_id: res.flow_id,
-            });
+            p = await apiJSON("api/connections/kiro/poll", "POST", { flow_id: res.flow_id });
           } catch {
             p = null;
           }
@@ -165,6 +150,11 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
         <div className="p-body">
           {/* device flow: URL + a short code to confirm in the browser; kiro self-polls. */}
           <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
+          <div className="flow">
+            <button className="ghost" onClick={() => setFlow(null)}>
+              {tr("common.cancel")}
+            </button>
+          </div>
         </div>
       ) : st?.connected ? (
         <div className="p-who">
@@ -172,7 +162,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
             {st.email || "Kiro"}
           </span>
           <ReauthButton disabled={busy} onClick={() => void reauth(startLogin)} />
-          <DisconnectButton onClick={disconnect} />
+          <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : unsupported ? (
         // Not installed yet — offer the on-demand install (~855MB into the home volume).
@@ -220,10 +210,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
           ) : (
             <>
               <p className="ps-note ps-note-warn">
-                {tr("agents.kiro_update_avail", {
-                  cur: inst.version || "?",
-                  pin: inst.pin || "?",
-                })}
+                {tr("agents.kiro_update_avail", { cur: inst.version || "?", pin: inst.pin || "?" })}
               </p>
               <div className="p-opts">
                 <button type="button" className="p-opt" disabled={busy} onClick={install}>
