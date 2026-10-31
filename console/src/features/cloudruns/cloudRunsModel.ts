@@ -21,6 +21,13 @@ export interface CloudRun {
   /** Let through by an approval that did not come through the Control Plane (ADR 0126). */
   approvedOutsideConsole?: boolean;
   refused?: string;
+  /** The shared sign-in the profile logs in through. */
+  signIn?: string;
+  /** The SSM target of a session start. */
+  target?: string;
+  /** The identity is what Settings names for an SSM pane, not what STS confirmed, and the row has
+   *  no exit status (the pane resolves its credentials in its own shell). Not an af-aws-exec run. */
+  identityFromSettings?: boolean;
 }
 
 /** parseCloudRuns keeps the well-formed rows of a `cloudRuns` or `runs` payload. */
@@ -50,7 +57,10 @@ export function cloudRunParts(r: CloudRun): string[] {
     who,
     r.region ?? "",
     r.source ? tr("cloudruns.via", { source: r.source }) : "",
+    r.signIn ? tr("cloudruns.sign_in", { name: r.signIn }) : "",
     cmd,
+    r.target ? tr("cloudruns.target", { target: r.target }) : "",
+    r.identityFromSettings ? tr("cloudruns.from_settings") : "",
     r.approvedOutsideConsole ? tr("cloudruns.outside_console") : "",
     end,
   ].filter(Boolean);

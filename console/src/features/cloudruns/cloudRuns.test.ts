@@ -37,6 +37,20 @@ describe("parseCloudRuns", () => {
   });
 });
 
+describe("an SSM pane's row (ADR 0126 decision 3)", () => {
+  const ssm: CloudRun = { ...base, service: "ssm", operation: "start-session", target: "i-0abc", signIn: "corp", identityFromSettings: true };
+  it("names the target and sign-in, and says the identity is from Settings, not confirmed", () => {
+    const p = cloudRunParts(ssm);
+    expect(p).toContain("aws ssm start-session");
+    expect(p).toContain(t("cloudruns.target", { target: "i-0abc" }));
+    expect(p).toContain(t("cloudruns.sign_in", { name: "corp" }));
+    expect(p).toContain(t("cloudruns.from_settings"));
+  });
+  it("leaves the marker off an af-aws-exec run", () => {
+    expect(cloudRunParts(base)).not.toContain(t("cloudruns.from_settings"));
+  });
+});
+
 describe("confirm before use in a run's line (ADR 0126)", () => {
   it("says why a run was held, and flags an approval from outside the Console", () => {
     expect(cloudRunParts({ ...base, refused: "confirm_required" }).at(-1)).toBe(t("cloudruns.refused_confirm"));

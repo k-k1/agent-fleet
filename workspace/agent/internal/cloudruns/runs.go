@@ -76,6 +76,15 @@ type Row struct {
 	ApprovedOutsideConsole bool `json:"approvedOutsideConsole,omitempty"`
 	// Refused is set when the wrapper refused the run before the command started.
 	Refused string `json:"refused,omitempty"`
+	// SignIn is the shared sign-in (ADR 0125) the profile logs in through, by name.
+	SignIn string `json:"signIn,omitempty"`
+	// Target is the SSM target of a session start; the one argument a row may carry.
+	Target string `json:"target,omitempty"`
+	// IdentityFromSettings marks a row whose identity is what Settings says the pane will use,
+	// not what STS confirmed: an SSM pane resolves its credentials in its own shell, which the
+	// Agent does not see. Such a row has no exit status either. Never mistake it for the
+	// resolved identity of an af-aws-exec run.
+	IdentityFromSettings bool `json:"identityFromSettings,omitempty"`
 }
 
 var (
@@ -201,6 +210,53 @@ func (r *Run) Resolved(id Identity) {
 	r.row.Region = keep(id.Region, regionRe)
 	r.row.Source = keep(id.Source, profileRe)
 	r.write()
+}
+
+// Settings is the identity an SSM pane is about to use as Settings describes it.
+type Settings struct {
+	Profile, Account, Role, Region, Source, SignIn, Target string
+}
+
+// targetMax bounds a target kept in a row or a pane line.
+const targetMax = 128
+
+// plainTarget keeps a target printable: control characters (a terminal escape) become "?" and
+// the length is bounded. Spaces, quotes and "$" stay: the target is text here, never code.
+func plainTarget(v string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range v {
+		if n == targetMax {
+			break
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 {
+			r = '?'
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}
+
+// Clean returns s with every field passed through the row's allowlists, so what a pane line
+// prints is exactly what the row keeps.
+func (s Settings) Clean() Settings {
+	return Settings{Profile: keep(s.Profile, profileRe), Account: keep(s.Account, accountRe), Role: keep(s.Role, roleRe),
+		Region: keep(s.Region, regionRe), Source: keep(s.Source, profileRe), SignIn: keep(s.SignIn, profileRe),
+		Target: plainTarget(s.Target)}
+}
+
+// BeginFromSettings writes the row of an SSM session start (aws ssm start-session) and returns
+// the cleaned identity for the pane's line. The row is marked IdentityFromSettings and is never
+// completed: the pane runs the command, so there is no exit status to record.
+func BeginFromSettings(sessionName string, in Settings) Settings {
+	c := in.Clean()
+	r := Begin("aws", sessionName, c.Profile, nil)
+	r.row.Program, r.row.Service, r.row.Operation = "aws", "ssm", "start-session"
+	r.row.Account, r.row.Role, r.row.Region, r.row.Source = c.Account, c.Role, c.Region, c.Source
+	r.row.SignIn, r.row.Target, r.row.IdentityFromSettings = c.SignIn, c.Target, true
+	r.write()
+	return c
 }
 
 // Confirmed records that the run passed the confirmation gate, and whether by an approval from
