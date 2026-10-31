@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -368,6 +369,8 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 			"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +
 			loginAs + "aws sso login --use-device-code --no-browser; " + back + "}; ")
 	}
+	id := cloudruns.BeginFromSettings(name, settingsIdentity(s))
+	b.WriteString("printf '%s\\n' " + session.ShellQuote(identityLine(id)) + "; ")
 	b.WriteString("exec aws ssm start-session")
 	fmt.Fprintf(&b, " --target %s", session.ShellQuote(s.Target))
 	if s.Document != "" {
@@ -377,4 +380,39 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 		fmt.Fprintf(&b, " --region %s", session.ShellQuote(s.Region))
 	}
 	return b.String(), nil
+}
+
+// settingsIdentity is the identity Settings says the pane will use: the chain's target role for
+// a chain (the SSO fields then describe its source), the profile's own otherwise.
+func settingsIdentity(s session.SSMMeta) cloudruns.Settings {
+	id := cloudruns.Settings{Profile: s.Profile, Account: s.AccountID, Role: s.RoleName, Region: s.Region, Target: s.Target}
+	if id.Region == "" {
+		id.Region = s.SSORegion
+	}
+	if s.RoleARN != "" {
+		id.Account, id.Role, id.Source = "", "", s.SourceProfile
+		if parts := strings.Split(s.RoleARN, ":"); len(parts) == 6 {
+			id.Account = parts[4]
+			id.Role = parts[5][strings.LastIndex(parts[5], "/")+1:]
+		}
+	}
+	if s.SSOSession != "" {
+		id.SignIn = strings.TrimPrefix(s.SSOSession, "af-")
+	}
+	return id
+}
+
+// identityLine is the one line the pane prints before the session starts (ADR 0126 decision 3).
+// The pane resolves its credentials in its own shell, so the line says what Settings names and
+// that STS has not confirmed it. id is already cleaned; the caller quotes the line for the
+// shell, so a target with spaces, quotes or "$" prints as it is.
+func identityLine(id cloudruns.Settings) string {
+	parts := []string{"[Agent Fleet] AWS profile " + id.Profile + " (identity from Settings, not confirmed)"}
+	for _, f := range []struct{ label, v string }{{"account", id.Account}, {"role", id.Role}, {"region", id.Region},
+		{"via", id.Source}, {"sign-in", id.SignIn}, {"target", id.Target}} {
+		if f.v != "" {
+			parts = append(parts, f.label+" "+f.v)
+		}
+	}
+	return strings.Join(parts, " · ")
 }

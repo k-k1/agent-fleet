@@ -471,4 +471,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "cloudruns.load_failed": "Could not load the recent runs: {msg}",
   "cloudruns.refused_confirm": "not run: confirmation not given",
   "cloudruns.outside_console": "approved without the Console",
+  "cloudruns.sign_in": "sign-in {name}",
+  "cloudruns.target": "target {target}",
+  "cloudruns.from_settings": "identity from Settings, not confirmed",
 };

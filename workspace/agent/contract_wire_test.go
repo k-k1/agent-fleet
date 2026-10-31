@@ -127,7 +127,7 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/cloudruns/cloudRunsModel.ts",
 			tsName:  "CloudRun",
 			tsKeys: keySet("id", "provider", "session", "startedAt", "endedAt", "profile", "account", "role", "region", "source",
-				"program", "service", "operation", "approvedOutsideConsole", "refused"),
+				"program", "service", "operation", "approvedOutsideConsole", "refused", "signIn", "target", "identityFromSettings"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{},
 		},
@@ -434,7 +434,7 @@ var cloudRunRowBinding = map[string]string{
 	"ID": "id", "Provider": "provider", "Session": "session", "StartedAt": "startedAt", "EndedAt": "endedAt",
 	"Profile": "profile", "Account": "account", "Role": "role", "Region": "region", "Source": "source",
 	"Program": "program", "Service": "service", "Operation": "operation", "ApprovedOutsideConsole": "approvedOutsideConsole",
-	"Refused": "refused",
+	"Refused": "refused", "SignIn": "signIn", "Target": "target", "IdentityFromSettings": "identityFromSettings",
 }
 
 var browserPageBinding = map[string]string{

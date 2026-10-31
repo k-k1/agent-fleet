@@ -331,3 +331,25 @@ Three related details:
 - A denial holds each profile it named for a minute, whatever set of profiles the next run asks about.
 - Right before credentials are fetched, after the wait, af-aws-exec checks again that the member's own files have
   not taken the profile, its sso-session or its source.
+
+## Note — the SSM pane's line and row say "from Settings" (2026-10-31)
+
+Implementation of decision 3 (#3064). The pane resolves its credentials in its own shell: the Agent knows what
+Settings names for the session (profile, account, role, region, sign-in, target), not what STS confirmed, and it
+does not see how `aws ssm start-session` ended. So:
+
+- **The line** is printed right before `exec aws ssm start-session`, after any login step:
+  `[Agent Fleet] AWS profile <p> (identity from Settings, not confirmed) · account · role · region · via <source> ·
+  sign-in <name> · target <t>`. Empty parts are left out. For a chain, account and role are the target role's and
+  the source is "via". The sign-in (ADR 0125) is named when the profile is in one.
+- **The row** is the same run row with `identityFromSettings: true`, `signIn` and `target` (both new, optional),
+  program `aws`, service `ssm`, operation `start-session`. It has no exit status and no end, like every started
+  row. It is written when the pane's program is built, which is every (re)launch of the session.
+  A row alone does not prove start-session ran: if the login never completes, the row stays without an end.
+  The Console draws the marker ("identity from Settings, not confirmed") in the row, so it is not mistaken for
+  an `af-aws-exec` run, whose identity `PlanExec` resolved. An older Console ignores the new fields and shows
+  the row as a plain run.
+- **Contents.** Nothing but the allowlisted identity and the target. The target is kept printable (control
+  characters become `?`, 128 characters at most); it reaches the shell only as one quoted `printf '%s\n'`
+  argument, so spaces, quotes and `$` print as they are.
+- **The gate is unchanged:** SSM stays outside it, as decision 3 says. Nothing here asks for a confirmation.

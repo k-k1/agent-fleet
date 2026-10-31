@@ -500,4 +500,7 @@ export const mirror = {
   "cloudruns.load_failed": "最近の実行を読み込めませんでした: {msg}",
   "cloudruns.refused_confirm": "未実行: 確認が得られず",
   "cloudruns.outside_console": "Console を通さずに承認",
+  "cloudruns.sign_in": "サインイン {name}",
+  "cloudruns.target": "対象 {target}",
+  "cloudruns.from_settings": "身元は設定どおり・未確認",
 };
