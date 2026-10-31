@@ -3,7 +3,8 @@ import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
+import { useReauth } from "../parts/useReauth.ts";
 import { CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
 export function AgyCard({
@@ -63,6 +64,7 @@ export function AgyCard({
       setBusy(false);
     }
   };
+  const reauth = useReauth("agy", reload, setBusy);
   const disconnect = async () => {
     await raw("api/connections/agy", { method: "DELETE" });
     reload();
@@ -90,15 +92,9 @@ export function AgyCard({
         <ConnPaused />
       ) : unsupported ? (
         <div className="p-desc">{tr("agents.agy_unsupported", { reason: st?.reason || "" })}</div>
-      ) : st?.connected ? (
-        <div className="p-who">
-          <span className="p-em" title={st.email || tr("conn.connected")}>
-            {st.email || tr("conn.connected")}
-          </span>
-          {st.plan && <span className="p-pl">{st.plan}</span>}
-          <DisconnectButton onClick={disconnect} />
-        </div>
       ) : flow ? (
+        // Before the connection state: re-auth opens the flow while the refetch that clears
+        // "connected" is still on its way (or failed).
         <>
           <div className="p-desc">{tr("agents.agy_desc_flow")}</div>
           <div className="p-body">
@@ -129,9 +125,27 @@ export function AgyCard({
               <button disabled={busy} onClick={complete}>
                 {tr("agents.complete")}
               </button>
+              <button
+                className="ghost"
+                onClick={() => {
+                  setFlow(null);
+                  setCode("");
+                }}
+              >
+                {tr("common.cancel")}
+              </button>
             </div>
           </div>
         </>
+      ) : st?.connected ? (
+        <div className="p-who">
+          <span className="p-em" title={st.email || tr("conn.connected")}>
+            {st.email || tr("conn.connected")}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <ReauthButton disabled={busy} onClick={() => void reauth(start)} />
+          <DisconnectButton disabled={busy} onClick={disconnect} />
+        </div>
       ) : (
         <>
           <div className="p-desc">{tr("agents.agy_desc")}</div>
