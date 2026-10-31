@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -507,16 +508,28 @@ func foldRetiredAgent(m session.Meta, mark usageAgentMark, src sessionx.Subagent
 			last = r
 		}
 	}
-	// A read that lacks turns (a copy that could not be read whole) must not take back what was
-	// written: the per-turn form never subtracts a missing turn either.
+	// A read that lacks turns already written (a copy gone or unreadable) cannot be told from
+	// one that also has new growth: the sum nets the two. Writing it would lose the growth for
+	// good, so the mark and its stamp stay as they were and the next pass reads again; the cost is
+	// one re-read per pass while the copy is missing.
 	was := mark.Total
-	next.Total.In, next.Total.Out = max(next.Total.In, was.In), max(next.Total.Out, was.Out)
-	next.Total.CacheRead, next.Total.CacheCreate = max(next.Total.CacheRead, was.CacheRead), max(next.Total.CacheCreate, was.CacheCreate)
-	next.Total.CostUSD = max(next.Total.CostUSD, was.CostUSD)
+	t := next.Total
+	// Costs are summed in a different order than retireAgentMark's, so equal ones can differ in the
+	// last bits; only the claude reader feeds this and its cost is 0.
+	costDiff := t.CostUSD - was.CostUSD
+	if math.Abs(costDiff) < 1e-9 {
+		costDiff = 0
+	}
+	if t.In < was.In || t.Out < was.Out || t.CacheRead < was.CacheRead || t.CacheCreate < was.CacheCreate || costDiff < 0 {
+		log.Printf("usage: fold %s subagent: transcript holds less than was folded; waiting for the missing copy", m.Name)
+		held := mark
+		held.Pending = nil
+		return held, nil
+	}
 	delta := last
-	delta.Tokens = usagex.Tokens{In: next.Total.In - was.In, Out: next.Total.Out - was.Out,
-		CacheRead: next.Total.CacheRead - was.CacheRead, CacheCreate: next.Total.CacheCreate - was.CacheCreate}
-	delta.CostUSD = next.Total.CostUSD - was.CostUSD
+	delta.Tokens = usagex.Tokens{In: t.In - was.In, Out: t.Out - was.Out,
+		CacheRead: t.CacheRead - was.CacheRead, CacheCreate: t.CacheCreate - was.CacheCreate}
+	delta.CostUSD = costDiff
 	if delta.Tokens == (usagex.Tokens{}) && delta.CostUSD == 0 {
 		return next, nil
 	}

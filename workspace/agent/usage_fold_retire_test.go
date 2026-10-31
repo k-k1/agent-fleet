@@ -124,7 +124,6 @@ func TestRetiredAgentMarkFoldsLateAppendsAndCopiesExactly(t *testing.T) {
 	if in, out := countedSums(m); in != 11600 || out != 73 {
 		t.Fatalf("counted in=%d out=%d, want 11600 / 73", in, out)
 	}
-	// A read that lacks turns takes nothing back and writes nothing.
 	if n := foldAgentAt(t, m, id, "s4", longAgo, concat(a)); n != 0 {
 		t.Fatalf("a shorter read wrote %d rows", n)
 	}
@@ -133,6 +132,51 @@ func TestRetiredAgentMarkFoldsLateAppendsAndCopiesExactly(t *testing.T) {
 	}
 	if in, out := countedSums(m); in != 11600 || out != 73 {
 		t.Fatalf("after the shorter read: in=%d out=%d", in, out)
+	}
+}
+
+// A read that lacks a recorded turn and has new growth nets the two in a sum. It must not be
+// written (the growth would be lost for good) nor its stamp kept: the full read that follows
+// folds the growth exactly.
+func TestRetiredAgentMarkHoldsAReadThatLacksARecordedTurn(t *testing.T) {
+	useTempUsageDir(t)
+	m := session.Meta{Name: "retirehold3081", Kind: session.KindClaude, Model: "claude-opus-5"}
+	const id = "/subagents/agent-h.jsonl"
+	a := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
+	c := agentTurn("c", "2026-10-30T09:10:00Z", 3000, 5)
+	d := agentTurn("d", "2026-10-30T09:20:00Z", 1500, 10)
+	foldAgentAt(t, m, id, "s1", longAgo, concat(a, c))
+	foldAgentAt(t, m, id, "s1", longAgo, concat(a, c)) // retire
+	if n := foldAgentAt(t, m, id, "s2", longAgo, concat(c, d)); n != 0 {
+		t.Fatalf("a read lacking turn a wrote %d rows", n)
+	}
+	if mk := agentMarkOf(m, id); mk.Stamp != "s1" || mk.Total == nil || mk.Total.In != 5000 {
+		t.Fatalf("held mark changed: %+v", mk)
+	}
+	if n := foldAgentAt(t, m, id, "s3", longAgo, concat(a, c, d)); n != 1 {
+		t.Fatalf("the copy returned: %d rows, want the growth once", n)
+	}
+	if in, out := countedSums(m); in != 6500 || out != 35 {
+		t.Fatalf("counted in=%d out=%d, want 6500 / 35", in, out)
+	}
+}
+
+// Only an agent quiet for the whole usageAgentQuiet is retired.
+func TestAgentMarkRetiresOnlyAfterTheQuietPeriod(t *testing.T) {
+	m := session.Meta{Name: "retireedge3081", Kind: session.KindClaude, Model: "claude-opus-5"}
+	for _, tc := range []struct {
+		age     time.Duration
+		retired bool
+	}{{usageAgentQuiet - time.Minute, false}, {usageAgentQuiet + time.Minute, true}} {
+		useTempUsageDir(t)
+		const id = "/subagents/agent-e.jsonl"
+		turns := agentTurn("a", "2026-10-30T09:00:00Z", 2000, 20)
+		mod := time.Now().Add(-tc.age)
+		foldAgentAt(t, m, id, "s1", mod, turns)
+		foldAgentAt(t, m, id, "s1", mod, turns)
+		if got := agentMarkOf(m, id).Total != nil; got != tc.retired {
+			t.Fatalf("quiet for %v: retired = %v, want %v", tc.age, got, tc.retired)
+		}
 	}
 }
 

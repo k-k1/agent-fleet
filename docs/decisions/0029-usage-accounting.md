@@ -395,15 +395,21 @@ newest transcript copy is older than `usageAgentQuiet` (24 h) the mark is retire
 change to a retired agent is folded as one row, the difference between the transcript's sum
 and `total` (`foldRetiredAgent`), stamped with the newest turn.
 
-- **Safe by construction, not by the 24 h.** Ledger rows are summed, so the difference of sums
-  is exactly what the per-turn form would have added in total; a late older turn, growth of the
-  newest turn and a new turn all land once. Only the per-row timestamps are coarser. A read that
-  lacks turns cannot lower `total` (clamped), as the per-turn form never subtracts a missing turn.
+- **Exact while the transcript only grows, whatever the 24 h.** Ledger rows are summed, so the
+  difference of sums is what the per-turn form would have added in total; a late older turn,
+  growth of the newest turn and a new turn all land once. Only the per-row timestamps are coarser.
+- **Known limit: a read that lacks a recorded turn.** A sum cannot tell a missing turn from
+  growth that nets against it (total 5000 in, a read with one 2000-turn gone and a 1500 one new
+  reads 4500). Such a read (any field below `total`) writes nothing and keeps the stamp, so the
+  next pass reads again and the growth lands when the copy returns. If the copy never returns,
+  growth of that agent is not counted; the per-turn form would have counted it. This needs an
+  agent that was quiet for 24 h, a copy that then disappears (a moved project directory, claude's
+  `cleanupPeriodDays`) and growth after that.
 - `pending` and `seq` are untouched, so an interrupted batch replays as before. A `state.json`
   without `total` loads as it did and retires when quiet.
 - A retired mark is a few dozen bytes: the file still grows with the number of agents, no
   longer with their events.
 - Marks of archived sessions are **not** dropped: archived transcripts are still read by the
   fold, so a dropped mark would re-fold the agent from its first turn and count it twice.
-  Retirement covers them. Rolling back to a build without this note reads a retired mark as
+  Retirement covers them. Rolling back to a build without this change reads a retired mark as
   having no turns and would fold the agent again.
