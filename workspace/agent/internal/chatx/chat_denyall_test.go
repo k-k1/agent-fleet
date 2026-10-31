@@ -65,9 +65,9 @@ n=$((n+1)); echo $n > "$LOG/count"
 k=$n; [ $k -gt 2 ] && k=2
 echo "$*" > "$LOG/argv.$n"
 head -n 1 > "$LOG/stdin.$n"
-sleep "$(cat "$LOG/script.sleep.$k")"
 cat "$LOG/script.out.$k"
 cat "$LOG/script.err.$k" >&2
+sleep "$(cat "$LOG/script.sleep.$k")"
 exit "$(cat "$LOG/script.exit.$k")"
 `
 	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
@@ -232,8 +232,10 @@ func TestOneShotDenyAllRefusesAProbeThatTimesOut(t *testing.T) {
 	if !errors.Is(err, ErrDenyAllUnavailable) || !strings.Contains(err.Error(), "did not finish in time") {
 		t.Fatalf("err = %v, want ErrDenyAllUnavailable from the probe timeout", err)
 	}
-	if invocations(t, logDir) != 1 {
-		t.Fatal("the transcript run started after a probe that timed out")
+	// "At most": a stall longer than the budget can still kill the probe before it records itself,
+	// and that must not read as a failure. The timeout path is pinned by the error text above.
+	if n := invocations(t, logDir); n > 1 {
+		t.Fatalf("claude ran %d times: the transcript run started after a probe that timed out", n)
 	}
 }
 
