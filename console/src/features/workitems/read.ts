@@ -3,6 +3,8 @@
 // Kept free of React and of the API client so the parts that decide what the rail says
 // (state tone, "last fetched", the seeded first prompt, the branch name) are testable on
 // their own — they are the feature, the section is just their frame.
+import { knownRole, sameWorkItem } from "../sessions/sessionLinks.ts";
+import type { Session, SessionWorkLinkRole } from "../../types/session.ts";
 import type { ApiError } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { normalizeHex } from "./labelColor.ts";
@@ -68,6 +70,8 @@ export interface WorkItemSessionRef {
   repo: string;
   branch: string;
   createdAt: string;
+  /** How the session relates to the item (#3134). Absent on a ledger row: a launch. */
+  role?: SessionWorkLinkRole;
 }
 
 export interface WorkItemPayload {
@@ -816,4 +820,35 @@ export function repoForItem(item: WorkItem, hint: string, folders: string[]): st
 /** Ledger lookup: the sessions already started for an item key. */
 export function sessionsForItem(sessions: WorkItemSessionRef[], key: string): WorkItemSessionRef[] {
   return sessions.filter((s) => s.itemKey === key);
+}
+
+/** The ledger's sessions for an item, then the sessions on the live list linked to it (#3134):
+ * a child that watches the ticket, a session that opened a PR for it. The ledger only knows
+ * launches from the inbox, and the links ride the session list, so a stopped Workspace shows
+ * the ledger alone. A session already in the ledger is not listed twice. */
+export function sessionsOnItem(
+  ledger: WorkItemSessionRef[],
+  sessions: Pick<Session, "name" | "links" | "repo" | "branch" | "createdAt">[],
+  provider: string,
+  key: string,
+): WorkItemSessionRef[] {
+  const out = sessionsForItem(ledger, key);
+  const named = new Set(out.map((r) => r.sessionName));
+  for (const s of sessions) {
+    if (named.has(s.name)) continue;
+    const link = (s.links || []).find((l) => sameWorkItem(l, provider, key));
+    if (!link) continue;
+    named.add(s.name);
+    out.push({
+      id: `link:${s.name}`,
+      provider,
+      itemKey: key,
+      sessionName: s.name,
+      repo: s.repo || "",
+      branch: s.branch || "",
+      createdAt: link.at || s.createdAt || "",
+      role: knownRole(link.role) ?? undefined,
+    });
+  }
+  return out;
 }

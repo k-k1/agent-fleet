@@ -1,5 +1,6 @@
 // SessionLinks — a session row's second line (#1062): the pull request of the branch the
-// session works on, and the ports its processes listen on. A port opens in the workspace's
+// session works on, the work items it is linked to (#3134), and the ports its processes listen
+// on. An item opens the work item panel, the same one a ticket link in the mirror opens. A port opens in the workspace's
 // default target (subdomain, else browser pane, else lightweight preview — see features/preview).
 //
 // A line of its own rather than chips beside the title: the rail is narrow and the title is
@@ -9,25 +10,36 @@ import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { PortOpen } from "../preview/PortOpen.tsx";
-import { CHECK_ICON, PR_ICON, prChecks, prStateKey, rowPorts, safePRURL } from "./sessionLinks.ts";
-import type { Session } from "../../types/session.ts";
+import { useWorkItemStore } from "../workitems/store.ts";
+import { useWorkItemModal } from "../workitems/modal.ts";
+import { resolveWorkItemRef } from "../workitems/refs.ts";
+import { CHECK_ICON, LINK_ROLE_ICON, PR_ICON, knownRole, prChecks, prStateKey, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
+import type { Session, SessionWorkLink } from "../../types/session.ts";
 
 /** Ports drawn before the rest fold behind "+N": one line at the rail's narrowest. */
 const PORTS_SHOWN = 3;
+/** Linked items drawn before the rest fold behind "+N", for the same reason. */
+const LINKS_SHOWN = 2;
 
 /** Whether a row has a link line to draw. */
 export function hasSessionLinks(s: Session, running: boolean): boolean {
-  return Boolean(s.pr && safePRURL(s.pr.url)) || (running && Boolean(s.alive) && rowPorts(s.ports).length > 0);
+  return (
+    Boolean(s.pr && safePRURL(s.pr.url)) ||
+    rowWorkLinks(s).length > 0 ||
+    (running && Boolean(s.alive) && rowPorts(s.ports).length > 0)
+  );
 }
 
 export function SessionLinks({ s, running }: { s: Session; running: boolean }) {
   const tr = useT();
   const [allPorts, setAllPorts] = useState(false);
+  const [allLinks, setAllLinks] = useState(false);
+  const links = rowWorkLinks(s);
   const pr = s.pr;
   const href = pr ? safePRURL(pr.url) : null;
   // A port is only worth offering while the Workspace runs: the pane cannot reach it otherwise.
   const ports = running && s.alive ? rowPorts(s.ports) : [];
-  if (!(pr && href) && ports.length === 0) return null;
+  if (!(pr && href) && links.length === 0 && ports.length === 0) return null;
 
   return (
     <div className="sess-links" aria-label={tr("srow.links")}>
@@ -51,6 +63,23 @@ export function SessionLinks({ s, running }: { s: Session; running: boolean }) {
           </a>
         );
       })()}
+      {links.length > 0 && (
+        <span className="sess-items">
+          {(allLinks ? links : links.slice(0, LINKS_SHOWN)).map((l) => (
+            <WorkLinkChip key={`${l.provider}:${l.key}`} link={l} />
+          ))}
+          {!allLinks && links.length > LINKS_SHOWN && (
+            <button
+              type="button"
+              className="sess-port sess-port-more"
+              title={tr("srow.links_more", { n: links.length - LINKS_SHOWN })}
+              onClick={() => setAllLinks(true)}
+            >
+              +{links.length - LINKS_SHOWN}
+            </button>
+          )}
+        </span>
+      )}
       {ports.length > 0 && (
         <span className="sess-ports">
           <Icon name="globe" />
@@ -70,5 +99,34 @@ export function SessionLinks({ s, running }: { s: Session; running: boolean }) {
         </span>
       )}
     </div>
+  );
+}
+
+/** One linked item. The row of the inbox cache is looked up at click time, as the mirror's ticket
+ * links do: an item that is not cached opens as a reference stand-in. */
+function WorkLinkChip({ link }: { link: SessionWorkLink }) {
+  const tr = useT();
+  const open = () => {
+    const { item, reference } = resolveWorkItemRef(
+      { provider: link.provider, key: link.key },
+      useWorkItemStore.getState().payload?.items || [],
+    );
+    useWorkItemModal.getState().openDetail(item, { reference });
+  };
+  const role = knownRole(link.role);
+  return (
+    <button
+      type="button"
+      className={"sess-item" + (role ? " role-" + role : "")}
+      title={tr("srow.link_title", {
+        key: link.key,
+        role: role ? tr(`srow.link_role.${role}`) : "",
+        title: link.title ? ` — ${link.title}` : "",
+      })}
+      onClick={open}
+    >
+      <Icon name={role ? LINK_ROLE_ICON[role] : "link"} />
+      {link.key}
+    </button>
   );
 }

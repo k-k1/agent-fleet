@@ -153,7 +153,8 @@
       "list_memos#2",
       "add_memo#2",
       "update_memo#2",
-      "branch_name#1"
+      "branch_name#1",
+      "link_work_item#1"
     ],
     "session-all": [
       "propose_session_handoff#2",
@@ -175,6 +176,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "memory_index#1",
       "memory_search#1",
       "memory_read#1",
@@ -213,6 +215,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "memory_index#1",
       "memory_search#1",
       "memory_read#1",
@@ -247,7 +250,8 @@
       "list_memos#2",
       "add_memo#2",
       "update_memo#2",
-      "branch_name#1"
+      "branch_name#1",
+      "link_work_item#1"
     ],
     "session-chromium-nobrowser": [
       "propose_session_handoff#1",
@@ -258,7 +262,8 @@
       "list_memos#2",
       "add_memo#2",
       "update_memo#2",
-      "branch_name#1"
+      "branch_name#1",
+      "link_work_item#1"
     ],
     "session-imagegen": [
       "propose_session_handoff#1",
@@ -270,6 +275,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "generate_image#1"
     ],
     "session-memory": [
@@ -282,6 +288,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "memory_index#1",
       "memory_search#1",
       "memory_read#1",
@@ -300,7 +307,8 @@
       "list_memos#2",
       "add_memo#2",
       "update_memo#2",
-      "branch_name#1"
+      "branch_name#1",
+      "link_work_item#1"
     ],
     "session-search": [
       "propose_session_handoff#1",
@@ -312,6 +320,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "search_sessions#1"
     ],
     "session-spawn": [
@@ -324,6 +333,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "create_session#2",
       "list_child_sessions#1",
       "list_repos#2",
@@ -345,6 +355,7 @@
       "add_memo#2",
       "update_memo#2",
       "branch_name#1",
+      "link_work_item#1",
       "get_image_studio#1",
       "set_image_draft#1",
       "add_image_knowledge#1",
@@ -359,7 +370,8 @@
       "list_memos#2",
       "add_memo#2",
       "update_memo#2",
-      "branch_name#1"
+      "branch_name#1",
+      "link_work_item#1"
     ]
   },
   "tools": {
@@ -630,7 +642,7 @@
                 "type": "array"
               },
               "provider": {
-                "description": "github, jira, ...",
+                "description": "github, jira or bitbucket. Omitted: PROJ-12 is taken as jira, anything else as github, so pass it for bitbucket",
                 "type": "string"
               },
               "title": {
@@ -856,6 +868,36 @@
           "title": {
             "description": "Short display name saying what the task is (optional)",
             "type": "string"
+          },
+          "work_item": {
+            "additionalProperties": false,
+            "description": "The issue or ticket the child works on (optional). Omitted, the child watches the items you were started for or work on",
+            "properties": {
+              "key": {
+                "description": "owner/repo#45 or PROJ-12",
+                "type": "string"
+              },
+              "provider": {
+                "enum": [
+                  "github",
+                  "jira",
+                  "bitbucket"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "description": "The tracker's item type, e.g. Bug or Story (picks the branch prefix)",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "key"
+            ],
+            "type": "object"
           },
           "worktree": {
             "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work",
@@ -1322,6 +1364,51 @@
         "type": "object"
       },
       "name": "get_session_usage"
+    },
+    "link_work_item#1": {
+      "description": "Agent Fleet: link your session to an issue, ticket or pull request so the Console shows it on your row and in that item. Call it when you start working on, reviewing or watching an item you were not launched for. branch_name with an item and the PR of your branch are linked for you. remove: true unlinks.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "description": "owner/repo#45, or #45 in your own repository, or PROJ-12",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "github",
+              "jira",
+              "bitbucket"
+            ],
+            "type": "string"
+          },
+          "remove": {
+            "type": "boolean"
+          },
+          "role": {
+            "description": "default working",
+            "enum": [
+              "working",
+              "reviewing",
+              "watching",
+              "created"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "key"
+        ],
+        "type": "object"
+      },
+      "name": "link_work_item"
     },
     "list_assistants#1": {
       "description": "利用可能なアシスタント（常設ビルトイン＋ユーザー定義）の一覧を返す。ask_assistant で誰に相談するか選ぶ前に呼ぶ。",

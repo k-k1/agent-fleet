@@ -20,7 +20,7 @@ import { useWorkItemModal } from "./modal.ts";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import { readShelf, resolveSessionRef, useArchivedFor, type ResolvedSessionRef } from "./sessionRefs.ts";
-import { branchForItem, promptForItem, repoForItem, sessionsForItem, titleForItem, type WorkItem } from "./read.ts";
+import { branchForItem, promptForItem, repoForItem, sessionsOnItem, titleForItem, type WorkItem } from "./read.ts";
 import "./workitems.css";
 
 /** Opens a session a ticket was started in. A slug that is not on the live list used to open
@@ -96,7 +96,7 @@ export function WorkItemModalHost() {
 
   // The ledger names a slug; what the modals show for it is looked up here (#1108). The shelf is
   // read only while a modal lists a slug that is not on the live list.
-  const shownRefs = [detail?.item, report].flatMap((i) => (i ? sessionsForItem(ledger, i.key) : []));
+  const shownRefs = [detail?.item, report].flatMap((i) => (i ? sessionsOnItem(ledger, sessions, i.provider, i.key) : []));
   const missing = [...new Set(shownRefs.map((r) => r.sessionName))].filter((n) => !sessions.some((s) => s.name === n));
   const archived = useArchivedFor(missing);
   const sessionRef = (name: string): ResolvedSessionRef => resolveSessionRef(name, sessions, archived);
@@ -149,7 +149,7 @@ export function WorkItemModalHost() {
         reference={detail.reference}
         repos={repos}
         defaultRepo={repoForItem(item, detail.repoHint || queryHint, folders)}
-        started={sessionsForItem(ledger, item.key)}
+        started={sessionsOnItem(ledger, sessions, item.provider, item.key)}
         onClose={close}
         onPick={(target, inPlace, reviewBranch, resolved) => pickTarget(resolved, target, inPlace, reviewBranch)}
         onStartHub={(resolved) => toStartHub(resolved)}
@@ -167,7 +167,7 @@ export function WorkItemModalHost() {
     return (
       <WorkItemReportModal
         item={report}
-        sessions={sessionsForItem(ledger, report.key)}
+        sessions={sessionsOnItem(ledger, sessions, report.provider, report.key)}
         sessionRef={sessionRef}
         onClose={close}
       />

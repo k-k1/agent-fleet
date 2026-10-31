@@ -54,7 +54,11 @@ type branchToolResult struct {
 
 func callBranchName(t *testing.T, args map[string]any) branchToolResult {
 	t.Helper()
-	out := callSelfTool(t, mcpToolBranchName, args)
+	return parseToolResult(t, callSelfTool(t, mcpToolBranchName, args))
+}
+
+func parseToolResult(t *testing.T, out string) branchToolResult {
+	t.Helper()
 	var parsed struct {
 		Result struct {
 			IsError bool `json:"isError"`
@@ -64,7 +68,7 @@ func callBranchName(t *testing.T, args map[string]any) branchToolResult {
 		} `json:"result"`
 	}
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil || len(parsed.Result.Content) == 0 {
-		t.Fatalf("branch_name answer = %s (%v)", out, err)
+		t.Fatalf("tool answer = %s (%v)", out, err)
 	}
 	return branchToolResult{parsed.Result.IsError, parsed.Result.Content[0].Text}
 }

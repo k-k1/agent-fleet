@@ -8,6 +8,7 @@ const { SessionRow } = await import("./SessionRow.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+const { useWorkItemModal } = await import("../workitems/modal.ts");
 type Session = import("../../types/session.ts").Session;
 
 let root: Root | null = null;
@@ -123,5 +124,31 @@ describe("SessionRow link line", () => {
     expect(ports()).toHaveLength(0);
     await render({ ports: [5173] }, false);
     expect(ports()).toHaveLength(0);
+  });
+
+  it("draws linked items and opens the work item panel for one (#3134)", async () => {
+    await render({
+      pr: { number: 7, state: "open", url: "https://github.com/o/r/pull/7" },
+      links: [
+        { provider: "github", key: "o/r#7", role: "working" },
+        { provider: "jira", key: "PROJ-9", role: "watching", title: "Login" },
+        { provider: "jira", key: "PROJ-1", role: "started" },
+        { provider: "github", key: "o/r#3", role: "reviewing" },
+      ],
+    });
+    const chips = () => [...host.querySelectorAll<HTMLButtonElement>(".sess-item")];
+    // The branch's PR is the PR chip, not an item; two items show and the rest fold.
+    expect(chips().map((c) => c.textContent)).toEqual(["PROJ-1", "o/r#3"]);
+    const more = host.querySelector<HTMLButtonElement>(".sess-items .sess-port-more");
+    expect(more?.textContent).toBe("+1");
+    await act(async () => more!.click());
+    expect(chips().map((c) => c.textContent)).toEqual(["PROJ-1", "o/r#3", "PROJ-9"]);
+    expect(chips()[2].title).toContain("Login");
+
+    await act(async () => chips()[0].click());
+    const detail = useWorkItemModal.getState().detail;
+    expect(detail?.item).toMatchObject({ provider: "jira", key: "PROJ-1" });
+    expect(detail?.reference).toBe(true);
+    useWorkItemModal.getState().close();
   });
 });
