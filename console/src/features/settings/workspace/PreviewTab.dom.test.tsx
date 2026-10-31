@@ -5,7 +5,7 @@
 //   3. reached directly anyway, the tab says "not available" instead of rendering blank
 //   4. where subdomains are issued the settings appear, and the published ports are saved
 //      on blur
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -36,19 +36,39 @@ const wsSettings = (extra: Record<string, unknown> = {}) => ({
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+// Every mounted tree, so afterEach can unmount all of them rather than only the last one.
+const mounted: { root: Root; host: HTMLDivElement }[] = [];
+// Bumped per test. A test that timed out keeps running on its pending await; freshModule
+// throws for it once its import finally lands, so it cannot mount into a later test.
+let generation = 0;
 
 // The availability answer is cached at module scope (so settings do not refetch on every
 // open), so each test re-imports the module; reusing it would make every later test read
 // the first one's answer.
 async function freshModule() {
+  const mine = generation;
   vi.resetModules();
-  return await import("./PreviewTab.tsx");
+  const m = await import("./PreviewTab.tsx");
+  if (mine !== generation) throw new Error("stale test: its import finished after the test ended");
+  return m;
 }
+
+// Every test re-evaluates the module graph (see freshModule), which is slow on a loaded
+// host; the budget is this file's own, not the global testTimeout.
+vi.setConfig({ testTimeout: 30_000 });
+
+// The first import of PreviewTab and its dependency graph is the slow one (cold transform
+// of the whole tree); later freshModule() calls reuse the transformed modules. Do it here,
+// with a generous timeout of its own, so the first test never pays for it.
+beforeAll(async () => {
+  await import("./PreviewTab.tsx");
+}, 60_000);
 
 async function mount(el: React.ReactElement) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+  mounted.push({ root, host });
   await act(async () => {
     root!.render(el);
   });
@@ -57,9 +77,17 @@ async function mount(el: React.ReactElement) {
   });
 }
 
+function unmountCurrent() {
+  const i = mounted.findIndex((m) => m.root === root);
+  if (i >= 0) mounted.splice(i, 1);
+  act(() => root?.unmount());
+  host?.remove();
+}
+
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 
 beforeEach(() => {
+  generation++;
   g.IS_REACT_ACT_ENVIRONMENT = true;
   api.mockReset();
   apiJSON.mockReset();
@@ -67,8 +95,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  act(() => root?.unmount());
-  host?.remove();
+  generation++;
+  for (const m of mounted.splice(0)) {
+    act(() => m.root.unmount());
+    m.host.remove();
+  }
   root = null;
   host = null;
   delete g.IS_REACT_ACT_ENVIRONMENT;
@@ -109,8 +140,7 @@ describe("usePreviewAvailable", () => {
 
   // Settings opening again is a fresh mount of the same module (the cache survives it).
   const remount = async (P: () => React.ReactElement) => {
-    act(() => root?.unmount());
-    host?.remove();
+    unmountCurrent();
     await mount(<P />);
   };
 
@@ -285,8 +315,7 @@ describe("Expose this port… strip", () => {
     useSettingsUI.setState({ previewAddPort: 3000 });
     await mount(<PreviewTab />);
     expect(addStrip()).toBeNull();
-    act(() => root?.unmount());
-    host?.remove();
+    unmountCurrent();
 
     const full = await tabWith({ previewMaxPorts: 2 });
     full.useSettingsUI.setState({ previewAddPort: 5173 });

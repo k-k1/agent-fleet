@@ -37,6 +37,13 @@ func TestParseResetClock(t *testing.T) {
 			wantH: 9, wantM: 0, wantZone: "Asia/Tokyo",
 		},
 		{
+			// Reworded 5-hour window (measured sutgu3b 2026-10-30, issue #3065):
+			// the clock still parses the same way.
+			name:  "5-hour limit banner",
+			msg:   "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)",
+			wantH: 1, wantM: 50, wantZone: "Asia/Tokyo",
+		},
+		{
 			// 12am/12pm is the %12 boundary. Get it wrong and the wake-up is 12 hours off.
 			name:  "12am is hour 0",
 			msg:   "resets 12am (Asia/Tokyo)",
@@ -189,6 +196,10 @@ func TestLimitInMessage(t *testing.T) {
 	}{
 		{"session window", "You've hit your session limit · resets 7:50pm (Asia/Tokyo)", LimitWindow,
 			time.Date(2026, 10, 26, 19, 50, 0, 0, tokyo), true},
+		// Reworded 5-hour window (issue #3065): now is 18:00, so the next 1:50am
+		// is tomorrow's.
+		{"5-hour window", "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)", LimitWindow,
+			time.Date(2026, 10, 27, 1, 50, 0, 0, tokyo), true},
 		{"per-model window, no time", "You've reached your Fable 5 limit. Run /usage-credits to continue", LimitWindow, time.Time{}, true},
 		{"spend cap", "You've hit your org's monthly spend limit · run /usage-credits to raise it", LimitSpend, time.Time{}, true},
 		{"temporary 429", "API Error: 429 temporarily limiting requests (not your usage limit)", "", time.Time{}, false},
@@ -241,6 +252,7 @@ func TestIsPerModelLimit(t *testing.T) {
 	for msg, want := range map[string]bool{
 		"You've reached your Fable 5 limit. Run /usage-credits to continue or switch models": true,
 		"You've hit your session limit · resets 7:50pm (Asia/Tokyo)":                         false,
+		"You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)":                          false,
 		"You've hit your weekly limit · resets 9am (Asia/Tokyo)":                             false,
 		"You've hit your org's monthly spend limit · run /usage-credits to raise it":         false,
 	} {

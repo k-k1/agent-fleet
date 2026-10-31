@@ -1,11 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
 import { OnOff } from "../parts/controls.tsx";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
+import {
+  ProviderCard,
+  StatusPill,
+  Hint,
+  DeviceSteps,
+  DisconnectButton,
+  ReauthButton,
+  IssueLink,
+} from "../parts/providerCard.tsx";
 import { usePolling } from "../parts/usePolling.ts";
 import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
@@ -92,6 +100,41 @@ export function CodexCard({
     await raw("api/connections/codex", { method: "DELETE" });
     reload();
   };
+  // A login revoked server side still reads as connected (`codex login status` and auth.json
+  // are local), so signing in again has to be offered on the connected card. It signs in the
+  // way the card was connected: the device flow for ChatGPT, the key form for an API key —
+  // the device flow would silently switch an API-key workspace to a subscription.
+  //
+  // A sign-out that failed must stop here: the device poll answers "connected" from the global
+  // login state, so a revoked login left in place would close the new flow on its first poll
+  // and read as success. One run at a time (reauthing): a second confirm while the first is in
+  // flight would open a second device flow and leave the two racing.
+  const reauthing = useRef(false);
+  const reauth = async () => {
+    if (reauthing.current) return;
+    reauthing.current = true;
+    setBusy(true);
+    try {
+      const viaKey = st?.method === "apikey";
+      let failure = "";
+      try {
+        const r = await raw("api/connections/codex", { method: "DELETE" });
+        if (!r.ok) failure = `HTTP ${r.status}`;
+      } catch (e) {
+        failure = e instanceof Error ? e.message : String(e);
+      }
+      if (failure) {
+        toast(tr("provider.reauth_signout_failed", { msg: failure }));
+        return;
+      }
+      reload(); // put the status pill back to "not connected"; the flow view below does not wait for it
+      if (viaKey) setMode("key");
+      else await startDevice();
+    } finally {
+      reauthing.current = false;
+      setBusy(false);
+    }
+  };
 
   return (
     <ProviderCard
@@ -105,15 +148,9 @@ export function CodexCard({
     >
       {!running ? (
         <ConnPaused />
-      ) : st?.connected ? (
-        <div className="p-who">
-          <span className="p-em" title={st.email || ""}>
-            {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
-          </span>
-          {st.plan && <span className="p-pl">{st.plan}</span>}
-          <DisconnectButton onClick={disconnect} />
-        </div>
-      ) : mode === "device" && dev ? (
+      ) : /* The flow before the connection state, as on the Claude card: re-auth opens it while
+            the api/connections refetch that clears "connected" is still on its way (or failed). */
+      mode === "device" && dev ? (
         <div className="p-body">
           <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
           <Hint>
@@ -143,6 +180,15 @@ export function CodexCard({
             </button>
           </div>
           <IssueLink url="https://platform.openai.com/api-keys" />
+        </div>
+      ) : st?.connected ? (
+        <div className="p-who">
+          <span className="p-em" title={st.email || ""}>
+            {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <ReauthButton disabled={busy} onClick={() => void reauth()} />
+          <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : (
         <>

@@ -93,6 +93,7 @@ func notificationsIn(buf *bytes.Buffer) []string {
 // nothing. The negative control is the second check, which must stay silent: a notification on
 // every tick would have the client re-listing once a minute forever.
 func TestToolListChangedWhenAModelIsEnabled(t *testing.T) {
+	isolateAdvertised(t)
 	withImageGen(t, true)
 	set := stubMovingStatus(t, statusWithModels("sdxl-base", "anima"))
 	buf := captureStdio(t)
@@ -122,6 +123,7 @@ func TestToolListChangedWhenAModelIsEnabled(t *testing.T) {
 // call-side check enforces must follow the newest truth, or a session whose client has not
 // re-listed yet keeps permission to name a checkpoint that is gone.
 func TestToolListChangedWhenAModelIsWithdrawn(t *testing.T) {
+	isolateAdvertised(t)
 	withImageGen(t, true)
 	set := stubMovingStatus(t, statusWithModels("sdxl-base", "anima"))
 	captureStdio(t)

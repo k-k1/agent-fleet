@@ -33,12 +33,25 @@ type turnErrorWire struct {
 	CodexErrorInfo    json.RawMessage `json:"codexErrorInfo"`
 }
 
+// rolloutErrorWire is the same failure as the rollout stores it, on a task_complete
+// record's `error` (TurnCompleteEvent.error, codex 0.166.0). The protocol crate serializes
+// it in snake_case, so the variant names and the status key differ from the app-server's
+// camelCase: "unauthorized" is spelled the same, "usage_limit_exceeded" is not.
+type rolloutErrorWire struct {
+	Message        string          `json:"message"`
+	CodexErrorInfo json.RawMessage `json:"codex_error_info"`
+}
+
 // codexError is the normalized failure detail, mirroring opencode's messageError shape
 // (label + detail) so both agent kinds render the same way downstream.
 type codexError struct {
 	message string
 	label   string // codexErrorInfo variant name, e.g. "usageLimitExceeded"; "" if absent
 	status  int    // httpStatusCode, when the variant carries one
+	// turnID is the failed turn, when codex named one (turn/completed). Such a failure is on
+	// the rollout's task_complete record, so withLastError adds no copy of it; a turn/start
+	// rejection has none.
+	turnID string
 }
 
 // decodeCodexError parses a TurnError payload (turn.error's raw bytes). ok is false when
@@ -61,8 +74,24 @@ func decodeCodexError(raw []byte) (codexError, bool) {
 	return e, true
 }
 
+// decodeRolloutError parses a task_complete record's `error` (rolloutErrorWire). ok is false
+// when the turn completed without one.
+func decodeRolloutError(raw []byte) (codexError, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return codexError{}, false
+	}
+	var w rolloutErrorWire
+	if json.Unmarshal(raw, &w) != nil || strings.TrimSpace(w.Message) == "" {
+		return codexError{}, false
+	}
+	e := codexError{message: w.Message}
+	e.label, e.status = decodeCodexErrorInfo(w.CodexErrorInfo)
+	return e, true
+}
+
 // decodeCodexErrorInfo reads CodexErrorInfo's two wire shapes: a bare string enum, or a
 // single-key object ({"variant":{"httpStatusCode":...}}) for the variants that carry one.
+// The status key is read in both casings, so the rollout's snake_case form decodes too.
 func decodeCodexErrorInfo(raw json.RawMessage) (label string, status int) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", 0
@@ -72,10 +101,14 @@ func decodeCodexErrorInfo(raw json.RawMessage) (label string, status int) {
 		return s, 0
 	}
 	var obj map[string]struct {
-		HTTPStatusCode int `json:"httpStatusCode"`
+		HTTPStatusCode  int `json:"httpStatusCode"`
+		HTTPStatusSnake int `json:"http_status_code"`
 	}
 	if json.Unmarshal(raw, &obj) == nil {
 		for k, v := range obj {
+			if v.HTTPStatusCode == 0 {
+				return k, v.HTTPStatusSnake
+			}
 			return k, v.HTTPStatusCode
 		}
 	}
@@ -120,7 +153,45 @@ func (e codexError) part() transcript.Part {
 	if label == "" {
 		label = "error"
 	}
-	return transcript.Part{Kind: "error", Info: label, Text: e.message}
+	return transcript.Part{Kind: "error", Info: label, Text: e.message, Cause: e.cause()}
+}
+
+// authMarkers are the stems of codex's own "sign in again" wording, for a failure whose
+// codexErrorInfo is missing or another variant. Every refresh-token failure codex words
+// (expired, revoked, already used, other) ends in "Please log out and sign in again."
+// Measured, revoked ChatGPT login (codex 0.166.0):
+//
+//	unauthorized: Your access token could not be refreshed because your refresh token was
+//	revoked. Please log out and sign in again.
+var authMarkers = []string{
+	"sign in again",
+	"log in again",
+	"access token could not be refreshed",
+}
+
+// isAuth reports whether this failure clears by signing in again. The variant leads; the
+// wording is the fallback, because it is rewritten between versions. HTTP 403 and 400 stay
+// out: a permission or bad-request failure does not clear by a new sign-in, and offering one
+// sends the reader down a path that cannot help.
+func (e codexError) isAuth() bool {
+	if strings.EqualFold(e.label, "unauthorized") || e.status == 401 {
+		return true
+	}
+	low := strings.ToLower(e.message)
+	for _, m := range authMarkers {
+		if strings.Contains(low, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// cause is the machine-readable hint the Console keys its guidance off. "" = no route.
+func (e codexError) cause() string {
+	if e.isAuth() {
+		return transcript.CauseAuth
+	}
+	return ""
 }
 
 func (e codexError) retryable() bool {

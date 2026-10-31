@@ -22,7 +22,7 @@ import (
 // Seams over the session layer, so the pass can be tested without real transcripts or tmux.
 var (
 	listMetas     = session.ListMetas
-	turnsOf       = sessionx.UsageTurns
+	turnsOf       = sessionx.TextTurns
 	aliveOf       = sessionx.SessionAlive
 	canTranscript = func(m session.Meta) bool { return sessionx.AgentOf(m.Kind).Caps().CanTranscript }
 	indexPath     = func() string { return filepath.Join(paths.AgentStateDir(), "session-search", "index.db") }

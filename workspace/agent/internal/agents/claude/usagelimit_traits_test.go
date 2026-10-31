@@ -51,6 +51,7 @@ func TestUsageLimitTraitsThroughRealTranscript(t *testing.T) {
 	}{
 		{"per-model limit, no time: capture only", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue", 429), LimitWindow, "capture", true},
 		{"account window with a banner time", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), LimitWindow, "banner", false},
+		{"5-hour window with a banner time", apiErr("You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)", 429), LimitWindow, "banner", false},
 		{"spend cap", apiErr("You've hit your org's monthly spend limit · run /usage-credits to raise it", 429), LimitSpend, "capture", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
