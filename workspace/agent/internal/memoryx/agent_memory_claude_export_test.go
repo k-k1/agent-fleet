@@ -255,9 +255,13 @@ func TestClaudeExportScanFlagsSecretsMasked(t *testing.T) {
 // MEMORY.md stays within claude's load limit, with a closing line for what did not fit.
 func TestClaudeExportIndexLimits(t *testing.T) {
 	e := newClaudeExportEnv(t)
-	for i := 0; i < 260; i++ {
-		e.save(fmt.Sprintf("mem-%03d", i), strings.Repeat("あ", 100), "project", "body")
-	}
+	// The first save records the project; the rest are seeded in one commit.
+	e.save("mem-000", strings.Repeat("あ", 100), "project", "body")
+	base := e.now
+	memSeedMany(t, e.c, 259, func(i int) agentMemSaveReq {
+		return agentMemSaveReq{Name: fmt.Sprintf("mem-%03d", i+1), Description: strings.Repeat("あ", 100), Type: "project", Body: "body"}
+	}, func(i int) time.Time { return base.Add(time.Duration(i+1) * time.Minute) })
+	e.now = base.Add(259 * time.Minute)
 	e.apply()
 	idx := e.read("MEMORY.md")
 	lines := strings.Split(strings.TrimRight(idx, "\n"), "\n")
