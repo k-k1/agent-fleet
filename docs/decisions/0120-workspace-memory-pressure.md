@@ -438,3 +438,14 @@ On docker the Control Plane's local cgroup read answered the stats poll without 
 through a per-workspace cache refreshed in the background (short timeout, backoff after a failure,
 dropped after 30 s without an answer); the other gauges stay from the local read and an Agent error
 leaves the axis absent. The semantics stay the Agent's. Follow-ups: #2837.
+
+## Note (2026-10-31)
+
+Decision 1's `memory.max` agreement is now recorded. Each adapter that requests a limit passes it to the
+Agent as `AF_WS_MEMORY_LIMIT_BYTES` (docker `--memory`, the Fargate task size, the ecs-ec2 container cap, the
+kubernetes pod limit; native and an uncapped ecs-ec2 rung set nothing). The Agent compares it with the
+resolved cgroup's `memory.max` (the kernel's page rounding allowed) and reports `agree` / `disagree` /
+`unknown` in its log and as `memory_max_agreement` on the `mem_pressure` axis. It is informational: a
+mismatch never fails the start or turns the axis off, and "not told" is `unknown`. Not yet checked on a real
+runtime; on Fargate the limit may sit on the task cgroup rather than the container's, which would read as
+`disagree`. Follow-ups: #2816.

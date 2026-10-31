@@ -268,6 +268,7 @@ func TestECSEndpointNameToken(t *testing.T) {
 func TestECSStartCreatesEverything(t *testing.T) {
 	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
 	rt := newTestECS(fe, ff, fs)
+	rt.memory = "2048" // the per-workspace task size the factory would have set
 	if err := rt.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -333,6 +334,10 @@ func TestECSStartCreatesEverything(t *testing.T) {
 	// Dropping the variable would let the Agent list browser tools the CP refuses.
 	if len(browserEnv) != 1 || browserEnv[0] != "ecs" {
 		t.Errorf("%s entries = %q, want exactly [ecs]", BrowserUnavailableEnv, browserEnv)
+	}
+	// rt.memory above is 2048 MiB.
+	if got := ecsEnvValue(c0.Environment, MemoryLimitEnv); got != "2147483648" {
+		t.Errorf("%s = %q, want the task's 2048 MiB in bytes", MemoryLimitEnv, got)
 	}
 	if agentGrace != "25" {
 		t.Errorf("AGENT_STOP_GRACE_SEC = %q, want 25 (grace - safety margin)", agentGrace)
@@ -657,4 +662,13 @@ func TestECSDestroyRemovesServiceAccessPointsAndSecrets(t *testing.T) {
 			t.Errorf("leftover %q not reported (the operator would think the home is gone), got %v", want, leftovers)
 		}
 	}
+}
+
+func ecsEnvValue(env []ecstypes.KeyValuePair, name string) string {
+	for _, kv := range env {
+		if aws.ToString(kv.Name) == name {
+			return aws.ToString(kv.Value)
+		}
+	}
+	return ""
 }

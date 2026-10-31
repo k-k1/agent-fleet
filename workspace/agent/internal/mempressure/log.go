@@ -9,3 +9,10 @@ func logBoundary(b Boundary) {
 	}
 	log.Printf("mem-pressure: %s; the axis is reported unavailable", b.Reason)
 }
+
+func logMemMax(b Boundary) {
+	if b.MemMax == "" {
+		return
+	}
+	log.Printf("mem-pressure: memory.max agreement with the requested limit: %s (%s)", b.MemMax, b.MemMaxDetail)
+}

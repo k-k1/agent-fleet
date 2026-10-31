@@ -63,6 +63,10 @@ type Wire struct {
 	AgentLatencyMs   *float64 `json:"agent_latency_ms,omitempty"`
 	AgentProbeFailed bool     `json:"agent_probe_failed,omitempty"`
 
+	// MemoryMaxAgreement is "agree", "disagree" or "unknown": whether the cgroup's memory.max
+	// matches the limit the runtime asked for. Informational; "unknown" is not a mismatch.
+	MemoryMaxAgreement string `json:"memory_max_agreement,omitempty"`
+
 	SampledAtMs int64 `json:"sampled_at_ms,omitempty"`
 }
 
@@ -86,6 +90,7 @@ type Sampler struct {
 	mu     sync.Mutex
 	latest *Sample
 	reason string // non-empty: the boundary check failed; nothing is read
+	memMax Agreement
 
 	acc   accum
 	ticks int
@@ -96,7 +101,7 @@ type Sampler struct {
 
 // New builds a sampler. A non-OK boundary makes it report unavailable without reading anything.
 func New(dir string, b Boundary, src Sources, series *Series) *Sampler {
-	s := &Sampler{dir: dir, src: src, series: series}
+	s := &Sampler{dir: dir, src: src, series: series, memMax: b.MemMax}
 	if !b.OK {
 		s.reason = b.Reason
 	}
@@ -219,16 +224,16 @@ func (s *Sampler) Wire() *Wire {
 	cur := s.latest
 	s.mu.Unlock()
 	if s.reason != "" {
-		return &Wire{Reason: s.reason}
+		return &Wire{Reason: s.reason, MemoryMaxAgreement: string(s.memMax)}
 	}
 	if cur == nil {
 		return nil
 	}
 	now := s.src.Now()
 	if now.Sub(cur.At) > StaleAfter {
-		return &Wire{Reason: "sampler stalled", SampledAtMs: cur.At.UnixMilli()}
+		return &Wire{Reason: "sampler stalled", SampledAtMs: cur.At.UnixMilli(), MemoryMaxAgreement: string(s.memMax)}
 	}
-	w := &Wire{SampledAtMs: cur.At.UnixMilli()}
+	w := &Wire{SampledAtMs: cur.At.UnixMilli(), MemoryMaxAgreement: string(s.memMax)}
 	if cur.Some10 == nil || cur.Full10 == nil {
 		w.Reason = "memory.pressure not readable"
 	} else {

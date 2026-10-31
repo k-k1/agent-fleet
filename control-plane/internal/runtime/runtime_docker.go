@@ -318,6 +318,7 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		// Graceful-shutdown budget for the Agent's SIGTERM handler; see Stop.
 		"-e", fmt.Sprintf("AGENT_STOP_GRACE_SEC=%d", agentStopGraceSec()),
 	}
+	args = append(args, d.memoryLimitArgs()...)
 	if d.cpus != "" {
 		args = append(args, "--cpus", d.cpus)
 	}
@@ -471,6 +472,19 @@ func (d *dockerRuntime) envArgs() []string {
 		args = append(args, "-e", kv)
 	}
 	return args
+}
+
+// memoryLimitArgs tells the Agent what --memory asked for, so it can check its cgroup agrees
+// (MemoryLimitEnv). A value that does not parse is simply not reported.
+func (d *dockerRuntime) memoryLimitArgs() []string {
+	n, err := parseDockerBytes(d.memory)
+	if err != nil {
+		return nil
+	}
+	if v := memoryLimitValue(n); v != "" {
+		return []string{"-e", MemoryLimitEnv + "=" + v}
+	}
+	return nil
 }
 
 // dockerEnvValues is env as the container sees it: the last entry of a key wins.

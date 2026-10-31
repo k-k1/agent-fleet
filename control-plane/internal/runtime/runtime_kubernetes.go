@@ -885,6 +885,9 @@ func (k *kubeRuntime) podTemplate(image string, gen int64, now time.Time) kPodTe
 	if k.cfg.sessionCmd != "" {
 		env = append(env, kEnvVar{Name: "AGENT_SESSION_CMD", Value: k.cfg.sessionCmd})
 	}
+	if k.memBytes > 0 {
+		env = append(env, kEnvVar{Name: MemoryLimitEnv, Value: strconv.FormatInt(k.memBytes, 10)})
+	}
 	res := kResources{
 		Requests: map[string]string{"ephemeral-storage": kubeEphemeralRequest},
 		Limits:   map[string]string{"ephemeral-storage": kubeEphemeralLimit},

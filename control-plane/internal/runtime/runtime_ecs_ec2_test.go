@@ -1768,6 +1768,14 @@ func TestECSEC2TaskDefinitionShape(t *testing.T) {
 	if v, ok := env[BrowserUnavailableEnv]; ok {
 		t.Errorf("%s = %q on ecs-ec2: the browser is available there", BrowserUnavailableEnv, v)
 	}
+	// The Agent is told the container cap, or nothing when the rung is uncapped.
+	if c.Memory == nil {
+		if v, ok := env[MemoryLimitEnv]; ok {
+			t.Errorf("%s = %q on an uncapped container", MemoryLimitEnv, v)
+		}
+	} else if want := strconv.FormatInt(int64(*c.Memory)*mib, 10); env[MemoryLimitEnv] != want {
+		t.Errorf("%s = %q, want %q (the container's hard cap)", MemoryLimitEnv, env[MemoryLimitEnv], want)
+	}
 }
 
 // Occupancy is derived, never stored: a slot whose home device is taken, and a slot

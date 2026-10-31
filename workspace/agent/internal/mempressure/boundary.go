@@ -9,6 +9,12 @@ import (
 type Boundary struct {
 	OK     bool
 	Reason string // why not, when !OK
+
+	// MemMax is whether the cgroup's memory.max agrees with the limit the runtime asked for. It
+	// is informational: it never turns OK off, because a limit the kernel rounded or a runtime
+	// that enforces it one level up must not cost the axis.
+	MemMax       Agreement
+	MemMaxDetail string
 }
 
 // CheckBoundary is ADR 0120 decision 1's "verified means resolved, not merely readable". A
