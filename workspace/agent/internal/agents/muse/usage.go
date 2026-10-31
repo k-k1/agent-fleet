@@ -17,6 +17,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/msp"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagewin"
 )
 
@@ -26,17 +27,26 @@ var quotaSeen *msp.SubscriptionUsage
 // recordQuota keeps the newest observation. Newest by the host's own `observedAtMs` rather
 // than by arrival: two hosts can deliver out of order, and an older reading overwriting a
 // newer one is a chip that walks backwards.
+//
+// It is also written to usagestore, which is what the chip and the limit paths fall back to
+// after an Agent restart: the push is the only route by which a reading arrives, and no host is
+// running to ask once the workspace has been stopped and started again.
 func recordQuota(u msp.SubscriptionUsage) {
 	quotaMu.Lock()
-	defer quotaMu.Unlock()
 	if quotaSeen != nil && u.ObservedAtMs < quotaSeen.ObservedAtMs {
+		quotaMu.Unlock()
 		return
 	}
 	cp := u
 	quotaSeen = &cp
+	quotaMu.Unlock()
+	if u.ObservedAtMs > 0 {
+		usagestore.Record("muse", accountIdentity(), time.UnixMilli(u.ObservedAtMs), u)
+	}
 }
 
-func lastQuota() *msp.SubscriptionUsage {
+// heldQuota is the observation this process received, nil before the first one.
+func heldQuota() *msp.SubscriptionUsage {
 	quotaMu.Lock()
 	defer quotaMu.Unlock()
 	if quotaSeen == nil {
@@ -44,6 +54,19 @@ func lastQuota() *msp.SubscriptionUsage {
 	}
 	cp := *quotaSeen
 	return &cp
+}
+
+// lastQuota is the newest observation known: this process's own, else the one stored before
+// the last restart (only while the same account is signed in).
+func lastQuota() *msp.SubscriptionUsage {
+	if u := heldQuota(); u != nil {
+		return u
+	}
+	var u msp.SubscriptionUsage
+	if _, ok := usagestore.Load("muse", accountIdentity(), &u); !ok {
+		return nil
+	}
+	return &u
 }
 
 // readQuota asks a live host for its last observation, so a Console that opens the chip
@@ -85,7 +108,9 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, out)
 		return
 	}
-	if lastQuota() == nil {
+	// A live host may hold a newer reading than the stored one, so it is asked whenever this
+	// process has none of its own.
+	if heldQuota() == nil {
 		readQuota()
 	}
 	u := lastQuota()

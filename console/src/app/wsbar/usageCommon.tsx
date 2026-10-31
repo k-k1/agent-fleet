@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../../core/api/client.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI } from "../../features/settings/store.ts";
+import { refreshUsage, subscribeUsage } from "./usageAll.ts";
 
 // The reading shared by the usage chips (claude/codex/agy/copilot). Each agent uses
 // different fields (fiveHour/sevenDay vs groups vs quotas), expressed as one type with
@@ -50,42 +50,27 @@ export interface UsageReading {
   canUpgrade?: boolean;
 }
 
-// useUsage surfaces one agent's subscription usage (5-hour + weekly) from `endpoint`
-// (api/claude/usage or api/codex/usage). The Console reads the Agent's value once on
-// mount, on a slow 5-min re-read (to recover the chip if the workspace started after
-// mount / stay in sync across tabs), and on an explicit refresh() (?refresh=1) — never
-// on a fast background timer (the claude endpoint is unofficial/rate-limited; codex is
-// a local rollout read). Kept in WsBar so it doesn't re-render the app.
-export function useUsage(tenant: string | null, endpoint: string) {
+// useUsage surfaces one agent's subscription usage for its chip. The read itself is shared
+// by every chip of the tenant (usageAll.ts: one GET /usage/all on mount, on a slow 5-min
+// re-read and on visibility, never a fast background timer); refresh() forces this kind's
+// source to re-read. Kept in WsBar so it doesn't re-render the app.
+export function useUsage(tenant: string | null, src: { kind: string; endpoint: string }) {
   const [usage, setUsage] = useState<UsageReading | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const load = useCallback(
-    (force: boolean) => {
-      if (document.hidden && !force) return;
-      if (force) setRefreshing(true);
-      api(endpoint + (force ? "?refresh=1" : ""))
-        // Prefer a fresh ok reading. On a failed read keep the last good value (don't
-        // blank a working chip), whether it was a background poll or a manual refresh —
-        // but if we have nothing yet, still adopt the failed payload so its `authed` flag
-        // can render the degraded "unavailable" chip instead of hiding entirely.
-        .then((d) => setUsage((u) => (d && (d.ok || !u) ? d : u)))
-        .catch(() => {})
-        .finally(() => force && setRefreshing(false));
-    },
-    [endpoint],
-  );
+  const { kind, endpoint } = src;
   useEffect(() => {
     setUsage(null);
-    load(false);
-    const id = setInterval(() => load(false), 300000); // 5 min, Agent-cached (no endpoint hit)
-    const onVis = () => !document.hidden && load(false);
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [tenant, load]);
-  return { usage, refreshing, refresh: () => load(true) };
+    // Prefer a fresh ok reading. On a failed read keep the last good value (don't blank a
+    // working chip), whether it was a background poll or a manual refresh — but if we have
+    // nothing yet, still adopt the failed payload so its `authed` flag can render the
+    // degraded "unavailable" chip instead of hiding entirely.
+    return subscribeUsage(tenant, kind, endpoint, (d) => setUsage((u) => (d.ok || !u ? d : u)));
+  }, [tenant, kind, endpoint]);
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void refreshUsage(tenant, kind).finally(() => setRefreshing(false));
+  }, [tenant, kind]);
+  return { usage, refreshing, refresh };
 }
 
 // agoText: seconds since the usage was fetched -> "N seconds/minutes/hours ago" (freshness label).

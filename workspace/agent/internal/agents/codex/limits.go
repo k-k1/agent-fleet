@@ -34,6 +34,13 @@ func LimitReading() limitobs.Reading {
 			readings = append(readings, u)
 		}
 	}
+	if len(readings) == 0 {
+		// Every live source is empty (rollouts cleaned out, nothing pushed or fetched since the
+		// Agent started): the reading usagestore kept for this account.
+		if u := withStored(usage{}); u.OK {
+			readings = append(readings, u)
+		}
+	}
 	for _, slot := range []struct {
 		unit string
 		pick func(usage) *usageWindow

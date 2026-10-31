@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagestore"
 )
 
 // Claude usage capture via the statusLine command. claude runs its configured
@@ -98,6 +99,36 @@ func readCapturedUsage() (*capturedUsage, time.Time) {
 		at = time.Unix(c.CapturedAt, 0)
 	}
 	return &c, at
+}
+
+// latestObservedAt is the newest of the capture's observation times: what usagestore orders
+// captures by, so a capture where only one window moved still replaces the stored one.
+func (c *capturedUsage) latestObservedAt() time.Time {
+	at := c.observedAt()
+	for _, w := range []int64{c.FiveHourObservedAt, c.SevenDayObservedAt} {
+		if t := time.Unix(w, 0); w > 0 && t.After(at) {
+			at = t
+		}
+	}
+	return at
+}
+
+// currentCapture is the statusLine capture, kept in usagestore as it is read, or — when the
+// capture file is gone — the copy stored there for the account signed in now.
+func currentCapture() (*capturedUsage, time.Time) {
+	c, at := readCapturedUsage()
+	if c != nil {
+		usagestore.Record("claude", accountID(), c.latestObservedAt(), c)
+		return c, at
+	}
+	var stored capturedUsage
+	if _, ok := usagestore.Load("claude", accountID(), &stored); !ok {
+		return nil, time.Time{}
+	}
+	if stored.CapturedAt > 0 {
+		at = time.Unix(stored.CapturedAt, 0)
+	}
+	return &stored, at
 }
 
 // statusLineRateLimit is one window as it appears in the statusLine payload.
