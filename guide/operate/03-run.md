@@ -220,30 +220,24 @@ AF_OPENCODE_TUI_STANDALONE=1
   sessions keep the mode they started in.
 - `AF_OPENCODE_SERVE_DISABLE=1` (managed opencode off) also gives private servers, because
   there is no shared server to attach to.
-- On an image re-pinned to opencode 1 (below) neither variable has an effect on Terminal sessions.
 
-### Going back to opencode 1
+### When an opencode release misbehaves
 
-The image pins opencode 2 (`OPENCODE_VERSION` in `workspace/Dockerfile`). If it misbehaves in
-your deployment, the way back is an image whose pin is `1.19.0`: rebuild with
-`--build-arg OPENCODE_VERSION=1.19.0` (the install, the self-update and the drift check pick
-`opencode-ai` for a 1.x pin by themselves), then Stop and Start the workspaces.
+The image pins opencode 2 (`OPENCODE_VERSION` in `workspace/Dockerfile`), and opencode 2 is the
+only major Agent Fleet supports. If a release misbehaves in your deployment, rebuild with an
+earlier 2.x pin (`--build-arg OPENCODE_VERSION=<2.x>`) and Stop and Start the workspaces. Every
+2.x release reads the same database. Going back to opencode 1 is not supported: opencode 1 cannot
+see anything opencode 2 created, and Agent Fleet no longer drives it.
 
-- **What carries over.** The first opencode 2 start converted `~/.local/share/opencode/opencode.db`
-  in place and imported the opencode 1 sessions, keeping their ids. opencode 1 still runs on the
-  converted file and sees every conversation from before the upgrade.
-- **What is lost.** Conversations created under opencode 2, and turns added under opencode 2 to
-  older ones, are not visible to opencode 1 (it does not read the tables opencode 2 writes), and
-  conversations started under opencode 1 after the way back are not visible to opencode 2 on a
-  later upgrade. The data is not deleted.
-- **To be able to undo an upgrade exactly,** copy `~/.local/share/opencode/opencode.db*` of the
-  workspace before the first opencode 2 start and put the copies back after the way back.
+- **Workspaces that last ran opencode 1.** The first opencode 2 start converts
+  `~/.local/share/opencode/opencode.db` in place and imports the opencode 1 sessions with their
+  ids. Agent Fleet waits for that import before it resumes anything, however long ago the
+  workspace was last used.
 - **Leftovers of the earlier opt-in.** A workspace that had run `workspace-agent opencode-major 2`
-  (a private opencode 2 install under `~/.local/share/agent-fleet/opencode2` with its own database
-  in `opencode2-data`) ignores both once the pin is 2.x: the pinned opencode 2 uses the main
-  database, and the sessions that only exist in the private database are **not merged** into it.
-  They stay on disk until you delete the two directories. After a way back to a 1.x pin the opt-in
-  works as it did before.
+  still holds a private opencode 2 install under `~/.local/share/agent-fleet/opencode2` and its own
+  database in `~/.local/share/agent-fleet/opencode2-data`. Nothing reads either one, and the
+  sessions that only exist in that database were **never merged** into the main one. Delete the two
+  directories when you no longer need them. Agent Fleet does not delete them.
 
 ## Once it is on the public internet
 

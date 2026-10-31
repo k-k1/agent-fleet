@@ -166,20 +166,6 @@ var subcommands = []subcommand{
 		run:     runPruneNodeVersions,
 	},
 	{
-		// Opt-in to opencode 2 beside the pinned 1.x: a private npm prefix, ~200 MB, never
-		// on PATH. opencode-major switches af's launches to it.
-		name:     "install-opencode2",
-		operands: "[version]",
-		summary:  "download opencode 2 into the home volume (does not switch to it)",
-		run:      runInstallOpencode2,
-	},
-	{
-		name:     "opencode-major",
-		operands: "[1|2]",
-		summary:  "show, or switch, which opencode major af launches (2 needs install-opencode2)",
-		run:      runOpencodeMajor,
-	},
-	{
 		name:     "install-postgres",
 		operands: "[major]",
 		summary:  "download the Zonky embedded-postgres binaries for this arch",

@@ -207,9 +207,7 @@ Privacy 設定）。クォータや課金ならアカウントへのチャージ
 イメージで動くのは opencode 2 です。opencode 1 を使っていたワークスペースでも、会話はそのまま残ります。
 そこで opencode 2 が初めて起動すると、opencode のデータベースをその場で変換し、既存のセッションを
 同じセッション ID のまま 1 回だけ取り込むので、マネージド・ターミナル（CLI）のどちらでも続きから
-再開できます。opencode 2 で始めた会話は opencode 1 からは見えないので、あとで 1 に戻すとそれらは
-失われます。管理者がイメージを opencode 1 に戻している場合、上の `AGENTS.md`・共有サーバー・
-質問フォーム・ToDo の説明は当てはまりません（[operate/03](../operate/03-run.ja.md#opencode-1-に戻す)）。
+再開できます。opencode 1 はサポートしていません（[operate/03](../operate/03-run.ja.md#opencode-の版に問題があったとき)）。
 
 ## GitHub Copilot
 

@@ -205,28 +205,23 @@ AF_OPENCODE_TUI_STANDALONE=1
   セッションは起動したときのモードのままです。
 - `AF_OPENCODE_SERVE_DISABLE=1`（マネージド opencode を無効にする）でも、つなぐ共有サーバーが
   無いため専用サーバーになります。
-- opencode 1 に戻したイメージ（下記）では、どちらの変数もターミナルセッションには効きません。
 
-### opencode 1 に戻す
+### opencode の版に問題があったとき
 
-イメージは opencode 2 にピン止めされています（`workspace/Dockerfile` の `OPENCODE_VERSION`）。お使いの環境で
-うまく動かないときは、ピンを `1.19.0` にしたイメージで戻します。`--build-arg OPENCODE_VERSION=1.19.0` を
-付けて再ビルドし（インストール・自己更新・ドリフト検査は、1.x のピンなら自動で `opencode-ai` を選びます）、
-ワークスペースを Stop → Start してください。
+イメージは opencode 2 にピン止めされています（`workspace/Dockerfile` の `OPENCODE_VERSION`）。Agent Fleet が
+サポートするのは opencode 2 だけです。お使いの環境で特定の版に問題があったときは、2.x の以前の版をピンにして
+再ビルドし（`--build-arg OPENCODE_VERSION=<2.x>`）、ワークスペースを Stop → Start してください。2.x の版は
+どれも同じデータベースを読めます。opencode 1 に戻すことはサポートしていません。opencode 1 からは opencode 2 で
+作ったものが一切見えず、Agent Fleet も opencode 1 を扱わなくなっています。
 
-- **引き継がれるもの。** 最初の opencode 2 起動で `~/.local/share/opencode/opencode.db` がその場で変換され、
-  opencode 1 のセッションが ID のまま取り込まれています。opencode 1 は変換後のファイルでもそのまま動き、
-  アップグレード前の会話はすべて見えます。
-- **失われるもの。** opencode 2 で作った会話と、opencode 2 で古い会話に足したターンは、opencode 1 からは
-  見えません（opencode 1 は opencode 2 が書く表を読みません）。戻したあとに opencode 1 で始めた会話も、
-  次に opencode 2 へ上げたときは見えません。データが消えるわけではありません。
-- **アップグレードを正確に取り消したいとき。** 最初の opencode 2 起動の前に、ワークスペースの
-  `~/.local/share/opencode/opencode.db*` をコピーしておき、戻したあとにそのコピーを書き戻します。
-- **以前のオプトインの残り。** `workspace-agent opencode-major 2` を使っていたワークスペース
-  （`~/.local/share/agent-fleet/opencode2` の専用インストールと、`opencode2-data` の専用データベース）は、
-  ピンが 2.x になるとどちらも使われなくなります。ピン止めされた opencode 2 がメインのデータベースを使い、
-  専用データベースにしかないセッションはそちらに**統合されません**。2 つのディレクトリを削除するまでは
-  ディスクに残ります。1.x のピンに戻した場合、オプトインは以前どおり動きます。
+- **最後に opencode 1 で使っていたワークスペース。** 最初の opencode 2 起動で
+  `~/.local/share/opencode/opencode.db` がその場で変換され、opencode 1 のセッションが ID のまま取り込まれます。
+  ワークスペースを最後に使ったのがどれだけ前でも、Agent Fleet はこの取り込みが終わるのを待ってから再開します。
+- **以前のオプトインの残り。** `workspace-agent opencode-major 2` を使っていたワークスペースには、
+  `~/.local/share/agent-fleet/opencode2` の専用インストールと、`~/.local/share/agent-fleet/opencode2-data` の
+  専用データベースが残っています。どちらも読まれることはありません。専用データベースにしかないセッションは
+  メインのデータベースへ**統合されていません**。不要になったら 2 つのディレクトリを削除してください。
+  Agent Fleet が自動で削除することはありません。
 
 ## インターネットに公開したとき
 

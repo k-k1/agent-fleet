@@ -54,7 +54,6 @@ install_gcloud.go
 install_kiro.go
 install_muse.go
 install_mysql.go
-install_opencode2.go
 install_pg_client.go
 install_postgres.go
 install_tools.go
