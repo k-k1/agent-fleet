@@ -132,6 +132,16 @@ func repoForProvider(dir, provider string) string {
 	return ""
 }
 
+// applyCreateLinks sets a new session's links: a moved session keeps the source's (carried in
+// the request by moveCreateReq), any other inherits its parent's (inheritLinks).
+func applyCreateLinks(meta *session.Meta, req *CreateReq) {
+	if len(req.links) > 0 || len(req.unlinked) > 0 {
+		meta.Links, meta.Unlinked = req.links, req.unlinked
+		return
+	}
+	inheritLinks(meta)
+}
+
 // inheritLinks gives a session-spawned child its parent's items as watching, unless the child
 // was started for an item of its own. Best effort: a parent whose meta cannot be read gives
 // nothing, and the child is created regardless.

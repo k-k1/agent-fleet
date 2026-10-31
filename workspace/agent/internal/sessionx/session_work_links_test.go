@@ -225,3 +225,19 @@ func TestCleanWorkItemRefKeysJiraAsLinksDo(t *testing.T) {
 		t.Fatalf("a bare GitHub number became %q; {ref} renders from it", got.Key)
 	}
 }
+
+func TestApplyCreateLinksPrefersAMovedSessionsLinksOverInheritance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "par7", Kind: session.KindClaude, WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-7"}})
+
+	moved := session.Meta{Name: "dst7", OriginSession: "par7"}
+	applyCreateLinks(&moved, &CreateReq{links: []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkReviewing}}, unlinked: []string{"o/r#9"}})
+	if len(moved.Links) != 1 || moved.Links[0].Key != "o/r#2" || len(moved.Unlinked) != 1 {
+		t.Fatalf("moved links=%+v unlinked=%v, want the carried ones and no inherited PROJ-7", moved.Links, moved.Unlinked)
+	}
+	child := session.Meta{Name: "kid7", OriginSession: "par7"}
+	applyCreateLinks(&child, &CreateReq{})
+	if len(child.Links) != 1 || child.Links[0].Key != "PROJ-7" || child.Links[0].Role != session.LinkWatching {
+		t.Fatalf("child links=%+v, want PROJ-7 watching inherited", child.Links)
+	}
+}
