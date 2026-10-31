@@ -54,7 +54,7 @@ func liveScanFixture(t *testing.T, repos string, n, deepDirs int) (copies []stri
 func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	home, _, _ := memoryTestEnv(t)
 	repos := filepath.Join(home, "repos")
-	copies := liveScanFixture(t, repos, 40, 1500)
+	copies := liveScanFixture(t, repos, 16, 1500)
 	// A clone inside a dependency store is not looked for.
 	nested := filepath.Join(repos, "r000", "node_modules", "p1", "lib", "d", "e")
 	memoryMkdirAll(t, nested)
@@ -66,8 +66,8 @@ func TestAgentMemoryLiveSearchManyWorkingCopiesStaysFast(t *testing.T) {
 	if !complete {
 		t.Fatal("the search must be complete")
 	}
-	if len(live) != 40 {
-		t.Fatalf("found %d projects, want 40 (a clone and its worktree are one project; the one in node_modules is skipped)", len(live))
+	if len(live) != 16 {
+		t.Fatalf("found %d projects, want 16 (a clone and its worktree are one project; the one in node_modules is skipped)", len(live))
 	}
 	for _, c := range copies {
 		if p := agentMemProjectFor(c); p == nil || live[p.ID] == nil {

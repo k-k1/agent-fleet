@@ -278,7 +278,7 @@ The product is **two Go modules**, run separately (`e2e/` and the release scanne
 
 ```bash
 (cd control-plane   && go test ./...)
-(cd workspace/agent && go test ./...)
+(cd workspace/agent && go test -timeout 20m ./...)
 ```
 
 - The CP side carries many `httptest`-based smoke tests (audit, egress, the internal

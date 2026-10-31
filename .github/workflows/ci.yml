@@ -224,6 +224,8 @@ jobs:
         run: cd control-plane && ../scripts/vet-build-tags.sh
 
   workspace-agent:
+    # Backstop for the 20m go test timeout below: a hang still ends the job.
+    timeout-minutes: 30
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
@@ -254,7 +256,8 @@ jobs:
         env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
         run: go build ./...
       - name: go test
-        run: go test ./...
+        # internal/memoryx runs ~5 min alone (real git, regexp scans) and crosses the 10 min default under load.
+        run: go test -timeout 20m ./...
       # Build-tagged files are not part of the default build, and none of the gofmt / vet /
       # build / test steps above touch them (measured: an unused import in tagged code left
       # every gate green and only `go vet -tags contract` red). The reason and what the
