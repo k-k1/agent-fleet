@@ -63,6 +63,10 @@ function followUp(hub: Hub, pending: unknown) {
     Array.isArray(pending) &&
     [...hub.subs].some((s) => pending.includes(s.kind));
   if (!waiting) {
+    // Nothing is pending any more (a refresh may have answered it): drop a follow-up that
+    // would only repeat this read.
+    if (hub.followUp) clearTimeout(hub.followUp);
+    hub.followUp = null;
     hub.followUps = 0;
     return;
   }
@@ -70,6 +74,8 @@ function followUp(hub: Hub, pending: unknown) {
   hub.followUps++;
   hub.followUp = setTimeout(() => {
     hub.followUp = null;
+    // A hidden tab reads nothing; showing it again polls (onVis), which picks this up.
+    if (document.hidden) return;
     if (hub.subs.size) void fetchAll(hub, null);
   }, FOLLOW_UP_MS);
 }
@@ -113,6 +119,9 @@ function poll(hub: Hub) {
   hub.queued = true;
   queueMicrotask(() => {
     hub.queued = false;
+    // Each regular read starts a fresh follow-up budget, so one slow stretch does not leave a
+    // kind waiting for a manual reload.
+    hub.followUps = 0;
     if (hub.subs.size) void fetchAll(hub, null);
   });
 }

@@ -150,6 +150,21 @@ describe("usage chips: one shared poll", () => {
     }
   });
 
+  it("does not follow up while the tab is hidden", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+    const hidden = vi.spyOn(document, "hidden", "get");
+    try {
+      api.mockImplementation(() => Promise.resolve({ kinds: { claude: calm(14, 70) }, pending: ["muse"] }));
+      await mount();
+      hidden.mockReturnValue(true);
+      await act(async () => void vi.advanceTimersByTime(60000));
+      expect(calls()).toEqual([USAGE_ALL]);
+    } finally {
+      hidden.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   // Every delivery is a new object to a chip, and claude/codex/muse chips post a usage
   // observation on each: a reload of one chip must not make the others post.
   it("delivers a refresh only to the chip that asked", async () => {
