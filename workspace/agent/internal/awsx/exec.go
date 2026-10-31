@@ -74,6 +74,10 @@ type ExecOptions struct {
 	// Set only for a terminal that is not an agent's (an agent's run keeps its own path).
 	// --login still forces the in-terminal login.
 	TerminalConsole bool
+
+	// Resolved, when set, is told the account, role and region the command will run as,
+	// once STS has confirmed them: the run's row in the session's mirror (ADR 0126).
+	Resolved func(account, role, region string)
 }
 
 // ErrLoginRequired means the SSO login is missing or expired and no login was attempted.
@@ -459,7 +463,7 @@ func PlanExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 	// account. With the SSO-only config this is a consistency check, not the proof of
 	// provenance (an ARN shows a role name and account, not that Identity Center issued
 	// it).
-	return planChild(awsBin, env, keys, creds, cfg, o, func(arn string) error {
+	return planChild(awsBin, env, keys, creds, cfg, o, scalar(keys["sso_role_name"]), func(arn string) error {
 		if !IsSSORoleARN(arn, keys["sso_account_id"], keys["sso_role_name"]) {
 			return fmt.Errorf("profile %q resolved to %s, not its SSO role %s in account %s; af-aws-exec refuses it",
 				o.Profile, arn, keys["sso_role_name"], keys["sso_account_id"])
@@ -483,7 +487,7 @@ func checkRegion(env []string, keys map[string]string, o ExecOptions) error {
 // to accept or refuse. The STS call runs with verifierCfg as its only config and no
 // endpoint override, so nothing but AWS answers it.
 func planChild(awsBin string, env []string, keys map[string]string, creds processCreds, verifierCfg string, o ExecOptions,
-	check func(arn string) error) (string, []string, []string, error) {
+	role string, check func(arn string) error) (string, []string, []string, error) {
 	var err error
 	// --region, then a region the caller exported (as for any aws command), then the
 	// profile's. AWS_DEFAULT_REGION alone is copied to AWS_REGION: the JS SDK and CDK
@@ -532,6 +536,12 @@ func planChild(awsBin string, env []string, keys map[string]string, creds proces
 	}
 	if err := check(arn); err != nil {
 		return "", nil, nil, err
+	}
+	if o.Resolved != nil {
+		if role == "" {
+			role = assumedRoleName(arn)
+		}
+		o.Resolved(callerAccount(arn), role, cloudexec.EnvValue(env, "AWS_REGION"))
 	}
 	if !o.Quiet && o.Stderr != nil {
 		exp := ""

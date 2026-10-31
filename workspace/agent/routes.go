@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
@@ -216,6 +217,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", sessionx.HandleSSMLoginStatus)
 	// af-aws-exec's Console login (ADR 0102): the pending requests, and the device-code
 	// attempt the member starts with "Log in". CP allowlist: registerSessionRoutes.
+	mux.HandleFunc("GET /aws-runs", cloudruns.HandleRecent)
 	mux.HandleFunc("GET /aws-login", awsx.HandleLoginList)
 	mux.HandleFunc("POST /aws-login/{id}/start", awsx.HandleLoginStart)
 	mux.HandleFunc("GET /aws-login/{id}/attempts/{attempt}", awsx.HandleLoginAttempt)

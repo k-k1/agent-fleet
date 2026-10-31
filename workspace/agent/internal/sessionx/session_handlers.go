@@ -21,6 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -106,6 +107,8 @@ func removeManagedLedger(m session.Meta) {
 	}
 	agents.DropHeld(m.Name, agents.DropTrashed)
 	dropPendingPeers(m.Name, "purged from the trash")
+	// The run rows stay while the session can still be restored from the trash.
+	cloudruns.Drop(m.Name)
 }
 
 // HandleListSessions returns the live claude_* tmux sessions.

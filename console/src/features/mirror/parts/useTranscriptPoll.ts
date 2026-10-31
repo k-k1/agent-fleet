@@ -15,6 +15,14 @@ import { emptyDiscardNotices } from "../stopQueue.ts";
 import type { Turn } from "../transcript/types.ts";
 import { isPendingApproval } from "../transcript/types.ts";
 import { parsePendingPeers } from "./PendingPeersNotice.tsx";
+import { parseCloudRuns, type CloudRun } from "../../cloudruns/cloudRunsModel.ts";
+
+// sameRuns keeps the previous array when the rows did not change: it feeds the block memo in
+// MirrorView, and a fresh array every poll would rebuild every block.
+function sameRuns(prev: CloudRun[], next: CloudRun[]): CloudRun[] {
+  const key = (rs: CloudRun[]) => rs.map((r) => r.id + ":" + (r.endedAt ?? "") + ":" + (r.account ?? "")).join("|");
+  return key(prev) === key(next) ? prev : next;
+}
 import { echoStore } from "./sendEcho.ts";
 import { parseRetry } from "./retryNote.ts";
 import type { MirrorState } from "./useMirrorState.ts";
@@ -50,7 +58,7 @@ export function useTranscriptPoll({
   const {
     setTurns, setStateSession, setPendingSends, pendingSendsRef, applyEchoes, setLoaded, setTermState,
     setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setFinalizing, finalizingRef, wasWorkingRef,
-    setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers,
+    setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers, setCloudRuns,
     queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm,
     setPendingApproval, setCarried, setRestoredAt, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
     setSuggestedTitle, setTitleActing, setManagedSettingsOpen, setManagedSettings, setPasting, setLightbox,
@@ -96,6 +104,7 @@ export function useTranscriptPoll({
     setDiscards([]);
     setDiscardNotices(emptyDiscardNotices);
     setPendingPeers([]);
+    setCloudRuns([]);
     queueOpsRef.current = new Set();
     setAlive(!!sessionMeta?.alive);
     setPending(null);
@@ -272,6 +281,7 @@ export function useTranscriptPoll({
             // to a closed tab or a dropped connection comes back here (decision 4).
             setDiscards(parseDiscards(d.discardedInputs));
             setPendingPeers(parsePendingPeers(d.pendingPeers));
+            setCloudRuns((prev) => sameRuns(prev, parseCloudRuns(d.cloudRuns)));
             setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
             setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
             setLiveText(liveOnRef.current && typeof d.liveText === "string" ? d.liveText : "");

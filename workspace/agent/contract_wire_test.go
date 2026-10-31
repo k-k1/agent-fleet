@@ -33,6 +33,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -115,6 +116,19 @@ func agentContractFamilies() []contractFamily {
 				"openUrl": "[gap] the URL that opens the attachment. Not declared in the Console's BrowserAttachmentStatus.",
 				"viewer":  "[gap] likewise.",
 			},
+		},
+
+		// One af-aws-exec run (ADR 0126): the mirror's `cloudRuns` and the rows of GET /aws-runs.
+		{
+			name:    "cloudruns.Row",
+			goType:  reflect.TypeOf(cloudruns.Row{}),
+			binding: cloudRunRowBinding,
+			tsPath:  "../../console/src/features/cloudruns/cloudRunsModel.ts",
+			tsName:  "CloudRun",
+			tsKeys: keySet("id", "provider", "session", "startedAt", "endedAt", "profile", "account", "role", "region", "source",
+				"program", "service", "operation", "refused"),
+			tsOnly: map[string]string{},
+			goOnly: map[string]string{},
 		},
 
 		// One row of the AF memory change list (ADR 0108).
@@ -307,6 +321,12 @@ var memoryImportPreviewBinding = map[string]string{
 	"SecretScanFailed": "secretScanFailed",
 }
 
+var cloudRunRowBinding = map[string]string{
+	"ID": "id", "Provider": "provider", "Session": "session", "StartedAt": "startedAt", "EndedAt": "endedAt",
+	"Profile": "profile", "Account": "account", "Role": "role", "Region": "region", "Source": "source",
+	"Program": "program", "Service": "service", "Operation": "operation", "Refused": "refused",
+}
+
 var browserPageBinding = map[string]string{
 	"ID": "id", "Port": "port", "URL": "url", "Title": "title", "State": "state", "Reason": "reason",
 }
@@ -342,7 +362,7 @@ func TestContractFamilies(t *testing.T) {
 	fams := agentContractFamilies()
 	// Guard the population being scanned (the #320 shape): a family that silently
 	// disappears is caught here.
-	if len(fams) != 14 {
+	if len(fams) != 15 {
 		t.Fatalf("only %d families - one has dropped out of the table (if you added one, fix the count too)", len(fams))
 	}
 	for _, f := range fams {

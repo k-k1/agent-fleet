@@ -293,6 +293,20 @@ func roleARNParts(arn string) (account, name string, ok bool) {
 	return parts[4], res[strings.LastIndexByte(res, '/')+1:], true
 }
 
+// assumedRoleName is the role of an STS assumed-role ARN
+// (arn:<partition>:sts::<account>:assumed-role/<role>/<session>), "" for any other ARN.
+func assumedRoleName(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) != 6 || parts[2] != "sts" {
+		return ""
+	}
+	res := strings.Split(parts[5], "/")
+	if len(res) != 3 || res[0] != "assumed-role" {
+		return ""
+	}
+	return res[1]
+}
+
 // callerAccount is the account of an STS caller ARN (arn:<partition>:sts::<account>:…).
 func callerAccount(arn string) string {
 	parts := strings.SplitN(arn, ":", 6)
@@ -428,7 +442,11 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 		return "", nil, nil, fmt.Errorf("could not get credentials for profile %q: %v", o.Profile, err)
 	}
 
-	return planChild(awsBin, env, keys, creds, os.DevNull, o, func(arn string) error {
+	reportRole := ""
+	if isRole {
+		reportRole = roleName
+	}
+	return planChild(awsBin, env, keys, creds, os.DevNull, o, reportRole, func(arn string) error {
 		if acct := callerAccount(arn); acct != o.Account {
 			return fmt.Errorf("profile %q resolved to %s, which is account %s, not the %s given with --account; af-aws-exec refuses it",
 				o.Profile, arn, orNone(acct), o.Account)

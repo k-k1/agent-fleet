@@ -19,6 +19,7 @@ import type { SessionFile } from "../sessionFiles.ts";
 import type { PendingApproval, Question, TaskItem, Turn } from "../transcript/types.ts";
 import { echoStore, type SendEcho } from "./sendEcho.ts";
 import type { RetryNote } from "./retryNote.ts";
+import type { CloudRun } from "../../cloudruns/cloudRunsModel.ts";
 
 /**
  * useMirrorState declares MirrorView's per-session view state: what the transcript poll fills
@@ -109,6 +110,8 @@ export function useMirrorState({
   const [discardNotices, setDiscardNotices] = useState<DiscardNoticeState>(emptyDiscardNotices);
   // Peer messages the Agent holds until the member answers the pending prompt (#1031).
   const [pendingPeers, setPendingPeers] = useState<PendingPeer[]>([]);
+  // af-aws-exec runs that reported this session (ADR 0126), drawn between the turns.
+  const [cloudRuns, setCloudRuns] = useState<CloudRun[]>([]);
   // Queue entries with a remove request in flight, so a double click sends one request.
   const queueOpsRef = useRef<Set<string>>(new Set());
   const queueShown = useMemo(() => queueEntries(queuedItems, queuedPrompts), [queuedItems, queuedPrompts]);
@@ -242,7 +245,7 @@ export function useMirrorState({
     compactProg, setCompactProg, retry, setRetry, status, setStatus, bgBusy, setBgBusy, bgBusyReason, setBgBusyReason,
     finalizing, setFinalizing, finalizingRef, wasWorkingRef, busy, tasks, setTasks, files, setFiles,
     queuedPrompts, setQueuedPrompts, queuedItems, setQueuedItems, discards, setDiscards, discardNotices,
-    setDiscardNotices, pendingPeers, setPendingPeers, queueOpsRef, queueShown, queuedCount, discardView,
+    setDiscardNotices, pendingPeers, setPendingPeers, cloudRuns, setCloudRuns, queueOpsRef, queueShown, queuedCount, discardView,
     alive, setAlive, dirGone, pending, setPending, pendingText, setPendingText, liveMode, liveOn, liveOnRef,
     liveText, setLiveText, pendingPlan, setPendingPlan, pendingPerm, setPendingPerm, pendingApproval,
     setPendingApproval, carried, setCarried, restoredAt, setRestoredAt, rejectedPlansRef, rejectedGen, setRejectedGen, markRejected,

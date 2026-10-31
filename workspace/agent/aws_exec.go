@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -49,6 +50,11 @@ credential_source, web identity and mfa_serial are refused.
   -q                 do not print the principal the command runs as
   -h, --help         print this help
   --version          print the version (the workspace-agent build it belongs to)
+
+Each run leaves one line in the calling session's conversation (Settings > AWS
+profiles/SSM lists them all under "Recent runs"): the profile, account, role, region,
+the program and, for aws, the service and operation, or why the run was refused. Never
+the arguments.
 
 Exit status: the command's own on success; 2 usage error; 3 SSO login required but not
 started (--no-login, no Console
@@ -148,11 +154,23 @@ func runAWSExec(args []string) {
 		os.Exit(0)
 	}
 
+	// Every run that names a command leaves a row in its session's mirror (ADR 0126), refused
+	// runs included; --list and --help leave none.
+	run := cloudruns.Begin("aws", os.Getenv("AF_SESSION_NAME"), o.Profile, o.Argv)
 	if o.Profile == "" || len(o.Argv) == 0 {
+		run.Refuse(cloudruns.RefusedUsage)
 		awsExec.FailUsage()
+	}
+	source := ""
+	if sp, ok := o.Settings[o.Profile]; ok && sp.Chained() {
+		source = sp.SourceProfile
+	}
+	o.Resolved = func(account, role, region string) {
+		run.Resolved(cloudruns.Identity{Account: account, Role: role, Region: region, Source: source})
 	}
 	awsBin, err := ensureAWSCLI()
 	if err != nil {
+		run.Refuse(cloudruns.RefusedOther)
 		awsExec.Fail(cloudexec.ExitRefused, err.Error())
 	}
 	o.Interactive = cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
@@ -165,8 +183,18 @@ func runAWSExec(args []string) {
 	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
 	if err != nil {
+		if errors.Is(err, awsx.ErrLoginRequired) {
+			run.Refuse(cloudruns.RefusedLogin)
+		} else {
+			run.Refuse(cloudruns.RefusedOther)
+		}
 		awsExec.FailPlan(err, awsx.ErrLoginRequired)
 	}
+	// The wrapper becomes the command, so signals, process groups and a parent's SIGKILL reach
+	// it exactly as before. Supervising it as a child would let the row record the exit
+	// status, but a signal sent to the process group then reaches the command twice, once
+	// directly and once forwarded, and a child that ignores SIGTERM outlives a killed wrapper
+	// with the credentials (ADR 0126 note of 2026-10-31).
 	awsExec.Exec(prog, argv, env)
 }
 

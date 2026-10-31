@@ -88,6 +88,9 @@ var sessionRelays = []agentRelay{
 	// af-aws-exec's Console login (ADR 0102) and af-gcloud-exec's (ADR 0107 decision 3): the
 	// presses, the cancels and the log-outs are audited (auditAWSLogin, gcpLoginAudit), the
 	// polls and lists are reads. The presses are wrapped, at the end of this table.
+	// Settings' "Recent runs" (ADR 0126 decision 2): af-aws-exec's run rows, a read. The
+	// session mirror's rows come with /messages and need no route of their own.
+	{route: "GET /api/aws-runs"},
 	{route: "GET /api/aws-login"},
 	{route: "POST /api/aws-login/{id}/cancel", audit: auditAWSLogin},
 	// The Settings row's "Log in" (#1028): an attempt without a request, and each row's state.

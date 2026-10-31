@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -308,6 +309,10 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if pp := pendingPeersWire(name); len(pp) > 0 {
 		resp["pendingPeers"] = pp
 	}
+	// af-aws-exec runs that reported this session (ADR 0126): rows between the turns.
+	if runs := cloudruns.ForSession(name); len(runs) > 0 {
+		resp["cloudRuns"] = runs
+	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -535,6 +540,9 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// Peer messages queued behind the user's answer (#1031), as on claude's path.
 	if pp := pendingPeersWire(meta.Name); len(pp) > 0 {
 		resp["pendingPeers"] = pp
+	}
+	if runs := cloudruns.ForSession(meta.Name); len(runs) > 0 {
+		resp["cloudRuns"] = runs
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
