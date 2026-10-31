@@ -145,6 +145,60 @@ The dialog lists every profile that was **left out**, with the reason:
 - a role whose source profile is itself left out, missing, or not an SSO profile.
 
 Each SSO profile is written with its own `sso-session` (`af-<name>`), so each needs its own login on your machine too.
+The members of a shared sign-in (below) share one `[sso-session af-<sign-in>]`, so one login there serves them all.
+
+### Shared sign-ins: one login for several profiles
+
+Several profiles often reach different accounts or roles through **one** IAM Identity Center portal, the way your
+laptop shares one `[sso-session]` between them. Put them in one **shared sign-in** and the workspace logs in to that
+portal **once** for all of them, instead of once per profile.
+
+**Creating and joining.** In a profile's form, **Sign-in** chooses:
+
+| Choice | What it does |
+|---|---|
+| Its own sign-in (the default) | Today's behaviour: the profile has a login of its own, with its own start URL and SSO region. |
+| One of your sign-ins | The profile joins it. The start URL and SSO region are the sign-in's and are not entered again. |
+| New shared sign-in… | Creates a sign-in with the name you type and the start URL and SSO region you enter, and puts the profile in it. |
+
+A sign-in name is 1–61 letters, digits and `.` `@` `-`; the workspace calls its login `af-<name>`. Saving can be
+refused with a reason in words:
+
+- **another start URL or SSO region**: the sign-in you chose uses another portal. A profile in a sign-in always uses
+  the sign-in's portal; change the portal on the sign-in's header if it really moved;
+- **the name is taken**: another profile of yours with a login of its own has that name. Choose another sign-in
+  name, or rename that profile;
+- **a sign-in of that name already exists**: pick it from the list to join it.
+
+**The list.** The profiles of a sign-in are listed under one header that names the sign-in and its portal and
+carries the login state, **Log in** and **Log out** once. A member row keeps its account, role and region and has no
+login button of its own. Profiles with a sign-in of their own keep their own rows.
+
+**Logging out** of a sign-in (on its header, or on a member in the WS bar's AWS badge) signs **every** member out,
+and every assume-role profile that follows one of them; the confirmation lists them first.
+
+**Renaming a sign-in or changing its portal.** **Edit** on the header changes both. Either one signs every member
+out: a rename moves the login to a new name, and a token from the old portal is never used for the new one. The
+confirmation says so and names the members; afterwards they show **Log in again**.
+
+**Keeping a login when you group.** When the sign-in takes the name of a profile that is signed in now, that
+profile's login becomes the sign-in's and nobody has to log in again. With any other name the sign-in starts
+signed out and needs one login. Leaving a sign-in (choose **Its own sign-in**) gives the profile a login of its own
+again, so it needs a login too.
+
+Limits:
+
+- Nothing is grouped for you. Two profiles with the same portal and no sign-in, or in two sign-ins, still log in
+  separately.
+- An SSM host's **Log in again** on a member drops the shared login, so every member is signed out.
+- If your own `~/.aws/config` defines `[sso-session af-<sign-in>]`, every member of that sign-in is held back
+  (`af-aws-exec --list` says why), as with a profile name of your own.
+- A cached login is tied to the sign-in (or profile) and portal it was made for. One made for another owner or
+  portal is never used: the workspace moves it aside, deletes the role credentials taken through it, and asks
+  for a new login.
+- Logging out of a sign-in also removes a member's own login from before it joined, but only when it is certain
+  that login was that member's and nothing else uses its name.
+- The import from `~/.aws/config` does not put profiles in a sign-in yet: join them afterwards in each profile's form.
 
 ### Profile type: assume a role from another profile
 

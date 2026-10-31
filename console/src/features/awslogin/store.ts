@@ -100,6 +100,9 @@ interface AwsLoginState {
   close(): void;
   /** Every Settings profile the Agent last listed; null until it has answered once. */
   profiles: AwsProfileState[] | null;
+  /** The shared sign-ins the Agent last listed (ADR 0125), one login state each; [] from an
+   *  Agent that predates sign-ins. */
+  signIns: AwsSignInState[];
   /** Profiles the Agent lists as expiring. */
   expiring: AwsProfileExpiry[];
   /** Expiry warnings (expiryKey) the member closed in this tab. */
@@ -161,7 +164,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     set({ requests: d.requests.map((r) => ({ ...r, deadline: deadlineFrom(r.expiresInSec, now) })) });
   },
   reset() {
-    set({ requests: [], hidden: {}, modal: null, profiles: null, expiring: [], hiddenExpiry: {}, profileModal: null });
+    set({ requests: [], hidden: {}, modal: null, profiles: null, signIns: [], expiring: [], hiddenExpiry: {}, profileModal: null });
   },
   hide(id) {
     set((s) => ({ hidden: { ...s.hidden, [id]: true } }));
@@ -173,12 +176,13 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     set({ modal: null });
   },
   profiles: null,
+  signIns: [],
   expiring: [],
   hiddenExpiry: {},
   profileModal: null,
   async refreshExpiry() {
     const tenant = getTenant();
-    let d: { profiles?: unknown[]; error?: unknown } | null = null;
+    let d: { profiles?: unknown[]; signIns?: unknown; error?: unknown } | null = null;
     try {
       d = await api("api/aws-login/profiles");
     } catch {
@@ -201,12 +205,25 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
         expiresAt: typeof p.expiresAt === "string" ? p.expiresAt : "",
         expiring: p.expiring === true,
         deadline: deadlineFrom(p.expiresInSec, now),
+        ...(typeof p.signIn === "string" && p.signIn ? { signIn: p.signIn } : {}),
+      });
+    }
+    const signIns: AwsSignInState[] = [];
+    for (const raw of Array.isArray(d.signIns) ? d.signIns : []) {
+      const si = raw as Record<string, unknown>;
+      if (typeof si?.name !== "string" || !si.name) continue;
+      signIns.push({
+        name: si.name,
+        state: String(si.state ?? ""),
+        expiresAt: typeof si.expiresAt === "string" ? si.expiresAt : "",
+        expiring: si.expiring === true,
+        profiles: Array.isArray(si.profiles) ? si.profiles.filter((x): x is string => typeof x === "string") : [],
       });
     }
     const expiring: AwsProfileExpiry[] = profiles
       .filter((p) => p.expiring && p.expiresAt)
       .map(({ name, label, accountId, roleName, expiresAt, deadline }) => ({ name, label, accountId, roleName, expiresAt, deadline }));
-    set({ profiles, expiring });
+    set({ profiles, signIns, expiring });
     return expiring;
   },
   hideExpiry(key) {

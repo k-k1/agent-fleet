@@ -62,13 +62,18 @@ export interface AwsConfigExport {
  *  the real one gets copied over it. */
 export const EXPORT_FILENAME = "agent-fleet-aws-profiles.aws-config-fragment.txt";
 
-/** The sso-session a profile signs in through. One place decides it, so sign-ins that several
- *  profiles share (ADR 0125) change this function and nothing else: sessions are emitted once
- *  per name, in the order their first profile appears. Today it is the Agent's per-profile
- *  `af-<profile>`, which keeps the exported file's login cache key equal to the workspace's. */
-function sessionOf(name: string, startUrl: string, ssoRegion: string): { name: string; startUrl: string; ssoRegion: string } {
-  return { name: "af-" + name, startUrl, ssoRegion };
+/** The sso-session a profile signs in through, named as the Agent names it, so the exported
+ *  file's login cache key equals the workspace's: `af-<sign-in>` for a profile in a shared
+ *  sign-in (ADR 0125), whose members carry the sign-in's portal, and `af-<profile>` otherwise.
+ *  Sessions are emitted once per name, in the order their first profile appears. A sign-in name
+ *  outside the Control Plane's rule is not trusted to name a section: the profile then keeps a
+ *  session of its own. */
+function sessionOf(name: string, signIn: string, startUrl: string, ssoRegion: string): { name: string; startUrl: string; ssoRegion: string } {
+  return { name: "af-" + (SIGN_IN_NAME_RE.test(signIn) ? signIn : name), startUrl, ssoRegion };
 }
+
+// The Control Plane's sign-in name rule (store.SignInNameRe).
+const SIGN_IN_NAME_RE = /^[A-Za-z0-9._@-]{1,61}$/;
 
 interface Prepared {
   row: any;
@@ -147,7 +152,7 @@ export function renderAwsConfig(rows: any[]): AwsConfigExport {
     "# Exported from Agent Fleet (Settings > AWS profiles/SSM).",
     "# This is a fragment to merge into ~/.aws/config by hand, not a replacement for it:",
     "# it holds only the profiles Agent Fleet can express, and none of your keys, MFA or",
-    "# command-credential profiles. Each profile signs in through its own sso-session.",
+    "# command-credential profiles. Each profile signs in through its own sso-session, or its shared sign-in's.",
   ];
   const sessions = new Set<string>();
   const included: ExportedRow[] = [];
@@ -155,7 +160,7 @@ export function renderAwsConfig(rows: any[]): AwsConfigExport {
   for (const p of list) {
     if (excluded.has(p) || isRole(p)) continue;
     const r = p.row;
-    const s = sessionOf(p.name, str(r.startUrl), str(r.ssoRegion));
+    const s = sessionOf(p.name, str(r.signIn), str(r.startUrl), str(r.ssoRegion));
     if (!sessions.has(s.name)) {
       sessions.add(s.name);
       put("");

@@ -39,6 +39,17 @@ describe("renderAwsConfig", () => {
     expect(r.included.map((x) => x.name)).toEqual(["prod", "deploy"]);
     expect(r.excluded).toEqual([]);
   });
+  it("writes the members of a shared sign-in under its one sso-session, as the Agent names it", () => {
+    const r = renderAwsConfig([sso("a", "prod", { signIn: "corp" }), sso("b", "stg", { signIn: "corp", accountId: "333333333333" }), sso("c", "solo")]);
+    expect(r.text.match(/^\[sso-session af-corp\]$/gm)).toHaveLength(1);
+    expect(r.text).toContain("[profile prod]\nsso_session = af-corp\n");
+    expect(r.text).toContain("[profile stg]\nsso_session = af-corp\n");
+    expect(r.text).toContain("[sso-session af-solo]");
+    // A name outside the Control Plane's rule never names a section.
+    const bad = renderAwsConfig([sso("a", "prod", { signIn: "x]\n[profile evil" })]);
+    expect(bad.text).toContain("[profile prod]\nsso_session = af-prod\n");
+    expect(bad.text).not.toContain("evil");
+  });
   it("a role's region is its own, else its source's region, else the source's SSO region (the Agent's chainRegion)", () => {
     const at = (srcRegion: string, roleRegion: string) => {
       const t = renderAwsConfig([sso("a", "prod", { region: srcRegion }), role("b", "deploy", "a", { region: roleRegion })]).text;

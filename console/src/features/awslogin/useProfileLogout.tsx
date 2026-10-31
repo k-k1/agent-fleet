@@ -1,7 +1,8 @@
 // useProfileLogout — "Log out" of one Settings AWS profile, shared by the WS bar chip and the
 // Settings > AWS profiles/SSM row. The Agent revokes and deletes only that profile's login
 // (`aws sso logout` would sign out every profile). Asked first, because only a new device-code
-// login undoes it.
+// login undoes it. A profile in a shared sign-in (ADR 0125) shares one login with the other
+// members, so the confirmation names the sign-in and every member it signs out.
 //
 // A role-chaining profile has no login of its own: it follows its source's, and the Agent refuses
 // a logout aimed at it (409 chained_profile). Its Log out therefore ends the SOURCE's login, which
@@ -39,18 +40,30 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) 
       const target = me.source ? list.find((x) => x.name === me.source && !x.source) : me;
       if (!target) return false;
       const labelOf = (x: { name: string; label: string }) => x.label || x.name;
-      const followers = list.filter((x) => x.source === target.name && x.name !== me.name).map(labelOf);
+      // A shared sign-in (ADR 0125) has one login: every member is signed out, and every chain
+      // that follows any of them.
+      const signIn = target.signIn || "";
+      const inLogin = (name: string) => name === target.name || (!!signIn && list.some((y) => y.name === name && y.signIn === signIn));
+      const members = signIn ? list.filter((x) => x.signIn === signIn && x.name !== me.name && !x.source).map(labelOf) : [];
+      const followers = list.filter((x) => !!x.source && inLogin(x.source) && x.name !== me.name).map(labelOf);
       const viaChain = target !== me;
       const profile = labelOf(me);
       const ok = await askConfirm({
-        title: tr("awslogin.logout_confirm_title", { profile }),
+        title: signIn && !viaChain ? tr("awslogin.logout_confirm_title_signin", { signIn }) : tr("awslogin.logout_confirm_title", { profile }),
         body: (
           <>
             {viaChain && <p>{tr("awslogin.logout_confirm_chain", { profile, source: labelOf(target) })}</p>}
             <p>{tr("awslogin.logout_confirm_body")}</p>
+            {signIn && (
+              <p className="aws-logout-signin">
+                {members.length > 0
+                  ? tr("awslogin.logout_confirm_signin", { signIn, profiles: members.join(", ") })
+                  : tr("awslogin.logout_confirm_signin_alone", { signIn })}
+              </p>
+            )}
             {followers.length > 0 && (
               <p className="aws-logout-followers">
-                {tr("awslogin.logout_confirm_followers", { source: labelOf(target), profiles: followers.join(", ") })}
+                {tr("awslogin.logout_confirm_followers", { source: signIn || labelOf(target), profiles: followers.join(", ") })}
               </p>
             )}
           </>
@@ -67,8 +80,8 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">) 
         toast(key ? tr(key) : tr("awslogin.logout_failed", { msg: r.message || r.code }));
         return false;
       }
-      // Named after the profile whose login ended: the source, for a chain.
-      const ended = labelOf(target);
+      // Named after the login that ended: the sign-in, or the source for a chain.
+      const ended = signIn || labelOf(target);
       if (r.revoked || r.alreadyEnded || r.noToken) toast(tr("awslogin.logout_done", { profile: ended }), { kind: "success" });
       // Signed out here; only the session at AWS was not ended.
       else toast(tr("awslogin.logout_not_revoked", { profile: ended, msg: r.message }), { kind: "warn", persist: true });
