@@ -116,7 +116,7 @@ func TestMeasureNamesReposOutsideHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := measure(t, Config{Home: home, Repos: filepath.Join(home, "repos"), AfWork: filepath.Join(home, ".af-work")})
-	if len(u.Elsewhere) != 1 || u.Elsewhere[0] != "repos" || len(u.Repos) != 0 {
+	if len(u.Elsewhere) != 1 || u.Elsewhere[0] != "~/repos" || len(u.Repos) != 0 {
 		t.Fatalf("elsewhere = %v repos = %+v", u.Elsewhere, u.Repos)
 	}
 }
@@ -137,5 +137,37 @@ func TestRunnerSurvivesAPanic(t *testing.T) {
 	}
 	if s := r.Snapshot(); s.Error == "" {
 		t.Fatalf("no error: %+v", s)
+	}
+}
+
+// A classified root that is itself a link: into home it is filed by its target, out of home
+// it is named, never left as a lone link under other.
+func TestMeasureResolvesLinkedRoots(t *testing.T) {
+	home, out := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(home, "disk", "cache", "blob"), 50000)
+	write(t, filepath.Join(out, "m2", "x.jar"), 50000)
+	for target, link := range map[string]string{
+		filepath.Join(home, "disk", "cache"): filepath.Join(home, ".cache"),
+		filepath.Join(out, "m2"):             filepath.Join(home, ".m2"),
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u := measure(t, Config{Home: home, Roots: map[string]Root{
+		filepath.Join(home, ".cache"): {Cat: CatToolCache, Part: ".cache"},
+		filepath.Join(home, ".m2"):    {Cat: CatToolCache, Part: ".m2"},
+	}})
+	var tc int64
+	for _, c := range u.Categories {
+		if c.Key == CatToolCache {
+			tc = c.Bytes
+		}
+	}
+	if tc < 50000 {
+		t.Fatalf("tool_cache = %d: the linked ~/.cache was not filed by its target", tc)
+	}
+	if len(u.Elsewhere) != 1 || u.Elsewhere[0] != "~/.m2" {
+		t.Fatalf("elsewhere = %v", u.Elsewhere)
 	}
 }

@@ -45,7 +45,7 @@ export interface HomeUsage {
   truncated?: boolean;
   approximate?: boolean;
   unreadable?: number;
-  /** "repos" / "af_work" when that folder is outside home or on another disk, so not counted. */
+  /** Folders ("~/repos", "~/.cache", …) outside home or on another disk, so not counted. */
   elsewhere?: string[];
   measured_at: string;
   elapsed_ms: number;
@@ -92,7 +92,8 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
       // A 404, or an answer without the shape, means an Agent older than the endpoint. Any
       // other error (a 502 while the Agent restarts, a refused POST) is a failure to say, and
       // the button stays to retry.
-      if (res?.error?.status === 404 || (res && !res.error && typeof res.running !== "boolean")) {
+      const notFound = res?.error?.status === 404 || res?.error?.code === "http_404"; // a plain-text 404 has no status
+      if (notFound || (res && !res.error && typeof res.running !== "boolean")) {
         setUnsupported(true);
         return;
       }
@@ -258,7 +259,7 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
           {u.approximate && <p className="muted ds-note">{tr("machine.home_approximate")}</p>}
           {u.elsewhere?.map((k) => (
             <p key={k} className="muted ds-note">
-              {tr("machine.home_elsewhere", { name: k === "repos" ? "~/repos" : label(k) })}
+              {tr("machine.home_elsewhere", { name: k })}
             </p>
           ))}
           {!!u.unreadable && <p className="muted ds-note">{tr("machine.home_unreadable", { count: u.unreadable })}</p>}

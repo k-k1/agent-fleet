@@ -188,8 +188,12 @@ describe("HomeBreakdownSection", () => {
 
   it("hides itself on an Agent without the endpoint", async () => {
     answers.byPath["api/cleanup/home"] = { error: { code: "http_404", status: 404 } };
-    const text = await mount();
-    expect(text).toBe("");
+    expect(await mount()).toBe("");
+  });
+
+  it("hides itself on a plain-text 404 too, which carries no status", async () => {
+    answers.byPath["api/cleanup/home"] = { error: { code: "http_404", message: "404 page not found" } };
+    expect(await mount()).toBe("");
   });
 
   it("stays, says so and can retry when the Agent answers with any other error", async () => {
@@ -209,7 +213,7 @@ describe("HomeBreakdownSection", () => {
   it("names a folder it could not count, and the parts it did not list", async () => {
     const many = {
       ...result,
-      elsewhere: ["repos"],
+      elsewhere: ["~/repos"],
       categories: [
         {
           key: "tool_cache",

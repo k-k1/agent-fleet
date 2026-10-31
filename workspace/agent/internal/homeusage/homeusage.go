@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -158,8 +159,8 @@ type Usage struct {
 	Approximate bool `json:"approximate,omitempty"`
 	// Unreadable counts directories the walk could not list; what they hold is in no figure.
 	Unreadable int `json:"unreadable,omitempty"`
-	// Elsewhere names the special folders ("repos", "af_work") the walk could not count
-	// because they live outside home or on another filesystem (a symlink, a mount).
+	// Elsewhere names the folders ("~/repos", "~/.cache", …) the walk could not count because
+	// they resolve outside home or onto another filesystem (a symlink, a mount).
 	Elsewhere  []string `json:"elsewhere,omitempty"`
 	MeasuredAt string   `json:"measured_at"`
 	ElapsedMs  int64    `json:"elapsed_ms"`
@@ -216,7 +217,7 @@ func newWalker(cfg Config, tracked map[string]map[string]bool, scanned *atomic.I
 		place = func(abs string) Place { return Place{Path: abs} }
 	}
 	w := &walker{
-		place: place, roots: cfg.Roots, repos: cfg.Repos, afWork: cfg.AfWork,
+		place:   place,
 		tracked: tracked, budget: maxEntries, scanned: scanned,
 		seen: map[[2]uint64]struct{}{}, cats: map[string]*Category{},
 		parts: map[string]map[string]*Part{}, repo: map[string]*groupTally{}, afw: map[string]*groupTally{},
@@ -224,8 +225,15 @@ func newWalker(cfg Config, tracked map[string]map[string]bool, scanned *atomic.I
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
 		w.dev = uint64(st.Dev)
 	}
-	w.repos = w.resolve(cfg.Home, cfg.Repos, "repos")
-	w.afWork = w.resolve(cfg.Home, cfg.AfWork, "af_work")
+	w.repos = w.resolve(cfg.Home, cfg.Repos)
+	w.afWork = w.resolve(cfg.Home, cfg.AfWork)
+	// A root is matched by the path the walk meets, so a root that is itself a link (a
+	// ~/.cache moved to another disk) is keyed by its target, or named in Elsewhere.
+	w.roots = make(map[string]Root, len(cfg.Roots))
+	for dir, r := range cfg.Roots {
+		w.roots[w.resolve(cfg.Home, dir)] = r
+	}
+	sort.Strings(w.elsewhere)
 	return w, nil
 }
 
@@ -287,8 +295,8 @@ func (w *walker) group(m map[string]*groupTally, k string) *groupTally {
 
 // resolve returns the path the walk will meet dir at. A dir that is a link into home is met
 // at its target; one that resolves outside home or onto another filesystem is never met, so
-// it is named in Elsewhere instead of silently counting nothing.
-func (w *walker) resolve(home, dir, name string) string {
+// it is named in Elsewhere ("~/…") instead of silently counting nothing.
+func (w *walker) resolve(home, dir string) string {
 	if dir == "" {
 		return ""
 	}
@@ -307,7 +315,13 @@ func (w *walker) resolve(home, dir, name string) string {
 		}
 	}
 	if !inside {
-		w.elsewhere = append(w.elsewhere, name)
+		name := dir
+		if rel, err := filepath.Rel(home, dir); err == nil && !strings.HasPrefix(rel, "..") {
+			name = "~/" + filepath.ToSlash(rel)
+		}
+		if !slices.Contains(w.elsewhere, name) {
+			w.elsewhere = append(w.elsewhere, name)
+		}
 		return dir
 	}
 	// The walk starts at home as given; map the target back under it.
