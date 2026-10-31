@@ -437,6 +437,16 @@ type UsageReader interface {
 	UsageTurns(m session.Meta) []transcript.Turn
 }
 
+// UsageStamper is an optional Agent capability: a cheap fingerprint of every file the kind's
+// usage fold parses for the session's own transcript (UsageTurns, or Transcript when it has no
+// UsageReader). It must be Stat calls on paths the kind already memoizes, never a directory
+// sweep or a read. ok=false means "cannot say" (no source found, or the kind has no cheap way to
+// name it); the fold then parses as it always did. A kind that cannot promise the stamp covers
+// everything its parse reads must not implement it: a stale "unchanged" is a turn never folded.
+type UsageStamper interface {
+	UsageStamp(m session.Meta) (stamp string, ok bool)
+}
+
 // TextReader is an optional Agent capability: the turns as a reader of their text (the search
 // index) wants them, when UsageReader's differ — claude, whose usage turns carry no text.
 type TextReader interface {

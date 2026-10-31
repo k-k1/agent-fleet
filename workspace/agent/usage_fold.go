@@ -71,6 +71,11 @@ type usageFoldMark struct {
 	// their Groups counts from the first VISIBLE turn, a number that shifts once the head
 	// becomes visible (see rebaseCappedMark).
 	Uncapped bool `json:"uncapped,omitempty"`
+	// Stamp is sessionx.UsageStamp of the transcript source as it stood BEFORE the last fold
+	// that fully succeeded (taken before the parse, so growth during it shows as a change next
+	// time). While it is unchanged the transcript is not parsed again. Empty: never recorded
+	// (older state.json, or a kind with no cheap stamp), so the next pass parses once.
+	Stamp string `json:"stamp,omitempty"`
 }
 
 type usageFoldState struct {
@@ -378,13 +383,39 @@ func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing 
 	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
 		return 0, false, nil // shell/ssm have no transcript
 	}
-	n, err := foldSessionUsageWithTurns(m, st, sessionx.UsageTurns(m), includeTrailing)
-	if err != nil {
-		return n, false, err
+	// Stat before the parse: a write that lands during it changes the stamp, so it is parsed
+	// again next pass instead of being recorded as seen.
+	stamp, stamped := foldUsageStamp(m)
+	skip := stamped && !includeTrailing && st.Sessions[m.Name].Stamp == stamp
+	n, parsed := 0, false
+	if !skip {
+		turns := foldUsageTurns(m)
+		parsed = len(turns) > 0 // an empty read may be a failed one: never record it as seen
+		var err error
+		if n, err = foldSessionUsageWithTurns(m, st, turns, includeTrailing); err != nil {
+			return n, false, err
+		}
 	}
+	// The subagent sources carry their own stamps (usageAgentMark.Stamp), so this stays cheap
+	// for a session whose files have not changed.
 	sub, subDirty, err := foldSubagentUsage(m, st, sessionx.SubagentUsageSources(m))
-	return n + sub, n > 0 || subDirty, err
+	dirty := n > 0 || subDirty
+	if err == nil && parsed && stamped {
+		mark := st.Sessions[m.Name]
+		if mark.Stamp != stamp {
+			mark.Stamp = stamp
+			st.Sessions[m.Name] = mark
+			dirty = true
+		}
+	}
+	return n + sub, dirty, err
 }
+
+// Seams for the tests: they count transcript parses and stamp reads.
+var (
+	foldUsageTurns = sessionx.UsageTurns
+	foldUsageStamp = sessionx.UsageStamp
+)
 
 // subagentMarkKey names one subagent transcript's watermark. The session name is in it, so a
 // recreated name cannot meet its predecessor's; the id is the agent's own (its path below the

@@ -7,6 +7,8 @@ package sessionx
 // status is a cheap polling primitive, while this reads and folds whole transcripts.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"math"
 	"net/http"
 	"time"
@@ -311,4 +313,21 @@ func AggregateUsage(turns []transcript.Turn) sessionUsage {
 	}
 	fold()
 	return u
+}
+
+// UsageStamp fingerprints the transcript source UsageTurns would parse, as a short digest, so
+// the fold can tell an unchanged transcript without opening it. ok=false: the kind has no cheap
+// stamp (it does not implement agents.UsageStamper) or its source cannot be named right now, and
+// the caller must parse.
+func UsageStamp(m session.Meta) (string, bool) {
+	us, ok := AgentOf(m.Kind).(agents.UsageStamper)
+	if !ok {
+		return "", false
+	}
+	raw, ok := us.UsageStamp(m)
+	if !ok {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:8]), true
 }
