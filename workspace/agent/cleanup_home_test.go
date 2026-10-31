@@ -181,6 +181,9 @@ func TestMeasureHomeClassifiesEveryByteOnce(t *testing.T) {
 		below(paths.AgentDataDir(), sessionx.CleanupArchiveDir())+allocated(t, sessionx.CacheRoot()); got != want {
 		t.Fatalf("agent = %d, want %d", got, want)
 	}
+	for _, p := range homeCat(u, homeusage.CatSource).Parts {
+		t.Fatalf("source has a part %+v: the copies are listed in Repos", p)
+	}
 	for _, r := range u.Repos {
 		if r.Name == "stray.txt" {
 			t.Fatal("a file under ~/repos became a working copy")

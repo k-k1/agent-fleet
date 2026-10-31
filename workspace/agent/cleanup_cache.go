@@ -314,7 +314,9 @@ func homeRoots(home string) map[string]homeusage.Root {
 		paths.AgentDataDir():           {Cat: homeusage.CatAgent, Part: ".local/share/agent-fleet"},
 		sessionx.CacheRoot():           {Cat: homeusage.CatAgent, Part: ".cache/agent-fleet"},
 		cleanupStoreDir():              {Cat: homeusage.CatTrash, Part: "trash", Reclaimable: true},
-		gitx.ReposRoot():               {Cat: homeusage.CatSource, Part: "repos"},
+		// No part: the copies are listed one by one, and a "repos" line would only hold the
+		// folder itself and loose files beside the copies (it read as "60 KB of source").
+		gitx.ReposRoot(): {Cat: homeusage.CatSource},
 	}
 	for _, c := range toolCaches {
 		if d := c.dir(); strings.HasPrefix(d, home+string(filepath.Separator)) {

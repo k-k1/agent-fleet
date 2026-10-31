@@ -1109,7 +1109,9 @@ button.mv-path:focus-visible {
 /* Home breakdown (HomeBreakdownSection): each category's share of home as a thin bar after
    its size, so the one that filled the disk stands out before any number is read. */
 .hb-bar {
-  flex: 1;
+  /* Basis auto, not 0: on a phone .ds-row turns into a column, where a zero basis is the
+     height and the bar collapsed to nothing (measured: 160x0 with flex: 1). */
+  flex: 1 1 auto;
   max-width: 160px;
   height: 6px;
   border-radius: 3px;
