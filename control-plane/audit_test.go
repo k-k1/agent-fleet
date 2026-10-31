@@ -74,12 +74,27 @@ func TestAuditActionTarget(t *testing.T) {
 		{"GET", "/api/gcp-login/profiles/prod/attempts/abc", "prod", "", "", false},
 		{"GET", "/api/gcp-login/profiles", "", "", "", false},
 		{"GET", "/api/gcp-login", "", "", "", false},
+		// #2883: fs, git and session changes the relays used to leave unrecorded.
+		{"POST", "/api/sessions/s1/archive", "s1", "session.archive", "s1", true},
+		{"POST", "/api/sessions/s1/restore", "s1", "session.restore", "s1", true},
+		{"POST", "/api/sessions/s1/recreate", "s1", "session.recreate", "s1", true},
+		{"POST", "/api/sessions/s1/start", "s1", "session.start", "s1", true},
+		{"POST", "/api/sessions/s1/rename-branch", "s1", "session.rename_branch", "s1", true},
+		{"DELETE", "/api/cleanup/archives?older_than_days=30", "", "cleanup.archive.purge_old", "older_than_days: 30", true},
+		{"DELETE", "/api/cleanup/archives?older_than_days=../../x", "", "cleanup.archive.purge_old", "", true},
+		{"POST", "/api/repos/init", "", "repo.init", "", true},
+		{"POST", "/api/repos/foo/recreate", "foo", "repo.recreate", "foo", true},
+		{"POST", "/api/repos/foo/stage", "foo", "git.stage", "foo", true},
+		{"POST", "/api/repos/foo/unstage", "foo", "git.unstage", "foo", true},
+		{"DELETE", "/api/repos/foo/branch?branch=feature/x", "foo", "repo.branch.delete", "foo: feature/x", true},
+		{"DELETE", "/api/repos/foo/branch?branch=a%20b%0Ac", "foo", "repo.branch.delete", "foo", true},
+		{"POST", "/api/repos/foo/gitflow/init", "foo", "repo.gitflow.init", "foo", true},
+		{"POST", "/api/repos/foo/mcp/apply", "foo", "repo.mcp.apply", "foo", true},
 		// Not auditable (reads, non-change mutations, unlisted ops):
 		{"GET", "/api/fs/file?path=a", "", "", "", false},
 		{"GET", "/api/fs/tree", "", "", "", false},
 		{"GET", "/api/sessions", "", "", "", false},
 		{"POST", "/api/sessions/s1/input", "s1", "", "", false},
-		{"POST", "/api/repos/foo/stage", "foo", "", "", false},
 		{"GET", "/api/repos/foo/log", "foo", "", "", false},
 	}
 	for _, c := range cases {

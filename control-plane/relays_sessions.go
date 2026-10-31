@@ -13,10 +13,10 @@ var sessionRelays = []agentRelay{
 	{route: "POST /api/sessions/{name}/move/deliver", audit: auditByName("session.move.deliver")},
 	{route: "POST /api/sessions/{name}/stop", audit: auditByName("session.delete")},
 	{route: "POST /api/sessions/{name}/halt"},
-	{route: "POST /api/sessions/{name}/recreate"},
+	{route: "POST /api/sessions/{name}/recreate", audit: auditByName("session.recreate")},
 	{route: "GET /api/sessions/archived"},
-	{route: "POST /api/sessions/{name}/archive"},
-	{route: "POST /api/sessions/{name}/restore"},
+	{route: "POST /api/sessions/{name}/archive", audit: auditByName("session.archive")},
+	{route: "POST /api/sessions/{name}/restore", audit: auditByName("session.restore")},
 	// Cleanup (docs/log/32): survey, per-session usage, delete-with-reclaim, and the gz
 	// safety-net archive (list/restore/purge). Proxied verbatim; also used by the MCP
 	// cleanup tools, which reach the Agent directly via the resolved runtime.
@@ -35,9 +35,9 @@ var sessionRelays = []agentRelay{
 	{route: "DELETE /api/sessions/{name}", audit: auditByName("session.delete")},
 	{route: "POST /api/sessions/{name}/lock"}, // deletion lock (docs/log/45)
 	{route: "GET /api/cleanup/archives"},
-	{route: "POST /api/cleanup/archives/{id}/restore"},
-	{route: "DELETE /api/cleanup/archives/{id}"},
-	{route: "DELETE /api/cleanup/archives"}, // ?older_than_days=N (ADR 0101 decision 6)
+	{route: "POST /api/cleanup/archives/{id}/restore", audit: auditArchiveByID("cleanup.archive.restore")},
+	{route: "DELETE /api/cleanup/archives/{id}", audit: auditArchiveByID("cleanup.archive.purge")},
+	{route: "DELETE /api/cleanup/archives", audit: auditArchivePurgeOld}, // ?older_than_days=N (ADR 0101 decision 6)
 	{route: "GET /api/cleanup/usage"},
 	{route: "DELETE /api/cleanup/cache/{feature}"},
 	{route: "GET /api/cleanup/tool-caches"},
@@ -137,11 +137,12 @@ var sessionRelays = []agentRelay{
 	// translate button at all (the absent-capability rule in transcript/capabilities.ts).
 	{route: "POST /api/sessions/{name}/translate"},
 	{route: "GET /api/sessions/{name}/translations"},
-	{route: "POST /api/sessions/{name}/rename-branch"}, // worktree deferred-naming: git branch -m
-	// Wrapped in routes.go: create, fork and move go through the CP's quota check, and the
+	{route: "POST /api/sessions/{name}/rename-branch", audit: auditByName("session.rename_branch")}, // worktree deferred-naming: git branch -m
+	// Wrapped in routes.go: create, fork, move and start go through the CP's quota check, and the
 	// login presses through restLoginFlow because the attempt lives only in the Agent's memory.
 	{route: "POST /api/sessions", audit: auditAs("session.create", nil), wrapped: true},
 	{route: "POST /api/sessions/{name}/fork", audit: auditByName("session.fork"), wrapped: true},
+	{route: "POST /api/sessions/{name}/start", audit: auditByName("session.start"), wrapped: true},
 	{route: "POST /api/sessions/{name}/move", audit: auditByName("session.move"), wrapped: true},
 	{route: "POST /api/sessions/{name}/move/retry", audit: auditByName("session.move.retry"), wrapped: true},
 	{route: "POST /api/aws-login/{id}/start", audit: auditAWSLogin, wrapped: true},

@@ -14,6 +14,7 @@ package main
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -221,4 +222,44 @@ func awsLoginAuditTarget(p string, q url.Values) string {
 // auditGCPLogin is gcpLoginAudit (ADR 0107 decision 3) on the request's own path and query.
 func auditGCPLogin(r *http.Request) (string, string, bool) {
 	return gcpLoginAudit(r, r.URL.Path, r.URL.Query())
+}
+
+var (
+	auditArchiveIDRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,80}$`)
+	auditBranchRe    = regexp.MustCompile(`^[A-Za-z0-9._/@+-]{1,200}$`)
+	auditDaysRe      = regexp.MustCompile(`^[0-9]{1,5}$`)
+)
+
+// auditArchiveByID records a cleanup-archive operation under the archive id in the URL; an id of
+// an unexpected shape is recorded as an empty target, never as given.
+func auditArchiveByID(action string) relayAudit {
+	return func(r *http.Request) (string, string, bool) {
+		id := r.PathValue("id")
+		if !auditArchiveIDRe.MatchString(id) {
+			id = ""
+		}
+		return action, id, true
+	}
+}
+
+// auditArchivePurgeOld records the bulk purge by the age threshold alone (digits only).
+func auditArchivePurgeOld(r *http.Request) (string, string, bool) {
+	days := r.URL.Query().Get("older_than_days")
+	if !auditDaysRe.MatchString(days) {
+		return "cleanup.archive.purge_old", "", true
+	}
+	return "cleanup.archive.purge_old", "older_than_days: " + days, true
+}
+
+// auditRepoBranchDelete records a branch removal as "<repo>: <branch>"; the branch comes from the
+// query and is kept only when it is ref-shaped.
+func auditRepoBranchDelete(r *http.Request) (string, string, bool) {
+	name := r.PathValue("name")
+	if name == "" {
+		return "", "", false
+	}
+	if b := r.URL.Query().Get("branch"); auditBranchRe.MatchString(b) {
+		return "repo.branch.delete", name + ": " + b, true
+	}
+	return "repo.branch.delete", name, true
 }

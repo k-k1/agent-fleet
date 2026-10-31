@@ -5,14 +5,14 @@ package main
 var repoRelays = []agentRelay{
 	{route: "GET /api/repos"},
 	{route: "POST /api/repos", audit: auditAs("repo.clone", nil)},
-	{route: "POST /api/repos/init"}, // new working copy with no import source (mkdir + git init)
+	{route: "POST /api/repos/init", audit: auditAs("repo.init", nil)}, // new working copy with no import source (mkdir + git init)
 	{route: "DELETE /api/repos/{name}", audit: auditByName("repo.delete")},
 	{route: "GET /api/repos/{name}/recreate"}, // deleted worktree back at its path (#1040)
-	{route: "POST /api/repos/{name}/recreate"},
+	{route: "POST /api/repos/{name}/recreate", audit: auditByName("repo.recreate")},
 	{route: "POST /api/repos/{name}/lock"}, // deletion lock (docs/log/45)
 	{route: "GET /api/repos/{name}/status"},
 	{route: "GET /api/repos/{name}/branches"},
-	{route: "DELETE /api/repos/{name}/branch"}, // ?branch=<name>; cleanup (docs/log/32)
+	{route: "DELETE /api/repos/{name}/branch", audit: auditRepoBranchDelete}, // ?branch=<name>; cleanup (docs/log/32)
 	{route: "POST /api/repos/{name}/checkout", audit: auditByName("git.checkout")},
 	{route: "POST /api/repos/{name}/fetch", audit: auditByName("git.fetch")},
 	{route: "POST /api/repos/{name}/ff", audit: auditByName("git.ff")},
@@ -44,14 +44,14 @@ var repoRelays = []agentRelay{
 	{route: "POST /api/repos/{name}/branch-name"},
 	{route: "POST /api/repos/{name}/branch-name/check"},
 	{route: "GET /api/repos/{name}/gitflow"},
-	{route: "POST /api/repos/{name}/gitflow/init"},
+	{route: "POST /api/repos/{name}/gitflow/init", audit: auditByName("repo.gitflow.init")},
 	{route: "GET /api/branch-rules/user"},
 	{route: "PUT /api/branch-rules/user"},
 	{route: "POST /api/branch-rules/preview"},
 	// Project-scope MCP servers (docs/log/56 P0/P1) — proxied to the Agent.
 	{route: "GET /api/repos/{name}/mcp"},
 	{route: "POST /api/repos/{name}/mcp/plan"},
-	{route: "POST /api/repos/{name}/mcp/apply"},
+	{route: "POST /api/repos/{name}/mcp/apply", audit: auditByName("repo.mcp.apply")},
 	// Source-control view + light edits (docs/17 P3-5) — proxied to the Agent.
 	{route: "GET /api/repos/{name}/changes"},
 	{route: "GET /api/repos/{name}/diff"},
@@ -59,8 +59,8 @@ var repoRelays = []agentRelay{
 	{route: "GET /api/repos/{name}/graph"},
 	{route: "GET /api/repos/{name}/submodules"},
 	{route: "GET /api/repos/{name}/show"},
-	{route: "POST /api/repos/{name}/stage"},
-	{route: "POST /api/repos/{name}/unstage"},
+	{route: "POST /api/repos/{name}/stage", audit: auditByName("git.stage")},
+	{route: "POST /api/repos/{name}/unstage", audit: auditByName("git.unstage")},
 	{route: "POST /api/repos/{name}/discard", audit: auditByName("git.discard")},
 	{route: "POST /api/repos/{name}/commit", audit: auditByName("git.commit")},
 	{route: "GET /api/repos/{name}/identity"},

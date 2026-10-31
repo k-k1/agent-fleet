@@ -400,6 +400,22 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/aws-confirm/{id}/approve": true, // ADR 0126 decision 5
 	"POST /api/aws-confirm/{id}/deny":    true,
+	// #2883
+	"POST /api/sessions/{name}/archive":       true,
+	"POST /api/sessions/{name}/restore":       true,
+	"POST /api/sessions/{name}/recreate":      true,
+	"POST /api/sessions/{name}/start":         true,
+	"POST /api/sessions/{name}/rename-branch": true,
+	"DELETE /api/cleanup/archives":            true,
+	"DELETE /api/cleanup/archives/{id}":       true,
+	"POST /api/cleanup/archives/{id}/restore": true,
+	"POST /api/repos/init":                    true,
+	"POST /api/repos/{name}/recreate":         true,
+	"POST /api/repos/{name}/stage":            true,
+	"POST /api/repos/{name}/unstage":          true,
+	"DELETE /api/repos/{name}/branch":         true,
+	"POST /api/repos/{name}/gitflow/init":     true,
+	"POST /api/repos/{name}/mcp/apply":        true,
 }
 
 // minFrozenAuditedRoutes is how many golden routes the frozen switch audits (57 when it was frozen).
