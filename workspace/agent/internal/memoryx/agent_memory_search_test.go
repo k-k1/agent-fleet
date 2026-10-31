@@ -86,6 +86,9 @@ func TestMemSeedManyMatchesSave(t *testing.T) {
 	read := func(seed bool) (file, staged []byte) {
 		t.Helper()
 		agentMemTestEnv(t)
+		// The scan cache is process-wide and keyed by content, so the save variant's entry
+		// would otherwise satisfy the seed variant's read.
+		agentMemDropScanCache()
 		c := agentMemCallerT(t, "claude-main")
 		runs := agentMemScanRuns.Load()
 		if seed {
