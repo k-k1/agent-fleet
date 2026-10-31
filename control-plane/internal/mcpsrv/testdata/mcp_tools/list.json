@@ -992,7 +992,7 @@
             "type": "string"
           },
           "repository": {
-            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work)",
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
             "type": "string"
           },
           "revision": {
@@ -1030,7 +1030,7 @@
             "type": "string"
           },
           "repository": {
-            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work)",
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
             "type": "string"
           }
         },
@@ -1059,7 +1059,7 @@
             "type": "string"
           },
           "repository": {
-            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work)",
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
             "type": "string"
           },
           "scope": {
@@ -1106,7 +1106,7 @@
             "type": "string"
           },
           "repository": {
-            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work)",
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
             "type": "string"
           },
           "revision": {
@@ -1159,7 +1159,7 @@
             "type": "string"
           },
           "repository": {
-            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work)",
+            "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)",
             "type": "string"
           }
         },

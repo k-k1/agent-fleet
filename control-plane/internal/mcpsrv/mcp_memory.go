@@ -69,7 +69,7 @@ const memoryOutsideNote = "Inside an Agent Fleet session, use the af server's ow
 func memoryTools() []mcpTool {
 	const repoHint = "Pass `repository` = the output of `git remote get-url origin` in the repository you are working in; the project is found from it. "
 	projectArg := map[string]any{"type": "string", "description": "project id from memory_projects (optional when `repository` is given; if both are given they must name the same project)"}
-	repositoryArg := map[string]any{"type": "string", "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work)"}
+	repositoryArg := map[string]any{"type": "string", "description": "git remote URL of your current repository: run `git remote get-url origin` and pass its output (https, ssh:// and git@host:owner/repo forms all work), or a project's `remote` exactly as memory_projects lists it (host/owner/repo)"}
 	scopeArg := map[string]any{"type": "string", "enum": []string{"user", "project"}, "description": "optional; omit it to search the project first, then the user scope. user (a fact for all projects) or project (needs `repository` or `project`)"}
 	writeScopeArg := map[string]any{"type": "string", "enum": []string{"user", "project"}, "description": "required: project (a fact about the repository; needs `repository` or `project`) or user (a fact that holds in every project)"}
 	nameArg := map[string]any{"type": "string", "description": "memory name"}

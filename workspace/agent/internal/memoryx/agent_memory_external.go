@@ -161,8 +161,11 @@ func agentMemExternalResolve(project, repository string) (agentMemExternalTarget
 	}
 	want := agentMemNormalizeRemote(repository)
 	if want == "" {
+		want = agentMemNormalizedRemoteForm(repository)
+	}
+	if want == "" {
 		return agentMemExternalTarget{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest,
-			"repository %q is not a remote this memory can match: pass the https or ssh URL printed by `git remote get-url origin` (only github.com, gitlab.com, bitbucket.org and codeberg.org remotes are matched), or pass `project` from memory_projects", repository)
+			"repository %q is not a remote this memory can match: pass the https or ssh URL printed by `git remote get-url origin`, or a `remote` value from memory_projects (only github.com, gitlab.com, bitbucket.org and codeberg.org remotes are matched), or pass `project` from memory_projects", repository)
 	}
 	// The normaliser drops the port, so on a self-hosted host "forge:8443/x" and "forge:9443/x" (or
 	// a port-less one) are one string yet can be different services. Only the big forges, whose
@@ -216,6 +219,25 @@ func agentMemExternalResolve(project, repository string) (agentMemExternalTarget
 			"`project` (%s) and `repository` (%s) name different projects: pass only one of them", project, t.ID)
 	}
 	return t, nil
+}
+
+// agentMemNormalizedRemoteForm accepts a repository that is already in the normalised form
+// "host/owner/repo", which is what memory_projects lists as a project's `remote`; the URL
+// normaliser answers "" for it because it has no scheme. Only a forge host is taken, with at least
+// owner and repo after it, so a bare word, a local path ("./x/y", "foo/bar") and a self-hosted
+// host stay refused; userinfo, a port, a query or a trailing slash fail agentMemRemoteOK. The host
+// is lower-cased as the normaliser does and the path keeps its case. "" means not this form.
+func agentMemNormalizedRemoteForm(raw string) string {
+	host, path, ok := strings.Cut(raw, "/")
+	host = strings.ToLower(host)
+	if !ok || !forgeHosts[host] || strings.Count(path, "/") < 1 {
+		return ""
+	}
+	out := host + "/" + path
+	if !agentMemRemoteOK(out) {
+		return ""
+	}
+	return out
 }
 
 // agentMemExternalCallerFor resolves project/repository and returns the caller for it. start is

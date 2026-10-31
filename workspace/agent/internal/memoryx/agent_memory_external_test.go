@@ -225,6 +225,58 @@ func TestAgentMemoryExternalRepositorySelectsTheProject(t *testing.T) {
 	}
 }
 
+// The `remote` that memory_projects lists is accepted back as `repository` (#3098), and only when
+// it is a forge host with owner and repo; look-alikes stay refused.
+func TestAgentMemoryExternalRepositoryAcceptsListedRemote(t *testing.T) {
+	home, _, _ := agentMemTestEnv(t)
+	a := extRepo(t, home, "alpha", "git@github.com:k-k1/Alpha.git")
+	externalMode(t, ExternalMemoryWrite)
+	code, out := memberDo(t, http.MethodGet, extBase+"projects", nil)
+	if code != 200 {
+		t.Fatalf("projects: %d %s", code, out)
+	}
+	var list struct {
+		Projects []struct{ ID, Remote string }
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		t.Fatal(err)
+	}
+	remote := ""
+	for _, p := range list.Projects {
+		if p.ID == a.Project.ID {
+			remote = p.Remote
+		}
+	}
+	if remote != "github.com/k-k1/Alpha" {
+		t.Fatalf("listed remote = %q in %s", remote, out)
+	}
+	for i, repo := range []string{remote, "GitHub.com/k-k1/Alpha"} {
+		name := fmt.Sprintf("via-listed-%d", i)
+		code, out := extSave(t, map[string]any{"scope": "project", "repository": repo, "name": name})
+		if code != 200 || !strings.Contains(out, `"project":"`+a.Project.ID+`"`) {
+			t.Fatalf("save via %s: %d %s", repo, code, out)
+		}
+		code, raw := memberDo(t, http.MethodGet, extBase+"search?q=seed&repository="+url.QueryEscape(repo), nil)
+		if code != 200 || !strings.Contains(string(raw), a.Project.ID) {
+			t.Errorf("search via %s: %d %s", repo, code, raw)
+		}
+	}
+	for _, repo := range []string{
+		"foo/bar", "./k-k1/alpha", "github.com/k-k1", "github.com", "github.com/", "github.com/k-k1/",
+		"git.example.com/team/repo", "tok:x@github.com/k-k1/alpha",
+		"github.com/k-k1/alpha?x=1", "/github.com/k-k1/alpha", "ghe.example.com/k-k1/alpha",
+	} {
+		if code, out := extSave(t, map[string]any{"scope": "project", "repository": repo, "name": "nope"}); code != 400 {
+			t.Errorf("%q accepted: %d %s", repo, code, out)
+		}
+	}
+	// A non-forge host stays refused even when a project lists it.
+	extRepo(t, home, "ghe", "https://ghe.example.com/k-k1/alpha.git")
+	if code, out := extSave(t, map[string]any{"scope": "project", "repository": "ghe.example.com/k-k1/alpha", "name": "nope"}); code != 400 {
+		t.Errorf("self-hosted listed remote accepted: %d %s", code, out)
+	}
+}
+
 // A remote that matches no project, matches two, names a different project than `project`, or is
 // not a remote at all is refused; a self-hosted host is not github.com.
 func TestAgentMemoryExternalRepositoryRefusals(t *testing.T) {
