@@ -345,6 +345,7 @@ does not see how `aws ssm start-session` ended. So:
 - **The row** is the same run row with `identityFromSettings: true`, `signIn` and `target` (both new, optional),
   program `aws`, service `ssm`, operation `start-session`. It has no exit status and no end, like every started
   row. It is written when the pane's program is built, which is every (re)launch of the session.
+  A row alone does not prove start-session ran: if the login never completes, the row stays without an end.
   The Console draws the marker ("identity from Settings, not confirmed") in the row, so it is not mistaken for
   an `af-aws-exec` run, whose identity `PlanExec` resolved. An older Console ignores the new fields and shows
   the row as a plain run.

@@ -1,7 +1,7 @@
 import { t as tr, type MsgKey } from "../../lib/i18n/index.ts";
 
 /** One af-aws-exec run, as the Agent's run spool holds it (ADR 0126 decision 1). It names the
- *  identity the command ran as and never the command's arguments. A run that started has no
+ *  identity the command ran as and never the command's arguments, except the SSM target (`target`), the one argument an SSM row may carry. A run that started has no
  *  end: the wrapper becomes the command, so nothing sees how it ended; only a refused run has
  *  `endedAt` and `refused`. */
 export interface CloudRun {

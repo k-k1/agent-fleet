@@ -2,8 +2,8 @@
 // Agent serves to the Console: the session's mirror shows its own rows, and Settings shows
 // the recent rows of every session (ADR 0126 decisions 1 and 2).
 //
-// A row names the identity a command ran as and never the command's arguments, environment
-// or output: arguments can carry secrets. Everything that reaches a row is either resolved by
+// A row names the identity a command ran as and never the command's arguments (except the SSM target, the one argument a row may carry),
+// environment or output: arguments can carry secrets. Everything that reaches a row is either resolved by
 // the wrapper (account, role, region) or passes an allowlist (profile, program, a service and
 // operation the CLI itself knows).
 //
@@ -229,7 +229,8 @@ func plainTarget(v string) string {
 		if n == targetMax {
 			break
 		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 ||
+			(r >= 0x200b && r <= 0x200f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2060 && r <= 0x2069) || r == 0xfeff {
 			r = '?'
 		}
 		b.WriteRune(r)

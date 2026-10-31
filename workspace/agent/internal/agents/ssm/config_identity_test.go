@@ -104,3 +104,10 @@ func TestPaneLineDropsValuesOutsideTheAllowlistsAndControlCharacters(t *testing.
 		t.Fatalf("line = %q", line)
 	}
 }
+
+func TestPaneLineReplacesBidiAndZeroWidthCharacters(t *testing.T) {
+	line := identityLine(settingsIdentity(session.SSMMeta{Profile: "dev", Target: "i-1\u202eabc\u200b\ufeff\u2066"}).Clean())
+	if strings.ContainsAny(line, "\u202e\u200b\ufeff\u2066") || !strings.HasSuffix(line, "target i-1?abc???") {
+		t.Fatalf("line = %q", line)
+	}
+}
