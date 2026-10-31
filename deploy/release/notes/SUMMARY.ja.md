@@ -12,6 +12,36 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.38.0](0.38.0.ja.md) — 2026-10-31
+
+**CLI ピン** — Claude Code 2.1.316 / Codex 0.166.0 / Antigravity 1.4.12 / Kiro 2.37.0 / OpenCode 2.2.5
+
+**New / Improved**
+
+- **[AWS プロファイル]** 同じ IAM Identity Center ポータルのプロファイルが 1 つのサインイン（ログイン・ログアウト 1 回）を共有。既存のものは「1 つのサインインを共有」でまとめ、取り込みはまとめ方を提案 ([#3014](https://github.com/k-k1/agent-fleet/issues/3014), [#3077](https://github.com/k-k1/agent-fleet/issues/3077))
+- **[AWS プロファイル]** `af-aws-exec` の実行をアカウント・ロール・リージョンつきで呼び出したセッションに表示。SSM のペインは使う ID を表示。プロファイルごとに各セッションで使う前の確認 ([#3050](https://github.com/k-k1/agent-fleet/issues/3050), [#3064](https://github.com/k-k1/agent-fleet/issues/3064))
+- **[設定]** `~/.aws/config`・`~/.ssh/config`（SSM ホスト）・gcloud の構成をプレビューつきで取り込み（ブラウザ内で読む）。AWS プロファイルを `~/.aws/config` の断片として書き出し ([#3010](https://github.com/k-k1/agent-fleet/issues/3010), [#3017](https://github.com/k-k1/agent-fleet/issues/3017))
+- **[ワークスペース]** 設定 › マシン にホームのボリューム全体の分類別の内訳 ([#3083](https://github.com/k-k1/agent-fleet/issues/3083))
+- **[codex]** 再認証ボタン。取り消されたログインはログインの問題として表示し、サインインし直すまでプロンプトを断り、し直すと再開 ([#3021](https://github.com/k-k1/agent-fleet/issues/3021))
+- **[ワークスペース]** アーカイブしたセッションの `~/.af-work` フォルダをアーカイブから 7 日後に削除 ([#3105](https://github.com/k-k1/agent-fleet/issues/3105))
+- **[エージェントメモリ]** 外部からの `repository` 指定の保存で clone 済みリポジトリのプロジェクトを開始でき、`memory_projects` のリモートの形も受け付ける。大きなワークスペースで作業コピーの検索がタイムアウトしない ([#3032](https://github.com/k-k1/agent-fleet/issues/3032), [#3098](https://github.com/k-k1/agent-fleet/issues/3098), [#3045](https://github.com/k-k1/agent-fleet/issues/3045), [#3061](https://github.com/k-k1/agent-fleet/issues/3061))
+- **[クラウドのログイン]** AWS・Google Cloud のログインのトーストがプロファイル・アカウント・ロールを別項目で示し、残り時間を数える ([#3023](https://github.com/k-k1/agent-fleet/issues/3023))
+- **[作業項目]** GitHub がマージ可否を計算中の PR は確認中と示し、自動で確認し直す ([#3012](https://github.com/k-k1/agent-fleet/issues/3012))
+- **[codex／ecs-ec2]** Codex の SQLite データベースを EFS でなくホームのボリュームに置く ([#3013](https://github.com/k-k1/agent-fleet/issues/3013))
+- **[監査]** 監査ログに記録する Console の操作を追加（セッションのアーカイブ・復元・作り直し、ブランチの削除、ステージ、リポジトリの作成） ([#2883](https://github.com/k-k1/agent-fleet/issues/2883), [#3104](https://github.com/k-k1/agent-fleet/issues/3104))
+
+**Fixed**
+
+- **[使用量／予算]** Claude のサブエージェント・Workflow のエージェントのターンと長いセッションの古いターンが数えられず、サブエージェントの多いセッションが予算で止まらなかった。Cursor の Terminal のターンが「計測なし」にも数えられていた ([#3051](https://github.com/k-k1/agent-fleet/issues/3051), [#3054](https://github.com/k-k1/agent-fleet/issues/3054), [#3055](https://github.com/k-k1/agent-fleet/issues/3055), [#2495](https://github.com/k-k1/agent-fleet/issues/2495))
+- **[claude]** 文言が変わった 5 時間の利用上限を利用上限として認識しなかった ([#3065](https://github.com/k-k1/agent-fleet/issues/3065))
+- **[エディタ]** ダークテーマで選択した文字と一部の構文の色が読めなかった ([#3020](https://github.com/k-k1/agent-fleet/issues/3020), [#3046](https://github.com/k-k1/agent-fleet/issues/3046))
+- **[作業項目]** ワークフローが待ち行列にある間やステータスの報告前に PR パネルが CI を成功と表示した ([#2992](https://github.com/k-k1/agent-fleet/issues/2992))
+- **[セッション]** マネージドの Cursor セッションを止めるとクラッシュと記録され、自分から終了した Codex・OpenCode のサーバは停止と記録された ([#2996](https://github.com/k-k1/agent-fleet/issues/2996), [#3004](https://github.com/k-k1/agent-fleet/issues/3004))
+- **[承認]** タイムアウトの瞬間に押した承認が、何も実行されていないのに承認済みと表示された ([#2964](https://github.com/k-k1/agent-fleet/issues/2964))
+- **[MCP]** `create_session` の最初のプロンプトに「MCP 経由」の表示がなかった ([#3027](https://github.com/k-k1/agent-fleet/issues/3027))
+- **[ワークツリー]** ワークツリーから作ったワークツリーが入れ子のフォルダ名になった ([#2991](https://github.com/k-k1/agent-fleet/issues/2991))
+- **[UI 設定同期／ビューア]** 端末に空で保存された設定が画面を壊すことがあった。PDF の検索バーがフォーカスなしで開くことがあった ([#2970](https://github.com/k-k1/agent-fleet/issues/2970), [#2972](https://github.com/k-k1/agent-fleet/issues/2972))
+
 ## [0.37.0](0.37.0.ja.md) — 2026-10-30
 
 **CLI ピン** — Antigravity 1.4.10 / OpenCode 2.2.1
