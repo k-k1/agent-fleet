@@ -12,6 +12,7 @@
 //   - A request that never came back (network) leaves its row "unknown" and stops the run: the
 //     row may exist, and the next import's re-read of the lists is what tells.
 import { api, rawJSON } from "../../../core/api/client.ts";
+import type { ExistingSignIn } from "../../../lib/awsConfigImport.ts";
 import type { SsmPlan } from "../../../lib/settingsBundle.ts";
 
 export type RowOutcome = "created" | "failed" | "unknown" | "skipped_source" | "not_run";
@@ -30,6 +31,20 @@ export async function loadSsmLists(): Promise<{ profiles: any[]; hosts: any[] } 
     const [profiles, hosts] = await Promise.all([api("api/ssm/profiles"), api("api/ssm/hosts")]);
     if (!Array.isArray(profiles) || !Array.isArray(hosts)) return null;
     return { profiles, hosts };
+  } catch {
+    return null;
+  }
+}
+
+/** The member's shared sign-ins, or null when they could not be read (an older Control Plane
+ *  answers 404, a failure answers an error body): the import then proposes no sign-in. */
+export async function loadSignIns(): Promise<ExistingSignIn[] | null> {
+  try {
+    const d = await api("api/ssm/sign-ins");
+    if (!Array.isArray(d)) return null;
+    return d
+      .filter((x) => typeof x?.name === "string")
+      .map((x) => ({ name: String(x.name), startUrl: String(x.startUrl ?? ""), ssoRegion: String(x.ssoRegion ?? "") }));
   } catch {
     return null;
   }

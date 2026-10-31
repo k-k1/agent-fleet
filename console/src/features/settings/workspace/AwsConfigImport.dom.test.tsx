@@ -214,7 +214,8 @@ describe("AwsConfigImport", () => {
     expect(readBtn()!.disabled).toBe(true);
     // A second click on the disabled button starts no second load.
     await act(async () => readBtn()!.click());
-    expect(api).toHaveBeenCalledTimes(2);
+    // profiles, hosts and the member's sign-ins
+    expect(api).toHaveBeenCalledTimes(3);
     await act(async () => release.forEach((r) => r([])));
     await flush();
     expect(document.querySelector('[role="status"]')).toBeNull();
@@ -229,5 +230,105 @@ describe("AwsConfigImport", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toBeTruthy();
     expect(document.querySelector("textarea")).not.toBeNull();
     expect(readBtn()).toBeDefined();
+  });
+
+  describe("shared sign-ins (ADR 0125)", () => {
+    const sso = (n: string, acct: string) => `[profile ${n}]\nsso_session = corp\nsso_account_id = ${acct}\nsso_role_name = R\n`;
+    const SESSION = `[sso-session corp]\nsso_start_url = ${URL}\nsso_region = us-east-1\n`;
+    const signInInput = (name: string) => rowEl(name).querySelector<HTMLInputElement>("input.ssm-imp-signin")!;
+
+    it("defaults each sso-session profile to signIn = the session's name and sends it", async () => {
+      await mount();
+      await paste(SESSION + sso("a", "1") + sso("b", "2"));
+      expect(signInInput("a").value).toBe("corp");
+      await act(async () => importBtn().click());
+      await flush();
+      expect(rawJSON.mock.calls.map((c) => (c[2] as any).signIn)).toEqual(["corp", "corp"]);
+    });
+
+    it("gives a legacy profile one sign-in per portal, named after the host label", async () => {
+      await mount();
+      await paste("[profile x]\nsso_start_url = https://d-1234567890.awsapps.com/start\nsso_region = us-east-1\nsso_account_id = 1\nsso_role_name = R\n");
+      expect(signInInput("x").value).toBe("d-1234567890");
+      await act(async () => importBtn().click());
+      await flush();
+      expect(rawJSON.mock.calls[0][2]).toMatchObject({ signIn: "d-1234567890" });
+    });
+
+    it("edits one name for every row of a laptop sign-in, and clearing it imports a sign-in of its own", async () => {
+      await mount();
+      await paste(SESSION + sso("a", "1") + sso("b", "2"));
+      await act(async () => setValue(signInInput("a"), "team"));
+      expect(signInInput("b").value).toBe("team");
+      await act(async () => setValue(signInInput("b"), ""));
+      expect(signInInput("a").value).toBe("");
+      await act(async () => importBtn().click());
+      await flush();
+      expect(rawJSON.mock.calls.map((c) => "signIn" in (c[2] as object))).toEqual([false, false]);
+    });
+
+    it("shows a name outside the allowlist as a blocked row with an editable name, without echoing it", async () => {
+      const long = "SECRETSENTINEL" + "s".repeat(60);
+      await mount();
+      await paste(`[sso-session ${long}]\nsso_start_url = ${URL}\nsso_region = us-east-1\n[profile a]\nsso_session = ${long}\nsso_account_id = 1\nsso_role_name = R\n`);
+      expect(rowEl("a").className).toContain("blocked");
+      expect(signInInput("a").value).toBe("");
+      expect(document.body.innerHTML).not.toContain("SECRETSENTINEL");
+      await act(async () => setValue(signInInput("a"), "team"));
+      expect(rowEl("a").className).toContain("create");
+      await act(async () => importBtn().click());
+      await flush();
+      expect(rawJSON.mock.calls[0][2]).toMatchObject({ signIn: "team" });
+      expect(JSON.stringify(rawJSON.mock.calls) + document.body.innerHTML + logs.join("\n")).not.toContain("SECRETSENTINEL");
+    });
+
+    it("shows sign_in_mismatch and sign_in_name_taken in the preview", async () => {
+      api.mockImplementation((p: string) =>
+        Promise.resolve(
+          p.endsWith("sign-ins")
+            ? [{ id: "g", name: "corp", startUrl: "https://other.awsapps.com/start", ssoRegion: "us-east-1" }]
+            : p.endsWith("profiles")
+              ? [{ id: "x", kind: "sso", label: "solo", startUrl: "https://z.awsapps.com/start", ssoRegion: "us-east-1", accountId: "9", roleName: "R" }]
+              : [],
+        ),
+      );
+      await mount();
+      await paste(SESSION + sso("a", "1"));
+      expect(rowEl("a").className).toContain("blocked");
+      expect(rowEl("a").textContent).toMatch(/別の start URL|another start URL/);
+      await act(async () => setValue(signInInput("a"), "solo"));
+      expect(rowEl("a").textContent).toContain("solo");
+      expect(rowEl("a").className).toContain("blocked");
+      await act(async () => setValue(signInInput("a"), "free"));
+      expect(rowEl("a").className).toContain("create");
+    });
+
+    it("lists a 409 sign-in refusal of one row in the results with its code and the fix", async () => {
+      let n = 0;
+      rawJSON.mockImplementation(async () =>
+        ++n === 2
+          ? new Response(JSON.stringify({ error: { code: "sign_in_mismatch", message: "x" } }), { status: 409 })
+          : new Response(JSON.stringify({ id: "id" + n }), { status: 201 }),
+      );
+      await mount();
+      await paste(SESSION + sso("a", "1") + sso("b", "2"));
+      await act(async () => importBtn().click());
+      await flush();
+      const res = document.querySelector(".aws-import-results")!.textContent!;
+      expect(res).toContain("sign_in_mismatch");
+      expect(res).toMatch(/別の start URL|another start URL/);
+      expect(document.querySelectorAll(".aws-import-results li.created")).toHaveLength(1);
+    });
+
+    it("proposes and sends no sign-in when the sign-ins cannot be read", async () => {
+      api.mockImplementation((p: string) => Promise.resolve(p.endsWith("sign-ins") ? { error: { code: "not_found" } } : []));
+      await mount();
+      await paste(SESSION + sso("a", "1"));
+      expect(document.querySelector("input.ssm-imp-signin")).toBeNull();
+      expect(document.querySelector('[role="status"]')?.textContent).toBeTruthy();
+      await act(async () => importBtn().click());
+      await flush();
+      expect("signIn" in (rawJSON.mock.calls[0][2] as object)).toBe(false);
+    });
   });
 });
