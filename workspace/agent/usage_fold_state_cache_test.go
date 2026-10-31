@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // cacheFixture is n claude sessions, each with one closed turn in its transcript.
@@ -36,6 +37,15 @@ func cacheFixture(t *testing.T, n int) []session.Meta {
 		ms = append(ms, m)
 	}
 	return ms
+}
+
+// cachedState is what the next commit would be handed, and puts it back.
+func cachedState() usageFoldState {
+	usageFoldMu.Lock()
+	defer usageFoldMu.Unlock()
+	st, l := loadUsageFoldStateLocked()
+	releaseUsageFoldStateLocked(st, l)
+	return *st
 }
 
 func commitAll(t *testing.T, ms []session.Meta) {
@@ -66,16 +76,12 @@ func TestFoldPassDecodesStateOnce(t *testing.T) {
 func TestFoldStateCacheMatchesDisk(t *testing.T) {
 	ms := cacheFixture(t, 6)
 	commitAll(t, ms)
-	usageFoldMu.Lock()
-	cached := *loadUsageFoldStateLocked()
-	usageFoldMu.Unlock()
+	cached := cachedState()
 	if disk := readUsageFoldState(); !reflect.DeepEqual(cached, disk) {
 		t.Fatalf("cache differs from disk:\n cache %+v\n disk  %+v", cached, disk)
 	}
 	finalizeSessionUsage(ms[0])
-	usageFoldMu.Lock()
-	cached = *loadUsageFoldStateLocked()
-	usageFoldMu.Unlock()
+	cached = cachedState()
 	if _, ok := cached.Sessions[ms[0].Name]; ok {
 		t.Fatal("finalize left the deleted session's mark in the cache")
 	}
@@ -97,9 +103,7 @@ func TestFoldStateCacheDroppedOnFailedWrite(t *testing.T) {
 	if err := os.Remove(usageStatePath() + ".tmp"); err != nil {
 		t.Fatal(err)
 	}
-	usageFoldMu.Lock()
-	got := *loadUsageFoldStateLocked()
-	usageFoldMu.Unlock()
+	got := cachedState()
 	if _, ok := got.Sessions[ms[2].Name]; ok {
 		t.Fatal("the cache kept a mark whose write failed")
 	}
@@ -118,9 +122,7 @@ func TestFoldStateCacheValidatedAndNotAliased(t *testing.T) {
 	mark.Groups = 999
 	mark.OrphanKeys = append(mark.OrphanKeys, "x")
 	mine.Sessions[ms[0].Name] = mark
-	usageFoldMu.Lock()
-	cached := loadUsageFoldStateLocked().Sessions[ms[0].Name]
-	usageFoldMu.Unlock()
+	cached := cachedState().Sessions[ms[0].Name]
 	if cached.Groups == 999 || len(cached.OrphanKeys) != 0 {
 		t.Fatal("a value from readUsageFoldState aliases the cache")
 	}
@@ -131,28 +133,24 @@ func TestFoldStateCacheValidatedAndNotAliased(t *testing.T) {
 	if err := writeUsageFoldState(edit); err != nil {
 		t.Fatal(err)
 	}
-	usageFoldMu.Lock()
-	_, stale := loadUsageFoldStateLocked().Sessions[ms[1].Name]
-	usageFoldMu.Unlock()
+	_, stale := cachedState().Sessions[ms[1].Name]
 	if stale {
 		t.Fatal("the cache served a state.json that changed under it")
 	}
 	if err := os.WriteFile(usageStatePath(), []byte("{\"sessions\":{}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	usageFoldMu.Lock()
-	n := len(loadUsageFoldStateLocked().Sessions)
-	usageFoldMu.Unlock()
+	n := len(cachedState().Sessions)
 	if n != 0 {
 		t.Fatalf("cache served %d sessions after the file was replaced", n)
 	}
 }
 
-// Measurement for the PR (go test -run TestMeasureUsageStateSize -v): how big state.json gets and
+// Measurement for the PR (AF_MEASURE_USAGE_STATE=1 go test -run TestMeasureUsageStateSize -v): how big state.json gets and
 // what decoding it costs; the fold used to pay this once per session per pass.
 func TestMeasureUsageStateSize(t *testing.T) {
-	if testing.Short() {
-		t.Skip("measurement")
+	if os.Getenv("AF_MEASURE_USAGE_STATE") == "" {
+		t.Skip("measurement, no assertions: set AF_MEASURE_USAGE_STATE=1")
 	}
 	useTempUsageDir(t)
 	dropUsageStateCache()
@@ -187,4 +185,34 @@ func TestMeasureUsageStateSize(t *testing.T) {
 	per := time.Since(start) / reps
 	t.Logf("%d sessions + %d agent marks: state.json %d bytes; one decode %v; one pass of %d sessions: %.1f MB read, %v decoding (cache: one decode, then %d Stats)",
 		sessions, len(st.Subagents), fi.Size(), per, sessions, float64(fi.Size())*sessions/1e6, per*sessions, sessions)
+}
+
+// A commit that fails part-way (here: a panic inside the fold) leaves no cached state behind, so
+// the next session decodes the file instead of persisting a half-mutated value.
+func TestFoldStateCacheNotReturnedAfterPanic(t *testing.T) {
+	ms := cacheFixture(t, 2)
+	commitAll(t, ms)
+	orig := foldUsageSource
+	defer func() { foldUsageSource = orig }()
+	foldUsageSource = func(session.Meta) (string, func() ([]transcript.Turn, bool)) { panic("boom") }
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = commitSessionUsageFold(ms[0], true) // includeTrailing: never skipped
+	}()
+	if usageStateCache.st != nil {
+		t.Fatal("a commit that panicked left its state in the cache")
+	}
+}
+
+// The cache lives for one pass.
+func TestFoldAllSessionsDropsCache(t *testing.T) {
+	ms := cacheFixture(t, 2)
+	commitAll(t, ms)
+	if usageStateCache.st == nil {
+		t.Fatal("setup: nothing cached")
+	}
+	foldAllSessions(false)
+	if usageStateCache.st != nil {
+		t.Fatal("the decoded state outlived the pass")
+	}
 }
