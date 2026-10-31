@@ -5,7 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -331,5 +334,106 @@ func TestAgentMemoryGitIdentityMatchesSeparateCalls(t *testing.T) {
 	r2, k2 := agentMemGitIdentityWith(separate)
 	if k1 == "" || r1 != r2 || k1 != k2 {
 		t.Fatalf("combined (%q, %q) differs from separate (%q, %q)", r1, k1, r2, k2)
+	}
+}
+
+// The per-clone git work runs on a bounded pool: more than one process at once (the point of
+// #3097), never more than agentMemLiveWorkers.
+func TestAgentMemoryLiveSearchRunsGitInParallelWithinTheCap(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	repos := filepath.Join(home, "repos")
+	copies := liveScanFixture(t, repos, 12, 0)
+	var mu sync.Mutex
+	inflight, peak := 0, 0
+	old := agentMemLiveRunner
+	agentMemLiveRunner = func(dir string) agentMemGitRunner {
+		return func(args ...string) (string, error) {
+			mu.Lock()
+			if inflight++; inflight > peak {
+				peak = inflight
+			}
+			mu.Unlock()
+			time.Sleep(15 * time.Millisecond)
+			mu.Lock()
+			inflight--
+			mu.Unlock()
+			return gitx.Run(dir, args...)
+		}
+	}
+	t.Cleanup(func() { agentMemLiveRunner = old })
+	live, complete := agentMemLiveProjects()
+	if !complete || len(live) != 12 {
+		t.Fatalf("complete=%v live=%d for %d copies", complete, len(live), len(copies))
+	}
+	if peak < 2 {
+		t.Errorf("peak concurrency %d: the per-clone git work is sequential", peak)
+	}
+	if peak > agentMemLiveWorkers {
+		t.Errorf("peak concurrency %d exceeds the cap %d", peak, agentMemLiveWorkers)
+	}
+}
+
+// Results are applied in index order whatever order the workers finish in, so the first-wins
+// put of a shared project id never depends on scheduling.
+func TestAgentMemoryLiveForEachAppliesInOrder(t *testing.T) {
+	st := &agentMemLiveState{stop: make(chan struct{})}
+	const n = 24
+	var got []int
+	ok := st.forEach(n, func(i int) { time.Sleep(time.Duration(n-i) * time.Millisecond) }, func(i int) { got = append(got, i) })
+	if !ok || len(got) != n {
+		t.Fatalf("ok=%v applied %d of %d", ok, len(got), n)
+	}
+	for i, v := range got {
+		if v != i {
+			t.Fatalf("applied out of order: %v", got)
+		}
+	}
+}
+
+// An abandoned search stops: no new item starts once stop is closed, and the workers exit.
+func TestAgentMemoryLiveForEachStopsWhenAbandoned(t *testing.T) {
+	st := &agentMemLiveState{stop: make(chan struct{})}
+	var started atomic.Int64
+	before := runtime.NumGoroutine()
+	go func() { time.Sleep(30 * time.Millisecond); close(st.stop) }()
+	ok := st.forEach(500, func(int) { started.Add(1); time.Sleep(10 * time.Millisecond) }, func(int) {})
+	if ok {
+		t.Fatal("forEach reported success after stop")
+	}
+	time.Sleep(100 * time.Millisecond)
+	n := started.Load()
+	if n >= 100 {
+		t.Errorf("%d items started: workers kept going after stop", n)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if again := started.Load(); again != n {
+		t.Errorf("items still starting after stop: %d then %d", n, again)
+	}
+	if after := runtime.NumGoroutine(); after > before+1 {
+		t.Errorf("goroutines %d -> %d: workers leaked", before, after)
+	}
+}
+
+// One worker and four find exactly the same projects, down to the Root a shared id keeps.
+func TestAgentMemoryLiveSearchSameResultForAnyWorkerCount(t *testing.T) {
+	home, _, _ := memoryTestEnv(t)
+	liveScanFixture(t, filepath.Join(home, "repos"), 10, 0)
+	old := agentMemLiveWorkers
+	t.Cleanup(func() { agentMemLiveWorkers = old })
+	var snaps []map[string]agentMemProject
+	for _, w := range []int{1, 4} {
+		agentMemLiveWorkers = w
+		live, complete := agentMemLiveProjects()
+		if !complete {
+			t.Fatalf("workers=%d: incomplete", w)
+		}
+		m := map[string]agentMemProject{}
+		for id, p := range live {
+			m[id] = *p
+		}
+		snaps = append(snaps, m)
+	}
+	if !reflect.DeepEqual(snaps[0], snaps[1]) {
+		t.Fatalf("results differ:\n1: %v\n4: %v", snaps[0], snaps[1])
 	}
 }
