@@ -3,7 +3,8 @@ import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "../parts/providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
+import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 
@@ -124,6 +125,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
       setBusy(false);
     }
   };
+  const reauth = useReauth("kiro", reload, setBusy);
   const disconnect = async () => {
     await raw("api/connections/kiro", { method: "DELETE" });
     setFlow(null);
@@ -142,12 +144,25 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
     >
       {!running ? (
         <ConnPaused />
+      ) : flow ? (
+        // Before the connection state: re-auth opens the flow while the refetch that clears
+        // "connected" is still on its way (or failed).
+        <div className="p-body">
+          {/* device flow: URL + a short code to confirm in the browser; kiro self-polls. */}
+          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
+          <div className="flow">
+            <button className="ghost" onClick={() => setFlow(null)}>
+              {tr("common.cancel")}
+            </button>
+          </div>
+        </div>
       ) : st?.connected ? (
         <div className="p-who">
           <span className="p-em" title={st.email || ""}>
             {st.email || "Kiro"}
           </span>
-          <DisconnectButton onClick={disconnect} />
+          <ReauthButton disabled={busy} onClick={() => void reauth(startLogin)} />
+          <DisconnectButton disabled={busy} onClick={disconnect} />
         </div>
       ) : unsupported ? (
         // Not installed yet — offer the on-demand install (~855MB into the home volume).
@@ -169,11 +184,6 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: any; r
             )}
           </div>
         </>
-      ) : flow ? (
-        <div className="p-body">
-          {/* device flow: URL + a short code to confirm in the browser; kiro self-polls. */}
-          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
-        </div>
       ) : (
         <>
           <div className="p-desc">{tr("agents.kiro_desc")}</div>

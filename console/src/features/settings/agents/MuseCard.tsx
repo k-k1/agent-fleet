@@ -3,7 +3,8 @@ import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
-import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "../parts/providerCard.tsx";
+import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton, ReauthButton } from "../parts/providerCard.tsx";
+import { useReauth } from "../parts/useReauth.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { CardSettings, ConnPaused, LaunchDefaults } from "./AgentCardParts.tsx";
 
@@ -40,6 +41,10 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
   const [installing, setInstalling] = useState<null | "installing" | "error">(null);
   const [mode, setMode] = useState<"idle" | "key">("idle");
   const [key, setKey] = useState("");
+  // The key form was opened by re-authentication, so it may show over a status that still reads
+  // connected (the refetch has not landed). Without this flag a login made elsewhere while the
+  // ordinary key form is open would be hidden behind the form.
+  const [keyReauth, setKeyReauth] = useState(false);
   const [busy, setBusy] = useState(false);
   // { installed, version, pin, updateAvailable } — the version facts behind the update
   // affordance. muse is managed-only, so unlike kiro there is no launch guard to re-pin
@@ -155,16 +160,29 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
       }
       setKey("");
       setMode("idle");
+      setKeyReauth(false);
       reload();
     } finally {
       setBusy(false);
     }
   };
 
+  const reauth = useReauth("muse", reload, setBusy);
+  // Signs in the way the card was connected: the device flow for an account sign-in, the key
+  // form for a pasted API key (`metered`). The device flow would silently move a metered
+  // workspace onto the subscription, and the key route refuses while a sign-in exists.
+  const reauthMuse = () =>
+    reauth(async () => {
+      if (st?.metered) {
+        setKeyReauth(true);
+        setMode("key");
+      } else await startLogin();
+    });
   const disconnect = async () => {
     await raw("api/connections/muse", { method: "DELETE" });
     setFlow(null);
     setMode("idle");
+    setKeyReauth(false);
     reload();
   };
 
@@ -180,13 +198,56 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
     >
       {!running ? (
         <ConnPaused />
+      ) : flow ? (
+        // Before the connection state: re-auth opens the flow while the refetch that clears
+        // "connected" is still on its way (or failed).
+        <div className="p-body">
+          {/* Device flow: a URL with the code embedded plus the code on its own, to compare in the
+              browser. muse polls Meta itself, so there is nothing to paste back. */}
+          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
+          <div className="flow">
+            <button className="ghost" onClick={() => setFlow(null)}>
+              {tr("common.cancel")}
+            </button>
+          </div>
+        </div>
+      ) : mode === "key" && (!st?.connected || keyReauth) ? (
+        <div className="p-body">
+          {/* 🔴 The warning comes BEFORE the field, not after a failure: this route destroys an
+              account sign-in and moves the workspace onto metered billing, and the member should
+              read that while deciding rather than in a toast. */}
+          <p className="ps-note ps-note-warn">{tr("agents.muse_key_warn")}</p>
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder={tr("agents.muse_key_placeholder")}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              autoFocus
+            />
+            <button disabled={busy || !key.trim()} onClick={saveKey}>
+              {tr("conn.connect")}
+            </button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setMode("idle");
+                setKeyReauth(false);
+              }}
+            >
+              {tr("common.back")}
+            </button>
+          </div>
+        </div>
       ) : st?.connected ? (
         <>
           <div className="p-who">
             <span className="p-em" title={st.email || ""}>
               {st.email || st.name || "Muse Code"}
             </span>
-            <DisconnectButton onClick={disconnect} />
+            <ReauthButton disabled={busy} onClick={() => void reauthMuse()} />
+            <DisconnectButton disabled={busy} onClick={disconnect} />
           </div>
           {/* Which credential, and what it costs. Only said when it is NOT the subscription: a
               plain account sign-in needs no note, and a note on every card teaches nothing. */}
@@ -212,35 +273,6 @@ export function MuseCard({ running, st, reload }: { running: boolean; st: any; r
             )}
           </div>
         </>
-      ) : flow ? (
-        <div className="p-body">
-          {/* Device flow: a URL with the code embedded plus the code on its own, to compare in the
-              browser. muse polls Meta itself, so there is nothing to paste back. */}
-          <DeviceSteps code={flow.user_code} url={flow.url} status={flow.status} />
-        </div>
-      ) : mode === "key" ? (
-        <div className="p-body">
-          {/* 🔴 The warning comes BEFORE the field, not after a failure: this route destroys an
-              account sign-in and moves the workspace onto metered billing, and the member should
-              read that while deciding rather than in a toast. */}
-          <p className="ps-note ps-note-warn">{tr("agents.muse_key_warn")}</p>
-          <div className="flow">
-            <input
-              className="cinput"
-              type="password"
-              placeholder={tr("agents.muse_key_placeholder")}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              autoFocus
-            />
-            <button disabled={busy || !key.trim()} onClick={saveKey}>
-              {tr("conn.connect")}
-            </button>
-            <button className="ghost" onClick={() => setMode("idle")}>
-              {tr("common.back")}
-            </button>
-          </div>
-        </div>
       ) : (
         <>
           <div className="p-desc">{tr("agents.muse_desc")}</div>
