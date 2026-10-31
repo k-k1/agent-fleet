@@ -270,7 +270,7 @@ function ProfileSection({
   // next: further members of a sign-in to log in through when the Agent refuses this one as not
   // exported; startNow: the member already pressed Log in.
   const [loginFor, setLoginFor] = useState<
-    (LoginProfile & { id: string; ids?: string[]; next?: (LoginProfile & { id: string })[]; startNow?: boolean }) | null
+    (LoginProfile & { id: string; ids?: string[]; signIn?: string; next?: (LoginProfile & { id: string })[]; startNow?: boolean }) | null
   >(null);
   // The sign-in whose name and portal are being edited on its header.
   const [editingSignIn, setEditingSignIn] = useState<SsmSignIn | null>(null);
@@ -428,6 +428,9 @@ function ProfileSection({
       if (!ok) return;
       if (editing && needsLogin(body)) {
         reloginNeeded.add(editing.id);
+        setMarks((n) => n + 1);
+      } else if (editing && !chainedForm && nextSignIn !== String(editing.signIn || "") && reloginNeeded.delete(editing.id)) {
+        // Moved into a login that works now: the mark was about the login it left.
         setMarks((n) => n + 1);
       }
       close();
@@ -786,7 +789,7 @@ function ProfileSection({
             disabled={busy || !loginMember}
             onClick={() =>
               loginMember &&
-              setLoginFor({ ...asLogin(loginMember), ids: members.map((m) => String(m.id)), next: candidates.slice(1).map(asLogin) })
+              setLoginFor({ ...asLogin(loginMember), ids: members.map((m) => String(m.id)), signIn: si.name, next: candidates.slice(1).map(asLogin) })
             }
           >
             {tr("ssm.login")}
@@ -960,8 +963,19 @@ function ProfileSection({
           profile={loginFor}
           startNow={loginFor.startNow}
           onRefused={(code) => {
-            const [nx, ...rest] = loginFor.next || [];
-            if (code === "not_exported" && nx) setLoginFor({ ...nx, ids: loginFor.ids, next: rest, startNow: true });
+            if (code !== "not_exported" || !loginFor.signIn || !loginFor.next?.length) return;
+            // The next member starts at once only while the Agent still lists it in the sign-in the
+            // member pressed Log in for; one moved to another sign-in meanwhile would log that in.
+            const cur = loginFor;
+            void api("api/aws-login/profiles")
+              .then((d) => {
+                const inSignIn = (n: string) =>
+                  (Array.isArray(d?.profiles) ? d.profiles : []).some((x: any) => x?.name === n && !x?.source && x?.signIn === cur.signIn);
+                const left = (cur.next || []).filter((x) => inSignIn(x.name));
+                const [nx, ...rest] = left;
+                if (nx) setLoginFor((now) => (now === cur ? { ...nx, ids: cur.ids, signIn: cur.signIn, next: rest, startNow: true } : now));
+              })
+              .catch(() => {});
           }}
           onClose={() => {
             setLoginFor(null);

@@ -76,7 +76,10 @@ export function useProfileLogout(): (p: Pick<AwsLoginTarget, "name" | "label">, 
       });
       if (!ok) return false;
       let r = await logoutProfile(target.name);
-      for (const name of signIn ? others : []) {
+      // Only a profile the fresh list still shows in this sign-in shares the login the member
+      // confirmed: one moved to another sign-in meanwhile would sign that one out.
+      const sameLogin = (n: string) => list.some((x) => x.name === n && !x.source && x.signIn === signIn);
+      for (const name of signIn ? others.filter(sameLogin) : []) {
         if (r.ok || r.code !== "not_exported") break;
         r = await logoutProfile(name);
       }

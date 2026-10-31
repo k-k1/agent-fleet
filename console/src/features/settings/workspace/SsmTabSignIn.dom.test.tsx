@@ -270,6 +270,51 @@ describe("SsmTab shared sign-ins", () => {
     expect(soloRow().querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_relogin"));
   });
 
+  it("never falls back to a member the fresh list shows in another sign-in", async () => {
+    notExported.add("a");
+    states = {
+      profiles: [
+        { name: "a", state: "signed_in", signIn: "team" },
+        { name: "b", state: "signed_in", signIn: "other" },
+      ],
+      signIns: [{ name: "team", state: "signed_in", profiles: ["a"] }],
+    };
+    await mount();
+    await click(header()!.querySelector<HTMLButtonElement>("button.ssm-signin-login")!);
+    const modal = () => document.querySelector<HTMLElement>(".ui-modal")!;
+    await click(btn(modal(), t("awslogin.start")));
+    await act(async () => {});
+    expect(starts).toEqual(["a"]);
+    await click(btn(modal(), t("awslogin.close")));
+    await click(header()!.querySelector<HTMLButtonElement>("button.ssm-signin-logout")!);
+    expect(logouts).toEqual(["a"]);
+  });
+
+  it("moving into a login that works clears the mark of the login left; a member's plain edit keeps a portal-change mark", async () => {
+    await mount();
+    const soloRow = () => Array.from(host.querySelectorAll<HTMLElement>("li.ssm-item:not(.ssm-member):not(.ssm-signin)"))[0];
+    await click(btn(soloRow(), t("ssm.edit")));
+    await type(field(".ssm-frm input[placeholder='my-profile']"), "solo2");
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(soloRow().querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_relogin"));
+    await click(btn(soloRow(), t("ssm.edit")));
+    await type(field("select.ssm-sign-in-select"), "join:team");
+    // What the save's reload reads: solo is now a member of team.
+    profiles = [member("p1", "a"), member("p2", "b"), { ...solo, signIn: "team" }];
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(Array.from(header()!.querySelectorAll("li.ssm-member .ssm-alias")).map((x) => x.textContent)).toEqual(["a", "b", "solo"]);
+    expect(header()!.querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_signed_in"));
+
+    // Control: a portal change marks every member, and a member's untouched edit keeps it.
+    await click(header()!.querySelector<HTMLButtonElement>("button.ssm-signin-edit")!);
+    await type(field("input.ssm-signin-url"), "https://other.awsapps.com/start");
+    await click(header()!.querySelector<HTMLButtonElement>("button.ssm-signin-save")!);
+    const a = Array.from(host.querySelectorAll<HTMLElement>("li.ssm-member"))[0];
+    await click(btn(a, t("ssm.edit")));
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(header()!.querySelector(".ssm-login-state")?.textContent).toBe(t("ssm.state_relogin"));
+  });
+
   it("logs in and out through the next member when the Agent refuses the first as not exported", async () => {
     notExported.add("a");
     await mount();
