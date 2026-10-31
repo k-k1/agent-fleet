@@ -101,10 +101,20 @@ func hashParts(parts ...string) string {
 func identityOf(p Profile, settings map[string]Profile) string {
 	if p.Chained() {
 		src := settings[p.SourceProfile]
-		return hashParts("assume_role", p.ID, p.AccountID, p.RoleARN, p.Region, src.ID, p.ExternalID, p.SessionName,
-			fmt.Sprint(p.DurationSeconds))
+		return hashParts(withSignIn([]string{"assume_role", p.ID, p.AccountID, p.RoleARN, p.Region, src.ID, p.ExternalID, p.SessionName,
+			fmt.Sprint(p.DurationSeconds)}, src)...)
 	}
-	return hashParts("sso", p.ID, p.AccountID, p.RoleName, p.Region, strings.TrimRight(p.StartURL, "/"), p.SSORegion)
+	return hashParts(withSignIn([]string{"sso", p.ID, p.AccountID, p.RoleName, p.Region, strings.TrimRight(p.StartURL, "/"), p.SSORegion}, p)...)
+}
+
+// withSignIn adds the shared sign-in the login comes from (ADR 0125): joining, leaving or
+// switching one changes whose login the run uses, so a grant given before does not carry over.
+// A profile in no sign-in hashes as it did before sign-ins, so its grants stay valid.
+func withSignIn(parts []string, login Profile) []string {
+	if login.SignInID == "" {
+		return parts
+	}
+	return append(parts, "sign-in:"+login.SignInID)
 }
 
 // confirmTargets lists the approvals a run of profile needs: the profile's own when it is
@@ -484,7 +494,7 @@ func ForgetRoleCredentials(settings map[string]Profile, profile string) error {
 		}
 	}
 	if sso.Name != "" {
-		if err := os.Remove(ssoRoleCachePath(sso.AccountID, sso.RoleName, "af-"+sso.Name)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(ssoRoleCachePath(sso.AccountID, sso.RoleName, sso.SSOSession())); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err)
 		}
 	}

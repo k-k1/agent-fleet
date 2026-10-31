@@ -301,6 +301,11 @@ type awsRunner struct {
 	// ctx, when set, kills the child when it ends and makes out return only after the child
 	// exited (a Console wait's Ctrl-C and budget); nil runs to the child's own end.
 	ctx context.Context
+	// target, when set, is checked under the sso-session's lock right before every export
+	// (plannedTarget); an error stops the export.
+	target func(ssoSession string) error
+	// targetID names the owner and portal target holds the key to, for the login request.
+	targetID string
 }
 
 func (r awsRunner) out(args ...string) (string, error) {
@@ -446,6 +451,7 @@ func planExec(awsBin string, environ []string, o ExecOptions) (string, []string,
 		return "", nil, nil, err
 	}
 	aws := awsRunner{bin: awsBin, env: verifierEnv(env, cfg)}
+	aws.target, aws.targetID = plannedTarget(o.Settings, sso.Session)
 
 	// Read before the check, not after: a login landing between the two must not be
 	// recorded as the cache that failed (ADR 0102 decision 1).
@@ -652,9 +658,9 @@ func notDefined(env []string, o ExecOptions) error {
 	msg := fmt.Sprintf("profile %q is not defined in %s or %s", o.Profile, cfg, creds)
 	if _, ok := o.Settings[o.Profile]; ok {
 		b, _ := os.ReadFile(expandHome(cfg))
-		if _, sessions := configNames(string(b)); sessions["af-"+o.Profile] {
-			msg += fmt.Sprintf(" although Settings has it: your [sso-session af-%s] in %s uses the name its sso-session needs, "+
-				"so it is not exported; rename that section", o.Profile, cfg)
+		if _, sessions := configNames(string(b)); sessions[o.Settings[o.Profile].SSOSession()] {
+			msg += fmt.Sprintf(" although Settings has it: your [sso-session %s] in %s uses the name its sso-session needs, "+
+				"so it is not exported; rename that section", o.Settings[o.Profile].SSOSession(), cfg)
 		} else {
 			msg += " although Settings has it; check that AWS_CONFIG_FILE is not pointing elsewhere"
 		}

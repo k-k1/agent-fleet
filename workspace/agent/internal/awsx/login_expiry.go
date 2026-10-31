@@ -80,21 +80,34 @@ func expiringAt(end, now time.Time) bool {
 // the Console shows it only if GET /aws-login/profiles lists that profile as expiring.
 func warnExpiringSSO(now time.Time) {
 	settings := loginSettings()
+	usable := UsableNow()
 	names := make([]string, 0, len(settings))
-	for _, name := range UsableNow() {
+	for _, name := range usable {
 		if _, ok := settings[name]; ok {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
+	// Once per sso-session and end: the members of a shared sign-in share one login (ADR 0125
+	// decision 5). The payload keeps the first member's name, so a Console that predates
+	// sign-ins still opens a modal, and adds the sign-in.
+	warned := map[string]bool{}
 	for _, name := range names {
-		end, ok := readSSOExpiry("af-"+name, now)
+		sp := settings[name]
+		if sp.Chained() || warned[sp.SSOSession()] {
+			continue
+		}
+		warned[sp.SSOSession()] = true
+		end, ok := keyExpiry(sp, settings, usable, now)
 		if !ok || !expiringAt(end, now) {
 			continue
 		}
 		ev := notice.New(NoticeKindAWSExpiring, "", "", "")
 		ev.TargetType = "workspace"
 		ev.Payload["profile"] = name
-		_ = notice.PutOnce("aws-sso-expiring:"+name+":"+end.Format(time.RFC3339), ev)
+		if sp.SignIn != "" {
+			ev.Payload["signIn"] = sp.SignIn
+		}
+		_ = notice.PutOnce("aws-sso-expiring:"+sp.SSOSession()+":"+end.Format(time.RFC3339), ev)
 	}
 }

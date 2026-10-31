@@ -40,7 +40,36 @@ var (
 	ssmRoleARNRe     = regexp.MustCompile(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$`)
 	ssmExternalIDRe  = regexp.MustCompile(`^[A-Za-z0-9+=,.@:/_-]{2,}$`)
 	ssmSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{2,64}$`)
+	// The sso-session of a shared sign-in (ADR 0125): af- and a sign-in name the Control Plane
+	// allows (61 characters at most, so the whole fits 64).
+	ssoSessionRe = regexp.MustCompile(`^af-[A-Za-z0-9._@-]{1,61}$`)
 )
+
+// VetLogin and ForgetLogin are the AWS backend's (internal/awsx, which sets them): this package
+// cannot import it. VetLogin retires the cached login of a Settings profile whose owner or portal
+// changed (ADR 0125 decision 10) before the pane uses it, and refuses a meta Settings no longer
+// matches or a login it could not retire. ForgetLogin drops that login for a
+// forced re-login: the token and the role credentials of every profile sharing it, in one
+// section under the login's lock, so no other run's export can put a member's credentials back
+// in between. Nil leaves the pane to its shell steps (tests, a profile of the member's own).
+var (
+	VetLogin    func(s session.SSMMeta) error
+	ForgetLogin func(s session.SSMMeta) error
+)
+
+// SSOSessionName is the sso-session s logs in through: its shared sign-in's when it is in one,
+// af-<profile> otherwise. Every file that describes s names it the same, so they share one
+// cached login.
+func SSOSessionName(s session.SSMMeta) string {
+	switch {
+	case s.SSOSession != "":
+		return s.SSOSession
+	case s.RoleARN != "" && s.SourceProfile != "":
+		// A chain logs in through its source (renderChained renders the source's section).
+		return "af-" + s.SourceProfile
+	}
+	return "af-" + s.Profile
+}
 
 // ValidateAssumeRole checks the role-chaining fields of s (RoleARN, SourceProfile,
 // ExternalID, RoleSessionName, DurationSeconds) plus the profile name and region. The source
@@ -119,6 +148,7 @@ func validateSSMMeta(s session.SSMMeta) error {
 		check("region", s.Region, ssmRegionRe, false),
 		check("account id", s.AccountID, ssmAccountRe, false),
 		check("role name", s.RoleName, ssmRoleRe, false),
+		check("sso session", s.SSOSession, ssoSessionRe, false),
 	} {
 		if e != nil {
 			return e
@@ -142,28 +172,39 @@ func WriteSSMConfig(path string, s session.SSMMeta) error {
 }
 
 // RenderSSMConfig returns the sso-session + profile sections for s, validated. The
-// sso-session is named "af-<profile>" wherever it is written, so every file that
-// describes the same profile shares one cached SSO login.
+// sso-session is SSOSessionName(s) wherever it is written, so every file that describes the
+// same profile, or the same shared sign-in, shares one cached SSO login.
 func RenderSSMConfig(s session.SSMMeta) (string, error) {
 	if s.RoleARN != "" {
 		return renderChained(s)
 	}
-	if s.SourceProfile != "" || s.ExternalID != "" || s.RoleSessionName != "" || s.DurationSeconds != 0 {
-		return "", errors.New("ssm meta: assume-role fields without a role arn")
+	sess, prof, err := RenderSSOParts(s)
+	if err != nil {
+		return "", err
+	}
+	return sess + "\n" + prof, nil
+}
+
+// RenderSSOParts is RenderSSMConfig of an SSO profile, as its two sections: the sso-session,
+// which a file holds once however many profiles use it, and the profile.
+func RenderSSOParts(s session.SSMMeta) (string, string, error) {
+	if s.RoleARN != "" || s.SourceProfile != "" || s.ExternalID != "" || s.RoleSessionName != "" || s.DurationSeconds != 0 {
+		return "", "", errors.New("ssm meta: assume-role fields without a role arn")
 	}
 	if err := validateSSMMeta(s); err != nil {
-		return "", err
+		return "", "", err
 	}
 	region := s.Region
 	if region == "" {
 		region = s.SSORegion
 	}
-	ssoName := "af-" + s.Profile
+	ssoName := SSOSessionName(s)
+	var sess strings.Builder
+	fmt.Fprintf(&sess, "[sso-session %s]\n", ssoName)
+	fmt.Fprintf(&sess, "sso_start_url = %s\n", s.StartURL)
+	fmt.Fprintf(&sess, "sso_region = %s\n", s.SSORegion)
+	sess.WriteString("sso_registration_scopes = sso:account:access\n")
 	var b strings.Builder
-	fmt.Fprintf(&b, "[sso-session %s]\n", ssoName)
-	fmt.Fprintf(&b, "sso_start_url = %s\n", s.StartURL)
-	fmt.Fprintf(&b, "sso_region = %s\n", s.SSORegion)
-	b.WriteString("sso_registration_scopes = sso:account:access\n\n")
 	fmt.Fprintf(&b, "[profile %s]\n", s.Profile)
 	fmt.Fprintf(&b, "sso_session = %s\n", ssoName)
 	if s.AccountID != "" {
@@ -175,7 +216,7 @@ func RenderSSMConfig(s session.SSMMeta) (string, error) {
 	if region != "" {
 		fmt.Fprintf(&b, "region = %s\n", region)
 	}
-	return b.String(), nil
+	return sess.String(), b.String(), nil
 }
 
 // chainScrubVars are the environment variables through which an AWS client finds
@@ -222,7 +263,7 @@ func renderChained(s session.SSMMeta) (string, error) {
 		return "", err
 	}
 	src := session.SSMMeta{Profile: s.SourceProfile, StartURL: s.StartURL, SSORegion: s.SSORegion,
-		AccountID: s.AccountID, RoleName: s.RoleName}
+		AccountID: s.AccountID, RoleName: s.RoleName, SSOSession: s.SSOSession}
 	srcINI, err := RenderSSMConfig(src)
 	if err != nil {
 		return "", err
@@ -275,10 +316,20 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 	// into this very pane (docs/log/35 §35.7.2-6). No-op when both are present.
 	b.WriteString("{ command -v aws && command -v session-manager-plugin; } >/dev/null 2>&1 || " +
 		"workspace-agent install-awscli || { echo '[Agent Fleet] AWS CLI の導入に失敗しました（ネットワークを確認して再試行してください）'; exit 1; }; ")
-	if s.StartURL != "" && s.Profile != "" {
+	fromSettings := s.StartURL != "" && s.Profile != ""
+	if fromSettings {
 		cfg := SsmConfigPath(name)
 		if err := WriteSSMConfig(cfg, s); err != nil {
 			return "", err
+		}
+		if force && ForgetLogin != nil {
+			if err := ForgetLogin(s); err != nil {
+				return "", err
+			}
+		} else if VetLogin != nil {
+			if err := VetLogin(s); err != nil {
+				return "", err
+			}
 		}
 		if s.RoleARN != "" {
 			b.WriteString(chainIsolationShell())
@@ -306,8 +357,12 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 		back = fmt.Sprintf("export AWS_PROFILE=%s; ", session.ShellQuote(s.Profile))
 	}
 	if force {
+		forget := ssmForgetLogin
+		if fromSettings && ForgetLogin != nil {
+			forget = "" // done above, in Go
+		}
 		b.WriteString("echo '[Agent Fleet] 再ログインします（自分で開始したこのログインのみ承認してください）'; " +
-			loginAs + ssmForgetLogin + "aws sso login --use-device-code --no-browser; " + back)
+			loginAs + forget + "aws sso login --use-device-code --no-browser; " + back)
 	} else {
 		b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
 			"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +

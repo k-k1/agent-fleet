@@ -19,6 +19,8 @@ type ssmInstancesReq struct {
 	// Role chaining (issue #1109): see session.SSMMeta.
 	SourceProfile, RoleARN, ExternalID, RoleSessionName string
 	DurationSeconds                                     int
+	// The shared sign-in's sso-session and the token's owner (ADR 0125); see session.SSMMeta.
+	SSOSession, SSOOwnerID string
 }
 
 type ssmInstance struct {
@@ -46,10 +48,19 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 	meta := session.SSMMeta{Profile: req.Profile, Region: req.Region, StartURL: req.StartURL,
 		SSORegion: req.SSORegion, AccountID: req.AccountID, RoleName: req.RoleName,
 		RoleARN: req.RoleARN, SourceProfile: req.SourceProfile, ExternalID: req.ExternalID,
-		RoleSessionName: req.RoleSessionName, DurationSeconds: req.DurationSeconds}
+		RoleSessionName: req.RoleSessionName, DurationSeconds: req.DurationSeconds,
+		SSOSession: req.SSOSession, SSOOwnerID: req.SSOOwnerID}
 	if err := ssm.WriteSSMConfig(cfg, meta); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return
+	}
+	// The token of another owner or portal is retired before the CLI reads it, and a profile
+	// Settings no longer renders this way is refused.
+	if ssm.VetLogin != nil {
+		if err := ssm.VetLogin(meta); err != nil {
+			httpx.WriteErr(w, http.StatusConflict, "ssm_login_stale", err.Error())
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()

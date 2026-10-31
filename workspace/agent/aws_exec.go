@@ -225,7 +225,7 @@ func runAWSExec(args []string) {
 		name := os.Getenv("AF_SESSION_NAME")
 		o.ConsoleLogin = true
 		o.ConsoleWait, o.TerminalConsole = consoleLoginWaitFor(name, o.Interactive)
-		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0])}
+		o.Waiter = awsx.LoginWaiter{Session: name, Command: filepath.Base(o.Argv[0]), Profile: o.Profile}
 	}
 	if gated {
 		// The wait for the member's confirmation can be long: the member's own files may define
@@ -238,6 +238,12 @@ func runAWSExec(args []string) {
 				"its sso-session or its source now, or [DEFAULT] conflicts with it (`af-aws-exec --list` says why)", o.Profile))
 		}
 		o.Exported = usable
+	}
+	// A key whose owner or portal changed is retired before the CLI reads it (ADR 0125 decision 10).
+	// One that cannot be retired is refused: its token or role credentials may still be read.
+	if err := awsx.VetKeyOf(o.Settings, o.Profile); err != nil {
+		run.Refuse(cloudruns.RefusedOther)
+		awsExec.Fail(cloudexec.ExitRefused, err.Error())
 	}
 	prog, argv, env, err := awsx.PlanExec(awsBin, os.Environ(), o)
 	if err != nil {

@@ -63,7 +63,13 @@ type Store[S comparable] struct {
 type Waiter struct {
 	Session string `json:"session,omitempty"`
 	Command string `json:"command,omitempty"`
-	At      string `json:"at"`
+	// Profile is the profile the waiting run asked for: with a shared sign-in (ADR 0125) one
+	// request serves several.
+	Profile string `json:"profile,omitempty"`
+	// Target names the owner and portal the run needs the key's login for (an opaque string of
+	// the backend's), "" when the backend has none.
+	Target string `json:"target,omitempty"`
+	At     string `json:"at"`
 }
 
 // Request is one pending request, one file per request key. The JSON names are fixed by
@@ -76,6 +82,9 @@ type Request[S comparable] struct {
 	LastAt   string   `json:"lastAt"`
 	Snapshot S        `json:"cache"`
 	Waiters  []Waiter `json:"waiters,omitempty"`
+	// Target is the Waiter.Target every waiter of this request shares: a run for another
+	// target of the same key starts a new request, so one login never serves two owners.
+	Target string `json:"target,omitempty"`
 }
 
 // cancelMarker is written by the Agent when a request is cancelled, before the request
@@ -251,6 +260,19 @@ func RecentWaiters(ws []Waiter, n int) []WaiterWire {
 	return out
 }
 
+// WaiterProfiles lists the distinct profiles the waiters asked for, in the order they asked.
+func WaiterProfiles(ws []Waiter) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, w := range ws {
+		if p := CleanWaiterText(w.Profile); p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // ErrHeld means a cancel in the Console still holds new requests back.
 var ErrHeld = errors.New("the login request was cancelled in the Console")
 
@@ -269,12 +291,12 @@ func (s *Store[S]) FileCancel(profile, key string, snap S, w Waiter, cancel <-ch
 	if s.Held(key, now) {
 		return Request[S]{}, false, ErrHeld
 	}
-	w.Session, w.Command = CleanWaiterText(w.Session), CleanWaiterText(w.Command)
+	w.Session, w.Command, w.Profile = CleanWaiterText(w.Session), CleanWaiterText(w.Command), CleanWaiterText(w.Profile)
 	w.At = now.Format(time.RFC3339Nano)
 	r, exists := s.Read(key)
-	created := !exists
+	created := !exists || r.Target != w.Target
 	if created {
-		r = Request[S]{ID: newID(), Profile: profile, Key: key, FirstAt: w.At}
+		r = Request[S]{ID: newID(), Profile: profile, Key: key, FirstAt: w.At, Target: w.Target}
 	}
 	r.LastAt = w.At
 	// Joining: the record must describe a state this run found unusable.

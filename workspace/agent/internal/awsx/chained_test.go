@@ -282,7 +282,7 @@ func TestConsoleLoginIsAskedForTheSourceOfAChain(t *testing.T) {
 		}
 		path := ssoCachePath("af-src")
 		os.MkdirAll(filepath.Dir(path), 0o700)
-		doc, _ := json.Marshal(map[string]string{"accessToken": "fresh", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+		doc, _ := json.Marshal(map[string]string{"accessToken": "fresh", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "startUrl": "https://example.awsapps.com/start", "region": "ap-northeast-1"})
 		os.WriteFile(path, doc, 0o600)
 		os.WriteFile(filepath.Join(state, "loggedIn"), nil, 0o600)
 		os.WriteFile(filepath.Join(state, "arn"), []byte("arn:aws:sts::210987654321:assumed-role/deploy/s"), 0o600)
@@ -356,7 +356,7 @@ func TestProfileLoginStateOfAChainFollowsItsSource(t *testing.T) {
 	}
 	path := ssoCachePath("af-src")
 	os.MkdirAll(filepath.Dir(path), 0o700)
-	doc, _ := json.Marshal(map[string]string{"accessToken": "t", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	doc, _ := json.Marshal(map[string]string{"accessToken": "t", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "startUrl": "https://example.awsapps.com/start", "region": "ap-northeast-1"})
 	os.WriteFile(path, doc, 0o600)
 	if s := states(); s["deploy"] != loginStateSignedIn || s["src"] != loginStateSignedIn {
 		t.Fatalf("source signed in: %v", s)
@@ -442,9 +442,9 @@ func TestProfileLoginStateOfAChainWithoutAUsableSource(t *testing.T) {
 	// A live login for src must not leak into a chain that cannot use it.
 	path := ssoCachePath("af-src")
 	os.MkdirAll(filepath.Dir(path), 0o700)
-	doc, _ := json.Marshal(map[string]string{"accessToken": "t", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	doc, _ := json.Marshal(map[string]string{"accessToken": "t", "expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "startUrl": "https://example.awsapps.com/start", "region": "ap-northeast-1"})
 	os.WriteFile(path, doc, 0o600)
-	read := func(profiles []Profile, exported []Profile) map[string]profileLoginStateWire {
+	read := func(profiles []Profile, exported []Profile) map[string]ProfileLoginStateWire {
 		if err := saveSettingsCache(profiles, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -458,7 +458,7 @@ func TestProfileLoginStateOfAChainWithoutAUsableSource(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatal(err)
 		}
-		m := map[string]profileLoginStateWire{}
+		m := map[string]ProfileLoginStateWire{}
 		for _, p := range out.Profiles {
 			m[p.Name] = p
 		}

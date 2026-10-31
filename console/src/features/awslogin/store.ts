@@ -23,6 +23,21 @@ export interface AwsLoginRequest {
   /** When the Agent drops the request, on this browser's clock (deadlineFrom); null while a
    *  login attempt for it runs, or when the Agent gave no countdown. */
   deadline?: number | null;
+  /** The shared sign-in the login is for (ADR 0125), and the profiles whose runs wait on it;
+   *  absent from an Agent that predates sign-ins. */
+  signIn?: string;
+  profiles?: string[];
+}
+
+/** A shared sign-in's login (ADR 0125), as GET /api/aws-login/profiles lists it: one state for
+ *  every member. */
+export interface AwsSignInState {
+  name: string;
+  state: string;
+  expiresAt?: string;
+  expiresInSec?: number;
+  expiring?: boolean;
+  profiles: string[];
 }
 
 /** A Settings profile whose cached login ends soon, as GET /api/aws-login/profiles lists it (#1029). */
@@ -56,6 +71,8 @@ export interface AwsProfileState {
   expiring: boolean;
   /** expiresAt on this browser's clock, from the Agent's seconds left (deadlineFrom). */
   deadline?: number | null;
+  /** The shared sign-in the profile is in (ADR 0125); its state is the sign-in's. */
+  signIn?: string;
 }
 
 /** What a profile's login modal needs; a subset of both lists, so either can open it. */
@@ -107,13 +124,23 @@ interface AwsLoginState {
   logoutProfile(name: string): Promise<AwsLogoutResult>;
 }
 
+/** POST api/aws-login/profiles/{name}/logout as the Agent sends it (awsx.ProfileLogoutWire). */
+export interface AwsLogoutWire {
+  revoked: boolean;
+  alreadyEnded?: boolean;
+  noToken?: boolean;
+  message?: string;
+  /** Every profile the logout signed out: the members of a shared sign-in, or the profile alone. */
+  profiles: string[];
+}
+
 /**
  * The Agent's answer to a logout. revoked is false when AWS could not be told (the workspace
  * is signed out all the same), when there was no login to revoke (noToken), or when the session
  * at AWS had already ended (alreadyEnded: AWS refused to renew the expired login).
  */
 export type AwsLogoutResult =
-  | { ok: true; revoked: boolean; alreadyEnded: boolean; noToken: boolean; message: string }
+  | { ok: true; revoked: boolean; alreadyEnded: boolean; noToken: boolean; message: string; profiles: string[] }
   | { ok: false; code: string; message: string };
 
 export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
@@ -203,7 +230,7 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     // === true, not truthiness: a profile named "constructor" would read Object.prototype's.
     if (get().loggingOut[name] === true) return { ok: false, code: "busy", message: "" };
     set((s) => ({ loggingOut: { ...s.loggingOut, [name]: true } }));
-    let d: { revoked?: unknown; alreadyEnded?: unknown; noToken?: unknown; message?: unknown; error?: { code?: string; message?: string } } | null;
+    let d: (Partial<Record<keyof AwsLogoutWire, unknown>> & { error?: { code?: string; message?: string } }) | null;
     try {
       d = await api(`api/aws-login/profiles/${encodeURIComponent(name)}/logout`, { method: "POST" });
     } catch (e) {
@@ -217,7 +244,16 @@ export const useAwsLoginStore = create<AwsLoginState>((set, get) => ({
     // Whatever the answer, the cache may have changed under the list.
     void get().refreshExpiry();
     if (!d || d.error) return { ok: false, code: d?.error?.code || "", message: d?.error?.message || "" };
-    return { ok: true, revoked: d.revoked === true, alreadyEnded: d.alreadyEnded === true, noToken: d.noToken === true, message: String(d.message ?? "") };
+    // An Agent that predates shared sign-ins sends no profiles: the profile alone was signed out.
+    const profiles = Array.isArray(d.profiles) ? d.profiles.filter((p): p is string => typeof p === "string") : [name];
+    return {
+      ok: true,
+      revoked: d.revoked === true,
+      alreadyEnded: d.alreadyEnded === true,
+      noToken: d.noToken === true,
+      message: String(d.message ?? ""),
+      profiles,
+    };
   },
 }));
 

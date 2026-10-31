@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -32,17 +33,35 @@ var LoginAWSBin = func() (string, error) { return exec.LookPath("aws") }
 // when the code is dead and says so.
 const loginAttemptTimeout = 15 * time.Minute
 
-// settingsFor is the Settings profile a request names, if Settings still defines it the
-// way the request was filed for.
+// settingsFor is the Settings profile a request's login runs as, if Settings still gives the
+// request's key the owner and portal the request was filed for. With a shared sign-in any
+// current member serves (the profile that filed it may have left or been deleted): the one that
+// filed it first, then the waiters' in order, then any other.
 func settingsFor(r LoginRequest, settings map[string]Profile) (Profile, bool) {
-	sp, ok := settings[r.Profile]
-	return sp, ok && r.Key == "af-"+sp.Name && IncompleteReason(sp) == ""
+	if r.Target != "" {
+		want, ok := settingsOwner(settings, r.Key)
+		if !ok || want.id() != r.Target {
+			return Profile{}, false
+		}
+	}
+	names := append([]string{r.Profile}, cloudlogin.WaiterProfiles(r.Waiters)...)
+	if r.Target != "" {
+		for _, m := range sessionMembers(settings, r.Key) {
+			names = append(names, m.Name)
+		}
+	}
+	for _, n := range names {
+		if sp, ok := settings[n]; ok && !sp.Chained() && r.Key == sp.SSOSession() && IncompleteReason(sp) == "" {
+			return sp, true
+		}
+	}
+	return Profile{}, false
 }
 
-// loginRequestWire is one pending request as the Console shows it. The account, role and
+// LoginRequestWire is one pending request as the Console shows it. The account, role and
 // label come from Settings; waiters are the cut-down text of decision 1. No attempt id,
 // URL or code is ever here.
-type loginRequestWire struct {
+type LoginRequestWire struct {
 	ID        string                  `json:"id"`
 	Profile   string                  `json:"profile"`
 	Label     string                  `json:"label"`
@@ -54,10 +73,14 @@ type loginRequestWire struct {
 	// ExpiresInSec is the time left before the request is dropped (cloudlogin.ExpiresInSec);
 	// absent while a login attempt for it runs.
 	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
+	// SignIn is the shared sign-in the login is for (ADR 0125), and Profiles the profiles
+	// whose runs wait on it: one login serves them all.
+	SignIn   string   `json:"signIn,omitempty"`
+	Profiles []string `json:"profiles"`
 }
 
 type loginListWire struct {
-	Requests []loginRequestWire `json:"requests"`
+	Requests []LoginRequestWire `json:"requests"`
 }
 
 func loginSettings() map[string]Profile {
@@ -71,16 +94,16 @@ func loginSettings() map[string]Profile {
 // HandleLoginList is GET /aws-login: the pending requests the Console may show.
 func HandleLoginList(w http.ResponseWriter, r *http.Request) {
 	settings := loginSettings()
-	out := []loginRequestWire{}
+	out := []LoginRequestWire{}
 	now := time.Now()
 	for _, req := range logins.Sweep(now) {
 		sp, ok := settingsFor(req, settings)
 		if !ok {
 			continue
 		}
-		out = append(out, loginRequestWire{ID: req.ID, Profile: sp.Name, Label: sp.Label, AccountID: sp.AccountID,
+		out = append(out, LoginRequestWire{ID: req.ID, Profile: sp.Name, Label: sp.Label, AccountID: sp.AccountID,
 			RoleName: sp.RoleName, Waiters: cloudlogin.RecentWaiters(req.Waiters, 5), FirstAt: req.FirstAt, LastAt: req.LastAt,
-			ExpiresInSec: logins.ExpiresInSec(req, now)})
+			ExpiresInSec: logins.ExpiresInSec(req, now), SignIn: sp.SignIn, Profiles: cloudlogin.WaiterProfiles(req.Waiters)})
 	}
 	httpx.WriteJSON(w, http.StatusOK, loginListWire{Requests: out})
 }
@@ -159,7 +182,7 @@ func HandleProfileLoginStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "no_aws_cli", err.Error())
 		return
 	}
-	a, err := startLoginAttempt(bin, "af-"+sp.Name, "", sp)
+	a, err := startLoginAttempt(bin, sp.SSOSession(), "", sp)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
@@ -182,9 +205,9 @@ const (
 	loginStateSourceUnavailable = "source_unavailable"
 )
 
-// profileLoginStateWire carries Settings' account, role and label so the Console can open
+// ProfileLoginStateWire carries Settings' account, role and label so the Console can open
 // the login modal from an expiry warning without a second list. No token is ever here.
-type profileLoginStateWire struct {
+type ProfileLoginStateWire struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	// Source is the Settings profile a chained profile follows ("" for an SSO profile).
@@ -197,10 +220,24 @@ type profileLoginStateWire struct {
 	// not depend on the browser's clock.
 	ExpiresInSec *int64 `json:"expiresInSec,omitempty"`
 	Expiring     bool   `json:"expiring,omitempty"`
+	// SignIn is the shared sign-in an SSO profile is in (ADR 0125); its State is the sign-in's.
+	SignIn string `json:"signIn,omitempty"`
+}
+
+// SignInStateWire is one shared sign-in's login (ADR 0125 decision 5): one state for all its
+// members, which the Console shows once on the sign-in's header.
+type SignInStateWire struct {
+	Name         string   `json:"name"`
+	State        string   `json:"state"`
+	ExpiresAt    string   `json:"expiresAt,omitempty"`
+	ExpiresInSec *int64   `json:"expiresInSec,omitempty"`
+	Expiring     bool     `json:"expiring,omitempty"`
+	Profiles     []string `json:"profiles"`
 }
 
 type profileLoginStatesWire struct {
-	Profiles []profileLoginStateWire `json:"profiles"`
+	Profiles []ProfileLoginStateWire `json:"profiles"`
+	SignIns  []SignInStateWire       `json:"signIns"`
 }
 
 // profileLoginState reads the token cache of ssoSession. Neither token leaves this function.
@@ -221,23 +258,24 @@ func profileLoginState(ssoSession string, now time.Time) string {
 // profile the Agent knows, from the last poll's list (a read must not pull from the CP).
 func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
-	out := []profileLoginStateWire{}
+	out := []ProfileLoginStateWire{}
 	exported := UsableNow()
 	settings := loginSettings()
+	signIns := map[string]*SignInStateWire{}
 	for name, sp := range settings {
 		if sp.Chained() {
 			// No login of its own: it follows its source, so a row never shows "not signed in"
 			// for a chain whose source is signed in. A source that is not an exported SSO
 			// Settings profile leaves nothing to follow (af-aws-exec refuses the run too), and
 			// that is never "signed in".
-			p := profileLoginStateWire{Name: name, Source: sp.SourceProfile, Label: sp.Label, AccountID: sp.AccountID,
+			p := ProfileLoginStateWire{Name: name, Source: sp.SourceProfile, Label: sp.Label, AccountID: sp.AccountID,
 				RoleName: roleNameOf(sp.RoleARN)}
 			if src, ok := settings[sp.SourceProfile]; !ok || src.Chained() || !slices.Contains(exported, sp.SourceProfile) || !slices.Contains(exported, name) {
 				p.State = loginStateSourceUnavailable
 			} else {
-				p.State = profileLoginState("af-"+sp.SourceProfile, now)
+				p.State = keyLoginState(src, settings, exported, now)
 				// Shown, never warned about: the source's own row carries the expiry warning.
-				if end, ok := readSSOExpiry("af-"+sp.SourceProfile, now); ok {
+				if end, ok := keyExpiry(src, settings, exported, now); ok {
 					p.ExpiresAt = end.Format(time.RFC3339)
 					p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 				}
@@ -245,18 +283,33 @@ func HandleProfileLoginStates(w http.ResponseWriter, r *http.Request) {
 			out = append(out, p)
 			continue
 		}
-		p := profileLoginStateWire{Name: name, State: profileLoginState("af-"+name, now),
-			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName}
-		if end, ok := readSSOExpiry("af-"+name, now); ok {
+		p := ProfileLoginStateWire{Name: name, State: keyLoginState(sp, settings, exported, now),
+			Label: sp.Label, AccountID: sp.AccountID, RoleName: sp.RoleName, SignIn: sp.SignIn}
+		if end, ok := keyExpiry(sp, settings, exported, now); ok {
 			p.ExpiresAt = end.Format(time.RFC3339)
 			p.ExpiresInSec = cloudlogin.SecondsLeft(end, now)
 			// Only a profile in the managed block: the row's login refuses any other.
 			p.Expiring = expiringAt(end, now) && slices.Contains(exported, name)
 		}
+		if sp.SignIn != "" {
+			si := signIns[sp.SignIn]
+			if si == nil {
+				si = &SignInStateWire{Name: sp.SignIn, State: p.State, ExpiresAt: p.ExpiresAt, ExpiresInSec: p.ExpiresInSec}
+				signIns[sp.SignIn] = si
+			}
+			si.Expiring = si.Expiring || p.Expiring
+			si.Profiles = append(si.Profiles, name)
+		}
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	httpx.WriteJSON(w, http.StatusOK, profileLoginStatesWire{Profiles: out})
+	sis := []SignInStateWire{}
+	for _, si := range signIns {
+		sort.Strings(si.Profiles)
+		sis = append(sis, *si)
+	}
+	sort.Slice(sis, func(i, j int) bool { return sis[i].Name < sis[j].Name })
+	httpx.WriteJSON(w, http.StatusOK, profileLoginStatesWire{Profiles: out, SignIns: sis})
 }
 
 // HandleLoginAttempt is GET /aws-login/{id}/attempts/{attempt}: the phase of one attempt,
@@ -366,17 +419,36 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 	if err != nil {
 		return nil, err
 	}
+	// The owner and portal this attempt logs in for: its landing binds only that (decision 10).
+	target := keyBinding{Session: ssoSession, Owner: sp.TokenOwner(), StartURL: strings.TrimRight(sp.StartURL, "/"), SSORegion: sp.SSORegion}
+	if want, ok := settingsOwner(loginSettings(), ssoSession); ok {
+		if !want.sameTarget(target) {
+			os.RemoveAll(dir)
+			return nil, errors.New(settingsChangedLogin)
+		}
+		target = want
+	}
+	_, fleetUsed := keyOwner(loginSettings(), UsableNow(), ssoSession)
+	if !fleetUsed && heldBackElsewhere(ssoSession, target) {
+		// The member's own files hold the key for another portal or owner: not the compatible case.
+		os.RemoveAll(dir)
+		return nil, errors.New("your own ~/.aws files use this sign-in's sso-session for another sign-in; the login was not started")
+	}
+	reg, unregister := registerAttempt(target, fleetUsed)
 	cfg := filepath.Join(dir, "config")
 	if err := os.WriteFile(cfg, []byte(ini), 0o600); err != nil {
+		unregister()
 		os.RemoveAll(dir)
 		return nil, err
 	}
 	allowed := allowedDeviceHosts(sp)
-	return logins.Start(ssoSession, requestID, sp.Name, cloudlogin.Process{
-		Name:    "aws sso login",
-		Path:    bin,
-		Args:    []string{"sso", "login", "--profile", ssoOnlyProfile, "--use-device-code", "--no-browser"},
-		Env:     verifierEnv(baseEnv(os.Environ()), cfg),
+	a, err := logins.Start(ssoSession, requestID, sp.Name, cloudlogin.Process{
+		Name: "aws sso login",
+		Path: bin,
+		Args: []string{"sso", "login", "--profile", ssoOnlyProfile, "--use-device-code", "--no-browser"},
+		// HOME is the attempt's own directory, so the CLI writes its token to a staging cache
+		// that bindLanding publishes only once Settings is checked under the key's lock.
+		Env:     cloudexec.SetEnv(verifierEnv(baseEnv(os.Environ()), cfg), "HOME="+dir),
 		Timeout: loginAttemptTimeout,
 		Parse: func(out string) (string, string, error) {
 			url, code := sessionx.DeviceAuthorization(out)
@@ -386,7 +458,12 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 			return url, code, nil
 		},
 		Exited: func(err error) (bool, string) {
-			if err == nil && ReadCacheState(ssoSession).Unexpired(time.Now()) {
+			defer unregister()
+			staged := ssoCacheIn(dir, ssoSession)
+			if err == nil && readCacheStateAt(staged).Unexpired(time.Now()) {
+				if berr := bindLanding(reg, ssoSession, target, staged); berr != nil {
+					return false, berr.Error()
+				}
 				return true, ""
 			}
 			msg := "aws sso login did not complete"
@@ -398,6 +475,15 @@ func startLoginAttempt(bin, ssoSession, requestID string, sp Profile) (*cloudlog
 		},
 		Cleanup: func() { os.RemoveAll(dir) },
 	})
+	if err != nil {
+		unregister()
+		return nil, err
+	}
+	if !attachAttempt(reg, a) {
+		// A sync ended the registration while the process started: its target is gone.
+		a.End(cloudlogin.PhaseCancelled, settingsChangedLogin)
+	}
+	return a, nil
 }
 
 // roleNameOf is the role name of an IAM role ARN, "" when arn is not one.

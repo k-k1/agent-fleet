@@ -101,7 +101,7 @@ func checkChainedIdentity(env []string, sp Profile, keys, origin map[string]stri
 	if err != nil {
 		return "", fmt.Errorf("source profile %q: %w", sp.SourceProfile, err)
 	}
-	if !sameSSO(srcSP, srcSSO) || srcSSO.Session != "af-"+sp.SourceProfile || !nonSSOFree(srcKeys) {
+	if !sameSSO(srcSP, srcSSO) || srcSSO.Session != srcSP.SSOSession() || !nonSSOFree(srcKeys) {
 		return "", mismatch(fmt.Sprintf("source profile %q is not defined as Settings defines it", sp.SourceProfile))
 	}
 	region := chainRegion(sp, srcSP)
@@ -112,7 +112,8 @@ func checkChainedIdentity(env []string, sp Profile, keys, origin map[string]stri
 	// changed after the checks above (another tab's sync, a login wait) cannot be swapped in.
 	ini, err := ssm.RenderSSMConfig(session.SSMMeta{Profile: o.Profile, SourceProfile: sp.SourceProfile, RoleARN: sp.RoleARN,
 		ExternalID: sp.ExternalID, RoleSessionName: sp.SessionName, DurationSeconds: sp.DurationSeconds, Region: region,
-		StartURL: srcSP.StartURL, SSORegion: srcSP.SSORegion, AccountID: srcSP.AccountID, RoleName: srcSP.RoleName})
+		StartURL: srcSP.StartURL, SSORegion: srcSP.SSORegion, AccountID: srcSP.AccountID, RoleName: srcSP.RoleName,
+		SSOSession: ssmMetaOf(srcSP).SSOSession})
 	if err != nil {
 		return "", fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
@@ -384,6 +385,9 @@ func planNonSSO(awsBin string, env []string, keys, origin map[string]string, ste
 		}
 		aws.env = verifierEnv(env, cfg)
 	}
+	if rootSession != "" {
+		aws.target, aws.targetID = plannedTarget(o.Settings, rootSession)
+	}
 	// Read before the check, not after (ADR 0102 decision 1).
 	snap := ReadCacheState(rootSession)
 	creds, err := exportLocked(aws, o.Profile, rootSession)
@@ -475,7 +479,7 @@ func chainRootConsoleEligible(env []string, ssoRoot string, o ExecOptions) (ssoI
 		return ssoInfo{}, false
 	}
 	sso, err := resolveSSO(env, keys, origin)
-	if err != nil || !sameSSO(sp, sso) || sso.Session != "af-"+ssoRoot {
+	if err != nil || !sameSSO(sp, sso) || sso.Session != sp.SSOSession() {
 		return ssoInfo{}, false
 	}
 	return sso, true

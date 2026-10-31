@@ -22,7 +22,7 @@ func consoleEligible(sso ssoInfo, o ExecOptions) bool {
 		return false
 	}
 	sp, listed := o.Settings[o.Profile]
-	return listed && sameSSO(sp, sso) && sso.Session == "af-"+o.Profile
+	return listed && sameSSO(sp, sso) && sso.Session == sp.SSOSession()
 }
 
 // errConsoleNotAsked marks the refusal of a run whose request could not be filed, so a
@@ -57,6 +57,9 @@ func consoleLogin(aws awsRunner, t consoleTarget, snap CacheState, o ExecOptions
 	defer stopCtx()
 	checkAWS := aws
 	checkAWS.ctx = ctx
+	// The request records the owner and portal this run's login is for: a request filed for
+	// another owner of the same key is a different request (cloudlogin.Waiter.Target).
+	o.Waiter.Target = aws.targetID
 	creds, err := cloudlogin.Wait(logins, snap, cloudlogin.WaitSpec[processCreds]{
 		Profile: t.Profile, Key: t.Session, Waiter: o.Waiter,
 		Wait: o.ConsoleWait, Poll: loginPollInterval, Cancel: cancel,
