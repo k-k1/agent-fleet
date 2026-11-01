@@ -308,7 +308,7 @@ func (e *kubeTestEnv) installCPRole() error {
 	e.rbac = rbac
 	clusterRules := rbac.clusterRoleRules
 	// The manifest's name carries a deployment's CP namespace; the test binds it to the user af-cp.
-	rbac.clusterRole["metadata"] = map[string]any{"name": "af-cp-read"}
+	rbac.clusterRole["metadata"].(map[string]any)["name"] = "af-cp-read"
 	cr := rbac.clusterRole
 	if err := e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/clusterroles", cr, nil); err != nil {
 		return err

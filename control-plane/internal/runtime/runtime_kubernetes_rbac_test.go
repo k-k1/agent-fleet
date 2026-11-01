@@ -17,6 +17,9 @@ import (
 // The overlays (deploy/kubernetes/overlays/*, components/params) only rewrite namespaces,
 // the ClusterRole's name and rules.0.resourceNames.0 in it; they never add or change a
 // rule, so this base file is the single source of truth for what af-cp may do.
+// cpClusterRolePlaceholder is the ClusterRole's name in the base manifest.
+const cpClusterRolePlaceholder = "agent-fleet:af-placeholder-cp"
+
 const cpRBACPath = "../../../deploy/kubernetes/base/cp-rbac.yaml"
 
 // cpRBAC is the af-cp Role and ClusterRole as parsed from cp-rbac.yaml. The envtest
@@ -57,7 +60,9 @@ func parseCPRBAC(data []byte) (*cpRBAC, error) {
 			}
 			delete(meta, "namespace")
 			out.role = doc
-		case kind == "ClusterRole":
+		// The name is the placeholder components/params rewrites per deployment; pinning it
+		// makes a rename of the ClusterRole a deliberate edit of this test too.
+		case kind == "ClusterRole" && name == cpClusterRolePlaceholder:
 			if out.clusterRole != nil {
 				return nil, errors.New("more than one ClusterRole")
 			}
@@ -77,11 +82,27 @@ func parseCPRBAC(data []byte) (*cpRBAC, error) {
 	return out, nil
 }
 
-func strList(v any) []string {
+// strList reads a YAML list of strings; any other element type is an error, not a string
+// made by formatting it.
+func strList(v any) ([]string, error) {
 	var s []string
 	l, _ := v.([]any)
 	for _, e := range l {
-		s = append(s, fmt.Sprint(e))
+		str, ok := e.(string)
+		if !ok {
+			return nil, fmt.Errorf("list element %v (%T) is not a string", e, e)
+		}
+		s = append(s, str)
+	}
+	return s, nil
+}
+
+// mustStrList is strList for assertions in tests.
+func mustStrList(t *testing.T, v any) []string {
+	t.Helper()
+	s, err := strList(v)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return s
 }
@@ -95,13 +116,20 @@ func expandRules(obj map[string]any) ([]kubeTestRule, error) {
 	var out []kubeTestRule
 	for _, r := range rules {
 		m, _ := r.(map[string]any)
-		groups, resources, verbs := strList(m["apiGroups"]), strList(m["resources"]), strList(m["verbs"])
+		var lists [4][]string
+		for i, k := range []string{"apiGroups", "resources", "verbs", "resourceNames"} {
+			var err error
+			if lists[i], err = strList(m[k]); err != nil {
+				return nil, fmt.Errorf("%v: %s: %w", obj["kind"], k, err)
+			}
+		}
+		groups, resources, verbs, names := lists[0], lists[1], lists[2], lists[3]
 		if len(groups) == 0 || len(resources) == 0 || len(verbs) == 0 {
 			return nil, fmt.Errorf("%v: rule %v lacks apiGroups, resources or verbs", obj["kind"], m)
 		}
 		for _, g := range groups {
 			for _, res := range resources {
-				out = append(out, kubeTestRule{group: g, resource: res, names: strList(m["resourceNames"]), verbs: verbs})
+				out = append(out, kubeTestRule{group: g, resource: res, names: names, verbs: verbs})
 			}
 		}
 	}
@@ -155,26 +183,38 @@ func TestCPRBACManifestStaysNarrow(t *testing.T) {
 			}
 		}
 	}
+	// Every (group, resource) the Role may touch. A new resource kind is a wider grant for a
+	// compromised CP, so it has to be added here on purpose.
+	allowed := map[string]bool{
+		"apps/statefulsets": true, "/services": true, "/persistentvolumeclaims": true,
+		"/secrets": true, "/pods": true, "/events": true,
+	}
+	for _, r := range c.roleRules {
+		if !allowed[r.group+"/"+r.resource] {
+			t.Errorf("Role grants %s/%s, which is not on the allowlist: %+v", r.group, r.resource, r)
+		}
+	}
 	// components/params writes the StorageClass into rules.0.resourceNames.0.
-	if first := c.clusterRole["rules"].([]any)[0].(map[string]any); len(strList(first["resourceNames"])) != 1 {
+	if first := c.clusterRole["rules"].([]any)[0].(map[string]any); len(mustStrList(t, first["resourceNames"])) != 1 {
 		t.Errorf("ClusterRole rules[0] must be the resourceNames-restricted storageclasses rule (components/params patches rules.0.resourceNames.0)")
 	}
 }
 
 func TestParseCPRBACRejectsBrokenManifests(t *testing.T) {
 	const role = "kind: Role\nmetadata: {name: af-cp, namespace: x}\nrules:\n- {apiGroups: [''], resources: [pods], verbs: [get]}\n"
-	const cr = "kind: ClusterRole\nmetadata: {name: c}\nrules:\n- {apiGroups: [''], resources: [persistentvolumes], verbs: [get]}\n"
+	const cr = "kind: ClusterRole\nmetadata: {name: agent-fleet:af-placeholder-cp}\nrules:\n- {apiGroups: [''], resources: [persistentvolumes], verbs: [get]}\n"
 	if c, err := parseCPRBAC([]byte(role + "---\n" + cr)); err != nil {
 		t.Fatal(err)
 	} else if _, has := c.role["metadata"].(map[string]any)["namespace"]; has {
 		t.Error("Role namespace must be dropped")
 	}
 	for name, doc := range map[string]string{
-		"no ClusterRole": role,
-		"no Role":        cr,
-		"two Roles":      role + "---\n" + role + "---\n" + cr,
-		"rule w/o verbs": strings.Replace(role, "verbs: [get]", "verbs: []", 1) + "---\n" + cr,
-		"Role w/o rules": "kind: Role\nmetadata: {name: af-cp}\n---\n" + cr,
+		"no ClusterRole":  role,
+		"no Role":         cr,
+		"two Roles":       role + "---\n" + role + "---\n" + cr,
+		"rule w/o verbs":  strings.Replace(role, "verbs: [get]", "verbs: []", 1) + "---\n" + cr,
+		"non-string verb": strings.Replace(role, "verbs: [get]", "verbs: [true]", 1) + "---\n" + cr,
+		"Role w/o rules":  "kind: Role\nmetadata: {name: af-cp}\n---\n" + cr,
 	} {
 		if _, err := parseCPRBAC([]byte(doc)); err == nil {
 			t.Errorf("%s: accepted", name)
