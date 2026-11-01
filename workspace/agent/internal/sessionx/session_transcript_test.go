@@ -162,6 +162,40 @@ func TestHidePendingInteractionQuestion(t *testing.T) {
 	}
 }
 
+// The payload and the transcript part are both parsed from the same tool_input, so a field
+// the Console renders (preview, an empty description, multiSelect) cannot make them differ and
+// leave both cards on screen. Pins that the content match is not the reason a question is drawn
+// twice (#3190); the reason is the window, see TestHidePendingInteractionPartBehindCursor.
+func TestHidePendingInteractionMatchesEveryField(t *testing.T) {
+	raw := json.RawMessage(`[{"header":"H","question":"Q?","multiSelect":true,"options":[` +
+		`{"label":"A","description":"","preview":"+--+\n|  |\n+--+"},{"label":"B","description":"b"}]}]`)
+	line := []byte(`{"type":"assistant","uuid":"u1","message":{"role":"assistant","content":[` +
+		`{"type":"tool_use","id":"toolu_q","name":"AskUserQuestion","input":{"questions":` + string(raw) + `}}]}}`)
+	turns := claude.CollectTurns([][]byte{line}, 0, 1)
+	pending := map[string]any{"pendingQuestions": raw}
+	got, hold := hidePendingInteraction(turns, pending, map[string]claude.InteractionAnswer{})
+	if hold != 0 || len(got) != 0 {
+		t.Fatalf("hold = %d, turns = %+v, want the part (parsed from the jsonl line) hidden and held", hold, got)
+	}
+}
+
+// The gap behind #3190: when the jsonl line lands before the hook's pending file, poll N delivers
+// the part with nothing to hide and the client cursor moves past it. On poll N+1 the window no
+// longer holds the line, so the Agent has nothing to strip and no reason to hold — it just hands
+// out the payload. The Console therefore holds both and has to de-duplicate itself
+// (parts/pendingQuestionDedup.ts).
+func TestHidePendingInteractionPartBehindCursor(t *testing.T) {
+	raw := json.RawMessage(`[{"header":"H","question":"Q?","options":[{"label":"A"},{"label":"B"}]}]`)
+	pending := map[string]any{"pendingQuestions": raw}
+	got, hold := hidePendingInteraction(nil, pending, map[string]claude.InteractionAnswer{})
+	if hold != -1 || len(got) != 0 {
+		t.Fatalf("hold = %d, turns = %d, want -1 / 0: nothing in the window to hide", hold, len(got))
+	}
+	if _, ok := pending["pendingQuestions"]; !ok {
+		t.Error("the payload was withdrawn — the actionable card must still be offered")
+	}
+}
+
 // While a different question is pending, an unrelated question part that happens to be nearby
 // must not be caught in the sweep.
 func TestHidePendingInteractionNoMatch(t *testing.T) {

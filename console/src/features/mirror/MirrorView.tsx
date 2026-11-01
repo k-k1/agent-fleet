@@ -79,6 +79,7 @@ import { composerInput, composerKeys, type MirrorSignal } from "./parts/composer
 import { titleActions } from "./parts/titleActions.ts";
 import { usePlanActions } from "./parts/usePlanActions.ts";
 import { groupWithQueue } from "./parts/mirrorGroups.ts";
+import { dropPendingQuestionPart } from "./parts/pendingQuestionDedup.ts";
 import { useFinalizeHold } from "./parts/useFinalizeHold.ts";
 import { useTranscriptCaps } from "./parts/useTranscriptCaps.ts";
 import { MirrorPendingCards } from "./parts/MirrorPendingCards.tsx";
@@ -364,8 +365,14 @@ function MirrorViewBody({
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
   const grouped = useMemo(
-    () => groupWithQueue(turns, pendingSends, queueShown, restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite)),
-    [turns, pendingSends, queueShown, restoredAt],
+    () =>
+      groupWithQueue(
+        dropPendingQuestionPart(turns, pending),
+        pendingSends,
+        queueShown,
+        restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite),
+      ),
+    [turns, pending, pendingSends, queueShown, restoredAt],
   );
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
