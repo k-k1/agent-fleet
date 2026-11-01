@@ -304,7 +304,7 @@ Then edit, in the copy:
 - `cp.env`: `PUBLIC_BASE_URL` and `PUBLIC_DOMAIN` (the `fqdn`), `AF_PREVIEW_DOMAIN` (Terraform's
   `preview_domain`, or empty), the sign-in settings, `SUPER_ADMIN_EMAILS`. Keep
   `AF_TRUSTED_PROXY_HOPS=2` (see "The load balancer").
-  To archive raw egress events, append the line of `terraform output -raw egress_archive_env` (`deploy/gcp/gke`, "Egress archive"; empty when the archive is off).
+  To archive raw egress events, set `AF_EGRESS_ARCHIVE_URL` from `terraform output -raw egress_archive_env` by replacing the existing line, never appending twice, and deleting it when the archive is off (`deploy/gcp/gke` README, "Egress archive").
 - `kustomization.yaml`: `images:` — the CP image and the release tag.
 - `base/cp-data.yaml` asks 20 GiB for the CP's own disk; patch it in the copy if the internal
   git provider will hold more.

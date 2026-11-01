@@ -91,7 +91,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
    GKE では `deploy/gcp/gke` の `egress_archive = true` で非公開のバケットを作り（既存のバケットなら
    `egress_archive_existing_bucket`）、Control Plane の Google サービスアカウントに**そのバケットだけ**への
    `roles/storage.objectCreator` と `roles/storage.objectViewer` を付け、`cp.env` に足す行を
-   `terraform output -raw egress_archive_env` で出します。viewer が無いと、先に書いた日を Control Plane が
+   `terraform output -raw egress_archive_env` で出します（追記ではなく既存の行を置き換え、アーカイブを止めるときは行を削除します）。viewer が無いと、先に書いた日を Control Plane が
    検証できず、purge がその日で止まります。`egress_archive_retention_days` を指定しない限り、バケットの中身は
    期限切れになりません。AWS ではデータスタックの `EgressArchive` パラメータです。
 3. **enforce へ切替**：許可リストが十分に固まってから、モードを enforce に切り替えます。以降は

@@ -227,13 +227,16 @@ variable "egress_archive_existing_bucket" {
 }
 
 variable "egress_archive_prefix" {
-  description = "Object prefix inside the bucket, without slashes at either end (the CP already writes under egress/). Empty: the bucket root."
+  description = "Object prefix inside the bucket (the CP already writes under egress/): segments of letters, digits, \".\", \"_\" and \"-\" joined by single slashes, none of them \".\" or \"..\", no slash at either end. It becomes the path of a gs:// URL, which the CP parses and normalises, so URL-reserved characters, percent signs and dot segments are refused rather than stored somewhere else. Empty: the bucket root."
   type        = string
   default     = ""
 
   validation {
-    condition     = var.egress_archive_prefix == trim(var.egress_archive_prefix, "/")
-    error_message = "egress_archive_prefix has no leading or trailing slash."
+    condition = var.egress_archive_prefix == "" || (
+      can(regex("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", var.egress_archive_prefix)) &&
+      alltrue([for s in split("/", var.egress_archive_prefix) : s != "." && s != ".."])
+    )
+    error_message = "egress_archive_prefix is segments of [A-Za-z0-9._-] joined by single slashes, none of them \".\" or \"..\", with no slash at either end."
   }
 }
 

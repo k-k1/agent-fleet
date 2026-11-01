@@ -1,6 +1,7 @@
 # The optional bucket of the CP's raw egress event archive (AF_EGRESS_ARCHIVE_URL). With
 # egress_archive = false nothing here exists and the CP is not told about it.
 locals {
+  archive_name   = "${var.name_prefix}-egress-archive-${var.project_id}"
   archive_on     = var.egress_archive
   archive_create = var.egress_archive && var.egress_archive_existing_bucket == ""
   archive_bucket = !local.archive_on ? "" : local.archive_create ? google_storage_bucket.egress_archive[0].name : var.egress_archive_existing_bucket
@@ -9,7 +10,7 @@ locals {
 
 resource "google_storage_bucket" "egress_archive" {
   count    = local.archive_create ? 1 : 0
-  name     = "${var.name_prefix}-egress-archive-${var.project_id}"
+  name     = local.archive_name
   location = var.egress_archive_location == "" ? var.region : var.egress_archive_location
 
   # Never public, whatever a later ACL or IAM grant says.
@@ -34,9 +35,10 @@ resource "google_storage_bucket" "egress_archive" {
   }
 
   lifecycle {
+    # GCS naming: at most 63 characters, and neither a "goog" start nor "google" inside.
     precondition {
-      condition     = length(var.name_prefix) + length(var.project_id) + 15 <= 63
-      error_message = "The archive bucket name \"<name_prefix>-egress-archive-<project_id>\" is over 63 characters: name an existing bucket with egress_archive_existing_bucket."
+      condition     = length(local.archive_name) <= 63 && !startswith(local.archive_name, "goog") && !strcontains(local.archive_name, "google")
+      error_message = "The archive bucket name \"${local.archive_name}\" is over 63 characters, starts with \"goog\" or contains \"google\", which Cloud Storage refuses: name an existing bucket with egress_archive_existing_bucket."
     }
   }
 }

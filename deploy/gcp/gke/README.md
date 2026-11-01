@@ -127,7 +127,7 @@ purges them (`AF_EGRESS_ARCHIVE_URL`, [`docs/build/03-control-plane.md`](../../.
 |---|---|---|
 | `egress_archive` | `false` | `true` turns it on. |
 | `egress_archive_existing_bucket` | `""` | Name of a bucket you already have. The module then manages only the CP's grants on it. Empty: the module creates `<name_prefix>-egress-archive-<project_id>`. |
-| `egress_archive_prefix` | `""` | Object prefix inside the bucket (the CP already writes under `egress/`). |
+| `egress_archive_prefix` | `""` | Object prefix inside the bucket (the CP already writes under `egress/`). Segments of `A-Za-z0-9._-` joined by single slashes (`team/prod`); no `.`/`..` segment, no `#?%`, no slash at either end. |
 | `egress_archive_location` | `""` | Location of a created bucket; empty is `region`. |
 | `egress_archive_retention_days` | `null` | Delete archived objects after this many days (created bucket only). `null` never deletes: the archive is the only copy once the events are purged. |
 
@@ -139,12 +139,20 @@ viewer role is not optional: the next run reads back a day it already wrote to v
 without it that read is a 403 and the purge stops at that day. A bucket you name is not
 modified apart from those two members; keep its public access prevention on yourself.
 
-The CP's setting goes through `cp.env`, like the other deployment-specific ones. Append the
-output to your overlay's copy and re-apply it:
+The CP's setting goes through `cp.env`, like the other deployment-specific ones. Re-runnable
+form: drop the old key, then add the current line only when there is one (empty output means the
+archive is off, and a key left behind would keep the CP archiving to a bucket it no longer has
+grants on):
 
 ```bash
-terraform output -raw egress_archive_env >> overlays/<yours>/cp.env   # empty when off
+cd overlays/<yours>
+sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
+line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env)
+[ -z "$line" ] || printf '%s\n' "$line" >> cp.env
 ```
+
+Then re-apply the overlay. `kustomize` refuses a `cp.env` that repeats the key, so do not append
+twice.
 
 **Not yet verified against a real bucket** ([#2733](https://github.com/k-k1/agent-fleet/issues/2733)):
 the first archive, a second run that finds and verifies the objects, and the 403 when the
