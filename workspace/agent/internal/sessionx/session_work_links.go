@@ -153,7 +153,13 @@ func inheritLinks(child *session.Meta) {
 	if !ok {
 		return
 	}
-	for _, l := range session.InheritedLinks(parent, child.CreatedAt) {
+	// Links are stamped in UTC like every other writer, but CreatedAt is in local time. Re-format
+	// the same instant rather than stamping now; an unparsable CreatedAt falls back to now.
+	at := time.Now().UTC()
+	if t, err := time.Parse(time.RFC3339, child.CreatedAt); err == nil {
+		at = t.UTC()
+	}
+	for _, l := range session.InheritedLinks(parent, at.Format(time.RFC3339)) {
 		session.AddLink(child, l)
 	}
 }
