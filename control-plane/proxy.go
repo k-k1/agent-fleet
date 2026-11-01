@@ -126,7 +126,8 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	// exists, so the approval must be on record even if the member never retries).
 	reviewApprove := r.Method == http.MethodPost && r.URL.Path == "/api/agents/memory-review/proposals/approve" &&
 		resp.StatusCode == http.StatusInternalServerError
-	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || reviewApprove {
+	storedGate := auditGated(r)
+	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || reviewApprove || storedGate != nil {
 		// These errors are deliberately small JSON envelopes. Read only a bounded
 		// prefix before the audit decision so the outcome cannot be lost,
 		// while still forwarding an unexpectedly larger upstream response.
@@ -147,7 +148,10 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	// M1 audit (docs/log/20): record a successful change operation. actor/tenant come from
 	// the resolved request; best-effort with a detached context so a client disconnect
 	// during the body copy below can't cancel the write.
+	// A sign-in step audits only the answer that says it stored the credential, not a pending
+	// poll; a failed call (non-2xx) is not audited, as for every other row.
 	if action, target, ok := auditActionTarget(r); ok &&
+		(storedGate == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300 && len(bufferedResponse) <= 64<<10 && storedGate(bufferedResponse))) &&
 		((resp.StatusCode >= 200 && resp.StatusCode < 300) ||
 			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown) ||
 			reviewPublishedUncleared) {

@@ -17,6 +17,7 @@ row is one operation, with the following columns.
 - **Time**: when it was done.
 - **Action**: what was done (`fs.*` = file operations, `git.*` = commits, checkouts, and so on,
   `repo.*` = repository creation / deletion, `session.*` = session creation / fork / stop,
+  `connection.*` = credential saves, removals and sign-ins, `mcp.*` = MCP server changes,
   `engine.*` = the self-hosted inference engines, etc.).
 - **Actor**: who did it (email address). Besides human operations, the actor can also be an
   external Claude client (MCP) or a system action (auto-stop, etc.).
@@ -45,6 +46,14 @@ keep it in mind.
   `inbox.withdraw`, `inbox.pr`, `inbox.block` / `inbox.unblock` and `inbox.launch`. Tenant switches write
   `limit_board.set` and `tenant.member_defaults`; switching the development sign-in writes `dev_idp.set`, a
   deployment row.
+  Credential writes are recorded too, without ever naming a secret: `connection.<kind>.save` and
+  `connection.<kind>.delete` (git, aws, cloudwatch, discord, grafana, jira, lcpp, pagerduty, slack,
+  svn, opencode and the agent CLIs), `connection.<kind>.api_key` (codex, muse),
+  `connection.<kind>.signin` (one row when the sign-in actually stored a credential; a still-pending
+  poll writes nothing) and `mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`.
+  The target is the git host, the provider key's variable name or the MCP server id, and empty
+  otherwise. A failed write (an error answer from the workspace) leaves no row. `session.spend_cap`,
+  `session.lock` and `repo.lock` record who set a spend cap or flipped a deletion lock.
 - **Not recorded**: plain **reads** (just opening and viewing a file, just browsing a list) are
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.
