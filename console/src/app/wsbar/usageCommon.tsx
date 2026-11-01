@@ -5,6 +5,7 @@ import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI } from "../../features/settings/store.ts";
 import { refreshUsage, subscribeUsage } from "./usageAll.ts";
+import { recordUsageReading } from "./usageReadings.ts";
 
 // The reading shared by the usage chips (claude/codex/agy/copilot). Each agent uses
 // different fields (fiveHour/sevenDay vs groups vs quotas), expressed as one type with
@@ -64,7 +65,10 @@ export function useUsage(tenant: string | null, src: { kind: string; endpoint: s
     // working chip), whether it was a background poll or a manual refresh — but if we have
     // nothing yet, still adopt the failed payload so its `authed` flag can render the
     // degraded "unavailable" chip instead of hiding entirely.
-    return subscribeUsage(tenant, kind, endpoint, (d) => setUsage((u) => (d.ok || !u ? d : u)));
+    return subscribeUsage(tenant, kind, endpoint, (d) => {
+      recordUsageReading(tenant, kind, d);
+      setUsage((u) => (d.ok || !u ? d : u));
+    });
   }, [tenant, kind, endpoint]);
   const refresh = useCallback(() => {
     setRefreshing(true);
