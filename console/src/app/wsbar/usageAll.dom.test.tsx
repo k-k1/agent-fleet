@@ -102,8 +102,7 @@ describe("usage chips: one shared poll", () => {
   // api() resolves an HTTP error as {error}; only a network failure rejects. An Agent older than
   // this Console answers /usage/all with a 404, i.e. the resolved shape.
   for (const [name, answer] of [
-    ["a 404 (resolved as {error})", () => Promise.resolve({ error: { code: "http_404", message: "404 page not found" } })],
-    ["a network failure (rejected)", () => Promise.reject(new Error("offline"))],
+    ["a 404 (resolved as {error})", () => Promise.resolve({ error: { code: "http_404", message: "404 page not found", status: 404 } })],
   ] as const) {
     it(`falls back to each chip's own endpoint on ${name}`, async () => {
       api.mockImplementation((p: string) => {
@@ -124,6 +123,66 @@ describe("usage chips: one shared poll", () => {
       expect(calls()).toEqual([`${USAGE_ALL}?refresh=1&kind=claude`, "api/claude/usage?refresh=1"]);
     });
   }
+
+  // Only a 404 means "no such route". Any other failure (the CP's 409 before a tenant is
+  // selected, a 5xx, a dropped connection) would fail on every per-kind endpoint too: deliver
+  // nothing, keep what the chips show, and let the next poll try again.
+  for (const [name, answer] of [
+    ["a 409", () => Promise.resolve({ error: { code: "tenant_selection_required", message: "select a tenant", status: 409 } })],
+    ["a 500", () => Promise.resolve({ error: { code: "internal", message: "boom", status: 500 } })],
+    ["a 503", () => Promise.resolve({ error: { code: "unavailable", message: "later", status: 503 } })],
+    ["an error without a status", () => Promise.resolve({ error: { code: "x", message: "?" } })],
+    ["a network failure (rejected)", () => Promise.reject(new Error("offline"))],
+  ] as const) {
+    it(`does not fan out to the per-kind endpoints on ${name}`, async () => {
+      api.mockImplementation((p: string) =>
+        p.startsWith(USAGE_ALL) ? answer() : Promise.reject(new Error("per-kind endpoint must not be called")),
+      );
+      await mount();
+      expect(calls()).toEqual([USAGE_ALL]);
+      expect(nums()).toEqual([]);
+    });
+  }
+
+  it("keeps the chips' readings and recovers on the next poll after a transient 5xx", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+    try {
+      let n = 0;
+      api.mockImplementation(() => {
+        n++;
+        if (n === 1) return Promise.resolve({ kinds: { claude: calm(14, 70), muse: calm(7, 29), copilot } });
+        if (n === 2) return Promise.resolve({ error: { code: "internal", message: "boom", status: 503 } });
+        return Promise.resolve({ kinds: { claude: calm(16, 71), muse: calm(7, 29), copilot } });
+      });
+      await mount();
+      await act(async () => void vi.advanceTimersByTime(300000));
+      await settle();
+      expect(calls()).toEqual([USAGE_ALL, USAGE_ALL]);
+      expect(nums()).toEqual(["14% / 70%", "7% / 29%", "25%"]); // kept, not blanked
+      await act(async () => void vi.advanceTimersByTime(300000));
+      await settle();
+      expect(calls()).toEqual([USAGE_ALL, USAGE_ALL, USAGE_ALL]);
+      expect(nums()[0]).toBe("16% / 71%");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a refresh answered 409 reads no per-kind endpoint", async () => {
+    api.mockImplementation((p: string) =>
+      Promise.resolve(
+        p.includes("refresh=1")
+          ? { error: { code: "tenant_selection_required", message: "x", status: 409 } }
+          : { kinds: { claude: calm(14, 70), muse: calm(7, 29), copilot } },
+      ),
+    );
+    await mount();
+    await act(async () => host!.querySelectorAll<HTMLButtonElement>(".ws-usage-btn")[0].click());
+    await act(async () => host!.querySelector<HTMLButtonElement>(".wu-reload")!.click());
+    await settle();
+    expect(calls()).toEqual([USAGE_ALL, `${USAGE_ALL}?refresh=1&kind=claude`]);
+    expect(nums()[0]).toBe("14% / 70%");
+  });
 
   it("asks again shortly for the kinds the Agent answered as pending", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
