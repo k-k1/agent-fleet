@@ -66,8 +66,9 @@ unless they name another tree.
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
 The table is not a complete list of where kind names appear. The Agent's measured-per-kind
-lists (`moveTargetKinds`, `oneShotKinds`, `usageMeasuredForKind`) are hand-kept on purpose,
+lists (`oneShotKinds`, `usageMeasuredForKind`) are hand-kept on purpose,
 since they record a measurement and not a capability; each has a test that fails until a newly registered kind is classified (§20.7).
+The move-target answer is the kind's own `agents.MoveTarget` declaration (§20.7).
 Grep `workspace/agent`, `control-plane` and `console/src` for an existing kind with the
 same drivers as yours, and decide each hit.
 
@@ -273,13 +274,14 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       it). `kindCatalog.test.ts` holds it, and `SESSION_KINDS`, equal to the catalog snapshot
 - [ ] the measured-per-kind lists, each held by a test that names the kind it is missing:
       `usageMeasuredForKind` (`usage_fold.go`; `usageMeasuredByKind` in `kind_lists_test.go`),
-      move target (`moveTargetKinds` / `moveUnmeasuredTargets`; `moveClassification` in
-      `session_move_kinds_test.go`), and a chat provider or its entry in `noChatProvider`
+      move target (`agents.MoveTarget` on the Agent, measured or unmeasured, in a `move_target.go`
+      of your package; a kind that cannot be one goes in `moveRefusals` in
+      `session_move_kinds_test.go`, which fails for a kind that is neither), and a chat provider or its entry in `noChatProvider`
       (`kind_lists_test.go`; with one, `oneShotKinds` and `providerResumeHandles` in `chatx`
       follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`, which also holds each
       kind's message cursor field (`TestEveryMessageCursorFieldIsListed`).
-      `TestMoveTargetListsAreUnchanged` pins both move lists as literals, so a kind added to
-      either edits it too
+      `TestShippedMoveClassificationHolds` pins the shipped classification as literals; a new kind
+      needs no row there
 - [ ] a row in `wantRuntime` (`internal/sessionx/managed_runtime_test.go`) for every kind, `nil`
       for one with no Managed runtime (`TestManagedRuntimeDispatchPinned`)
 - [ ] skills: `agents.SkillsLayouter` in `capabilities.go` for every agent kind,
@@ -339,6 +341,10 @@ scripts/stub-kind-count.sh --verify   # also run both Go modules, the Console an
 Provisional count at 2026-11-01 (after `instrUnsupported` moved onto
 `agents.InstructionsUnsupported`, #2933): 16 non-test, non-Markdown files, 21 including tests
 and Markdown (was 17 / 22). It comes from a run without `--verify`, so it is not yet the figure.
+
+Provisional count at 2026-11-01 (after `moveTargetKinds` / `moveUnmeasuredTargets` moved onto
+`agents.MoveTarget`, #2933): 15 non-test, non-Markdown files, 20 including tests and Markdown
+(was 16 / 21). Again without `--verify`.
 
 Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
 guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until
