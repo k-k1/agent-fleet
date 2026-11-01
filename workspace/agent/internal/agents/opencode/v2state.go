@@ -389,8 +389,13 @@ func (t apiTarget) active() (map[string]bool, error) {
 
 // liveStateV2 is LiveState: working while the daemon lists the session as running,
 // idle otherwise. "" (unknown, fall back to the status plugin) when the daemon cannot be asked —
-// the same refusal to claim idle from no information that LiveState documents.
+// the same refusal to claim idle from no information that LiveState documents. The store
+// (offline) says nothing about a running turn, not even that there is no conversation yet: a
+// standalone pane's conversation can be missing from it while its turn runs, so it is all "".
 func liveStateV2(t apiTarget, m session.Meta) string {
+	if t.offline {
+		return ""
+	}
 	info, err := t.v2Session(m)
 	if err != nil {
 		return ""

@@ -908,3 +908,31 @@ func TestV2TasksLatestCallWinsAndEmptyIsNil(t *testing.T) {
 		t.Fatal("no messages must give nil")
 	}
 }
+
+// With no handle (a Terminal slot on the shared serve) the newest compaction message says whether
+// a compaction runs, and only while the session is active.
+func TestV2CompactingWithoutAHandleReadsTheCompactionMessage(t *testing.T) {
+	d, m := v2Slot(t, "tool.messages.json")
+	base := append([]string(nil), d.messages["ses_a"]...)
+	set := func(status string, active bool) {
+		d.mu.Lock()
+		d.messages["ses_a"] = append(append([]string(nil), base...), `{"id":"msg_zzzz","type":"compaction","status":"`+status+`"}`)
+		d.active = nil
+		if active {
+			d.active = []string{"ses_a"}
+		}
+		d.mu.Unlock()
+	}
+	set("running", true)
+	if !isCompacting(m) {
+		t.Fatal("a running compaction of an active session is not compacting")
+	}
+	set("completed", true)
+	if isCompacting(m) {
+		t.Fatal("a finished compaction still reads as compacting")
+	}
+	set("running", false)
+	if isCompacting(m) {
+		t.Fatal("an inactive session reads as compacting")
+	}
+}

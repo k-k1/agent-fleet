@@ -57,7 +57,7 @@ type v2Conv struct {
 }
 
 // readConv reads info's messages and its subagents' through t. Only an unreachable daemon is an
-// error; any other failure leaves what was gathered, like readSession.
+// error; any other failure leaves what was gathered, like the other readers.
 func (t apiTarget) readConv(info *v2SessionInfo) (v2Conv, error) {
 	c := v2Conv{T: t, Info: info}
 	var err error

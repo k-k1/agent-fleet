@@ -472,3 +472,17 @@ func TestStandaloneTerminalReadsTheStore(t *testing.T) {
 		t.Fatalf("ForkSource = %q, %v", src, err)
 	}
 }
+
+// The store says nothing about a running turn, not even "no conversation": a standalone pane whose
+// conversation is not in it (yet) must not read idle while its plugin says it works.
+func TestStandaloneWithoutAConversationIsUnknownNotIdle(t *testing.T) {
+	isolatedHome(t)
+	openTestStore(t)
+	m := session.Meta{Name: "oc-empty", Dir: "/nowhere", Kind: session.KindOpencode, Driver: session.DriverTUI}
+	sid := session.UUID(m.Dir, m.Name)
+	markSlotMode(sid, modeStandalone)
+	t.Cleanup(func() { slotModes.Remove(sid) })
+	if got := LiveState(m); got != "" {
+		t.Fatalf("LiveState = %q, want \"\"", got)
+	}
+}

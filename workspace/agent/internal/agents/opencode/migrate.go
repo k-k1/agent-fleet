@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,6 +49,10 @@ var startMigrationServe = func(spec LaunchSpec) (addr, password string, exited <
 	cmd.Env = append(withoutEnv(os.Environ(), "AF_SESSION_SID", "AF_SESSION_NAME"),
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	cmd.Dir = paths.HomeDir()
+	// The import outlives nothing: if the Agent dies mid-import the server goes too, instead of
+	// running on with no owner while the next Agent starts a second import of the same database.
+	// The signal follows the thread that started it, which EnsureMigrated keeps locked.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	if err := cmd.Start(); err != nil {
 		return "", "", nil, nil, err
 	}
@@ -168,6 +173,10 @@ func EnsureMigrated(spec LaunchSpec) error {
 	if !needsMigration(db) {
 		return nil
 	}
+	// Pdeathsig (startMigrationServe) fires when the starting OS thread exits, not the process:
+	// held on one thread until the server is stopped.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	addr, password, exited, stop, err := startMigrationServe(spec)
 	if err != nil {
 		return fmt.Errorf("opencode 2 database migration: %w", err)

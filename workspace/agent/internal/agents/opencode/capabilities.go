@@ -30,8 +30,8 @@ func (agentImpl) PaneMode(pane string) string { return PaneMode(pane) }
 // waiting for the composer.
 func (agentImpl) SendWaitsForComposer() bool { return false }
 
-// PromptModal is agents.ModalProbe: the question in opencode's store (TerminalModal); its plugin
-// reports working/idle at most. Terminal route only: the managed driver refuses free text itself
+// PromptModal is agents.ModalProbe: a form the shared serve holds for the pane's session
+// (TerminalModal); its plugin reports working/idle at most. Terminal route only: the managed driver refuses free text itself
 // (ErrQuestionPending).
 func (agentImpl) PromptModal(m session.Meta) string { return TerminalModal(m) }
 

@@ -77,8 +77,8 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 // session list's "compacting" state (WireLive).
 func isCompacting(m session.Meta) bool { return compactingV2(v2TargetFor(m), m) }
 
-// compactionProbe is the part of a message (store row or message.updated info) that says
-// whether it is a compaction summary and whether it has finished.
+// compactionProbe is the part of an opencode 1 message.updated event's info that says whether
+// it is a compaction summary and whether it has finished (driver.go).
 type compactionProbe struct {
 	Role  string `json:"role"`
 	Mode  string `json:"mode"`
