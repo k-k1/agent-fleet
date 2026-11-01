@@ -2,9 +2,11 @@ package sessionx
 
 import (
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // editedUsageLimitAgent keeps a registered agent's terminal and live-state traits and passes its
@@ -63,4 +65,13 @@ func (e editedUsageLimitAgent) TUIInterrupt(inSubagentView func() bool) agents.T
 		return i.TUIInterrupt(inSubagentView)
 	}
 	return agents.TUIInterruptTraits{Keys: []string{"Escape"}, Gap: agents.TUIInterruptDefaultGap}
+}
+
+// StopContinued forwards the wrapped kind's declaration; a kind without it answers false, which
+// is what the report reconciler treats a kind without agents.StopContinuer as.
+func (e editedUsageLimitAgent) StopContinued(m session.Meta, sid string, marker time.Time) bool {
+	if c, ok := e.Agent.(agents.StopContinuer); ok {
+		return c.StopContinued(m, sid, marker)
+	}
+	return false
 }

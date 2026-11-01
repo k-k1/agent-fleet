@@ -107,3 +107,8 @@ func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 	return agents.TUIInterruptEscape()
 }
+
+// StopContinued is agents.StopContinuer: the transcript shows the turn went on after the Stop.
+func (agentImpl) StopContinued(_ session.Meta, sid string, marker time.Time) bool {
+	return StopContinued(sid, marker)
+}

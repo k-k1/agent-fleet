@@ -14,11 +14,16 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -697,4 +702,66 @@ func TestReportReconcilerDeliveryIsIdempotent(t *testing.T) {
 	if n := countReportCards(t, conv); n != 2 {
 		t.Fatalf("report cards after the reopen = %d, want 2", n)
 	}
+}
+
+// reportStopContinued asks the kind's agents.StopContinuer. The kind switch it replaced named
+// claude and codex only, matched the kind exactly after normalizeKind, and answered false for
+// everything else; the same holds for every registered kind, an alias spelling and an
+// unregistered kind.
+func TestReportStopContinuedKindsMatchOldSwitch(t *testing.T) {
+	var with []string
+	for _, kind := range agentreg.Kinds() {
+		if _, ok := agentreg.Lookup(kind); !ok {
+			t.Fatalf("%s is listed but not registered", kind)
+		}
+		if _, ok := agentreg.Of(kind).(agents.StopContinuer); ok {
+			with = append(with, kind)
+		}
+	}
+	if !slices.Equal(with, []string{session.KindClaude, session.KindCodex}) {
+		t.Fatalf("kinds with StopContinuer = %v, the old switch had claude and codex", with)
+	}
+
+	// A claude transcript whose Stop was blocked: true for claude and for what normalizes to it,
+	// false for every other kind even when the same session id and marker are passed.
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	const sid = "11111111-2222-3333-4444-555555552925"
+	marker := time.Now().Truncate(time.Second)
+	ts := marker.Add(time.Second).UTC().Format(time.RFC3339Nano)
+	proj := filepath.Join(cfg, "projects", "p1")
+	if err := os.MkdirAll(proj, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join([]string{
+		`{"type":"assistant","timestamp":"` + ts + `","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"attachment","timestamp":"` + ts + `","attachment":{"type":"hook_blocking_error","hookEvent":"Stop"}}`,
+		`{"type":"system","subtype":"stop_hook_summary","timestamp":"` + ts + `"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(proj, sid+".jsonl"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range append([]string{"", "unknown-kind", "Claude", " claude"}, agentreg.Kinds()...) {
+		got := reportStopContinued(session.Meta{Name: "s", Kind: kind}, sid, marker)
+		m := session.Meta{Name: "s", Kind: kind}
+		if want := oldReportStopContinued(m, sid, marker); got != want {
+			t.Errorf("kind %q: reportStopContinued = %v, old switch %v", kind, got, want)
+		}
+		// The test's normalizeKind folds an unknown kind to claude, as the real one does.
+		if want := normalizeKind(kind) == session.KindClaude; got != want {
+			t.Errorf("kind %q: reportStopContinued = %v, want %v (true only for claude here)", kind, got, want)
+		}
+	}
+}
+
+// oldReportStopContinued is the kind switch reportStopContinued held before the kinds declared
+// agents.StopContinuer; a deliberate literal copy.
+func oldReportStopContinued(m session.Meta, sid string, marker time.Time) bool {
+	switch normalizeKind(m.Kind) {
+	case session.KindClaude:
+		return claude.StopContinued(sid, marker)
+	case session.KindCodex:
+		return m.DriverKind() != session.DriverManaged && codex.StopContinued(m, marker)
+	}
+	return false
 }
