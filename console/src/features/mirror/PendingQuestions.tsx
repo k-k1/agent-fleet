@@ -44,6 +44,7 @@ export function PendingQuestions({
   cancelLabel,
   sending,
   answerMode = "claude",
+  menuKeys = true,
   multiPage = false,
   writeIn = false,
   translate,
@@ -74,15 +75,20 @@ export function PendingQuestions({
   cancelLabel?: string;
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
-  // "menu": codex/opencode ask via a simple option menu — a single-select question is
-  // answered by moving Down to the option index and pressing Enter.
+  // "menu": every other kind. codex and agy ask via a simple option menu — a single-select
+  // question is answered by moving Down to the option index and pressing Enter (opencode: see
+  // menuKeys).
   answerMode?: "claude" | "menu";
+  // menuKeys=false: the menu's keys are not known, so a question without an id (no structured
+  // route) is shown read-only with the terminal hint. opencode: its cards come with a form id
+  // and answer through /respond; the opencode 2 TUI's own form is tabbed, not the one-page menu
+  // buildMenuSeq drives, and no key sequence for it has been measured.
+  menuKeys?: boolean;
   // multiPage (codex): the menu pages through a multi-question form one question at a
   // time — each page is answered by Down×i + Enter, which submits the page, advances
   // to the next and resets the cursor to the top (verified on codex 0.144.3). So a
   // multi-question menu IS drivable: build a selection here, then send the pages'
-  // sequences in one go. opencode's dialog has no verified paging keys, so it stays
-  // single-question-only (multiPage=false → terminal hint for multi).
+  // sequences in one go. Without it a menu is single-question-only (terminal hint for multi).
   multiPage?: boolean;
   // writeIn (agy): the menu appends a "Write-in..." row just after the options, so a
   // menu question can ALSO be answered with free text — without this the card showed
@@ -109,13 +115,13 @@ export function PendingQuestions({
   const semantic = !!onRespond;
   // What a menu can drive: a single-select single question always; a multi-question
   // form only when the dialog pages (multiPage) and no question is multi-select (the
-  // codex dialog is one choice per page). Anything else is shown read-only with a
-  // hint to answer in the terminal. Semantic (managed) answers aren't bound by the
+  // codex dialog is one choice per page); nothing when its keys are unknown (menuKeys).
+  // Anything else is shown read-only with a hint to answer in the terminal. Semantic (managed) answers aren't bound by the
   // TUI modal's key behavior, so every form is drivable.
   const menuDrivable =
     semantic ||
     !!onSubmitAnswers || // a carried interaction fires no keys, so the modal's limits do not apply
-    (menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
+    (menu && menuKeys && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
 
   const toggle = (qi: number, label: string, multi?: boolean) => {
     setSel((prev) => {
@@ -304,7 +310,7 @@ export function PendingQuestions({
           </button>
         )}
         {menu && menuDrivable && (
-          // The menus (codex/opencode/agy) submit the same way: pick per question above,
+          // The menus (codex/agy, opencode by id) submit the same way: pick per question above,
           // then send every page's key sequence at once. A single-question menu now needs
           // this button too — its options no longer send on click.
           <button
@@ -317,8 +323,8 @@ export function PendingQuestions({
           </button>
         )}
         {menu && !menuDrivable && (
-          // A multi-select menu (or a multi-question one on a dialog whose paging keys
-          // aren't verified) we can't reliably drive from chat.
+          // A multi-select menu, a multi-question one on a dialog whose paging keys aren't
+          // verified, or a menu whose keys are unknown: we can't reliably drive it from chat.
           <span className="muted mq-terminal-hint">{tr("mirror.question_terminal")}</span>
         )}
       </div>

@@ -200,6 +200,7 @@ export function QuestionCard({
   repo,
   sending,
   answerMode,
+  menuKeys,
   multiPage,
   writeIn,
   onOpenFile,
@@ -216,6 +217,7 @@ export function QuestionCard({
   repo: string | null;
   sending: boolean;
   answerMode: "claude" | "menu";
+  menuKeys: boolean;
   multiPage: boolean;
   writeIn: boolean;
   onOpenFile: (path: string, line?: number, column?: number) => void;
@@ -243,6 +245,7 @@ export function QuestionCard({
         // Interrupt. Either way the pending question clears and the composer is free.
         onCancel={onCancel}
         answerMode={answerMode}
+        menuKeys={menuKeys}
         multiPage={multiPage}
         writeIn={writeIn}
         translate={tx}

@@ -167,7 +167,7 @@ export function buildClaudeSubmit(
   return { seq: buildClaudeSeq(qs, sel, freeText) };
 }
 
-// The simple option menu (codex / opencode / agy): one choice per page, answered by
+// The simple option menu (codex / agy): one choice per page, answered by
 // Down×i + Enter — which submits the page, advances to the next question and resets
 // the cursor to the top, so pages simply concatenate. The trailing Enter completes
 // the form (no review page, unlike claude).
@@ -176,8 +176,8 @@ export function buildClaudeSubmit(
 // Unlike claude's row it must be ENTERED before it accepts text — Enter opens the
 // "Your answer:" field and the trailing Enter submits it (measured on agy 1.1.4). Typing
 // without that first Enter lands on a plain option row, where the text is dropped and
-// Enter picks the highlighted option instead. Left false for codex/opencode, whose
-// menus have no verified write-in row.
+// Enter picks the highlighted option instead. Left false for codex, whose menu has no
+// verified write-in row.
 export function buildMenuSeq(
   qs: QKQuestion[],
   sel: string[][],
@@ -206,13 +206,11 @@ export function buildMenuSeq(
 // slot, because there the Agent can answer the form through the form API and the TUI follows.
 // Every other Terminal question has no id and keeps driving the modal.
 //
-// What the keys can do on opencode (the slot is NOT on the shared serve: v1, or v2 started
-// with --standalone) is deliberately the v1 menu and nothing more: the card is "menu" mode
-// (one choice per page), so only a single question with a single choice is drivable, and
-// anything else is shown read-only with a hint to answer in the terminal. The Console does
-// not know a slot's opencode major, and v2's tabbed form (a Submit tab after the last
-// question, Enter toggling a checklist, Tab leaving it) is a different key contract from v1's
-// pages — guessing it per slot would silently mis-answer one of the two.
+// opencode is never driven by keys: an opencode question without an id is shown read-only with
+// the terminal hint (PendingQuestions' menuKeys). Its TUI form is tabbed (a Submit tab after the
+// last question, Enter toggling a checklist, Tab leaving it), not buildMenuSeq's one-page menu,
+// and its keys are unmeasured. A --standalone pane, the one opencode slot not on the shared serve,
+// shows no card today at all: its form cannot be read offline (#3162).
 export const answersByRespond = (managed: boolean, qs: { id?: string }[] | null | undefined): boolean =>
   managed || !!qs?.[0]?.id;
 

@@ -1,4 +1,5 @@
 import type { Session } from "../../../types/session.ts";
+import { agentOf } from "../../../agents/registry.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { CarriedBlock } from "../CarriedBlock.tsx";
@@ -131,6 +132,7 @@ export function MirrorPendingCards({
           repo={sessionMeta?.repo ?? null}
           sending={sending}
           answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
+          menuKeys={!agentOf(sessionMeta?.kind).caps.questionByIdOnly}
           multiPage={sessionMeta?.kind === "codex"}
           writeIn={sessionMeta?.kind === "agy"}
           onOpenFile={openFile}

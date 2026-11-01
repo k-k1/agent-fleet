@@ -98,13 +98,13 @@ describe("buildMenuSeq — agy write-in row", () => {
   });
 });
 
-describe("buildMenuSeq — codex / opencode (no verified write-in row)", () => {
+describe("buildMenuSeq — codex (no verified write-in row)", () => {
   it("answers a single question by Down×index + Enter", () => {
     expect(show(buildMenuSeq([q3], [["緑"]], [""]))).toBe("Down Down Enter");
   });
 
   it("NEVER types free text when writeIn is off", () => {
-    // Guard for codex/opencode: their menus have no verified write-in row, so typed
+    // Guard for codex: its menu has no verified write-in row, so typed
     // text must not be emitted — on an option row it is ignored and the Enter would
     // confirm whatever is highlighted.
     const seq = buildMenuSeq([q3], [["青"]], ["自由入力"]);
@@ -345,7 +345,7 @@ describe("every named key these builders emit is one the Agent accepts", () => {
       for (const k of out.keys || []) expect([show([{ k }]), allowed.has(k)]).toEqual([k, true]);
       for (const s of out.seq || [])
         if (s.k !== undefined) expect([show([s]), allowed.has(s.k)]).toEqual([s.k, true]);
-      // The same check for the menu route (codex/opencode/agy).
+      // The same check for the menu route (codex/agy).
       for (const s of buildMenuSeq(qs, sel, ft, true))
         if (s.k !== undefined) expect([show([s]), allowed.has(s.k)]).toEqual([s.k, true]);
     }
