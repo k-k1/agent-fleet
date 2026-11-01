@@ -6,7 +6,7 @@ package main
 //   DELETE /cleanup/tool-caches/{name} → empty that cache
 //
 // These are not Agent Fleet's own leftovers (cleanup_cache.go counts those). They belong to
-// go, npm, uv and pip, grow without bound, and were measured at 34G (go-build) and 41G
+// go, npm (npx too), uv, pip and Maven, grow without bound, and were measured at 34G (go-build) and 41G
 // (npm) in one home (docs/log/116). All of them are regenerable: emptying one costs the next
 // build or install a slower first run and nothing else.
 //
@@ -46,10 +46,15 @@ var toolCaches = []toolCache{
 	{Name: "npm", env: "npm_config_cache", envSub: "_cacache", rel: ".npm/_cacache", users: argvRunsNode("npm", "npx")},
 	{Name: "uv", env: "UV_CACHE_DIR", rel: ".cache/uv", users: argvRuns("uv", "uvx")},
 	{Name: "pip", env: "PIP_CACHE_DIR", rel: ".cache/pip", users: argvRunsPip},
+	// Maven has no environment variable for the local repository (only -Dmaven.repo.local
+	// or settings.xml), so the default location is the only one. The directory is
+	// ~/.m2/repository, never ~/.m2: settings.xml and settings-security.xml live beside it.
+	{Name: "maven", rel: ".m2/repository", users: argvRunsMaven},
+	{Name: "npx", env: "npm_config_cache", envSub: "_npx", rel: ".npm/_npx", users: argvRunsNode("npx")},
 }
 
 func (c toolCache) dir() string {
-	if v := os.Getenv(c.env); v != "" && filepath.IsAbs(v) {
+	if v := os.Getenv(c.env); c.env != "" && v != "" && filepath.IsAbs(v) {
 		return filepath.Join(v, c.envSub)
 	}
 	return filepath.Join(homeDir(), c.rel)
@@ -99,6 +104,34 @@ func argvRunsNode(names ...string) func([]string) bool {
 		}
 		return false
 	}
+}
+
+// argvRunsMaven matches mvn / mvnd, the wrapper (a shell script, so `sh ./mvnw`), and the
+// JVM Maven itself runs in (classworlds launcher or -Dmaven.multiModuleProjectDirectory).
+// Any other java process is deliberately not matched: a blanket java block would refuse
+// whenever an unrelated JVM runs.
+func argvRunsMaven(argv []string) bool {
+	if argvRuns("mvn", "mvnd", "mvnw")(argv) {
+		return true
+	}
+	for i, a := range argv {
+		if i == 1 && argvRuns("mvnw", "mvn")([]string{a}) && isShell(argv[0]) {
+			return true
+		}
+		if i > 0 && (a == "org.codehaus.plexus.classworlds.launcher.Launcher" ||
+			strings.HasPrefix(a, "-Dmaven.multiModuleProjectDirectory")) {
+			return true
+		}
+	}
+	return false
+}
+
+func isShell(prog string) bool {
+	switch filepath.Base(prog) {
+	case "sh", "bash", "dash", "zsh":
+		return true
+	}
+	return false
 }
 
 // argvRunsPip matches pip and `python -m pip`.

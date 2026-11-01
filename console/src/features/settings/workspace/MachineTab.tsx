@@ -398,7 +398,7 @@ interface ToolCacheRow extends Place {
   busy?: number[];
 }
 
-// ToolCacheSection — the go / npm / uv / pip caches in home, and emptying one (docs/log/116).
+// ToolCacheSection — the go / npm / npx / uv / pip / Maven caches in home, and emptying one (docs/log/116).
 //
 // Not part of DiskSection: those rows are Agent Fleet's own and are walked when the tab
 // opens. These run to hundreds of thousands of files, so they are measured only on a press.

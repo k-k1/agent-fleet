@@ -20,7 +20,9 @@ func isolateToolCaches(t *testing.T) (home, proc string) {
 	home = t.TempDir()
 	t.Setenv("HOME", home)
 	for _, c := range toolCaches {
-		t.Setenv(c.env, "")
+		if c.env != "" {
+			t.Setenv(c.env, "")
+		}
 	}
 	proc = t.TempDir()
 	old := procRoot
@@ -66,6 +68,14 @@ func TestToolCacheUsersMatchTheRealArgvShapes(t *testing.T) {
 		{"npm", []string{"npx", "vitest"}, true},
 		{"npm", []string{"node", "server.js"}, false},
 		{"uv", []string{"/home/dev/.local/bin/uv", "sync"}, true},
+		{"maven", []string{"/usr/bin/mvn", "package"}, true},
+		{"maven", []string{"sh", "./mvnw", "verify"}, true},
+		{"maven", []string{"/bin/bash", "/home/dev/repos/x/mvnw", "test"}, true},
+		{"maven", []string{"/usr/lib/jvm/java-21/bin/java", "-classpath", "/m/boot/plexus-classworlds.jar", "-Dmaven.multiModuleProjectDirectory=/x", "org.codehaus.plexus.classworlds.launcher.Launcher", "test"}, true},
+		{"maven", []string{"java", "-jar", "app.jar"}, false},
+		{"maven", []string{"bash", "build.sh", "mvnw-notes"}, false},
+		{"npx", []string{"node", "/usr/lib/node_modules/npm/bin/npx-cli.js", "cowsay"}, true},
+		{"npx", []string{"node", "server.js"}, false},
 		{"pip", []string{"python3", "-m", "pip", "install", "x"}, true},
 		{"pip", []string{"python3", "-m", "http.server"}, false},
 	}
@@ -200,5 +210,51 @@ func TestSessionWorkDirGoesWithTheSession(t *testing.T) {
 		if got := paths.SessionWorkDir(bad); got != "" {
 			t.Errorf("SessionWorkDir(%q) = %q, want \"\"", bad, got)
 		}
+	}
+}
+
+func TestMavenAndNpxCachesEmptyOnlyTheirOwnDirectory(t *testing.T) {
+	home, _ := isolateToolCaches(t)
+	settings := filepath.Join(home, ".m2/settings.xml")
+	writeSized(t, settings, 5)
+	writeSized(t, filepath.Join(home, ".m2/repository/org/x/x.jar"), 100)
+	writeSized(t, filepath.Join(home, ".npm/_npx/abc/package.json"), 7)
+	cacache := filepath.Join(home, ".npm/_cacache/k")
+	writeSized(t, cacache, 9)
+
+	for _, name := range []string{"maven", "npx"} {
+		req := httptest.NewRequest("DELETE", "/cleanup/tool-caches/"+name, nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		handleDeleteToolCache(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d (%s)", name, rec.Code, rec.Body)
+		}
+	}
+	for _, p := range []string{settings, cacache, filepath.Join(home, ".m2/repository"), filepath.Join(home, ".npm/_npx")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should survive: %v", p, err)
+		}
+	}
+	for _, p := range []string{filepath.Join(home, ".m2/repository/org"), filepath.Join(home, ".npm/_npx/abc")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s should be gone", p)
+		}
+	}
+}
+
+func TestMavenCacheMissingIsAbsentNotAnError(t *testing.T) {
+	isolateToolCaches(t)
+	req := httptest.NewRequest("DELETE", "/cleanup/tool-caches/maven", nil)
+	req.SetPathValue("name", "maven")
+	rec := httptest.NewRecorder()
+	handleDeleteToolCache(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	handleToolCacheUsage(rec, httptest.NewRequest("GET", "/cleanup/tool-caches", nil))
+	if strings.Contains(rec.Body.String(), `"maven"`) {
+		t.Fatalf("absent maven repo listed: %s", rec.Body)
 	}
 }
