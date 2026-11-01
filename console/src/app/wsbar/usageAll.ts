@@ -101,13 +101,14 @@ function fetchAll(hub: Hub, refreshKind: string | null): Promise<void> {
     ? `?refresh=1&kind=${encodeURIComponent(refreshKind)}`
     : "";
   return api(USAGE_ALL + q).then(
-    // api() resolves an HTTP error as {error} with the status stamped on it; only a network
-    // failure rejects.
+    // api() resolves an HTTP error as {error}; only a network failure rejects. A JSON error
+    // body carries `status`, a plain-text one (an old Agent's mux answers "404 page not
+    // found") only code http_<status>, so both spellings of a 404 are read.
     (
       d: {
         kinds?: Record<string, UsageReading>;
         pending?: string[];
-        error?: { status?: number };
+        error?: { status?: number; code?: string };
       } | null,
     ) => {
       if (d && typeof d.kinds === "object" && d.kinds !== null) {
@@ -115,7 +116,8 @@ function fetchAll(hub: Hub, refreshKind: string | null): Promise<void> {
         followUp(hub, d.pending);
         return;
       }
-      if (d?.error?.status === 404) return fetchEach(hub, refreshKind);
+      if (d?.error?.status === 404 || d?.error?.code === "http_404")
+        return fetchEach(hub, refreshKind);
     },
     () => {},
   );

@@ -102,7 +102,9 @@ describe("usage chips: one shared poll", () => {
   // api() resolves an HTTP error as {error}; only a network failure rejects. An Agent older than
   // this Console answers /usage/all with a 404, i.e. the resolved shape.
   for (const [name, answer] of [
-    ["a 404 (resolved as {error})", () => Promise.resolve({ error: { code: "http_404", message: "404 page not found", status: 404 } })],
+    // What api() resolves for an old Agent's plain-text "404 page not found": no status.
+    ["a plain-text 404 (code only)", () => Promise.resolve({ error: { code: "http_404", message: "404 page not found" } })],
+    ["a JSON 404 (status stamped)", () => Promise.resolve({ error: { code: "not_found", message: "no route", status: 404 } })],
   ] as const) {
     it(`falls back to each chip's own endpoint on ${name}`, async () => {
       api.mockImplementation((p: string) => {
@@ -131,7 +133,7 @@ describe("usage chips: one shared poll", () => {
     ["a 409", () => Promise.resolve({ error: { code: "tenant_selection_required", message: "select a tenant", status: 409 } })],
     ["a 500", () => Promise.resolve({ error: { code: "internal", message: "boom", status: 500 } })],
     ["a 503", () => Promise.resolve({ error: { code: "unavailable", message: "later", status: 503 } })],
-    ["an error without a status", () => Promise.resolve({ error: { code: "x", message: "?" } })],
+    ["an error with neither a status nor a 404 code", () => Promise.resolve({ error: { code: "x", message: "?" } })],
     ["a network failure (rejected)", () => Promise.reject(new Error("offline"))],
   ] as const) {
     it(`does not fan out to the per-kind endpoints on ${name}`, async () => {
