@@ -335,6 +335,8 @@ scripts/stub-kind-count.sh            # count at HEAD
 scripts/stub-kind-count.sh --verify   # also run both Go modules, the Console and docs-check
 ```
 
+Count at 2026-11-01 (after `instrUnsupported` moved onto `agents.InstructionsUnsupported`, #2933): 16 non-test, non-Markdown files, 21 including tests and Markdown (was 17 / 22). Measured without `--verify`.
+
 Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
 guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until
 `--verify`'s steps pass there, then write the clone's diff back without the generated files and
