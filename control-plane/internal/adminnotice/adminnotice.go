@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -17,23 +16,14 @@ import (
 
 const gib = 1 << 30
 
-// Store is what the notices read and write; *store.SQL satisfies it.
+// Store is what the notices need; *store.SQL satisfies it.
 type Store interface {
-	GetWorkspaceDisk(ctx context.Context, workspaceID string) (store.WorkspaceDisk, bool, error)
-	GetWorkspaceBootFailed(ctx context.Context, workspaceID string) (string, error)
-	ListMembersByTenant(ctx context.Context, tenantID string) ([]store.MemberInfo, error)
-	InsertNotification(ctx context.Context, n store.Notification) error
 	store.WorkspaceNoticeStore
 }
 
-// Admin notices (#2427): a tenant's admins hear, once per crossing, that a member's own home
-// volume is short of space or that the member's last observed start failed to install a CLI.
-// The member sees the same conditions in their own Console; this is for the person who has to
-// act when the member does not.
-
 // The home-disk thresholds are the member-facing ones, number for number. They are stated here
 // as well as in console/src/core/store/homeDiskPressure.ts because the CP decides when an admin
-// is told; admin_notice_test.go reads that file and fails when either side moves alone.
+// is told; adminnotice_test.go reads that file and fails when either side moves alone.
 const (
 	homePressureRaiseFreeBytes = 2 * gib
 	homePressureRaisePct       = 90
@@ -79,61 +69,45 @@ func bootInstallFailures(raw string) []string {
 	return tools
 }
 
-// HomeDisk runs after a home reading was stored for a workspace whose home is the
-// member's own volume. It reads the STORED reading back, so a slow sweep whose write was refused
-// as older cannot decide anything. Never called for an unknown reading or a shared home.
+// HomeDisk runs after a home reading was stored for a workspace whose home is the member's own
+// volume. The decision is taken from the reading the store hands back under its lock, so a slow
+// sweep whose write was refused as older, or a concurrent evaluation, cannot decide on a stale
+// value. An unknown reading changes nothing.
 func HomeDisk(ctx context.Context, st Store, ws store.Workspace) {
-	d, ok, err := st.GetWorkspaceDisk(ctx, ws.ID)
-	if err != nil || !ok || d.Total == 0 {
-		return
-	}
-	prev, err := st.WorkspaceNoticeRaised(ctx, ws.ID, store.WorkspaceNoticeHomeFull)
+	err := st.SyncWorkspaceNotice(ctx, ws, store.WorkspaceNoticeHomeFull,
+		func(r store.NoticeReading, prev bool) store.NoticeDecision {
+			if !r.DiskOK || r.Disk.Total == 0 {
+				return store.NoticeDecision{Want: prev}
+			}
+			next := nextHomeDiskPressure(prev, r.Disk.Used, r.Disk.Total)
+			return store.NoticeDecision{Want: next, Notes: func(members []store.MemberInfo) []store.Notification {
+				return notes(ws, "member-home-full", members, map[string]any{"used": r.Disk.Used, "total": r.Disk.Total})
+			}}
+		})
 	if err != nil {
-		return
-	}
-	next := nextHomeDiskPressure(prev, d.Used, d.Total)
-	switch {
-	case next && !prev:
-		raise(ctx, st, ws, store.WorkspaceNoticeHomeFull, "member-home-full",
-			map[string]any{"used": d.Used, "total": d.Total})
-	case !next && prev:
-		if _, err := st.ReleaseWorkspaceNotice(ctx, ws.ID, store.WorkspaceNoticeHomeFull); err != nil {
-			log.Printf("admin notice: release home_full (%s): %v", ws.ContainerName, err)
-		}
+		log.Printf("admin notice: home_full (%s): %v", ws.ContainerName, err)
 	}
 }
 
-// BootInstall runs after an install outcome was stored. Like the disk notice it decides
-// from the stored outcome, which is "the last start observed".
+// BootInstall runs after an install outcome was stored; like HomeDisk it decides from the stored
+// outcome, which is "the last start observed".
 func BootInstall(ctx context.Context, st Store, ws store.Workspace) {
-	raw, err := st.GetWorkspaceBootFailed(ctx, ws.ID)
+	err := st.SyncWorkspaceNotice(ctx, ws, store.WorkspaceNoticeBootInstall,
+		func(r store.NoticeReading, prev bool) store.NoticeDecision {
+			tools := bootInstallFailures(r.BootFailed)
+			return store.NoticeDecision{Want: len(tools) > 0, Notes: func(members []store.MemberInfo) []store.Notification {
+				return notes(ws, "member-boot-install", members, map[string]any{"tools": tools})
+			}}
+		})
 	if err != nil {
-		return
-	}
-	tools := bootInstallFailures(raw)
-	prev, err := st.WorkspaceNoticeRaised(ctx, ws.ID, store.WorkspaceNoticeBootInstall)
-	if err != nil {
-		return
-	}
-	switch {
-	case len(tools) > 0 && !prev:
-		raise(ctx, st, ws, store.WorkspaceNoticeBootInstall, "member-boot-install",
-			map[string]any{"tools": tools})
-	case len(tools) == 0 && prev:
-		if _, err := st.ReleaseWorkspaceNotice(ctx, ws.ID, store.WorkspaceNoticeBootInstall); err != nil {
-			log.Printf("admin notice: release boot_install (%s): %v", ws.ContainerName, err)
-		}
+		log.Printf("admin notice: boot_install (%s): %v", ws.ContainerName, err)
 	}
 }
 
-// raise claims the mark first and notifies only the claimant. Recipients are the
-// active tenant_admin memberships of the workspace's own tenant, taken from that tenant's roster
-// alone. When delivery fails the claim is withdrawn so the next sample retries.
-func raise(ctx context.Context, st Store, ws store.Workspace, noticeKind, kind string, payload map[string]any) {
-	members, err := st.ListMembersByTenant(ctx, ws.TenantID)
-	if err != nil {
-		return
-	}
+// notes builds one notification per active tenant_admin of the workspace's own tenant, from that
+// tenant's roster alone. A removed member (not on the active roster) is offboarding, not a
+// problem to act on, so it yields none.
+func notes(ws store.Workspace, kind string, members []store.MemberInfo, payload map[string]any) []store.Notification {
 	var subject *store.MemberInfo
 	var admins []string
 	for i := range members {
@@ -144,13 +118,8 @@ func raise(ctx context.Context, st Store, ws store.Workspace, noticeKind, kind s
 			admins = append(admins, members[i].MembershipID)
 		}
 	}
-	// A removed member (not on the active roster) is offboarding, not a problem to act on.
-	if subject == nil || len(admins) == 0 {
-		return
-	}
-	claimed, err := st.ClaimWorkspaceNotice(ctx, ws.ID, noticeKind)
-	if err != nil || !claimed {
-		return
+	if subject == nil {
+		return nil
 	}
 	display := subject.Email
 	if display == "" {
@@ -160,18 +129,15 @@ func raise(ctx context.Context, st Store, ws store.Workspace, noticeKind, kind s
 	payload["userKey"] = subject.UserKey
 	body, _ := json.Marshal(payload)
 	stamp := time.Now().UTC().UnixNano()
+	var out []store.Notification
 	for _, adminID := range admins {
 		// The event id carries the recipient: InsertNotification is idempotent on event_id alone.
-		err := st.InsertNotification(ctx, store.Notification{
+		out = append(out, store.Notification{
 			EventID:      fmt.Sprintf("%s-%s-%d-%s", kind, ws.ID, stamp, adminID),
 			MembershipID: adminID, Kind: kind,
 			TargetType: "member", TargetID: subject.UserKey,
 			DisplayName: display, Payload: string(body), CreatedAt: store.NowTS(),
 		})
-		if err != nil {
-			log.Printf("admin notice: %s (%s): %v", kind, strings.TrimSpace(ws.ContainerName), err)
-			_, _ = st.ReleaseWorkspaceNotice(ctx, ws.ID, noticeKind)
-			return
-		}
 	}
+	return out
 }

@@ -52,6 +52,9 @@ export function MembersPanel({
 }) {
   const tr = useT();
   const [members, setMembers] = useState<Member[] | null>(null);
+  // Which tenant `members` belongs to: a slug change shows the old list for one render, and a
+  // notification link must not be resolved against it.
+  const [loadedSlug, setLoadedSlug] = useState("");
   // The roster shows what each member is sized to, and that only reads correctly once
   // the runtime has said what the numbers mean (ADR 0045 decision 21). Same fetch the member
   // detail does — it is a small, cacheable, identity-agnostic document.
@@ -77,6 +80,7 @@ export function MembersPanel({
     } catch {
       setMembers([]);
     }
+    setLoadedSlug(slug);
   }, [slug]);
   useEffect(() => {
     setMembers(null);
@@ -87,12 +91,12 @@ export function MembersPanel({
   const target = useSettingsUI((s) => s.tenantMemberTarget);
   const clearTarget = useSettingsUI((s) => s.clearTenantMemberTarget);
   useEffect(() => {
-    if (!target || target.slug !== slug || !members) return;
+    if (!target || target.slug !== slug || loadedSlug !== slug || !members) return;
     const m = members.find((x) => x.user_key === target.userKey);
     if (!m) return;
     clearTarget();
     onOpenMember(m);
-  }, [target, slug, members, clearTarget, onOpenMember]);
+  }, [target, slug, loadedSlug, members, clearTarget, onOpenMember]);
 
   return (
     <section className="admin-panel">
