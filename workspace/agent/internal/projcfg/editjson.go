@@ -75,6 +75,39 @@ func UpsertJSONEntry(src []byte, containerKey, entryName string, newValue map[st
 	return spliceIn(src, m.valStart, m.valEnd, []byte(valueJSON)), nil
 }
 
+// DeleteJSONEntry removes entryName from containerKey's map in src. If it was the
+// last remaining entry, containerKey itself is removed from the root object
+// entirely (mirroring materialize_json.go: "no key at all, rather than an empty
+// object af introduced"). A no-op (returns src unchanged) if the entry — or the
+// container itself — is not present.
+func DeleteJSONEntry(src []byte, containerKey, entryName string) ([]byte, error) {
+	rootStart := skipWS(src, 0)
+	if rootStart >= len(src) || src[rootStart] != '{' {
+		return nil, fmt.Errorf("not a JSON object")
+	}
+	rootMembers, rootEnd, err := scanObjectMembers(src, rootStart)
+	if err != nil {
+		return nil, err
+	}
+	contIdx, err := findMemberIndex(src, rootMembers, containerKey)
+	if err != nil || contIdx < 0 {
+		return src, err
+	}
+	cont := rootMembers[contIdx]
+	members, contObjEnd, err := scanObjectMembers(src, cont.valStart)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := findMemberIndex(src, members, entryName)
+	if err != nil || idx < 0 {
+		return src, err
+	}
+	if len(members) == 1 {
+		return removeMember(src, rootStart, rootEnd, rootMembers, contIdx), nil
+	}
+	return removeMember(src, cont.valStart, contObjEnd, members, idx), nil
+}
+
 // --- member scan -------------------------------------------------------------
 
 // jmember is one direct "key": value pair inside a JSON object, as a set of byte
@@ -362,4 +395,45 @@ func insertMember(src []byte, objStart, objEnd int, members []jmember, key strin
 	last := members[len(members)-1]
 	ins := []byte(",\n" + entryIndent + string(keyJSON) + ": " + string(valJSON))
 	return spliceIn(src, last.valEnd, last.valEnd, ins), nil
+}
+
+// removeMember deletes members[idx] from the object at [objStart,objEnd). When it
+// is the only member, the object's interior collapses to empty rather than
+// leaving stray whitespace.
+func removeMember(src []byte, objStart, objEnd int, members []jmember, idx int) []byte {
+	if len(members) == 1 {
+		return spliceOut(src, objStart+1, objEnd)
+	}
+	m := members[idx]
+	if idx < len(members)-1 {
+		start := lineStartOf(src, m.keyStart)
+		end := m.valEnd
+		if m.commaPos >= 0 {
+			end = m.commaPos + 1
+		}
+		end = consumeOneNewline(src, end)
+		return spliceOut(src, start, end)
+	}
+	// The member becoming last has no comma of its own to remove; instead the
+	// PREVIOUS member's trailing comma must go, so the new last member ends up
+	// with none (a trailing comma before '}' is invalid JSON).
+	prev := members[idx-1]
+	return spliceOut(src, prev.commaPos, m.valEnd)
+}
+
+func spliceOut(src []byte, start, end int) []byte {
+	out := make([]byte, 0, len(src)-(end-start))
+	out = append(out, src[:start]...)
+	out = append(out, src[end:]...)
+	return out
+}
+
+func consumeOneNewline(src []byte, i int) int {
+	if i < len(src) && src[i] == '\r' {
+		i++
+	}
+	if i < len(src) && src[i] == '\n' {
+		i++
+	}
+	return i
 }
