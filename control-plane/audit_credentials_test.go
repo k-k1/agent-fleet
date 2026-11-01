@@ -38,6 +38,9 @@ func TestSignInStepsAuditOnlyWhenStored(t *testing.T) {
 		"not json":  `pending`,
 		"empty":     `{}`,
 		"slow_down": `{"connected":false,"status":"slow_down"}`,
+		// Already signed in with no live flow, or a repeat: connected without a stored signal.
+		"already connected": `{"connected":true,"stored":false}`,
+		"connected only":    `{"connected":true}`,
 	} {
 		for _, p := range probeRelaysWith(t, only, agentPaths(answer)) {
 			if !p.relayed() {
