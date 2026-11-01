@@ -2,11 +2,10 @@
 //
 // A Managed opencode session cannot tell af's MCP child which session it is: the MCP config
 // is global and opencode spawns one child per project directory, so sessions sharing a
-// worktree share one child and no per-process environment can carry AF_SESSION_NAME
-// (contract_mcp_identity_test.go). The one per-call channel opencode has is the tool
-// pre-execution hook: it fires for MCP tools too, carries opencode's own session id, and the
-// input it mutates is the very object handed to the MCP client's tools/call
-// (contract_caller_plugin_test.go).
+// worktree share one child and no per-process environment can carry AF_SESSION_NAME. The one
+// per-call channel opencode has is the tool pre-execution hook: it fires for MCP tools too,
+// carries opencode's own session id, and the input it mutates is the very object handed to the
+// MCP client's tools/call.
 //
 // So for af's own tools — and only those, a third-party server must never see this — the
 // plugin stamps the calling session id into a reserved argument. The af server strips it

@@ -1080,8 +1080,8 @@ if [ -d "$OC_PLUG_SRC" ]; then
     || echo "[entrypoint] WARN: failed to seed opencode plugin"
   # opencode 2's TUI plugin (agent-fleet-tui/): a directory with a package.json whose ./tui
   # export is loaded from ~/.config/opencode/plugins/<dir>/ (measured on 2.0.28). It keeps the
-  # sessions a shared-server Terminal pane creates apart from the other panes' (#2120); opencode 1
-  # never reads this directory. Replaced as a whole so a removed file does not outlive the image.
+  # sessions a shared-server Terminal pane creates apart from the other panes' (#2120). Replaced
+  # as a whole so a removed file does not outlive the image.
   if [ -d "$OC_PLUG_SRC/agent-fleet-tui" ]; then
     OC_TUI_DST="$HOME/.config/opencode/plugins/agent-fleet-tui"
     mkdir -p "$HOME/.config/opencode/plugins" \
