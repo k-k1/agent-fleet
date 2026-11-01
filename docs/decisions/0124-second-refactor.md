@@ -447,3 +447,19 @@ finds no cursor. `resetProviderCursors` reads the table too. `kindLiteralCeiling
 switches over every handle kind, chat provider and alias spelling;
 `TestEveryMessageCursorFieldIsListed` fails on a cursor field no entry points at. The remaining
 sites stay in #2925.
+
+## Note (2026-11-01): `instrUnsupported` retired (#2933, second slice)
+
+"This kind cannot take agent instructions, and why" is now the kind's own declaration:
+`agents.InstructionsUnsupported` (`InstructionsUnsupported() string`, the reason code), implemented
+by `cursor` in `internal/agents/cursor/instructions.go` together with the measurement that used to
+sit on the slice. `agent_instructions.go` derives the screen rows, `GET /agents/kinds`'
+`instructionsReason` and the tri-state answer from the registry by exact key, so an alias or an
+unknown kind answers as before. `TestInstrUnsupportedMatchesOldList` holds the answers to a literal
+copy of the old slice over every registered kind. `scripts/stub-kind-count.sh` on the refreshed
+`zz.patch` (the stub now declares its answer inside its own package): 21 files with tests and
+Markdown (was 22), 16 non-test, non-Markdown files (was 17); Go 5 → 4. Not a full `--verify` run.
+Still hand-kept: `session.Kind*`, `agentreg`, `kinds.registered`, `moveUnmeasuredTargets`
+and the Console lists.
+
+Follow-ups: #2933.

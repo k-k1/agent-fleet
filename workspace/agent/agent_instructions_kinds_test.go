@@ -25,7 +25,7 @@ import (
 
 // noInstructionTargets are the registered kinds that run no agent CLI, so there is nothing to
 // deliver instructions to. Every other registered kind must be supported or listed in
-// instrUnsupported with a reason.
+// agents.InstructionsUnsupported with a reason.
 var noInstructionTargets = []string{"shell", "ssm"}
 
 // legacyInstr is what applyInstructionsLocked, instrState, instrDeliveryOf and the preview
@@ -126,14 +126,14 @@ func TestInstructionsOpsDispatchPinned(t *testing.T) {
 }
 
 // A registered kind must say whether it takes the member's instructions: it implements
-// agents.Instructions and is in instrSupportedKinds (display order), or it is in
-// instrUnsupported with a reason, or it runs no agent CLI at all.
+// agents.Instructions and is in instrSupportedKinds (display order), or it
+// implements agents.InstructionsUnsupported with a reason, or it runs no agent CLI at all.
 func TestInstructionsClassifyEveryRegisteredKind(t *testing.T) {
 	for _, kind := range sessionx.RegisteredKinds() {
 		a, _ := sessionx.RegisteredAgent(kind)
 		_, impl := a.(agents.Instructions)
 		listed := slices.Contains(instrSupportedKinds, kind)
-		unsupported := slices.ContainsFunc(instrUnsupported, func(u struct{ kind, reason string }) bool { return u.kind == kind })
+		unsupported := instrUnsupportedOf(kind) != ""
 		none := slices.Contains(noInstructionTargets, kind)
 		if impl != listed {
 			t.Errorf("%s: implements agents.Instructions = %v, instrSupportedKinds lists it = %v", kind, impl, listed)
@@ -250,5 +250,83 @@ func TestInstructionsPreviewOpencode2ShowsOnlyTheUserBlock(t *testing.T) {
 	}
 	if strings.Contains(p.Content, "do not delete other sessions") || strings.Contains(p.Content, "agent-fleet:") {
 		t.Errorf("preview echoes more than the user block:\n%s", p.Content)
+	}
+}
+
+// oldInstrUnsupported is the hand-kept list instrUnsupported held before the declaration moved
+// into each kind's package. It is deliberately a literal copy: the derived answer must equal it
+// for every registered kind, and for a spelling or kind the old exact-match loop never matched.
+var oldInstrUnsupported = []struct{ kind, reason string }{
+	{"cursor", "no_user_scope"},
+}
+
+func TestInstrUnsupportedMatchesOldList(t *testing.T) {
+	old := func(kind string) string {
+		for _, u := range oldInstrUnsupported {
+			if u.kind == kind {
+				return u.reason
+			}
+		}
+		return ""
+	}
+	probes := append([]string{"Cursor", "CURSOR", " cursor", "", "unknown-kind", "cursor-agent"}, sessionx.RegisteredKinds()...)
+	for _, kind := range probes {
+		if got, want := instrUnsupportedOf(kind), old(kind); got != want {
+			t.Errorf("instrUnsupportedOf(%q) = %q, old list says %q", kind, got, want)
+		}
+		wantSupport := agents.TriUnverified
+		switch {
+		case slices.Contains(instrSupportedKinds, kind):
+			wantSupport = agents.TriYes
+		case old(kind) != "":
+			wantSupport = agents.TriNo
+		}
+		if got := instrSupport(kind); got != wantSupport {
+			t.Errorf("instrSupport(%q) = %v, want %v", kind, got, wantSupport)
+		}
+	}
+	var wantKinds []string
+	for _, k := range sessionx.RegisteredKinds() {
+		if old(k) != "" {
+			wantKinds = append(wantKinds, k)
+		}
+	}
+	if got := instrUnsupportedKinds(); !slices.Equal(got, wantKinds) {
+		t.Errorf("instrUnsupportedKinds() = %v, want %v", got, wantKinds)
+	}
+	// The catalog and the screen rows carry the same reason, byte for byte.
+	for _, e := range buildKindCatalog(false).Kinds {
+		if e.InstructionsReason != old(e.Kind) {
+			t.Errorf("catalog %s: instructionsReason = %q, want %q", e.Kind, e.InstructionsReason, old(e.Kind))
+		}
+	}
+	var rows []instrTarget
+	for _, tg := range instrState().Targets {
+		if !tg.Supported {
+			rows = append(rows, tg)
+		}
+	}
+	if len(rows) != len(oldInstrUnsupported) {
+		t.Fatalf("unsupported rows = %v, want %d", rows, len(oldInstrUnsupported))
+	}
+	for i, u := range oldInstrUnsupported {
+		if rows[i] != (instrTarget{Kind: u.kind, Reason: u.reason}) {
+			t.Errorf("row %d = %+v, want %s/%s", i, rows[i], u.kind, u.reason)
+		}
+	}
+}
+
+// A kind says either that it takes instructions or that it cannot, never both.
+func TestInstructionsAndUnsupportedAreExclusive(t *testing.T) {
+	for _, kind := range sessionx.RegisteredKinds() {
+		a, _ := sessionx.RegisteredAgent(kind)
+		_, yes := a.(agents.Instructions)
+		u, no := a.(agents.InstructionsUnsupported)
+		if yes && no {
+			t.Errorf("%s implements both agents.Instructions and agents.InstructionsUnsupported", kind)
+		}
+		if no && u.InstructionsUnsupported() == "" {
+			t.Errorf("%s: InstructionsUnsupported returns no reason code", kind)
+		}
 	}
 }
