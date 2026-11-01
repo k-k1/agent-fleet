@@ -25,6 +25,7 @@ import { waitingAtFromNotifications } from "../sessions/order.ts";
 import { homeLists } from "./home.ts";
 import { observedWaitingAt } from "../sessions/waiting.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
+import { GlanceSection } from "./GlanceSection.tsx";
 import { SetupCard, useSetupState } from "../terminal/OnboardingCard.tsx";
 import { openAssistantDraft } from "../chat/open.ts";
 import type { Session } from "../../types/session.ts";
@@ -102,6 +103,8 @@ export function HomeView({ embedded = false, headerActions }: HomeViewProps) {
             {cards(next)}
           </section>
         )}
+        {/* Below the lists, so what is waiting stays first; it costs nothing while folded. */}
+        <GlanceSection />
         {/* While the setup card shows, its goal tiles are the start actions; a second pair here
             would put two of each button on one screen. */}
         {!setup.show && (

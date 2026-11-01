@@ -26,6 +26,7 @@ import { AgentSilentBadge } from "./AgentSilentBadge.tsx";
 import { UsageChip } from "./UsageChip.tsx";
 import { MachineDetailsLink, useWsMachine } from "./machine.tsx";
 import { DesktopMore, MobileMore } from "./MoreMenu.tsx";
+import { useUsageFeed } from "./usageFeed.ts";
 import { StaleBadge } from "./StaleBadge.tsx";
 import { useLayoutButtons } from "./useLayoutButtons.tsx";
 import { usePortPreview } from "./usePortPreview.tsx";
@@ -122,6 +123,7 @@ export function WsBar() {
   const noTenant = wsState === "unknown" && wsReason === "not_provisioned";
   const tr = useT();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
+  useUsageFeed(tenant);
   const isMobile = useIsMobile();
   const barRef = useRef<HTMLDivElement>(null);
   const { foldUsage, foldMore, noteUsageLayout } = useWsBarFold(barRef, !isMobile);

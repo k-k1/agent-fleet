@@ -17,6 +17,7 @@ import { UsageChip } from "./UsageChip.tsx";
 import { CopilotUsageChip } from "./RemainingUsageChip.tsx";
 import { USAGE_SOURCES } from "./usageSources.ts";
 import { refreshUsage, subscribeUsage, USAGE_ALL } from "./usageAll.ts";
+import { useUsageFeed } from "./usageFeed.ts";
 
 const HOUR = 3600000;
 const calm = (five: number, week: number) => ({
@@ -125,6 +126,32 @@ describe("usage chips: one shared poll", () => {
       expect(calls()).toEqual([`${USAGE_ALL}?refresh=1&kind=claude`, "api/claude/usage?refresh=1"]);
     });
   }
+
+  it("against an old Agent, a chip and the bar's feed on the same kind still cost one request per endpoint, refresh included", async () => {
+    api.mockImplementation((p: string) => {
+      if (p.startsWith(USAGE_ALL)) return Promise.resolve({ error: { code: "http_404", message: "404 page not found" } });
+      if (p.startsWith("api/claude/usage")) return Promise.resolve(calm(14, 70));
+      return Promise.resolve({});
+    });
+    const Feed = () => {
+      useUsageFeed("t");
+      return null;
+    };
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<><Feed /><UsageChip src={claudeSrc} tenant="t" /></>));
+    await settle();
+    const per = (path: string) => calls().filter((c) => c.startsWith(path)).length;
+    expect(per("api/claude/usage")).toBe(1);
+    expect(per("api/codex/usage")).toBe(1);
+    expect(nums()).toEqual(["14% / 70%"]);
+    api.mockClear();
+    await act(async () => host!.querySelector<HTMLButtonElement>(".ws-usage-btn")!.click());
+    await act(async () => host!.querySelector<HTMLButtonElement>(".wu-reload")!.click());
+    await settle();
+    expect(calls()).toEqual([`${USAGE_ALL}?refresh=1&kind=claude`, "api/claude/usage?refresh=1"]);
+  });
 
   // Only a 404 means "no such route". Any other failure (the CP's 409 before a tenant is
   // selected, a 5xx, a dropped connection) would fail on every per-kind endpoint too: deliver

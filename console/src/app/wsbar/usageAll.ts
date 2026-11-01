@@ -85,14 +85,22 @@ function followUp(hub: Hub, pending: unknown) {
 // Fallback: each chip's own endpoint, as before /usage/all existed. A refresh reads only the
 // chip that asked for it, forced.
 function fetchEach(hub: Hub, refreshKind: string | null): Promise<void> {
+  // One request per endpoint however many subscribers a kind has (a chip plus the bar's own feed
+  // subscribe the same kind): the endpoints are live upstream calls, and a forced refresh must
+  // not be sent twice.
+  const byEndpoint = new Map<string, Listener[]>();
+  for (const s of hub.subs) {
+    if (refreshKind && s.kind !== refreshKind) continue;
+    const l = byEndpoint.get(s.endpoint);
+    if (l) l.push(s.listener);
+    else byEndpoint.set(s.endpoint, [s.listener]);
+  }
   return Promise.all(
-    [...hub.subs]
-      .filter((s) => !refreshKind || s.kind === refreshKind)
-      .map((s) =>
-        api(s.endpoint + (refreshKind ? "?refresh=1" : ""))
-          .then((d: UsageReading | null) => d && s.listener(d))
-          .catch(() => {}),
-      ),
+    [...byEndpoint].map(([endpoint, listeners]) =>
+      api(endpoint + (refreshKind ? "?refresh=1" : ""))
+        .then((d: UsageReading | null) => d && listeners.forEach((fn) => fn(d)))
+        .catch(() => {}),
+    ),
   ).then(() => {});
 }
 
