@@ -114,6 +114,10 @@ interface SettingsUIStore {
   /** Section to open: the caller's requested section (deep-link), else the last-opened one
    *  (localStorage), else "signin". */
   tenantSection: string;
+  /** A member the tenant dialog should open on (an admin notification's link). The roster
+   *  consumes it once the member list is loaded, then clears it. */
+  tenantMemberTarget: { slug: string; userKey: string } | null;
+  clearTenantMemberTarget(): void;
   /** Getting-started guide modal (re-openable first-run checklist — GuideModal). */
   guideOpen: boolean;
   /** A port the "Expose this port…" entry asked to add to the preview list. Nothing is saved
@@ -133,7 +137,7 @@ interface SettingsUIStore {
   closeSettings(): void;
   openAdmin(): void;
   closeAdmin(): void;
-  openTenantSettings(section?: string): void;
+  openTenantSettings(section?: string, opts?: { slug?: string; userKey?: string }): void;
   closeTenantSettings(): void;
   openGuide(): void;
   closeGuide(): void;
@@ -149,6 +153,8 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   adminOpen: false,
   tenantOpen: false,
   tenantSection: lastTenantSection() || "signin",
+  tenantMemberTarget: null,
+  clearTenantMemberTarget: () => set({ tenantMemberTarget: null }),
   guideOpen: false,
   previewAddPort: null,
   settingsTarget: null,
@@ -196,11 +202,15 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   // Tenant settings ride on the same ui/Modal as the personal settings, so close-on-back is
   // handled by useBackClose. Like personal settings, no explicit section → restore the
   // last-opened one (localStorage), else sign-in (#1100).
-  openTenantSettings(section?: string) {
-    set({ tenantSection: section || lastTenantSection() || "signin", tenantOpen: true });
+  openTenantSettings(section?: string, opts?: { slug?: string; userKey?: string }) {
+    set({
+      tenantSection: section || lastTenantSection() || "signin",
+      tenantOpen: true,
+      tenantMemberTarget: opts?.slug && opts.userKey ? { slug: opts.slug, userKey: opts.userKey } : null,
+    });
   },
   closeTenantSettings() {
-    set({ tenantOpen: false });
+    set({ tenantOpen: false, tenantMemberTarget: null });
   },
 
   // Close-on-back comes from ui/Modal (useBackClose), like the settings dialog.

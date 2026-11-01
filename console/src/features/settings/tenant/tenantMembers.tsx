@@ -16,6 +16,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
+import { useSettingsUI } from "../store.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 import { relTime } from "../../../lib/intl.ts";
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
@@ -81,6 +82,17 @@ export function MembersPanel({
     setMembers(null);
     loadMembers();
   }, [loadMembers]);
+
+  // An admin notification linked to this member: open the detail once the roster has them.
+  const target = useSettingsUI((s) => s.tenantMemberTarget);
+  const clearTarget = useSettingsUI((s) => s.clearTenantMemberTarget);
+  useEffect(() => {
+    if (!target || target.slug !== slug || !members) return;
+    const m = members.find((x) => x.user_key === target.userKey);
+    if (!m) return;
+    clearTarget();
+    onOpenMember(m);
+  }, [target, slug, members, clearTarget, onOpenMember]);
 
   return (
     <section className="admin-panel">

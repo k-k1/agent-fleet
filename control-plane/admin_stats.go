@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/adminnotice"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -105,7 +106,9 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 				raw = string(b)
 			}
 		}
-		_ = a.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, raw, store.DiskObservedAt(readStart))
+		if err := a.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, raw, store.DiskObservedAt(readStart)); err == nil {
+			adminnotice.BootInstall(ctx, a.mgr.store, ws)
+		}
 	} else {
 		live = nil
 		if raw, err := a.mgr.store.GetWorkspaceBootFailed(ctx, ws.ID); err == nil && raw != "" {

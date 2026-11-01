@@ -222,6 +222,11 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     useSchedulesStore.getState().revealSchedule(n.target.id);
     return { opened: true };
   }
+  // An admin notice about a member (#2427): open that member's detail in tenant settings.
+  if ((n.kind === "member-home-full" || n.kind === "member-boot-install") && typeof n.payload.tenantSlug === "string" && n.payload.tenantSlug) {
+    useSettingsUI.getState().openTenantSettings("members", { slug: n.payload.tenantSlug, userKey: n.target.id });
+    return { opened: true };
+  }
   // The background memory review's proposals are decided in one place (ADR 0117 decision 6).
   if (n.kind === "memory-review") {
     useSettingsUI.getState().openSettings("memory:changes");

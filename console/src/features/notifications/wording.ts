@@ -28,6 +28,8 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
   "handoff-late-session": "noti.kind_handoff_late_session",
+  "member-home-full": "noti.kind_member_home_full",
+  "member-boot-install": "noti.kind_member_boot_install",
   "arch-residue": "noti.kind_arch_residue",
   "memory-sync": "noti.kind_memory_sync",
   "memory-review": "noti.kind_memory_review",
@@ -56,7 +58,7 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
-  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
+  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
   // The message is the point of a terminal notification; the kind label alone says nothing.
   if (n.kind === "terminal-notification") {
     const text = terminalNotificationText(n.payload);
@@ -330,6 +332,24 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     const items = [...repos, ...bins];
     const body = items.length ? items.join(", ") : t("notif.arch_residue.body_generic");
     return { title: t("notif.arch_residue.title"), body, speech: t("notif.arch_residue.speech") };
+  }
+  // Admin notices about a member (#2427). displayName is the member's, so it is the {name}; the
+  // click opens that member's detail in tenant settings (store.ts), never a session.
+  if (n.kind === "member-home-full") {
+    const gib = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? `${(v / 1024 ** 3).toFixed(1)} GiB` : "?");
+    return {
+      title: t("notif.member_home_full.title", { name }),
+      body: t("notif.member_home_full.body", { name, used: gib(n.payload.used), total: gib(n.payload.total) }),
+      speech: t("notif.member_home_full.speech", { name }),
+    };
+  }
+  if (n.kind === "member-boot-install") {
+    const tools = Array.isArray(n.payload.tools) ? n.payload.tools.filter((x) => typeof x === "string").join(", ") : "";
+    return {
+      title: t("notif.member_boot_install.title", { name }),
+      body: t("notif.member_boot_install.body", { name, tools }),
+      speech: t("notif.member_boot_install.speech", { name }),
+    };
   }
   if (n.kind === "start-deadline") {
     // The Control Plane stopped a launch that stayed "starting" past its deadline

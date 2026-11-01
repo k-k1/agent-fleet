@@ -307,6 +307,7 @@ func deleteWorkspaceTx(ctx context.Context, tx *sqlTx, workspaceID string) error
 		`DELETE FROM session_work_link WHERE workspace_id=?`,
 		`DELETE FROM session WHERE workspace_id=?`,
 		`DELETE FROM workspace_disk WHERE workspace_id=?`,
+		`DELETE FROM workspace_notice WHERE workspace_id=?`,
 		`DELETE FROM wrapped_dek WHERE workspace_id=?`,
 		`DELETE FROM workspace WHERE id=?`,
 	} {

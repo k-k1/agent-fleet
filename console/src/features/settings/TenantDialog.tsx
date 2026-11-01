@@ -32,6 +32,7 @@ export function TenantDialog() {
   const costProfile = useCostProfile();
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
   const tenantSection = useSettingsUI((s) => s.tenantSection);
+  const memberTarget = useSettingsUI((s) => s.tenantMemberTarget);
   const [section, setSection] = useState(
     TENANT_SCOPE_SECTIONS.includes(tenantSection) ? tenantSection : "signin",
   );
@@ -64,6 +65,11 @@ export function TenantDialog() {
   // The tenant last picked here is restored too (#1100); load() drops it for the first tenant
   // when it is no longer in the list.
   const [slug, setSlug] = useState(lastTenantSlug);
+  // A notification that links to a member names its tenant; switch to it so the roster the
+  // member is looked up in is that tenant's.
+  useEffect(() => {
+    if (memberTarget && memberTarget.slug !== slug) setSlug(memberTarget.slug);
+  }, [memberTarget, slug]);
 
   // Members are two levels, list → detail. Growing the rail by one item per person breaks down
   // in a 40-person department, and the rail would shift the moment someone is added or removed,

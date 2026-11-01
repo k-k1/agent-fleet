@@ -63,6 +63,10 @@ func (s *SQL) ClearWorkspaceDisk(ctx context.Context, workspaceID string) error 
 	if err != nil {
 		return err
 	}
+	// A wiped home starts over: the notices raised for the old one must be able to fire again.
+	if _, err = s.db.ExecContext(ctx, `DELETE FROM workspace_notice WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
 	// The last start's install outcome describes the wiped home too: the next start installs again.
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO workspace_boot_install(workspace_id, failed, observed_at)
