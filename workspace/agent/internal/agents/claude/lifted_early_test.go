@@ -2,6 +2,7 @@ package claude
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -72,7 +73,10 @@ func TestLiftedEarlyFiveHourSource(t *testing.T) {
 
 // LiftedEarly reads af-usage.json itself: a missing file answers false, a written capture decides.
 func TestLiftedEarlyReadsTheCaptureFile(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	cfg := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	signIn(t, cfg, "acct-a")
 	episode := time.Now().Add(-time.Hour)
 	booked := time.Now().Add(48 * time.Hour)
 	if LiftedEarly("banner+capture:weekly", booked, episode) {
@@ -125,5 +129,42 @@ func TestLabelCaptureSource(t *testing.T) {
 func TestUsageLimitTraitsWiresLiftedEarly(t *testing.T) {
 	if agentImpl.UsageLimitTraits(agentImpl{}).LiftedEarly == nil {
 		t.Fatal("claude UsageLimitTraits.LiftedEarly is nil")
+	}
+}
+
+func signIn(t *testing.T, cfg, uuid string) {
+	t.Helper()
+	b := `{"oauthAccount":{"accountUuid":"` + uuid + `"}}`
+	if err := os.WriteFile(filepath.Join(cfg, ".claude.json"), []byte(b), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A capture taken under another account must not lift this episode: A hit the weekly limit,
+// the member signs in as B, and B's low usage and later resets_at land in the shared capture.
+func TestLiftedEarlyIgnoresACaptureAfterAnAccountSwitch(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	signIn(t, cfg, "acct-a")
+	_ = accountID()
+	episode := time.Now().Add(-time.Hour)
+	booked := time.Now().Add(48 * time.Hour)
+	now := time.Now().Unix()
+	writeCapturedUsage(capturedUsage{
+		FiveHour:   &capturedWindow{UsedPercent: 1, ResetsAt: now + 5*3600},
+		SevenDay:   &capturedWindow{UsedPercent: 1, ResetsAt: now + 7*24*3600},
+		CapturedAt: now, ObservedAt: now, FiveHourObservedAt: now, SevenDayObservedAt: now,
+	})
+	if !LiftedEarly("banner+capture:weekly", booked, episode) {
+		t.Fatal("same account: want lifted")
+	}
+	signIn(t, cfg, "acct-b-longer-id") // the file's size changes, so the identity is re-read
+	if LiftedEarly("banner+capture:weekly", booked, episode) {
+		t.Error("capture after an account switch must not count as lifted")
+	}
+	signIn(t, cfg, "") // no identity at all
+	if LiftedEarly("banner+capture:weekly", booked, episode) {
+		t.Error("unknown account must answer false")
 	}
 }

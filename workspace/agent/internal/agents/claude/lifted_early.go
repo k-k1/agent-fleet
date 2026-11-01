@@ -3,6 +3,8 @@ package claude
 import (
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/limitepoch"
 )
 
 // Source suffixes ResetAt appends when the instant came from a captured window, so
@@ -43,7 +45,21 @@ func labelCaptureSource(source string, at time.Time) string {
 // natural reset (a stock reset or a plan change; neither is visible over OAuth, only their
 // effect on the windows is). The capture only moves while some claude session renders its
 // statusline, so a reading older than the episode, or none, answers false.
+//
+// The capture is one file for the whole config dir and names no account, and the booking
+// records none either. So the account signed in now must have been signed in since before the
+// episode opened (limitepoch's Since; zero for the first account ever recorded): after a login
+// switch the capture describes another account's windows, which says nothing about the limit
+// the booking waits on. An unknown identity answers false.
 func LiftedEarly(source string, bookedAt, episodeAt time.Time) bool {
+	id := accountID()
+	if id == "" {
+		return false
+	}
+	st, ok := limitepoch.Current("claude", id, time.Now())
+	if !ok || st.Since.After(episodeAt) {
+		return false
+	}
 	c, _ := readCapturedUsage()
 	return liftedEarlyFrom(c, source, bookedAt, episodeAt)
 }
