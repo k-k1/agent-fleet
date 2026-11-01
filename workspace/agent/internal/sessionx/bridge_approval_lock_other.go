@@ -2,6 +2,8 @@
 
 package sessionx
 
-// lockApprovals is a no-op where flock is unavailable: the timeout race narrows to the
-// window between the daemon's read and write but is not closed.
-func lockApprovalsFile() (func(), error) { return func() {}, nil }
+// lockApprovalsFile is process-local where flock is unavailable. It serializes concurrent
+// decisions on one gate inside the Agent (double click, two tabs), which is the single
+// daemon case. Exclusion against the waiter in the mcp-stdio subprocess is left to the
+// claim file, which needs no lock.
+func lockApprovalsFile() (func(), error) { return lockApprovalsInProcess() }

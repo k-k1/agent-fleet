@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -472,7 +474,7 @@ func TestApprovalNoopLockThenDaemonStallReportsExpired(t *testing.T) {
 	withTempHome(t)
 	orig := lockApprovals
 	t.Cleanup(func() { lockApprovals = orig })
-	lockApprovals = func() (func(), error) { return func() {}, nil }
+	lockApprovals = lockApprovalsInProcess
 	id := pendingWithDeadline(t)
 	var werr error
 	bridgeApprovalBetweenReadAndClaim = func(id string) { werr = expireApproval(id) }
@@ -748,7 +750,7 @@ func TestApprovalDeadlineAtWriteWaiterTakesDecision(t *testing.T) {
 	withTempHome(t)
 	orig := lockApprovals
 	t.Cleanup(func() { lockApprovals = orig })
-	lockApprovals = func() (func(), error) { return func() {}, nil }
+	lockApprovals = lockApprovalsInProcess
 	id := pendingWithDeadline(t)
 	var werr error
 	bridgeApprovalAfterWrite = func(id string) { werr = expireApproval(id) }
@@ -773,7 +775,7 @@ func TestApprovalExpireLosesToConfirmedActs(t *testing.T) {
 				failApprovalLock(t)
 			} else {
 				t.Cleanup(func() { lockApprovals = realLock })
-				lockApprovals = func() (func(), error) { return func() {}, nil }
+				lockApprovals = lockApprovalsInProcess
 			}
 			id := pendingWithDeadline(t)
 			orig := claimApprovalFn
@@ -842,5 +844,73 @@ func TestApprovalConfirmedWithoutDecisionTimesOut(t *testing.T) {
 	}
 	if _, ok := bridgeApprovals.Read(id); ok {
 		t.Fatal("record must be removed")
+	}
+}
+
+// A holder that never lets go must not stall the in-process lock past the bounded wait.
+// lockApprovalsInProcess is what the non-unix lockApprovalsFile returns, and it is untagged,
+// so this runs on Linux too.
+func TestLockApprovalsInProcessIsBoundedAndExclusive(t *testing.T) {
+	w := bridgeApprovalLockWait
+	t.Cleanup(func() { bridgeApprovalLockWait = w })
+	bridgeApprovalLockWait = 50 * time.Millisecond
+	hold, err := lockApprovalsInProcess()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlock, err := lockApprovalsInProcess(); err == nil {
+		unlock()
+		t.Fatal("second acquisition must fail while held")
+	}
+	hold()
+	unlock, err := lockApprovalsInProcess()
+	if err != nil {
+		t.Fatalf("not released: %v", err)
+	}
+	unlock()
+}
+
+// Two decisions on one gate, under the non-unix lock: exactly one wins, the record holds
+// that decision, and the loser is told it was already handled. The seam parks the first
+// decision between its read and its claim until a second one has read too (or 300 ms pass);
+// a no-op lock lets both in, both claim "confirmed" (same winner name) and both write.
+func TestConcurrentDecisionsOnOneGateInProcessLock(t *testing.T) {
+	withTempHome(t)
+	origLock, origSeam := lockApprovals, bridgeApprovalBetweenReadAndClaim
+	t.Cleanup(func() { lockApprovals, bridgeApprovalBetweenReadAndClaim = origLock, origSeam })
+	lockApprovals = lockApprovalsInProcess
+	var entered atomic.Int32
+	bridgeApprovalBetweenReadAndClaim = func(string) {
+		entered.Add(1)
+		for end := time.Now().Add(300 * time.Millisecond); entered.Load() < 2 && time.Now().Before(end); {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	id := pendingWithDeadline(t)
+	choices := []string{"approve", "reject"}
+	msgs := make([]string, 2)
+	var wg sync.WaitGroup
+	for i := range choices {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			msgs[i], _ = bridgeApprovalDecision(id, choices[i], true)
+		}()
+	}
+	wg.Wait()
+	rec, _ := bridgeApprovals.Read(id)
+	won := -1
+	for i, m := range msgs {
+		if strings.HasPrefix(m, "✓") {
+			if won >= 0 {
+				t.Fatalf("both clicks were answered as the winner: %q", msgs)
+			}
+			won = i
+		} else if !strings.Contains(m, "already handled") {
+			t.Fatalf("loser reply = %q", m)
+		}
+	}
+	if won < 0 || rec.Decision != choices[won] {
+		t.Fatalf("recorded %q, replies %q", rec.Decision, msgs)
 	}
 }
