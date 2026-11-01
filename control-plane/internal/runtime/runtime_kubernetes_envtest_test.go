@@ -343,15 +343,20 @@ func (e *kubeTestEnv) namespace(t *testing.T) string {
 		}},
 	}, nil))
 	all := []string{"get", "list", "create", "update", "patch", "delete"}
+	rules := []kubeTestRule{
+		{"apps", "statefulsets", all},
+		{"", "services", all}, {"", "persistentvolumeclaims", all}, {"", "secrets", all},
+		{"", "pods", []string{"get", "list", "watch", "create", "delete"}},
+		{"", "events", []string{"get", "list"}},
+	}
+	roleRules := make([]any, 0, len(rules))
+	for _, r := range rules {
+		roleRules = append(roleRules, map[string]any{"apiGroups": []string{r.group}, "resources": []string{r.resource}, "verbs": r.verbs})
+	}
 	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/roles", map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
 		"metadata": map[string]any{"name": "af-cp"},
-		"rules": []any{
-			map[string]any{"apiGroups": []string{"apps"}, "resources": []string{"statefulsets"}, "verbs": all},
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"services", "persistentvolumeclaims", "secrets"}, "verbs": all},
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"pods"}, "verbs": []string{"get", "list", "watch", "create", "delete"}},
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"events"}, "verbs": []string{"get", "list"}},
-		},
+		"rules":    roleRules,
 	}, nil))
 	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/rolebindings", map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
@@ -359,11 +364,51 @@ func (e *kubeTestEnv) namespace(t *testing.T) string {
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "af-cp"},
 		"subjects": []any{map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "User", "name": "af-cp"}},
 	}, nil))
+	// The API server's authorizer reads Roles and RoleBindings from an informer cache, so a
+	// request authenticated as af-cp can still get a 403 for a moment after both were
+	// created. Without this wait the first call a test makes as af-cp races that lag.
+	eventually(t, 30*time.Second, "the af-cp Role to be visible to the authorizer in "+ns, func() bool {
+		return e.cpAllowed(ctx, ns, rules)
+	})
 	eventually(t, 30*time.Second, "default service account in "+ns, func() bool {
 		var sa json.RawMessage
 		return e.admin.get(ctx, "/api/v1/namespaces/"+ns+"/serviceaccounts/default", &sa) == nil
 	})
 	return ns
+}
+
+// kubeTestRule is one rule of the per-namespace Role: it is both what the Role grants and
+// what namespace waits to see allowed.
+type kubeTestRule struct {
+	group, resource string
+	verbs           []string
+}
+
+// cpAllowed reports whether the API server's authorizer, asked through a
+// SubjectAccessReview, allows af-cp every verb of every rule in ns.
+func (e *kubeTestEnv) cpAllowed(ctx context.Context, ns string, rules []kubeTestRule) bool {
+	for _, r := range rules {
+		for _, v := range r.verbs {
+			var out struct {
+				Status struct {
+					Allowed bool `json:"allowed"`
+				} `json:"status"`
+			}
+			err := e.admin.create(ctx, "/apis/authorization.k8s.io/v1/subjectaccessreviews", map[string]any{
+				"apiVersion": "authorization.k8s.io/v1", "kind": "SubjectAccessReview",
+				"spec": map[string]any{
+					"user": "af-cp",
+					"resourceAttributes": map[string]any{
+						"namespace": ns, "verb": v, "group": r.group, "resource": r.resource,
+					},
+				},
+			}, &out)
+			if err != nil || !out.Status.Allowed {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // factory builds the adapter's factory as the CP would, authenticated as af-cp. Each
