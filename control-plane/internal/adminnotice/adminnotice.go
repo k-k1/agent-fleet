@@ -112,9 +112,15 @@ func BootInstall(ctx context.Context, st Store, ws store.Workspace) {
 func AgentSilent(ctx context.Context, st Store, ws store.Workspace, silent bool) {
 	err := st.SyncWorkspaceNotice(ctx, ws, store.WorkspaceNoticeAgentSilent,
 		func(_ store.NoticeReading, _ bool) store.NoticeDecision {
-			return store.NoticeDecision{Want: silent, Notes: func(members []store.MemberInfo) []store.Notification {
-				return notes(ws, "member-agent-silent", members, map[string]any{})
-			}}
+			audit := func(action string) *store.AuditLog {
+				return &store.AuditLog{ID: store.NewID(), TenantID: ws.TenantID, ActorKind: "system",
+					ActorID: "agent-liveness", Action: action, Target: ws.ID, At: store.NowTS()}
+			}
+			return store.NoticeDecision{Want: silent,
+				Notes: func(members []store.MemberInfo) []store.Notification {
+					return notes(ws, "member-agent-silent", members, map[string]any{})
+				},
+				Raised: audit("workspace.agent_silent"), Retired: audit("workspace.agent_recovered")}
 		})
 	if err != nil {
 		log.Printf("admin notice: agent_silent (%s): %v", ws.ContainerName, err)

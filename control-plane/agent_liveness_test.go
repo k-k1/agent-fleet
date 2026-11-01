@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/adminnotice"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -16,21 +17,22 @@ func TestLivenessClockStartsAtFirstSightAndNeverAnsweredGetsDouble(t *testing.T)
 	t0 := time.Unix(1_000_000, 0)
 	after := 3 * time.Minute
 	// First sight starts the clock: a fresh CP (or a fresh workspace) cannot alarm at once.
-	if s, p, _ := l.assess("a", t0, after); s || p {
+	if s, p, _ := l.assess("a", t0, after); s || p != nil {
 		t.Fatal("first sight must neither flag nor probe")
 	}
 	// Never answered: the limit is twice `after`.
-	if _, p, _ := l.assess("a", t0.Add(after+time.Second), after); p {
+	if _, p, _ := l.assess("a", t0.Add(after+time.Second), after); p != nil {
 		t.Fatal("probed before 2×after for an Agent that never answered")
 	}
-	if _, p, _ := l.assess("a", t0.Add(2*after+time.Second), after); !p {
+	_, tok, _ := l.assess("a", t0.Add(2*after+time.Second), after)
+	if tok == nil {
 		t.Fatal("no probe after 2×after of silence")
 	}
 	// A second assess while the probe is in flight does not start another.
-	if _, p, _ := l.assess("a", t0.Add(2*after+2*time.Second), after); p {
+	if _, p, _ := l.assess("a", t0.Add(2*after+2*time.Second), after); p != nil {
 		t.Fatal("probe started twice")
 	}
-	if !l.probeDone("a", false) {
+	if !l.probeDone("a", *tok, false) {
 		t.Fatal("a failed probe must flip to silent")
 	}
 	if s, _, _ := l.assess("a", t0.Add(2*after+3*time.Second), after); !s {
@@ -45,7 +47,7 @@ func TestLivenessClockStartsAtFirstSightAndNeverAnsweredGetsDouble(t *testing.T)
 		t.Fatal("recovery reported twice")
 	}
 	// Once it has answered, the plain period applies.
-	if _, p, _ := l.assess("a", t0.Add(3*after+after+time.Second), after); !p {
+	if _, p, _ := l.assess("a", t0.Add(3*after+after+time.Second), after); p == nil {
 		t.Fatal("no probe after `after` of silence following an answer")
 	}
 }
@@ -55,20 +57,49 @@ func TestLivenessAnsweredProbeStaysQuietAndForgetRestartsTheClock(t *testing.T) 
 	t0 := time.Unix(1_000_000, 0)
 	l.assess("a", t0, time.Minute)
 	l.note("a", t0)
-	if _, p, _ := l.assess("a", t0.Add(61*time.Second), time.Minute); !p {
+	_, tok, _ := l.assess("a", t0.Add(61*time.Second), time.Minute)
+	if tok == nil {
 		t.Fatal("expected a probe")
 	}
-	if l.probeDone("a", true) {
+	if l.probeDone("a", *tok, true) {
 		t.Fatal("an answered probe must not flip")
 	}
 	l.forget("a")
-	if s, p, _ := l.assess("a", t0.Add(time.Hour), time.Minute); s || p {
+	if s, p, _ := l.assess("a", t0.Add(time.Hour), time.Minute); s || p != nil {
 		t.Fatal("after forget the next sight starts a new clock")
 	}
 	// note on an unknown key must not create an entry (no unbounded growth).
 	l.note("zzz", t0)
 	if _, ok := l.m["zzz"]; ok {
 		t.Fatal("note created an entry")
+	}
+}
+
+// A probe that failed is stale evidence when an answer arrived after it started, or when the
+// workspace was stopped and started again under it.
+func TestLivenessDropsAFailedProbeThatANewerAnswerOrGenerationOutdates(t *testing.T) {
+	l := &agentLiveness{m: map[string]*liveEntry{}}
+	t0 := time.Unix(1_000_000, 0)
+	l.assess("a", t0, time.Minute)
+	l.note("a", t0)
+	_, tok, _ := l.assess("a", t0.Add(61*time.Second), time.Minute)
+	l.note("a", t0.Add(62*time.Second)) // some other request succeeded meanwhile
+	if l.probeDone("a", *tok, false) {
+		t.Fatal("a probe that failed before a later answer flipped the entry")
+	}
+	if s, _, _ := l.assess("a", t0.Add(63*time.Second), time.Minute); s {
+		t.Fatal("flagged on stale evidence")
+	}
+
+	l.note("a", t0)
+	_, tok, _ = l.assess("a", t0.Add(130*time.Second), time.Minute)
+	if tok == nil {
+		t.Fatal("expected a probe")
+	}
+	l.forget("a")
+	l.assess("a", t0.Add(131*time.Second), time.Minute) // a new running spell
+	if l.probeDone("a", *tok, false) {
+		t.Fatal("a probe from the previous spell flagged the new one")
 	}
 }
 
@@ -187,5 +218,62 @@ func TestDeadManFlagsASilentAgentOnceAndClearsOnAnswer(t *testing.T) {
 	}
 	if p := api.workspacePayload(ctx, res, "starting"); p["agentSilent"] != nil {
 		t.Fatalf("payload flags a starting workspace: %v", p)
+	}
+}
+
+func countAuditAction(t *testing.T, st *store.SQL, tenantID, action string) int {
+	t.Helper()
+	rows, err := st.ListAuditByTenant(context.Background(), tenantID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range rows {
+		if r.Action == action {
+			n++
+		}
+	}
+	return n
+}
+
+// Two replicas that both see one outage write one audit row for it, and one for the recovery:
+// the rows follow the shared mark's real transitions, not each replica's own view.
+func TestAgentSilentAuditFollowsTheSharedMarkNotEachReplica(t *testing.T) {
+	f := newNoticeFixture(t, false)
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		adminnotice.AgentSilent(ctx, f.st, f.ws, true)
+	}
+	if n := countAuditAction(t, f.st, f.ws.TenantID, "workspace.agent_silent"); n != 1 {
+		t.Fatalf("silent audit rows = %d, want 1", n)
+	}
+	for i := 0; i < 2; i++ {
+		adminnotice.AgentSilent(ctx, f.st, f.ws, false)
+	}
+	if n := countAuditAction(t, f.st, f.ws.TenantID, "workspace.agent_recovered"); n != 1 {
+		t.Fatalf("recovered audit rows = %d, want 1", n)
+	}
+	// Retiring a mark nobody raised writes nothing.
+	adminnotice.AgentSilent(ctx, f.st, f.ws, false)
+	if n := countAuditAction(t, f.st, f.ws.TenantID, "workspace.agent_recovered"); n != 1 {
+		t.Fatalf("recovered audit rows after a no-op = %d, want 1", n)
+	}
+}
+
+// A mark left by a replica that died mid-outage is retired by a healthy, unwatched workspace's
+// own sweep, using the answer that sweep just got.
+func TestSweepRetiresAMarkLeftByAnotherReplicaOnceTheAgentAnswers(t *testing.T) {
+	f := newNoticeFixture(t, false)
+	ctx := context.Background()
+	key := endpointKey(f.mgr.runtimeFor(f.ws, noSecretKeys).Endpoint())
+	agentLive.forget(key)
+	defer agentLive.forget(key)
+	adminnotice.AgentSilent(ctx, f.st, f.ws, true)
+	if r, _ := f.st.WorkspaceNoticeRaised(ctx, f.ws.ID, store.WorkspaceNoticeAgentSilent); !r {
+		t.Fatal("setup: no mark")
+	}
+	f.sample() // first sight on this replica; the Agent answers the sweep's own calls
+	if r, _ := f.st.WorkspaceNoticeRaised(ctx, f.ws.ID, store.WorkspaceNoticeAgentSilent); r {
+		t.Fatal("the mark survived a sweep in which the Agent answered")
 	}
 }

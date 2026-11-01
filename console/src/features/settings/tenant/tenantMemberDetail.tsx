@@ -168,10 +168,8 @@ export function MemberView({
 
   // The home-full flag keeps its hysteresis across polls (see nextMemberHomePressure).
   const [homeFull, setHomeFull] = useState(false);
-  // Stats and sessions are read and applied independently. They used to be one Promise.all,
-  // so a wedged Agent that held the sessions read (up to the CP's two-minute client timeout)
-  // kept the stats from ever landing: the detail stayed on "checking" and Force-stop stayed
-  // disabled exactly when it was needed (#2518).
+  // Stats and sessions are applied independently: a slow sessions read must never hold back the
+  // stats that decide whether Force-stop is offered.
   const poll = useCallback(async () => {
     const readStats = async () => {
       try {

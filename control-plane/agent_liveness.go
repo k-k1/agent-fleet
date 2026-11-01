@@ -1,17 +1,13 @@
-// agent_liveness.go — the CP-side dead-man check for a running workspace whose Agent has
-// stopped answering (#2518).
+// agent_liveness.go — the CP-side dead-man check: a workspace the runtime reports running whose
+// Agent has stopped answering (#2518). ECS cannot tell: the workspace container has no health
+// check.
 //
-// In both memory-thrash incidents the container stayed RUNNING/HEALTHY for ECS while the
-// Agent inside it made no progress, and every CP call ended in a timeout. Nothing said so.
-//
-// Design, in one paragraph. The CP already talks to every running Agent: the Console's
-// polls, the relay, the usage sampler's sweep, the /healthz probes. Those clients share one
-// RoundTripper wrapper (answerTransport) that records "an answer came back from this
-// endpoint". A workspace is Agent-silent when the runtime says running, nothing has answered
-// for agentSilentAfter, AND a fresh /healthz probe then fails. The probe is the authority, so
-// the state is derived per replica with no shared storage: a replica that merely did not see
-// the traffic probes, finds the Agent answering and stays quiet. Only the admin notice needs
-// cross-replica memory (once per outage), and that is the existing workspace_notice mark.
+// The CP->Agent HTTP clients share one RoundTripper wrapper (answerTransport) that records
+// every answer per endpoint. A workspace is Agent-silent when nothing has answered for
+// agentSilentAfter AND a fresh /healthz probe then fails. The probe is the authority, so the
+// state is derived per replica with no shared storage: a replica that merely missed the
+// traffic probes, finds the Agent answering and stays quiet. Only the admin notice (and its
+// audit rows) need cross-replica memory, and that is the workspace_notice mark.
 package main
 
 import (
@@ -45,17 +41,14 @@ func agentSilentAfter() time.Duration {
 	return intervalOff(os.Getenv("AF_AGENT_SILENT_AFTER"), defaultAgentSilentAfter)
 }
 
-// Audit actions, written by the replica that flipped its own view.
-const (
-	auditAgentSilent    = "workspace.agent_silent"
-	auditAgentRecovered = "workspace.agent_recovered"
-)
-
 type liveEntry struct {
 	since    time.Time // first observed running; the clock for an Agent that never answered
 	answered time.Time // last answer; zero = none since `since`
 	probedAt time.Time
 	probing  bool
+	// gen identifies this running spell and rev counts answers; a probe that started under
+	// another gen, or before a later answer, must not flip the entry.
+	gen, rev uint64
 	silent   bool
 	// recovered is set by an answer that arrived while silent; the next assess reports it
 	// once so the caller (which holds the workspace row) can retire the notice.
@@ -63,9 +56,13 @@ type liveEntry struct {
 }
 
 type agentLiveness struct {
-	mu sync.Mutex
-	m  map[string]*liveEntry
+	mu      sync.Mutex
+	m       map[string]*liveEntry
+	nextGen uint64
 }
+
+// probeToken is what a probe remembers from the moment it started.
+type probeToken struct{ gen, rev uint64 }
 
 var agentLive = &agentLiveness{m: map[string]*liveEntry{}}
 
@@ -89,6 +86,7 @@ func (l *agentLiveness) note(key string, now time.Time) {
 	defer l.mu.Unlock()
 	if e := l.m[key]; e != nil {
 		e.answered = now
+		e.rev++
 		if e.silent {
 			e.silent = false
 			e.recovered = true
@@ -109,13 +107,14 @@ func (l *agentLiveness) forget(key string) {
 // cannot raise an alarm storm). An Agent that has never answered since then gets twice the
 // period: right after the boot budget (runtime.AgentBootBudget) State() falls back to
 // running even if the entrypoint is still installing.
-func (l *agentLiveness) assess(key string, now time.Time, after time.Duration) (silent, probe, recovered bool) {
+func (l *agentLiveness) assess(key string, now time.Time, after time.Duration) (silent bool, probe *probeToken, recovered bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.m[key]
 	if e == nil {
-		l.m[key] = &liveEntry{since: now}
-		return false, false, false
+		l.nextGen++
+		l.m[key] = &liveEntry{since: now, gen: l.nextGen}
+		return false, nil, false
 	}
 	recovered, e.recovered = e.recovered, false
 	last, limit := e.answered, after
@@ -123,11 +122,11 @@ func (l *agentLiveness) assess(key string, now time.Time, after time.Duration) (
 		last, limit = e.since, 2*after
 	}
 	if now.Sub(last) < limit {
-		return false, false, recovered
+		return false, nil, recovered
 	}
 	if !e.probing && now.Sub(e.probedAt) >= agentSilentProbeEvery {
 		e.probing, e.probedAt = true, now
-		probe = true
+		probe = &probeToken{gen: e.gen, rev: e.rev}
 	}
 	return e.silent, probe, recovered
 }
@@ -140,20 +139,40 @@ func (l *agentLiveness) answeredWithin(key string, now time.Time, d time.Duratio
 	return e != nil && !e.answered.IsZero() && now.Sub(e.answered) < d
 }
 
-// probeDone ends a probe. changed is true when it flipped the workspace to silent.
-func (l *agentLiveness) probeDone(key string, answered bool) (changed bool) {
+// probeDone ends a probe. A failure counts only if the entry is the one the probe started
+// under and nothing has answered since; otherwise it is stale evidence and is dropped.
+// changed is true when it flipped the workspace to silent.
+func (l *agentLiveness) probeDone(key string, tok probeToken, answered bool) (changed bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.m[key]
-	if e == nil {
+	if e == nil || e.gen != tok.gen {
 		return false
 	}
 	e.probing = false
-	if answered || e.silent {
+	if answered || e.silent || e.rev != tok.rev {
 		return false
 	}
 	e.silent = true
 	return true
+}
+
+// genOf is the current generation of key's entry (0 if none).
+func (l *agentLiveness) genOf(key string) uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.m[key]; e != nil {
+		return e.gen
+	}
+	return 0
+}
+
+// stillSilent reports whether the entry of generation gen is still flagged.
+func (l *agentLiveness) stillSilent(key string, gen uint64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.m[key]
+	return e != nil && e.gen == gen && e.silent
 }
 
 // answerTransport records every answer that came back from an Agent. A 502/503/504 is what
@@ -193,13 +212,13 @@ func (m *manager) checkAgentSilent(ctx context.Context, ws store.Workspace, rt r
 	if recovered {
 		m.agentRecovered(ctx, ws)
 	}
-	if probe {
-		go m.probeAgent(ws, rt.Endpoint(), key)
+	if probe != nil {
+		go m.probeAgent(ws, rt.Endpoint(), key, *probe)
 	}
 	return silent
 }
 
-func (m *manager) probeAgent(ws store.Workspace, endpoint, key string) {
+func (m *manager) probeAgent(ws store.Workspace, endpoint, key string, tok probeToken) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*healthzClient.Timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/healthz", nil)
@@ -212,24 +231,20 @@ func (m *manager) probeAgent(ws store.Workspace, endpoint, key string) {
 				resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusGatewayTimeout
 		}
 	}
-	if !agentLive.probeDone(key, answered) {
+	if !agentLive.probeDone(key, tok, answered) {
 		return
 	}
 	log.Printf("agent silent: workspace %s runs but its Agent has not answered for %s and /healthz fails",
 		ws.ID, agentSilentAfter())
-	m.auditAgentLiveness(ctx, ws, auditAgentSilent)
 	adminnotice.AgentSilent(ctx, m.store, ws, true)
+	// An answer (or a stop) may have landed between the verdict and the raise; the mark must
+	// not outlive it, and the recovery flag may already have been consumed.
+	if !agentLive.stillSilent(key, tok.gen) {
+		adminnotice.AgentSilent(context.WithoutCancel(ctx), m.store, ws, false)
+	}
 }
 
 func (m *manager) agentRecovered(ctx context.Context, ws store.Workspace) {
 	log.Printf("agent silent: workspace %s answers again", ws.ID)
-	m.auditAgentLiveness(ctx, ws, auditAgentRecovered)
 	adminnotice.AgentSilent(context.WithoutCancel(ctx), m.store, ws, false)
-}
-
-func (m *manager) auditAgentLiveness(ctx context.Context, ws store.Workspace, action string) {
-	_ = m.store.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
-		ID: store.NewID(), TenantID: ws.TenantID, ActorKind: "system", ActorID: "agent-liveness",
-		Action: action, Target: ws.ID, At: store.NowTS(),
-	})
 }
