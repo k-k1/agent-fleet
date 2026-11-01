@@ -82,11 +82,10 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   per-session value. lcpp's bash tool gets it from the harness runtime. Managed opencode (2.x)
   gets it, with `$AF_SESSION_NAME`, through the session's own shell environment, which the Agent
   puts there from the server's environment before each session's first shell command on a server
-  generation (#2710). opencode 1.x has no per-session channel, and a server started with
-  `AF_OPENCODE_TUI_STANDALONE=1` while no shared Terminal session exists has no env-gate
-  plugin mode, so both run without the variable.
-  Whenever `$AF_WORK_DIR` is actually empty (a directory that could not be created, or those
-  opencode cases), use
+  generation (#2710). A server started with `AF_OPENCODE_TUI_STANDALONE=1` while no shared
+  Terminal session exists has no env-gate plugin mode, so it runs without the variable.
+  Whenever `$AF_WORK_DIR` is actually empty (a directory that could not be created, or that
+  opencode case), use
   `mkdir -p ~/.af-work/"$(basename "$(git rev-parse --show-toplevel)")"` and remove it when the
   task is done (an unmarked directory is kept at boot but offered for deletion in Settings >
   Machine). The name is the session's slug and a rename changes only the title, so the directory

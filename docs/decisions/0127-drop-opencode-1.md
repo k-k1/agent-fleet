@@ -3,7 +3,9 @@
 English | [日本語](0127-drop-opencode-1.ja.md)
 
 - Status: **accepted** (2026-11-01). The user took decisions A–C below, the recommended option in each.
-- Issue: #3132
+- Issue: #3132. Landed in #3137, #3151, #3161, #3165, #3172, #3174 and #3189, then the guide and notes
+  cleanup.
+- Follow-ups: #3162
 - Related: [docs/log/119](../log/119-opencode-caller-session-plugin.md) (the opencode 2 port, the opt-in and
   the cut-over) / #2101 (opencode 2 support) / #2105 (the cut-over)
 
@@ -74,10 +76,10 @@ workspace may hold.
 
 - The `opencode` package loses the major switch. Code that runs before the first probe no longer defaults to
   1.x.
-- The opencode contract CI runs 2.x only. The tests that skip on 2.x (`skipOnOpencode2`) and pin a 1.x tree
-  (`useMajor(t, 1)`) are deleted.
-- A standalone opencode slot is always opencode 2, so the Console's question keys can use the opencode 2 form
-  contract for it as well.
-- The work lands in phases, one PR each, listed in #3132. The opt-in goes first: nothing reaches it. This
-  record describes the end state: until the later phases land, the 1.x paths are still in the code, and the
-  refusal in decision 1 is not in place yet.
+- The opencode contract CI runs 2.x only. The tests that skip on 2.x (`skipOnOpencode2`) are deleted; the two
+  that put a 1.x install on PATH (`useMajor(t, 1)`) stay, because they test the refusal in decision 1.
+- The Console never drives an opencode question with keys. Every card it can show comes from the shared
+  serve with a form id and is answered through it. A standalone pane raises none, since its form cannot be
+  read offline (#3162). A card without an id is shown read-only: the opencode 2 TUI's form keys are
+  unmeasured, and opencode 1's one-page menu keys would mis-answer it.
+- The work landed in phases, one PR each, listed in #3132. The opt-in went first: nothing reached it.
