@@ -5,10 +5,12 @@ import type { UsageReading } from "./usageCommon.tsx";
 // payload, in the shape its own endpoint answers, under `kinds.<kind>`. Each chip subscribes
 // here with its kind and endpoint, and every chip of a tenant shares one request.
 //
-// When /usage/all fails — an Agent older than this Console has no such route (404), or the
-// request just failed — the chips fall back to their own endpoints for that poll, so a skew
-// between the Console and a not-yet-updated workspace costs one extra request, never a blank
-// chip.
+// When /usage/all answers 404 — an Agent older than this Console has no such route — the chips
+// fall back to their own endpoints for that poll, so a skew between the Console and a
+// not-yet-updated workspace costs one extra request, never a blank chip. Any other failure
+// (the CP's 409 before a tenant is selected, a 5xx, a dropped connection) delivers nothing:
+// the per-kind endpoints sit behind the same gates and would fail alike, so the fan-out only
+// multiplies the failing requests. The chips keep what they show and the next poll retries.
 
 export const USAGE_ALL = "api/usage/all";
 
@@ -99,16 +101,25 @@ function fetchAll(hub: Hub, refreshKind: string | null): Promise<void> {
     ? `?refresh=1&kind=${encodeURIComponent(refreshKind)}`
     : "";
   return api(USAGE_ALL + q).then(
-    // An Agent without the route answers 404, which api() resolves as {error}: no kinds.
+    // api() resolves an HTTP error as {error}; only a network failure rejects. A JSON error
+    // body carries `status`, a plain-text one (an old Agent's mux answers "404 page not
+    // found") only code http_<status>, so both spellings of a 404 are read.
     (
-      d: { kinds?: Record<string, UsageReading>; pending?: string[] } | null,
+      d: {
+        kinds?: Record<string, UsageReading>;
+        pending?: string[];
+        error?: { status?: number; code?: string };
+      } | null,
     ) => {
-      if (!d || typeof d.kinds !== "object" || d.kinds === null)
+      if (d && typeof d.kinds === "object" && d.kinds !== null) {
+        deliver(hub, d.kinds, refreshKind);
+        followUp(hub, d.pending);
+        return;
+      }
+      if (d?.error?.status === 404 || d?.error?.code === "http_404")
         return fetchEach(hub, refreshKind);
-      deliver(hub, d.kinds, refreshKind);
-      followUp(hub, d.pending);
     },
-    () => fetchEach(hub, refreshKind),
+    () => {},
   );
 }
 
