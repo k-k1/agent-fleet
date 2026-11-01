@@ -408,7 +408,7 @@ a new instance (see "lcpp: what hardware measurement found" above).
 ²⁰ codex and opencode can fork only in Managed execution: their CLI launch command has no way to
 pass a branch point. (lcpp and muse are always Managed.) One exception: an opencode 2 Terminal
 (CLI) session attached to the shared server can fork too, because that server takes the branch
-point. A Terminal session on a private server, or on opencode 1.x, cannot.
+point. A Terminal session on a private server cannot.
 
 ²¹ copilot's plan mode is set at launch, and can also be switched from the managed settings.
 
