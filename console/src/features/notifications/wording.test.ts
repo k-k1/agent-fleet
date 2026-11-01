@@ -223,3 +223,27 @@ describe("member admin notices", () => {
     expect(notificationRowSubtitle({ kind: "member-boot-install", displayName: "w@acme.co.jp", payload: { tools: ["claude"] } })).toBe("w@acme.co.jp: claude");
   });
 });
+
+// A session's PR became ready to merge, or was merged or closed (#3131). The row and the OS
+// notification name the PR, since one session can have opened several.
+describe("pull request notifications", () => {
+  it("names the session and the PR on the notification and the row", () => {
+    setLocale("ja");
+    const n = { kind: "pr-merged", displayName: "Bitbucket 対応", payload: { provider: "github", key: "o/r#7", number: 7 } };
+    const w = notificationWording(n);
+    expect(w.title).toBe("プルリクエストがマージされました");
+    expect(w.body).toBe("Bitbucket 対応 — o/r#7");
+    expect(w.speech).toBe("Bitbucket 対応 のプルリクエストがマージされました。");
+    expect(notificationRowSubtitle(n)).toBe("Bitbucket 対応 — o/r#7");
+    expect(notificationKindLabel("pr-ready")).toBe("マージできます");
+  });
+
+  it("words each kind apart, and falls back to the session without a key", () => {
+    setLocale("en");
+    expect(notificationWording({ kind: "pr-ready", displayName: "a", payload: { key: "o/r#1" } }).title).toBe("A pull request is ready to merge");
+    expect(notificationWording({ kind: "pr-closed", displayName: "a", payload: {} }).speech).toBe("a's pull request was closed without merging.");
+    expect(notificationRowSubtitle({ kind: "pr-closed", displayName: "a", payload: {} })).toBe("a");
+    for (const k of ["pr-ready", "pr-merged", "pr-closed"]) expect(NOTIFICATION_KIND_LABELS[k]).toBeTruthy();
+    setLocale("ja");
+  });
+});

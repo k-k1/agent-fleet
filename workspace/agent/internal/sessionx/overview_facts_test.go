@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"os"
 	"reflect"
 	"strings"
@@ -28,13 +29,15 @@ import (
 // bitbucket.org would start a background refresh that reads the credential store and calls the
 // provider, every listing would read the Jira projects the same way, and the port scan would
 // attribute this machine's real listeners. session_links_test.go and
-// session_inferred_links_test.go stub them back.
+// session_inferred_links_test.go stub them back. PR notifications go nowhere unless a test
+// captures them (session_pr_notices_test.go).
 func TestMain(m *testing.M) {
 	os.Exit(testguard.Run(m, func() {
 		overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
 		lookupPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
 		lookupBitbucketPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
 		jiraProjectsOf = func(time.Time) map[string]bool { return nil }
+		putPRNotice = func(string, notice.Event) error { return nil }
 		lookupPorts = func(time.Time) map[string][]int { return nil }
 		_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
 	}))

@@ -371,3 +371,30 @@ func TestQueryAsksForTheTitleAndClosingIssues(t *testing.T) {
 		t.Fatalf("query = %s", q)
 	}
 }
+
+func TestParseReadsWhatReadinessNeeds(t *testing.T) {
+	keys := []Key{{Repo: "o/r", Branch: "a"}, {Repo: "o/r", Branch: "b"}}
+	node := func(n int, review string) string {
+		return `{"number":` + itoa(n) + `,"title":"t","state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/` + itoa(n) + `",` +
+			`"mergeable":"MERGEABLE","reviewDecision":` + review + `,"headRepositoryOwner":{"login":"o"},` +
+			`"commits":{"nodes":[{"commit":{"oid":"abc` + itoa(n) + `","statusCheckRollup":{"state":"SUCCESS"}}}]}}`
+	}
+	body := `{"data":{` + answer("r0", "o", "main", node(1, "null")) + "," + answer("r1", "o", "main", node(2, `"REVIEW_REQUIRED"`)) + `}}`
+	got, _, _, err := parse([]byte(body), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := got[keys[0]], got[keys[1]]
+	if a.Mergeable != "MERGEABLE" || a.ReviewDecision != "" || a.Head != "abc1" || !a.Ready() {
+		t.Errorf("a = %+v, want ready (no review required)", a)
+	}
+	if b.ReviewDecision != "REVIEW_REQUIRED" || b.Ready() {
+		t.Errorf("b = %+v, want not ready while a review is required", b)
+	}
+	q, _ := query(keys[:1])
+	for _, f := range []string{" mergeable ", " reviewDecision ", "commit{oid "} {
+		if !strings.Contains(q, f) {
+			t.Errorf("query lacks %q", f)
+		}
+	}
+}

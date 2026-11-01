@@ -17,6 +17,7 @@ export type NotifyRow =
   | "needs-input"
   | "usage-reset"
   | "session-report"
+  | "pull-request"
   | "rate-limit"
   | "schedule"
   | "handoff"
@@ -42,6 +43,7 @@ export const NOTIFY_ROWS: NotifyRowDef[] = [
   { row: "needs-input", label: "noti.row_needs_input", hint: "noti.row_needs_input_hint", unreadFixed: true },
   { row: "usage-reset", label: "noti.row_usage_reset", hint: "noti.row_usage_reset_hint" },
   { row: "session-report", label: "noti.row_session_report", hint: "noti.row_session_report_hint" },
+  { row: "pull-request", label: "noti.row_pull_request", hint: "noti.row_pull_request_hint" },
   { row: "rate-limit", label: "noti.row_rate_limit", hint: "noti.row_rate_limit_hint" },
   { row: "schedule", label: "noti.row_schedule", hint: "noti.row_schedule_hint" },
   { row: "handoff", label: "noti.row_handoff", hint: "noti.row_handoff_hint", unreadFixed: true },
@@ -59,6 +61,9 @@ const KIND_ROW: Record<string, NotifyRow> = {
   "carried-interaction": "needs-input",
   "usage-reset": "usage-reset",
   "session-report": "session-report",
+  "pr-ready": "pull-request",
+  "pr-merged": "pull-request",
+  "pr-closed": "pull-request",
   "rate-limit-reached": "rate-limit",
   "rate-limit-resumed": "rate-limit",
   "schedule-failed": "schedule",

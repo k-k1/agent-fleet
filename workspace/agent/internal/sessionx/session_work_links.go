@@ -192,12 +192,20 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 			role = session.LinkWatching
 		}
 		state := prLinkState(s.PR)
+		cur, held := heldLink(s.Links, provider, key)
+		// Told only about a PR the row still holds: a PR removed by hand is no longer the
+		// session's, and a PR seen for the first time is linked on this poll and told from the next.
+		if held {
+			if kind, extra := prNotice(s.PR, role, cur.State); kind != "" {
+				sendPRNotice(s, kind, provider, key, extra, s.PR)
+			}
+		}
 		// Already linked at this role or above, with this state: nothing to write. A weaker link
 		// (watching from when the copy was shared, reviewing before the session took the branch
 		// over) goes through AddLink, which raises it; an unknown role from a hand-edited meta
 		// ranks lowest.
 		// The launch item is its own record and carries no state, so it is never rewritten here.
-		if cur, held := heldLink(s.Links, provider, key); held && (cur.Role == session.LinkStarted ||
+		if held && (cur.Role == session.LinkStarted ||
 			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role) && cur.State == state) {
 			continue
 		}

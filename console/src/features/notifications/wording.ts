@@ -39,6 +39,9 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "aws-use-confirm": "noti.kind_aws_use_confirm",
   "gcp-login-required": "noti.kind_gcp_login_required",
   "terminal-notification": "noti.kind_terminal_notification",
+  "pr-ready": "noti.kind_pr_ready",
+  "pr-merged": "noti.kind_pr_merged",
+  "pr-closed": "noti.kind_pr_closed",
 };
 
 /** Translated row heading; only an unknown kind (new CP with an old Console) falls back to the raw identifier. */
@@ -64,7 +67,19 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
     const text = terminalNotificationText(n.payload);
     return text ? `${n.displayName} — ${text}` : n.displayName;
   }
+  // Which PR: a session can have opened several, and the row would not say which one this is.
+  if (isPRKind(n.kind)) {
+    const pr = prKeyOf(n.payload);
+    return pr ? `${n.displayName} — ${pr}` : n.displayName;
+  }
   return n.displayName;
+}
+
+const isPRKind = (kind: string) => kind === "pr-ready" || kind === "pr-merged" || kind === "pr-closed";
+
+// prKeyOf is the PR as the Agent keys it ("owner/repo#7"), "" when the payload has none.
+function prKeyOf(payload: Record<string, unknown>): string {
+  return typeof payload.key === "string" ? payload.key : "";
 }
 
 // startDeadlineBody words why the start deadline stopped a launch: the limit, then the last
@@ -282,6 +297,17 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
   if (n.kind === "aws-sso-expiring") {
     // Fixed text for the same reason: the profile, account and role come from the Agent's list.
     return { title: t("notif.aws_expiring.title"), body: t("notif.aws_expiring.body"), speech: t("notif.aws_expiring.speech") };
+  }
+  if (isPRKind(n.kind)) {
+    // The PR of the session's branch became ready to merge, or was merged or closed (#3131). The
+    // spoken form names the session, not the PR key, which reads badly aloud.
+    const which = n.kind === "pr-ready" ? "ready" : n.kind === "pr-merged" ? "merged" : "closed";
+    const pr = prKeyOf(n.payload);
+    return {
+      title: t(`notif.pr_${which}.title`),
+      body: pr ? `${name} — ${pr}` : name,
+      speech: t(`notif.pr_${which}.speech`, { name }),
+    };
   }
   if (n.kind === "terminal-notification") {
     // A program in the session asked its terminal to raise a desktop notification (OSC 9 / 99 /
