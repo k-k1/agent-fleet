@@ -9,7 +9,7 @@ import { REMAINING_SOURCES, USAGE_SOURCES } from "../../app/wsbar/usageSources.t
 import type { StatSample } from "../../core/store/wsStatsFeed.ts";
 import type { UsageSeries } from "../usage/api.ts";
 import { keysByMagnitude, metricOf, totalsByKey } from "../usage/series.ts";
-import { buildGrid, cellLevel, dayRange, localDayKey, type UptimeResponse } from "../usage/uptime.ts";
+import { buildGrid, cellLevel, localDayKey, type UptimeResponse } from "../usage/uptime.ts";
 
 // --- Limits -----------------------------------------------------------------------------
 
@@ -129,14 +129,33 @@ export interface UptimeSummary {
 
 export const UPTIME_DAYS = 7;
 
+/** The last `n` local calendar days ending today, oldest first. Built with calendar arithmetic
+ *  (setDate semantics), never `now - k * 86400000`: across a DST change a local day is 23 or 25
+ *  hours long, and millisecond steps repeat or skip a date there. */
+export function lastLocalDays(now: number, n: number): string[] {
+  const d = new Date(now);
+  const out: string[] = [];
+  for (let i = n - 1; i >= 0; i--) out.push(localDayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() - i)));
+  return out;
+}
+
+/** The /api/usage/me/hourly window for those days: one calendar day wider at each end, because
+ *  the server cuts on UTC days and the local edge cells need the neighbours. */
+export function uptimeWindow(now: number): { from: string; to: string } {
+  const days = lastLocalDays(now, UPTIME_DAYS);
+  const [fy, fm, fd] = days[0].split("-").map(Number);
+  const [ty, tm, td] = days[days.length - 1].split("-").map(Number);
+  return { from: localDayKey(new Date(fy, fm - 1, fd - 1)), to: localDayKey(new Date(ty, tm - 1, td + 1)) };
+}
+
 /** The last seven local days. A day with no observed hour is "unobserved" (the CP was not
  *  watching), which is not "stopped": the heatmap's third state survives here. */
 export function uptimeSummary(res: UptimeResponse | null, now: number): UptimeSummary {
-  const today = new Date(now);
-  const to = localDayKey(today);
-  const from = localDayKey(new Date(now - (UPTIME_DAYS - 1) * 86400000));
+  const dayKeys = lastLocalDays(now, UPTIME_DAYS);
+  const from = dayKeys[0];
+  const to = dayKeys[dayKeys.length - 1];
   const grid = buildGrid(res);
-  const days: UptimeDay[] = dayRange(from, to).map((day) => {
+  const days: UptimeDay[] = dayKeys.map((day) => {
     let running = 0;
     let observed = false;
     for (let h = 0; h < 24; h++) {

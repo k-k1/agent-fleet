@@ -276,4 +276,65 @@ describe("At a glance: cost", () => {
     expect(tile("limits")!.textContent).toContain("44%");
     expect(calls().filter((c) => LIMIT_PATHS.test(c))).toEqual([]);
   });
+
+  it("folding and re-expanding repeats no read: one series and one hourly request in total", async () => {
+    uptime = uptimeBody();
+    series = seriesBody(10, 1);
+    await mount(<GlanceSection />);
+    const toggle = () => act(async () => (host.querySelector(".home-glance-toggle") as HTMLButtonElement).click());
+    await toggle();
+    await toggle();
+    await toggle();
+    await toggle();
+    await settle();
+    expect(host.querySelector(".glance-grid")).not.toBeNull();
+    expect(tile("models")).not.toBeNull();
+    expect(calls().filter((c) => c.startsWith("api/usage/series"))).toHaveLength(1);
+    expect(calls().filter((c) => c.startsWith("api/usage/me/hourly"))).toHaveLength(1);
+  });
+
+  it("starts no read until the section is first expanded", async () => {
+    localStorage.setItem("af-home-glance", "0");
+    await mount(<GlanceSection />);
+    expect(api).not.toHaveBeenCalled();
+    await act(async () => (host.querySelector(".home-glance-toggle") as HTMLButtonElement).click());
+    await settle();
+    expect(calls().filter((c) => c.startsWith("api/usage/series"))).toHaveLength(1);
+  });
+
+  it("passes the abort signal to both reads and aborts them when Home goes away", async () => {
+    api.mockImplementation(() => new Promise(() => {}));
+    await mount(<GlanceSection />);
+    const signals = api.mock.calls
+      .filter((c) => /usage\/(me\/hourly|series)/.test(String(c[0])))
+      .map((c) => (c[1] as RequestInit | undefined)?.signal);
+    expect(signals).toHaveLength(2);
+    expect(signals.every((x) => x instanceof AbortSignal && !x.aborted)).toBe(true);
+    await act(async () => root!.unmount());
+    root = createRoot(host);
+    expect(signals.every((x) => x!.aborted)).toBe(true);
+  });
+
+  it("never shows one workspace's figures as another's while the new one is pending or failed", async () => {
+    uptime = uptimeBody();
+    series = seriesBody(10, 1);
+    await mount(<GlanceSection />);
+    expect(tile("uptime")).not.toBeNull();
+    expect(tile("models")).not.toBeNull();
+
+    // Tenant b: the reads never answer.
+    api.mockImplementation(() => new Promise(() => {}));
+    await act(async () => useTenantStore.setState({ tenant: "b" } as never));
+    await settle();
+    expect(tile("uptime")).toBeNull();
+    expect(tile("models")).toBeNull();
+
+    // Tenant c: the reads fail; a's data still must not come back.
+    api.mockImplementation(() => Promise.resolve({ error: { status: 500, code: "boom" } }));
+    await act(async () => useTenantStore.setState({ tenant: "c" } as never));
+    await settle();
+    expect(tile("uptime")).toBeNull();
+    expect(tile("models")!.textContent).toContain(t("home.glance_load_error"));
+    expect(tile("models")!.textContent).not.toContain("model-a");
+  });
 });

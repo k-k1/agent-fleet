@@ -10,7 +10,7 @@
 //
 // LIMITS ARE READ FROM THE CHIPS' STORE, NEVER POLLED. The WS bar chips own the one poll of the
 // usage-limit endpoints and write every reading to usageReadings.ts; mounting Home adds no request.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
@@ -32,14 +32,14 @@ import { openSessionsOverview } from "../overview/open.ts";
 import { fetchUsageSeries, type UsageSeries } from "../usage/api.ts";
 import { dimLabel, fmtUSDEst } from "../usage/UsageView.tsx";
 import { rangeOf } from "../usage/series.ts";
-import { localDayKey, minutesOf, widenForTimezone, type UptimeResponse } from "../usage/uptime.ts";
+import { minutesOf, type UptimeResponse } from "../usage/uptime.ts";
 import "../usage/uptime.css";
 import {
   limitRows,
   machineSummary,
   modelUsage,
-  UPTIME_DAYS,
   uptimeSummary,
+  uptimeWindow,
   type LimitRowModel,
   type ModelUsage,
   type UptimeSummary,
@@ -73,6 +73,8 @@ function usePageVisible(): boolean {
 export function GlanceSection() {
   const tr = useT();
   const mobile = useIsMobile();
+  const running = useWorkspaceStore((s) => s.state) === "running";
+  const tenant = useTenantStore((s) => s.tenant);
   const [stored, setStored] = useState<boolean | null>(null);
   const open = stored ?? readOpen(mobile);
   const toggle = () => {
@@ -84,6 +86,37 @@ export function GlanceSection() {
       /* the toggle still works for this page view */
     }
   };
+
+  // The reads live here, not in the body: folding unmounts the body (and with it the stats-feed
+  // viewer) but must not throw the answers away, or every re-expand would repeat the series
+  // read (folding can take ~20 s on a large workspace). They start on the first expand and run
+  // once per Home mount and tenant; only the model tile's refresh button asks again.
+  const seen = useRef(false);
+  if (open) seen.current = true;
+
+  // 7 days of hourly uptime; the CP answers while the workspace is stopped.
+  const uptime = useLoad<UptimeSummary>(
+    seen.current,
+    tenant,
+    async (signal) => {
+      const now = Date.now();
+      const d = await api(`api/usage/me/hourly?${new URLSearchParams(uptimeWindow(now)).toString()}`, { signal });
+      return d && !d.error ? uptimeSummary(d as UptimeResponse, now) : null;
+    },
+  );
+
+  // 24 h, hourly buckets, by model, never forced. The Agent is the source, so nothing is asked
+  // while the workspace is stopped.
+  const models = useLoad<ModelUsage>(seen.current && running, tenant, async (signal) => {
+    const { from, to, bucket } = rangeOf(24, new Date());
+    const d = await fetchUsageSeries({ from, to, bucket, by: "model" }, signal);
+    if ((d as { error?: unknown }).error) {
+      if (isTransientErr(d)) return null;
+      throw new Error(errText((d as { error: Parameters<typeof errText>[0] }).error));
+    }
+    return modelUsage(d as UsageSeries);
+  });
+
   return (
     <section className="home-section home-glance">
       <h3 className="home-title" title={tr("home.glance_hint")}>
@@ -92,70 +125,67 @@ export function GlanceSection() {
           <Icon name="dashboard" /> {tr("home.glance")}
         </button>
       </h3>
-      {open && <GlanceBody />}
+      {open && <GlanceBody uptime={uptime} models={models} />}
     </section>
   );
 }
 
-function useLoad<T>(enabled: boolean, load: (signal: AbortSignal) => Promise<T | null>, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (!enabled) return;
-    const ac = new AbortController();
-    setLoading(true);
-    setFailed(false);
-    load(ac.signal)
-      .then((d) => {
-        if (ac.signal.aborted) return;
-        setData(d);
-        setFailed(d == null);
-      })
-      .catch(() => !ac.signal.aborted && setFailed(true))
-      .finally(() => !ac.signal.aborted && setLoading(false));
-    return () => ac.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, tick, ...deps]);
-  return { data, failed, loading, reload: useCallback(() => setTick((n) => n + 1), []) };
+interface Loaded<T> {
+  data: T | null;
+  failed: boolean;
+  loading: boolean;
+  reload: () => void;
 }
 
-function GlanceBody() {
+// useLoad runs `load` while `enabled`, once per tenant (and once more per reload()). The state is
+// keyed by tenant: an answer, a pending read or a failure belonging to another workspace is never
+// shown as this one's. Disabling aborts the request in flight and re-enabling starts it again; a
+// finished read is not repeated.
+function useLoad<T>(enabled: boolean, tenant: string | null, load: (signal: AbortSignal) => Promise<T | null>): Loaded<T> {
+  const key = tenant ?? "";
+  const [st, setSt] = useState<{ tenant: string; data: T | null; failed: boolean }>({ tenant: key, data: null, failed: false });
+  const [inflight, setInflight] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const done = useRef("");
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(() => {
+    if (!enabled) return;
+    const id = `${key}#${tick}`;
+    if (done.current === id) return;
+    const ac = new AbortController();
+    setInflight(id);
+    loadRef
+      .current(ac.signal)
+      .then((d) => {
+        if (ac.signal.aborted) return;
+        done.current = id;
+        setSt({ tenant: key, data: d, failed: d == null });
+      })
+      .catch(() => {
+        if (ac.signal.aborted) return;
+        done.current = id;
+        setSt({ tenant: key, data: null, failed: true });
+      })
+      .finally(() => !ac.signal.aborted && setInflight(null));
+    return () => ac.abort();
+  }, [enabled, key, tick]);
+  const mine = st.tenant === key;
+  return {
+    data: mine ? st.data : null,
+    failed: mine && st.failed,
+    loading: inflight !== null && inflight.startsWith(key + "#"),
+    reload: useCallback(() => setTick((n) => n + 1), []),
+  };
+}
+
+function GlanceBody({ uptime, models }: { uptime: Loaded<UptimeSummary>; models: Loaded<ModelUsage> }) {
   const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
   const tenant = useTenantStore((s) => s.tenant);
   const visible = usePageVisible();
   const sessions = useSessionsStore((s) => s.sessions);
   const byKind = useUsageReadings((s) => readingsFor(s, tenant));
-
-  // One request for the 7 days, on mount; the CP answers while the workspace is stopped.
-  const uptime = useLoad<UptimeSummary>(
-    true,
-    async () => {
-      const now = Date.now();
-      const w = widenForTimezone(localDayKey(new Date(now - (UPTIME_DAYS - 1) * 86400000)), localDayKey(new Date(now)));
-      const d = await api(`api/usage/me/hourly?${new URLSearchParams(w).toString()}`);
-      return d && !d.error ? uptimeSummary(d as UptimeResponse, now) : null;
-    },
-    [tenant],
-  );
-
-  // One series request: 24 h, hourly buckets, by model, never forced. The Agent is the source,
-  // so nothing is asked while the workspace is stopped.
-  const models = useLoad<ModelUsage>(
-    running,
-    async (signal) => {
-      const { from, to, bucket } = rangeOf(24, new Date());
-      const d = await fetchUsageSeries({ from, to, bucket, by: "model" }, signal);
-      if ((d as { error?: unknown }).error) {
-        if (isTransientErr(d)) return null;
-        throw new Error(errText((d as { error: Parameters<typeof errText>[0] }).error));
-      }
-      return modelUsage(d as UsageSeries);
-    },
-    [tenant],
-  );
 
   const limits = limitRows(byKind, Date.now(), tr);
   const live = sessions.filter((s) => s.alive);

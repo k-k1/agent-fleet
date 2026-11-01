@@ -3,7 +3,7 @@ import { t } from "../../lib/i18n/index.ts";
 import { recordUsageReading, readingsFor, useUsageReadings } from "../../app/wsbar/usageReadings.ts";
 import type { StatSample } from "../../core/store/wsStatsFeed.ts";
 import type { UsageSeries } from "../usage/api.ts";
-import { limitRows, limitWindow, machineSummary, modelUsage, uptimeSummary } from "./glance.ts";
+import { lastLocalDays, limitRows, limitWindow, machineSummary, modelUsage, uptimeSummary, uptimeWindow } from "./glance.ts";
 
 const HOUR = 3600000;
 const NOW = Date.parse("2026-11-02T12:00:00Z");
@@ -115,5 +115,36 @@ describe("modelUsage", () => {
   });
   it("is 'nothing' only when there was no call at all", () => {
     expect(modelUsage(series({}, { totals: agg(0, 0) })).state).toBe("nothing");
+  });
+});
+
+describe("local calendar days across DST", () => {
+  const prev = process.env.TZ;
+  const run = (tz: string, at: string, fn: () => void) => {
+    process.env.TZ = tz;
+    try {
+      fn();
+    } finally {
+      if (prev === undefined) delete process.env.TZ;
+      else process.env.TZ = prev;
+    }
+  };
+  it("lists seven distinct days ending today when the clocks go back (US, 2026-11-01)", () => {
+    run("America/New_York", "", () => {
+      const now = Date.parse("2026-11-02T00:30:00-05:00");
+      expect(lastLocalDays(now, 7)).toEqual(["2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"]);
+      expect(uptimeWindow(now)).toEqual({ from: "2026-10-26", to: "2026-11-03" });
+      expect(uptimeSummary(null, now).days.map((d) => d.day)).toHaveLength(7);
+      expect(new Set(uptimeSummary(null, now).days.map((d) => d.day)).size).toBe(7);
+    });
+  });
+  it("starts on the right day when the clocks go forward (US, 2026-03-08)", () => {
+    run("America/New_York", "", () => {
+      const now = Date.parse("2026-03-09T00:30:00-04:00");
+      const days = lastLocalDays(now, 7);
+      expect(days[0]).toBe("2026-03-03");
+      expect(days[6]).toBe("2026-03-09");
+      expect(uptimeWindow(now).from).toBe("2026-03-02");
+    });
   });
 });
