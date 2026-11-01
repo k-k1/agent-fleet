@@ -171,7 +171,11 @@ func absDur(d time.Duration) time.Duration {
 // material yields a time.
 func ResetAt(sid string, now time.Time) (time.Time, string, bool) {
 	a, _ := AbortInfo(sid)
-	return resolveResetAt(a.Msg, a.At, capturedResets(), now)
+	at, source, ok := resolveResetAt(a.Msg, a.At, capturedResets(), now)
+	if ok {
+		source = labelCaptureSource(source, at)
+	}
+	return at, source, ok
 }
 
 // bannerGated is ResetAt's ok for a limit that came without a menu: the instant is trusted only

@@ -94,6 +94,7 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 			at, source, ok := ResetAt(session.UUID(m.Dir, m.Name), now)
 			return at, source, bannerGated(source, ok, menu)
 		},
+		LiftedEarly: LiftedEarly,
 		RanTurnSince: func(m session.Meta, at time.Time) bool {
 			return RanTurnSince(session.UUID(m.Dir, m.Name), at)
 		},

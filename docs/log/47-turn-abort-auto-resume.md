@@ -1114,7 +1114,17 @@ claude と違って文章を読み解く必要は無い。codex は rollout に�
   `resets_at` が予約 ResumeAt より後（window が再始動した）なら、予約を now+2 分へ移す。
   新しい予約を先に作ってから古い予約を取り消す（途中で失敗しても予約が無くならない）。
   Source は `codex:reset-early` になり、これ以降は再度動かない。拒否された場合は §4-13 の
-  episodeSpent が従来どおり再予約する。claude は `LiftedEarly` を持たない（未対応）。
+  episodeSpent が従来どおり再予約する。
+- **claude の早期解除（#3196）**: 材料は statusline の捕捉 `af-usage.json`（アカウントビューは
+  取れない。claude.ai の「無料リセット」自体は OAuth から見えず、窓への効果だけが見える）。
+  `ResetAt` が捕捉の epoch で決めた予約は Source に窓を付ける（`banner+capture:5h` /
+  `:weekly`、`capture:5h` / `:weekly`）。バナーだけで決めた予約（`banner`）は窓が分からないので
+  判定しない。判定は codex と同じ 3 条件 — 予約元の窓の観測が At より後（窓ごとの
+  `observedAt`。値が変わらない再描画では進まない）、どの窓も 95% 未満、予約元の窓の
+  `resets_at` が ResumeAt より後。statusline は claude セッションが描画している間しか
+  動かないので、古い読み・ファイル無し・読めないファイルは「解けていない」に倒す。
+  **実機では踏めない**（早期解除を任意に起こせない）。固めてあるのは判定の表テストと
+  Source への窓の付与のみ。
 - **手動で先に進んだ場合**: 成功したターン（codex: rollout 末尾の task_complete がエラー無しで
   At より後 / claude: 転写末尾が At より後の通常の assistant 記録）があれば、予約を取り消して
   エピソードを捨てる。停止中・上限で待機中なだけでは取り消さない。
