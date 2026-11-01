@@ -95,7 +95,9 @@ func TestAllIsACopyInRegistrationOrder(t *testing.T) {
 }
 
 // The order is a behaviour (main.go reconciles and shutdown.go shuts the managed kinds down in
-// it) and the labels are what chat channels read, so today's table is pinned as a literal copy.
+// it) and the labels are what chat channels read, so the shipped kinds are pinned as a literal
+// copy. The table is projected onto them: a newly registered kind may sit anywhere and needs no
+// row here, but a shipped kind missing, moved relative to another, or relabelled fails.
 func TestKindTableMatchesShippedList(t *testing.T) {
 	type row struct{ kind, label string }
 	shipped := []row{
@@ -103,17 +105,32 @@ func TestKindTableMatchesShippedList(t *testing.T) {
 		{"copilot", "GitHub Copilot"}, {"cursor", "Cursor"}, {"kiro", "Kiro"},
 		{"agy", "Antigravity"}, {"lcpp", ""}, {"muse", "Muse Code"}, {"shell", ""}, {"ssm", ""},
 	}
+	labelOf := map[string]string{}
+	var order []string
+	for _, r := range shipped {
+		labelOf[r.kind] = r.label
+		order = append(order, r.kind)
+	}
 	var got []row
 	for _, e := range session.KindTable() {
-		got = append(got, row{e.Kind, e.Label})
+		if _, ok := labelOf[e.Kind]; ok {
+			got = append(got, row{e.Kind, e.Label})
+		}
 	}
 	if !slices.Equal(got, shipped) {
-		t.Fatalf("kind table = %v, shipped %v", got, shipped)
+		t.Fatalf("shipped kinds in the table = %v, want %v", got, shipped)
 	}
-	for i, k := range All() {
-		if k != shipped[i].kind || Label(k) != shipped[i].label {
-			t.Errorf("All()[%d]/Label = %q/%q, shipped %v", i, k, Label(k), shipped[i])
+	var all []string
+	for _, k := range All() {
+		if want, ok := labelOf[k]; ok {
+			all = append(all, k)
+			if Label(k) != want {
+				t.Errorf("Label(%q) = %q, shipped %q", k, Label(k), want)
+			}
 		}
+	}
+	if !slices.Equal(all, order) {
+		t.Errorf("All() restricted to the shipped kinds = %v, want %v", all, order)
 	}
 }
 
