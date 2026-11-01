@@ -6,7 +6,7 @@ package main
 //   DELETE /cleanup/tool-caches/{name} → empty that cache
 //
 // These are not Agent Fleet's own leftovers (cleanup_cache.go counts those). They belong to
-// go, npm, uv and pip, grow without bound, and were measured at 34G (go-build) and 41G
+// go, npm (npx too), uv, pip and Maven, grow without bound, and were measured at 34G (go-build) and 41G
 // (npm) in one home (docs/log/116). All of them are regenerable: emptying one costs the next
 // build or install a slower first run and nothing else.
 //
@@ -39,6 +39,16 @@ type toolCache struct {
 	// users says whether a running process could be using this cache (argv as read from
 	// /proc). Emptying it under a running build or install can fail that run.
 	users func(argv []string) bool
+	// noFollow refuses a cache directory that is itself a symlink. These rows' directories
+	// sit beside unrelated data (~/.m2/settings.xml, the rest of ~/.npm), so a link there
+	// could point anywhere and emptying "through" it would delete what it points at.
+	noFollow bool
+}
+
+// isSymlink reports whether p's last element is a symlink.
+func isSymlink(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
 }
 
 var toolCaches = []toolCache{
@@ -46,10 +56,15 @@ var toolCaches = []toolCache{
 	{Name: "npm", env: "npm_config_cache", envSub: "_cacache", rel: ".npm/_cacache", users: argvRunsNode("npm", "npx")},
 	{Name: "uv", env: "UV_CACHE_DIR", rel: ".cache/uv", users: argvRuns("uv", "uvx")},
 	{Name: "pip", env: "PIP_CACHE_DIR", rel: ".cache/pip", users: argvRunsPip},
+	// Maven has no environment variable for the local repository (only -Dmaven.repo.local
+	// or settings.xml), so the default location is the only one. The directory is
+	// ~/.m2/repository, never ~/.m2: settings.xml and settings-security.xml live beside it.
+	{Name: "maven", rel: ".m2/repository", users: argvRunsMaven, noFollow: true},
+	{Name: "npx", env: "npm_config_cache", envSub: "_npx", rel: ".npm/_npx", users: argvRunsNpx, noFollow: true},
 }
 
 func (c toolCache) dir() string {
-	if v := os.Getenv(c.env); v != "" && filepath.IsAbs(v) {
+	if v := os.Getenv(c.env); c.env != "" && v != "" && filepath.IsAbs(v) {
 		return filepath.Join(v, c.envSub)
 	}
 	return filepath.Join(homeDir(), c.rel)
@@ -99,6 +114,45 @@ func argvRunsNode(names ...string) func([]string) bool {
 		}
 		return false
 	}
+}
+
+// argvRunsMaven matches mvn / mvnd, the wrapper (a shell script, so `sh ./mvnw`), and the
+// JVM Maven itself runs in (classworlds launcher or -Dmaven.multiModuleProjectDirectory).
+// Any other java process is deliberately not matched: a blanket java block would refuse
+// whenever an unrelated JVM runs.
+func argvRunsMaven(argv []string) bool {
+	if argvRuns("mvn", "mvnd", "mvnw")(argv) {
+		return true
+	}
+	if len(argv) > 1 && isShell(argv[0]) && argvRuns("mvnw", "mvn")(argv[1:2]) {
+		return true
+	}
+	// Maven's own arguments count only on a JVM: a shell or editor that merely has the
+	// string in its argv is not a build.
+	if len(argv) == 0 || filepath.Base(argv[0]) != "java" {
+		return false
+	}
+	for _, a := range argv[1:] {
+		if a == "org.codehaus.plexus.classworlds.launcher.Launcher" ||
+			strings.HasPrefix(a, "-Dmaven.multiModuleProjectDirectory") {
+			return true
+		}
+	}
+	return false
+}
+
+// argvRunsNpx matches npx and any running npm. `npm exec` / `npm x` use _npx, but picking the
+// subcommand out of argv is unsafe: global options take values as separate arguments
+// (`npm --cache /p exec`), so the first non-flag word is not reliably the subcommand.
+// Treating every npm as a user errs toward refusing, which the npm row already does.
+var argvRunsNpx = argvRunsNode("npx", "npm")
+
+func isShell(prog string) bool {
+	switch filepath.Base(prog) {
+	case "sh", "bash", "dash", "zsh":
+		return true
+	}
+	return false
 }
 
 // argvRunsPip matches pip and `python -m pip`.
@@ -186,6 +240,9 @@ func measureToolCaches(now time.Time) *toolCacheUsage {
 		if _, err := os.Stat(dir); err != nil {
 			continue // not installed or never used: no row
 		}
+		if c.noFollow && isSymlink(dir) {
+			continue // never walked or emptied through a link; see toolCache.noFollow
+		}
 		budget := toolCacheMaxEntries
 		row := toolCacheRow{Name: c.Name, Busy: cacheUsers(c), usagePlace: placeOf(dir)}
 		row.Bytes, row.Files = walkSize(dir, &budget)
@@ -209,6 +266,10 @@ func handleDeleteToolCache(w http.ResponseWriter, r *http.Request) {
 	}
 	if pids := cacheUsers(c); len(pids) > 0 {
 		httpx.WriteErr(w, http.StatusConflict, "cache_in_use", c.Name+" is in use by pid "+joinInts(pids))
+		return
+	}
+	if c.noFollow && isSymlink(c.dir()) {
+		httpx.WriteErr(w, http.StatusConflict, "cache_is_symlink", c.Name+" cache directory is a symlink; empty its target by hand")
 		return
 	}
 	bytes, files, err := emptyDir(c.dir())

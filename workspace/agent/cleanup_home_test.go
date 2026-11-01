@@ -67,7 +67,9 @@ func buildHome(t *testing.T) string {
 	t.Helper()
 	home, _ := isolateLeftovers(t)
 	for _, c := range toolCaches {
-		t.Setenv(c.env, "") // a GOCACHE of the machine running this would sit outside home
+		if c.env != "" {
+			t.Setenv(c.env, "") // a GOCACHE of the machine running this would sit outside home
+		}
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -262,7 +264,9 @@ func TestMeasureHomeAfWorkUnjudgedWithoutSessionStore(t *testing.T) {
 func TestHomeRootsLeaveOutCachesOutsideHome(t *testing.T) {
 	home, _ := isolateLeftovers(t)
 	for _, c := range toolCaches {
-		t.Setenv(c.env, "")
+		if c.env != "" {
+			t.Setenv(c.env, "")
+		}
 	}
 	outside := t.TempDir()
 	t.Setenv("GOCACHE", outside)
