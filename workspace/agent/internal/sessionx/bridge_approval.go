@@ -124,7 +124,8 @@ var (
 	bridgeApprovalLockWait = 2 * time.Second // bound on waiting for the handshake lock
 )
 
-// lockApprovals is a var so tests can inject an acquisition failure.
+// lockApprovals is a var so tests can inject an acquisition failure. Neither the flock nor
+// the in-process lock is reentrant, so a test seam must not take it from inside the section.
 var lockApprovals = lockApprovalsFile
 
 // approvalNowMs is the clock the handshake compares against Deadline; a var so a test can
@@ -136,8 +137,9 @@ var approvalNowMs = chatx.NowMs
 // (claimTaken: the waiter consumed a decision; claimExpired: the waiter gave up;
 // claimConfirmed: the daemon claimed the approval BEFORE it wrote the decision, so a decision
 // is visible only once the claim exists). Creation is an atomic
-// hard link, so it holds with no flock — the lock can be unavailable, or the no-op one on a
-// non-unix build, and the arbiter still serializes the two processes.
+// hard link, so it holds with no flock — the lock can be unavailable, or unable to exclude a counterpart in
+// another process (the non-unix lock is process-local), and the arbiter still serializes the
+// two processes.
 var bridgeApprovalClaims = fstore.Strings(paths.AgentStateDir, "bridge-approvals", ".claim")
 
 const (
@@ -286,11 +288,13 @@ func BridgeApprovalGate(op, summary string) error {
 // bridgeApprovalBetweenReadAndClaim is a test seam: it runs inside bridgeApprovalDecision's
 // critical section, after the pending and deadline checks and before the daemon claims, so a
 // test can land the waiter's deadline step exactly there (the daemon then loses the claim).
+// It must not take lockApprovals (not reentrant).
 var bridgeApprovalBetweenReadAndClaim func(id string)
 
 // bridgeApprovalAfterWrite is a test seam: it runs after the daemon has claimed and written
 // the decision, before it replies. The gap between the claim and the write is not seamed;
 // tests reach it by acting inside the claim function (claimApprovalFn).
+// It must not take lockApprovals (not reentrant).
 var bridgeApprovalAfterWrite func(id string)
 
 // waitApprovalDecision polls the handshake record until the daemon writes a decision or the
@@ -374,7 +378,8 @@ func expireApproval(id string) error {
 			return err
 		}
 	}
-	// With the real lock the daemon cannot be mid-click here; a no-op lock can.
+	// A lock that excludes the daemon (unix flock) means it cannot be mid-click here; the
+	// process-local non-unix lock does not exclude another process, so the claim decides.
 	if claimExpiry(id) {
 		return awaitConfirmedDecision(id)
 	}
@@ -390,8 +395,9 @@ func expireApproval(id string) error {
 // under the lock shared with expireApproval, so a record the waiter has removed is never
 // re-created and a click after the deadline is reported as expired.
 //
-// The lock alone cannot cover a waiter that failed to take it, or a build whose lock is a
-// no-op, so the claim file arbitrates, and the daemon claims BEFORE it writes the decision:
+// The lock alone cannot cover a waiter that failed to take it, or a counterpart in another
+// process that a process-local lock cannot exclude, so the claim file arbitrates, and the
+// daemon claims BEFORE it writes the decision:
 // "confirmed" wins only against a waiter that has not claimed "expired" yet, and a waiter
 // sees the decision only once the claim exists. The decision is therefore never visible
 // without the daemon having claimed it, so a daemon whose claim fails (bounded 3x50 ms)

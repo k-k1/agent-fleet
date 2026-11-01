@@ -468,13 +468,14 @@ func TestApprovalLockFailureThenDaemonStallReportsExpired(t *testing.T) {
 	}
 }
 
-// The same interleaving on a build whose lock is a no-op: the waiter removes the record
+// The same interleaving against a counterpart in another process, which no in-process lock
+// can exclude (the stub does not exclude): the waiter removes the record
 // mid-stall and the daemon's claim loses, so it writes nothing.
-func TestApprovalNoopLockThenDaemonStallReportsExpired(t *testing.T) {
+func TestApprovalCrossProcessThenDaemonStallReportsExpired(t *testing.T) {
 	withTempHome(t)
 	orig := lockApprovals
 	t.Cleanup(func() { lockApprovals = orig })
-	lockApprovals = lockApprovalsInProcess
+	lockApprovals = func() (func(), error) { return func() {}, nil } // stands in for the other process
 	id := pendingWithDeadline(t)
 	var werr error
 	bridgeApprovalBetweenReadAndClaim = func(id string) { werr = expireApproval(id) }
@@ -743,14 +744,14 @@ func TestApprovalDaemonOnlyClaimFailureWaiterNeverActs(t *testing.T) {
 	}
 }
 
-// The waiter's deadline step lands right after the daemon's claim and write, on a build with
-// a no-op lock. The daemon won "confirmed"; the waiter's last look takes the decision (its
+// The waiter's deadline step lands right after the daemon's claim and write, with a lock that
+// does not exclude the other side (another process). The daemon won "confirmed"; the waiter's last look takes the decision (its
 // own "taken" loses to "confirmed", which is honored), so "Approved" is truthful.
 func TestApprovalDeadlineAtWriteWaiterTakesDecision(t *testing.T) {
 	withTempHome(t)
 	orig := lockApprovals
 	t.Cleanup(func() { lockApprovals = orig })
-	lockApprovals = lockApprovalsInProcess
+	lockApprovals = func() (func(), error) { return func() {}, nil } // stands in for the other process
 	id := pendingWithDeadline(t)
 	var werr error
 	bridgeApprovalAfterWrite = func(id string) { werr = expireApproval(id) }
@@ -763,11 +764,11 @@ func TestApprovalDeadlineAtWriteWaiterTakesDecision(t *testing.T) {
 
 // The waiter loses its expiry claim to the REAL daemon path ("confirmed", then the write):
 // it must act, because the user was told "Approved". Covers both the lock-failed and the
-// no-op-lock (locked path) deadline steps; the daemon claims confirmed before the waiter's
+// cross-process (locked path) deadline steps; the daemon claims confirmed before the waiter's
 // claim runs (after its last look found the record pending), and the daemon's write lands
 // before the waiter's bounded wait for it.
 func TestApprovalExpireLosesToConfirmedActs(t *testing.T) {
-	for _, mode := range []string{"lock-failed", "noop-lock"} {
+	for _, mode := range []string{"lock-failed", "cross-process"} {
 		t.Run(mode, func(t *testing.T) {
 			withTempHome(t)
 			realLock := lockApprovals
@@ -775,7 +776,7 @@ func TestApprovalExpireLosesToConfirmedActs(t *testing.T) {
 				failApprovalLock(t)
 			} else {
 				t.Cleanup(func() { lockApprovals = realLock })
-				lockApprovals = lockApprovalsInProcess
+				lockApprovals = func() (func(), error) { return func() {}, nil } // stands in for the other process
 			}
 			id := pendingWithDeadline(t)
 			orig := claimApprovalFn
@@ -873,12 +874,15 @@ func TestLockApprovalsInProcessIsBoundedAndExclusive(t *testing.T) {
 // Two decisions on one gate, under the non-unix lock: exactly one wins, the record holds
 // that decision, and the loser is told it was already handled. The seam parks the first
 // decision between its read and its claim until a second one has read too (or 300 ms pass);
-// a no-op lock lets both in, both claim "confirmed" (same winner name) and both write.
+// a lock that excludes nothing lets both in, both claim "confirmed" (same winner name) and both write.
 func TestConcurrentDecisionsOnOneGateInProcessLock(t *testing.T) {
 	withTempHome(t)
 	origLock, origSeam := lockApprovals, bridgeApprovalBetweenReadAndClaim
 	t.Cleanup(func() { lockApprovals, bridgeApprovalBetweenReadAndClaim = origLock, origSeam })
 	lockApprovals = lockApprovalsInProcess
+	w := bridgeApprovalLockWait
+	t.Cleanup(func() { bridgeApprovalLockWait = w })
+	bridgeApprovalLockWait = 10 * time.Second // the bound itself is covered by the test above
 	var entered atomic.Int32
 	bridgeApprovalBetweenReadAndClaim = func(string) {
 		entered.Add(1)
