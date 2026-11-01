@@ -32,17 +32,22 @@ export const CHECK_ICON: Record<"success" | "failure" | "pending", string> = {
   pending: "clock",
 };
 
-/** A GitHub pull request page, and nothing else, may become the row's href: the URL arrives
- * from the provider through two relays. Only https://github.com/<owner>/<repo>/pull/<n> with no
- * port and no userinfo passes, and it is rebuilt from those parts, so a query or a fragment
- * never rides along. */
-const PR_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/;
+/** A pull request page on github.com or bitbucket.org, and nothing else, may become the row's
+ * href: the URL arrives from the provider through two relays. Only
+ * https://github.com/<owner>/<repo>/pull/<n> and https://bitbucket.org/<workspace>/<repo>/pull-requests/<n>
+ * with no port and no userinfo pass, and they are rebuilt from those parts, so a query or a
+ * fragment never rides along. */
+const PR_PATHS: Record<string, RegExp> = {
+  "github.com": /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/,
+  "bitbucket.org": /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull-requests\/[1-9][0-9]*$/,
+};
 
 export function safePRURL(url: string): string | null {
   try {
     const u = new URL(url);
-    if (u.protocol !== "https:" || u.hostname !== "github.com" || u.port !== "" || u.username || u.password) return null;
-    return PR_PATH.test(u.pathname) ? `https://github.com${u.pathname}` : null;
+    const path = Object.hasOwn(PR_PATHS, u.hostname) ? PR_PATHS[u.hostname] : undefined;
+    if (!path || u.protocol !== "https:" || u.port !== "" || u.username || u.password) return null;
+    return path.test(u.pathname) ? `https://${u.hostname}${u.pathname}` : null;
   } catch {
     return null;
   }
@@ -61,9 +66,9 @@ export function rowPorts(ports: number[] | undefined): number[] {
  * line says nothing new. Keys compare case-insensitively, as the Agent compares them
  * (owner/repo names are). */
 export function rowWorkLinks(s: Pick<Session, "links" | "pr">): SessionWorkLink[] {
-  const prKey = s.pr ? prKeyOf(s.pr.url) : null;
+  const pr = s.pr ? prItemOf(s.pr.url) : null;
   return (s.links || [])
-    .filter((l) => l.key && !(prKey && sameWorkItem(l, "github", prKey)))
+    .filter((l) => l.key && !(pr && sameWorkItem(l, pr.provider, pr.key)))
     .map((l, i) => ({ l, i }))
     .sort(
       (a, b) =>
@@ -110,10 +115,11 @@ export const LINK_ROLE_ICON: Record<SessionWorkLinkRole, string> = {
   watching: "bell",
 };
 
-/** "owner/repo#N" of a github.com PR page, as the Agent keys it. */
-function prKeyOf(url: string): string | null {
+/** The provider and "owner/repo#N" of a PR page, as the Agent keys it. */
+function prItemOf(url: string): { provider: string; key: string } | null {
   const safe = safePRURL(url);
   if (!safe) return null;
-  const [, owner, repo, , n] = new URL(safe).pathname.split("/");
-  return `${owner}/${repo}#${n}`;
+  const u = new URL(safe);
+  const [, owner, repo, , n] = u.pathname.split("/");
+  return { provider: u.hostname === "bitbucket.org" ? "bitbucket" : "github", key: `${owner}/${repo}#${n}` };
 }
