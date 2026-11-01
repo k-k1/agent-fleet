@@ -224,7 +224,7 @@ export function QuestionCard({
   onSubmitKeys: (keys: string[]) => void | Promise<boolean | void>;
   onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void | Promise<boolean | void>;
   onRespond?: (answers: InteractionAnswer[]) => void | Promise<boolean | void>;
-  onCancel: () => void;
+  onCancel?: () => void;
   translate?: TranscriptTranslateWiring;
 }) {
   const tx = useQuestionTranslate(translate, questions, pendingText);

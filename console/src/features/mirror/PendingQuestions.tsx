@@ -310,9 +310,9 @@ export function PendingQuestions({
           </button>
         )}
         {menu && menuDrivable && (
-          // The menus (codex/agy, opencode by id) submit the same way: pick per question above,
-          // then send every page's key sequence at once. A single-question menu now needs
-          // this button too — its options no longer send on click.
+          // The menus (codex/agy) submit the same way: pick per question above, then send every
+          // page's key sequence at once (by id: the structured answer instead). A
+          // single-question menu now needs this button too — its options no longer send on click.
           <button
             type="button"
             className="btn primary mq-submit"
