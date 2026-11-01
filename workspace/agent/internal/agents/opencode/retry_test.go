@@ -197,21 +197,6 @@ func TestV2RetryScheduled(t *testing.T) {
 	t.Fatal("a permanent message on v2 must abort the turn too")
 }
 
-// The /global/event line exactly as 1.19.0 sent it while retrying (loopback stub answering 500). The
-// driver still accepts it: the event name is still in the 2.x binary.
-func TestRetryFromTheMeasuredGlobalEvent(t *testing.T) {
-	m, srv := newMockServe(t)
-	h := newTestHandle(t, srv)
-	registerTestHandle(t, h)
-	startBlocking(t, m, h)
-	handleServeEvent([]byte(`{"directory":"/work","project":"global","payload":{"id":"evt_1388b229000174j6X2BlRro2E4","type":"session.status","properties":{"sessionID":"ses_test","status":{"type":"retry","attempt":2,"message":"Upstream request failed: connection reset","next":1791950009293}}}}`))
-	got := enriched(h)
-	if got == nil || got.Attempt != 2 || got.Message != "Upstream request failed: connection reset" {
-		t.Fatalf("Retry = %+v, want the measured retry", got)
-	}
-	endTurn(m)
-}
-
 // While the pump waits behind another client's turn (an attached TUI's), h.running is true but
 // no /message of ours is out: that client's retry is not ours to show or to abort.
 func TestRetryBehindAnotherClientsTurnIsNotOurs(t *testing.T) {

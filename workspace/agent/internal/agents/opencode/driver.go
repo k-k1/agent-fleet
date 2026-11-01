@@ -465,9 +465,8 @@ type threadHandle struct {
 	// forms: every form the session waits on, oldest first; inter is forms[0] (v2form.go).
 	forms []*agents.Interaction
 	// compacting: serve said a compaction summary is being written for this session
-	// (session.compaction.started, or the opencode 1 message.updated). Cleared by every terminal
-	// turn state, a stop, the daemon going away and teardown, so a missed end event cannot keep it
-	// on.
+	// (session.compaction.started). Cleared by every terminal turn state, a stop, the daemon going
+	// away and teardown, so a missed end event cannot keep it on.
 	compacting bool
 	// retry: the runtime is retrying a failing provider call (retry.go). Cleared by output, by
 	// every terminal turn state and by teardown. retryFailed is the retry that ended the last
@@ -1224,26 +1223,12 @@ func splitModel(s string) (provider, model string, ok bool) {
 // adds ask must not silently wedge a managed session).
 func handleServeEvent(data []byte) {
 	var ev struct {
-		// The opencode 1 stream wrapped it as {"payload": {type, properties}}; that and the bare
-		// {type, properties} shape are still accepted.
-		Payload    json.RawMessage `json:"payload"`
-		Type       string          `json:"type"`
-		Properties json.RawMessage `json:"properties"`
-		// v2 (/api/event) carries the body in "data" instead (measured 2.0.28).
-		Data json.RawMessage `json:"data"`
+		Type string `json:"type"`
+		// /api/event carries the body in "data" (measured 2.0.28).
+		Properties json.RawMessage `json:"data"`
 	}
 	if json.Unmarshal(data, &ev) != nil {
 		return
-	}
-	if len(ev.Properties) == 0 && len(ev.Data) > 0 {
-		ev.Properties = ev.Data
-	}
-	if ev.Type == "" && len(ev.Payload) > 0 {
-		inner := ev
-		if json.Unmarshal(ev.Payload, &inner) != nil {
-			return
-		}
-		ev.Type, ev.Properties = inner.Type, inner.Properties
 	}
 	noteProgress(ev.Type, ev.Properties)
 	switch ev.Type {
@@ -1270,50 +1255,8 @@ func handleServeEvent(data []byte) {
 			// Whoever settled it: the Console, an attached TUI, or an interrupt.
 			h.settleForm(p.ID)
 		}
-	case "message.updated":
-		// Compaction (measured 1.18.34): the v1 loop announces neither
-		// session.next.compaction.started nor .ended — those belong to the v2 event store and
-		// never reach /global/event. What it does send is the compaction summary's own
-		// message.updated: an assistant message with mode "compaction", without time.completed
-		// while it is written and with it once it ends or is aborted. Any other assistant
-		// message means the summary is over and the turn has moved on.
-		var p struct {
-			Info struct {
-				compactionProbe
-				SessionID string `json:"sessionID"`
-			} `json:"info"`
-		}
-		if json.Unmarshal(ev.Properties, &p) != nil || p.Info.Role != "assistant" {
-			return
-		}
-		if h := handleBySes(p.Info.SessionID); h != nil {
-			h.setCompacting(p.Info.inFlight())
-		}
-	case "session.status":
-		// v1: busy | retry | idle per session. The status goes busy between two attempts, so
-		// only output (message.part.updated below), idle and the turn's end clear a retry.
-		var p struct {
-			SessionID string `json:"sessionID"`
-			Status    struct {
-				Type    string `json:"type"`
-				Attempt int    `json:"attempt"`
-				Message string `json:"message"`
-				Next    int64  `json:"next"`
-			} `json:"status"`
-		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
-			return
-		}
-		if h := handleBySes(p.SessionID); h != nil {
-			switch p.Status.Type {
-			case "retry":
-				h.noteRetry(p.Status.Attempt, p.Status.Message, p.Status.Next)
-			case "idle":
-				h.clearRetry()
-			}
-		}
 	case "session.retry.scheduled":
-		// v2: the next attempt of a failing step is due at "at".
+		// The next attempt of a failing step is due at "at".
 		var p struct {
 			SessionID string `json:"sessionID"`
 			Attempt   int    `json:"attempt"`
@@ -1326,19 +1269,13 @@ func handleServeEvent(data []byte) {
 		if h := handleBySes(p.SessionID); h != nil {
 			h.noteRetry(p.Attempt, p.Error.Message, p.At)
 		}
-	case "message.part.updated", "session.text.started", "session.step.ended":
-		// The retried call produced output (a failing attempt emits no part, measured).
+	case "session.text.started", "session.step.ended":
+		// The retried call produced output (a failing attempt emits none, measured).
 		var p struct {
 			SessionID string `json:"sessionID"`
-			Part      struct {
-				SessionID string `json:"sessionID"`
-			} `json:"part"`
 		}
 		if json.Unmarshal(ev.Properties, &p) != nil {
 			return
-		}
-		if p.SessionID == "" {
-			p.SessionID = p.Part.SessionID
 		}
 		if h := handleBySes(p.SessionID); h != nil {
 			h.clearRetry()
@@ -1377,16 +1314,6 @@ func handleServeEvent(data []byte) {
 			if h := handleBySes(p.SessionID); h != nil {
 				h.setCompacting(false)
 			}
-		}
-	case "session.compacted", "session.idle":
-		var p struct {
-			SessionID string `json:"sessionID"`
-		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
-			return
-		}
-		if h := handleBySes(p.SessionID); h != nil {
-			h.setCompacting(false)
 		}
 	case "permission.asked":
 		var p struct {
