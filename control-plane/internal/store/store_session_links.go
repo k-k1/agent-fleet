@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -11,14 +12,15 @@ import (
 // is bounded and clipped before it is stored, and anything unreadable mirrors as no links
 // rather than failing the write that also carries every other session.
 
-// Bounds on what one session may put into the mirror. They match the Agent's own (MaxLinks,
-// the key, title and URL clips), so a well-formed list passes untouched.
+// Bounds on what one session may put into the mirror. They match the Agent's own, in its
+// units, so a well-formed list passes untouched: MaxLinks plus the launch item LinksOf puts
+// first, the key in bytes, the title and URL in runes.
 const (
-	mirrorMaxLinks = 50
-	mirrorMaxKey   = 200
-	mirrorMaxTitle = 300
-	mirrorMaxURL   = 500
-	mirrorMaxShort = 40 // provider, role, timestamp
+	mirrorMaxLinks = 51
+	mirrorMaxKey   = 200 // bytes
+	mirrorMaxTitle = 300 // runes
+	mirrorMaxURL   = 500 // runes
+	mirrorMaxShort = 40  // bytes: provider, role, timestamp
 )
 
 // sessionLinkWire is one entry of the Agent's links array, in its wire shape.
@@ -46,17 +48,22 @@ func SessionLinksFromJSON(raw json.RawMessage) []SessionLink {
 		if len(out) == mirrorMaxLinks {
 			break
 		}
+		// Postgres refuses a NUL in TEXT, and the INSERT failing would roll back the whole
+		// workspace's mirror; the Agent passes titles through as given.
+		for _, f := range []*string{&l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At} {
+			*f = strings.ReplaceAll(*f, "\x00", "")
+		}
 		if l.Provider == "" || l.Key == "" || len(l.Provider) > mirrorMaxShort || len(l.Key) > mirrorMaxKey {
 			continue
 		}
 		url := l.URL
-		if len(url) > mirrorMaxURL {
+		if utf8.RuneCountInString(url) > mirrorMaxURL {
 			url = "" // a clipped URL points somewhere else
 		}
 		out = append(out, SessionLink{
 			Provider: l.Provider, Key: l.Key,
 			Role:  clipBytes(l.Role, mirrorMaxShort),
-			Title: clipBytes(l.Title, mirrorMaxTitle),
+			Title: clipRunes(l.Title, mirrorMaxTitle),
 			URL:   url,
 			At:    clipBytes(l.At, mirrorMaxShort),
 		})
@@ -90,4 +97,12 @@ func clipBytes(s string, n int) string {
 		n--
 	}
 	return s[:n]
+}
+
+// clipRunes cuts s to at most n runes, as the Agent clips a title.
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }

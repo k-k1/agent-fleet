@@ -1033,6 +1033,11 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 	if err != nil {
 		rows = nil
 	}
+	// Links are an extra on a stopped list: when they cannot be read the rows are still served.
+	links, err := a.mgr.store.ListSessionLinks(ctx, res.ws.ID)
+	if err != nil {
+		log.Printf("sessions: mirrored links (%s): %v", res.ws.ID, err)
+	}
 	out := make([]sessionWire, 0, len(rows))
 	for _, r0 := range rows {
 		out = append(out, sessionWire{
@@ -1044,7 +1049,7 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 			// Which studio a session belongs to decides which pane opens it.
 			Studio: r0.Studio,
 			// Which items it is on: the Console's rows and item details read them while stopped too.
-			Links: store.SessionLinksJSON(r0.Links),
+			Links: store.SessionLinksJSON(links[r0.Name]),
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
 			Resumable: true,

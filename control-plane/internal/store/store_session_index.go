@@ -19,7 +19,8 @@ type SessionRow struct {
 	// Studio is the image studio the session is bound to (ADR 0100 decision 2), "" for none.
 	Studio string
 	// Links are the work items and PRs the session is linked to (#3134), in the Agent's order.
-	// Stored in session_work_link, replaced together with the row.
+	// Written to session_work_link with the row; ListSessions does not fill it (ListSessionLinks
+	// does), so a reader that only counts sessions does not read every link title.
 	Links []SessionLink
 }
 
@@ -41,6 +42,8 @@ func linkFold(l SessionLink) (provider, key string) {
 type SessionIndexStore interface {
 	ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error
 	ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error)
+	// ListSessionLinks is the workspace's mirrored links by session name, each in the Agent's order.
+	ListSessionLinks(ctx context.Context, workspaceID string) (map[string][]SessionLink, error)
 }
 
 func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error {
@@ -71,25 +74,35 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 	return tx.Commit()
 }
 
-// insertSessionLinks writes one session's links. A second link to the same item (differing
-// only in case) is skipped rather than allowed to hit the primary key: the list comes from
-// the Agent, and one odd entry must not fail the whole mirror write.
+// insertSessionLinks writes one session's links in one statement: the mirror is rewritten on
+// every list poll, and a round trip per link would hold the transaction open that much
+// longer. A second link to the same item (differing only in case) is skipped rather than
+// allowed to hit the primary key: the list comes from the Agent, and one odd entry must not
+// fail the whole mirror write. At most 51 rows × 10 values (SessionLinksFromJSON's cap), well
+// under either dialect's bound-parameter limit.
 func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session string, links []SessionLink) error {
 	seen := make(map[[2]string]bool, len(links))
+	var q strings.Builder
+	var args []any
 	for i, l := range links {
 		provider, fold := linkFold(l)
 		if provider == "" || fold == "" || seen[[2]string{provider, fold}] {
 			continue
 		}
 		seen[[2]string{provider, fold}] = true
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at)
-			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At); err != nil {
-			return err
+		if len(args) == 0 {
+			q.WriteString(`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at) VALUES`)
+		} else {
+			q.WriteString(",")
 		}
+		q.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At)
 	}
-	return nil
+	if len(args) == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, q.String(), args...)
+	return err
 }
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
@@ -108,22 +121,10 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 		}
 		out = append(out, r)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
-	links, err := s.listSessionLinks(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	for i := range out {
-		out[i].Links = links[out[i].Name]
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
-// listSessionLinks is the workspace's mirrored links by session name, each in the Agent's order.
-func (s *SQL) listSessionLinks(ctx context.Context, workspaceID string) (map[string][]SessionLink, error) {
+func (s *SQL) ListSessionLinks(ctx context.Context, workspaceID string) (map[string][]SessionLink, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT session_name, provider, item_key, role, title, url, linked_at
 		 FROM session_work_link WHERE workspace_id=? ORDER BY session_name, ord`, workspaceID)
