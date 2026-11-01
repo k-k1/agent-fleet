@@ -576,14 +576,12 @@ type tuiInterrupt struct {
 // interruptsInFlight holds the names of sessions whose stop keys are being sent.
 var interruptsInFlight sync.Map
 
-// interruptLiveState is the kind's transcript-derived state, replaceable in tests. Only the
-// kinds whose stop is Ctrl+C need it.
+// interruptLiveState is the kind's own live-state verdict (agents.LiveStateTraits.State),
+// replaceable in tests. Only a stop that needs a running turn (TUIInterruptTraits.NeedsWorking)
+// reads it.
 var interruptLiveState = func(kind string, m session.Meta) string {
-	switch kind {
-	case session.KindCursor:
-		return cursor.LiveState(m)
-	case session.KindCopilot:
-		return copilot.LiveState(m)
+	if st := liveStateTraits(kind).State; st != nil {
+		return st(m)
 	}
 	return ""
 }
@@ -595,11 +593,6 @@ func stateOrUnknown(st string) string {
 	return st
 }
 
-// opencodeDoubleEscGap sits inside opencode 2.x's window: the first Esc only arms "esc
-// again to interrupt" and the arm lapses after a few seconds (measured: two Esc 0.5 s apart
-// interrupt, one Esc does nothing). The gap is the time /turn holds the request.
-const opencodeDoubleEscGap = 600 * time.Millisecond
-
 // TUIInterruptKeys is the stop sequence the chat's stop button sends to a kind's Terminal
 // pane, and the pause between its keys. It exists so the caps drift probe presses the same
 // keys as production instead of its own guess (a plain Escape does not stop copilot).
@@ -608,30 +601,16 @@ func TUIInterruptKeys(kind string) (keys []string, gap time.Duration) {
 	return p.keys, p.gap
 }
 
-// tuiInterruptFor picks the stop keys from docs/log/133 §1, per kind. Never add a sequence
-// without an observation there: a key the CLI ignores reads as "Stop did nothing".
-//   - claude, codex, kiro: Esc interrupts (and sends what was queued).
-//   - opencode 2.x: two Esc within ~1 s. In the subagent detail view Escape only navigates,
-//     so Up goes first (as /input does); the double Esc after it is not measured there.
-//   - cursor: Esc cancels the queued follow-up and leaves the turn running; Ctrl+C stops it.
-//   - copilot: Esc is ignored while a prompt is pending; Ctrl+C cancels the operation.
-//   - anything else (agy was never measured; shell, ssm, ...): the historic single Escape,
-//     reported with measured=false.
+// tuiInterruptFor picks the stop keys from the kind's agents.TUIInterrupter (docs/log/133 §1
+// holds the observations). Never add a sequence without one there: a key the CLI ignores reads
+// as "Stop did nothing". A kind without the capability (agy was never measured; shell, ssm,
+// ...) and an unregistered kind get the historic single Escape, reported with measured=false.
 func tuiInterruptFor(kind string, inOpencodeSubagentView func() bool) tuiInterrupt {
-	const defaultGap = 90 * time.Millisecond
-	switch kind {
-	case session.KindClaude, session.KindCodex, session.KindKiro:
-		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: true}
-	case session.KindOpencode:
-		if inOpencodeSubagentView() {
-			// Not in docs/log/133: Up then Escape is the historic sequence, the second Escape
-			// is added for 2.x's double-Esc and its effect here was never observed.
-			return tuiInterrupt{keys: []string{"Up", "Escape", "Escape"}, gap: opencodeDoubleEscGap}
+	if a, ok := RegisteredAgent(kind); ok {
+		if t, ok := a.(agents.TUIInterrupter); ok {
+			p := t.TUIInterrupt(inOpencodeSubagentView)
+			return tuiInterrupt{keys: p.Keys, gap: p.Gap, measured: p.Measured, needsWorking: p.NeedsWorking}
 		}
-		return tuiInterrupt{keys: []string{"Escape", "Escape"}, gap: opencodeDoubleEscGap, measured: true}
-	case session.KindCursor, session.KindCopilot:
-		return tuiInterrupt{keys: []string{"C-c"}, gap: defaultGap, measured: true, needsWorking: true}
-	default:
-		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: false}
 	}
+	return tuiInterrupt{keys: []string{"Escape"}, gap: agents.TUIInterruptDefaultGap, measured: false}
 }

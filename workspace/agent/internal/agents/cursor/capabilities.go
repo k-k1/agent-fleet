@@ -50,3 +50,9 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
 }
+
+// TUIInterrupt is agents.TUIInterrupter: Esc is not a stop here, Ctrl+C is, and only on a
+// running turn (docs/log/133 §1).
+func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
+	return agents.TUIInterruptCtrlC()
+}

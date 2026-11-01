@@ -47,3 +47,8 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
 }
+
+// TUIInterrupt is agents.TUIInterrupter: Esc interrupts a running turn (docs/log/133 §1).
+func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
+	return agents.TUIInterruptEscape()
+}
