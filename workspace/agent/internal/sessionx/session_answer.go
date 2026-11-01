@@ -201,6 +201,17 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 
 var planRespondMu sync.Map // session name -> *sync.Mutex
 
+// planDecided remembers, per session, the presentation (planPresentation) that has been given
+// its one decision. Set under planRespondLock once the keys went out; every later decision for
+// the same presentation is refused, because the hook that retires the card runs later and until
+// then a second Enter or Escape would land on the composer or interrupt the work an approval
+// just started.
+var planDecided sync.Map // session name -> presentation token
+
+// planGuardKey carries an in-process precondition (planAutoLive for the automatic reject) that
+// the handler re-checks under planRespondLock. Unexported, so no request can set it.
+type planGuardKey struct{}
+
 func planRespondLock(name string) (unlock func()) {
 	mu, _ := planRespondMu.LoadOrStore(name, &sync.Mutex{})
 	mu.(*sync.Mutex).Lock()
@@ -275,6 +286,15 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "no_plan", "no pending plan approval (already handled?)")
 		return
 	}
+	token := planPresentation(sid)
+	if done, ok := planDecided.Load(name); ok && token != "" && done == token {
+		httpx.WriteErr(w, http.StatusConflict, "no_plan", "this plan presentation was already answered")
+		return
+	}
+	if g, ok := r.Context().Value(planGuardKey{}).(func() bool); ok && !g() {
+		httpx.WriteErr(w, http.StatusConflict, "no_plan", "the automatic review this decision belonged to was changed")
+		return
+	}
 	if req.ExpectPlan != "" {
 		if planPresentation(sid) != req.ExpectPlan {
 			httpx.WriteErr(w, http.StatusConflict, "no_plan", "the plan on the card is not the one this decision was for")
@@ -295,6 +315,7 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
+		planDecided.Store(name, token)
 		markSessionWorking(name)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"responded": name, "decision": "approve"})
 		return
@@ -306,6 +327,7 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
+	planDecided.Store(name, token)
 	resp := map[string]any{"responded": name, "decision": "reject"}
 	if req.Feedback != "" {
 		delivered := false

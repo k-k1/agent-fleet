@@ -1,9 +1,11 @@
 package sessionx
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,7 +147,7 @@ func (f *planAutoFake) deps() planAutoDeps {
 			}
 			return f.sendErr
 		},
-		reject: func(p, expect string) error { f.rejected = append(f.rejected, p); return f.rejectErr },
+		reject: func(p, expect string, _ func() bool) error { f.rejected = append(f.rejected, p); return f.rejectErr },
 		settle: func(string) bool { return true },
 		now:    func() time.Time { return f.now },
 	}
@@ -178,7 +180,7 @@ func TestPlanAutoSendsOneRoundAndRejectsAfterTheSend(t *testing.T) {
 	var order []string
 	d := f.deps()
 	d.send = func(p, r, msg string) error { order = append(order, "send"); f.sent = append(f.sent, msg); return nil }
-	d.reject = func(p, expect string) error { order = append(order, "reject"); return nil }
+	d.reject = func(p, expect string, _ func() bool) error { order = append(order, "reject"); return nil }
 
 	planAutoOnPlan(d, planner)
 	if len(f.sent) != 1 || strings.Join(order, ",") != "send,reject" {
@@ -296,7 +298,7 @@ func TestPlanAutoLeavesAPlanTheMemberAnsweredMeanwhile(t *testing.T) {
 	d := f.deps()
 	d.settle = func(string) bool { status.RemovePendingPlan(sid); return true } // approved while the reviewer woke up
 	// The real Agent refuses a decision whose presentation is no longer on the card.
-	d.reject = func(p, expect string) error {
+	d.reject = func(p, expect string, _ func() bool) error {
 		if planPresentation(sid) != expect {
 			return errPlanGone
 		}
@@ -534,7 +536,7 @@ func TestPlanAutoClaimMarksTheRoundInFlightUntilTheRejectWent(t *testing.T) {
 	f := &planAutoFake{now: now}
 	planner, _, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
 	d := f.deps()
-	d.reject = func(p, expect string) error {
+	d.reject = func(p, expect string, _ func() bool) error {
 		if a := readAuto(t, planner, path); !a.Inflight {
 			t.Error("round not marked in flight before the reject")
 		}
@@ -577,5 +579,138 @@ func TestPlanRespondWithExpectPlanChecksPresentationAndDialog(t *testing.T) {
 		t.Skip("modtime resolution too coarse to tell two writes apart")
 	} else if code, body := post(token); code != 409 || !strings.Contains(body, "no_plan") {
 		t.Errorf("a re-presentation of the same text passed the guard: %d %s", code, body)
+	}
+}
+
+// fakeTmuxLogging answers like a live pane and appends every send-keys call to a log.
+func fakeTmuxLogging(t *testing.T) (keysSent func() int) {
+	t.Helper()
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "keys.log")
+	script := "#!/bin/sh\ncase \"$1\" in\n  has-session) exit 0 ;;\n  list-panes) printf '1 %%3\\n' ;;\n  send-keys) echo \"$@\" >> " + log + " ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	return func() int {
+		b, _ := os.ReadFile(log)
+		return strings.Count(string(b), "\n")
+	}
+}
+
+func postPlanRespond(t *testing.T, name, body string, guard func() bool) (int, string) {
+	t.Helper()
+	ctx := context.Background()
+	if guard != nil {
+		ctx = context.WithValue(ctx, planGuardKey{}, guard)
+	}
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/sessions/"+name+"/plan-respond", strings.NewReader(body))
+	req.SetPathValue("name", name)
+	rec := httptest.NewRecorder()
+	HandleSessionPlanRespond(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+// One decision per presentation: whichever answer comes second, the member's approve or the
+// automatic reject, in either order, sends no key.
+func TestPlanRespondAnswersEachPresentationOnce(t *testing.T) {
+	for _, order := range [][2]string{{"approve", "reject"}, {"reject", "approve"}, {"reject", "reject"}, {"approve", "approve"}} {
+		m, sid := planFileEnv(t, "# Plan\nbody")
+		keys := fakeTmuxLogging(t)
+		status.WritePlanFile(sid, "/p/plan.md")
+		status.Persist(sid, "permission") // the dialog is up
+		token := planPresentation(sid)
+		code, body := postPlanRespond(t, m.Name, `{"decision":"`+order[0]+`","expect_plan":"`+token+`"}`, nil)
+		if code != 200 {
+			t.Fatalf("%v: first decision %d %s", order, code, body)
+		}
+		first := keys()
+		if first == 0 {
+			t.Fatalf("%v: the first decision sent no key", order)
+		}
+		// The hook that retires the card has not run: the plan is still pending and the state
+		// is still readable as the plan modal (working + pending plan).
+		code, body = postPlanRespond(t, m.Name, `{"decision":"`+order[1]+`"}`, nil)
+		if code != 409 || keys() != first {
+			t.Errorf("%v: second decision answered %d %s and keys went %d -> %d", order, code, body, first, keys())
+		}
+		// A new presentation is answerable again.
+		status.WritePendingPlan(sid, "# Plan\nrevised")
+		if planPresentation(sid) == token {
+			continue
+		}
+		if code, body = postPlanRespond(t, m.Name, `{"decision":"reject"}`, nil); code != 200 {
+			t.Errorf("%v: a new presentation was refused: %d %s", order, code, body)
+		}
+	}
+}
+
+// The setting is re-checked inside the decision's lock: an "off" that completed while the reject
+// waited for the lock stops it before any key.
+func TestPlanAutoRejectIsGuardedUnderTheDecisionLock(t *testing.T) {
+	now := time.Now()
+	planner, sid, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
+	keys := fakeTmuxLogging(t)
+	status.Persist(sid, "permission")
+	token := planPresentation(sid)
+	m, _ := session.ReadMeta(planner)
+	gen := m.PlanReviewers[0].Auto.Gen
+	guard := func() bool { return planAutoLive(planner, path, "srev01", gen) }
+
+	unlock := planRespondLock(planner) // a manual decision holding the lock (feedback wait)
+	done := make(chan error, 1)
+	go func() { done <- rejectPlannerPlan(planner, token, guard) }()
+	time.Sleep(150 * time.Millisecond)                      // the reject is now queued on the lock
+	UpdateSessionMeta(planner, func(m *session.Meta) bool { // "off" answered meanwhile
+		a := *m.PlanReviewers[0].Auto
+		planAutoStop(&a, "")
+		a.Gen++
+		m.PlanReviewers[0].Auto = &a
+		return true
+	})
+	unlock()
+	if err := <-done; err == nil {
+		t.Fatal("the reject went through after the loop was switched off")
+	}
+	if keys() != 0 {
+		t.Fatalf("%d keys sent after the loop was switched off", keys())
+	}
+}
+
+// A failing round of an OLD claim must not stop the loop the member started since.
+func TestPlanAutoOldRoundFailureLeavesTheNewLoopAlone(t *testing.T) {
+	now := time.Now()
+	restart := map[string]func(planner, path string){
+		"off and on": func(planner, path string) {
+			UpdateSessionMeta(planner, func(m *session.Meta) bool {
+				a := *m.PlanReviewers[0].Auto
+				a.Gen += 2
+				a.Round, a.Verdict, a.Stop = 0, "", ""
+				m.PlanReviewers[0].Auto = &a
+				return true
+			})
+		},
+		"reviewer changed": func(planner, path string) {
+			UpdateSessionMeta(planner, func(m *session.Meta) bool {
+				m.PlanReviewers = withPlanReviewer(m.PlanReviewers, path, "srev02")
+				return true
+			})
+		},
+	}
+	for name, mutate := range restart {
+		for phase, label := range []string{"prepare fails", "settle times out"} {
+			f := &planAutoFake{now: now}
+			planner, _, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
+			d := f.deps()
+			if phase == 0 {
+				d.prepare = func(string) error { mutate(planner, path); return errors.New("boom") }
+			} else {
+				d.settle = func(string) bool { mutate(planner, path); return false }
+			}
+			planAutoOnPlan(d, planner)
+			if a := readAuto(t, planner, path); !a.Enabled || a.Stop != "" {
+				t.Errorf("%s / %s: the new loop was stopped: %+v", name, label, a)
+			}
+		}
 	}
 }

@@ -177,6 +177,24 @@ func stopPlanAuto(planner, path, reason string) {
 	})
 }
 
+// stopPlanAutoIf is stopPlanAuto for the round claimed as (reviewer, gen): a loop the member has
+// since switched off, re-pointed or restarted is a different loop and is left alone.
+func stopPlanAutoIf(planner, path, reviewer string, gen int, reason string) {
+	log.Printf("plan auto-review: %s %s: stopped (%s)", planner, path, reason)
+	UpdateSessionMeta(planner, func(m *session.Meta) bool {
+		for i := range m.PlanReviewers {
+			e := m.PlanReviewers[i]
+			if e.Path == path && e.Reviewer == reviewer && e.Auto != nil && e.Auto.Enabled && e.Auto.Gen == gen {
+				cp := *e.Auto
+				planAutoStop(&cp, reason)
+				m.PlanReviewers[i].Auto = &cp
+				return true
+			}
+		}
+		return false
+	})
+}
+
 // notePlanReviewerReply records the verdict of a peer message `from` sent to planner `dst`.
 // It acts only for a reviewer linked to one of dst's plans with the loop on, so an ordinary
 // peer message costs one read of the meta already in hand and no write.
@@ -192,6 +210,8 @@ func notePlanReviewerReply(dst session.Meta, from, body string) {
 	}
 	verdict := parsePlanVerdict(body)
 	now := time.Now()
+	// Serialised with a decision on the planner's dialog, like every other write that can end the loop.
+	defer planRespondLock(dst.Name)()
 	UpdateSessionMeta(dst.Name, func(m *session.Meta) bool {
 		var hit []int
 		for i, e := range m.PlanReviewers {
@@ -230,7 +250,7 @@ type planAutoDeps struct {
 	// reject closes the planner's approval dialog (interrupt) so the reply lands on an idle
 	// planner. `expect` names the presentation the round was claimed for: the Agent checks it
 	// under the same lock as a member's approve/reject and refuses (errPlanGone) when it moved.
-	reject func(planner, expect string) error
+	reject func(planner, expect string, guard func() bool) error
 	// settle reports whether the planner's dialog is really on screen, waiting a few seconds.
 	settle func(sid string) bool
 	now    func() time.Time
@@ -370,7 +390,7 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 	gen := claimed.Auto.Gen
 	fail := func(reason string, err error) {
 		log.Printf("plan auto-review: %s %s: %v", name, path, err)
-		stopPlanAuto(name, path, reason)
+		stopPlanAutoIf(name, path, claimed.Reviewer, gen, reason)
 	}
 	// Order: reviewer ready, send, THEN reject. A reviewer that will not come up or a refused
 	// send leaves the plan on its card untouched; the reply can only arrive after the reject
@@ -398,10 +418,11 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 	if !planAutoLive(name, path, claimed.Reviewer, gen) {
 		return
 	}
-	if err := d.reject(name, token); err != nil {
+	guard := func() bool { return planAutoLive(name, path, claimed.Reviewer, gen) }
+	if err := d.reject(name, token, guard); err != nil {
 		switch err {
 		case errPlanGone:
-			stopPlanAuto(name, path, "plan_changed") // the member answered the card meanwhile
+			stopPlanAutoIf(name, path, claimed.Reviewer, gen, "plan_changed") // the member answered the card meanwhile
 		case errDialogNotShown:
 			fail("dialog_not_shown", err)
 		default:
@@ -450,9 +471,10 @@ func sendPlanFollowUp(planner, reviewer, message string) error {
 	return peerReject("send_refused", "send to %s answered %d %s", reviewer, rec.status, strings.TrimSpace(rec.body.String()))
 }
 
-func rejectPlannerPlan(planner, expect string) error {
+func rejectPlannerPlan(planner, expect string, guard func() bool) error {
 	body, _ := json.Marshal(map[string]string{"decision": "reject", "expect_plan": expect})
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/sessions/"+planner+"/plan-respond", bytes.NewReader(body))
+	ctx := context.WithValue(context.Background(), planGuardKey{}, guard)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/sessions/"+planner+"/plan-respond", bytes.NewReader(body))
 	req.SetPathValue("name", planner)
 	rec := &captureWriter{header: http.Header{}}
 	HandleSessionPlanRespond(rec, req)

@@ -79,6 +79,10 @@ func HandleSetPlanReviewer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_reviewer", "reviewer must be another session's name")
 		return
 	}
+	// A settings write and a decision on the planner's approval dialog never interleave: an
+	// automatic reject re-checks the setting under this lock, so once "off" has been answered no
+	// Escape follows it.
+	defer planRespondLock(name)()
 	if req.Auto != nil {
 		if req.Auto.Max < 0 || req.Auto.Max > planAutoMaxRounds {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_max", "max must be between 1 and "+strconv.Itoa(planAutoMaxRounds))
