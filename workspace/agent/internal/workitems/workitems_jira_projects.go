@@ -119,3 +119,17 @@ func jiraProjectKeys(c *secrets.JiraCreds) (keys []string, truncated bool, err e
 	}
 	return keys, true, nil
 }
+
+// JiraProjectKeys is the member's Jira project keys, for telling a Jira key in a branch name or a
+// PR title from UTF-8 or SHA-256. connected is false without a usable Jira connection.
+func JiraProjectKeys() (keys []string, connected bool, err error) {
+	s, err := secrets.Load()
+	if err != nil {
+		return nil, false, err
+	}
+	if !jirax.Connected(s.Jira) {
+		return nil, false, nil
+	}
+	keys, _, err = jiraProjectKeys(s.Jira)
+	return keys, true, err
+}

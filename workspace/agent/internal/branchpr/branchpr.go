@@ -35,6 +35,10 @@ type PR struct {
 	Draft  bool   `json:"draft,omitempty"`
 	URL    string `json:"url"`
 	Checks string `json:"checks,omitempty"`
+	// Title and Closes are read for the session's links (the Jira keys a title names, the GitHub
+	// issues a PR closes, as "owner/repo#N") and never leave the Agent: the row does not draw them.
+	Title  string   `json:"-"`
+	Closes []string `json:"-"`
 }
 
 // Key names one branch of one repository on the cache's provider. Repo is "owner/name"
@@ -57,8 +61,9 @@ const (
 	rateBackoff = 15 * time.Minute
 	// forgetAfter drops a branch no list has asked about for this long.
 	forgetAfter = time.Hour
-	// batchSize caps the branches one call asks about. Each is one aliased repository lookup;
-	// GitHub's GraphQL cost stays at a point or two for a batch this size.
+	// batchSize caps the branches one call asks about. Each is one aliased repository lookup with
+	// up to 5 PRs, each with its last commit and up to 3 closing issues: about 440 connections a
+	// full batch, which GitHub's GraphQL cost rounds to a handful of points.
 	batchSize = 40
 )
 
@@ -245,7 +250,8 @@ func query(keys []Key) (string, map[string]any) {
 		// also matches headRefName, and parse skips those.
 		fmt.Fprintf(&body, "r%d:repository(owner:$%s,name:$%s){owner{login} defaultBranchRef{name} "+
 			"pullRequests(headRefName:$%s,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"+
-			"number state isDraft url headRepositoryOwner{login} "+
+			"number title state isDraft url headRepositoryOwner{login} "+
+			"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
 			"commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}} ", i, o, n, b)
 	}
 	return "query(" + strings.TrimSuffix(decl.String(), ",") + "){" + body.String() + "}", vars
@@ -318,10 +324,19 @@ func rateWait(h http.Header, now time.Time) time.Duration {
 // reports a rate-limit answer, which GraphQL delivers as 200 with an error of type RATE_LIMITED.
 func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limited bool, err error) {
 	type node struct {
-		Number    int    `json:"number"`
-		State     string `json:"state"`
-		IsDraft   bool   `json:"isDraft"`
-		URL       string `json:"url"`
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		State   string `json:"state"`
+		IsDraft bool   `json:"isDraft"`
+		URL     string `json:"url"`
+		Closing struct {
+			Nodes []struct {
+				Number int `json:"number"`
+				Repo   struct {
+					Name string `json:"nameWithOwner"`
+				} `json:"repository"`
+			} `json:"nodes"`
+		} `json:"closingIssuesReferences"`
 		HeadOwner *struct {
 			Login string `json:"login"`
 		} `json:"headRepositoryOwner"`
@@ -397,7 +412,12 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 			if n.HeadOwner == nil || !strings.EqualFold(n.HeadOwner.Login, r.Owner.Login) {
 				continue // a fork's branch that happens to share the name
 			}
-			pr := &PR{Number: n.Number, State: strings.ToLower(n.State), Draft: n.IsDraft, URL: n.URL}
+			pr := &PR{Number: n.Number, State: strings.ToLower(n.State), Draft: n.IsDraft, URL: n.URL, Title: n.Title}
+			for _, c := range n.Closing.Nodes {
+				if c.Number > 0 && c.Repo.Name != "" {
+					pr.Closes = append(pr.Closes, c.Repo.Name+"#"+strconv.Itoa(c.Number))
+				}
+			}
 			if len(n.Commits.Nodes) > 0 && n.Commits.Nodes[0].Commit.Rollup != nil {
 				pr.Checks = rollupState(n.Commits.Nodes[0].Commit.Rollup.State)
 			}

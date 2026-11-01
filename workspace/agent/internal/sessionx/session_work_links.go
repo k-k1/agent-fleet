@@ -6,7 +6,8 @@ package sessionx
 //
 // Writers: POST /sessions/{name}/links (the link_work_item tool, and branch_name naming a
 // branch after an item), a create from a session (the child inherits its parent's items as
-// watching), and the PR lookup of the session list (the branch's PR as working).
+// watching), the PR lookup of the session list (the branch's PR as working), and what the branch
+// and PR name (session_inferred_links.go).
 
 import (
 	"net/http"

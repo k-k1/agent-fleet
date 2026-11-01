@@ -192,7 +192,7 @@ func (b *bitbucket) pulls(auth, repo string, keys []Key) (map[Key]bbHit, []Key, 
 		"sort":    {"-created_on"},
 		"pagelen": {strconv.Itoa(bitbucketPageLen)},
 		// A PR object carries its whole description; only the row's columns are asked for.
-		"fields": {"values.id,values.state,values.draft,values.links.html.href," +
+		"fields": {"values.id,values.title,values.state,values.draft,values.links.html.href," +
 			"values.source.branch.name,values.source.repository.full_name,values.source.commit.hash"},
 	}
 	body, wait, err := b.get(auth, repoPath(repo)+"/pullrequests?"+params.Encode())
@@ -307,6 +307,7 @@ func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]bbHit, b
 	var br struct {
 		Values []struct {
 			ID    int    `json:"id"`
+			Title string `json:"title"`
 			State string `json:"state"`
 			Draft bool   `json:"draft"`
 			Links struct {
@@ -347,7 +348,7 @@ func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]bbHit, b
 		if !ok {
 			continue
 		}
-		h := bbHit{pr: &PR{Number: v.ID, State: state, Draft: state == "open" && v.Draft, URL: v.Links.HTML.Href}}
+		h := bbHit{pr: &PR{Number: v.ID, State: state, Draft: state == "open" && v.Draft, URL: v.Links.HTML.Href, Title: v.Title}}
 		if v.Source.Commit != nil {
 			h.head = v.Source.Commit.Hash
 		}
