@@ -726,7 +726,7 @@ export function WorkItemDetailModal({
                 const prState = linkPRState(s);
                 // Only a link can be removed here (its id is "link:…"; a ledger row's is not): a
                 // launch is the record of who started the ticket, and so is the launch item.
-                const removable = !!onUnlink && s.id.startsWith("link:") && s.role !== "started";
+                const removable = !!onUnlink && !!s.id?.startsWith("link:") && s.role !== "started";
                 return (
                   <li key={s.id} className="wi-dsrow">
                     <button
