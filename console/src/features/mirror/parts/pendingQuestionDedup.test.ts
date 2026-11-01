@@ -38,10 +38,21 @@ describe("dropPendingQuestionPart", () => {
     expect(dropPendingQuestionPart([askTurn(1, [q("one")], { answer: "x", declined: true })], [q("one")])).toHaveLength(1);
   });
 
-  it("leaves other questions alone and hides only the newest identical one", () => {
+  it("leaves other questions alone and hides only the trailing identical one", () => {
     const turns = [askTurn(1, [q("one")], { answer: "A" }), askTurn(2, [q("two")], { answer: "B" }), askTurn(3, [q("one")])];
     const out = dropPendingQuestionPart(turns, [q("one")]);
     expect(out.map((t) => t.idx)).toEqual([1, 2]);
+  });
+
+  it("keeps an older identical open question when the new ask was already hidden by the Agent", () => {
+    // The first ask was abandoned (no answer ever landed); the re-ask's part never reached the
+    // client because the Agent hid it. Later turns sit behind the old part, so it is history.
+    const turns: Turn[] = [
+      askTurn(1, [q("one")]),
+      { role: "user", idx: 2, parts: [{ kind: "text", text: "again please" }] },
+      { role: "assistant", idx: 3, parts: [{ kind: "text", text: "asking once more" }] },
+    ];
+    expect(dropPendingQuestionPart(turns, [q("one")])).toBe(turns);
   });
 
   it("is a no-op without a pending question or a match", () => {

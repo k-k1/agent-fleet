@@ -1,4 +1,4 @@
-import type { Part, Question, Turn } from "../transcript/types.ts";
+import type { Question, Turn } from "../transcript/types.ts";
 
 // sameQuestions compares two AskUserQuestion payloads by what the member reads: header,
 // prompt, multiSelect and every option's label / description / preview. Question.id is left out
@@ -34,27 +34,26 @@ function sameQuestions(a: Question[], b: Question[]): boolean {
 // is the only place that sees both. Matching is by content, like the Agent's: the payload has
 // no tool_use id.
 //
-// Nothing is mutated and `turns` itself is returned when nothing matches. Only the NEWEST
-// unanswered match goes (an older identical question that was answered keeps its history),
-// and a part that already has an answer or was declined is history, never the pending one.
-// Because `turns` stays untouched in the caller's state, the part reappears — decided — on the
-// render after the pending payload clears.
+// Content alone cannot prove two parts are the same tool_use (the payload has no id), so the
+// match must also be POSITIONAL: the duplicate is the very last part of the last held turn. An
+// open AskUserQuestion blocks claude, so nothing is written after its line; an older identical
+// question that was left open and then re-asked has later turns behind it, and is history —
+// when in doubt the part stays (a double card is the lesser evil than a vanished one).
+//
+// Nothing is mutated and `turns` itself is returned when nothing matches. A part that already
+// has an answer or was declined is history, never the pending one. Because `turns` stays
+// untouched in the caller's state, the part reappears — decided — on the render after the
+// pending payload clears.
 export function dropPendingQuestionPart(turns: Turn[], pending: Question[] | null): Turn[] {
   if (!pending || pending.length === 0) return turns;
-  let ti = -1;
-  let pi = -1;
-  turns.forEach((t, i) =>
-    (t.parts || []).forEach((p: Part, j) => {
-      if (p.kind === "question" && p.questions && sameQuestions(p.questions, pending)) {
-        ti = i;
-        pi = j;
-      }
-    }),
-  );
-  if (ti < 0) return turns;
-  const hit = turns[ti].parts![pi];
+  const ti = turns.length - 1;
+  const last = ti >= 0 ? turns[ti].parts : undefined;
+  if (!last || last.length === 0) return turns;
+  const pi = last.length - 1;
+  const hit = last[pi];
+  if (hit.kind !== "question" || !hit.questions || !sameQuestions(hit.questions, pending)) return turns;
   if (hit.answer || hit.declined) return turns;
-  const parts = turns[ti].parts!.filter((_, j) => j !== pi);
+  const parts = last.slice(0, pi);
   const next = turns.slice();
   if (parts.length === 0 && !turns[ti].text) next.splice(ti, 1);
   else next[ti] = { ...turns[ti], parts };
