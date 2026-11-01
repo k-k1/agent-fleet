@@ -58,17 +58,6 @@ func TestEnsureServiceDisabledKeepsMembersChoices(t *testing.T) {
 	}
 }
 
-func TestEnsureServiceDisabledNoopOnV1(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	useMajor(t, 1)
-	if err := EnsureServiceDisabled(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(ServiceConfigPath()); !os.IsNotExist(err) {
-		t.Fatalf("v1 must not get a service.json (stat err = %v)", err)
-	}
-}
-
 // `null` unmarshals into a nil map without an error; writing to it panicked the Agent at boot.
 func TestEnsureServiceDisabledNullFileIsUnreadableNotAPanic(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

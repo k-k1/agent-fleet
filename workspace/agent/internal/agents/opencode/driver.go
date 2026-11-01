@@ -5,32 +5,18 @@ package opencode
 // Interaction (§5) and reconciliation (§6) onto the shared `opencode serve` HTTP + SSE
 // surface.
 //
-// API choices, from measurement (1.17.18, docs/log/27 §12.2):
-//   - Turns are driven by the v1 blocking POST /session/{id}/message, the only entry
-//     point that writes the message/part records the read layer treats as canonical; a
-//     goroutine wraps it to make it asynchronous. prompt_async only writes the user
-//     message and never starts a turn (measured). On v2 the turn is /api/session/{id}/prompt
-//     and the read layer goes through the API too (v2state.go), because v2 never writes the
-//     v1 tables.
-//   - v1 has no mid-turn steer entry point (v2's delivery=steer is not injected into the
-//     running v1 turn, it starts its own — measured). Steer is held in a driver-side
-//     queue and submitted as the next turn once the running one finishes, which is
-//     exactly §4's queued state.
-//   - interrupt = POST /session/{id}/abort (the blocking call returns 200 with partial
-//     results and the assistant message is marked completed, so resume is safe).
-//   - question = the question.asked/replied/rejected events plus GET /question and
-//     POST /question/{id}/reply {answers: [[label,…]]} (answers are label strings).
-//   - attachments = the v1 file part {type:"file", mime, url:"file://…"} (measured).
+// API choices (opencode 2, measured on 2.0.28; docs/log/27 has the opencode 1 history):
+//   - A turn is POST /api/session/{id}/prompt, which only queues the input; its end and outcome
+//     are read off /api/session/active and the execution record (sendTurn). The read layer goes
+//     through the API too (v2state.go).
+//   - Steer is held in a driver-side queue and submitted as the next turn once the running one
+//     finishes, which is exactly §4's queued state.
+//   - interrupt = POST /api/session/{id}/interrupt.
+//   - question = a form (form.created / replied / cancelled, answered through v2form.go).
+//   - attachments = file entries {uri:"file://…", name} on the prompt.
 //
 // ClientMessageID (§4) idempotency happens only in the driver's ledger (accept()); the
-// messageID is never handed to serve. Measured (1.17.18): the turn loop depends on the
-// lexical order of message ids, so a turn whose client-assigned id sorts below an
-// existing one is never picked up and /message never returns (the same root cause behind
-// prompt_async looking inert).
-//
-// serve's session/question/status/event surfaces are scoped to a project (directory)
-// (measured), so the session's dir always travels along as a directory query, and SSE
-// subscribes to the cross-project /global/event.
+// messageID is never handed to serve.
 
 import (
 	"bytes"
@@ -41,11 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"mime"
 	"net/http"
 	"net/http/httptrace"
-	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,8 +41,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// turnClient runs the blocking /message calls: no timeout — a turn legitimately
-// runs for minutes/hours. Interrupt (abort) or daemon death unblocks it.
+// turnClient sends the prompt: no timeout, the same client a turn of minutes or hours has always
+// used. Interrupt or daemon death ends the wait for the turn (sendTurn).
 var turnClient = &http.Client{Transport: authTransport{}}
 
 // ledger is the persistent ClientMessageID ledger (§9.5, persisted across processes): an
@@ -185,12 +168,12 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 // that other session. The next Resume finds the recorded session and stamps it again.
 func managedSession(addr string, m session.Meta, cwd, ocSid, ses string) (string, error) {
 	var err error
-	if ses != "" && !serveSessionExists(addr, ses, cwd) {
+	if ses != "" && !serveSessionExists(addr, ses) {
 		ses = "" // pruned/imported-away conversation — start fresh
 	}
 	if ses == "" {
 		if m.ForkFrom != "" {
-			ses, err = serveForkSession(addr, m.ForkFrom, cwd, m.ForkAt)
+			ses, err = serveForkSession(addr, m.ForkFrom, m.ForkAt)
 		} else {
 			ses, err = serveCreateSession(addr, cwd, session.Display(m))
 		}
@@ -201,10 +184,8 @@ func managedSession(addr string, m session.Meta, cwd, ocSid, ses string) (string
 		// consults it first, and with no plugin in managed mode the driver is the writer.
 		sids.Write(ocSid, ses)
 	}
-	if isV2() {
-		if err := tagManagedSession(addr, ses, m.Name); err != nil {
-			return "", fmt.Errorf("opencode session %s could not be named for its shell environment: %w", ses, err)
-		}
+	if err := tagManagedSession(addr, ses, m.Name); err != nil {
+		return "", fmt.Errorf("opencode session %s could not be named for its shell environment: %w", ses, err)
 	}
 	return ses, nil
 }
@@ -345,7 +326,7 @@ func DropHandle(name string) {
 		return
 	}
 	h.mu.Lock()
-	addr, ses, dir, running := h.addr, h.ses, h.dir, h.running
+	addr, ses, running := h.addr, h.ses, h.running
 	h.alive = false
 	h.compacting = false
 	// Teardown discards the queue (ADR 0105 decision 8), the input the pump holds included. An
@@ -357,7 +338,7 @@ func DropHandle(name string) {
 	}
 	h.mu.Unlock()
 	if running && ses != "" {
-		abortSession(addr, ses, dir)
+		abortSession(addr, ses)
 	}
 }
 
@@ -579,31 +560,22 @@ func (h *threadHandle) runtimeLost() {
 }
 
 // reconcile is steps 3-4 of §6: settle the turn state from the runtime's session state
-// plus any pending question. busy=running / question=waiting_interaction / else completed.
+// plus any pending form. busy=running / form=waiting_interaction / else completed.
 func (h *threadHandle) reconcile() {
 	h.mu.Lock()
-	addr, ses, dir := h.addr, h.ses, h.dir
+	addr, ses := h.addr, h.ses
 	h.mu.Unlock()
 	st := agents.TurnCompleted
-	if busy := serveSessionBusy(addr, ses, dir); busy {
+	if busy := serveSessionBusy(addr, ses); busy {
 		st = agents.TurnRunning
 	}
 	var inter *agents.Interaction
-	if isV2() {
-		if forms, err := (apiTarget{Addr: addr, Client: serveClient}).pendingForms(ses); err == nil && len(forms) > 0 {
-			inter = forms[0].interaction()
-			st = agents.TurnWaitingInteraction
-			h.mu.Lock()
-			h.setForms(forms)
-			h.mu.Unlock()
-		}
-	}
-	for _, q := range serveListQuestions(addr, dir) {
-		if q.SessionID == ses {
-			inter = q.toInteraction()
-			st = agents.TurnWaitingInteraction
-			break
-		}
+	if forms, err := (apiTarget{Addr: addr, Client: serveClient}).pendingForms(ses); err == nil && len(forms) > 0 {
+		inter = forms[0].interaction()
+		st = agents.TurnWaitingInteraction
+		h.mu.Lock()
+		h.setForms(forms)
+		h.mu.Unlock()
 	}
 	h.mu.Lock()
 	h.state = st
@@ -624,17 +596,16 @@ func (h *threadHandle) Send(in agents.TurnInput) error {
 // running: the pump waits for it in waitIdle before this input goes out.
 func (h *threadHandle) SendQueued(in agents.TurnInput) (bool, error) {
 	h.mu.Lock()
-	addr, ses, dir, ours := h.addr, h.ses, h.dir, h.pumping || h.running
+	addr, ses, ours := h.addr, h.ses, h.pumping || h.running
 	h.mu.Unlock()
 	// Asked before accept starts the pump: asked after, the session is busy with this very input.
-	foreign := !ours && ses != "" && serveSessionBusy(addr, ses, dir)
+	foreign := !ours && ses != "" && serveSessionBusy(addr, ses)
 	queued, err := h.accept(in)
 	return queued || (err == nil && foreign), err
 }
 
-// Steer is a follow-up input to the running turn (§4 queued). opencode v1 has no entry
-// point for mid-turn injection (see the file comment), so the semantics are "submit as
-// the next turn once the running one finishes".
+// Steer is a follow-up input to the running turn (§4 queued): it is submitted as the next turn
+// once the running one finishes (see the file comment).
 func (h *threadHandle) Steer(in agents.TurnInput) error {
 	_, err := h.accept(in)
 	return err
@@ -688,11 +659,11 @@ func ErrQuestionPending(err error) bool { return errors.Is(err, errQuestionPendi
 
 // pump processes the queue serially: wait for the runtime to be idle (a TUI-attached
 // user may be running their own turn, so wait here rather than betting on serve to
-// serialize), run the blocking turn, repeat.
+// serialize), run the turn to its end, repeat.
 func (h *threadHandle) pump() {
 	for {
 		// Each entry gets a lease of its own on the session's lifecycle gate (ADR 0115 decision
-		// 11.1), taken before it leaves the queue and held until /message is written to serve.
+		// 11.1), taken before it leaves the queue and held until the prompt is written to serve.
 		// The input path that queued it released its lease at the accept, so a move finds every
 		// accepted entry either with serve or still queued, where its snapshot reads it. The hold
 		// spans waitIdle: a move waits out another client's turn (at most its 60s) rather than
@@ -717,13 +688,13 @@ func (h *threadHandle) pump() {
 			lease.Release()
 			return
 		}
-		addr, ses, dir := h.addr, h.ses, h.dir
+		addr, ses := h.addr, h.ses
 		h.running = true
 		h.mu.Unlock()
 
 		// Guard for TUI co-use: wait while another client's turn is running (the same
-		// 60s as the maximum drain), then send anyway — serve handles /message serially
-		// even when busy. Waiting there, the input is queued behind that turn (ADR 0105
+		// 60s as the maximum drain), then send anyway — serve queues a prompt behind a running
+		// execution. Waiting there, the input is queued behind that turn (ADR 0105
 		// decision 1): a first stop lets it continue, a second one discards it. It counts as
 		// held from before the status call, so a first stop that lands during that HTTP round
 		// trip cannot take it for the turn being started while serve is still running
@@ -731,8 +702,8 @@ func (h *threadHandle) pump() {
 		h.mu.Lock()
 		h.tq().Hold(t, true)
 		h.mu.Unlock()
-		if serveSessionBusy(addr, ses, dir) {
-			waitIdle(addr, ses, dir, 60*time.Second)
+		if serveSessionBusy(addr, ses) {
+			waitIdle(addr, ses, 60*time.Second)
 		}
 		if h.commit(t) {
 			h.runTurn(t, lease)
@@ -793,7 +764,7 @@ func (h *threadHandle) resumePump() {
 	}
 }
 
-// commit is the pump's last act under the lock before it builds and sends /message: the line
+// commit is the pump's last act under the lock before it builds and sends the prompt: the line
 // a discard or a removal cannot cross (ADR 0105 decision 3). false means a stop or a removal
 // took the input back and it must not be sent. It also starts the input's own abort record:
 // an abort asked before this point was aimed at the other client's turn, not at this input.
@@ -809,7 +780,7 @@ func (h *threadHandle) commit(t *agents.Taken) bool {
 	return true
 }
 
-// runTurn executes ONE blocking v1 /message turn and lands the terminal state.
+// runTurn executes ONE turn to its end (sendTurn) and lands the terminal state.
 // It also updates the status store, standing in for hooks: WireLive prefers the
 // db-derived LiveState, but the fallback and anySessionWorking (graceful shutdown's wait
 // condition) read this. Without returning to idle at the end of a turn, the session
@@ -834,20 +805,18 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 	st := h.settings
 	h.mu.Unlock()
 
-	// Let serve assign the messageID (measured 1.17.18: the turn loop depends on the
-	// lexical order of message ids, so a turn whose client-assigned id sorts below an
-	// existing one is never picked up and /message never returns — the same root cause
-	// behind prompt_async looking inert). ClientMessageID idempotency happens only in the
-	// driver's ledger (accept()).
-	req, err := newTurnRequest(addr, ses, h.dir, in, st)
+	// Let serve assign the message id: ClientMessageID idempotency happens only in the
+	// driver's ledger (accept()), and a client-assigned id that sorts below an existing one
+	// was never picked up by opencode's turn loop (measured on 1.17.18).
+	req, err := newTurnRequest(addr, ses, in)
 	if err != nil {
 		h.setState(agents.TurnFailed)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Issuing /message is the only point opencode offers at which serve holds this input, and
+	// Issuing the prompt is the only point opencode offers at which serve holds this input, and
 	// it is best effort (ADR 0105 decision 3): serve's status names no input, so a stop from
-	// here on aborts whatever runs, and an abort that reaches serve before /message finds
+	// here on aborts whatever runs, and an abort that reaches serve before the prompt finds
 	// nothing. A stop that arrived while the input was committed but not yet out lands here,
 	// before anything is sent.
 	h.mu.Lock()
@@ -862,8 +831,8 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 		return
 	}
 	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
-	// /message blocks for the whole turn, so the request's write is the moment serve has the
-	// input; a send that fails before it keeps the lease until runTurn returns.
+	// The prompt request's write is the moment serve has the input; a send that fails before it
+	// keeps the lease until runTurn returns.
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			if info.Err == nil {
@@ -871,7 +840,7 @@ func (h *threadHandle) runTurn(t *agents.Taken, lease *lifegate.Lease) {
 			}
 		},
 	}))
-	res, err := sendTurn(addr, ses, h.dir, req, st)
+	res, err := sendTurn(addr, ses, req, st)
 	if err != nil {
 		// A transport break means the daemon is gone or the turn was interrupted: fall
 		// to unknown honestly and leave it to §6.
@@ -972,12 +941,12 @@ func (h *threadHandle) interruptAll() error {
 
 func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agents.InterruptResult, error) {
 	h.mu.Lock()
-	addr, ses, dir, pumpRunning := h.addr, h.ses, h.dir, h.running
+	addr, ses, pumpRunning := h.addr, h.ses, h.running
 	h.mu.Unlock()
 	// Input the pump has not taken yet is the turn being started only when serve runs nothing:
 	// behind another client's turn (an attached TUI's) it is queued, and a first stop lets it
 	// continue. Asked outside the lock because it is an HTTP call.
-	foreign := !pumpRunning && ses != "" && serveSessionBusy(addr, ses, dir)
+	foreign := !pumpRunning && ses != "" && serveSessionBusy(addr, ses)
 
 	h.mu.Lock()
 	if teardown {
@@ -985,7 +954,7 @@ func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agen
 	}
 	// running covers the whole pump cycle, the wait behind another client's turn included. An
 	// input committed but not yet sent (HeadStopPending) has nothing on serve to abort: runTurn
-	// finds the stop before /message goes out. Every other case aborts what serve runs, as the
+	// finds the stop before the prompt goes out. Every other case aborts what serve runs, as the
 	// stop always has: this input's turn, or the other client's turn it waits behind.
 	running := h.running
 	out := h.tq().Interrupt(opts, running || foreign)
@@ -1014,12 +983,12 @@ func (h *threadHandle) interrupt(opts agents.InterruptOpts, teardown bool) (agen
 	if !abort {
 		return out.Result, nil
 	}
-	return out.Result, serveAbort(addr, ses, dir)
+	return out.Result, serveAbort(addr, ses)
 }
 
-// UpdateSettings merges the dynamic thread settings (§9.4-3). They take effect as the
-// next turn's /message parameters (agent / model / variant): the v1 flow has no RPC that
-// persists a settings update on the thread, so the driver owns the settings.
+// UpdateSettings merges the dynamic thread settings (§9.4-3). They take effect at the next
+// turn, which pushes agent and model to the session before its prompt (applyV2Settings), so the
+// driver owns the settings.
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
 	if s.ClearModel {
@@ -1041,54 +1010,23 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	return nil
 }
 
-// Respond answers the pending Interaction (§5): questions only, since all three kinds run
-// with approvals bypassed. answer is converted to the per-question list of selected labels
-// and sent to /question/{id}/reply; cancel/deny goes to /reject.
+// Respond answers the pending Interaction (§5): forms only, since all three kinds run with
+// approvals bypassed.
 func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	h.mu.Lock()
-	inter := h.inter
+	inter := h.formByID(reply.ID)
 	addr := h.addr
-	if isV2() {
-		inter = h.formByID(reply.ID)
-	}
 	h.mu.Unlock()
 	if inter == nil || inter.ID != reply.ID {
 		return fmt.Errorf("interaction %s is not pending: %w", reply.ID, errFormSettled)
 	}
-	if isV2() {
-		// A form, not a question: it is answered by field key and read again first (v2form.go).
-		err := respondForm(addr, h.sessionID(), reply)
-		if err == nil || errors.Is(err, errFormSettled) {
-			// Only this form goes: a later one may have arrived while the request was out.
-			h.settleForm(reply.ID)
-		}
-		return err
-	} else {
-		switch reply.Decision {
-		case agents.DecisionCancel, agents.DecisionDeny:
-			if err := serveQuestionReject(addr, reply.ID, h.dir); err != nil {
-				return err
-			}
-		case agents.DecisionAnswer, agents.DecisionAllow:
-			answers, err := answersToLabels(inter.Questions, reply.Answers)
-			if err != nil {
-				return err
-			}
-			if err := serveQuestionReply(addr, reply.ID, h.dir, answers); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported decision: %s", reply.Decision)
-		}
+	// A form is answered by field key and read again first (v2form.go).
+	err := respondForm(addr, h.sessionID(), reply)
+	if err == nil || errors.Is(err, errFormSettled) {
+		// Only this form goes: a later one may have arrived while the request was out.
+		h.settleForm(reply.ID)
 	}
-	h.mu.Lock()
-	h.inter = nil
-	if h.running {
-		h.state = agents.TurnRunning
-	}
-	h.mu.Unlock()
-	h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
-	return nil
+	return err
 }
 
 func (h *threadHandle) Events() <-chan agents.Event { return h.events }
@@ -1156,23 +1094,8 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 
 // --- serve API helpers ---------------------------------------------------------
 
-// dirQ appends the session's project directory to a serve URL. serve's session/question/
-// status surfaces are scoped to a project (measured 1.17.18: without directory, a session
-// living outside serve's cwd appears in neither /question nor /session/status). Calling
-// the session APIs with directory is the safe choice even when an id is given.
-func dirQ(base, dir string) string {
-	if dir == "" {
-		return base
-	}
-	sep := "?"
-	if strings.ContainsRune(base, '?') {
-		sep = "&"
-	}
-	return base + sep + "directory=" + url.QueryEscape(dir)
-}
-
-func serveSessionExists(addr, ses, dir string) bool {
-	res, err := serveClient.Get(sessionURL(addr, ses, dir))
+func serveSessionExists(addr, ses string) bool {
+	res, err := serveClient.Get(sessionURL(addr, ses))
 	if err != nil {
 		return false
 	}
@@ -1180,8 +1103,8 @@ func serveSessionExists(addr, ses, dir string) bool {
 	return res.StatusCode == http.StatusOK
 }
 
-func serveSessionBusy(addr, ses, dir string) bool {
-	m, err := activeSessions(addr, dir)
+func serveSessionBusy(addr, ses string) bool {
+	m, err := activeSessions(addr)
 	if err != nil {
 		return false
 	}
@@ -1189,10 +1112,10 @@ func serveSessionBusy(addr, ses, dir string) bool {
 	return ok && st != "idle"
 }
 
-func waitIdle(addr, ses, dir string, timeout time.Duration) {
+func waitIdle(addr, ses string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !serveSessionBusy(addr, ses, dir) {
+		if !serveSessionBusy(addr, ses) {
 			return
 		}
 		time.Sleep(2 * time.Second)
@@ -1217,12 +1140,12 @@ func serveCreateSession(addr, dir, title string) (string, error) {
 // message the copy stops BEFORE: opencode's fork loop breaks at the first message whose
 // id sorts >= it, so the anchored turn and everything after it stay out of the fork
 // (measured 1.18.14 — docs/log/55 §55.2). Empty at = the whole conversation.
-func serveForkSession(addr, src, dir, at string) (string, error) {
+func serveForkSession(addr, src, at string) (string, error) {
 	body, err := forkBody(at)
 	if err != nil {
 		return "", fmt.Errorf("opencode session の分岐点を組み立てられません: %w", err)
 	}
-	res, err := serveClient.Post(forkURL(addr, src, dir), "application/json", strings.NewReader(body))
+	res, err := serveClient.Post(forkURL(addr, src), "application/json", strings.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("opencode session の分岐に失敗しました: %w", err)
 	}
@@ -1243,8 +1166,8 @@ func serveForkSession(addr, src, dir, at string) (string, error) {
 	return id, nil
 }
 
-func serveAbort(addr, ses, dir string) error {
-	res, err := serveClient.Post(abortURL(addr, ses, dir), "application/json", strings.NewReader("{}"))
+func serveAbort(addr, ses string) error {
+	res, err := serveClient.Post(abortURL(addr, ses), "application/json", strings.NewReader("{}"))
 	if err != nil {
 		return err
 	}
@@ -1252,84 +1175,10 @@ func serveAbort(addr, ses, dir string) error {
 	return nil
 }
 
-// serveQuestion is the wire QuestionRequest (GET /question, question.asked event).
-type serveQuestion struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionID"`
-	Questions []struct {
-		Question string `json:"question"`
-		Header   string `json:"header"`
-		Options  []struct {
-			Label       string `json:"label"`
-			Description string `json:"description"`
-		} `json:"options"`
-		Multiple bool `json:"multiple"`
-		Custom   bool `json:"custom"`
-	} `json:"questions"`
-}
-
-func (q *serveQuestion) toInteraction() *agents.Interaction {
-	inter := &agents.Interaction{ID: q.ID, Kind: "question"}
-	for _, sq := range q.Questions {
-		tq := transcript.Question{
-			ID:          q.ID,
-			Question:    sq.Question,
-			Header:      sq.Header,
-			MultiSelect: sq.Multiple,
-		}
-		for _, o := range sq.Options {
-			tq.Options = append(tq.Options, transcript.Option{Label: o.Label, Description: o.Description})
-		}
-		inter.Questions = append(inter.Questions, tq)
-	}
-	return inter
-}
-
-func serveListQuestions(addr, dir string) []*serveQuestion {
-	if isV2() {
-		return nil // v2 has no /question: they became forms (v2form.go)
-	}
-	res, err := serveClient.Get(dirQ(addr+"/question", dir))
-	if err != nil {
-		return nil
-	}
-	defer res.Body.Close()
-	var qs []*serveQuestion
-	if json.NewDecoder(res.Body).Decode(&qs) != nil {
-		return nil
-	}
-	return qs
-}
-
-func serveQuestionReply(addr, id, dir string, answers [][]string) error {
-	body, _ := json.Marshal(map[string]any{"answers": answers})
-	res, err := serveClient.Post(dirQ(addr+"/question/"+url.PathEscape(id)+"/reply", dir), "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode >= 400 {
-		return fmt.Errorf("質問への回答が拒否されました (HTTP %d)", res.StatusCode)
-	}
-	return nil
-}
-
-func serveQuestionReject(addr, id, dir string) error {
-	res, err := serveClient.Post(dirQ(addr+"/question/"+url.PathEscape(id)+"/reject", dir), "application/json", strings.NewReader("{}"))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode >= 400 {
-		return fmt.Errorf("質問の却下が拒否されました (HTTP %d)", res.StatusCode)
-	}
-	return nil
-}
-
 // --- pure mapping helpers (unit-tested) ---------------------------------------
 
-// normalizeMsgID makes a ClientMessageID acceptable as opencode's v1 messageID (the ^msg
-// prefix is required — measured). An empty id is assigned here, by AF (§4).
+// normalizeMsgID gives a ClientMessageID opencode's message id shape (the msg prefix). An empty
+// id is assigned here, by AF (§4).
 func normalizeMsgID(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -1356,7 +1205,7 @@ func agentForMode(mode string) string {
 }
 
 // splitModel parses the launch-model string "provider/model" (the same shape buildProgram
-// passes to --model) into a v1 model ref. A value with no "/" has no identifiable
+// passes to --model) into a model ref. A value with no "/" has no identifiable
 // provider, so nothing is sent and serve's default applies.
 func splitModel(s string) (provider, model string, ok bool) {
 	s = strings.TrimSpace(s)
@@ -1365,57 +1214,6 @@ func splitModel(s string) (provider, model string, ok bool) {
 		return "", "", false
 	}
 	return s[:i], s[i+1:], true
-}
-
-// buildParts assembles the v1 message parts: prompt text + one file part per
-// attachment (§10.2-3: managed attaches through the API, not by pasting into tmux).
-func buildParts(in agents.TurnInput) []map[string]any {
-	var parts []map[string]any
-	if t := strings.TrimSpace(in.Prompt); t != "" {
-		parts = append(parts, map[string]any{"type": "text", "text": t})
-	}
-	for _, p := range in.Attachments {
-		if strings.TrimSpace(p) == "" {
-			continue
-		}
-		mt := mime.TypeByExtension(filepath.Ext(p))
-		if mt == "" {
-			mt = "application/octet-stream"
-		}
-		parts = append(parts, map[string]any{
-			"type": "file", "mime": mt,
-			"filename": filepath.Base(p),
-			"url":      "file://" + p,
-		})
-	}
-	return parts
-}
-
-// answersToLabels converts the structured reply (per-question Text / Options indexes)
-// into opencode's answers (per-question lists of selected labels). An index resolves to
-// that question's option; Text is passed through as a single label (a custom answer).
-func answersToLabels(questions []transcript.Question, answers []agents.InteractionAnswer) ([][]string, error) {
-	if len(answers) != len(questions) {
-		return nil, fmt.Errorf("回答数が質問数と一致しません (%d != %d)", len(answers), len(questions))
-	}
-	out := make([][]string, len(answers))
-	for i, a := range answers {
-		var labels []string
-		for _, oi := range a.Options {
-			if oi < 0 || oi >= len(questions[i].Options) {
-				return nil, fmt.Errorf("質問 %d の選択肢 %d は範囲外です", i+1, oi)
-			}
-			labels = append(labels, questions[i].Options[oi].Label)
-		}
-		if len(labels) == 0 && strings.TrimSpace(a.Text) != "" {
-			labels = []string{strings.TrimSpace(a.Text)}
-		}
-		if len(labels) == 0 {
-			return nil, fmt.Errorf("質問 %d に回答がありません", i+1)
-		}
-		out[i] = labels
-	}
-	return out, nil
 }
 
 // --- SSE dispatch ---------------------------------------------------------------
@@ -1427,9 +1225,8 @@ func answersToLabels(questions []transcript.Question, answers []agents.Interacti
 // adds ask must not silently wedge a managed session).
 func handleServeEvent(data []byte) {
 	var ev struct {
-		// /global/event wraps it as {"payload": {type, properties}} (measured). The bare
-		// /event shape ({type, properties} inline) is accepted too, for tests and future
-		// compatibility.
+		// The opencode 1 stream wrapped it as {"payload": {type, properties}}; that and the bare
+		// {type, properties} shape are still accepted.
 		Payload    json.RawMessage `json:"payload"`
 		Type       string          `json:"type"`
 		Properties json.RawMessage `json:"properties"`
@@ -1451,41 +1248,8 @@ func handleServeEvent(data []byte) {
 	}
 	noteProgress(ev.Type, ev.Properties)
 	switch ev.Type {
-	case "question.asked":
-		var q serveQuestion
-		if json.Unmarshal(ev.Properties, &q) != nil || q.SessionID == "" {
-			return
-		}
-		if h := handleBySes(q.SessionID); h != nil {
-			inter := q.toInteraction()
-			h.mu.Lock()
-			h.inter = inter
-			h.state = agents.TurnWaitingInteraction
-			h.mu.Unlock()
-			h.emit(agents.Event{Kind: "interaction", TurnState: agents.TurnWaitingInteraction, Interaction: inter})
-		}
-	case "question.replied", "question.rejected":
-		var p struct {
-			SessionID string `json:"sessionID"`
-			RequestID string `json:"requestID"`
-		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
-			return
-		}
-		if h := handleBySes(p.SessionID); h != nil {
-			// Clear it even when the answer came from the attached TUI (co-use, §2).
-			h.mu.Lock()
-			if h.inter != nil && h.inter.ID == p.RequestID {
-				h.inter = nil
-				if h.running {
-					h.state = agents.TurnRunning
-				}
-			}
-			h.mu.Unlock()
-			h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
-		}
 	case "form.created":
-		// v2: the question tool asks through a form (v2form.go); it is the question.asked of v1.
+		// The question tool asks through a form (v2form.go).
 		var p struct {
 			Form v2Form `json:"form"`
 		}
@@ -1642,9 +1406,9 @@ func handleServeEvent(data []byte) {
 		}
 		if h := handleBySes(p.SessionID); h != nil {
 			h.mu.Lock()
-			addr, dir := h.addr, h.dir
+			addr := h.addr
 			h.mu.Unlock()
-			u, payload := permissionReplyRequest(addr, p.SessionID, p.ID, dir)
+			u, payload := permissionReplyRequest(addr, p.SessionID, p.ID)
 			if res, err := serveClient.Post(u, "application/json", strings.NewReader(payload)); err == nil {
 				res.Body.Close()
 				log.Printf("opencode managed: auto-allowed permission %s (session %s)", p.ID, h.name)

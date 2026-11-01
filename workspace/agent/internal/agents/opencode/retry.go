@@ -121,7 +121,7 @@ func confirmedAbort(addr, ses, dir string) bool {
 		if i > 0 {
 			time.Sleep(retryAbortBackoff)
 		}
-		res, err := serveClient.Post(abortURL(addr, ses, dir), "application/json", strings.NewReader("{}"))
+		res, err := serveClient.Post(abortURL(addr, ses), "application/json", strings.NewReader("{}"))
 		if err != nil {
 			lost = true
 			continue

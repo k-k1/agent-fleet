@@ -64,47 +64,25 @@ func ApplyFleetNotes(fleet string) error {
 	})
 }
 
-// UserInstructionsInAgentsMD reports whether the member's instructions are delivered as a
-// block of the global AGENTS.md. Measured on 2.0.28: the `instructions` array is not applied
-// (a file listed there never reaches the model), while the global AGENTS.md is read, and
-// neither CLAUDE.md nor ~/.claude/CLAUDE.md is. opencode 1 keeps the array, which leaves
-// AGENTS.md untouched as docs/log/60 §60.5-6 requires.
-func UserInstructionsInAgentsMD() bool { return installedMajor() >= 2 }
-
-// ApplyUserInstructions delivers the member's instructions the way the installed opencode
-// reads them, and takes them back out of the other place: AGENTS.md block on 2.x, the
-// AF-owned file plus the config's `instructions` entry on 1.x. Empty body removes both.
+// ApplyUserInstructions delivers the member's instructions as a block of the global AGENTS.md.
+// Measured on 2.0.28: the config's `instructions` array is not applied (a file listed there never
+// reaches the model), while the global AGENTS.md is read, and neither CLAUDE.md nor
+// ~/.claude/CLAUDE.md is. path is the file opencode 1 read them from: it and its config entry are
+// removed whenever they are still there.
 func ApplyUserInstructions(path, body string) error {
-	if UserInstructionsInAgentsMD() {
-		if err := mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, func(s string) (string, error) {
-			return mdblock.SetSafe(s, "user-notes", body)
-		}); err != nil {
-			return err
-		}
-		// Leftovers of a 1.x install; v2 ignores them, so an unparseable config is not worth an error.
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if err := setConfigInstruction(path, false); err != nil && !errors.Is(err, ErrUnreadableConfig) {
-			return err
-		}
-		return nil
-	}
 	if err := mdblock.EditFile(AgentsPath(), 0o644, 0o755, false, func(s string) (string, error) {
-		return mdblock.SetSafe(s, "user-notes", "")
+		return mdblock.SetSafe(s, "user-notes", body)
 	}); err != nil {
 		return err
 	}
-	if body == "" {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return setConfigInstruction(path, false)
-	}
-	if err := writeAtomic(path, []byte(body), 0o644); err != nil {
+	// opencode 2 ignores them, so an unparseable config is not worth an error.
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return setConfigInstruction(path, true)
+	if err := setConfigInstruction(path, false); err != nil && !errors.Is(err, ErrUnreadableConfig) {
+		return err
+	}
+	return nil
 }
 
 // setConfigInstruction adds/removes one path in the config's `instructions` array,

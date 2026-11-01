@@ -294,7 +294,7 @@ func HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusServiceUnavailable, "serve_unavailable", "could not start opencode serve: "+err.Error())
 		return
 	}
-	// health alone is not enough: /global/health returns 200 from the moment of startup, but
+	// health alone is not enough: the probe passes from the moment of startup, but
 	// the device method is registered by an opencode plugin whose load finishes later.
 	// Measured (a click 85ms after startup): hit inside that window the daemon returns 500
 	// `OAuth method not found: opencode/device`. Wait until the method is visible.

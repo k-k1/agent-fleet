@@ -36,12 +36,9 @@ type legacyInstrRow struct {
 	fleet, skills, user     bool   // which apply steps the kind took part in
 }
 
-func legacyInstr(opencodeV2 bool) map[string]legacyInstrRow {
-	oc := legacyInstrRow{delivery: agents.DeliveryConfig, measure: agents.MeasureConfig, path: instrOpencodeFile(),
-		fleet: true, skills: true, user: true}
-	if opencodeV2 {
-		oc.delivery, oc.measure, oc.path, oc.preview = agents.DeliveryCompose, agents.MeasureBlock, opencode.AgentsPath(), "user-notes"
-	}
+func legacyInstr() map[string]legacyInstrRow {
+	oc := legacyInstrRow{delivery: agents.DeliveryCompose, measure: agents.MeasureBlock, path: opencode.AgentsPath(),
+		preview: "user-notes", fleet: true, skills: true, user: true}
 	return map[string]legacyInstrRow{
 		"claude":   {agents.DeliveryFile, agents.MeasureBlock, claude.UserInstructionsPath(), "", false, true, true},
 		"codex":    {agents.DeliveryCompose, agents.MeasureBlock, codex.AgentsPath(), "", true, true, true},
@@ -55,34 +52,29 @@ func legacyInstr(opencodeV2 bool) map[string]legacyInstrRow {
 }
 
 func TestInstructionsShapeMatchesLegacySwitches(t *testing.T) {
-	for _, v2 := range []bool{false, true} {
-		instrEnv(t)
-		if v2 {
-			useOpencodeV2(t)
+	instrEnv(t)
+	legacy := legacyInstr()
+	for _, kind := range append(sessionx.RegisteredKinds(), "", "Claude", "CODEX", "kiro-cli", "open-code", "fleet", "unknown") {
+		row, supported := legacy[kind]
+		ops, ok := instrOpsOf(kind)
+		if ok != supported {
+			t.Errorf("%q: instrOpsOf = %v, legacy supported = %v", kind, ok, supported)
+			continue
 		}
-		legacy := legacyInstr(v2)
-		for _, kind := range append(sessionx.RegisteredKinds(), "", "Claude", "CODEX", "kiro-cli", "open-code", "fleet", "unknown") {
-			row, supported := legacy[kind]
-			ops, ok := instrOpsOf(kind)
-			if ok != supported {
-				t.Errorf("v2=%v %q: instrOpsOf = %v, legacy supported = %v", v2, kind, ok, supported)
-				continue
-			}
-			if got := instrDeliveryOf(kind); got != row.delivery {
-				t.Errorf("v2=%v %q: delivery %q, legacy %q", v2, kind, got, row.delivery)
-			}
-			if !ok {
-				continue
-			}
-			s := ops.Shape()
-			if s.Delivery != row.delivery || s.Measure != row.measure || s.Path != row.path || s.PreviewBlock != row.preview {
-				t.Errorf("v2=%v %q: shape %+v, legacy %+v", v2, kind, s, row)
-			}
-			if (ops.Fleet != nil) != row.fleet || (ops.SkillsDir != nil) != row.skills ||
-				(ops.User != nil) != row.user || (ops.Memory != nil) != row.user {
-				t.Errorf("v2=%v %q: apply steps fleet=%v skills=%v user=%v memory=%v, legacy %+v", v2, kind,
-					ops.Fleet != nil, ops.SkillsDir != nil, ops.User != nil, ops.Memory != nil, row)
-			}
+		if got := instrDeliveryOf(kind); got != row.delivery {
+			t.Errorf("%q: delivery %q, legacy %q", kind, got, row.delivery)
+		}
+		if !ok {
+			continue
+		}
+		s := ops.Shape()
+		if s.Delivery != row.delivery || s.Measure != row.measure || s.Path != row.path || s.PreviewBlock != row.preview {
+			t.Errorf("%q: shape %+v, legacy %+v", kind, s, row)
+		}
+		if (ops.Fleet != nil) != row.fleet || (ops.SkillsDir != nil) != row.skills ||
+			(ops.User != nil) != row.user || (ops.Memory != nil) != row.user {
+			t.Errorf("%q: apply steps fleet=%v skills=%v user=%v memory=%v, legacy %+v", kind,
+				ops.Fleet != nil, ops.SkillsDir != nil, ops.User != nil, ops.Memory != nil, row)
 		}
 	}
 }
@@ -207,27 +199,22 @@ func previewOf(t *testing.T, kind string) previewWire {
 // The preview and the state row must describe the same artifact for every kind: same path, and
 // once the member's text is applied the artifact the row calls applied exists in the preview.
 func TestInstructionsPreviewAgreesWithState(t *testing.T) {
-	for _, v2 := range []bool{false, true} {
-		instrEnv(t)
-		if v2 {
-			useOpencodeV2(t)
+	instrEnv(t)
+	if err := userinstr.SaveText("AGREEME\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	for _, row := range instrState().Targets {
+		if !row.Supported {
+			continue
 		}
-		if err := userinstr.SaveText("AGREEME\n"); err != nil {
-			t.Fatal(err)
+		p := previewOf(t, row.Kind)
+		if p.Path != row.Path {
+			t.Errorf("%s: preview path %q, state path %q", row.Kind, p.Path, row.Path)
 		}
-		reconcileAgentInstructions()
-		for _, row := range instrState().Targets {
-			if !row.Supported {
-				continue
-			}
-			p := previewOf(t, row.Kind)
-			if p.Path != row.Path {
-				t.Errorf("v2=%v %s: preview path %q, state path %q", v2, row.Kind, p.Path, row.Path)
-			}
-			if !row.Applied || !p.Exists || !strings.Contains(p.Content, "AGREEME") {
-				t.Errorf("v2=%v %s: applied=%v preview exists=%v content has text=%v", v2, row.Kind, row.Applied, p.Exists,
-					strings.Contains(p.Content, "AGREEME"))
-			}
+		if !row.Applied || !p.Exists || !strings.Contains(p.Content, "AGREEME") {
+			t.Errorf("%s: applied=%v preview exists=%v content has text=%v", row.Kind, row.Applied, p.Exists,
+				strings.Contains(p.Content, "AGREEME"))
 		}
 	}
 }
@@ -263,18 +250,5 @@ func TestInstructionsPreviewOpencode2ShowsOnlyTheUserBlock(t *testing.T) {
 	}
 	if strings.Contains(p.Content, "do not delete other sessions") || strings.Contains(p.Content, "agent-fleet:") {
 		t.Errorf("preview echoes more than the user block:\n%s", p.Content)
-	}
-}
-
-// opencode 1 is unchanged: the preview reads the AF-owned file its config points at.
-func TestInstructionsPreviewOpencode1ReadsTheOwnedFile(t *testing.T) {
-	instrEnv(t)
-	if err := userinstr.SaveText("Always report in Japanese.\n"); err != nil {
-		t.Fatal(err)
-	}
-	reconcileAgentInstructions()
-	p := previewOf(t, "opencode")
-	if p.Path != instrOpencodeFile() || !p.Exists || !strings.Contains(p.Content, "Always report in Japanese.") {
-		t.Errorf("opencode 1 preview: %+v", p)
 	}
 }

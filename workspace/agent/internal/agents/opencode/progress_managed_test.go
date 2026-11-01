@@ -15,11 +15,11 @@ import (
 func progressTestHandle(t *testing.T, v2 bool) (*threadHandle, session.Meta) {
 	t.Helper()
 	if v2 {
-		detectedMajor.Store(int32(apiV2))
+		serveSeen.Store(true)
 	} else {
-		detectedMajor.Store(int32(apiV1))
+		serveSeen.Store(false)
 	}
-	t.Cleanup(func() { detectedMajor.Store(0) })
+	t.Cleanup(func() { serveSeen.Store(false) })
 	h := &threadHandle{name: "prog", ses: "ses_p", alive: true, events: make(chan agents.Event, 8)}
 	handlesMu.Lock()
 	handles[h.name] = h
@@ -123,15 +123,6 @@ func TestEventsOfAnotherSessionDoNotStamp(t *testing.T) {
 	noteProgress("session.tool.called", json.RawMessage(`{"sessionID":"ses_other","id":"c"}`))
 	if _, ok := h.act.At(); ok {
 		t.Fatal("another session's event reached this handle")
-	}
-}
-
-// opencode 1.x was not measured: it reports nothing and keeps holding.
-func TestV1StreamIsNotStamped(t *testing.T) {
-	_, m := progressTestHandle(t, false)
-	feed("session.tool.called", "call_1")
-	if _, ok := (managedDriver{}).ManagedProgress(m); ok {
-		t.Fatal("a v1 daemon reported progress")
 	}
 }
 

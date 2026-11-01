@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,9 +10,8 @@ import (
 	"strings"
 )
 
-// The opencode major decides which launch line, which instruction delivery and which
-// service defaults apply. It is read from the installed package, never by running the
-// binary: the launch path is hot, and `opencode --version` costs a process start.
+// Only opencode 2 is supported (ADR 0127). The major is read from the installed package, never by
+// running the binary: the launch path is hot, and `opencode --version` costs a process start.
 
 // buildPinsPath is the image's pin list (workspace/Dockerfile writes it from its ARGs). It is
 // only the fallback for a binary whose package.json cannot be found; a var so tests can swap it.
@@ -26,14 +26,10 @@ var opencodeBinary = func() string {
 	return p
 }
 
-// InstalledMajor is the exported form of installedMajor, for the callers outside this
-// package that must pick between the two majors' config mechanisms.
-func InstalledMajor() int { return installedMajor() }
-
-// installedMajor is the major of the opencode on PATH: 2 for @opencode/cli, 1 for opencode-ai.
-// Both packages put the executable at <pkg>/bin/opencode[.exe] and the manifest beside bin/,
-// so the version comes from the resolved binary's package.json. A binary whose manifest cannot
-// be found (a copied or wrapped executable) falls back to the image pin, then to 1.
+// installedMajor is the major of the opencode on PATH: 2 for @opencode/cli, 1 for opencode-ai, 0
+// when unknown. Both packages put the executable at <pkg>/bin/opencode[.exe] and the manifest
+// beside bin/, so the version comes from the resolved binary's package.json. A binary whose
+// manifest cannot be found (a copied or wrapped executable) falls back to the image pin.
 func installedMajor() int {
 	if bin := opencodeBinary(); bin != "" {
 		if real, err := filepath.EvalSymlinks(bin); err == nil {
@@ -47,12 +43,24 @@ func installedMajor() int {
 			Opencode string `json:"opencode"`
 		}
 		if json.Unmarshal(b, &pins) == nil {
-			if m := majorOf(pins.Opencode); m != 0 {
-				return m
-			}
+			return majorOf(pins.Opencode)
 		}
 	}
-	return 1
+	return 0
+}
+
+// checkSupported refuses an opencode whose major is known to be older than 2. An unknown major
+// is let through: the launch then fails or works on its own, and a wrapped binary of the
+// supported major must not be refused for hiding its manifest.
+func checkSupported() error {
+	if m := installedMajor(); m != 0 && m < 2 {
+		v := installedVersion()
+		if v == "" {
+			v = strconv.Itoa(m) + ".x"
+		}
+		return fmt.Errorf("opencode %s には対応していません。Agent Fleet が動かせるのは opencode 2（@opencode/cli）だけです", v)
+	}
+	return nil
 }
 
 // installedVersion is the full version of the opencode on PATH ("" when unknown).

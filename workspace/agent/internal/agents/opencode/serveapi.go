@@ -1,15 +1,14 @@
 package opencode
 
-// The client layer for the shared `opencode serve` daemon: authentication, server major
-// version detection, and the v1/v2 route table. serve.go and driver.go call these helpers
-// instead of spelling a path, so a route lives in exactly one place per major version.
+// The client layer for the shared `opencode serve` daemon: authentication, the health probe and
+// the route table. serve.go and driver.go call these helpers instead of spelling a path, so a
+// route lives in exactly one place. Only opencode 2 is supported (ADR 0127).
 //
-// Measured (1.19.0 and 2.0.28, both with OPENCODE_SERVER_PASSWORD set; user `opencode`):
-//   - Both majors answer 401 to every request without Basic auth, the SSE stream included.
-//   - The majors disagree about each other's paths without saying so: v2 answers the v1
-//     /global/health with 200 text/html (the web UI), and v1 answers /api/info the same
-//     way. A status-code-only health check therefore accepts the wrong server, so a probe
-//     passes only on a JSON body that names the server (healthyV1 / healthyV2).
+// Measured (2.0.28, with OPENCODE_SERVER_PASSWORD set; user `opencode`):
+//   - It answers 401 to every request without Basic auth, the SSE stream included.
+//   - Paths it does not serve answer 200 text/html (the web UI), an opencode 1 path included.
+//     A status-code-only health check therefore accepts any server, so the probe passes only
+//     on a JSON /api/info that names a 2.x version (healthyV2).
 //   - v2 has no question endpoints (they became forms) and its PATCH /api/experimental/config
 //     takes `shell` only; a provider block is refused with 400. A change that has to reach
 //     a running v2 daemon therefore needs a restart (ErrLiveConfigUnsupported).
@@ -18,9 +17,6 @@ package opencode
 //
 // Reading a session's history, queue and outcome on v2 is v2state.go; it needs no route here
 // beyond the paths it builds from the same address and authenticated client.
-//
-// Until the image pin moves (workspace/Dockerfile OPENCODE_VERSION) the v1 routes stay the
-// default: serveMajor() is v1 until a probe has seen a v2 server.
 
 import (
 	"bytes"
@@ -44,7 +40,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// serveUser is the Basic auth user both majors expect (OPENCODE_SERVER_USERNAME default).
+// serveUser is the Basic auth user opencode expects (OPENCODE_SERVER_USERNAME default).
 const serveUser = "opencode"
 
 // ErrLiveConfigUnsupported: the running daemon cannot take this configuration change over
@@ -126,22 +122,17 @@ func newServePassword() (string, error) {
 // serveRejectsAuth reports that something on addr answers 401: a daemon is there and holds
 // a password this Agent does not have. Starting another one would only collide on the port.
 func serveRejectsAuth(addr string) bool {
-	for _, p := range []string{"/global/health", "/api/info"} {
-		res, err := serveClient.Get(addr + p)
-		if err != nil {
-			continue
-		}
-		res.Body.Close()
-		if res.StatusCode == http.StatusUnauthorized {
-			return true
-		}
+	res, err := serveClient.Get(addr + "/api/info")
+	if err != nil {
+		return false
 	}
-	return false
+	res.Body.Close()
+	return res.StatusCode == http.StatusUnauthorized
 }
 
 // authTransport adds Basic auth to every request that goes to the serve daemon. Wrapping
-// the transport (rather than each call site) is what keeps the SSE stream, the blocking
-// turn call and the OAuth calls from each needing to remember it.
+// the transport (rather than each call site) is what keeps the SSE stream, the turn calls
+// and the OAuth calls from each needing to remember it.
 type authTransport struct{ base http.RoundTripper }
 
 func (t authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -162,26 +153,12 @@ func sameServeHost(u *url.URL) bool {
 	return err == nil && want.Host == u.Host
 }
 
-// --- version detection ----------------------------------------------------------
+// --- health ---------------------------------------------------------------------
 
-type apiMajor int32
-
-const (
-	apiV1 apiMajor = 1
-	apiV2 apiMajor = 2
-)
-
-var detectedMajor atomic.Int32
-
-// serveMajor is the major version of the daemon last probed; v1 until a probe says otherwise.
-func serveMajor() apiMajor {
-	if apiMajor(detectedMajor.Load()) == apiV2 {
-		return apiV2
-	}
-	return apiV1
-}
-
-func isV2() bool { return serveMajor() == apiV2 }
+// serveSeen is set once a probe has found an opencode 2 daemon answering. Before that (the Agent
+// has just restarted and nothing has started a daemon yet) the store decides where history is
+// read from (v2Served).
+var serveSeen atomic.Bool
 
 // healthyV2 accepts only a JSON /api/info that carries a version of major 2 or later.
 func healthyV2(addr string) bool {
@@ -200,18 +177,6 @@ func healthyV2(addr string) bool {
 	return err == nil && n >= 2
 }
 
-// healthyV1 accepts only the JSON {"healthy":true} /global/health answers.
-func healthyV1(addr string) bool {
-	body, ok := fetchJSON(addr + "/global/health")
-	if !ok {
-		return false
-	}
-	var h struct {
-		Healthy bool `json:"healthy"`
-	}
-	return json.Unmarshal(body, &h) == nil && h.Healthy
-}
-
 // fetchJSON is a 200 whose Content-Type is JSON; anything else (an HTML page, 401) is not.
 func fetchJSON(u string) ([]byte, bool) {
 	res, err := serveClient.Get(u)
@@ -226,87 +191,53 @@ func fetchJSON(u string) ([]byte, bool) {
 	return b, err == nil
 }
 
-// probeServe reports whether a daemon of either major answers at addr, and records which.
-// The major seen last is asked first, so a steady-state probe is one request.
+// probeServe reports whether an opencode 2 daemon answers at addr.
 func probeServe(addr string) bool {
-	order := []apiMajor{apiV1, apiV2}
-	if isV2() {
-		order = []apiMajor{apiV2, apiV1}
-	}
-	for _, m := range order {
-		if (m == apiV2 && healthyV2(addr)) || (m == apiV1 && healthyV1(addr)) {
-			detectedMajor.Store(int32(m))
-			return true
-		}
+	if healthyV2(addr) {
+		serveSeen.Store(true)
+		return true
 	}
 	return false
 }
 
 // --- route table ----------------------------------------------------------------
 
-func eventURL(addr string) string {
-	if isV2() {
-		return addr + "/api/event"
-	}
-	return addr + "/global/event"
+func eventURL(addr string) string { return addr + "/api/event" }
+
+func sessionURL(addr, ses string) string { return addr + "/api/session/" + url.PathEscape(ses) }
+
+func abortURL(addr, ses string) string {
+	return addr + "/api/session/" + url.PathEscape(ses) + "/interrupt"
 }
 
-func sessionURL(addr, ses, dir string) string {
-	if isV2() {
-		return addr + "/api/session/" + url.PathEscape(ses)
-	}
-	return dirQ(addr+"/session/"+url.PathEscape(ses), dir)
-}
+func forkURL(addr, ses string) string { return addr + "/api/session/" + url.PathEscape(ses) + "/fork" }
 
-func abortURL(addr, ses, dir string) string {
-	if isV2() {
-		return addr + "/api/session/" + url.PathEscape(ses) + "/interrupt"
-	}
-	return dirQ(addr+"/session/"+url.PathEscape(ses)+"/abort", dir)
-}
-
-func forkURL(addr, ses, dir string) string {
-	if isV2() {
-		return addr + "/api/session/" + url.PathEscape(ses) + "/fork"
-	}
-	return dirQ(addr+"/session/"+url.PathEscape(ses)+"/fork", dir)
-}
-
-// forkBody is the fork request; at is the message the copy stops BEFORE (both majors).
+// forkBody is the fork request; at is the message the copy stops BEFORE.
 func forkBody(at string) (string, error) {
 	if at == "" {
 		return "{}", nil
 	}
-	key := "messageID"
-	if isV2() {
-		key = "before"
-	}
-	b, err := json.Marshal(map[string]string{key: at})
+	b, err := json.Marshal(map[string]string{"before": at})
 	return string(b), err
 }
 
 // createSessionRequest returns the URL and body that create a session in dir.
 func createSessionRequest(addr, dir, title string) (string, []byte) {
-	if isV2() {
-		// The allow-all ruleset is the --auto of the TUI: the container is the sandbox and
-		// nobody can answer a prompt from chat.
-		// metadata marks the session as af's Managed one: the env-gate plugin lets a session
-		// with no af tag wait for a Terminal pane's environment, and this one has none to wait for.
-		b, _ := json.Marshal(map[string]any{
-			"title": title, "location": map[string]string{"directory": dir},
-			"permissions": []map[string]string{{"action": "*", "resource": "*", "effect": "allow"}},
-			"metadata":    map[string]string{metaManaged: "1"},
-		})
-		return addr + "/api/session", b
-	}
-	b, _ := json.Marshal(map[string]string{"title": title})
-	return addr + "/session?directory=" + url.QueryEscape(dir), b
+	// The allow-all ruleset is the --auto of the TUI: the container is the sandbox and
+	// nobody can answer a prompt from chat.
+	// metadata marks the session as af's Managed one: the env-gate plugin lets a session
+	// with no af tag wait for a Terminal pane's environment, and this one has none to wait for.
+	b, _ := json.Marshal(map[string]any{
+		"title": title, "location": map[string]string{"directory": dir},
+		"permissions": []map[string]string{{"action": "*", "resource": "*", "effect": "allow"}},
+		"metadata":    map[string]string{metaManaged: "1"},
+	})
+	return addr + "/api/session", b
 }
 
-// sessionID extracts the id from a create/fork response: v2 wraps it in {"data":{…}}.
+// sessionID extracts the id from a create/fork response, which wraps it in {"data":{…}}.
 func sessionID(body io.Reader) string {
 	var s struct {
-		ID   string `json:"id"`
 		Data struct {
 			ID string `json:"id"`
 		} `json:"data"`
@@ -314,21 +245,13 @@ func sessionID(body io.Reader) string {
 	if json.NewDecoder(body).Decode(&s) != nil {
 		return ""
 	}
-	if isV2() {
-		return s.Data.ID
-	}
-	return s.ID
+	return s.Data.ID
 }
 
 // activeSessions lists the sessions the daemon is running, id → status type. An idle
-// session is not listed on either major (measured). v1 scopes the list to a project
-// (directory); v2's /api/session/active is global.
-func activeSessions(addr, dir string) (map[string]string, error) {
-	u := dirQ(addr+"/session/status", dir)
-	if isV2() {
-		u = addr + "/api/session/active"
-	}
-	res, err := serveClient.Get(u)
+// session is not listed (measured). The list is global, not per project.
+func activeSessions(addr string) (map[string]string, error) {
+	res, err := serveClient.Get(addr + "/api/session/active")
 	if err != nil {
 		return nil, err
 	}
@@ -339,71 +262,43 @@ func activeSessions(addr, dir string) (map[string]string, error) {
 	type st struct {
 		Type string `json:"type"`
 	}
-	var m map[string]st
-	if isV2() {
-		var w struct {
-			Data map[string]st `json:"data"`
-		}
-		if err := json.NewDecoder(res.Body).Decode(&w); err != nil {
-			return nil, err
-		}
-		m = w.Data
-	} else if err := json.NewDecoder(res.Body).Decode(&m); err != nil {
+	var w struct {
+		Data map[string]st `json:"data"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&w); err != nil {
 		return nil, err
 	}
-	out := make(map[string]string, len(m))
-	for id, s := range m {
+	out := make(map[string]string, len(w.Data))
+	for id, s := range w.Data {
 		out[id] = s.Type
 	}
 	return out, nil
 }
 
-func permissionReplyRequest(addr, ses, id, dir string) (string, string) {
-	if isV2() {
-		return addr + "/api/session/" + url.PathEscape(ses) + "/permission/" + url.PathEscape(id) + "/reply", `{"decision":"always"}`
-	}
-	return dirQ(addr+"/permission/"+url.PathEscape(id)+"/reply", dir), `{"reply":"always"}`
+func permissionReplyRequest(addr, ses, id string) (string, string) {
+	return addr + "/api/session/" + url.PathEscape(ses) + "/permission/" + url.PathEscape(id) + "/reply", `{"decision":"always"}`
 }
 
 // --- turns ----------------------------------------------------------------------
 
-// newTurnRequest builds the request that submits one input. v1: the blocking
-// POST /session/{id}/message, whose agent/model/variant ride in the body. v2:
-// POST /api/session/{id}/prompt, which takes text and files only (agent and model are
-// session state there, see sendTurn).
-func newTurnRequest(addr, ses, dir string, in agents.TurnInput, st agents.ThreadSettings) (*http.Request, error) {
-	if isV2() {
-		body := map[string]any{"text": strings.TrimSpace(in.Prompt)}
-		var files []map[string]string
-		for _, p := range in.Attachments {
-			if strings.TrimSpace(p) != "" {
-				files = append(files, map[string]string{"uri": "file://" + p, "name": filepath.Base(p)})
-			}
+// newTurnRequest builds the request that submits one input: POST /api/session/{id}/prompt, which
+// takes text and files only (agent and model are session state, see sendTurn).
+func newTurnRequest(addr, ses string, in agents.TurnInput) (*http.Request, error) {
+	body := map[string]any{"text": strings.TrimSpace(in.Prompt)}
+	var files []map[string]string
+	for _, p := range in.Attachments {
+		if strings.TrimSpace(p) != "" {
+			files = append(files, map[string]string{"uri": "file://" + p, "name": filepath.Base(p)})
 		}
-		if len(files) > 0 {
-			body["files"] = files
-		}
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		return http.NewRequest("POST", addr+"/api/session/"+url.PathEscape(ses)+"/prompt", bytes.NewReader(buf))
 	}
-	body := map[string]any{"parts": buildParts(in)}
-	if ag := agentForMode(st.Mode); ag != "" {
-		body["agent"] = ag
-	}
-	if prov, model, ok := splitModel(st.Model); ok {
-		body["model"] = map[string]string{"providerID": prov, "modelID": model}
-	}
-	if st.Effort != "" {
-		body["variant"] = st.Effort
+	if len(files) > 0 {
+		body["files"] = files
 	}
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
-	return http.NewRequest("POST", dirQ(addr+"/session/"+url.PathEscape(ses)+"/message", dir), bytes.NewReader(buf))
+	return http.NewRequest("POST", addr+"/api/session/"+url.PathEscape(ses)+"/prompt", bytes.NewReader(buf))
 }
 
 // v2 turn pacing. /prompt only queues the input (its answer is the stored user message), so the
@@ -417,14 +312,9 @@ var (
 	v2PollMisses  = 3
 )
 
-// sendTurn submits the input and returns once the turn has ended, shaped like v1's blocking
-// answer (a body runTurn can read an error or an abort out of) so the caller's state machine is
-// the same on both majors. A transport failure (the daemon went away) is an error, exactly as on
-// v1.
-func sendTurn(addr, ses, dir string, req *http.Request, st agents.ThreadSettings) (*http.Response, error) {
-	if !isV2() {
-		return turnClient.Do(req)
-	}
+// sendTurn submits the input and returns once the turn has ended, as a body runTurn can read an
+// error or an abort out of. A transport failure (the daemon went away) is an error.
+func sendTurn(addr, ses string, req *http.Request, st agents.ThreadSettings) (*http.Response, error) {
 	// Armed before the prompt goes out, so the start event cannot slip between the two.
 	events, stop := watchExec(ses)
 	defer stop()
@@ -447,9 +337,9 @@ func sendTurn(addr, ses, dir string, req *http.Request, st agents.ThreadSettings
 	seen, misses, outMisses := false, 0, 0 // failed active reads / failed outcome reads, in a row
 	lastLive := time.Now()                 // the last moment the turn was known to be alive or not yet due
 	for {
-		m, err := activeSessions(addr, dir)
+		m, err := activeSessions(addr)
 		// A new generation means the daemon this turn ran on is gone, whatever the new one
-		// reports (v1 sees the same thing as a transport break). Checked after the read so
+		// reports. Checked after the read so
 		// that an empty list from the replacement is never taken for "finished".
 		if Serve().Generation() != gen {
 			return nil, errors.New("opencode serve was replaced during the turn")
@@ -492,8 +382,8 @@ func v2OutcomeResponse(kind string, e *v2Err) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(v2OutcomeBody(kind, e)))}
 }
 
-// applyV2Settings pushes the settings v1 carried in each message body: v2 keeps agent and
-// model on the session.
+// applyV2Settings pushes the agent and the model, which opencode 2 keeps on the session rather
+// than on each prompt.
 func applyV2Settings(addr, ses string, st agents.ThreadSettings) error {
 	post := func(path string, body any) error {
 		buf, _ := json.Marshal(body)

@@ -2,11 +2,11 @@ package opencode
 
 // Unit tests for the managed driver (docs/log/27 P2). serve is mocked with httptest, and the
 // tests cover the turn state machine (Send → completed, queueing while busy, interrupt →
-// cancelled, ledger idempotency), Interaction replies (label conversion, reject) and SSE
-// dispatch.
+// cancelled, ledger idempotency) and SSE dispatch.
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,85 +74,55 @@ func TestUpdateSettingsAndClear(t *testing.T) {
 	}
 }
 
-func TestBuildParts(t *testing.T) {
-	parts := buildParts(agents.TurnInput{Prompt: "hello", Attachments: []string{"/tmp/x.png", "/tmp/no-ext"}})
-	if len(parts) != 3 {
-		t.Fatalf("want 3 parts, got %d", len(parts))
-	}
-	if parts[0]["type"] != "text" || parts[0]["text"] != "hello" {
-		t.Errorf("text part: %v", parts[0])
-	}
-	if parts[1]["type"] != "file" || parts[1]["url"] != "file:///tmp/x.png" || !strings.HasPrefix(parts[1]["mime"].(string), "image/png") {
-		t.Errorf("file part: %v", parts[1])
-	}
-	if parts[2]["mime"] != "application/octet-stream" {
-		t.Errorf("extension-less attachment should fall back to octet-stream: %v", parts[2])
-	}
-}
-
-func TestAnswersToLabels(t *testing.T) {
-	qs := []transcript.Question{
-		{Question: "color?", Options: []transcript.Option{{Label: "red"}, {Label: "blue"}}},
-		{Question: "free?", Options: []transcript.Option{{Label: "a"}}},
-	}
-	got, err := answersToLabels(qs, []agents.InteractionAnswer{
-		{Options: []int{1}},
-		{Text: "something"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got[0][0] != "blue" || got[1][0] != "something" {
-		t.Errorf("got %v", got)
-	}
-	if _, err := answersToLabels(qs, []agents.InteractionAnswer{{Options: []int{0}}}); err == nil {
-		t.Error("count mismatch must error")
-	}
-	if _, err := answersToLabels(qs, []agents.InteractionAnswer{{Options: []int{5}}, {Text: "x"}}); err == nil {
-		t.Error("out-of-range option must error")
-	}
-	if _, err := answersToLabels(qs, []agents.InteractionAnswer{{Options: []int{0}}, {}}); err == nil {
-		t.Error("empty answer must error")
-	}
-}
-
 // --- turn state machine against a mock serve ---
 
-// mockServe fakes the v1 endpoints the handle drives. turnDelay simulates model
-// latency; abort unblocks a waiting turn like the real /abort does.
+// mockServe fakes the opencode 2 endpoints the handle drives. A prompt only queues the input
+// (like the real /prompt); the turn then runs until turnDelay passes or an interrupt arrives, and
+// its end is an idle message carrying the outcome, which sendTurn reads back.
 type mockServe struct {
 	mu        sync.Mutex
 	turns     []string // received prompt texts, in order
 	clientIDs []string // messageIDs received (must stay empty - serve assigns them)
 	busy      bool
-	turnGate  chan struct{} // closed per-turn by abort or timer
-	replies   []string      // question reply bodies
-	rejects   int
-	turnDelay time.Duration
-	// holdAbort answers /abort without releasing the turn, so a test can read the queue while
-	// the pump is still parked in the aborted turn — once the turn returns, the pump may
+	turnGate  chan struct{} // closed to end the running turn (a test may close it directly)
+	// interruptedGate is the gate an interrupt closed: that turn ends "interrupted", while a
+	// gate a test closes directly ends the turn the way it would have ended anyway.
+	interruptedGate chan struct{}
+	turnDelay       time.Duration
+	// holdAbort answers the interrupt without releasing the turn, so a test can read the queue
+	// while the pump is still parked in the aborted turn — once the turn returns, the pump may
 	// already have taken what the interrupt left, and an empty queue proves nothing.
 	holdAbort   bool
-	statusPolls int // GET /session/status calls, so a test can tell the pump reached waitIdle
-	// statusGate, when set, holds every GET /session/status until it is closed, and
+	statusPolls int // GET /api/session/active calls, so a test can tell the pump reached waitIdle
+	// statusGate, when set, holds every GET /api/session/active until it is closed, and
 	// statusEntered is signalled as each one arrives: the window of the pump's busy check.
 	statusGate    chan struct{}
 	statusEntered chan struct{}
 	aborts        int
-	// holdFirstAbort, when set, parks the first POST /abort until it is closed (it is consumed by that call).
+	// holdFirstAbort, when set, parks the first interrupt until it is closed (it is consumed by that call).
 	holdFirstAbort chan struct{}
-	// failAborts makes the next N POST /abort answer 500 without releasing the turn.
+	// failAborts makes the next N interrupts answer 500 without releasing the turn.
 	failAborts int
-	// turnBody overrides the assistant message the blocking /message call answers with.
-	// opencode reports a provider-side failure INSIDE a 200 response (errors.go), so a
-	// failing turn is simulated by the body, not by the status code.
-	turnBody string
+	// turnOutcome and turnErr are how a turn that runs to its end is recorded ("succeeded" when
+	// empty; turnErr is a v2 error object). opencode reports a provider-side failure in the
+	// execution record, not as an HTTP error, so a failing turn is simulated here.
+	turnOutcome string
+	turnErr     string
+	msgs        []string // the session's messages, oldest first, as JSON
+	seq         int
 }
 
 func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 	m := &mockServe{}
+	oldPoll := v2PollEvery
+	v2PollEvery = 10 * time.Millisecond
+	t.Cleanup(func() { v2PollEvery = oldPoll })
+	js := func(w http.ResponseWriter, s string) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(s))
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /session/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/session/active", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		m.statusPolls++
 		gate, entered := m.statusGate, m.statusEntered
@@ -170,48 +140,66 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 		busy := m.busy
 		m.mu.Unlock()
 		if busy {
-			w.Write([]byte(`{"ses_test":{"type":"busy"}}`))
+			js(w, `{"data":{"ses_test":{"type":"running"}}}`)
 			return
 		}
-		w.Write([]byte(`{}`))
+		js(w, `{"data":{}}`)
 	})
-	mux.HandleFunc("POST /session/ses_test/message", func(w http.ResponseWriter, r *http.Request) {
-		// No messageID is sent (serve assigns it; see the measured comment in driver.go),
-		// so a turn is identified by its prompt text.
+	mux.HandleFunc("POST /api/session/ses_test/prompt", func(w http.ResponseWriter, r *http.Request) {
+		// No messageID is sent (serve assigns it), so a turn is identified by its prompt text.
 		var body struct {
-			MessageID string           `json:"messageID"`
-			Parts     []map[string]any `json:"parts"`
+			MessageID string `json:"messageID"`
+			Text      string `json:"text"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		text, _ := "", false
-		if len(body.Parts) > 0 {
-			t2, ok2 := body.Parts[0]["text"].(string)
-			text, _ = t2, ok2
-		}
 		m.mu.Lock()
 		if body.MessageID != "" {
 			m.clientIDs = append(m.clientIDs, body.MessageID)
 		}
-		m.turns = append(m.turns, text)
+		m.turns = append(m.turns, body.Text)
 		m.busy = true
 		gate := make(chan struct{})
 		m.turnGate = gate
 		delay := m.turnDelay
+		m.seq++
+		userID := fmt.Sprintf("msg_%06d", m.seq)
+		m.msgs = append(m.msgs, fmt.Sprintf(`{"id":%q,"type":"user","text":%q}`, userID, body.Text))
 		m.mu.Unlock()
-		select {
-		case <-gate:
-		case <-time.After(delay):
-		}
-		m.mu.Lock()
-		m.busy = false
-		resp := m.turnBody
-		m.mu.Unlock()
-		if resp == "" {
-			resp = `{"info":{"role":"assistant"},"parts":[]}`
-		}
-		w.Write([]byte(resp))
+		go func() {
+			select {
+			case <-gate:
+			case <-time.After(delay):
+			}
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			interrupted := m.interruptedGate == gate
+			outcome, e := m.turnOutcome, m.turnErr
+			if outcome == "" {
+				outcome = "succeeded"
+			}
+			if interrupted {
+				outcome, e = "interrupted", ""
+			}
+			m.seq++
+			idle := fmt.Sprintf(`{"id":"msg_%06d","type":"idle","outcome":%q`, m.seq, outcome)
+			if e != "" {
+				idle += `,"error":` + e
+			}
+			m.msgs = append(m.msgs, idle+"}")
+			m.busy = false
+		}()
+		js(w, `{"data":{"id":"`+userID+`"}}`)
 	})
-	mux.HandleFunc("POST /session/ses_test/abort", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/session/ses_test/message", func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		out := make([]string, 0, len(m.msgs))
+		for i := len(m.msgs) - 1; i >= 0; i-- { // newest first
+			out = append(out, m.msgs[i])
+		}
+		m.mu.Unlock()
+		js(w, `{"data":[`+strings.Join(out, ",")+`]}`)
+	})
+	mux.HandleFunc("POST /api/session/ses_test/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		if m.failAborts > 0 {
 			m.failAborts--
@@ -231,43 +219,19 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 			select {
 			case <-m.turnGate:
 			default:
+				m.interruptedGate = m.turnGate
 				close(m.turnGate)
 			}
 		}
 		m.mu.Unlock()
-		w.Write([]byte(`true`))
+		js(w, `{}`)
 	})
-	mux.HandleFunc("POST /question/que_1/reply", func(w http.ResponseWriter, r *http.Request) {
-		b := new(strings.Builder)
-		if _, err := jsonCopy(b, r); err == nil {
-			m.mu.Lock()
-			m.replies = append(m.replies, b.String())
-			m.mu.Unlock()
-		}
-		w.Write([]byte(`true`))
-	})
-	mux.HandleFunc("POST /question/que_1/reject", func(w http.ResponseWriter, r *http.Request) {
-		m.mu.Lock()
-		m.rejects++
-		m.mu.Unlock()
-		w.Write([]byte(`true`))
+	mux.HandleFunc("POST /api/session/ses_test/{setting}", func(w http.ResponseWriter, r *http.Request) {
+		js(w, `{}`) // agent / model: session state the prompt does not carry
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return m, srv
-}
-
-func jsonCopy(dst *strings.Builder, r *http.Request) (int64, error) {
-	buf := make([]byte, 4096)
-	var n int64
-	for {
-		k, err := r.Body.Read(buf)
-		dst.Write(buf[:k])
-		n += int64(k)
-		if err != nil {
-			return n, nil
-		}
-	}
 }
 
 func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
@@ -463,65 +427,6 @@ func TestAbortManagedDiscardsTheQueue(t *testing.T) {
 	defer m.mu.Unlock()
 	if len(m.turns) != 1 {
 		t.Errorf("turns = %q, want no turn started after the shutdown interrupt", m.turns)
-	}
-}
-
-func TestQuestionFlow(t *testing.T) {
-	m, srv := newMockServe(t)
-	m.turnDelay = 2 * time.Second
-	h := newTestHandle(t, srv)
-	registerTestHandle(t, h)
-
-	if err := h.Send(agents.TurnInput{Prompt: "ask me", ClientMessageID: "msg_ask"}); err != nil {
-		t.Fatal(err)
-	}
-	waitState(t, h, agents.TurnRunning)
-	// Dispatch as if an SSE question.asked had arrived, in /global/event's
-	// {"payload": {...}} wrapper (the measured production shape).
-	handleServeEvent([]byte(`{"payload":{"type":"question.asked","properties":{"id":"que_1","sessionID":"ses_test","questions":[{"question":"color?","header":"Color","options":[{"label":"red","description":"r"},{"label":"blue","description":"b"}],"multiple":false,"custom":true}]}}}`))
-	waitState(t, h, agents.TurnWaitingInteraction)
-
-	// Free text sent while a question is pending is refused with question_pending, the same
-	// shape as /input's guard.
-	if err := h.Send(agents.TurnInput{Prompt: "stray", ClientMessageID: "msg_stray"}); !ErrQuestionPending(err) {
-		t.Errorf("send during question = %v, want question_pending", err)
-	}
-
-	snap, _ := h.Snapshot()
-	if snap.Interaction == nil || snap.Interaction.ID != "que_1" || len(snap.Interaction.Questions) != 1 {
-		t.Fatalf("snapshot interaction = %+v", snap.Interaction)
-	}
-	if err := h.Respond(agents.InteractionReply{ID: "que_1", Decision: agents.DecisionAnswer,
-		Answers: []agents.InteractionAnswer{{Options: []int{1}}}}); err != nil {
-		t.Fatal(err)
-	}
-	m.mu.Lock()
-	replies := append([]string(nil), m.replies...)
-	m.mu.Unlock()
-	if len(replies) != 1 || !strings.Contains(replies[0], `[["blue"]]`) {
-		t.Errorf("replies = %v", replies)
-	}
-	waitState(t, h, agents.TurnRunning) // the turn continues once answered
-}
-
-func TestRespondRejectOnCancel(t *testing.T) {
-	m, srv := newMockServe(t)
-	m.turnDelay = 2 * time.Second
-	h := newTestHandle(t, srv)
-	registerTestHandle(t, h)
-	if err := h.Send(agents.TurnInput{Prompt: "ask", ClientMessageID: "msg_c"}); err != nil {
-		t.Fatal(err)
-	}
-	waitState(t, h, agents.TurnRunning)
-	handleServeEvent([]byte(`{"type":"question.asked","properties":{"id":"que_1","sessionID":"ses_test","questions":[{"question":"q","header":"h","options":[{"label":"a","description":"d"}]}]}}`))
-	waitState(t, h, agents.TurnWaitingInteraction)
-	if err := h.Respond(agents.InteractionReply{ID: "que_1", Decision: agents.DecisionCancel}); err != nil {
-		t.Fatal(err)
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.rejects != 1 {
-		t.Errorf("rejects = %d, want 1", m.rejects)
 	}
 }
 

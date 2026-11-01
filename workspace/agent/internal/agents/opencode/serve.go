@@ -323,7 +323,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	prevPassword := servePassword()
 	// Decided once: the password policy and the environment flag must agree, and a second read
 	// could see a Terminal slot come or go in between.
-	sharedWanted := sharedTUIFor(spec) || sharedTerminals() > 0
+	sharedWanted := sharedTUI() || sharedTerminals() > 0
 	password, err := nextServePassword(prevPassword, sharedWanted)
 	if err != nil {
 		return "", 0, fmt.Errorf("opencode serve のパスワードを用意できません: %w", err)
@@ -336,7 +336,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		}
 	}()
 	// A database still holding 1.x data is migrated before the daemon opens it (migrate.go).
-	if err := EnsureMigrated(spec); err != nil {
+	if err := PrepareStart(spec); err != nil {
 		return "", 0, err
 	}
 	cmd := exec.Command(spec.Bin, "serve", "--hostname", host, "--port", port)
@@ -664,11 +664,11 @@ func (s *Supervisor) drain(addr string) {
 		h.mu.Lock()
 		h.abortAsked = true
 		h.mu.Unlock()
-		abortSession(addr, h.sessionID(), h.dir)
+		abortSession(addr, h.sessionID())
 	}
 	for _, ses := range busyTerminals(addr) {
 		log.Printf("opencode serve: drain timeout — aborting terminal session %s", ses)
-		abortSession(addr, ses, "")
+		abortSession(addr, ses)
 	}
 	// Give the aborts a moment to unwind the blocked turn goroutines.
 	time.Sleep(2 * time.Second)
@@ -681,7 +681,7 @@ func busyTerminals(addr string) []string {
 	if len(slots) == 0 {
 		return nil
 	}
-	m, err := activeSessions(addr, "")
+	m, err := activeSessions(addr)
 	if err != nil {
 		return nil
 	}
@@ -698,30 +698,27 @@ func busyTerminals(addr string) []string {
 
 // busyManaged lists the opencode sessions that are (a) busy per the runtime and
 // (b) owned by a managed handle — a TUI-attached user's own experiments outside AF
-// sessions are not ours to wait on. Measured: /session/status is scoped to a project
-// (directory), so it is queried per handle dir and the results combined.
+// sessions are not ours to wait on.
 func busyManaged(addr string) []*threadHandle {
-	byDir := map[string][]*threadHandle{}
-	for _, h := range liveHandles() {
-		byDir[h.dir] = append(byDir[h.dir], h)
+	hs := liveHandles()
+	if len(hs) == 0 {
+		return nil
+	}
+	m, err := activeSessions(addr)
+	if err != nil {
+		return nil
 	}
 	var out []*threadHandle
-	for dir, hs := range byDir {
-		m, err := activeSessions(addr, dir)
-		if err != nil {
-			continue
-		}
-		for _, h := range hs {
-			// Measured: the status list omits idle, so being listed = busy/retry.
-			if st, ok := m[h.sessionID()]; ok && st != "idle" {
-				out = append(out, h)
-			}
+	for _, h := range hs {
+		// Measured: the active list omits idle, so being listed = busy/retry.
+		if st, ok := m[h.sessionID()]; ok && st != "idle" {
+			out = append(out, h)
 		}
 	}
 	return out
 }
 
-func abortSession(addr, ses, dir string) { _ = serveAbort(addr, ses, dir) }
+func abortSession(addr, ses string) { _ = serveAbort(addr, ses) }
 
 // stopProcess terminates the owned daemon (SIGTERM → SIGKILL). For an adopted
 // daemon (cmd == nil) there is no handle to signal — best-effort skip.

@@ -93,7 +93,7 @@ func (a agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, e
 }
 
 // ResolveForkAtPinned is ResolveForkAt plus the conversation the point was resolved against
-// ("" when the route does not name it: opencode 1.x).
+// ("" when the route does not name it).
 func (agentImpl) ResolveForkAtPinned(m session.Meta, at agents.ForkPoint) (string, string, error) {
 	anchor := at.Anchor
 	if anchor == "" {
@@ -204,9 +204,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// verified on tmux 3.3a) so the keys never appear in the command string /
 	// /proc/*/cmdline / pane_start_command.
 	ocSid := session.UUID(m.Dir, m.Name)
-	// One reading for the whole launch: the migration check and the program agree on the major.
 	spec := CurrentLaunch()
-	if err := EnsureMigrated(spec); err != nil {
+	if err := PrepareStart(spec); err != nil {
 		return agents.LaunchPlan{}, err
 	}
 	// The fleet's own inference engines (ADR 0071): env() already carries a workspace-scoped
@@ -215,9 +214,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// which is what makes the usage row say who spent it. Merged rather than appended: two
 	// entries of the same name in `tmux new-session -e` is not something to leave to luck.
 	envs := mergeCommandEnv(append([]string{"AF_SESSION_SID=" + ocSid}, spec.Env()...), EngineEnv(m.Name))
-	// opencode 2: the TUI attaches to af's own serve. The session is created (or resumed, or
-	// forked) through its API here, so none of the v1 store reads below apply to it.
-	if sharedTUIFor(spec) {
+	// The TUI attaches to af's own serve. The session is created (or resumed, or forked) through
+	// its API here, so none of the store reads below apply to it.
+	if sharedTUI() {
 		plan, ok, err := buildSharedLaunch(spec, m, ocSid)
 		if err != nil {
 			return agents.LaunchPlan{}, err
@@ -225,12 +224,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		if ok {
 			return agents.LaunchPlan{Program: plan.Program, Cwd: m.CWD(), Env: mergeCommandEnv(envs, plan.Env)}, nil
 		}
-	} else if spec.Major() >= 2 {
-		markSlotMode(ocSid, modeStandalone)
 	} else {
-		// A pane launched on 1.x is never attached to the serve, so a record left by an earlier
-		// opencode 2 launch of the slot must not count it as a dependent of a 2.x serve.
-		slotModes.Remove(ocSid)
+		markSlotMode(ocSid, modeStandalone)
 	}
 	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured
 	// per-slot id, else a store-derived conversation this slot itself opened — never an
@@ -263,7 +258,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		}
 		resume, fork = m.ForkFrom, true
 	}
-	return agents.LaunchPlan{Program: buildProgramFor(spec, m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil
+	return agents.LaunchPlan{Program: buildProgramV2(spec, m.Model, m.Mode, resume, fork), Cwd: m.CWD(), Env: envs}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

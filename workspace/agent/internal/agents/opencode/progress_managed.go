@@ -15,8 +15,7 @@ var _ agents.ManagedProgressReporter = managedDriver{}
 // 120 s `sleep`), and the shell is a child of the one shared daemon, so neither a heartbeat nor
 // the process table says which session it belongs to. The trace of a silent tool is the pair
 // session.tool.called ... session.tool.success, so a call that was announced and has not
-// finished counts as a live tool. opencode 1.x has no such events and is not stamped, so it
-// reports nothing and keeps holding.
+// finished counts as a live tool.
 func (managedDriver) ManagedProgress(m session.Meta) (time.Time, bool) {
 	h := handleFor(m.Name)
 	if h == nil {
@@ -29,9 +28,6 @@ func (managedDriver) ManagedProgress(m session.Meta) (time.Time, bool) {
 // tool calls in flight. A call whose end event is missed is dropped when its step or execution
 // ends, so a lost event cannot pin the row for longer than the turn.
 func noteProgress(typ string, props json.RawMessage) {
-	if !isV2() {
-		return
-	}
 	var p struct {
 		SessionID string `json:"sessionID"`
 		ID        string `json:"id"`

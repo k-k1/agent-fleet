@@ -63,15 +63,15 @@ func TestInstalledMajorFromPackage(t *testing.T) {
 	}
 }
 
-func TestInstalledMajorFallsBackToPinThenV1(t *testing.T) {
+func TestInstalledMajorFallsBackToPinThenUnknown(t *testing.T) {
 	// A binary with no manifest beside it (copied or wrapped): the image pin decides.
 	bin := filepath.Join(t.TempDir(), "opencode")
 	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	useOpencode(t, bin)
-	if got := installedMajor(); got != 1 {
-		t.Fatalf("no manifest, no pin: major = %d, want 1 (the default)", got)
+	if got := installedMajor(); got != 0 {
+		t.Fatalf("no manifest, no pin: major = %d, want 0 (unknown)", got)
 	}
 	if err := os.WriteFile(buildPinsPath, []byte(`{"opencode":"2.0.28"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestInstalledMajorFallsBackToPinThenV1(t *testing.T) {
 	// A manifest of some other package is not evidence.
 	other := fakeInstall(t, "left-pad", "9.0.0")
 	useOpencode(t, other)
-	if got := installedMajor(); got != 1 {
-		t.Fatalf("foreign manifest: major = %d, want 1", got)
+	if got := installedMajor(); got != 0 {
+		t.Fatalf("foreign manifest: major = %d, want 0", got)
 	}
 }

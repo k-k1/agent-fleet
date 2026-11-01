@@ -26,17 +26,11 @@ import (
 
 var errV2Offline = errors.New("opencode api: reading from the store, no daemon")
 
-// v2Served reports whether conversations of this workspace live in the v2 store. A probed daemon
-// says so. Before any probe (the Agent has just restarted and nothing has started a daemon yet)
-// the installed opencode and the database together do: v1 was the default there, which read the
-// tables v2 never fills, but an install of 2.x over a database v2 has not migrated yet still holds
-// its history in the v1 tables, and only v2's first start moves it.
-func v2Served() bool {
-	if isV2() {
-		return true
-	}
-	return apiMajor(detectedMajor.Load()) == 0 && installedMajor() >= 2 && storeIsV2()
-}
+// v2Served reports whether conversations of this workspace live in the v2 store. A daemon the
+// Agent has seen answer says so. Before that (the Agent has just restarted and nothing has started
+// a daemon yet) the database does: a database opencode 2 has not migrated yet still holds its
+// history in the 1.x tables, and only the first opencode 2 start moves it.
+func v2Served() bool { return serveSeen.Load() || storeIsV2() }
 
 // storeIsV2: opencode 2 has opened the database and its history import is over. The tables alone
 // do not say so: an import that stopped half way leaves a v2 schema beside the v1 rows, and those

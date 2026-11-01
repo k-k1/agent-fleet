@@ -169,11 +169,9 @@ func decodeMessageError(data []byte) (messageError, bool) {
 	return e, true
 }
 
-// decodeTurnError pulls the error field out of the assistant message a blocking /message
-// call answers with — ABORTS INCLUDED, which the driver then classifies against its own
-// abortAsked. Streamed rather than buffered on purpose: a SUCCESSFUL turn's body
-// carries the whole answer (every text and tool part) and can be large, while the only
-// field that matters here is info.error.
+// decodeTurnError pulls the error field out of the body sendTurn hands back for a turn
+// (v2OutcomeBody) — ABORTS INCLUDED, which the driver then classifies against its own
+// abortAsked. Streamed rather than buffered: the only field that matters here is info.error.
 func decodeTurnError(r io.Reader) (messageError, bool) {
 	var wire errorEnvelope
 	if json.NewDecoder(r).Decode(&wire) != nil {
