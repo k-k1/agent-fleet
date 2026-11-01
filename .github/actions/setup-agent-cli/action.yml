@@ -62,7 +62,7 @@ runs:
         case "$AGENT" in
           claude)   arg=CLAUDE_CODE_VERSION; pkg="@anthropic-ai/claude-code" ;;
           codex)    arg=CODEX_VERSION;       pkg="@openai/codex" ;;
-          opencode) arg=OPENCODE_VERSION;    pkg="opencode-ai" ;;
+          opencode) arg=OPENCODE_VERSION;    pkg="@opencode/cli" ;;
           copilot)  arg=COPILOT_VERSION;     pkg="@github/copilot" ;;
           agy)      arg=AGY_VERSION;         pkg="" ;;
           cursor)   arg=CURSOR_VERSION;      pkg="" ;;
@@ -85,19 +85,6 @@ runs:
           [ -n "$spec" ] || { echo "::error::ARG $arg が workspace/Dockerfile に無い（ピンを解決できない）"; exit 1; }
         else
           spec="$VERSION"
-        fi
-
-        # opencode 2 is a different npm package (@opencode/cli). The package follows the major of
-        # the version asked for, and `latest` means the newest release of the pin's own line, so
-        # it takes the pin's major (workspace/Dockerfile): @opencode/cli since the v2 cut-over,
-        # opencode-ai again after a rollback re-pin to 1.x.
-        if [ "$AGENT" = opencode ]; then
-          major_src="$spec"
-          if [ "$spec" = latest ]; then
-            major_src="$(sed -n 's/^ARG OPENCODE_VERSION=//p' workspace/Dockerfile | head -1)"
-            [ -n "$major_src" ] || { echo "::error::ARG OPENCODE_VERSION が workspace/Dockerfile に無い（latest の系列を決められない）"; exit 1; }
-          fi
-          case "${major_src%%.*}" in [2-9]|[1-9][0-9]*) pkg="@opencode/cli" ;; esac
         fi
 
         echo "spec=$spec" >> "$GITHUB_OUTPUT"

@@ -56,18 +56,17 @@ func TestResolveForkAtOnSharedTerminal(t *testing.T) {
 // its place would look like it worked.
 func TestForkAtTerminalStaysManagedOnlyElsewhere(t *testing.T) {
 	cases := []struct {
-		name  string
-		major int
-		env   string
-		mode  string
+		name string
+		env  string
+		mode string
 	}{
-		{"standalone pane", 2, "", modeStandalone},
-		{"pane launched before the record existed", 2, "", ""},
-		{"shared pane but the next launch is --standalone", 2, "1", modeShared},
+		{"standalone pane", "", modeStandalone},
+		{"pane launched before the record existed", "", ""},
+		{"shared pane but the next launch is --standalone", "1", modeShared},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			useMajor(t, c.major)
+			useMajor(t, 2)
 			t.Setenv(standaloneEnv, c.env)
 			m, user := terminalV2Slot(t, c.mode)
 			a := agentImpl{}

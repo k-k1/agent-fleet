@@ -137,21 +137,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The Dockerfile pin is the source of truth. If it is ever rolled back to 1.x there is no
-      # 2.x number to read, so the newest @opencode/cli stands in (the line cli-drift-check.sh
-      # reports as latest_opencode2) and the 2.x contracts keep running next to the 1.x pin.
+      # The Dockerfile pin is the source of truth.
       - name: resolve the opencode 2 version
         id: v2
         run: |
           set -euo pipefail
           pin="$(sed -n 's/^ARG OPENCODE_VERSION=//p' workspace/Dockerfile | head -1)"
           [ -n "$pin" ] || { echo "::error::ARG OPENCODE_VERSION is missing from workspace/Dockerfile"; exit 1; }
-          case "${pin%%.*}" in
-            [2-9]|[1-9][0-9]*) version="$pin" ;;
-            *) version="$(npm view @opencode/cli version)" ;;
-          esac
-          case "$version" in 2.*) ;; *) echo "::error::not an opencode 2 version: '$version'"; exit 1 ;; esac
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$pin" in 2.*) ;; *) echo "::error::not an opencode 2 version: '$pin'"; exit 1 ;; esac
+          echo "version=$pin" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/setup-agent-cli
         id: cli

@@ -68,26 +68,14 @@ cat > "$STUB/npm" <<'FAKE'
 # `npm view <pkg> version`
 case "$2" in
   @anthropic-ai/claude-code) name=claude ;;
-  opencode-ai)               name=opencode ;;
+  @opencode/cli)             name=opencode ;;
   @openai/codex)             name=codex ;;
   @github/copilot)           name=copilot ;;
-  # @opencode/cli is the opencode row's package once the pin is 2.x. Under a 1.x pin it is
-  # the informational "2.x line" instead: STUB_OC2 asks for that reading (and STUB_FAIL
-  # opencode2 refuses it); without STUB_OC2 it answers as the row does, from the pin file,
-  # with STUB_DRIFT / STUB_FAIL naming `opencode` and STUB_OCCLI overriding the answer.
-  @opencode/cli)             echo "$2" >> "$STUB_NPM_LOG"
-                             if [ -n "${STUB_OC2:-}" ]; then
-                               case ",${STUB_FAIL:-}," in *",opencode2,"*) exit 1 ;; esac
-                               echo "$STUB_OC2"; exit 0
-                             fi
-                             [ -z "${STUB_OCCLI:-}" ] || { echo "$STUB_OCCLI"; exit 0; }
-                             case ",${STUB_FAIL:-}," in *",opencode,"*) exit 1 ;; esac
-                             case ",${STUB_DRIFT:-}," in *",opencode,"*) echo "9.9.9"; exit 0 ;; esac
-                             cat "$STUB_PINS/opencode"; echo; exit 0 ;;
-  *) exit 1 ;;
+  *) echo "$2" >> "$STUB_NPM_LOG"; exit 1 ;;
 esac
 echo "$2" >> "$STUB_NPM_LOG"
-[ "$name" != opencode ] || [ -z "${STUB_OCAI:-}" ] || { echo "$STUB_OCAI"; exit 0; }
+# STUB_OCCLI overrides the opencode row's answer (another 2.x, or a new major).
+[ "$name" != opencode ] || [ -z "${STUB_OCCLI:-}" ] || { echo "$STUB_OCCLI"; exit 0; }
 case ",${STUB_FAIL:-}," in *",$name,"*) exit 1 ;; esac
 case ",${STUB_DRIFT:-}," in *",$name,"*) echo "9.9.9"; exit 0 ;; esac
 cat "$STUB_PINS/$name"; echo
@@ -217,81 +205,28 @@ out_has '^failed=cursor$'
 out_has '^latest_cursor=$'
 says "Could not read: cursor"
 
-# The checker resolves workspace/Dockerfile from its own location. The real tree pins 2.x
-# (since the cut-over), so the 1.x cases run a copy of the tree whose pin is a 1.x one, which
-# is also what a rollback re-pin looks like.
-TREE1="$WORK/tree1"
-mkdir -p "$TREE1/deploy/local" "$TREE1/workspace"
-cp "$CHECK" "$TREE1/deploy/local/cli-drift-check.sh"
-sed 's/^ARG OPENCODE_VERSION=.*/ARG OPENCODE_VERSION=1.19.0/' "$ROOT/workspace/Dockerfile" > "$TREE1/workspace/Dockerfile"
-cp "$PINS/opencode" "$WORK/opencode.pin.keep"
-use_pin1() { printf '1.19.0' > "$PINS/opencode"; SCRIPT_UNDER_TEST="$TREE1/deploy/local/cli-drift-check.sh"; }
-use_pin2() { cp "$WORK/opencode.pin.keep" "$PINS/opencode"; SCRIPT_UNDER_TEST="$CHECK"; }
-
-echo "== case 5b: while the pin is 1.x the 2.x line is reported, and only reported =="
-use_pin1
-STUB_FAIL="" STUB_DRIFT="" STUB_OC2=2.0.29 run_check
-code_is 0                         # a new major is not drift
-says "opencode2"
-says "new major, not tracked as drift"
-out_has '^latest_opencode2=2\.0\.29$'
-out_has '^failed=$'
-sum_has "2.x line"
-# It is not a row: a registry that does not answer for it is skipped without a word, and
-# `failed=` stays empty (case 5's rule would otherwise have to name it).
-STUB_FAIL="opencode2" STUB_DRIFT="" STUB_OC2=2.0.29 run_check
-code_is 0
-out_has '^failed=$'
-out_hasnt '^latest_opencode2='
-saysnt "opencode2"
-# ...and with every real row failing it is not a row that saves the run from exit 2.
-STUB_FAIL="claude,opencode,codex,copilot,agy,cursor,kiro,muse,rtk" STUB_DRIFT="" STUB_OC2=2.0.29 run_check
-code_is 2
-# A single-row check of another CLI does not print it.
-STUB_FAIL="" STUB_DRIFT="" STUB_OC2=2.0.29 run_check claude
-saysnt "opencode2"
-use_pin2
-
-echo "== case 5c: the opencode row follows the package of the pin's major =="
-# Positive control first -- the 1.x tree must ask for opencode-ai.
-use_pin1
-: > "$WORK/npm.log"
-STUB_FAIL="" STUB_DRIFT="" run_check opencode
-grep -qxF "opencode-ai" "$WORK/npm.log" || fail "1.x pin: opencode-ai was not asked for"
-use_pin2
+echo "== case 5c: the opencode row reads @opencode/cli =="
 : > "$WORK/npm.log"
 STUB_FAIL="" STUB_DRIFT="" run_check opencode
 code_is 0
-grep -qxF "@opencode/cli" "$WORK/npm.log" || fail "2.x pin: @opencode/cli was not asked for"
-grep -qxF "opencode-ai" "$WORK/npm.log" && fail "2.x pin: opencode-ai must not be asked for" || true
+grep -qxF "@opencode/cli" "$WORK/npm.log" || fail "@opencode/cli was not asked for"
+grep -qxF "opencode-ai" "$WORK/npm.log" && fail "opencode-ai (opencode 1) must not be asked for" || true
 out_has "^pin_opencode=$(cat "$PINS/opencode" | sed 's/\./\\./g')\$"
 in_sync opencode
-saysnt "opencode2"                # already on 2.x: nothing to announce
 STUB_FAIL="" STUB_DRIFT="" STUB_OCCLI=2.99.0 run_check opencode
 code_is 1
 out_has '^latest_opencode=2\.99\.0$'
 says "DRIFT"
 
-echo "== case 5d: the pin's package publishing another major is flagged, not offered as a plain bump =="
-use_pin1
-STUB_FAIL="" STUB_DRIFT="" STUB_OCAI=2.0.0 run_check opencode
-code_is 1
-out_has '^latest_opencode=2\.0\.0$'
-says "MAJOR"
-sum_has "other major"
-STUB_FAIL="" STUB_DRIFT="" STUB_OCAI=1.99.0 run_check opencode
-code_is 1
-says "DRIFT"                      # same major: an ordinary edge
-saysnt "MAJOR"
-use_pin2
-# The same two directions on the 2.x pin the tree has now.
+echo "== case 5d: a new opencode major is flagged, not offered as a plain bump =="
 STUB_FAIL="" STUB_DRIFT="" STUB_OCCLI=3.0.0 run_check opencode
 code_is 1
 out_has '^latest_opencode=3\.0\.0$'
 says "MAJOR"
+sum_has "other major"
 STUB_FAIL="" STUB_DRIFT="" STUB_OCCLI=2.99.0 run_check opencode
 code_is 1
-says "DRIFT"
+says "DRIFT"                      # same major: an ordinary edge
 saysnt "MAJOR"
 
 echo "== case 6: a single named row -- reads clean, or is 'every row failed' =="

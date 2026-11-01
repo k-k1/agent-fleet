@@ -290,8 +290,8 @@ for row in "${KINDS[@]}"; do
 
   check_fragments "$kind" "$pin" "$latest"
 
-  # opencode 1 -> 2 changes the npm package, the server API, the plugin API and the TUI flags
-  # at once: a bump PR must never carry it, whatever a contract says about the newer line.
+  # A new opencode major changes the server API, the plugin API and the TUI flags at once: a
+  # bump PR must never carry it, whatever a contract says about the newer line.
   if [ "$kind" = opencode ] && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
     left+=("$kind|$pin|$latest|a new major ($(major_of "$pin") -> $(major_of "$latest")): the cut-over is manual (#2101), never an automatic bump")
     continue
