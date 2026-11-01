@@ -444,7 +444,7 @@ describe("sessionsOnItem", () => {
     ];
     const live = [
       { name: "sparent", links: [{ provider: "jira", key: "PROJ-1", role: "started" as const }] },
-      { name: "skid", repo: "web", branch: "k", createdAt: "c", links: [{ provider: "jira", key: "PROJ-1", role: "watching" as const, at: "t" }] },
+      { name: "skid", repo: "web", branch: "k", createdAt: "c", links: [{ provider: "jira", key: "PROJ-1", role: "watching" as const, at: "t", state: "merged" as const }] },
       // Same key on another provider is another item.
       { name: "sother", links: [{ provider: "github", key: "PROJ-1", role: "working" as const }] },
       { name: "snone" },
@@ -454,7 +454,7 @@ describe("sessionsOnItem", () => {
       ["sparent", undefined],
       ["skid", "watching"],
     ]);
-    expect(got[1]).toMatchObject({ id: "link:skid", repo: "web", branch: "k", createdAt: "t" });
+    expect(got[1]).toMatchObject({ id: "link:skid", repo: "web", branch: "k", createdAt: "t", state: "merged" });
   });
 
   it("matches provider and key regardless of case and drops a role it does not know", () => {

@@ -204,7 +204,10 @@ workspace is stopped.
   agent can link itself to a ticket or pull request with the af tool `link_work_item`. The linked
   items appear on the session's row (click one to open its details), and the details list every
   session linked to the item with how it is linked. While the workspace is stopped, rows and
-  details show the links as they were when it last ran.
+  details show the links as they were when it last ran. A linked pull request last seen merged or
+  closed is drawn faint at the end of the row and tagged with its state in the details. To unlink
+  a session, press **Remove** next to it in the item's details; a session's launch item cannot be
+  removed, and a pull request removed this way is not linked again from the session's branch.
 
 While the workspace runs the list refreshes about every 5 minutes; **⟳** fetches immediately.
 

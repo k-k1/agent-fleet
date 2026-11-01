@@ -4,7 +4,7 @@
 // (state tone, "last fetched", the seeded first prompt, the branch name) are testable on
 // their own — they are the feature, the section is just their frame.
 import { knownRole, sameWorkItem } from "../sessions/sessionLinks.ts";
-import type { Session, SessionWorkLinkRole } from "../../types/session.ts";
+import type { Session, SessionWorkLink, SessionWorkLinkRole } from "../../types/session.ts";
 import type { ApiError } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { normalizeHex } from "./labelColor.ts";
@@ -72,6 +72,8 @@ export interface WorkItemSessionRef {
   createdAt: string;
   /** How the session relates to the item (#3134). Absent on a ledger row: a launch. */
   role?: SessionWorkLinkRole;
+  /** Last state seen when the item is a pull request (#3166). */
+  state?: SessionWorkLink["state"];
 }
 
 export interface WorkItemPayload {
@@ -848,6 +850,7 @@ export function sessionsOnItem(
       branch: s.branch || "",
       createdAt: link.at || s.createdAt || "",
       role: knownRole(link.role) ?? undefined,
+      state: link.state,
     });
   }
   return out;

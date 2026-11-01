@@ -168,8 +168,10 @@ func inheritLinks(child *session.Meta) {
 // on a PR's head branch is the one its CI and review feedback is for, whether they opened it or
 // took it over. Recording it keeps the PR on the row after the session moves to another branch.
 // A child that shares its parent's working copy is on the parent's branch without working on
-// it (a reviewer, typically), so it only watches. Only metas that lack the link are written,
-// so a steady list writes nothing.
+// it (a reviewer, typically), so it only watches. The PR's state is recorded on the link too, so
+// a row can tell a merged PR from one still in flight after the session has left its branch.
+// Only metas that lack the link or hold an older state are written, so a steady list writes
+// nothing.
 func recordBranchPRs(sessions []session.Session, now time.Time) {
 	dirOf := make(map[string]string, len(sessions))
 	for _, s := range sessions {
@@ -188,17 +190,25 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		if s.OriginSession != "" && dirOf[s.OriginSession] == s.Dir {
 			role = session.LinkWatching
 		}
-		// Already linked at this role or above: nothing to write. A weaker link (watching from when
-		// the copy was shared, reviewing before the session took the branch over) goes through
-		// AddLink, which raises it; an unknown role from a hand-edited meta ranks lowest.
-		if cur, held := linkRole(s.Links, "github", key); held && session.LinkRoleRank(cur) >= session.LinkRoleRank(role) {
+		state := prLinkState(s.PR)
+		// Already linked at this role or above, with this state: nothing to write. A weaker link
+		// (watching from when the copy was shared, reviewing before the session took the branch
+		// over) goes through AddLink, which raises it; an unknown role from a hand-edited meta
+		// ranks lowest.
+		// The launch item is its own record and carries no state, so it is never rewritten here.
+		if cur, held := heldLink(s.Links, "github", key); held && (cur.Role == session.LinkStarted ||
+			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role) && cur.State == state) {
 			continue
 		}
-		l := session.WorkItemLink{Provider: "github", Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339)}
+		l := session.WorkItemLink{Provider: "github", Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339), State: state}
 		// A PR unlinked by hand stays unlinked. Checked on the meta itself: the wire does not carry
 		// the removals, so such a row costs one meta read per poll and no write.
 		if m, wrote := UpdateSessionMeta(s.Name, func(m *session.Meta) bool {
-			return !session.IsUnlinked(*m, key) && session.AddLink(m, l)
+			if session.IsUnlinked(*m, key) {
+				return false
+			}
+			added := session.AddLink(m, l)
+			return session.SetLinkState(m, "github", key, state) || added
 		}); wrote {
 			s.Links = session.LinksOf(m)
 		}
@@ -219,12 +229,21 @@ func prLinkKey(pr *branchpr.PR) (string, bool) {
 	return session.NormalizeLinkKey("github", parts[0]+"/"+parts[1]+"#"+parts[3], "")
 }
 
-// linkRole is the role links holds provider/key at, and whether it holds it at all.
-func linkRole(links []session.WorkItemLink, provider, key string) (string, bool) {
+// heldLink is links' link to provider/key, and whether it holds one at all.
+func heldLink(links []session.WorkItemLink, provider, key string) (session.WorkItemLink, bool) {
 	for _, l := range links {
 		if session.SameLinkItem(l, provider, key) {
-			return l.Role, true
+			return l, true
 		}
 	}
-	return "", false
+	return session.WorkItemLink{}, false
+}
+
+// prLinkState is the state a PR link records: GitHub's state, with an open draft told apart as
+// the row's PR chip tells it.
+func prLinkState(pr *branchpr.PR) string {
+	if pr.State == "open" && pr.Draft {
+		return "draft"
+	}
+	return pr.State
 }

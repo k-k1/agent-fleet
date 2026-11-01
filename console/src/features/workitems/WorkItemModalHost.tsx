@@ -7,7 +7,7 @@
 import { useEffect, useMemo } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { api, raw } from "../../core/api/client.ts";
+import { api, errText, raw, sessionUnlinkItem } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore, useLaunchSeed, useLaunchTarget, type Repo } from "../repos/store.ts";
@@ -160,6 +160,14 @@ export function WorkItemModalHost() {
         }}
         // openReport closes the detail modal in the same update: never stack two modals.
         onReport={() => openReport(item)}
+        onUnlink={async (name) => {
+          try {
+            const r = await sessionUnlinkItem(name, item.provider, item.key);
+            return r?.error ? errText(r.error) : "";
+          } catch (e) {
+            return e instanceof Error ? e.message : String(e);
+          }
+        }}
       />
     );
   }

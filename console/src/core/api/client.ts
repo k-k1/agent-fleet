@@ -1137,6 +1137,16 @@ export const sessionKeepAwake = (
 ): Promise<{ keepAwakeUntil?: string; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/keep-awake`, "POST", { hours });
 
+// Work item link removal (#3166): drops the session's link to one item. The Agent refuses to
+// drop the item a session was launched for, and remembers a removed PR so the branch-PR
+// lookup does not link it again.
+export const sessionUnlinkItem = (
+  name: string,
+  provider: string,
+  key: string,
+): Promise<{ changed?: boolean; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/links`, "POST", { provider, key, remove: true });
+
 // Stop-after-turn arm (docs/log/85): the pin's mirror image — stop this session once the turn
 // it is running ends. The stop is resumable, and a new instruction releases the arm.
 export const sessionStopAfterTurn = (

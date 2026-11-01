@@ -245,3 +245,49 @@ func TestApplyCreateLinksPrefersAMovedSessionsLinksOverInheritance(t *testing.T)
 		t.Fatalf("child links=%+v, want PROJ-7 watching inherited", child.Links)
 	}
 }
+
+// The branch PR's state rides on its link and follows the PR (#3166): a merge seen while the
+// session is still on the branch is kept for after it has moved on, the role stays, and a
+// steady state writes nothing.
+func TestRecordBranchPRsKeepsThePRStateOnTheLink(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "st1", Dir: "/wt/st", Kind: session.KindClaude})
+	poll := func(pr *branchpr.PR) []session.WorkItemLink {
+		t.Helper()
+		m, _ := session.ReadMeta("st1")
+		rows := []session.Session{{Name: "st1", Dir: "/wt/st", PR: pr, Links: session.LinksOf(m)}}
+		recordBranchPRs(rows, time.Now())
+		m, _ = session.ReadMeta("st1")
+		return m.Links
+	}
+	url := "https://github.com/o/r/pull/7"
+	if l := poll(&branchpr.PR{Number: 7, State: "open", Draft: true, URL: url}); len(l) != 1 || l[0].State != "draft" {
+		t.Fatalf("links=%+v, want o/r#7 recorded as draft", l)
+	}
+	if l := poll(&branchpr.PR{Number: 7, State: "merged", URL: url}); len(l) != 1 || l[0].State != "merged" || l[0].Role != session.LinkWorking {
+		t.Fatalf("links=%+v, want o/r#7 still working, now merged", l)
+	}
+	before, _ := session.ReadMeta("st1")
+	after := poll(&branchpr.PR{Number: 7, State: "merged", URL: url})
+	if after[0].At != before.Links[0].At || after[0].State != "merged" {
+		t.Fatalf("a steady state rewrote the link: %+v -> %+v", before.Links, after)
+	}
+	// Moved to a branch with no PR: the last state seen stays.
+	if l := poll(nil); len(l) != 1 || l[0].State != "merged" {
+		t.Fatalf("links=%+v, want the merged state kept after leaving the branch", l)
+	}
+}
+
+// A session launched for the PR it is on keeps its launch item as is: that record carries no
+// state, and trying to give it one every poll would read the meta for nothing.
+func TestRecordBranchPRsLeavesALaunchPRAlone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "lp1", Dir: "/wt/lp", Kind: session.KindClaude,
+		WorkItem: &session.WorkItemRef{Provider: "github", Key: "o/r#7"}})
+	m, _ := session.ReadMeta("lp1")
+	rows := []session.Session{{Name: "lp1", Dir: "/wt/lp", PR: &branchpr.PR{Number: 7, State: "merged", URL: "https://github.com/o/r/pull/7"}, Links: session.LinksOf(m)}}
+	recordBranchPRs(rows, time.Now())
+	if m, _ := session.ReadMeta("lp1"); len(m.Links) != 0 {
+		t.Fatalf("links=%+v, want the launch PR left as the launch item only", m.Links)
+	}
+}

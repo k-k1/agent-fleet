@@ -343,6 +343,8 @@ export interface SessionWorkLink {
   title?: string;
   url?: string;
   at?: string;
+  /** Last state seen for a pull request link (#3166); absent when never seen or not a PR. */
+  state?: "open" | "draft" | "merged" | "closed";
 }
 
 export interface SessionPR {

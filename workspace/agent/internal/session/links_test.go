@@ -120,3 +120,20 @@ func TestRemovingTheLaunchItemChangesNothing(t *testing.T) {
 		t.Fatalf("removing the launch item reported a change: unlinked=%v", m.Unlinked)
 	}
 }
+
+func TestSetLinkStateRecordsOnlyAKnownStateOnAHeldLink(t *testing.T) {
+	m := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#1"},
+		Links: []WorkItemLink{{Provider: "github", Key: "o/r#2", Role: LinkWorking}}}
+	if !SetLinkState(&m, "GitHub", "O/R#2", "merged") || m.Links[0].State != "merged" {
+		t.Fatalf("links=%+v, want o/r#2 merged", m.Links)
+	}
+	if SetLinkState(&m, "github", "o/r#2", "merged") {
+		t.Fatal("the same state reported a change")
+	}
+	if SetLinkState(&m, "github", "o/r#2", "weird") || m.Links[0].State != "merged" {
+		t.Fatalf("an unknown state was recorded: %+v", m.Links)
+	}
+	if SetLinkState(&m, "github", "o/r#1", "closed") || SetLinkState(&m, "github", "o/r#9", "closed") {
+		t.Fatal("a state was recorded for the launch item or an unheld item")
+	}
+}
