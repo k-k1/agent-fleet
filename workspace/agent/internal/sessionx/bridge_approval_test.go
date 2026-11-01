@@ -291,7 +291,7 @@ func TestBridgeApprovalDecisionRacesDeadline(t *testing.T) {
 
 			waiter := make(chan error, 1)
 			locked := make(chan struct{})
-			bridgeApprovalBetweenReadAndWrite = func(id string) {
+			bridgeApprovalBetweenReadAndClaim = func(id string) {
 				go func() {
 					waiter <- expireApproval(id)
 				}()
@@ -305,7 +305,7 @@ func TestBridgeApprovalDecisionRacesDeadline(t *testing.T) {
 				}
 				close(locked)
 			}
-			t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
+			t.Cleanup(func() { bridgeApprovalBetweenReadAndClaim = nil })
 
 			msg, err := bridgeApprovalDecision(id, choice, true)
 			if err != nil {
@@ -429,29 +429,6 @@ func TestLockApprovalsIsBounded(t *testing.T) {
 	}
 }
 
-// stallPastDeadline makes the daemon's post-write clock read land after the record's
-// deadline, which is what "stalled across it" means, without sleeping.
-func stallPastDeadline(t *testing.T) {
-	t.Helper()
-	orig := approvalNowMs
-	t.Cleanup(func() { approvalNowMs = orig })
-	var late bool
-	approvalNowMs = func() int64 {
-		if late {
-			return orig() + time.Hour.Milliseconds()
-		}
-		return orig()
-	}
-	prev := bridgeApprovalAfterWrite
-	t.Cleanup(func() { bridgeApprovalAfterWrite = prev })
-	bridgeApprovalAfterWrite = func(id string) {
-		late = true
-		if prev != nil {
-			prev(id)
-		}
-	}
-}
-
 func pendingWithDeadline(t *testing.T) string {
 	t.Helper()
 	id := chatx.RandUUID()
@@ -459,21 +436,20 @@ func pendingWithDeadline(t *testing.T) string {
 	return id
 }
 
-// #3042: the waiter cannot take the lock and gives up inside the daemon's stall. The
-// daemon then writes its decision after the deadline; it must report "expired" and the
-// gate must not act on it.
+// #3042: the waiter cannot take the lock and gives up inside the daemon's stall (between
+// its pending check and its claim). The daemon's claim loses, so it must report "expired"
+// and publish no decision for the gate to act on.
 func TestApprovalLockFailureThenDaemonStallReportsExpired(t *testing.T) {
 	withTempHome(t)
 	id := pendingWithDeadline(t)
 	var werr error
-	bridgeApprovalBetweenReadAndWrite = func(id string) {
+	bridgeApprovalBetweenReadAndClaim = func(id string) {
 		orig := lockApprovals
 		lockApprovals = func() (func(), error) { return nil, errors.New("injected lock failure") }
 		werr = expireApproval(id) // the waiter's deadline step, lock unavailable
 		lockApprovals = orig
 	}
-	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
-	stallPastDeadline(t)
+	t.Cleanup(func() { bridgeApprovalBetweenReadAndClaim = nil })
 
 	msg, err := bridgeApprovalDecision(id, "approve", true)
 	if err != nil {
@@ -486,12 +462,12 @@ func TestApprovalLockFailureThenDaemonStallReportsExpired(t *testing.T) {
 		t.Fatalf("user told %q for a gate that timed out", msg)
 	}
 	if _, ok := bridgeApprovals.Read(id); ok {
-		t.Fatal("withdrawn decision must not stay published")
+		t.Fatal("no decision may stay published after the daemon lost the claim")
 	}
 }
 
 // The same interleaving on a build whose lock is a no-op: the waiter removes the record
-// mid-stall and the daemon's write re-creates it.
+// mid-stall and the daemon's claim loses, so it writes nothing.
 func TestApprovalNoopLockThenDaemonStallReportsExpired(t *testing.T) {
 	withTempHome(t)
 	orig := lockApprovals
@@ -499,9 +475,8 @@ func TestApprovalNoopLockThenDaemonStallReportsExpired(t *testing.T) {
 	lockApprovals = func() (func(), error) { return func() {}, nil }
 	id := pendingWithDeadline(t)
 	var werr error
-	bridgeApprovalBetweenReadAndWrite = func(id string) { werr = expireApproval(id) }
-	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
-	stallPastDeadline(t)
+	bridgeApprovalBetweenReadAndClaim = func(id string) { werr = expireApproval(id) }
+	t.Cleanup(func() { bridgeApprovalBetweenReadAndClaim = nil })
 
 	msg, err := bridgeApprovalDecision(id, "approve", true)
 	if err != nil || !errors.Is(werr, errApprovalTimeout) {
@@ -511,13 +486,13 @@ func TestApprovalNoopLockThenDaemonStallReportsExpired(t *testing.T) {
 		t.Fatalf("user told %q for a gate that timed out", msg)
 	}
 	if _, ok := bridgeApprovals.Read(id); ok {
-		t.Fatal("record re-created by the late write must be removed")
+		t.Fatal("the record must not be re-created after the daemon lost the claim")
 	}
 }
 
-// A late decision the waiter had already consumed stays an approval: the action ran, so
-// the user is told so.
-func TestApprovalLateDecisionAlreadyTakenStaysApproved(t *testing.T) {
+// A waiter that consumes the decision in the gap after the write, before the daemon
+// replies, acted on a confirmed decision, so the user is told "Approved".
+func TestApprovalWaiterTakesDecisionBeforeReplyStaysApproved(t *testing.T) {
 	withTempHome(t)
 	id := pendingWithDeadline(t)
 	var werr error
@@ -527,7 +502,6 @@ func TestApprovalLateDecisionAlreadyTakenStaysApproved(t *testing.T) {
 		took, werr = approvalOutcome(id, cur) // the waiter's poll lands in the gap
 	}
 	t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
-	stallPastDeadline(t)
 
 	msg, err := bridgeApprovalDecision(id, "approve", true)
 	if err != nil || !took || werr != nil {
@@ -538,12 +512,14 @@ func TestApprovalLateDecisionAlreadyTakenStaysApproved(t *testing.T) {
 	}
 }
 
-// A late decision nobody has consumed is withdrawn, so a waiter that polls afterwards
-// does not act on what the user was told expired.
-func TestApprovalLateDecisionWithdrawnIsNotActedOn(t *testing.T) {
+// A click that arrives after the deadline is reported as expired and leaves no decision a
+// waiter could act on.
+func TestApprovalLateClickIsNotActedOn(t *testing.T) {
 	withTempHome(t)
 	id := pendingWithDeadline(t)
-	stallPastDeadline(t)
+	orig := approvalNowMs
+	t.Cleanup(func() { approvalNowMs = orig })
+	approvalNowMs = func() int64 { return orig() + time.Hour.Milliseconds() }
 	msg, err := bridgeApprovalDecision(id, "approve", true)
 	if err != nil || !strings.Contains(msg, "expired") {
 		t.Fatalf("msg=%q err=%v", msg, err)
@@ -553,31 +529,35 @@ func TestApprovalLateDecisionWithdrawnIsNotActedOn(t *testing.T) {
 	}
 }
 
-// The dangerous order: the waiter's poll reads the late decision, the daemon then wins
-// "retracted" and removes it, and the waiter's claim loses. It must not act.
-func TestApprovalWaiterLosesClaimDoesNotAct(t *testing.T) {
+// The daemon stalls across the deadline between its pending check and its claim and the
+// waiter expires meanwhile: the daemon's claim loses, so nothing is written and the user is
+// told "expired".
+func TestApprovalWaiterExpiresFirstDaemonLosesClaim(t *testing.T) {
 	for _, choice := range []string{"approve", "reject"} {
 		t.Run(choice, func(t *testing.T) {
 			withTempHome(t)
 			id := pendingWithDeadline(t)
-			var cur bridgeApprovalRec
-			bridgeApprovalAfterWrite = func(id string) { cur, _ = bridgeApprovals.Read(id) }
-			t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
-			stallPastDeadline(t)
-			msg, err := bridgeApprovalDecision(id, choice, true)
-			if err != nil || !strings.Contains(msg, "expired") {
-				t.Fatalf("msg=%q err=%v", msg, err)
+			var werr error
+			bridgeApprovalBetweenReadAndClaim = func(id string) {
+				orig := lockApprovals
+				lockApprovals = func() (func(), error) { return nil, errors.New("injected lock failure") }
+				werr = expireApproval(id)
+				lockApprovals = orig
 			}
-			decided, werr := approvalOutcome(id, cur)
-			if !decided || !errors.Is(werr, errApprovalTimeout) {
-				t.Fatalf("waiter that lost the claim: decided=%v err=%v", decided, werr)
+			t.Cleanup(func() { bridgeApprovalBetweenReadAndClaim = nil })
+			msg, err := bridgeApprovalDecision(id, choice, true)
+			if err != nil || !strings.Contains(msg, "expired") || !errors.Is(werr, errApprovalTimeout) {
+				t.Fatalf("msg=%q err=%v waiter=%v", msg, err, werr)
+			}
+			if cur, ok := bridgeApprovals.Read(id); ok && cur.Decision != "" {
+				t.Fatalf("decision %q published for a gate that expired", cur.Decision)
 			}
 		})
 	}
 }
 
-// A late reject the waiter took first stays "Rejected".
-func TestApprovalLateRejectAlreadyTakenStaysRejected(t *testing.T) {
+// The same for a reject: the waiter took it before the daemon replied, "Rejected" stands.
+func TestApprovalWaiterTakesRejectBeforeReplyStaysRejected(t *testing.T) {
 	withTempHome(t)
 	id := pendingWithDeadline(t)
 	var werr error
@@ -586,7 +566,6 @@ func TestApprovalLateRejectAlreadyTakenStaysRejected(t *testing.T) {
 		_, werr = approvalOutcome(id, cur)
 	}
 	t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
-	stallPastDeadline(t)
 	msg, err := bridgeApprovalDecision(id, "reject", true)
 	if err != nil || !strings.Contains(msg, "Rejected") || !errors.Is(werr, errApprovalRejected) {
 		t.Fatalf("msg=%q err=%v waiter=%v", msg, err, werr)
@@ -607,7 +586,7 @@ func TestApprovalWaiterClaimFailureIsUnconfirmed(t *testing.T) {
 	}
 }
 
-// A decision written in time is untouched by the late check and still honored.
+// A decision written in time is claimed, written and honored by the waiter.
 func TestApprovalOnTimeDecisionHonored(t *testing.T) {
 	withTempHome(t)
 	id := pendingWithDeadline(t)
@@ -621,10 +600,9 @@ func TestApprovalOnTimeDecisionHonored(t *testing.T) {
 }
 
 // When the daemon cannot tell who won (the claim is unusable) it must not say "Approved".
-func TestApprovalLateClaimFailureIsNotApproved(t *testing.T) {
+func TestApprovalUnusableClaimIsNotApproved(t *testing.T) {
 	withTempHome(t)
 	id := pendingWithDeadline(t)
-	stallPastDeadline(t)
 	// A claim path that is a directory can be neither linked nor read.
 	_ = os.MkdirAll(bridgeApprovalClaims.Path(id), 0o700)
 	msg, err := bridgeApprovalDecision(id, "approve", true)
@@ -655,5 +633,214 @@ func TestSweepStaleApprovalClaims(t *testing.T) {
 	}
 	if _, ok := bridgeApprovalClaims.ModTime(fresh); !ok {
 		t.Fatal("fresh claim must stay")
+	}
+}
+
+// failClaims makes the claim of every who in `who` fail with an I/O error (nothing in the
+// claim dir changes), leaving the others real. No who given = every claim fails, which is
+// what a filesystem without hard links looks like.
+func failClaims(t *testing.T, who ...string) {
+	t.Helper()
+	orig := claimApprovalFn
+	t.Cleanup(func() { claimApprovalFn = orig })
+	claimApprovalFn = func(id, w string) (string, error) {
+		if len(who) == 0 {
+			return "", errors.New("injected: hard links unsupported")
+		}
+		for _, x := range who {
+			if x == w {
+				return "", errors.New("injected claim I/O failure")
+			}
+		}
+		return orig(id, w)
+	}
+}
+
+// #3157: the decision is written in time and the user is told "Approved", then the waiter's
+// own claim fails. The daemon's "confirmed" claim lets the waiter act anyway.
+func TestApprovalWaiterClaimFailureStillActsOnConfirmedDecision(t *testing.T) {
+	for _, tc := range []struct {
+		choice, told string
+		want         error
+	}{{"approve", "Approved", nil}, {"reject", "Rejected", errApprovalRejected}} {
+		t.Run(tc.choice, func(t *testing.T) {
+			withTempHome(t)
+			id := pendingWithDeadline(t)
+			msg, err := bridgeApprovalDecision(id, tc.choice, true)
+			if err != nil || !strings.Contains(msg, tc.told) {
+				t.Fatalf("msg=%q err=%v", msg, err)
+			}
+			failClaims(t, claimTaken)
+			cur, _ := bridgeApprovals.Read(id)
+			decided, werr := approvalOutcome(id, cur)
+			if !decided || !errors.Is(werr, tc.want) {
+				t.Fatalf("user told %q but waiter decided=%v err=%v", msg, decided, werr)
+			}
+		})
+	}
+}
+
+// Every claim fails (no hard links, unwritable claim dir): the daemon must not say
+// "Approved", and no decision is ever visible, so the waiter cannot act on one.
+func TestApprovalNoClaimsAtAllNeitherApprovedNorRun(t *testing.T) {
+	for _, choice := range []string{"approve", "reject"} {
+		t.Run(choice, func(t *testing.T) {
+			withTempHome(t)
+			id := pendingWithDeadline(t)
+			bridgeApprovalAfterWrite = func(string) { t.Error("decision written without a claim") }
+			t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+			failClaims(t)
+			msg, err := bridgeApprovalDecision(id, choice, true)
+			if err == nil || strings.Contains(msg, "Approved") || strings.Contains(msg, "Rejected") || !strings.Contains(msg, "not be confirmed") {
+				t.Fatalf("msg=%q err=%v", msg, err)
+			}
+			if _, ok := bridgeApprovals.Read(id); ok {
+				t.Fatal("record must not stay published")
+			}
+			if werr := expireApproval(id); !errors.Is(werr, errApprovalTimeout) {
+				t.Fatalf("waiter → %v", werr)
+			}
+		})
+	}
+}
+
+// Only the daemon's claim fails (its own transient fault) while a healthy waiter keeps
+// polling: the waiter must never see a decision to act on, however it polls, because the
+// user was told "not confirmed".
+func TestApprovalDaemonOnlyClaimFailureWaiterNeverActs(t *testing.T) {
+	for _, choice := range []string{"approve", "reject"} {
+		t.Run(choice, func(t *testing.T) {
+			withTempHome(t)
+			id := pendingWithDeadline(t)
+			orig := claimApprovalFn
+			t.Cleanup(func() { claimApprovalFn = orig })
+			var polled []bridgeApprovalRec
+			claimApprovalFn = func(id, w string) (string, error) {
+				// A healthy waiter polls at every moment the daemon is working.
+				cur, _ := bridgeApprovals.Read(id)
+				polled = append(polled, cur)
+				if w == claimConfirmed {
+					return "", errors.New("injected daemon-side claim failure")
+				}
+				return orig(id, w)
+			}
+			msg, err := bridgeApprovalDecision(id, choice, true)
+			if err == nil || strings.Contains(msg, "Approved") || !strings.Contains(msg, "not be confirmed") {
+				t.Fatalf("msg=%q err=%v", msg, err)
+			}
+			if cur, ok := bridgeApprovals.Read(id); ok && cur.Decision != "" {
+				t.Fatalf("decision %q visible after the daemon failed to claim", cur.Decision)
+			}
+			for _, cur := range polled {
+				if decided, _ := approvalOutcome(id, cur); decided {
+					t.Fatal("waiter acted on a decision the user was told was not confirmed")
+				}
+			}
+			bridgeApprovals.Remove(id)
+		})
+	}
+}
+
+// The waiter's deadline step lands right after the daemon's claim and write, on a build with
+// a no-op lock. The daemon won "confirmed"; the waiter's last look takes the decision (its
+// own "taken" loses to "confirmed", which is honored), so "Approved" is truthful.
+func TestApprovalDeadlineAtWriteWaiterTakesDecision(t *testing.T) {
+	withTempHome(t)
+	orig := lockApprovals
+	t.Cleanup(func() { lockApprovals = orig })
+	lockApprovals = func() (func(), error) { return func() {}, nil }
+	id := pendingWithDeadline(t)
+	var werr error
+	bridgeApprovalAfterWrite = func(id string) { werr = expireApproval(id) }
+	t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || werr != nil || !strings.Contains(msg, "Approved") {
+		t.Fatalf("msg=%q err=%v waiter=%v", msg, err, werr)
+	}
+}
+
+// The waiter loses its expiry claim to the REAL daemon path ("confirmed", then the write):
+// it must act, because the user was told "Approved". Covers both the lock-failed and the
+// no-op-lock (locked path) deadline steps; the daemon claims confirmed before the waiter's
+// claim runs (after its last look found the record pending), and the daemon's write lands
+// before the waiter's bounded wait for it.
+func TestApprovalExpireLosesToConfirmedActs(t *testing.T) {
+	for _, mode := range []string{"lock-failed", "noop-lock"} {
+		t.Run(mode, func(t *testing.T) {
+			withTempHome(t)
+			realLock := lockApprovals
+			if mode == "lock-failed" {
+				failApprovalLock(t)
+			} else {
+				t.Cleanup(func() { lockApprovals = realLock })
+				lockApprovals = func() (func(), error) { return func() {}, nil }
+			}
+			id := pendingWithDeadline(t)
+			orig := claimApprovalFn
+			t.Cleanup(func() { claimApprovalFn = orig })
+			var msg string
+			var derr error
+			claimApprovalFn = func(id, w string) (string, error) {
+				if w != claimExpired {
+					return orig(id, w)
+				}
+				claimApprovalFn = orig // the daemon's own claim must not recurse
+				lockApprovals = realLock
+				msg, derr = bridgeApprovalDecision(id, "approve", true)
+				return orig(id, w) // the waiter's claim now loses to "confirmed"
+			}
+			if err := expireApproval(id); err != nil {
+				t.Fatalf("daemon said %q (err=%v), waiter → %v", msg, derr, err)
+			}
+			if derr != nil || !strings.Contains(msg, "Approved") {
+				t.Fatalf("msg=%q err=%v", msg, derr)
+			}
+		})
+	}
+}
+
+// A transient failure of the waiter's expiry claim does not turn a confirmed approval
+// into a timeout: the claim is retried.
+func TestApprovalExpiryClaimRetriesTransientFailure(t *testing.T) {
+	withTempHome(t)
+	failApprovalLock(t)
+	id := pendingWithDeadline(t)
+	if _, err := claimApproval(id, claimConfirmed); err != nil { // daemon confirmed
+		t.Fatal(err)
+	}
+	orig := claimApprovalFn
+	t.Cleanup(func() { claimApprovalFn = orig })
+	var calls int
+	claimApprovalFn = func(id, w string) (string, error) {
+		if calls++; calls == 1 {
+			rec, _ := bridgeApprovals.Read(id) // the daemon's write lands after the last look
+			rec.Decision = "approve"
+			_ = bridgeApprovals.Write(id, rec)
+			return "", errors.New("injected transient failure")
+		}
+		return orig(id, w)
+	}
+	if err := expireApproval(id); err != nil {
+		t.Fatalf("waiter → %v", err)
+	}
+}
+
+// The daemon won "confirmed" and then never wrote (it died, or the write failed): the user
+// was told nothing, and the waiter, after its bounded wait, times out and removes the record.
+func TestApprovalConfirmedWithoutDecisionTimesOut(t *testing.T) {
+	withTempHome(t)
+	failApprovalLock(t)
+	old := bridgeApprovalConfirmWait
+	t.Cleanup(func() { bridgeApprovalConfirmWait = old })
+	bridgeApprovalConfirmWait = 30 * time.Millisecond
+	id := pendingWithDeadline(t)
+	if _, err := claimApproval(id, claimConfirmed); err != nil {
+		t.Fatal(err)
+	}
+	if err := expireApproval(id); !errors.Is(err, errApprovalTimeout) {
+		t.Fatalf("waiter → %v", err)
+	}
+	if _, ok := bridgeApprovals.Read(id); ok {
+		t.Fatal("record must be removed")
 	}
 }
