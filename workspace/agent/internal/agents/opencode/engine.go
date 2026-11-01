@@ -242,9 +242,9 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 		// Both numbers or neither, measured on opencode 2.2.5 (TestContractV2ModelLimits*):
 		//
 		//   - a model with no `limit` gets a 200000 window and a 32000 output cap: compaction waits
-		//     past 168000 tokens and every request asks for 32000 output, so on a smaller engine
-		//     the session runs until llama-server rejects the request, which is the failure this
-		//     field exists to prevent;
+		//     until about 170000 tokens and a turn asks for up to 32000 output, so on a smaller
+		//     engine the session runs until llama-server rejects the request, which is the failure
+		//     this field exists to prevent. A declared window compacts before its context;
 		//   - a `limit` with a context and no output is rejected, and opencode then drops EVERY
 		//     model of this provider ("Model unavailable"), not just that one.
 		//

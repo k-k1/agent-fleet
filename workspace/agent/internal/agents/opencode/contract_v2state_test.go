@@ -136,10 +136,6 @@ func startStubbedV2(t *testing.T) (stub *stubProvider, addr, dir string) {
 // startStubbedV2With is startStubbedV2 with extra top-level keys in the opencode config.
 func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider, addr, dir string) {
 	t.Helper()
-	requireOpencode(t)
-	if !strings.HasPrefix(strings.TrimPrefix(opencodeVersion(t), "opencode v"), "2.") {
-		skipUnlessV2Required(t, "needs opencode 2")
-	}
 	stub = &stubProvider{}
 	addr, dir = startV2Serve(t, http.HandlerFunc(stub.handler), map[string]any{"m": map[string]any{"name": "m", "tool_call": true,
 		"cost": map[string]any{"input": 1, "output": 2}, "limit": map[string]any{"context": 8000, "output": 1000}}}, extra)
@@ -147,8 +143,13 @@ func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider,
 }
 
 // startV2Serve runs a real opencode 2 serve whose only provider, "stub", is llm with these models.
+// It skips the test without an opencode 2 on PATH, unless AF_REQUIRE_OPENCODE2 makes that a failure.
 func startV2Serve(t *testing.T, llmHandler http.Handler, models, extra map[string]any) (addr, dir string) {
 	t.Helper()
+	requireOpencode(t)
+	if !strings.HasPrefix(strings.TrimPrefix(opencodeVersion(t), "opencode v"), "2.") {
+		skipUnlessV2Required(t, "needs opencode 2")
+	}
 	llm := httptest.NewServer(llmHandler)
 	t.Cleanup(func() { llm.CloseClientConnections(); llm.Close() })
 

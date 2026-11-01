@@ -166,7 +166,10 @@ func TestContractV2ModelLimits(t *testing.T) {
 	v := opencodeVersion(t)
 
 	// No limit is not context 0 (opencode 1: auto-compaction off). opencode 2 gives the model a
-	// 200000 window with a 32000 output cap, asks for 32000 output tokens, and compacts past that.
+	// 200000 window with a 32000 output cap and compacts at about 170000 tokens. A declared window
+	// compacts before its context is reached. The exact point is opencode's own: measured on
+	// 2.2.5 it is 85% of 200000 and of 20000, but already 82000-84000 of 100000 and under 40000 of
+	// 50000, so only measured pairs on either side are pinned here.
 	listed := listedLimits(t, addr, dir)
 	if l := listed["nolimit"]; l["context"] != 200000 || l["output"] != 32000 {
 		t.Fatalf("%s: a model without limit is listed with %v, want context 200000 output 32000", v, l)
@@ -180,10 +183,10 @@ func TestContractV2ModelLimits(t *testing.T) {
 		wantCap    float64
 		wantSummit bool
 	}{
-		{"nolimit", 1_000_000, 32000, true}, // past 200000-32000
-		{"quiet", 100_000, 32000, false},    // control: inside the default window
-		{"both", 19_000, 2000, true},        // past 20000-2000
-		{"bothquiet", 10_000, 2000, false},  // control: inside the declared window
+		{"nolimit", 170_100, 32000, true},
+		{"quiet", 169_800, 32000, false},
+		{"both", 17_100, 2000, true},
+		{"bothquiet", 16_800, 2000, false},
 	} {
 		if errs := limitsTurns(t, stub, addr, dir, c.id, c.tokens); len(errs) > 0 {
 			t.Fatalf("%s: %s turns failed: %v", v, c.id, errs)
@@ -192,9 +195,14 @@ func TestContractV2ModelLimits(t *testing.T) {
 		if len(caps) == 0 {
 			t.Fatalf("%s: %s: the stub saw no turn request", v, c.id)
 		}
+		// The first turn asks for the full cap; later ones may ask for less as the window fills
+		// (measured: 28187 after a 169800-token turn without a limit).
+		if caps[0] != c.wantCap {
+			t.Fatalf("%s: %s asked for max_tokens %v, want %v first", v, c.id, caps, c.wantCap)
+		}
 		for _, got := range caps {
-			if got != c.wantCap {
-				t.Fatalf("%s: %s asked for max_tokens %v, want %v", v, c.id, caps, c.wantCap)
+			if got <= 0 || got > c.wantCap {
+				t.Fatalf("%s: %s asked for max_tokens %v, want at most %v", v, c.id, caps, c.wantCap)
 			}
 		}
 		if (summaries > 0) != c.wantSummit {
