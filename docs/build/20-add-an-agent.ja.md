@@ -64,7 +64,8 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
 たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別、`usage_fold.go` の
-`usageMeasuredForKind`。
+`usageMeasuredForKind`。移動先の答えは、種別自身の `agents.MoveTarget` 宣言（自パッケージの
+`move_target.go`、§20.7）です。
 `workspace/agent`・`control-plane`・`console/src` を、自分と同じ driver を持つ既存種別の名前で grep し、
 当たりを 1 つずつ判断してください。
 

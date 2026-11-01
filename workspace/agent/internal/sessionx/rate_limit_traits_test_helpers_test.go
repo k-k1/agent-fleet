@@ -44,7 +44,8 @@ func editUsageLimitTraits(t *testing.T, kind string, edit func(*agents.UsageLimi
 	t.Cleanup(agentreg.SwapForTest(kind, editedUsageLimitAgent{agentreg.Of(kind), edit}))
 }
 
-// MoveTarget forwards the wrapped kind's move declaration; without it the wrapper hides the
+// MoveTarget forwards the wrapped kind's move declaration (do not swap a kind that makes none:
+// the wrapper then answers 0 where the kind has no method; other test doubles do not forward); without it the wrapper hides the
 // optional capability and the kind stops being a move target for the test's duration. 0 is
 // "no declaration".
 func (e editedUsageLimitAgent) MoveTarget() agents.MoveTargetState {

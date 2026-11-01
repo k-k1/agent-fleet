@@ -12,7 +12,7 @@ import (
 )
 
 // moveRefusals are the registered kinds that are deliberately not move targets, and the reason
-// each is refused. Every other registered kind must be on declare agents.MoveTarget (answer "" or
+// each is refused. Every other registered kind must declare agents.MoveTarget (answer "" or
 // moveTargetNotMeasured), which is where the measurement lives, so adding a measured kind edits
 // only its own package. A kind on no declaration and not here is a kind
 // nobody has classified, and fails TestEveryKindIsClassifiedForMove.
@@ -177,5 +177,17 @@ func TestAnyEligibleTargetIsEligible(t *testing.T) {
 		if got := anyEligibleTarget(src); got == src || moveTargetReason(src, got) != "" {
 			t.Errorf("anyEligibleTarget(%q) = %q", src, got)
 		}
+	}
+}
+
+// editedUsageLimitAgent must not hide the wrapped kind's move declaration.
+func TestUsageLimitWrapperKeepsMoveTarget(t *testing.T) {
+	editUsageLimitTraits(t, session.KindClaude, func(*agents.UsageLimitTraits) {})
+	editUsageLimitTraits(t, session.KindCursor, func(*agents.UsageLimitTraits) {})
+	if got := moveTargetReason("codex", session.KindClaude); got != "" {
+		t.Errorf("claude behind the wrapper: %q, want a measured target", got)
+	}
+	if got := moveTargetReason("codex", session.KindCursor); got != moveTargetNotMeasured {
+		t.Errorf("cursor behind the wrapper: %q, want %q", got, moveTargetNotMeasured)
 	}
 }
