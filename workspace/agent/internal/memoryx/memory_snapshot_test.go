@@ -65,7 +65,8 @@ func memoryTestEnv(t *testing.T) (home, cfg, slug string) {
 //
 // It also turns off the auto-maintenance that every `commit` would otherwise spawn as a child
 // process: a test repo never holds the thousands of loose objects that make it do anything, so
-// it is a pure extra exec per commit. A test that wants the trigger (the auto-gc proof below)
+// it is a pure extra exec per commit (the threshold is never reached, so what it hides is
+// nothing the tests could observe). A test that wants the trigger (the auto-gc proof below)
 // adds its own entry after these two.
 func memoryTestGitForeground(t *testing.T) {
 	t.Helper()

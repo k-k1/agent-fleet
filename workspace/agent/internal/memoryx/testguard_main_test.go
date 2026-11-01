@@ -1,6 +1,7 @@
 package memoryx
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -19,5 +20,7 @@ func emptyGitTemplate() {
 	// Inside the guard's scratch root (removed on exit) when there is one.
 	if d, err := os.MkdirTemp(os.Getenv("AF_TESTGUARD_ROOT"), "memx-git-template-"); err == nil {
 		os.Setenv("GIT_TEMPLATE_DIR", d)
+	} else {
+		fmt.Fprintln(os.Stderr, "memoryx tests: no empty git template dir, running with the stock one:", err)
 	}
 }

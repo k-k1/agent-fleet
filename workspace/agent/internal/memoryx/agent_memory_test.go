@@ -3,7 +3,6 @@ package memoryx
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -42,78 +40,14 @@ func agentMemTestEnv(t *testing.T) (home, clone, wt string) {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	// The clone's .git holds no absolute path, so a copy of one built earlier is as good as a
-	// fresh `git init` + empty commit (two execs per test). The worktree link below does record
-	// the clone's path and is therefore made per test.
-	copyTree(t, agentMemCloneTemplate(t), clone)
+	git(clone, "init", "--quiet", "-b", "main")
+	git(clone, "commit", "--quiet", "--allow-empty", "-m", "init")
 	git(clone, "worktree", "add", "--quiet", "-b", "feature-x", wt)
 
 	session.WriteMeta(session.Meta{Name: "claude-main", Dir: clone, Kind: "claude"})
 	session.WriteMeta(session.Meta{Name: "codex-wt", Dir: wt, Kind: "codex"})
 	session.WriteMeta(session.Meta{Name: "shell-home", Dir: home, Kind: "shell"})
 	return home, clone, wt
-}
-
-var (
-	agentMemCloneOnce sync.Once
-	agentMemCloneDir  string
-	agentMemCloneErr  error
-)
-
-// agentMemCloneTemplate returns a read-only repository with one empty commit on main, built
-// once per test binary. Tests copy it (copyTree) and never write into it.
-func agentMemCloneTemplate(t *testing.T) string {
-	t.Helper()
-	agentMemCloneOnce.Do(func() {
-		dir, err := os.MkdirTemp(os.Getenv("AF_TESTGUARD_ROOT"), "memx-clone-template-")
-		if err != nil {
-			agentMemCloneErr = err
-			return
-		}
-		agentMemCloneDir = dir
-		for _, args := range [][]string{{"init", "--quiet", "-b", "main"}, {"commit", "--quiet", "--allow-empty", "-m", "init"}} {
-			cmd := exec.Command("git", args...)
-			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-				"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				agentMemCloneErr = fmt.Errorf("git %v: %v: %s", args, err, out)
-				return
-			}
-		}
-	})
-	if agentMemCloneErr != nil {
-		t.Fatal(agentMemCloneErr)
-	}
-	return agentMemCloneDir
-}
-
-// copyTree copies the regular files and directories under src into dst (which must exist or be
-// creatable). Symlinks are not expected in the trees it is used on.
-func copyTree(t *testing.T, src, dst string) {
-	t.Helper()
-	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, p)
-		target := filepath.Join(dst, rel)
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm()|0o700)
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, b, info.Mode().Perm())
-	})
-	if err != nil {
-		t.Fatalf("copy %s: %v", src, err)
-	}
 }
 
 func agentMemCallerT(t *testing.T, name string) agentMemCaller {
