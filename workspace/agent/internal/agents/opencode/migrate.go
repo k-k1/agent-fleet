@@ -173,8 +173,9 @@ func EnsureMigrated(spec LaunchSpec) error {
 	if !needsMigration(db) {
 		return nil
 	}
-	// Pdeathsig (startMigrationServe) fires when the starting OS thread exits, not the process:
-	// held on one thread until the server is stopped.
+	// Pdeathsig (startMigrationServe) follows the OS thread that started the server, not the
+	// goroutine: stay on that thread until the server is stopped, or a runtime thread exit would
+	// kill the import early.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	addr, password, exited, stop, err := startMigrationServe(spec)
