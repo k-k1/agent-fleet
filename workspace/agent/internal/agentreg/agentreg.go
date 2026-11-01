@@ -27,22 +27,27 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
+// constructors is every kind's agent, in no particular order: the registry key is the agent's
+// own Kind(), so a kind's name is spelled once, in internal/session's kind table and constants.
+// A kind in the table without an entry here (or the reverse) fails registry_test.go.
+var constructors = []agents.Agent{
+	claude.New(), opencode.New(), codex.New(), cursor.New(), kiro.New(), agy.New(),
+	copilot.New(), shell.New(), ssm.New(), lcpp.New(), muse.New(),
+}
+
 // registry is the kind → agents.Agent registry. Of falls back to claude for an unknown or
 // empty kind, matching the historical default (a session with no recognized kind launches
 // claude).
-var registry = map[string]agents.Agent{
-	session.KindClaude:   claude.New(),
-	session.KindOpencode: opencode.New(),
-	session.KindCodex:    codex.New(),
-	session.KindCursor:   cursor.New(),
-	session.KindKiro:     kiro.New(),
-	session.KindAgy:      agy.New(),
-	session.KindCopilot:  copilot.New(),
-	session.KindShell:    shell.New(),
-	session.KindSSM:      ssm.New(),
-	session.KindLcpp:     lcpp.New(),
-	session.KindMuse:     muse.New(),
-}
+var registry = func() map[string]agents.Agent {
+	m := make(map[string]agents.Agent, len(constructors))
+	for _, a := range constructors {
+		if _, dup := m[a.Kind()]; dup {
+			panic("agentreg: two agents answer Kind() " + a.Kind())
+		}
+		m[a.Kind()] = a
+	}
+	return m
+}()
 
 // Of returns the Agent registered for kind, or claude's for an unknown or empty kind.
 func Of(kind string) agents.Agent {

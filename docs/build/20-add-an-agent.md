@@ -50,7 +50,7 @@ unless they name another tree.
 
 | Surface | Where | Notes |
 |---|---|---|
-| The kind constant and its registration | `Kind*` in `internal/session/session.go`; `registry` in `internal/agentreg/agentreg.go` and the same kind in `internal/kinds/kinds.go`; for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from the registry silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
+| The kind constant and its registration | `Kind*` and the kind table (`kindTable`: order and product label) in `internal/session/session.go`; the agent's constructor in `constructors` in `internal/agentreg/agentreg.go` (the registry key is its `Kind()`); for Managed, `managedDrivers` in `internal/sessionx/session_turn.go` | **A kind missing from the registry silently becomes claude**: `NormalizeKind` and `AgentOf` fall back to it |
 | Capabilities | `Caps()` in your package; `Capabilities()` on your `Driver` | **Do not set a capability the member sees until you have driven it end to end.** `Capabilities()` declares what the driver implements (§20.4). `Caps()` is also what `GET /agents/kinds` serves (§20.7); a `Tri` field left unset reads `unverified`, never `no` |
 | Terminal launch | your package's `BuildLaunch`, returning `agents.LaunchPlan` | Environment goes in `LaunchPlan.Env`, **never prefixed onto the command** (§20.3). A managed-only kind returns `ErrNoTerminalRoute` |
 | Managed runtime | your `Driver`: `Resume` returns a `ThreadHandle` | Its shape follows the process model ([04 §4.3](04-agent.md)) |
@@ -241,11 +241,12 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 
 **Required — every kind:**
 
-- [ ] `Kind*` constant in `internal/session/session.go`, an entry in `internal/agentreg`'s
-      `registry` and in `internal/kinds`' list; the key equals `Kind()`
-      (`TestRegisteredKindsSpellTheirOwnKind`) and the two lists agree
-      (`TestRegistryMatchesTheKindsList`); the `internal/kinds` entry carries the product label
-      the notification bridge writes (`""` for none), pinned by `TestLabels` in `kinds_test.go`
+- [ ] `Kind*` constant and a `kindTable` row (registration order, product label, `""` for none) in
+      `internal/session/session.go`, and the agent's constructor in `internal/agentreg`'s
+      `constructors`; the registry key is the agent's `Kind()` (`TestRegisteredKindsSpellTheirOwnKind`),
+      and a table row with no constructor, or the reverse, fails `TestConstructorsAndKindTableAgree`
+      and `TestRegistryMatchesTheKindsList`. `internal/kinds` reads the table (nothing to edit
+      there); the shipped order and labels are pinned by `TestKindTableMatchesShippedList` and `TestLabels`
 - [ ] `Caps()` with every field decided, `MCPClient` included (`TestMCPClientKindsMatchRegistry`
       fails on `unverified`) and `ManagedDefault` for a kind that should start Managed (the
       CP and in-container callers follow it; `TestManagedDefaultKindFollowsTheRegistry` pins
@@ -350,6 +351,11 @@ Provisional count at 2026-11-01 (after `moveTargetKinds` / `moveUnmeasuredTarget
 Provisional count at 2026-11-01 (after `usageMeasuredByKind` / `noChatProvider` moved onto
 `agents.UsageMeasurer` / `agents.NoHeadlessChat`, #2933): 15 non-test, non-Markdown files (unchanged),
 19 including tests and Markdown (was 20); no Go test file is edited any more. Again without `--verify`.
+
+Provisional count at 2026-11-02 (after `internal/kinds`' list moved into `internal/session`'s kind
+table and `agentreg` was keyed by each agent's `Kind()`, #2933): 14 non-test, non-Markdown files
+(was 15), 18 including tests and Markdown (was 19): the stub now edits `session.go` and
+`agentreg.go` for the Go lists. Again without `--verify`.
 
 Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
 guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until

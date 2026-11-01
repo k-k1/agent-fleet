@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 const module = "github.com/k-k1/agent-fleet/workspace/agent/"
@@ -70,12 +72,13 @@ func TestInModuleDepsSeesTheAgentPackages(t *testing.T) {
 
 func TestAllIsACopyInRegistrationOrder(t *testing.T) {
 	a := All()
-	if len(a) != len(registered) {
-		t.Fatalf("All() = %v, want %d kinds", a, len(registered))
+	table := session.KindTable()
+	if len(a) != len(table) {
+		t.Fatalf("All() = %v, want %d kinds", a, len(table))
 	}
-	for i, e := range registered {
-		if a[i] != e.kind {
-			t.Fatalf("All()[%d] = %q, want %q", i, a[i], e.kind)
+	for i, e := range table {
+		if a[i] != e.Kind {
+			t.Fatalf("All()[%d] = %q, want %q", i, a[i], e.Kind)
 		}
 	}
 	a[0] = "changed"
@@ -83,18 +86,41 @@ func TestAllIsACopyInRegistrationOrder(t *testing.T) {
 		t.Fatal("All() returned the package's own array")
 	}
 	seen := map[string]bool{}
-	for _, e := range registered {
-		if seen[e.kind] {
-			t.Errorf("%q is registered twice", e.kind)
+	for _, e := range session.KindTable() {
+		if seen[e.Kind] {
+			t.Errorf("%q is registered twice", e.Kind)
 		}
-		seen[e.kind] = true
+		seen[e.Kind] = true
+	}
+}
+
+// The order is a behaviour (main.go reconciles and shutdown.go shuts the managed kinds down in
+// it) and the labels are what chat channels read, so today's table is pinned as a literal copy.
+func TestKindTableMatchesShippedList(t *testing.T) {
+	type row struct{ kind, label string }
+	shipped := []row{
+		{"claude", "Claude Code"}, {"opencode", "opencode"}, {"codex", "Codex"},
+		{"copilot", "GitHub Copilot"}, {"cursor", "Cursor"}, {"kiro", "Kiro"},
+		{"agy", "Antigravity"}, {"lcpp", ""}, {"muse", "Muse Code"}, {"shell", ""}, {"ssm", ""},
+	}
+	var got []row
+	for _, e := range session.KindTable() {
+		got = append(got, row{e.Kind, e.Label})
+	}
+	if !slices.Equal(got, shipped) {
+		t.Fatalf("kind table = %v, shipped %v", got, shipped)
+	}
+	for i, k := range All() {
+		if k != shipped[i].kind || Label(k) != shipped[i].label {
+			t.Errorf("All()[%d]/Label = %q/%q, shipped %v", i, k, Label(k), shipped[i])
+		}
 	}
 }
 
 func TestKnownIsExact(t *testing.T) {
-	for _, e := range registered {
-		if !Known(e.kind) {
-			t.Errorf("Known(%q) = false", e.kind)
+	for _, e := range session.KindTable() {
+		if !Known(e.Kind) {
+			t.Errorf("Known(%q) = false", e.Kind)
 		}
 	}
 	for _, k := range []string{"", "Claude", " codex", "codex ", "kiro-cli", "llama.cpp", "pi"} {

@@ -56,10 +56,10 @@ index 141da6a67..98a2d741b 100644
    ssm: f(false, false, "no"),
  };
 diff --git a/console/src/agents/registry.ts b/console/src/agents/registry.ts
-index 5daf1de14..32e890891 100644
+index 0c7c3b4dd..4022164b4 100644
 --- a/console/src/agents/registry.ts
 +++ b/console/src/agents/registry.ts
-@@ -703,6 +703,23 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
+@@ -710,6 +710,23 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
      // the signpost that keeps the menu honest.
      available: (c) => c.conns?.muse?.supported !== false && !!c.conns?.muse?.connected,
    },
@@ -84,7 +84,7 @@ index 5daf1de14..32e890891 100644
      id: "shell",
      icon: "terminal",
 diff --git a/console/src/lib/i18n/locales/en/sessions.ts b/console/src/lib/i18n/locales/en/sessions.ts
-index 9fda98f0b..b4f39b57d 100644
+index 3c3bdf793..f463aabdc 100644
 --- a/console/src/lib/i18n/locales/en/sessions.ts
 +++ b/console/src/lib/i18n/locales/en/sessions.ts
 @@ -24,6 +24,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
@@ -96,7 +96,7 @@ index 9fda98f0b..b4f39b57d 100644
    "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
  
 diff --git a/console/src/lib/i18n/locales/ja/sessions.ts b/console/src/lib/i18n/locales/ja/sessions.ts
-index f08dac705..b4f496f3d 100644
+index 73cd78bbf..e4520aaa4 100644
 --- a/console/src/lib/i18n/locales/ja/sessions.ts
 +++ b/console/src/lib/i18n/locales/ja/sessions.ts
 @@ -22,6 +22,7 @@ export const sessions = {
@@ -133,7 +133,7 @@ index 7a2495056..c25fe5335 100644
  .kind-ssm { --kind: var(--kind-ssm); }
 +.kind-zz { --kind: var(--kind-zz); }
 diff --git a/console/src/types/session.ts b/console/src/types/session.ts
-index 40ebbc27c..a1b987b7a 100644
+index d9638d528..1814ed965 100644
 --- a/console/src/types/session.ts
 +++ b/console/src/types/session.ts
 @@ -6,13 +6,13 @@
@@ -153,7 +153,7 @@ index 40ebbc27c..a1b987b7a 100644
  // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
  // emits question/plan/permission; codex/opencode emit working/idle; agy emits
 diff --git a/workspace/agent/internal/agentreg/agentreg.go b/workspace/agent/internal/agentreg/agentreg.go
-index d855a48db..876acaead 100644
+index 5701ffc29..9a1dc22f3 100644
 --- a/workspace/agent/internal/agentreg/agentreg.go
 +++ b/workspace/agent/internal/agentreg/agentreg.go
 @@ -24,6 +24,7 @@ import (
@@ -164,14 +164,15 @@ index d855a48db..876acaead 100644
  	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
  )
  
-@@ -42,6 +43,7 @@ var registry = map[string]agents.Agent{
- 	session.KindSSM:      ssm.New(),
- 	session.KindLcpp:     lcpp.New(),
- 	session.KindMuse:     muse.New(),
-+	session.KindZz:       zz.New(),
+@@ -32,7 +33,7 @@ import (
+ // A kind in the table without an entry here (or the reverse) fails registry_test.go.
+ var constructors = []agents.Agent{
+ 	claude.New(), opencode.New(), codex.New(), cursor.New(), kiro.New(), agy.New(),
+-	copilot.New(), shell.New(), ssm.New(), lcpp.New(), muse.New(),
++	copilot.New(), shell.New(), ssm.New(), lcpp.New(), muse.New(), zz.New(),
  }
  
- // Of returns the Agent registered for kind, or claude's for an unknown or empty kind.
+ // registry is the kind → agents.Agent registry. Of falls back to claude for an unknown or
 diff --git a/workspace/agent/internal/agents/zz/testguard_main_test.go b/workspace/agent/internal/agents/zz/testguard_main_test.go
 new file mode 100644
 index 000000000..b54e7a88e
@@ -192,7 +193,7 @@ index 000000000..b54e7a88e
 +func TestMain(m *testing.M) { os.Exit(testguard.Run(m, nil)) }
 diff --git a/workspace/agent/internal/agents/zz/zz.go b/workspace/agent/internal/agents/zz/zz.go
 new file mode 100644
-index 000000000..a290704cb
+index 000000000..ce329870e
 --- /dev/null
 +++ b/workspace/agent/internal/agents/zz/zz.go
 @@ -0,0 +1,62 @@
@@ -258,20 +259,8 @@ index 000000000..a290704cb
 +func (agentImpl) SkillsLayout() agents.SkillsLayout {
 +	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
 +}
-diff --git a/workspace/agent/internal/kinds/kinds.go b/workspace/agent/internal/kinds/kinds.go
-index 91415d0c3..0906377c7 100644
---- a/workspace/agent/internal/kinds/kinds.go
-+++ b/workspace/agent/internal/kinds/kinds.go
-@@ -26,6 +26,7 @@ var registered = [...]entry{
- 	{session.KindAgy, "Antigravity"},
- 	{session.KindLcpp, ""},
- 	{session.KindMuse, "Muse Code"},
-+	{session.KindZz, "ZZ Stub"},
- 	{session.KindShell, ""},
- 	{session.KindSSM, ""},
- }
 diff --git a/workspace/agent/internal/session/session.go b/workspace/agent/internal/session/session.go
-index 471e82a05..734dab8d3 100644
+index 2cebd3166..c8bbd5187 100644
 --- a/workspace/agent/internal/session/session.go
 +++ b/workspace/agent/internal/session/session.go
 @@ -31,6 +31,7 @@ const (
@@ -281,4 +270,12 @@ index 471e82a05..734dab8d3 100644
 +	KindZz       = "zz"
  )
  
- // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
+ // KindInfo is one registered kind in the table below.
+@@ -61,6 +62,7 @@ var kindTable = [...]KindInfo{
+ 	{KindAgy, "Antigravity"},
+ 	{KindLcpp, ""},
+ 	{KindMuse, "Muse Code"},
++	{KindZz, "ZZ Stub"},
+ 	{KindShell, ""},
+ 	{KindSSM, ""},
+ }

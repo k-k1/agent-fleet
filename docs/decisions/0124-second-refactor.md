@@ -569,3 +569,20 @@ catalog. `kindLiteralCeiling` goes 96 → 90 (base measured 96). Behaviour uncha
 against a live fleet.
 
 Follow-ups: #2925.
+
+## Note (2026-11-02): the kind list and the registry keyed by `Kind()` (#2933, fifth slice)
+
+`internal/kinds.registered` (order and product label) moved into `internal/session` as `kindTable`,
+beside the `Kind*` constants; `kinds.All` / `Known` / `Label` keep their signatures and read it.
+`session` gains no import (its in-module dependencies are the same five packages). `agentreg` now
+holds a list of constructors and builds its registry from each agent's own `Kind()`, so a kind's
+name is no longer spelled again as a map key; two agents answering one `Kind()` panic at start.
+The order is a behaviour (main.go reconciles and shutdown.go shuts down the managed kinds in it), so
+`TestKindTableMatchesShippedList` holds kind, label and order to a literal copy of the old list;
+`TestConstructorsAndKindTableAgree` fails when a table row has no constructor or the reverse (seen
+failing with `muse.New()` dropped). `scripts/stub-kind/zz.patch` was regenerated; `docs-check.py`
+still reads the constants and passes. `scripts/stub-kind-count.sh`: 14 non-test, non-Markdown files
+(was 15), 18 with tests and Markdown (was 19); not a full `--verify` run. A new kind now edits the
+session constant and table row, and one constructor line. Still hand-kept: the Console lists.
+
+Follow-ups: #2933.

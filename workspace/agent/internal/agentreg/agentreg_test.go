@@ -55,3 +55,25 @@ func TestSwapForTestRestores(t *testing.T) {
 		t.Fatal("restore left a new kind registered")
 	}
 }
+
+// The registry is built from the agents' own Kind(), so a kind in the session table with no
+// constructor in the list (or an agent whose Kind() is not in the table) must fail here rather
+// than drop a kind or register an unknown one.
+func TestConstructorsAndKindTableAgree(t *testing.T) {
+	var have []string
+	for _, a := range constructors {
+		have = append(have, a.Kind())
+	}
+	var table []string
+	for _, e := range session.KindTable() {
+		table = append(table, e.Kind)
+	}
+	slices.Sort(have)
+	slices.Sort(table)
+	if !slices.Equal(have, table) {
+		t.Fatalf("constructors answer %v, the session kind table lists %v", have, table)
+	}
+	if len(registry) != len(constructors) {
+		t.Fatalf("registry holds %d agents for %d constructors", len(registry), len(constructors))
+	}
+}
