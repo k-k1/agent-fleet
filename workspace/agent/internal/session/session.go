@@ -17,8 +17,8 @@ import (
 )
 
 // Canonical kind list. These are the persisted Meta.Kind / wire Session.Kind
-// values; keep them in sync with the agent registry (package main) and the
-// Console's Session type.
+// values; kindTable below lists each one, and internal/agentreg registers its agent. Keep them
+// in sync with the Console's Session type.
 const (
 	KindClaude   = "claude"
 	KindOpencode = "opencode"
@@ -32,6 +32,41 @@ const (
 	KindLcpp     = "lcpp"
 	KindMuse     = "muse"
 )
+
+// KindInfo is one registered kind in the table below.
+type KindInfo struct {
+	Kind string
+	// Label is the kind's outward product name, as the notification bridge writes it; the
+	// Console's agent registry (console/src/agents/registry.ts) is the naming source of truth,
+	// so keep the two in sync. "" means the kind has none and is shown by its id.
+	Label string
+}
+
+// kindTable is every kind, in registration order, next to the Kind* constants it lists. A
+// loop over the registry runs in this order, so moving a line can change behaviour: the managed
+// kinds appear in the order main.go reconciles them and shutdown.go aborts and shuts them down
+// (opencode, codex, copilot, cursor, kiro, lcpp, muse).
+//
+// It lives here because the packages the agent packages import (bridge) must be able to ask
+// for a kind's label, and internal/agentreg, which imports every agent package, cannot be
+// imported by them. internal/kinds is the reader; agentreg builds its registry from the agents
+// themselves and a test holds the two to the same set.
+var kindTable = [...]KindInfo{
+	{KindClaude, "Claude Code"},
+	{KindOpencode, "opencode"},
+	{KindCodex, "Codex"},
+	{KindCopilot, "GitHub Copilot"},
+	{KindCursor, "Cursor"},
+	{KindKiro, "Kiro"},
+	{KindAgy, "Antigravity"},
+	{KindLcpp, ""},
+	{KindMuse, "Muse Code"},
+	{KindShell, ""},
+	{KindSSM, ""},
+}
+
+// KindTable returns the kind table in registration order, as a slice the caller may keep.
+func KindTable() []KindInfo { return append([]KindInfo(nil), kindTable[:]...) }
 
 // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
 // TUI inside tmux (AF writes with send-keys and reads by scraping/hooks). managed is a shared

@@ -47,7 +47,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 
 | 面 | 置き場 | 注意 |
 |---|---|---|
-| kind 定数と登録 | `internal/session/session.go` の `Kind*`、`internal/agentreg/agentreg.go` の `registry` と `internal/kinds/kinds.go` の同じ kind、マネージドなら `internal/sessionx/session_turn.go` の `managedDrivers` | **レジストリに無い kind は黙って claude になる**。`NormalizeKind` と `AgentOf` がそこへ落とす |
+| kind 定数と登録 | `internal/session/session.go` の `Kind*` と kind 表（`kindTable`: 順序と製品名）、`internal/agentreg/agentreg.go` の `constructors` にある Agent のコンストラクタ（レジストリのキーはその `Kind()`）、マネージドなら `internal/sessionx/session_turn.go` の `managedDrivers` | **レジストリに無い kind は黙って claude になる**。`NormalizeKind` と `AgentOf` がそこへ落とす |
 | capability | 自パッケージの `Caps()`、自 `Driver` の `Capabilities()` | **利用者に見える capability は、通しで駆動するまで立てない**。`Capabilities()` は driver の実装を宣言する（§20.4）。`Caps()` は `GET /agents/kinds` がそのまま配る値でもある（§20.7）。`Tri` のフィールドを未設定のままにすると `unverified` と読まれ、`no` にはならない |
 | ターミナル起動 | 自パッケージの `BuildLaunch`（`agents.LaunchPlan` を返す）| 環境変数は `LaunchPlan.Env` に入れ、**コマンドに前置しない**（§20.3）。マネージド専用の種別は `ErrNoTerminalRoute` を返す |
 | マネージドの実行系 | 自 `Driver`。`Resume` が `ThreadHandle` を返す | 形はプロセスモデルに従う（[04 §4.3](04-agent.ja.md)）|
@@ -221,10 +221,12 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 
 **必須 — どの種別でも:**
 
-- [ ] `internal/session/session.go` の `Kind*` 定数、`internal/agentreg` の `registry` と
-      `internal/kinds` の一覧への登録。キーは `Kind()` と一致し（`TestRegisteredKindsSpellTheirOwnKind`）、
-      2 つの一覧は揃う（`TestRegistryMatchesTheKindsList`）。`internal/kinds` の行は通知ブリッジが書く
-      製品名（無ければ `""`）を持ち、`kinds_test.go` の `TestLabels` が固定する
+- [ ] `internal/session/session.go` に `Kind*` 定数と `kindTable` の行（登録順、製品名。無ければ `""`）、
+      `internal/agentreg` の `constructors` に Agent のコンストラクタ。レジストリのキーは Agent の
+      `Kind()` で（`TestRegisteredKindsSpellTheirOwnKind`）、表にあってコンストラクタが無い（またはその逆）と
+      `TestConstructorsAndKindTableAgree` と `TestRegistryMatchesTheKindsList` が落ちる。
+      `internal/kinds` は表を読むだけで編集は要らない。出荷済みの順序と製品名は
+      `TestKindTableMatchesShippedList` と `TestLabels` が固定する
 - [ ] `Caps()` の全フィールドを決める。`MCPClient` も含む（`unverified` だと
       `TestMCPClientKindsMatchRegistry` が落ちる）。マネージドで始めたい種別は `ManagedDefault` も
       （CP とコンテナ内の呼び出し側が追従する。集合は `TestManagedDefaultKindFollowsTheRegistry` が固定）
@@ -318,6 +320,10 @@ scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-
 暫定値（2026-11-01、`usageMeasuredByKind` / `noChatProvider` を `agents.UsageMeasurer` /
 `agents.NoHeadlessChat` へ移した後、#2933）: テスト・Markdown 以外 15 ファイル（変化なし）、含めて 19 ファイル
 （それまでは 20）。編集される Go テストファイルは無くなった。これも `--verify` 未実行。
+
+暫定値（2026-11-02、`internal/kinds` の一覧を `internal/session` の kind 表へ移し、`agentreg` を各 Agent の
+`Kind()` で引くようにした後、#2933）: テスト・Markdown 以外 14 ファイル（それまでは 15）、含めて 18 ファイル
+（それまでは 19）。スタブが Go の一覧のために編集するのは `session.go` と `agentreg.go`。これも `--verify` 未実行。
 
 数値として使えるのは、`--verify` が通った実行だけです。パッチが当たらなくなったとき、または
 `--verify` で新しいガードが落ちたときはパッチを作り直します。`--keep` で実行し、残したクローンで

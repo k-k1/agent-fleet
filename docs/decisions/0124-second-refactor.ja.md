@@ -450,3 +450,19 @@ claude の tmux / transcript の挙動。`TestReportStopContinuedKindsMatchOldSw
 `kindLiteralCeiling` は 96 → 90（base の実測は 96）。挙動の変更なし。実機では未確認。
 
 Follow-ups: #2925.
+
+## 追記 (2026-11-02): kind の一覧と、`Kind()` で引くレジストリ (#2933、スライス 5)
+
+`internal/kinds.registered`（順序と製品名）を `internal/session` の `kindTable` として `Kind*` 定数の隣へ移した。
+`kinds.All` / `Known` / `Label` のシグネチャは変えず、表を読む。`session` に新しい import は増えない
+（モジュール内の依存は同じ 5 パッケージ）。`agentreg` はコンストラクタの一覧を持ち、各 Agent 自身の `Kind()` で
+レジストリを組む。kind の名前をマップのキーとして書き直さなくなり、同じ `Kind()` を返す Agent が 2 つあれば起動時に
+panic する。順序は挙動（main.go が managed の kind を再接続し、shutdown.go が止める順）なので、
+`TestKindTableMatchesShippedList` が kind・製品名・順序を旧一覧のリテラルコピーに固定する。
+`TestConstructorsAndKindTableAgree` は、表の行にコンストラクタが無い（またはその逆）と落ちる
+（`muse.New()` を外して落ちるのを確認）。`scripts/stub-kind/zz.patch` は作り直し、`docs-check.py` は定数を
+読むままで通る。`scripts/stub-kind-count.sh`: テスト・Markdown 以外 14 ファイル（それまで 15）、含めて 18 ファイル
+（それまで 19）。`--verify` の全実行は未実施。新しい kind が編集するのは、session の定数と表の行、
+コンストラクタ 1 行。手書きのまま残るのは Console の一覧。
+
+Follow-ups: #2933.
