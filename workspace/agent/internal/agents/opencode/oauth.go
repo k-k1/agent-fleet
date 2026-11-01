@@ -371,6 +371,8 @@ func HandleOAuthPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	st := env.Data
 	out := map[string]any{"status": st.Status, "connected": st.Status == "complete"}
+	// stored is true once per attempt: re-asking about a finished attempt says connected again.
+	out["stored"] = st.Status == "complete" && oauthFirstComplete(req.FlowID)
 	if st.Message != "" {
 		out["message"] = st.Message
 	}
@@ -448,4 +450,24 @@ func credentialID(addr string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+var (
+	oauthCompletedMu sync.Mutex
+	oauthCompleted   = map[string]bool{}
+)
+
+// oauthFirstComplete reports true the first time it sees attemptID, and false after. The set is
+// dropped when it grows past a bound: attempts are minutes long and a few per sign-in.
+func oauthFirstComplete(attemptID string) bool {
+	oauthCompletedMu.Lock()
+	defer oauthCompletedMu.Unlock()
+	if oauthCompleted[attemptID] {
+		return false
+	}
+	if len(oauthCompleted) >= 256 {
+		oauthCompleted = map[string]bool{}
+	}
+	oauthCompleted[attemptID] = true
+	return true
 }

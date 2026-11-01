@@ -12,6 +12,7 @@ package main
 // declares the audit and the signing.
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,10 +35,17 @@ const (
 // never the request body, so no secret is read (docs §A.6).
 type relayAudit func(r *http.Request) (action, target string, ok bool)
 
+// relayOutcome reports from a 2xx answer's body whether the call did the change its row audits.
+// An answer it cannot read, or one larger than the proxy buffers, counts as no.
+type relayOutcome func(body []byte) bool
+
 // agentRelay is one CP route forwarded to the Workspace Agent with /api stripped.
 type agentRelay struct {
-	route   string       // "METHOD /api/path", exactly as registered and as in testdata/routes.golden
-	audit   relayAudit   // nil: a success is not audited
+	route string     // "METHOD /api/path", exactly as registered and as in testdata/routes.golden
+	audit relayAudit // nil: a success is not audited
+	// auditIf, when set, holds the audit until the Agent's 2xx answer says the call changed
+	// something: a sign-in step is polled until it is done, and a pending answer is a 200 too.
+	auditIf relayOutcome
 	sign    relaySigning // the method and path must be literal: signing looks the request path up
 	wrapped bool         // registered by hand in routes.go; the row only declares audit and signing
 }
@@ -105,6 +113,15 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 	return rl.audit(r)
 }
 
+// auditGated reports whether r's row holds its audit until the answer says it stored something.
+func auditGated(r *http.Request) relayOutcome {
+	rl, found := relayFor(r)
+	if !found {
+		return nil
+	}
+	return rl.auditIf
+}
+
 // signedRelayRoutes are the routes signed as the member's, and the hashed subset of them, keyed
 // by "METHOD path" as memberOriginRoute looks a request up.
 func signedRelayRoutes() (signed, hashed map[string]bool) {
@@ -153,6 +170,46 @@ func query(key string) func(*http.Request) string {
 // shape: the Agent never reads it, so anything else is recorded as an empty target.
 func queryShaped(key string, keep func(string) string) func(*http.Request) string {
 	return func(r *http.Request) string { return keep(r.URL.Query().Get(key)) }
+}
+
+// auditConnection records a credential write under the connection's name; target (nil: none)
+// names what the write is about, from the URL only.
+func auditConnection(kind, verb string, target func(*http.Request) string) relayAudit {
+	return auditAs("connection."+kind+"."+verb, target)
+}
+
+var (
+	// auditHostRe is a git host with an optional port: no userinfo, path or query can pass.
+	auditHostRe = regexp.MustCompile(`^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$`)
+	// auditEnvNameRe is the Agent's own shape for a provider key's environment variable name.
+	auditEnvNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
+)
+
+// pathShaped is one path value, kept only when it matches re: anything else is recorded as an
+// empty target, never as given.
+func pathShaped(key string, re *regexp.Regexp) func(*http.Request) string {
+	return func(r *http.Request) string {
+		if v := r.PathValue(key); re.MatchString(v) {
+			return v
+		}
+		return ""
+	}
+}
+
+// auditMCPServer records a change to an MCP server registered under the id in the URL (the
+// body carries env and header values, which are never read).
+func auditMCPServer(verb string) relayAudit {
+	return auditAs("mcp.server."+verb, pathShaped("id", mcpServerIDRe))
+}
+
+// storedSignin reads a sign-in step's answer: the Agent says {"stored": true} only for the call
+// that consumed a live flow. "connected" alone is not enough: an already-signed-in workspace
+// answers it to every poll, with or without a flow, and a pending or failed poll says false.
+func storedSignin(body []byte) bool {
+	var out struct {
+		Stored bool `json:"stored"`
+	}
+	return json.Unmarshal(body, &out) == nil && out.Stored
 }
 
 // auditFSFilePut records a file save under the path fsFilePut checked and put in the context;

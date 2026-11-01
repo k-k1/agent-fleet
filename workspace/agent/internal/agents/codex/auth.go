@@ -212,10 +212,15 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if loggedIn() {
+		// stored: this call consumed a live flow, i.e. it is the one that saw the sign-in
+		// finish. A repeat, or a poll with no flow while already signed in, says connected
+		// without it; the Control Plane audits only the former.
+		stored := false
 		if f := flows.Take(req.FlowID); f != nil {
 			f.Close()
+			stored = true
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})

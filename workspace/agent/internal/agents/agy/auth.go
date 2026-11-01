@@ -210,7 +210,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	// Belt and braces on top of the ToS-screen toggle: pin the Interactions
 	// data-collection opt-out in settings.json (agy is closed by then).
 	enforceTelemetryOff()
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
 // driveOnboarding answers the post-code onboarding screens as they appear, each

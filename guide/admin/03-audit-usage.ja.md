@@ -15,7 +15,8 @@ audience: "何が起きたか・いくらかかったかを見るテナント管
 
 - **時刻**：いつ行われたか。
 - **操作**：何をしたか（`fs.*` = ファイル操作、`git.*` = コミットやチェックアウトなど、`repo.*` =
-  リポジトリの作成・削除、`session.*` = セッションの作成・fork・停止、`engine.*` = セルフホストの
+  リポジトリの作成・削除、`session.*` = セッションの作成・fork・停止、`connection.*` = 認証情報の保存・削除・サインイン、
+  `mcp.*` = MCP サーバーの変更、`engine.*` = セルフホストの
   推論エンジン など）。
 - **実行者**：誰が（メールアドレス）。人の操作のほか、外部の Claude クライアント（MCP）や
   システム動作（自動停止など）が主体のこともあります。
@@ -41,6 +42,14 @@ audience: "何が起きたか・いくらかかったかを見るテナント管
   `inbox.claim`・`inbox.decline`・`inbox.release`・`inbox.done`・`inbox.withdraw`・`inbox.pr`・`inbox.block` / `inbox.unblock`・
   `inbox.launch` を書きます。テナントのスイッチは `limit_board.set` と `tenant.member_defaults`、開発用サインインの
   切り替えは配備の行として `dev_idp.set` を書きます。
+  認証情報の書き込みも記録しますが、秘密の値は一切書きません。`connection.<種類>.save` と
+  `connection.<種類>.delete`（git・aws・cloudwatch・discord・grafana・jira・lcpp・pagerduty・slack・svn・
+  opencode と各エージェント CLI）、`connection.<種類>.api_key`（codex・muse）、
+  `connection.<種類>.signin`（サインインを完了させた呼び出しが 1 行だけ書きます。待機中のポーリング、完了ポーリングの再送、
+  サインイン済みの状態でのポーリングは書きません）、`mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`。
+  対象は git のホスト、プロバイダーキーの変数名、MCP サーバー ID で、それ以外は空です。
+  ワークスペースがエラーを返した書き込みは行を残しません。`session.spend_cap`・`session.lock`・
+  `repo.lock` は、誰が支出上限を設定したか・削除ロックを切り替えたかを記録します。
 - **記録されない**：単なる**読み取り**（ファイルを開いて見ただけ、一覧を眺めただけ）は既定で残りません。
   そして **ターミナルの生の入出力（画面に流れる文字そのもの）は保存しません**。パスワードやトークンが
   紛れ込むリスクを避けるための設計です。

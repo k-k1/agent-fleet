@@ -33,7 +33,7 @@ var sessionRelays = []agentRelay{
 	// the other GETs above; the Agent has already assembled the page.
 	{route: "GET /api/fleet-graph"},
 	{route: "DELETE /api/sessions/{name}", audit: auditByName("session.delete")},
-	{route: "POST /api/sessions/{name}/lock"}, // deletion lock (docs/log/45)
+	{route: "POST /api/sessions/{name}/lock", audit: auditByName("session.lock")}, // deletion lock (docs/log/45)
 	{route: "GET /api/cleanup/archives"},
 	{route: "POST /api/cleanup/archives/{id}/restore", audit: auditArchiveByID("cleanup.archive.restore")},
 	{route: "DELETE /api/cleanup/archives/{id}", audit: auditArchiveByID("cleanup.archive.purge")},
@@ -75,7 +75,7 @@ var sessionRelays = []agentRelay{
 	{route: "POST /api/sessions/{name}/stop-after-turn"},
 	// Spend budget (#1054) — set the cap, and read the spend against it (with the
 	// session's create_session children beside it). The Agent enforces it; proxied verbatim.
-	{route: "POST /api/sessions/{name}/spend-cap"},
+	{route: "POST /api/sessions/{name}/spend-cap", audit: auditByName("session.spend_cap")},
 	{route: "GET /api/sessions/{name}/spend"},
 	// Read and live-update a managed session's ThreadSettings (docs/log/27 P2 §9.4-3) —
 	// proxied verbatim.

@@ -11,7 +11,7 @@ var repoRelays = []agentRelay{
 	{route: "DELETE /api/repos/{name}", audit: auditByName("repo.delete")},
 	{route: "GET /api/repos/{name}/recreate"}, // deleted worktree back at its path (#1040)
 	{route: "POST /api/repos/{name}/recreate", audit: auditByName("repo.recreate")},
-	{route: "POST /api/repos/{name}/lock"}, // deletion lock (docs/log/45)
+	{route: "POST /api/repos/{name}/lock", audit: auditByName("repo.lock")}, // deletion lock (docs/log/45)
 	{route: "GET /api/repos/{name}/status"},
 	{route: "GET /api/repos/{name}/branches"},
 	{route: "DELETE /api/repos/{name}/branch", audit: auditRepoBranchDelete}, // ?branch=<name>; cleanup (docs/log/32)

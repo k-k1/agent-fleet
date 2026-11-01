@@ -196,12 +196,27 @@ func (f countingRuntimeFactory) New(runtime.Workspace, runtime.SecretKeys, []str
 var agentProbeAnswers = map[string]string{
 	// oauth_mcp_client.go audits the disconnect only when the Agent says a grant was dropped.
 	"DELETE /mcp-servers/x1/oauth": `{"serverId":"x1","issuer":"https://issuer.invalid","hadGrant":true,"revoked":true}`,
+	// A sign-in step is audited only when the Agent says it stored the credential.
+	"POST /connections/agy/complete":        `{"connected":true,"stored":true}`,
+	"POST /connections/claude/complete":     `{"connected":true,"stored":true}`,
+	"POST /connections/codex/device/poll":   `{"connected":true,"stored":true}`,
+	"POST /connections/cursor/poll":         `{"connected":true,"stored":true}`,
+	"POST /connections/kiro/poll":           `{"connected":true,"stored":true}`,
+	"POST /connections/muse/poll":           `{"connected":true,"stored":true}`,
+	"POST /connections/opencode/oauth/poll": `{"connected":true,"stored":true,"status":"complete"}`,
 }
 
 // probeRelays drives every /api route of the full route table once. A workspace resolves to a
 // runtime that points at a recording fake Agent, which answers 200 {} unless
 // agentProbeAnswers says otherwise.
 func probeRelays(t *testing.T) []relayProbe {
+	t.Helper()
+	return probeRelaysWith(t, nil, agentProbeAnswers)
+}
+
+// probeRelaysWith probes the routes only accepts (all when nil), with the fake Agent answering
+// from answers.
+func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[string]string) []relayProbe {
 	t.Helper()
 	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
 	mgr := cfg.mgr
@@ -212,7 +227,7 @@ func probeRelays(t *testing.T) []relayProbe {
 		mu.Lock()
 		hits = append(hits, agentHit{r.Method, r.URL.Path})
 		mu.Unlock()
-		answer, ok := agentProbeAnswers[r.Method+" "+r.URL.Path]
+		answer, ok := answers[r.Method+" "+r.URL.Path]
 		if !ok {
 			answer = `{}`
 		}
@@ -255,7 +270,7 @@ func probeRelays(t *testing.T) []relayProbe {
 	var out []relayProbe
 	for _, line := range muxRoutes(t, mux) {
 		method, pattern, _ := strings.Cut(line, " ")
-		if method == "ANY" || !strings.HasPrefix(pattern, "/api/") {
+		if method == "ANY" || !strings.HasPrefix(pattern, "/api/") || (only != nil && !only(line)) {
 			continue
 		}
 		p := relayProbe{route: line, method: method, pattern: pattern, concrete: concretePath(pattern)}

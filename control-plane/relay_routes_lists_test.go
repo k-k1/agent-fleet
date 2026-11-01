@@ -5,8 +5,7 @@ package main
 // stale.
 
 // mutatingRelayAuditExempt lists the mutating relays that write no audit row, grouped by the
-// reason. What is in the audit scope follows #2883: the KNOWN GAP group is in it and not audited
-// yet; the other groups are out of it.
+// reason. Every group is out of the audit scope (#2883).
 var mutatingRelayAuditExempt = routeReasons(
 	routeGroup{"a read, a preview or an LLM suggestion sent as POST: nothing is changed", []string{
 		"POST /api/cleanup/home/measure",
@@ -132,54 +131,6 @@ var mutatingRelayAuditExempt = routeReasons(
 		"DELETE /api/cleanup/cache/{feature}",
 		"DELETE /api/cleanup/leftovers/{kind}",
 		"DELETE /api/cleanup/tool-caches/{name}",
-	}},
-	routeGroup{"KNOWN GAP, to be audited by #2883: a credential write, or a lock or spend cap", []string{
-		"PUT /api/connections/git/{host}",
-		"DELETE /api/connections/git/{host}",
-		"PUT /api/connections/aws",
-		"DELETE /api/connections/aws",
-		"PUT /api/connections/cloudwatch",
-		"DELETE /api/connections/cloudwatch",
-		"PUT /api/connections/discord",
-		"DELETE /api/connections/discord",
-		"PUT /api/connections/grafana",
-		"DELETE /api/connections/grafana",
-		"PUT /api/connections/jira",
-		"DELETE /api/connections/jira",
-		"PUT /api/connections/lcpp",
-		"DELETE /api/connections/lcpp",
-		"PUT /api/connections/pagerduty",
-		"DELETE /api/connections/pagerduty",
-		"PUT /api/connections/slack",
-		"DELETE /api/connections/slack",
-		"PUT /api/connections/svn",
-		"DELETE /api/connections/svn",
-		"DELETE /api/connections/agy",
-		"DELETE /api/connections/claude",
-		"DELETE /api/connections/codex",
-		"DELETE /api/connections/cursor",
-		"DELETE /api/connections/kiro",
-		"DELETE /api/connections/muse",
-		"PUT /api/connections/opencode",
-		"DELETE /api/connections/opencode/oauth",
-		"DELETE /api/connections/opencode/{env}",
-		"POST /api/connections/codex/api-key",
-		"POST /api/connections/muse/api-key",
-		"POST /api/connections/agy/complete",
-		"POST /api/connections/claude/complete",
-		"POST /api/connections/codex/device/poll",
-		"POST /api/connections/cursor/poll",
-		"POST /api/connections/kiro/poll",
-		"POST /api/connections/muse/poll",
-		"POST /api/connections/opencode/oauth/poll",
-		"POST /api/mcp-servers",
-		"PUT /api/mcp-servers/{id}",
-		"DELETE /api/mcp-servers/{id}",
-		"PUT /api/mcp-servers/{id}/secrets",
-		"PUT /api/mcp-servers/{id}/oauth/client",
-		"POST /api/sessions/{name}/spend-cap",
-		"POST /api/sessions/{name}/lock",
-		"POST /api/repos/{name}/lock",
 	}},
 )
 

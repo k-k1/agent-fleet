@@ -432,3 +432,40 @@ func TestHandleDisconnectJudgesTheCredential(t *testing.T) {
 		}
 	})
 }
+
+// "stored" is what the Control Plane audits a sign-in by: only the poll that consumed a live
+// flow says it. A repeat of that poll, and a flow-less poll while already signed in, answer
+// connected without it, so neither can add an audit row.
+func TestHandlePollSaysStoredOnlyForTheCallThatConsumedTheFlow(t *testing.T) {
+	museHome(t)
+	writeAuth(t, accountJSON)
+
+	stored := func(body string) bool {
+		var out struct {
+			Connected bool `json:"connected"`
+			Stored    bool `json:"stored"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil || !out.Connected {
+			t.Fatalf("poll body %q: want connected", body)
+		}
+		return out.Stored
+	}
+	if stored(post(t, HandlePoll, `{}`).Body.String()) {
+		t.Fatal("a poll with no flow while signed in said stored")
+	}
+	if stored(post(t, HandlePoll, `{"flow_id":"nope"}`).Body.String()) {
+		t.Fatal("a poll with an unknown flow said stored")
+	}
+	live, err := agents.StartPipeFlow(exec.Command("sh", "-c", "sleep 30"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := loginFlows.Put(live)
+	body := `{"flow_id":"` + id + `"}`
+	if !stored(post(t, HandlePoll, body).Body.String()) {
+		t.Fatal("the poll that consumed the live flow did not say stored")
+	}
+	if stored(post(t, HandlePoll, body).Body.String()) {
+		t.Fatal("a repeat of the same poll said stored again")
+	}
+}
