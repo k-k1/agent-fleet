@@ -40,11 +40,11 @@ func TestContractV2FormQuestionRoundTrip(t *testing.T) {
 		done = make(chan struct{})
 		go func() {
 			defer close(done)
-			req, err := newTurnRequest(addr, ses, dir, agents.TurnInput{Prompt: prompt}, st)
+			req, err := newTurnRequest(addr, ses, agents.TurnInput{Prompt: prompt})
 			if err != nil {
 				return
 			}
-			if res, err := sendTurn(addr, ses, dir, req, st); err == nil {
+			if res, err := sendTurn(addr, ses, req, st); err == nil {
 				res.Body.Close()
 			}
 		}()
@@ -125,7 +125,7 @@ func TestContractV2FormQuestionRoundTrip(t *testing.T) {
 
 	// Interrupt while waiting: the form goes with the turn, and the stop is not a failure.
 	m, ses, _, done = ask("v2forminterrupt", "ASK again")
-	if err := serveAbort(addr, ses, dir); err != nil {
+	if err := serveAbort(addr, ses); err != nil {
 		t.Fatal(err)
 	}
 	finished(done)

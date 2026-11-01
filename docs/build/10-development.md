@@ -536,7 +536,7 @@ costs; which CLI it exercises is in the test name (`TestDriftCodex…`, `TestCon
 
 | Tag | Needs | Without it |
 |---|---|---|
-| `contract` | the real CLI on `PATH` (and tmux for the pane tests). Some tests that spend a turn also wait for their own opt-in (`CLAUDE_CONTRACT_LIVE`, `COPILOT_CONTRACT_LIVE`, `OPENCODE_CONTRACT_LIVE`, `AF_IMAGEGEN_LIVE`); the TUI probes (`TestClaudeTUIContractLive`, `TestClaudePlanApprovalContractLive`, `Test<Kind>TUIMirrorContract`) do not, and run a real turn wherever the CLI is signed in | skips, or fails under `E2E_REQUIRE=1` |
+| `contract` | the real CLI on `PATH` (and tmux for the pane tests). Some tests that spend a turn also wait for their own opt-in (`CLAUDE_CONTRACT_LIVE`, `COPILOT_CONTRACT_LIVE`, `AF_IMAGEGEN_LIVE`); the TUI probes (`TestClaudeTUIContractLive`, `TestClaudePlanApprovalContractLive`, `Test<Kind>TUIMirrorContract`) do not, and run a real turn wherever the CLI is signed in | skips, or fails under `E2E_REQUIRE=1` |
 | `contract_live` | real codex credentials; every test spends real turns (`codex-contract.yml`'s `live-drift`, dispatch only) | fails |
 | `contract_manual` | a person: an engine endpoint they provide (`AF_LCPP_LIVE_*`) or an interactive sign-in (`AF_AGY_LOGIN`); no workflow runs it | skips |
 

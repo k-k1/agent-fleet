@@ -147,37 +147,36 @@ func TestServeForkSessionBody(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"ses_new"}`)
+		_, _ = io.WriteString(w, `{"data":{"id":"ses_new"}}`)
 	}))
 	defer srv.Close()
 
-	// With a fork point: messageID is included.
-	id, err := serveForkSession(srv.URL, "ses_src", "/dir", "msg_7")
+	// With a fork point: the message the copy stops before is included.
+	id, err := serveForkSession(srv.URL, "ses_src", "msg_7")
 	if err != nil {
 		t.Fatalf("serveForkSession error: %v", err)
 	}
 	if id != "ses_new" {
 		t.Fatalf("id = %q; want ses_new", id)
 	}
-	if gotPath != "/session/ses_src/fork" {
+	if gotPath != "/api/session/ses_src/fork" {
 		t.Fatalf("path = %q", gotPath)
 	}
 	var body map[string]string
 	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
 		t.Fatalf("body %q: %v", gotBody, err)
 	}
-	if body["messageID"] != "msg_7" {
-		t.Fatalf("body = %v; want messageID=msg_7", body)
+	if body["before"] != "msg_7" {
+		t.Fatalf("body = %v; want before=msg_7", body)
 	}
 
-	// Without a fork point: fork the whole conversation (an empty object, as before). Sending
-	// messageID as an empty string is rejected by opencode's ^msg pattern, so the key itself
-	// must be absent.
-	if _, err := serveForkSession(srv.URL, "ses_src", "/dir", ""); err != nil {
+	// Without a fork point: fork the whole conversation (an empty object). An empty anchor is
+	// not a message id, so the key itself must be absent.
+	if _, err := serveForkSession(srv.URL, "ses_src", ""); err != nil {
 		t.Fatalf("serveForkSession (whole) error: %v", err)
 	}
-	if strings.Contains(gotBody, "messageID") {
-		t.Fatalf("whole-conversation fork sent %q; want no messageID", gotBody)
+	if gotBody != "{}" {
+		t.Fatalf("whole-conversation fork sent %q; want {}", gotBody)
 	}
 }
 
@@ -186,7 +185,7 @@ func TestServeForkSessionRejectedAnchorSurfaces(t *testing.T) {
 		http.Error(w, `{"error":"bad messageID"}`, http.StatusBadRequest)
 	}))
 	defer srv.Close()
-	_, err := serveForkSession(srv.URL, "ses_src", "/dir", "msg_7")
+	_, err := serveForkSession(srv.URL, "ses_src", "msg_7")
 	if err == nil {
 		t.Fatal("serveForkSession(400) = nil error; want one")
 	}

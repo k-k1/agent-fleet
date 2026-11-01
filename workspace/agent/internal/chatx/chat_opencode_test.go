@@ -104,8 +104,8 @@ func TestOpencodeChatConfigSkippedWithoutGrant(t *testing.T) {
 }
 
 // The project-side (--dir) config must not carry the af MCP server. opencode MERGES configs
-// and the PROJECT config wins on a conflict (measured on 1.18.7, pinned by
-// TestContractOpencodeConfigPrecedence), so writing af here would override the
+// and the PROJECT config wins on a conflict (measured on 1.18.7), so writing af here would
+// override the
 // per-conversation definition that carries --conv and session reports (docs/log/30) would
 // never arrive again. The registry servers are built from the same conversation in both
 // configs, so they cannot disagree and may stay here.
@@ -228,23 +228,16 @@ func fakeOpencode(t *testing.T, pkg, version string) {
 }
 
 // opencode 2 ignores OPENCODE_CONFIG (measured on 2.0.28), so the one-shot read-only policy
-// and the per-conversation af MCP server must also ride OPENCODE_CONFIG_CONTENT there. 1.x
-// keeps exactly the one variable.
-func TestOpencodeConfigEnvByMajor(t *testing.T) {
+// and the per-conversation af MCP server must also ride OPENCODE_CONFIG_CONTENT.
+func TestOpencodeConfigEnvCarriesTheContent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	path := OpencodeOneShotConfig()
 	if path == "" {
 		t.Fatal("no one-shot config written")
 	}
 
-	fakeOpencode(t, "opencode-ai", "1.19.0")
-	env := opencodeConfigEnv(path)
-	if len(env) != 1 || env[0] != "OPENCODE_CONFIG="+path {
-		t.Fatalf("opencode 1 env = %q, want only OPENCODE_CONFIG", env)
-	}
-
 	fakeOpencode(t, "@opencode/cli", "2.0.28")
-	env = opencodeConfigEnv(path)
+	env := opencodeConfigEnv(path)
 	if len(env) != 2 || env[0] != "OPENCODE_CONFIG="+path {
 		t.Fatalf("opencode 2 env = %q, want OPENCODE_CONFIG and OPENCODE_CONFIG_CONTENT", env)
 	}

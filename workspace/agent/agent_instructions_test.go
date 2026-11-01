@@ -27,8 +27,7 @@ const fleetFixture = "# Workspace Guide (operating policy)\n\ndo not delete othe
 func instrEnv(t *testing.T) {
 	t.Helper()
 	isolateAgentConfigDirs(t)
-	// The opencode delivery depends on the installed major; default these tests to 1.x
-	// whatever is installed on the machine running them.
+	// Whatever opencode is installed on the machine running them must not decide these tests.
 	t.Cleanup(opencode.SetBinaryForTest(""))
 	notes := filepath.Join(t.TempDir(), "workspace-notes.md")
 	if err := os.WriteFile(notes, []byte(fleetFixture), 0o644); err != nil {
@@ -136,7 +135,7 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 	for _, tc := range []struct{ name, path string }{
 		{"claude", claude.UserInstructionsPath()},
 		{"codex", codex.AgentsPath()},
-		{"opencode", instrOpencodeFile()},
+		{"opencode", opencode.AgentsPath()},
 		{"copilot", copilot.UserInstructionsPath()},
 		{"agy", agy.AgentsPath()},
 		{"kiro", kiro.UserInstructionsPath()},
@@ -146,12 +145,9 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 			t.Fatalf("%s: user text missing from %s:\n%s", tc.name, tc.path, got)
 		}
 	}
-	// opencode leaves AGENTS.md alone and references the file from its config instructions.
-	if strings.Contains(read(t, opencode.AgentsPath()), "Always report in Japanese.") {
-		t.Fatal("opencode: user text must not be composed into AGENTS.md")
-	}
-	if !opencodeRefers(instrOpencodeFile()) {
-		t.Fatalf("opencode: config does not reference the AF file:\n%s", read(t, opencode.ConfigPath()))
+	// opencode 2 does not apply the config's instructions array, so nothing points there.
+	if fileExists(instrOpencodeFile()) || opencodeRefers(instrOpencodeFile()) {
+		t.Fatal("opencode: the instructions-array delivery must not be written")
 	}
 	// claude's managed policy is a separate layer; AF only ever writes to user memory.
 	if !strings.Contains(read(t, claude.UserInstructionsPath()), "workspace guide wins") {
@@ -316,8 +312,8 @@ func TestUntickingATargetRemovesItsArtifact(t *testing.T) {
 }
 
 // A config that cannot be read is left alone, so reformatting never destroys what the user
-// wrote; that it is not in effect is reported.
-func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
+// wrote. The instructions do not go through it (opencode 2 reads AGENTS.md), so they still apply.
+func TestUnreadableOpencodeConfigIsLeftAloneAndInstructionsApply(t *testing.T) {
 	instrEnv(t)
 	cfg := opencode.ConfigPath()
 	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
@@ -334,13 +330,12 @@ func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
 	if read(t, cfg) != raw {
 		t.Fatalf("af rewrote a config it could not parse:\n%s", read(t, cfg))
 	}
-	if instrErrs["opencode"] != "config_unreadable" {
-		t.Fatalf("failure not reported: %v", instrErrs)
+	if e := instrErrs["opencode"]; e != "" {
+		t.Fatalf("an unreadable config the delivery does not use was reported: %q", e)
 	}
-	st := instrState()
-	for _, tgt := range st.Targets {
-		if tgt.Kind == "opencode" && (tgt.Applied || tgt.Error == "") {
-			t.Fatalf("opencode row must show it is not in effect: %+v", tgt)
+	for _, tgt := range instrState().Targets {
+		if tgt.Kind == "opencode" && (!tgt.Applied || tgt.Error != "") {
+			t.Fatalf("opencode row must show the AGENTS.md block in effect: %+v", tgt)
 		}
 	}
 }
@@ -655,15 +650,5 @@ func TestReconcileDeliversUserInstructionsToOpencode2ThroughAgentsMD(t *testing.
 	}
 	if !found {
 		t.Fatal("no opencode row")
-	}
-
-	// Back on 1.x (a downgrade): the text moves to the array and leaves AGENTS.md.
-	opencode.SetBinaryForTest("")
-	reconcileAgentInstructions()
-	if strings.Contains(read(t, opencode.AgentsPath()), "Always report in Japanese.") {
-		t.Fatal("opencode 1: user text must leave AGENTS.md again")
-	}
-	if !opencodeRefers(instrOpencodeFile()) {
-		t.Fatal("opencode 1: config does not reference the AF file again")
 	}
 }

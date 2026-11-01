@@ -104,7 +104,7 @@ func useFakeMigration(t *testing.T, dbp string, f *fakeMigration) {
 
 const running = `{"status":"running","progress":{"label":"Migrating sessions","numerator":1,"denominator":50}}`
 
-var spec2 = LaunchSpec{Maj: 2, Bin: "opencode"}
+var spec2 = LaunchSpec{Bin: "opencode"}
 
 // The defect: a resume asked an opencode 2 whose import was still running, got a 404 for a
 // conversation that exists and started a new one. EnsureMigrated must not return before the
@@ -196,14 +196,33 @@ func TestEnsureMigratedFollowsTheDatabaseContent(t *testing.T) {
 	}
 }
 
-func TestEnsureMigratedSkipsOpencode1(t *testing.T) {
+// An opencode 1 on PATH is refused before anything starts: no import, and the error names it.
+func TestPrepareStartRefusesOpencode1(t *testing.T) {
 	isolatedHome(t)
-	db := filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode", "opencode.db")
+	useMajor(t, 1)
+	db := dbPath()
 	seedDB(t, db, 2, false)
 	f := &fakeMigration{}
 	useFakeMigration(t, db, f)
-	if err := EnsureMigrated(LaunchSpec{Maj: 1, Bin: "opencode"}); err != nil || f.started.Load() != 0 {
-		t.Fatalf("err %v, started %d: a 1.x opencode does not migrate", err, f.started.Load())
+	err := PrepareStart(LaunchSpec{Bin: "opencode"})
+	if err == nil || !strings.Contains(err.Error(), "1.19.0") {
+		t.Fatalf("err = %v, want a refusal naming 1.19.0", err)
+	}
+	if f.started.Load() != 0 {
+		t.Fatal("the import started for an opencode af refuses")
+	}
+}
+
+// A binary whose major cannot be read (a wrapper without its manifest, no pin) is let through.
+func TestPrepareStartLetsAnUnknownMajorThrough(t *testing.T) {
+	isolatedHome(t)
+	bin := filepath.Join(t.TempDir(), "opencode")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useOpencode(t, bin)
+	if err := PrepareStart(LaunchSpec{Bin: "opencode"}); err != nil {
+		t.Fatalf("err = %v, want nil for an unknown major", err)
 	}
 }
 

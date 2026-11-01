@@ -18,7 +18,6 @@
 package main
 
 import (
-	"context"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
 	"os/exec"
@@ -63,17 +62,6 @@ func opencodeIs2(t *testing.T) bool {
 	return strings.HasPrefix(strings.TrimPrefix(opencodeVer(t), "opencode v"), "2.")
 }
 
-// skipOnOpencode2 skips a test of the opencode 1.x contract when PATH has 2.x: OPENCODE_CONFIG
-// is ignored there (af passes OPENCODE_CONFIG_CONTENT, pinned by the 2.x contract tests in
-// internal/agents/opencode), so a failure would say nothing about drift. It runs again if the
-// image is re-pinned to 1.x.
-func skipOnOpencode2(t *testing.T, why string) {
-	t.Helper()
-	if opencodeIs2(t) {
-		t.Skipf("opencode 1.x contract, not applicable to %s: %s", opencodeVer(t), why)
-	}
-}
-
 func opencodeVer(t *testing.T) string {
 	t.Helper()
 	out, _ := exec.Command("opencode", "--version").Output()
@@ -84,10 +72,9 @@ func opencodeVer(t *testing.T) string {
 // inside home. Overriding HOME alone is NOT enough: opencode resolves its global config
 // through XDG_CONFIG_HOME (paths.go OpencodeConfigDir), and a GitHub Actions runner
 // **exports XDG_CONFIG_HOME=/home/runner/.config**. With only HOME replaced, the runner's
-// real (empty) config root wins, the "global" source of a precedence test silently
-// contributes nothing, and the test reports upstream drift that does not exist — exactly
-// how TestContractOpencodeConfigPrecedence went red on CI while passing on every
-// workstation (verified: setting XDG_CONFIG_HOME elsewhere reproduces it on 1.18.9).
+// real (empty) config root wins, the "global" source of a config test silently contributes
+// nothing, and the test reports upstream drift that does not exist (verified: setting
+// XDG_CONFIG_HOME elsewhere reproduces it on 1.18.9).
 // The data/cache roots get the same treatment so the isolation the tests claim is real.
 func isolatedHomeEnv(home string) []string {
 	return []string{
@@ -155,125 +142,4 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 	}
 	pane, _ := tmuxx.Cmd("capture-pane", "-p", "-t", name).Output()
 	t.Errorf("after Tab paneMode = %q, want \"Plan\" — the agent/mode readout moved in opencode %s.\npane:\n%s", got, ver, pane)
-}
-
-// TestContractOpencodeEnvConfig is the drift alarm for OPENCODE_CONFIG, which the
-// assistant chat's report wiring rests on: the af MCP server must carry `--conv <id>`
-// (docs/log/30), the id is per conversation, and opencode's config is per FILE — so the
-// per-conversation config is handed over as OPENCODE_CONFIG while --dir stays the
-// per-grant project dir (that path IS the session's resume identity).
-//
-// If opencode ever stops honoring the env var, every opencode assistant silently goes
-// back to running with no af tools at all, which is exactly the class of failure this
-// test exists to catch loudly.
-//
-//	go test -tags contract -run TestContractOpencodeEnvConfig ./
-func TestContractOpencodeEnvConfig(t *testing.T) {
-	requireBins(t, "opencode")
-	skipOnOpencode2(t, "OPENCODE_CONFIG (a file) is ignored in 2.x")
-	home, dir := t.TempDir(), t.TempDir()
-	// The project config defines NO server: anything `mcp list` reports can only have
-	// come from the env-pointed file.
-	if err := os.WriteFile(filepath.Join(dir, "opencode.json"),
-		[]byte(`{"$schema":"https://opencode.ai/config.json","permission":{"edit":"deny","bash":"deny"}}`+"\n"),
-		0o600); err != nil {
-		t.Fatalf("write project config: %v", err)
-	}
-	cfg := filepath.Join(home, "conv.json")
-	// /bin/echo is not an MCP server — it exits at once and `mcp list` reports the entry
-	// as failed. That is fine: the contract under test is that the entry is READ.
-	if err := os.WriteFile(cfg,
-		[]byte(`{"$schema":"https://opencode.ai/config.json","mcp":{"afconvprobe":{"type":"local","command":["/bin/echo","probe"],"enabled":true}}}`+"\n"),
-		0o600); err != nil {
-		t.Fatalf("write conv config: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "opencode", "mcp", "list")
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), append(isolatedHomeEnv(home), "OPENCODE_CONFIG="+cfg)...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("opencode mcp list: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "afconvprobe") {
-		t.Fatalf("OPENCODE_CONFIG no longer honored by opencode %s — the per-conversation af MCP config "+
-			"(and with it --conv / セッション報告) is silently dropped.\nmcp list:\n%s", opencodeVer(t), out)
-	}
-}
-
-// TestContractOpencodeConfigPrecedence pins HOW opencode combines its config sources,
-// which is what decides where the af MCP server may live (chat_providers.go).
-//
-// Measured on 1.18.7 with `opencode debug config`:
-//   - every source is MERGED (union of the `mcp` maps) — none replaces another;
-//   - on a name collision the nearest project config WINS, over both OPENCODE_CONFIG
-//     and the global ~/.config/opencode config.
-//
-// The second half is the dangerous one. The chat writes af ONLY into the per-conversation
-// OPENCODE_CONFIG file because that is the only place `--conv <id>` can live; if a future
-// opencode flipped precedence — or if someone "helpfully" added af to the project config —
-// the --conv-less entry would win and every opencode assistant would stop reporting back
-// (docs/log/30), with nothing else looking broken.
-//
-//	go test -tags contract -run TestContractOpencodeConfigPrecedence ./
-func TestContractOpencodeConfigPrecedence(t *testing.T) {
-	requireBins(t, "opencode")
-	skipOnOpencode2(t, "it resolves colliding MCP names through the v1 `mcp` config shape")
-	home, dir := t.TempDir(), t.TempDir()
-	write := func(path, body string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatalf("mkdir %s: %v", path, err)
-		}
-		if err := os.WriteFile(path, []byte(body+"\n"), 0o600); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-	// The same name "dup" in all three sources, plus one name unique to each: the unique
-	// ones prove the merge, "dup" proves the precedence. /bin/echo is not an MCP server —
-	// the entries fail to connect, which is fine, the contract is that they are READ.
-	write(filepath.Join(home, ".config", "opencode", "opencode.json"),
-		`{"$schema":"https://opencode.ai/config.json","mcp":{`+
-			`"globalonly":{"type":"local","command":["/bin/echo","g"],"enabled":true},`+
-			`"dup":{"type":"local","command":["/bin/echo","FROM-GLOBAL"],"enabled":true}}}`)
-	write(filepath.Join(dir, "opencode.json"),
-		`{"$schema":"https://opencode.ai/config.json","permission":{"edit":"deny","bash":"deny"},"mcp":{`+
-			`"projonly":{"type":"local","command":["/bin/echo","p"],"enabled":true},`+
-			`"dup":{"type":"local","command":["/bin/echo","FROM-PROJECT"],"enabled":true}}}`)
-	cfg := filepath.Join(home, "conv.json")
-	write(cfg, `{"$schema":"https://opencode.ai/config.json","mcp":{`+
-		`"envonly":{"type":"local","command":["/bin/echo","e"],"enabled":true},`+
-		`"dup":{"type":"local","command":["/bin/echo","FROM-ENV"],"enabled":true}}}`)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "opencode", "debug", "config")
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), append(isolatedHomeEnv(home), "OPENCODE_CONFIG="+cfg)...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("opencode debug config: %v\n%s", err, out)
-	}
-	got := string(out)
-	// Merge: a source contributing a name found nowhere else must survive.
-	for _, name := range []string{"globalonly", "projonly", "envonly"} {
-		if !strings.Contains(got, name) {
-			t.Fatalf("opencode %s no longer MERGES its config sources — %q is missing, so one source "+
-				"is replacing the others. chat_providers.go assumes the union.\ndebug config:\n%s",
-				opencodeVer(t), name, got)
-		}
-	}
-	// Precedence: the project config must win the collision.
-	if !strings.Contains(got, "FROM-PROJECT") {
-		t.Fatalf("opencode %s no longer resolves a colliding MCP name to the PROJECT config — "+
-			"config precedence moved. Re-check that af still belongs only in the per-conversation "+
-			"OPENCODE_CONFIG file (chat_providers.go opencodeChatConfig).\ndebug config:\n%s",
-			opencodeVer(t), got)
-	}
-	if strings.Contains(got, "FROM-ENV") || strings.Contains(got, "FROM-GLOBAL") {
-		t.Fatalf("opencode %s resolved the colliding MCP name to something other than the project "+
-			"config — precedence moved (see above).\ndebug config:\n%s", opencodeVer(t), got)
-	}
 }

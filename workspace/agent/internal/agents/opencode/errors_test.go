@@ -83,7 +83,8 @@ func TestDecodeMessageErrorIgnoresDeliberateAbort(t *testing.T) {
 // reach MarkTurnEndErr (that is, the operator report and the chat bridge).
 func TestTurnWith200ErrorBodyLandsFailedAndReportsReason(t *testing.T) {
 	m, srv := newMockServe(t)
-	m.turnBody = zenCreditsBody
+	m.turnOutcome = "failed"
+	m.turnErr = `{"type":"provider.auth","message":"Insufficient balance. Manage your billing here: https://opencode.ai/workspace/wrk_x/billing","status":401}`
 	h := newTestHandle(t, srv)
 
 	got := make(chan string, 4)
@@ -110,7 +111,8 @@ func TestTurnWith200ErrorBodyLandsFailedAndReportsReason(t *testing.T) {
 
 func TestRetryableTurnLandsAbortedWithoutRepostingPrompt(t *testing.T) {
 	m, srv := newMockServe(t)
-	m.turnBody = `{"info":{"error":{"name":"APIError","data":{"statusCode":500,"isRetryable":true,"message":"Internal server error"}}},"parts":[]}`
+	m.turnOutcome = "failed"
+	m.turnErr = `{"type":"provider.internal","message":"Internal server error","status":500}`
 	h := newTestHandle(t, srv)
 
 	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "msg_abort"}); err != nil {
@@ -205,7 +207,7 @@ func TestDecodeSeparatesAbortFromProviderFailure(t *testing.T) {
 func TestAbortNobodyAskedForLandsAbortedAndReportsReason(t *testing.T) {
 	m, srv := newMockServe(t)
 	m.turnDelay = 30 * time.Millisecond
-	m.turnBody = abortedBody
+	m.turnOutcome = "interrupted" // ended without this side asking
 	h := newTestHandle(t, srv)
 
 	got := make(chan string, 4)
@@ -238,7 +240,6 @@ func TestAbortWeAskedForStaysCancelled(t *testing.T) {
 	// land cancelled too, so a short delay would let the test pass without the abort ever
 	// arriving — and fail on a slow machine for a reason that is not the one under test.
 	m.turnDelay = 30 * time.Second
-	m.turnBody = abortedBody
 	h := newTestHandle(t, srv)
 	h.name = "slot-" + t.Name() // DropHandle addresses the registry by name
 	registerTestHandle(t, h)

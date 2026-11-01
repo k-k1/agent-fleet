@@ -146,12 +146,3 @@ func quotaWindow(pct int64, windowMins int, resetsAtMs int64, now time.Time) map
 	}
 	return w
 }
-
-// epochMsToRFC3339 renders a wire timestamp the way the other usage endpoints do. Zero means
-// "the provider named no reset", and it must not become 1970 on the screen.
-func epochMsToRFC3339(ms int64) string {
-	if ms <= 0 {
-		return ""
-	}
-	return time.UnixMilli(ms).UTC().Format(time.RFC3339)
-}

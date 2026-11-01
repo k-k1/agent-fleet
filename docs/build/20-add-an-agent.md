@@ -276,7 +276,8 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       move target (`moveTargetKinds` / `moveUnmeasuredTargets`; `moveClassification` in
       `session_move_kinds_test.go`), and a chat provider or its entry in `noChatProvider`
       (`kind_lists_test.go`; with one, `oneShotKinds` and `providerResumeHandles` in `chatx`
-      follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`.
+      follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`, which also holds each
+      kind's message cursor field (`TestEveryMessageCursorFieldIsListed`).
       `TestMoveTargetListsAreUnchanged` pins both move lists as literals, so a kind added to
       either edits it too
 - [ ] a row in `wantRuntime` (`internal/sessionx/managed_runtime_test.go`) for every kind, `nil`
