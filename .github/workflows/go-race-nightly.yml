@@ -3,9 +3,9 @@
 # hour because of its root package and internal/store), so it runs nightly and on demand;
 # ci.yml's go-race job covers the goroutine-heavy packages on every PR.
 #
-# Packages that already fail under -race are excluded below so the run goes red only for a
-# NEW race. Remove an entry when its package is fixed.
-# Known-red packages are tracked in #3143.
+# A package that fails under -race can be excluded below (its path as a grep -E pattern) so
+# the run goes red only for a NEW race; track it in a follow-up issue and remove the entry
+# when it is fixed.
 name: go-race-nightly
 
 on:
@@ -29,10 +29,12 @@ jobs:
       matrix:
         include:
           - module: workspace/agent
-            # Matches no package path; an empty pattern would make grep -Ev drop every package.
+            # Matches no package path; an empty pattern would make grep -Ev drop
+            # every package and fail the step.
             exclude: '^$'
           - module: control-plane
-            # Matches no package path; an empty pattern would make grep -Ev drop every package.
+            # Matches no package path; an empty pattern would make grep -Ev drop
+            # every package and fail the step.
             exclude: '^$'
     name: race (${{ matrix.module }})
     steps:
