@@ -13,7 +13,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
 import { prettyModel } from "../../../lib/modelName.ts";
-import { t as tr } from "../../../lib/i18n/index.ts";
+import { t as tr, useT } from "../../../lib/i18n/index.ts";
 import { splitCommandArgs, splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
@@ -56,6 +56,9 @@ function TranscriptTurnImpl({
   defaultWorkOpen: boolean;
   autoTranslate?: boolean;
 }) {
+  // This component is memoised on its props, so a region format / time zone change (which alters
+  // no prop) would leave every existing turn's time stale. useT also subscribes to that revision.
+  useT();
   const isUser = turn.role === "user";
   const agentName = caps.agentName;
   const who = isUser ? caps.userName || tr("chat.you") : turn.sidechain ? tr("mirror.subagent") : agentName;

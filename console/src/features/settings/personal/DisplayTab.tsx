@@ -49,6 +49,7 @@ export function DisplayTab() {
         </Row>
         <Row label={tr("settings.region_format")}>
           <select
+            aria-label={tr("settings.region_format")}
             value={s.regionFormat}
             onChange={(e) => setSetting("regionFormat", e.target.value)}
           >
@@ -330,7 +331,8 @@ function timeZoneNames(): string[] {
   try {
     const f = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
     const names = f ? f("timeZone") : [];
-    if (names.length > 0) return names;
+    // supportedValuesOf omits "UTC" on common engines, yet it is the zone most often pinned.
+    if (names.length > 0) return names.includes("UTC") ? names : ["UTC", ...names];
   } catch {
     /* fall through */
   }
@@ -344,7 +346,7 @@ function TimeZoneSelect({ value, onChange }: { value: string; onChange: (v: stri
   const names = timeZoneNames();
   const extra = value !== FORMAT_AUTO && !names.includes(value);
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
+    <select aria-label={tr("settings.time_zone")} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value={FORMAT_AUTO}>
         {tr("settings.time_zone_auto")} ({tr("settings.time_zone_current", { zone: browserTimeZone() })})
       </option>

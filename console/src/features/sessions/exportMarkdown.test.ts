@@ -40,11 +40,11 @@ describe("exportSessionMarkdown", () => {
     expect(notify.mock.calls[0][0]).toBe(t("srow.export_failed") + ": nope");
   });
 
-  it("sends no ?tz= when a zone is chosen: the Agent reads the setting from ui-prefs", async () => {
+  it("sends the chosen zone as ?tz= too, for an older Agent and a not-yet-synced setting", async () => {
     raw.mockResolvedValue({ ok: false, status: 400, json: () => Promise.resolve({}) });
     setFormatPrefs("auto", "Asia/Tokyo");
     await exportSessionMarkdown("s1", "names", vi.fn());
-    expect(String(raw.mock.calls[0][0])).toBe("api/sessions/s1/export?tools=names");
+    expect(String(raw.mock.calls[0][0])).toBe("api/sessions/s1/export?tools=names&tz=Asia%2FTokyo");
   });
 
   it("falls back to ?tz= with the browser's zone for an unknown stored zone", async () => {

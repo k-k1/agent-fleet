@@ -5,18 +5,19 @@
 // with a JSON error, which a link navigation would save as the "Markdown" file.
 import { errDetail, raw } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
-import { browserTimeZone, selectedTimeZone } from "../../lib/intl.ts";
+import { effectiveTimeZone } from "../../lib/intl.ts";
 
 type Notify = (message: string, opts?: { kind?: "error" | "warn" | "info" | "success" }) => void;
 
 export async function exportSessionMarkdown(name: string, tools: "none" | "names" | "full", notify: Notify): Promise<void> {
   let res: Response;
   try {
-    // An explicit time zone setting reaches the Agent through ui-prefs, like the display
-    // language, so only "follow the browser" needs ?tz=: the Agent cannot see the browser's zone.
-    const tz = selectedTimeZone() ? "" : browserTimeZone();
+    // Always the resolved zone, chosen or the browser's. An Agent older than the time zone
+    // setting falls back to its container's clock without ?tz=, and a setting just changed may
+    // not have reached the Agent's ui-prefs yet; the Agent still reads the setting when it is absent.
+    const tz = effectiveTimeZone();
     res = await raw(
-      "api/sessions/" + encodeURIComponent(name) + "/export?tools=" + tools + (tz ? "&tz=" + encodeURIComponent(tz) : ""),
+      "api/sessions/" + encodeURIComponent(name) + "/export?tools=" + tools + "&tz=" + encodeURIComponent(tz),
     );
   } catch {
     notify(t("srow.export_failed"));
