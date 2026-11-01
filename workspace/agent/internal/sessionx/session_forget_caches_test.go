@@ -1,11 +1,13 @@
 package sessionx
 
 // The per-name read caches (folded file list, priced spend) are dropped when a session is
-// folded away by delete, archive or recreate, and kept across a halt. Each case goes through
-// the real entry point; a direct forget* call would pass without the wiring.
+// folded away by delete, archive, recreate or the stopped-TTL sweep, and kept across a halt.
+// Archive, recreate, halt and the sweep go through their real handlers; delete is pinned
+// end to end by TestTrashSessionForgetsSessionCaches in package main (trashSession lives there).
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -14,23 +16,8 @@ import (
 
 func seedSessionCaches(t *testing.T, name string) {
 	t.Helper()
-	fileAggMu.Lock()
-	fileAggs[name] = &fileAggEntry{used: time.Now()}
-	fileAggMu.Unlock()
-	spendCache.Lock()
-	spendCache.m[name] = spendEntry{at: time.Now(), spend: session.Spend{USD: 1, Priced: true}}
-	spendCache.Unlock()
+	SeedSessionCachesForTest(name)
 	t.Cleanup(func() { forgetSessionCaches(name) })
-}
-
-func sessionCachesHeld(name string) (files, spend bool) {
-	fileAggMu.Lock()
-	_, files = fileAggs[name]
-	fileAggMu.Unlock()
-	spendCache.Lock()
-	_, spend = spendCache.m[name]
-	spendCache.Unlock()
-	return files, spend
 }
 
 func assertCaches(t *testing.T, name string, want bool) {
@@ -46,7 +33,7 @@ func TestDeleteForgetsSessionCaches(t *testing.T) {
 	m := session.Meta{Name: name, Dir: home, Kind: session.KindClaude}
 	session.WriteMeta(m)
 	seedSessionCaches(t, name)
-	ForgetRuntime(m) // the trash's cleanup step (cleanup_ops.go trashSession)
+	ForgetRuntime(m) // the step trashSession runs; the full path is tested in package main
 	assertCaches(t, name, false)
 }
 
@@ -69,7 +56,34 @@ func TestRecreateForgetsOldSessionCaches(t *testing.T) {
 	orig := launchTmuxFn
 	launchTmuxFn = func(session.Meta, bool) error { return http.ErrAbortHandler } // the launch is not under test
 	t.Cleanup(func() { launchTmuxFn = orig })
-	callHandler(HandleRecreateSession, http.MethodPost, name, "")
+	// The launch failure makes recreate answer 500, after the old identity was folded away.
+	if w := callHandler(HandleRecreateSession, http.MethodPost, name, ""); w.Code != http.StatusInternalServerError {
+		t.Fatalf("recreate = %d %s, want the launch failure (500)", w.Code, w.Body)
+	}
+	assertCaches(t, name, false)
+}
+
+// The stopped-TTL auto-archive in the session list is a second archive path that does not go
+// through ArchiveSession.
+func TestStoppedTTLAutoArchiveForgetsSessionCaches(t *testing.T) {
+	home := writebackEnv(t)
+	t.Setenv("AF_SESSION_STOPPED_TTL", "1h")
+	const name = "fgtttl1"
+	session.WriteMeta(session.Meta{Name: name, Dir: home, Kind: session.KindClaude,
+		StoppedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)})
+	seedSessionCaches(t, name)
+	prev := deps.FinalizeSessionUsage
+	deps.FinalizeSessionUsage = func(session.Meta) {} // the usage ledger is not under test
+	t.Cleanup(func() { deps.FinalizeSessionUsage = prev })
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	rec := httptest.NewRecorder()
+	HandleListSessions(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body)
+	}
+	if m, _ := session.ReadMeta(name); !m.Archived {
+		t.Fatal("the list did not auto-archive the stopped session; the test setup is wrong")
+	}
 	assertCaches(t, name, false)
 }
 

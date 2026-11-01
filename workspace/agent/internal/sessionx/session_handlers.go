@@ -224,6 +224,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 				return true
 			})
 			if wrote {
+				forgetSessionCaches(name) // this path does not go through ArchiveSession
 				finalizeSessionUsage(cur) // fold into the usage ledger at the same moment as before (docs/log/46 §3-b)
 				continue
 			}
