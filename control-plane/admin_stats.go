@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -80,6 +81,16 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	state := sync.OnceValue(func() string { return rt.State(ctx) })
 	readStart := time.Now()
 	out := workspaceStats(ctx, a.mgr, rt, state)
+	// Running per the runtime, yet the Agent is silent (agent_liveness.go): the detail says so
+	// next to the Force-stop it already offers.
+	// A non-running read still has to reach the check: it is what resets the clock.
+	checkState := "stopped"
+	if out["running"] == true {
+		checkState = "running"
+	}
+	if a.mgr.checkAgentSilent(ctx, ws, rt, checkState) {
+		out["agent_silent"] = true
+	}
 	// The member detail is opened from a roster snapshot and polls only this, so the
 	// automatic-stop reason rides here: read from the snapshot, it outlived the restart
 	// that cleared it. A running workspace has none, which spares that poll the State call.
@@ -161,7 +172,12 @@ func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
 	rt := a.mgr.runtimeFor(ws, noSecretKeys)
 	if rt.State(ctx) == "running" {
 		readStart := time.Now()
-		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
+		// Bounded: the detail polls stats and sessions together, and a wedged Agent would
+		// otherwise hold this call for the shared client's two minutes (#2518).
+		sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
+		list, err := a.mgr.agentSessions(sctx, rt)
+		cancel()
+		if err == nil {
 			_ = a.mgr.mirrorSessions(ctx, ws.ID, readStart, list)
 			writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
 			return

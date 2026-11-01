@@ -320,6 +320,22 @@ detail until the next start, and the Control Plane log says so too (`start-deadl
 `AF_ECS_EC2_WAIT_SEC`). It runs on the usage sampler, so `AF_USAGE_SAMPLE_INTERVAL=0` turns
 it off too.
 
+### Silent Agent detection
+
+A running workspace whose Agent has stopped answering is flagged, not stopped. The Control Plane
+records every answer it gets from an Agent (Console polls, the relay, the usage sweep, health
+probes). When the runtime says `running` and nothing has answered for `AF_AGENT_SILENT_AFTER`
+(default `3m`; `0` turns it off; a workspace that has never answered since the Control Plane first
+saw it running gets twice that), a direct `/healthz` probe (at most one per 30 s per workspace)
+decides. Only a failed probe flags it: the member sees **Not responding**, the member detail shows
+it, the tenant's admins get one notification per outage, and the log (`agent silent: …`) and audit
+log (`workspace.agent_silent` / `workspace.agent_recovered`) record it. The state is kept per
+Control Plane replica; a replica restart starts a fresh grace period, so a deploy cannot raise a
+storm. The sweep that reaches workspaces nobody has open is the usage sampler, so
+`AF_USAGE_SAMPLE_INTERVAL=0` leaves only the checks done while someone polls. The workspace
+container has no ECS health check of its own, so ECS reports the task running whatever the Agent is
+doing; this check is what notices.
+
 ### Automatic idle stop (scale-to-zero)
 
 An idle claude session is halted, and a Workspace with nothing running is stopped, after the

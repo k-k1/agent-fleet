@@ -208,6 +208,14 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.stale.restart": "Restart now",
   "wsbar.stale.later": "Later",
 
+  // The workspace runs but its Agent stopped answering (CP dead-man check, #2518)
+  "wsbar.agentsilent.badge": "Not responding",
+  "wsbar.agentsilent.title": "The workspace is running but not responding — stop and start it",
+  "wsbar.agentsilent.body":
+    "The workspace is up, but its Agent has not answered for several minutes (often a sign it ran out of memory). Nothing will work until it is restarted: stop the workspace, then start it again. Running sessions become Stopped (resumable later); repos and files are left untouched.",
+  "wsbar.agentsilent.stop": "Stop workspace",
+  "wsbar.agentsilent.later": "Later",
+
   // ecs-ec2: the slot under this workspace is reserved for replacement (#1473)
   "wsbar.slotmove.badge": "Moves to a new slot",
   "wsbar.slotmove.title": "Your next start moves this workspace to a new machine",

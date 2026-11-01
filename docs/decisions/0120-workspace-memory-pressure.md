@@ -530,3 +530,15 @@ is not read at all. These are follow-ups and are not built here.
 
 Follow-ups: #2453 (the series, the wire rate and the build/incident measurements, tracked here as the
 open work of this decision) and #3110 (real runtimes, Fargate). #2517 is closed.
+
+## Note (2026-11-02)
+
+The in-container response above runs inside the cgroup that thrashes, so it can stall with it. The Control
+Plane now has an independent dead-man check (#2518, `control-plane/agent_liveness.go`): a workspace whose
+runtime says `running` and whose Agent has not answered for `AF_AGENT_SILENT_AFTER` (default 3 minutes) and
+then fails a direct `/healthz` probe is flagged `agentSilent` on the member's payload (a "Not responding"
+badge advising stop and start), `agent_silent` on the administrator's member stats, a tenant-admin
+notification (once per outage, through the `workspace_notice` mark) and an audit line. The state is derived
+per replica, so a restart starts a fresh grace period. It never stops anything by itself. The workspace
+container definitions carry no ECS health check, so ECS has nothing to turn unhealthy for an unresponsive
+Agent. Not yet seen on a real runtime. Follow-ups: #3212.

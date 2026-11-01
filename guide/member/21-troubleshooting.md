@@ -28,6 +28,7 @@ The workspace itself: its power button, its start, its disk and the tools instal
 | You see | Entry |
 |---|---|
 | **Restart needed** badge by the power button | [details](#a-restart-needed-badge-sits-next-to-the-power-button) |
+| **Not responding** badge by the power button | [details](#a-not-responding-badge-sits-next-to-the-power-button) |
 | A start turned into "stopped" by itself | [details](#the-workspace-went-from-starting-to-stopped-on-its-own) |
 | The workspace has stopped without me noticing | [details](#the-workspace-has-stopped-without-me-noticing) |
 | "Your home disk is nearly full" | [details](#your-home-disk-is-nearly-full) |
@@ -39,6 +40,16 @@ The backend was updated while your workspace was running. Nothing is broken and 
 happen now: the badge offers **Restart now** (a stop→start, which stops running sessions;
 they stay resumable) and goes away once the workspace is back on the current version
 ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
+
+### A **Not responding** badge sits next to the power button
+
+The workspace is up, but the Agent inside it has not answered the Control Plane for several
+minutes (the Control Plane also confirms with a direct probe before it says so). The usual
+cause is that it ran out of memory and is thrashing. Nothing will work until it is restarted:
+open the badge and press **Stop workspace**, then start it again. Running sessions become
+Stopped and stay resumable; repos and files are untouched. If it answers again by itself,
+the badge disappears on its own. Your tenant's admins are notified as well, and can
+Force-stop the workspace from the member detail.
 
 ### The workspace went from "starting" to "stopped" on its own
 

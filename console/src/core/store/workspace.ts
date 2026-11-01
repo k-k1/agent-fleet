@@ -61,6 +61,8 @@ interface WorkspaceStore {
    * replacement, so the next start moves it to a new slot and takes longer (#1473). A state
    * the CP clears once the move has happened. */
   slotReplace: boolean;
+  /** The runtime says running but the Agent has stopped answering (CP dead-man check, #2518). */
+  agentSilent: boolean;
   /** Error code explaining why the state could not be read ("" = read fine). "unknown" says
    * no more than "the fetch failed", which leaves a not-yet-invited super_admin with an
    * unexplained "unknown" and a start button that does nothing (anyone not invited lands on
@@ -90,6 +92,7 @@ interface WorkspaceStore {
     bootPhase?: string;
     stale?: boolean;
     slotReplace?: boolean;
+    agentSilent?: boolean;
     homeWipeFailed?: string;
     browserUnavailable?: string;
     docsRoot?: string;
@@ -117,6 +120,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   bootPhase: "",
   stale: false,
   slotReplace: false,
+  agentSilent: false,
   reason: "",
   homeWipeFailed: "",
   browserUnavailable: "",
@@ -139,7 +143,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         // would wedge busy instead (the 4s poll skips while busy), so during that, and on a
         // terminal error, fall to unknown as before.
         if (isTransientErr(w) && !wsBusy(get().state)) return;
-        set({ state: "unknown", bootPhase: "", stale: false, slotReplace: false, reason: String(w.error.code || "") });
+        set({ state: "unknown", bootPhase: "", stale: false, slotReplace: false, agentSilent: false, reason: String(w.error.code || "") });
         return;
       }
       noteHomeWipeFailed(get().homeWipeFailed, w.homeWipeFailed);
@@ -148,6 +152,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         bootPhase: w.bootPhase || "",
         stale: !!w.stale,
         slotReplace: !!w.slotReplace,
+        agentSilent: !!w.agentSilent,
         reason: "",
         homeWipeFailed: w.homeWipeFailed || "",
         browserUnavailable: typeof w.browserUnavailable === "string" ? w.browserUnavailable : "",
@@ -175,6 +180,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       bootPhase: w.bootPhase || "",
       stale: !!w.stale,
       slotReplace: !!w.slotReplace,
+      agentSilent: !!w.agentSilent,
       homeWipeFailed: w.homeWipeFailed || "",
     });
   },

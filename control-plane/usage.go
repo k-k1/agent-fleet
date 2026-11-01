@@ -136,6 +136,9 @@ func (u *usageSampler) sample(ctx context.Context) {
 				overdue = append(overdue, overdueStart{rt, ws})
 				continue
 			}
+			// The dead-man check rides the sweep: it is the traffic that reaches a workspace
+			// nobody has open.
+			u.mgr.checkAgentSilent(ctx, ws, rt, state)
 			if state != "running" {
 				continue
 			}
@@ -143,6 +146,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
 			}
 			c := u.counters(ctx, ws, rt, secs, backgroundHoldMax(parseLimits(t.Limits), u.backgroundDef))
+			u.syncAgentSilentNotice(ctx, ws, rt)
 			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour, c); err != nil {
 				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
 			}
@@ -516,4 +520,22 @@ func (u *usageSampler) recordBootFailed(ctx context.Context, ws store.Workspace,
 		return
 	}
 	adminnotice.BootInstall(ctx, u.mgr.store, ws)
+}
+
+// syncAgentSilentNotice reconciles the admin notice after this sweep's own Agent calls, so a
+// healthy workspace that no one watches still retires a mark left by a replica that died
+// mid-outage. It raises on this replica's confirmed view and retires only on a positive answer,
+// never on mere absence of a verdict, or replicas with different views would retire and
+// re-raise each other's notice every sweep.
+func (u *usageSampler) syncAgentSilentNotice(ctx context.Context, ws store.Workspace, rt runtime.Runtime) {
+	key := endpointKey(rt.Endpoint())
+	after := agentSilentAfter()
+	if key == "" || after <= 0 {
+		return
+	}
+	if agentLive.answeredWithin(key, time.Now(), after) {
+		adminnotice.AgentSilent(ctx, u.mgr.store, ws, false)
+	} else if agentLive.stillSilent(key, agentLive.genOf(key)) {
+		adminnotice.AgentSilent(ctx, u.mgr.store, ws, true)
+	}
 }

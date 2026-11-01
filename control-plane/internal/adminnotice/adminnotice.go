@@ -104,6 +104,29 @@ func BootInstall(ctx context.Context, st Store, ws store.Workspace) {
 	}
 }
 
+// AgentSilent raises the notice while a running workspace's Agent is silent (#2518) and
+// retires it when the Agent answers again. There is no stored source row: the caller's own
+// view (the CP's dead-man check) is the reading, and the workspace_notice mark is what keeps
+// replicas from notifying twice. The usage sweep calls it with the current view every time,
+// so a mark left by a replica that died mid-outage is cleared by the next sweep.
+func AgentSilent(ctx context.Context, st Store, ws store.Workspace, silent bool) {
+	err := st.SyncWorkspaceNotice(ctx, ws, store.WorkspaceNoticeAgentSilent,
+		func(_ store.NoticeReading, _ bool) store.NoticeDecision {
+			audit := func(action string) *store.AuditLog {
+				return &store.AuditLog{ID: store.NewID(), TenantID: ws.TenantID, ActorKind: "system",
+					ActorID: "agent-liveness", Action: action, Target: ws.ID, At: store.NowTS()}
+			}
+			return store.NoticeDecision{Want: silent,
+				Notes: func(members []store.MemberInfo) []store.Notification {
+					return notes(ws, "member-agent-silent", members, map[string]any{})
+				},
+				Raised: audit("workspace.agent_silent"), Retired: audit("workspace.agent_recovered")}
+		})
+	if err != nil {
+		log.Printf("admin notice: agent_silent (%s): %v", ws.ContainerName, err)
+	}
+}
+
 // notes builds one notification per active tenant_admin of the workspace's own tenant, from that
 // tenant's roster alone. A removed member (not on the active roster) is offboarding, not a
 // problem to act on, so it yields none.

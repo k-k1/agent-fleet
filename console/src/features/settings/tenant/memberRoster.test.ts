@@ -232,6 +232,11 @@ describe("memberStopAvailable", () => {
     expect(memberStopAvailable({})).toBe(false);
     expect(memberStopAvailable(null)).toBe(false);
   });
+
+  it("stays offered for a running workspace whose Agent is silent, even if the running read failed", () => {
+    expect(memberStopAvailable({ running: false, agent_silent: true })).toBe(true);
+    expect(memberStopAvailable({ running: true, agent_silent: true })).toBe(true);
+  });
 });
 
 describe("diskFigureNote", () => {

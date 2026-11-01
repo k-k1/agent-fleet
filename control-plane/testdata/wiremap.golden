@@ -9,7 +9,7 @@
 # count: 149
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
-admin_stats.go adminAPI.memberStats x1 {auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
+admin_stats.go adminAPI.memberStats x1 {agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} cond{agent_silent,auto_stop,boot_failed,cpu_pct,disk_observed_at,disk_pending,disk_quota,disk_used,exit_code,home_own,mem_max,mem_pressure,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 admin_stats.go adminAPI.memberStats x1 {running}
 audit.go adminAPI.audit x1 {audit}
 cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_groups,shared_micro,shared_roles,shared_services,to} cond{shared_groups,shared_micro,shared_roles,shared_services}
@@ -145,7 +145,7 @@ update.go updateApply x2 {mode,ok,to}
 usage.go adminAPI.usage x1 {days,from,to,totals}
 workitems.go workItemsAPI.deleteQuery x1 {ok}
 workitems.go workItemsAPI.deleteSession x1 {ok}
-workspace_handlers.go workspaceAPI.get x1 {bootPhase,browserUnavailable,docsRoot,homeWipeFailed,name,slotReplace,stale,state} cond{bootPhase,browserUnavailable,docsRoot,homeWipeFailed,slotReplace,stale}
+workspace_handlers.go workspaceAPI.get x1 {agentSilent,bootPhase,browserUnavailable,docsRoot,homeWipeFailed,name,slotReplace,stale,state} cond{agentSilent,bootPhase,browserUnavailable,docsRoot,homeWipeFailed,slotReplace,stale}
 workspace_handlers.go workspaceAPI.memberHomeWipe x2 {name,state}
 workspace_handlers.go workspaceAPI.sessionsList x1 {sessions}
 workspace_handlers.go workspaceAPI.startResolved x1 {name,state}

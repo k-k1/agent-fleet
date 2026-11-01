@@ -10,6 +10,7 @@ import (
 const (
 	WorkspaceNoticeHomeFull    = "home_full"
 	WorkspaceNoticeBootInstall = "boot_install"
+	WorkspaceNoticeAgentSilent = "agent_silent"
 )
 
 // NoticeReading is what a notice decision reads: the stored home reading and the stored install
@@ -26,6 +27,10 @@ type NoticeReading struct {
 type NoticeDecision struct {
 	Want  bool
 	Notes func(members []MemberInfo) []Notification
+	// Raised and Retired are audit rows written in the same transaction as the mark's actual
+	// creation or deletion, so each outage is recorded exactly once however many replicas
+	// evaluate it. A raise that finds no recipient leaves no mark and so no row.
+	Raised, Retired *AuditLog
 }
 
 // WorkspaceNoticeStore keeps the "already notified" mark of each admin notice, one row per
@@ -131,6 +136,11 @@ func (s *SQL) SyncWorkspaceNotice(ctx context.Context, ws Workspace, kind string
 		if len(notes) == 0 {
 			return nil
 		}
+		if d.Raised != nil {
+			if err := insertAuditTx(ctx, tx, *d.Raised); err != nil {
+				return err
+			}
+		}
 		for _, nt := range notes {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
 				VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, nt.EventID, nt.MembershipID,
@@ -139,12 +149,30 @@ func (s *SQL) SyncWorkspaceNotice(ctx context.Context, ws Workspace, kind string
 			}
 		}
 	case !d.Want && prev:
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM workspace_notice WHERE workspace_id=? AND kind=?`, ws.ID, kind); err != nil {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM workspace_notice WHERE workspace_id=? AND kind=?`, ws.ID, kind)
+		if err != nil {
 			return err
+		}
+		// Kinds without a locked source row can read prev=true in two transactions at once; only
+		// the one whose DELETE removed the mark records the retirement.
+		if c, err := res.RowsAffected(); err != nil {
+			return err
+		} else if d.Retired != nil && c == 1 {
+			if err := insertAuditTx(ctx, tx, *d.Retired); err != nil {
+				return err
+			}
 		}
 	default:
 		return nil
 	}
 	return tx.Commit()
+}
+
+func insertAuditTx(ctx context.Context, tx *sqlTx, a AuditLog) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.TenantID, a.ActorKind, a.ActorID, a.Action, a.Target, a.Detail, a.At, a.HTTPStatus)
+	return err
 }

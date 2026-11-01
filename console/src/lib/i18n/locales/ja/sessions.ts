@@ -216,6 +216,14 @@ export const sessions = {
   "wsbar.stale.restart": "今すぐ再起動",
   "wsbar.stale.later": "あとで",
 
+  // The workspace runs but its Agent stopped answering (CP dead-man check, #2518)
+  "wsbar.agentsilent.badge": "応答なし",
+  "wsbar.agentsilent.title": "ワークスペースは起動中ですが応答していません。停止してから起動し直してください",
+  "wsbar.agentsilent.body":
+    "ワークスペースは起動していますが、Agent が数分間応答していません（メモリ不足が原因のことが多いです）。再起動するまで何も動きません。ワークスペースを停止し、もう一度起動してください。実行中のセッションは「停止」になりますが、あとで再開できます。リポジトリとファイルはそのままです。",
+  "wsbar.agentsilent.stop": "ワークスペースを停止",
+  "wsbar.agentsilent.later": "あとで",
+
   // ecs-ec2: the slot under this workspace is reserved for replacement (#1473)
   "wsbar.slotmove.badge": "新しいスロットへ移動",
   "wsbar.slotmove.title": "次回の起動で新しいマシンに移ります",
