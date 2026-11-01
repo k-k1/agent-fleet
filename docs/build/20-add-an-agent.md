@@ -273,11 +273,12 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`; `MCP_KINDS` is derived from
       it). `kindCatalog.test.ts` holds it, and `SESSION_KINDS`, equal to the catalog snapshot
 - [ ] the measured-per-kind lists, each held by a test that names the kind it is missing:
-      `usageMeasuredForKind` (`usage_fold.go`; `usageMeasuredByKind` in `kind_lists_test.go`),
+      usage accuracy (`agents.UsageMeasurer` on the Agent: exact, partial or none, every kind says it;
+      `TestEveryKindDeclaresItsUsageAccuracy`),
       move target (`agents.MoveTarget` on the Agent, measured or unmeasured, in a `move_target.go`
       of your package; a kind that cannot be one goes in `moveRefusals` in
-      `session_move_kinds_test.go`, which fails for a kind that is neither), and a chat provider or its entry in `noChatProvider`
-      (`kind_lists_test.go`; with one, `oneShotKinds` and `providerResumeHandles` in `chatx`
+      `session_move_kinds_test.go`, which fails for a kind that is neither), and a chat provider or `agents.NoHeadlessChat` on the Agent
+      (`TestEveryRegisteredKindHasAChatProviderOrIsExcluded`; with a provider, `oneShotKinds` and `providerResumeHandles` in `chatx`
       follow their own tests). `providerResumeKinds` is derived from `providerResumeHandles`, which also holds each
       kind's message cursor field (`TestEveryMessageCursorFieldIsListed`).
       `TestShippedMoveClassificationHolds` pins the shipped classification as literals; a new kind
@@ -345,6 +346,10 @@ and Markdown (was 17 / 22). It comes from a run without `--verify`, so it is not
 Provisional count at 2026-11-01 (after `moveTargetKinds` / `moveUnmeasuredTargets` moved onto
 `agents.MoveTarget`, #2933): 15 non-test, non-Markdown files, 20 including tests and Markdown
 (was 16 / 21). Again without `--verify`.
+
+Provisional count at 2026-11-01 (after `usageMeasuredByKind` / `noChatProvider` moved onto
+`agents.UsageMeasurer` / `agents.NoHeadlessChat`, #2933): 15 non-test, non-Markdown files (unchanged),
+19 including tests and Markdown (was 20); no Go test file is edited any more. Again without `--verify`.
 
 Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
 guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until

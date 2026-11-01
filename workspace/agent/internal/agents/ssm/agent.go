@@ -6,6 +6,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Agent is the ssm kind's agents.Agent.
@@ -39,3 +40,9 @@ func (Agent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 }
 
 func (Agent) ClearResume(string) {}
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: runs no agent CLI, so nothing reports tokens.
+func (Agent) UsageMeasured() string { return usagex.MeasuredNone }
+
+// NoHeadlessChat is agents.NoHeadlessChat: chatx has no provider for this kind.
+func (Agent) NoHeadlessChat() {}

@@ -3,6 +3,7 @@ package copilot
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the copilot kind, each delegating to this package's own function.
@@ -47,6 +48,12 @@ func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any {
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredPartial: the transcript only carries output tokens.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredPartial }
+
+// NoHeadlessChat is agents.NoHeadlessChat: chatx has no provider for this kind.
+func (agentImpl) NoHeadlessChat() {}
 
 // TUIInterrupt is agents.TUIInterrupter: Esc is not a stop here, Ctrl+C is, and only on a
 // running turn (docs/log/133 §1).

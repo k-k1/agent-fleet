@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the opencode kind, each delegating to this package's own
@@ -67,6 +68,9 @@ func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any { retur
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState}
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredExact.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }
 
 // DoubleEscGap sits inside opencode 2.x's window: the first Esc only arms "esc again to
 // interrupt" and the arm lapses after a few seconds (measured: two Esc 0.5 s apart interrupt,

@@ -8,6 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the claude kind, each delegating to this package's own
@@ -98,6 +99,9 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 		},
 	}
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredExact.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }
 
 // TUIInterrupt is agents.TUIInterrupter: Esc interrupts a running turn (docs/log/133 §1).
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {

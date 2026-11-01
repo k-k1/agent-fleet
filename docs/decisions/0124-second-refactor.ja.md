@@ -406,3 +406,22 @@ capability を転送することを確かめる。`kindLiteralCeiling` は 105 �
 実機では未確認。
 
 Follow-ups: #2933.
+
+## 追記 (2026-11-01): `usageMeasuredByKind` と `noChatProvider` を廃止 (#2933、第 4 スライス)
+
+どちらのテスト表もレジストリを写しているだけだった。使用量の精度は種別自身の宣言
+`agents.UsageMeasurer`（`UsageMeasured()` が `usagex.MeasuredExact` / `Partial` / `None` を返す）になり、
+登録済みの全種別が（none も含めて）実装する。何も言わない種別は黙って none と読まれるのではなく
+`TestEveryKindDeclaresItsUsageAccuracy` が落ちる。lcpp と muse の長い実測コメントは答えと一緒に移した。
+`usageMeasuredForKind` は registry の完全一致キーで引くので、別名や未知の種別はこれまでどおり none。
+`TestUsageMeasuredMatchesOldSwitch` が、当時あった種別について旧 `switch` のリテラルコピーとの一致を固定する。
+「ヘッドレスのチャット backend が無い」は、kiro・copilot・shell・ssm のマーカー `agents.NoHeadlessChat`
+（backend は chatx のコードで、Agent のパッケージからは import できない）。既存の「ちょうど一方」の
+ガードは表の代わりにマーカーを読む。`TestLabels` と `wantRuntime` の nil 行は、上の追記ですでに導出済み。
+`scripts/stub-kind-count.sh`（更新した `zz.patch`。スタブは両方を自パッケージで宣言し、`kind_lists_test.go` は
+もう編集されない）: テスト・Markdown 込みで 19 ファイル（それまで 20）、テスト・Markdown 以外は 15 ファイル（変化なし）。
+編集される Go テストは 1 → 0。`--verify` の全実行は未実施。`usageMeasuredForKind` の `switch` は kind リテラルが 4 行だったので、`kindLiteralCeiling` は 100 → 96。
+手書きのまま残るのは `session.Kind*`、`agentreg`、
+`kinds.registered`、Console の一覧。
+
+Follow-ups: #2933.
