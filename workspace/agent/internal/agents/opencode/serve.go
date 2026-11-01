@@ -89,9 +89,10 @@ var supervisor = &Supervisor{}
 // dependents is the total number of things that need the shared daemon.
 //
 // Managed handles count, and so does every live Terminal pane attached to this daemon
-// (sharedTerminals): the idle stop must not pull the server out from under its TUI. The OAuth device flow is the one more exception: it is the only
-// path that starts the daemon while still unconnected, so unless it counts as demand for its
-// duration, the daemon gets folded up from under a login in progress.
+// (sharedTerminals): the idle stop must not pull the server out from under its TUI. The OAuth
+// device flow is the one more exception: it is the only path that starts the daemon while still
+// unconnected, so unless it counts as demand for its duration, the daemon gets folded up from
+// under a login in progress.
 //
 // Counting REGISTERED rather than live handles is for the same reason as on the codex
 // side: when the daemon dies runtimeLost clears alive, so counting live would make the
@@ -736,8 +737,8 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 // --- SSE event monitor ------------------------------------------------------
 
 // monitorEvents subscribes to the serve's SSE stream (GET /api/event, every project) and
-// dispatches to the thread handles. Unlike codex, no attach is needed. A disconnect while the generation is still current
-// means the daemon is gone or wedged: verify via health and reconcile.
+// dispatches to the thread handles. Unlike codex, no attach is needed. A disconnect while the
+// generation is still current means the daemon is gone or wedged: verify via health and reconcile.
 func (s *Supervisor) monitorEvents(addr string, gen int) {
 	for {
 		if s.Generation() != gen {

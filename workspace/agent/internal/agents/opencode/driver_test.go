@@ -243,9 +243,8 @@ func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
 	t.Setenv("HOME", t.TempDir()) // isolate where status.Persist writes
 	// Give every test its own sid. A turn runs in the pump goroutine and does not stop when
 	// the test returns (a test may return with a turn still running), so with a fixed sid the
-	// previous test's turn ends
-	// inside a later one and feeds a transition for the same sid into the process-wide state
-	// notification seam (agents.SetStateNotifier). Measured: under load
+	// previous test's turn ends inside a later one and feeds a transition for the same sid into
+	// the process-wide state notification seam (agents.SetStateNotifier). Measured: under load
 	// TestManagedTurnNotifiesCompletion fails with `transition = [sid-test idle idle]` or
 	// `[sid-test  idle]`, roughly once in 8 runs.
 	h := &threadHandle{

@@ -13,7 +13,8 @@ package opencode
 // So a retry status is the only place a permanent condition that rides on a retryable status shows
 // up (an exhausted quota on a 429, a region or privacy refusal a gateway wraps in a 500). The same
 // status is the session.retry.scheduled event on opencode 2 (opencode 1 sent session.status, which
-// the driver still accepts); 2.x gives up on its own after ~11 attempts, but a permanent message there still burns that minute and a half.
+// the driver still accepts); 2.x gives up on its own after ~11 attempts, but a permanent message
+// there still burns that minute and a half.
 // Aborting a session that is retrying leaves no error on the assistant message (measured: error
 // null, parts empty), so the failure has to be carried by the driver (threadHandle.retryStop).
 

@@ -55,7 +55,8 @@ func TestRetryIsShownWhileItLastsAndClearsOnOutput(t *testing.T) {
 	if got == nil || got.Attempt != 5 || got.Message != "stub upstream exploded" || got.Failed || got.NextMs != 1791949793161 {
 		t.Fatalf("Retry = %+v, want attempt 5 with the upstream message", got)
 	}
-	// The next attempt starting is not the end of the retry.
+	// The next attempt starting is not the end of the retry: no event that only announces an
+	// attempt may clear it (the driver has no case for this one, and must not grow one).
 	handleServeEvent([]byte(`{"type":"session.step.started","data":{"sessionID":"ses_test"}}`))
 	if enriched(h) == nil {
 		t.Fatal("the next attempt starting cleared the retry")
