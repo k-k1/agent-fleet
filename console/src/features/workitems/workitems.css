@@ -407,6 +407,12 @@
   padding: 3px 8px;
   /* A <button> centres its text by default, which a wrapped title makes obvious. */
   text-align: left;
+  /* On a narrow screen the slug, branch and tags drop below the title rather than hold the
+     button at their combined width: flex's default min-width would overflow the row and push
+     Remove past the modal's edge. */
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 .wi-dsession .codicon {
   color: var(--ok);
@@ -415,14 +421,22 @@
 }
 /* Only the title wraps; the slug, branch and tag stay whole beside it. */
 .wi-dname {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  /* Room for the dot (10px + the 6px gap), so a wrapping title stays on the dot's line. */
+  max-width: calc(100% - 16px);
 }
 .wi-dslug,
 .wi-dbranch,
 .wi-dtag {
   flex: none;
   white-space: nowrap;
+}
+/* A branch wider than the row is cut, not allowed to widen it. */
+.wi-dbranch {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .wi-dsession:hover {
   border-color: var(--accent);
