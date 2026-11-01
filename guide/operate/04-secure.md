@@ -106,6 +106,14 @@ in the Console.
    kept as a raw event attributed to its workspace, read through `GET /api/admin/egress/events`
    (super_admin; the Admin panel shows only the per-host counts). Raw events are deleted after
    `AF_EGRESS_EVENT_RETENTION_DAYS` (default 30, `0` keeps them forever); the per-host counts stay.
+   To keep them past that, set `AF_EGRESS_ARCHIVE_URL` (`s3://bucket/prefix`, `gs://bucket/prefix` or
+   `file:///dir`; empty, the default, is off): the Control Plane writes each past UTC day there before it
+   purges it. On GKE, `egress_archive = true` in `deploy/gcp/gke` creates a private bucket (or uses
+   `egress_archive_existing_bucket`), gives the Control Plane's Google service account
+   `roles/storage.objectCreator` and `roles/storage.objectViewer` on that bucket only, and prints the
+   `cp.env` line (`terraform output -raw egress_archive_env`; replace the existing line rather than appending, and delete it when you turn the archive off). Without the viewer role the Control Plane
+   cannot verify a day it wrote earlier and the purge stops there. Nothing in the bucket expires unless
+   `egress_archive_retention_days` is set. On AWS it is the `EgressArchive` parameter of the data stack.
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. Switching straight to enforce also
    kills the traffic you need (agent CLI updates, MCP endpoints), and clearing the block candidates under

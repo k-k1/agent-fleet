@@ -47,3 +47,14 @@ output "kustomize_deployment" {
       certificateMapName: ${google_certificate_manager_certificate_map.main.name}
   EOT
 }
+
+# A line for the overlay's cp.env: empty (the CP's archive stays off) unless egress_archive.
+output "egress_archive_env" {
+  description = "AF_EGRESS_ARCHIVE_URL=gs://... for cp.env, or empty when egress_archive is false."
+  value       = local.archive_on ? "AF_EGRESS_ARCHIVE_URL=${local.archive_url}" : ""
+}
+
+output "egress_archive_bucket" {
+  description = "The archive bucket's name, or empty when egress_archive is false."
+  value       = local.archive_bucket
+}

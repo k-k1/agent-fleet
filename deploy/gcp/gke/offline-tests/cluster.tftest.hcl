@@ -63,6 +63,16 @@ override_resource {
   }
 }
 
+# The CP and the nodes get different accounts, so a grant aimed at the wrong one is seen.
+override_resource {
+  target = google_service_account.cp
+  values = {
+    email  = "af-example-cp@example-project.iam.gserviceaccount.com"
+    member = "serviceAccount:af-example-cp@example-project.iam.gserviceaccount.com"
+    name   = "projects/example-project/serviceAccounts/af-example-cp@example-project.iam.gserviceaccount.com"
+  }
+}
+
 # GKE takes min_master_version as the version to create at, and a prefix the channel no
 # longer offers fails the create. The cluster is created at the channel's default.
 run "creates_at_the_channel_default" {
@@ -256,5 +266,178 @@ run "destroy_policies_are_set" {
   assert {
     condition     = google_service_networking_connection.private_service_access.deletion_policy == "REMOVE_PEERING"
     error_message = "ABANDON would leave the peering and block the VPC delete"
+  }
+}
+
+# The egress archive is opt-in: by default no bucket, no grant, no setting for the CP.
+run "egress_archive_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(google_storage_bucket.egress_archive) == 0 && length(google_storage_bucket_iam_member.cp_archive_creator) == 0 && length(google_storage_bucket_iam_member.cp_archive_viewer) == 0
+    error_message = "the archive creates nothing unless egress_archive is set"
+  }
+
+  assert {
+    condition     = output.egress_archive_env == "" && output.egress_archive_bucket == ""
+    error_message = "the CP gets no AF_EGRESS_ARCHIVE_URL unless egress_archive is set"
+  }
+}
+
+run "egress_archive_creates_a_private_bucket" {
+  command = plan
+
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "fleet"
+  }
+
+  assert {
+    condition     = google_storage_bucket.egress_archive[0].uniform_bucket_level_access == true && google_storage_bucket.egress_archive[0].public_access_prevention == "enforced"
+    error_message = "the archive bucket is never public"
+  }
+
+  assert {
+    condition     = google_storage_bucket.egress_archive[0].force_destroy == false && length(google_storage_bucket.egress_archive[0].lifecycle_rule) == 0
+    error_message = "nothing deletes archived days unless egress_archive_retention_days asks"
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.cp_archive_creator[0].role == "roles/storage.objectCreator" && google_storage_bucket_iam_member.cp_archive_viewer[0].role == "roles/storage.objectViewer"
+    error_message = "the CP gets objectCreator and objectViewer on the bucket"
+  }
+
+  assert {
+    condition = alltrue([
+      for g in [google_storage_bucket_iam_member.cp_archive_creator[0], google_storage_bucket_iam_member.cp_archive_viewer[0]] :
+      g.member == "serviceAccount:af-example-cp@example-project.iam.gserviceaccount.com" && g.bucket == "af-example-egress-archive-example-project"
+    ])
+    error_message = "both grants name the CP's account and the created bucket"
+  }
+
+  assert {
+    condition     = output.egress_archive_env == "AF_EGRESS_ARCHIVE_URL=gs://af-example-egress-archive-example-project/fleet"
+    error_message = "cp.env line names the created bucket and the prefix"
+  }
+}
+
+run "egress_archive_existing_bucket_is_not_managed" {
+  command = plan
+
+  variables {
+    egress_archive                 = true
+    egress_archive_existing_bucket = "my-archive"
+  }
+
+  assert {
+    condition     = length(google_storage_bucket.egress_archive) == 0 && google_storage_bucket_iam_member.cp_archive_viewer[0].bucket == "my-archive"
+    error_message = "an existing bucket gets the grants only"
+  }
+
+  assert {
+    condition = alltrue([
+      for g in [google_storage_bucket_iam_member.cp_archive_creator[0], google_storage_bucket_iam_member.cp_archive_viewer[0]] :
+      g.member == "serviceAccount:af-example-cp@example-project.iam.gserviceaccount.com" && g.bucket == "my-archive"
+    ])
+    error_message = "both grants name the CP's account and the existing bucket"
+  }
+
+  assert {
+    condition     = output.egress_archive_env == "AF_EGRESS_ARCHIVE_URL=gs://my-archive"
+    error_message = "cp.env line names the existing bucket"
+  }
+}
+
+run "egress_archive_retention_is_opt_in" {
+  command = plan
+
+  variables {
+    egress_archive                = true
+    egress_archive_retention_days = 400
+  }
+
+  assert {
+    condition     = length([for r in google_storage_bucket.egress_archive[0].lifecycle_rule : r if one(r.condition).age == 400 && one(r.action).type == "Delete"]) == 1
+    error_message = "retention days become an age rule"
+  }
+}
+
+run "egress_archive_accepts_a_nested_prefix" {
+  command = plan
+
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "team/prod.v2_a-b"
+  }
+
+  assert {
+    condition     = output.egress_archive_env == "AF_EGRESS_ARCHIVE_URL=gs://af-example-egress-archive-example-project/team/prod.v2_a-b"
+    error_message = "a multi-level prefix is kept as written"
+  }
+}
+
+# The CP parses the URL and normalises the path, so these would be stored elsewhere.
+run "egress_archive_rejects_unsafe_prefixes" {
+  command = plan
+
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "team#production"
+  }
+
+  expect_failures = [var.egress_archive_prefix]
+}
+
+run "egress_archive_rejects_a_query_prefix" {
+  command = plan
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "team?production"
+  }
+  expect_failures = [var.egress_archive_prefix]
+}
+
+run "egress_archive_rejects_a_percent_prefix" {
+  command = plan
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "team%2Fproduction"
+  }
+  expect_failures = [var.egress_archive_prefix]
+}
+
+run "egress_archive_rejects_dot_segments" {
+  command = plan
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "tenant/../other"
+  }
+  expect_failures = [var.egress_archive_prefix]
+}
+
+run "egress_archive_rejects_an_empty_segment" {
+  command = plan
+  variables {
+    egress_archive        = true
+    egress_archive_prefix = "a//b"
+  }
+  expect_failures = [var.egress_archive_prefix]
+}
+
+run "egress_archive_rejects_a_goog_bucket_name" {
+  command = plan
+  variables {
+    egress_archive = true
+    name_prefix    = "goog-fleet"
+  }
+  expect_failures = [google_storage_bucket.egress_archive]
+}
+
+run "egress_archive_goog_name_is_fine_for_an_existing_bucket" {
+  command = plan
+  variables {
+    egress_archive                 = true
+    egress_archive_existing_bucket = "my-archive"
+    name_prefix                    = "goog-fleet"
   }
 }

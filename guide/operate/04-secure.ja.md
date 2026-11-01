@@ -86,6 +86,14 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
    紐づけた生イベントも残り、`GET /api/admin/egress/events`（super_admin）で読めます（Admin の画面に出るのは
    ホストごとの件数だけです）。生イベントは `AF_EGRESS_EVENT_RETENTION_DAYS`（既定 30 日、`0` で無期限）を過ぎると
    削除され、ホストごとの件数は残ります。
+   それより長く残すには `AF_EGRESS_ARCHIVE_URL`（`s3://bucket/prefix`・`gs://bucket/prefix`・`file:///dir`。
+   空が既定で無効）を設定します。Control Plane は削除する前に、過ぎた UTC の日ごとにここへ保存します。
+   GKE では `deploy/gcp/gke` の `egress_archive = true` で非公開のバケットを作り（既存のバケットなら
+   `egress_archive_existing_bucket`）、Control Plane の Google サービスアカウントに**そのバケットだけ**への
+   `roles/storage.objectCreator` と `roles/storage.objectViewer` を付け、`cp.env` に足す行を
+   `terraform output -raw egress_archive_env` で出します（追記ではなく既存の行を置き換え、アーカイブを止めるときは行を削除します）。viewer が無いと、先に書いた日を Control Plane が
+   検証できず、purge がその日で止まります。`egress_archive_retention_days` を指定しない限り、バケットの中身は
+   期限切れになりません。AWS ではデータスタックの `EgressArchive` パラメータです。
 3. **enforce へ切替**：許可リストが十分に固まってから、モードを enforce に切り替えます。以降は
    許可リスト外の通信を**遮断**します。いきなり enforce にするとエージェントの更新取得や MCP の接続先など必要な通信まで落ちるので、log-only のうちに
    「観測された宛先」の遮断候補を解消しておくと切替えが穏やかに済みます。Admin の UI も「先に log-only で実態を

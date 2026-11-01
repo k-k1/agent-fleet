@@ -211,3 +211,48 @@ variable "workspace_image" {
   type        = string
   default     = "ghcr.io/k-k1/agent-fleet/workspace:VERSION"
 }
+
+# --- egress archive ------------------------------------------------------------
+
+variable "egress_archive" {
+  description = "Archive the Control Plane's raw egress events to Cloud Storage before it purges them (AF_EGRESS_ARCHIVE_URL, docs/build/03-control-plane.md 3.8). false (default): off, no bucket, no grant, no setting. true: the module creates a bucket, or uses egress_archive_existing_bucket."
+  type        = bool
+  default     = false
+}
+
+variable "egress_archive_existing_bucket" {
+  description = "Name of an existing bucket to archive into instead of creating one. The module then manages only the CP's grants on it, never the bucket. Only read with egress_archive = true."
+  type        = string
+  default     = ""
+}
+
+variable "egress_archive_prefix" {
+  description = "Object prefix inside the bucket (the CP already writes under egress/): segments of letters, digits, \".\", \"_\" and \"-\" joined by single slashes, none of them \".\" or \"..\", no slash at either end. It becomes the path of a gs:// URL, which the CP parses and normalises, so URL-reserved characters, percent signs and dot segments are refused rather than stored somewhere else. Empty: the bucket root."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.egress_archive_prefix == "" || (
+      can(regex("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$", var.egress_archive_prefix)) &&
+      alltrue([for s in split("/", var.egress_archive_prefix) : s != "." && s != ".."])
+    )
+    error_message = "egress_archive_prefix is segments of [A-Za-z0-9._-] joined by single slashes, none of them \".\" or \"..\", with no slash at either end."
+  }
+}
+
+variable "egress_archive_location" {
+  description = "Location of the bucket the module creates. Empty: var.region. Only read when the module creates the bucket."
+  type        = string
+  default     = ""
+}
+
+variable "egress_archive_retention_days" {
+  description = "Days before Cloud Storage deletes an archived object, for a bucket the module creates. null (default): never. The archive is the only copy once the CP purges the events, so nothing expires unless this is set."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.egress_archive_retention_days == null ? true : var.egress_archive_retention_days >= 1
+    error_message = "egress_archive_retention_days is null or at least 1."
+  }
+}

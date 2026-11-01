@@ -31,3 +31,11 @@ workspace_image = "europe-west1-docker.pkg.dev/example-project/agent-fleet/works
 # sql_availability_type  = "ZONAL"
 # sql_tier               = "db-custom-1-3840"
 # managed_prometheus     = false
+
+# --- Egress archive (README, "Egress archive (optional)") ------------------------------
+# Off by default. true creates a private bucket and gives the CP's service account object
+# create + view on it; then set cp.env's AF_EGRESS_ARCHIVE_URL from `terraform output -raw egress_archive_env` (replace the line; README).
+#
+# egress_archive                 = true
+# egress_archive_existing_bucket = "my-existing-bucket"  # instead of creating one
+# egress_archive_retention_days  = 365                   # unset: never deleted

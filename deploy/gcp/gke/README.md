@@ -25,9 +25,10 @@ the manifests, and day-2 operations — is the runbook,
 | `sql.tf` | Cloud SQL for Postgres, the database, the CP's IAM database user |
 | `lb.tf` | The global address, Certificate Manager, the DNS records |
 | `iam.tf` | Service accounts and grants, each to one principal on one resource |
+| `archive.tf` | The optional egress archive bucket and the CP's two grants on it (`egress_archive`, off by default) |
 | `pause.sh` | Pause and resume without destroying: node pools to 0, Cloud SQL stopped ([runbook](../../kubernetes/README.md#pausing)) |
-| `outputs.tf` | Includes `kustomize_deployment`, the `deployment.yaml` for the overlay |
-| `offline-tests/` | `terraform test` against mocked providers: the version floor and the DNS cache setting of the cluster |
+| `outputs.tf` | Includes `kustomize_deployment`, the `deployment.yaml` for the overlay, and `egress_archive_env`, a `cp.env` line |
+| `offline-tests/` | `terraform test` against mocked providers: the version floor and the DNS cache setting of the cluster, the optional egress archive |
 
 The tests need Terraform 1.11 or later (`mock_provider`, and `state_key` in a run block); the
 module itself runs on 1.6, which is why they are not in `tests/`, the directory every
@@ -114,6 +115,55 @@ and Cloud SQL's storage. Only deleting them stops those. `pause.sh` in this dire
 and `--up` undoes it ([runbook, "Pausing"](../../kubernetes/README.md#pausing)). Its trap — the
 workspace pool has no taint, so a system pool at 0 lets the autoscaler start a workspace node
 for the cluster's own pods — is why it resizes that pool to 0 itself.
+
+## Egress archive (optional)
+
+The Control Plane can write each past UTC day of raw egress events to Cloud Storage before it
+purges them (`AF_EGRESS_ARCHIVE_URL`, [`docs/build/03-control-plane.md`](../../../docs/build/03-control-plane.md)
+§3.8; the operate guide's "Operating egress control"). It is off by default: with
+`egress_archive = false` the plan has no bucket, no grant and no new setting for the CP.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `egress_archive` | `false` | `true` turns it on. |
+| `egress_archive_existing_bucket` | `""` | Name of a bucket you already have. The module then manages only the CP's grants on it. Empty: the module creates `<name_prefix>-egress-archive-<project_id>`. |
+| `egress_archive_prefix` | `""` | Object prefix inside the bucket (the CP already writes under `egress/`). Segments of `A-Za-z0-9._-` joined by single slashes (`team/prod`); no `.`/`..` segment, no `#?%`, no slash at either end. |
+| `egress_archive_location` | `""` | Location of a created bucket; empty is `region`. |
+| `egress_archive_retention_days` | `null` | Delete archived objects after this many days (created bucket only). `null` never deletes: the archive is the only copy once the events are purged. |
+
+A created bucket has uniform bucket-level access and public access prevention enforced, and
+`force_destroy = false` (Destroy stops at a bucket that still holds archived days). The CP's
+existing Google service account (the Workload Identity one of `iam.tf`; no second identity) gets
+`roles/storage.objectCreator` and `roles/storage.objectViewer` **on that bucket only**. The
+viewer role is not optional: the next run reads back a day it already wrote to verify it, and
+without it that read is a 403 and the purge stops at that day. A bucket you name is not
+modified apart from those two members; keep its public access prevention on yourself.
+
+The CP's setting goes through `cp.env`, like the other deployment-specific ones. Re-runnable
+form: once the output is read, drop the old key and add the current line only when there is one
+(an empty output means the archive is off, and a key left behind would keep the CP archiving to a
+bucket it no longer has grants on):
+
+```bash
+cd overlays/<yours>
+if line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env); then
+  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
+  [ -z "$line" ] || printf '%s\n' "$line" >> cp.env
+else
+  echo "terraform output failed: cp.env left as it was" >&2; false
+fi
+```
+
+cp.env is touched only after `terraform output` succeeded, so a failed read (backend error, wrong
+`-chdir`, output not created yet) is never taken for "archive off": that would delete the key and
+make the next apply purge events unarchived. The block exits non-zero on a failed read: do not re-apply then.
+
+Then re-apply the overlay. `kustomize` refuses a `cp.env` that repeats the key, so do not append
+twice.
+
+**Not yet verified against a real bucket** ([#2733](https://github.com/k-k1/agent-fleet/issues/2733)):
+the first archive, a second run that finds and verifies the objects, and the 403 when the
+viewer role is missing. The offline tests check the plan only.
 
 ## Small profile
 
