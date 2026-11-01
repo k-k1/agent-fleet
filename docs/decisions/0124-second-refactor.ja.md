@@ -420,7 +420,8 @@ Follow-ups: #2933.
 ガードは表の代わりにマーカーを読む。`TestLabels` と `wantRuntime` の nil 行は、上の追記ですでに導出済み。
 `scripts/stub-kind-count.sh`（更新した `zz.patch`。スタブは両方を自パッケージで宣言し、`kind_lists_test.go` は
 もう編集されない）: テスト・Markdown 込みで 19 ファイル（それまで 20）、テスト・Markdown 以外は 15 ファイル（変化なし）。
-編集される Go テストは 1 → 0。`--verify` の全実行は未実施。手書きのまま残るのは `session.Kind*`、`agentreg`、
+編集される Go テストは 1 → 0。`--verify` の全実行は未実施。`usageMeasuredForKind` の `switch` は kind リテラルが 4 行だったので、`kindLiteralCeiling` は 100 → 96。
+手書きのまま残るのは `session.Kind*`、`agentreg`、
 `kinds.registered`、Console の一覧。
 
 Follow-ups: #2933.

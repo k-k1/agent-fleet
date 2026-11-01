@@ -537,6 +537,7 @@ marker instead of the table. `TestLabels` and the `wantRuntime` nil rows had alr
 (see the note above). `scripts/stub-kind-count.sh` on the refreshed `zz.patch` (the stub declares both
 in its own package; `kind_lists_test.go` is no longer edited): 19 files with tests and Markdown (was
 20), 15 non-test, non-Markdown files (unchanged); Go tests edited 1 → 0. Not a full `--verify` run.
+`usageMeasuredForKind`'s switch was 4 kind-literal lines, so `kindLiteralCeiling` goes 100 → 96.
 Still hand-kept: `session.Kind*`, `agentreg`, `kinds.registered` and the Console lists.
 
 Follow-ups: #2933.
