@@ -36,7 +36,7 @@ DOCKERFILE="$ROOT/workspace/Dockerfile"
 # name|ARG name|release source|package / endpoint
 TARGETS=(
   "claude|CLAUDE_CODE_VERSION|npm|@anthropic-ai/claude-code"
-  "opencode|OPENCODE_VERSION|npm|opencode-ai"
+  "opencode|OPENCODE_VERSION|npm|@opencode/cli"
   "codex|CODEX_VERSION|npm|@openai/codex"
   "copilot|COPILOT_VERSION|npm|@github/copilot"
   "agy|AGY_VERSION|agy|https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json"
@@ -57,13 +57,10 @@ TARGETS=(
 
 CURL_RETRY=(--retry 3 --retry-delay 1 --retry-all-errors)
 
-# opencode ships as two npm packages, one per major: `opencode-ai` (1.x) and `@opencode/cli`
-# (2.x, which also installs an `opencode2` bin). The row follows the package of the PIN's
-# major: since the cut-over (#2101) the pin is 2.x and the row reports the newest 2.x; a rollback
-# re-pin to 1.x follows `opencode-ai` the same way. A row never offers the other major as an
-# update; moving across the major is a manual cut-over, not drift.
+# A new opencode major changes the server API, the plugin API and the TUI flags at once, so the
+# opencode row reports one as drift but marks it for a manual cut-over (cli-pin-bump.sh never
+# follows it).
 major_of() { local m="${1%%.*}"; case "$m" in ''|*[!0-9]*) echo 0 ;; *) echo "$m" ;; esac; }
-opencode_pkg() { if [ "$(major_of "$1")" -ge 2 ]; then echo "@opencode/cli"; else echo "opencode-ai"; fi; }
 
 # Take the whole match set, then the first line. `sed … | head -1` would leave sed to
 # die of SIGPIPE, and `pipefail` turns that into a 141 the caller reads as a crash.
@@ -112,7 +109,6 @@ for t in "${TARGETS[@]}"; do
   # 一発勝負にしない: 実測で kiro の CDN が直前の別ホストへの接続直後に
   # `curl: (35) Send failure: Connection reset by peer` を返すことがあり、
   # 単発 curl だと「取得失敗」= exit 2 で赤くなる（リトライで必ず通る）。
-  [ "$name" != opencode ] || locator="$(opencode_pkg "$pin")"
   case "$source" in
     npm)
       latest="$(npm view "$locator" version 2>/dev/null)" ;;
@@ -153,8 +149,8 @@ for t in "${TARGETS[@]}"; do
     printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "$latest" "ok"
     echo "| $name | \`$pin\` | \`$latest\` | ✅ in sync |" >> "$SUMMARY"
   elif [ "$name" = opencode ] && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
-    # The package of the pin's major now publishes another major (the registry moved its
-    # `latest`). It is drift, but cli-pin-bump.sh must not follow it: say so in the row.
+    # The registry's `latest` moved to another major. It is drift, but cli-pin-bump.sh must not
+    # follow it: say so in the row.
     printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "$latest" "MAJOR"
     echo "| $name | \`$pin\` | \`$latest\` | 🔶 other major (manual cut-over) |" >> "$SUMMARY"
     drift=1
@@ -164,18 +160,6 @@ for t in "${TARGETS[@]}"; do
     drift=1
   fi
 done
-
-# While the pin is on opencode 1.x (a rollback), say what the 2.x line is at. Informational only:
-# it is not a row (it neither counts toward "no source could be read" nor sets drift), and a
-# registry that does not answer is silently skipped. latest_opencode2= lets the watcher show it.
-if { [ -z "$want" ] || [ "$want" = opencode ]; } && oc_pin="$(arg_pin OPENCODE_VERSION)" &&
-   [ "$(major_of "$oc_pin")" -lt 2 ]; then
-  if oc2="$(npm view @opencode/cli version 2>/dev/null)" && [ -n "$oc2" ]; then
-    printf '%-10s %-14s %-14s %s\n' "opencode2" "-" "$oc2" "new major, not tracked as drift"
-    echo "| opencode (2.x line) | \`$oc_pin\` | \`$oc2\` | ℹ new major; moving to it is a manual cut-over |" >> "$SUMMARY"
-    [ -z "${GITHUB_OUTPUT:-}" ] || printf 'latest_opencode2=%s\n' "$oc2" >> "$GITHUB_OUTPUT"
-  fi
-fi
 
 failed_csv="$(IFS=,; printf '%s' "${failed[*]-}")"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then

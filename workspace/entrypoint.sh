@@ -444,57 +444,43 @@ cursor_runs() { timeout 30 "$1" --disable-auto-update --version >/dev/null 2>&1;
 # not present: the boot-install reinstalls it whatever the repin setting says. Plain start only;
 # agy needs agy_effective_version's env mask.
 bin_broken() { [ -e "$1" ] && ! timeout 30 "$1" --version >/dev/null 2>&1; }
-# opencode's npm package follows the major of its pin: opencode-ai (1.x) or @opencode/cli (2.x).
-# Both claim the `opencode` bin, so they never coexist in one prefix (see the pair loop below).
-oc_pkg() { case "${1%%.*}" in ''|*[!0-9]*|0|1) echo opencode-ai ;; *) echo @opencode/cli ;; esac; }
-OC_PKG="$(oc_pkg "$(vj_pin opencode)")"
-OC_OTHER=@opencode/cli; [ "$OC_PKG" = opencode-ai ] || OC_OTHER=opencode-ai
-# oc_install_swap <prefix> <npm specs...> — `npm install -g` into <prefix>, with the other opencode
-# package (OC_OTHER) out of the way. Both packages claim the `opencode` bin, so npm exits EEXIST
-# while the other one is linked (a home that self-updated on the old pin; measured opencode-ai
-# 1.19.0 -> @opencode/cli 2.0.29), and the stale shadow then keeps winning on PATH. The other
-# package is moved aside rather than uninstalled: when the install fails (a registry error, another
-# CLI in the same command) it is moved back, so a lean home never ends up with no opencode at all.
-oc_swap_restore() { # oc_swap_restore <prefix>: put back whatever an interrupted or failed swap left aside
-  # Driven by what is in $bak, not by which package is "other" now: the image may have been
-  # re-pinned to the other major since the copy was moved aside. Packages and bins are restored
-  # independently (a stop between the two moves leaves only the bin), and $bak is removed only
-  # once every move succeeded.
-  local pfx="$1" bak="$1/.af-oc-swap" p b ok=1
-  [ -d "$bak" ] || return 0
-  for p in opencode-ai @opencode/cli; do
-    if [ -d "$bak/pkg/$p" ]; then
-      rm -rf "$pfx/lib/node_modules/$p"
-      mkdir -p "$pfx/lib/node_modules/$(dirname "$p")"
-      mv "$bak/pkg/$p" "$pfx/lib/node_modules/$p" || ok=0
+# opencode is the npm package @opencode/cli; only opencode 2 is supported (ADR 0127). A home can
+# still hold the opencode 1 package, opencode-ai, in ~/.local (it self-updated on a 1.x pin): it
+# owns the `opencode` bin, so npm refuses to link @opencode/cli over it (EEXIST; measured
+# opencode-ai 1.19.0 -> @opencode/cli 2.0.29), and it wins on PATH over the image's opencode,
+# which the Agent then refuses to start. oc_drop_v1 removes it for good, every start. It is not
+# kept as a fallback: an opencode 1 cannot run a session here any more.
+#
+# An older image moved one package aside into <prefix>/.af-oc-swap while it swapped them, and a
+# start that stopped half-way left it there. An @opencode/cli found there is put back when the
+# prefix has none (it may be that home's only opencode); anything else there is opencode 1.
+#
+# Called under `||`, so `set -e` is off inside: every step that matters checks itself, and the
+# backup is deleted only once the copy in it is back. A failure costs a warning, never the start.
+oc_drop_v1() { # oc_drop_v1 <prefix>
+  local pfx="$1" bak="$1/.af-oc-swap" b l
+  if [ -d "$bak" ]; then
+    if [ -d "$bak/pkg/@opencode/cli" ] && [ ! -d "$pfx/lib/node_modules/@opencode/cli" ]; then
+      mkdir -p "$pfx/lib/node_modules/@opencode" "$pfx/bin" || return 1
+      mv "$bak/pkg/@opencode/cli" "$pfx/lib/node_modules/@opencode/cli" || return 1
+      for b in opencode opencode2; do
+        l="$bak/bin/$b"
+        if [ -L "$l" ] && [ ! -e "$pfx/bin/$b" ] && [ ! -L "$pfx/bin/$b" ]; then
+          case "$(readlink "$l")" in */@opencode/cli/*) mv "$l" "$pfx/bin/$b" || return 1 ;; esac
+        fi
+      done
     fi
-  done
-  for b in opencode opencode2; do
-    if [ -L "$bak/bin/$b" ]; then
-      rm -f "$pfx/bin/$b"
-      mv "$bak/bin/$b" "$pfx/bin/$b" || ok=0
-    fi
-  done
-  [ "$ok" = 1 ] && rm -rf "$bak"
-  return 0
-}
-oc_install_swap() {
-  local pfx="$1" bak="$1/.af-oc-swap" b l; shift
-  # A start that stopped between moving the copy aside and finishing leaves it in $bak, and it is
-  # the only copy: put it back before anything else, never delete it.
-  oc_swap_restore "$pfx"
-  if [ -d "$pfx/lib/node_modules/$OC_OTHER" ]; then
-    mkdir -p "$bak/pkg/$(dirname "$OC_OTHER")" "$bak/bin"
-    mv "$pfx/lib/node_modules/$OC_OTHER" "$bak/pkg/$OC_OTHER"
-    for b in opencode opencode2; do
-      l="$pfx/bin/$b"
-      if [ -L "$l" ]; then case "$(readlink "$l")" in *"/$OC_OTHER/"*) mv "$l" "$bak/bin/$b" ;; esac; fi
-    done
+    rm -rf "$bak" || return 1
   fi
-  if npm install -g --prefix "$pfx" "$@" >/dev/null 2>>"${BI_ERR:-/dev/null}"; then rm -rf "$bak"; return 0; fi
-  oc_swap_restore "$pfx"
-  return 1
+  [ -d "$pfx/lib/node_modules/opencode-ai" ] || return 0
+  echo "[entrypoint] removing opencode 1 (opencode-ai) from $pfx: only opencode 2 is supported"
+  for b in opencode opencode2; do
+    l="$pfx/bin/$b"
+    if [ -L "$l" ]; then case "$(readlink "$l")" in */opencode-ai/*) rm -f "$l" || return 1 ;; esac; fi
+  done
+  rm -rf "$pfx/lib/node_modules/opencode-ai"
 }
+oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 1 from ~/.local (retrying next start)"
 # agy_effective_version — the version of the agy that is actually installed now.
 #
 # The marker (.agy.version) is the version AF last installed, not the one present now. agy
@@ -571,17 +557,12 @@ if [ "$LEAN_CLIS" = 1 ]; then
   }
   NPM_BOOT=""; NPM_BOOT_CLIS=""
   npm_want() { NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; NPM_BOOT_CLIS="$NPM_BOOT_CLIS $cli"; }
-  for pair in "claude=@anthropic-ai/claude-code" "opencode=$OC_PKG" \
+  for pair in "claude=@anthropic-ai/claude-code" "opencode=@opencode/cli" \
               "codex=@openai/codex" "copilot=@github/copilot"; do
     cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
     [ -n "$ver" ] || continue
     if cli_present "$cli"; then bi_note "$cli" skipped; fi
     if ! cli_present "$cli"; then
-      npm_want
-    elif [ "$cli" = opencode ] && [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/opencode" ] \
-         && [ -z "$(npm_cur "$pkg")" ] && [ -n "$(npm_cur "$OC_OTHER")" ]; then
-      # The copy in ~/.local is the other major's package (the pin crossed 1 <-> 2). It owns
-      # the `opencode` bin, so npm would refuse to link the new one: oc_install_swap moves it aside.
       npm_want
     elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
       # Move a drifted copy back to the pin. Installs npm does not manage (no version) are left alone.
@@ -597,7 +578,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
     if bi_room $(( $(echo $NPM_BOOT | wc -w) * 300 )) $NPM_BOOT_CLIS; then
       : > "$BI_ERR" 2>/dev/null || true
       # shellcheck disable=SC2086
-      if oc_install_swap "$HOME/.local" $NPM_BOOT; then
+      if npm install -g --prefix "$HOME/.local" $NPM_BOOT >/dev/null 2>>"${BI_ERR:-/dev/null}"; then
         echo "[entrypoint] boot-install ok"
         for c in $NPM_BOOT_CLIS; do bi_note "$c" ok; done
       else
@@ -870,18 +851,17 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   # Always target ~/.local (a baked /usr/local pin is immutable; only the PATH-first
   # shadow is updated and compared).
   NPM_PREFIX_DIR="$HOME/.local"
-  NPM_PREFIX_ARG="--prefix $HOME/.local"
   # Skip when unchanged: if every package's installed version (in the effective PATH
   # prefix) equals the registry latest, skip the reinstall entirely (tarballs are fetched
   # only on a new release). When it cannot be decided, update.
-  NPM_NEED=$(NPM_PREFIX_DIR="$NPM_PREFIX_DIR" OC_PKG="$OC_PKG" node -e '
+  NPM_NEED=$(NPM_PREFIX_DIR="$NPM_PREFIX_DIR" node -e '
     const { execSync } = require("child_process");
     const pfx = process.env.NPM_PREFIX_DIR ? " --prefix " + process.env.NPM_PREFIX_DIR : "";
     const run = (c) => execSync(c, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
     try {
       const ls = JSON.parse(run("npm ls -g --depth=0 --json" + pfx));
       let need = 0;
-      for (const p of ["@anthropic-ai/claude-code", process.env.OC_PKG, "@openai/codex", "@github/copilot"]) {
+      for (const p of ["@anthropic-ai/claude-code", "@opencode/cli", "@openai/codex", "@github/copilot"]) {
         const cur = ((ls.dependencies || {})[p] || {}).version || "";
         const latest = run("npm view " + p + " version");
         if (!cur || !latest || cur !== latest) { need = 1; break; }
@@ -891,13 +871,13 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   ' 2>/dev/null || echo 1)
   if [ "$NPM_NEED" = "0" ]; then
     echo "[entrypoint] agent CLIs already latest; skip"
-  elif oc_install_swap "$NPM_PREFIX_DIR" @anthropic-ai/claude-code@latest "$OC_PKG@latest" @openai/codex@latest @github/copilot@latest; then
+  elif npm install -g --prefix "$NPM_PREFIX_DIR" @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
     echo "[entrypoint] agent CLIs updated${NPM_PREFIX_DIR:+ (~/.local)}: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
   else
     if [ -x /usr/local/bin/opencode ]; then
       echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
     else
-      echo "[entrypoint] WARN: agent CLI update failed (kept the installed versions; a swapped opencode package was put back)"
+      echo "[entrypoint] WARN: agent CLI update failed (kept the installed versions)"
     fi
   fi
   # agy (Antigravity) follows the same opt-in to latest. It ships via Google's install.sh
@@ -999,7 +979,7 @@ else
   # so PATH falls back to it at once (never in lean, where ~/.local is the pin itself).
   if [ -x /usr/local/bin/claude ]; then
     npm uninstall -g --prefix "$HOME/.local" \
-      @anthropic-ai/claude-code opencode-ai @opencode/cli @openai/codex @github/copilot >/dev/null 2>&1 || true
+      @anthropic-ai/claude-code @opencode/cli @openai/codex @github/copilot >/dev/null 2>&1 || true
   fi
   if [ -x /usr/local/bin/rtk ]; then rm -f "$HOME/.local/bin/rtk"; fi
   if [ -x /usr/local/bin/agy ]; then rm -f "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"; fi
@@ -1101,10 +1081,7 @@ fi
 # Best-effort: skips if the file isn't plain JSON (e.g. the user added comments).
 OC_CFG="$HOME/.config/opencode/opencode.jsonc"
 mkdir -p "$HOME/.config/opencode"
-# opencode 2 (@opencode/cli) prints "opencode v2.0.28", opencode-ai 1.x "1.19.0": the leading
-# integer is the major. Anything unreadable counts as 1, the pinned default.
-OC_MAJOR="$(opencode --version 2>/dev/null | head -1 | sed -nE 's/^[^0-9]*([0-9]+)\..*/\1/p')"
-python3 - "$OC_CFG" "${OC_MAJOR:-1}" <<'PY' && echo "[entrypoint] set opencode permission=allow" || echo "[entrypoint] WARN: skipped opencode permission config"
+python3 - "$OC_CFG" <<'PY' && echo "[entrypoint] set opencode permission=allow" || echo "[entrypoint] WARN: skipped opencode permission config"
 import json, os, sys
 p = sys.argv[1]
 cfg = {}
@@ -1123,10 +1100,8 @@ if not isinstance(perm, dict):
 for k in ("edit", "bash", "webfetch", "doom_loop", "external_directory"):
     perm[k] = "allow"
 cfg["permission"] = perm
-# v2 turns its auto-updater off through config (`update`); v1 keeps the
-# OPENCODE_DISABLE_AUTOUPDATE env from the Dockerfile and does not know the key.
-if sys.argv[2].isdigit() and int(sys.argv[2]) >= 2:
-    cfg["update"] = "disable"
+# The auto-updater's config switch, next to the Dockerfile's OPENCODE_DISABLE_AUTOUPDATE env.
+cfg["update"] = "disable"
 tmp = p + ".af-tmp"
 with open(tmp, "w") as f:
     json.dump(cfg, f, indent=2)

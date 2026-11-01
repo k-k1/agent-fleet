@@ -346,14 +346,10 @@ jobs:
           # agy's version marker (avoids running CLIs from outside the rootfs and
           # agy's RDRAND requirement).
           VJ="$(ls "$WS_DATA"/shared/rootfs/*/usr/local/share/agent-fleet/versions.json | head -1)"
-          for pair in "claude=@anthropic-ai/claude-code" "opencode=opencode-ai" \
+          for pair in "claude=@anthropic-ai/claude-code" "opencode=@opencode/cli" \
                       "codex=@openai/codex" "copilot=@github/copilot"; do
             k="${pair%%=*}"; pkg="${pair#*=}"
             pin="$(jq -r ".$k" "$VJ")"
-            # opencode's npm package follows the pin's major (opencode-ai 1.x, @opencode/cli 2.x).
-            if [ "$k" = opencode ]; then
-              case "${pin%%.*}" in 0|1) pkg=opencode-ai ;; *) pkg=@opencode/cli ;; esac
-            fi
             got="$(jq -r .version "$HOMEDIR/.local/lib/node_modules/$pkg/package.json")"
             test "$got" = "$pin" || { echo "NG: $k $got != pin $pin"; exit 1; }
             echo "ok  $k $got (pinned)"

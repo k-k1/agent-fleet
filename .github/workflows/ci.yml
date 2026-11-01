@@ -450,12 +450,8 @@ jobs:
       # and a present one must pass, or an empty result could mean a check that never ran.
       - name: CLI message fragment check (real script, fake npm packages)
         run: ./deploy/local/cli-fragment-check-stub-test.sh
-      # opencode 1 and 2 are different npm packages; five places pick one from the version's
-      # major, and they only disagree on the day the pin crosses.
-      - name: opencode package follows the major (every place that names it)
-        run: ./deploy/local/opencode-pkg-test.sh
-      - name: self-update puts the other opencode package back when the install fails
-        run: ./deploy/local/opencode-swap-test.sh
+      - name: entrypoint removes opencode 1 from ~/.local and settles an old package swap
+        run: ./deploy/local/opencode-drop-v1-test.sh
       # The daily apt-pins job in cli-drift.yml reads live Debian indexes; its verdicts
       # (missing for one architecture, unreadable index) are pinned here on fixtures.
       - name: Debian package pin check (real script, fixture indexes)

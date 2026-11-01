@@ -365,15 +365,12 @@ ARG CLAUDE_CODE_VERSION=2.1.316
 ARG OPENCODE_VERSION=2.2.5
 ARG CODEX_VERSION=0.166.0
 ARG COPILOT_VERSION=1.0.105
-# opencode's npm package follows the pin's major: `opencode-ai` for 1.x, `@opencode/cli` for
-# 2.x (which also installs an `opencode2` bin). Only 2.x is supported (ADR 0127): a rollback is an
-# earlier 2.x pin, never a 1.x one. entrypoint.sh, deploy/local/cli-drift-check.sh,
-# .github/workflows/release-gate.yml and .github/actions/setup-agent-cli apply the same rule, so
-# the `opencode-ai` branch leaves all of them in one change.
+# opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
+# is supported (ADR 0127): a rollback is an earlier 2.x pin, never a 1.x one (the opencode 1
+# package, opencode-ai, is another package that entrypoint.sh removes from ~/.local).
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
-      case "${OPENCODE_VERSION%%.*}" in 0|1) oc_pkg=opencode-ai ;; *) oc_pkg=@opencode/cli ;; esac; \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-        "${oc_pkg}@${OPENCODE_VERSION}" \
+        "@opencode/cli@${OPENCODE_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" \
         "@github/copilot@${COPILOT_VERSION}" \
       && claude --version && opencode --version && codex --version && copilot --version; \
@@ -633,8 +630,8 @@ ENV DISABLE_AUTOUPDATER=1
 # ~/.local shadow) — both unwanted in the version-pinned model. Disable it via env;
 # explicit `opencode upgrade` still works. (codex, by contrast, only *notifies* on
 # startup by default and self-writes only on explicit `codex update` / opt-in
-# autoUpdate, so it needs no analogous flag.) opencode 2 has the `update` config key for the
-# same thing (`"disable"`); entrypoint.sh seeds it when the installed major is 2.
+# autoUpdate, so it needs no analogous flag.) opencode 2 also has the `update` config key for the
+# same thing (`"disable"`), which entrypoint.sh seeds.
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
 
 # Muse Code の自己更新封殺（ADR 0095 決定 8）。**配布イメージは muse を配らない**
