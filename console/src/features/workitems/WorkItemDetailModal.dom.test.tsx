@@ -119,3 +119,17 @@ describe("WorkItemDetailModal session list", () => {
     expect(document.querySelector(".confirm [role=alert]")?.textContent).toBe("nope");
   });
 });
+
+describe("WorkItemDetailModal removed rows", () => {
+  it("shows a removed session again once it is linked again after the list dropped it", async () => {
+    const onUnlink = vi.fn(async () => "");
+    const swork = ref("swork", { role: "working" });
+    await render([swork], onUnlink);
+    await act(async () => removeOf(rows()[0])!.click());
+    await act(async () => confirmButton()!.click());
+    expect(rows()).toHaveLength(0);
+    await render([], onUnlink); // the next poll drops it
+    await render([swork], onUnlink); // linked again later
+    expect(rows()).toHaveLength(1);
+  });
+});

@@ -222,7 +222,7 @@ func InheritedLinks(parent Meta, at string) []WorkItemLink {
 	var out []WorkItemLink
 	for _, l := range LinksOf(parent) {
 		if l.Role == LinkStarted || l.Role == LinkWorking {
-			out = append(out, WorkItemLink{Provider: l.Provider, Key: l.Key, Role: LinkWatching, Title: l.Title, URL: l.URL, At: at})
+			out = append(out, WorkItemLink{Provider: l.Provider, Key: l.Key, Role: LinkWatching, Title: l.Title, URL: l.URL, At: at, State: l.State})
 		}
 	}
 	return out

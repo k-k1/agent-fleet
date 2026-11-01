@@ -69,7 +69,7 @@ func TestInheritedLinksTakesStartedAndWorkingOnly(t *testing.T) {
 	parent := Meta{
 		WorkItem: &WorkItemRef{Provider: "jira", Key: "PROJ-1"},
 		Links: []WorkItemLink{
-			{Provider: "github", Key: "o/r#2", Role: LinkWorking},
+			{Provider: "github", Key: "o/r#2", Role: LinkWorking, State: "merged"},
 			{Provider: "github", Key: "o/r#3", Role: LinkCreated},
 			{Provider: "github", Key: "o/r#4", Role: LinkWatching},
 		},
@@ -77,6 +77,10 @@ func TestInheritedLinksTakesStartedAndWorkingOnly(t *testing.T) {
 	got := InheritedLinks(parent, "now")
 	if len(got) != 2 || got[0].Key != "PROJ-1" || got[1].Key != "o/r#2" {
 		t.Fatalf("InheritedLinks = %+v, want PROJ-1 and o/r#2", got)
+	}
+	// The child watches the PR as it was last seen: a merged one is history on its row too.
+	if got[1].State != "merged" {
+		t.Fatalf("inherited o/r#2 state=%q, want merged", got[1].State)
 	}
 	for _, l := range got {
 		if l.Role != LinkWatching || l.At != "now" {

@@ -149,6 +149,11 @@ func TestUnlinkedBranchPRStaysUnlinkedUntilLinkedByHand(t *testing.T) {
 	if l := poll(); len(l) != 0 {
 		t.Fatalf("the next poll linked the removed PR again: %+v", l)
 	}
+	// A state change is not a reason to link it again either.
+	pr.State = "merged"
+	if l := poll(); len(l) != 0 {
+		t.Fatalf("the PR's merge linked the removed PR again: %+v", l)
+	}
 	if _, l := postLink(t, "un1", `{"provider":"github","key":"o/r#7","role":"Reviewing"}`); len(l) != 1 || l[0].Role != session.LinkReviewing {
 		t.Fatalf("relink links=%+v, want reviewing (role case ignored)", l)
 	}
@@ -272,6 +277,11 @@ func TestRecordBranchPRsKeepsThePRStateOnTheLink(t *testing.T) {
 	if after[0].At != before.Links[0].At || after[0].State != "merged" {
 		t.Fatalf("a steady state rewrote the link: %+v -> %+v", before.Links, after)
 	}
+	// A reopened PR is followed back.
+	if l := poll(&branchpr.PR{Number: 7, State: "open", URL: url}); len(l) != 1 || l[0].State != "open" {
+		t.Fatalf("links=%+v, want o/r#7 open again after a reopen", l)
+	}
+	poll(&branchpr.PR{Number: 7, State: "merged", URL: url})
 	// Moved to a branch with no PR: the last state seen stays.
 	if l := poll(nil); len(l) != 1 || l[0].State != "merged" {
 		t.Fatalf("links=%+v, want the merged state kept after leaving the branch", l)

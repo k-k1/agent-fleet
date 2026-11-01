@@ -339,6 +339,13 @@ export function WorkItemDetailModal({
   const [unlinkBusy, setUnlinkBusy] = useState(false);
   const [unlinkErr, setUnlinkErr] = useState("");
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
+  // Once the list has dropped a removed session, forget it: linked again later, it shows again.
+  useEffect(() => {
+    setRemoved((prev) => {
+      const still = [...prev].filter((name) => started.some((s) => s.sessionName === name));
+      return still.length === prev.size ? prev : new Set(still);
+    });
+  }, [started]);
   const shownStarted = started.filter((s) => !removed.has(s.sessionName));
   const confirmUnlink = async () => {
     if (!unlinkDlg || !onUnlink || unlinkBusy) return;
@@ -717,9 +724,9 @@ export function WorkItemDetailModal({
               {shownStarted.map((s) => {
                 const ref = sessionRef(s.sessionName);
                 const prState = linkPRState(s);
-                // Only a link can be removed here: a launch (a ledger row, or the launch item
-                // itself) is the record of who started the ticket.
-                const removable = !!onUnlink && !!s.role && s.role !== "started";
+                // Only a link can be removed here (its id is "link:…"; a ledger row's is not): a
+                // launch is the record of who started the ticket, and so is the launch item.
+                const removable = !!onUnlink && s.id.startsWith("link:") && s.role !== "started";
                 return (
                   <li key={s.id} className="wi-dsrow">
                     <button

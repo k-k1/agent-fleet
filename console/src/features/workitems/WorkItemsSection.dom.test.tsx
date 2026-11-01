@@ -1977,3 +1977,29 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
     });
   });
 });
+
+// #3166: Remove is offered only while the Workspace runs. Stopped, the rows still show the
+// mirrored links, but the Agent that holds them cannot be reached.
+describe("Remove in the item details", () => {
+  const linked = async (state: string) => {
+    const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+    useWorkspaceStore.setState({ state } as never);
+    useSessionsStore.setState({
+      sessions: [{ name: "swork", kind: "claude", alive: true, links: [{ provider: "github", key: "acme/web#45", role: "working" }] }] as never,
+    });
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: state === "running" });
+    await render();
+    await openRow();
+    return document.querySelector(".wi-dmodal .wi-dunlink");
+  };
+
+  it("offers Remove for a linked session while the Workspace runs", async () => {
+    expect(await linked("running")).not.toBeNull();
+  });
+
+  it("offers no Remove while the Workspace is stopped", async () => {
+    const modal = await linked("stopped");
+    expect(document.querySelector(".wi-dmodal")?.textContent).toContain("swork");
+    expect(modal).toBeNull();
+  });
+});
