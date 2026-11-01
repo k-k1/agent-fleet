@@ -101,20 +101,31 @@ func TestLinksCompareKeysCaseInsensitivelyAndBoundTheirLength(t *testing.T) {
 	}
 }
 
-func TestRemovingAGitHubLinkIsRememberedUntilLinkedAgain(t *testing.T) {
-	m := Meta{Links: []WorkItemLink{{Provider: "github", Key: "o/r#7", Role: LinkWorking}}}
-	if !RemoveLink(&m, "github", "O/R#7") || len(m.Links) != 0 || !IsUnlinked(m, "o/r#7") {
+func TestRemovingALinkIsRememberedPerProviderUntilLinkedAgain(t *testing.T) {
+	m := Meta{Links: []WorkItemLink{
+		{Provider: "github", Key: "o/r#7", Role: LinkWorking},
+		{Provider: "bitbucket", Key: "o/r#7", Role: LinkWorking},
+	}}
+	if !RemoveLink(&m, "github", "O/R#7") || len(m.Links) != 1 || !IsUnlinked(m, "github", "o/r#7") {
 		t.Fatalf("after remove: links=%+v unlinked=%v", m.Links, m.Unlinked)
 	}
+	// The same owner/repo#N on the other host is another item.
+	if IsUnlinked(m, "bitbucket", "o/r#7") {
+		t.Fatalf("unlinked=%v: removing GitHub's o/r#7 hid Bitbucket's", m.Unlinked)
+	}
+	if !RemoveLink(&m, "Bitbucket", "O/R#7") || len(m.Links) != 0 || !IsUnlinked(m, "bitbucket", "o/r#7") {
+		t.Fatalf("after the Bitbucket remove: links=%+v unlinked=%v", m.Links, m.Unlinked)
+	}
 	// Removing what is not linked still records it: the branch's PR may only be linked later.
-	if !RemoveLink(&m, "github", "o/r#8") || !IsUnlinked(m, "o/r#8") {
+	if !RemoveLink(&m, "github", "o/r#8") || !IsUnlinked(m, "github", "o/r#8") {
 		t.Fatalf("unlinked=%v, want o/r#8 remembered", m.Unlinked)
 	}
-	if RemoveLink(&m, "jira", "PROJ-1") || len(m.Unlinked) != 2 {
-		t.Fatalf("a Jira removal of nothing changed the meta: %v", m.Unlinked)
+	// A GitHub key stays bare, as metas written before other providers were recorded hold it.
+	if m.Unlinked[0] != "O/R#7" || m.Unlinked[1] != "bitbucket:O/R#7" {
+		t.Fatalf("unlinked=%v, want a bare GitHub key and a prefixed Bitbucket one", m.Unlinked)
 	}
-	if !ForgetUnlinked(&m, "o/r#7") || IsUnlinked(m, "o/r#7") {
-		t.Fatalf("unlinked=%v, want o/r#7 forgotten", m.Unlinked)
+	if !ForgetUnlinked(&m, "github", "o/r#7") || IsUnlinked(m, "github", "o/r#7") || !IsUnlinked(m, "bitbucket", "o/r#7") {
+		t.Fatalf("unlinked=%v, want only GitHub's o/r#7 forgotten", m.Unlinked)
 	}
 }
 

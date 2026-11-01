@@ -328,6 +328,15 @@ func TestRecordBranchPRsLinksABitbucketPRUnderBitbucket(t *testing.T) {
 	if m2, _ := session.ReadMeta("bb1"); len(m2.Links) != 1 || m2.Links[0].At != m1.Links[0].At {
 		t.Fatalf("a steady list rewrote the link: %+v -> %+v", m1.Links, m2.Links)
 	}
+	// Removed by hand, it stays removed while the session is still on the branch.
+	if w, links := postLink(t, "bb1", `{"provider":"bitbucket","key":"w/r#3","remove":true}`); w.Code != 200 || len(links) != 0 {
+		t.Fatalf("remove: %d %+v", w.Code, links)
+	}
+	sessions[0].Links = nil
+	recordBranchPRs(sessions[:1], time.Now().Add(2*time.Hour))
+	if m3, _ := session.ReadMeta("bb1"); len(m3.Links) != 0 || len(sessions[0].Links) != 0 {
+		t.Fatalf("an unlinked Bitbucket PR came back: %+v", m3.Links)
+	}
 }
 
 func TestPRLinkKeyReadsBothHosts(t *testing.T) {
@@ -338,6 +347,7 @@ func TestPRLinkKeyReadsBothHosts(t *testing.T) {
 		"https://bitbucket.org/w/r/pull-requests/3/x": "",
 		"https://gitlab.com/o/r/pull/7":               "",
 		"https://github.com/o/r/pull-requests/7":      "",
+		"https://u@github.com/o/r/pull/7":             "",
 	} {
 		p, k, ok := prLinkKey(&branchpr.PR{URL: url})
 		got := ""

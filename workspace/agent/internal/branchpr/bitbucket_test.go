@@ -19,8 +19,12 @@ type bbServer struct {
 	auth     []string
 	main     map[string]string // repo path → main branch; missing → 404
 	pulls    map[string]string // repo path → body
-	statuses map[string]string // ".../pullrequests/N/statuses" → body
+	statuses map[string]string // ".../commit/<hash>/statuses" → body
 	status   int               // non-zero: every call answers this
+	// badBranch makes any filter naming it answer 400; byBranch answers a filter naming exactly
+	// that one branch.
+	badBranch string
+	byBranch  map[string]string
 }
 
 func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +45,20 @@ func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusInternalServerError)
 	case strings.HasSuffix(p, "/pullrequests"):
-		b.filters = append(b.filters, r.URL.Query().Get("q"))
+		q := r.URL.Query().Get("q")
+		b.filters = append(b.filters, q)
+		if b.badBranch != "" && strings.Contains(q, `"`+b.badBranch+`"`) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if strings.Count(q, "source.branch.name") == 1 {
+			for br, body := range b.byBranch {
+				if strings.Contains(q, `source.branch.name = "`+br+`"`) {
+					_, _ = w.Write([]byte(body))
+					return
+				}
+			}
+		}
 		_, _ = w.Write([]byte(b.pulls[strings.TrimSuffix(p, "/pullrequests")]))
 	default:
 		m, ok := b.main[p]
@@ -70,7 +87,8 @@ func bbPR(id int, state string, draft bool, branch, source string) string {
 	}
 	return `{"id":` + itoa(id) + `,"state":"` + state + `","draft":` + d +
 		`,"links":{"html":{"href":"https://bitbucket.org/w/r/pull-requests/` + itoa(id) + `"}},` +
-		`"source":{"branch":{"name":"` + branch + `"},"repository":{"full_name":"` + source + `"}}}`
+		`"source":{"branch":{"name":"` + branch + `"},"repository":{"full_name":"` + source + `"},` +
+		`"commit":{"hash":"c0ffee` + itoa(id) + `"}}}`
 }
 
 func TestBitbucketAsksOncePerRepositoryAndPicksEachBranchsOwnPR(t *testing.T) {
@@ -87,7 +105,7 @@ func TestBitbucketAsksOncePerRepositoryAndPicksEachBranchsOwnPR(t *testing.T) {
 			"/2.0/repositories/w/other": `{"values":[]}`,
 		},
 		statuses: map[string]string{
-			"/2.0/repositories/w/r/pullrequests/11/statuses": `{"values":[{"state":"SUCCESSFUL"},{"state":"INPROGRESS"}]}`,
+			"/2.0/repositories/w/r/commit/c0ffee11/statuses": `{"values":[{"state":"SUCCESSFUL"},{"state":"INPROGRESS"}]}`,
 		},
 	}
 	c := newBBCache(t, b)
@@ -191,7 +209,7 @@ func TestBitbucketRefusalHoldsOffAndKeepsTheHeldAnswers(t *testing.T) {
 	b := &bbServer{
 		main:     map[string]string{"/2.0/repositories/w/r": "main"},
 		pulls:    map[string]string{"/2.0/repositories/w/r": `{"values":[` + bbPR(4, "OPEN", false, "a", "w/r") + `]}`},
-		statuses: map[string]string{"/2.0/repositories/w/r/pullrequests/4/statuses": `{"values":[]}`},
+		statuses: map[string]string{"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[]}`},
 	}
 	c := newBBCache(t, b)
 	keys := []Key{{"w/r", "a"}}
@@ -200,11 +218,11 @@ func TestBitbucketRefusalHoldsOffAndKeepsTheHeldAnswers(t *testing.T) {
 	// The connection loses the pull request scope: the row keeps what it showed, and the
 	// provider is not asked again on the next poll.
 	b.status = http.StatusForbidden
-	later := now.Add(openTTL + time.Second)
+	later := now.Add(bitbucketOpenTTL + time.Second)
 	c.Lookup(keys, later)
 	n := len(b.paths)
 	// Held past failBackoff too: a missing scope does not come back on its own.
-	got := c.Lookup(keys, later.Add(failBackoff+time.Second))
+	got := c.Lookup(keys, now.Add(failBackoff+2*time.Minute))
 	if pr := got[keys[0]]; pr == nil || pr.Number != 4 {
 		t.Fatalf("after a 403: %+v, want the held #4", pr)
 	}
@@ -248,5 +266,91 @@ func TestBitbucketRollup(t *testing.T) {
 func TestRepoPathEscapesEachPart(t *testing.T) {
 	if got := repoPath("w s/r?x"); got != "/2.0/repositories/"+url.PathEscape("w s")+"/"+url.PathEscape("r?x") {
 		t.Fatalf("repoPath = %q", got)
+	}
+}
+
+func TestBitbucketReadsChecksOfTheHeadCommitOnly(t *testing.T) {
+	b := &bbServer{
+		main:  map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls: map[string]string{"/2.0/repositories/w/r": `{"values":[` + bbPR(4, "OPEN", false, "a", "w/r") + `]}`},
+		statuses: map[string]string{
+			"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[{"state":"SUCCESSFUL"}]}`,
+			// The PR's own list spans its old commits too; it must not be what the row reads.
+			"/2.0/repositories/w/r/pullrequests/4/statuses": `{"values":[{"state":"FAILED"}]}`,
+		},
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{"w/r", "a"}}
+	c.Lookup(keys, time.Now())
+	if pr := c.Lookup(keys, time.Now())[keys[0]]; pr == nil || pr.Checks != "success" {
+		t.Fatalf("pr = %+v, want the head commit's success", pr)
+	}
+}
+
+func TestBitbucketAsksAnOpenPRLessOftenThanGitHub(t *testing.T) {
+	b := &bbServer{
+		main:     map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls:    map[string]string{"/2.0/repositories/w/r": `{"values":[` + bbPR(4, "OPEN", false, "a", "w/r") + `]}`},
+		statuses: map[string]string{"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[]}`},
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{"w/r", "a"}}
+	now := time.Now()
+	c.Lookup(keys, now)
+	c.Lookup(keys, now.Add(openTTL+time.Second))
+	if len(b.filters) != 1 {
+		t.Fatalf("list calls = %d after GitHub's openTTL, want 1: an open Bitbucket PR is held for bitbucketOpenTTL", len(b.filters))
+	}
+	c.Lookup(keys, now.Add(bitbucketOpenTTL+time.Second))
+	if len(b.filters) != 2 {
+		t.Fatalf("list calls = %d after bitbucketOpenTTL, want 2", len(b.filters))
+	}
+}
+
+func TestBitbucketBadFilterFailsOnlyItsOwnBranch(t *testing.T) {
+	b := &bbServer{
+		main: map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls: map[string]string{"/2.0/repositories/w/r": `{"values":[` +
+			bbPR(5, "MERGED", false, "good", "w/r") + `]}`},
+		badBranch: "odd",
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{"w/r", "good"}, {"w/r", "odd"}}
+	c.Lookup(keys, time.Now())
+	got := c.Lookup(keys, time.Now())
+	if pr := got[keys[0]]; pr == nil || pr.Number != 5 {
+		t.Fatalf("good = %+v, want #5 despite its neighbour's 400", pr)
+	}
+	if got[keys[1]] != nil {
+		t.Fatalf("odd = %+v, want none", got[keys[1]])
+	}
+	// The odd branch is answered (as none), not failed: the provider is not held off.
+	if !c.holdUntil.IsZero() {
+		t.Fatalf("held until %v after a 400 of one branch", c.holdUntil)
+	}
+}
+
+func TestBitbucketAsksAgainForABranchAFullPageLeftOut(t *testing.T) {
+	var page []string
+	for i := 0; i < bitbucketPageLen; i++ {
+		page = append(page, bbPR(100+i, "MERGED", false, "busy", "w/r"))
+	}
+	b := &bbServer{
+		main:     map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls:    map[string]string{"/2.0/repositories/w/r": `{"values":[` + strings.Join(page, ",") + `]}`},
+		byBranch: map[string]string{"quiet": `{"values":[` + bbPR(7, "MERGED", false, "quiet", "w/r") + `]}`},
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{"w/r", "busy"}, {"w/r", "quiet"}}
+	c.Lookup(keys, time.Now())
+	got := c.Lookup(keys, time.Now())
+	if pr := got[keys[1]]; pr == nil || pr.Number != 7 {
+		t.Fatalf("quiet = %+v, want #7 from a call of its own", pr)
+	}
+	if pr := got[keys[0]]; pr == nil || pr.Number != 100 {
+		t.Fatalf("busy = %+v, want its newest #100", pr)
+	}
+	if len(b.filters) != 2 {
+		t.Fatalf("list calls = %d, want the chunk and one for quiet", len(b.filters))
 	}
 }

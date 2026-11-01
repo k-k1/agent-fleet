@@ -15,15 +15,23 @@ import (
 
 // Bitbucket Cloud has no batched lookup like GraphQL aliases, so a refresh asks once per
 // repository: every branch of that repository due in the batch goes into one `q` filter, joined
-// with OR. Calls then scale with the repositories sessions work in, not with the sessions, which
-// is what keeps the list inside Bitbucket's hourly request budget.
+// with OR. Calls then scale with the repositories sessions work in, not with the sessions.
+//
+// The budget is Bitbucket's 1000 requests an hour per account, shared with the work-item inbox.
+// One refresh costs, per repository, ceil(branches/10) list calls plus one status call per open
+// PR, and the main branch once an hour. An open PR is re-read every bitbucketOpenTTL (12 refreshes
+// an hour), settled ones every settledTTL (6), so 10 repositories with 20 open PRs cost about
+// (10+20)×12 = 360 calls an hour.
 
 const (
+	// bitbucketOpenTTL is GitHub's openTTL stretched for that budget: an open PR costs a status
+	// call on every refresh, where GitHub answers its CI in the same single call.
+	bitbucketOpenTTL = 5 * time.Minute
 	// bitbucketMainTTL is how long a repository's main branch is trusted. It is asked so a
 	// session on it does not show the release PR whose source it is, and it almost never moves.
 	bitbucketMainTTL = time.Hour
 	// bitbucketBranchesPerCall bounds one filter. The answer is a single page of the newest PRs
-	// across those branches; with more branches, one busy branch could push another's PR off it.
+	// across those branches; a branch a full page leaves unanswered is asked again on its own.
 	bitbucketBranchesPerCall = 10
 	// bitbucketPageLen is that page.
 	bitbucketPageLen = 50
@@ -36,6 +44,9 @@ var (
 	// errRefused is a 403. A connection made for cloning lacks the pull request scope, and that
 	// will not change until it is reconnected, so the whole provider holds off.
 	errRefused = errors.New("bitbucket refused the read")
+	// errBadFilter is a 400 on the PR list: Bitbucket could not take the filter, which with
+	// escaped values can only be about one branch's name.
+	errBadFilter = errors.New("bitbucket could not parse the filter")
 )
 
 // NewBitbucket returns a cache that asks api.bitbucket.org. auth returns the whole Authorization
@@ -48,6 +59,7 @@ func NewBitbucket(auth func() (string, error)) *Cache {
 		Async:    func(f func()) { go f() },
 		entries:  map[Key]*entry{},
 		batch:    batchSize,
+		openTTL:  bitbucketOpenTTL,
 	}
 	b := &bitbucket{c: c, main: map[string]mainEntry{}}
 	c.fetch = b.fetch
@@ -63,6 +75,12 @@ type bitbucket struct {
 	c    *Cache
 	mu   sync.Mutex
 	main map[string]mainEntry
+}
+
+// bbHit is a branch's PR with the commit its build statuses are read for.
+type bbHit struct {
+	pr   *PR
+	head string
 }
 
 func (b *bitbucket) fetch(auth string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
@@ -99,19 +117,16 @@ func (b *bitbucket) fetch(auth string, keys []Key) (map[Key]*PR, map[Key]bool, t
 			n := min(len(branches), bitbucketBranchesPerCall)
 			chunk := branches[:n]
 			branches = branches[n:]
-			got, wait, err := b.pulls(auth, repo, chunk)
-			if errors.Is(err, errNotVisible) {
-				continue
-			}
+			got, bad, wait, err := b.pulls(auth, repo, chunk)
 			if err != nil {
-				if wait > 0 {
-					return nil, nil, wait, err
-				}
-				markFailed(failed, chunk)
-				continue
+				return nil, nil, wait, err
 			}
-			for k, pr := range got {
-				out[k] = pr
+			markFailed(failed, bad)
+			for k, h := range got {
+				if h.pr.State == "open" && h.head != "" {
+					h.pr.Checks = b.checks(auth, repo, h.head)
+				}
+				out[k] = h.pr
 			}
 		}
 	}
@@ -150,39 +165,108 @@ func (b *bitbucket) mainBranch(auth, repo string) (string, time.Duration, error)
 		name = r.Main.Name
 	}
 	b.mu.Lock()
+	// Repositories no session works in any more go with the next answer.
+	for k, old := range b.main {
+		if now.Sub(old.at) >= bitbucketMainTTL {
+			delete(b.main, k)
+		}
+	}
 	b.main[repo] = mainEntry{name: name, at: now}
 	b.mu.Unlock()
 	return name, 0, nil
 }
 
-// pulls answers the newest PR of each branch in keys, all of one repository, in one call. An
-// open PR's build statuses are a second call each; one that fails leaves Checks empty rather
-// than failing the PR.
-func (b *bitbucket) pulls(auth, repo string, keys []Key) (map[Key]*PR, time.Duration, error) {
+// pulls answers the newest PR of each branch in keys, all of one repository. failed are the
+// branches Bitbucket could not answer this time; an error (with its wait) holds the whole
+// provider off.
+//
+// Two answers are re-asked one branch at a time rather than taken for the whole chunk: a 400,
+// which a single odd branch name causes and which would otherwise fail its nine neighbours on
+// every refresh; and a full page, past which a branch's PR may lie, so that "absent" would read
+// as "no PR" for a settledTTL.
+func (b *bitbucket) pulls(auth, repo string, keys []Key) (map[Key]bbHit, []Key, time.Duration, error) {
 	params := url.Values{
 		"q":       {bitbucketFilter(keys)},
 		"sort":    {"-created_on"},
 		"pagelen": {strconv.Itoa(bitbucketPageLen)},
 		// A PR object carries its whole description; only the row's columns are asked for.
 		"fields": {"values.id,values.state,values.draft,values.links.html.href," +
-			"values.source.branch.name,values.source.repository.full_name"},
+			"values.source.branch.name,values.source.repository.full_name,values.source.commit.hash"},
 	}
 	body, wait, err := b.get(auth, repoPath(repo)+"/pullrequests?"+params.Encode())
-	if err != nil {
-		return nil, wait, err
+	switch {
+	case errors.Is(err, errNotVisible):
+		return nil, nil, 0, nil
+	case errors.Is(err, errBadFilter) && len(keys) > 1:
+		return b.oneByOne(auth, repo, keys)
+	case errors.Is(err, errBadFilter):
+		return nil, nil, 0, nil // a name Bitbucket's filter cannot take has no PR to show
+	case err != nil && wait > 0:
+		return nil, nil, wait, err
+	case err != nil:
+		return nil, keys, 0, nil
 	}
-	got, open, err := parseBitbucketPulls(body, repo, keys)
+	got, full, err := parseBitbucketPulls(body, repo, keys)
 	if err != nil {
-		return nil, 0, err
+		return nil, keys, 0, nil
 	}
-	for _, k := range open {
-		pr := got[k]
-		if sb, _, err := b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=values.state",
-			repoPath(repo), pr.Number, bitbucketPageLen)); err == nil {
-			pr.Checks = bitbucketRollup(sb)
+	if !full || len(keys) == 1 {
+		return got, nil, 0, nil
+	}
+	var rest []Key
+	for _, k := range keys {
+		if _, ok := got[k]; !ok {
+			rest = append(rest, k)
 		}
 	}
-	return got, 0, nil
+	more, failed, wait, err := b.oneByOne(auth, repo, rest)
+	if err != nil {
+		return nil, nil, wait, err
+	}
+	for k, h := range more {
+		got[k] = h
+	}
+	return got, failed, 0, nil
+}
+
+func (b *bitbucket) oneByOne(auth, repo string, keys []Key) (map[Key]bbHit, []Key, time.Duration, error) {
+	got := map[Key]bbHit{}
+	var failed []Key
+	for _, k := range keys {
+		one, bad, wait, err := b.pulls(auth, repo, []Key{k})
+		if err != nil {
+			return nil, nil, wait, err
+		}
+		failed = append(failed, bad...)
+		for kk, h := range one {
+			got[kk] = h
+		}
+	}
+	return got, failed, 0, nil
+}
+
+// checks folds the build statuses of an open PR's head commit. Asked of the commit, not of the
+// PR: the PR's own status list spans every commit it has had, and an old failure would keep a
+// fixed PR red. A failed call leaves the checks empty rather than failing the PR.
+func (b *bitbucket) checks(auth, repo, head string) string {
+	if !isHex(head) {
+		return ""
+	}
+	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=values.state",
+		repoPath(repo), head, bitbucketPageLen))
+	if err != nil {
+		return ""
+	}
+	return bitbucketRollup(body)
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // bitbucketFilter is the `q` for keys' branches in every state: without a state term
@@ -203,9 +287,9 @@ func bbqlEscape(s string) string {
 }
 
 // parseBitbucketPulls picks each branch's newest PR from a page sorted newest first. A PR from a
-// fork whose branch shares the name is skipped, as on GitHub. open lists the keys whose PR is
-// open, for the status call.
-func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]*PR, []Key, error) {
+// fork whose branch shares the name is skipped, as on GitHub. full reports a page Bitbucket
+// filled, past which more PRs may lie.
+func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]bbHit, bool, error) {
 	var br struct {
 		Values []struct {
 			ID    int    `json:"id"`
@@ -223,21 +307,23 @@ func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]*PR, []K
 				Repository *struct {
 					FullName string `json:"full_name"`
 				} `json:"repository"`
+				Commit *struct {
+					Hash string `json:"hash"`
+				} `json:"commit"`
 			} `json:"source"`
 		} `json:"values"`
 	}
 	if err := json.Unmarshal(body, &br); err != nil {
-		return nil, nil, fmt.Errorf("bitbucket answer: %w", err)
+		return nil, false, fmt.Errorf("bitbucket answer: %w", err)
 	}
 	want := map[string]Key{}
 	for _, k := range keys {
 		want[k.Branch] = k
 	}
-	out := map[Key]*PR{}
-	var open []Key
+	out := map[Key]bbHit{}
 	for _, v := range br.Values {
 		k, ok := want[v.Source.Branch.Name]
-		if !ok || out[k] != nil || v.ID <= 0 {
+		if _, done := out[k]; !ok || done || v.ID <= 0 {
 			continue
 		}
 		if v.Source.Repository == nil || !strings.EqualFold(v.Source.Repository.FullName, repo) {
@@ -247,12 +333,13 @@ func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]*PR, []K
 		if !ok {
 			continue
 		}
-		out[k] = &PR{Number: v.ID, State: state, Draft: state == "open" && v.Draft, URL: v.Links.HTML.Href}
-		if state == "open" {
-			open = append(open, k)
+		h := bbHit{pr: &PR{Number: v.ID, State: state, Draft: state == "open" && v.Draft, URL: v.Links.HTML.Href}}
+		if v.Source.Commit != nil {
+			h.head = v.Source.Commit.Hash
 		}
+		out[k] = h
 	}
-	return out, open, nil
+	return out, len(br.Values) >= bitbucketPageLen, nil
 }
 
 // bitbucketState maps Bitbucket's states onto the row's. A declined or superseded PR is closed:
@@ -331,6 +418,8 @@ func (b *bitbucket) get(auth, path string) ([]byte, time.Duration, error) {
 		return body, 0, nil
 	case http.StatusNotFound:
 		return nil, 0, errNotVisible
+	case http.StatusBadRequest:
+		return nil, 0, errBadFilter
 	case http.StatusUnauthorized:
 		return nil, failBackoff, fmt.Errorf("bitbucket %d: %w", resp.StatusCode, errUnauthorized)
 	case http.StatusForbidden:

@@ -172,18 +172,18 @@ func AddLink(m *Meta, l WorkItemLink) bool {
 }
 
 // RemoveLink drops the link to provider/key. The launch item cannot be removed here: the
-// branch-name resolver still renders from it. A removed GitHub item is also remembered in
+// branch-name resolver still renders from it. A removed item is also remembered in
 // Meta.Unlinked, so the session list does not link the branch's PR again on its next poll.
 func RemoveLink(m *Meta, provider, key string) bool {
 	if m.WorkItem != nil && strings.EqualFold(m.WorkItem.Provider, provider) && strings.EqualFold(m.WorkItem.Key, key) {
 		return false
 	}
 	changed := false
-	if strings.EqualFold(provider, "github") && !IsUnlinked(*m, key) {
+	if !IsUnlinked(*m, provider, key) {
 		if len(m.Unlinked) >= MaxLinks {
 			m.Unlinked = m.Unlinked[1:]
 		}
-		m.Unlinked = append(m.Unlinked, key)
+		m.Unlinked = append(m.Unlinked, unlinkedEntry(provider, key))
 		changed = true
 	}
 	for i, l := range m.Links {
@@ -195,20 +195,34 @@ func RemoveLink(m *Meta, provider, key string) bool {
 	return changed
 }
 
-// IsUnlinked reports whether the GitHub item key was removed by hand (RemoveLink).
-func IsUnlinked(m Meta, key string) bool {
+// unlinkedEntry is provider/key as Meta.Unlinked holds it: a GitHub key bare, as metas written
+// before other providers were recorded hold it, any other prefixed with its provider. The same
+// owner/repo#N can exist on github.com and bitbucket.org, and removing one must not hide the
+// other. No key of any provider contains a colon, so the two forms cannot collide.
+func unlinkedEntry(provider, key string) string {
+	if p := strings.ToLower(provider); p != "github" {
+		return p + ":" + key
+	}
+	return key
+}
+
+// IsUnlinked reports whether provider/key was removed by hand (RemoveLink).
+func IsUnlinked(m Meta, provider, key string) bool {
+	e := unlinkedEntry(provider, key)
 	for _, k := range m.Unlinked {
-		if strings.EqualFold(k, key) {
+		if strings.EqualFold(k, e) {
 			return true
 		}
 	}
 	return false
 }
 
-// ForgetUnlinked drops key from Meta.Unlinked: linking an item again by hand undoes the removal.
-func ForgetUnlinked(m *Meta, key string) bool {
+// ForgetUnlinked drops provider/key from Meta.Unlinked: linking an item again by hand undoes the
+// removal.
+func ForgetUnlinked(m *Meta, provider, key string) bool {
+	e := unlinkedEntry(provider, key)
 	for i, k := range m.Unlinked {
-		if strings.EqualFold(k, key) {
+		if strings.EqualFold(k, e) {
 			m.Unlinked = append(m.Unlinked[:i:i], m.Unlinked[i+1:]...)
 			return true
 		}

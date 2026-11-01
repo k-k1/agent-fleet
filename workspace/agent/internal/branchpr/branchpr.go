@@ -68,13 +68,13 @@ type entry struct {
 	asked   time.Time // last time a list wanted this key
 }
 
-func (e *entry) fresh(now time.Time) bool {
+func (e *entry) fresh(now time.Time, open time.Duration) bool {
 	if e.fetched.IsZero() {
 		return false
 	}
 	ttl := settledTTL
 	if e.pr != nil && e.pr.State == "open" {
-		ttl = openTTL
+		ttl = open
 	}
 	return now.Sub(e.fetched) < ttl
 }
@@ -86,19 +86,21 @@ type Cache struct {
 	// so connecting or disconnecting takes effect without a restart. An error means the store
 	// could not be read, which says nothing about the connection: the answers held are kept.
 	Token func() (string, error)
-	// Renew, when set, is asked for a replacement after GitHub answers a token with 401:
+	// Renew, when set, is asked for a replacement after the provider answers a token with 401:
 	// the recorded expiry of a renewable token can be wrong. The batch is retried once with
 	// the token it returns.
 	Renew func(rejected string) (string, error)
-	// Endpoint is the GraphQL URL; tests point it at a local server.
+	// Endpoint is GitHub's GraphQL URL, or Bitbucket's REST base URL; tests point it at a local
+	// server.
 	Endpoint string
 	Client   *http.Client
 	// Async runs the refresh. Tests set it to run inline.
 	Async func(func())
 	// fetch asks the provider about one batch. failed are the keys it could not answer this
 	// time; wait is how long to hold off after an error, and errUnauthorized asks for Renew.
-	fetch func(token string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error)
-	batch int
+	fetch   func(token string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error)
+	batch   int
+	openTTL time.Duration
 
 	mu        sync.Mutex
 	entries   map[Key]*entry
@@ -118,6 +120,7 @@ func New(token func() (string, error)) *Cache {
 		Async:    func(f func()) { go f() },
 		entries:  map[Key]*entry{},
 		batch:    batchSize,
+		openTTL:  openTTL,
 	}
 	c.fetch = c.fetchGitHub
 	return c
@@ -145,7 +148,7 @@ func (c *Cache) Lookup(keys []Key, now time.Time) map[Key]*PR {
 		if e.pr != nil {
 			out[k] = e.pr
 		}
-		if !e.fresh(now) {
+		if !e.fresh(now, c.openTTL) {
 			due = append(due, k)
 		}
 	}
@@ -291,8 +294,8 @@ func (c *Cache) fetchGitHub(token string, keys []Key) (map[Key]*PR, map[Key]bool
 	return got, failed, 0, nil
 }
 
-// rateWait reads when GitHub will take calls again: Retry-After for the secondary limit, the
-// reset stamp for the primary one, and rateBackoff when neither says.
+// rateWait reads when the provider will take calls again: Retry-After (GitHub's secondary limit,
+// Bitbucket's 429), the reset stamp of GitHub's primary one, and rateBackoff when neither says.
 func rateWait(h http.Header, now time.Time) time.Duration {
 	if s, err := strconv.Atoi(h.Get("Retry-After")); err == nil && s > 0 {
 		return time.Duration(s) * time.Second

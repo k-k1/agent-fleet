@@ -69,7 +69,7 @@ func HandleSessionLink(w http.ResponseWriter, r *http.Request) {
 			changed = session.RemoveLink(m, provider, key)
 		} else {
 			// Linking an item by hand undoes an earlier removal of it.
-			forgot := session.ForgetUnlinked(m, key)
+			forgot := session.ForgetUnlinked(m, provider, key)
 			changed = session.AddLink(m, session.WorkItemLink{
 				Provider: provider, Key: key, Role: role,
 				Title: clipRunes(strings.TrimSpace(req.Title), 300), URL: linkURL(req.URL),
@@ -204,7 +204,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		// A PR unlinked by hand stays unlinked. Checked on the meta itself: the wire does not carry
 		// the removals, so such a row costs one meta read per poll and no write.
 		if m, wrote := UpdateSessionMeta(s.Name, func(m *session.Meta) bool {
-			if session.IsUnlinked(*m, key) {
+			if session.IsUnlinked(*m, provider, key) {
 				return false
 			}
 			added := session.AddLink(m, l)
@@ -219,7 +219,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 // of its own, and the URL is the provider's (github.com/o/r/pull/N, bitbucket.org/w/r/pull-requests/N).
 func prLinkKey(pr *branchpr.PR) (provider, key string, ok bool) {
 	u, err := url.Parse(pr.URL)
-	if err != nil || u.Scheme != "https" {
+	if err != nil || u.Scheme != "https" || u.User != nil {
 		return "", "", false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")

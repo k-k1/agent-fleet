@@ -706,8 +706,9 @@ type Meta struct {
 	// Written only through AddLink / RemoveLink, which keep one link per item and the list
 	// bounded.
 	Links []WorkItemLink `json:"links,omitempty"`
-	// Unlinked are GitHub item keys removed by hand (RemoveLink), so the branch-PR lookup does not
-	// link them again. Bounded like Links; linking the item again by hand clears it.
+	// Unlinked are the items removed by hand (RemoveLink), so the branch-PR lookup does not link
+	// them again: a GitHub key bare, any other "provider:key" (unlinkedEntry). Bounded like Links;
+	// linking the item again by hand clears it.
 	Unlinked []string `json:"unlinked,omitempty"`
 	// Moving names the session this one is being moved to (ADR 0115 decision 11), MovedTo the
 	// session it was moved to once that exists. Either closes the session's input: every path
