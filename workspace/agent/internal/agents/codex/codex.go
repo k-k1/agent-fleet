@@ -434,3 +434,17 @@ func IsRateLimited(name string) bool {
 	ce := h.turnError()
 	return ce != nil && ce.label == "usageLimitExceeded"
 }
+
+// IsRateLimitedMeta is IsRateLimited that survives the handle: a Managed session that was
+// stopped, or whose Agent restarted, has no in-memory turn error, so the rollout's newest
+// turn-ending record answers instead (rolloutUsageLimited, a memoized tail read - no full
+// parse). A handle that holds an error is authoritative either way.
+func IsRateLimitedMeta(m session.Meta) bool {
+	if h := handleFor(m.Name); h != nil {
+		if ce := h.turnError(); ce != nil {
+			return ce.label == "usageLimitExceeded"
+		}
+	}
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	return path != "" && rolloutUsageLimited(path)
+}

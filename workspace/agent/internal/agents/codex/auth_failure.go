@@ -135,3 +135,58 @@ func rolloutAuthFailure(lines [][]byte) (agents.AuthFailure, bool) {
 	}
 	return fail, found
 }
+
+// usageLimitMemo is authMemo's twin for the usage-limit answer: the same (size, mtime) key, so
+// the per-poll caller costs one stat while the rollout is unchanged.
+var usageLimitMemo sync.Map // path -> usageLimitMemoEntry
+
+type usageLimitMemoEntry struct {
+	size  int64
+	mod   time.Time
+	limit bool
+}
+
+// rolloutUsageLimited reports whether the rollout's newest turn-ending record is a task_complete
+// that failed on the usage limit. It is the evidence a session keeps after the managed handle is
+// gone (a stop, an Agent restart): the handle's in-memory turn error is the primary source, this
+// is the fallback. A later task_started / turn_aborted, or a task_complete without the error,
+// means the limit is no longer the story. The rollout spells the label snake_case, the
+// app-server camelCase; both count.
+func rolloutUsageLimited(path string) bool {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if v, hit := usageLimitMemo.Load(path); hit {
+		e := v.(usageLimitMemoEntry)
+		if e.size == fi.Size() && e.mod.Equal(fi.ModTime()) {
+			return e.limit
+		}
+	}
+	limit := rolloutTailUsageLimited(rolloutTailLines(path))
+	usageLimitMemo.Store(path, usageLimitMemoEntry{size: fi.Size(), mod: fi.ModTime(), limit: limit})
+	return limit
+}
+
+func rolloutTailUsageLimited(lines [][]byte) bool {
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type  string          `json:"type"`
+				Error json.RawMessage `json:"error"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(lines[i], &ev) != nil || ev.Type != "event_msg" {
+			continue
+		}
+		switch ev.Payload.Type {
+		case "task_started", "turn_aborted":
+			return false
+		case "task_complete":
+			ce, ok := decodeRolloutError(ev.Payload.Error)
+			return ok && (ce.label == "usage_limit_exceeded" || ce.label == "usageLimitExceeded")
+		}
+	}
+	return false
+}

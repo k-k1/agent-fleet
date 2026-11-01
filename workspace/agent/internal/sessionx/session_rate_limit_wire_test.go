@@ -311,3 +311,44 @@ func TestWireSessionMuseRateLimit(t *testing.T) {
 		t.Error("DriveState stayed limited after the limit cleared")
 	}
 }
+
+// A booked auto-resume outlives a stop (the episode file and the CP schedule are both still
+// there), so a stopped row carries its instant - and stays "stopped": the reaper and idle logic
+// read State, so it must never turn limited/busy.
+func TestWireSessionStoppedKeepsBookedResume(t *testing.T) {
+	isolateAgentState(t)
+	atLimitProbe(t, agents.LimitWindow)
+	now := time.Now()
+	resume := now.Add(2 * time.Hour).Format(time.RFC3339)
+	m := limitedMeta(t, "rlwire-stop", rateLimitState{At: now.Format(time.RFC3339), ResumeAt: resume, ScheduleID: "sch_x"})
+
+	s := wireSession(m, false)
+	if s.RateLimitResumeAt != resume {
+		t.Errorf("rateLimitResumeAt = %q, want %q on a stopped row", s.RateLimitResumeAt, resume)
+	}
+	if s.State == agents.StateLimited {
+		t.Errorf("state = %q: a stopped session must not read limited", s.State)
+	}
+}
+
+func TestWireSessionStoppedWithoutLiveBookingSaysNothing(t *testing.T) {
+	now := time.Now()
+	future := now.Add(2 * time.Hour).Format(time.RFC3339)
+	for _, c := range []struct {
+		name string
+		kind agents.LimitKind
+		st   rateLimitState
+	}{
+		{"no schedule id", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future}},
+		{"instant already past", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-time.Minute).Format(time.RFC3339), ScheduleID: "s"}},
+		{"limit no longer in force", "", rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s"}},
+		{"spend limit", agents.LimitSpend, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s", Spend: true}},
+	} {
+		isolateAgentState(t)
+		atLimitProbe(t, c.kind)
+		m := limitedMeta(t, "rlwire-stop2", c.st)
+		if got := wireSession(m, false).RateLimitResumeAt; got != "" {
+			t.Errorf("%s: rateLimitResumeAt = %q, want empty", c.name, got)
+		}
+	}
+}

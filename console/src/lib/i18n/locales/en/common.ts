@@ -132,6 +132,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // hides the next step entirely. handoff_short is what the narrow rail row shows; the full
   // wording above goes to the tooltip and the pane head.
   "state.idle_handoff": "Ready · handoff to launch",
+  "state.stopped_auto_resume": "Stopped · auto-resume {at}",
   "state.stopped_handoff": "Stopped · handoff to launch",
   "state.handoff_short": "Handoff",
 

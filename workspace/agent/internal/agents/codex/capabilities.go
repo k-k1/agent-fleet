@@ -90,13 +90,14 @@ func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 // UsageLimitTraits is agents.UsageLimiter: Managed only, since a TUI codex leaves nothing that
 // says this session's turn died on the limit. codex names one usage limit (usageLimitExceeded),
 // the kind waiting clears; its error vocabulary has no spend counterpart, so nothing here is
-// agents.LimitSpend. The evidence is the managed handle's last turn error, an in-memory read, and
+// agents.LimitSpend. The evidence is the managed handle's last turn error (in memory), else the
+// rollout's last task_complete once the handle is gone (IsRateLimitedMeta), and
 // the reset instant is the account's own windows (ResetAt).
 func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 	return agents.UsageLimitTraits{
 		ManagedOnly: true,
 		AtLimit: func(m session.Meta) (agents.LimitKind, bool) {
-			return agents.LimitWindow, IsRateLimited(m.Name)
+			return agents.LimitWindow, IsRateLimitedMeta(m)
 		},
 		ResetAt: func(_ session.Meta, _ bool, now time.Time) (time.Time, string, bool) {
 			return ResetAt(now)

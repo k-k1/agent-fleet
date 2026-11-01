@@ -264,3 +264,24 @@ describe("elapsedShort", () => {
     expect(elapsedShort("2026-10-07T13:00:00Z", now)).toBe("0m");
   });
 });
+
+// A usage-limit auto-resume that is booked outlives a stop: the agent keeps sending the instant
+// on the stopped row, and the chip must say a resume is coming instead of a bare "Stopped".
+describe("stateInfo (a stopped session with a booked auto-resume)", () => {
+  const future = new Date(Date.now() + 3 * 3600_000).toISOString();
+
+  it("names the resume instant and stays an off chip", () => {
+    const st = stateInfo({ kind: "codex", alive: false, state: "stopped", rateLimitResumeAt: future });
+    expect(st.text).toBe(t("state.stopped_auto_resume", { at: resumeClock(future) }));
+    expect(st.cls).toContain("off");
+    expect(st.cls).toContain("resume");
+  });
+
+  it("ignores a past instant and ranks below a carried question", () => {
+    const past = new Date(Date.now() - 3600_000).toISOString();
+    expect(stateInfo({ kind: "codex", alive: false, rateLimitResumeAt: past }).text).toBe(t("state.stopped"));
+    expect(stateInfo({ kind: "codex", alive: false, rateLimitResumeAt: future, carried: "question" }).text).toBe(
+      t("state.stopped_question"),
+    );
+  });
+});
