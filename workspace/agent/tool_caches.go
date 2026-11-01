@@ -141,26 +141,11 @@ func argvRunsMaven(argv []string) bool {
 	return false
 }
 
-// argvRunsNpx matches npx and `npm exec` / `npm x`, direct or node-run: both use _npx.
-func argvRunsNpx(argv []string) bool {
-	if argvRunsNode("npx")(argv) {
-		return true
-	}
-	if !argvRunsNode("npm")(argv) {
-		return false
-	}
-	rest := argv[1:]
-	if filepath.Base(argv[0]) == "node" && len(argv) > 1 {
-		rest = argv[2:]
-	}
-	for _, a := range rest {
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		return a == "exec" || a == "x"
-	}
-	return false
-}
+// argvRunsNpx matches npx and any running npm. `npm exec` / `npm x` use _npx, but picking the
+// subcommand out of argv is unsafe: global options take values as separate arguments
+// (`npm --cache /p exec`), so the first non-flag word is not reliably the subcommand.
+// Treating every npm as a user errs toward refusing, which the npm row already does.
+var argvRunsNpx = argvRunsNode("npx", "npm")
 
 func isShell(prog string) bool {
 	switch filepath.Base(prog) {
