@@ -152,18 +152,6 @@ index 40ebbc27c..a1b987b7a 100644
  
  // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
  // emits question/plan/permission; codex/opencode emit working/idle; agy emits
-diff --git a/workspace/agent/agent_instructions.go b/workspace/agent/agent_instructions.go
-index 4fadbd09e..88e9f9421 100644
---- a/workspace/agent/agent_instructions.go
-+++ b/workspace/agent/agent_instructions.go
-@@ -119,6 +119,7 @@ var instrUnsupported = []struct{ kind, reason string }{
- 	// structural impossibility rather than missing wiring, so it is not shown as pending
- 	// implementation.
- 	{"cursor", "no_user_scope"},
-+	{"zz", "no_user_scope"},
- }
- 
- func instrOpencodeFile() string { return opencode.InstructionsFile() }
 diff --git a/workspace/agent/internal/agentreg/agentreg.go b/workspace/agent/internal/agentreg/agentreg.go
 index d855a48db..876acaead 100644
 --- a/workspace/agent/internal/agentreg/agentreg.go
@@ -207,7 +195,7 @@ new file mode 100644
 index 000000000..a290704cb
 --- /dev/null
 +++ b/workspace/agent/internal/agents/zz/zz.go
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,52 @@
 +// Package zz is a stub kind used only to measure how many files a new kind touches
 +// (scripts/stub-kind-count.sh). It is never merged.
 +package zz
@@ -252,6 +240,9 @@ index 000000000..a290704cb
 +
 +// PromptModal is agents.ModalProbe: the stub shows no modal.
 +func (agentImpl) PromptModal(session.Meta) string { return "" }
++
++// InstructionsUnsupported is agents.InstructionsUnsupported: the stub takes no user instructions.
++func (agentImpl) InstructionsUnsupported() string { return "no_user_scope" }
 +
 +// SkillsLayout is agents.SkillsLayouter: foreign entries only.
 +func (agentImpl) SkillsLayout() agents.SkillsLayout {

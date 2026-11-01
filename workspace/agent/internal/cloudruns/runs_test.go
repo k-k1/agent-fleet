@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,15 @@ func useRoot(t *testing.T) string {
 	oldRoot, oldNow := root, now
 	root = func() string { return dir }
 	clock := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	now = func() time.Time { clock = clock.Add(time.Millisecond); return clock }
+	// Begin and the run methods call now from several goroutines (TestEvictedRunsStayOut), so
+	// the fake clock needs its own lock.
+	var mu sync.Mutex
+	now = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		clock = clock.Add(time.Millisecond)
+		return clock
+	}
 	t.Cleanup(func() { root, now = oldRoot, oldNow })
 	return dir
 }

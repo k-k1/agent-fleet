@@ -231,30 +231,21 @@ func TestV2StoreMissingIsAnEmptyChat(t *testing.T) {
 	}
 }
 
-// Before anything has probed a daemon (the Agent just restarted) the installed opencode and the
-// database say which store holds the conversations; defaulting to v1 read the tables v2 never fills.
-func TestV2ServedBeforeAnyProbeFollowsTheInstalledMajor(t *testing.T) {
+// Before anything has probed a daemon (the Agent just restarted) the database says which store
+// holds the conversations; defaulting to v1 read the tables v2 never fills.
+func TestV2ServedBeforeAnyProbeFollowsTheStore(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := detectedMajor.Load()
-	detectedMajor.Store(0)
-	t.Cleanup(func() { detectedMajor.Store(prev) })
+	prev := serveSeen.Load()
+	serveSeen.Store(false)
+	t.Cleanup(func() { serveSeen.Store(prev) })
 	m := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode, Driver: session.DriverManaged}
 	openTestStore(t)
 
-	useMajor(t, 1)
-	if v2Served() {
-		t.Error("v1 installed: served as v2")
-	}
-	useMajor(t, 2)
 	if !v2Served() {
-		t.Fatal("v2 installed over a v2 store: not served as v2")
+		t.Fatal("a v2 store: not served as v2")
 	}
 	if tg, ok := v2TargetFor(m); !ok || tg.Addr == "" {
-		t.Errorf("a managed session on an unprobed v2 install has no target: %+v %v", tg, ok)
-	}
-	detectedMajor.Store(int32(apiV1))
-	if v2Served() {
-		t.Error("a probed v1 daemon was overruled by the installed major")
+		t.Errorf("a managed session on an unprobed v2 store has no target: %+v %v", tg, ok)
 	}
 }
 
@@ -262,9 +253,9 @@ func TestV2ServedBeforeAnyProbeFollowsTheInstalledMajor(t *testing.T) {
 // only the first start of v2 moves it. Until then the v1 reader has to serve it.
 func TestV2NotServedOverAnUnmigratedV1Store(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := detectedMajor.Load()
-	detectedMajor.Store(0)
-	t.Cleanup(func() { detectedMajor.Store(prev) })
+	prev := serveSeen.Load()
+	serveSeen.Store(false)
+	t.Cleanup(func() { serveSeen.Store(prev) })
 	useMajor(t, 2)
 	if v2Served() {
 		t.Fatal("no database at all: served as v2")
@@ -490,9 +481,9 @@ func TestV2StoreTellsATruncatedDocumentFromACutConnection(t *testing.T) {
 // still read from the v1 tables until a v2 start finishes the import.
 func TestV2NotServedOverAHalfMigratedStore(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	prev := detectedMajor.Load()
-	detectedMajor.Store(0)
-	t.Cleanup(func() { detectedMajor.Store(prev) })
+	prev := serveSeen.Load()
+	serveSeen.Store(false)
+	t.Cleanup(func() { serveSeen.Store(prev) })
 	useMajor(t, 2)
 	db := openTestStore(t) // the empty v2 schema
 	for _, q := range []string{

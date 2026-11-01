@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,7 +36,8 @@ func gateEnv(t *testing.T) map[string]Profile {
 		AccountID: "210987654321"}
 	settings := map[string]Profile{"prod-admin": admin, "base": base, "deploy": deploy, "admin-src": adminSrc, "via-admin": via}
 	old := confirmSettings
-	confirmSettings = func() map[string]Profile { return settings }
+	setSettings(settings)
+	confirmSettings = func() map[string]Profile { return *liveSettings.Load() }
 	oldPoll, oldCur := confirmPoll, currentSettings
 	confirmPoll = 10 * time.Millisecond
 	// The waiting run reads the same Settings the Agent's routes do, as both read the poll's.
@@ -43,6 +45,14 @@ func gateEnv(t *testing.T) map[string]Profile {
 	t.Cleanup(func() { confirmSettings, confirmPoll, currentSettings = old, oldPoll, oldCur })
 	return settings
 }
+
+// liveSettings is what confirmSettings returns during a test. A running gate polls it from its
+// own goroutine, so a test changes it through setSettings; reassigning the confirmSettings
+// package var mid-test is a data race with that poller. The package vars themselves are
+// swapped only here, before a gate starts and after its cleanup has joined it.
+var liveSettings atomic.Pointer[map[string]Profile]
+
+func setSettings(m map[string]Profile) { liveSettings.Store(&m) }
 
 // gate runs the gate in the background and returns its result channel.
 //
@@ -245,7 +255,7 @@ func TestConfirmTargetsOfChains(t *testing.T) {
 	d := both["deploy"]
 	d.SourceProfile = "admin-src"
 	both["deploy"] = d
-	confirmSettings = func() map[string]Profile { return both }
+	setSettings(both)
 	ch := gate(t, both, "admin-src", "s1", gateLongWait)
 	answer(t, pending(t, 1)[0].ID, "approve", true)
 	if err := <-ch; err != nil {
@@ -273,13 +283,13 @@ func TestConfirmRequestFollowsSettings(t *testing.T) {
 	p := edited["prod-admin"]
 	p.AccountID = "999999999999"
 	edited["prod-admin"] = p
-	confirmSettings = func() map[string]Profile { return edited }
+	setSettings(edited)
 	pending(t, 0)
 	if c := answer(t, reqs[0].ID, "approve", true); c != http.StatusNotFound {
 		t.Fatalf("approving a request Settings no longer matches = %d", c)
 	}
 
-	confirmSettings = func() map[string]Profile { return s }
+	setSettings(s)
 	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	answer(t, pending(t, 1)[0].ID, "approve", false)
 	if err := <-ch; err != nil {
@@ -310,7 +320,7 @@ func TestConfirmGateEndsWhenSettingsChangeWhileWaiting(t *testing.T) {
 	p := edited["prod-admin"]
 	p.RoleName = "AdministratorAccess"
 	edited["prod-admin"] = p
-	confirmSettings = func() map[string]Profile { return edited }
+	setSettings(edited)
 	select {
 	case err := <-ch:
 		if !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
@@ -377,7 +387,7 @@ func TestDenyHoldIsPerProfile(t *testing.T) {
 	d := both["deploy"]
 	d.SourceProfile = "admin-src"
 	both["deploy"] = d
-	confirmSettings = func() map[string]Profile { return both }
+	setSettings(both)
 	ch := gate(t, both, "deploy", "s1", gateLongWait)
 	reqs := pending(t, 1)
 	if len(reqs[0].Targets) != 2 {
@@ -422,17 +432,17 @@ func TestConfirmGrantDoesNotSkipTheSettingsCheck(t *testing.T) {
 		t.Fatalf("control = %+v, %v", res, err)
 	}
 	// The grant exists from the start, but Settings changed.
-	confirmSettings = func() map[string]Profile { return edited }
+	setSettings(edited)
 	if _, err := ConfirmGate(ConfirmOptions{Settings: s, Profile: "prod-admin", Session: "s1", Wait: time.Millisecond}); !errors.Is(err, ErrConfirmRequired) || !strings.Contains(err.Error(), "changed in Settings") {
 		t.Fatalf("existing grant, changed Settings = %v", err)
 	}
 
 	// The grant lands while the run waits, together with a Settings change.
 	os.Remove(grantPath(inc, target.ProfileID))
-	confirmSettings = func() map[string]Profile { return s }
+	setSettings(s)
 	ch := gate(t, s, "prod-admin", "s1", gateLongWait)
 	pending(t, 1)
-	confirmSettings = func() map[string]Profile { return edited }
+	setSettings(edited)
 	grant()
 	select {
 	case err := <-ch:

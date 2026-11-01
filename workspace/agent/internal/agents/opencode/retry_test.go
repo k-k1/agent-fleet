@@ -32,12 +32,9 @@ func TestPermanentRetry(t *testing.T) {
 	}
 }
 
-func sessionStatusEvent(status string) []byte {
-	return []byte(fmt.Sprintf(`{"payload":{"type":"session.status","properties":{"sessionID":"ses_test","status":%s}}}`, status))
-}
-
+// retryStatus is the retry announcement opencode 2 sends (session.retry.scheduled).
 func retryStatus(attempt int, msg string) []byte {
-	return sessionStatusEvent(fmt.Sprintf(`{"type":"retry","attempt":%d,"message":%q,"next":1791949793161}`, attempt, msg))
+	return []byte(fmt.Sprintf(`{"type":"session.retry.scheduled","data":{"sessionID":"ses_test","attempt":%d,"at":1791949793161,"error":{"type":"provider.internal","message":%q,"status":500}}}`, attempt, msg))
 }
 
 func enriched(h *threadHandle) *agents.RetryInfo {
@@ -58,12 +55,13 @@ func TestRetryIsShownWhileItLastsAndClearsOnOutput(t *testing.T) {
 	if got == nil || got.Attempt != 5 || got.Message != "stub upstream exploded" || got.Failed || got.NextMs != 1791949793161 {
 		t.Fatalf("Retry = %+v, want attempt 5 with the upstream message", got)
 	}
-	// opencode goes busy between two attempts: that is not the end of the retry.
-	handleServeEvent(sessionStatusEvent(`{"type":"busy"}`))
+	// The next attempt starting is not the end of the retry: no event that only announces an
+	// attempt may clear it (the driver has no case for this one, and must not grow one).
+	handleServeEvent([]byte(`{"type":"session.step.started","data":{"sessionID":"ses_test"}}`))
 	if enriched(h) == nil {
-		t.Fatal("a busy status between attempts cleared the retry")
+		t.Fatal("the next attempt starting cleared the retry")
 	}
-	handleServeEvent([]byte(`{"payload":{"type":"message.part.updated","properties":{"part":{"sessionID":"ses_test","type":"text"}}}}`))
+	handleServeEvent([]byte(`{"type":"session.text.started","data":{"sessionID":"ses_test"}}`))
 	if got := enriched(h); got != nil {
 		t.Fatalf("Retry = %+v after output, want none", got)
 	}
@@ -199,7 +197,8 @@ func TestV2RetryScheduled(t *testing.T) {
 	t.Fatal("a permanent message on v2 must abort the turn too")
 }
 
-// The /global/event line exactly as 1.19.0 sent it while retrying (loopback stub answering 500).
+// The /global/event line exactly as 1.19.0 sent it while retrying (loopback stub answering 500). The
+// driver still accepts it: the event name is still in the 2.x binary.
 func TestRetryFromTheMeasuredGlobalEvent(t *testing.T) {
 	m, srv := newMockServe(t)
 	h := newTestHandle(t, srv)
@@ -416,7 +415,7 @@ func TestTimedOutRetryAbortIsNotConfirmedByARetry(t *testing.T) {
 	m.mu.Lock()
 	m.holdFirstAbort = release // the first POST times out inside the handler
 	m.mu.Unlock()
-	if confirmedAbort(srv.URL, "ses_test", "/tmp") {
+	if confirmedAbort(srv.URL, "ses_test") {
 		t.Fatal("an abort whose first request timed out must not count as confirmed")
 	}
 	close(release)

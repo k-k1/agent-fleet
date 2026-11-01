@@ -29,10 +29,12 @@ jobs:
       matrix:
         include:
           - module: workspace/agent
-            exclude: 'internal/(awsx|gcpx|jirax|cloudruns)$'
+            # gcpx stays out: its race (TestWaitEndsWithTheReasonWhenALoginCannotHelp, #3143)
+            # does not reproduce, so no fix can be verified.
+            exclude: 'internal/gcpx$'
           - module: control-plane
-            # The root package has one known race (TestEngineDiscoverProbeCachesWithinTTL).
-            exclude: 'control-plane$'
+            # Matches no package path; an empty pattern would make grep -Ev drop every package.
+            exclude: '^$'
     name: race (${{ matrix.module }})
     steps:
       - uses: actions/checkout@v7

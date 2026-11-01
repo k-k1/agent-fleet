@@ -153,19 +153,15 @@ func inheritLinks(child *session.Meta) {
 	if !ok {
 		return
 	}
-	for _, l := range session.InheritedLinks(parent, inheritedAt(child.CreatedAt, time.Now())) {
+	// Links are stamped in UTC like every other writer, but CreatedAt is in local time. Re-format
+	// the same instant rather than stamping now; an unparsable CreatedAt falls back to now.
+	at := time.Now().UTC()
+	if t, err := time.Parse(time.RFC3339, child.CreatedAt); err == nil {
+		at = t.UTC()
+	}
+	for _, l := range session.InheritedLinks(parent, at.Format(time.RFC3339)) {
 		session.AddLink(child, l)
 	}
-}
-
-// inheritedAt is the child's creation time in UTC, as every other link is stamped: CreatedAt
-// is written in the workspace's local zone, and a reader that compares the strings would
-// order "+09:00" and "Z" stamps wrongly. now when CreatedAt does not parse.
-func inheritedAt(createdAt string, now time.Time) string {
-	if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
-		now = t
-	}
-	return now.UTC().Format(time.RFC3339)
 }
 
 // recordBranchPRs links each session to the PR of the branch it is on, as working: whoever is

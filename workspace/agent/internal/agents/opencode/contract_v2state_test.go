@@ -164,8 +164,8 @@ func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider,
 	if err != nil {
 		t.Fatal(err)
 	}
-	detectedMajor.Store(int32(apiV1))
-	t.Cleanup(func() { detectedMajor.Store(int32(apiV1)); resetServeAuth("") })
+	serveSeen.Store(false)
+	t.Cleanup(func() { serveSeen.Store(false); resetServeAuth("") })
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", port)
 	cmd.Env = append(envWithHome(home), "OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	cmd.Dir = home
@@ -178,8 +178,8 @@ func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider,
 			t.Fatal("serve never became healthy")
 		}
 	}
-	if !isV2() {
-		t.Fatal("probe did not detect v2")
+	if !serveSeen.Load() {
+		t.Fatal("the probe did not record the daemon")
 	}
 	// Warm the instance up: the first request for a directory boots plugins, which outlasts serveClient.
 	dir = t.TempDir()
@@ -203,11 +203,11 @@ func TestContractV2StateReadsTurnsThroughTheAPI(t *testing.T) {
 
 	turn := func(prompt string) (messageError, bool) {
 		t.Helper()
-		req, err := newTurnRequest(addr, ses, dir, agents.TurnInput{Prompt: prompt}, st)
+		req, err := newTurnRequest(addr, ses, agents.TurnInput{Prompt: prompt})
 		if err != nil {
 			t.Fatal(err)
 		}
-		res, err := sendTurn(addr, ses, dir, req, st)
+		res, err := sendTurn(addr, ses, req, st)
 		if err != nil {
 			t.Fatalf("turn %q: %v", prompt, err)
 		}
@@ -265,7 +265,7 @@ func TestContractV2StateReadsTurnsThroughTheAPI(t *testing.T) {
 	if len(td.Queued) != 1 || td.Queued[0] != "queued behind" {
 		t.Fatalf("queued = %q", td.Queued)
 	}
-	if err := serveAbort(addr, ses, dir); err != nil {
+	if err := serveAbort(addr, ses); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -341,11 +341,11 @@ func TestContractV2Todo(t *testing.T) {
 			sids.Write(session.UUID(m.Dir, m.Name), ses)
 			t.Cleanup(func() { sids.Remove(session.UUID(m.Dir, m.Name)) })
 			st := agents.ThreadSettings{Model: "stub/m"}
-			req, err := newTurnRequest(addr, ses, dir, agents.TurnInput{Prompt: "make a TODO list"}, st)
+			req, err := newTurnRequest(addr, ses, agents.TurnInput{Prompt: "make a TODO list"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			res, err := sendTurn(addr, ses, dir, req, st)
+			res, err := sendTurn(addr, ses, req, st)
 			if err != nil {
 				t.Fatal(err)
 			}

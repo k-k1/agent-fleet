@@ -57,7 +57,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 | サインイン | Agent の `/connections/<kind>/…` ハンドラ、**および** CP で 1 本ずつ名指しで中継するルート（`control-plane/relays_connections.go` の行。ログインフローは `routes.go` の `restLogin`）| CP へのコールバックが要る種別は無い（[08 §8.6](08-integrations.ja.md)）。サインインする相手が無い種別にはフローも無い |
 | 資格の置き場と fs denylist | 自パッケージと `fsDeny`（`fs.go`）| CLI が資格情報や状態を書く場所は**ファイルブラウザから隠す** |
 | MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerFor` の writer と `MaterializedKinds` への追加、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`Caps().MCPClient`。`knownKinds` は `ServedKinds` から、CP の `mcpKnownKinds` は kind カタログのスナップショット（§20.7）から導出される | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
-| エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または理由コード付きで `instrUnsupported` | Console の配布先一覧はこの 2 つから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
+| エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または Agent の `agents.InstructionsUnsupported`（理由コードを返す 1 行のメソッド。`cursor/instructions.go`） | Console の配布先一覧は `instrSupportedKinds` とレジストリの `InstructionsUnsupported` の答えから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
 | Console の descriptor | `console/src/types/session.ts` の `SESSION_KINDS` と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。driver に関する事実（`managedDriver`、`terminalDriver`）はカタログから読み、読み込み前は `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS` が答える。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
 | contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
@@ -237,7 +237,7 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       `mcpx` は golden が古いまま通る
 - [ ] [ref/agents.md](../../guide/ref/agents.ja.md) と `ref/agents.ja.md` の列。`scripts/docs-check.py` が
       `CAPS_ROWS` の行（MCP を含む）を `Caps()` と、日本語の表の印を英語の表と突き合わせる
-- [ ] 指示: `agents.Instructions` と `instrSupportedKinds`、または理由付きの `instrUnsupported`、
+- [ ] 指示: `agents.Instructions` と `instrSupportedKinds`、または `agents.InstructionsUnsupported`、
       CLI を動かさない種別なら `noInstructionTargets`（`TestInstructionsClassifyEveryRegisteredKind`。
       `agent_instructions_kinds_test.go` の `legacyInstr` に行を足すのは新しい形を固定するときだけ）
 - [ ] MCP: `MaterializedKinds`（と writer）か `ServedKinds` を `Caps().MCPClient` に合わせる。
@@ -252,7 +252,8 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       移動先（`moveTargetKinds` / `moveUnmeasuredTargets`。`session_move_kinds_test.go` の
       `moveClassification`）、チャットプロバイダか `noChatProvider` への登録（`kind_lists_test.go`。
       プロバイダがあれば `chatx` の `oneShotKinds` と `providerResumeHandles` がそれぞれのテストに従う）。
-      `providerResumeKinds` は `providerResumeHandles` から作る。`TestMoveTargetListsAreUnchanged` は
+      `providerResumeKinds` は `providerResumeHandles` から作る（この表は各 kind のメッセージカーソル欄も持つ。
+      `TestEveryMessageCursorFieldIsListed`）。`TestMoveTargetListsAreUnchanged` は
       移動先の 2 つの一覧をリテラルで固定するので、どちらかに足した種別はこれも直す
 - [ ] `wantRuntime`（`internal/sessionx/managed_runtime_test.go`）にどの種別も 1 行。マネージドの
       ランタイムを持たない種別は `nil`（`TestManagedRuntimeDispatchPinned`）
@@ -304,6 +305,10 @@ MCP ツールの golden を作り直し、`internal/agents/zz` の外で変わ�
 scripts/stub-kind-count.sh            # HEAD で数える
 scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-check も走らせる
 ```
+
+暫定値（2026-11-01、`instrUnsupported` を `agents.InstructionsUnsupported` へ移した後、#2933）:
+`--verify` 無しの実行で、テスト・Markdown 以外 16 ファイル、含めて 21 ファイル（それまでは 17 / 22）。
+`--verify` 未実行のため確定値ではありません。
 
 数値として使えるのは、`--verify` が通った実行だけです。パッチが当たらなくなったとき、または
 `--verify` で新しいガードが落ちたときはパッチを作り直します。`--keep` で実行し、残したクローンで

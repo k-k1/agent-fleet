@@ -50,7 +50,7 @@ func Models() []string {
 		modelsEnvKey = envKey
 		return modelsList
 	}
-	if err := EnsureMigrated(spec); err != nil {
+	if err := PrepareStart(spec); err != nil {
 		log.Printf("opencode models: %v", err)
 		return nil
 	}

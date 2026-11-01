@@ -111,14 +111,30 @@ func instrDeliveryOf(kind string) string {
 	return ops.Shape().Delivery
 }
 
-// instrUnsupported are the kinds it cannot reach, with the reason (measured, docs/log/60
-// §60.3).
-var instrUnsupported = []struct{ kind, reason string }{
-	// No user layer exists locally: User Rules live on the Cursor account side
-	// (aiserver.v1.UserRules) and every local rules source is project-scoped. That is a
-	// structural impossibility rather than missing wiring, so it is not shown as pending
-	// implementation.
-	{"cursor", "no_user_scope"},
+// instrUnsupportedOf is the reason a kind cannot take the member's instructions
+// (agents.InstructionsUnsupported), "" when it does not say so. Exact registry key, like
+// instrOpsOf: an alias has none.
+func instrUnsupportedOf(kind string) string {
+	a, ok := sessionx.RegisteredAgent(kind)
+	if !ok {
+		return ""
+	}
+	if u, ok := a.(agents.InstructionsUnsupported); ok {
+		return u.InstructionsUnsupported()
+	}
+	return ""
+}
+
+// instrUnsupportedKinds are the registered kinds that declare themselves unable to take the
+// instructions, in registry order.
+func instrUnsupportedKinds() []string {
+	var out []string
+	for _, k := range sessionx.RegisteredKinds() {
+		if instrUnsupportedOf(k) != "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func instrOpencodeFile() string { return opencode.InstructionsFile() }
@@ -241,7 +257,7 @@ func errCode(err error) string {
 // is measured rather than assumed.
 func instrState() instrStateWire {
 	st := userinstr.Load()
-	targets := make([]instrTarget, 0, len(instrSupportedKinds)+len(instrUnsupported))
+	targets := make([]instrTarget, 0, len(instrSupportedKinds)+len(instrUnsupportedKinds()))
 	for _, kind := range instrSupportedKinds {
 		t := instrTarget{Kind: kind, Supported: true, On: st.TargetOn(kind), Error: instrErrs[kind]}
 		want := st.Body(kind) != ""
@@ -252,8 +268,8 @@ func instrState() instrStateWire {
 		}
 		targets = append(targets, t)
 	}
-	for _, u := range instrUnsupported {
-		targets = append(targets, instrTarget{Kind: u.kind, Reason: u.reason})
+	for _, kind := range instrUnsupportedKinds() {
+		targets = append(targets, instrTarget{Kind: kind, Reason: instrUnsupportedOf(kind)})
 	}
 	return instrStateWire{
 		Text:     st.Text,

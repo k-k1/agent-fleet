@@ -25,11 +25,9 @@ package opencode
 //     SESSION even though the config file is shared.
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -213,51 +211,16 @@ func HasEngineProviders() bool {
 // — the next start reads it.
 var ErrNoDaemon = errors.New("opencode serve is not running")
 
-// PushEngineProviders hands the provider block to the RUNNING daemon, so an engine change
-// applies without replacing the process and without cutting short whatever turn is in
-// flight.
-//
-// Measured (1.18.31): PATCH /global/config answers 200, the provider is visible to
-// /config/providers immediately, and the patch is persisted to the config file.
-//
-// It MERGES, so it cannot express a removal: `{"provider":{}}` leaves the entry in place and
-// a null value is refused with 400 (both measured). A change that drops a provider therefore
-// still owes a new process — WriteEngineProviders reports that as `removed`.
+// PushEngineProviders would hand the provider block to the RUNNING daemon, so an engine change
+// applied without replacing the process. opencode 2 has no live path for it: PATCH
+// /api/experimental/config takes `shell` only and refuses a provider block with 400 (measured
+// 2.0.28). So a running daemon always answers ErrLiveConfigUnsupported and the caller asks for a
+// restart; with no daemon the file is the whole job.
 func PushEngineProviders(engines []EngineProvider) error {
 	if !Serve().Running() {
 		return ErrNoDaemon
 	}
-	if isV2() {
-		// PATCH /api/experimental/config takes `shell` only and refuses a provider block with
-		// 400 (measured 2.0.28), so there is no live path: the caller asks for a restart.
-		return ErrLiveConfigUnsupported
-	}
-	providers := map[string]any{}
-	for _, e := range engines {
-		if e.Provider == "" || e.BaseURL == "" || len(e.Models) == 0 {
-			continue
-		}
-		providers[e.Provider] = engineProviderEntry(e)
-	}
-	body, err := json.Marshal(map[string]any{engineProviderConfigKey: providers})
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest("PATCH", Serve().Addr()+"/global/config", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := serveClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode >= 300 {
-		return fmt.Errorf("PATCH /global/config: HTTP %d", res.StatusCode)
-	}
-	InvalidateModels() // the catalogue this side caches was taken before the patch
-	return nil
+	return ErrLiveConfigUnsupported
 }
 
 // engineProviderEntry is one provider as opencode reads it.

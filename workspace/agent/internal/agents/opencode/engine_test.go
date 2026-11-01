@@ -3,9 +3,6 @@ package opencode
 import (
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -376,41 +373,6 @@ func TestWriteEngineProvidersReportsARemoval(t *testing.T) {
 	}
 	if !removed {
 		t.Error("beta left the stack, and only a new process can make a running daemon forget it")
-	}
-}
-
-func TestPushEngineProvidersPatchesTheRunningDaemon(t *testing.T) {
-	var gotPath, gotBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.Method + " " + r.URL.Path
-		b, _ := io.ReadAll(r.Body)
-		gotBody = string(b)
-		w.Write([]byte(`{}`))
-	}))
-	t.Cleanup(srv.Close)
-	t.Setenv(serveAddrEnv, srv.URL)
-
-	supervisor.mu.Lock()
-	was := supervisor.up
-	supervisor.up = true
-	supervisor.mu.Unlock()
-	t.Cleanup(func() {
-		supervisor.mu.Lock()
-		supervisor.up = was
-		supervisor.mu.Unlock()
-	})
-
-	err := PushEngineProviders([]EngineProvider{
-		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1", Models: []string{"m"}},
-	})
-	if err != nil {
-		t.Fatalf("push: %v", err)
-	}
-	if gotPath != "PATCH /global/config" {
-		t.Errorf("path = %q", gotPath)
-	}
-	if !strings.Contains(gotBody, `"llamacpp"`) || !strings.Contains(gotBody, `"provider"`) {
-		t.Errorf("body = %s", gotBody)
 	}
 }
 

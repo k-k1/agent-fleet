@@ -64,7 +64,6 @@ func TestForkAtTerminalStaysManagedOnlyElsewhere(t *testing.T) {
 		{"standalone pane", 2, "", modeStandalone},
 		{"pane launched before the record existed", 2, "", ""},
 		{"shared pane but the next launch is --standalone", 2, "1", modeShared},
-		{"opencode 1.x", 1, "", modeShared},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

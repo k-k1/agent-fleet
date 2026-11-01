@@ -25,7 +25,7 @@ import (
 
 // noInstructionTargets are the registered kinds that run no agent CLI, so there is nothing to
 // deliver instructions to. Every other registered kind must be supported or listed in
-// instrUnsupported with a reason.
+// agents.InstructionsUnsupported with a reason.
 var noInstructionTargets = []string{"shell", "ssm"}
 
 // legacyInstr is what applyInstructionsLocked, instrState, instrDeliveryOf and the preview
@@ -36,12 +36,9 @@ type legacyInstrRow struct {
 	fleet, skills, user     bool   // which apply steps the kind took part in
 }
 
-func legacyInstr(opencodeV2 bool) map[string]legacyInstrRow {
-	oc := legacyInstrRow{delivery: agents.DeliveryConfig, measure: agents.MeasureConfig, path: instrOpencodeFile(),
-		fleet: true, skills: true, user: true}
-	if opencodeV2 {
-		oc.delivery, oc.measure, oc.path, oc.preview = agents.DeliveryCompose, agents.MeasureBlock, opencode.AgentsPath(), "user-notes"
-	}
+func legacyInstr() map[string]legacyInstrRow {
+	oc := legacyInstrRow{delivery: agents.DeliveryCompose, measure: agents.MeasureBlock, path: opencode.AgentsPath(),
+		preview: "user-notes", fleet: true, skills: true, user: true}
 	return map[string]legacyInstrRow{
 		"claude":   {agents.DeliveryFile, agents.MeasureBlock, claude.UserInstructionsPath(), "", false, true, true},
 		"codex":    {agents.DeliveryCompose, agents.MeasureBlock, codex.AgentsPath(), "", true, true, true},
@@ -55,34 +52,29 @@ func legacyInstr(opencodeV2 bool) map[string]legacyInstrRow {
 }
 
 func TestInstructionsShapeMatchesLegacySwitches(t *testing.T) {
-	for _, v2 := range []bool{false, true} {
-		instrEnv(t)
-		if v2 {
-			useOpencodeV2(t)
+	instrEnv(t)
+	legacy := legacyInstr()
+	for _, kind := range append(sessionx.RegisteredKinds(), "", "Claude", "CODEX", "kiro-cli", "open-code", "fleet", "unknown") {
+		row, supported := legacy[kind]
+		ops, ok := instrOpsOf(kind)
+		if ok != supported {
+			t.Errorf("%q: instrOpsOf = %v, legacy supported = %v", kind, ok, supported)
+			continue
 		}
-		legacy := legacyInstr(v2)
-		for _, kind := range append(sessionx.RegisteredKinds(), "", "Claude", "CODEX", "kiro-cli", "open-code", "fleet", "unknown") {
-			row, supported := legacy[kind]
-			ops, ok := instrOpsOf(kind)
-			if ok != supported {
-				t.Errorf("v2=%v %q: instrOpsOf = %v, legacy supported = %v", v2, kind, ok, supported)
-				continue
-			}
-			if got := instrDeliveryOf(kind); got != row.delivery {
-				t.Errorf("v2=%v %q: delivery %q, legacy %q", v2, kind, got, row.delivery)
-			}
-			if !ok {
-				continue
-			}
-			s := ops.Shape()
-			if s.Delivery != row.delivery || s.Measure != row.measure || s.Path != row.path || s.PreviewBlock != row.preview {
-				t.Errorf("v2=%v %q: shape %+v, legacy %+v", v2, kind, s, row)
-			}
-			if (ops.Fleet != nil) != row.fleet || (ops.SkillsDir != nil) != row.skills ||
-				(ops.User != nil) != row.user || (ops.Memory != nil) != row.user {
-				t.Errorf("v2=%v %q: apply steps fleet=%v skills=%v user=%v memory=%v, legacy %+v", v2, kind,
-					ops.Fleet != nil, ops.SkillsDir != nil, ops.User != nil, ops.Memory != nil, row)
-			}
+		if got := instrDeliveryOf(kind); got != row.delivery {
+			t.Errorf("%q: delivery %q, legacy %q", kind, got, row.delivery)
+		}
+		if !ok {
+			continue
+		}
+		s := ops.Shape()
+		if s.Delivery != row.delivery || s.Measure != row.measure || s.Path != row.path || s.PreviewBlock != row.preview {
+			t.Errorf("%q: shape %+v, legacy %+v", kind, s, row)
+		}
+		if (ops.Fleet != nil) != row.fleet || (ops.SkillsDir != nil) != row.skills ||
+			(ops.User != nil) != row.user || (ops.Memory != nil) != row.user {
+			t.Errorf("%q: apply steps fleet=%v skills=%v user=%v memory=%v, legacy %+v", kind,
+				ops.Fleet != nil, ops.SkillsDir != nil, ops.User != nil, ops.Memory != nil, row)
 		}
 	}
 }
@@ -134,14 +126,14 @@ func TestInstructionsOpsDispatchPinned(t *testing.T) {
 }
 
 // A registered kind must say whether it takes the member's instructions: it implements
-// agents.Instructions and is in instrSupportedKinds (display order), or it is in
-// instrUnsupported with a reason, or it runs no agent CLI at all.
+// agents.Instructions and is in instrSupportedKinds (display order), or it
+// implements agents.InstructionsUnsupported with a reason, or it runs no agent CLI at all.
 func TestInstructionsClassifyEveryRegisteredKind(t *testing.T) {
 	for _, kind := range sessionx.RegisteredKinds() {
 		a, _ := sessionx.RegisteredAgent(kind)
 		_, impl := a.(agents.Instructions)
 		listed := slices.Contains(instrSupportedKinds, kind)
-		unsupported := slices.ContainsFunc(instrUnsupported, func(u struct{ kind, reason string }) bool { return u.kind == kind })
+		unsupported := instrUnsupportedOf(kind) != ""
 		none := slices.Contains(noInstructionTargets, kind)
 		if impl != listed {
 			t.Errorf("%s: implements agents.Instructions = %v, instrSupportedKinds lists it = %v", kind, impl, listed)
@@ -207,27 +199,22 @@ func previewOf(t *testing.T, kind string) previewWire {
 // The preview and the state row must describe the same artifact for every kind: same path, and
 // once the member's text is applied the artifact the row calls applied exists in the preview.
 func TestInstructionsPreviewAgreesWithState(t *testing.T) {
-	for _, v2 := range []bool{false, true} {
-		instrEnv(t)
-		if v2 {
-			useOpencodeV2(t)
+	instrEnv(t)
+	if err := userinstr.SaveText("AGREEME\n"); err != nil {
+		t.Fatal(err)
+	}
+	reconcileAgentInstructions()
+	for _, row := range instrState().Targets {
+		if !row.Supported {
+			continue
 		}
-		if err := userinstr.SaveText("AGREEME\n"); err != nil {
-			t.Fatal(err)
+		p := previewOf(t, row.Kind)
+		if p.Path != row.Path {
+			t.Errorf("%s: preview path %q, state path %q", row.Kind, p.Path, row.Path)
 		}
-		reconcileAgentInstructions()
-		for _, row := range instrState().Targets {
-			if !row.Supported {
-				continue
-			}
-			p := previewOf(t, row.Kind)
-			if p.Path != row.Path {
-				t.Errorf("v2=%v %s: preview path %q, state path %q", v2, row.Kind, p.Path, row.Path)
-			}
-			if !row.Applied || !p.Exists || !strings.Contains(p.Content, "AGREEME") {
-				t.Errorf("v2=%v %s: applied=%v preview exists=%v content has text=%v", v2, row.Kind, row.Applied, p.Exists,
-					strings.Contains(p.Content, "AGREEME"))
-			}
+		if !row.Applied || !p.Exists || !strings.Contains(p.Content, "AGREEME") {
+			t.Errorf("%s: applied=%v preview exists=%v content has text=%v", row.Kind, row.Applied, p.Exists,
+				strings.Contains(p.Content, "AGREEME"))
 		}
 	}
 }
@@ -266,15 +253,80 @@ func TestInstructionsPreviewOpencode2ShowsOnlyTheUserBlock(t *testing.T) {
 	}
 }
 
-// opencode 1 is unchanged: the preview reads the AF-owned file its config points at.
-func TestInstructionsPreviewOpencode1ReadsTheOwnedFile(t *testing.T) {
-	instrEnv(t)
-	if err := userinstr.SaveText("Always report in Japanese.\n"); err != nil {
-		t.Fatal(err)
+// oldInstrUnsupported is the hand-kept list instrUnsupported held before the declaration moved
+// into each kind's package. It is deliberately a literal copy: the derived answer must equal it
+// for every registered kind, and for a spelling or kind the old exact-match loop never matched.
+var oldInstrUnsupported = []struct{ kind, reason string }{
+	{"cursor", "no_user_scope"},
+}
+
+func TestInstrUnsupportedMatchesOldList(t *testing.T) {
+	old := func(kind string) string {
+		for _, u := range oldInstrUnsupported {
+			if u.kind == kind {
+				return u.reason
+			}
+		}
+		return ""
 	}
-	reconcileAgentInstructions()
-	p := previewOf(t, "opencode")
-	if p.Path != instrOpencodeFile() || !p.Exists || !strings.Contains(p.Content, "Always report in Japanese.") {
-		t.Errorf("opencode 1 preview: %+v", p)
+	probes := append([]string{"Cursor", "CURSOR", " cursor", "", "unknown-kind", "cursor-agent"}, sessionx.RegisteredKinds()...)
+	for _, kind := range probes {
+		if got, want := instrUnsupportedOf(kind), old(kind); got != want {
+			t.Errorf("instrUnsupportedOf(%q) = %q, old list says %q", kind, got, want)
+		}
+		wantSupport := agents.TriUnverified
+		switch {
+		case slices.Contains(instrSupportedKinds, kind):
+			wantSupport = agents.TriYes
+		case old(kind) != "":
+			wantSupport = agents.TriNo
+		}
+		if got := instrSupport(kind); got != wantSupport {
+			t.Errorf("instrSupport(%q) = %v, want %v", kind, got, wantSupport)
+		}
+	}
+	var wantKinds []string
+	for _, k := range sessionx.RegisteredKinds() {
+		if old(k) != "" {
+			wantKinds = append(wantKinds, k)
+		}
+	}
+	if got := instrUnsupportedKinds(); !slices.Equal(got, wantKinds) {
+		t.Errorf("instrUnsupportedKinds() = %v, want %v", got, wantKinds)
+	}
+	// The catalog and the screen rows carry the same reason, byte for byte.
+	for _, e := range buildKindCatalog(false).Kinds {
+		if e.InstructionsReason != old(e.Kind) {
+			t.Errorf("catalog %s: instructionsReason = %q, want %q", e.Kind, e.InstructionsReason, old(e.Kind))
+		}
+	}
+	var rows []instrTarget
+	for _, tg := range instrState().Targets {
+		if !tg.Supported {
+			rows = append(rows, tg)
+		}
+	}
+	if len(rows) != len(oldInstrUnsupported) {
+		t.Fatalf("unsupported rows = %v, want %d", rows, len(oldInstrUnsupported))
+	}
+	for i, u := range oldInstrUnsupported {
+		if rows[i] != (instrTarget{Kind: u.kind, Reason: u.reason}) {
+			t.Errorf("row %d = %+v, want %s/%s", i, rows[i], u.kind, u.reason)
+		}
+	}
+}
+
+// A kind says either that it takes instructions or that it cannot, never both.
+func TestInstructionsAndUnsupportedAreExclusive(t *testing.T) {
+	for _, kind := range sessionx.RegisteredKinds() {
+		a, _ := sessionx.RegisteredAgent(kind)
+		_, yes := a.(agents.Instructions)
+		u, no := a.(agents.InstructionsUnsupported)
+		if yes && no {
+			t.Errorf("%s implements both agents.Instructions and agents.InstructionsUnsupported", kind)
+		}
+		if no && u.InstructionsUnsupported() == "" {
+			t.Errorf("%s: InstructionsUnsupported returns no reason code", kind)
+		}
 	}
 }

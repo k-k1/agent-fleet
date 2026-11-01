@@ -9,8 +9,9 @@ import (
 
 var _ agents.Instructions = agentImpl{}
 
-// InstructionsFile is the AF-owned body opencode 1's config points at. It lives under
-// ~/.config/agent-fleet so the only writer is af (opencode just reads it).
+// InstructionsFile is where opencode 1 read the member's instructions from (its config pointed at
+// it). opencode 2 does not apply that array, so the file is only ever removed now
+// (ApplyUserInstructions).
 func InstructionsFile() string {
 	return filepath.Join(paths.AgentConfigDir(), "instructions", "opencode.md")
 }
@@ -19,13 +20,10 @@ func InstructionsFile() string {
 func (agentImpl) Instructions() agents.InstructionsOps {
 	return agents.InstructionsOps{
 		Shape: func() agents.InstructionsShape {
-			if UserInstructionsInAgentsMD() {
-				// The global AGENTS.md also holds the fleet and memory blocks, so the preview
-				// shows the member's block only.
-				return agents.InstructionsShape{Delivery: agents.DeliveryCompose, Measure: agents.MeasureBlock,
-					Path: AgentsPath(), PreviewBlock: "user-notes"}
-			}
-			return agents.InstructionsShape{Delivery: agents.DeliveryConfig, Measure: agents.MeasureConfig, Path: InstructionsFile()}
+			// The global AGENTS.md also holds the fleet and memory blocks, so the preview shows the
+			// member's block only.
+			return agents.InstructionsShape{Delivery: agents.DeliveryCompose, Measure: agents.MeasureBlock,
+				Path: AgentsPath(), PreviewBlock: "user-notes"}
 		},
 		Fleet:     ApplyFleetNotes,
 		SkillsDir: func() string { return filepath.Join(paths.OpencodeConfigDir(), "skills") },

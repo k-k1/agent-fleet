@@ -52,10 +52,10 @@ func newSharedDaemon(t *testing.T) *sharedDaemon {
 	t.Setenv(serveAddrEnv, d.srv.URL)
 	t.Setenv(standaloneEnv, "")
 	resetServeAuth("pw-shared")
-	detectedMajor.Store(int32(apiV2))
+	serveSeen.Store(true)
 	old := ensureServe
 	ensureServe = func() (string, int, error) { return d.srv.URL, 1, nil }
-	t.Cleanup(func() { ensureServe = old; detectedMajor.Store(int32(apiV1)); resetServeAuth("") })
+	t.Cleanup(func() { ensureServe = old; serveSeen.Store(false); resetServeAuth("") })
 	return d
 }
 
@@ -352,20 +352,6 @@ func TestSharedLaunchReplacesAnOutdatedDaemon(t *testing.T) {
 	reasons = nil
 	if _, err := (agentImpl{}).BuildLaunch(terminalMeta(t, "current"), agents.LaunchOpts{}); err != nil || len(reasons) != 0 {
 		t.Errorf("a current daemon was restarted: %v %v", reasons, err)
-	}
-}
-
-// opencode 1 never touches the API for a Terminal launch.
-func TestSharedLaunchIsV2Only(t *testing.T) {
-	useMajor(t, 1)
-	ensureServe = func() (string, int, error) { t.Fatal("v1 must not use the shared serve"); return "", 0, nil }
-	t.Cleanup(func() { ensureServe = func() (string, int, error) { return Serve().Ensure() } })
-	plan, err := (agentImpl{}).BuildLaunch(terminalMeta(t, "v1"), agents.LaunchOpts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(plan.Program, "opencode --auto") || strings.Contains(plan.Program, "attach") {
-		t.Errorf("v1 program = %q", plan.Program)
 	}
 }
 

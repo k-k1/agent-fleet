@@ -626,6 +626,15 @@ type Instructions interface {
 	Instructions() InstructionsOps
 }
 
+// InstructionsUnsupported is the other answer to "does this kind take the member's
+// instructions": no, and why. The returned code is shown as the row's reason (the Console
+// translates it through its reason catalogue) and as GET /agents/kinds' instructionsReason, so
+// it must be non-empty. A kind implements this or Instructions, never both. A kind with
+// neither is unverified (shell, ssm, or one just added), which is not the same as "no".
+type InstructionsUnsupported interface {
+	InstructionsUnsupported() string
+}
+
 // InstructionsOps are the kind package's own apply functions. Each func-valued field may be nil
 // where the kind has nothing to write there; the body of every apply is "" to remove.
 type InstructionsOps struct {
