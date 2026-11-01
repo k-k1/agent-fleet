@@ -19,8 +19,11 @@ import (
 // is a release note, not twenty tickets this session works on.
 const maxInferredKeys = 3
 
-// jiraKeyRe is the key shape the Console links (workitems/refs.ts), uppercase only as Jira writes
-// keys; the boundaries are checked by hand because Go's regexp has no lookaround.
+// jiraKeyRe is a Jira key: uppercase only, as Jira writes keys and as the development-panel
+// convention expects them in a branch. A lowercase reading would turn branch words into tickets
+// (fix-it-2 is IT-2 on a site with an IT project). The boundaries are checked by hand because Go's
+// regexp has no lookaround; they differ from the Console's (workitems/refs.ts) on purpose: in a
+// branch name a key commonly follows "/" and is followed by "_" or "-".
 var jiraKeyRe = regexp.MustCompile(`[A-Z][A-Z0-9_]{1,9}-[1-9][0-9]{0,8}`)
 
 // jiraKeysIn returns the Jira keys in s whose project is one of projects, in order, at most
@@ -28,7 +31,7 @@ var jiraKeyRe = regexp.MustCompile(`[A-Z][A-Z0-9_]{1,9}-[1-9][0-9]{0,8}`)
 func jiraKeysIn(s string, projects map[string]bool) []string {
 	var out []string
 	for _, m := range jiraKeyRe.FindAllStringIndex(s, -1) {
-		if m[0] > 0 && isWordByte(s[m[0]-1]) || m[1] < len(s) && isAlnum(s[m[1]]) {
+		if m[0] > 0 && isAlnum(s[m[0]-1]) || m[1] < len(s) && isAlnum(s[m[1]]) {
 			continue
 		}
 		key := s[m[0]:m[1]]
@@ -48,8 +51,6 @@ func isAlnum(b byte) bool {
 	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
-func isWordByte(b byte) bool { return isAlnum(b) || b == '_' }
-
 func containsFold(list []string, s string) bool {
 	for _, x := range list {
 		if strings.EqualFold(x, s) {
@@ -60,9 +61,12 @@ func containsFold(list []string, s string) bool {
 }
 
 // recordInferredLinks links each session to the Jira keys of its branch and PR title, and to the
-// issues its GitHub PR closes. Only metas that lack a link (at this role or above) are written,
-// so a steady list writes nothing.
-func recordInferredLinks(sessions []session.Session, now time.Time) {
+// issues its GitHub PR closes. The branch is the one the working copy is on, as annotateLinks
+// reads it (dirBranch): a detached HEAD reads "(detached)", which names no key, and the start
+// branch stands in only for an unread copy. Only
+// metas that lack a link (at this role or above) are written, so a steady list writes nothing.
+// Like the PR, an inferred item stays after the session leaves the branch: the work happened.
+func recordInferredLinks(sessions []session.Session, dirBranch map[string]string, now time.Time) {
 	projects := jiraProjectsOf(now)
 	dirOf := make(map[string]string, len(sessions))
 	for _, s := range sessions {
@@ -73,7 +77,7 @@ func recordInferredLinks(sessions []session.Session, now time.Time) {
 		type item struct{ provider, key string }
 		var items []item
 		if len(projects) > 0 {
-			branch := s.CurrentBranch
+			branch := dirBranch[s.Dir]
 			if branch == "" {
 				branch = s.Branch
 			}
@@ -121,7 +125,8 @@ func recordInferredLinks(sessions []session.Session, now time.Time) {
 		if len(due) == 0 {
 			continue
 		}
-		// An item removed by hand stays removed; checked on the meta itself, as for the PR.
+		// An item removed by hand stays removed. Checked on the meta itself, as for the PR: the wire
+		// does not carry the removals, so such a row costs one meta read per poll and no write.
 		if m, wrote := UpdateSessionMeta(s.Name, func(m *session.Meta) bool {
 			changed := false
 			for _, l := range due {
@@ -189,7 +194,9 @@ func (c *jiraProjectCache) refresh() {
 	defer c.mu.Unlock()
 	c.inflight = false
 	c.at = c.now()
-	c.ok = err == nil
+	// Not connected counts as not ok: a connection made later is picked up within the retry, not
+	// the hour.
+	c.ok = err == nil && connected
 	switch {
 	case err != nil:
 		// Keep what was read before: a Jira outage must not stop recognising known projects.

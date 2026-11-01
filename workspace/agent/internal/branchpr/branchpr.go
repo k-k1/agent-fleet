@@ -61,8 +61,9 @@ const (
 	rateBackoff = 15 * time.Minute
 	// forgetAfter drops a branch no list has asked about for this long.
 	forgetAfter = time.Hour
-	// batchSize caps the branches one call asks about. Each is one aliased repository lookup;
-	// GitHub's GraphQL cost stays at a point or two for a batch this size.
+	// batchSize caps the branches one call asks about. Each is one aliased repository lookup with
+	// up to 5 PRs, each with its last commit and up to 3 closing issues: about 440 connections a
+	// full batch, which GitHub's GraphQL cost rounds to a handful of points.
 	batchSize = 40
 )
 
@@ -250,7 +251,7 @@ func query(keys []Key) (string, map[string]any) {
 		fmt.Fprintf(&body, "r%d:repository(owner:$%s,name:$%s){owner{login} defaultBranchRef{name} "+
 			"pullRequests(headRefName:$%s,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"+
 			"number title state isDraft url headRepositoryOwner{login} "+
-			"closingIssuesReferences(first:10){nodes{number repository{nameWithOwner}}} "+
+			"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
 			"commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}} ", i, o, n, b)
 	}
 	return "query(" + strings.TrimSuffix(decl.String(), ",") + "){" + body.String() + "}", vars

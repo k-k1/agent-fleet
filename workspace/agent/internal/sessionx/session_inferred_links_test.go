@@ -22,13 +22,17 @@ func stubJiraProjects(t *testing.T, keys ...string) {
 }
 
 func TestJiraKeysInTakesOnlyKnownProjectsWithClearBoundaries(t *testing.T) {
-	projects := map[string]bool{"PROJ": true, "AB": true}
+	projects := map[string]bool{"PROJ": true, "AB": true, "MY_PROJ": true, "P4": true}
 	for in, want := range map[string][]string{
 		"feature/PROJ-123-add-thing":           {"PROJ-123"},
 		"PROJ-1 and AB-22: fix (PROJ-1 again)": {"PROJ-1", "AB-22"},
 		"UTF-8 SHA-256 ISO-8601":               nil, // not projects of this Jira
 		"XPROJ-1 PROJ-12a proj-3 PROJ-0":       nil, // glued, lower case, zero
 		"fix/PROJ-7_x":                         {"PROJ-7"},
+		"fix_PROJ-7":                           {"PROJ-7"},
+		"feature_PROJ-12_add_x":                {"PROJ-12"},
+		"MY_PROJ-1 P4-2":                       {"MY_PROJ-1", "P4-2"},
+		"FOO_PROJ-3":                           nil, // project FOO_PROJ, not PROJ
 		"PROJ-1 PROJ-2 PROJ-3 PROJ-4":          {"PROJ-1", "PROJ-2", "PROJ-3"},
 		"":                                     nil,
 	} {
@@ -46,6 +50,8 @@ func TestRecordInferredLinksLinksBranchTitleAndClosedIssues(t *testing.T) {
 		{Name: "rev", Dir: "/wt/a", Kind: session.KindClaude, OriginSession: "own"},
 		{Name: "launch", Dir: "/wt/b", Kind: session.KindClaude, WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-9"}},
 		{Name: "drift", Dir: "/wt/c", Kind: session.KindClaude},
+		{Name: "nostart", Dir: "/wt/d", Kind: session.KindClaude},
+		{Name: "detached", Dir: "/wt/e", Kind: session.KindClaude},
 	} {
 		session.WriteMeta(m)
 	}
@@ -59,8 +65,15 @@ func TestRecordInferredLinksLinksBranchTitleAndClosedIssues(t *testing.T) {
 			Links: []session.WorkItemLink{{Provider: "jira", Key: "PROJ-9", Role: session.LinkStarted}}},
 		// Switched to another branch: the branch it is on now names the ticket, not the start one.
 		{Name: "drift", Dir: "/wt/c", Branch: "PROJ-1-start", CurrentBranch: "PROJ-5-now", BranchDrift: true},
+		// No start branch recorded: the copy's branch still names the ticket.
+		{Name: "nostart", Dir: "/wt/d"},
+		// A detached HEAD names nothing, not even the start branch's ticket.
+		{Name: "detached", Dir: "/wt/e", Branch: "PROJ-6-start"},
 	}
-	recordInferredLinks(sessions, time.Now())
+	recordInferredLinks(sessions, map[string]string{
+		"/wt/a": "feature/PROJ-11-x", "/wt/b": "feature/PROJ-9-y", "/wt/c": "PROJ-5-now",
+		"/wt/d": "feature/PROJ-8-z", "/wt/e": "(detached)",
+	}, time.Now())
 
 	keys := func(ls []session.WorkItemLink) map[string]string {
 		out := map[string]string{}
@@ -83,10 +96,16 @@ func TestRecordInferredLinksLinksBranchTitleAndClosedIssues(t *testing.T) {
 	if got := keys(sessions[3].Links); len(got) != 1 || got["jira:PROJ-5"] != "working" {
 		t.Errorf("drift links = %v, want only PROJ-5 from the current branch", got)
 	}
+	if got := keys(sessions[4].Links); len(got) != 1 || got["jira:PROJ-8"] != "working" {
+		t.Errorf("nostart links = %v, want PROJ-8 from the copy's branch", got)
+	}
+	if got := keys(sessions[5].Links); len(got) != 0 {
+		t.Errorf("detached links = %v, want none", got)
+	}
 	// A steady list writes nothing.
 	m1, _ := session.ReadMeta("own")
 	sessions[0].Links = session.LinksOf(m1)
-	recordInferredLinks(sessions[:1], time.Now().Add(time.Hour))
+	recordInferredLinks(sessions[:1], map[string]string{"/wt/a": "feature/PROJ-11-x"}, time.Now().Add(time.Hour))
 	if m2, _ := session.ReadMeta("own"); !reflect.DeepEqual(m1.Links, m2.Links) {
 		t.Errorf("a steady list rewrote the links: %+v -> %+v", m1.Links, m2.Links)
 	}
@@ -97,12 +116,12 @@ func TestRecordInferredLinksKeepsAnItemRemovedByHandRemoved(t *testing.T) {
 	stubJiraProjects(t, "PROJ")
 	session.WriteMeta(session.Meta{Name: "a", Dir: "/wt", Kind: session.KindClaude})
 	sessions := []session.Session{{Name: "a", Dir: "/wt", Branch: "PROJ-3-x"}}
-	recordInferredLinks(sessions, time.Now())
+	recordInferredLinks(sessions, nil, time.Now())
 	if w, links := postLink(t, "a", `{"provider":"jira","key":"PROJ-3","remove":true}`); w.Code != 200 || len(links) != 0 {
 		t.Fatalf("remove: %d %+v", w.Code, links)
 	}
 	sessions[0].Links = nil
-	recordInferredLinks(sessions, time.Now())
+	recordInferredLinks(sessions, nil, time.Now())
 	if m, _ := session.ReadMeta("a"); len(m.Links) != 0 {
 		t.Fatalf("links = %+v, want PROJ-3 to stay removed", m.Links)
 	}
@@ -114,7 +133,7 @@ func TestRecordInferredLinksWithoutJiraLinksOnlyClosedIssues(t *testing.T) {
 	session.WriteMeta(session.Meta{Name: "a", Dir: "/wt", Kind: session.KindClaude})
 	sessions := []session.Session{{Name: "a", Dir: "/wt", Branch: "PROJ-3-x",
 		PR: &branchpr.PR{Title: "PROJ-3", Closes: []string{"o/r#1", "bad key"}}}}
-	recordInferredLinks(sessions, time.Now())
+	recordInferredLinks(sessions, nil, time.Now())
 	if l := sessions[0].Links; len(l) != 1 || l[0].Key != "o/r#1" {
 		t.Fatalf("links = %+v, want only o/r#1", l)
 	}
@@ -165,5 +184,13 @@ func TestJiraProjectCacheNeverWaitsAndKeepsKeysThroughAFailure(t *testing.T) {
 	run("a retry after the failure")
 	if got := c.known(clock); got != nil {
 		t.Fatalf("keys = %v after Jira was disconnected, want none", got)
+	}
+	// Disconnected is re-read on the short retry: a connection made later shows within it.
+	answer = func() ([]string, bool, error) { return []string{"NEW"}, true, nil }
+	clock = clock.Add(jiraProjectsRetry)
+	c.known(clock)
+	run("a retry while disconnected")
+	if !c.known(clock)["NEW"] {
+		t.Fatalf("keys = %v, want NEW after connecting", c.keys)
 	}
 }

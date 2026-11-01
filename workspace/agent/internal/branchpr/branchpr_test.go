@@ -367,7 +367,7 @@ func TestParseReadsTheTitleAndTheIssuesAPRCloses(t *testing.T) {
 
 func TestQueryAsksForTheTitleAndClosingIssues(t *testing.T) {
 	q, _ := query([]Key{{"o/r", "b"}})
-	if !strings.Contains(q, " title ") || !strings.Contains(q, "closingIssuesReferences(first:10)") {
+	if !strings.Contains(q, " title ") || !strings.Contains(q, "closingIssuesReferences(first:3)") {
 		t.Fatalf("query = %s", q)
 	}
 }
