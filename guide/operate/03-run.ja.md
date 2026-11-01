@@ -297,6 +297,21 @@ usage のサンプルごと（5 分）なので、停止は最大 1 サンプル
 `0` で無効。`ecs-ec2` ではプール自身の起動予算（`AF_ECS_EC2_CLAIM_TTL_SEC`・`AF_ECS_EC2_WAIT_SEC`）
 より短くはなりません。usage サンプラーの上で動くため、`AF_USAGE_SAMPLE_INTERVAL=0` でも無効になります。
 
+### 応答しない Agent の検知
+
+稼働中のワークスペースの Agent が応答しなくなっても、停止はせず、印を付けるだけです。Control Plane は
+Agent からの応答（Console のポーリング、リレー、usage サンプラー、ヘルスプローブ）をすべて記録します。
+ランタイムが `running` と言っているのに `AF_AGENT_SILENT_AFTER`（既定 `3m`、`0` で無効。Control Plane が
+稼働中と見てから一度も応答がない場合はその 2 倍）の間応答がないとき、直接の `/healthz` プローブ
+（ワークスペースごとに 30 秒に 1 回まで）が判定します。プローブが失敗したときだけ印が付き、メンバーには
+**応答なし**、メンバー詳細にも表示、テナント管理者には障害 1 回につき 1 通の通知、ログ（`agent silent: …`）と
+監査ログ（`workspace.agent_silent` / `workspace.agent_recovered`）に記録されます。状態は Control Plane の
+レプリカごとに持ち、レプリカの再起動後は猶予期間からやり直すので、デプロイで警報が一斉に出ることは
+ありません。誰も開いていないワークスペースに届くのは usage サンプラーの巡回なので、
+`AF_USAGE_SAMPLE_INTERVAL=0` にすると、誰かがポーリングしている間の確認だけが残ります。ワークスペースの
+コンテナには ECS のヘルスチェックがなく、Agent が何をしていても ECS はタスクを running と報告します。
+これに気づくのがこの検知です。
+
 ### アイドル自動停止（scale-to-zero）
 
 使われていない claude セッションと、何も動いていない Workspace は、[上限と既定値](../ref/limits.ja.md#配備が決めるもの)の

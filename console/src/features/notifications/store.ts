@@ -223,7 +223,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     return { opened: true };
   }
   // An admin notice about a member (#2427): open that member's detail in tenant settings.
-  if ((n.kind === "member-home-full" || n.kind === "member-boot-install") && typeof n.payload.tenantSlug === "string" && n.payload.tenantSlug) {
+  if ((n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent") && typeof n.payload.tenantSlug === "string" && n.payload.tenantSlug) {
     useSettingsUI.getState().openTenantSettings("members", { slug: n.payload.tenantSlug, userKey: n.target.id });
     return { opened: true };
   }

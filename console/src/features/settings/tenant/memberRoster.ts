@@ -75,8 +75,10 @@ function bootEntries(failed?: Record<string, string> | null): [string, string][]
 /** Whether the administrator's Force-stop is offered, from the stats poll: a running workspace,
  *  or one the CP reports as starting. A start that never converges has no other exit, so
  *  "starting" must not grey the button out. An unread poll (null) offers nothing. */
-export function memberStopAvailable(stats: { running?: boolean; starting?: boolean } | null | undefined): boolean {
-  return !!stats && (stats.running === true || stats.starting === true);
+export function memberStopAvailable(stats: { running?: boolean; starting?: boolean; agent_silent?: boolean } | null | undefined): boolean {
+  // agent_silent is only ever sent beside running (the CP never flags a transition); it is
+  // named here so the rule survives a runtime whose "running" read is the thing that failed.
+  return !!stats && (stats.running === true || stats.starting === true || stats.agent_silent === true);
 }
 
 /** The member detail's "home is full" flag after one stats poll. The numbers are the ones the

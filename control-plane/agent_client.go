@@ -22,7 +22,7 @@ var agentHTTPClient = &http.Client{
 	Timeout: 2 * time.Minute,
 	// Shared transport (agent_dial.go) that falls back to Cloud Map when the Service
 	// Connect alias does not resolve. Every CP→Agent path goes through it.
-	Transport: newAgentTransport(),
+	Transport: newAnswerTransport(),
 	// Never re-follow an Agent redirect with the bearer attached — control-loop
 	// paths are CP-built, so a 3xx is unexpected and surfaces as its status code.
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -34,7 +34,7 @@ var agentHTTPClient = &http.Client{
 // which may pause 4 min on a bridge approval — always gives up first). The
 // 2-minute shared timeout would fake-fail those turns.
 var agentLongCallClient = &http.Client{
-	Transport:     newAgentTransport(),
+	Transport:     newAnswerTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
@@ -42,14 +42,14 @@ var agentLongCallClient = &http.Client{
 // re-issue every couple of seconds, so one hung request must not stall its
 // caller — a wedged probe inside a scheduler fire would otherwise hold the
 // tick's wg.Wait forever (the same failure mode agentHTTPClient closed).
-var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
+var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAnswerTransport()}
 
 // agentStatsClient bounds the resource-gauge poll. It must be its own client: the
 // stats read sits inside the 4-second /api/events tick, so a wedged Agent would
 // otherwise hold a subscriber's tick for the shared client's 2 MINUTES — the SSE
 // stream would go silent and the Console would show stale everything. A gauge that
 // cannot be read in a few seconds is simply "not measurable this tick".
-var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
+var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAnswerTransport()}
 
 // agentStatsMaxBytes bounds the stats body the CP will read.
 const agentStatsMaxBytes = 64 << 10

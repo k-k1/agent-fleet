@@ -216,6 +216,16 @@ describe("member admin notices", () => {
     expect(notificationKindLabel("member-home-full")).toBe(ja["noti.kind_member_home_full"]);
   });
 
+  it("member-agent-silent names the member in both languages and is a plain row", () => {
+    setLocale("en");
+    const n = { kind: "member-agent-silent", displayName: "w@acme.co.jp", payload: {} };
+    expect(notificationWording(n).title).toBe("w@acme.co.jp's workspace is not responding");
+    expect(notificationRowSubtitle(n)).toContain("w@acme.co.jp");
+    setLocale("ja");
+    expect(notificationWording(n).title).toBe("w@acme.co.jp さんのワークスペースが応答していません");
+    expect(notificationKindLabel("member-agent-silent")).toBe(ja["noti.kind_member_agent_silent"]);
+  });
+
   it("member-boot-install lists the tools", () => {
     setLocale("en");
     const w = notificationWording({ kind: "member-boot-install", displayName: "w@acme.co.jp", payload: { tools: ["claude", "codex"] } });

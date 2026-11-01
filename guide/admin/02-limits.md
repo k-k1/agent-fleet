@@ -301,6 +301,12 @@ cancels that start). After a confirmation dialog, that member's workspace
 container stops. **The work (home) is not lost.** The member can start it again from the Console.
 It is strictly a "pause for now" operation, not destructive.
 
+When a running workspace's Agent has stopped answering for several minutes (typically memory
+exhaustion), the member detail shows a **Not responding** mark beside the state, you get a
+notification in the Console, and the dialog says so. Force-stop is the way out; the Control Plane
+never stops it on its own. The detail reads the state and the session list separately, so a
+stalled Agent no longer leaves the Force-stop button disabled.
+
 Below it, ruled off under **"Cannot be undone"**, are exactly what the heading says: "Clean home",
 "Delete backups", "Remove member", "Destroy workspace" and "Delete this member". A deployment shows
 only the ones it can perform, and the member's state decides the rest: "Remove member" appears for

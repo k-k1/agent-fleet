@@ -10,6 +10,7 @@ import (
 const (
 	WorkspaceNoticeHomeFull    = "home_full"
 	WorkspaceNoticeBootInstall = "boot_install"
+	WorkspaceNoticeAgentSilent = "agent_silent"
 )
 
 // NoticeReading is what a notice decision reads: the stored home reading and the stored install

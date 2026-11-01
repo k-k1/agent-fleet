@@ -31,7 +31,7 @@ func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAut
 // `..` reach Agent endpoints outside the CP's explicit route allowlist (and skip the
 // route-level audit classification).
 var agentRelayClient = &http.Client{
-	Transport:     newAgentTransport(),
+	Transport:     newAnswerTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 

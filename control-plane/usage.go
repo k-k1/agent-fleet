@@ -136,8 +136,19 @@ func (u *usageSampler) sample(ctx context.Context) {
 				overdue = append(overdue, overdueStart{rt, ws})
 				continue
 			}
+			// The dead-man check rides the sweep: it is the traffic that reaches a workspace
+			// nobody has open, and it re-asserts the admin notice every pass.
+			silent := u.mgr.checkAgentSilent(ctx, ws, rt, state)
 			if state != "running" {
 				continue
+			}
+			// Raise on this replica's own confirmed view; retire only on a positive answer,
+			// never on mere absence of a verdict, or two replicas with different views would
+			// retire and re-raise each other's notice every sweep.
+			if silent {
+				adminnotice.AgentSilent(ctx, u.mgr.store, ws, true)
+			} else if agentLive.answeredWithin(endpointKey(rt.Endpoint()), time.Now(), agentSilentAfter()) {
+				adminnotice.AgentSilent(ctx, u.mgr.store, ws, false)
 			}
 			if err := u.mgr.store.AddUsage(ctx, ws.MembershipID, ws.TenantID, day, secs); err != nil {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)

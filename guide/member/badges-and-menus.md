@@ -130,6 +130,9 @@ connection. Not this deployment's engine."** together with the model the last ch
 - **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
   pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away
   once the workspace is current ([01](01-first-day.md#a-new-version-is-available-and-the-restart-needed-badge)).
+- **Not responding**, beside the workspace power button: the workspace is running but its Agent has not
+  answered the Control Plane for several minutes. Nothing in the Console will work until you **Stop workspace**
+  and start it again ([21](21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button)).
 - Colored `1`, `2`…: the number of the pane it is shown in. Press to jump to that pane.
 - "Untracked", "Added", "Modified", "Renamed", "Deleted": the file's Git change type.
 - The number on an assistant row: the conversation's message count.

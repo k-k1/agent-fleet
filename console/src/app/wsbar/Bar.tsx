@@ -22,6 +22,7 @@ import { AwsProfilesChip } from "../../features/awslogin/AwsProfilesChip.tsx";
 import { GcpProfilesChip } from "../../features/gcplogin/GcpProfilesChip.tsx";
 import { RemainingUsageChip } from "./RemainingUsageChip.tsx";
 import { SlotMoveNotice } from "./SlotMoveNotice.tsx";
+import { AgentSilentBadge } from "./AgentSilentBadge.tsx";
 import { UsageChip } from "./UsageChip.tsx";
 import { MachineDetailsLink, useWsMachine } from "./machine.tsx";
 import { DesktopMore, MobileMore } from "./MoreMenu.tsx";
@@ -111,6 +112,7 @@ export function WsBar() {
   const wsState = useWorkspaceStore((s) => s.state);
   const wsStale = useWorkspaceStore((s) => s.stale);
   const wsSlotReplace = useWorkspaceStore((s) => s.slotReplace);
+  const wsAgentSilent = useWorkspaceStore((s) => s.agentSilent);
   const wsReason = useWorkspaceStore((s) => s.reason);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
@@ -167,6 +169,9 @@ export function WsBar() {
   // ecs-ec2: an administrator retired the machine this workspace sits on (#1473). Shown
   // whether running or stopped, hidden while a start (the move itself) runs.
   const slotMoveShown = wsSlotReplace && !busy;
+  // The CP's dead-man check: running per the runtime, yet the Agent has not answered for minutes.
+  // Never while a transition is in flight (the server does not send it then either).
+  const agentSilentShown = wsAgentSilent && running && !busy;
   const previewPop = usePortPreview(pvOpen, moreOpen, running, setPvOpen, setMoreOpen);
 
   // Close each popover on an outside click / Escape.
@@ -384,6 +389,7 @@ export function WsBar() {
       </span>
       {staleShown && <StaleBadge onRestart={onRestart} />}
       {slotMoveShown && <SlotMoveNotice />}
+      {agentSilentShown && <AgentSilentBadge onStop={onToggle} />}
       {/* The single "start anything" entry (launch flow Ph2): opens the StartModal hub
           (chat / repo / clone / home / other). While the workspace
           is stopped it offers to start it and opens the hub when ready (Ph3). */}

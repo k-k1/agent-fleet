@@ -168,25 +168,39 @@ export function MemberView({
 
   // The home-full flag keeps its hysteresis across polls (see nextMemberHomePressure).
   const [homeFull, setHomeFull] = useState(false);
+  // Stats and sessions are read and applied independently. They used to be one Promise.all,
+  // so a wedged Agent that held the sessions read (up to the CP's two-minute client timeout)
+  // kept the stats from ever landing: the detail stayed on "checking" and Force-stop stayed
+  // disabled exactly when it was needed (#2518).
   const poll = useCallback(async () => {
-    try {
-      const [s, ss] = await Promise.all([api(`${base}/stats`), api(`${base}/sessions`)]);
-      const st = s && !s.error ? s : { running: false };
-      const stSer = JSON.stringify(st);
-      if (stSer !== statsSer.current) {
-        statsSer.current = stSer;
-        setStats(st);
-        setHomeFull((prev) => nextMemberHomePressure(prev, st));
+    const readStats = async () => {
+      try {
+        const s = await api(`${base}/stats`);
+        const st = s && !s.error ? s : { running: false };
+        const stSer = JSON.stringify(st);
+        if (stSer !== statsSer.current) {
+          statsSer.current = stSer;
+          setStats(st);
+          setHomeFull((prev) => nextMemberHomePressure(prev, st));
+        }
+      } catch {
+        /* keep last values; transient */
       }
-      const list = ss && ss.sessions ? ss.sessions : [];
-      const ssSer = JSON.stringify(list);
-      if (ssSer !== sessSer.current) {
-        sessSer.current = ssSer;
-        setSessions(list);
+    };
+    const readSessions = async () => {
+      try {
+        const ss = await api(`${base}/sessions`);
+        const list = ss && ss.sessions ? ss.sessions : [];
+        const ssSer = JSON.stringify(list);
+        if (ssSer !== sessSer.current) {
+          sessSer.current = ssSer;
+          setSessions(list);
+        }
+      } catch {
+        /* keep last values; transient */
       }
-    } catch {
-      /* keep last values; transient */
-    }
+    };
+    await Promise.all([readStats(), readSessions()]);
   }, [base]);
 
   // Deployment-wide and immutable while the Console runs, so it is read once per open
@@ -219,6 +233,8 @@ export function MemberView({
   }, [poll]);
 
   const running = stats?.running;
+  // Running per the runtime, but the Agent has not answered for minutes (CP dead-man check, #2518).
+  const agentSilent = !!stats?.agent_silent;
   const memRatio = stats?.mem_max ? stats.mem_used / stats.mem_max : null;
   // The disk denominator prefers the measured value (disk_total = the capacity of the FS the
   // home sits on) and falls back to the configured cap (disk_quota). On ecs-ec2 disk_gb only
@@ -500,6 +516,11 @@ export function MemberView({
         <span className={"state-word " + (stats == null ? "" : running ? "on" : "off")}>
           {stats == null ? tr("admin.checking") : running ? tr("admin.running_state") : tr("admin.stopped_state")}
         </span>
+        {agentSilent && (
+          <span className="state-word off" title={tr("admin.agent_silent_title")}>
+            <Icon name="warning" /> {tr("admin.agent_silent")}
+          </span>
+        )}
         <span className="mh-key mono">{key}</span>
         {member.super_admin && <Icon name="star-full" className="mr-star" title={tr("admin.super_admin_deploy_title")} />}
         <span className="mh-role">
@@ -879,6 +900,7 @@ export function MemberView({
           onConfirm={stop}
         >
           <p>{tr(running ? "admin.stop_body" : "admin.stop_body_starting", { slug })}</p>
+          {agentSilent && <p className="muted">{tr("admin.stop_body_silent")}</p>}
         </ConfirmDialog>
       )}
       {confirmRotate && (

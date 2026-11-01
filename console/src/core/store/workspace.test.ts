@@ -32,6 +32,13 @@ describe("workspace store applyPush", () => {
     useWorkspaceStore.setState({ state: "running", bootPhase: "" });
   });
 
+  it("carries agentSilent from a push and drops it when the next frame lacks it", () => {
+    useWorkspaceStore.getState().applyPush({ state: "running", agentSilent: true });
+    expect(useWorkspaceStore.getState().agentSilent).toBe(true);
+    useWorkspaceStore.getState().applyPush({ state: "running" });
+    expect(useWorkspaceStore.getState().agentSilent).toBe(false);
+  });
+
   it("adopts docsRoot from a push and clears it when absent", () => {
     useWorkspaceStore.setState({ state: "running", docsRoot: "" });
     useWorkspaceStore.getState().applyPush({ state: "running", docsRoot: "/data/ws/docs" });
