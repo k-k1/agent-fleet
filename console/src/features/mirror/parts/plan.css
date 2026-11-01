@@ -57,6 +57,23 @@
   gap: 8px;
   align-items: center;
 }
+/* "Review automatically, up to N rounds" and its round count, beside "Review again". */
+.mt-plan-auto {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted, inherit);
+}
+.mt-plan-auto label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mt-plan-auto-state {
+  font-variant-numeric: tabular-nums;
+}
 .mt-plan-open {
   display: inline-flex;
   align-items: center;

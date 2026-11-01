@@ -11,7 +11,7 @@ import { handoffLaunchTarget } from "../handoffLaunch.ts";
 import { discardCarriedAfterReview } from "../carriedPlanReview.ts";
 import { deliverPlanComments, planKey } from "../planComments.ts";
 import {
-  liveReviewer, rememberReviewer, reviewerLabel, runRereview, useHasRememberedReviewer, useReviewer,
+  AUTO_REVIEW_DEFAULT_ROUNDS, liveReviewer, rememberReviewer, reviewerLabel, runRereview, setReviewAuto, useHasRememberedReviewer, useReviewAuto, useReviewer,
 } from "../reviewAgain.ts";
 import { reviewPrompt, reviewTitle } from "../planReview.ts";
 import { planTitle } from "../transcript/blocks.tsx";
@@ -100,6 +100,25 @@ export function usePlanActions({
   }, [planText, session, hasMemory]);
   const reviewer = useReviewer(session, planPath);
   const rereview = reviewer ? { name: reviewer.name, label: reviewerLabel(reviewer) } : null;
+  // "Review automatically, up to N rounds" (#2810). The Agent runs the loop; this edits its record.
+  // Offered only when the Agent already holds the link (a link seen only by this browser would be
+  // refused as no_link) (planPath is only set for a plan file claude wrote).
+  const autoState = useReviewAuto(session, planPath);
+  const linkedAtAgent = useSessionsStore((s) => Array.isArray(s.sessions.find((x) => x.name === session)?.planReviewers));
+  const reviewAuto =
+    reviewer && planPath && linkedAtAgent
+      ? {
+          enabled: !!autoState?.enabled,
+          max: autoState?.max || AUTO_REVIEW_DEFAULT_ROUNDS,
+          round: autoState?.round ?? 0,
+          stop: autoState?.stop || "",
+          onChange: (enabled: boolean, max: number) => {
+            void setReviewAuto(session, planPath, reviewer.name, enabled, max).then((code) => {
+              if (code) toast(tr("plan.auto_failed", { code }));
+            });
+          },
+        }
+      : null;
 
   // Remember who reviews this plan once the launch dialog has created the session. Only a path
   // claude wrote keys anything (see above); a snapshot is a one-off copy.
@@ -395,5 +414,5 @@ export function usePlanActions({
     openTargetInNew(target, true);
   };
 
-  return { openPlan, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, rereviewing, planSendBlocked, sendPlanComments, openFile, openDiff };
+  return { openPlan, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, reviewAuto, rereviewing, planSendBlocked, sendPlanComments, openFile, openDiff };
 }

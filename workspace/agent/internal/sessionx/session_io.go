@@ -249,6 +249,8 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if blockedOn != "" {
+				// Queued behind the target's dialog, but the reviewer's verdict is final now.
+				notePlanReviewerReply(dst, body.PeerFrom, body.Prompt)
 				writePendingQueued(w, name, blockedOn, n)
 				return
 			}
@@ -263,6 +265,7 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// the delivery machinery.
 		if !isDelivery { // a queued message is recorded once it is delivered (peer_pending.go)
 			fleetgraph.RecordPeer(body.PeerFrom, name, strings.TrimSpace(body.PeerIntent), body.Prompt)
+			notePlanReviewerReply(dst, body.PeerFrom, body.Prompt)
 		}
 		// The server builds the envelope; the caller never does, so it can neither be
 		// forgotten nor forged.

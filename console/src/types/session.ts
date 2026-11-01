@@ -42,7 +42,7 @@ export interface Session {
   // Which session reviewed each plan FILE this planner wrote (the Agent's Meta.PlanReviewers),
   // newest last. Only the reviewer's NAME is stored; the "Review again" shortcut labels it from
   // the live list (features/mirror/reviewAgain.ts).
-  planReviewers?: { path: string; reviewer: string }[];
+  planReviewers?: { path: string; reviewer: string; auto?: PlanAutoState }[];
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
@@ -354,4 +354,13 @@ export interface SessionPR {
   url: string;
   /** CI rollup of the head commit; absent when nothing ran — which is not green. */
   checks?: "success" | "failure" | "pending";
+}
+
+/** The automatic re-review loop of one plan-review link (the Agent's session.PlanAuto, relayed by
+ *  the Control Plane). `stop` says why a loop that was switched on has ended; "" while it runs. */
+export interface PlanAutoState {
+  enabled: boolean;
+  max: number;
+  round: number;
+  stop?: string;
 }

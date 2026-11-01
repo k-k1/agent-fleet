@@ -68,3 +68,10 @@ export function reviewTitle(planHeading: string): string {
 export function rereviewPrompt({ parent, path, revision }: { parent: string; path: string; revision: string }): string {
   return t("plan.review_again_prompt", { session: parent, path, rev: revision });
 }
+
+/** The same follow-up with {session} {path} {rev} left in place. The Agent runs the automatic
+ *  rounds and has no catalogue of its own, so the Console hands it the text in the language it
+ *  is displaying and the Agent fills the three values in. */
+export function rereviewPromptTemplate(): string {
+  return rereviewPrompt({ parent: "{session}", path: "{path}", revision: "{rev}" });
+}

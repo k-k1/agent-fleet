@@ -21,11 +21,11 @@
 // slugs, never reused). Any miss, from either store, falls back to the launch dialog: a missed
 // shortcut, never a wrong send.
 import { useSyncExternalStore } from "react";
-import { sessionAlive, sessionPeerSend, sessionPlanReviewerSet, sessionReady } from "../../core/api/client.ts";
+import { sessionAlive, sessionPeerSend, sessionPlanAutoSet, sessionPlanReviewerSet, sessionReady } from "../../core/api/client.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import type { Session } from "../../types/session.ts";
+import type { PlanAutoState, Session } from "../../types/session.ts";
 import { planFingerprint } from "./planComments.ts";
-import { rereviewPrompt } from "./planReview.ts";
+import { rereviewPrompt, rereviewPromptTemplate } from "./planReview.ts";
 
 const LS_KEY = "af.plan-reviewers";
 /** Oldest entry evicted first, so localStorage cannot grow without bound. */
@@ -410,4 +410,27 @@ export async function runRereview(o: {
   } finally {
     o.lock.held = false;
   }
+}
+
+/** The automatic re-review loop of the link for this plan, as the Agent holds it (#2810). Read
+ *  from the session list only: the loop runs at the Agent, so a browser-local copy would only
+ *  ever be stale. null = never set (or an Agent that predates it). */
+export function reviewAutoOf(sessions: Session[], planner: string, planPath: string): PlanAutoState | null {
+  return plannerLinks(sessions, planner)?.find((e) => e.path === planPath)?.auto ?? null;
+}
+
+export function useReviewAuto(planner: string, planPath: string): PlanAutoState | null {
+  const sessions = useSessionsStore((s) => s.sessions);
+  return reviewAutoOf(sessions, planner, planPath);
+}
+
+export const AUTO_REVIEW_DEFAULT_ROUNDS = 3;
+export const AUTO_REVIEW_MAX_ROUNDS = 10;
+
+/** Switch the loop on or off for this plan's reviewer. "" = stored; otherwise the Agent's failure
+ *  code ("no_link": the Agent holds no link yet, "reviewer_changed": this tab is behind). */
+export async function setReviewAuto(planner: string, planPath: string, reviewer: string, enabled: boolean, max: number): Promise<string> {
+  const code = await sessionPlanAutoSet(planner, planPath, reviewer, { enabled, max, prompt: rereviewPromptTemplate() });
+  if (!code) await useSessionsStore.getState().refresh();
+  return code;
 }

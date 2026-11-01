@@ -290,6 +290,8 @@ func serve() {
 	agents.SweepHeld()
 	// Peer messages waiting for a user's answer (#1031) get their delivery loops back.
 	sessionx.ResumePendingPeers()
+	// A plan auto-review round that died between its claim and its reject is ended with a reason (#2810).
+	sessionx.RecoverPlanAutoInflight()
 	// Started in internal/kinds order (managedLifecycles).
 	for _, lc := range managedLifecycles() {
 		go lc.Reconcile("agent boot")

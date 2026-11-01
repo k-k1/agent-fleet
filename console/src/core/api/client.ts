@@ -1364,6 +1364,21 @@ export async function sessionPlanReviewerSet(planner: string, path: string, revi
   return !!r && !r.error;
 }
 
+/** sessionPlanAutoSet switches the automatic re-review loop of the link `planner` + `path` on or
+ *  off (#2810). `prompt` is the follow-up template (with {session} {path} {rev}) in the Console's
+ *  language: the Agent runs the loop and has no catalogue of its own. `reviewer` guards against a
+ *  tab that still shows a replaced reviewer. Resolves the failure code ("" = stored). */
+export async function sessionPlanAutoSet(
+  planner: string,
+  path: string,
+  reviewer: string,
+  auto: { enabled: boolean; max: number; prompt: string },
+): Promise<string> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(planner)}/plan-reviewer`, "POST", { path, reviewer, auto }).catch(() => null);
+  if (r && !r.error) return "";
+  return (r && typeof r.error === "object" ? (r.error as { code?: string }).code : "") || "failed";
+}
+
 /** sessionAlive reads whether the session is running NOW (null = the read failed). The session
  *  list lags by seconds and a held Session snapshot lags by as long as a card sits on screen. */
 export async function sessionAlive(session: string): Promise<boolean | null> {

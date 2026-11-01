@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -198,6 +199,28 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"answered": name, "picked": labels})
 }
 
+var planRespondMu sync.Map // session name -> *sync.Mutex
+
+// planDecided remembers, per session, the presentation (planPresentation) that has been given
+// its one decision. Set under planRespondLock once the keys went out; every later decision for
+// the same presentation is refused, because the hook that retires the card runs later and until
+// then a second Enter or Escape would land on the composer or interrupt the work an approval
+// just started.
+var planDecided sync.Map // session name -> presentation token
+
+// planGuardKey carries an in-process precondition (planAutoLive for the automatic reject) that
+// the handler re-checks under planRespondLock. Unexported, so no request can set it.
+type planGuardKey struct{}
+
+func planRespondLock(name string) (unlock func()) {
+	mu, _ := planRespondMu.LoadOrStore(name, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
+// planRespondSupported: plan mode, and so a plan approval to answer, is a claude concept.
+func planRespondSupported(kind string) bool { return kind == session.KindClaude }
+
 // HandleSessionPlanRespond (POST /sessions/{name}/plan-respond {decision, feedback})
 // applies the operator's decision to a pending ExitPlanMode approval (claude TUI —
 // plan mode is a claude concept).
@@ -226,6 +249,10 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Decision string `json:"decision"`
 		Feedback string `json:"feedback"`
+		// ExpectPlan is set only by the automatic plan review (session_planauto.go): the
+		// presentation it was claimed for. The decision is refused unless it is still the one on
+		// the card AND its dialog is on screen, checked under planRespondLock.
+		ExpectPlan string `json:"expect_plan"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -240,7 +267,7 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if meta.Kind != session.KindClaude {
+	if !planRespondSupported(meta.Kind) {
 		httpx.WriteErr(w, http.StatusNotImplemented, "plan_unsupported",
 			"プラン承認は claude セッションのみ対象です")
 		return
@@ -249,9 +276,34 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 	// effectiveModal, not the raw state: ExitPlanMode's own permission_prompt overwrites
 	// "plan" with "permission" while its approval dialog is still up (session_status.go),
 	// and judging by the raw state refused every decision taken after that hook fired.
-	if st, _ := status.Read(sid); effectiveModal(sid, st.State) != "plan" {
+	// One decision per session at a time, from the check to the keys: without it a member's
+	// approve and an automatic reject both pass the check and send Enter then Escape, and the
+	// Escape interrupts the work the approval just started.
+	unlock := planRespondLock(name)
+	defer unlock()
+	st, _ := status.Read(sid)
+	if effectiveModal(sid, st.State) != "plan" {
 		httpx.WriteErr(w, http.StatusConflict, "no_plan", "no pending plan approval (already handled?)")
 		return
+	}
+	token := planPresentation(sid)
+	if done, ok := planDecided.Load(name); ok && token != "" && done == token {
+		httpx.WriteErr(w, http.StatusConflict, "no_plan", "this plan presentation was already answered")
+		return
+	}
+	if g, ok := r.Context().Value(planGuardKey{}).(func() bool); ok && !g() {
+		httpx.WriteErr(w, http.StatusConflict, "no_plan", "the automatic review this decision belonged to was changed")
+		return
+	}
+	if req.ExpectPlan != "" {
+		if planPresentation(sid) != req.ExpectPlan {
+			httpx.WriteErr(w, http.StatusConflict, "no_plan", "the plan on the card is not the one this decision was for")
+			return
+		}
+		if st.State != "permission" {
+			httpx.WriteErr(w, http.StatusConflict, "dialog_not_shown", "the approval dialog is not on screen yet")
+			return
+		}
 	}
 	pane, err := claudePane(name)
 	if err != nil {
@@ -263,6 +315,7 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
+		planDecided.Store(name, token)
 		markSessionWorking(name)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"responded": name, "decision": "approve"})
 		return
@@ -274,6 +327,7 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
+	planDecided.Store(name, token)
 	resp := map[string]any{"responded": name, "decision": "reject"}
 	if req.Feedback != "" {
 		delivered := false

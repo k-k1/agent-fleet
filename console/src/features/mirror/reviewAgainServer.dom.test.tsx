@@ -5,13 +5,15 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 
 const setLink = vi.hoisted(() => vi.fn());
+const autoSet = vi.hoisted(() => vi.fn());
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/api/client.ts")>()),
   sessionPlanReviewerSet: setLink,
+  sessionPlanAutoSet: autoSet,
 }));
 
 import {
-  forgetReviewer, hasRememberedReviewer, liveReviewer, rememberReviewer, rememberedReviewer, reloadReviewersForTest, useReviewer,
+  forgetReviewer, hasRememberedReviewer, liveReviewer, rememberReviewer, rememberedReviewer, reloadReviewersForTest, reviewAutoOf, setReviewAuto, useReviewer,
 } from "./reviewAgain.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
@@ -179,5 +181,32 @@ describe("reviewer link held by the Agent", () => {
     expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBeUndefined();
     useSessionsStore.setState({ sessions: [planner([{ path: "/p/a.md", reviewer: "rev-old" }]), sess({ name: "unrelated" })] });
     expect(JSON.parse(localStorage.getItem("af.plan-reviewers")!)[k]).toBeUndefined();
+  });
+});
+
+describe("automatic re-review (#2810)", () => {
+  it("reads the loop's record from the planner's row only", () => {
+    const auto = { enabled: true, max: 3, round: 2, stop: "" };
+    const list = [sess({ name: "planner", kind: "claude", planReviewers: [{ path: "/p/a.md", reviewer: "rev", auto }] })];
+    expect(reviewAutoOf(list, "planner", "/p/a.md")).toEqual(auto);
+    expect(reviewAutoOf(list, "planner", "/p/b.md")).toBeNull();
+    expect(reviewAutoOf([sess({ name: "planner" })], "planner", "/p/a.md")).toBeNull(); // an Agent without the field
+  });
+
+  it("sends the follow-up template with its placeholders in the display language, and refreshes on success", async () => {
+    const refresh = vi.fn(async () => {});
+    useSessionsStore.setState({ sessions: [], refresh });
+    autoSet.mockResolvedValue("");
+    expect(await setReviewAuto("planner", "/p/a.md", "rev", true, 4)).toBe("");
+    const [, , reviewerArg, auto] = autoSet.mock.calls[0];
+    expect(reviewerArg).toBe("rev");
+    expect(auto).toMatchObject({ enabled: true, max: 4 });
+    for (const ph of ["{session}", "{path}", "{rev}"]) expect(auto.prompt).toContain(ph);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    autoSet.mockResolvedValue("no_link");
+    refresh.mockClear();
+    expect(await setReviewAuto("planner", "/p/a.md", "rev", true, 4)).toBe("no_link");
+    expect(refresh).not.toHaveBeenCalled();
   });
 });
