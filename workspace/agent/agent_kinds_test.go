@@ -72,7 +72,7 @@ func TestKindCatalogCoversRegistry(t *testing.T) {
 		// Every kind that runs an agent CLI must say whether it takes the member's
 		// instructions; only shell and ssm, which run none, may stay unverified.
 		if e.MCPClient == "yes" && e.Instructions == "unverified" {
-			t.Errorf("%s runs an MCP client but is on neither instrSupportedKinds nor instrUnsupported", e.Kind)
+			t.Errorf("%s runs an MCP client but is on neither instrSupportedKinds nor agents.InstructionsUnsupported", e.Kind)
 		}
 		if e.ManagedOnly && !e.ManagedDefault {
 			t.Errorf("%s: managedOnly without managedDefault", e.Kind)
@@ -85,11 +85,6 @@ func TestKindCatalogCoversRegistry(t *testing.T) {
 	for _, k := range instrSupportedKinds {
 		if !slices.Contains(kinds, k) {
 			t.Errorf("instrSupportedKinds has %q, which is not a registered kind", k)
-		}
-	}
-	for _, u := range instrUnsupported {
-		if !slices.Contains(kinds, u.kind) {
-			t.Errorf("instrUnsupported has %q, which is not a registered kind", u.kind)
 		}
 	}
 }

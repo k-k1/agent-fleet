@@ -38,7 +38,7 @@ type kindEntryWire struct {
 	// "prompt"). Live only: opencode's depends on the installed major version, so the
 	// checked-in snapshot leaves it out.
 	InstructionDelivery string `json:"instructionDelivery,omitempty"`
-	// InstructionsReason is instrUnsupported's reason when Instructions is "no".
+	// InstructionsReason is instrUnsupportedOf's reason when Instructions is "no".
 	InstructionsReason string `json:"instructionsReason,omitempty"`
 }
 
@@ -72,11 +72,7 @@ func buildKindCatalog(live bool) kindCatalogWire {
 				PermissionChoice: c.PermissionChoice,
 			},
 		}
-		for _, u := range instrUnsupported {
-			if u.kind == k {
-				e.InstructionsReason = u.reason
-			}
-		}
+		e.InstructionsReason = instrUnsupportedOf(k)
 		if live {
 			e.InstructionDelivery = instrDeliveryOf(k)
 		}
@@ -85,16 +81,14 @@ func buildKindCatalog(live bool) kindCatalogWire {
 	return out
 }
 
-// instrSupport answers from the two instruction lists. A kind on neither (shell, ssm, or one
+// instrSupport answers from instrSupportedKinds and agents.InstructionsUnsupported. A kind on neither (shell, ssm, or one
 // just added) is unverified rather than "no": nobody has said.
 func instrSupport(kind string) agents.Tri {
 	if slices.Contains(instrSupportedKinds, kind) {
 		return agents.TriYes
 	}
-	for _, u := range instrUnsupported {
-		if u.kind == kind {
-			return agents.TriNo
-		}
+	if instrUnsupportedOf(kind) != "" {
+		return agents.TriNo
 	}
 	return agents.TriUnverified
 }
