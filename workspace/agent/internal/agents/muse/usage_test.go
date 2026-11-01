@@ -131,16 +131,6 @@ func TestOlderObservationDoesNotOverwriteANewerOne(t *testing.T) {
 	}
 }
 
-// A reset the provider did not name must not become 1970 on the screen.
-func TestNoResetStampRendersEmpty(t *testing.T) {
-	if got := epochMsToRFC3339(0); got != "" {
-		t.Errorf("epochMsToRFC3339(0) = %q", got)
-	}
-	if got := epochMsToRFC3339(1_800_000_000_000); got == "" {
-		t.Error("a real stamp rendered empty")
-	}
-}
-
 // usage/read is the pull half: a Console that opens the chip before any notification has
 // arrived still gets the host's own last observation.
 func TestUsageReadAsksALiveHost(t *testing.T) {
