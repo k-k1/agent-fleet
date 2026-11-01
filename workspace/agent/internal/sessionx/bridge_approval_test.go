@@ -429,29 +429,177 @@ func TestLockApprovalsIsBounded(t *testing.T) {
 	}
 }
 
-// A published decision is never retracted: a daemon stalled across the deadline after its
-// pre-write check still reports what it wrote, because the waiter's lock-free poll may
-// already have acted on it.
-func TestBridgeApprovalDecisionNeverRetracted(t *testing.T) {
-	withTempHome(t)
+// stallPastDeadline makes the daemon's post-write clock read land after the record's
+// deadline, which is what "stalled across it" means, without sleeping.
+func stallPastDeadline(t *testing.T) {
+	t.Helper()
+	orig := approvalNowMs
+	t.Cleanup(func() { approvalNowMs = orig })
+	var late bool
+	approvalNowMs = func() int64 {
+		if late {
+			return orig() + time.Hour.Milliseconds()
+		}
+		return orig()
+	}
+	prev := bridgeApprovalAfterWrite
+	t.Cleanup(func() { bridgeApprovalAfterWrite = prev })
+	bridgeApprovalAfterWrite = func(id string) {
+		late = true
+		if prev != nil {
+			prev(id)
+		}
+	}
+}
+
+func pendingWithDeadline(t *testing.T) string {
+	t.Helper()
 	id := chatx.RandUUID()
-	// The deadline starts far ahead so the daemon's pre-check always passes; the seam then
-	// moves the stored deadline into the past, which is what "stalled across it" means.
 	_ = bridgeApprovals.Write(id, bridgeApprovalRec{ID: id, CreatedAt: chatx.NowMs(), Deadline: chatx.NowMs() + time.Hour.Milliseconds()})
+	return id
+}
+
+// #3042: the waiter cannot take the lock and gives up inside the daemon's stall. The
+// daemon then writes its decision after the deadline; it must report "expired" and the
+// gate must not act on it.
+func TestApprovalLockFailureThenDaemonStallReportsExpired(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
+	var werr error
 	bridgeApprovalBetweenReadAndWrite = func(id string) {
-		rec, _ := bridgeApprovals.Read(id)
-		rec.Deadline = chatx.NowMs() - 1
-		_ = bridgeApprovals.Write(id, rec)
+		orig := lockApprovals
+		lockApprovals = func() (func(), error) { return nil, errors.New("injected lock failure") }
+		werr = expireApproval(id) // the waiter's deadline step, lock unavailable
+		lockApprovals = orig
 	}
 	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
+	stallPastDeadline(t)
+
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(werr, errApprovalTimeout) {
+		t.Fatalf("waiter → %v", werr)
+	}
+	if strings.Contains(msg, "Approved") || !strings.Contains(msg, "expired") {
+		t.Fatalf("user told %q for a gate that timed out", msg)
+	}
+	if _, ok := bridgeApprovals.Read(id); ok {
+		t.Fatal("withdrawn decision must not stay published")
+	}
+}
+
+// The same interleaving on a build whose lock is a no-op: the waiter removes the record
+// mid-stall and the daemon's write re-creates it.
+func TestApprovalNoopLockThenDaemonStallReportsExpired(t *testing.T) {
+	withTempHome(t)
+	orig := lockApprovals
+	t.Cleanup(func() { lockApprovals = orig })
+	lockApprovals = func() (func(), error) { return func() {}, nil }
+	id := pendingWithDeadline(t)
+	var werr error
+	bridgeApprovalBetweenReadAndWrite = func(id string) { werr = expireApproval(id) }
+	t.Cleanup(func() { bridgeApprovalBetweenReadAndWrite = nil })
+	stallPastDeadline(t)
+
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || !errors.Is(werr, errApprovalTimeout) {
+		t.Fatalf("err=%v waiter=%v", err, werr)
+	}
+	if strings.Contains(msg, "Approved") || !strings.Contains(msg, "expired") {
+		t.Fatalf("user told %q for a gate that timed out", msg)
+	}
+	if _, ok := bridgeApprovals.Read(id); ok {
+		t.Fatal("record re-created by the late write must be removed")
+	}
+}
+
+// A late decision the waiter had already consumed stays an approval: the action ran, so
+// the user is told so.
+func TestApprovalLateDecisionAlreadyTakenStaysApproved(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
+	var werr error
+	var took bool
+	bridgeApprovalAfterWrite = func(id string) {
+		cur, _ := bridgeApprovals.Read(id)
+		took, werr = approvalOutcome(id, cur) // the waiter's poll lands in the gap
+	}
+	t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+	stallPastDeadline(t)
+
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || !took || werr != nil {
+		t.Fatalf("err=%v took=%v waiter=%v", err, took, werr)
+	}
+	if !strings.Contains(msg, "Approved") {
+		t.Fatalf("waiter acted but user told %q", msg)
+	}
+}
+
+// A late decision nobody has consumed is withdrawn, so a waiter that polls afterwards
+// does not act on what the user was told expired.
+func TestApprovalLateDecisionWithdrawnIsNotActedOn(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
+	stallPastDeadline(t)
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || !strings.Contains(msg, "expired") {
+		t.Fatalf("msg=%q err=%v", msg, err)
+	}
+	if err := expireApproval(id); !errors.Is(err, errApprovalTimeout) {
+		t.Fatalf("waiter → %v", err)
+	}
+}
+
+// A decision written in time is untouched by the late check and still honored.
+func TestApprovalOnTimeDecisionHonored(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
 	msg, err := bridgeApprovalDecision(id, "approve", true)
 	if err != nil || !strings.Contains(msg, "Approved") {
 		t.Fatalf("msg=%q err=%v", msg, err)
 	}
-	if rec, ok := bridgeApprovals.Read(id); !ok || rec.Decision != "approve" {
-		t.Fatalf("decision must stay published: %+v ok=%v", rec, ok)
-	}
 	if err := waitApprovalDecision(id); err != nil {
-		t.Fatalf("the waiter must see the approval: %v", err)
+		t.Fatalf("waiter → %v", err)
+	}
+}
+
+// When the daemon cannot tell who won (the claim is unusable) it must not say "Approved".
+func TestApprovalLateClaimFailureIsNotApproved(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
+	stallPastDeadline(t)
+	// A claim path that is a directory can be neither linked nor read.
+	_ = os.MkdirAll(bridgeApprovalClaims.Path(id), 0o700)
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err == nil || strings.Contains(msg, "Approved") {
+		t.Fatalf("msg=%q err=%v", msg, err)
+	}
+}
+
+// Claim files are swept once they are older than the horizon; fresh ones stay.
+func TestSweepStaleApprovalClaims(t *testing.T) {
+	withTempHome(t)
+	oldAge := bridgeApprovalMaxAge
+	t.Cleanup(func() { bridgeApprovalMaxAge = oldAge })
+	bridgeApprovalMaxAge = time.Hour
+	stale, fresh := chatx.RandUUID(), chatx.RandUUID()
+	for _, id := range []string{stale, fresh} {
+		if _, err := claimApproval(id, claimTaken); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(bridgeApprovalClaims.Path(stale), past, past); err != nil {
+		t.Fatal(err)
+	}
+	sweepStaleApprovals()
+	if _, ok := bridgeApprovalClaims.ModTime(stale); ok {
+		t.Fatal("stale claim must be swept")
+	}
+	if _, ok := bridgeApprovalClaims.ModTime(fresh); !ok {
+		t.Fatal("fresh claim must stay")
 	}
 }
