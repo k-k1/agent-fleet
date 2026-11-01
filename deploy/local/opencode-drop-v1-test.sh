@@ -3,10 +3,12 @@
 # so @opencode/cli can be linked there and nothing stale shadows the image's opencode on PATH. It
 # also settles what an older image's interrupted package swap left in <prefix>/.af-oc-swap. Runs
 # the real function against a stub `npm` that refuses, like the real one, to link a package's
-# `opencode` bin while another package owns it (EEXIST).
+# `opencode` bin while anything is at that path, a dangling link included (EEXIST).
 #
 #   deploy/local/opencode-drop-v1-test.sh
 set -euo pipefail
+# The failure cases make directories unwritable, which root ignores.
+[ "$(id -u)" != 0 ] || { echo "SKIP: run as a regular user (root bypasses the permission bits)"; exit 0; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
@@ -21,7 +23,7 @@ pfx="$4"; shift 4
 for spec in "$@"; do
   pkg="${spec%@*}"
   case "$pkg" in opencode-ai|@opencode/cli)
-    [ ! -e "$pfx/bin/opencode" ] || { echo "npm error EEXIST" >&2; exit 1; }
+    [ ! -e "$pfx/bin/opencode" ] && [ ! -L "$pfx/bin/opencode" ] || { echo "npm error EEXIST" >&2; exit 1; }
     mkdir -p "$pfx/lib/node_modules/$pkg/bin"
     echo "$pkg" > "$pfx/lib/node_modules/$pkg/marker"
     ln -s "../lib/node_modules/$pkg/bin/opencode.exe" "$pfx/bin/opencode" ;;
@@ -93,14 +95,50 @@ drop || fail "oc_drop_v1 failed on an aside opencode-ai"
 [ "$(owner)" = "@opencode/cli" ] || fail "the installed @opencode/cli was changed: '$(owner)'"
 echo "ok  an aside opencode-ai is discarded"
 
-# Restoring fails (the prefix cannot be written): the aside copy must survive for the next start.
+# An aside @opencode/cli while the prefix already has one: the prefix's copy is kept as it is.
+home_with @opencode/cli
+aside @opencode/cli
+npm install -g --prefix "$P" @opencode/cli@latest
+echo installed > "$P/lib/node_modules/@opencode/cli/marker2"
+drop || fail "oc_drop_v1 failed with an aside copy and an installed one"
+[ -f "$P/lib/node_modules/@opencode/cli/marker2" ] || fail "the installed @opencode/cli was replaced"
+[ ! -e "$P/lib/node_modules/@opencode/cli/cli" ] || fail "the aside copy was moved into the installed one"
+[ ! -e "$P/.af-oc-swap" ] || fail "the backup directory was left behind"
+echo "ok  an installed @opencode/cli wins over an aside one"
+
+# Half-restored: the package is back, its bin is still aside.
+home_with @opencode/cli
+mkdir -p "$P/.af-oc-swap/bin"
+mv "$P/bin/opencode" "$P/.af-oc-swap/bin/opencode"
+drop || fail "oc_drop_v1 failed on a half-restored swap"
+[ "$(owner)" = "@opencode/cli" ] || fail "the aside bin of an installed @opencode/cli was not put back"
+echo "ok  a half-restored swap gets its bin back"
+
+# opencode-ai's package is gone but its link is left (an old swap stopped between its two moves):
+# the dangling link must go, or npm refuses @opencode/cli on every start.
+home_with opencode-ai
+rm -rf "$P/lib/node_modules/opencode-ai"
+if npm install -g --prefix "$P" @opencode/cli@latest 2>/dev/null; then fail "control: the stub did not refuse over a dangling link"; fi
+drop || fail "oc_drop_v1 failed on a dangling opencode-ai link"
+[ ! -L "$P/bin/opencode" ] || fail "the dangling opencode-ai link was left"
+npm install -g --prefix "$P" @opencode/cli@latest || fail "@opencode/cli could not be installed after a dangling link"
+echo "ok  a dangling opencode-ai link is removed"
+
+# Restoring fails: the aside copy must survive for the next start. Once at the mkdir, once at the
+# move itself (a file where the package goes: only the move fails, deleting the backup would not).
 home_with @opencode/cli
 aside @opencode/cli
 rm -rf "$P/lib/node_modules/@opencode"
 chmod a-w "$P/lib/node_modules"
-if drop 2>/dev/null; then fail "oc_drop_v1 reported success although it could not restore"; fi
+if drop 2>/dev/null; then fail "oc_drop_v1 reported success although it could not create the target"; fi
 chmod u+w "$P/lib/node_modules"
-[ -d "$P/.af-oc-swap/pkg/@opencode/cli" ] || fail "the aside @opencode/cli was deleted although it could not be restored"
+[ -d "$P/.af-oc-swap/pkg/@opencode/cli" ] || fail "the aside @opencode/cli was deleted although the target could not be created"
+home_with @opencode/cli
+aside @opencode/cli
+rm -rf "$P/lib/node_modules/@opencode"
+mkdir -p "$P/lib/node_modules/@opencode"; : > "$P/lib/node_modules/@opencode/cli"
+if drop 2>/dev/null; then fail "oc_drop_v1 reported success although the move failed"; fi
+[ -d "$P/.af-oc-swap/pkg/@opencode/cli" ] || fail "the aside @opencode/cli was deleted although it could not be moved back"
 echo "ok  a failed restore keeps the aside copy"
 
 # The entrypoint runs under `set -e`; a failure must cost a warning, not the start.

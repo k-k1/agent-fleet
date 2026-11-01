@@ -90,7 +90,9 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   node -e '
     const fs = require("fs"), path = require("path");
     const root = process.argv[1];
-    // Skip what boot-install restores itself (it would be installed twice).
+    // Skip what boot-install restores itself (it would be installed twice), and opencode-ai: that
+    // is opencode 1, which oc_drop_v1 removes and af-arch-repair must never install again
+    // (ADR 0127).
     const skip = new Set(["@anthropic-ai/claude-code", "opencode-ai", "@opencode/cli", "@openai/codex", "@github/copilot"]);
     const out = [];
     const add = (rel) => {
@@ -110,11 +112,11 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   ' "$HOME/.local/lib/node_modules" > "$HOME/.local/share/agent-fleet/arch-repair-npm" 2>/dev/null || true
   [ -s "$HOME/.local/share/agent-fleet/arch-repair-npm" ] || rm -f "$HOME/.local/share/agent-fleet/arch-repair-npm"
   for rel in \
-    .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/copilot \
+    .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/opencode2 .local/bin/copilot \
     .local/bin/rtk .local/bin/agy .local/bin/.agy.version \
     .local/bin/cursor-agent \
     .local/bin/kiro-cli .local/bin/kiro-cli-chat .local/bin/kiro-cli-term .local/bin/.kiro.version \
-    .local/lib/node_modules \
+    .local/lib/node_modules .local/.af-oc-swap \
     .local/share/claude .local/share/cursor-agent .local/share/kiro-cli \
     .local/share/agent-fleet/chromium \
     .cache/ms-playwright \
@@ -452,32 +454,37 @@ bin_broken() { [ -e "$1" ] && ! timeout 30 "$1" --version >/dev/null 2>&1; }
 # kept as a fallback: an opencode 1 cannot run a session here any more.
 #
 # An older image moved one package aside into <prefix>/.af-oc-swap while it swapped them, and a
-# start that stopped half-way left it there. An @opencode/cli found there is put back when the
-# prefix has none (it may be that home's only opencode); anything else there is opencode 1.
+# start that stopped half-way left it there. An @opencode/cli package or bin link found there is
+# put back where the prefix has none (it may be that home's only opencode); anything else there is
+# opencode 1.
 #
 # Called under `||`, so `set -e` is off inside: every step that matters checks itself, and the
-# backup is deleted only once the copy in it is back. A failure costs a warning, never the start.
+# backup is deleted only once the package in it is back. A bin link that cannot be put back is
+# left to npm: a missing `opencode` makes the boot-install reinstall @opencode/cli. A failure costs
+# a warning, never the start.
 oc_drop_v1() { # oc_drop_v1 <prefix>
   local pfx="$1" bak="$1/.af-oc-swap" b l
   if [ -d "$bak" ]; then
     if [ -d "$bak/pkg/@opencode/cli" ] && [ ! -d "$pfx/lib/node_modules/@opencode/cli" ]; then
-      mkdir -p "$pfx/lib/node_modules/@opencode" "$pfx/bin" || return 1
+      mkdir -p "$pfx/lib/node_modules/@opencode" || return 1
       mv "$bak/pkg/@opencode/cli" "$pfx/lib/node_modules/@opencode/cli" || return 1
-      for b in opencode opencode2; do
-        l="$bak/bin/$b"
-        if [ -L "$l" ] && [ ! -e "$pfx/bin/$b" ] && [ ! -L "$pfx/bin/$b" ]; then
-          case "$(readlink "$l")" in */@opencode/cli/*) mv "$l" "$pfx/bin/$b" || return 1 ;; esac
-        fi
-      done
     fi
+    for b in opencode opencode2; do
+      l="$bak/bin/$b"
+      if [ -L "$l" ] && [ ! -e "$pfx/bin/$b" ] && [ ! -L "$pfx/bin/$b" ]; then
+        case "$(readlink "$l")" in */@opencode/cli/*) mkdir -p "$pfx/bin" && mv "$l" "$pfx/bin/$b" ;; esac
+      fi
+    done
     rm -rf "$bak" || return 1
   fi
-  [ -d "$pfx/lib/node_modules/opencode-ai" ] || return 0
-  echo "[entrypoint] removing opencode 1 (opencode-ai) from $pfx: only opencode 2 is supported"
+  # opencode-ai's own links go even when its package is already gone: a dangling one still makes
+  # npm refuse to link @opencode/cli (EEXIST), on every start.
   for b in opencode opencode2; do
     l="$pfx/bin/$b"
     if [ -L "$l" ]; then case "$(readlink "$l")" in */opencode-ai/*) rm -f "$l" || return 1 ;; esac; fi
   done
+  [ -d "$pfx/lib/node_modules/opencode-ai" ] || return 0
+  echo "[entrypoint] removing opencode 1 (opencode-ai) from $pfx: only opencode 2 is supported"
   rm -rf "$pfx/lib/node_modules/opencode-ai"
 }
 oc_drop_v1 "$HOME/.local" || echo "[entrypoint] WARN: could not remove opencode 1 from ~/.local (retrying next start)"
@@ -979,7 +986,7 @@ else
   # so PATH falls back to it at once (never in lean, where ~/.local is the pin itself).
   if [ -x /usr/local/bin/claude ]; then
     npm uninstall -g --prefix "$HOME/.local" \
-      @anthropic-ai/claude-code @opencode/cli @openai/codex @github/copilot >/dev/null 2>&1 || true
+      @anthropic-ai/claude-code opencode-ai @opencode/cli @openai/codex @github/copilot >/dev/null 2>&1 || true
   fi
   if [ -x /usr/local/bin/rtk ]; then rm -f "$HOME/.local/bin/rtk"; fi
   if [ -x /usr/local/bin/agy ]; then rm -f "$HOME/.local/bin/agy" "$HOME/.local/bin/.agy.version"; fi
