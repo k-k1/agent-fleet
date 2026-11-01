@@ -749,6 +749,22 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 type planReviewerWire struct {
 	Path     string `json:"path"`
 	Reviewer string `json:"reviewer"`
+	// Auto: the automatic re-review loop of this link (the Agent's session.PlanAuto). Relayed
+	// whole; absent = never set.
+	Auto *planAutoWire `json:"auto,omitempty"`
+}
+
+// planAutoWire mirrors the Agent's session.PlanAuto field for field, so a value the Control
+// Plane does not know about is not silently dropped on the way to the Console.
+type planAutoWire struct {
+	Enabled   bool   `json:"enabled"`
+	Max       int    `json:"max"`
+	Round     int    `json:"round"`
+	Verdict   string `json:"verdict,omitempty"`
+	VerdictAt string `json:"verdictAt,omitempty"`
+	Plan      string `json:"plan,omitempty"`
+	Stop      string `json:"stop,omitempty"`
+	Prompt    string `json:"prompt,omitempty"`
 }
 
 // sessionWire is the session shape exchanged with the Agent and the Console. The

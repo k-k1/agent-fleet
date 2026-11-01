@@ -98,6 +98,23 @@ export const mirror = {
   "plan.review_again": "{name} で再レビュー",
   "plan.review_again_title":
     "プランを却下し、以前レビューした {name} に改訂版を送ります。停止中なら再開します。作業中のレビュアーには、そのターンが終わってから届きます",
+  "plan.auto_prefix": "最大",
+  "plan.auto_suffix": "回まで自動で再レビュー",
+  "plan.auto_title":
+    "計画側がプランを改訂するたびに、判定が changes-requested の間は、クリックなしで {name} へ送り直します。承認は決してしません。最後の改訂はこのカードに残るので、判断はあなたがします",
+  "plan.auto_state_running": "自動レビュー {round}/{max}",
+  "plan.auto_state_stopped": "自動レビューを停止（{round}/{max}）：{reason}",
+  "plan.auto_stop_approved": "レビュー役が承認した",
+  "plan.auto_stop_max_rounds": "回数の上限に達した",
+  "plan.auto_stop_verdict_unclear": "返信に判定が読み取れなかった",
+  "plan.auto_stop_send_failed": "レビュー役に送れなかった",
+  "plan.auto_stop_reject_failed": "プランを却下できなかった",
+  "plan.auto_stop_not_plan_mode": "セッションがプランモードではない",
+  "plan.auto_stop_plan_changed": "その間にプランへ回答があった",
+  "plan.auto_stop_stale": "判定が古すぎた",
+  "plan.auto_stop_ambiguous_reviewer": "同じレビュー役がこのセッションの 2 つのプランを見ている",
+  "plan.auto_stop_other": "理由不明",
+  "plan.auto_failed": "自動レビューの設定を変えられませんでした（{code}）",
   "plan.review_again_retry": "もう一度送る",
   "plan.review_again_failed": "{name} にプランを送れませんでした：{err}",
   "plan.review_again_prompt":

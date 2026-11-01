@@ -63,3 +63,42 @@ describe("carried plan card", () => {
     expect(buttons.filter((b) => !b.disabled).map((b) => b.className + b.textContent)).toEqual([]);
   });
 });
+
+describe("automatic re-review control (#2810)", () => {
+  const base = { plan: "# P\n\nbody", session: "planner", pending: true, onApprove: () => {}, onReject: () => {}, onReview: () => {}, onReviewAgain: () => {}, reviewAgainName: "R" };
+  const auto = (o: Partial<{ enabled: boolean; max: number; round: number; stop: string }> = {}) => ({
+    enabled: false, max: 3, round: 0, stop: "", onChange: vi.fn(), ...o,
+  });
+  const box = () => host.querySelector<HTMLInputElement>(".mt-plan-auto-on");
+  const state = () => host.querySelector(".mt-plan-auto-state")?.textContent?.trim();
+
+  it("is absent without a reviewer or without the control", async () => {
+    await mount(<PlanBlock {...base} reviewAgainName={undefined} reviewAuto={auto()} />);
+    expect(box()).toBeNull();
+    await act(async () => root!.unmount());
+    host.remove();
+    await mount(<PlanBlock {...base} />);
+    expect(box()).toBeNull();
+  });
+  it("is off by default and switches on with the chosen number of rounds", async () => {
+    const a = auto();
+    await mount(<PlanBlock {...base} reviewAuto={a} />);
+    expect(box()!.checked).toBe(false);
+    expect(state()).toBeUndefined();
+    await act(async () => box()!.click());
+    expect(a.onChange).toHaveBeenCalledWith(true, 3);
+  });
+  it("shows the round count while it runs", async () => {
+    await mount(<PlanBlock {...base} reviewAuto={auto({ enabled: true, round: 2 })} />);
+    expect(box()!.checked).toBe(true);
+    expect(state()).toBe(t("plan.auto_state_running", { round: 2, max: 3 }));
+  });
+  it("says why it stopped, in words", async () => {
+    await mount(<PlanBlock {...base} reviewAuto={auto({ round: 3, stop: "max_rounds" })} />);
+    expect(state()).toBe(t("plan.auto_state_stopped", { round: 3, max: 3, reason: t("plan.auto_stop_max_rounds") }));
+  });
+  it("falls back to a generic reason for a stop code this Console does not know", async () => {
+    await mount(<PlanBlock {...base} reviewAuto={auto({ stop: "from_the_future" })} />);
+    expect(state()).toContain(t("plan.auto_stop_other"));
+  });
+});

@@ -492,6 +492,35 @@ const MaxPlanReviewers = 16
 type PlanReviewer struct {
 	Path     string `json:"path"`
 	Reviewer string `json:"reviewer"`
+	// Auto is the optional "review automatically, up to N rounds" setting of this review and
+	// the loop's own progress (nil = never set). It lives on the link, next to the reviewer,
+	// so the Agent can run the loop with no tab open and the count survives an Agent restart.
+	Auto *PlanAuto `json:"auto,omitempty"`
+}
+
+// PlanAuto is the state of one review's automatic re-review loop. Enabled is the only switch:
+// every way the loop ends (approve, the round limit, any failure) clears it and records why in
+// Stop, so a stopped loop never restarts on its own.
+type PlanAuto struct {
+	Enabled bool `json:"enabled"`
+	// Max bounds Round: the number of automatic re-reviews this loop may send.
+	Max int `json:"max"`
+	// Round counts the re-reviews already sent. It is written BEFORE a send, so a crash between
+	// the write and the send costs a round rather than allowing an extra one.
+	Round int `json:"round"`
+	// Verdict is the reviewer's latest reply not yet acted on: "changes-requested" (the only
+	// value that lets the next re-presented plan go out) or "" (nothing waiting).
+	Verdict string `json:"verdict,omitempty"`
+	// VerdictAt (RFC3339) dates Verdict; an old one is not acted on (see planAutoVerdictTTL).
+	VerdictAt string `json:"verdictAt,omitempty"`
+	// Plan is the fingerprint of the plan text the last automatic re-review was sent for.
+	Plan string `json:"plan,omitempty"`
+	// Stop says why the loop ended: approved | max_rounds | verdict_unclear | send_failed |
+	// reject_failed | not_plan_mode | stale | ambiguous_reviewer. "" while it runs.
+	Stop string `json:"stop,omitempty"`
+	// Prompt is the follow-up text with {session} {path} {rev} placeholders, in the language the
+	// Console was displaying when the loop was switched on (the Agent has no catalogue of its own).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 type Meta struct {

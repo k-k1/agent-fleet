@@ -19,7 +19,7 @@ import { baseName, imageFormat } from "../../../lib/filemeta.ts";
 import { fmtDateTime, fmtNum } from "../../../lib/intl.ts";
 import { fmtTok } from "../../../lib/fmttok.ts";
 import { prettyModel } from "../../../lib/modelName.ts";
-import { t as tr, tCount } from "../../../lib/i18n/index.ts";
+import { t as tr, tCount, tMaybe } from "../../../lib/i18n/index.ts";
 import { useSettings } from "../../../lib/settings.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { lineDiff, type DiffEdit } from "../../viewer/DiffView.tsx";
@@ -1068,6 +1068,7 @@ export function PlanBlock({
   onReview,
   onReviewAgain,
   reviewAgainName,
+  reviewAuto,
   onSendComments,
   sendDisabled,
   sending,
@@ -1091,6 +1092,8 @@ export function PlanBlock({
    *  its display name (the reviewer still exists). */
   onReviewAgain?: () => void;
   reviewAgainName?: string;
+  /** The "review automatically, up to N rounds" control (#2810), shown beside "Review again". */
+  reviewAuto?: PlanAutoControl;
   onSendComments?: () => void;
   /** Why sending is blocked ("" or absent = allowed); blocks the button on a stopped session. */
   sendDisabled?: string;
@@ -1235,6 +1238,9 @@ export function PlanBlock({
               >
                 <Icon name="comment-discussion" /> {tr("plan.review_again", { name: reviewAgainName })}
               </button>
+            )}
+            {onReviewAgain && reviewAgainName && reviewAuto && (
+              <PlanAutoReview name={reviewAgainName} auto={reviewAuto} disabled={sending} />
             )}
           </>
         )}
@@ -1401,5 +1407,59 @@ export function CopyButton({ text }: { text: string }) {
     >
       <Icon name={done ? "check" : "copy"} /> {done ? tr("chat.copied") : tr("chat.copy")}
     </button>
+  );
+}
+
+/** What the live plan card needs to show and change the automatic re-review loop. */
+export interface PlanAutoControl {
+  enabled: boolean;
+  max: number;
+  round: number;
+  /** Why a loop that was switched on has ended ("" = still running, or never started). */
+  stop: string;
+  onChange: (enabled: boolean, max: number) => void;
+}
+
+const AUTO_ROUND_CHOICES = Array.from({ length: 10 }, (_, i) => i + 1);
+
+/** "Review automatically, up to [N] rounds", with the round count while it runs and the reason
+ *  once it stopped. The loop runs at the Agent; this only reflects and edits its record. */
+function PlanAutoReview({ name, auto, disabled }: { name: string; auto: PlanAutoControl; disabled?: boolean }) {
+  const stopped = !auto.enabled && !!auto.stop;
+  const reason = stopped ? (tMaybe(`plan.auto_stop_${auto.stop}`) ?? tr("plan.auto_stop_other")) : "";
+  return (
+    <span className="mt-plan-auto" title={tr("plan.auto_title", { name })}>
+      <label>
+        <input
+          type="checkbox"
+          className="mt-plan-auto-on"
+          checked={auto.enabled}
+          disabled={disabled}
+          onChange={(e) => auto.onChange(e.target.checked, auto.max)}
+        />{" "}
+        {tr("plan.auto_prefix")}{" "}
+        <select
+          className="mt-plan-auto-max"
+          value={auto.max}
+          disabled={disabled}
+          onChange={(e) => auto.onChange(auto.enabled, Number(e.target.value))}
+        >
+          {AUTO_ROUND_CHOICES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>{" "}
+        {tr("plan.auto_suffix")}
+      </label>
+      {(auto.enabled || stopped) && (
+        <span className="mt-plan-auto-state">
+          {" "}
+          {auto.enabled
+            ? tr("plan.auto_state_running", { round: auto.round, max: auto.max })
+            : tr("plan.auto_state_stopped", { round: auto.round, max: auto.max, reason })}
+        </span>
+      )}
+    </span>
   );
 }

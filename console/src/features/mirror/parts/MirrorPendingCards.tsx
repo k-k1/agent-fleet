@@ -42,7 +42,7 @@ export function MirrorPendingCards({
     carried, setCarried, markRejected, sending,
   } = st;
   const { sendKeys, sendSeq, sendInterrupt, cancelQuestion, sendApproval, sendRespond } = actions;
-  const { openPlan, openFile, planSendBlocked, sendPlanComments, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, rereviewing } = plan;
+  const { openPlan, openFile, planSendBlocked, sendPlanComments, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, reviewAuto, rereviewing } = plan;
   const byId = answersByRespond(managed, pending);
   return (
     <>
@@ -97,6 +97,7 @@ export function MirrorPendingCards({
           onReview={() => void reviewPlanElsewhere(pendingPlan)}
           onReviewAgain={() => void reviewPlanAgain(pendingPlan)}
           reviewAgainName={rereview?.label}
+          reviewAuto={reviewAuto ?? undefined}
         />
       )}
       {pendingApproval && !pending && !pendingPlan && (

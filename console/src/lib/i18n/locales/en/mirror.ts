@@ -92,6 +92,23 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "plan.review_again": "Review again in {name}",
   "plan.review_again_title":
     "Reject the plan and send the revised plan to {name}, which reviewed it before. A stopped session is resumed; a reviewer that is mid-turn gets the message when its turn ends.",
+  "plan.auto_prefix": "Review automatically, up to",
+  "plan.auto_suffix": "rounds",
+  "plan.auto_title":
+    "After the planner revises the plan, send it to {name} again without a click while the verdict is changes-requested. It never approves: the last revision stays on this card for you to decide.",
+  "plan.auto_state_running": "auto-review {round}/{max}",
+  "plan.auto_state_stopped": "auto-review stopped at {round}/{max}: {reason}",
+  "plan.auto_stop_approved": "the reviewer approved",
+  "plan.auto_stop_max_rounds": "round limit reached",
+  "plan.auto_stop_verdict_unclear": "the reply had no clear verdict",
+  "plan.auto_stop_send_failed": "the reviewer could not be reached",
+  "plan.auto_stop_reject_failed": "the plan could not be rejected",
+  "plan.auto_stop_not_plan_mode": "the session is not in plan mode",
+  "plan.auto_stop_plan_changed": "the plan was answered in the meantime",
+  "plan.auto_stop_stale": "the verdict was too old",
+  "plan.auto_stop_ambiguous_reviewer": "the reviewer reviews two plans of this session",
+  "plan.auto_stop_other": "unknown reason",
+  "plan.auto_failed": "Could not change automatic review ({code})",
   "plan.review_again_retry": "Send again",
   "plan.review_again_failed": "Could not send the plan to {name}: {err}",
   "plan.review_again_prompt":

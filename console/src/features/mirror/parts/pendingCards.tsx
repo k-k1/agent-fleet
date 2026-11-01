@@ -4,7 +4,7 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 import { usePrefersReducedMotion } from "../../../lib/device.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { useTypewriter } from "../useTypewriter.ts";
-import { PlanBlock } from "../transcript/blocks.tsx";
+import { PlanBlock, type PlanAutoControl } from "../transcript/blocks.tsx";
 import { PendingQuestions } from "../PendingQuestions.tsx";
 import { questionDraftKey } from "../questionDraft.ts";
 import { useQuestionTranslate } from "../questionTranslate.ts";
@@ -44,6 +44,7 @@ export function PlanPendingCard({
   onReview,
   onReviewAgain,
   reviewAgainName,
+  reviewAuto,
 }: {
   agentName: string;
   plan: string;
@@ -57,6 +58,7 @@ export function PlanPendingCard({
   onReview: () => void;
   onReviewAgain?: () => void;
   reviewAgainName?: string;
+  reviewAuto?: PlanAutoControl;
 }) {
   return (
     <PendingTurn agentName={agentName} note={tr("mirror.plan_pending")}>
@@ -74,6 +76,7 @@ export function PlanPendingCard({
         onReview={onReview}
         onReviewAgain={onReviewAgain}
         reviewAgainName={reviewAgainName}
+        reviewAuto={reviewAuto}
       />
     </PendingTurn>
   );

@@ -198,6 +198,9 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"answered": name, "picked": labels})
 }
 
+// planRespondSupported: plan mode, and so a plan approval to answer, is a claude concept.
+func planRespondSupported(kind string) bool { return kind == session.KindClaude }
+
 // HandleSessionPlanRespond (POST /sessions/{name}/plan-respond {decision, feedback})
 // applies the operator's decision to a pending ExitPlanMode approval (claude TUI —
 // plan mode is a claude concept).
@@ -240,7 +243,7 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if meta.Kind != session.KindClaude {
+	if !planRespondSupported(meta.Kind) {
 		httpx.WriteErr(w, http.StatusNotImplemented, "plan_unsupported",
 			"プラン承認は claude セッションのみ対象です")
 		return

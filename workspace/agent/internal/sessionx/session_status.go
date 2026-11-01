@@ -340,6 +340,11 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		if session.UUID(m.Dir, m.Name) != sid {
 			continue
 		}
+		// A plan review loop may be waiting for this plan (#2810). This runs in the status hook's
+		// process, so the daemon is asked to take the step.
+		if kind == "plan-approval" && planRespondSupported(m.Kind) && len(m.PlanReviewers) > 0 {
+			kickPlanAuto(m.Name)
+		}
 		holdReport := false
 		if m.DriverKind() == session.DriverManaged && (m.Kind == session.KindCodex || m.Kind == session.KindOpencode) {
 			switch state {
