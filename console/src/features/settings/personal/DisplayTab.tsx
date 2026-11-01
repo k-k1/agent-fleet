@@ -18,9 +18,11 @@ import {
   REGION_THEMES,
   SURFACE_TARGETS,
   LOCALES,
+  REGION_FORMATS,
   PANE_LAYOUTS,
 } from "../../../lib/settings.ts";
 import { FONT_MIN, FONT_MAX } from "../../../lib/viewFont.ts";
+import { browserTimeZone, FORMAT_AUTO, isValidTimeZone } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 import FileIcon from "../../../ui/FileIcon.tsx";
@@ -45,6 +47,24 @@ export function DisplayTab() {
             onChange={(v) => setSetting("locale", v)}
           />
         </Row>
+        <Row label={tr("settings.region_format")}>
+          <select
+            value={s.regionFormat}
+            onChange={(e) => setSetting("regionFormat", e.target.value)}
+          >
+            <option value={FORMAT_AUTO}>{tr("settings.region_format_auto")}</option>
+            {REGION_FORMATS.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <p className="muted ds-note">{tr("settings.region_format_note")}</p>
+        <Row label={tr("settings.time_zone")}>
+          <TimeZoneSelect value={s.timeZone} onChange={(v) => setSetting("timeZone", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("settings.time_zone_note")}</p>
       </section>
       <section className="ds-group">
         <h4 className="ds-title">{tr("display.pane_layout")}</h4>
@@ -301,5 +321,39 @@ function Stepper({
         ＋
       </button>
     </div>
+  );
+}
+
+// timeZoneNames — every IANA zone this browser knows. Older engines lack supportedValuesOf, so the
+// list degrades to UTC plus the browser's own zone rather than throwing.
+function timeZoneNames(): string[] {
+  try {
+    const f = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    const names = f ? f("timeZone") : [];
+    if (names.length > 0) return names;
+  } catch {
+    /* fall through */
+  }
+  return Array.from(new Set(["UTC", browserTimeZone()]));
+}
+
+// TimeZoneSelect — "follow the browser" is its own stored value ("auto"), never a copy of today's
+// zone. A stored name this browser does not know is listed as-is so the control shows the truth.
+function TimeZoneSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const tr = useT();
+  const names = timeZoneNames();
+  const extra = value !== FORMAT_AUTO && !names.includes(value);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value={FORMAT_AUTO}>
+        {tr("settings.time_zone_auto")} ({tr("settings.time_zone_current", { zone: browserTimeZone() })})
+      </option>
+      {extra && <option value={value}>{value}{isValidTimeZone(value) ? "" : " ?"}</option>}
+      {names.map((n) => (
+        <option key={n} value={n}>
+          {n}
+        </option>
+      ))}
+    </select>
   );
 }

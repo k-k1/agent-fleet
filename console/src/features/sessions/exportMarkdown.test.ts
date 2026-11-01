@@ -8,9 +8,13 @@ vi.mock("../../core/api/client.ts", () => ({
 
 import { exportSessionMarkdown } from "./exportMarkdown.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { setFormatPrefs } from "../../lib/intl.ts";
 
 describe("exportSessionMarkdown", () => {
-  beforeEach(() => raw.mockReset());
+  beforeEach(() => {
+    raw.mockReset();
+    setFormatPrefs("auto", "auto");
+  });
 
   it("reports a body that fails after a 200 instead of dropping it", async () => {
     raw.mockResolvedValue({
@@ -34,6 +38,20 @@ describe("exportSessionMarkdown", () => {
     await exportSessionMarkdown("s1", "full", notify);
     expect(String(raw.mock.calls[0][0])).toMatch(/^api\/sessions\/s1\/export\?tools=full&tz=/);
     expect(notify.mock.calls[0][0]).toBe(t("srow.export_failed") + ": nope");
+  });
+
+  it("sends no ?tz= when a zone is chosen: the Agent reads the setting from ui-prefs", async () => {
+    raw.mockResolvedValue({ ok: false, status: 400, json: () => Promise.resolve({}) });
+    setFormatPrefs("auto", "Asia/Tokyo");
+    await exportSessionMarkdown("s1", "names", vi.fn());
+    expect(String(raw.mock.calls[0][0])).toBe("api/sessions/s1/export?tools=names");
+  });
+
+  it("falls back to ?tz= with the browser's zone for an unknown stored zone", async () => {
+    raw.mockResolvedValue({ ok: false, status: 400, json: () => Promise.resolve({}) });
+    setFormatPrefs("auto", "Mars/Olympus_Mons");
+    await exportSessionMarkdown("s1", "names", vi.fn());
+    expect(String(raw.mock.calls[0][0])).toMatch(/^api\/sessions\/s1\/export\?tools=names&tz=.+/);
   });
 
   it("asks for the tool-free variant", async () => {

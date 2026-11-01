@@ -39,6 +39,13 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.calls_hdr_version": "MCP-Protocol-Version",
 
   "settings.language": "Language",
+  "settings.region_format": "Region format",
+  "settings.region_format_note": "Dates and numbers follow the region format; \"Follow display language\" uses the language above.",
+  "settings.region_format_auto": "Follow display language",
+  "settings.time_zone": "Time zone",
+  "settings.time_zone_note": "Times in the session mirror and in files the Agent writes (such as the Markdown export) use this zone. \"Follow browser\" uses the zone of the browser you are using right now, so it moves with you.",
+  "settings.time_zone_auto": "Follow browser",
+  "settings.time_zone_current": "Current: {zone}",
   // The pre-invitation landing (docs/log/61 §61.10.2 · P7-2). ★ Written as the normal
   // first step on an invite-run deployment, not as a failure — and it must show the
   // address to quote to the administrator.

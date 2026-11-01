@@ -1,5 +1,17 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { relTime, fmtDateTime, fmtNum, compareText, TIME_HM } from "./intl.ts";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  relTime,
+  fmtDateTime,
+  fmtNum,
+  compareText,
+  TIME_HM,
+  setFormatPrefs,
+  effectiveTimeZone,
+  selectedTimeZone,
+  browserTimeZone,
+  formatLocale,
+  isValidTimeZone,
+} from "./intl.ts";
 import { setLocale } from "./i18n/index.ts";
 
 const NOW = 1_700_000_000_000; // fixed reference; passed to relTime as `now` so tests are deterministic
@@ -73,5 +85,70 @@ describe("intl.compareText", () => {
   });
   it("keeps RFC3339 timestamps in chronological order", () => {
     expect(compareText("2026-07-16T09:00:00Z", "2026-07-16T10:00:00Z")).toBeLessThan(0);
+  });
+});
+
+// Region format and time zone (#2185). Fixed instants only: 2026-03-08T07:30Z is the moment US
+// clocks jump (02:00 -> 03:00 PST->PDT in America/Los_Angeles); 2026-03-29T01:30Z is the EU one.
+describe("intl region format and time zone", () => {
+  const US_DST_AFTER = Date.UTC(2026, 2, 8, 10, 30); // 03:30 PDT (UTC-7), 02:30 never existed
+  const US_DST_BEFORE = Date.UTC(2026, 2, 8, 9, 30); // 01:30 PST (UTC-8)
+  const HM = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
+  beforeEach(() => {
+    setLocale("en");
+    setFormatPrefs("auto", "auto");
+  });
+  afterEach(() => setFormatPrefs("auto", "auto"));
+
+  it("shows the same instant in the chosen zone, across a DST jump", () => {
+    setFormatPrefs("auto", "America/Los_Angeles");
+    expect(fmtDateTime(US_DST_BEFORE, HM)).toBe("01:30");
+    expect(fmtDateTime(US_DST_AFTER, HM)).toBe("03:30");
+    setFormatPrefs("auto", "Asia/Tokyo");
+    expect(fmtDateTime(US_DST_AFTER, HM)).toBe("19:30");
+  });
+
+  it("follows the browser's zone while the setting is auto, and re-reads it each call", () => {
+    const spy = vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions");
+    spy.mockReturnValue({ timeZone: "Asia/Tokyo" } as Intl.ResolvedDateTimeFormatOptions);
+    expect(effectiveTimeZone()).toBe("Asia/Tokyo");
+    expect(fmtDateTime(US_DST_AFTER, HM)).toBe("19:30");
+    // The member travelled: same stored "auto", new browser zone, no stale cached formatter.
+    spy.mockReturnValue({ timeZone: "America/Los_Angeles" } as Intl.ResolvedDateTimeFormatOptions);
+    expect(effectiveTimeZone()).toBe("America/Los_Angeles");
+    expect(fmtDateTime(US_DST_AFTER, HM)).toBe("03:30");
+    spy.mockRestore();
+  });
+
+  it("falls back to the browser's zone for an unknown stored zone instead of throwing", () => {
+    setFormatPrefs("auto", "Mars/Olympus_Mons");
+    expect(selectedTimeZone()).toBeUndefined();
+    expect(() => fmtDateTime(US_DST_AFTER, HM)).not.toThrow();
+    expect(effectiveTimeZone()).toBe(browserTimeZone());
+  });
+
+  it("writes dates in the region format, independent of the display language", () => {
+    const day = Date.UTC(2026, 10, 2, 12, 0);
+    const D = { year: "numeric", month: "numeric", day: "numeric", timeZone: "UTC" } as const;
+    setFormatPrefs("en-US", "auto");
+    expect(fmtDateTime(day, D)).toBe("11/2/2026");
+    setFormatPrefs("en-GB", "auto");
+    expect(fmtDateTime(day, D)).toBe("02/11/2026");
+    setFormatPrefs("de-DE", "auto");
+    expect(fmtNum(1234567.5)).toBe("1.234.567,5");
+    setFormatPrefs("auto", "auto");
+    expect(fmtNum(1234567.5)).toBe("1,234,567.5"); // follows the display language (en)
+  });
+
+  it("treats an unusable region format as the display language", () => {
+    setFormatPrefs("not a tag!!", "auto");
+    expect(formatLocale()).toBe("en");
+  });
+
+  it("isValidTimeZone never throws", () => {
+    expect(isValidTimeZone("Asia/Tokyo")).toBe(true);
+    expect(isValidTimeZone("Nope/Zone")).toBe(false);
+    expect(isValidTimeZone("")).toBe(false);
+    expect(isValidTimeZone(42)).toBe(false);
   });
 });

@@ -2,7 +2,7 @@
 // legacy migrations load and hydrate run before merging, and the accessors that read a
 // kind-scoped map. Each mirrors the Agent's own reading of the same ui-prefs key, so what the
 // screen shows is what the Agent enforces. Re-exported from lib/settings.ts.
-import { ASSISTANT_AGENT_KINDS, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS, DEFAULT_MODEL } from "./options.ts";
+import { ASSISTANT_AGENT_KINDS, ASSISTANT_RECOMMENDED_MODEL, CLAUDE_MODELS, DEFAULT_MODEL, REGION_FORMATS } from "./options.ts";
 import type { Settings } from "./prefs.ts";
 
 // Settings for one read-aloud character (a ttsVoicePool value). Every field is optional; an
@@ -163,6 +163,17 @@ export type MemoryReviewMode = "off" | "propose";
 /** Anything but "propose" is off, the Agent's own reading (uiprefs.MemoryReview). */
 export function normalizeMemoryReview(value: unknown): MemoryReviewMode {
   return value === "propose" ? value : "off";
+}
+
+/** A region format outside REGION_FORMATS is "auto" (follow the display language). */
+export function normalizeRegionFormat(value: unknown): string {
+  return typeof value === "string" && REGION_FORMATS.some((r) => r.id === value) ? value : "auto";
+}
+
+/** Time zone: a non-string or empty value is "auto". A name is kept even if this browser does not
+ *  know it (lib/intl.ts falls back at use time), so another device's valid zone is not erased. */
+export function normalizeTimeZone(value: unknown): string {
+  return typeof value === "string" && value !== "" ? value : "auto";
 }
 
 export function normalizeClaudeCustomModels(value: unknown): string[] {

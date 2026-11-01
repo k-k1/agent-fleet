@@ -41,6 +41,18 @@ export function getLocale(): string {
   return currentLocale;
 }
 
+// Region format / time zone (lib/intl.ts) change how dates and numbers print without changing the
+// language, so t() text is unchanged but every component that formats a time has to re-render.
+// useT() subscribes to this revision as well as the locale; intl.ts bumps it.
+let formatRev = 0;
+export function bumpFormatRev(): void {
+  formatRev++;
+  listeners.forEach((fn) => fn());
+}
+function renderKey(): string {
+  return currentLocale + "#" + formatRev;
+}
+
 export function subscribeLocale(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -106,7 +118,7 @@ export function tLocales(key: string, vars?: Record<string, string | number>): s
 
 // useT — for React code that must re-render on a locale change. The returned t is a stable ref.
 export function useT(): typeof t {
-  useSyncExternalStore(subscribeLocale, getLocale, getLocale);
+  useSyncExternalStore(subscribeLocale, renderKey, renderKey);
   return t;
 }
 

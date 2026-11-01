@@ -3,7 +3,67 @@
 // current locale (getLocale from i18n); JS ships Intl data for both ja and en. Intl objects are
 // memoized per locale x options, so a locale switch simply builds them under a new key. Nothing
 // here depends on React, so non-React callers (WsBar and friends) can use it directly.
-import { getLocale, t } from "./i18n/index.ts";
+import { bumpFormatRev, getLocale, t } from "./i18n/index.ts";
+
+// Region format and time zone (#2185). Both are member settings pushed in by applyLocale()
+// (lib/settings/appearance.ts), like the display language; "auto" is a stored value of its own and
+// is resolved here on every call, so a member who travels follows the browser's current zone
+// instead of a copy frozen when the setting was saved.
+export const FORMAT_AUTO = "auto";
+let regionPref = FORMAT_AUTO;
+let zonePref = FORMAT_AUTO;
+
+// isValidTimeZone — true when Intl accepts name as an IANA zone. Never throws.
+export function isValidTimeZone(name: unknown): name is string {
+  if (typeof name !== "string" || name === "") return false;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: name });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isValidRegion(tag: unknown): tag is string {
+  if (typeof tag !== "string" || tag === "") return false;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf(tag).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function setFormatPrefs(region: string, timeZone: string): void {
+  if (region === regionPref && timeZone === zonePref) return;
+  regionPref = region;
+  zonePref = timeZone;
+  bumpFormatRev();
+}
+
+// formatLocale — the locale dates and numbers are written in: the chosen region format, or the
+// display language when it is "auto" or unusable.
+export function formatLocale(): string {
+  return isValidRegion(regionPref) ? regionPref : getLocale();
+}
+
+export function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+// selectedTimeZone — the explicit zone the member chose, or undefined for "follow the browser"
+// (also what a stored name Intl does not know becomes; it must never throw).
+export function selectedTimeZone(): string | undefined {
+  return isValidTimeZone(zonePref) ? zonePref : undefined;
+}
+
+// effectiveTimeZone — the IANA zone every timestamp is shown in right now.
+export function effectiveTimeZone(): string {
+  return selectedTimeZone() ?? browserTimeZone();
+}
 
 const rtfCache = new Map<string, Intl.RelativeTimeFormat>();
 function rtf(): Intl.RelativeTimeFormat {
@@ -20,10 +80,14 @@ function rtf(): Intl.RelativeTimeFormat {
 
 const dtfCache = new Map<string, Intl.DateTimeFormat>();
 function dtf(opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const key = getLocale() + ":" + JSON.stringify(opts);
+  const loc = formatLocale();
+  // Always an explicit zone: a formatter built without one freezes the browser's zone at
+  // construction, and the cache would keep it after the member travels.
+  const zone = effectiveTimeZone();
+  const key = loc + ":" + zone + ":" + JSON.stringify(opts);
   let f = dtfCache.get(key);
   if (!f) {
-    f = new Intl.DateTimeFormat(getLocale(), opts);
+    f = new Intl.DateTimeFormat(loc, { timeZone: zone, ...opts });
     dtfCache.set(key, f);
   }
   return f;
@@ -31,10 +95,11 @@ function dtf(opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
 
 const nfCache = new Map<string, Intl.NumberFormat>();
 function nf(opts?: Intl.NumberFormatOptions): Intl.NumberFormat {
-  const key = getLocale() + ":" + (opts ? JSON.stringify(opts) : "");
+  const loc = formatLocale();
+  const key = loc + ":" + (opts ? JSON.stringify(opts) : "");
   let f = nfCache.get(key);
   if (!f) {
-    f = new Intl.NumberFormat(getLocale(), opts);
+    f = new Intl.NumberFormat(loc, opts);
     nfCache.set(key, f);
   }
   return f;
@@ -103,7 +168,7 @@ export function fmtDateTime(when: string | number | Date, opts: Intl.DateTimeFor
 }
 
 // fmtNum — locale-aware numbers (grouping separators and so on). The default matches plain
-// toLocaleString, except that it uses the app locale rather than the browser's.
+// toLocaleString, except that it uses the region format (default: the app language) rather than the browser's.
 export function fmtNum(n: number, opts?: Intl.NumberFormatOptions): string {
   return nf(opts).format(n);
 }
