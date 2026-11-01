@@ -30,8 +30,6 @@
 //    A new session nobody has tagged yet is waited for (the TUI plugin PUTs and tags it); one that
 //    stays untagged for the bound, an old untagged session, and a Managed one made before
 //    af.managed.name existed have no pane to take an environment from and run as they always did.
-//
-// opencode 1 has no shared server; the module only keeps the file loadable there.
 import { execFile } from "node:child_process";
 
 const AGENT_BIN = process.env.AF_WORKSPACE_AGENT_BIN || "/usr/local/bin/workspace-agent";
@@ -39,7 +37,7 @@ const TAG_WAIT_MS = Number(process.env.AF_OPENCODE_TAG_WAIT_MS) || 5000;
 const NEW_SESSION_MS = 60000; // a session older than this is not waiting for a first tag
 const TOKEN_TTL_MS = 10 * 60 * 1000;
 const TOKEN_MISS_TTL_MS = 60 * 1000;
-const SHELL_TOOLS = new Set(["shell", "bash"]);
+const SHELL_TOOLS = new Set(["shell"]);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -135,9 +133,5 @@ export default {
       }
       confirmed.add(event.sessionID);
     });
-  },
-  // opencode 1 has no shared server.
-  async server() {
-    return {};
   },
 };

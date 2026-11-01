@@ -12,11 +12,9 @@ import { execFile } from "node:child_process"
 // source of truth (rtk's Rust registry). To change rewrite rules, edit rtk —
 // not this file.
 //
-// One module for both opencode majors, with no dependency on @opencode/plugin:
-// opencode 2 reads `id` and `setup` from a plain default-exported object and ignores
-// `server`; opencode 1 (object entrypoints, 1.18.29+) calls `server` and ignores the rest.
-// The shell tool is `bash` on 1 and `shell` on 2. The Bun `$` helper is not part of the 2
-// context, so both majors run rtk through node:child_process.
+// No dependency on @opencode/plugin: opencode 2 reads `id` and `setup` from a plain
+// default-exported object. The Bun `$` helper is not part of its context, so rtk runs
+// through node:child_process.
 
 // run never rejects: like the `.nothrow()` it replaces, a non-zero exit still yields its stdout.
 const run = (file: string, args: string[]): Promise<{ ok: boolean; stdout: string }> =>
@@ -33,7 +31,7 @@ const hasRtk = async (): Promise<boolean> => {
 // rewrite returns the rtk form of the tool call's command, or null to leave it unchanged.
 const rewrite = async (tool: unknown, args: unknown): Promise<string | null> => {
   const name = String(tool ?? "").toLowerCase()
-  if (name !== "bash" && name !== "shell") return null
+  if (name !== "shell") return null
   if (!args || typeof args !== "object") return null
   const command = (args as Record<string, unknown>).command
   if (typeof command !== "string" || !command) return null
@@ -51,11 +49,5 @@ export default {
   async setup(ctx: any) {
     if (!(await hasRtk())) return
     await ctx.tool.hook("execute.before", (event: any) => apply(event?.tool, event?.input))
-  },
-  async server() {
-    if (!(await hasRtk())) return {}
-    return {
-      "tool.execute.before": async (input: any, output: any) => apply(input?.tool, output?.args),
-    }
   },
 }

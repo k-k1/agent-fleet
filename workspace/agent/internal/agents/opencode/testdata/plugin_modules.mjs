@@ -1,4 +1,4 @@
-// Drives the shipped opencode plugin modules (workspace/opencode-plugin) with fake v1 and v2
+// Drives the shipped opencode plugin modules (workspace/opencode-plugin) with fake opencode 2
 // hosts. Run by plugin_modules_test.go; any failed assertion exits non-zero.
 //
 //   node --experimental-strip-types plugin_modules.mjs <plugin dir> <fake rtk dir> <fake agent log>
@@ -59,17 +59,16 @@ const v2Host = (sessions = {}) => {
 
 const mods = { caller: await load("agent-fleet-caller.js"), status: await load("agent-fleet-status.js"), rtk: await load("rtk.ts") };
 
-// Shape: one module that both majors accept. v2 reads id + setup, v1 calls server().
+// Shape: opencode 2 reads id + setup.
 const ids = new Set();
 for (const [name, m] of Object.entries(mods)) {
-  assert.equal(typeof m.id, "string", name + ": v2 needs a stable id");
-  assert.equal(typeof m.setup, "function", name + ": v2 needs setup()");
-  assert.equal(typeof m.server, "function", name + ": v1 (1.18.29+) needs server()");
+  assert.equal(typeof m.id, "string", name + ": needs a stable id");
+  assert.equal(typeof m.setup, "function", name + ": needs setup()");
   ids.add(m.id);
 }
 assert.equal(ids.size, 3, "plugin ids must be distinct");
 
-// caller: stamps af's tools only, overwrites a forged value, on both majors.
+// caller: stamps af's tools only, overwrites a forged value.
 {
   const afTool = "af_0123abcd_request_browser_action";
   const run = async (stampOn) => {
@@ -89,8 +88,6 @@ assert.equal(ids.size, 3, "plugin ids must be distinct");
   const h = v2Host();
   await mods.caller.setup(h.ctx);
   await run(async (tool, sessionID, input) => h.hooks["execute.before"]({ tool, sessionID, input }));
-  const v1 = await mods.caller.server();
-  await run(async (tool, sessionID, args) => v1["tool.execute.before"]({ tool, sessionID }, { args }));
 }
 
 // rtk: `rtk rewrite` exits non-zero when it rewrites (measured), and the plugin must still use it.
@@ -102,24 +99,18 @@ assert.equal(ids.size, 3, "plugin ids must be distinct");
   };
   const h = v2Host();
   await mods.rtk.setup(h.ctx);
-  assert.ok(h.hooks["execute.before"], "rtk on PATH: the v2 hook must be registered");
-  const v2 = (tool, args) => h.hooks["execute.before"]({ tool, input: args });
-  assert.equal(await rewritten("shell", "git status", v2), "rtk git status");
-  assert.equal(await rewritten("bash", "git status", v2), "rtk git status");
-  assert.equal(await rewritten("read", "git status", v2), "git status");
-  assert.equal(await rewritten("shell", "unchanged", v2), "unchanged");
-  const v1h = await mods.rtk.server();
-  const v1 = (tool, args) => v1h["tool.execute.before"]({ tool }, { args });
-  assert.equal(await rewritten("bash", "git status", v1), "rtk git status");
-  assert.equal(await rewritten("read", "git status", v1), "git status");
+  assert.ok(h.hooks["execute.before"], "rtk on PATH: the hook must be registered");
+  const hook = (tool, args) => h.hooks["execute.before"]({ tool, input: args });
+  assert.equal(await rewritten("shell", "git status", hook), "rtk git status");
+  assert.equal(await rewritten("read", "git status", hook), "git status");
+  assert.equal(await rewritten("shell", "unchanged", hook), "unchanged");
 
   const saved = process.env.PATH;
   process.env.PATH = mkdtempSync(join(tmpdir(), "no-rtk-"));
   try {
     const off = v2Host();
     await mods.rtk.setup(off.ctx);
-    assert.equal(off.hooks["execute.before"], undefined, "no rtk: the v2 hook must not be registered");
-    assert.deepEqual(await mods.rtk.server(), {}, "no rtk: v1 hooks must be empty");
+    assert.equal(off.hooks["execute.before"], undefined, "no rtk: the hook must not be registered");
   } finally {
     process.env.PATH = saved;
   }
@@ -138,7 +129,7 @@ assert.equal(ids.size, 3, "plugin ids must be distinct");
   mkdirSync(dirname(legacyRec), { recursive: true });
   writeFileSync(legacyRec, "ses_stale_from_old_plugin");
   const cleanup = mods.status.setup(h.ctx);
-  assert.equal(typeof cleanup, "function", "v2 setup must return its cleanup");
+  assert.equal(typeof cleanup, "function", "setup must return its cleanup");
   const settle = async (n, what) => {
     await until(() => states().length >= n, what);
     await sleep(200);
@@ -209,16 +200,6 @@ assert.equal(ids.size, 3, "plugin ids must be distinct");
     stopNew();
   }
 
-  // v1: idle on session.idle, working on message.*, a trailing message.* right after idle ignored.
-  const before = states().length;
-  const v1 = await mods.status.server();
-  await v1.event({ event: { type: "message.updated", properties: { info: { sessionID: "ses_v1" } } } });
-  await v1.event({ event: { type: "session.idle", properties: { sessionID: "ses_v1" } } });
-  await v1.event({ event: { type: "message.updated", properties: { info: { sessionID: "ses_v1" } } } });
-  await until(() => states().length >= before + 2, "two v1 transitions");
-  await sleep(200);
-  assert.deepEqual(states().slice(before), ["session-status working sid-test", "session-status idle sid-test"]);
-  assert.equal(ocid(), "ses_v1");
   assert.equal(readFileSync(legacyRec, "utf8"), "ses_stale_from_old_plugin", "the plugin must leave the old directory alone");
   assert.deepEqual(stagedLeft(), [], "no staged file may be left behind");
   assert.equal(statSync(join(process.env.HOME, ".local/state/agent-fleet/opencode-sid", process.env.AF_SESSION_SID)).mode & 0o777, 0o600);
@@ -354,7 +335,6 @@ const now = Date.now();
   const saved = { sid: process.env.AF_SESSION_SID, shared: process.env.AF_OPENCODE_SHARED_SERVE, token: process.env.AF_ENGINE_TOKEN };
   const shared = await load("agent-fleet-shared.js");
   assert.equal(typeof shared.setup, "function");
-  assert.deepEqual(await shared.server(), {}, "opencode 1 has no shared server");
   delete process.env.AF_SESSION_SID;
   try {
     delete process.env.AF_OPENCODE_SHARED_SERVE;
@@ -407,7 +387,7 @@ const now = Date.now();
       assert.equal(await pending(run("read", "ses_root")), false, "only shell commands are held");
       assert.equal(asked().length, before, "and only they ask the Agent");
       await run("shell", "ses_root");
-      await run("bash", "ses_kid");
+      await run("shell", "ses_kid");
       await run("shell", "ses_fork");
       assert.deepEqual(asked().slice(before), ["opencode-put-env slotR ses_root", "opencode-put-env slotR ses_kid", "opencode-put-env slotR ses_fork"], "every tagged session — root, subagent, fork — is confirmed by the Agent");
       await run("shell", "ses_root");
@@ -417,7 +397,7 @@ const now = Date.now();
       await run("shell", "ses_managed");
       assert.equal(asked().length, before + 3, "old untagged and Managed sessions have no pane to ask for");
       await run("shell", "ses_named");
-      await run("bash", "ses_namedkid");
+      await run("shell", "ses_namedkid");
       assert.deepEqual(asked().slice(before + 3), ["opencode-put-env mgdA ses_named", "opencode-put-env mgdA ses_namedkid"], "a Managed session that names its af session is confirmed under that name, subagents included");
 
       const waiting = run("shell", "ses_new");

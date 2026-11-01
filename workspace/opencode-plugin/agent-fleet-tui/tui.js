@@ -23,7 +23,7 @@
 //     environment of every session this pane has claimed is sent again.
 //
 // This runs inside the TUI process, whose environment is the pane's: the same values the shell
-// of a v1 pane sees, minus the server credentials. Without AF_OPENCODE_SHARED=1 (a --standalone
+// of a --standalone pane sees, minus the server credentials. Without AF_OPENCODE_SHARED=1 (a --standalone
 // pane, a TUI started by hand) the plugin does nothing.
 import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
