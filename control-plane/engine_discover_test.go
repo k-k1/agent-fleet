@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -151,9 +152,10 @@ func TestEngineDiscoverProbeGivesUpWithinBudgetWhenTheHostIsDown(t *testing.T) {
 // Pressing the button twice inside the cache window must not cost the LAN box a second round
 // trip (ADR 0076 decision 8's 10-second TTL, reused by ADR 0082 decision 7).
 func TestEngineDiscoverProbeCachesWithinTTL(t *testing.T) {
-	hits := 0
+	// Written by the server's handler goroutines (discovery probes several nodes), read by the test.
+	var hits atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
+		hits.Add(1)
 		node := strings.TrimPrefix(r.URL.Path, "/object_info/")
 		f := map[string]string{"CheckpointLoaderSimple": "ckpt_name", "LoraLoader": "lora_name", "VAELoader": "vae_name"}[node]
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -169,12 +171,12 @@ func TestEngineDiscoverProbeCachesWithinTTL(t *testing.T) {
 	if _, err := e.discoverModels(context.Background()); err != nil {
 		t.Fatalf("first discoverModels: %v", err)
 	}
-	first := hits
+	first := hits.Load()
 	if _, err := e.discoverModels(context.Background()); err != nil {
 		t.Fatalf("second discoverModels: %v", err)
 	}
-	if hits != first {
-		t.Errorf("a second press within the TTL cost %d more upstream requests, want 0 (cached)", hits-first)
+	if n := hits.Load(); n != first {
+		t.Errorf("a second press within the TTL cost %d more upstream requests, want 0 (cached)", n-first)
 	}
 }
 
