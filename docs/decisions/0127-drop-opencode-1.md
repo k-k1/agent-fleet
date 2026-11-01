@@ -77,7 +77,8 @@ workspace may hold.
 - The `opencode` package loses the major switch. Code that runs before the first probe no longer defaults to
   1.x.
 - The opencode contract CI runs 2.x only. The tests that skip on 2.x (`skipOnOpencode2`) are deleted; the two
-  that put a 1.x install on PATH (`useMajor(t, 1)`) stay, because they test the refusal in decision 1.
+  that put a 1.x install on PATH (`useMajor(t, 1)`) stay: one checks the start-time refusal in decision 1, the
+  other that the background import never starts while the opencode on PATH is 1.x.
 - The Console never drives an opencode question with keys. Every card it can show comes from the shared
   serve with a form id and is answered through it. A standalone pane raises none, since its form cannot be
   read offline (#3162). A card without an id is shown read-only: the opencode 2 TUI's form keys are
