@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// The shipped plugins are one module per file that opencode 1 (server()) and opencode 2
-// (id + setup()) must both accept. This drives them with fake hosts of each major; the real
-// binaries are exercised by the contract tests. testdata/plugin_modules.mjs holds the assertions.
-func TestOpencodePluginModulesServeBothMajors(t *testing.T) {
+// The shipped plugins are one module per file that opencode 2 loads through id + setup(). This
+// drives them with a fake host; the real binary is exercised by the contract tests.
+// testdata/plugin_modules.mjs holds the assertions.
+func TestOpencodePluginModules(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		skipUnlessV2Required(t, "node is needed to load the plugin modules")

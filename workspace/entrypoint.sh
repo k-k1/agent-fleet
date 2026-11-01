@@ -1068,9 +1068,9 @@ fi
 # dir (home, persists): agent-fleet-status.js reports session working/idle state back
 # to the agent — the opencode analog of claude's settings.json hooks — and
 # agent-fleet-caller.js stamps the calling session on af's MCP tools (#989). Refreshed
-# each start so they track the image version. opencode 1 and 2 both auto-load
-# ~/.config/opencode/plugin/*.js (measured on 1.19.0 and 2.0.28); each file is one module
-# serving both majors. (rtk.ts is the agent's to seed or remove.)
+# each start so they track the image version. opencode 2 auto-loads
+# ~/.config/opencode/plugin/*.js (measured on 2.0.28). (rtk.ts is the agent's to seed or
+# remove.)
 OC_PLUG_SRC="/usr/local/share/agent-fleet/opencode-plugin"
 OC_PLUG_DST="$HOME/.config/opencode/plugin"
 if [ -d "$OC_PLUG_SRC" ]; then
@@ -1080,8 +1080,8 @@ if [ -d "$OC_PLUG_SRC" ]; then
     || echo "[entrypoint] WARN: failed to seed opencode plugin"
   # opencode 2's TUI plugin (agent-fleet-tui/): a directory with a package.json whose ./tui
   # export is loaded from ~/.config/opencode/plugins/<dir>/ (measured on 2.0.28). It keeps the
-  # sessions a shared-server Terminal pane creates apart from the other panes' (#2120); opencode 1
-  # never reads this directory. Replaced as a whole so a removed file does not outlive the image.
+  # sessions a shared-server Terminal pane creates apart from the other panes' (#2120). Replaced
+  # as a whole so a removed file does not outlive the image.
   if [ -d "$OC_PLUG_SRC/agent-fleet-tui" ]; then
     OC_TUI_DST="$HOME/.config/opencode/plugins/agent-fleet-tui"
     mkdir -p "$HOME/.config/opencode/plugins" \
