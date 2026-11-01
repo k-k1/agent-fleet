@@ -398,3 +398,16 @@ func TestParseReadsWhatReadinessNeeds(t *testing.T) {
 		}
 	}
 }
+
+func TestParseReadsWhenAPRWasClosed(t *testing.T) {
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
+	node := `{"number":3,"state":"CLOSED","isDraft":false,"url":"https://github.com/o/r/pull/3","closedAt":"2026-11-01T02:03:04Z",` +
+		`"headRepositoryOwner":{"login":"o"},"commits":{"nodes":[]}}`
+	got, _, _, err := parse([]byte(`{"data":{`+answer("r0", "o", "main", node)+`}}`), keys)
+	if err != nil || got[keys[0]] == nil || got[keys[0]].ClosedAt != "2026-11-01T02:03:04Z" {
+		t.Fatalf("got %+v err %v, want closedAt read", got[keys[0]], err)
+	}
+	if q, _ := query(keys); !strings.Contains(q, " closedAt ") {
+		t.Fatalf("query lacks closedAt: %s", q)
+	}
+}

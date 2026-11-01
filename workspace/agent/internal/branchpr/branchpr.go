@@ -45,6 +45,9 @@ type PR struct {
 	Mergeable      string `json:"-"`
 	ReviewDecision string `json:"-"`
 	Head           string `json:"-"`
+	// ClosedAt is when a merged or closed PR was closed (GitHub; "" on Bitbucket), so a PR
+	// reopened and closed again tells apart from its first close. Never on the wire.
+	ClosedAt string `json:"-"`
 }
 
 // Ready reports a PR anyone could merge now: open, not a draft, its checks green, no conflict,
@@ -264,7 +267,7 @@ func query(keys []Key) (string, map[string]any) {
 		// also matches headRefName, and parse skips those.
 		fmt.Fprintf(&body, "r%d:repository(owner:$%s,name:$%s){owner{login} defaultBranchRef{name} "+
 			"pullRequests(headRefName:$%s,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"+
-			"number title state isDraft url mergeable reviewDecision headRepositoryOwner{login} "+
+			"number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+
 			"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
 			"commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}}} ", i, o, n, b)
 	}
@@ -347,6 +350,7 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 		// repository requires no review.
 		Mergeable      string  `json:"mergeable"`
 		ReviewDecision *string `json:"reviewDecision"`
+		ClosedAt       *string `json:"closedAt"`
 		Closing        struct {
 			Nodes []struct {
 				Number int `json:"number"`
@@ -435,6 +439,9 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 				Mergeable: n.Mergeable}
 			if n.ReviewDecision != nil {
 				pr.ReviewDecision = *n.ReviewDecision
+			}
+			if n.ClosedAt != nil {
+				pr.ClosedAt = *n.ClosedAt
 			}
 			for _, c := range n.Closing.Nodes {
 				if c.Number > 0 && c.Repo.Name != "" {

@@ -196,17 +196,20 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		// Told only about a PR the row still holds: a PR removed by hand is no longer the
 		// session's, and a PR seen for the first time is linked on this poll and told from the next.
 		if held {
-			if kind, extra := prNotice(s.PR, role, cur.State); kind != "" {
-				sendPRNotice(s, kind, provider, key, extra, s.PR)
+			if kind, extra := prNotice(s.PR, role, cur.State); kind != "" &&
+				!sendPRNotice(s, kind, provider, key, extra, s.PR) && kind != prReadyNotice {
+				// The merge or close is told on the change of the recorded state: recording it now
+				// would make the next poll see no change, and the notice would be lost for good.
+				continue
 			}
 		}
 		// Already linked at this role or above, with this state: nothing to write. A weaker link
 		// (watching from when the copy was shared, reviewing before the session took the branch
 		// over) goes through AddLink, which raises it; an unknown role from a hand-edited meta
 		// ranks lowest.
-		// The launch item is its own record and carries no state, so it is never rewritten here.
-		if held && (cur.Role == session.LinkStarted ||
-			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role) && cur.State == state) {
+		// The launch item keeps its role; only its state is recorded (Meta.WorkItemState).
+		if held && cur.State == state && (cur.Role == session.LinkStarted ||
+			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role)) {
 			continue
 		}
 		l := session.WorkItemLink{Provider: provider, Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339), State: state}

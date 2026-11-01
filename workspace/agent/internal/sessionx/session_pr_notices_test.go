@@ -150,3 +150,64 @@ func TestAFailedOutboxWriteIsRetriedOnTheNextPoll(t *testing.T) {
 		t.Fatalf("sent %d, want the failed one retried once and then held", len(*sent))
 	}
 }
+
+func TestAMergeIsToldAfterTheOutboxRecovers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sent := capturePRNotices(t)
+	session.WriteMeta(session.Meta{Name: "a", Dir: "/wt", Kind: session.KindClaude,
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#7", Role: "working", State: "open"}}})
+	merged := &branchpr.PR{Number: 7, State: "merged", URL: "https://github.com/o/r/pull/7", ClosedAt: "2026-11-01T00:00:00Z"}
+	row := func() []session.Session {
+		m, _ := session.ReadMeta("a")
+		return []session.Session{{Name: "a", Dir: "/wt", PR: merged, Links: session.LinksOf(m)}}
+	}
+	ok := putPRNotice
+	putPRNotice = func(string, notice.Event) error { return errTest{} }
+	recordBranchPRs(row(), time.Now())
+	if m, _ := session.ReadMeta("a"); m.Links[0].State != "open" {
+		t.Fatalf("state = %q after a failed outbox write, want open kept so the change is seen again", m.Links[0].State)
+	}
+	putPRNotice = ok
+	recordBranchPRs(row(), time.Now())
+	if len(*sent) != 1 || (*sent)[0].ev.Kind != prMergedNotice {
+		t.Fatalf("sent %+v, want the merge told once the outbox works", *sent)
+	}
+	if m, _ := session.ReadMeta("a"); m.Links[0].State != "merged" {
+		t.Fatalf("state = %q, want merged recorded after the notice", m.Links[0].State)
+	}
+}
+
+func TestASessionLaunchedFromThePRIsToldOfItsMerge(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sent := capturePRNotices(t)
+	session.WriteMeta(session.Meta{Name: "lp", Dir: "/wt", Kind: session.KindClaude,
+		WorkItem: &session.WorkItemRef{Provider: "github", Key: "o/r#7"}})
+	row := func(pr *branchpr.PR) []session.Session {
+		m, _ := session.ReadMeta("lp")
+		return []session.Session{{Name: "lp", Dir: "/wt", PR: pr, Links: session.LinksOf(m)}}
+	}
+	url := "https://github.com/o/r/pull/7"
+	recordBranchPRs(row(&branchpr.PR{Number: 7, State: "open", URL: url}), time.Now())
+	recordBranchPRs(row(&branchpr.PR{Number: 7, State: "merged", URL: url, ClosedAt: "t1"}), time.Now())
+	if len(*sent) != 1 || (*sent)[0].ev.Kind != prMergedNotice || (*sent)[0].ev.SessionName != "lp" {
+		t.Fatalf("sent %+v, want pr-merged for the session launched from the PR", *sent)
+	}
+}
+
+func TestAPRClosedAgainAfterAReopenIsToldAgain(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sent := capturePRNotices(t)
+	session.WriteMeta(session.Meta{Name: "a", Dir: "/wt", Kind: session.KindClaude,
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#7", Role: "working", State: "open"}}})
+	row := func(pr *branchpr.PR) []session.Session {
+		m, _ := session.ReadMeta("a")
+		return []session.Session{{Name: "a", Dir: "/wt", PR: pr, Links: session.LinksOf(m)}}
+	}
+	url := "https://github.com/o/r/pull/7"
+	recordBranchPRs(row(&branchpr.PR{Number: 7, State: "closed", URL: url, ClosedAt: "t1"}), time.Now())
+	recordBranchPRs(row(&branchpr.PR{Number: 7, State: "open", URL: url}), time.Now())
+	recordBranchPRs(row(&branchpr.PR{Number: 7, State: "closed", URL: url, ClosedAt: "t2"}), time.Now())
+	if len(*sent) != 2 || (*sent)[0].once == (*sent)[1].once {
+		t.Fatalf("sent %+v, want two pr-closed, one per close", *sent)
+	}
+}

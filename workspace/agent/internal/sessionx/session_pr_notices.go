@@ -40,25 +40,29 @@ func prNotice(pr *branchpr.PR, role, before string) (kind, onceKey string) {
 	open := before == "open" || before == "draft"
 	switch {
 	case pr.State == "merged" && open:
-		return prMergedNotice, ""
+		return prMergedNotice, pr.ClosedAt
 	case pr.State == "closed" && open:
-		return prClosedNotice, ""
+		// Keyed by when it was closed: a PR reopened and closed again is news again.
+		return prClosedNotice, pr.ClosedAt
 	case pr.Ready() && pr.Head != "":
-		// Once per head commit: a push after the notice makes it a different PR to merge.
+		// Once per head commit: a push after the notice makes it a different PR to merge. The
+		// marker that keeps this across a restart is pruned after 30 days, so a PR left ready on
+		// one commit for longer is announced once more after a restart: a fair reminder.
 		return prReadyNotice, pr.Head
 	}
 	return "", ""
 }
 
-// sendPRNotice puts one notification for the PR provider/key of session s. Best effort: an
-// outbox that cannot be written loses this notice and is retried on the next poll.
-func sendPRNotice(s *session.Session, kind, provider, key, extra string, pr *branchpr.PR) {
+// sendPRNotice puts one notification for the PR provider/key of session s, and reports whether it
+// is in the outbox (now or earlier). An outbox that cannot be written answers false, and the
+// caller keeps the state change that prompted it so the next poll tries again.
+func sendPRNotice(s *session.Session, kind, provider, key, extra string, pr *branchpr.PR) bool {
 	once := kind + "|" + provider + ":" + key
 	if extra != "" {
 		once += "|" + extra
 	}
 	if _, sent := prNoticesSent.Load(once); sent {
-		return
+		return true
 	}
 	ev := notice.New(kind, s.Name, s.Kind, s.Display)
 	// The chat bridge has no wording for these; the notification center does.
@@ -69,7 +73,9 @@ func sendPRNotice(s *session.Session, kind, provider, key, extra string, pr *bra
 	if u := linkURL(pr.URL); u != "" {
 		ev.Payload["url"] = u
 	}
-	if err := putPRNotice(once, ev); err == nil {
-		prNoticesSent.Store(once, true)
+	if err := putPRNotice(once, ev); err != nil {
+		return false
 	}
+	prNoticesSent.Store(once, true)
+	return true
 }

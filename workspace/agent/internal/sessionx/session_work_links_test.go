@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -290,15 +291,26 @@ func TestRecordBranchPRsKeepsThePRStateOnTheLink(t *testing.T) {
 
 // A session launched for the PR it is on keeps its launch item as is: that record carries no
 // state, and trying to give it one every poll would read the meta for nothing.
-func TestRecordBranchPRsLeavesALaunchPRAlone(t *testing.T) {
+func TestRecordBranchPRsKeepsALaunchPRAsTheLaunchItemWithItsState(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	session.WriteMeta(session.Meta{Name: "lp1", Dir: "/wt/lp", Kind: session.KindClaude,
 		WorkItem: &session.WorkItemRef{Provider: "github", Key: "o/r#7"}})
 	m, _ := session.ReadMeta("lp1")
 	rows := []session.Session{{Name: "lp1", Dir: "/wt/lp", PR: &branchpr.PR{Number: 7, State: "merged", URL: "https://github.com/o/r/pull/7"}, Links: session.LinksOf(m)}}
 	recordBranchPRs(rows, time.Now())
-	if m, _ := session.ReadMeta("lp1"); len(m.Links) != 0 {
-		t.Fatalf("links=%+v, want the launch PR left as the launch item only", m.Links)
+	m, _ = session.ReadMeta("lp1")
+	if len(m.Links) != 0 || m.WorkItemState != "merged" {
+		t.Fatalf("links=%+v state=%q, want no second link and the launch PR's state recorded", m.Links, m.WorkItemState)
+	}
+	// A steady list writes nothing more.
+	rows[0].Links = session.LinksOf(m)
+	old := time.Unix(1_000_000_000, 0)
+	if err := os.Chtimes(session.MetaPath("lp1"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	recordBranchPRs(rows, time.Now())
+	if after, _ := os.Stat(session.MetaPath("lp1")); !after.ModTime().Equal(old) {
+		t.Fatal("a steady list rewrote the meta")
 	}
 }
 
