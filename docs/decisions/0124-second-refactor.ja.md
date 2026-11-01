@@ -405,4 +405,4 @@ cursor・copilot（Ctrl+C、`NeedsWorking`）が実装する。実装の無い k
 capability を転送することを確かめる。`kindLiteralCeiling` は 105 → 100（base の実測は 105）。挙動の変更なし。
 実機では未確認。
 
-Follow-ups: #2925.
+Follow-ups: #2933.

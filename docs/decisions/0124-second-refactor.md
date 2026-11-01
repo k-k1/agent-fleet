@@ -520,4 +520,4 @@ with the subagent view both ways; `TestUsageLimitWrapperKeepsTUIInterrupt` check
 `editedUsageLimitAgent` forwards the capability. `kindLiteralCeiling` goes 105 → 100 (base measured
 105). Behaviour unchanged; not verified against a live fleet.
 
-Follow-ups: #2925.
+Follow-ups: #2933.

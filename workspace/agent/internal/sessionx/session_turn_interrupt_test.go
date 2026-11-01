@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"reflect"
@@ -220,14 +221,18 @@ func TestInterruptLiveStateCoversNeedsWorkingKinds(t *testing.T) {
 func TestUsageLimitWrapperKeepsTUIInterrupt(t *testing.T) {
 	want := map[string]tuiInterrupt{}
 	for _, kind := range RegisteredKinds() {
-		want[kind] = tuiInterruptFor(kind, func() bool { return false })
+		for _, sub := range []bool{false, true} {
+			want[fmt.Sprint(kind, sub)] = tuiInterruptFor(kind, func() bool { return sub })
+		}
 	}
 	for _, kind := range RegisteredKinds() {
 		editUsageLimitTraits(t, kind, func(*agents.UsageLimitTraits) {})
 	}
 	for _, kind := range RegisteredKinds() {
-		if got := tuiInterruptFor(kind, func() bool { return false }); !reflect.DeepEqual(got, want[kind]) {
-			t.Errorf("%s behind the wrapper: %+v, want %+v", kind, got, want[kind])
+		for _, sub := range []bool{false, true} {
+			if got := tuiInterruptFor(kind, func() bool { return sub }); !reflect.DeepEqual(got, want[fmt.Sprint(kind, sub)]) {
+				t.Errorf("%s (subagent view %v) behind the wrapper: %+v, want %+v", kind, sub, got, want[fmt.Sprint(kind, sub)])
+			}
 		}
 	}
 }
