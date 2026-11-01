@@ -134,7 +134,7 @@ func TestInstructionsOpsDispatchPinned(t *testing.T) {
 }
 
 // A registered kind must say whether it takes the member's instructions: it implements
-// agents.Instructions and is in instrSupportedKinds (display order), or it is in
+// agents.Instructions and is in instrSupportedKinds (display order), or it
 // implements agents.InstructionsUnsupported with a reason, or it runs no agent CLI at all.
 func TestInstructionsClassifyEveryRegisteredKind(t *testing.T) {
 	for _, kind := range sessionx.RegisteredKinds() {

@@ -81,8 +81,8 @@ func buildKindCatalog(live bool) kindCatalogWire {
 	return out
 }
 
-// instrSupport answers from instrSupportedKinds and agents.InstructionsUnsupported. A kind on neither (shell, ssm, or one
-// just added) is unverified rather than "no": nobody has said.
+// instrSupport answers from instrSupportedKinds and agents.InstructionsUnsupported. A kind on
+// neither (shell, ssm, or one just added) is unverified rather than "no": nobody has said.
 func instrSupport(kind string) agents.Tri {
 	if slices.Contains(instrSupportedKinds, kind) {
 		return agents.TriYes
