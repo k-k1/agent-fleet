@@ -72,6 +72,12 @@ describe("usage observation post", () => {
     expect(body?.windows[0]).not.toHaveProperty("observedAt");
     expect(body).not.toHaveProperty("limitEpoch");
   });
+  it("posts nothing for a kind the API refuses as a source", () => {
+    expect(usageObservationBody("muse", { fiveHour: win(40), sevenDay: win(50) })).toBeNull();
+    expect(usageObservationBody("opencode", { fiveHour: win(40) })).toBeNull();
+    expect(usageObservationBody("claude", { fiveHour: win(40) })).not.toBeNull();
+    expect(usageObservationBody("codex", { sevenDay: win(40) })).not.toBeNull();
+  });
   it("drops stale windows and flags derived ones", () => {
     expect(usageObservationBody("codex", { fiveHour: win(0, { stale: true, derived: true }) })).toBeNull();
     const body = usageObservationBody("codex", { sevenDay: win(0, { derived: true }) });

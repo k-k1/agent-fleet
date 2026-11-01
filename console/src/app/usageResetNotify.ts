@@ -42,6 +42,11 @@ export interface UsageForNotify {
   limitEpochSince?: string;
 }
 
+// Agent kinds the API accepts as an observation `source` (observeUsage in
+// control-plane/notification.go). Any other kind (muse) keeps its chip but posts nothing:
+// the CP answers it with 400 bad_source. Keep in step with the CP's list.
+const OBSERVABLE_KINDS: ReadonlySet<string> = new Set(["claude", "codex"]);
+
 // usageObservationBody is the POST /api/notifications/usage-observations body, or null when
 // there is nothing to send.
 //
@@ -54,7 +59,7 @@ export interface UsageForNotify {
 // this tab sends is not the time the provider observed anything, and the CP keeps a window
 // without one off the limit board.
 export function usageObservationBody(kind: string, usage: UsageForNotify | null) {
-  if (!usage) return null;
+  if (!usage || !OBSERVABLE_KINDS.has(kind)) return null;
   const windows = [
     { key: "5h", w: usage.fiveHour },
     { key: "7d", w: usage.sevenDay },
