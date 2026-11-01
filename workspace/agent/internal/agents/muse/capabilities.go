@@ -5,6 +5,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the muse kind, each delegating to this package's own function.
@@ -59,3 +60,13 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 		},
 	}
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredPartial.
+// muse (ADR 0095 decision 10): the wire's own per-turn numbers are clean (cached input is
+// separated, the cumulative block never needs differencing, a failed turn reports nothing and
+// a resume replays none of it), so partial is about OWNERSHIP, not precision: subagent and
+// observer model calls are never folded into `session/tokenUsage` (gate B1 measured 88,077
+// prompt tokens on the wire against 116,816 in the host's own log across six calls, two of
+// them a subagent's). AF's clamps turn subagents and observers off, but a clamp is a setting
+// and this is a declaration about the SOURCE, so it stays partial.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredPartial }

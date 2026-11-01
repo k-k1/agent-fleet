@@ -3,6 +3,7 @@ package kiro
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the kiro kind, each delegating to this package's own function.
@@ -47,3 +48,9 @@ func (agentImpl) ConnectionStatus(agents.StatusInputs) map[string]any { return S
 func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 	return agents.LiveStateTraits{State: LiveState, PolledTurnEnd: true}
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredNone }
+
+// NoHeadlessChat is agents.NoHeadlessChat: chatx has no provider for this kind.
+func (agentImpl) NoHeadlessChat() {}

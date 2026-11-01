@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the codex kind, each delegating to this package's own function.
@@ -103,3 +104,6 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 		},
 	}
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredExact.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }

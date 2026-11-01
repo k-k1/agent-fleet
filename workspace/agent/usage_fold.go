@@ -437,37 +437,16 @@ func usageTriggerFromTurnSource(src string) string {
 	return usagex.TriggerUser
 }
 
-// usageMeasuredForKind is the measurement accuracy per kind (docs/log/46 §1-c). It is a
-// self-declaration that stops the 0 of an agent that reports no tokens from reading as
-// "consumed nothing"; the UI uses it to show unmeasured consumption separately.
+// usageMeasuredForKind is the measurement accuracy per kind (docs/log/46 §1-c): the kind's own
+// agents.UsageMeasurer, by exact registry key. An alias, an unregistered kind and a kind that
+// declares nothing read none, never the exact kind they resemble.
 func usageMeasuredForKind(kind string) string {
-	switch kind {
-	case session.KindClaude, session.KindCodex, session.KindOpencode:
-		return usagex.MeasuredExact
-	// lcpp (ADR 0093 decision 8): llama-server's own `usage` (prompt_tokens/completion_tokens)
-	// is exact and rides the stream (CP gateway's askForStreamUsage forces
-	// stream_options.include_usage), and this kind never runs it through usagex.WindowGuess or
-	// any other estimator — it IS the executor, so its own store's KindUsage record (lcpp's
-	// store.go AppendUsage) is the same number the engine reported, not a derived one. That
-	// makes lcpp the first kind whose exactness comes from running its own engine rather than
-	// reading a vendor CLI's self-reported total.
-	case session.KindLcpp:
-		return usagex.MeasuredExact
-	case session.KindCopilot:
-		return usagex.MeasuredPartial // the transcript only carries outTok
-	// muse (ADR 0095 decision 10): the wire's own per-turn numbers are clean — cached input is
-	// separated, the cumulative block never needs differencing, a failed turn reports nothing
-	// and a resume replays none of it — so what makes this partial is not precision but
-	// OWNERSHIP. Subagent and observer model calls are never folded into `session/tokenUsage`;
-	// gate B1 measured one turn reporting 88,077 prompt tokens on the wire while the host's own
-	// durable log recorded 116,816 across six calls, two of them owned by a subagent. AF's
-	// clamps turn subagents and observers off, which makes the wire numbers complete in
-	// practice — but a clamp is a setting and this is a declaration about the SOURCE, so it
-	// stays partial rather than claiming an exactness the protocol does not give.
-	case session.KindMuse:
-		return usagex.MeasuredPartial
+	if a, ok := sessionx.RegisteredAgent(kind); ok {
+		if u, ok := a.(agents.UsageMeasurer); ok {
+			return u.UsageMeasured()
+		}
 	}
-	return usagex.MeasuredNone // kiro / cursor / agy: no tokens in the transcript
+	return usagex.MeasuredNone
 }
 
 // foldSessionUsageLocked writes one session's unfolded portion to the ledger and returns

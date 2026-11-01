@@ -5,6 +5,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Optional agents capabilities of the lcpp kind.
@@ -50,3 +51,11 @@ func (agentImpl) ConnectionStatus(in agents.StatusInputs) map[string]any {
 	}
 	return ConnStatus(in.Secrets)
 }
+
+// UsageMeasured is agents.UsageMeasurer: usagex.MeasuredExact.
+// lcpp (ADR 0093 decision 8): llama-server's own `usage` (prompt_tokens/completion_tokens)
+// is exact and rides the stream (CP gateway's askForStreamUsage forces
+// stream_options.include_usage), and this kind never runs it through usagex.WindowGuess or
+// any other estimator: it is the executor, so its own store's usage record is the number the
+// engine reported, not a derived one.
+func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }

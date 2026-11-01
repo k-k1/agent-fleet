@@ -500,3 +500,22 @@ Not a full `--verify` run. Still hand-kept: `session.Kind*`, `agentreg`, `kinds.
 Console lists, `usageMeasuredByKind` / `noChatProvider`.
 
 Follow-ups: #2933.
+
+## Note (2026-11-01): `usageMeasuredByKind` and `noChatProvider` retired (#2933, fourth slice)
+
+Both test tables only re-listed the registry. The usage accuracy is now the kind's own
+declaration, `agents.UsageMeasurer` (`UsageMeasured()` returning `usagex.MeasuredExact` / `Partial`
+/ `None`), implemented by every registered kind, "none" included, so a kind that says nothing
+still fails `TestEveryKindDeclaresItsUsageAccuracy` instead of silently reading none; the long
+lcpp and muse measurement comments moved with their answers. `usageMeasuredForKind` looks it up by
+exact registry key, so an alias or unknown kind still reads none. `TestUsageMeasuredMatchesOldSwitch`
+holds it to a literal copy of the old switch over the kinds that existed. "Has no headless chat
+backend" is the marker `agents.NoHeadlessChat` on kiro, copilot, shell and ssm (the backends are
+chatx's code, which an agent package cannot import); the existing exactly-one-of guard now reads the
+marker instead of the table. `TestLabels` and the `wantRuntime` nil rows had already been derived
+(see the note above). `scripts/stub-kind-count.sh` on the refreshed `zz.patch` (the stub declares both
+in its own package; `kind_lists_test.go` is no longer edited): 19 files with tests and Markdown (was
+20), 15 non-test, non-Markdown files (unchanged); Go tests edited 1 → 0. Not a full `--verify` run.
+Still hand-kept: `session.Kind*`, `agentreg`, `kinds.registered` and the Console lists.
+
+Follow-ups: #2933.

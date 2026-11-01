@@ -195,7 +195,7 @@ new file mode 100644
 index 000000000..a290704cb
 --- /dev/null
 +++ b/workspace/agent/internal/agents/zz/zz.go
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,62 @@
 +// Package zz is a stub kind used only to measure how many files a new kind touches
 +// (scripts/stub-kind-count.sh). It is never merged.
 +package zz
@@ -203,6 +203,7 @@ index 000000000..a290704cb
 +import (
 +	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 +	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
++	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 +)
 +
 +type agentImpl struct{ agents.NoGenericTranscript }
@@ -247,6 +248,12 @@ index 000000000..a290704cb
 +// MoveTarget is agents.MoveTarget: the stub's read has not been measured.
 +func (agentImpl) MoveTarget() agents.MoveTargetState { return agents.MoveTargetUnmeasured }
 +
++// UsageMeasured is agents.UsageMeasurer: the stub reports no tokens.
++func (agentImpl) UsageMeasured() string { return usagex.MeasuredNone }
++
++// NoHeadlessChat is agents.NoHeadlessChat: the stub has no chat backend.
++func (agentImpl) NoHeadlessChat() {}
++
 +// SkillsLayout is agents.SkillsLayouter: foreign entries only.
 +func (agentImpl) SkillsLayout() agents.SkillsLayout {
 +	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
@@ -275,23 +282,3 @@ index 471e82a05..734dab8d3 100644
  )
  
  // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
-diff --git a/workspace/agent/kind_lists_test.go b/workspace/agent/kind_lists_test.go
-index 713d3fd27..e5afb71b3 100644
---- a/workspace/agent/kind_lists_test.go
-+++ b/workspace/agent/kind_lists_test.go
-@@ -26,6 +26,7 @@ var usageMeasuredByKind = map[string]string{
- 	session.KindAgy:      usagex.MeasuredNone,
- 	session.KindShell:    usagex.MeasuredNone,
- 	session.KindSSM:      usagex.MeasuredNone,
-+	session.KindZz:       usagex.MeasuredNone,
- }
- 
- func TestEveryKindDeclaresItsUsageAccuracy(t *testing.T) {
-@@ -63,6 +64,7 @@ func TestUsageMeasuredRefusesAlternateSpellings(t *testing.T) {
- // noChatProvider are the registered kinds that run no headless chat/one-shot backend.
- var noChatProvider = map[string]bool{
- 	session.KindKiro: true, session.KindCopilot: true, session.KindShell: true, session.KindSSM: true,
-+	session.KindZz: true,
- }
- 
- // A registered kind either has a chat provider (and then chatx classifies it for one-shots and
