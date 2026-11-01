@@ -46,12 +46,15 @@ A row can also carry **"Shared"** (visible to another member;
 see [12](12-collaboration.md#sharing-a-conversation-shared-sessions)) and **"Locked against deletion"** (excluded from deletion and
 automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanup)).
 
-A row can grow a **second line** with links. The first is the GitHub pull request of the
-branch the session works on. The icon says open, draft, merged or closed, and an open one
+A row can grow a **second line** with links. The first is the GitHub or Bitbucket pull request
+of the branch the session works on. The icon says open, draft, merged or closed, and an open one
 carries its CI result (passed / failing / running; nothing when no check ran). Click it to open
-the PR on GitHub. It appears only for a working copy whose origin is on github.com while GitHub
-is connected (Settings > Connections), never for the repository's default branch, and it is
-refreshed every couple of minutes, so a merge can take that long to show. The others are the
+the PR on its provider. It appears only for a working copy whose origin is on github.com or
+bitbucket.org while that provider is connected (Settings > Connections), never for the
+repository's default branch, and it is refreshed every couple of minutes, so a merge can take
+that long to show. On Bitbucket the connection needs the pull request read permission
+(`pullrequest`, or `read:pullrequest:bitbucket` on an API token); a connection made only for
+cloning shows no PR. The others are the
 ports the session's own processes listen on (`:5173`): click one to open it in the default target: the preview
 subdomain where one is issued, else a browser pane, else (on a deployment with no browser pane, such as
 Kubernetes, a preview runtime) the lightweight preview. Ctrl / middle-click always opens a pane in a new tab

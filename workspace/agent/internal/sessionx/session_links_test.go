@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,18 +10,42 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// stubLinks replaces the three lookups annotateLinks reads for one test.
+// stubLinks replaces the lookups annotateLinks reads for one test. An origin "bb:w/r" is a
+// bitbucket.org repository, any other non-empty one a github.com repository. Bitbucket answers
+// come from bbPRs; asked records GitHub's lookups only.
 func stubLinks(t *testing.T, origins map[string]string, prs map[branchpr.Key]*branchpr.PR, ports map[string][]int) *[][]branchpr.Key {
 	t.Helper()
-	oldPR, oldPorts, oldOrigin := lookupPRs, lookupPorts, originOf
-	t.Cleanup(func() { lookupPRs, lookupPorts, originOf = oldPR, oldPorts, oldOrigin })
+	return stubLinksBB(t, origins, prs, nil, ports, nil)
+}
+
+func stubLinksBB(t *testing.T, origins map[string]string, prs, bbPRs map[branchpr.Key]*branchpr.PR,
+	ports map[string][]int, bbAsked *[][]branchpr.Key) *[][]branchpr.Key {
+	t.Helper()
+	oldPR, oldBB, oldPorts, oldOrigin := lookupPRs, lookupBitbucketPRs, lookupPorts, originOf
+	t.Cleanup(func() { lookupPRs, lookupBitbucketPRs, lookupPorts, originOf = oldPR, oldBB, oldPorts, oldOrigin })
 	var asked [][]branchpr.Key
 	lookupPRs = func(keys []branchpr.Key, _ time.Time) map[branchpr.Key]*branchpr.PR {
 		asked = append(asked, keys)
 		return prs
 	}
+	lookupBitbucketPRs = func(keys []branchpr.Key, _ time.Time) map[branchpr.Key]*branchpr.PR {
+		if bbAsked == nil {
+			t.Fatalf("Bitbucket asked about %v", keys)
+		}
+		*bbAsked = append(*bbAsked, keys)
+		return bbPRs
+	}
 	lookupPorts = func(time.Time) map[string][]int { return ports }
-	originOf = func(dir string, _ time.Time) string { return origins[dir] }
+	originOf = func(dir string, _ time.Time) originRepo {
+		o := origins[dir]
+		if r, ok := strings.CutPrefix(o, "bb:"); ok {
+			return originRepo{"bitbucket", r}
+		}
+		if o == "" {
+			return originRepo{}
+		}
+		return originRepo{"github", o}
+	}
 	return &asked
 }
 
@@ -40,7 +65,7 @@ func TestAnnotateLinksMatchesEachRowToItsOwnBranchAndPorts(t *testing.T) {
 		{Name: "a", Dir: "/wt/a", Branch: "feature/a", Alive: true},
 		// Stopped: its PR still shows, its ports cannot (nothing of it is running).
 		{Name: "b", Dir: "/wt/b", Branch: "fix/b", Alive: false},
-		// A Bitbucket working copy: no PR lookup at all.
+		// An origin on a host with no PR lookup.
 		{Name: "c", Dir: "/bb", Branch: "x", Alive: true},
 		// No working copy (an orphan tmux row).
 		{Name: "d", Alive: true},
@@ -98,5 +123,24 @@ func TestAnnotateLinksShowsNoPRForADetachedHead(t *testing.T) {
 	annotateLinks(sessions, map[string]string{}, time.Now())
 	if sessions[0].PR != started {
 		t.Fatalf("pr = %+v, want the start branch's PR when the copy was not read", sessions[0].PR)
+	}
+}
+
+func TestAnnotateLinksAsksBitbucketForABitbucketCopyOnly(t *testing.T) {
+	gh := &branchpr.PR{Number: 7, State: "open", URL: "https://github.com/o/r/pull/7"}
+	bb := &branchpr.PR{Number: 3, State: "merged", URL: "https://bitbucket.org/w/r/pull-requests/3"}
+	var bbAsked [][]branchpr.Key
+	// The same owner/name and branch on both hosts: each row must get its own provider's answer.
+	asked := stubLinksBB(t, map[string]string{"/gh": "w/r", "/bb": "bb:w/r"},
+		map[branchpr.Key]*branchpr.PR{{Repo: "w/r", Branch: "f"}: gh},
+		map[branchpr.Key]*branchpr.PR{{Repo: "w/r", Branch: "f"}: bb},
+		nil, &bbAsked)
+	sessions := []session.Session{{Name: "a", Dir: "/gh", Branch: "f"}, {Name: "b", Dir: "/bb", Branch: "f"}}
+	annotateLinks(sessions, map[string]string{"/gh": "f", "/bb": "f"}, time.Now())
+	if sessions[0].PR != gh || sessions[1].PR != bb {
+		t.Fatalf("pr = %+v / %+v, want GitHub's #7 and Bitbucket's #3", sessions[0].PR, sessions[1].PR)
+	}
+	if len(*asked) != 1 || len((*asked)[0]) != 1 || len(bbAsked) != 1 || len(bbAsked[0]) != 1 {
+		t.Fatalf("asked github=%v bitbucket=%v, want one key each", *asked, bbAsked)
 	}
 }

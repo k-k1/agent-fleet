@@ -301,3 +301,61 @@ func TestRecordBranchPRsLeavesALaunchPRAlone(t *testing.T) {
 		t.Fatalf("links=%+v, want the launch PR left as the launch item only", m.Links)
 	}
 }
+
+func TestRecordBranchPRsLinksABitbucketPRUnderBitbucket(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "bb1", Dir: "/wt/b", Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: "bb2", Dir: "/wt/c", Kind: session.KindClaude})
+	pr := &branchpr.PR{Number: 3, State: "merged", URL: "https://bitbucket.org/w/r/pull-requests/3"}
+	sessions := []session.Session{
+		{Name: "bb1", Dir: "/wt/b", PR: pr},
+		// GitHub's path on Bitbucket's host is no PR page.
+		{Name: "bb2", Dir: "/wt/c", PR: &branchpr.PR{Number: 4, State: "open", URL: "https://bitbucket.org/w/r/pull/4"}},
+	}
+	recordBranchPRs(sessions, time.Now())
+	l := sessions[0].Links
+	if len(l) != 1 || l[0].Provider != "bitbucket" || l[0].Key != "w/r#3" || l[0].Role != session.LinkWorking ||
+		l[0].State != "merged" || l[0].URL != pr.URL {
+		t.Fatalf("bb1 links=%+v, want bitbucket w/r#3 working merged", l)
+	}
+	if len(sessions[1].Links) != 0 {
+		t.Fatalf("bb2 links=%+v, want none", sessions[1].Links)
+	}
+	// A steady list writes nothing: the held link is found under its own provider.
+	m1, _ := session.ReadMeta("bb1")
+	sessions[0].Links = session.LinksOf(m1)
+	recordBranchPRs(sessions[:1], time.Now().Add(time.Hour))
+	if m2, _ := session.ReadMeta("bb1"); len(m2.Links) != 1 || m2.Links[0].At != m1.Links[0].At {
+		t.Fatalf("a steady list rewrote the link: %+v -> %+v", m1.Links, m2.Links)
+	}
+	// Removed by hand, it stays removed while the session is still on the branch.
+	if w, links := postLink(t, "bb1", `{"provider":"bitbucket","key":"w/r#3","remove":true}`); w.Code != 200 || len(links) != 0 {
+		t.Fatalf("remove: %d %+v", w.Code, links)
+	}
+	sessions[0].Links = nil
+	recordBranchPRs(sessions[:1], time.Now().Add(2*time.Hour))
+	if m3, _ := session.ReadMeta("bb1"); len(m3.Links) != 0 || len(sessions[0].Links) != 0 {
+		t.Fatalf("an unlinked Bitbucket PR came back: %+v", m3.Links)
+	}
+}
+
+func TestPRLinkKeyReadsBothHosts(t *testing.T) {
+	for url, want := range map[string]string{
+		"https://github.com/O/R/pull/7":               "github O/R#7",
+		"https://bitbucket.org/w/r/pull-requests/3":   "bitbucket w/r#3",
+		"http://github.com/o/r/pull/7":                "",
+		"https://bitbucket.org/w/r/pull-requests/3/x": "",
+		"https://gitlab.com/o/r/pull/7":               "",
+		"https://github.com/o/r/pull-requests/7":      "",
+		"https://u@github.com/o/r/pull/7":             "",
+	} {
+		p, k, ok := prLinkKey(&branchpr.PR{URL: url})
+		got := ""
+		if ok {
+			got = p + " " + k
+		}
+		if got != want {
+			t.Errorf("prLinkKey(%s) = %q, want %q", url, got, want)
+		}
+	}
+}

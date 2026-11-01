@@ -15,7 +15,31 @@ describe("sessionLinks", () => {
     expect(prChecks({ number: 1, state: "closed", url: "", checks: "failure" })).toBeNull();
   });
 
-  it("accepts github.com pages only", () => {
+  it("accepts bitbucket.org pull request pages and rebuilds them", () => {
+    expect(safePRURL("https://bitbucket.org/w/r/pull-requests/3")).toBe("https://bitbucket.org/w/r/pull-requests/3");
+    expect(safePRURL("https://bitbucket.org/w/r/pull-requests/3/diff?x=1#y")).toBeNull();
+    expect(safePRURL("https://bitbucket.org:443/w/r/pull-requests/3?x=1")).toBe("https://bitbucket.org/w/r/pull-requests/3");
+    // Each host's own path only: a GitHub path on Bitbucket is not a PR page.
+    expect(safePRURL("https://bitbucket.org/w/r/pull/3")).toBeNull();
+    expect(safePRURL("https://github.com/o/r/pull-requests/3")).toBeNull();
+    expect(safePRURL("https://bitbucket.org.evil.example/w/r/pull-requests/3")).toBeNull();
+    expect(safePRURL("https://u:p@bitbucket.org/w/r/pull-requests/3")).toBeNull();
+    // A host name that is an Object.prototype key is not a provider.
+    expect(safePRURL("https://constructor/w/r/pull-requests/3")).toBeNull();
+  });
+
+  it("does not repeat a Bitbucket row PR as a link, but keeps a GitHub item of the same key", () => {
+    const links = rowWorkLinks({
+      pr: { number: 3, state: "open", url: "https://bitbucket.org/w/r/pull-requests/3" },
+      links: [
+        { provider: "bitbucket", key: "W/R#3", role: "working" },
+        { provider: "github", key: "w/r#3", role: "watching" },
+      ],
+    });
+    expect(links.map((l) => `${l.provider}:${l.key}`)).toEqual(["github:w/r#3"]);
+  });
+
+  it("accepts github.com pull request pages only", () => {
     expect(safePRURL("https://github.com/o/r/pull/1")).toBe("https://github.com/o/r/pull/1");
     expect(safePRURL("http://github.com/o/r/pull/1")).toBeNull();
     expect(safePRURL("https://github.com.evil.example/o/r/pull/1")).toBeNull();

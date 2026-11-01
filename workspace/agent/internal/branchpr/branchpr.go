@@ -8,8 +8,9 @@
 // single GraphQL call. A row whose answer has not arrived yet simply shows no PR until a later
 // poll.
 //
-// GitHub only (github.com, the Connections token — the host the gh wrapper and the work-item
-// inbox serve). Other providers, and a Workspace with no GitHub connection, show nothing.
+// github.com (New, one GraphQL call per batch) and bitbucket.org (NewBitbucket, one REST call
+// per repository): the Connections credentials, the hosts the work-item inbox serves. Each
+// provider is its own Cache. Any other host, and a provider with no connection, shows nothing.
 package branchpr
 
 import (
@@ -36,7 +37,8 @@ type PR struct {
 	Checks string `json:"checks,omitempty"`
 }
 
-// Key names one branch of one GitHub repository. Repo is "owner/name".
+// Key names one branch of one repository on the cache's provider. Repo is "owner/name"
+// ("workspace/slug" on Bitbucket).
 type Key struct {
 	Repo   string
 	Branch string
@@ -66,32 +68,39 @@ type entry struct {
 	asked   time.Time // last time a list wanted this key
 }
 
-func (e *entry) fresh(now time.Time) bool {
+func (e *entry) fresh(now time.Time, open time.Duration) bool {
 	if e.fetched.IsZero() {
 		return false
 	}
 	ttl := settledTTL
 	if e.pr != nil && e.pr.State == "open" {
-		ttl = openTTL
+		ttl = open
 	}
 	return now.Sub(e.fetched) < ttl
 }
 
 // Cache is the per-Agent store. The zero value is not usable; use New.
 type Cache struct {
-	// Token returns the GitHub token, "" when GitHub is not connected. Read on every refresh,
+	// Token returns the provider's credential (the GitHub token; Bitbucket's whole
+	// Authorization value), "" when the provider is not connected. Read on every refresh,
 	// so connecting or disconnecting takes effect without a restart. An error means the store
 	// could not be read, which says nothing about the connection: the answers held are kept.
 	Token func() (string, error)
-	// Renew, when set, is asked for a replacement after GitHub answers a token with 401:
+	// Renew, when set, is asked for a replacement after the provider answers a token with 401:
 	// the recorded expiry of a renewable token can be wrong. The batch is retried once with
 	// the token it returns.
 	Renew func(rejected string) (string, error)
-	// Endpoint is the GraphQL URL; tests point it at a local server.
+	// Endpoint is GitHub's GraphQL URL, or Bitbucket's REST base URL; tests point it at a local
+	// server.
 	Endpoint string
 	Client   *http.Client
 	// Async runs the refresh. Tests set it to run inline.
 	Async func(func())
+	// fetch asks the provider about one batch. failed are the keys it could not answer this
+	// time; wait is how long to hold off after an error, and errUnauthorized asks for Renew.
+	fetch   func(token string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error)
+	batch   int
+	openTTL time.Duration
 
 	mu        sync.Mutex
 	entries   map[Key]*entry
@@ -104,13 +113,17 @@ var errUnauthorized = errors.New("token rejected")
 
 // New returns a cache that asks api.github.com.
 func New(token func() (string, error)) *Cache {
-	return &Cache{
+	c := &Cache{
 		Token:    token,
 		Endpoint: "https://api.github.com/graphql",
 		Client:   &http.Client{Timeout: 20 * time.Second},
 		Async:    func(f func()) { go f() },
 		entries:  map[Key]*entry{},
+		batch:    batchSize,
+		openTTL:  openTTL,
 	}
+	c.fetch = c.fetchGitHub
+	return c
 }
 
 // Lookup returns what is known for keys right now and starts one background refresh for the
@@ -135,7 +148,7 @@ func (c *Cache) Lookup(keys []Key, now time.Time) map[Key]*PR {
 		if e.pr != nil {
 			out[k] = e.pr
 		}
-		if !e.fresh(now) {
+		if !e.fresh(now, c.openTTL) {
 			due = append(due, k)
 		}
 	}
@@ -186,7 +199,7 @@ func (c *Cache) refresh(due []Key) {
 		return
 	}
 	for len(due) > 0 {
-		n := min(len(due), batchSize)
+		n := min(len(due), c.batch)
 		batch := due[:n]
 		due = due[n:]
 		got, failed, wait, err := c.fetch(token, batch)
@@ -238,9 +251,9 @@ func query(keys []Key) (string, map[string]any) {
 	return "query(" + strings.TrimSuffix(decl.String(), ",") + "){" + body.String() + "}", vars
 }
 
-// fetch runs one batch. failed are the keys GitHub could not answer this time (their alias
+// fetchGitHub runs one batch. failed are the keys GitHub could not answer this time (their alias
 // carried an error other than NOT_FOUND). wait is how long to hold off after an error.
-func (c *Cache) fetch(token string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+func (c *Cache) fetchGitHub(token string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
 	q, vars := query(keys)
 	payload, err := json.Marshal(map[string]any{"query": q, "variables": vars})
 	if err != nil {
@@ -281,8 +294,8 @@ func (c *Cache) fetch(token string, keys []Key) (map[Key]*PR, map[Key]bool, time
 	return got, failed, 0, nil
 }
 
-// rateWait reads when GitHub will take calls again: Retry-After for the secondary limit, the
-// reset stamp for the primary one, and rateBackoff when neither says.
+// rateWait reads when the provider will take calls again: Retry-After (GitHub's secondary limit,
+// Bitbucket's 429), the reset stamp of GitHub's primary one, and rateBackoff when neither says.
 func rateWait(h http.Header, now time.Time) time.Duration {
 	if s, err := strconv.Atoi(h.Get("Retry-After")); err == nil && s > 0 {
 		return time.Duration(s) * time.Second

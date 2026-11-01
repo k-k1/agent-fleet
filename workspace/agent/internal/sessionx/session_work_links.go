@@ -69,7 +69,7 @@ func HandleSessionLink(w http.ResponseWriter, r *http.Request) {
 			changed = session.RemoveLink(m, provider, key)
 		} else {
 			// Linking an item by hand undoes an earlier removal of it.
-			forgot := session.ForgetUnlinked(m, key)
+			forgot := session.ForgetUnlinked(m, provider, key)
 			changed = session.AddLink(m, session.WorkItemLink{
 				Provider: provider, Key: key, Role: role,
 				Title: clipRunes(strings.TrimSpace(req.Title), 300), URL: linkURL(req.URL),
@@ -182,7 +182,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		if s.PR == nil || s.PR.Number <= 0 {
 			continue
 		}
-		key, ok := prLinkKey(s.PR)
+		provider, key, ok := prLinkKey(s.PR)
 		if !ok {
 			continue
 		}
@@ -196,37 +196,46 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		// over) goes through AddLink, which raises it; an unknown role from a hand-edited meta
 		// ranks lowest.
 		// The launch item is its own record and carries no state, so it is never rewritten here.
-		if cur, held := heldLink(s.Links, "github", key); held && (cur.Role == session.LinkStarted ||
+		if cur, held := heldLink(s.Links, provider, key); held && (cur.Role == session.LinkStarted ||
 			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role) && cur.State == state) {
 			continue
 		}
-		l := session.WorkItemLink{Provider: "github", Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339), State: state}
+		l := session.WorkItemLink{Provider: provider, Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339), State: state}
 		// A PR unlinked by hand stays unlinked. Checked on the meta itself: the wire does not carry
 		// the removals, so such a row costs one meta read per poll and no write.
 		if m, wrote := UpdateSessionMeta(s.Name, func(m *session.Meta) bool {
-			if session.IsUnlinked(*m, key) {
+			if session.IsUnlinked(*m, provider, key) {
 				return false
 			}
 			added := session.AddLink(m, l)
-			return session.SetLinkState(m, "github", key, state) || added
+			return session.SetLinkState(m, provider, key, state) || added
 		}); wrote {
 			s.Links = session.LinksOf(m)
 		}
 	}
 }
 
-// prLinkKey is the inbox key of a GitHub PR, read from its URL: the PR row carries no repo of
-// its own, and the URL is the provider's.
-func prLinkKey(pr *branchpr.PR) (string, bool) {
+// prLinkKey is the provider and inbox key of a PR, read from its URL: the PR row carries no repo
+// of its own, and the URL is the provider's (github.com/o/r/pull/N, bitbucket.org/w/r/pull-requests/N).
+func prLinkKey(pr *branchpr.PR) (provider, key string, ok bool) {
 	u, err := url.Parse(pr.URL)
-	if err != nil || u.Host != "github.com" {
-		return "", false
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return "", "", false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 4 || parts[2] != "pull" {
-		return "", false
+	if len(parts) != 4 {
+		return "", "", false
 	}
-	return session.NormalizeLinkKey("github", parts[0]+"/"+parts[1]+"#"+parts[3], "")
+	switch {
+	case u.Host == "github.com" && parts[2] == "pull":
+		provider = "github"
+	case u.Host == "bitbucket.org" && parts[2] == "pull-requests":
+		provider = "bitbucket"
+	default:
+		return "", "", false
+	}
+	key, ok = session.NormalizeLinkKey(provider, parts[0]+"/"+parts[1]+"#"+parts[3], "")
+	return provider, key, ok
 }
 
 // heldLink is links' link to provider/key, and whether it holds one at all.
@@ -239,7 +248,7 @@ func heldLink(links []session.WorkItemLink, provider, key string) (session.WorkI
 	return session.WorkItemLink{}, false
 }
 
-// prLinkState is the state a PR link records: GitHub's state, with an open draft told apart as
+// prLinkState is the state a PR link records: the provider's state, with an open draft told apart as
 // the row's PR chip tells it.
 func prLinkState(pr *branchpr.PR) string {
 	if pr.State == "open" && pr.Draft {
