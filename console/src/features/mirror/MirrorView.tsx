@@ -43,6 +43,7 @@ import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit lives in transcript/ alongside the turn rendering (owned by TranscriptTurn).
 import { awaitingReply, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
 import { echoLanded } from "./pendingEcho.ts";
+import { hidePendingQuestionDup } from "./pendingQuestionDup.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal } from "./HandoffProposal.tsx";
@@ -359,13 +360,21 @@ function MirrorViewBody({
   // ↑ is a fine way back through the last few prompts and a poor one through fifty.
   const histSearch = useHistorySearch({ history, draft, setDraft, setHistIdx, inputRef, composerLocked });
 
-  // Memoized on the three states it reads: this walks every turn in the window and rebuilds every
+  // Memoized on the states it reads: this walks every turn in the window and rebuilds every
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
   const grouped = useMemo(
-    () => groupWithQueue(turns, pendingSends, queueShown, restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite)),
-    [turns, pendingSends, queueShown, restoredAt],
+    // The pending question card is the one actionable copy; the held transcript part of the same
+    // ask is hidden (hidePendingQuestionDup). It reappears, decided, once the answer lands.
+    () =>
+      groupWithQueue(
+        hidePendingQuestionDup(turns, pending),
+        pendingSends,
+        queueShown,
+        restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite),
+      ),
+    [turns, pending, pendingSends, queueShown, restoredAt],
   );
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
