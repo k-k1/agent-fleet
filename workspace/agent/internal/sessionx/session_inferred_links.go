@@ -63,8 +63,8 @@ func containsFold(list []string, s string) bool {
 // recordInferredLinks links each session to the Jira keys of its branch and PR title, and to the
 // issues its GitHub PR closes. The branch is the one the working copy is on, as annotateLinks
 // reads it (dirBranch): a detached HEAD reads "(detached)", which names no key, and the start
-// branch stands in only for an unread copy. Only
-// metas that lack a link (at this role or above) are written, so a steady list writes nothing.
+// branch stands in only for an unread copy. Only metas that lack a link (at this role or above)
+// are written, so a steady list writes nothing.
 // Like the PR, an inferred item stays after the session leaves the branch: the work happened.
 func recordInferredLinks(sessions []session.Session, dirBranch map[string]string, now time.Time) {
 	projects := jiraProjectsOf(now)
