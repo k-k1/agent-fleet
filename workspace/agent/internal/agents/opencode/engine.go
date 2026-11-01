@@ -239,15 +239,14 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 			shown = label
 		}
 		m := map[string]any{"name": shown + " (self-hosted)"}
-		// Both numbers or neither, and both measured against opencode 1.18.29 rather than
-		// guessed:
+		// Both numbers or neither, measured on opencode 2.2.5 (TestContractV2ModelLimits*):
 		//
-		//   - a model with no `limit` gets context 0, and opencode DISABLES auto-compaction
-		//     when the context is 0. The session then runs until llama-server rejects the
-		//     request, which is the failure this field exists to prevent;
-		//   - the usable window is context MINUS the output cap, and an output of 0 is not
-		//     "unset" there — it falls back to 32000. Writing the context alone would leave
-		//     a 32k engine with 768 usable tokens and compaction thrashing from turn one.
+		//   - a model with no `limit` gets a 200000 window and a 32000 output cap: compaction waits
+		//     until about 170000 tokens and a turn asks for up to 32000 output, so on a smaller
+		//     engine the session runs until llama-server rejects the request, which is the failure
+		//     this field exists to prevent. A declared window compacts before its context;
+		//   - a `limit` with a context and no output is rejected, and opencode then drops EVERY
+		//     model of this provider ("Model unavailable"), not just that one.
 		//
 		// So a stack that declares only one of them gets neither: today's behaviour, rather
 		// than a worse one dressed up as a fix.

@@ -425,3 +425,28 @@ Follow-ups: #2933.
 `kinds.registered`、Console の一覧。
 
 Follow-ups: #2933.
+
+## 追記 (2026-11-01): chat のモデル推奨ルールと、Stop 阻止の判定 (#2925、スライス 5)
+
+`chatx/chat.go` には kind リテラルの分岐が 6 件あった（base はモジュール全体で 96 と実測）。分類:
+`chatModelFor` の `kind == claude` の 2 行は 1 製品の挙動（claude の自動ターンのモデルと、従来の
+`AF_CHAT_MODEL` 既定）なので残す。`recommendedAssistantModelV` の `case` 4 行は kind ごとのルールだが、
+どのルールも `visibility`（chatx 自身の deps の上に作られ、agent パッケージからは名指せない。agent
+パッケージは chatx を import できない）を受け取るので、`agents` の capability にはできない。そこで
+パッケージ内の表 `assistantModelRules` にした。引きは kind の完全一致で、別名や未登録の kind はこれまでどおり
+""。`TestAssistantModelRulesMatchOldSwitch` が、旧 `switch` のリテラルコピーとの一致を、登録済みの全 kind・
+別名の綴り・未知の kind・2 通りの visibility で固定する。
+
+chat.go の本物の候補はこれ 1 件だったので、chatx の次のファイル `chat_report_reconcile.go` も対象にした。
+`reportStopContinued`（2 行）は `agents.StopContinuer` になり、claude と codex が宣言する（codex の managed
+ドライバの除外は自分のメソッドの中）。同ファイルの残り 2 行（`reportPaneBusy`、claude 専用の鮮度信号）は
+claude の tmux / transcript の挙動。`TestReportStopContinuedKindsMatchOldSwitch` が旧 `switch` のコピーとの一致を
+全 kind・別名・未知の kind で、`TestStopContinuedCapabilityGatesManaged` が codex の除外を、
+`TestUsageLimitWrapperKeepsStopContinued` がテスト用ラッパーの転送を確かめる。
+意図して残したもの: `stopArmBackgroundBusy`（muse・managed の codex）は `agents.BackgroundReporter` に
+見えるが、agy も実装しており、今の arm は agy に false を返すので、載せ替えると挙動が変わる。
+`sessionx/session_create.go` の live カタログの連鎖（codex・copilot・opencode・lcpp）は
+`codexModelsFn` 系のテスト用の継ぎ目と lcpp の注入カタログに結びついている。
+`kindLiteralCeiling` は 96 → 90（base の実測は 96）。挙動の変更なし。実機では未確認。
+
+Follow-ups: #2925.

@@ -588,6 +588,7 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	}
 	parentSyncEntered := make(chan struct{})
 	releaseParentSync := make(chan struct{})
+	spawn, release := gatedGoroutines(t, releaseParentSync)
 	var fsyncCalls atomic.Int32
 	ops := defaultFSAtomicWriteOps
 	ops.fsync = func(fd int) error {
@@ -605,25 +606,27 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	}
 	first := make(chan result, 1)
 	second := make(chan result, 1)
-	go func() {
+	spawn(func() {
 		resp, err := putFSFile(t.Context(), directPut("a.txt", "first\n", []byte("old\n")), service)
 		first <- result{resp, err}
-	}()
+	})
 	select {
 	case <-parentSyncEntered:
-	case <-time.After(5 * time.Second):
+	case got := <-first:
+		t.Fatalf("first PUT finished before reaching parent fsync: %+v", got)
+	case <-time.After(fsPutReachBound(t)):
 		t.Fatal("first PUT did not reach parent fsync")
 	}
-	go func() {
+	spawn(func() {
 		resp, err := putFSFile(t.Context(), directPut("a.txt", "second\n", []byte("old\n")), service)
 		second <- result{resp, err}
-	}()
+	})
 	select {
 	case got := <-second:
 		t.Fatalf("second PUT completed before first parent fsync result: %+v", got)
 	case <-time.After(100 * time.Millisecond):
 	}
-	close(releaseParentSync)
+	release()
 	if got := <-first; got.err != nil {
 		t.Fatalf("first PUT: %+v", got.err)
 	}
@@ -635,6 +638,50 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	}
 }
 
+// fsPutReachBound bounds how long a test waits for a PUT goroutine to reach a
+// hooked syscall. It only guards against a hang, so it must be far above any
+// scheduling delay on a loaded host: a fixed 60 s cap, shortened to fire
+// before the test deadline (never after it, or the run dies in a panic with
+// no diagnosis). The short "must not overtake" windows stay at 100 ms.
+func fsPutReachBound(t *testing.T) time.Duration {
+	t.Helper()
+	bound := 60 * time.Second
+	if d, ok := t.Deadline(); ok {
+		left := time.Until(d)
+		if left < 0 {
+			left = 0
+		}
+		if capped := left - min(5*time.Second, left/2); capped < bound {
+			bound = capped
+		}
+	}
+	return bound
+}
+
+// gatedGoroutines tracks goroutines parked on a test-controlled gate. The
+// returned release closes the gate once, and a cleanup registered here (so it
+// runs before the TempDir and env cleanups registered earlier) releases the
+// gate and waits for every started goroutine, so a t.Fatal never leaves a PUT
+// holding the path lock or writing into a removed directory.
+func gatedGoroutines(t *testing.T, gate chan struct{}) (spawn func(func()), release func()) {
+	t.Helper()
+	var wg sync.WaitGroup
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(func() {
+		release()
+		wg.Wait()
+	})
+	spawn = func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	}
+	return spawn, release
+}
+
 func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AF_BROWSE_ROOT", root)
@@ -644,6 +691,7 @@ func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 	}
 	renameEntered := make(chan struct{})
 	releaseRename := make(chan struct{})
+	spawn, release := gatedGoroutines(t, releaseRename)
 	ops := defaultFSAtomicWriteOps
 	ops.renameat = func(oldFD int, oldPath string, newFD int, newPath string) error {
 		close(renameEntered)
@@ -656,13 +704,15 @@ func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 	// the Agent. A recovery GET issued after that timeout must not observe the
 	// pre-rename base while the rename is still pending.
 	putDone := make(chan *fsAPIError, 1)
-	go func() {
+	spawn(func() {
 		_, aerr := putFSFile(t.Context(), directPut("a.txt", "new\n", []byte("old\n")), service)
 		putDone <- aerr
-	}()
+	})
 	select {
 	case <-renameEntered:
-	case <-time.After(5 * time.Second):
+	case aerr := <-putDone:
+		t.Fatalf("PUT finished before reaching rename: %+v", aerr)
+	case <-time.After(fsPutReachBound(t)):
 		t.Fatal("PUT did not reach rename")
 	}
 
@@ -671,17 +721,17 @@ func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 		err  *fsAPIError
 	}
 	getDone := make(chan getResult, 1)
-	go func() {
+	spawn(func() {
 		resp, aerr := readFSFile("a.txt", service)
 		getDone <- getResult{resp, aerr}
-	}()
+	})
 	select {
 	case got := <-getDone:
 		t.Fatalf("recovery GET overtook the in-flight PUT: %+v", got)
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	close(releaseRename)
+	release()
 	if aerr := <-putDone; aerr != nil {
 		t.Fatalf("PUT: %+v", aerr)
 	}

@@ -68,10 +68,18 @@ func validLinkState(state string) bool {
 }
 
 // SetLinkState records state on m's link to provider/key, and reports whether it changed. The
-// launch item has no link of its own to carry it, and an unknown state is not recorded.
+// launch item has no link of its own, so its state goes to Meta.WorkItemState. An unknown state
+// is not recorded.
 func SetLinkState(m *Meta, provider, key, state string) bool {
 	if !validLinkState(state) {
 		return false
+	}
+	if m.WorkItem != nil && sameItem(WorkItemLink{Provider: m.WorkItem.Provider, Key: m.WorkItem.Key}, provider, key) {
+		if m.WorkItemState == state {
+			return false
+		}
+		m.WorkItemState = state
+		return true
 	}
 	for i := range m.Links {
 		if sameItem(m.Links[i], provider, key) && m.Links[i].State != state {
@@ -120,7 +128,7 @@ func LinksOf(m Meta) []WorkItemLink {
 	}
 	out := make([]WorkItemLink, 0, len(m.Links)+1)
 	if wi := m.WorkItem; wi != nil {
-		out = append(out, WorkItemLink{Provider: strings.ToLower(wi.Provider), Key: wi.Key, Role: LinkStarted, Title: wi.Title})
+		out = append(out, WorkItemLink{Provider: strings.ToLower(wi.Provider), Key: wi.Key, Role: LinkStarted, Title: wi.Title, State: m.WorkItemState})
 	}
 	for _, l := range m.Links {
 		if m.WorkItem != nil && sameItem(l, m.WorkItem.Provider, m.WorkItem.Key) {

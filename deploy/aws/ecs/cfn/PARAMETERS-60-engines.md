@@ -404,14 +404,17 @@ section, so a window is per MODEL: ADR 0071's rule that two windows meant two en
 provider ids is gone with the parameters that created it.
 
 Both halves of the window travel, and the second is not decoration. Measured against opencode
-1.18.29, which is what a workspace drives this engine with:
+2.2.5, which is what a workspace drives this engine with (`TestContractV2ModelLimits*`):
 
-- a model the client has never heard of and that declares no `limit` is read as **context 0**, and
-  auto-compaction is **switched off** at 0. The session then grows until `llama-server` rejects the
-  request, with nothing in the UI to explain it;
-- the usable window is `context − output cap`, and an output cap of **0 is not "unset"** there — it
-  substitutes 32,000. Declaring a 32,768-token context without the output half would leave **768**
-  usable tokens, i.e. compaction thrashing from the first turn. That is why the Agent writes both
+- a model that declares no `limit` is given a **200,000-token** window with a **32,000** output
+  cap. Compaction waits until about 170,000 tokens and a turn asks for up to 32,000 output tokens,
+  so on a smaller engine the session grows until `llama-server` rejects the request, with nothing
+  in the UI to explain it;
+- with both halves declared, a turn asks for up to the output cap, and compaction starts before
+  the context is reached (on a 20,000-token window: at 17,100 tokens, not at 16,800; the exact
+  point is opencode's own and is not a fixed share of the window);
+- a `limit` with a context and **no output** is rejected, and with it **every model of the
+  engine's provider**: they all answer "Model unavailable". That is why the Agent writes both
   or neither, and why the panel's registration form refuses one without the other.
 
 32,768 is what was measured on an L4 (opencode's request is 18.7k tokens with the fleet's

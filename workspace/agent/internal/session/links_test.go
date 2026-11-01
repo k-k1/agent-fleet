@@ -148,7 +148,14 @@ func TestSetLinkStateRecordsOnlyAKnownStateOnAHeldLink(t *testing.T) {
 	if SetLinkState(&m, "github", "o/r#2", "weird") || m.Links[0].State != "merged" {
 		t.Fatalf("an unknown state was recorded: %+v", m.Links)
 	}
-	if SetLinkState(&m, "github", "o/r#1", "closed") || SetLinkState(&m, "github", "o/r#9", "closed") {
-		t.Fatal("a state was recorded for the launch item or an unheld item")
+	if SetLinkState(&m, "github", "o/r#9", "closed") {
+		t.Fatal("a state was recorded for an unheld item")
+	}
+	// The launch item's state goes to the meta, and shows on its started link.
+	if !SetLinkState(&m, "github", "O/R#1", "merged") || m.WorkItemState != "merged" || SetLinkState(&m, "github", "o/r#1", "merged") {
+		t.Fatalf("workItemState=%q, want merged recorded once", m.WorkItemState)
+	}
+	if l := LinksOf(m); l[0].Role != LinkStarted || l[0].State != "merged" {
+		t.Fatalf("launch link = %+v, want started and merged", l[0])
 	}
 }

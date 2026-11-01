@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -216,12 +217,19 @@ func TestRecordBranchPRsRaisesReviewingToWorkingButNotWorkingToWatching(t *testi
 
 func TestMoveCarriesTheLaunchItemAndLinks(t *testing.T) {
 	src := session.Meta{Name: "src1", Dir: "/wt/a",
-		WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-1"},
-		Links:    []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkReviewing}},
-		Unlinked: []string{"o/r#9"}}
+		WorkItem:      &session.WorkItemRef{Provider: "github", Key: "o/r#1"},
+		WorkItemState: "merged",
+		Links:         []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkReviewing}},
+		Unlinked:      []string{"o/r#9"}}
 	req := moveCreateReq(src, moveRecord{Target: "dst1", Kind: session.KindClaude})
-	if req.WorkItem == nil || req.WorkItem.Key != "PROJ-1" || len(req.links) != 1 || len(req.unlinked) != 1 {
+	if req.WorkItem == nil || req.WorkItem.Key != "o/r#1" || len(req.links) != 1 || len(req.unlinked) != 1 {
 		t.Fatalf("move request work_item=%+v links=%+v unlinked=%v, want the source's", req.WorkItem, req.links, req.unlinked)
+	}
+	// The target's meta keeps the launch PR's state, so its started link still reads merged.
+	dst := session.Meta{Name: "dst1", WorkItem: req.WorkItem}
+	applyCreateLinks(&dst, &req)
+	if dst.WorkItemState != "merged" || session.LinksOf(dst)[0].State != "merged" {
+		t.Fatalf("target state=%q links=%+v, want the launch PR still merged", dst.WorkItemState, session.LinksOf(dst))
 	}
 }
 
@@ -290,15 +298,26 @@ func TestRecordBranchPRsKeepsThePRStateOnTheLink(t *testing.T) {
 
 // A session launched for the PR it is on keeps its launch item as is: that record carries no
 // state, and trying to give it one every poll would read the meta for nothing.
-func TestRecordBranchPRsLeavesALaunchPRAlone(t *testing.T) {
+func TestRecordBranchPRsKeepsALaunchPRAsTheLaunchItemWithItsState(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	session.WriteMeta(session.Meta{Name: "lp1", Dir: "/wt/lp", Kind: session.KindClaude,
 		WorkItem: &session.WorkItemRef{Provider: "github", Key: "o/r#7"}})
 	m, _ := session.ReadMeta("lp1")
 	rows := []session.Session{{Name: "lp1", Dir: "/wt/lp", PR: &branchpr.PR{Number: 7, State: "merged", URL: "https://github.com/o/r/pull/7"}, Links: session.LinksOf(m)}}
 	recordBranchPRs(rows, time.Now())
-	if m, _ := session.ReadMeta("lp1"); len(m.Links) != 0 {
-		t.Fatalf("links=%+v, want the launch PR left as the launch item only", m.Links)
+	m, _ = session.ReadMeta("lp1")
+	if len(m.Links) != 0 || m.WorkItemState != "merged" {
+		t.Fatalf("links=%+v state=%q, want no second link and the launch PR's state recorded", m.Links, m.WorkItemState)
+	}
+	// A steady list writes nothing more.
+	rows[0].Links = session.LinksOf(m)
+	old := time.Unix(1_000_000_000, 0)
+	if err := os.Chtimes(session.MetaPath("lp1"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	recordBranchPRs(rows, time.Now())
+	if after, _ := os.Stat(session.MetaPath("lp1")); !after.ModTime().Equal(old) {
+		t.Fatal("a steady list rewrote the meta")
 	}
 }
 

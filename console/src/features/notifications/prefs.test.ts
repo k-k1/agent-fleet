@@ -7,6 +7,7 @@ const base = { notifyUnread: {}, notifyDevice: {}, childIdleNotify: true, usageR
 describe("notifyRowOf", () => {
   it("splits a turn finish by whether the session is a child", () => {
     expect(notifyRowOf("answer-ready", false)).toBe("turn-own");
+    for (const k of ["pr-ready", "pr-merged", "pr-closed"]) expect(notifyRowOf(k, false)).toBe("pull-request");
     expect(notifyRowOf("answer-ready", true)).toBe("turn-child");
     expect(notifyRowOf("question", true)).toBe("needs-input");
   });

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MirrorPendingCards } from "./MirrorPendingCards.tsx";
+import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import type { Question } from "../transcript/types.ts";
 
 type Props = Parameters<typeof MirrorPendingCards>[0];
@@ -17,7 +18,7 @@ const noop = () => {};
 // Every plan action is unused by a question card; a Proxy stands in for the whole set.
 const plan = new Proxy({}, { get: () => noop }) as Props["plan"];
 
-function render(kind: string, pending: Question[]) {
+function render(kind: string, pending: Question[], opts: { pendingText?: string; questionInline?: boolean } = {}) {
   const actions = {
     sendKeys: vi.fn(() => Promise.resolve(true)),
     sendSeq: vi.fn(() => Promise.resolve(true)),
@@ -30,7 +31,7 @@ function render(kind: string, pending: Question[]) {
     busy: false,
     queuedCount: 0,
     pending,
-    pendingText: "",
+    pendingText: opts.pendingText ?? "",
     liveMode: null,
     liveText: "",
     pendingPlan: null,
@@ -46,7 +47,7 @@ function render(kind: string, pending: Question[]) {
   root = createRoot(host);
   act(() =>
     root!.render(
-      <MirrorPendingCards
+      <ToastProvider><MirrorPendingCards
         session={"s-" + kind}
         sessionMeta={{ name: "s-" + kind, kind } as Props["sessionMeta"]}
         managed={false}
@@ -56,7 +57,8 @@ function render(kind: string, pending: Question[]) {
         st={st as unknown as Props["st"]}
         actions={actions as unknown as Props["actions"]}
         plan={plan}
-      />,
+        questionInline={opts.questionInline}
+      /></ToastProvider>,
     ),
   );
   return actions;
@@ -79,6 +81,16 @@ const click = async (el: Element | null) => {
 };
 
 describe("MirrorPendingCards question routes", () => {
+  it("prints the prose before the question, unless the question's own part was hidden inline", () => {
+    render("codex", Q(), { pendingText: "ZZ-LEAD-PROSE" });
+    expect(document.body.textContent).toContain("ZZ-LEAD-PROSE");
+    act(() => root?.unmount());
+    host?.remove();
+    render("codex", Q(), { pendingText: "ZZ-LEAD-PROSE", questionInline: true });
+    expect(document.body.textContent).not.toContain("ZZ-LEAD-PROSE");
+    expect(opts()).toHaveLength(2);
+  });
+
   it("opencode without an id: read-only, no Cancel, no keys", async () => {
     const a = render("opencode", Q());
     expect(opts().every((b) => b.disabled)).toBe(true);

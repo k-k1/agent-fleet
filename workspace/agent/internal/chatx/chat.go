@@ -440,18 +440,24 @@ func recommendedAssistantModel(agent string) string {
 }
 
 func recommendedAssistantModelV(v visibility, agent string) string {
-	switch agent {
-	case session.KindClaude:
-		return claudeFirstVisible(v, claudeChatTiers)
-	case session.KindCodex:
-		return codexNewestLuna(v)
-	case session.KindOpencode:
-		return recommendedCatalogModel(v.ids(agent, opencode.Models()), modelfallback.ChatOpencodeGo,
-			v.model(agent, defaultOpencodeChatModel))
-	case session.KindAgy:
-		return agyNamedModel(v, defaultAgyChatModel)
+	if rule, ok := assistantModelRules[agent]; ok {
+		return rule(v)
 	}
 	return "" // cursor: Auto is the only entitlement-safe recommendation
+}
+
+// assistantModelRules is each kind's chat recommendation, by exact kind (an alias or an
+// unregistered kind has none and answers ""). A package-local table rather than an agents
+// capability: every rule reads a visibility, which is built on this package's deps and cannot
+// be named from an agent package (an agent package cannot import chatx).
+var assistantModelRules = map[string]func(v visibility) string{
+	session.KindClaude: func(v visibility) string { return claudeFirstVisible(v, claudeChatTiers) },
+	session.KindCodex:  codexNewestLuna,
+	session.KindOpencode: func(v visibility) string {
+		return recommendedCatalogModel(v.ids(session.KindOpencode, opencode.Models()), modelfallback.ChatOpencodeGo,
+			v.model(session.KindOpencode, defaultOpencodeChatModel))
+	},
+	session.KindAgy: func(v visibility) string { return agyNamedModel(v, defaultAgyChatModel) },
 }
 
 // ResolveChatModel applies an agent-specific default only when the assistant did not

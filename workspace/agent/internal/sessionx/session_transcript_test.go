@@ -162,6 +162,42 @@ func TestHidePendingInteractionQuestion(t *testing.T) {
 	}
 }
 
+// When the jsonl line lands before the payload, an earlier poll has already delivered the
+// part and moved the cursor past it, so the later poll cannot hide it: the Agent only strips
+// a part inside the window that also carries the payload. The Console de-duplicates the rest
+// (mirror/pendingQuestionDup.ts). Content matching itself must not be what misses.
+func TestHidePendingInteractionQuestionLineBeforePayload(t *testing.T) {
+	const input = `[{"header":"方式","question":"どれ？","multiSelect":true,"options":[{"label":"A","description":"","preview":"  +--+\n  |  |"},{"label":"B"}]}]`
+	ask := []byte(`{"type":"assistant","timestamp":"2026-11-01T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":` + input + `}}]}}`)
+	lines := [][]byte{ask}
+
+	// Poll N: no payload yet.
+	turns1 := claude.CollectTurns(lines, 0, len(lines))
+	got1, hold1 := hidePendingInteraction(turns1, map[string]any{}, claude.CollectInteractionAnswers(lines))
+	if hold1 != -1 || len(got1) != 1 {
+		t.Fatalf("poll N: hold=%d turns=%d, want the part delivered (-1 / 1)", hold1, len(got1))
+	}
+
+	// Poll N+1: the client cursor (len(lines)) is past the line, the payload now exists.
+	turns2 := claude.CollectTurns(lines, len(lines), len(lines))
+	pending := map[string]any{"pendingQuestions": json.RawMessage(input)}
+	got2, hold2 := hidePendingInteraction(turns2, pending, claude.CollectInteractionAnswers(lines))
+	if len(got2) != 0 || hold2 != -1 {
+		t.Fatalf("poll N+1: turns=%d hold=%d, want nothing to hide from an empty window", len(got2), hold2)
+	}
+	if _, ok := pending["pendingQuestions"]; !ok {
+		t.Fatal("the payload was withdrawn")
+	}
+
+	// Ruled out: the content comparison is not what misses. The same line and payload DO match
+	// inside one window — preview, an empty description and multiSelect included.
+	pending = map[string]any{"pendingQuestions": json.RawMessage(input)}
+	got3, hold3 := hidePendingInteraction(claude.CollectTurns(lines, 0, len(lines)), pending, nil)
+	if hold3 != 0 || len(got3) != 0 {
+		t.Fatalf("same-window match failed: hold=%d turns=%d — DeepEqual differs on a field", hold3, len(got3))
+	}
+}
+
 // While a different question is pending, an unrelated question part that happens to be nearby
 // must not be caught in the sweep.
 func TestHidePendingInteractionNoMatch(t *testing.T) {

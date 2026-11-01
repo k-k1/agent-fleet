@@ -157,6 +157,8 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       <Icon name={n.kind === "answer-ready" ? "check"
         : n.kind.startsWith("schedule-") ? "watch" // same glyph as the schedule section in the left rail
           : n.kind.startsWith("handoff-") ? "git-branch" // same glyph as the handoff badge in the sharing rail
+          : n.kind === "pr-merged" ? "git-merge"
+          : n.kind.startsWith("pr-") ? "git-pull-request"
             : ["usage-reset", "rate-limit-reached", "rate-limit-resumed", "spend-budget"].includes(n.kind) ? "pulse" : "comment-discussion"} />
       <span><b>{notificationKindLabel(n.kind)}</b><small>{notificationRowSubtitle(n)} · {relative(n.createdAt)}</small></span>
     </Button>

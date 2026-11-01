@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -41,6 +42,25 @@ func TestStopContinuedReadsRolloutLifecycle(t *testing.T) {
 		if got := StopContinued(m, c.marker); got != c.continued {
 			t.Errorf("%s: StopContinued = %v, want %v", c.what, got, c.continued)
 		}
+	}
+}
+
+// The capability the report reconciler asks answers what the old switch did: the rollout's
+// verdict for a Terminal session, and never true for a managed one (turn/completed already
+// followed every Stop hook).
+func TestStopContinuedCapabilityGatesManaged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "cx-1600-cap", Dir: t.TempDir(), Kind: session.KindCodex}
+	marker := time.Now().Truncate(time.Second)
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-000000001601",
+		taskStarted(marker.Add(-time.Minute).UTC().Format(time.RFC3339Nano), "t1"))
+	var c agents.StopContinuer = agentImpl{}
+	if !c.StopContinued(m, "", marker) {
+		t.Fatal("a Terminal session with an open task_started must answer true")
+	}
+	m.Driver = session.DriverManaged
+	if c.StopContinued(m, "", marker) {
+		t.Fatal("a managed session must answer false")
 	}
 }
 

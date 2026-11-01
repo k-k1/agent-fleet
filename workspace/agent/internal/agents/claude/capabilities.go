@@ -94,6 +94,7 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 			at, source, ok := ResetAt(session.UUID(m.Dir, m.Name), now)
 			return at, source, bannerGated(source, ok, menu)
 		},
+		LiftedEarly: LiftedEarly,
 		RanTurnSince: func(m session.Meta, at time.Time) bool {
 			return RanTurnSince(session.UUID(m.Dir, m.Name), at)
 		},
@@ -106,4 +107,9 @@ func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }
 // TUIInterrupt is agents.TUIInterrupter: Esc interrupts a running turn (docs/log/133 §1).
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 	return agents.TUIInterruptEscape()
+}
+
+// StopContinued is agents.StopContinuer: the transcript shows the turn went on after the Stop.
+func (agentImpl) StopContinued(_ session.Meta, sid string, marker time.Time) bool {
+	return StopContinued(sid, marker)
 }

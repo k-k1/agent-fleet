@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -234,5 +235,40 @@ func TestUsageLimitWrapperKeepsTUIInterrupt(t *testing.T) {
 				t.Errorf("%s (subagent view %v) behind the wrapper: %+v, want %+v", kind, sub, got, want[fmt.Sprint(kind, sub)])
 			}
 		}
+	}
+}
+
+// editedUsageLimitAgent must not hide the wrapped kind's StopContinued: behind the wrapper,
+// claude still sees a blocked Stop in its transcript.
+func TestUsageLimitWrapperKeepsStopContinued(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	const sid = "11111111-2222-3333-4444-555555552926"
+	marker := time.Now().Truncate(time.Second)
+	ts := marker.Add(time.Second).UTC().Format(time.RFC3339Nano)
+	proj := filepath.Join(cfg, "projects", "p1")
+	if err := os.MkdirAll(proj, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Join([]string{
+		`{"type":"assistant","timestamp":"` + ts + `","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}`,
+		`{"type":"attachment","timestamp":"` + ts + `","attachment":{"type":"hook_blocking_error","hookEvent":"Stop"}}`,
+		`{"type":"system","subtype":"stop_hook_summary","timestamp":"` + ts + `"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(proj, sid+".jsonl"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "w", Kind: session.KindClaude}
+	stopContinued := func() bool {
+		a, _ := RegisteredAgent(session.KindClaude)
+		c, ok := a.(agents.StopContinuer)
+		return ok && c.StopContinued(m, sid, marker)
+	}
+	if !stopContinued() {
+		t.Fatal("unwrapped claude did not see the blocked Stop; the fixture is wrong")
+	}
+	editUsageLimitTraits(t, session.KindClaude, func(*agents.UsageLimitTraits) {})
+	if !stopContinued() {
+		t.Fatal("the wrapper hides the wrapped kind's StopContinued")
 	}
 }

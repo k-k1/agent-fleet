@@ -136,6 +136,11 @@ func repoForProvider(dir, provider string) string {
 // applyCreateLinks sets a new session's links: a moved session keeps the source's (carried in
 // the request by moveCreateReq), any other inherits its parent's (inheritLinks).
 func applyCreateLinks(meta *session.Meta, req *CreateReq) {
+	// The launch item's last seen state goes with it: without it a launch PR merged before the
+	// move would lose its done mark, and one merged after it would not be news to the target.
+	if meta.WorkItem != nil {
+		meta.WorkItemState = req.workItemState
+	}
 	if len(req.links) > 0 || len(req.unlinked) > 0 {
 		meta.Links, meta.Unlinked = req.links, req.unlinked
 		return
@@ -192,13 +197,24 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 			role = session.LinkWatching
 		}
 		state := prLinkState(s.PR)
+		cur, held := heldLink(s.Links, provider, key)
+		// Told only about a PR the row still holds: a PR removed by hand is no longer the
+		// session's, and a PR seen for the first time is linked on this poll and told from the next.
+		if held {
+			if kind, extra := prNotice(s.PR, role, cur.State); kind != "" &&
+				!sendPRNotice(s, kind, provider, key, extra, s.PR) && kind != prReadyNotice {
+				// The merge or close is told on the change of the recorded state: recording it now
+				// would make the next poll see no change, and the notice would be lost for good.
+				continue
+			}
+		}
 		// Already linked at this role or above, with this state: nothing to write. A weaker link
 		// (watching from when the copy was shared, reviewing before the session took the branch
 		// over) goes through AddLink, which raises it; an unknown role from a hand-edited meta
 		// ranks lowest.
-		// The launch item is its own record and carries no state, so it is never rewritten here.
-		if cur, held := heldLink(s.Links, provider, key); held && (cur.Role == session.LinkStarted ||
-			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role) && cur.State == state) {
+		// The launch item keeps its role; only its state is recorded (Meta.WorkItemState).
+		if held && cur.State == state && (cur.Role == session.LinkStarted ||
+			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role)) {
 			continue
 		}
 		l := session.WorkItemLink{Provider: provider, Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339), State: state}

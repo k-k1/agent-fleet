@@ -541,3 +541,31 @@ in its own package; `kind_lists_test.go` is no longer edited): 19 files with tes
 Still hand-kept: `session.Kind*`, `agentreg`, `kinds.registered` and the Console lists.
 
 Follow-ups: #2933.
+
+## Note (2026-11-01): chat model rules and the blocked-Stop check (#2925, slice 5)
+
+`chatx/chat.go` held 6 kind-literal branches (base measured 96 module-wide). Classified: the two
+`kind == claude` lines in `chatModelFor` are one product's behaviour (claude's auto-turn model and
+the historical `AF_CHAT_MODEL` default) and stay; the 4 `case` lines of
+`recommendedAssistantModelV` are per-kind rules but cannot be an `agents` capability, because every
+rule takes a `visibility`, which is built on chatx's own deps and cannot be named from an agent
+package (an agent package cannot import chatx). They are now the package-local table
+`assistantModelRules`, looked up by exact kind (an alias or unregistered kind still answers "").
+`TestAssistantModelRulesMatchOldSwitch` holds it to a literal copy of the old switch over every
+registered kind, alias spellings, an unknown kind and both visibility readings.
+
+That left one real candidate in chat.go, so the next chatx file was taken:
+`chat_report_reconcile.go`. `reportStopContinued` (2 lines) is now `agents.StopContinuer`,
+declared by claude and codex (codex keeps its managed-driver gate inside its own method). Its other
+two lines (`reportPaneBusy`, the claude-only freshness signals) are claude's tmux/transcript
+behaviour. `TestReportStopContinuedKindsMatchOldSwitch` compares against a copy of the old switch
+for every registered kind, an alias and an unknown kind; `TestStopContinuedCapabilityGatesManaged`
+pins codex's gate; `TestUsageLimitWrapperKeepsStopContinued` checks the test wrapper forwards it.
+Left alone on purpose: `stopArmBackgroundBusy` (muse, managed codex) looks like
+`agents.BackgroundReporter`, but agy implements that too and the arm answers false for agy today, so
+routing it would change behaviour; and `sessionx/session_create.go`'s live-catalog chain (codex,
+copilot, opencode, lcpp), which is tied to the `codexModelsFn`-style test seams and lcpp's injected
+catalog. `kindLiteralCeiling` goes 96 → 90 (base measured 96). Behaviour unchanged; not verified
+against a live fleet.
+
+Follow-ups: #2925.

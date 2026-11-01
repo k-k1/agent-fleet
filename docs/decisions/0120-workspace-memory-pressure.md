@@ -453,6 +453,86 @@ checked on a real runtime. Follow-ups: #2816, #3110.
 
 ## Note (2026-11-02)
 
+A live check (#2517) read the counters on a capped container and found that `avg10` stayed near zero
+while `memory.events max` and the PSI `total` counters moved. This note records what that does and does
+not show and proposes what to measure next. The decision text above is unchanged, and the stage table
+keeps its provisional values until a later note replaces them.
+
+**What was observed.** One synthetic load on one runtime: an `ecs-ec2` slot (AL2023, cgroup v2), the
+container held at `memory.max` for about 4 minutes with anonymous plus file-backed memory.
+
+| Counter | Result |
+|---|---|
+| `memory.events` `max` | rose 0 → about 129k (about 540 per second on average) |
+| `memory.events` `oom`, `oom_kill` | stayed 0 |
+| `memory.pressure` `some` and `full` `total` | "rose to" about 792k µs (start value not recorded) |
+| `memory.pressure` `avg10` | peaked at 0.03 (how the peak was sampled is not recorded) |
+
+**What it does not show.** The increment, the period it covers, which line (`some` or `full`) it belongs
+to, and the sampling that produced the `avg10` peak were not recorded. If 792k µs is an increment over
+about 240 s, it is about 3.3 ms of stall per second, 0.33% of wall time (the PSI `total` is in µs, the
+averages are percent: µs/s ÷ 10,000). That is a small amount of stall, and a long-window average and a
+`total` delta measure the same stall time; the difference between them is the window, not a hidden
+signal. So the check does not show that the incident was reproduced, nor that the `avg` windows "fail to
+react": the load may simply have stalled little. What it supports is narrower: the box was at its limit
+and reclaiming (`max` events) for minutes while stalling little, and `avg10` is smoothed over 10 s, so a
+brief stall is diluted. It was not a heavy-build load (`go test -p`, `npm run build`), and not Fargate,
+docker or kubernetes; the incident behind #2451–#2453 has not been reproduced. Whether the stage table's
+`avg10` entry would have fired in that incident is therefore **unknown, not shown**.
+
+**What to measure next (a candidate, not a replacement).** Rates from the cumulative counters are a way
+to read the same PSI stall time over a window of our own choosing and to see short bursts; they are not
+a separate stall signal. Candidates to record and compare against `avg10`/`avg60`, over the sustained
+window of decision 2 (same timestamp rules):
+
+- **Stall rate:** the increase of `memory.pressure` `total` (`some`, and `full`) in µs per second, from
+  consecutive 5 s samples. It is the same quantity as the averages, over a window we pick.
+- **`memory.events max` rate:** the count of times usage met the limit. It also rises with ordinary,
+  healthy cache reclaim, so on its own it is **supporting evidence only** and never grounds for a stage
+  change.
+- **Working set against `max`, and the refault rate** from `memory.stat` (`workingset_refault_file`, and
+  `workingset_refault_anon` where there is swap). A hypothesis to test, not a rule: a high stall with a
+  low refault rate looks like allocation, and a high stall with a high refault rate looks like thrash.
+  Builds also refault, and a low refault rate can still come with another cause of stall, so the
+  classification has to be checked against measured stalls, latency and progress before it gates anything.
+- **`avg10` and `avg60`** stay for the Console display and as a damper. A short burst also moves
+  `avg60`, only attenuated, not to zero; "stage 3 needs both" keeps its meaning as a requirement for
+  persistence, not as immunity to bursts.
+
+A counter that goes backwards (a recreated cgroup) resets the window and is never read as a negative
+rate. No threshold is proposed; fitting them is the next phase's measure-only work.
+
+**What phase 0 already records** (#2516, `workspace/agent/internal/mempressure`). Every 5 s the sampler
+reads `memory.pressure`, `memory.current`, `memory.max`, `memory.stat` and `memory.events`. Once a
+minute it writes one series line with the last values of `some_usec` / `full_usec`, `ev_high` /
+`ev_max` / `ev_oom` / `ev_oom_kill`, `refault_file`, `cur`, `max`, `ws`, `anon`, `file`, `shmem`, the
+per-minute maxima of `some10` / `full10` and of the refault rate, the last `some60` / `full60`, and the
+latency probe. Because the counters are cumulative, a per-minute delta is recoverable by subtraction. The
+`mem_pressure` wire axis carries the `avg` values and the current refault rate, but no PSI or events
+rate.
+
+**What it lacks for fitting.** A per-minute maximum of a 5 s delta cannot restore decision 2's "holds at
+every sample for 30–60 s": an isolated peak and a sustained squeeze give the same maximum. Fitting needs
+a timestamped series at the sampling interval of the 5 s deltas of `some` and `full` `total`, of
+`memory.events max` and of the file refault count (with the missing-sample, counter-reset and elapsed-second
+markers kept), or a stored sustained-window evaluation per candidate window. `workingset_refault_anon`
+is not read at all. These are follow-ups and are not built here.
+
+**Still unknown, needs data from real workloads.**
+
+1. The distribution of the stall rate and the `max` event rate in ordinary builds and test runs at
+   production sizes, and so the false-positive question, which is now about those rates and not only
+   `avg10`.
+2. Whether any of these separates the incident from a build, and which one; this needs a reproduction of
+   the incident's thrash, which has not been done.
+3. Fargate, docker and kubernetes.
+4. The increment, period and peak sampling of the numbers above.
+
+Follow-ups: #2453 (the series, the wire rate and the build/incident measurements, tracked here as the
+open work of this decision) and #3110 (real runtimes, Fargate). #2517 is closed.
+
+## Note (2026-11-02)
+
 The in-container response above runs inside the cgroup that thrashes, so it can stall with it. The Control
 Plane now has an independent dead-man check (#2518, `control-plane/agent_liveness.go`): a workspace whose
 runtime says `running` and whose Agent has not answered for `AF_AGENT_SILENT_AFTER` (default 3 minutes) and
