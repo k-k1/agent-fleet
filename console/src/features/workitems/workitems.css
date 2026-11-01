@@ -407,22 +407,41 @@
   padding: 3px 8px;
   /* A <button> centres its text by default, which a wrapped title makes obvious. */
   text-align: left;
+  /* On a narrow screen the slug, branch and tags drop below the title rather than hold the
+     button at their combined width: flex's default min-width would overflow the row and push
+     Remove past the modal's edge. */
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 .wi-dsession .codicon {
   color: var(--ok);
   font-size: 10px;
   flex: none;
 }
-/* Only the title wraps; the slug, branch and tag stay whole beside it. */
+/* Only the title breaks mid-text; the slug, branch and tag stay nowrap and drop whole to the
+   next line. */
 .wi-dname {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  /* A title is up to 80 characters with no spaces; without this it overflows onto Remove. */
+  overflow-wrap: anywhere;
+  /* Room for the icon (10px + the 6px gap) plus 4px of slack, so a sub-pixel font difference
+     cannot push the title below the icon's line. */
+  max-width: calc(100% - 20px);
 }
 .wi-dslug,
 .wi-dbranch,
 .wi-dtag {
   flex: none;
   white-space: nowrap;
+}
+/* A branch wider than the row is cut with an ellipsis, so it cannot push Remove past the modal's
+   edge. Slug and tags are short by construction and are not capped. */
+.wi-dbranch {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .wi-dsession:hover {
   border-color: var(--accent);
