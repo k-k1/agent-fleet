@@ -17,6 +17,8 @@ import {
   normalizeClaudeCustomModels,
   normalizeExternalMemory,
   normalizeMemoryReview,
+  normalizeRegionFormat,
+  normalizeTimeZone,
   type AgentLaunchDefaults,
   type ExternalMemoryMode,
   type MemoryReviewMode,
@@ -114,6 +116,14 @@ const PREFS = {
   // device-local: it syncs through the server so the language follows the person onto every
   // device. The default comes from the browser language, falling back to Japanese (detectLocale).
   locale: synced(detectLocale()),
+  // Region format (#2185): the locale dates and numbers are written in. "auto" (a stored value of
+  // its own) follows the display language; anything else is a BCP 47 tag from REGION_FORMATS.
+  regionFormat: synced("auto", { normalize: normalizeRegionFormat }),
+  // Time zone (#2185): "auto" follows the browser's current zone (resolved on every use, never
+  // copied here), otherwise an IANA name. Unknown names are kept as stored and treated as "auto" at
+  // use time (lib/intl.ts), so a zone this browser's ICU lacks is not erased from the server copy.
+  // The Agent reads the same key from ui-prefs for text it renders.
+  timeZone: synced("auto", { normalize: normalizeTimeZone }),
   // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).

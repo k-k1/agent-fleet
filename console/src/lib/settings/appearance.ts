@@ -2,6 +2,7 @@
 // font stacks, and the UI locale. Re-exported from lib/settings.ts, which calls the three apply
 // functions before first paint, on every change and after a server hydrate.
 import { setLocale } from "../i18n/index.ts";
+import { setFormatPrefs } from "../intl.ts";
 import {
   CJK_FAMILY,
   CJK_FAMILY_PROSE,
@@ -201,5 +202,6 @@ export function applyTheme(s: Settings): void {
 // after a server hydrate).
 export function applyLocale(s: Settings): void {
   setLocale(s.locale);
+  setFormatPrefs(s.regionFormat, s.timeZone);
   if (typeof document !== "undefined") document.documentElement.lang = s.locale;
 }

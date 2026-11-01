@@ -1,6 +1,8 @@
 package sessionx
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // A token-shaped string in tool output or in assistant text must not survive into the file,
@@ -93,6 +96,61 @@ func TestExportScrubsSecretsInEveryMode(t *testing.T) {
 		md := renderSessionExport(session.Meta{Name: "s1", Kind: "claude"}, turns, m, "UTC", time.Now())
 		if strings.Contains(md, tok) || !strings.Contains(md, bridge.RedactedMark) {
 			t.Errorf("mode %v:\n%s", m, md)
+		}
+	}
+}
+
+// An unknown or missing zone must neither fail nor use the container's clock: the file is UTC and
+// says so in the header.
+func TestExportFallsBackToLabelledUTC(t *testing.T) {
+	t.Setenv("TZ", "Asia/Tokyo")
+	prev := time.Local
+	time.Local = time.FixedZone("JST", 9*3600)
+	defer func() { time.Local = prev }()
+	turns := []transcript.Turn{{Role: "user", TS: "2026-10-15T01:00:00Z", Parts: []transcript.Part{{Kind: "text", Text: "hi"}}}}
+	now := time.Date(2026, 10, 15, 1, 5, 0, 0, time.UTC)
+	for _, tz := range []string{"", "Mars/Olympus_Mons", "Local"} {
+		md := renderSessionExport(session.Meta{Name: "s1", Kind: "claude"}, turns, transcript.ToolsNames, tz, now)
+		if !strings.Contains(md, "2026-10-15 01:00") || !strings.Contains(md, "2026-10-15 01:05 UTC") {
+			t.Errorf("tz %q: expected UTC times with a UTC label:\n%s", tz, md)
+		}
+	}
+}
+
+func TestPickExportZone(t *testing.T) {
+	for _, c := range []struct{ query, pref, want string }{
+		{"Asia/Tokyo", "America/New_York", "Asia/Tokyo"}, // ?tz= overrides the setting
+		{"", "America/New_York", "America/New_York"},     // the setting is the default source
+		{"Mars/X", "America/New_York", "America/New_York"},
+		{"", "", ""},
+		{"Local", "Nope/Zone", ""},
+	} {
+		if got := pickExportZone(c.query, c.pref); got != c.want {
+			t.Errorf("pick(%q,%q)=%q want %q", c.query, c.pref, got, c.want)
+		}
+	}
+}
+
+// The setting is read from ui-prefs, like the display language; "auto" is the browser's, which the
+// Agent cannot know.
+func TestUIPrefsTimeZone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	write := func(body string) {
+		p := uiprefs.Path()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for body, want := range map[string]string{
+		`{"timeZone":"Asia/Tokyo"}`: "Asia/Tokyo", `{"timeZone":"auto"}`: "", `{"timeZone":5}`: "", `{}`: "",
+	} {
+		write(body)
+		if got := uiprefs.TimeZone(); got != want {
+			t.Errorf("%s: got %q want %q", body, got, want)
 		}
 	}
 }

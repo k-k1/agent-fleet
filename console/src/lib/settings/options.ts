@@ -111,6 +111,16 @@ export const LOCALES = [
   { id: "en", label: "English" },
 ];
 
+// Region format choices (#2185): the locale dates and numbers are written in. "auto" follows the
+// display language. Labels are endonyms, like LOCALES, so they are never translated.
+export const REGION_FORMATS = [
+  { id: "ja-JP", label: "日本 (ja-JP)" }, // i18n-exempt: endonym
+  { id: "en-US", label: "United States (en-US)" },
+  { id: "en-GB", label: "United Kingdom (en-GB)" },
+  { id: "de-DE", label: "Deutschland (de-DE)" },
+  { id: "fr-FR", label: "France (fr-FR)" },
+];
+
 // Per-region theme choices (session mirror / assistant chat). "inherit" = follow the app
 // theme above; "dark"/"light" give that region its own base theme, independent of the rest
 // of the Console — applied by scoping data-theme onto the region container (.mirrorview /

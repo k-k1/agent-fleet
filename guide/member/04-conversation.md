@@ -339,7 +339,7 @@ and **"Including tool output"** adds command output and edit diffs. The
 file covers the whole conversation, not just the part the chat view has loaded. Thinking and a
 subagent's own exchanges are left out. Strings that look like tokens or passwords are masked as
 `[secret redacted]`; the masking is a best-effort pattern match, so read the file before you
-share it. Times are shown in your browser's time zone. The workspace has to be running; the
+share it. Times are shown in your **Time zone** setting (Settings > Display; by default your browser's zone), the same as in the chat view. The workspace has to be running; the
 session itself may be stopped.
 
 The file is named after the session (`<session>.md`, or `session.md` when the name itself looks

@@ -37,6 +37,13 @@ export const settings = {
   "tokens.calls_hdr_version": "MCP-Protocol-Version",
 
   "settings.language": "言語",
+  "settings.region_format": "地域の形式",
+  "settings.region_format_note": "日付と数値の書き方です。「表示言語に合わせる」は上の言語に従います。",
+  "settings.region_format_auto": "表示言語に合わせる",
+  "settings.time_zone": "タイムゾーン",
+  "settings.time_zone_note": "セッションミラーの時刻や、Agent が書き出すファイル（Markdown エクスポートなど）の時刻はこのゾーンで表示します。「ブラウザに合わせる」は今使っているブラウザのゾーンに従うので、移動しても追従します。",
+  "settings.time_zone_auto": "ブラウザに合わせる",
+  "settings.time_zone_current": "現在: {zone}",
   // 招待前の着地面（docs/log/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
   // 最初の一歩として書く。管理者に伝えるべき「自分のアドレス」を必ず読ませる。
   "notprov.title": "まだ招待されていません",

@@ -588,6 +588,19 @@ func Locale() string {
 	return "ja"
 }
 
+// TimeZone returns the IANA zone the member picked (Settings > Display > Time zone, #2185), or ""
+// for "follow the browser" and for anything that is not a string. The Agent cannot see the browser,
+// so "" means the caller must have been handed a zone with the request or must say it fell back;
+// it never means "use the container's clock". The name is returned unvalidated: the caller owns
+// the time.LoadLocation fallback.
+func TimeZone() string {
+	v, _ := Read()["timeZone"].(string)
+	if v == "auto" {
+		return ""
+	}
+	return v
+}
+
 // WriteAtomic replaces the prefs file with body so that a concurrent Read sees either the old
 // or the new complete JSON. os.WriteFile truncates first, and a launch-time gate (AgentMemory
 // read by a session spawn) that lands in that window sees an empty file, answers "off", and

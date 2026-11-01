@@ -15,8 +15,9 @@ import (
 // HandleSessionExport serves a session's whole conversation as one Markdown file (#2183).
 // It reads the full transcript rather than the mirror's tail window, so the file does not
 // depend on how far the member has scrolled. ?tools=none leaves tool calls out, ?tools=full
-// adds tool output and edit diffs; anything else reduces every tool call to its name and label. ?tz= is the browser's IANA zone,
-// so the file shows the same times as the mirror; an unknown zone falls back to the Agent's.
+// adds tool output and edit diffs; anything else reduces every tool call to its name and label. The zone is ?tz= when given (the
+// browser's, sent while the member follows the browser), else the member's time zone setting
+// from ui-prefs, else UTC: never the container's clock. A name that is not an IANA zone is skipped.
 //
 // Secrets are scrubbed with the chat bridge's scrubber whatever the option: tool output
 // routinely carries tokens, and a downloaded file is easy to paste somewhere public.
@@ -38,7 +39,7 @@ func HandleSessionExport(w http.ResponseWriter, r *http.Request) {
 	turns := exportTurns(meta)
 	tagInjectedTurns(name, turns)
 	q := r.URL.Query()
-	md := renderSessionExport(meta, turns, exportToolDetail(q.Get("tools")), q.Get("tz"), time.Now())
+	md := renderSessionExport(meta, turns, exportToolDetail(q.Get("tools")), pickExportZone(q.Get("tz"), uiprefs.TimeZone()), time.Now())
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+exportFileName(name)+`"`)
 	w.Header().Set("Cache-Control", "no-store")
@@ -94,16 +95,39 @@ func exportToolDetail(v string) transcript.ToolDetail {
 	return transcript.ToolsNames
 }
 
+// pickExportZone chooses between the request's ?tz= override and the stored setting: the first
+// one that names a loadable zone wins, "" when neither does.
+func pickExportZone(query, pref string) string {
+	for _, z := range []string{query, pref} {
+		if _, ok := loadZone(z); ok {
+			return z
+		}
+	}
+	return ""
+}
+
+func loadZone(name string) (*time.Location, bool) {
+	if name == "" || name == "Local" {
+		return nil, false // "Local" would load the container's zone
+	}
+	l, err := time.LoadLocation(name)
+	return l, err == nil
+}
+
+// exportLocation resolves a zone name, with UTC as the fallback. The header prints the zone
+// abbreviation, so a fallback is labelled "UTC" in the file rather than passing as local time.
+func exportLocation(name string) *time.Location {
+	if l, ok := loadZone(name); ok {
+		return l
+	}
+	return time.UTC
+}
+
 // renderSessionExport is the handler minus I/O, so a test can pin that the scrubber is
 // always applied.
 func renderSessionExport(meta session.Meta, turns []transcript.Turn, tools transcript.ToolDetail, tz string, now time.Time) string {
 	lang := uiprefs.Locale()
-	loc := time.Local
-	if tz != "" {
-		if l, err := time.LoadLocation(tz); err == nil {
-			loc = l
-		}
-	}
+	loc := exportLocation(tz)
 	return transcript.Markdown(turns, transcript.MarkdownOptions{
 		Title:  exportTitle(meta),
 		Header: exportHeader(meta, lang, now.In(loc)),
