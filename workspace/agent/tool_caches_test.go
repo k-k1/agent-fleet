@@ -76,6 +76,12 @@ func TestToolCacheUsersMatchTheRealArgvShapes(t *testing.T) {
 		{"maven", []string{"bash", "build.sh", "mvnw-notes"}, false},
 		{"npx", []string{"node", "/usr/lib/node_modules/npm/bin/npx-cli.js", "cowsay"}, true},
 		{"npx", []string{"node", "server.js"}, false},
+		{"npx", []string{"node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "exec", "cowsay"}, true},
+		{"npx", []string{"node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "--yes", "x", "cowsay"}, true},
+		{"npx", []string{"npm", "exec", "--", "cowsay"}, true},
+		{"npx", []string{"node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "install", "exec"}, false},
+		{"maven", []string{"bash", "-c", "x -Dmaven.multiModuleProjectDirectory=/x"}, false},
+		{"maven", []string{"tail", "-f", "org.codehaus.plexus.classworlds.launcher.Launcher"}, false},
 		{"pip", []string{"python3", "-m", "pip", "install", "x"}, true},
 		{"pip", []string{"python3", "-m", "http.server"}, false},
 	}
@@ -256,5 +262,45 @@ func TestMavenCacheMissingIsAbsentNotAnError(t *testing.T) {
 	handleToolCacheUsage(rec, httptest.NewRequest("GET", "/cleanup/tool-caches", nil))
 	if strings.Contains(rec.Body.String(), `"maven"`) {
 		t.Fatalf("absent maven repo listed: %s", rec.Body)
+	}
+}
+
+func TestMavenAndNpxRefuseASymlinkedCacheDir(t *testing.T) {
+	home, _ := isolateToolCaches(t)
+	shared := t.TempDir()
+	keep := filepath.Join(shared, "settings.xml")
+	writeSized(t, keep, 5)
+	writeSized(t, filepath.Join(shared, "other/data"), 5)
+	if err := os.MkdirAll(filepath.Join(home, ".m2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".npm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(home, ".m2/repository")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(home, ".npm/_npx")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"maven", "npx"} {
+		req := httptest.NewRequest("DELETE", "/cleanup/tool-caches/"+name, nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		handleDeleteToolCache(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("%s: status %d, want 409 (%s)", name, rec.Code, rec.Body)
+		}
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("link target was emptied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(shared, "other/data")); err != nil {
+		t.Fatalf("link target was emptied: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	handleToolCacheUsage(rec, httptest.NewRequest("GET", "/cleanup/tool-caches", nil))
+	if strings.Contains(rec.Body.String(), `"maven"`) || strings.Contains(rec.Body.String(), `"npx"`) {
+		t.Fatalf("symlinked caches listed: %s", rec.Body)
 	}
 }
