@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -52,5 +54,48 @@ func TestRolloutCleanTurnSince(t *testing.T) {
 		if got := rolloutCleanTurnSince(c.lines, at); got != c.want {
 			t.Errorf("%s: = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// LiftedEarly must neither fetch nor wait on accountUsage's mutex (held across an HTTP call):
+// the sweep calls it under a lifecycle lease and the episode lock. It reads the published
+// snapshot, and refuses a source it cannot judge before reading anything.
+func TestLiftedEarlyNeverBlocksOnTheAccountFetch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	auth := `{"auth_mode":"chatgpt","tokens":{"access_token":"x","account_id":"acct-early"}}`
+	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(auth), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	booked := now.Add(48 * time.Hour)
+	win := func(pct float64, resets time.Time) *usageWindow {
+		return &usageWindow{Pct: pct, ResetsAt: resets.Format(time.RFC3339)}
+	}
+	old := accountPublished.Load()
+	t.Cleanup(func() { accountPublished.Store(old) })
+	accountPublished.Store(&accountPub{account: "acct-early", observed: now, val: usage{
+		OK: true, FiveHour: win(0, now.Add(5*time.Hour)), SevenDay: win(0, now.Add(7*24*time.Hour)),
+	}})
+
+	accountUsageCache.Lock() // an in-flight fetch holds this
+	defer accountUsageCache.Unlock()
+	got := make(chan bool, 2)
+	go func() { got <- LiftedEarly("codex:weekly", booked, now.Add(-time.Hour)) }()
+	go func() { got <- LiftedEarly("codex:reset-early", booked, now.Add(-time.Hour)) }()
+	var res []bool
+	for i := 0; i < 2; i++ {
+		select {
+		case v := <-got:
+			res = append(res, v)
+		case <-time.After(2 * time.Second):
+			t.Fatal("LiftedEarly blocked on the account cache lock")
+		}
+	}
+	if !(res[0] != res[1]) {
+		t.Errorf("results = %v, want exactly the weekly source to report lifted", res)
 	}
 }

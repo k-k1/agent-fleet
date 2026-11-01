@@ -53,7 +53,11 @@ type UsageLimitTraits struct {
 	// the booked instant, episodeAt when the episode opened. It must rest on a reading OBSERVED
 	// after episodeAt, and answers false whenever it cannot tell. Nil = the kind cannot see
 	// an early lift and its bookings stay at the natural reset.
-	LiftedEarly func(source string, bookedAt, episodeAt time.Time) bool
+	// RefreshEvidence refreshes whatever LiftedEarly reads. It may block on the network, so
+	// the sweep calls it outside its locks, once per kind per tick, and only while some booking
+	// could still move. Nil = LiftedEarly reads nothing that needs a refresh.
+	RefreshEvidence func()
+	LiftedEarly     func(source string, bookedAt, episodeAt time.Time) bool
 	// RanTurnSince reports that the session completed a turn successfully after at, i.e. it
 	// moved on by hand and a booked "the limit has reset, continue" prompt would land on
 	// unrelated work. false when it cannot tell. Nil = never cancelled for this reason.

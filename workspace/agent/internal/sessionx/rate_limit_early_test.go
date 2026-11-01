@@ -4,6 +4,8 @@ package sessionx
 // booked usage-limit auto-resume.
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -143,5 +145,47 @@ func TestRateLimitResumedNoticeFiresForTheMovedBooking(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("resumed notices = %d, want 1", n)
+	}
+}
+
+// A crash between recording the moved booking and cancelling the old one: the episode carries
+// the old id (MovedFrom), and the next sweep cancels it. Nothing forgets the old booking.
+func TestRateLimitMoveResumesAnInterruptedSwap(t *testing.T) {
+	f := newEarlyFixture(t)
+	st := stateOf(t, f.m.Name)
+	st.MovedFrom, st.ScheduleID, st.Source = "sch_old", "sch_new9", rateLimitSourceResetEarly
+	if err := RateLimitStates.Write(f.m.Name, st); err != nil {
+		t.Fatal(err)
+	}
+	rateLimitTickSession(f.m, f.now)
+	if len(f.deleted) != 1 || f.deleted[0] != "sch_old" {
+		t.Fatalf("deleted = %v, want the replaced booking cancelled", f.deleted)
+	}
+	if got := stateOf(t, f.m.Name); got.MovedFrom != "" || got.ScheduleID != "sch_new9" {
+		t.Errorf("episode = %+v, want MovedFrom cleared and the new id kept", got)
+	}
+}
+
+// If the episode cannot be written, the new booking is cancelled rather than orphaned, and the
+// old one stays the episode's booking.
+func TestRateLimitMoveWriteFailureDropsTheNewBooking(t *testing.T) {
+	f := newEarlyFixture(t)
+	f.lifted = true
+	dir := filepath.Dir(RateLimitStates.Path(f.m.Name))
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if err := RateLimitStates.Write("probe-writable", rateLimitState{At: "x"}); err == nil {
+		t.Skip("the state directory is writable despite chmod (running as root?)")
+	}
+	rateLimitFollowUp(f.m, stateOf(t, f.m.Name), f.now, false)
+	if got := stateOf(t, f.m.Name); got.ScheduleID != "sch_old" {
+		t.Errorf("episode = %+v, want the old booking kept", got)
+	}
+	for _, id := range f.deleted {
+		if id == "sch_old" {
+			t.Errorf("deleted = %v: the old booking must survive a failed write", f.deleted)
+		}
 	}
 }

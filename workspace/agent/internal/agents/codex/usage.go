@@ -806,14 +806,31 @@ func ageSecFrom(iso string) int {
 }
 
 // LiftedEarly is agents.UsageLimitTraits.LiftedEarly for codex: the account view says the limit
-// is gone although the booking still waits for the natural reset. It reads the cached account
-// view only (accountUsage, 5-minute TTL), never the local rollout or push readings: those carry
-// percentages without a verdict and can be older than the episode.
+// is gone although the booking still waits for the natural reset. It reads the last PUBLISHED
+// account snapshot (peekAccountUsage: no fetch, no cache lock - the sweep calls this under a
+// lifecycle lease and the episode lock, and accountUsage holds its mutex across an 8 s HTTP
+// call). RefreshAccountUsage is what keeps that snapshot fresh, from outside those locks. Never
+// the local rollout or push readings: they carry percentages without a verdict and can predate
+// the episode.
 func LiftedEarly(source string, bookedAt, episodeAt time.Time) bool {
+	if source != "codex:5h" && source != "codex:weekly" {
+		return false // gate first: nothing is read for a source this cannot judge
+	}
+	auth, ok := readCodexAuth()
+	if !ok {
+		return false
+	}
+	u, ok := peekAccountUsage(auth.Tokens.AccountID)
+	return ok && liftedEarlyFrom(u, source, bookedAt, episodeAt)
+}
+
+// RefreshAccountUsage refreshes the account view through its TTL cache (a no-op inside the TTL).
+// The usage-limit sweep calls it once per tick OUTSIDE its locks so LiftedEarly's snapshot is
+// never older than the TTL, even with no Console open.
+func RefreshAccountUsage() {
 	ctx, cancel := context.WithTimeout(context.Background(), resetAtLookupTimeout)
 	defer cancel()
-	u, ok := accountUsage(ctx)
-	return ok && liftedEarlyFrom(u, source, bookedAt, episodeAt)
+	accountUsage(ctx)
 }
 
 // liftedEarlyFrom is the decision, apart from the fetching. All of: the reading was observed
