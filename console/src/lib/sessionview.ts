@@ -143,6 +143,14 @@ export const stateInfo = (s: SessionState): StateInfo => {
       case "permission":
         return { cls: "off question", icon: "shield", text: t("state.stopped_permission") };
     }
+    // The usage-limit auto-resume is booked with the scheduler and outlives the stop, so the
+    // agent keeps sending its instant on a stopped row (state stays "stopped": this is not a
+    // limited/busy state). Without this the row read as plain "Stopped" with no hint that a
+    // resume is coming. A past instant says nothing, hence the remainingShort guard.
+    if (remainingShort(s.rateLimitResumeAt)) {
+      const at = resumeClock(s.rateLimitResumeAt);
+      if (at) return { cls: "off resume", icon: "watch", text: t("state.stopped_auto_resume", { at }), short: at };
+    }
     // A handoff the session proposed and nobody launched. Ranked below a carried interaction —
     // an unanswered question is someone waiting on a reply, a handoff is work that can be
     // started whenever — but above the plain stopped chip, which is what makes a session look

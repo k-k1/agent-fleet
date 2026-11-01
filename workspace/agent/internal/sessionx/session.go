@@ -176,6 +176,9 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.RateLimitResumeAt = at
 		}
 	}
+	if !alive && rateLimitWatched(m) {
+		s.RateLimitResumeAt = rateLimitBookedAt(m, time.Now())
+	}
 	fillStateSince(&s, m, realSinceProbes)
 	fillBackgroundSince(&s, time.Now())
 	if alive {
