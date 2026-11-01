@@ -1105,3 +1105,16 @@ claude と違って文章を読み解く必要は無い。codex は rollout に�
 - claude 内部のストリーム番犬（既定 5 分・`CLAUDE_STREAM_IDLE_TIMEOUT_MS` で延長可）は
   触っていない。延ばせば中断そのものは減るが、本当にハングした場合の検知も遅れるので、
   自動再開の保険として要るかは実データを見てから。
+
+## 4-14 早期解除と手動再開（2026-11-01 追記、#3186）
+
+- **早期解除**: 開いた window エピソードで予約済みかつ ResumeAt が先のとき、1 分の巡回が
+  codex のアカウントビュー（`accountUsage`、5 分キャッシュ・追加通信なし）を見る。
+  観測がエピソード At より後、`limit_reached` が偽、どの window も 95% 未満、予約元の window の
+  `resets_at` が予約 ResumeAt より後（window が再始動した）なら、予約を now+2 分へ移す。
+  新しい予約を先に作ってから古い予約を取り消す（途中で失敗しても予約が無くならない）。
+  Source は `codex:reset-early` になり、これ以降は再度動かない。拒否された場合は §4-13 の
+  episodeSpent が従来どおり再予約する。claude は `LiftedEarly` を持たない（未対応）。
+- **手動で先に進んだ場合**: 成功したターン（codex: rollout 末尾の task_complete がエラー無しで
+  At より後 / claude: 転写末尾が At より後の通常の assistant 記録）があれば、予約を取り消して
+  エピソードを捨てる。停止中・上限で待機中なだけでは取り消さない。

@@ -190,3 +190,39 @@ func rolloutTailUsageLimited(lines [][]byte) bool {
 	}
 	return false
 }
+
+// RanTurnSince reports that the session's newest turn-ending rollout record is a task_complete
+// WITHOUT an error, written after at: the session moved on by hand. A newer task_started (a turn
+// still running) or any failure answers false; the next sweep sees the completion. A tail read
+// per call, made only for sessions with an open episode.
+func RanTurnSince(m session.Meta, at time.Time) bool {
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	return path != "" && rolloutCleanTurnSince(rolloutTailLines(path), at)
+}
+
+func rolloutCleanTurnSince(lines [][]byte, at time.Time) bool {
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev struct {
+			TS      string `json:"timestamp"`
+			Type    string `json:"type"`
+			Payload struct {
+				Type  string          `json:"type"`
+				Error json.RawMessage `json:"error"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal(lines[i], &ev) != nil || ev.Type != "event_msg" {
+			continue
+		}
+		switch ev.Payload.Type {
+		case "task_started", "turn_aborted":
+			return false
+		case "task_complete":
+			if _, failed := decodeRolloutError(ev.Payload.Error); failed {
+				return false
+			}
+			ts, err := time.Parse(time.RFC3339Nano, ev.TS)
+			return err == nil && ts.After(at)
+		}
+	}
+	return false
+}

@@ -31,6 +31,9 @@ type abortRecord struct {
 	IsAPIError  bool   `json:"isApiErrorMessage"`
 	Status      int    `json:"apiErrorStatus"`
 	Timestamp   string `json:"timestamp"`
+	Message     struct {
+		StopReason string `json:"stop_reason"`
+	} `json:"message"`
 	// Error is claude's own MACHINE-READABLE cause ("server_error" / "rate_limit" /
 	// "invalid_request" — measured 2026-08-05). Unlike the English prose it is not reworded
 	// from release to release, so it is the last clue left when a shape the text does not
@@ -381,4 +384,28 @@ func HealIdle(sid string) {
 		return
 	}
 	status.Remove(sid)
+}
+
+// RanTurnSince reports that the newest terminal transcript record is the END of an ordinary
+// turn (an assistant record, not an API error, whose stop_reason is end_turn) written after at:
+// the session finished a turn by hand. A thinking / tool_use record, a user record, or an abort
+// answers false: the turn may still be running or may end on the limit again.
+func RanTurnSince(sid string, at time.Time) bool {
+	for _, p := range jsonlByMtime(sid) {
+		line, found := lastLineWhere(p, func(l []byte) bool { _, ok := terminalRecord(l); return ok })
+		if !found {
+			continue
+		}
+		return turnEndedCleanSince(line, at)
+	}
+	return false
+}
+
+func turnEndedCleanSince(line []byte, at time.Time) bool {
+	r, ok := terminalRecord(line)
+	if !ok || r.Type != "assistant" || r.IsAPIError || r.Message.StopReason != "end_turn" {
+		return false
+	}
+	ts, err := time.Parse(time.RFC3339, r.Timestamp)
+	return err == nil && ts.After(at)
 }
