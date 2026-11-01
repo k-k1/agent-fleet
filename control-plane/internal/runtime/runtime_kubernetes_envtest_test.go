@@ -299,13 +299,18 @@ func (e *kubeTestEnv) stop() {
 // (namespace) and once for the cluster-wide reads.
 func (e *kubeTestEnv) installCPRole() error {
 	ctx := context.Background()
+	clusterRules := []kubeTestRule{
+		{"", "persistentvolumes", []string{"get"}},
+		{"storage.k8s.io", "storageclasses", []string{"get"}},
+	}
+	clusterRoleRules := make([]any, 0, len(clusterRules))
+	for _, r := range clusterRules {
+		clusterRoleRules = append(clusterRoleRules, map[string]any{"apiGroups": []string{r.group}, "resources": []string{r.resource}, "verbs": r.verbs})
+	}
 	cr := map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
 		"metadata": map[string]any{"name": "af-cp-read"},
-		"rules": []any{
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"persistentvolumes"}, "verbs": []string{"get"}},
-			map[string]any{"apiGroups": []string{"storage.k8s.io"}, "resources": []string{"storageclasses"}, "verbs": []string{"get"}},
-		},
+		"rules":    clusterRoleRules,
 	}
 	if err := e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/clusterroles", cr, nil); err != nil {
 		return err
@@ -316,12 +321,17 @@ func (e *kubeTestEnv) installCPRole() error {
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "af-cp-read"},
 		"subjects": []any{map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "User", "name": "af-cp"}},
 	}
-	return e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings", crb, nil)
+	if err := e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings", crb, nil); err != nil {
+		return err
+	}
+	// Same informer lag as in namespace: volumeProtected and checkStorageClass would
+	// read a late 403 on these as "not protected" / a warning, silently changing outcomes.
+	return e.waitCPAllowed(ctx, "", clusterRules, 30*time.Second)
 }
 
 // namespace creates a namespace enforcing `restricted`, with the CP's Role bound in it,
-// and waits for its default service account (the ServiceAccount admission plugin refuses
-// pods until the controller has made it).
+// and waits until the authorizer honours that Role (see below) and for the default service
+// account (the ServiceAccount admission plugin refuses pods until the controller has made it).
 func (e *kubeTestEnv) namespace(t *testing.T) string {
 	t.Helper()
 	e.mu.Lock()
@@ -343,15 +353,20 @@ func (e *kubeTestEnv) namespace(t *testing.T) string {
 		}},
 	}, nil))
 	all := []string{"get", "list", "create", "update", "patch", "delete"}
+	rules := []kubeTestRule{
+		{"apps", "statefulsets", all},
+		{"", "services", all}, {"", "persistentvolumeclaims", all}, {"", "secrets", all},
+		{"", "pods", []string{"get", "list", "watch", "create", "delete"}},
+		{"", "events", []string{"get", "list"}},
+	}
+	roleRules := make([]any, 0, len(rules))
+	for _, r := range rules {
+		roleRules = append(roleRules, map[string]any{"apiGroups": []string{r.group}, "resources": []string{r.resource}, "verbs": r.verbs})
+	}
 	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/roles", map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
 		"metadata": map[string]any{"name": "af-cp"},
-		"rules": []any{
-			map[string]any{"apiGroups": []string{"apps"}, "resources": []string{"statefulsets"}, "verbs": all},
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"services", "persistentvolumeclaims", "secrets"}, "verbs": all},
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"pods"}, "verbs": []string{"get", "list", "watch", "create", "delete"}},
-			map[string]any{"apiGroups": []string{""}, "resources": []string{"events"}, "verbs": []string{"get", "list"}},
-		},
+		"rules":    roleRules,
 	}, nil))
 	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/rolebindings", map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
@@ -359,11 +374,73 @@ func (e *kubeTestEnv) namespace(t *testing.T) string {
 		"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "af-cp"},
 		"subjects": []any{map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "User", "name": "af-cp"}},
 	}, nil))
+	// The API server's authorizer reads Roles and RoleBindings from an informer cache, so a
+	// request authenticated as af-cp can still get a 403 for a moment after both were
+	// created; without this wait the first call a test makes as af-cp races that lag.
+	// Measured: creating 150 namespaces back to back, the first SubjectAccessReview for
+	// af-cp was denied in 10-15 of them.
+	must(e.waitCPAllowed(ctx, ns, rules, 30*time.Second))
 	eventually(t, 30*time.Second, "default service account in "+ns, func() bool {
 		var sa json.RawMessage
 		return e.admin.get(ctx, "/api/v1/namespaces/"+ns+"/serviceaccounts/default", &sa) == nil
 	})
 	return ns
+}
+
+// kubeTestRule is one rule of the per-namespace Role: it is both what the Role grants and
+// what namespace waits to see allowed.
+type kubeTestRule struct {
+	group, resource string
+	verbs           []string
+}
+
+// cpDenial asks the API server's authorizer, through a SubjectAccessReview, whether af-cp
+// may do every verb of every rule in ns ("" = cluster scope). It returns "" when all are
+// allowed, else the first refusal with the authorizer's own reason, so a Role that is
+// wrong (not merely late) says what is missing.
+func (e *kubeTestEnv) cpDenial(ctx context.Context, ns string, rules []kubeTestRule) string {
+	for _, r := range rules {
+		for _, v := range r.verbs {
+			var out struct {
+				Status struct {
+					Allowed         bool   `json:"allowed"`
+					Reason          string `json:"reason"`
+					EvaluationError string `json:"evaluationError"`
+				} `json:"status"`
+			}
+			attrs := map[string]any{"verb": v, "group": r.group, "resource": r.resource}
+			if ns != "" {
+				attrs["namespace"] = ns
+			}
+			err := e.admin.create(ctx, "/apis/authorization.k8s.io/v1/subjectaccessreviews", map[string]any{
+				"apiVersion": "authorization.k8s.io/v1", "kind": "SubjectAccessReview",
+				"spec": map[string]any{"user": "af-cp", "resourceAttributes": attrs},
+			}, &out)
+			what := fmt.Sprintf("%s %s/%s in %q", v, r.group, r.resource, ns)
+			if err != nil {
+				return what + ": SubjectAccessReview failed: " + err.Error()
+			}
+			if !out.Status.Allowed {
+				return fmt.Sprintf("%s denied (reason %q, evaluationError %q)", what, out.Status.Reason, out.Status.EvaluationError)
+			}
+		}
+	}
+	return ""
+}
+
+// waitCPAllowed polls cpDenial until it is empty. The error names the last refusal.
+func (e *kubeTestEnv) waitCPAllowed(ctx context.Context, ns string, rules []kubeTestRule, within time.Duration) error {
+	deadline := time.Now().Add(within)
+	for {
+		denial := e.cpDenial(ctx, ns, rules)
+		if denial == "" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("af-cp not authorized after %s: %s", within, denial)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // factory builds the adapter's factory as the CP would, authenticated as af-cp. Each
