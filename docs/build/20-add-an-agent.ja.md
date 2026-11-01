@@ -64,7 +64,8 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
 たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別、`usage_fold.go` の
-`usageMeasuredForKind`。
+`usageMeasuredForKind`。移動先の答えは、種別自身の `agents.MoveTarget` 宣言（自パッケージの
+`move_target.go`、§20.7）です。
 `workspace/agent`・`control-plane`・`console/src` を、自分と同じ driver を持つ既存種別の名前で grep し、
 当たりを 1 つずつ判断してください。
 
@@ -249,12 +250,12 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       `kindCatalog.test.ts` がそれと `SESSION_KINDS` をカタログのスナップショットと突き合わせる
 - [ ] 種別ごとに実測した一覧。どれも、漏れた種別を名指しするテストが守る:
       `usageMeasuredForKind`（`usage_fold.go`。`kind_lists_test.go` の `usageMeasuredByKind`）、
-      移動先（`moveTargetKinds` / `moveUnmeasuredTargets`。`session_move_kinds_test.go` の
-      `moveClassification`）、チャットプロバイダか `noChatProvider` への登録（`kind_lists_test.go`。
+      移動先（Agent の `agents.MoveTarget`。測定済みか未測定かを、自パッケージの `move_target.go` で宣言する。
+      移動先になれない種別は `session_move_kinds_test.go` の `moveRefusals` に載せる。どちらでもない種別はテストが落ちる）、チャットプロバイダか `noChatProvider` への登録（`kind_lists_test.go`。
       プロバイダがあれば `chatx` の `oneShotKinds` と `providerResumeHandles` がそれぞれのテストに従う）。
       `providerResumeKinds` は `providerResumeHandles` から作る（この表は各 kind のメッセージカーソル欄も持つ。
-      `TestEveryMessageCursorFieldIsListed`）。`TestMoveTargetListsAreUnchanged` は
-      移動先の 2 つの一覧をリテラルで固定するので、どちらかに足した種別はこれも直す
+      `TestEveryMessageCursorFieldIsListed`）。`TestShippedMoveClassificationHolds` は
+      出荷済みの分類をリテラルで固定する。新しい種別はここに行を足さなくてよい
 - [ ] `wantRuntime`（`internal/sessionx/managed_runtime_test.go`）にどの種別も 1 行。マネージドの
       ランタイムを持たない種別は `nil`（`TestManagedRuntimeDispatchPinned`）
 - [ ] スキル: どのエージェント種別も `capabilities.go` に `agents.SkillsLayouter`。固有の仕組みが
@@ -309,6 +310,9 @@ scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-
 暫定値（2026-11-01、`instrUnsupported` を `agents.InstructionsUnsupported` へ移した後、#2933）:
 `--verify` 無しの実行で、テスト・Markdown 以外 16 ファイル、含めて 21 ファイル（それまでは 17 / 22）。
 `--verify` 未実行のため確定値ではありません。
+
+暫定値（2026-11-01、`moveTargetKinds` / `moveUnmeasuredTargets` を `agents.MoveTarget` へ移した後、#2933）:
+`--verify` 無しの実行で、テスト・Markdown 以外 15 ファイル、含めて 20 ファイル（それまでは 16 / 21）。
 
 数値として使えるのは、`--verify` が通った実行だけです。パッチが当たらなくなったとき、または
 `--verify` で新しいガードが落ちたときはパッチを作り直します。`--keep` で実行し、残したクローンで

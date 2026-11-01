@@ -35,25 +35,40 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// moveTargetKinds are the kinds a move may target: each can read a file outside its working
-// folder without a prompt, which is where the handover lives (decision 9; the measurements are
-// in its 2026-10-20 addendum). The list is per kind, not per driver: a driver measured for a kind
-// speaks for both of its drivers unless the addendum says otherwise.
-var moveTargetKinds = []string{
-	session.KindClaude, session.KindCodex, session.KindOpencode,
-	session.KindCopilot, session.KindAgy, session.KindMuse, session.KindKiro,
+// moveTargetStateOf is the kind's agents.MoveTarget declaration, 0 when it makes none. Exact
+// registry key: an alias or unknown spelling has none, so it is never a target.
+func moveTargetStateOf(kind string) agents.MoveTargetState {
+	a, ok := RegisteredAgent(kind)
+	if !ok {
+		return 0
+	}
+	if m, ok := a.(agents.MoveTarget); ok {
+		return m.MoveTarget()
+	}
+	return 0
 }
 
-// moveUnmeasuredTargets stay off until the read has been measured through the real driver; the
-// bare CLI's result does not cover the driver's trust handling and flags. Moving a kind into
-// moveTargetKinds is the whole change once that measurement exists.
-var moveUnmeasuredTargets = []string{session.KindCursor}
+// moveTargetKinds are the registered kinds that declare a measured move target, in registry order.
+func moveTargetKinds() []string { return moveKindsDeclaring(agents.MoveTargetMeasured) }
+
+// moveUnmeasuredTargets are the registered kinds that declare themselves unmeasured.
+func moveUnmeasuredTargets() []string { return moveKindsDeclaring(agents.MoveTargetUnmeasured) }
+
+func moveKindsDeclaring(st agents.MoveTargetState) []string {
+	var out []string
+	for _, k := range RegisteredKinds() {
+		if moveTargetStateOf(k) == st {
+			out = append(out, k)
+		}
+	}
+	return out
+}
 
 // Reasons a kind is not offered as a target, as the preview reports them.
 const (
 	moveTargetSameKind     = "same_kind"        // decision 5: same quota; fork where the kind can
 	moveTargetCannotRead   = "cannot_read_file" // lcpp: its file tools refuse paths outside the working folder
-	moveTargetNotMeasured  = "not_measured"     // moveUnmeasuredTargets
+	moveTargetNotMeasured  = "not_measured"     // MoveTargetUnmeasured
 	moveTargetNotAnAgent   = "not_an_agent"     // shell, ssm: nothing that reads a file
 	moveWarnCursorMirror   = "managed_cursor_mirror_empty"
 	moveWarnChildrenActive = "children_running"
@@ -64,9 +79,9 @@ func moveTargetReason(source, target string) string {
 	switch {
 	case target == source:
 		return moveTargetSameKind
-	case slices.Contains(moveTargetKinds, target):
+	case moveTargetStateOf(target) == agents.MoveTargetMeasured:
 		return ""
-	case slices.Contains(moveUnmeasuredTargets, target):
+	case moveTargetStateOf(target) == agents.MoveTargetUnmeasured:
 		return moveTargetNotMeasured
 	case target == session.KindLcpp:
 		return moveTargetCannotRead

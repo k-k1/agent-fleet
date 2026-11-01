@@ -367,3 +367,22 @@ for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.g
 （base の実測はちょうど 112、このスライスで 7 減）。`TestWriterForMatchesOldSwitch` が、登録済みの全種別と
 別名・大文字小文字・未知の綴りについて、旧 `switch` のそのままのコピーと引き当てを突き合わせる。
 種別ごとに書かれるファイルを見る既存の `materialize*` テストは変更なし。残りの箇所は #2925 に残る。
+
+## 追記（2026-11-01）— `moveTargetKinds` / `moveUnmeasuredTargets` を廃止（#2933、第 3 スライス）
+
+「この種別へセッションを移せるか、それは実測済みか」は、種別自身の宣言 `agents.MoveTarget`
+（`MoveTarget() MoveTargetState`。測定済みか未測定か）になった。claude、codex、opencode、copilot、agy、
+muse、kiro（測定済み）と cursor（未測定）が、各パッケージの `move_target.go` に根拠とともに持つ。
+`sessionx` は両方の一覧をレジストリから完全一致のキーで導くので、別名や未知の種別は従来どおり
+`not_an_agent` で断られ、lcpp・shell・ssm は何も宣言せず従来の拒否のまま。1 つのメソッドが 1 つの状態を返すので、
+「移動先かつ未測定」は表せない。`TestMoveTargetDeclarationIsAKnownState` が範囲外の状態と `moveRefusals`
+との重複を落とし、`TestMoveTargetDeclarationsMatchOldLists` が旧一覧のリテラルの写しと
+`moveTargetReason` を全種別の組と別名表記で突き合わせる。#3011 の `TestShippedMoveClassificationHolds` は
+独立した固定として残る。プレビューの `anyEligibleTarget` は一覧順ではなくレジストリ順の最初の候補を返すが、
+それが通すリクエスト検査は可否だけに依存するので答えは変わらない。`agents.Agent` を埋め込むテスト用ラッパーは
+任意の能力を隠すため、`editedUsageLimitAgent` が `MoveTarget` を転送する。`scripts/stub-kind-count.sh`
+（スタブは自パッケージで `MoveTarget` を宣言する）: テスト・Markdown 込みで 20 ファイル（それまで 21）、
+テスト・Markdown 以外 15 ファイル（それまで 16）。`--verify` の全実行は未実施。手書きのまま残るのは
+`session.Kind*`、`agentreg`、`kinds.registered`、Console の一覧、`usageMeasuredByKind` / `noChatProvider`。
+
+Follow-ups: #2933.

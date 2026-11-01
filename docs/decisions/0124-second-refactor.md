@@ -478,3 +478,25 @@ exactly 112; this slice removes 7). `TestWriterForMatchesOldSwitch` holds the lo
 copy of the old switch over every registered kind plus alias, case and unknown spellings; the
 existing `materialize*` tests (the written files per kind) are unchanged. The remaining sites stay
 in #2925.
+
+## Note (2026-11-01): `moveTargetKinds` / `moveUnmeasuredTargets` retired (#2933, third slice)
+
+"May a session be moved to this kind, and is that measured" is now the kind's own declaration:
+`agents.MoveTarget` (`MoveTarget() MoveTargetState`, measured or unmeasured), implemented in a
+`move_target.go` in each of claude, codex, opencode, copilot, agy, muse and kiro (measured) and
+cursor (unmeasured), next to the evidence. `sessionx` derives both lists from the registry by exact
+key, so an alias or an unknown kind is still refused as `not_an_agent`; lcpp, shell and ssm declare
+nothing and keep their refusal. One method returning one state makes "target and unmeasured at
+once" unrepresentable; `TestMoveTargetDeclarationIsAKnownState` rejects an out-of-range state and a
+kind also on `moveRefusals`. `TestMoveTargetDeclarationsMatchOldLists` holds `moveTargetReason` to
+a literal copy of the old lists over every registered kind pair plus alias spellings;
+`TestShippedMoveClassificationHolds` (#3011) stays an independent pin. The preview's
+`anyEligibleTarget` now returns the first eligible kind in registry order rather than list order;
+the request check it feeds depends only on eligibility, so no answer changes. A test wrapper that
+embeds `agents.Agent` hides optional capabilities, so `editedUsageLimitAgent` forwards
+`MoveTarget`. `scripts/stub-kind-count.sh` (the stub now declares `MoveTarget` in its own
+package): 20 files with tests and Markdown (was 21), 15 non-test, non-Markdown files (was 16).
+Not a full `--verify` run. Still hand-kept: `session.Kind*`, `agentreg`, `kinds.registered`, the
+Console lists, `usageMeasuredByKind` / `noChatProvider`.
+
+Follow-ups: #2933.

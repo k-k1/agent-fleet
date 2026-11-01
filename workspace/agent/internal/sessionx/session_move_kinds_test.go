@@ -1,19 +1,20 @@
 package sessionx
 
-// moveTargetKinds is a measured fact per kind (ADR 0115 decision 9), not a capability, so it
-// stays a hand-kept list; this table is what makes a new kind choose.
+// A move target is a measured fact per kind (ADR 0115 decision 9), not a capability, so each kind
+// declares it (agents.MoveTarget); this table is what makes a new kind choose.
 
 import (
 	"slices"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // moveRefusals are the registered kinds that are deliberately not move targets, and the reason
-// each is refused. Every other registered kind must be on moveTargetKinds (answer "") or on
-// moveUnmeasuredTargets (answer moveTargetNotMeasured), which are where the measurement lives, so
-// adding a measured kind edits only those lists. A kind on neither list and not here is a kind
+// each is refused. Every other registered kind must declare agents.MoveTarget (answer "" or
+// moveTargetNotMeasured), which is where the measurement lives, so adding a measured kind edits
+// only its own package. A kind on no declaration and not here is a kind
 // nobody has classified, and fails TestEveryKindIsClassifiedForMove.
 var moveRefusals = map[string]string{
 	session.KindLcpp:  moveTargetCannotRead,
@@ -31,12 +32,12 @@ var (
 
 func TestShippedMoveClassificationHolds(t *testing.T) {
 	for _, k := range shippedMoveTargets {
-		if !slices.Contains(moveTargetKinds, k) {
+		if !slices.Contains(moveTargetKinds(), k) {
 			t.Errorf("%q was a measured move target and is not on moveTargetKinds any more", k)
 		}
 	}
 	for _, k := range shippedMoveUnmeasured {
-		if !slices.Contains(moveUnmeasuredTargets, k) {
+		if !slices.Contains(moveUnmeasuredTargets(), k) {
 			t.Errorf("%q was an unmeasured move target and is not on moveUnmeasuredTargets any more", k)
 		}
 	}
@@ -50,7 +51,7 @@ func TestShippedMoveClassificationHolds(t *testing.T) {
 // The lists are disjoint, duplicate-free and hold only registered kinds.
 func TestMoveListsAreWellFormed(t *testing.T) {
 	seen := map[string]string{}
-	for list, kinds := range map[string][]string{"moveTargetKinds": moveTargetKinds, "moveUnmeasuredTargets": moveUnmeasuredTargets} {
+	for list, kinds := range map[string][]string{"moveTargetKinds": moveTargetKinds(), "moveUnmeasuredTargets": moveUnmeasuredTargets()} {
 		for _, k := range kinds {
 			if prev, dup := seen[k]; dup {
 				t.Errorf("%q is on %s and %s", k, prev, list)
@@ -58,7 +59,7 @@ func TestMoveListsAreWellFormed(t *testing.T) {
 			seen[k] = list
 		}
 	}
-	for _, list := range [][]string{moveTargetKinds, moveUnmeasuredTargets} {
+	for _, list := range [][]string{moveTargetKinds(), moveUnmeasuredTargets()} {
 		if len(slices.Compact(slices.Sorted(slices.Values(list)))) != len(list) {
 			t.Errorf("a move target list has a duplicate: %v", list)
 		}
@@ -69,15 +70,15 @@ func TestEveryKindIsClassifiedForMove(t *testing.T) {
 	for _, k := range RegisteredKinds() {
 		want, refused := moveRefusals[k]
 		switch {
-		case slices.Contains(moveTargetKinds, k):
+		case slices.Contains(moveTargetKinds(), k):
 			want = ""
-		case slices.Contains(moveUnmeasuredTargets, k):
+		case slices.Contains(moveUnmeasuredTargets(), k):
 			want = moveTargetNotMeasured
 		case !refused:
-			t.Errorf("kind %q is registered but not classified as a move target: measure it and add it to moveTargetKinds or moveUnmeasuredTargets, or refuse it with a reason in moveRefusals", k)
+			t.Errorf("kind %q is registered but not classified as a move target: measure it and declare agents.MoveTarget in its package, or refuse it with a reason in moveRefusals", k)
 			continue
 		}
-		if refused && (slices.Contains(moveTargetKinds, k) || slices.Contains(moveUnmeasuredTargets, k)) {
+		if refused && (slices.Contains(moveTargetKinds(), k) || slices.Contains(moveUnmeasuredTargets(), k)) {
 			t.Errorf("kind %q is both refused and on a target list", k)
 		}
 		if got := moveTargetReason("other", k); got != want {
@@ -89,7 +90,7 @@ func TestEveryKindIsClassifiedForMove(t *testing.T) {
 			t.Errorf("moveRefusals has %q, which is not a registered kind", k)
 		}
 	}
-	for _, k := range append(slices.Clone(moveTargetKinds), moveUnmeasuredTargets...) {
+	for _, k := range append(moveTargetKinds(), moveUnmeasuredTargets()...) {
 		if _, ok := RegisteredAgent(k); !ok {
 			t.Errorf("a move target list has %q, which is not a registered kind", k)
 		}
@@ -110,5 +111,83 @@ func TestMoveTargetRefusesAlternateSpellings(t *testing.T) {
 	}
 	if got := moveTargetReason("claude", "claude"); got != moveTargetSameKind {
 		t.Errorf("moveTargetReason(claude, claude) = %q, want %q", got, moveTargetSameKind)
+	}
+}
+
+// oldMoveTargetKinds and oldMoveUnmeasuredTargets are literal copies of the hand-kept lists the
+// declarations replaced (#2933), so moving them into the kind packages is held to byte-identical
+// answers. Deliberately not the shipped* snapshot above, which is the independent pin.
+var (
+	oldMoveTargetKinds       = []string{"claude", "codex", "opencode", "copilot", "agy", "muse", "kiro"}
+	oldMoveUnmeasuredTargets = []string{"cursor"}
+)
+
+func oldMoveTargetReason(source, target string) string {
+	switch {
+	case target == source:
+		return "same_kind"
+	case slices.Contains(oldMoveTargetKinds, target):
+		return ""
+	case slices.Contains(oldMoveUnmeasuredTargets, target):
+		return "not_measured"
+	case target == "lcpp":
+		return "cannot_read_file"
+	}
+	return "not_an_agent"
+}
+
+func TestMoveTargetDeclarationsMatchOldLists(t *testing.T) {
+	kinds := append(RegisteredKinds(), "", "Claude", "claude-code", "codex-cli", "antigravity",
+		"kiro-cli", "cursor-agent", "github-copilot", "llamacpp", "llama.cpp", "unknown", " cursor")
+	for _, src := range kinds {
+		for _, tgt := range kinds {
+			if got, want := moveTargetReason(src, tgt), oldMoveTargetReason(src, tgt); got != want {
+				t.Errorf("moveTargetReason(%q, %q) = %q, old lists said %q", src, tgt, got, want)
+			}
+		}
+	}
+	if got := slices.Sorted(slices.Values(moveTargetKinds())); !slices.Equal(got, slices.Sorted(slices.Values(oldMoveTargetKinds))) {
+		t.Errorf("moveTargetKinds() = %v", got)
+	}
+	if got := moveUnmeasuredTargets(); !slices.Equal(got, oldMoveUnmeasuredTargets) {
+		t.Errorf("moveUnmeasuredTargets() = %v", got)
+	}
+}
+
+// A declaration must be one of the two defined states: zero or an out-of-range value would make
+// the kind silently "not a target", and a kind cannot be both by construction of one method.
+func TestMoveTargetDeclarationIsAKnownState(t *testing.T) {
+	for _, k := range RegisteredKinds() {
+		a, _ := RegisteredAgent(k)
+		m, ok := a.(agents.MoveTarget)
+		if !ok {
+			continue
+		}
+		if st := m.MoveTarget(); st != agents.MoveTargetMeasured && st != agents.MoveTargetUnmeasured {
+			t.Errorf("%s declares MoveTarget %d, which is neither measured nor unmeasured", k, st)
+		}
+		if _, refused := moveRefusals[k]; refused {
+			t.Errorf("%s both declares MoveTarget and is on moveRefusals", k)
+		}
+	}
+}
+
+func TestAnyEligibleTargetIsEligible(t *testing.T) {
+	for _, src := range RegisteredKinds() {
+		if got := anyEligibleTarget(src); got == src || moveTargetReason(src, got) != "" {
+			t.Errorf("anyEligibleTarget(%q) = %q", src, got)
+		}
+	}
+}
+
+// editedUsageLimitAgent must not hide the wrapped kind's move declaration.
+func TestUsageLimitWrapperKeepsMoveTarget(t *testing.T) {
+	editUsageLimitTraits(t, session.KindClaude, func(*agents.UsageLimitTraits) {})
+	editUsageLimitTraits(t, session.KindCursor, func(*agents.UsageLimitTraits) {})
+	if got := moveTargetReason("codex", session.KindClaude); got != "" {
+		t.Errorf("claude behind the wrapper: %q, want a measured target", got)
+	}
+	if got := moveTargetReason("codex", session.KindCursor); got != moveTargetNotMeasured {
+		t.Errorf("cursor behind the wrapper: %q, want %q", got, moveTargetNotMeasured)
 	}
 }
