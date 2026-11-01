@@ -252,7 +252,8 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       移動先（`moveTargetKinds` / `moveUnmeasuredTargets`。`session_move_kinds_test.go` の
       `moveClassification`）、チャットプロバイダか `noChatProvider` への登録（`kind_lists_test.go`。
       プロバイダがあれば `chatx` の `oneShotKinds` と `providerResumeHandles` がそれぞれのテストに従う）。
-      `providerResumeKinds` は `providerResumeHandles` から作る。`TestMoveTargetListsAreUnchanged` は
+      `providerResumeKinds` は `providerResumeHandles` から作る（この表は各 kind のメッセージカーソル欄も持つ。
+      `TestEveryMessageCursorFieldIsListed`）。`TestMoveTargetListsAreUnchanged` は
       移動先の 2 つの一覧をリテラルで固定するので、どちらかに足した種別はこれも直す
 - [ ] `wantRuntime`（`internal/sessionx/managed_runtime_test.go`）にどの種別も 1 行。マネージドの
       ランタイムを持たない種別は `nil`（`TestManagedRuntimeDispatchPinned`）

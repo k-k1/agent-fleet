@@ -18,19 +18,8 @@ const maxProviderSyncChars = 64 << 10
 
 func providerCursor(c *ChatConversation, agent string) int {
 	var cursor int
-	switch agent {
-	case "claude":
-		cursor = c.ClaudeMessageCursor
-	case "codex":
-		cursor = c.CodexMessageCursor
-	case "opencode":
-		cursor = c.OpencodeMessageCursor
-	case "agy":
-		cursor = c.AgyMessageCursor
-	case "cursor":
-		cursor = c.CursorMessageCursor
-	case "muse":
-		cursor = c.MuseMessageCursor
+	if h, ok := providerResumeHandleOf(agent); ok {
+		cursor = *h.cursor(c)
 	}
 	if cursor > 0 {
 		return cursor
@@ -68,23 +57,37 @@ func providerCursor(c *ChatConversation, agent string) int {
 	return 0
 }
 
-// providerResumeHandles is the one place that says which ChatConversation field holds each
-// backend's native resume handle. providerHasResume, anyProviderResume, clearProviderSessions
-// and providerResumeKinds all read it, because a hand-written condition repeated per kind loses
+type providerResumeHandle struct {
+	kind   string
+	handle func(*ChatConversation) *string
+	cursor func(*ChatConversation) *int
+}
+
+// providerResumeHandles is the one place that says which ChatConversation fields hold each
+// backend's native resume handle and its message cursor. providerHasResume, anyProviderResume,
+// clearProviderSessions, providerResumeKinds, providerCursor, MarkProviderSynced and
+// resetProviderCursors all read it, because a hand-written condition repeated per kind loses
 // an entry every time a kind is added: cursor (docs/log/40) reached providerHasResume but was
 // missed by the compaction side, so compacting a cursor conversation left its handle behind
 // (muse repeated it until it was listed here).
-// TestEveryResumeHandleFieldIsListed fails on a handle field no entry points at.
-var providerResumeHandles = []struct {
-	kind   string
-	handle func(*ChatConversation) *string
-}{
-	{session.KindClaude, func(c *ChatConversation) *string { return &c.ClaudeSessionID }},
-	{session.KindCodex, func(c *ChatConversation) *string { return &c.CodexSessionID }},
-	{session.KindOpencode, func(c *ChatConversation) *string { return &c.OpencodeSessionID }},
-	{session.KindAgy, func(c *ChatConversation) *string { return &c.AgyConversationID }},
-	{session.KindCursor, func(c *ChatConversation) *string { return &c.CursorSessionID }},
-	{session.KindMuse, func(c *ChatConversation) *string { return &c.MuseSessionID }},
+// TestEveryResumeHandleFieldIsListed fails on a handle or cursor field no entry points at.
+//
+// These are persisted fields of this package's own record, so the table stays here rather than
+// behind an agents capability: internal/agents cannot name ChatConversation, and renaming the
+// JSON keys would change stored conversations.
+var providerResumeHandles = []providerResumeHandle{
+	{session.KindClaude, func(c *ChatConversation) *string { return &c.ClaudeSessionID },
+		func(c *ChatConversation) *int { return &c.ClaudeMessageCursor }},
+	{session.KindCodex, func(c *ChatConversation) *string { return &c.CodexSessionID },
+		func(c *ChatConversation) *int { return &c.CodexMessageCursor }},
+	{session.KindOpencode, func(c *ChatConversation) *string { return &c.OpencodeSessionID },
+		func(c *ChatConversation) *int { return &c.OpencodeMessageCursor }},
+	{session.KindAgy, func(c *ChatConversation) *string { return &c.AgyConversationID },
+		func(c *ChatConversation) *int { return &c.AgyMessageCursor }},
+	{session.KindCursor, func(c *ChatConversation) *string { return &c.CursorSessionID },
+		func(c *ChatConversation) *int { return &c.CursorMessageCursor }},
+	{session.KindMuse, func(c *ChatConversation) *string { return &c.MuseSessionID },
+		func(c *ChatConversation) *int { return &c.MuseMessageCursor }},
 }
 
 // providerResumeKinds lists every backend that holds a resume handle, in providerResumeHandles
@@ -97,11 +100,20 @@ var providerResumeKinds = func() []string {
 	return kinds
 }()
 
-func providerHasResume(c *ChatConversation, agent string) bool {
+// providerResumeHandleOf looks a backend up by its exact registry key; an alias, a different
+// case or an unknown kind finds nothing, as the per-kind switches it replaced did.
+func providerResumeHandleOf(agent string) (providerResumeHandle, bool) {
 	for _, h := range providerResumeHandles {
 		if h.kind == agent {
-			return *h.handle(c) != ""
+			return h, true
 		}
+	}
+	return providerResumeHandle{}, false
+}
+
+func providerHasResume(c *ChatConversation, agent string) bool {
+	if h, ok := providerResumeHandleOf(agent); ok {
+		return *h.handle(c) != ""
 	}
 	return false
 }
@@ -125,26 +137,15 @@ func clearProviderSessions(c *ChatConversation) {
 }
 
 func MarkProviderSynced(c *ChatConversation, agent string, cursor int) {
-	switch agent {
-	case "claude":
-		c.ClaudeMessageCursor = cursor
-	case "codex":
-		c.CodexMessageCursor = cursor
-	case "opencode":
-		c.OpencodeMessageCursor = cursor
-	case "agy":
-		c.AgyMessageCursor = cursor
-	case "cursor":
-		c.CursorMessageCursor = cursor
-	case "muse":
-		c.MuseMessageCursor = cursor
+	if h, ok := providerResumeHandleOf(agent); ok {
+		*h.cursor(c) = cursor
 	}
 }
 
 func resetProviderCursors(c *ChatConversation) {
-	c.ClaudeMessageCursor, c.CodexMessageCursor = 0, 0
-	c.OpencodeMessageCursor, c.AgyMessageCursor = 0, 0
-	c.CursorMessageCursor, c.MuseMessageCursor = 0, 0
+	for _, h := range providerResumeHandles {
+		*h.cursor(c) = 0
+	}
 }
 
 // syncProviderPrompt prepends canonical user/assistant turns in [cursor, upto).
