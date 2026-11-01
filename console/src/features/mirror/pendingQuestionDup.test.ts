@@ -61,8 +61,15 @@ describe("hidePendingQuestionDup", () => {
     expect(hidePendingQuestionDup(turns, q)).toEqual({ turns, hidden: false });
   });
 
-  it("tolerates a user turn after the match (queued prompt)", () => {
+  it("keeps an interrupted older ask when the user moved on and the new ask was hidden by the Agent", () => {
+    // Held: [old ask, user follow-up]. The new identical ask was a question-only turn that the
+    // Agent dropped whole, so it never reaches the Console.
     const turns = [turn(2, [qPart("q1")]), { role: "user", idx: 3, text: "next" } as Turn];
+    expect(hidePendingQuestionDup(turns, q)).toEqual({ turns, hidden: false });
+  });
+
+  it("ignores optimistic or queued local turns after the match", () => {
+    const turns = [turn(2, [qPart("q1")]), { role: "user", idx: 3, text: "next", queued: true } as Turn];
     const r = hidePendingQuestionDup(turns, q);
     expect(r.hidden).toBe(true);
     expect(r.turns.map((t) => t.idx)).toEqual([3]);
