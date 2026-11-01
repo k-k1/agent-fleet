@@ -90,27 +90,24 @@ type writer func(defs []ServerDef, prev []string) (written, removed []string, ch
 // this package can hold the writers to the real kind registry.
 func HasWriter(kind string) bool { return writerFor(kind) != nil }
 
-func writerFor(kind string) writer {
-	switch kind {
-	case session.KindClaude:
-		return materializeClaude
-	case session.KindCodex:
-		return materializeCodex
-	case session.KindOpencode:
-		return materializeOpencode
-	case session.KindCursor:
-		return materializeCursor
-	case session.KindKiro:
-		return materializeKiro
-	case session.KindAgy:
-		return materializeAgy
-	case session.KindCopilot:
-		return materializeCopilot
-	}
-	// Kinds that run no agent CLI (shell, ssm) have no config to write. Skipped, not
-	// an error — see MaterializeResult.Skipped.
-	return nil
+// writers is the kind → native-config editor table, keyed by the exact registry key. It is a
+// package-local table and not an agents capability because internal/agents (and the kind
+// packages under it) import mcpreg, so mcpreg cannot import agents without a cycle. A kind
+// with no entry (shell, ssm: no agent CLI) has no config to write; an alias or unknown kind
+// finds none either.
+var writers = map[string]writer{
+	session.KindClaude:   materializeClaude,
+	session.KindCodex:    materializeCodex,
+	session.KindOpencode: materializeOpencode,
+	session.KindCursor:   materializeCursor,
+	session.KindKiro:     materializeKiro,
+	session.KindAgy:      materializeAgy,
+	session.KindCopilot:  materializeCopilot,
 }
+
+// writerFor returns nil for a kind with no writer, which Materialize reports as skipped, not
+// an error — see MaterializeResult.Skipped.
+func writerFor(kind string) writer { return writers[kind] }
 
 // materializeMu serializes materialize passes. Every pass is read → merge → rename over
 // a shared config file AND a read-modify-write of the ownership ledger, and there are
