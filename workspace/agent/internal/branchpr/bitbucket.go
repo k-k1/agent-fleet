@@ -44,8 +44,9 @@ var (
 	// errRefused is a 403. A connection made for cloning lacks the pull request scope, and that
 	// will not change until it is reconnected, so the whole provider holds off.
 	errRefused = errors.New("bitbucket refused the read")
-	// errBadFilter is a 400 on the PR list: Bitbucket could not take the filter, which with
-	// escaped values can only be about one branch's name.
+	// errBadFilter is a 400 on the PR list: Bitbucket could not take the filter. With escaped
+	// values that is expected to be one branch's odd name; a 400 for any other reason leaves the
+	// branches it hits without a PR until it stops, rather than holding every row off.
 	errBadFilter = errors.New("bitbucket could not parse the filter")
 )
 
@@ -124,7 +125,7 @@ func (b *bitbucket) fetch(auth string, keys []Key) (map[Key]*PR, map[Key]bool, t
 			markFailed(failed, bad)
 			for k, h := range got {
 				if h.pr.State == "open" && h.head != "" {
-					h.pr.Checks = b.checks(auth, repo, h.head)
+					h.pr.Checks = b.checks(auth, repo, h.pr.Number, h.head)
 				}
 				out[k] = h.pr
 			}
@@ -248,16 +249,28 @@ func (b *bitbucket) oneByOne(auth, repo string, keys []Key) (map[Key]bbHit, []Ke
 // checks folds the build statuses of an open PR's head commit. Asked of the commit, not of the
 // PR: the PR's own status list spans every commit it has had, and an old failure would keep a
 // fixed PR red. A failed call leaves the checks empty rather than failing the PR.
-func (b *bitbucket) checks(auth, repo, head string) string {
+//
+// The PR list gives the head as a short hash. Should the commit endpoint not resolve one (404),
+// the PR's list is read instead and only the statuses whose commit link starts with that hash are
+// folded: one more call, never a stale verdict.
+func (b *bitbucket) checks(auth, repo string, pr int, head string) string {
 	if !isHex(head) {
 		return ""
 	}
 	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=values.state",
 		repoPath(repo), head, bitbucketPageLen))
+	if err == nil {
+		return bitbucketRollup(body, "")
+	}
+	if !errors.Is(err, errNotVisible) {
+		return ""
+	}
+	body, _, err = b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=values.state,values.links.commit.href",
+		repoPath(repo), pr, bitbucketPageLen))
 	if err != nil {
 		return ""
 	}
-	return bitbucketRollup(body)
+	return bitbucketRollup(body, head)
 }
 
 func isHex(s string) bool {
@@ -356,12 +369,18 @@ func bitbucketState(s string) (string, bool) {
 	return "", false
 }
 
-// bitbucketRollup folds a PR's build statuses into the row's three words. A stopped build did
-// not pass, so it counts as a failure; no status at all is "", which must not read as green.
-func bitbucketRollup(body []byte) string {
+// bitbucketRollup folds build statuses into the row's three words. A stopped build did not pass,
+// so it counts as a failure; no status at all is "", which must not read as green. With head set,
+// only the statuses of the commit whose hash starts with it count.
+func bitbucketRollup(body []byte, head string) string {
 	var sr struct {
 		Values []struct {
 			State string `json:"state"`
+			Links struct {
+				Commit struct {
+					Href string `json:"href"`
+				} `json:"commit"`
+			} `json:"links"`
 		} `json:"values"`
 	}
 	if json.Unmarshal(body, &sr) != nil {
@@ -369,6 +388,12 @@ func bitbucketRollup(body []byte) string {
 	}
 	var failed, pending, passed bool
 	for _, v := range sr.Values {
+		if head != "" {
+			_, hash, _ := strings.Cut(v.Links.Commit.Href, "/commit/")
+			if !strings.HasPrefix(strings.ToLower(hash), strings.ToLower(head)) {
+				continue
+			}
+		}
 		switch strings.ToUpper(v.State) {
 		case "FAILED", "STOPPED":
 			failed = true

@@ -25,6 +25,7 @@ type bbServer struct {
 	// that one branch.
 	badBranch string
 	byBranch  map[string]string
+	notFound  string // a path that answers 404
 }
 
 func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +35,10 @@ func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
 	b.auth = append(b.auth, r.Header.Get("Authorization"))
 	if b.status != 0 {
 		w.WriteHeader(b.status)
+		return
+	}
+	if r.URL.Path == b.notFound {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	p := r.URL.Path
@@ -257,7 +262,7 @@ func TestBitbucketRollup(t *testing.T) {
 		`{"values":[{"state":"FAILED"}]}`:                            "failure",
 		`not json`:                                                   "",
 	} {
-		if got := bitbucketRollup([]byte(body)); got != want {
+		if got := bitbucketRollup([]byte(body), ""); got != want {
 			t.Errorf("rollup(%s) = %q, want %q", body, got, want)
 		}
 	}
@@ -352,5 +357,28 @@ func TestBitbucketAsksAgainForABranchAFullPageLeftOut(t *testing.T) {
 	}
 	if len(b.filters) != 2 {
 		t.Fatalf("list calls = %d, want the chunk and one for quiet", len(b.filters))
+	}
+}
+
+func TestBitbucketFallsBackToThePRsStatusesOfItsHeadWhenTheCommitIsNotResolved(t *testing.T) {
+	commit := func(hash, state string) string {
+		return `{"state":"` + state + `","links":{"commit":{"href":"https://api.bitbucket.org/2.0/repositories/w/r/commit/` + hash + `"}}}`
+	}
+	b := &bbServer{
+		main:  map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls: map[string]string{"/2.0/repositories/w/r": `{"values":[` + bbPR(4, "OPEN", false, "a", "w/r") + `]}`},
+		// The commit endpoint does not resolve the short hash (notFound below).
+		statuses: map[string]string{
+			"/2.0/repositories/w/r/pullrequests/4/statuses": `{"values":[` +
+				commit("c0ffee4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "SUCCESSFUL") + "," +
+				commit("01d0000000000000000000000000000000000000", "FAILED") + `]}`,
+		},
+	}
+	c := newBBCache(t, b)
+	b.notFound = "/2.0/repositories/w/r/commit/c0ffee4/statuses"
+	keys := []Key{{"w/r", "a"}}
+	c.Lookup(keys, time.Now())
+	if pr := c.Lookup(keys, time.Now())[keys[0]]; pr == nil || pr.Checks != "success" {
+		t.Fatalf("pr = %+v, want success from the head's statuses only (the old commit's failure ignored)", pr)
 	}
 }
