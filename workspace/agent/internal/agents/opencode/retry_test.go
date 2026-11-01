@@ -72,6 +72,22 @@ func TestRetryIsShownWhileItLastsAndClearsOnOutput(t *testing.T) {
 	waitState(t, h, agents.TurnCompleted)
 }
 
+// A step that answers with a tool call alone emits no text.started (measured): the call itself is
+// the output that ends the retry, not the step's end, which a long tool would hold back.
+func TestRetryClearsOnAToolCall(t *testing.T) {
+	m, srv := newMockServe(t)
+	h := newTestHandle(t, srv)
+	registerTestHandle(t, h)
+	startBlocking(t, m, h)
+	handleServeEvent(retryStatus(2, "Service unavailable"))
+	handleServeEvent([]byte(`{"type":"session.tool.called","data":{"sessionID":"ses_test","id":"call_1"}}`))
+	if got := enriched(h); got != nil {
+		t.Fatalf("Retry = %+v after a tool call, want none", got)
+	}
+	endTurn(m)
+	waitState(t, h, agents.TurnCompleted)
+}
+
 func TestRetryClearsWhenTheTurnEnds(t *testing.T) {
 	m, srv := newMockServe(t)
 	h := newTestHandle(t, srv)

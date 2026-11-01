@@ -1225,19 +1225,19 @@ func handleServeEvent(data []byte) {
 	var ev struct {
 		Type string `json:"type"`
 		// /api/event carries the body in "data" (measured 2.0.28).
-		Properties json.RawMessage `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
 	if json.Unmarshal(data, &ev) != nil {
 		return
 	}
-	noteProgress(ev.Type, ev.Properties)
+	noteProgress(ev.Type, ev.Data)
 	switch ev.Type {
 	case "form.created":
 		// The question tool asks through a form (v2form.go).
 		var p struct {
 			Form v2Form `json:"form"`
 		}
-		if json.Unmarshal(ev.Properties, &p) != nil || p.Form.ID == "" {
+		if json.Unmarshal(ev.Data, &p) != nil || p.Form.ID == "" {
 			return
 		}
 		if h := handleBySes(p.Form.SessionID); h != nil {
@@ -1248,7 +1248,7 @@ func handleServeEvent(data []byte) {
 			ID        string `json:"id"`
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
+		if json.Unmarshal(ev.Data, &p) != nil {
 			return
 		}
 		if h := handleBySes(p.SessionID); h != nil {
@@ -1263,18 +1263,19 @@ func handleServeEvent(data []byte) {
 			At        int64  `json:"at"`
 			Error     v2Err  `json:"error"`
 		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
+		if json.Unmarshal(ev.Data, &p) != nil {
 			return
 		}
 		if h := handleBySes(p.SessionID); h != nil {
 			h.noteRetry(p.Attempt, p.Error.Message, p.At)
 		}
-	case "session.text.started", "session.step.ended":
-		// The retried call produced output (a failing attempt emits none, measured).
+	case "session.text.started", "session.tool.called", "session.step.ended":
+		// The retried call produced output: text, or a tool call for a step that answers with one
+		// alone (it emits no text.started, measured). A failing attempt emits none of these.
 		var p struct {
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
+		if json.Unmarshal(ev.Data, &p) != nil {
 			return
 		}
 		if h := handleBySes(p.SessionID); h != nil {
@@ -1286,7 +1287,7 @@ func handleServeEvent(data []byte) {
 		var p struct {
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(ev.Properties, &p) == nil {
+		if json.Unmarshal(ev.Data, &p) == nil {
 			if h := handleBySes(p.SessionID); h != nil {
 				h.setCompacting(true)
 			}
@@ -1295,7 +1296,7 @@ func handleServeEvent(data []byte) {
 		var p struct {
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(ev.Properties, &p) == nil {
+		if json.Unmarshal(ev.Data, &p) == nil {
 			if h := handleBySes(p.SessionID); h != nil {
 				h.setCompacting(false)
 			}
@@ -1306,7 +1307,7 @@ func handleServeEvent(data []byte) {
 		var p struct {
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(ev.Properties, &p) != nil || p.SessionID == "" {
+		if json.Unmarshal(ev.Data, &p) != nil || p.SessionID == "" {
 			return
 		}
 		wakeExec(p.SessionID)
@@ -1321,7 +1322,7 @@ func handleServeEvent(data []byte) {
 			RequestID string `json:"requestID"` // v2 may name it so (the spec's path parameter)
 			SessionID string `json:"sessionID"`
 		}
-		if json.Unmarshal(ev.Properties, &p) != nil {
+		if json.Unmarshal(ev.Data, &p) != nil {
 			return
 		}
 		if p.ID == "" {

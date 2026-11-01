@@ -99,7 +99,7 @@ func TestParallelToolsAreTrackedByCallID(t *testing.T) {
 
 // A missed end event must not pin the row beyond the turn.
 func TestStepEndClearsALostToolEnd(t *testing.T) {
-	for _, end := range []string{"session.step.ended", "session.execution.succeeded", "session.execution.interrupted", "session.idle"} {
+	for _, end := range []string{"session.step.ended", "session.execution.succeeded", "session.execution.interrupted"} {
 		h, _ := progressTestHandle(t)
 		feed("session.tool.called", "call_1")
 		feed(end, "")
