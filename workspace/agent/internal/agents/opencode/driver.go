@@ -462,8 +462,7 @@ type threadHandle struct {
 	q        *agents.TurnQueue
 	settings agents.ThreadSettings
 	inter    *agents.Interaction // pending question (the payload of waiting_interaction)
-	// forms: every form a v2 session waits on, oldest first; inter is forms[0] (v2form.go). v1 asks
-	// one question at a time and leaves it nil.
+	// forms: every form the session waits on, oldest first; inter is forms[0] (v2form.go).
 	forms []*agents.Interaction
 	// compacting: serve said a compaction summary is being written for this session (an
 	// in-flight compaction message.updated). Only half of the "compacting" state — the store

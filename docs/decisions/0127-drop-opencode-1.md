@@ -35,7 +35,8 @@ probe takes the 1.x branch on an image that has no 1.x.
 
 The `opencode` kind supports opencode 2 only. The code paths for 1.x are removed. An opencode whose major is
 not 2 or later is refused at launch with an error that names the version found, instead of being driven
-through a 1.x path.
+through a 1.x path. An opencode whose major cannot be read (a wrapped binary without its package manifest,
+and no image pin) is let through: refusing it would also refuse a wrapped opencode 2.
 
 ### 2. A rollback is an earlier 2.x pin
 

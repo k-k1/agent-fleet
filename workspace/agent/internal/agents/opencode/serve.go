@@ -5,23 +5,19 @@ package opencode
 // runtime for managed sessions. Its only responsibility is the PROCESS LIFETIME — what a
 // thread (an opencode session) is made to do belongs to driver.go's ThreadHandle.
 //
-// Measured (1.17.18, docs/log/27 §12.2):
+// Measured (opencode 2, docs/log/27 has the opencode 1 history):
 //   - Auth: every request carries Basic auth (user `opencode`). A new daemon starts with a
-//     random per-generation OPENCODE_SERVER_PASSWORD that both majors read (measured on
-//     1.19.0 and 2.0.28: 401 without it, SSE included); serveapi.go's transport adds it to
-//     every client, and the file it is kept in lets a restarted Agent adopt the daemon. On v1
-//     the TUI route never attaches to this daemon (buildProgram opens its own store). On v2
-//     Terminal sessions do (shared.go): their TUIs read the password from the pane
-//     environment, so a v2 daemon keeps ONE password across generations, because a TUI whose
-//     server restarted reconnects only with the password it started with. The password is not
-//     a boundary against the agent itself: the serve process environment and the file are
-//     readable by the same uid.
-//   - Major version: the pin is v1, but a probe also recognises v2 and the driver then
-//     routes to /api/* (serveapi.go holds the table and the measured differences).
+//     random OPENCODE_SERVER_PASSWORD (measured on 2.0.28: 401 without it, SSE included);
+//     serveapi.go's transport adds it to every client, and the file it is kept in lets a
+//     restarted Agent adopt the daemon. Terminal sessions attach to this daemon too (shared.go):
+//     their TUIs read the password from the pane environment, so the daemon keeps ONE password
+//     across generations, because a TUI whose server restarted reconnects only with the
+//     password it started with. The password is not a boundary against the agent itself: the
+//     serve process environment and the file are readable by the same uid.
 //   - Provider keys are env-injected (auth.go's env()), so a key change requires a
 //     restart: generation + drain (§7) IS the path that applies it.
-//   - serve writes to SQLite (message/part) through the v1 flow, so the read layer
-//     (transcript.go) can read the canonical record of a managed session untouched.
+//   - The read layer goes through the daemon's API (v2state.go), and reads opencode.db only
+//     when the daemon is gone (v2store.go).
 //
 // Exit recording (docs/log/26, §10.2-2): the daemon is the supervisor's child process, so
 // cmd.Wait()'s wait status is available directly. An unexpected death goes (a) to the log
@@ -62,9 +58,9 @@ const sharedServeEnv = "AF_OPENCODE_SHARED_SERVE"
 // container.
 const defaultServeAddr = "http://127.0.0.1:7799"
 
-// serveClient is the short-timeout HTTP client for the control calls
-// (create/abort/question/status). Only the blocking /message (running a turn, no time
-// limit) uses a client of its own, in driver.go.
+// serveClient is the short-timeout HTTP client for the control calls (create, interrupt,
+// forms, active list). Only the prompt (turnClient, no time limit) uses a client of its own,
+// in driver.go.
 var serveClient = &http.Client{Timeout: 10 * time.Second, Transport: authTransport{}}
 
 // Supervisor owns the shared `opencode serve` daemon: idempotent start, health,
@@ -92,10 +88,8 @@ var supervisor = &Supervisor{}
 
 // dependents is the total number of things that need the shared daemon.
 //
-// On v1 the TUI route does not use serve (buildProgram connects directly to its own SQLite
-// store), so only managed handles are counted. On v2 every live Terminal pane is a dependent
-// as well (sharedTerminals): its TUI is attached to this daemon, and the idle stop must not
-// pull it out from under it. The OAuth device flow is the one more exception: it is the only
+// Managed handles count, and so does every live Terminal pane attached to this daemon
+// (sharedTerminals): the idle stop must not pull the server out from under its TUI. The OAuth device flow is the one more exception: it is the only
 // path that starts the daemon while still unconnected, so unless it counts as demand for its
 // duration, the daemon gets folded up from under a login in progress.
 //
@@ -259,8 +253,8 @@ func (s *Supervisor) Generation() int {
 // after a successful Ensure).
 func (s *Supervisor) Addr() string { return serveAddr() }
 
-// healthy is a cheap liveness probe of either major (serveapi.go): a JSON answer that names
-// the server, not a status code, because the other major's paths answer 200 with HTML.
+// healthy is a cheap liveness probe (serveapi.go): a JSON answer that names an opencode 2
+// server, not a status code, because paths it does not serve answer 200 with HTML.
 func healthy(addr string) bool { return probeServe(addr) }
 
 // ErrNotConnected: opencode is not connected (no key, no Console login, no explicit
@@ -741,11 +735,8 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 
 // --- SSE event monitor ------------------------------------------------------
 
-// monitorEvents subscribes to the serve's cross-project SSE stream (GET /global/event, /api/event on v2)
-// and dispatches to the thread handles. Measured: a bare /event is scoped to the project
-// of serve's own cwd, so a question.asked from a session in another directory never
-// arrives; /global/event wraps each event in {"payload": {...}} and delivers all projects.
-// Unlike codex, no attach is needed. A disconnect while the generation is still current
+// monitorEvents subscribes to the serve's SSE stream (GET /api/event, every project) and
+// dispatches to the thread handles. Unlike codex, no attach is needed. A disconnect while the generation is still current
 // means the daemon is gone or wedged: verify via health and reconcile.
 func (s *Supervisor) monitorEvents(addr string, gen int) {
 	for {

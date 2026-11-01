@@ -85,8 +85,9 @@ type mockServe struct {
 	clientIDs []string // messageIDs received (must stay empty - serve assigns them)
 	busy      bool
 	turnGate  chan struct{} // closed to end the running turn (a test may close it directly)
-	// interruptedGate is the gate an interrupt closed: that turn ends "interrupted", while a
-	// gate a test closes directly ends the turn the way it would have ended anyway.
+	// interruptedGate is the gate of the turn an interrupt was accepted for: that turn ends
+	// "interrupted", while a gate a test closes on its own ends the turn the way it would have
+	// ended anyway.
 	interruptedGate chan struct{}
 	turnDelay       time.Duration
 	// holdAbort answers the interrupt without releasing the turn, so a test can read the queue
@@ -215,12 +216,16 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 		}
 		m.mu.Lock()
 		m.aborts++
-		if m.turnGate != nil && !m.holdAbort {
-			select {
-			case <-m.turnGate:
-			default:
-				m.interruptedGate = m.turnGate
-				close(m.turnGate)
+		if m.turnGate != nil {
+			// An accepted interrupt ends the turn "interrupted" even when holdAbort delays the
+			// end and the test closes the gate later.
+			m.interruptedGate = m.turnGate
+			if !m.holdAbort {
+				select {
+				case <-m.turnGate:
+				default:
+					close(m.turnGate)
+				}
 			}
 		}
 		m.mu.Unlock()
@@ -237,8 +242,8 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
 	t.Setenv("HOME", t.TempDir()) // isolate where status.Persist writes
 	// Give every test its own sid. A turn runs in the pump goroutine and does not stop when
-	// the test returns (TestQuestionFlow and TestRespondRejectOnCancel return with a
-	// turnDelay=2s turn still running), so with a fixed sid the previous test's turn ends
+	// the test returns (a test may return with a turn still running), so with a fixed sid the
+	// previous test's turn ends
 	// inside a later one and feeds a transition for the same sid into the process-wide state
 	// notification seam (agents.SetStateNotifier). Measured: under load
 	// TestManagedTurnNotifiesCompletion fails with `transition = [sid-test idle idle]` or
@@ -250,8 +255,8 @@ func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
 	}
 	// The isolation above only holds if we wait. When a test returns with a turn still
 	// running, the pump's MarkTurnEnd → status.Persist runs AFTER HOME is restored and writes
-	// to the real `~/.config/agent-fleet` (measured: `sid-TestQuestionFlow.json` and
-	// `sid-TestRespondRejectOnCancel.json` were left in the user's session-status/).
+	// to the real `~/.config/agent-fleet` (measured: session-status files of such tests were
+	// left in the user's session-status/).
 	// t.Cleanup is LIFO, so this wait, pushed after t.Setenv, runs before HOME is restored
 	// (pushed before, it would run after - too late). The mock server's Close was pushed
 	// earlier still in newMockServe, so it is alive while we wait.
