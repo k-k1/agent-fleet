@@ -9,9 +9,10 @@ package opencode
 // transcript is read from the store, read-only, and run through the same v2Turns as the API's
 // answer: session_message.data is the API's message without its id and type, which are columns.
 //
-// This leans on a private schema, which is why it is the fallback and not the default: a live
-// daemon is always asked first. Anything the store cannot answer (the form list, the inbox, the
-// running set) degrades to "nothing" because those only exist while a daemon runs.
+// The same store reader serves a --standalone Terminal session, whose private server af cannot
+// reach (v2TargetFor). This leans on a private schema, which is why it is not the default where a
+// daemon can answer. Anything the store cannot answer (the form list, the inbox, the running set)
+// degrades to "nothing" because those only exist on a running server.
 
 import (
 	"database/sql"
@@ -25,29 +26,6 @@ import (
 )
 
 var errV2Offline = errors.New("opencode api: reading from the store, no daemon")
-
-// v2Served reports whether conversations of this workspace live in the v2 store. A daemon the
-// Agent has seen answer says so. Before that (the Agent has just restarted and nothing has started
-// a daemon yet) the database does: a database opencode 2 has not migrated yet still holds its
-// history in the 1.x tables, and only the first opencode 2 start moves it.
-func v2Served() bool { return serveSeen.Load() || storeIsV2() }
-
-// storeIsV2: opencode 2 has opened the database and its history import is over. The tables alone
-// do not say so: an import that stopped half way leaves a v2 schema beside the v1 rows, and those
-// conversations are still read from the v1 tables until a v2 start finishes the job.
-func storeIsV2() bool {
-	path := dbPath()
-	db, ok := openRODB(path)
-	if !ok {
-		return false
-	}
-	defer db.Close()
-	var n int
-	if db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_v2'`).Scan(&n) != nil || n == 0 {
-		return false
-	}
-	return !needsMigration(path)
-}
 
 // daemonGone: err is a failure to reach the daemon, or a connection cut while its answer was being
 // read, and not an answer from it. A refusal (statusError) and a body that arrives whole and does

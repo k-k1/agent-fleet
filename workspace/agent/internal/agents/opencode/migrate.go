@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -108,6 +109,24 @@ func needsMigration(path string) bool {
 		return true
 	}
 	return n > 0
+}
+
+// MigrateInBackground imports a database that still holds 1.x data, off the boot path. History
+// is read from the opencode 2 tables only, so a home whose last opencode was 1.x shows none of
+// its conversations until an opencode 2 process has opened the database; doing it at Agent start
+// instead of at the first launch is what keeps that window to the import itself. A database with
+// nothing to import, no opencode on PATH or an opencode af refuses starts nothing.
+func MigrateInBackground() {
+	if !Available() || checkSupported() != nil || !needsMigration(dbPath()) {
+		return
+	}
+	go func() {
+		if err := EnsureMigrated(CurrentLaunch()); err != nil {
+			log.Printf("opencode: importing the 1.x database at start: %v (the next opencode start retries)", err)
+			return
+		}
+		log.Printf("opencode: imported the 1.x database")
+	}()
 }
 
 // PrepareStart is the gate every opencode process af starts passes first: it refuses an opencode

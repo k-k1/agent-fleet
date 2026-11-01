@@ -34,7 +34,7 @@ func TestContractTerminalFormRespond(t *testing.T) {
 	v2ActiveTTL = 0
 	t.Cleanup(func() { v2ActiveTTL = 500 * time.Millisecond })
 	prev := v2TargetFor
-	v2TargetFor = func(session.Meta) (apiTarget, bool) { return api, true }
+	v2TargetFor = func(session.Meta) apiTarget { return api }
 	t.Cleanup(func() { v2TargetFor = prev })
 
 	run := func(name, prompt string, reply func(id string) agents.InteractionReply, wantTurnText string) {

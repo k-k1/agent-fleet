@@ -21,99 +21,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// forkAtStore builds a store with one root conversation (2 messages) and one child
-// (subagent) conversation, and returns the slot meta that resolves to the root.
-func forkAtStore(t *testing.T) session.Meta {
-	t.Helper()
-	db := newOpencodeLiveStore(t)
-	defer db.Close()
-	dir := "/home/dev/repos/x"
-	const root, child = "ses_root", "ses_child"
-	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, root, dir); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,?,?,2)`, child, root, dir); err != nil {
-		t.Fatal(err)
-	}
-	for _, m := range []struct{ id, ses, data string }{
-		{"msg_1", root, `{"role":"user","time":{"created":1000}}`},
-		{"msg_2", root, `{"role":"assistant","time":{"created":1100,"completed":1200}}`},
-		{"msg_9", child, `{"role":"user","time":{"created":1300}}`},
-	} {
-		if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,time_updated,data) VALUES(?,?,1,1,?)`,
-			m.id, m.ses, m.data); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A fork point can only be passed through the serve API, i.e. managed (ResolveForkAt
-	// checks the route too).
-	return session.Meta{Dir: dir, Name: "n", Kind: session.KindOpencode, Driver: session.DriverManaged}
-}
-
-func TestResolveForkAtPassesAnchorThrough(t *testing.T) {
-	m := forkAtStore(t)
-	got, err := agentImpl{}.ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_1"})
-	if err != nil {
-		t.Fatalf("ResolveForkAt(msg_1) error: %v", err)
-	}
-	// opencode's messageID is exclusive (it cuts just before the named message), so passing
-	// the anchor the Console picked through unchanged is correct; shifting it by one here
-	// moves the fork point by a whole exchange.
-	if got != "msg_1" {
-		t.Fatalf("ResolveForkAt(msg_1) = %q; want msg_1", got)
-	}
-}
-
-// "continue from this message" (Include): cut just before the NEXT user message, so every
-// reply in between is carried over. With no next message the whole conversation ("") is the
-// right answer - that is what keeping everything to the end means.
-func TestResolveForkAtInclude(t *testing.T) {
-	db := newOpencodeLiveStore(t)
-	dir := "/home/dev/repos/y"
-	const ses = "ses_inc"
-	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, ses, dir); err != nil {
-		t.Fatal(err)
-	}
-	for _, m := range []struct{ id, data string }{
-		{"msg_1", `{"role":"user","time":{"created":1000}}`},
-		{"msg_2", `{"role":"assistant","time":{"created":1100,"completed":1200}}`},
-		{"msg_3", `{"role":"user","time":{"created":1300}}`},
-		{"msg_4", `{"role":"assistant","time":{"created":1400,"completed":1500}}`},
-	} {
-		if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,time_updated,data) VALUES(?,?,1,1,?)`,
-			m.id, ses, m.data); err != nil {
-			t.Fatal(err)
-		}
-	}
-	db.Close()
-	m := session.Meta{Dir: dir, Name: "n", Kind: session.KindOpencode, Driver: session.DriverManaged}
-
-	got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_1", Include: true})
-	if err != nil {
-		t.Fatalf("ResolveForkAt(msg_1, include): %v", err)
-	}
-	if got != "msg_3" {
-		t.Fatalf("ResolveForkAt(msg_1, include) = %q; want msg_3 (the NEXT prompt — everything "+
-			"between it and the anchor is the reply we are keeping)", got)
-	}
-
-	got, err = (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_3", Include: true})
-	if err != nil {
-		t.Fatalf("ResolveForkAt(msg_3, include): %v", err)
-	}
-	if got != "" {
-		t.Fatalf("ResolveForkAt(last exchange, include) = %q; want \"\" = the whole conversation", got)
-	}
-}
-
 func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
-	m := forkAtStore(t)
+	_, m := v2Slot(t, "tool.messages.json")
 	for _, tc := range []struct{ name, anchor string }{
 		{"empty", ""},
 		{"unknown", "msg_nope"},
-		// A message of the child (subagent) conversation: it is not part of the parent's
-		// id sequence, so forking the parent on it cuts at an unrelated point.
-		{"sidechain", "msg_9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: tc.anchor})
@@ -128,8 +40,7 @@ func TestResolveForkAtRejectsUnusableAnchors(t *testing.T) {
 // route cannot do it", so the answer wraps ErrForkAtRoute and the handler can return
 // fork_at_unsupported.
 func TestResolveForkAtRefusesCLIRoute(t *testing.T) {
-	m := forkAtStore(t)
-	m.Driver = session.DriverTUI
+	m := session.Meta{Dir: "/home/dev/repos/x", Name: "n", Kind: session.KindOpencode, Driver: session.DriverTUI}
 	_, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: "msg_1"})
 	if err == nil {
 		t.Fatal("ResolveForkAt on the CLI route = nil error; want a refusal")

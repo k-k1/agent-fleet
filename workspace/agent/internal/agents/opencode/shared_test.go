@@ -52,10 +52,9 @@ func newSharedDaemon(t *testing.T) *sharedDaemon {
 	t.Setenv(serveAddrEnv, d.srv.URL)
 	t.Setenv(standaloneEnv, "")
 	resetServeAuth("pw-shared")
-	serveSeen.Store(true)
 	old := ensureServe
 	ensureServe = func() (string, int, error) { return d.srv.URL, 1, nil }
-	t.Cleanup(func() { ensureServe = old; serveSeen.Store(false); resetServeAuth("") })
+	t.Cleanup(func() { ensureServe = old; resetServeAuth("") })
 	return d
 }
 
@@ -545,7 +544,7 @@ func TestAFallbackPaneStaysStandaloneWhileTheServeRecovers(t *testing.T) {
 	if sharedSlot(m) {
 		t.Error("a fallen-back pane is not a shared slot")
 	}
-	if _, ok := v2TargetFor(m); ok {
+	if !v2TargetFor(m).offline {
 		t.Error("its state is not on the shared serve")
 	}
 	supervisor.mu.Lock()
@@ -648,13 +647,13 @@ func TestV2TargetForTerminalFollowsTheLaunchMode(t *testing.T) {
 	m := terminalMeta(t, "reader")
 	markSlotMode(session.UUID(m.Dir, m.Name), modeShared)
 	t.Cleanup(func() { slotModes.Remove(session.UUID(m.Dir, m.Name)) })
-	if _, ok := v2TargetFor(m); !ok {
+	if v2TargetFor(m).offline {
 		t.Error("a shared Terminal slot must be read through the API")
 	}
 	// The switch is for the next launch: this pane is still on the serve, so its state still comes
 	// from there, and the daemon keeps its shared password and plugin mode while it has such panes.
 	t.Setenv(standaloneEnv, "1")
-	if _, ok := v2TargetFor(m); !ok {
+	if v2TargetFor(m).offline {
 		t.Error("flipping the switch must not move a running shared pane's reads to SQLite")
 	}
 	if !sharedSlot(m) {
@@ -670,8 +669,8 @@ func TestV2TargetForTerminalFollowsTheLaunchMode(t *testing.T) {
 	}
 	// An unrecorded (pre-existing standalone) slot is read from SQLite.
 	slotModes.Remove(session.UUID(m.Dir, m.Name))
-	if _, ok := v2TargetFor(m); ok {
-		t.Error("standalone slot keeps the SQLite reader")
+	if !v2TargetFor(m).offline {
+		t.Error("a standalone slot is read from the store")
 	}
 }
 

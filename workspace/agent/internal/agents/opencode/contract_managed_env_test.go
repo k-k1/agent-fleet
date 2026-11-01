@@ -89,8 +89,7 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 
 	addr := "http://127.0.0.1:" + freePort(t)
 	t.Setenv(serveAddrEnv, addr)
-	serveSeen.Store(false)
-	t.Cleanup(func() { Serve().Shutdown(); serveSeen.Store(false); resetServeAuth("") })
+	t.Cleanup(func() { Serve().Shutdown(); resetServeAuth("") })
 
 	work := t.TempDir()
 	start := func(name string) *threadHandle {

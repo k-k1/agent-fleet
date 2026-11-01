@@ -180,8 +180,8 @@ func managedSession(addr string, m session.Meta, cwd, ocSid, ses string) (string
 		if err != nil {
 			return "", err
 		}
-		// The same per-slot mapping claude/codex use: the read layer's activeSession
-		// consults it first, and with no plugin in managed mode the driver is the writer.
+		// The same per-slot mapping claude/codex use: the read layer (v2Session) consults it
+		// first, and with no plugin in managed mode the driver is the writer.
 		sids.Write(ocSid, ses)
 	}
 	if err := tagManagedSession(addr, ses, m.Name); err != nil {
@@ -213,8 +213,8 @@ var _ agents.TerminalResponder = managedDriver{}
 // again before answering. A settled, forgotten or unknown form is errFormSettled, so an answer made
 // in the TUI at the same moment is never doubled. Anything not on the serve keeps keys.
 func (managedDriver) RespondTerminal(m session.Meta, reply agents.InteractionReply) error {
-	t, ok := v2TargetFor(m)
-	if !ok || m.DriverKind() != session.DriverTUI {
+	t := v2TargetFor(m)
+	if t.offline || m.DriverKind() != session.DriverTUI {
 		return agents.ErrTerminalRespond
 	}
 	// A write is aimed at the conversation af recorded for this slot, never at the directory guess
@@ -464,10 +464,10 @@ type threadHandle struct {
 	inter    *agents.Interaction // pending question (the payload of waiting_interaction)
 	// forms: every form the session waits on, oldest first; inter is forms[0] (v2form.go).
 	forms []*agents.Interaction
-	// compacting: serve said a compaction summary is being written for this session (an
-	// in-flight compaction message.updated). Only half of the "compacting" state — the store
-	// has to agree (sessionCompacting) — and cleared by every terminal turn state, a stop, the
-	// daemon going away and teardown, so a missed end event cannot keep it on.
+	// compacting: serve said a compaction summary is being written for this session
+	// (session.compaction.started, or the opencode 1 message.updated). Cleared by every terminal
+	// turn state, a stop, the daemon going away and teardown, so a missed end event cannot keep it
+	// on.
 	compacting bool
 	// retry: the runtime is retrying a failing provider call (retry.go). Cleared by output, by
 	// every terminal turn state and by teardown. retryFailed is the retry that ended the last

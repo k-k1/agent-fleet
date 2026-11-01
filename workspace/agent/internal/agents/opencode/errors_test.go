@@ -139,7 +139,7 @@ func TestReadSessionKeepsFailedTurnWithErrorPart(t *testing.T) {
 	insMsg(t, db, "m2", ses, 1100, `{"role":"assistant","modelID":"deepseek-v4-pro","time":{"created":1100},`+
 		`"error":{"name":"APIError","data":{"statusCode":401,"message":"Insufficient balance."}}}`)
 
-	turns := readSession(db, ses)
+	turns := renderSession(t, db, ses)
 	if len(turns) != 2 {
 		t.Fatalf("turns = %d, want 2 (the failed assistant turn must not be dropped)", len(turns))
 	}
@@ -167,7 +167,7 @@ func TestReadSessionAppendsErrorAfterPartialOutput(t *testing.T) {
 		`"error":{"name":"APIError","data":{"statusCode":429,"message":"Rate limited."}}}`)
 	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"調べます"}`)
 
-	turns := readSession(db, ses)
+	turns := renderSession(t, db, ses)
 	if len(turns) != 1 || len(turns[0].Parts) != 2 {
 		t.Fatalf("turns = %+v", turns)
 	}

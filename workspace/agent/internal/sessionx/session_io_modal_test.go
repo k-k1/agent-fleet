@@ -63,8 +63,9 @@ esac
 
 // The gate refuses free text while each kind's modal is up and lets it through once the modal
 // is gone, reading the modal from wherever the kind keeps it. The fixtures are in the shapes
-// measured for #1227 (codex 0.159.0, opencode 1.18.33, cursor 2026.09.28), where a pasted line
-// + Enter answered the first option, approved the command, or built the plan.
+// measured for #1227 (codex 0.159.0, cursor 2026.09.28), where a pasted line + Enter answered the
+// first option, approved the command, or built the plan. opencode's question modal comes from its
+// daemon's form list (agents/opencode TestTerminalModalReadsAFormOnTheSharedServe).
 func TestPromptBlockerReadsEachTerminalKindsModal(t *testing.T) {
 	asked := time.Date(2026, 9, 30, 2, 25, 47, 0, time.UTC)
 	before, after := asked.Add(-time.Minute), asked.Add(time.Minute)
@@ -88,24 +89,6 @@ func TestPromptBlockerReadsEachTerminalKindsModal(t *testing.T) {
 			`{"timestamp":"2026-09-30T02:26:08.190Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"t1","reason":"interrupted"}}`)...)
 		fakeModalTmux(t, before, "")
 		wantBlocker(t, m.Name, "", "the question interrupted with Esc")
-	})
-
-	t.Run("opencode", func(t *testing.T) {
-		isolateAgentConfigDirs(t)
-		m := writeModalMeta(t, "gate_opencode", session.KindOpencode)
-		db := opencodeStore(t)
-		agents.NewSidStore("opencode-sid").Write(session.UUID(m.Dir, m.Name), "ses_q")
-		mustExec(t, db, `INSERT INTO session(id,parent_id,directory,time_created) VALUES('ses_q',NULL,?,1)`, m.Dir)
-		mustExec(t, db, `INSERT INTO message VALUES('m1','ses_q',?,?,'{"role":"assistant","time":{"created":1}}')`, asked.UnixMilli()-1, asked.UnixMilli()-1)
-		mustExec(t, db, `INSERT INTO part VALUES('p1','m1','ses_q',?,'{"type":"tool","tool":"question","state":{"status":"running","input":{"questions":[{"question":"Which animal?"}]}}}')`, asked.UnixMilli())
-		fakeModalTmux(t, before, "")
-		wantBlocker(t, m.Name, "question", "the question tool")
-		fakeModalTmux(t, after, "")
-		wantBlocker(t, m.Name, "", "a question left running by a SIGKILLed process")
-		mustExec(t, db, `UPDATE message SET data='{"role":"assistant","time":{"created":1,"completed":2}}'`)
-		mustExec(t, db, `UPDATE part SET data='{"type":"tool","tool":"question","state":{"status":"error","error":"The user dismissed this question"}}'`)
-		fakeModalTmux(t, before, "")
-		wantBlocker(t, m.Name, "", "the question dismissed with Esc")
 	})
 
 	t.Run("cursor", func(t *testing.T) {
@@ -233,28 +216,6 @@ func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
 	if _, err := db.Exec(q, args...); err != nil {
 		t.Fatalf("%s: %v", q, err)
 	}
-}
-
-// opencodeStore creates the store where opencode keeps it, with the columns the readers use.
-func opencodeStore(t *testing.T) *sql.DB {
-	t.Helper()
-	dir := filepath.Join(paths.HomeDir(), ".local", "share", "opencode")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.Join(dir, "opencode.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	for _, s := range []string{
-		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`,
-		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)`,
-		`CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, time_created INTEGER, time_compacting INTEGER)`,
-	} {
-		mustExec(t, db, s)
-	}
-	return db
 }
 
 // agyConversation creates agy's conversation DB with the columns its probe reads.

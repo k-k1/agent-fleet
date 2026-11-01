@@ -16,7 +16,7 @@ func TestOpencodeGeneratedImageBecomesAUserFilePart(t *testing.T) {
 		`{"type":"tool","tool":"pictures_generate_image","state":{"status":"completed","input":{},`+
 			`"output":"{\"files\":[{\"path\":\"/tmp/other.png\"}]}"}}`)
 
-	turns := readSession(db, ses)
+	turns := renderSession(t, db, ses)
 	if len(turns) != 1 {
 		t.Fatalf("turns = %+v, want one", turns)
 	}
@@ -41,7 +41,7 @@ func TestOpencodeGeneratedImageFailureShowsNoCard(t *testing.T) {
 		`{"type":"tool","tool":"af_40ed9852_generate_image","state":{"status":"completed","input":{"prompt":"x"},`+
 			`"output":"画像を生成できませんでした: codex is not logged in"}}`)
 
-	for _, p := range readSession(db, ses)[0].Parts {
+	for _, p := range renderSession(t, db, ses)[0].Parts {
 		if p.Kind == "userfile" {
 			t.Fatalf("a failed generation produced a picture card: %+v", p)
 		}

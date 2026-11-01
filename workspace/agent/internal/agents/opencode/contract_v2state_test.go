@@ -164,8 +164,7 @@ func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider,
 	if err != nil {
 		t.Fatal(err)
 	}
-	serveSeen.Store(false)
-	t.Cleanup(func() { serveSeen.Store(false); resetServeAuth("") })
+	t.Cleanup(func() { resetServeAuth("") })
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", port)
 	cmd.Env = append(envWithHome(home), "OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	cmd.Dir = home
@@ -177,9 +176,6 @@ func startStubbedV2With(t *testing.T, extra map[string]any) (stub *stubProvider,
 		if time.Now().After(deadline) {
 			t.Fatal("serve never became healthy")
 		}
-	}
-	if !serveSeen.Load() {
-		t.Fatal("the probe did not record the daemon")
 	}
 	// Warm the instance up: the first request for a directory boots plugins, which outlasts serveClient.
 	dir = t.TempDir()

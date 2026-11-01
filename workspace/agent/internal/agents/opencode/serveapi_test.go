@@ -40,8 +40,7 @@ func newFakeServe(t *testing.T, major int, password string) *fakeServe {
 	t.Setenv(serveAddrEnv, f.srv.URL)
 	t.Setenv("HOME", t.TempDir())
 	resetServeAuth(password)
-	serveSeen.Store(false)
-	t.Cleanup(func() { serveSeen.Store(false); resetServeAuth("") })
+	t.Cleanup(func() { resetServeAuth("") })
 	return f
 }
 
@@ -110,15 +109,12 @@ func (f *fakeServe) saw(method, prefix string) (string, bool) {
 // HTML) is not a daemon af can drive.
 func TestProbeAcceptsOnlyOpencode2(t *testing.T) {
 	f := newFakeServe(t, 1, "pw")
-	if healthy(f.srv.URL) || serveSeen.Load() {
+	if healthy(f.srv.URL) {
 		t.Fatal("an opencode 1 daemon was accepted")
 	}
 	f = newFakeServe(t, 2, "pw")
 	if !healthy(f.srv.URL) {
 		t.Fatal("v2 daemon reported unhealthy")
-	}
-	if !serveSeen.Load() {
-		t.Fatal("a healthy probe did not record the daemon")
 	}
 }
 
