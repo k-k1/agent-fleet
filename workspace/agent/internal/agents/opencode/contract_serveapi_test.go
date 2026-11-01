@@ -24,8 +24,7 @@ func TestContractServeAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serveSeen.Store(false)
-	t.Cleanup(func() { serveSeen.Store(false); resetServeAuth("") })
+	t.Cleanup(func() { resetServeAuth("") })
 
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", port)
 	cmd.Env = append(envWithHome(home), "OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
@@ -41,10 +40,6 @@ func TestContractServeAPI(t *testing.T) {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	if !serveSeen.Load() {
-		t.Fatalf("a healthy probe did not record the daemon (binary %s)", opencodeVersion(t))
-	}
-
 	// Every API request needs the password. (Paths it does not serve answer the web UI's static
 	// HTML without auth, so only its own routes are asserted.)
 	for _, p := range []string{"/api/info", "/api/event", "/api/session/active"} {

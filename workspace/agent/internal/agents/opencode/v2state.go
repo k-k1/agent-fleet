@@ -1,12 +1,11 @@
 package opencode
 
-// Session state on opencode 2, read through the serve API instead of opencode.db.
+// Session state on opencode 2, read through the serve API.
 //
-// v2 migrates the v1 database in place and never writes the v1 tables (message, part,
-// session_input, todo) again; its own data lives in session_v2 / session_message /
-// session_inbox / session_pending. Reading those would tie us to a private schema upstream
-// says not to touch, so every read here goes through /api/*. The v1 SQLite path in
-// transcript.go stays the default and is untouched.
+// opencode 2 keeps its data in session_v2 / session_message / session_inbox / session_pending.
+// Reading those ties us to a private schema upstream says not to touch, so every read here goes
+// through /api/* while a daemon can answer; only a session whose server af cannot reach is read
+// from opencode.db (v2store.go).
 //
 // Measured on 2.0.28 against a stub OpenAI-compatible provider (testdata/v2/):
 //   - GET /api/session/{id}/message returns typed messages: user, assistant (a list of
@@ -74,19 +73,16 @@ type apiTarget struct {
 	offline bool
 }
 
-// v2TargetFor says where slot m's state is read from, or false when it is read from opencode.db.
-// A managed session is served by af's own supervised daemon (serveapi.go's client already adds
-// the Basic auth), and so is a Terminal one whose TUI is attached to it (sharedTUI). A
-// --standalone Terminal session keeps its state in the shared database file only, which is
-// still the v1 reader's path.
-var v2TargetFor = func(m session.Meta) (apiTarget, bool) {
-	if !v2Served() {
-		return apiTarget{}, false
-	}
+// v2TargetFor says where slot m's state is read from. A managed session is served by af's own
+// supervised daemon (serveapi.go's client already adds the Basic auth), and so is a Terminal one
+// whose TUI is attached to it (sharedTUI). A --standalone Terminal session runs on a private
+// server af cannot reach, so it is read from opencode.db (offline): its history is there, while
+// its running state and forms are not, and the readers answer "unknown" for those.
+var v2TargetFor = func(m session.Meta) apiTarget {
 	if m.DriverKind() == session.DriverManaged || sharedSlot(m) {
-		return apiTarget{Addr: serveAddr(), Client: serveClient}, true
+		return apiTarget{Addr: serveAddr(), Client: serveClient}
 	}
-	return apiTarget{}, false
+	return apiTarget{offline: true}
 }
 
 // statusError is a non-200 answer.
@@ -274,7 +270,7 @@ func sessionPath(ses string) string { return "/api/session/" + url.PathEscape(se
 
 // v2Session resolves the slot's opencode conversation: the id recorded for the slot (the driver
 // writes it on create), else the newest root conversation in its directory that this slot itself
-// can have opened (created after it, like activeSession on v1). nil when there is none yet.
+// can have opened (created after it). nil when there is none yet.
 func (t apiTarget) v2Session(m session.Meta) (*v2SessionInfo, error) {
 	if t.offline {
 		return storeSession(m)
@@ -391,10 +387,15 @@ func (t apiTarget) active() (map[string]bool, error) {
 	return m, err
 }
 
-// liveStateV2 is liveState on the API: working while the daemon lists the session as running,
+// liveStateV2 is LiveState: working while the daemon lists the session as running,
 // idle otherwise. "" (unknown, fall back to the status plugin) when the daemon cannot be asked —
-// the same refusal to claim idle from no information that LiveState documents.
+// the same refusal to claim idle from no information that LiveState documents. The store
+// (offline) says nothing about a running turn, not even that there is no conversation yet: a
+// standalone pane's conversation can be missing from it while its turn runs, so it is all "".
 func liveStateV2(t apiTarget, m session.Meta) string {
+	if t.offline {
+		return ""
+	}
 	info, err := t.v2Session(m)
 	if err != nil {
 		return ""
@@ -569,8 +570,8 @@ func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
 	return r
 }
 
-// resolveForkAtV2 validates a mirror anchor against the slot's own conversation exactly like the
-// v1 reader does: the anchor must be a message of THIS conversation, and "include" moves it to
+// resolveForkAtV2 validates a mirror anchor against the slot's own conversation: the anchor must
+// be a message of THIS conversation, and "include" moves it to
 // just before the next user message. source is the conversation it was resolved against, so the caller
 // can fork exactly that one (agents.ForkAtPinner).
 func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, source string, err error) {

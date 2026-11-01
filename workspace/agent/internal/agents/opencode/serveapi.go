@@ -33,7 +33,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -155,11 +154,6 @@ func sameServeHost(u *url.URL) bool {
 
 // --- health ---------------------------------------------------------------------
 
-// serveSeen is set once a probe has found an opencode 2 daemon answering. Before that (the Agent
-// has just restarted and nothing has started a daemon yet) the store decides where history is
-// read from (v2Served).
-var serveSeen atomic.Bool
-
 // healthyV2 accepts only a JSON /api/info that carries a version of major 2 or later.
 func healthyV2(addr string) bool {
 	body, ok := fetchJSON(addr + "/api/info")
@@ -192,13 +186,7 @@ func fetchJSON(u string) ([]byte, bool) {
 }
 
 // probeServe reports whether an opencode 2 daemon answers at addr.
-func probeServe(addr string) bool {
-	if healthyV2(addr) {
-		serveSeen.Store(true)
-		return true
-	}
-	return false
-}
+func probeServe(addr string) bool { return healthyV2(addr) }
 
 // --- route table ----------------------------------------------------------------
 

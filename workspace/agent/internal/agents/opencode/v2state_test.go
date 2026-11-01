@@ -738,22 +738,17 @@ func TestV2RunTurnLandsTheExplicitOutcome(t *testing.T) {
 	}
 }
 
-// The v1 reader stays the default: nothing is read from the API until a probe has seen a v2
-// daemon, and only for the route whose daemon is known (a Terminal pane's is not, yet).
-func TestV2TargetOnlyForAManagedSessionOnAV2Daemon(t *testing.T) {
+// A managed session is read through af's daemon; a Terminal session that is not on the shared
+// serve (--standalone) is read from the store, since its own server is private.
+func TestV2TargetFollowsTheRoute(t *testing.T) {
 	managed := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode, Driver: session.DriverManaged}
 	terminal := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode}
-	serveSeen.Store(false)
-	if _, ok := v2TargetFor(managed); ok {
-		t.Fatal("a v1 daemon is read through the v2 API")
-	}
 	f := newFakeServe(t, 2, "pw")
-	healthy(f.srv.URL)
-	if tg, ok := v2TargetFor(managed); !ok || tg.Addr != f.srv.URL {
-		t.Fatalf("managed on v2: %+v %v", tg, ok)
+	if tg := v2TargetFor(managed); tg.offline || tg.Addr != f.srv.URL {
+		t.Fatalf("managed: %+v", tg)
 	}
-	if _, ok := v2TargetFor(terminal); ok {
-		t.Fatal("a Terminal session was routed to af's daemon")
+	if tg := v2TargetFor(terminal); !tg.offline {
+		t.Fatalf("a standalone Terminal session was routed to af's daemon: %+v", tg)
 	}
 }
 
@@ -911,5 +906,33 @@ func TestV2TasksLatestCallWinsAndEmptyIsNil(t *testing.T) {
 	}
 	if v2Tasks(nil) != nil {
 		t.Fatal("no messages must give nil")
+	}
+}
+
+// With no handle (a Terminal slot on the shared serve) the newest compaction message says whether
+// a compaction runs, and only while the session is active.
+func TestV2CompactingWithoutAHandleReadsTheCompactionMessage(t *testing.T) {
+	d, m := v2Slot(t, "tool.messages.json")
+	base := append([]string(nil), d.messages["ses_a"]...)
+	set := func(status string, active bool) {
+		d.mu.Lock()
+		d.messages["ses_a"] = append(append([]string(nil), base...), `{"id":"msg_zzzz","type":"compaction","status":"`+status+`"}`)
+		d.active = nil
+		if active {
+			d.active = []string{"ses_a"}
+		}
+		d.mu.Unlock()
+	}
+	set("running", true)
+	if !isCompacting(m) {
+		t.Fatal("a running compaction of an active session is not compacting")
+	}
+	set("completed", true)
+	if isCompacting(m) {
+		t.Fatal("a finished compaction still reads as compacting")
+	}
+	set("running", false)
+	if isCompacting(m) {
+		t.Fatal("an inactive session reads as compacting")
 	}
 }

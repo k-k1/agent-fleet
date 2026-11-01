@@ -3,10 +3,8 @@ package opencode
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,34 +16,20 @@ import (
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in the CP
 )
 
-// opencode chat transcript. opencode keeps its conversation in a SQLite database
-// (~/.local/share/opencode/opencode.db, WAL mode) rather than a jsonl file: a `message`
-// row per turn (role + tokens + model in a JSON `data` blob) and `part` rows per message
-// (text / reasoning / tool / patch, ordered by time_created). We already capture this
-// slot's opencode session id (sids, "ses_…", written by the bundled plugin), so
-// we read that session's messages+parts read-only and normalize them into the SAME
-// transcript.Turn model the Console chat consumes for claude/codex. The generic /messages
-// handler windows the result (there's no line cursor — the store isn't append-only text).
-//
-// Shapes (verified against a real opencode.db):
-//   message.data = {role:"user"|"assistant", modelID, tokens:{input,output,cache:{read,write}}, time:{created}, path:{cwd}}
-//   part.data    = {type:"text"|"reasoning"|"tool"|"patch"|"step-start"|"step-finish", ...}
-//     text/reasoning: {text}          tool: {tool, state:{input:{command|file_path|…}}}
-//     patch: {files:[...]}            step-*: framing, dropped
-
-// This file is the v1 reader. A managed session served by an opencode 2 daemon is read through
-// the API instead (v2state.go): v2 never writes the tables below.
+// opencode chat transcript. The conversation is read through af's serve (v2state.go) or, for a
+// session whose server af cannot reach, from opencode's SQLite store (v2store.go), and normalized
+// into the SAME transcript.Turn model the Console chat consumes for claude/codex. This file holds
+// the entry points and the message/part rendering both readers share: opencode 2's messages are
+// rendered through the opencode 1 message/part shape (v2state.go builds it), so parseMessage below
+// is the one renderer.
 
 // dbPath is the shared SQLite store the opencode TUI sessions write.
 func dbPath() string {
 	return filepath.Join(paths.HomeDir(), ".local", "share", "opencode", "opencode.db")
 }
 
-// openRO opens the store read-only (WAL auto-detected; busy_timeout so a
-// concurrent opencode write can't wedge us). ok=false when the db is absent/unopenable.
-func openRO() (*sql.DB, bool) { return openRODB(dbPath()) }
-
-// openRODB is openRO on the store at p.
+// openRODB opens the store at p read-only (WAL auto-detected; busy_timeout so a concurrent
+// opencode write can't wedge us). ok=false when the db is absent/unopenable.
 func openRODB(p string) (*sql.DB, bool) {
 	if _, err := os.Stat(p); err != nil {
 		return nil, false
@@ -55,50 +39,6 @@ func openRODB(p string) (*sql.DB, bool) {
 		return nil, false
 	}
 	return db, true
-}
-
-// activeSession resolves the slot's CURRENT opencode conversation. Per-slot truth
-// first: the id the bundled plugin captured for THIS slot (it re-records on every
-// event, so runtime session switches track too — the same per-slot mapping claude and codex
-// use). When no mapping exists (plugin not firing), fall back to the store —
-// but ONLY to a root conversation created AFTER the slot itself, i.e. one this slot
-// must have opened. The previous unbounded by-dir lookup made a brand-new session
-// hijack (and resume) the dir's most recent OLD conversation — measured: brand-new slot
-// szyyh2f resumed a 9-day-old conversation in ~/repos/temp via --session.
-func activeSession(db *sql.DB, m session.Meta) string {
-	id, _ := activeSessionErr(db, m)
-	return id
-}
-
-// activeSessionErr is activeSession keeping the store error apart from "no conversation
-// yet" (sql.ErrNoRows → "", nil). Only LiveState needs the distinction: a real query
-// error means opencode's store contract moved under us (see LiveState), not that the
-// slot is idle. Other callers take activeSession and treat both as "no conversation".
-func activeSessionErr(db *sql.DB, m session.Meta) (string, error) {
-	if id := sids.Read(session.UUID(m.Dir, m.Name)); id != "" && sessionExists(db, id) {
-		return id, nil
-	}
-	var id string
-	err := db.QueryRow(
-		`SELECT s.id FROM session s JOIN message msg ON msg.session_id = s.id
-		 WHERE s.directory = ? AND (s.parent_id IS NULL OR s.parent_id = '')
-		   AND s.time_created >= ?
-		 GROUP BY s.id ORDER BY MAX(msg.time_created) DESC LIMIT 1`, m.Dir, metaCreatedMs(m),
-	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil // no conversation this slot opened — a normal, empty result
-	}
-	if err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
-// sessionExists guards a stale plugin mapping (a deleted/imported-away session id)
-// from shadowing the store-derived fallback.
-func sessionExists(db *sql.DB, id string) bool {
-	var n int
-	return db.QueryRow(`SELECT count(*) FROM session WHERE id = ?`, id).Scan(&n) == nil && n > 0
 }
 
 // metaCreatedMs is the slot's creation time as epoch millis (opencode's time unit).
@@ -115,245 +55,30 @@ func metaCreatedMs(m session.Meta) int64 {
 	return t.UnixMilli()
 }
 
-// LiveState derives opencode's working/idle/question state from the store (robust —
-// the status plugin's events are unreliable): a turn is in flight when the active
-// session's newest message isn't a completed assistant reply, and an in-flight turn
-// whose question tool is running is "question" — the same state claude raises, so the
-// sessions list question chip and desktop notifications light up for opencode too.
-// Returns "" when the state can't be derived (caller falls back to the plugin status
-// store): the db can't be read, OR the store answered but not in the shape we parse.
+// LiveState derives opencode's working/idle/question state from the conversation's reader
+// (v2state.go): working while af's serve lists the session as running, question while it waits on
+// a form, idle otherwise. Returns "" when the state can't be derived, and the caller falls back to
+// the plugin status store: the daemon can't be asked, or the session runs on a private
+// --standalone server af cannot reach.
 //
-// Why "" and not "idle" on a store error: opencode's schema is its own private,
-// unversioned contract and it does migrate (the store carries ~38 applied migrations,
-// and a v2 session_message store already exists alongside the v1 message/part one this
-// reads). Returning "idle" on a broken read would assert the *strongest* claim — the
-// turn is done — from the *least* information, and it fails silently: a schema change
-// would flip a live turn's state to waiting-for-input with no stop button, which is exactly the
-// claude false-idle bug (there, a TUI footer string moved). It can't self-heal either,
-// because a non-empty "idle" short-circuits driveState before the reverse-heal, and
-// claude's spinner probe doesn't match opencode's footer anyway. "" degrades to the
-// plugin status instead of guessing. Verified: renaming `message` turns a live
-// "working" into "" (fallback), not a silent "idle".
-func LiveState(m session.Meta) string {
-	if t, ok := v2TargetFor(m); ok {
-		return liveStateV2(t, m)
-	}
-	db, ok := openRO()
-	if !ok {
-		return ""
-	}
-	defer db.Close()
-	return liveState(db, m)
-}
+// Why "" and not "idle" on a failed read: "idle" asserts the *strongest* claim — the turn is done
+// — from the *least* information, and it fails silently: a live turn would read as waiting for
+// input with no stop button, which is exactly the claude false-idle bug (there, a TUI footer string
+// moved). "" degrades to the plugin status instead of guessing.
+func LiveState(m session.Meta) string { return liveStateV2(v2TargetFor(m), m) }
 
-// liveState is LiveState on an already open store.
-func liveState(db *sql.DB, m session.Meta) string {
-	ses, err := activeSessionErr(db, m)
-	if err != nil {
-		return "" // store contract moved — unknown, not idle
-	}
-	if ses == "" {
-		return "idle" // no conversation yet — sitting at the composer
-	}
-	var data []byte
-	var touched int64 // the newest message's last write, in the store's epoch millis
-	switch err := db.QueryRow(`SELECT data, MAX(time_created, COALESCE(time_updated, 0)) FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data, &touched); {
-	case errors.Is(err, sql.ErrNoRows):
-		return "idle" // a conversation with no messages yet — genuinely at the composer
-	case err != nil:
-		return "" // store contract moved — unknown, not idle
-	}
-	var md struct {
-		Role string `json:"role"`
-		Time struct {
-			Completed int64 `json:"completed"`
-		} `json:"time"`
-	}
-	if json.Unmarshal(data, &md) != nil {
-		return "" // message payload isn't the shape we parse — unknown, not idle
-	}
-	if md.Role == "assistant" && md.Time.Completed > 0 {
-		return "idle"
-	}
-	// A turn left incomplete by an earlier opencode process is not running: a SIGKILL leaves
-	// it that way for good, and the relaunch starts a fresh conversation while the slot's
-	// mapping still names this one until its first message. Bounded like openQuestion but
-	// rounded towards live (terminalStartedAfter), so a completed conversation the relaunch
-	// resumed still reads idle above, and a turn the current process started or is still
-	// writing still reads working.
-	if since := terminalStartedAfter(m); !since.IsZero() && touched > 0 && touched < since.UnixMilli() {
-		return "idle"
-	}
-	if len(openQuestion(db, ses, m)) > 0 {
-		return "question" // the in-flight turn is waiting on the user's answer
-	}
-	return "working" // an in-flight assistant turn, or a user message awaiting a reply
-}
-
-// readTranscript reads the slot's current opencode conversation as normalized
-// chat turns plus the db path (diagnostics). ok is always true; no conversation yet
-// yields nil turns (an empty chat).
+// readTranscript reads the slot's current opencode conversation as normalized chat turns. ok is
+// always true; no conversation yet yields nil turns (an empty chat).
 func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
-	if t, ok := v2TargetFor(m); ok {
-		return readTranscriptV2(t, m), true
-	}
-	db, ok := openRO()
-	if !ok {
-		return agents.TranscriptData{}, true
-	}
-	defer db.Close()
-	path := dbPath()
-	ses := activeSession(db, m)
-	if ses == "" {
-		td := agents.TranscriptData{Path: path}
-		managedEnrich(m, &td)
-		return td, true
-	}
-	td := agents.TranscriptData{
-		Turns:      readSession(db, ses),
-		Path:       path,
-		Tasks:      tasks(db, ses),
-		Pending:    openQuestion(db, ses, m),
-		Mode:       mode(db, ses),
-		Queued:     queued(db, ses),
-		Compacting: sessionCompacting(db, m, ses),
-	}
-	// Managed sessions (docs/log/27 P2): merge in the driver's runtime state — the Interaction
-	// id (the address /respond posts to) onto a pending question, and the driver-held queue
-	// into the queued list.
-	managedEnrich(m, &td)
-	return td, true
-}
-
-// queued returns the prompts sitting in opencode's mid-run input queue — typed while a
-// turn runs, recorded as session_input rows, and not yet promoted to a real user
-// message (promoted_seq is set on promotion; consumed rows are cleaned up). Surfaced as
-// the mirror's queued badge, like claude's queue-operation reconstruction. Ordered by
-// arrival. The generic handler gates on the working state, so stale leftovers from a
-// killed run stay hidden.
-func queued(db *sql.DB, ses string) []string {
-	rows, err := db.Query(
-		`SELECT prompt FROM session_input WHERE session_id = ? AND promoted_seq IS NULL ORDER BY time_created, id`, ses,
-	)
-	if err != nil {
-		return nil // older store without session_input — no queue to show
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p string
-		if rows.Scan(&p) != nil {
-			continue
-		}
-		if t := strings.TrimSpace(promptText(p)); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// promptText decodes a session_input prompt column into displayable text. opencode
-// stores it JSON-encoded; the shapes seen/anticipated are a bare string, an object
-// with a text field, or a parts array whose text parts carry the typed message.
-// Anything undecodable falls back to the raw column so the queue never shows blank.
-func promptText(raw string) string {
-	b := []byte(strings.TrimSpace(raw))
-	if len(b) == 0 {
-		return ""
-	}
-	var s string
-	if json.Unmarshal(b, &s) == nil {
-		return s
-	}
-	type textPart struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	join := func(parts []textPart) string {
-		var sb strings.Builder
-		for _, p := range parts {
-			if (p.Type == "" || p.Type == "text") && strings.TrimSpace(p.Text) != "" {
-				if sb.Len() > 0 {
-					sb.WriteString("\n")
-				}
-				sb.WriteString(p.Text)
-			}
-		}
-		return sb.String()
-	}
-	var arr []textPart
-	if json.Unmarshal(b, &arr) == nil {
-		if t := join(arr); t != "" {
-			return t
-		}
-	}
-	var obj struct {
-		Text  string     `json:"text"`
-		Parts []textPart `json:"parts"`
-	}
-	if json.Unmarshal(b, &obj) == nil {
-		if obj.Text != "" {
-			return obj.Text
-		}
-		if t := join(obj.Parts); t != "" {
-			return t
-		}
-	}
-	return raw
+	return readTranscriptV2(v2TargetFor(m), m), true
 }
 
 // isCompacting reports whether the session is compacting its conversation right now — the
 // session list's "compacting" state (WireLive).
-func isCompacting(m session.Meta) bool {
-	if t, ok := v2TargetFor(m); ok {
-		return compactingV2(t, m)
-	}
-	db, ok := openRO()
-	if !ok {
-		return false
-	}
-	defer db.Close()
-	ses := activeSession(db, m)
-	return ses != "" && sessionCompacting(db, m, ses)
-}
+func isCompacting(m session.Meta) bool { return compactingV2(v2TargetFor(m), m) }
 
-// sessionCompacting is the store's compaction in flight, confirmed by the side that knows the
-// turn is live: under Managed the driver's event-fed flag, which every turn end, stop, abort and
-// daemon loss clears (driver.go); under Terminal liveState's "working", which already rules out a
-// turn an earlier process left incomplete. Either alone can stick: the store keeps an
-// incomplete message after a SIGKILL, and a missed SSE event keeps the flag.
-func sessionCompacting(db *sql.DB, m session.Meta, ses string) bool {
-	if !compactionInFlight(db, ses) {
-		return false
-	}
-	if m.DriverKind() == session.DriverManaged {
-		h := handleFor(m.Name)
-		return h != nil && h.isCompacting()
-	}
-	return liveState(db, m) == "working"
-}
-
-// compactionInFlight reports whether the session's newest message is a compaction summary
-// still being written. Measured on 1.18.34: /summarize and the automatic overflow compaction
-// both write an assistant message with mode and agent "compaction" (summary: true) that gains
-// time.completed when it ends, an abort included (MessageAbortedError). session.time_compacting
-// is still read in case a later release writes it, but 1.18.34 never does — it only maps the
-// column.
-func compactionInFlight(db *sql.DB, ses string) bool {
-	var tc sql.NullInt64
-	if db.QueryRow(`SELECT time_compacting FROM session WHERE id = ?`, ses).Scan(&tc) == nil && tc.Valid && tc.Int64 > 0 {
-		return true
-	}
-	var data []byte
-	if db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data) != nil {
-		return false
-	}
-	var md compactionProbe
-	return json.Unmarshal(data, &md) == nil && md.inFlight()
-}
-
-// compactionProbe is the part of a message (store row or message.updated info) that says
-// whether it is a compaction summary and whether it has finished.
+// compactionProbe is the part of an opencode 1 message.updated event's info that says whether
+// it is a compaction summary and whether it has finished (driver.go).
 type compactionProbe struct {
 	Role  string `json:"role"`
 	Mode  string `json:"mode"`
@@ -368,106 +93,6 @@ func (p compactionProbe) isCompaction() bool {
 }
 
 func (p compactionProbe) inFlight() bool { return p.isCompaction() && p.Time.Completed == 0 }
-
-// mode reports the session's current agent/mode normalized to "plan" | "normal".
-// opencode's "plan" agent is its plan mode; anything else (build, …) is normal. Read from
-// the newest message's agent field (falling back to mode).
-func mode(db *sql.DB, ses string) string {
-	var data []byte
-	if db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data) != nil {
-		return ""
-	}
-	var md struct {
-		Agent string `json:"agent"`
-		Mode  string `json:"mode"`
-	}
-	if json.Unmarshal(data, &md) != nil {
-		return ""
-	}
-	v := md.Agent
-	if v == "" {
-		v = md.Mode
-	}
-	if v == "plan" {
-		return "plan"
-	}
-	if v == "" {
-		return ""
-	}
-	return "normal"
-}
-
-// pending returns the questions of the latest `question` tool part still running in this
-// session, and when that part was created (epoch ms), or nil. Same shape as claude's
-// AskUserQuestion so the Console renders it interactively. Read it through openQuestion,
-// which drops a question no screen is showing.
-func pending(db *sql.DB, ses string) ([]transcript.Question, int64) {
-	rows, err := db.Query(
-		`SELECT time_created, data FROM part WHERE session_id = ? AND json_extract(data,'$.tool') = 'question' AND json_extract(data,'$.state.status') = 'running' ORDER BY time_created DESC LIMIT 1`,
-		ses,
-	)
-	if err != nil {
-		return nil, 0
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, 0
-	}
-	var created int64
-	var pd []byte
-	if rows.Scan(&created, &pd) != nil {
-		return nil, 0
-	}
-	var p struct {
-		State struct {
-			Input json.RawMessage `json:"input"`
-		} `json:"state"`
-	}
-	if json.Unmarshal(pd, &p) != nil {
-		return nil, 0
-	}
-	return questions(p.State.Input), created
-}
-
-// openQuestion is pending without a question that predates the Terminal pane's opencode
-// process. Esc and a SIGHUP both close the part (measured 1.18.33), but a SIGKILL leaves it
-// running for good, and the relaunch starts a fresh conversation while this slot's mapping
-// still names the old one until its first message — so the dead question would otherwise be
-// read as live, and refuse the very prompt that moves the mapping on.
-func openQuestion(db *sql.DB, ses string, m session.Meta) []transcript.Question {
-	qs, created := pending(db, ses)
-	if len(qs) == 0 {
-		return nil
-	}
-	// Asked only now, so the tmux round trip is paid only when a question is running.
-	if since := terminalSince(m); !since.IsZero() && created > 0 && created < since.UnixMilli() {
-		return nil
-	}
-	return qs
-}
-
-// terminalSince is where the records of the Terminal pane's current opencode process begin
-// (tmuxx.CLIRecordsSince). Zero for a managed session, whose questions come from the serve
-// daemon, and when no pane is running.
-func terminalSince(m session.Meta) time.Time {
-	if m.DriverKind() == session.DriverManaged {
-		return time.Time{}
-	}
-	t, _ := tmuxx.CLIRecordsSince(session.TmuxName(m.Name))
-	return t
-}
-
-// terminalStartedAfter is terminalSince rounded towards live where only tmux's second-resolution
-// stamp is known (tmuxx.CLIStartedAfter): a turn written in the pane's first second may be the
-// new process's, and reading a running turn as idle hides its stop button and lets the reaper
-// take the workspace.
-func terminalStartedAfter(m session.Meta) time.Time {
-	if m.DriverKind() == session.DriverManaged {
-		return time.Time{}
-	}
-	t, _ := tmuxx.CLIStartedAfter(session.TmuxName(m.Name))
-	return t
-}
 
 // TerminalModal is the modal an opencode Terminal pane shows that typed text would decide:
 // "question" while the question tool waits, "permission" while the permission prompt is up
@@ -517,287 +142,12 @@ func answer(output string) string {
 	return ""
 }
 
-// tasks reads this session's ToDo list from opencode's `todo` table (direct
-// columns: content/status/priority/position) so the chat shows the same checklist claude
-// gets. Returns nil when the table is empty for the session.
-func tasks(db *sql.DB, ses string) []transcript.Task {
-	rows, err := db.Query(`SELECT content, status FROM todo WHERE session_id = ? ORDER BY position`, ses)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []transcript.Task
-	i := 0
-	for rows.Next() {
-		var content, status string
-		if rows.Scan(&content, &status) != nil {
-			continue
-		}
-		i++
-		if status == "" {
-			status = "pending"
-		}
-		out = append(out, transcript.Task{ID: strconv.Itoa(i), Subject: content, Status: status})
-	}
-	return out
-}
-
-// sessionResumable reports whether resuming this session with `opencode
-// --session <id>` is safe — i.e. its last turn is COMPLETE. opencode continues an
-// incomplete/interrupted assistant turn on resume (re-running the pending work, e.g. an
-// interrupted Explore subagent), which is never what the user wants after a Stop→Start.
-// A message is complete when its data.time.completed is set (opencode leaves it null
-// while a turn is in flight / was interrupted). No captured session, no db, or an empty
-// session all count as resumable (nothing to re-run). Best-effort: on any read error we
-// default to true so a transient hiccup doesn't needlessly drop the conversation.
-func sessionResumable(ses string) bool {
-	if ses == "" {
-		return true
-	}
-	db, ok := openRO()
-	if !ok {
-		return true
-	}
-	defer db.Close()
-	// Newest message for the session; is it a completed assistant turn?
-	row := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses)
-	var data []byte
-	if err := row.Scan(&data); err != nil {
-		return true // no messages (fresh) or read error — nothing to re-run
-	}
-	var md struct {
-		Role string `json:"role"`
-		Time struct {
-			Completed int64 `json:"completed"`
-		} `json:"time"`
-	}
-	if json.Unmarshal(data, &md) != nil {
-		return true
-	}
-	// A user message as the last row means the assistant never replied (interrupted
-	// before responding); an assistant message with no completed time was interrupted
-	// mid-turn. Either way, resuming would continue it — so it's not resumable.
-	if md.Role == "assistant" && md.Time.Completed > 0 {
-		return true
-	}
-	return false
-}
-
-// readSession loads one session's messages (ordered) and their parts, building a
-// transcript.Turn per displayable message. Subagent activity (child sessions with
-// parent_id = ses, spawned by the task tool) is interleaved by creation time and
-// flagged Sidechain, so the chat shows it like claude's subagent turns. A message with
-// no displayable part (a pure reasoning/step frame) is dropped. Best-effort: a query
-// error yields the turns gathered so far rather than failing the whole poll.
-//
-// Ordering note: rows are stamped time_created at insert, so the merged parent+child
-// sequence is append-only across polls — each turn's ordinal (Idx, the render key and
-// paging cursor unit) stays stable as new messages arrive.
-func readSession(db *sql.DB, ses string) []transcript.Turn { return readSessionTurns(db, ses, false) }
-
-// readSessionTurns is readSession; with usage set it also returns a CostOnly turn for every
-// assistant message parseMessage drops whose reported cost is its own — a billed call that
-// ended with nothing to display (an empty text, step-start/step-finish only). Only the usage
-// fold reads those (UsageTurns); the chat never sees them.
-func readSessionTurns(db *sql.DB, ses string, usage bool) []transcript.Turn {
-	// Taken once for the whole read: every assistant message asks the same question, and the
-	// answer cannot change inside one poll.
-	win := modelWindowLookup()
-	sessions := append([]string{ses}, childSessions(db, ses)...)
-	ph := strings.TrimSuffix(strings.Repeat("?,", len(sessions)), ",")
-	args := make([]any, len(sessions))
-	for i, s := range sessions {
-		args[i] = s
-	}
-	rows, err := db.Query(
-		`SELECT id, session_id, time_created, data FROM message WHERE session_id IN (`+ph+`) ORDER BY time_created, id`, args...,
-	)
-	if err != nil {
-		return nil
-	}
-	type msgRow struct {
-		id      string
-		ses     string
-		created int64
-		data    []byte
-	}
-	var msgs []msgRow
-	for rows.Next() {
-		var mr msgRow
-		var created sql.NullInt64
-		if rows.Scan(&mr.id, &mr.ses, &created, &mr.data) == nil {
-			mr.created = created.Int64
-			msgs = append(msgs, mr)
-		}
-	}
-	rows.Close()
-	born := sessionsCreated(db, sessions)
-
-	// A batch at a time: the parts are fetched for a whole group of messages (one query
-	// instead of one per message), then those messages are turned into turns and the raw
-	// rows are dropped. Holding the entire conversation's part rows at once would be the
-	// cheaper code and the worse neighbour — a tool output is unbounded until display
-	// caps it, and the Agent shares a memory-capped container.
-	turns := make([]transcript.Turn, 0, len(msgs))
-	for start := 0; start < len(msgs); start += partBatch {
-		end := min(start+partBatch, len(msgs))
-		batch := msgs[start:end]
-		ids := make([]string, len(batch))
-		for i, mr := range batch {
-			ids[i] = mr.id
-		}
-		byMsg := loadParts(db, ids)
-		for i, mr := range batch {
-			// A fork copies every message into the new session under a new id but keeps its
-			// time_created (measured 1.18.34, fork of a fork included), so a message older than
-			// its own session is a copy: the session it came from already reported that cost.
-			copied := mr.created > 0 && mr.created < born[mr.ses]
-			sidechain := mr.ses != ses
-			t, ok := parseMessage(mr.id, mr.data, byMsg[mr.id], start+i, win)
-			if !ok {
-				if usage && !copied {
-					if cost, ts, model := messageCost(mr.data); cost > 0 {
-						turns = append(turns, transcript.Turn{Role: "assistant", CostOnly: true,
-							CostUSD: cost, TS: ts, Model: model, Idx: start + i, Sidechain: sidechain,
-							AnchorID: mr.id}) // the stable identity a cost-only ledger row is kept by
-					}
-				}
-				continue
-			}
-			t.Sidechain = sidechain
-			if copied {
-				t.CostUSD = 0
-			}
-			turns = append(turns, t)
-		}
-	}
-	return turns
-}
-
-// messageCost is an assistant message row's reported cost (0 for anything else), its creation
-// time as a transcript timestamp, and its model.
-func messageCost(data []byte) (float64, string, string) {
-	var md struct {
-		Role    string  `json:"role"`
-		ModelID string  `json:"modelID"`
-		Cost    float64 `json:"cost"`
-		Time    struct {
-			Created int64 `json:"created"`
-		} `json:"time"`
-	}
-	if json.Unmarshal(data, &md) != nil || md.Role != "assistant" {
-		return 0, "", ""
-	}
-	ts := ""
-	if md.Time.Created > 0 {
-		ts = time.UnixMilli(md.Time.Created).UTC().Format(time.RFC3339)
-	}
-	return md.Cost, ts, md.ModelID
-}
-
 // usageTurns is the conversation as the usage fold reads it: readTranscript's turns plus the
 // CostOnly ones.
-func usageTurns(m session.Meta) []transcript.Turn {
-	if t, ok := v2TargetFor(m); ok {
-		return usageTurnsV2(t, m)
-	}
-	db, ok := openRO()
-	if !ok {
-		return nil
-	}
-	defer db.Close()
-	ses := activeSession(db, m)
-	if ses == "" {
-		return nil
-	}
-	return readSessionTurns(db, ses, true)
-}
+func usageTurns(m session.Meta) []transcript.Turn { return usageTurnsV2(v2TargetFor(m), m) }
 
-// sessionsCreated maps each session id to its creation time (store epoch millis). Missing rows
-// map to 0, so nothing is taken for a copy.
-func sessionsCreated(db *sql.DB, ids []string) map[string]int64 {
-	out := make(map[string]int64, len(ids))
-	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	rows, err := db.Query(`SELECT id, time_created FROM session WHERE id IN (`+ph+`)`, args...)
-	if err != nil {
-		return out
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		var tc sql.NullInt64
-		if rows.Scan(&id, &tc) == nil && tc.Valid {
-			out[id] = tc.Int64
-		}
-	}
-	return out
-}
-
-// partBatch is how many messages one parts query covers. SQLite's variable limit is the
-// ceiling (32766 in modernc's build); this stays far below it, and bounds how much raw
-// part data is held at once. A var only so a test can shrink it and still cross a batch
-// boundary in a few rows.
-var partBatch = 400
-
-// loadParts reads the parts of the given messages in ONE query, grouped by message id.
-//
-// WHY not one query per message, which is what this used to be: a poll re-reads the whole
-// conversation, and a query costs about the same whether it returns 2 rows or 200 —
-// measured against a real 189 MB store, the parts of 115 messages took 58 ms as 115
-// statements and 8 ms as one. The store is indexed on (message_id, id), so nothing here
-// scans; the cost was round trips, and it grew with the length of the conversation — the
-// same "the longer you talk, the slower it gets" shape that made a long codex session
-// unusable (codex/rolloutcache.go).
-func loadParts(db *sql.DB, msgIDs []string) map[string][][]byte {
-	ph := strings.TrimSuffix(strings.Repeat("?,", len(msgIDs)), ",")
-	args := make([]any, len(msgIDs))
-	for i, id := range msgIDs {
-		args[i] = id
-	}
-	// Ordered by message then time, so each message's parts arrive in the order the
-	// per-message query used to return them in.
-	rows, err := db.Query(
-		`SELECT message_id, data FROM part WHERE message_id IN (`+ph+`) ORDER BY message_id, time_created`, args...,
-	)
-	if err != nil {
-		return nil // a message with no parts is dropped by parseMessage, as before
-	}
-	defer rows.Close()
-	out := make(map[string][][]byte, len(msgIDs))
-	for rows.Next() {
-		var id string
-		var data []byte
-		if rows.Scan(&id, &data) == nil {
-			out[id] = append(out[id], data)
-		}
-	}
-	return out
-}
-
-// childSessions lists the subagent sessions spawned under ses (one level — the task
-// tool's children). Best-effort: any error just means no sidechain turns.
-func childSessions(db *sql.DB, ses string) []string {
-	rows, err := db.Query(`SELECT id FROM session WHERE parent_id = ? ORDER BY time_created, id`, ses)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var id string
-		if rows.Scan(&id) == nil && id != "" {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-// parseMessage builds a transcript.Turn from one message row and its parts (the raw part
-// rows, already fetched — see loadParts). idx is the message ordinal (a stable render key
+// parseMessage builds a transcript.Turn from one message and its parts in the opencode 1
+// message/part shape (v2SessionTurns builds it from an opencode 2 message). idx is the message ordinal (a stable render key
 // + the unit the generic windower pages over). win answers the model's context window and
 // may be nil (no window recorded, and the Console guesses from the model name as before).
 func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win windowFn) (transcript.Turn, bool) {

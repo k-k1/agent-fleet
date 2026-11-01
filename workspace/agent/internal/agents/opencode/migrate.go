@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -47,6 +49,10 @@ var startMigrationServe = func(spec LaunchSpec) (addr, password string, exited <
 	cmd.Env = append(withoutEnv(os.Environ(), "AF_SESSION_SID", "AF_SESSION_NAME"),
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	cmd.Dir = paths.HomeDir()
+	// The import outlives nothing: if the Agent dies mid-import the server goes too, instead of
+	// running on with no owner while the next Agent starts a second import of the same database.
+	// The signal follows the thread that started it, which EnsureMigrated keeps locked.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	if err := cmd.Start(); err != nil {
 		return "", "", nil, nil, err
 	}
@@ -110,6 +116,24 @@ func needsMigration(path string) bool {
 	return n > 0
 }
 
+// MigrateInBackground imports a database that still holds 1.x data, off the boot path. History
+// is read from the opencode 2 tables only, so a home whose last opencode was 1.x shows none of
+// its conversations until an opencode 2 process has opened the database; doing it at Agent start
+// instead of at the first launch is what keeps that window to the import itself. A database with
+// nothing to import, no opencode on PATH or an opencode af refuses starts nothing.
+func MigrateInBackground() {
+	if !Available() || checkSupported() != nil || !needsMigration(dbPath()) {
+		return
+	}
+	go func() {
+		if err := EnsureMigrated(CurrentLaunch()); err != nil {
+			log.Printf("opencode: importing the 1.x database at start: %v (the next opencode start retries)", err)
+			return
+		}
+		log.Printf("opencode: imported the 1.x database")
+	}()
+}
+
 // PrepareStart is the gate every opencode process af starts passes first: it refuses an opencode
 // af does not support, then waits for the database import (EnsureMigrated).
 func PrepareStart(spec LaunchSpec) error {
@@ -149,6 +173,11 @@ func EnsureMigrated(spec LaunchSpec) error {
 	if !needsMigration(db) {
 		return nil
 	}
+	// Pdeathsig (startMigrationServe) follows the OS thread that started the server, not the
+	// goroutine: stay on that thread until the server is stopped, or a runtime thread exit would
+	// kill the import early.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	addr, password, exited, stop, err := startMigrationServe(spec)
 	if err != nil {
 		return fmt.Errorf("opencode 2 database migration: %w", err)

@@ -6,8 +6,6 @@
 package opencode
 
 import (
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -54,33 +52,16 @@ func forkAtOnSharedTerminal(m session.Meta) bool {
 	return sharedSlot(m) && sharedTUI()
 }
 
-// ForkSource resolves this session's current opencode conversation as the fork
-// source. An interrupted conversation is refused: opencode re-runs the incomplete
-// turn on resume/fork, which is never what a fork should do.
+// ForkSource resolves this session's current opencode conversation as the fork source.
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
-	if t, ok := v2TargetFor(m); ok {
-		info, err := t.v2Session(m)
-		if err != nil {
-			return "", errors.New("opencode の会話ストアを読めません")
-		}
-		if info == nil {
-			return "", errors.New("分岐できる会話がまだありません")
-		}
-		return info.ID, nil
-	}
-	db, ok := openRO()
-	if !ok {
+	info, err := v2TargetFor(m).v2Session(m)
+	if err != nil {
 		return "", errors.New("opencode の会話ストアを読めません")
 	}
-	ses := activeSession(db, m)
-	db.Close()
-	if ses == "" {
+	if info == nil {
 		return "", errors.New("分岐できる会話がまだありません")
 	}
-	if !sessionResumable(ses) {
-		return "", errors.New("中断中の会話は分岐できません（一度セッションを再開してから分岐してください）")
-	}
-	return ses, nil
+	return info.ID, nil
 }
 
 // ResolveForkAt validates a mirror anchor against this session's OWN conversation.
@@ -107,63 +88,7 @@ func (agentImpl) ResolveForkAtPinned(m session.Meta, at agents.ForkPoint) (strin
 			"または opencode 2 の共有サーバに接続したターミナルでのみ利用できます",
 			agents.ErrForkAtRoute)
 	}
-	if t, ok := v2TargetFor(m); ok {
-		return resolveForkAtV2(t, m, at)
-	}
-	db, ok := openRO()
-	if !ok {
-		return "", "", errors.New("opencode の会話ストアを読めません")
-	}
-	defer db.Close()
-	ses := activeSession(db, m)
-	if ses == "" {
-		return "", "", errors.New("分岐できる会話がまだありません")
-	}
-	var owner string
-	if err := db.QueryRow(`SELECT session_id FROM message WHERE id = ?`, anchor).Scan(&owner); err != nil {
-		return "", "", errors.New("指定された分岐点がこの会話に見つかりません")
-	}
-	// A sidechain (subagent) turn lives in a CHILD session, so its id is not part of the
-	// parent's ordering at all: forking the parent "at" it would cut at an unrelated
-	// place. The mirror only offers the affordance on the user's own turns, but the
-	// anchor arrives from the client and has to be checked here too.
-	if owner != ses {
-		return "", "", errors.New("サブエージェントの発言からは分岐できません")
-	}
-	if !at.Include {
-		return anchor, "", nil
-	}
-	// "continue from this message" means up to just before the NEXT user message, so every
-	// assistant message in between (the answer and its tool round trips) is carried over.
-	// No next user message means this was the last exchange, and the whole conversation ("")
-	// is the right answer: keeping everything is exactly what that asks for.
-	next, err := nextUserMessageID(db, ses, anchor)
-	return next, "", err
-}
-
-// nextUserMessageID returns the id of the first user message that sorts after anchor in
-// ses. "" (with no error) when the anchor is the last exchange.
-func nextUserMessageID(db *sql.DB, ses, anchor string) (string, error) {
-	rows, err := db.Query(
-		`SELECT id, data FROM message WHERE session_id = ? AND id > ? ORDER BY time_created, id`, ses, anchor)
-	if err != nil {
-		return "", errors.New("opencode の会話ストアを読めません")
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		var data []byte
-		if rows.Scan(&id, &data) != nil {
-			continue
-		}
-		var md struct {
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(data, &md) == nil && md.Role == "user" {
-			return id, nil
-		}
-	}
-	return "", nil
+	return resolveForkAtV2(v2TargetFor(m), m, at)
 }
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
@@ -227,21 +152,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	} else {
 		markSlotMode(ocSid, modeStandalone)
 	}
-	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured
-	// per-slot id, else a store-derived conversation this slot itself opened — never an
-	// older one from the same dir), UNLESS its last turn was interrupted (incomplete).
-	// opencode continues an incomplete turn on resume, re-running the pending work
-	// (e.g. an Explore subagent the user stopped); starting fresh avoids that. The
-	// interrupted conversation stays in the store, just not auto-resumed.
+	// Resume the slot's OWN opencode conversation: the plugin-captured per-slot id, else a
+	// conversation in the store this slot itself opened — never an older one from the same dir.
 	resume := ""
-	if db, ok := openRO(); ok {
-		resume = activeSession(db, m)
-		db.Close()
-	} else {
+	if info, err := storeSession(m); err == nil && info != nil {
+		resume = info.ID
+	} else if err != nil {
 		resume = sids.Read(ocSid) // store unreadable — the captured mapping is all we have
-	}
-	if resume != "" && !sessionResumable(resume) {
-		resume = ""
 	}
 	// First launch of a forked slot: no own conversation yet — copy the source and
 	// diverge (`--session <src> --fork`). opencode materializes the fork as a NEW
@@ -262,9 +179,9 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// State is derived from opencode's own store (LiveState) — robust against the
-	// status plugin not firing — falling back to the plugin status file when the db can't
-	// be read. Resumable unless the working dir is gone.
+	// State comes from the conversation's reader (LiveState) — robust against the status plugin
+	// not firing — falling back to the plugin status file when it cannot say (a --standalone pane,
+	// or a daemon that does not answer). Resumable unless the working dir is gone.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		if st := LiveState(m); st != "" {

@@ -281,8 +281,7 @@ func TestContractSharedServeTerminalSessions(t *testing.T) {
 
 	addr := "http://127.0.0.1:" + freePort(t)
 	t.Setenv(serveAddrEnv, addr)
-	serveSeen.Store(false)
-	t.Cleanup(func() { Serve().Shutdown(); serveSeen.Store(false); resetServeAuth("") })
+	t.Cleanup(func() { Serve().Shutdown(); resetServeAuth("") })
 	if !sharedTUI() {
 		t.Fatal("sharedTUI() is false on an opencode 2 binary")
 	}

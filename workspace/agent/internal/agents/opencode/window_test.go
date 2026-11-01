@@ -123,7 +123,7 @@ func TestReadSessionRecordsTheDeclaredWindow(t *testing.T) {
 		`"tokens":{"input":10,"output":5,"cache":{"read":0,"write":0}},"time":{"created":3000,"completed":4000}}`)
 	insPart(t, db, "p2", "m2", ses, 1, `{"type":"text","text":"also done"}`)
 
-	turns := readSession(db, ses)
+	turns := renderSession(t, db, ses)
 	if len(turns) != 2 {
 		t.Fatalf("want 2 turns, got %d", len(turns))
 	}

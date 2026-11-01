@@ -39,8 +39,6 @@ func TestRestartDrainsBusyTerminals(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv(serveAddrEnv, srv.URL)
-	serveSeen.Store(true)
-	t.Cleanup(func() { serveSeen.Store(false) })
 
 	m := session.Meta{Name: "oc-busy", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverTUI}
 	sid := session.UUID(m.Dir, m.Name)

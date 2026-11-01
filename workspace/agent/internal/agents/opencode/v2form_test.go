@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -285,8 +287,8 @@ func terminalForm(t *testing.T) (*formDaemon, session.Meta) {
 	fd.list["ses_a"] = string(v2Fixture(t, "form-single.pending.json"))
 	fd.detail[fixtureForms(t, "form-single.pending.json")[0].ID] = string(v2Fixture(t, "form-detail.pending.json"))
 	prev := v2TargetFor
-	v2TargetFor = func(session.Meta) (apiTarget, bool) {
-		return apiTarget{Addr: fd.f.srv.URL, Client: serveClient}, true
+	v2TargetFor = func(session.Meta) apiTarget {
+		return apiTarget{Addr: fd.f.srv.URL, Client: serveClient}
 	}
 	t.Cleanup(func() { v2TargetFor = prev })
 	m := session.Meta{Name: "v2term", Dir: "/work", Kind: session.KindOpencode, Driver: session.DriverTUI}
@@ -393,10 +395,10 @@ func TestV2RespondTerminalNeverDoubleAnswers(t *testing.T) {
 	}
 }
 
-// A slot that is not on the shared serve (v1, --standalone) has no API route: the Console keeps keys.
+// A slot that is not on the shared serve (--standalone) has no API route: the Console keeps keys.
 func TestV2RespondTerminalRefusesWhatIsNotOnTheServe(t *testing.T) {
 	prev := v2TargetFor
-	v2TargetFor = func(session.Meta) (apiTarget, bool) { return apiTarget{}, false }
+	v2TargetFor = func(session.Meta) apiTarget { return apiTarget{offline: true} }
 	t.Cleanup(func() { v2TargetFor = prev })
 	m := session.Meta{Name: "v2standalone", Dir: "/work", Kind: session.KindOpencode, Driver: session.DriverTUI}
 	err := (managedDriver{}).RespondTerminal(m, agents.InteractionReply{ID: "frm", Decision: agents.DecisionAnswer})
@@ -737,5 +739,21 @@ func TestV2RespondRecoversFromARefusalThatSaysSettled(t *testing.T) {
 				t.Fatalf("after the refusal: %d forms, inter %+v, state %s; want only %s left", forms, inter, state, b.ID)
 			}
 		})
+	}
+}
+
+// A Terminal pane on the shared serve whose turn waits on a form shows the question modal, so the
+// Console's free text is refused instead of answering the highlighted option. The modal comes from
+// the daemon's form list.
+func TestTerminalModalReadsAFormOnTheSharedServe(t *testing.T) {
+	_, m := terminalForm(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("AF_TMUX_SOCKET", "")
+	if got := TerminalModal(m); got != "question" {
+		t.Fatalf("TerminalModal = %q, want question", got)
 	}
 }

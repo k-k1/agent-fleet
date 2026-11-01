@@ -106,7 +106,7 @@ func deadDaemon(t *testing.T) apiTarget {
 func useTarget(t *testing.T, tg apiTarget) {
 	t.Helper()
 	prev := v2TargetFor
-	v2TargetFor = func(session.Meta) (apiTarget, bool) { return tg, true }
+	v2TargetFor = func(session.Meta) apiTarget { return tg }
 	t.Cleanup(func() { v2TargetFor = prev })
 }
 
@@ -151,7 +151,7 @@ func TestV2StoreServesUsageOfAStoppedSession(t *testing.T) {
 	want := usageTurnsV2(mustTarget(t, m), m)
 	writeV2Store(t, "ses_a", "compaction-ok.messages.json")
 	useTarget(t, deadDaemon(t))
-	tg, _ := v2TargetFor(m)
+	tg := v2TargetFor(m)
 	got := usageTurnsV2(tg, m)
 	if len(want) == 0 || len(got) != len(want) {
 		t.Fatalf("usage turns = %d, want %d", len(got), len(want))
@@ -160,9 +160,9 @@ func TestV2StoreServesUsageOfAStoppedSession(t *testing.T) {
 
 func mustTarget(t *testing.T, m session.Meta) apiTarget {
 	t.Helper()
-	tg, ok := v2TargetFor(m)
-	if !ok {
-		t.Fatal("no v2 target")
+	tg := v2TargetFor(m)
+	if tg.offline {
+		t.Fatal("no daemon target")
 	}
 	return tg
 }
@@ -228,52 +228,6 @@ func TestV2StoreMissingIsAnEmptyChat(t *testing.T) {
 	db.Close()
 	if got, ok := readTranscript(m); !ok || len(got.Turns) != 0 {
 		t.Fatalf("v1-only store: %+v %v", got, ok)
-	}
-}
-
-// Before anything has probed a daemon (the Agent just restarted) the database says which store
-// holds the conversations; defaulting to v1 read the tables v2 never fills.
-func TestV2ServedBeforeAnyProbeFollowsTheStore(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	prev := serveSeen.Load()
-	serveSeen.Store(false)
-	t.Cleanup(func() { serveSeen.Store(prev) })
-	m := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode, Driver: session.DriverManaged}
-	openTestStore(t)
-
-	if !v2Served() {
-		t.Fatal("a v2 store: not served as v2")
-	}
-	if tg, ok := v2TargetFor(m); !ok || tg.Addr == "" {
-		t.Errorf("a managed session on an unprobed v2 store has no target: %+v %v", tg, ok)
-	}
-}
-
-// 2.x installed over a database v2 has not opened yet: the history is still in the v1 tables, and
-// only the first start of v2 moves it. Until then the v1 reader has to serve it.
-func TestV2NotServedOverAnUnmigratedV1Store(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	prev := serveSeen.Load()
-	serveSeen.Store(false)
-	t.Cleanup(func() { serveSeen.Store(prev) })
-	useMajor(t, 2)
-	if v2Served() {
-		t.Fatal("no database at all: served as v2")
-	}
-	path := dbPath()
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = db.Exec(`CREATE TABLE session (id TEXT)`)
-	db.Close()
-	if v2Served() {
-		t.Fatal("a v1-only database: served as v2")
-	}
-	m := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode, Driver: session.DriverManaged}
-	if _, ok := v2TargetFor(m); ok {
-		t.Fatal("the v2 reader was chosen for a database that holds only v1 history")
 	}
 }
 
@@ -384,7 +338,7 @@ func TestV2StoreDoesNotBillACopiedChildTwice(t *testing.T) {
 
 	storeSubagentConversation(t, parent, child, childMsgs)
 	useTarget(t, deadDaemon(t))
-	tg, _ := v2TargetFor(m)
+	tg := v2TargetFor(m)
 	var gotCost float64
 	var sides int
 	for _, tn := range usageTurnsV2(tg, m) {
@@ -477,35 +431,6 @@ func TestV2StoreTellsATruncatedDocumentFromACutConnection(t *testing.T) {
 	})
 }
 
-// An import that stopped half way leaves a v2 schema beside the v1 rows; those conversations are
-// still read from the v1 tables until a v2 start finishes the import.
-func TestV2NotServedOverAHalfMigratedStore(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	prev := serveSeen.Load()
-	serveSeen.Store(false)
-	t.Cleanup(func() { serveSeen.Store(prev) })
-	useMajor(t, 2)
-	db := openTestStore(t) // the empty v2 schema
-	for _, q := range []string{
-		`CREATE TABLE session (id TEXT)`,
-		`INSERT INTO session VALUES ('ses_v1')`,
-		`CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT)`,
-	} {
-		if _, err := db.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if v2Served() {
-		t.Fatal("a v2 schema with v1 rows and no completed import: served as v2")
-	}
-	if _, err := db.Exec(`INSERT INTO kv VALUES ('migration.v1-v2', '{"phase":"completed"}')`); err != nil {
-		t.Fatal(err)
-	}
-	if !v2Served() {
-		t.Fatal("the import is over: not served as v2")
-	}
-}
-
 // With no mapping and two roots touched at the same instant the store takes the same one the
 // API's listing does (updated, then id, newest first): the answer must not depend on the daemon.
 func TestV2StoreBreaksTiesLikeTheAPI(t *testing.T) {
@@ -517,5 +442,47 @@ func TestV2StoreBreaksTiesLikeTheAPI(t *testing.T) {
 	info, err := storeSession(m)
 	if err != nil || info == nil || info.ID != "ses_z" {
 		t.Fatalf("storeSession = %+v, %v; want ses_z", info, err)
+	}
+}
+
+// A --standalone Terminal session runs on a private server af cannot reach. Its history is in
+// opencode.db, so it is read from there; its running state is not, so LiveState says "unknown"
+// and the plugin status decides, instead of the "idle" the opencode 1 reader answered for a
+// conversation it could not see.
+func TestStandaloneTerminalReadsTheStore(t *testing.T) {
+	isolatedHome(t)
+	writeV2Store(t, "ses_a", "tool.messages.json")
+	m := session.Meta{Name: "oc-standalone", Dir: "/work", Kind: session.KindOpencode, Driver: session.DriverTUI}
+	sid := session.UUID(m.Dir, m.Name)
+	sids.Write(sid, "ses_a")
+	markSlotMode(sid, modeStandalone)
+	t.Cleanup(func() { sids.Remove(sid); slotModes.Remove(sid) })
+
+	if tg := v2TargetFor(m); !tg.offline {
+		t.Fatalf("a standalone pane is routed to af's daemon: %+v", tg)
+	}
+	td, _ := readTranscript(m)
+	if len(td.Turns) == 0 {
+		t.Fatal("a standalone pane's history reads empty")
+	}
+	if got := LiveState(m); got != "" {
+		t.Fatalf("LiveState = %q, want \"\" (the store cannot say whether a turn runs)", got)
+	}
+	if src, err := (agentImpl{}).ForkSource(m); err != nil || src != "ses_a" {
+		t.Fatalf("ForkSource = %q, %v", src, err)
+	}
+}
+
+// The store says nothing about a running turn, not even "no conversation": a standalone pane whose
+// conversation is not in it (yet) must not read idle while its plugin says it works.
+func TestStandaloneWithoutAConversationIsUnknownNotIdle(t *testing.T) {
+	isolatedHome(t)
+	openTestStore(t)
+	m := session.Meta{Name: "oc-empty", Dir: "/nowhere", Kind: session.KindOpencode, Driver: session.DriverTUI}
+	sid := session.UUID(m.Dir, m.Name)
+	markSlotMode(sid, modeStandalone)
+	t.Cleanup(func() { slotModes.Remove(sid) })
+	if got := LiveState(m); got != "" {
+		t.Fatalf("LiveState = %q, want \"\"", got)
 	}
 }

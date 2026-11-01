@@ -177,6 +177,9 @@ func serve() {
 	if err := opencode.EnsureServiceDisabled(); err != nil {
 		log.Printf("opencode service: %v (left as is)", err)
 	}
+	// A home whose last opencode was 1.x has its history in tables opencode 2 reads only after
+	// importing them; start that now rather than at the first opencode launch.
+	opencode.MigrateInBackground()
 	// Mint this boot's name for af's own MCP server, BEFORE anything materializes a
 	// config. A repository's project-scoped MCP config beats af's user-scope one on
 	// every kind but claude (docs/log/48 §8.4), so a repo that happens to define a server

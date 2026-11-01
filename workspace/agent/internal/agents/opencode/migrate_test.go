@@ -312,3 +312,56 @@ func TestEnsureMigratedRecordsCompletionDespiteAReader(t *testing.T) {
 		t.Fatalf("second call: err %v started %d; the completion must have been recorded", err, f.started.Load())
 	}
 }
+
+// pathOpencode puts an executable `opencode` on PATH, so Available says yes.
+func pathOpencode(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A home whose database still holds 1.x data is imported at Agent start, without waiting for the
+// first opencode launch: until then its history reads empty.
+func TestMigrateInBackgroundImportsA1xDatabase(t *testing.T) {
+	isolatedHome(t)
+	pathOpencode(t)
+	useMajor(t, 2)
+	db := dbPath()
+	seedDB(t, db, 2, false)
+	f := &fakeMigration{script: []string{running}}
+	useFakeMigration(t, db, f)
+	MigrateInBackground()
+	for deadline := time.Now().Add(10 * time.Second); !f.done.Load(); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the import never ran (started %d)", f.started.Load())
+		}
+	}
+	for deadline := time.Now().Add(5 * time.Second); f.stopped.Load() == 0; time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the throwaway server was not stopped")
+		}
+	}
+}
+
+// Nothing starts for a database with nothing to import, or for an opencode af refuses.
+func TestMigrateInBackgroundStartsNothingWithoutAJob(t *testing.T) {
+	isolatedHome(t)
+	pathOpencode(t)
+	useMajor(t, 2)
+	db := dbPath()
+	seedDB(t, db, 2, true) // already imported
+	f := &fakeMigration{}
+	useFakeMigration(t, db, f)
+	MigrateInBackground()
+
+	useMajor(t, 1)
+	seedDB(t, db, 2, false) // 1.x data again, but the opencode on PATH is 1.x
+	MigrateInBackground()
+	time.Sleep(200 * time.Millisecond)
+	if n := f.started.Load(); n != 0 {
+		t.Fatalf("started %d imports, want none", n)
+	}
+}
