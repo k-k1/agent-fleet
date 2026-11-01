@@ -45,8 +45,8 @@ audience: "何が起きたか・いくらかかったかを見るテナント管
   認証情報の書き込みも記録しますが、秘密の値は一切書きません。`connection.<種類>.save` と
   `connection.<種類>.delete`（git・aws・cloudwatch・discord・grafana・jira・lcpp・pagerduty・slack・svn・
   opencode と各エージェント CLI）、`connection.<種類>.api_key`（codex・muse）、
-  `connection.<種類>.signin`（サインインが実際に認証情報を保存したときに 1 行。待機中のポーリングは
-  書きません）、`mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`。
+  `connection.<種類>.signin`（サインインを完了させた呼び出しが 1 行だけ書きます。待機中のポーリング、完了ポーリングの再送、
+  サインイン済みの状態でのポーリングは書きません）、`mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`。
   対象は git のホスト、プロバイダーキーの変数名、MCP サーバー ID で、それ以外は空です。
   ワークスペースがエラーを返した書き込みは行を残しません。`session.spend_cap`・`session.lock`・
   `repo.lock` は、誰が支出上限を設定したか・削除ロックを切り替えたかを記録します。

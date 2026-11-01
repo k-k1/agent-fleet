@@ -238,10 +238,14 @@ func HandlePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if readCredential().Present {
+		// stored: this call consumed a live flow (see the cursor poll); a repeat or a
+		// flow-less poll while signed in reports connected without it.
+		stored := false
 		if f := loginFlows.Take(req.FlowID); f != nil {
 			f.Close()
+			stored = true
 		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": stored})
 		return
 	}
 	// An unknown or already-reaped flow id leaves nothing to wait on; report it as still

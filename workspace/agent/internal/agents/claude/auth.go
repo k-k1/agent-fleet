@@ -113,7 +113,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	// claude wrote its own .credentials.json; nothing for us to store.
 	resetCredCache() // re-read the freshly written credentials: the contents can change under an unchanged stat
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "stored": true})
 }
 
 // HandleDisconnect logs claude out via the CLI. DELETE /connections/claude.

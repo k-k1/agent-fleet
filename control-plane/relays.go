@@ -202,13 +202,14 @@ func auditMCPServer(verb string) relayAudit {
 	return auditAs("mcp.server."+verb, pathShaped("id", mcpServerIDRe))
 }
 
-// storedConnected reads a sign-in step's answer: the credential is stored once it says
-// {"connected": true}. A pending, slow-down or failed poll says false, and writes no row.
-func storedConnected(body []byte) bool {
+// storedSignin reads a sign-in step's answer: the Agent says {"stored": true} only for the call
+// that consumed a live flow. "connected" alone is not enough: an already-signed-in workspace
+// answers it to every poll, with or without a flow, and a pending or failed poll says false.
+func storedSignin(body []byte) bool {
 	var out struct {
-		Connected bool `json:"connected"`
+		Stored bool `json:"stored"`
 	}
-	return json.Unmarshal(body, &out) == nil && out.Connected
+	return json.Unmarshal(body, &out) == nil && out.Stored
 }
 
 // auditFSFilePut records a file save under the path fsFilePut checked and put in the context;

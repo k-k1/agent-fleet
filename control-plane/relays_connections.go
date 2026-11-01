@@ -10,13 +10,13 @@ var connectionRelays = []agentRelay{
 	// only the answer that says the credential was stored.
 	{route: "PUT /api/connections/git/{host}", audit: auditConnection("git", "save", pathShaped("host", auditHostRe)), wrapped: true},
 	{route: "DELETE /api/connections/git/{host}", audit: auditConnection("git", "delete", pathShaped("host", auditHostRe)), wrapped: true},
-	{route: "POST /api/connections/agy/complete", audit: auditConnection("agy", "signin", nil), auditIf: storedConnected, wrapped: true},
-	{route: "POST /api/connections/claude/complete", audit: auditConnection("claude", "signin", nil), auditIf: storedConnected, wrapped: true},
-	{route: "POST /api/connections/codex/device/poll", audit: auditConnection("codex", "signin", nil), auditIf: storedConnected, wrapped: true},
-	{route: "POST /api/connections/cursor/poll", audit: auditConnection("cursor", "signin", nil), auditIf: storedConnected, wrapped: true},
-	{route: "POST /api/connections/kiro/poll", audit: auditConnection("kiro", "signin", nil), auditIf: storedConnected, wrapped: true},
-	{route: "POST /api/connections/muse/poll", audit: auditConnection("muse", "signin", nil), auditIf: storedConnected, wrapped: true},
-	{route: "POST /api/connections/opencode/oauth/poll", audit: auditConnection("opencode", "signin", nil), auditIf: storedConnected, wrapped: true},
+	{route: "POST /api/connections/agy/complete", audit: auditConnection("agy", "signin", nil), auditIf: storedSignin, wrapped: true},
+	{route: "POST /api/connections/claude/complete", audit: auditConnection("claude", "signin", nil), auditIf: storedSignin, wrapped: true},
+	{route: "POST /api/connections/codex/device/poll", audit: auditConnection("codex", "signin", nil), auditIf: storedSignin, wrapped: true},
+	{route: "POST /api/connections/cursor/poll", audit: auditConnection("cursor", "signin", nil), auditIf: storedSignin, wrapped: true},
+	{route: "POST /api/connections/kiro/poll", audit: auditConnection("kiro", "signin", nil), auditIf: storedSignin, wrapped: true},
+	{route: "POST /api/connections/muse/poll", audit: auditConnection("muse", "signin", nil), auditIf: storedSignin, wrapped: true},
+	{route: "POST /api/connections/opencode/oauth/poll", audit: auditConnection("opencode", "signin", nil), auditIf: storedSignin, wrapped: true},
 	// MCP registry (docs/log/48 P0) — the implementation is Agent-side
 	// (workspace/agent/mcp_servers.go).
 	{route: "GET /api/mcp-servers"},

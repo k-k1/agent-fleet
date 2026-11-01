@@ -48,7 +48,7 @@ func TestSignInStepsAuditOnlyWhenStored(t *testing.T) {
 			}
 		}
 	}
-	stored := probeRelaysWith(t, only, agentPaths(`{"connected":true}`))
+	stored := probeRelaysWith(t, only, agentPaths(`{"connected":true,"stored":true}`))
 	if len(stored) != len(signInSteps) {
 		t.Fatalf("probed %d sign-in steps, want %d", len(stored), len(signInSteps))
 	}

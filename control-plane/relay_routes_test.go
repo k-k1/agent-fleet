@@ -197,13 +197,13 @@ var agentProbeAnswers = map[string]string{
 	// oauth_mcp_client.go audits the disconnect only when the Agent says a grant was dropped.
 	"DELETE /mcp-servers/x1/oauth": `{"serverId":"x1","issuer":"https://issuer.invalid","hadGrant":true,"revoked":true}`,
 	// A sign-in step is audited only when the Agent says it stored the credential.
-	"POST /connections/agy/complete":        `{"connected":true}`,
-	"POST /connections/claude/complete":     `{"connected":true}`,
-	"POST /connections/codex/device/poll":   `{"connected":true}`,
-	"POST /connections/cursor/poll":         `{"connected":true}`,
-	"POST /connections/kiro/poll":           `{"connected":true}`,
-	"POST /connections/muse/poll":           `{"connected":true}`,
-	"POST /connections/opencode/oauth/poll": `{"connected":true,"status":"complete"}`,
+	"POST /connections/agy/complete":        `{"connected":true,"stored":true}`,
+	"POST /connections/claude/complete":     `{"connected":true,"stored":true}`,
+	"POST /connections/codex/device/poll":   `{"connected":true,"stored":true}`,
+	"POST /connections/cursor/poll":         `{"connected":true,"stored":true}`,
+	"POST /connections/kiro/poll":           `{"connected":true,"stored":true}`,
+	"POST /connections/muse/poll":           `{"connected":true,"stored":true}`,
+	"POST /connections/opencode/oauth/poll": `{"connected":true,"stored":true,"status":"complete"}`,
 }
 
 // probeRelays drives every /api route of the full route table once. A workspace resolves to a

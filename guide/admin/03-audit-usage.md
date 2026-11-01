@@ -49,8 +49,8 @@ keep it in mind.
   Credential writes are recorded too, without ever naming a secret: `connection.<kind>.save` and
   `connection.<kind>.delete` (git, aws, cloudwatch, discord, grafana, jira, lcpp, pagerduty, slack,
   svn, opencode and the agent CLIs), `connection.<kind>.api_key` (codex, muse),
-  `connection.<kind>.signin` (one row when the sign-in actually stored a credential; a still-pending
-  poll writes nothing) and `mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`.
+  `connection.<kind>.signin` (one row, written by the call that finished the sign-in; a still-pending poll, a repeat of
+  the finishing poll and a poll made while already signed in write nothing) and `mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`.
   The target is the git host, the provider key's variable name or the MCP server id, and empty
   otherwise. A failed write (an error answer from the workspace) leaves no row. `session.spend_cap`,
   `session.lock` and `repo.lock` record who set a spend cap or flipped a deletion lock.
