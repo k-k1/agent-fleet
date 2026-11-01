@@ -419,9 +419,9 @@
 }
 .wi-dsession .codicon {
   color: var(--ok);
-  font-size: 10px;
-  /* The codicon stylesheet makes the glyph box 16px wide whatever font-size says (measured);
-     pinning it keeps the reservation in .wi-dname exact. */
+  /* Equal specificity with codicon.css, which comes later in the bundle and wins, so its
+     font: 16px/1 sets the glyph box to 16px. codicon.css declares no width, so pinning it here
+     keeps the .wi-dname reservation exact in any import order. */
   width: var(--wi-dicon);
   flex: none;
 }
@@ -432,8 +432,9 @@
   min-width: 0;
   /* A title is up to 80 characters with no spaces; without this it overflows onto Remove. */
   overflow-wrap: anywhere;
-  /* Room for the icon (16px) and the 6px gap: 22px. Reserving less leaves the title one or two
-     pixels too wide to sit beside the icon, so it wraps onto its own line below it. */
+  /* Room for the icon column and one gap (--wi-dicon + --wi-dgap): reserving less leaves the
+     title a pixel or two too wide to sit beside the icon, so it wraps onto its own line below
+     it (measured 16 + 6 + 262 > 282 content px at 400px). */
   max-width: calc(100% - var(--wi-dicon) - var(--wi-dgap));
 }
 .wi-dslug,
