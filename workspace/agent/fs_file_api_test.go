@@ -611,7 +611,9 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	}()
 	select {
 	case <-parentSyncEntered:
-	case <-time.After(5 * time.Second):
+	case got := <-first:
+		t.Fatalf("first PUT finished before reaching parent fsync: %+v", got)
+	case <-time.After(fsPutReachBound(t)):
 		t.Fatal("first PUT did not reach parent fsync")
 	}
 	go func() {
@@ -633,6 +635,21 @@ func TestFSFileConcurrentPUTsSerializeThroughParentSync(t *testing.T) {
 	if got, _ := os.ReadFile(target); string(got) != "first\n" {
 		t.Fatalf("final content=%q", got)
 	}
+}
+
+// fsPutReachBound bounds how long a test waits for a PUT goroutine to reach a
+// hooked syscall. It only guards against a hang, so it must be far above any
+// scheduling delay on a loaded host: the time left to the test deadline when
+// there is one, else a generous fixed cap. The short "must not overtake"
+// windows are separate and stay at 100 ms.
+func fsPutReachBound(t *testing.T) time.Duration {
+	t.Helper()
+	if d, ok := t.Deadline(); ok {
+		if left := time.Until(d) - 5*time.Second; left > 5*time.Second {
+			return left
+		}
+	}
+	return 60 * time.Second
 }
 
 func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
@@ -662,7 +679,9 @@ func TestFSFileGetWaitsForInFlightPut(t *testing.T) {
 	}()
 	select {
 	case <-renameEntered:
-	case <-time.After(5 * time.Second):
+	case aerr := <-putDone:
+		t.Fatalf("PUT finished before reaching rename: %+v", aerr)
+	case <-time.After(fsPutReachBound(t)):
 		t.Fatal("PUT did not reach rename")
 	}
 
