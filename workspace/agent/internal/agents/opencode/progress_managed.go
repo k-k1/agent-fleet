@@ -47,7 +47,7 @@ func noteProgress(typ string, props json.RawMessage) {
 		h.tools.Add(p.ID)
 	case "session.tool.success", "session.tool.failed", "session.tool.error":
 		h.tools.Done(p.ID)
-	case "session.execution.started", "session.step.ended", "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted", "session.idle":
+	case "session.execution.started", "session.step.ended", "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted":
 		// A turn boundary seen on a live stream: nothing from before it is still running, and
 		// the set is trustworthy again.
 		h.tools.Reset()

@@ -169,7 +169,7 @@ jobs:
           set -u
           run='^(TestContract(ServeAPI|V2|Shared|TerminalForm)|TestOpencodePluginModules)'
           go test -tags contract -list "$run" ./internal/agents/opencode/ > "$RUNNER_TEMP/list.txt"
-          for name in TestContractServeAPI TestContractV2Form TestContractV2State \
+          for name in TestContractServeAPI TestContractV2Form TestContractV2State TestContractV2EventStream \
                       TestContractShared TestContractTerminalForm TestOpencodePluginModules; do
             grep -q "^$name" "$RUNNER_TEMP/list.txt" || { echo "::error::no test named $name* is selected"; exit 1; }
           done

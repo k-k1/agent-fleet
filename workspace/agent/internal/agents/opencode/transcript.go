@@ -77,23 +77,6 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 // session list's "compacting" state (WireLive).
 func isCompacting(m session.Meta) bool { return compactingV2(v2TargetFor(m), m) }
 
-// compactionProbe is the part of an opencode 1 message.updated event's info that says whether
-// it is a compaction summary and whether it has finished (driver.go).
-type compactionProbe struct {
-	Role  string `json:"role"`
-	Mode  string `json:"mode"`
-	Agent string `json:"agent"`
-	Time  struct {
-		Completed int64 `json:"completed"`
-	} `json:"time"`
-}
-
-func (p compactionProbe) isCompaction() bool {
-	return p.Role == "assistant" && (p.Mode == "compaction" || p.Agent == "compaction")
-}
-
-func (p compactionProbe) inFlight() bool { return p.isCompaction() && p.Time.Completed == 0 }
-
 // TerminalModal is the modal an opencode Terminal pane shows that typed text would decide:
 // "question" while the question tool waits, "permission" while the permission prompt is up
 // (screen.go), "" otherwise. A pasted line is dropped in both and the Enter picks the

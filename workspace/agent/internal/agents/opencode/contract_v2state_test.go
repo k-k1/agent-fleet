@@ -6,7 +6,7 @@
 //
 //	PATH=<dir with opencode 2>:$PATH go test -tags contract -run V2State ./internal/agents/opencode/
 //
-// Like contract_serveapi_test.go it is not run in CI: opencode-contract.yml pins opencode-ai only.
+// opencode-contract.yml runs it in its opencode 2 job.
 package opencode
 
 import (
@@ -30,7 +30,8 @@ import (
 
 const stubSummary = "## Objective\n- o\n\n## Requirements\n- (none)\n\n## Decisions\n- (none)\n\n## Work State\n### Completed\n- (none)\n\n### Active\n- (none)\n\n### Blocked\n- (none)\n\n## Next Move\n1. (none)\n\n## Relevant Files\n- (none)\n\n## Important Context\n- (none)"
 
-// stubProvider answers by the last user text: FAIL → 401, SLOW → a stream that takes ~8 s,
+// stubProvider answers by the last user text: FAIL → 401, RETRY → 500 (retried by opencode),
+// SLOW → a stream that takes ~8 s,
 // TOOL → one shell call first, a compaction request → the template filled in, anything else →
 // "ok". It records every request, so the test can say the stub saw them.
 type stubProvider struct {
@@ -55,6 +56,12 @@ func (s *stubProvider) handler(w http.ResponseWriter, r *http.Request) {
 			text = fmt.Sprint(m.Content)
 		}
 		afterTool = m.Role == "tool"
+	}
+	if strings.Contains(text, "RETRY") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"message":"stub: upstream exploded","type":"server_error"}}`)
+		return
 	}
 	if strings.Contains(text, "FAIL") {
 		w.Header().Set("Content-Type", "application/json")
