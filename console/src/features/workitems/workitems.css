@@ -397,7 +397,10 @@
 .wi-dsession {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  /* Icon column and gap; .wi-dname reserves their sum so the title stays on the icon's line. */
+  --wi-dicon: 16px;
+  --wi-dgap: 6px;
+  gap: var(--wi-dgap);
   border: 1px solid var(--border);
   border-radius: 5px;
   background: none;
@@ -417,6 +420,9 @@
 .wi-dsession .codicon {
   color: var(--ok);
   font-size: 10px;
+  /* The codicon stylesheet makes the glyph box 16px wide whatever font-size says (measured);
+     pinning it keeps the reservation in .wi-dname exact. */
+  width: var(--wi-dicon);
   flex: none;
 }
 /* Only the title breaks mid-text; the slug, branch and tag stay nowrap and drop whole to the
@@ -426,9 +432,9 @@
   min-width: 0;
   /* A title is up to 80 characters with no spaces; without this it overflows onto Remove. */
   overflow-wrap: anywhere;
-  /* Room for the icon (10px + the 6px gap) plus 4px of slack, so a sub-pixel font difference
-     cannot push the title below the icon's line. */
-  max-width: calc(100% - 20px);
+  /* Room for the icon (16px) and the 6px gap: 22px. Reserving less leaves the title one or two
+     pixels too wide to sit beside the icon, so it wraps onto its own line below it. */
+  max-width: calc(100% - var(--wi-dicon) - var(--wi-dgap));
 }
 .wi-dslug,
 .wi-dbranch,
