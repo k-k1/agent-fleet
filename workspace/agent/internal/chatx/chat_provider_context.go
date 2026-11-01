@@ -70,11 +70,11 @@ type providerResumeHandle struct {
 // an entry every time a kind is added: cursor (docs/log/40) reached providerHasResume but was
 // missed by the compaction side, so compacting a cursor conversation left its handle behind
 // (muse repeated it until it was listed here).
-// TestEveryResumeHandleFieldIsListed fails on a handle or cursor field no entry points at.
+// TestEveryResumeHandleFieldIsListed and TestEveryMessageCursorFieldIsListed fail on a handle or
+// cursor field no entry points at.
 //
-// These are persisted fields of this package's own record, so the table stays here rather than
-// behind an agents capability: internal/agents cannot name ChatConversation, and renaming the
-// JSON keys would change stored conversations.
+// These are fields of this package's own record, so the table stays here rather than behind an
+// agents capability: internal/agents cannot import chatx and so cannot name ChatConversation.
 var providerResumeHandles = []providerResumeHandle{
 	{session.KindClaude, func(c *ChatConversation) *string { return &c.ClaudeSessionID },
 		func(c *ChatConversation) *int { return &c.ClaudeMessageCursor }},

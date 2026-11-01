@@ -435,13 +435,15 @@ Follow-ups: #3122 (the Console's `auth_expired` toast and re-auth target are sti
 
 `internal/chatx/chat_provider_context.go` held 12 of the kind-literal branches: two six-way
 `switch`es, `providerCursor` and `MarkProviderSynced`, choosing the `ChatConversation`
-`<Kind>MessageCursor` field. They are not an `agents` capability candidate: the fields are
-persisted keys of chatx's own record (`claude_message_cursor`, …), `internal/agents` cannot name
-`ChatConversation`, and moving them would change stored conversations. They are the same kind
-of per-kind field mapping as the resume handles, so they now live in the same table
-(`providerResumeHandles` gained a `cursor` accessor; `providerResumeHandleOf` looks up by the
-exact registry key, so an alias or unknown kind still finds no cursor). `resetProviderCursors`
-reads the table too. `kindLiteralCeiling` goes 126 → 114. `TestProviderCursorMatchesOldSwitch`
-holds the lookup and the write to copies of the old switches over every handle kind, chat
-provider and alias spelling; `TestEveryMessageCursorFieldIsListed` fails on a cursor field no
-entry points at. The remaining sites stay in #2925.
+`<Kind>MessageCursor` field. #2925 listed this site as a capability candidate; it is
+reclassified because the fields belong to chatx's own record and `internal/agents` cannot import
+chatx, so a capability could not name `ChatConversation`. It is neither a measured-per-kind list
+nor one product's behaviour: the branches are consolidated into a package-local table.
+`providerResumeHandles` gained a `cursor` accessor next to the resume handle, and
+`providerResumeHandleOf` looks up by the exact registry key, so an alias or unknown kind still
+finds no cursor. `resetProviderCursors` reads the table too. `kindLiteralCeiling` goes 126 → 112
+(the base already measured 124, two under its ceiling; this slice removes 12).
+`TestProviderCursorMatchesOldSwitch` holds the lookup and the write to copies of the old
+switches over every handle kind, chat provider and alias spelling;
+`TestEveryMessageCursorFieldIsListed` fails on a cursor field no entry points at. The remaining
+sites stay in #2925.
