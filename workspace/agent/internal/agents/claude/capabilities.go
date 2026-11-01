@@ -95,3 +95,8 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 		},
 	}
 }
+
+// TUIInterrupt is agents.TUIInterrupter: Esc interrupts a running turn (docs/log/133 §1).
+func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
+	return agents.TUIInterruptEscape()
+}
