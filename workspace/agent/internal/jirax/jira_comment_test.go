@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -350,9 +351,9 @@ func TestJiraCommentAddRefusals(t *testing.T) {
 
 // A POST cut off in transport is not re-sent, and the message says the comment may exist.
 func TestJiraCommentAddTransportFailureIsNotRetried(t *testing.T) {
-	n := 0
+	var attempts atomic.Int32 // written by the server's handler goroutine
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n++
+		attempts.Add(1)
 		hj, _ := w.(http.Hijacker)
 		conn, _, _ := hj.Hijack()
 		conn.Close()
@@ -360,7 +361,7 @@ func TestJiraCommentAddTransportFailureIsNotRetried(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := &secrets.JiraCreds{Site: srv.URL, Email: "me@example.com", Token: "fake-api-tok"}
 	rc, _, errs := runComment(c, "", "issue", "comment", "add", "T-1", "x")
-	if rc != 1 || n != 1 || !strings.Contains(errs, "may have been added") {
+	if n := attempts.Load(); rc != 1 || n != 1 || !strings.Contains(errs, "may have been added") {
 		t.Errorf("rc=%d attempts=%d err=%q", rc, n, errs)
 	}
 }
