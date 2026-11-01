@@ -450,3 +450,76 @@ mismatch never fails the start or turns the axis off, and "not told" is `unknown
 boundary check did not accept. Fargate is not told: its container definition has no memory of its own, so the
 limit sits on the task cgroup and the container's `memory.max` would read `max`, a false `disagree`. Not yet
 checked on a real runtime. Follow-ups: #2816, #3110.
+
+## Note (2026-11-02)
+
+The live check in #2517 found that the trigger in decisions 1 and 2 would probably not fire in the
+incident it exists for. This note records the finding and proposes the trigger for the next phase;
+the decision text above is unchanged, and the stage table keeps its provisional values until a later
+note replaces them.
+
+**What was measured.** One synthetic load on one runtime: an `ecs-ec2` slot (AL2023, cgroup v2), the
+container pinned at `memory.max` for about 4 minutes with anonymous plus file-backed memory.
+
+| Counter | Result |
+|---|---|
+| `memory.events` `max` | rose 0 → about 129k (roughly 540 per second) |
+| `memory.events` `oom`, `oom_kill` | stayed 0 |
+| `memory.pressure` `some` and `full` `total` | rose to about 792k µs |
+| `memory.pressure` `avg10` | peaked at 0.03 |
+
+A container that is capped and keeps reclaiming its own page cache stalls briefly and often. The `avg`
+windows are smoothed percentages of wall time and barely move under that shape, while the cumulative
+`total` counter and `memory.events max` move clearly. That is the shape of the incident behind #2451–#2453,
+so the stage table's `some avg10` / `full avg10` entry and `avg60` damper would likely never have
+reached stage 2. What is not known: 792k µs over about 240 s is on average about 0.3% of wall time,
+which does not obviously agree with an `avg10` peak of 0.03; the check did not record the samples
+between, so the two are not reconciled here.
+
+**What this does not show.** It is not a heavy-build load (`go test -p`, `npm run build`), and not
+Fargate, docker or kubernetes, which are the remaining items of #2517. No false-positive rate for builds
+exists yet, and none for any rate-based trigger.
+
+**Proposed trigger for the next phase (to be fitted, not final).** Replace the `avg10` entry in the stage
+conditions with rates taken over the sustained window of decision 2 (same timestamp rules):
+
+- **Stall rate:** the increase of `memory.pressure` `total` (`some` for stage 1 and 2, `full` for stage 2
+  and 3) in µs per second over the window, computed from consecutive 5 s samples.
+- **Reclaim-at-limit rate:** the increase of `memory.events` `max` per second over the window. It is
+  evidence that allocations are meeting the limit, and is only meaningful while `max` is finite.
+- **Corroboration, unchanged in role:** working set against `max`, and the refault rate from
+  `memory.stat` (`workingset_refault_file`, and `workingset_refault_anon` where there is swap). A high
+  stall rate with a low refault rate is a build that merely allocates; a high one with a high refault
+  rate is thrash. The anonymous share condition of stage 3 stays.
+- **`avg10` and `avg60` stay for two things only:** the Console's display (they are what members expect
+  of PSI), and as an additional damper for stage 3 (a short burst moves a rate over 30 s but not `avg60`).
+  Neither alone may enter a stage.
+
+The counters are cumulative and a window needs both ends, so a counter that goes backwards (a cgroup
+recreated) resets the window and is never read as a negative rate.
+
+**What phase 0 already records** (#2516, `workspace/agent/internal/mempressure`). Every 5 s the sampler
+reads `memory.pressure`, `memory.current`, `memory.max`, `memory.stat` and `memory.events`. Once a minute
+it writes a series line containing the last values of `some_usec` / `full_usec` (the `total` counters),
+`ev_high` / `ev_max` / `ev_oom` / `ev_oom_kill`, `refault_file`, `cur`, `max`, `ws`, `anon`, `file`,
+`shmem`, the per-minute maxima of `some10` / `full10` and of the refault rate, the last `some60` /
+`full60`, and the latency probe. The cumulative counters mean a per-minute delta is recoverable offline
+by subtraction, which is enough to fit a minute-scale rate.
+
+**What it lacks for fitting the thresholds.** A sustained window of 30–60 s needs the rate inside the
+minute, and a minute-end delta hides a burst. Missing series: the per-minute peak of the 5 s `total`
+delta (`some` and `full`) and of the 5 s `memory.events max` delta, and `workingset_refault_anon`. Also
+not on the wire: the `mem_pressure` axis carries the `avg` values only, no rate. These are listed as
+follow-ups and are not built here.
+
+**Still unknown, needs data from real workloads.**
+
+1. The stall-rate and reclaim-rate distribution of ordinary builds and test runs at the sizes in
+   production, and so the false-positive question, which is now about the `total` rate and the `max`
+   events rate and not about `avg10`.
+2. Whether a stall-rate threshold separates the incident from a build at all, or only a refault-rate
+   condition does.
+3. Fargate, docker and kubernetes, which may behave differently (#2517).
+4. Why the `avg10` peak and the `total` increase disagree (above).
+
+Follow-ups: #2517 (the remaining runtimes and the build load).
