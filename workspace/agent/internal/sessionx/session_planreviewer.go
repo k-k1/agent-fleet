@@ -32,7 +32,7 @@ func withPlanReviewer(list []session.PlanReviewer, path, reviewer string) []sess
 		} else if e.Auto != nil {
 			// The member's choice for this plan outlives a change of reviewer; the progress of
 			// the old reviewer's loop does not.
-			auto = &session.PlanAuto{Enabled: e.Auto.Enabled, Max: e.Auto.Max, Prompt: e.Auto.Prompt}
+			auto = &session.PlanAuto{Enabled: e.Auto.Enabled, Max: e.Auto.Max, Prompt: e.Auto.Prompt, Gen: e.Auto.Gen + 1}
 		}
 	}
 	if reviewer != "" {
@@ -100,10 +100,15 @@ func HandleSetPlanReviewer(w http.ResponseWriter, r *http.Request) {
 				if req.Auto.Enabled {
 					// A fresh loop: round 0, and no verdict yet, so only a reply that arrives after
 					// this switch counts.
-					m.PlanReviewers[i].Auto = &session.PlanAuto{Enabled: true, Max: req.Auto.Max, Prompt: planAutoPromptOf(req.Auto.Prompt)}
+					gen := 1
+					if e.Auto != nil {
+						gen = e.Auto.Gen + 1
+					}
+					m.PlanReviewers[i].Auto = &session.PlanAuto{Enabled: true, Max: req.Auto.Max, Prompt: planAutoPromptOf(req.Auto.Prompt), Gen: gen}
 				} else if a := e.Auto; a != nil {
 					cp := *a
 					planAutoStop(&cp, "")
+					cp.Gen++
 					m.PlanReviewers[i].Auto = &cp
 				}
 				return true

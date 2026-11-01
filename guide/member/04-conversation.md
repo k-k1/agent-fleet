@@ -198,8 +198,9 @@ there, so you can show the plan to a different model than the one that wrote it.
   "auto-review stopped at 2/3: …" with the reason, when the reviewer's verdict is `approve`, after
   N automatic rounds, or on any failure: a reply whose **Verdict** section does not read as exactly
   `approve` or `changes-requested`, a reviewer that could not be reached, a plan that could not be
-  rejected, a planner that is not in plan mode (for instance one resumed after a stop), or a plan you
-  answered yourself in the meantime. The last revision is then on an ordinary approval card for you.
+  rejected, a planner that is not in plan mode (for instance one resumed after a stop), an approval dialog
+  that was not on screen, an Agent restart in the middle of a round (nothing is resent), or a plan you
+  answered yourself or a setting you changed in the meantime. The last revision is then on an ordinary approval card for you.
   Only the **Verdict** section of the reply is read, never the findings. While it runs the card shows
   "auto-review 2/3". Choosing a different reviewer for the plan keeps the setting but starts the
   count again; switching it off and on again does too. The first review is still started by you, and

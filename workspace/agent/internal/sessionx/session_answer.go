@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -198,6 +199,14 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"answered": name, "picked": labels})
 }
 
+var planRespondMu sync.Map // session name -> *sync.Mutex
+
+func planRespondLock(name string) (unlock func()) {
+	mu, _ := planRespondMu.LoadOrStore(name, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
+}
+
 // planRespondSupported: plan mode, and so a plan approval to answer, is a claude concept.
 func planRespondSupported(kind string) bool { return kind == session.KindClaude }
 
@@ -229,6 +238,10 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Decision string `json:"decision"`
 		Feedback string `json:"feedback"`
+		// ExpectPlan is set only by the automatic plan review (session_planauto.go): the
+		// presentation it was claimed for. The decision is refused unless it is still the one on
+		// the card AND its dialog is on screen, checked under planRespondLock.
+		ExpectPlan string `json:"expect_plan"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -252,9 +265,25 @@ func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 	// effectiveModal, not the raw state: ExitPlanMode's own permission_prompt overwrites
 	// "plan" with "permission" while its approval dialog is still up (session_status.go),
 	// and judging by the raw state refused every decision taken after that hook fired.
-	if st, _ := status.Read(sid); effectiveModal(sid, st.State) != "plan" {
+	// One decision per session at a time, from the check to the keys: without it a member's
+	// approve and an automatic reject both pass the check and send Enter then Escape, and the
+	// Escape interrupts the work the approval just started.
+	unlock := planRespondLock(name)
+	defer unlock()
+	st, _ := status.Read(sid)
+	if effectiveModal(sid, st.State) != "plan" {
 		httpx.WriteErr(w, http.StatusConflict, "no_plan", "no pending plan approval (already handled?)")
 		return
+	}
+	if req.ExpectPlan != "" {
+		if planPresentation(sid) != req.ExpectPlan {
+			httpx.WriteErr(w, http.StatusConflict, "no_plan", "the plan on the card is not the one this decision was for")
+			return
+		}
+		if st.State != "permission" {
+			httpx.WriteErr(w, http.StatusConflict, "dialog_not_shown", "the approval dialog is not on screen yet")
+			return
+		}
 	}
 	pane, err := claudePane(name)
 	if err != nil {

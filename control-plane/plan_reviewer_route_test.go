@@ -69,13 +69,13 @@ func TestSessionWireKeepsPlanReviewersAbsentVersusEmpty(t *testing.T) {
 // carry vanishes between the Agent and the Console, and the Console would show a loop that
 // has no count and no reason for stopping.
 func TestSessionWireRelaysThePlanAutoState(t *testing.T) {
-	in := `{"name":"a","planReviewers":[{"path":"/p","reviewer":"b","auto":{"enabled":false,"max":3,"round":2,"verdict":"changes-requested","verdictAt":"2026-11-01T10:00:00Z","plan":"abc","stop":"max_rounds","prompt":"R {path}"}}]}`
+	in := `{"name":"a","planReviewers":[{"path":"/p","reviewer":"b","auto":{"enabled":false,"max":3,"round":2,"verdict":"changes-requested","verdictAt":"2026-11-01T10:00:00Z","plan":"abc","stop":"max_rounds","gen":4,"inflight":true,"prompt":"R {path}"}}]}`
 	var w sessionWire
 	if err := json.Unmarshal([]byte(in), &w); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := json.Marshal(w)
-	for _, want := range []string{`"max":3`, `"round":2`, `"stop":"max_rounds"`, `"verdict":"changes-requested"`, `"verdictAt":"2026-11-01T10:00:00Z"`, `"plan":"abc"`, `"prompt":"R {path}"`} {
+	for _, want := range []string{`"max":3`, `"round":2`, `"stop":"max_rounds"`, `"verdict":"changes-requested"`, `"verdictAt":"2026-11-01T10:00:00Z"`, `"plan":"abc"`, `"gen":4`, `"inflight":true`, `"prompt":"R {path}"`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("relay dropped %s: %s", want, b)
 		}

@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 407
+# count: 411
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -57,6 +57,8 @@ agentCatalogWire.sessions[].name string
 agentCatalogWire.sessions[].origin string,omitempty
 agentCatalogWire.sessions[].originSession string,omitempty
 agentCatalogWire.sessions[].planReviewers[].auto.enabled bool
+agentCatalogWire.sessions[].planReviewers[].auto.gen number,omitempty
+agentCatalogWire.sessions[].planReviewers[].auto.inflight bool,omitempty
 agentCatalogWire.sessions[].planReviewers[].auto.max number
 agentCatalogWire.sessions[].planReviewers[].auto.plan string,omitempty
 agentCatalogWire.sessions[].planReviewers[].auto.prompt string,omitempty
@@ -296,6 +298,8 @@ sessionWire.name string
 sessionWire.origin string,omitempty
 sessionWire.originSession string,omitempty
 sessionWire.planReviewers[].auto.enabled bool
+sessionWire.planReviewers[].auto.gen number,omitempty
+sessionWire.planReviewers[].auto.inflight bool,omitempty
 sessionWire.planReviewers[].auto.max number
 sessionWire.planReviewers[].auto.plan string,omitempty
 sessionWire.planReviewers[].auto.prompt string,omitempty

@@ -764,6 +764,8 @@ type planAutoWire struct {
 	VerdictAt string `json:"verdictAt,omitempty"`
 	Plan      string `json:"plan,omitempty"`
 	Stop      string `json:"stop,omitempty"`
+	Gen       int    `json:"gen,omitempty"`
+	Inflight  bool   `json:"inflight,omitempty"`
 	Prompt    string `json:"prompt,omitempty"`
 }
 

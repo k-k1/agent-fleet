@@ -516,8 +516,16 @@ type PlanAuto struct {
 	// Plan is the fingerprint of the plan text the last automatic re-review was sent for.
 	Plan string `json:"plan,omitempty"`
 	// Stop says why the loop ended: approved | max_rounds | verdict_unclear | send_failed |
-	// reject_failed | not_plan_mode | stale | ambiguous_reviewer. "" while it runs.
+	// reject_failed | dialog_not_shown | not_plan_mode | plan_changed | stale | ambiguous_reviewer |
+	// interrupted. "" while it runs.
 	Stop string `json:"stop,omitempty"`
+	// Gen names this loop instance: every switch-on, switch-off and change of reviewer moves it,
+	// and a round in flight re-checks it before each side effect, so a round claimed before the
+	// member changed the setting never sends or rejects afterwards.
+	Gen int `json:"gen,omitempty"`
+	// Inflight is true from the moment a round is claimed until its reject went through. An Agent
+	// that finds it set at boot died inside a round and ends the loop ("interrupted").
+	Inflight bool `json:"inflight,omitempty"`
 	// Prompt is the follow-up text with {session} {path} {rev} placeholders, in the language the
 	// Console was displaying when the loop was switched on (the Agent has no catalogue of its own).
 	Prompt string `json:"prompt,omitempty"`

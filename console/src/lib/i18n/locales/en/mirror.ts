@@ -103,6 +103,8 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "plan.auto_stop_verdict_unclear": "the reply had no clear verdict",
   "plan.auto_stop_send_failed": "the reviewer could not be reached",
   "plan.auto_stop_reject_failed": "the plan could not be rejected",
+  "plan.auto_stop_dialog_not_shown": "the plan approval dialog was not on screen",
+  "plan.auto_stop_interrupted": "the Agent restarted during a round",
   "plan.auto_stop_not_plan_mode": "the session is not in plan mode",
   "plan.auto_stop_plan_changed": "the plan was answered in the meantime",
   "plan.auto_stop_stale": "the verdict was too old",

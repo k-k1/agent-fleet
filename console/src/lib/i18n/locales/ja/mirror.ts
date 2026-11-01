@@ -109,6 +109,8 @@ export const mirror = {
   "plan.auto_stop_verdict_unclear": "返信に判定が読み取れなかった",
   "plan.auto_stop_send_failed": "レビュー役に送れなかった",
   "plan.auto_stop_reject_failed": "プランを却下できなかった",
+  "plan.auto_stop_dialog_not_shown": "プランの承認ダイアログが表示されていなかった",
+  "plan.auto_stop_interrupted": "ラウンドの途中で Agent が再起動した",
   "plan.auto_stop_not_plan_mode": "セッションがプランモードではない",
   "plan.auto_stop_plan_changed": "その間にプランへ回答があった",
   "plan.auto_stop_stale": "判定が古すぎた",

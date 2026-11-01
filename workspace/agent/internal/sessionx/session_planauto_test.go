@@ -2,7 +2,9 @@ package sessionx
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,8 +145,8 @@ func (f *planAutoFake) deps() planAutoDeps {
 			}
 			return f.sendErr
 		},
-		reject: func(p string) error { f.rejected = append(f.rejected, p); return f.rejectErr },
-		settle: func(string) {},
+		reject: func(p, expect string) error { f.rejected = append(f.rejected, p); return f.rejectErr },
+		settle: func(string) bool { return true },
 		now:    func() time.Time { return f.now },
 	}
 }
@@ -176,7 +178,7 @@ func TestPlanAutoSendsOneRoundAndRejectsAfterTheSend(t *testing.T) {
 	var order []string
 	d := f.deps()
 	d.send = func(p, r, msg string) error { order = append(order, "send"); f.sent = append(f.sent, msg); return nil }
-	d.reject = func(p string) error { order = append(order, "reject"); return nil }
+	d.reject = func(p, expect string) error { order = append(order, "reject"); return nil }
 
 	planAutoOnPlan(d, planner)
 	if len(f.sent) != 1 || strings.Join(order, ",") != "send,reject" {
@@ -292,7 +294,15 @@ func TestPlanAutoLeavesAPlanTheMemberAnsweredMeanwhile(t *testing.T) {
 	f := &planAutoFake{now: now}
 	planner, sid, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
 	d := f.deps()
-	d.settle = func(string) { status.RemovePendingPlan(sid) } // approved while the reviewer woke up
+	d.settle = func(string) bool { status.RemovePendingPlan(sid); return true } // approved while the reviewer woke up
+	// The real Agent refuses a decision whose presentation is no longer on the card.
+	d.reject = func(p, expect string) error {
+		if planPresentation(sid) != expect {
+			return errPlanGone
+		}
+		f.rejected = append(f.rejected, p)
+		return nil
+	}
 	planAutoOnPlan(d, planner)
 	if len(f.rejected) != 0 {
 		t.Fatal("rejected a plan that was no longer on the card")
@@ -409,5 +419,163 @@ func TestPeerReplyThroughInputArmsTheLoop(t *testing.T) {
 	}
 	if a := readAuto(t, planner, path); a.Verdict != verdictChanges {
 		t.Fatalf("the reviewer's reply was not recorded: %+v", a)
+	}
+}
+
+func TestPlanAutoWithoutADialogLeavesTheCard(t *testing.T) {
+	now := time.Now()
+	f := &planAutoFake{now: now}
+	planner, _, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
+	d := f.deps()
+	d.settle = func(string) bool { return false }
+	planAutoOnPlan(d, planner)
+	if len(f.rejected) != 0 {
+		t.Fatal("sent Escape with no sign of the dialog")
+	}
+	if a := readAuto(t, planner, path); a.Enabled || a.Stop != "dialog_not_shown" || a.Inflight {
+		t.Errorf("state = %+v", a)
+	}
+}
+
+// The member switches the loop off (or changes the reviewer) while the reviewer wakes up or the
+// dialog settles: the claimed round must not send or reject afterwards.
+func TestPlanAutoClaimIsRecheckedBeforeEachSideEffect(t *testing.T) {
+	now := time.Now()
+	change := map[string]func(planner, path string){
+		"switched off": func(planner, path string) {
+			UpdateSessionMeta(planner, func(m *session.Meta) bool {
+				a := *m.PlanReviewers[0].Auto
+				planAutoStop(&a, "")
+				a.Gen++
+				m.PlanReviewers[0].Auto = &a
+				return true
+			})
+		},
+		"off and on again": func(planner, path string) {
+			UpdateSessionMeta(planner, func(m *session.Meta) bool {
+				a := *m.PlanReviewers[0].Auto
+				a.Gen += 2 // two settings writes
+				m.PlanReviewers[0].Auto = &a
+				return true
+			})
+		},
+		"reviewer changed": func(planner, path string) {
+			UpdateSessionMeta(planner, func(m *session.Meta) bool {
+				m.PlanReviewers = withPlanReviewer(m.PlanReviewers, path, "srev02")
+				return true
+			})
+		},
+		"approved verdict stopped it": func(planner, path string) { stopPlanAuto(planner, path, "approved") },
+	}
+	for name, mutate := range change {
+		for phase := 0; phase < 2; phase++ { // 0: during prepare, 1: during settle
+			f := &planAutoFake{now: now}
+			planner, _, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
+			d := f.deps()
+			if phase == 0 {
+				d.prepare = func(string) error { mutate(planner, path); return nil }
+			} else {
+				d.settle = func(string) bool { mutate(planner, path); return true }
+			}
+			planAutoOnPlan(d, planner)
+			if len(f.rejected) != 0 || (phase == 0 && len(f.sent) != 0) {
+				t.Errorf("%s (phase %d): sent=%d rejected=%d after the setting changed", name, phase, len(f.sent), len(f.rejected))
+			}
+		}
+	}
+}
+
+// A claim that could not be saved leaves the old verdict and round on disk; nothing may go out,
+// or the next event claims the same round again.
+func TestPlanAutoSendsNothingWhenTheClaimCannotBeSaved(t *testing.T) {
+	now := time.Now()
+	f := &planAutoFake{now: now}
+	planner, _, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
+	dir := session.MetaDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skip(err)
+	}
+	defer os.Chmod(dir, 0o700)
+	if f2, err := os.CreateTemp(dir, "probe"); err == nil { // running as root: the injection cannot work
+		f2.Close()
+		os.Remove(f2.Name())
+		t.Skip("directory permissions are not enforced here")
+	}
+	planAutoOnPlan(f.deps(), planner)
+	if len(f.prepared)+len(f.sent)+len(f.rejected) != 0 {
+		t.Fatalf("side effects after a failed claim write: %v %v %v", f.prepared, f.sent, f.rejected)
+	}
+	os.Chmod(dir, 0o700)
+	if a := readAuto(t, planner, path); a.Round != 0 || a.Verdict != verdictChanges || a.Inflight {
+		t.Errorf("state = %+v, want the unclaimed original", a)
+	}
+}
+
+func TestPlanAutoRoundDiedInFlightIsEndedAtBoot(t *testing.T) {
+	now := time.Now()
+	a := armed(1, 3, now)
+	a.Inflight, a.Verdict, a.VerdictAt = true, "", ""
+	_, _, path := planAutoEnv(t, "# Plan", a)
+	RecoverPlanAutoInflight()
+	if got := readAuto(t, "planner", path); got.Enabled || got.Stop != "interrupted" || got.Inflight || got.Round != 1 {
+		t.Errorf("after recovery: %+v", got)
+	}
+	// A healthy loop (no round in flight) is left alone.
+	b := armed(1, 3, now)
+	_, _, path = planAutoEnv(t, "# Plan", b)
+	RecoverPlanAutoInflight()
+	if got := readAuto(t, "planner", path); !got.Enabled || got.Stop != "" {
+		t.Errorf("a healthy loop was touched: %+v", got)
+	}
+}
+
+func TestPlanAutoClaimMarksTheRoundInFlightUntilTheRejectWent(t *testing.T) {
+	now := time.Now()
+	f := &planAutoFake{now: now}
+	planner, _, path := planAutoEnv(t, "# Plan", armed(0, 3, now))
+	d := f.deps()
+	d.reject = func(p, expect string) error {
+		if a := readAuto(t, planner, path); !a.Inflight {
+			t.Error("round not marked in flight before the reject")
+		}
+		return nil
+	}
+	planAutoOnPlan(d, planner)
+	if a := readAuto(t, planner, path); a.Inflight || !a.Enabled || a.Round != 1 {
+		t.Errorf("after the round: %+v", a)
+	}
+}
+
+// The decision endpoint itself refuses a presentation that is not the one claimed, and one whose
+// dialog is not on screen, before any key is sent.
+func TestPlanRespondWithExpectPlanChecksPresentationAndDialog(t *testing.T) {
+	m, sid := planFileEnv(t, "# Plan\nbody")
+	status.WritePlanFile(sid, "/p/plan.md")
+	srv := planFileServer(t)
+	mux := srv.Config.Handler.(*http.ServeMux)
+	mux.HandleFunc("POST /sessions/{name}/plan-respond", HandleSessionPlanRespond)
+	post := func(expect string) (int, string) {
+		resp, err := http.Post(srv.URL+"/sessions/"+m.Name+"/plan-respond", "application/json",
+			strings.NewReader(`{"decision":"reject","expect_plan":"`+expect+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	status.Persist(sid, "plan") // the hook has fired, the dialog's own prompt has not
+	token := planPresentation(sid)
+	if code, body := post(token); code != 409 || !strings.Contains(body, "dialog_not_shown") {
+		t.Errorf("no dialog yet: %d %s", code, body)
+	}
+	if code, body := post("not|the|presentation"); code != 409 || !strings.Contains(body, "no_plan") {
+		t.Errorf("wrong presentation: %d %s", code, body)
+	}
+	status.WritePendingPlan(sid, "# Plan\nbody") // the same text presented again is another presentation
+	if token2 := planPresentation(sid); token2 == token {
+		t.Skip("modtime resolution too coarse to tell two writes apart")
+	} else if code, body := post(token); code != 409 || !strings.Contains(body, "no_plan") {
+		t.Errorf("a re-presentation of the same text passed the guard: %d %s", code, body)
 	}
 }

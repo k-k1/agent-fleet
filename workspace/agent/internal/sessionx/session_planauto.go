@@ -29,6 +29,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -155,6 +156,7 @@ func renderPlanAutoPrompt(tmpl, planner, path, rev string) string {
 // planAutoStop ends the loop recorded in a, for `reason`.
 func planAutoStop(a *session.PlanAuto, reason string) {
 	a.Enabled = false
+	a.Inflight = false
 	a.Verdict, a.VerdictAt = "", ""
 	a.Stop = reason
 }
@@ -226,14 +228,74 @@ type planAutoDeps struct {
 	// send delivers the follow-up as a `question` peer message.
 	send func(planner, reviewer, message string) error
 	// reject closes the planner's approval dialog (interrupt) so the reply lands on an idle
-	// planner. errNoPlan = the member got there first.
-	reject func(planner string) error
-	// settle waits until the planner's dialog is really up (best effort).
-	settle func(sid string)
+	// planner. `expect` names the presentation the round was claimed for: the Agent checks it
+	// under the same lock as a member's approve/reject and refuses (errPlanGone) when it moved.
+	reject func(planner, expect string) error
+	// settle reports whether the planner's dialog is really on screen, waiting a few seconds.
+	settle func(sid string) bool
 	now    func() time.Time
 }
 
-var errPlanGone = &peerRejection{Code: "no_plan", Msg: "no pending plan approval"}
+var (
+	errPlanGone       = &peerRejection{Code: "no_plan", Msg: "no pending plan approval"}
+	errDialogNotShown = &peerRejection{Code: "dialog_not_shown", Msg: "the plan approval dialog is not on screen"}
+)
+
+// planPresentation names one presentation of a plan: the text, the file it lives in and the
+// moment the hook captured it. Two presentations of the same text (a rejected plan revised back,
+// another plan file with the same body) differ.
+func planPresentation(sid string) string {
+	path, _ := status.ReadPlanFile(sid)
+	plan, ok := status.ReadPendingPlan(sid)
+	if !ok || strings.TrimSpace(plan) == "" {
+		return ""
+	}
+	at, _ := status.PendingPlanAt(sid)
+	return planFingerprint(plan) + "|" + path + "|" + strconv.FormatInt(at.UnixNano(), 10)
+}
+
+// planAutoLive reports whether the round claimed as `gen` for `reviewer` is still wanted: the
+// loop is on, with the same reviewer and instance. It is read right before every side effect.
+func planAutoLive(name, path, reviewer string, gen int) bool {
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return false
+	}
+	for _, e := range m.PlanReviewers {
+		if e.Path == path {
+			return e.Reviewer == reviewer && e.Auto != nil && e.Auto.Enabled && e.Auto.Gen == gen
+		}
+	}
+	return false
+}
+
+// finishPlanAutoRound clears the in-flight mark of the round claimed as `gen`.
+func finishPlanAutoRound(name, path string, gen int) {
+	UpdateSessionMeta(name, func(m *session.Meta) bool {
+		for i := range m.PlanReviewers {
+			if a := m.PlanReviewers[i].Auto; m.PlanReviewers[i].Path == path && a != nil && a.Gen == gen && a.Inflight {
+				cp := *a
+				cp.Inflight = false
+				m.PlanReviewers[i].Auto = &cp
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// RecoverPlanAutoInflight runs at Agent boot: a round still marked in flight died between its
+// claim and its reject. Nothing is resent (the follow-up may already be out); the loop ends with
+// a reason, so the card does not claim an automatic review that nothing is waiting on.
+func RecoverPlanAutoInflight() {
+	for _, m := range session.ListMetas() {
+		for _, e := range m.PlanReviewers {
+			if e.Auto != nil && e.Auto.Enabled && e.Auto.Inflight {
+				stopPlanAuto(m.Name, e.Path, "interrupted")
+			}
+		}
+	}
+}
 
 var defaultPlanAutoDeps = planAutoDeps{
 	prepare: prepareReviewerSession,
@@ -259,10 +321,11 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 	st, _ := status.Read(sid)
 	inPlan := effectiveModal(sid, st.State) == "plan"
 	fp := planFingerprint(plan)
+	token := planPresentation(sid)
 
 	var claimed session.PlanReviewer
-	var have bool
-	UpdateSessionMeta(name, func(m *session.Meta) bool {
+	claimedNow := false
+	_, wrote, werr := updateSessionMetaChecked(name, func(m *session.Meta) bool {
 		for i := range m.PlanReviewers {
 			e := m.PlanReviewers[i]
 			a := e.Auto
@@ -285,8 +348,9 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 			default:
 				cp.Round++ // persisted before the send: a crash costs a round, never adds one
 				cp.Verdict, cp.VerdictAt, cp.Plan = "", "", fp
+				cp.Inflight = true
 				m.PlanReviewers[i].Auto = &cp
-				claimed, have = m.PlanReviewers[i], true
+				claimed, claimedNow = m.PlanReviewers[i], true
 				return true
 			}
 			m.PlanReviewers[i].Auto = &cp
@@ -294,9 +358,16 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 		}
 		return false
 	})
-	if !have {
+	if werr != nil {
+		// Not persisted: the old verdict and round are still on disk, so going on would let the
+		// next event claim the same round again.
+		log.Printf("plan auto-review: %s %s: claim not saved: %v", name, path, werr)
 		return
 	}
+	if !claimedNow || !wrote {
+		return
+	}
+	gen := claimed.Auto.Gen
 	fail := func(reason string, err error) {
 		log.Printf("plan auto-review: %s %s: %v", name, path, err)
 		stopPlanAuto(name, path, reason)
@@ -305,8 +376,13 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 	// send leaves the plan on its card untouched; the reply can only arrive after the reject
 	// because a reviewer takes far longer than the next line, and a reply that beat it would be
 	// queued behind the dialog (peer_pending.go), not lost.
+	// Before each side effect the claim is checked again: the member may have switched the loop
+	// off or changed the reviewer while the reviewer was waking up.
 	if err := d.prepare(claimed.Reviewer); err != nil {
 		fail("send_failed", err)
+		return
+	}
+	if !planAutoLive(name, path, claimed.Reviewer, gen) {
 		return
 	}
 	msg := renderPlanAutoPrompt(claimed.Auto.Prompt, name, path, fp)
@@ -314,18 +390,26 @@ func planAutoOnPlan(d planAutoDeps, name string) {
 		fail("send_failed", err)
 		return
 	}
-	d.settle(sid)
-	if cur, ok := status.ReadPendingPlan(sid); !ok || planFingerprint(cur) != fp {
-		stopPlanAuto(name, path, "plan_changed") // the member answered the card meanwhile
+	if !d.settle(sid) {
+		// No sign that the dialog is up: an Escape now could land on the composer. Leave the card.
+		fail("dialog_not_shown", errDialogNotShown)
 		return
 	}
-	if err := d.reject(name); err != nil {
-		if err == errPlanGone {
-			stopPlanAuto(name, path, "plan_changed")
-			return
-		}
-		fail("reject_failed", err)
+	if !planAutoLive(name, path, claimed.Reviewer, gen) {
+		return
 	}
+	if err := d.reject(name, token); err != nil {
+		switch err {
+		case errPlanGone:
+			stopPlanAuto(name, path, "plan_changed") // the member answered the card meanwhile
+		case errDialogNotShown:
+			fail("dialog_not_shown", err)
+		default:
+			fail("reject_failed", err)
+		}
+		return
+	}
+	finishPlanAutoRound(name, path, gen)
 }
 
 // prepareReviewerSession mirrors the Console's prepareReviewer: resume a stopped reviewer and
@@ -366,8 +450,8 @@ func sendPlanFollowUp(planner, reviewer, message string) error {
 	return peerReject("send_refused", "send to %s answered %d %s", reviewer, rec.status, strings.TrimSpace(rec.body.String()))
 }
 
-func rejectPlannerPlan(planner string) error {
-	body, _ := json.Marshal(map[string]string{"decision": "reject"})
+func rejectPlannerPlan(planner, expect string) error {
+	body, _ := json.Marshal(map[string]string{"decision": "reject", "expect_plan": expect})
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/sessions/"+planner+"/plan-respond", bytes.NewReader(body))
 	req.SetPathValue("name", planner)
 	rec := &captureWriter{header: http.Header{}}
@@ -377,19 +461,23 @@ func rejectPlannerPlan(planner string) error {
 		return nil
 	case rec.status == http.StatusConflict && strings.Contains(rec.body.String(), "no_plan"):
 		return errPlanGone
+	case rec.status == http.StatusConflict && strings.Contains(rec.body.String(), "dialog_not_shown"):
+		return errDialogNotShown
 	}
 	return peerReject("reject_refused", "plan-respond answered %d %s", rec.status, strings.TrimSpace(rec.body.String()))
 }
 
 // settlePlanDialog waits (up to 8 s) for claude's own permission prompt, which fires when the
-// approval dialog is on screen: an Escape sent before it is typed into nothing.
-func settlePlanDialog(sid string) {
+// approval dialog is on screen, and reports whether it did: an Escape sent before it is typed
+// into nothing.
+func settlePlanDialog(sid string) bool {
 	for i := 0; i < 32; i++ {
-		if st, _ := status.Read(sid); st.State != "plan" {
-			return
+		if st, _ := status.Read(sid); st.State == "permission" && planPresentation(sid) != "" {
+			return true
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+	return false
 }
 
 // HandlePlanPresented (POST /sessions/{name}/plan-presented) is the status hook's kick: the
