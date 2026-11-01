@@ -553,6 +553,60 @@ func TestApprovalLateDecisionWithdrawnIsNotActedOn(t *testing.T) {
 	}
 }
 
+// The dangerous order: the waiter's poll reads the late decision, the daemon then wins
+// "retracted" and removes it, and the waiter's claim loses. It must not act.
+func TestApprovalWaiterLosesClaimDoesNotAct(t *testing.T) {
+	for _, choice := range []string{"approve", "reject"} {
+		t.Run(choice, func(t *testing.T) {
+			withTempHome(t)
+			id := pendingWithDeadline(t)
+			var cur bridgeApprovalRec
+			bridgeApprovalAfterWrite = func(id string) { cur, _ = bridgeApprovals.Read(id) }
+			t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+			stallPastDeadline(t)
+			msg, err := bridgeApprovalDecision(id, choice, true)
+			if err != nil || !strings.Contains(msg, "expired") {
+				t.Fatalf("msg=%q err=%v", msg, err)
+			}
+			decided, werr := approvalOutcome(id, cur)
+			if !decided || !errors.Is(werr, errApprovalTimeout) {
+				t.Fatalf("waiter that lost the claim: decided=%v err=%v", decided, werr)
+			}
+		})
+	}
+}
+
+// A late reject the waiter took first stays "Rejected".
+func TestApprovalLateRejectAlreadyTakenStaysRejected(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
+	var werr error
+	bridgeApprovalAfterWrite = func(id string) {
+		cur, _ := bridgeApprovals.Read(id)
+		_, werr = approvalOutcome(id, cur)
+	}
+	t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+	stallPastDeadline(t)
+	msg, err := bridgeApprovalDecision(id, "reject", true)
+	if err != nil || !strings.Contains(msg, "Rejected") || !errors.Is(werr, errApprovalRejected) {
+		t.Fatalf("msg=%q err=%v waiter=%v", msg, err, werr)
+	}
+}
+
+// A broken arbiter on the waiter side is reported as "not confirmed", not as a timeout
+// that contradicts the "Approved" the user was shown, and the action does not run.
+func TestApprovalWaiterClaimFailureIsUnconfirmed(t *testing.T) {
+	withTempHome(t)
+	id := pendingWithDeadline(t)
+	_ = os.MkdirAll(bridgeApprovalClaims.Path(id), 0o700) // unreadable claim
+	cur, _ := bridgeApprovals.Read(id)
+	cur.Decision = "approve"
+	decided, err := approvalOutcome(id, cur)
+	if !decided || !errors.Is(err, errApprovalUnconfirmed) {
+		t.Fatalf("decided=%v err=%v", decided, err)
+	}
+}
+
 // A decision written in time is untouched by the late check and still honored.
 func TestApprovalOnTimeDecisionHonored(t *testing.T) {
 	withTempHome(t)

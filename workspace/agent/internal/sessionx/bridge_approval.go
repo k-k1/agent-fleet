@@ -145,6 +145,20 @@ const (
 	claimRetracted = "retracted"
 )
 
+// claimApprovalRetry rides out a transient I/O failure of the arbiter (not a lost race,
+// which is a result): the waiter's claim sits on the most common path, an on-time approval.
+func claimApprovalRetry(id, who string) (string, error) {
+	var winner string
+	var err error
+	for i := 0; i < 3; i++ {
+		if winner, err = claimApproval(id, who); err == nil {
+			return winner, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return "", err
+}
+
 // claimApproval tries to resolve id as who and returns the winner's name. A returned error
 // means the outcome is unknown; callers fail closed.
 func claimApproval(id, who string) (winner string, err error) {
@@ -184,6 +198,7 @@ func claimApproval(id, who string) (winner string, err error) {
 var (
 	errApprovalRejected      = errors.New("この操作は却下されました（実行していません）")
 	errApprovalTimeout       = errors.New("承認がタイムアウトしました（実行していません）。必要ならもう一度依頼してください")
+	errApprovalUnconfirmed   = errors.New("承認は届きましたが確定できなかったため、この操作を実行していません。必要ならもう一度依頼してください")
 	errApprovalUndeliverable = errors.New("承認リクエストを Discord に送信できなかったため、この操作を中止しました")
 )
 
@@ -248,9 +263,14 @@ func approvalOutcome(id string, cur bridgeApprovalRec) (decided bool, err error)
 	if cur.Decision != "approve" && cur.Decision != "reject" {
 		return false, nil
 	}
-	winner, cerr := claimApproval(id, claimTaken)
+	winner, cerr := claimApprovalRetry(id, claimTaken)
 	bridgeApprovals.Remove(id)
-	if cerr != nil || winner != claimTaken {
+	if cerr != nil {
+		// Not a lost race: the arbiter itself failed. The daemon may already have said
+		// "Approved", so report that the decision arrived but was not confirmed.
+		return true, errApprovalUnconfirmed
+	}
+	if winner != claimTaken {
 		return true, errApprovalTimeout
 	}
 	if cur.Decision == "approve" {
@@ -276,8 +296,9 @@ func expireApproval(id string) error {
 				return derr
 			}
 		}
-		// Claim the expiry: a daemon stalled across the deadline that writes its decision
-		// after this look finds the claim and reports "expired" instead of "Approved".
+		// Record the expiry. It does not decide anything (a late daemon wins "retracted"
+		// or loses to this; either way the answer is "expired"); it keeps the claim file
+		// readable evidence of who resolved the approval.
 		_, _ = claimApproval(id, claimExpired)
 		return errApprovalTimeout
 	}
@@ -322,7 +343,7 @@ func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
 		return Fb(en, "この承認はすでに処理済みです", "This approval was already handled"), nil
 	}
 	expired := Fb(en, "この承認は期限切れ、または処理済みです", "This approval has expired or was already handled")
-	if rec.Deadline > 0 && chatx.NowMs() >= rec.Deadline {
+	if rec.Deadline > 0 && approvalNowMs() >= rec.Deadline {
 		return expired, nil // the waiter has given up (or is about to)
 	}
 	if h := bridgeApprovalBetweenReadAndWrite; h != nil {
