@@ -140,16 +140,23 @@ without it that read is a 403 and the purge stops at that day. A bucket you name
 modified apart from those two members; keep its public access prevention on yourself.
 
 The CP's setting goes through `cp.env`, like the other deployment-specific ones. Re-runnable
-form: drop the old key, then add the current line only when there is one (empty output means the
-archive is off, and a key left behind would keep the CP archiving to a bucket it no longer has
-grants on):
+form: once the output is read, drop the old key and add the current line only when there is one
+(an empty output means the archive is off, and a key left behind would keep the CP archiving to a
+bucket it no longer has grants on):
 
 ```bash
 cd overlays/<yours>
-sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
-line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env)
-[ -z "$line" ] || printf '%s\n' "$line" >> cp.env
+if line=$(terraform -chdir=<path to deploy/gcp/gke> output -raw egress_archive_env); then
+  sed -i '/^AF_EGRESS_ARCHIVE_URL=/d' cp.env
+  [ -z "$line" ] || printf '%s\n' "$line" >> cp.env
+else
+  echo "terraform output failed: cp.env left as it was" >&2; false
+fi
 ```
+
+cp.env is touched only after `terraform output` succeeded, so a failed read (backend error, wrong
+`-chdir`, output not created yet) is never taken for "archive off": that would delete the key and
+make the next apply purge events unarchived. The block exits non-zero on a failed read: do not re-apply then.
 
 Then re-apply the overlay. `kustomize` refuses a `cp.env` that repeats the key, so do not append
 twice.
