@@ -217,12 +217,19 @@ func TestRecordBranchPRsRaisesReviewingToWorkingButNotWorkingToWatching(t *testi
 
 func TestMoveCarriesTheLaunchItemAndLinks(t *testing.T) {
 	src := session.Meta{Name: "src1", Dir: "/wt/a",
-		WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-1"},
-		Links:    []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkReviewing}},
-		Unlinked: []string{"o/r#9"}}
+		WorkItem:      &session.WorkItemRef{Provider: "github", Key: "o/r#1"},
+		WorkItemState: "merged",
+		Links:         []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkReviewing}},
+		Unlinked:      []string{"o/r#9"}}
 	req := moveCreateReq(src, moveRecord{Target: "dst1", Kind: session.KindClaude})
-	if req.WorkItem == nil || req.WorkItem.Key != "PROJ-1" || len(req.links) != 1 || len(req.unlinked) != 1 {
+	if req.WorkItem == nil || req.WorkItem.Key != "o/r#1" || len(req.links) != 1 || len(req.unlinked) != 1 {
 		t.Fatalf("move request work_item=%+v links=%+v unlinked=%v, want the source's", req.WorkItem, req.links, req.unlinked)
+	}
+	// The target's meta keeps the launch PR's state, so its started link still reads merged.
+	dst := session.Meta{Name: "dst1", WorkItem: req.WorkItem}
+	applyCreateLinks(&dst, &req)
+	if dst.WorkItemState != "merged" || session.LinksOf(dst)[0].State != "merged" {
+		t.Fatalf("target state=%q links=%+v, want the launch PR still merged", dst.WorkItemState, session.LinksOf(dst))
 	}
 }
 

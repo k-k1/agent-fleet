@@ -461,10 +461,12 @@ type CreateReq struct {
 	// recorded in the meta so a later rename through POST /repos/{name}/branch-name keeps
 	// {ref} and the kind. Every other launch leaves it nil.
 	WorkItem *session.WorkItemRef `json:"work_item,omitempty"`
-	// links / unlinked are a moved session's links (session_move.go), set in-process only: no
-	// client can hand a new session links it did not earn.
-	links    []session.WorkItemLink
-	unlinked []string
+	// links / unlinked / workItemState are a moved session's links and its launch item's state
+	// (session_move.go), set in-process only: no client can hand a new session links it did not
+	// earn.
+	links         []session.WorkItemLink
+	unlinked      []string
+	workItemState string
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	// SSMAlias: the host bookmark's alias (CP disambiguates it with the profile when it

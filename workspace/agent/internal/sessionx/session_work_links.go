@@ -136,6 +136,11 @@ func repoForProvider(dir, provider string) string {
 // applyCreateLinks sets a new session's links: a moved session keeps the source's (carried in
 // the request by moveCreateReq), any other inherits its parent's (inheritLinks).
 func applyCreateLinks(meta *session.Meta, req *CreateReq) {
+	// The launch item's last seen state goes with it: without it a launch PR merged before the
+	// move would lose its done mark, and one merged after it would not be news to the target.
+	if meta.WorkItem != nil {
+		meta.WorkItemState = req.workItemState
+	}
 	if len(req.links) > 0 || len(req.unlinked) > 0 {
 		meta.Links, meta.Unlinked = req.links, req.unlinked
 		return
