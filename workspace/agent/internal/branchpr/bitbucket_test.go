@@ -382,3 +382,12 @@ func TestBitbucketFallsBackToThePRsStatusesOfItsHeadWhenTheCommitIsNotResolved(t
 		t.Fatalf("pr = %+v, want success from the head's statuses only (the old commit's failure ignored)", pr)
 	}
 }
+
+func TestBitbucketReadsThePRTitleForLinksOnly(t *testing.T) {
+	body := `{"values":[{"id":3,"title":"PROJ-12 tidy","state":"MERGED","links":{"html":{"href":"https://bitbucket.org/w/r/pull-requests/3"}},` +
+		`"source":{"branch":{"name":"a"},"repository":{"full_name":"w/r"}}}]}`
+	got, _, err := parseBitbucketPulls([]byte(body), "w/r", []Key{{"w/r", "a"}})
+	if err != nil || got[Key{"w/r", "a"}].pr.Title != "PROJ-12 tidy" {
+		t.Fatalf("got %+v err %v, want the title read", got, err)
+	}
+}

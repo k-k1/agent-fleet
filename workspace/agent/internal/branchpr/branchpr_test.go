@@ -343,3 +343,31 @@ func TestA401WithoutRenewAsksOnce(t *testing.T) {
 		t.Fatalf("calls = %d", calls.Load())
 	}
 }
+
+func TestParseReadsTheTitleAndTheIssuesAPRCloses(t *testing.T) {
+	keys := []Key{{Repo: "o/r", Branch: "f"}}
+	node := `{"number":7,"title":"PROJ-12 fix the thing","state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/7",` +
+		`"headRepositoryOwner":{"login":"o"},"closingIssuesReferences":{"nodes":[` +
+		`{"number":45,"repository":{"nameWithOwner":"o/r"}},{"number":3,"repository":{"nameWithOwner":"o/other"}},` +
+		`{"number":0,"repository":{"nameWithOwner":"o/r"}}]},"commits":{"nodes":[]}}`
+	got, _, _, err := parse([]byte(`{"data":{`+answer("r0", "o", "main", node)+`}}`), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := got[keys[0]]
+	if pr == nil || pr.Title != "PROJ-12 fix the thing" || len(pr.Closes) != 2 || pr.Closes[0] != "o/r#45" || pr.Closes[1] != "o/other#3" {
+		t.Fatalf("pr = %+v, want the title and o/r#45, o/other#3", pr)
+	}
+	// Neither leaves the Agent: the row does not draw them.
+	b, _ := json.Marshal(pr)
+	if strings.Contains(string(b), "PROJ-12") || strings.Contains(string(b), "o/r#45") {
+		t.Fatalf("wire = %s, want no title or closing issues", b)
+	}
+}
+
+func TestQueryAsksForTheTitleAndClosingIssues(t *testing.T) {
+	q, _ := query([]Key{{"o/r", "b"}})
+	if !strings.Contains(q, " title ") || !strings.Contains(q, "closingIssuesReferences(first:10)") {
+		t.Fatalf("query = %s", q)
+	}
+}

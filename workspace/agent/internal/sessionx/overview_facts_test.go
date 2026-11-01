@@ -24,13 +24,17 @@ import (
 // (AF_CODEX_APP_SERVER_ADDR): a codex Terminal launch probes it (codex/release.go), and no test
 // may reach it. The ones that need a server start a fake and set the address themselves.
 //
-// The row links (#1062) are off too: a listed session whose working copy points at github.com
-// would start a background refresh that reads the credential store and calls GitHub, and the
-// port scan would attribute this machine's real listeners. session_links_test.go stubs them.
+// The row links (#1062) are off too: a listed session whose working copy points at github.com or
+// bitbucket.org would start a background refresh that reads the credential store and calls the
+// provider, every listing would read the Jira projects the same way, and the port scan would
+// attribute this machine's real listeners. session_links_test.go and
+// session_inferred_links_test.go stub them back.
 func TestMain(m *testing.M) {
 	os.Exit(testguard.Run(m, func() {
 		overviewFactsRead = func(session.Meta) ([]transcript.Turn, bool) { return nil, false }
 		lookupPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
+		lookupBitbucketPRs = func([]branchpr.Key, time.Time) map[branchpr.Key]*branchpr.PR { return nil }
+		jiraProjectsOf = func(time.Time) map[string]bool { return nil }
 		lookupPorts = func(time.Time) map[string][]int { return nil }
 		_ = os.Unsetenv("AF_CODEX_APP_SERVER_ADDR")
 	}))

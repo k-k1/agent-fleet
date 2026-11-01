@@ -200,8 +200,9 @@ workspace is stopped.
   [15](15-external-services.md)); otherwise Agent Fleet only reads from Bitbucket.
 - A session is linked to more than the ticket it was started from. A session started by another
   session watches its parent's tickets; an agent that names its branch after a ticket with
-  `branch_name` is working on it; the pull request of a session's branch is linked to it; and an
-  agent can link itself to a ticket or pull request with the af tool `link_work_item`. The linked
+  `branch_name` is working on it; the pull request of a session's branch is linked to it, and so
+  are the Jira keys in the branch name or the pull request's title (`PROJ-123`, only for projects
+  of your Jira connection) and the GitHub issues the pull request closes; and an agent can link itself to a ticket or pull request with the af tool `link_work_item`. The linked
   items appear on the session's row (click one to open its details), and the details list every
   session linked to the item with how it is linked. While the workspace is stopped, rows and
   details show the links as they were when it last ran. A linked pull request last seen merged or
