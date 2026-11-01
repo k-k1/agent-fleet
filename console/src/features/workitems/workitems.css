@@ -419,12 +419,16 @@
   font-size: 10px;
   flex: none;
 }
-/* Only the title wraps; the slug, branch and tag stay whole beside it. */
+/* Only the title breaks mid-text; the slug, branch and tag stay nowrap and drop whole to the
+   next line. */
 .wi-dname {
   flex: 0 1 auto;
   min-width: 0;
-  /* Room for the dot (10px + the 6px gap), so a wrapping title stays on the dot's line. */
-  max-width: calc(100% - 16px);
+  /* A title is up to 80 characters with no spaces; without this it overflows onto Remove. */
+  overflow-wrap: anywhere;
+  /* Room for the icon (10px + the 6px gap) plus 4px of slack, so a sub-pixel font difference
+     cannot push the title below the icon's line. */
+  max-width: calc(100% - 20px);
 }
 .wi-dslug,
 .wi-dbranch,
@@ -432,7 +436,8 @@
   flex: none;
   white-space: nowrap;
 }
-/* A branch wider than the row is cut, not allowed to widen it. */
+/* A branch wider than the row is cut with an ellipsis, so it cannot push Remove past the modal's
+   edge. Slug and tags are short by construction and are not capped. */
 .wi-dbranch {
   max-width: 100%;
   overflow: hidden;
