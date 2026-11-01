@@ -25,12 +25,19 @@ describe("dropPendingQuestionPart", () => {
 
   it("keeps the prose of a turn and only strips the question part", () => {
     const turns: Turn[] = [
-      { role: "assistant", idx: 1, parts: [{ kind: "text", text: "hi" }, { kind: "question", questions: [q("one")] }] },
+      { role: "assistant", idx: 1, parts: [{ kind: "text", text: "hi" }, { kind: "question", tool: "AskUserQuestion", questions: [q("one")] }] },
     ];
     const out = dropPendingQuestionPart(turns, [q("one")]);
     expect(out).toHaveLength(1);
     expect(out[0].parts).toEqual([{ kind: "text", text: "hi" }]);
     expect(turns[0].parts).toHaveLength(2); // input untouched: the card must come back once answered
+  });
+
+  it("leaves other agents' question tools alone", () => {
+    for (const tool of ["request_user_input", "question", ""]) {
+      const turns = [askTurn(1, [q("one")], { tool })];
+      expect(dropPendingQuestionPart(turns, [q("one")])).toBe(turns);
+    }
   });
 
   it("keeps an already answered or declined card", () => {

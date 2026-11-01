@@ -13,7 +13,7 @@ import type { Session } from "../../types/session.ts";
 
 const SESSION = "dup-question-session";
 const QS = [{ header: "Plan", question: "Which branch?", options: [{ label: "main" }, { label: "dev" }] }];
-const part = (extra: object = {}) => ({ role: "assistant", idx: 1, parts: [{ kind: "question", questions: QS, qid: "toolu_1", ...extra }] });
+const part = (extra: object = {}) => ({ role: "assistant", idx: 1, parts: [{ kind: "question", tool: "AskUserQuestion", questions: QS, qid: "toolu_1", ...extra }] });
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;

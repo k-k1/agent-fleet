@@ -51,7 +51,9 @@ export function dropPendingQuestionPart(turns: Turn[], pending: Question[] | nul
   if (!last || last.length === 0) return turns;
   const pi = last.length - 1;
   const hit = last[pi];
-  if (hit.kind !== "question" || !hit.questions || !sameQuestions(hit.questions, pending)) return turns;
+  // Claude's AskUserQuestion only: codex / muse (request_user_input) and opencode (question) put
+  // question parts in the transcript on their own timing, which this fix does not cover.
+  if (hit.kind !== "question" || hit.tool !== "AskUserQuestion" || !hit.questions || !sameQuestions(hit.questions, pending)) return turns;
   if (hit.answer || hit.declined) return turns;
   const parts = last.slice(0, pi);
   const next = turns.slice();
