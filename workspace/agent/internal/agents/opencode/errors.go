@@ -10,8 +10,7 @@ package opencode
 // that arrives is final. Missing it once meant a failed turn landed as TurnCompleted and the
 // read layer, which dropped a message with no displayable part, showed nothing at all.
 //
-// The shape is opencode 1's, measured on 1.18.5 with an exhausted opencode Zen balance (the
-// store's 1.x rows still carry it):
+// The shape is opencode 1's, measured on 1.18.5 with an exhausted opencode Zen balance:
 //
 //	{"info":{…,"error":{"name":"APIError","data":{
 //	   "statusCode":401,"isRetryable":false,
