@@ -21,7 +21,8 @@ import (
 // One refresh costs, per repository, ceil(branches/10) list calls plus one status call per open
 // PR, and the main branch once an hour. An open PR is re-read every bitbucketOpenTTL (12 refreshes
 // an hour), settled ones every settledTTL (6), so 10 repositories with 20 open PRs cost about
-// (10+20)×12 = 360 calls an hour.
+// (10+20)×12 = 360 calls an hour. Where the commit endpoint does not resolve a short hash, the
+// status fallback makes that two calls per open PR: (10+40)×12 = 600.
 
 const (
 	// bitbucketOpenTTL is GitHub's openTTL stretched for that budget: an open PR costs a status
