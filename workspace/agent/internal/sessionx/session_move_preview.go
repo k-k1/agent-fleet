@@ -196,7 +196,7 @@ func buildMovePreview(m session.Meta, now time.Time) movePreviewWire {
 // anyEligibleTarget is some kind the source could move to, so the request check answers for the
 // source alone.
 func anyEligibleTarget(source string) string {
-	for _, k := range moveTargetKinds {
+	for _, k := range moveTargetKinds() {
 		if k != source {
 			return k
 		}

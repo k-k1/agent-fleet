@@ -195,7 +195,7 @@ new file mode 100644
 index 000000000..a290704cb
 --- /dev/null
 +++ b/workspace/agent/internal/agents/zz/zz.go
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,55 @@
 +// Package zz is a stub kind used only to measure how many files a new kind touches
 +// (scripts/stub-kind-count.sh). It is never merged.
 +package zz
@@ -244,6 +244,9 @@ index 000000000..a290704cb
 +// InstructionsUnsupported is agents.InstructionsUnsupported: the stub takes no user instructions.
 +func (agentImpl) InstructionsUnsupported() string { return "no_user_scope" }
 +
++// MoveTarget is agents.MoveTarget: the stub's read has not been measured.
++func (agentImpl) MoveTarget() agents.MoveTargetState { return agents.MoveTargetUnmeasured }
++
 +// SkillsLayout is agents.SkillsLayouter: foreign entries only.
 +func (agentImpl) SkillsLayout() agents.SkillsLayout {
 +	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
@@ -272,19 +275,6 @@ index 471e82a05..734dab8d3 100644
  )
  
  // Driver (docs/log/27 §2, §9.2, ADR 0015): a session's control route. tui is the traditional
-diff --git a/workspace/agent/internal/sessionx/session_move.go b/workspace/agent/internal/sessionx/session_move.go
-index cdc21668b..9cf59b9dd 100644
---- a/workspace/agent/internal/sessionx/session_move.go
-+++ b/workspace/agent/internal/sessionx/session_move.go
-@@ -47,7 +47,7 @@ var moveTargetKinds = []string{
- // moveUnmeasuredTargets stay off until the read has been measured through the real driver; the
- // bare CLI's result does not cover the driver's trust handling and flags. Moving a kind into
- // moveTargetKinds is the whole change once that measurement exists.
--var moveUnmeasuredTargets = []string{session.KindCursor}
-+var moveUnmeasuredTargets = []string{session.KindCursor, session.KindZz}
- 
- // Reasons a kind is not offered as a target, as the preview reports them.
- const (
 diff --git a/workspace/agent/kind_lists_test.go b/workspace/agent/kind_lists_test.go
 index 713d3fd27..e5afb71b3 100644
 --- a/workspace/agent/kind_lists_test.go

@@ -635,6 +635,29 @@ type InstructionsUnsupported interface {
 	InstructionsUnsupported() string
 }
 
+// MoveTarget is the kind's measured answer to "may a session be moved to me": the handover
+// lives in a file outside the target's working folder (ADR 0115 decision 9; measurements in its
+// 2026-10-20 addendum), so a kind qualifies only once its CLI has been shown to read that file
+// without a prompt. It is a measured fact, not a capability, which is why the kind declares it
+// and nothing derives it. A kind with no declaration is not offered as a target (lcpp: its file
+// tools refuse paths outside the working folder; shell and ssm run no agent).
+type MoveTarget interface {
+	MoveTarget() MoveTargetState
+}
+
+// MoveTargetState is what a kind declares through MoveTarget. Zero is not a valid answer, so a
+// forgotten return value cannot read as "measured".
+type MoveTargetState int
+
+const (
+	// MoveTargetMeasured: the read was measured through the real driver; a move may target the kind.
+	MoveTargetMeasured MoveTargetState = iota + 1
+	// MoveTargetUnmeasured: stays off until the read is measured through the real driver; the bare
+	// CLI's result does not cover the driver's trust handling and flags. Returning
+	// MoveTargetMeasured instead is the whole change once that measurement exists.
+	MoveTargetUnmeasured
+)
+
 // InstructionsOps are the kind package's own apply functions. Each func-valued field may be nil
 // where the kind has nothing to write there; the body of every apply is "" to remove.
 type InstructionsOps struct {
