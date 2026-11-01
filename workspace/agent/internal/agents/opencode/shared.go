@@ -57,13 +57,9 @@ const (
 	metaManagedName = "af.managed.name"
 )
 
-// sharedTUI reports whether Terminal sessions attach to af's serve: opencode 2 only (v1 has no
-// per-session environment to keep sessions apart with), unless switched back.
-func sharedTUI() bool { return sharedTUIFor(CurrentLaunch()) }
-
-func sharedTUIFor(spec LaunchSpec) bool {
-	return spec.Major() >= 2 && os.Getenv(standaloneEnv) != "1" && !Serve().Disabled()
-}
+// sharedTUI reports whether Terminal sessions attach to af's serve, unless switched back to
+// --standalone.
+func sharedTUI() bool { return os.Getenv(standaloneEnv) != "1" && !Serve().Disabled() }
 
 // slotModes records how each Terminal slot's pane was last launched. The workspace-wide switch
 // says what the NEXT launch does; the pane that is running keeps the mode it started with (an
@@ -104,7 +100,7 @@ func sharedTerminals() int { return len(terminalSlots()) }
 
 // sharedDaemonWanted is whether the daemon has to be started the shared way (a stable password,
 // the plugins' shared mode): a launch that will attach to it, or a pane that already is.
-func sharedDaemonWanted() bool { return sharedTUIFor(CurrentLaunch()) || sharedTerminals() > 0 }
+func sharedDaemonWanted() bool { return sharedTUI() || sharedTerminals() > 0 }
 
 // --- API calls ---------------------------------------------------------------------
 

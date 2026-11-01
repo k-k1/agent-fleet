@@ -17,67 +17,19 @@ func envOr(key, def string) string {
 	return def
 }
 
-// buildProgram returns the tmux program for an opencode session. opencode
-// keeps its sessions in a local SQLite db (~/.local/share/opencode) and --continue
-// resumes the most recent session for the current project, while safely starting a
-// new one when none exists — so we always pass it (first launch = fresh, relaunch =
-// continue). Auth is the user's own `opencode auth login` (persisted in home), so
-// there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
-// --continue's "most recent" target.
+// buildProgram returns the --standalone tmux program for an opencode session (buildProgramV2).
+// Env (AF_SESSION_SID + provider API keys) is carried on LaunchPlan.Env and injected by tmux
+// `new-session -e`, never prefixed onto the command: that would put the keys into /proc/*/cmdline
+// and pane_start_command in plaintext.
 func buildProgram(model, mode string, ocid string, fork bool) string {
-	return buildProgramFor(CurrentLaunch(), model, mode, ocid, fork)
-}
-
-// buildProgramFor is buildProgram against one reading of the installed opencode.
-func buildProgramFor(spec LaunchSpec, model, mode string, ocid string, fork bool) string {
-	if spec.Major() >= 2 {
-		return buildProgramV2(spec, model, mode, ocid, fork)
-	}
-	// Env (AF_SESSION_SID + provider API keys) is carried on LaunchPlan.Env and
-	// injected by tmux `new-session -e`: prefixing NAME='value' onto the command
-	// put the keys into /proc/*/cmdline and pane_start_command in plaintext.
-	parts := []string{"opencode"}
-	// Run unattended like claude (--dangerously-skip-permissions) and codex
-	// (--dangerously-bypass-…): the container IS the sandbox, so auto-approve every
-	// permission prompt (external-dir access, edits, bash) instead of stalling the TUI on
-	// an approval the Console user can't answer from chat. --auto approves anything not
-	// explicitly denied. Overridable via AGENT_OPENCODE_FLAGS (set to alternate flags).
-	parts = append(parts, envOr("AGENT_OPENCODE_FLAGS", "--auto"))
-	// Per-slot session: when we've captured this slot's opencode session id (the
-	// plugin records it on session.created, keyed by AF_SESSION_SID), resume exactly
-	// THAT session. Otherwise launch plain opencode — the TUI creates a fresh session
-	// on first message, distinct from other slots. We deliberately do NOT use
-	// --continue: it resumes the most-recent session in the project, so two slots in
-	// the same dir would collide on one shared conversation.
-	if ocid != "" {
-		parts = append(parts, "--session", session.ShellQuote(ocid))
-		if fork {
-			// Fork launch: copy ocid's conversation into a NEW session and diverge
-			// (the opencode analog of claude's --fork-session). First launch only —
-			// once the fork exists the caller resumes it without --fork.
-			parts = append(parts, "--fork")
-		}
-	}
-	if model != "" {
-		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
-		// verbatim. The Console only sends this for opencode when explicitly chosen.
-		parts = append(parts, "--model", session.ShellQuote(model))
-	}
-	if mode == "plan" || mode == "normal" {
-		agent := "build"
-		if mode == "plan" {
-			agent = "plan"
-		}
-		parts = append(parts, "--agent", agent)
-	}
-	return strings.Join(parts, " ")
+	return buildProgramV2(CurrentLaunch(), model, mode, ocid, fork)
 }
 
 // buildProgramV2 is the --standalone launch line for opencode 2: the fallback when af's own serve
 // cannot be had and the AF_OPENCODE_TUI_STANDALONE=1 switch (shared.go is the default, one serve
 // for every Terminal session). Measured on 2.0.28: the TUI takes only
 // --standalone, --server, --auto, --continue, --session and --prompt, so --model, --agent and
-// --fork (v1 TUI flags, `opencode run` only on v2) are replaced by what v2 does support.
+// --fork (TUI flags of opencode 1, `opencode run` only on 2) are replaced by what it does support.
 //
 //   - --standalone: a private server per TUI. A bare v2 `opencode` instead joins one per-user
 //     background service that inherited the environment of whichever session started it, so

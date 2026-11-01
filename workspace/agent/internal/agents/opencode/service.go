@@ -23,11 +23,8 @@ func ServiceConfigPath() string {
 // launch line (--standalone) already assumes.
 //
 // A `disabled` the member set themselves is respected, and so is every other key. A file that
-// is not plain JSON is left alone. It is a no-op on opencode 1, which has no service.
+// is not plain JSON is left alone.
 func EnsureServiceDisabled() error {
-	if installedMajor() < 2 {
-		return nil
-	}
 	path := ServiceConfigPath()
 	cfg := map[string]any{}
 	if b, err := os.ReadFile(path); err == nil {

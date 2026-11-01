@@ -39,22 +39,6 @@ func stubTerminalSlots(t *testing.T, fn func() []session.Meta) {
 	})
 }
 
-// A 1.x launch drops a shared slot mode an earlier opencode 2 launch of the slot recorded.
-func TestV1LaunchClearsAStaleSharedSlotMode(t *testing.T) {
-	isolatedHome(t)
-	useMajor(t, 1)
-	stubUsagePref(t, UsageOwn)
-	m := session.Meta{Name: "oc-1", Dir: t.TempDir(), Kind: session.KindOpencode}
-	sid := session.UUID(m.Dir, m.Name)
-	markSlotMode(sid, modeShared)
-	if _, err := (agentImpl{}).BuildLaunch(m, agents.LaunchOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	if got := slotModes.Read(sid); got != "" {
-		t.Fatalf("slot mode after a 1.x launch = %q, want none", got)
-	}
-}
-
 // A Supervisor an earlier test armed leaves its zero-demand watcher polling terminalSlots; the next
 // stubTerminalSlots must end it before writing the var, or -race reports the write against the
 // watcher's read.

@@ -2,27 +2,22 @@ package opencode
 
 // Turn-level failures opencode records on an assistant message.
 //
-// opencode does NOT express a failed turn as an HTTP error or as a part: the blocking
-// v1 `POST /session/{id}/message` answers **200** and the assistant message it returns
-// (and stores) carries `error` NEXT TO an EMPTY `parts` array. Both layers used to miss
-// this — the driver only checked the HTTP status, so a failed turn landed as
-// TurnCompleted / idle, and the read layer dropped any message with no displayable
-// part, so the mirror and get_session_output showed nothing at all. A session that hit
-// e.g. an exhausted opencode Zen balance therefore went silently back to waiting for
-// input with zero tokens and no trace of why.
+// opencode does NOT express a failed turn as an HTTP error. opencode 2 records it in the
+// execution record (session.execution.failed, an idle message with outcome "failed", an error on
+// the assistant message); sendTurn turns that into the {"info":{"error":…}} body below
+// (v2OutcomeBody), and v2state.go maps its {type, message, status} onto the same shape, so the
+// rendering and the classification are shared. 2.x retries a 5xx before it fails, so a failure
+// that arrives is final. Missing it once meant a failed turn landed as TurnCompleted and the
+// read layer, which dropped a message with no displayable part, showed nothing at all.
 //
-// Measured (1.18.5, opencode Zen balance exhausted):
+// The shape is opencode 1's, measured on 1.18.5 with an exhausted opencode Zen balance (the
+// store's 1.x rows still carry it):
 //
 //	{"info":{…,"error":{"name":"APIError","data":{
 //	   "statusCode":401,"isRetryable":false,
 //	   "message":"Insufficient balance. Manage your billing here: …",
 //	   "metadata":{"url":"https://opencode.ai/zen/v1/chat/completions"}}}},
 //	 "parts":[]}
-//
-// opencode 2 reports the same failure explicitly (session.execution.failed, an idle message
-// with outcome "failed", an error on the assistant message); v2state.go maps its
-// {type, message, status} onto this shape, so the rendering and the classification below are
-// shared. v2 also retries a 5xx before it fails, so a failure that arrives is final.
 //
 // Other observed names carry their detail in the same `data` envelope (ProviderAuthError
 // adds providerID; MessageOutputLengthError carries no message at all), so the decoder
@@ -169,11 +164,9 @@ func decodeMessageError(data []byte) (messageError, bool) {
 	return e, true
 }
 
-// decodeTurnError pulls the error field out of the assistant message a blocking /message
-// call answers with — ABORTS INCLUDED, which the driver then classifies against its own
-// abortAsked. Streamed rather than buffered on purpose: a SUCCESSFUL turn's body
-// carries the whole answer (every text and tool part) and can be large, while the only
-// field that matters here is info.error.
+// decodeTurnError pulls the error field out of the body sendTurn hands back for a turn
+// (v2OutcomeBody) — ABORTS INCLUDED, which the driver then classifies against its own
+// abortAsked. Streamed rather than buffered: the only field that matters here is info.error.
 func decodeTurnError(r io.Reader) (messageError, bool) {
 	var wire errorEnvelope
 	if json.NewDecoder(r).Decode(&wire) != nil {

@@ -1,8 +1,6 @@
 //go:build contract
 
-// The client layer (serveapi.go) against the REAL opencode binary on PATH, whichever major
-// it is: the same test runs against the v1 pin and against a v2 install, which is how the
-// "both pins" requirement is checked. No model turn is sent.
+// The client layer (serveapi.go) against the REAL opencode binary on PATH. No model turn is sent.
 //
 //	go test -tags contract -run ServeAPI ./internal/agents/opencode/
 package opencode
@@ -11,17 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 )
 
-func TestContractServeAPIBothMajors(t *testing.T) {
+func TestContractServeAPI(t *testing.T) {
 	requireOpencode(t)
-	wantMajor := apiV1
-	if strings.HasPrefix(strings.TrimPrefix(opencodeVersion(t), "opencode v"), "2.") {
-		wantMajor = apiV2
-	}
 	home := t.TempDir()
 	port := freePort(t)
 	addr := "http://127.0.0.1:" + port
@@ -31,8 +24,8 @@ func TestContractServeAPIBothMajors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	detectedMajor.Store(int32(apiV1))
-	t.Cleanup(func() { detectedMajor.Store(int32(apiV1)); resetServeAuth("") })
+	serveSeen.Store(false)
+	t.Cleanup(func() { serveSeen.Store(false); resetServeAuth("") })
 
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", port)
 	cmd.Env = append(envWithHome(home), "OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
@@ -48,17 +41,13 @@ func TestContractServeAPIBothMajors(t *testing.T) {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	if serveMajor() != wantMajor {
-		t.Fatalf("detected major %d, binary is %s", serveMajor(), opencodeVersion(t))
+	if !serveSeen.Load() {
+		t.Fatalf("a healthy probe did not record the daemon (binary %s)", opencodeVersion(t))
 	}
 
-	// Every API request needs the password. (v2 serves the web UI's static HTML for v1
-	// paths without auth, so only the running major's own routes are asserted.)
-	own := []string{"/global/health", "/global/event"}
-	if wantMajor == apiV2 {
-		own = []string{"/api/info", "/api/event", "/api/session/active"}
-	}
-	for _, p := range own {
+	// Every API request needs the password. (Paths it does not serve answer the web UI's static
+	// HTML without auth, so only its own routes are asserted.)
+	for _, p := range []string{"/api/info", "/api/event", "/api/session/active"} {
 		res, err := http.Get(addr + p)
 		if err != nil {
 			t.Fatal(err)
@@ -74,20 +63,20 @@ func TestContractServeAPIBothMajors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !serveSessionExists(addr, id, dir) {
+	if !serveSessionExists(addr, id) {
 		t.Error("created session not found")
 	}
-	if serveSessionExists(addr, "ses_doesnotexist", dir) {
+	if serveSessionExists(addr, "ses_doesnotexist") {
 		t.Error("a missing session reported as existing")
 	}
-	m, err := activeSessions(addr, dir)
+	m, err := activeSessions(addr)
 	if err != nil || len(m) != 0 {
 		t.Errorf("idle daemon active list = %v, %v; want empty", m, err)
 	}
-	if serveSessionBusy(addr, id, dir) {
+	if serveSessionBusy(addr, id) {
 		t.Error("idle session reported busy")
 	}
-	if err := serveAbort(addr, id, dir); err != nil {
+	if err := serveAbort(addr, id); err != nil {
 		t.Error(err)
 	}
 

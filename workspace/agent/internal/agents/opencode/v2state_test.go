@@ -743,7 +743,7 @@ func TestV2RunTurnLandsTheExplicitOutcome(t *testing.T) {
 func TestV2TargetOnlyForAManagedSessionOnAV2Daemon(t *testing.T) {
 	managed := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode, Driver: session.DriverManaged}
 	terminal := session.Meta{Name: "a", Dir: "/d", Kind: session.KindOpencode}
-	detectedMajor.Store(int32(apiV1))
+	serveSeen.Store(false)
 	if _, ok := v2TargetFor(managed); ok {
 		t.Fatal("a v1 daemon is read through the v2 API")
 	}

@@ -40,8 +40,8 @@ func newFakeServe(t *testing.T, major int, password string) *fakeServe {
 	t.Setenv(serveAddrEnv, f.srv.URL)
 	t.Setenv("HOME", t.TempDir())
 	resetServeAuth(password)
-	detectedMajor.Store(int32(apiV1))
-	t.Cleanup(func() { detectedMajor.Store(int32(apiV1)); resetServeAuth("") })
+	serveSeen.Store(false)
+	t.Cleanup(func() { serveSeen.Store(false); resetServeAuth("") })
 	return f
 }
 
@@ -81,16 +81,8 @@ func (f *fakeServe) handle(w http.ResponseWriter, r *http.Request) {
 		} else {
 			js(`{"data":{}}`)
 		}
-	case r.URL.Path == "/session/status":
-		if id := f.activeID(); id != "" {
-			js(`{"` + id + `":{"type":"busy"}}`)
-		} else {
-			js(`{}`)
-		}
-	case r.Method == "POST" && (r.URL.Path == "/api/session" || strings.HasSuffix(r.URL.Path, "/fork") && f.major == 2):
+	case r.Method == "POST" && (r.URL.Path == "/api/session" || strings.HasSuffix(r.URL.Path, "/fork")):
 		js(`{"data":{"id":"ses_new"}}`)
-	case r.Method == "POST" && (r.URL.Path == "/session" || strings.HasSuffix(r.URL.Path, "/fork")):
-		js(`{"id":"ses_new"}`)
 	default:
 		js(`{}`)
 	}
@@ -114,20 +106,24 @@ func (f *fakeServe) saw(method, prefix string) (string, bool) {
 	return "", false
 }
 
-func TestProbeRecognisesEachMajorByItsJSON(t *testing.T) {
-	for _, major := range []int{1, 2} {
-		f := newFakeServe(t, major, "pw")
-		if !healthy(f.srv.URL) {
-			t.Fatalf("v%d daemon reported unhealthy", major)
-		}
-		if got := int(serveMajor()); got != major {
-			t.Fatalf("detected major = %d, want %d", got, major)
-		}
+// Only an opencode 2 daemon passes the probe; an opencode 1 one (its /api/info is the web UI's
+// HTML) is not a daemon af can drive.
+func TestProbeAcceptsOnlyOpencode2(t *testing.T) {
+	f := newFakeServe(t, 1, "pw")
+	if healthy(f.srv.URL) || serveSeen.Load() {
+		t.Fatal("an opencode 1 daemon was accepted")
+	}
+	f = newFakeServe(t, 2, "pw")
+	if !healthy(f.srv.URL) {
+		t.Fatal("v2 daemon reported unhealthy")
+	}
+	if !serveSeen.Load() {
+		t.Fatal("a healthy probe did not record the daemon")
 	}
 }
 
-// The other major answers 200 text/html on this major's health path, so a status-code-only
-// probe calls any server healthy. A page that is 200 everywhere must not pass.
+// A server answers 200 text/html on paths it does not serve, so a status-code-only probe calls
+// any server healthy. A page that is 200 everywhere must not pass.
 func TestProbeRejectsHTMLWith200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -158,9 +154,9 @@ func TestProbeRejectsMissingVersionAndWrongAuth(t *testing.T) {
 }
 
 func TestEveryClientSendsBasicAuth(t *testing.T) {
-	f := newFakeServe(t, 1, "s3cret")
+	f := newFakeServe(t, 2, "s3cret")
 	for name, c := range map[string]*http.Client{"serve": serveClient, "turn": turnClient, "sse": sseClient, "oauth": oauthClient} {
-		res, err := c.Get(f.srv.URL + "/global/health")
+		res, err := c.Get(f.srv.URL + "/api/info")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,7 +173,7 @@ func TestPasswordIsNotSentToOtherHosts(t *testing.T) {
 		got.Store(r.Header.Get("Authorization"))
 	}))
 	defer other.Close()
-	newFakeServe(t, 1, "s3cret") // the serve address is a different server
+	newFakeServe(t, 2, "s3cret") // the serve address is a different server
 	res, err := serveClient.Get(other.URL)
 	if err != nil {
 		t.Fatal(err)
@@ -240,9 +236,9 @@ func TestEnsureStartsServeWithPassword(t *testing.T) {
 			http.Error(w, "no", http.StatusUnauthorized)
 			return
 		}
-		if r.URL.Path == "/global/health" {
+		if r.URL.Path == "/api/info" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"healthy":true,"version":"1.19.0"}`))
+			_, _ = w.Write([]byte(`{"version":"2.0.28"}`))
 			return
 		}
 		http.NotFound(w, r)
@@ -288,7 +284,7 @@ func TestV2RoutesAndShapes(t *testing.T) {
 	dir := "/work/p q"
 
 	f.active = func() string { return "ses_1" }
-	if !serveSessionBusy(addr, "ses_1", dir) || serveSessionBusy(addr, "ses_2", dir) {
+	if !serveSessionBusy(addr, "ses_1") || serveSessionBusy(addr, "ses_2") {
 		t.Fatal("serveSessionBusy did not read {data:{id:{type:running}}}")
 	}
 	if _, ok := f.saw("GET", "/api/session/active"); !ok {
@@ -306,14 +302,14 @@ func TestV2RoutesAndShapes(t *testing.T) {
 		t.Fatalf("create body = %q, want location.directory", f.bodies["POST /api/session"])
 	}
 
-	if id, err := serveForkSession(addr, "ses_1", dir, "msg_9"); err != nil || id != "ses_new" {
+	if id, err := serveForkSession(addr, "ses_1", "msg_9"); err != nil || id != "ses_new" {
 		t.Fatalf("fork = %q, %v", id, err)
 	}
 	if b := f.bodies["POST /api/session/ses_1/fork"]; b != `{"before":"msg_9"}` {
 		t.Fatalf("fork body = %q", b)
 	}
 
-	if err := serveAbort(addr, "ses_1", dir); err != nil {
+	if err := serveAbort(addr, "ses_1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := f.saw("POST", "/api/session/ses_1/interrupt"); !ok {
@@ -322,48 +318,10 @@ func TestV2RoutesAndShapes(t *testing.T) {
 	if got := eventURL(addr); got != addr+"/api/event" {
 		t.Fatalf("event url = %s", got)
 	}
-	if serveListQuestions(addr, dir) != nil {
-		t.Fatal("v2 has no /question")
-	}
 	for _, k := range f.reqs {
 		if strings.Contains(k, "/question") || strings.HasPrefix(k, "GET /session") || strings.Contains(k, "directory=") {
 			t.Errorf("a v1 route reached the v2 daemon: %s", k)
 		}
-	}
-}
-
-func TestV1RoutesUnchanged(t *testing.T) {
-	f := newFakeServe(t, 1, "pw")
-	addr := f.srv.URL
-	if !healthy(addr) {
-		t.Fatal("v1 fake unhealthy")
-	}
-	dir := "/work/p"
-	f.active = func() string { return "ses_1" }
-	if !serveSessionBusy(addr, "ses_1", dir) {
-		t.Fatal("v1 /session/status not read")
-	}
-	if _, ok := f.saw("GET", "/session/status?directory=%2Fwork%2Fp"); !ok {
-		t.Fatalf("v1 status route changed: %v", f.reqs)
-	}
-	if id, err := serveCreateSession(addr, dir, "t"); err != nil || id != "ses_new" {
-		t.Fatalf("create = %q, %v", id, err)
-	}
-	if _, ok := f.saw("POST", "/session?directory=%2Fwork%2Fp"); !ok {
-		t.Fatalf("v1 create route changed: %v", f.reqs)
-	}
-	if _, err := serveForkSession(addr, "ses_1", dir, "msg_9"); err != nil {
-		t.Fatal(err)
-	}
-	if b := f.bodies["POST /session/ses_1/fork?directory=%2Fwork%2Fp"]; b != `{"messageID":"msg_9"}` {
-		t.Fatalf("v1 fork body = %q", b)
-	}
-	_ = serveAbort(addr, "ses_1", dir)
-	if _, ok := f.saw("POST", "/session/ses_1/abort?directory=%2Fwork%2Fp"); !ok {
-		t.Fatalf("v1 abort route changed: %v", f.reqs)
-	}
-	if got := eventURL(addr); got != addr+"/global/event" {
-		t.Fatalf("event url = %s", got)
 	}
 }
 
@@ -418,11 +376,11 @@ func TestV2TurnWaitsForActiveToClear(t *testing.T) {
 
 	in := agents.TurnInput{Prompt: " hello ", Attachments: []string{"/tmp/a b.png"}}
 	st := agents.ThreadSettings{Model: "prov/mod", Mode: "plan", Effort: "high"}
-	req, err := newTurnRequest(f.srv.URL, "ses_1", "/d", in, st)
+	req, err := newTurnRequest(f.srv.URL, "ses_1", in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := sendTurn(f.srv.URL, "ses_1", "/d", req, st)
+	res, err := sendTurn(f.srv.URL, "ses_1", req, st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,11 +402,11 @@ func TestV2TurnWaitsForActiveToClear(t *testing.T) {
 // A daemon that misses one health probe must stay adoptable: the password a failed start
 // tried is forgotten, and the file keeps the one the live daemon holds.
 func TestFailedStartKeepsThePasswordOfTheLiveDaemon(t *testing.T) {
-	f := newFakeServe(t, 1, "P1")
-	// The probe that fails must be the last chance of the new password: on a PATH opencode 2 the
-	// shared-TUI policy keeps the live password across a start, the fake would accept the
-	// candidate and this start would succeed, so the host's major must not decide it.
-	useMajor(t, 1)
+	f := newFakeServe(t, 2, "P1")
+	// The probe that fails must be the last chance of the new password: the shared-TUI policy
+	// keeps the live password across a start, the fake would accept the candidate and this
+	// start would succeed, so the private-server policy (a fresh password per start) is used.
+	t.Setenv(standaloneEnv, "1")
 	if err := persistServePassword("P1"); err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +445,7 @@ func TestFailedStartKeepsThePasswordOfTheLiveDaemon(t *testing.T) {
 }
 
 func TestEnsureRefusesToSpawnOverADaemonItCannotAuthenticateTo(t *testing.T) {
-	newFakeServe(t, 1, "theirs")
+	newFakeServe(t, 2, "theirs")
 	resetServeAuth("ours")
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "spawned")
@@ -515,11 +473,11 @@ func v2Fast(t *testing.T) {
 
 func v2Turn(t *testing.T, f *fakeServe) (*http.Response, error) {
 	t.Helper()
-	req, err := newTurnRequest(f.srv.URL, "ses_1", "/d", agents.TurnInput{Prompt: "x"}, agents.ThreadSettings{})
+	req, err := newTurnRequest(f.srv.URL, "ses_1", agents.TurnInput{Prompt: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sendTurn(f.srv.URL, "ses_1", "/d", req, agents.ThreadSettings{})
+	return sendTurn(f.srv.URL, "ses_1", req, agents.ThreadSettings{})
 }
 
 func TestV2TurnFailsWhenTheGenerationChanges(t *testing.T) {

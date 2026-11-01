@@ -9,54 +9,6 @@ import (
 	"testing"
 )
 
-func TestBuildOpencodeProgramAuto(t *testing.T) {
-	useMajor(t, 1)
-	// Default launch: unattended --auto bypass, no session/model when unset.
-	got := buildProgram("", "", "", false)
-	if !strings.Contains(got, "--auto") {
-		t.Fatalf("expected --auto (permission bypass) in %q", got)
-	}
-
-	// With a captured session id and model, they're passed through alongside --auto.
-	got = buildProgram("anthropic/claude-x", "plan", "ses_abc", false)
-	for _, want := range []string{"--auto", "--session", "ses_abc", "--model", "anthropic/claude-x"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected %q in %q", want, got)
-		}
-	}
-	if !strings.Contains(got, "--agent plan") {
-		t.Fatalf("expected plan agent in %q", got)
-	}
-}
-
-func TestBuildOpencodeProgramFork(t *testing.T) {
-	useMajor(t, 1)
-	// Fork launch (first boot of a forked slot): resume the SOURCE session with --fork
-	// so opencode copies it into a new conversation and diverges.
-	got := buildProgram("", "normal", "ses_src", true)
-	if !strings.Contains(got, "--session 'ses_src'") || !strings.Contains(got, "--fork") {
-		t.Fatalf("expected --session ses_src --fork in %q", got)
-	}
-	if !strings.Contains(got, "--agent build") {
-		t.Fatalf("expected normal mode to select build agent in %q", got)
-	}
-	// A plain resume must NOT carry --fork.
-	got = buildProgram("", "", "ses_src", false)
-	if strings.Contains(got, "--fork") {
-		t.Fatalf("plain resume must not fork: %q", got)
-	}
-}
-
-// v1 keeps its exact launch line even while a v2 exists in the same test binary.
-func TestBuildProgramV1Unchanged(t *testing.T) {
-	useMajor(t, 1)
-	got := buildProgram("anthropic/claude-x", "plan", "ses_abc", true)
-	want := "opencode --auto --session 'ses_abc' --fork --model 'anthropic/claude-x' --agent plan"
-	if got != want {
-		t.Fatalf("v1 launch line changed:\n got %q\nwant %q", got, want)
-	}
-}
-
 func TestBuildProgramV2FreshSession(t *testing.T) {
 	useMajor(t, 2)
 	// Nothing chosen: a bare private-server TUI, no config, none of the v1-only flags.

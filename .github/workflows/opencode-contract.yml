@@ -94,18 +94,6 @@ jobs:
           E2E_REQUIRE: "1" # fail rather than skip when the binary is missing
         run: go test -tags contract -run TestContract -v -count=1 -timeout 15m ./internal/agents/opencode/ ./
 
-      # Tier B: runs a real turn on the free Zen model and verifies the message/part
-      # JSON payload shapes and the LiveState working→idle transition. Depends on an
-      # external service and can flake, so it is non-blocking (report only) — never
-      # turns the job red, but stays in the log.
-      - name: tier B — live free-model turn (non-blocking)
-        continue-on-error: true
-        working-directory: workspace/agent
-        env:
-          E2E_REQUIRE: "1"
-          OPENCODE_CONTRACT_LIVE: "1"
-        run: go test -tags contract -run TestContractLive -v -count=1 -timeout 15m ./internal/agents/opencode/
-
       - name: remember successfully tested latest
         if: matrix.version == 'latest' && github.event_name != 'pull_request'
         env:

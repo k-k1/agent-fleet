@@ -28,9 +28,8 @@ func unspawnableAddr(t *testing.T) *Supervisor {
 	// connected to opencode, the "do not spawn while disconnected" check then proves nothing.
 	// Measured: only the tests using this helper left a lock file in the real HOME.
 	t.Setenv("HOME", t.TempDir())
-	// The opt-in switch only means something next to a 1.x opencode on PATH (the image pin is
-	// 2.x since the cut-over, and then it is inert), so the tests that flip it get a 1.x one.
-	useMajor(t, 1)
+	// A supported opencode, so only the gate under test can stop the spawn.
+	useMajor(t, 2)
 	s := &Supervisor{}
 	t.Cleanup(s.Shutdown)
 	return s

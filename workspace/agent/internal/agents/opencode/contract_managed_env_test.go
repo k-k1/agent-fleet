@@ -89,8 +89,8 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 
 	addr := "http://127.0.0.1:" + freePort(t)
 	t.Setenv(serveAddrEnv, addr)
-	detectedMajor.Store(int32(apiV1))
-	t.Cleanup(func() { Serve().Shutdown(); detectedMajor.Store(int32(apiV1)); resetServeAuth("") })
+	serveSeen.Store(false)
+	t.Cleanup(func() { Serve().Shutdown(); serveSeen.Store(false); resetServeAuth("") })
 
 	work := t.TempDir()
 	start := func(name string) *threadHandle {
@@ -109,11 +109,11 @@ func TestContractManagedShellEnvPerSessionAndAcrossRestart(t *testing.T) {
 	// the output is matched by the turn's nonce, never by "the latest one", so a refused command
 	// cannot pass on an earlier generation's output. The turn must also end without an error.
 	shell := func(h *threadHandle, nonce string) (map[string]string, error) {
-		req, err := newTurnRequest(h.addr, h.ses, work, agents.TurnInput{Prompt: "ENVQ " + nonce}, st)
+		req, err := newTurnRequest(h.addr, h.ses, agents.TurnInput{Prompt: "ENVQ " + nonce})
 		if err != nil {
 			return nil, err
 		}
-		res, err := sendTurn(h.addr, h.ses, work, req, st)
+		res, err := sendTurn(h.addr, h.ses, req, st)
 		if err != nil {
 			return nil, fmt.Errorf("turn %s: %w", nonce, err)
 		}

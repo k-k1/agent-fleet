@@ -147,7 +147,7 @@ func v2Home(t *testing.T, llm string) string {
 
 func runOpencode(t *testing.T, dir string, env []string) string {
 	t.Helper()
-	args := append(opencodeRunArgs(dir), "--model", "stub/m", "do the thing")
+	args := append(opencodeRunArgs(), "--model", "stub/m", "do the thing")
 	cmd := exec.Command("opencode", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)

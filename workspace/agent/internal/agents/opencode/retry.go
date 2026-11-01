@@ -12,8 +12,9 @@ package opencode
 //
 // So a retry status is the only place a permanent condition that rides on a retryable status shows
 // up (an exhausted quota on a 429, a region or privacy refusal a gateway wraps in a 500). The same
-// status is an SSE session.status event on v1; v2 sends session.retry.scheduled and gives up on its
-// own after ~11 attempts, but a permanent message there still burns that minute and a half.
+// status is the session.retry.scheduled event on opencode 2 (opencode 1 sent session.status, which
+// the driver still accepts); 2.x gives up on its own after ~11 attempts, but a permanent message
+// there still burns that minute and a half.
 // Aborting a session that is retrying leaves no error on the assistant message (measured: error
 // null, parts empty), so the failure has to be carried by the driver (threadHandle.retryStop).
 
@@ -95,12 +96,12 @@ func (h *threadHandle) noteRetry(attempt int, msg string, nextMs int64) {
 	h.retry, h.retryFailed = nil, info
 	h.retryStop = retryFailure(msg)
 	h.abortAsked = true
-	addr, ses, dir := h.addr, h.ses, h.dir
+	addr, ses := h.addr, h.ses
 	done := make(chan struct{})
 	h.retryAbort = done
 	h.mu.Unlock()
 	go func() {
-		ok := confirmedAbort(addr, ses, dir)
+		ok := confirmedAbort(addr, ses)
 		h.mu.Lock()
 		h.retryAbortOK = ok
 		h.mu.Unlock()
@@ -115,13 +116,13 @@ var retryAbortBackoff = 500 * time.Millisecond
 // error or a timeout proves nothing: the daemon may still execute a request it received, and a
 // later request being acknowledged does not say the earlier one is gone. So one such failure makes
 // the whole abort unconfirmed, whatever follows, and the caller treats that as unknown.
-func confirmedAbort(addr, ses, dir string) bool {
+func confirmedAbort(addr, ses string) bool {
 	lost := false
 	for i := 0; i < 3; i++ {
 		if i > 0 {
 			time.Sleep(retryAbortBackoff)
 		}
-		res, err := serveClient.Post(abortURL(addr, ses, dir), "application/json", strings.NewReader("{}"))
+		res, err := serveClient.Post(abortURL(addr, ses), "application/json", strings.NewReader("{}"))
 		if err != nil {
 			lost = true
 			continue

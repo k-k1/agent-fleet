@@ -4,7 +4,7 @@ package opencode
 // pane's environment as the session's shell environment and only then replaces itself with the
 // TUI, so the environment is in place before the TUI can submit anything and a fresh session
 // never runs a shell with the server's environment. The pane's toolchain exports (JAVA_HOME,
-// PATH, …) are part of what it reads, so the shell matches what a v1 pane's shell sees.
+// PATH, …) are part of what it reads, so the shell matches what a --standalone pane's shell sees.
 
 import (
 	"fmt"

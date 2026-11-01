@@ -456,7 +456,7 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 
 | タグ | 要るもの | 無いとき |
 |---|---|---|
-| `contract` | `PATH` 上の実 CLI（ペインのテストは tmux も）。実ターンを使うテストの一部は自分のオプトイン（`CLAUDE_CONTRACT_LIVE`・`COPILOT_CONTRACT_LIVE`・`OPENCODE_CONTRACT_LIVE`・`AF_IMAGEGEN_LIVE`）も待つ。TUI のプローブ（`TestClaudeTUIContractLive`・`TestClaudePlanApprovalContractLive`・`Test<Kind>TUIMirrorContract`）は待たず、CLI がサインイン済みなら実ターンを走らせる | skip。`E2E_REQUIRE=1` なら失敗 |
+| `contract` | `PATH` 上の実 CLI（ペインのテストは tmux も）。実ターンを使うテストの一部は自分のオプトイン（`CLAUDE_CONTRACT_LIVE`・`COPILOT_CONTRACT_LIVE`・`AF_IMAGEGEN_LIVE`）も待つ。TUI のプローブ（`TestClaudeTUIContractLive`・`TestClaudePlanApprovalContractLive`・`Test<Kind>TUIMirrorContract`）は待たず、CLI がサインイン済みなら実ターンを走らせる | skip。`E2E_REQUIRE=1` なら失敗 |
 | `contract_live` | 実 codex のクレデンシャル。どのテストも実ターンを使う（`codex-contract.yml` の `live-drift`、dispatch のみ） | 失敗 |
 | `contract_manual` | 人: その人が用意するエンジンのエンドポイント（`AF_LCPP_LIVE_*`）か対話のサインイン（`AF_AGY_LOGIN`）。どのワークフローも走らせない | skip |
 

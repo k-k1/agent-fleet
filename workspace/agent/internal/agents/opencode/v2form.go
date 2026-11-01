@@ -72,7 +72,7 @@ type v2Form struct {
 	} `json:"state"`
 }
 
-// questions maps each visible field to the card the Console already draws for a v1 question.
+// questions maps each visible field to the card the Console draws for a question.
 func (f v2Form) questions() []transcript.Question {
 	var out []transcript.Question
 	for _, fl := range f.visibleFields() {
@@ -222,8 +222,7 @@ func pendingFormsV2(t apiTarget, m session.Meta, ses string) []v2Form {
 	return forms
 }
 
-// questionsV2 is the card of the oldest pending form, one at a time like v1's newest running
-// question. It carries the form id, the address the Console's /respond takes: a Managed session
+// questionsV2 is the card of the oldest pending form, one at a time. It carries the form id, the address the Console's /respond takes: a Managed session
 // and a Terminal slot on the shared serve are both answered through the form API (RespondTerminal).
 func questionsV2(forms []v2Form) []transcript.Question {
 	if len(forms) == 0 {

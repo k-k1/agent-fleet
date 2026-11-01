@@ -110,14 +110,20 @@ func needsMigration(path string) bool {
 	return n > 0
 }
 
-// EnsureMigrated returns once the database spec's opencode will open holds no 1.x data that is
-// still to be imported (immediately for 1.x, and for a database that needs nothing). Concurrent
-// callers, across processes, queue on one lock, so the import runs once and nobody opens the
-// database while it does. A failure is retried by the next caller.
-func EnsureMigrated(spec LaunchSpec) error {
-	if spec.Maj < 2 {
-		return nil
+// PrepareStart is the gate every opencode process af starts passes first: it refuses an opencode
+// af does not support, then waits for the database import (EnsureMigrated).
+func PrepareStart(spec LaunchSpec) error {
+	if err := checkSupported(); err != nil {
+		return err
 	}
+	return EnsureMigrated(spec)
+}
+
+// EnsureMigrated returns once the database holds no 1.x data that is still to be imported
+// (immediately for a database that needs nothing). Concurrent callers, across processes, queue on
+// one lock, so the import runs once and nobody opens the database while it does. A failure is
+// retried by the next caller.
+func EnsureMigrated(spec LaunchSpec) error {
 	db := dbPath()
 	if !needsMigration(db) {
 		return nil
