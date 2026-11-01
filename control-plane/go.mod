@@ -23,6 +23,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	golang.org/x/sys v0.49.0
 	google.golang.org/api v0.307.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.53.0
 )
 

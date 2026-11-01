@@ -50,6 +50,7 @@ type kubeTestEnv struct {
 	kcm      *exec.Cmd
 	nsSerial int
 	mu       sync.Mutex
+	rbac     *cpRBAC // af-cp's Role and ClusterRole, parsed from deploy/kubernetes/base/cp-rbac.yaml
 }
 
 var (
@@ -295,23 +296,20 @@ func (e *kubeTestEnv) stop() {
 	}
 }
 
-// installCPRole is ADR 0106 decision 8's grant for the CP, bound in each test namespace
-// (namespace) and once for the cluster-wide reads.
+// installCPRole installs the CP's ClusterRole as deploy/kubernetes/base/cp-rbac.yaml defines
+// it (ADR 0106 decision 8) and keeps the parsed Role for namespace to install per test
+// namespace. Only names and namespaces are rewritten; the rules are the manifest's.
 func (e *kubeTestEnv) installCPRole() error {
 	ctx := context.Background()
-	clusterRules := []kubeTestRule{
-		{"", "persistentvolumes", []string{"get"}},
-		{"storage.k8s.io", "storageclasses", []string{"get"}},
+	rbac, err := loadCPRBAC()
+	if err != nil {
+		return err
 	}
-	clusterRoleRules := make([]any, 0, len(clusterRules))
-	for _, r := range clusterRules {
-		clusterRoleRules = append(clusterRoleRules, map[string]any{"apiGroups": []string{r.group}, "resources": []string{r.resource}, "verbs": r.verbs})
-	}
-	cr := map[string]any{
-		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
-		"metadata": map[string]any{"name": "af-cp-read"},
-		"rules":    clusterRoleRules,
-	}
+	e.rbac = rbac
+	clusterRules := rbac.clusterRoleRules
+	// The manifest's name carries a deployment's CP namespace; the test binds it to the user af-cp.
+	rbac.clusterRole["metadata"].(map[string]any)["name"] = "af-cp-read"
+	cr := rbac.clusterRole
 	if err := e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/clusterroles", cr, nil); err != nil {
 		return err
 	}
@@ -352,22 +350,9 @@ func (e *kubeTestEnv) namespace(t *testing.T) string {
 			"pod-security.kubernetes.io/enforce-version": "latest",
 		}},
 	}, nil))
-	all := []string{"get", "list", "create", "update", "patch", "delete"}
-	rules := []kubeTestRule{
-		{"apps", "statefulsets", all},
-		{"", "services", all}, {"", "persistentvolumeclaims", all}, {"", "secrets", all},
-		{"", "pods", []string{"get", "list", "watch", "create", "delete"}},
-		{"", "events", []string{"get", "list"}},
-	}
-	roleRules := make([]any, 0, len(rules))
-	for _, r := range rules {
-		roleRules = append(roleRules, map[string]any{"apiGroups": []string{r.group}, "resources": []string{r.resource}, "verbs": r.verbs})
-	}
-	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/roles", map[string]any{
-		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role",
-		"metadata": map[string]any{"name": "af-cp"},
-		"rules":    roleRules,
-	}, nil))
+	rules := e.rbac.roleRules
+	// The Role is the manifest's own object (cp-rbac.yaml), minus its placeholder namespace.
+	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/roles", e.rbac.role, nil))
 	must(e.admin.create(ctx, "/apis/rbac.authorization.k8s.io/v1/namespaces/"+ns+"/rolebindings", map[string]any{
 		"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
 		"metadata": map[string]any{"name": "af-cp"},
@@ -387,10 +372,11 @@ func (e *kubeTestEnv) namespace(t *testing.T) string {
 	return ns
 }
 
-// kubeTestRule is one rule of the per-namespace Role: it is both what the Role grants and
-// what namespace waits to see allowed.
+// kubeTestRule is one apiGroup x resource of a rule of af-cp's Role or ClusterRole, as
+// parsed from cp-rbac.yaml: what namespace waits to see allowed.
 type kubeTestRule struct {
 	group, resource string
+	names           []string // resourceNames; empty = any object
 	verbs           []string
 }
 
@@ -411,6 +397,10 @@ func (e *kubeTestEnv) cpDenial(ctx context.Context, ns string, rules []kubeTestR
 			attrs := map[string]any{"verb": v, "group": r.group, "resource": r.resource}
 			if ns != "" {
 				attrs["namespace"] = ns
+			}
+			if len(r.names) > 0 {
+				// A resourceNames rule only answers for a named object.
+				attrs["name"] = r.names[0]
 			}
 			err := e.admin.create(ctx, "/apis/authorization.k8s.io/v1/subjectaccessreviews", map[string]any{
 				"apiVersion": "authorization.k8s.io/v1", "kind": "SubjectAccessReview",
