@@ -591,7 +591,14 @@ func TestBundleImportDoesNotBufferWhatItWillNotRead(t *testing.T) {
 	if it := bundleItemOf(sc, "ok"); it == nil || it.Status != bundleStatusNew {
 		t.Fatalf("ok = %+v", it)
 	}
-	if grew := after.TotalAlloc - before.TotalAlloc; grew > 4<<20 {
+	// The race runtime allocates several times more for the same work (measured: ~0.8 MB
+	// normal, 3.2-4.5 MB race), so under -race the ceiling is 8 MiB: above that noise, yet
+	// below what buffering the 8 MiB over-limit blob would add on top of it.
+	ceiling := uint64(4 << 20)
+	if raceEnabled {
+		ceiling = 8 << 20
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > ceiling {
 		t.Errorf("the preview allocated %d bytes: a blob over the limit or an unmatched project's body was buffered", grew)
 	}
 
