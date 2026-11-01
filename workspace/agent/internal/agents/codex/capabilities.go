@@ -102,5 +102,7 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 		ResetAt: func(_ session.Meta, _ bool, now time.Time) (time.Time, string, bool) {
 			return ResetAt(now)
 		},
+		LiftedEarly:  LiftedEarly,
+		RanTurnSince: RanTurnSince,
 	}
 }

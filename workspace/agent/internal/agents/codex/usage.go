@@ -804,3 +804,44 @@ func ageSecFrom(iso string) int {
 	}
 	return 0
 }
+
+// LiftedEarly is agents.UsageLimitTraits.LiftedEarly for codex: the account view says the limit
+// is gone although the booking still waits for the natural reset. It reads the cached account
+// view only (accountUsage, 5-minute TTL), never the local rollout or push readings: those carry
+// percentages without a verdict and can be older than the episode.
+func LiftedEarly(source string, bookedAt, episodeAt time.Time) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), resetAtLookupTimeout)
+	defer cancel()
+	u, ok := accountUsage(ctx)
+	return ok && liftedEarlyFrom(u, source, bookedAt, episodeAt)
+}
+
+// liftedEarlyFrom is the decision, apart from the fetching. All of: the reading was observed
+// after the episode opened, the account does not assert limit_reached, no window is at or above
+// windowFullPct, and the window the booking was made for (source codex:5h / codex:weekly) now
+// resets LATER than the booked instant, which is the sign it restarted. Any other source
+// (including the already-moved codex:reset-early) never counts, so a booking moves at most once.
+func liftedEarlyFrom(u usage, source string, bookedAt, episodeAt time.Time) bool {
+	if !u.OK || u.LimitReached || u.ObservedAt.IsZero() || !u.ObservedAt.After(episodeAt) {
+		return false
+	}
+	var w *usageWindow
+	switch source {
+	case "codex:5h":
+		w = u.FiveHour
+	case "codex:weekly":
+		w = u.SevenDay
+	default:
+		return false
+	}
+	for _, c := range []*usageWindow{u.FiveHour, u.SevenDay} {
+		if c != nil && c.Pct >= windowFullPct {
+			return false
+		}
+	}
+	if w == nil {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, w.ResetsAt)
+	return err == nil && t.After(bookedAt)
+}

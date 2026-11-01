@@ -303,6 +303,7 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 		return
 	}
 	st = scheduleRateLimitResume(m, st, now)
+	st = rateLimitMoveEarly(m, st, now)
 	notifyRateLimitReached(m, st)
 
 	if onMenu && !st.Dismissed && st.DismissTries < maxRateLimitDismissTries && !triedRecently(st, now) {
@@ -377,10 +378,14 @@ func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time, alive b
 		}
 		return
 	}
+	if _, done := rateLimitMovedOn(m, st, now); done {
+		return
+	}
 	if next := scheduleRateLimitResume(m, st, now); next != st {
 		st = next
 		_ = RateLimitStates.Write(m.Name, st)
 	}
+	st = rateLimitMoveEarly(m, st, now)
 	if !episodeStale(st, now) {
 		return
 	}
@@ -389,6 +394,76 @@ func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time, alive b
 		cancelRateLimitSchedule(m.Name, st.ScheduleID)
 	}
 	RateLimitStates.Remove(m.Name)
+}
+
+// rateLimitMoveEarly pulls a booked resume forward when the limit lifted before it (a reset
+// credit, a plan change): the kind's LiftedEarly says so from the account view, and the booking
+// moves to now+rateLimitResumeLead with Source "codex:reset-early". Only an open window episode
+// with a ScheduleID and a still-future ResumeAt qualifies, and the kind's evidence is matched on
+// the booking's recorded Source, which the move overwrites - so a booking moves at most once.
+//
+// The new schedule is created BEFORE the old one is cancelled: the CP has no way to change a
+// once-schedule's instant that this code relies on, and a failure in between must leave a booking,
+// never none. If the early resume is refused, the session is still at its limit when the lead
+// has passed and episodeSpent re-books it (docs/log/47 §4-13), so a wrong reading costs one
+// refused turn.
+func rateLimitMoveEarly(m session.Meta, st rateLimitState, now time.Time) rateLimitState {
+	if st.Spend || st.ScheduleID == "" || st.FiredDuringMove != "" || !uiprefs.RateLimitAutoResume() {
+		return st
+	}
+	tr, ok := usageLimitTraits(m)
+	if !ok || tr.LiftedEarly == nil {
+		return st
+	}
+	booked, err := time.Parse(time.RFC3339, st.ResumeAt)
+	if err != nil || !booked.After(now.Add(rateLimitResumeLead)) {
+		return st // nothing to gain: due within the lead, or already past
+	}
+	episode, err := time.Parse(time.RFC3339, st.At)
+	if err != nil || !tr.LiftedEarly(st.Source, booked, episode) {
+		return st
+	}
+	at := now.Add(rateLimitResumeLead)
+	id, err := putRateLimitSchedule(m, at)
+	if err != nil {
+		log.Printf("rate-limit: could not move the auto-resume of %s earlier: %v", m.Name, err)
+		return st
+	}
+	old := st.ScheduleID
+	st.ScheduleID, st.ResumeAt, st.Source = id, at.Format(time.RFC3339), rateLimitSourceResetEarly
+	_ = RateLimitStates.Write(m.Name, st) // record the new id first: the old one is cancelled next
+	cancelRateLimitSchedule(m.Name, old)
+	log.Printf("rate-limit: the limit of %s lifted before %s, so the auto-resume moved to %s (schedule=%s)",
+		m.Name, booked.Local().Format("01/02 15:04"), at.Local().Format("01/02 15:04"), id)
+	return st
+}
+
+// rateLimitSourceResetEarly is the Source of a booking moved forward by rateLimitMoveEarly.
+const rateLimitSourceResetEarly = "codex:reset-early"
+
+// rateLimitMovedOn cancels the booking and drops the episode when the session ran a successful
+// turn after the episode opened and the booked instant is still ahead: the "limit has reset,
+// continue" prompt would otherwise land on unrelated work (and wake the workspace for it). Being
+// stopped, or idle at the limit, is not evidence: only a completed turn is (the kind's
+// RanTurnSince). done reports whether it acted.
+func rateLimitMovedOn(m session.Meta, st rateLimitState, now time.Time) (rateLimitState, bool) {
+	if st.Spend || st.ScheduleID == "" || futureInstant(st.ResumeAt, now) == "" {
+		return st, false
+	}
+	tr, ok := usageLimitTraits(m)
+	if !ok || tr.RanTurnSince == nil {
+		return st, false
+	}
+	episode, err := time.Parse(time.RFC3339, st.At)
+	if err != nil || !tr.RanTurnSince(m, episode) {
+		return st, false
+	}
+	if err := cancelRateLimitSchedule(m.Name, st.ScheduleID); err != nil {
+		return st, false // keep the episode so the next sweep tries again
+	}
+	log.Printf("rate-limit: %s ran a turn after its limit episode, so the booked auto-resume was cancelled", m.Name)
+	RateLimitStates.Remove(m.Name)
+	return rateLimitState{}, true
 }
 
 // scheduleRateLimitResume registers the one-shot resume when it is wanted and not yet

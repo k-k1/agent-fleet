@@ -382,3 +382,23 @@ func HealIdle(sid string) {
 	}
 	status.Remove(sid)
 }
+
+// RanTurnSince reports that the newest terminal transcript record is an ordinary assistant
+// record (not an API-error abort) written after at: the session produced real output once the
+// episode opened, so it moved on by hand. A user record alone (a prompt still being answered) or
+// an abort answers false.
+func RanTurnSince(sid string, at time.Time) bool {
+	for _, p := range jsonlByMtime(sid) {
+		line, found := lastLineWhere(p, func(l []byte) bool { _, ok := terminalRecord(l); return ok })
+		if !found {
+			continue
+		}
+		r, _ := terminalRecord(line)
+		if r.Type != "assistant" || r.IsAPIError {
+			return false
+		}
+		ts, err := time.Parse(time.RFC3339, r.Timestamp)
+		return err == nil && ts.After(at)
+	}
+	return false
+}

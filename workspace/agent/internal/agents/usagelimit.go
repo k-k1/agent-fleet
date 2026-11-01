@@ -48,4 +48,14 @@ type UsageLimitTraits struct {
 	// instant can be named and nothing is booked. menu says the episode came with a pane
 	// menu. Without it nothing can be scheduled.
 	ResetAt func(m session.Meta, menu bool, now time.Time) (time.Time, string, bool)
+	// LiftedEarly reports that the limit behind a booking has lifted BEFORE the booked instant
+	// (a reset credit, a plan change): source is the evidence the booking recorded, bookedAt
+	// the booked instant, episodeAt when the episode opened. It must rest on a reading OBSERVED
+	// after episodeAt, and answers false whenever it cannot tell. Nil = the kind cannot see
+	// an early lift and its bookings stay at the natural reset.
+	LiftedEarly func(source string, bookedAt, episodeAt time.Time) bool
+	// RanTurnSince reports that the session completed a turn successfully after at, i.e. it
+	// moved on by hand and a booked "the limit has reset, continue" prompt would land on
+	// unrelated work. false when it cannot tell. Nil = never cancelled for this reason.
+	RanTurnSince func(m session.Meta, at time.Time) bool
 }
