@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 )
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -17,6 +18,21 @@ type SessionRow struct {
 	Carried string
 	// Studio is the image studio the session is bound to (ADR 0100 decision 2), "" for none.
 	Studio string
+	// Links are the work items and PRs the session is linked to (#3134), in the Agent's order.
+	// Stored in session_work_link, replaced together with the row.
+	Links []SessionLink
+}
+
+// SessionLink is one mirrored session ↔ work item link. Key is the inbox's shape
+// ("owner/repo#45", "PROJ-12"); only non-confidential coordinates, never a body.
+type SessionLink struct {
+	Provider, Key, Role, Title, URL, At string
+}
+
+// linkFold is the case-insensitive identity of a link within one session, the same
+// comparison the Agent makes (owner/repo names compare without case).
+func linkFold(l SessionLink) (provider, key string) {
+	return strings.ToLower(l.Provider), strings.ToLower(l.Key)
 }
 
 // SessionIndexStore mirrors the Agent's session list: ReplaceSessions swaps the
@@ -33,8 +49,13 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM session WHERE workspace_id=?`, workspaceID); err != nil {
-		return err
+	for _, stmt := range []string{
+		`DELETE FROM session_work_link WHERE workspace_id=?`,
+		`DELETE FROM session WHERE workspace_id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, workspaceID); err != nil {
+			return err
+		}
 	}
 	for _, r := range rows {
 		if _, err := tx.ExecContext(ctx,
@@ -43,8 +64,32 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio); err != nil {
 			return err
 		}
+		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+// insertSessionLinks writes one session's links. A second link to the same item (differing
+// only in case) is skipped rather than allowed to hit the primary key: the list comes from
+// the Agent, and one odd entry must not fail the whole mirror write.
+func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session string, links []SessionLink) error {
+	seen := make(map[[2]string]bool, len(links))
+	for i, l := range links {
+		provider, fold := linkFold(l)
+		if provider == "" || fold == "" || seen[[2]string{provider, fold}] {
+			continue
+		}
+		seen[[2]string{provider, fold}] = true
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
@@ -62,6 +107,38 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	links, err := s.listSessionLinks(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Links = links[out[i].Name]
+	}
+	return out, nil
+}
+
+// listSessionLinks is the workspace's mirrored links by session name, each in the Agent's order.
+func (s *SQL) listSessionLinks(ctx context.Context, workspaceID string) (map[string][]SessionLink, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT session_name, provider, item_key, role, title, url, linked_at
+		 FROM session_work_link WHERE workspace_id=? ORDER BY session_name, ord`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]SessionLink{}
+	for rows.Next() {
+		var name string
+		var l SessionLink
+		if err := rows.Scan(&name, &l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At); err != nil {
+			return nil, err
+		}
+		out[name] = append(out[name], l)
 	}
 	return out, rows.Err()
 }

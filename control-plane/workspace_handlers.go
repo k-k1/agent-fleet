@@ -931,9 +931,9 @@ type sessionWire struct {
 	// pane (#1062). Absent here, every row loses them. No DB-mirror column: a port is only real
 	// while the session runs.
 	Ports []int `json:"ports,omitempty"`
-	// Links: the work items and PRs the session is linked to (#3134). Relayed as raw JSON: the
-	// CP reads nothing in it. Absent here, every row loses its links. No DB-mirror column yet,
-	// so a stopped Workspace's rows show none.
+	// Links: the work items and PRs the session is linked to (#3134). Relayed as raw JSON while
+	// the Agent answers; absent here, every row loses its links. The DB mirror keeps them in
+	// session_work_link (store.SessionLinksFromJSON), so a stopped Workspace's rows still show them.
 	Links json.RawMessage `json:"links,omitempty"`
 	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
 	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
@@ -990,7 +990,7 @@ type sessionWire struct {
 
 // sessionRows turns the Agent's session list into DB mirror rows. Every writer of the
 // mirror goes through it: ReplaceSessions swaps the whole set, so a writer that leaves
-// out Carried or Studio erases them for the next reader (the stopped-workspace list).
+// out Carried, Studio or Links erases them for the next reader (the stopped-workspace list).
 func sessionRows(list []sessionWire) []store.SessionRow {
 	rows := make([]store.SessionRow, 0, len(list))
 	for _, s := range list {
@@ -1002,6 +1002,7 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 			Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 			Carried: s.Carried, Studio: s.Studio,
+			Links: store.SessionLinksFromJSON(s.Links),
 		})
 	}
 	return rows
@@ -1042,6 +1043,8 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 			Carried: r0.Carried,
 			// Which studio a session belongs to decides which pane opens it.
 			Studio: r0.Studio,
+			// Which items it is on: the Console's rows and item details read them while stopped too.
+			Links: store.SessionLinksJSON(r0.Links),
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
 			Resumable: true,

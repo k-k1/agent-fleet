@@ -71,10 +71,14 @@ func TestInheritLinksWatchesTheParentsItemsUnlessTheChildHasItsOwn(t *testing.T)
 		WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-1"},
 		Links:    []session.WorkItemLink{{Provider: "github", Key: "o/r#3", Role: session.LinkCreated}},
 	})
-	child := session.Meta{Name: "kid1", OriginSession: "par1", CreatedAt: "t0"}
+	child := session.Meta{Name: "kid1", OriginSession: "par1", CreatedAt: "2026-11-01T08:56:01+09:00"}
 	inheritLinks(&child)
 	if len(child.Links) != 1 || child.Links[0].Key != "PROJ-1" || child.Links[0].Role != session.LinkWatching {
 		t.Fatalf("child links=%+v, want PROJ-1 watching (not the parent's created PR)", child.Links)
+	}
+	// Stamped in UTC like every other link, though CreatedAt carries the local zone.
+	if child.Links[0].At != "2026-10-31T23:56:01Z" {
+		t.Fatalf("inherited at=%q, want the creation time in UTC", child.Links[0].At)
 	}
 	own := session.Meta{Name: "kid2", OriginSession: "par1", WorkItem: &session.WorkItemRef{Provider: "jira", Key: "PROJ-2"}}
 	inheritLinks(&own)
