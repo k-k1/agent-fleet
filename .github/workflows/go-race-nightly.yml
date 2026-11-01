@@ -29,8 +29,8 @@ jobs:
       matrix:
         include:
           - module: workspace/agent
-            # gcpx stays out: TestWaitEndsWithTheReasonWhenALoginCannotHelp raced once in a
-            # whole-module run (#3143) and has not reproduced since, so no fix can be verified.
+            # gcpx stays out: its race (TestWaitEndsWithTheReasonWhenALoginCannotHelp, #3143)
+            # does not reproduce, so no fix can be verified.
             exclude: 'internal/gcpx$'
           - module: control-plane
             # Matches no package path; an empty pattern would make grep -Ev drop every package.

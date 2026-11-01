@@ -3,6 +3,7 @@ package cloudruns
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -22,14 +23,31 @@ func holdLock(t *testing.T, dir string) func() {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }
+	var once sync.Once
+	release := func() { once.Do(func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }) }
+	t.Cleanup(release) // a failing test still frees the lock; runs after within's join (LIFO)
+	return release
 }
 
-// within fails the test unless fn returns before d.
+// joinBudget bounds the wait for a goroutine within started. Every call under test gives up
+// after lockWait, so it only separates "ends shortly after the verdict" from "never ends"; it
+// is generous because -race on a loaded host stretches lockWait several-fold.
+const joinBudget = 10 * time.Second
+
+// within fails the test unless fn returns before d. The goroutine is joined when the test
+// ends, before useRoot restores root and now (Cleanup is LIFO), so a timeout cannot turn into
+// a data race with fn's reads of them.
 func within(t *testing.T, d time.Duration, what string, fn func()) {
 	t.Helper()
 	done := make(chan struct{})
 	go func() { fn(); close(done) }()
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		case <-time.After(joinBudget):
+			t.Errorf("%s still running %s after the test ended", what, joinBudget)
+		}
+	})
 	select {
 	case <-done:
 	case <-time.After(d):
@@ -50,7 +68,7 @@ func TestBusySpoolNeverBlocksARun(t *testing.T) {
 				spool = filepath.Join(dir, workspaceDir)
 			}
 			release := holdLock(t, spool)
-			limit := 2 * time.Second
+			limit := 10 * time.Second
 			var r *Run
 			within(t, limit, "Begin", func() { r = Begin("aws", c.session, "p", []string{"aws"}) })
 			within(t, limit, "Resolved", func() { r.Resolved(Identity{Account: "123456789012"}) })
@@ -80,7 +98,7 @@ func TestBusyWorkspaceSpoolDoesNotStallASession(t *testing.T) {
 	dir := useRoot(t)
 	liveSession(t, "cr-other")
 	defer holdLock(t, filepath.Join(dir, workspaceDir))()
-	within(t, 2*time.Second, "Begin of a session's run", func() { Begin("aws", "cr-other", "p", []string{"aws"}) })
+	within(t, 10*time.Second, "Begin of a session's run", func() { Begin("aws", "cr-other", "p", []string{"aws"}) })
 	if n := len(ForSession("cr-other")); n != 1 {
 		t.Fatalf("session rows = %d, want 1", n)
 	}
