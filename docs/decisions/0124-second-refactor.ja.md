@@ -354,3 +354,16 @@ for k in codex opencode muse lcpp; do cat workspace/agent/internal/agents/$k/*.g
 ```
 
 **見直す**のは、種別をまたぐ修正がまたこれらのメソッドに入らなければならないときだけ。
+
+## 追記（2026-11-01）— `mcpreg/materialize.go` の writer はパッケージ内のテーブルへ（#2925 第 3 スライス）
+
+`internal/mcpreg/materialize.go` の `writerFor` が、このファイルの種別リテラル分岐 7 つすべてを
+持っていた。各 CLI のネイティブ MCP 設定の書き手を選ぶ `switch` である。#2925 は「MCP config writers」
+を capability 候補としていたが、`internal/agents/{claude,codex,muse,lcpp}` が `mcpreg` を import
+しているため、`mcpreg` は `agents` を import できない（できれば循環する）。そのため capability には
+せず、パッケージ内のテーブルにまとめた。種別ごとの測定リストでも、1 製品固有の挙動でもなく、答えは
+「その種別のファイルを書く関数はどれか」だけである。`writers` マップはレジストリの正確なキーで引くので、
+別名・別の綴り・未知の種別は従来どおり writer なし（skipped）になる。`kindLiteralCeiling` は 112 → 105
+（base の実測はちょうど 112、このスライスで 7 減）。`TestWriterForMatchesOldSwitch` が、登録済みの全種別と
+別名・大文字小文字・未知の綴りについて、旧 `switch` のそのままのコピーと引き当てを突き合わせる。
+種別ごとに書かれるファイルを見る既存の `materialize*` テストは変更なし。残りの箇所は #2925 に残る。
