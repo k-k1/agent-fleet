@@ -13,7 +13,19 @@ import { PortOpen } from "../preview/PortOpen.tsx";
 import { useWorkItemStore } from "../workitems/store.ts";
 import { useWorkItemModal } from "../workitems/modal.ts";
 import { resolveWorkItemRef } from "../workitems/refs.ts";
-import { CHECK_ICON, LINK_ROLE_ICON, PR_ICON, knownRole, prChecks, prStateKey, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
+import {
+  CHECK_ICON,
+  LINK_ROLE_ICON,
+  PR_ICON,
+  knownRole,
+  linkDone,
+  linkPRState,
+  prChecks,
+  prStateKey,
+  rowPorts,
+  rowWorkLinks,
+  safePRURL,
+} from "./sessionLinks.ts";
 import type { Session, SessionWorkLink } from "../../types/session.ts";
 
 /** Ports drawn before the rest fold behind "+N": one line at the rail's narrowest. */
@@ -114,18 +126,22 @@ function WorkLinkChip({ link }: { link: SessionWorkLink }) {
     useWorkItemModal.getState().openDetail(item, { reference });
   };
   const role = knownRole(link.role);
+  // A finished pull request draws its state, not the role it was worked in: the role is over.
+  const prState = linkPRState(link);
+  const done = linkDone(link);
+  const roleText = role ? tr(`srow.link_role.${role}`) : "";
   return (
     <button
       type="button"
-      className={"sess-item" + (role ? " role-" + role : "")}
+      className={"sess-item" + (role ? " role-" + role : "") + (done ? " done" : "")}
       title={tr("srow.link_title", {
         key: link.key,
-        role: role ? tr(`srow.link_role.${role}`) : "",
+        role: prState ? [roleText, tr(`srow.pr_state.${prState}`)].filter(Boolean).join(" · ") : roleText,
         title: link.title ? ` — ${link.title}` : "",
       })}
       onClick={open}
     >
-      <Icon name={role ? LINK_ROLE_ICON[role] : "link"} />
+      <Icon name={done && prState ? PR_ICON[prState] : role ? LINK_ROLE_ICON[role] : "link"} />
       {link.key}
     </button>
   );

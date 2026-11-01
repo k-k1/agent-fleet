@@ -7,11 +7,12 @@
 import { useEffect, useMemo } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { api, raw } from "../../core/api/client.ts";
+import { api, errText, raw, sessionUnlinkItem } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore, useLaunchSeed, useLaunchTarget, type Repo } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -83,6 +84,7 @@ export function WorkItemModalHost() {
   const repos = useReposStore((s) => s.repos);
   const settings = useSettings();
   const sessions = useSessionsStore((s) => s.sessions);
+  const running = useWorkspaceStore((s) => wsRunning(s.state));
   const seed = useLaunchSeed((s) => s.set);
   const openLaunch = useLaunchTarget((s) => s.open);
   const startHub = useSessionsStore((s) => s.openStart);
@@ -160,6 +162,16 @@ export function WorkItemModalHost() {
         }}
         // openReport closes the detail modal in the same update: never stack two modals.
         onReport={() => openReport(item)}
+        // Only while the Workspace runs: the Agent holds the links, and a stopped one would turn
+        // every Remove into an error after the confirmation.
+        onUnlink={running ? async (name) => {
+          try {
+            const r = await sessionUnlinkItem(name, item.provider, item.key);
+            return r?.error ? errText(r.error) : "";
+          } catch (e) {
+            return e instanceof Error ? e.message : String(e);
+          }
+        } : undefined}
       />
     );
   }

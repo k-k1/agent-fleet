@@ -69,7 +69,7 @@ func TestInheritedLinksTakesStartedAndWorkingOnly(t *testing.T) {
 	parent := Meta{
 		WorkItem: &WorkItemRef{Provider: "jira", Key: "PROJ-1"},
 		Links: []WorkItemLink{
-			{Provider: "github", Key: "o/r#2", Role: LinkWorking},
+			{Provider: "github", Key: "o/r#2", Role: LinkWorking, State: "merged"},
 			{Provider: "github", Key: "o/r#3", Role: LinkCreated},
 			{Provider: "github", Key: "o/r#4", Role: LinkWatching},
 		},
@@ -77,6 +77,10 @@ func TestInheritedLinksTakesStartedAndWorkingOnly(t *testing.T) {
 	got := InheritedLinks(parent, "now")
 	if len(got) != 2 || got[0].Key != "PROJ-1" || got[1].Key != "o/r#2" {
 		t.Fatalf("InheritedLinks = %+v, want PROJ-1 and o/r#2", got)
+	}
+	// The child watches the PR as it was last seen: a merged one is history on its row too.
+	if got[1].State != "merged" {
+		t.Fatalf("inherited o/r#2 state=%q, want merged", got[1].State)
 	}
 	for _, l := range got {
 		if l.Role != LinkWatching || l.At != "now" {
@@ -118,5 +122,22 @@ func TestRemovingTheLaunchItemChangesNothing(t *testing.T) {
 	m := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#45"}}
 	if RemoveLink(&m, "GitHub", "O/R#45") || len(m.Unlinked) != 0 {
 		t.Fatalf("removing the launch item reported a change: unlinked=%v", m.Unlinked)
+	}
+}
+
+func TestSetLinkStateRecordsOnlyAKnownStateOnAHeldLink(t *testing.T) {
+	m := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#1"},
+		Links: []WorkItemLink{{Provider: "github", Key: "o/r#2", Role: LinkWorking}}}
+	if !SetLinkState(&m, "GitHub", "O/R#2", "merged") || m.Links[0].State != "merged" {
+		t.Fatalf("links=%+v, want o/r#2 merged", m.Links)
+	}
+	if SetLinkState(&m, "github", "o/r#2", "merged") {
+		t.Fatal("the same state reported a change")
+	}
+	if SetLinkState(&m, "github", "o/r#2", "weird") || m.Links[0].State != "merged" {
+		t.Fatalf("an unknown state was recorded: %+v", m.Links)
+	}
+	if SetLinkState(&m, "github", "o/r#1", "closed") || SetLinkState(&m, "github", "o/r#9", "closed") {
+		t.Fatal("a state was recorded for the launch item or an unheld item")
 	}
 }

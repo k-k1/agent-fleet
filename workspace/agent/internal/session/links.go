@@ -52,6 +52,34 @@ type WorkItemLink struct {
 	Title    string `json:"title,omitempty"`
 	URL      string `json:"url,omitempty"`
 	At       string `json:"at,omitempty"`
+	// State is the last state seen for a pull request link: "open", "draft", "merged" or
+	// "closed" ("" = never seen, or not a pull request). The Agent reads a PR's state only while
+	// a session is on its branch, so it is kept here for after the session has moved on.
+	State string `json:"state,omitempty"`
+}
+
+// validLinkState reports whether state is one SetLinkState records.
+func validLinkState(state string) bool {
+	switch state {
+	case "open", "draft", "merged", "closed":
+		return true
+	}
+	return false
+}
+
+// SetLinkState records state on m's link to provider/key, and reports whether it changed. The
+// launch item has no link of its own to carry it, and an unknown state is not recorded.
+func SetLinkState(m *Meta, provider, key, state string) bool {
+	if !validLinkState(state) {
+		return false
+	}
+	for i := range m.Links {
+		if sameItem(m.Links[i], provider, key) && m.Links[i].State != state {
+			m.Links[i].State = state
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -194,7 +222,7 @@ func InheritedLinks(parent Meta, at string) []WorkItemLink {
 	var out []WorkItemLink
 	for _, l := range LinksOf(parent) {
 		if l.Role == LinkStarted || l.Role == LinkWorking {
-			out = append(out, WorkItemLink{Provider: l.Provider, Key: l.Key, Role: LinkWatching, Title: l.Title, URL: l.URL, At: at})
+			out = append(out, WorkItemLink{Provider: l.Provider, Key: l.Key, Role: LinkWatching, Title: l.Title, URL: l.URL, At: at, State: l.State})
 		}
 	}
 	return out

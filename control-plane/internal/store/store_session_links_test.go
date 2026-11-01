@@ -58,7 +58,7 @@ func sessionMirrorLinksCase(t *testing.T, st *SQL) {
 
 	first := []SessionLink{
 		{Provider: "jira", Key: "PROJ-1", Role: "started", Title: "Login"},
-		{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z"},
+		{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z", State: "merged"},
 		// The same item in another case: skipped, not a primary-key failure of the whole write.
 		{Provider: "GitHub", Key: "o/r#45", Role: "watching"},
 		{Provider: "github", Key: "o/r#7", Role: "watching"},
@@ -84,7 +84,7 @@ func sessionMirrorLinksCase(t *testing.T, st *SQL) {
 	if len(got) != 4 || got[0].Key != "PROJ-1" || got[1].Key != "O/R#45" || got[2].Key != "o/r#7" || got[3].Title != "ab" {
 		t.Fatalf("s1 links = %+v, want PROJ-1, O/R#45, o/r#7, PROJ-9 (titled ab) in the Agent's order", got)
 	}
-	if got[1] != (SessionLink{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z"}) {
+	if got[1] != (SessionLink{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z", State: "merged"}) {
 		t.Errorf("s1 PR link = %+v, want every field kept", got[1])
 	}
 	if _, ok := byName["s2"]; got[0].Title != "Login" || ok {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { knownRole, prChecks, prStateKey, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
+import { knownRole, linkDone, linkPRState, prChecks, prStateKey, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
 
 describe("sessionLinks", () => {
   it("names a draft apart from an open PR", () => {
@@ -49,6 +49,25 @@ describe("sessionLinks", () => {
     });
     expect(links.map((l) => l.key)).toEqual(["PROJ-1", "o/r#3", "PROJ-2"]);
     expect(rowWorkLinks({})).toEqual([]);
+  });
+
+  it("puts a merged or closed PR after every item still in flight, whatever its role (#3166)", () => {
+    const links = rowWorkLinks({
+      links: [
+        { provider: "github", key: "o/r#1", role: "created", state: "merged" },
+        { provider: "jira", key: "PROJ-2", role: "watching" },
+        { provider: "github", key: "o/r#3", role: "working", state: "closed" },
+        { provider: "github", key: "o/r#4", role: "working", state: "open" },
+      ],
+    });
+    expect(links.map((l) => l.key)).toEqual(["o/r#4", "PROJ-2", "o/r#1", "o/r#3"]);
+    expect([linkDone({ state: "merged" }), linkDone({ state: "closed" }), linkDone({ state: "draft" }), linkDone({})]).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect([linkPRState({ state: "draft" }), linkPRState({ state: "odd" as never }), linkPRState({})]).toEqual(["draft", null, null]);
   });
 
   it("compares keys case-insensitively and sorts an unknown role last", () => {

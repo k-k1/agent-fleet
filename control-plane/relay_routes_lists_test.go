@@ -116,13 +116,14 @@ var mutatingRelayAuditExempt = routeReasons(
 		"DELETE /api/sessions/{name}/handoff-proposal",
 		"DELETE /api/sessions/{name}/pending-peer/{id}",
 	}},
-	routeGroup{"session metadata (title, marks, keep-awake, preferences, reviewer): out of the audit scope by decision (#2883)", []string{
+	routeGroup{"session metadata (title, marks, keep-awake, preferences, reviewer, work item links): out of the audit scope by decision (#2883)", []string{
 		"POST /api/sessions/{name}/title/accept",
 		"POST /api/sessions/{name}/title/dismiss",
 		"POST /api/sessions/{name}/title/set",
 		"POST /api/sessions/{name}/marks",
 		"DELETE /api/sessions/{name}/marks",
 		"POST /api/sessions/{name}/keep-awake",
+		"POST /api/sessions/{name}/links",
 		"POST /api/sessions/{name}/settings",
 		"POST /api/sessions/{name}/driver",
 		"POST /api/sessions/{name}/plan-reviewer",

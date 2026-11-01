@@ -28,6 +28,8 @@ type SessionRow struct {
 // ("owner/repo#45", "PROJ-12"); only non-confidential coordinates, never a body.
 type SessionLink struct {
 	Provider, Key, Role, Title, URL, At string
+	// State is the last state seen for a pull request link ("" = none), as the Agent records it.
+	State string
 }
 
 // linkFold is the case-insensitive identity of a link within one session, the same
@@ -78,7 +80,7 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 // every list poll, and a round trip per link would hold the transaction open that much
 // longer. A second link to the same item (differing only in case) is skipped rather than
 // allowed to hit the primary key: the list comes from the Agent, and one odd entry must not
-// fail the whole mirror write. At most 51 rows × 10 values (SessionLinksFromJSON's cap), well
+// fail the whole mirror write. At most 51 rows × 11 values (SessionLinksFromJSON's cap), well
 // under either dialect's bound-parameter limit.
 func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session string, links []SessionLink) error {
 	seen := make(map[[2]string]bool, len(links))
@@ -91,12 +93,12 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 		}
 		seen[[2]string{provider, fold}] = true
 		if len(args) == 0 {
-			q.WriteString(`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at) VALUES`)
+			q.WriteString(`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at, state) VALUES`)
 		} else {
 			q.WriteString(",")
 		}
-		q.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		args = append(args, workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At)
+		q.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At, l.State)
 	}
 	if len(args) == 0 {
 		return nil
@@ -126,7 +128,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 
 func (s *SQL) ListSessionLinks(ctx context.Context, workspaceID string) (map[string][]SessionLink, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT session_name, provider, item_key, role, title, url, linked_at
+		`SELECT session_name, provider, item_key, role, title, url, linked_at, state
 		 FROM session_work_link WHERE workspace_id=? ORDER BY session_name, ord`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -136,7 +138,7 @@ func (s *SQL) ListSessionLinks(ctx context.Context, workspaceID string) (map[str
 	for rows.Next() {
 		var name string
 		var l SessionLink
-		if err := rows.Scan(&name, &l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At); err != nil {
+		if err := rows.Scan(&name, &l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At, &l.State); err != nil {
 			return nil, err
 		}
 		out[name] = append(out[name], l)

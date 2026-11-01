@@ -20,7 +20,7 @@ const (
 	mirrorMaxKey   = 200 // bytes
 	mirrorMaxTitle = 300 // runes
 	mirrorMaxURL   = 500 // runes
-	mirrorMaxShort = 40  // bytes: provider, role, timestamp
+	mirrorMaxShort = 40  // bytes: provider, role, timestamp, state
 )
 
 // sessionLinkWire is one entry of the Agent's links array, in its wire shape.
@@ -31,6 +31,7 @@ type sessionLinkWire struct {
 	Title    string `json:"title,omitempty"`
 	URL      string `json:"url,omitempty"`
 	At       string `json:"at,omitempty"`
+	State    string `json:"state,omitempty"`
 }
 
 // SessionLinksFromJSON reads the relayed links of one session (the Agent's links array). An entry without a provider or a key,
@@ -50,7 +51,7 @@ func SessionLinksFromJSON(raw json.RawMessage) []SessionLink {
 		}
 		// Postgres refuses a NUL in TEXT, and the INSERT failing would roll back the whole
 		// workspace's mirror; the Agent passes titles through as given.
-		for _, f := range []*string{&l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At} {
+		for _, f := range []*string{&l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At, &l.State} {
 			*f = strings.ReplaceAll(*f, "\x00", "")
 		}
 		if l.Provider == "" || l.Key == "" || len(l.Provider) > mirrorMaxShort || len(l.Key) > mirrorMaxKey {
@@ -66,6 +67,7 @@ func SessionLinksFromJSON(raw json.RawMessage) []SessionLink {
 			Title: clipRunes(l.Title, mirrorMaxTitle),
 			URL:   url,
 			At:    clipBytes(l.At, mirrorMaxShort),
+			State: clipBytes(l.State, mirrorMaxShort),
 		})
 	}
 	return out
@@ -79,7 +81,7 @@ func SessionLinksJSON(links []SessionLink) json.RawMessage {
 	}
 	out := make([]sessionLinkWire, len(links))
 	for i, l := range links {
-		out[i] = sessionLinkWire{Provider: l.Provider, Key: l.Key, Role: l.Role, Title: l.Title, URL: l.URL, At: l.At}
+		out[i] = sessionLinkWire{Provider: l.Provider, Key: l.Key, Role: l.Role, Title: l.Title, URL: l.URL, At: l.At, State: l.State}
 	}
 	b, err := json.Marshal(out)
 	if err != nil {

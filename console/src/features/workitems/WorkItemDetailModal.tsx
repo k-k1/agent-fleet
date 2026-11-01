@@ -50,6 +50,7 @@ import type { Repo } from "../repos/store.ts";
 import { workItemDetail, workItemMerge } from "./api.ts";
 import { LabelBadge } from "./LabelBadge.tsx";
 import type { ResolvedSessionRef } from "./sessionRefs.ts";
+import { linkPRState } from "../sessions/sessionLinks.ts";
 import {
   canComment,
   canReadLive,
@@ -270,6 +271,9 @@ interface Props {
   sessionRef(name: string): ResolvedSessionRef;
   onOpenSession(name: string): void;
   onReport(): void;
+  /** Drops a session's link to this item (#3166); resolves to an error text, "" on success.
+   * Absent: no Remove buttons. */
+  onUnlink?(sessionName: string): Promise<string>;
 }
 
 export function WorkItemDetailModal({
@@ -284,6 +288,7 @@ export function WorkItemDetailModal({
   sessionRef,
   onOpenSession,
   onReport,
+  onUnlink,
 }: Props) {
   const tr = useT();
   const live = useLiveDetail(item, reference);
@@ -328,6 +333,34 @@ export function WorkItemDetailModal({
 
   const gate = mergeGate(d);
   const [mergeDlg, setMergeDlg] = useState<MergeDialog | null>(null);
+  // Removing a session's link (#3166). removed hides the row at once: the session list that
+  // feeds `started` only drops it on its next poll.
+  const [unlinkDlg, setUnlinkDlg] = useState<WorkItemSessionRef | null>(null);
+  const [unlinkBusy, setUnlinkBusy] = useState(false);
+  const [unlinkErr, setUnlinkErr] = useState("");
+  const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
+  // Once the list has dropped a removed session, forget it: linked again later, it shows again.
+  useEffect(() => {
+    setRemoved((prev) => {
+      const still = [...prev].filter((name) => started.some((s) => s.sessionName === name));
+      return still.length === prev.size ? prev : new Set(still);
+    });
+  }, [started]);
+  const shownStarted = started.filter((s) => !removed.has(s.sessionName));
+  const confirmUnlink = async () => {
+    if (!unlinkDlg || !onUnlink || unlinkBusy) return;
+    setUnlinkBusy(true);
+    setUnlinkErr("");
+    const err = await onUnlink(unlinkDlg.sessionName);
+    setUnlinkBusy(false);
+    if (err) {
+      setUnlinkErr(err);
+      return;
+    }
+    const name = unlinkDlg.sessionName;
+    setRemoved((prev) => new Set(prev).add(name));
+    setUnlinkDlg(null);
+  };
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeErr, setMergeErr] = useState("");
   // The outcome of the last attempt, kept in the footer next to the button: the dialog is gone
@@ -681,17 +714,21 @@ export function WorkItemDetailModal({
 
         {/* Already started. This is the ledger's main payoff: it stops a second person picking
             up the same ticket before they launch (docs/log/80 §80.8). */}
-        {started.length > 0 && (
+        {shownStarted.length > 0 && (
           <section className="wi-dstarted">
             <h4>{tr("wi.detail_started")}</h4>
             <ul>
               {/* The display name leads and the slug follows, since the slug is what other
                   surfaces (the ledger, peer messages) name it by. An archived one says so here,
                   before the click that offers to bring it back (#1108). */}
-              {started.map((s) => {
+              {shownStarted.map((s) => {
                 const ref = sessionRef(s.sessionName);
+                const prState = linkPRState(s);
+                // Only a link can be removed here (its id is "link:…"; a ledger row's is not): a
+                // launch is the record of who started the ticket, and so is the launch item.
+                const removable = !!onUnlink && !!s.id?.startsWith("link:") && s.role !== "started";
                 return (
-                  <li key={s.id}>
+                  <li key={s.id} className="wi-dsrow">
                     <button
                       type="button"
                       className={`wi-dsession is-${ref.state}`}
@@ -703,9 +740,23 @@ export function WorkItemDetailModal({
                       {ref.title ? <span className="wi-dslug">{s.sessionName}</span> : null}
                       {s.branch ? <span className="wi-dbranch">{s.branch}</span> : null}
                       {s.role && <span className="wi-dtag">{tr(`wi.link_role.${s.role}`)}</span>}
+                      {prState && <span className="wi-dtag">{tr(`srow.pr_state.${prState}`)}</span>}
                       {ref.state === "archived" && <span className="wi-dtag">{tr("wi.session_archived")}</span>}
                       {ref.state === "gone" && <span className="wi-dtag">{tr("wi.session_deleted")}</span>}
                     </button>
+                    {removable && (
+                      <button
+                        type="button"
+                        className="wi-dunlink"
+                        title={tr("wi.unlink_hint")}
+                        onClick={() => {
+                          setUnlinkErr("");
+                          setUnlinkDlg(s);
+                        }}
+                      >
+                        {tr("wi.unlink")}
+                      </button>
+                    )}
                   </li>
                 );
               })}
@@ -874,6 +925,28 @@ export function WorkItemDetailModal({
           {mergeErr && (
             <p className="wi-merr" role="alert">
               {mergeErr}
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
+      {unlinkDlg && (
+        <ConfirmDialog
+          title={tr("wi.unlink_title")}
+          confirmLabel={tr("wi.unlink_confirm")}
+          danger
+          busy={unlinkBusy}
+          onConfirm={() => void confirmUnlink()}
+          onCancel={() => setUnlinkDlg(null)}
+        >
+          <p>
+            {tr("wi.unlink_body", {
+              session: sessionRef(unlinkDlg.sessionName).title || unlinkDlg.sessionName,
+              key: unlinkDlg.itemKey,
+            })}
+          </p>
+          {unlinkErr && (
+            <p className="wi-merr" role="alert">
+              {unlinkErr}
             </p>
           )}
         </ConfirmDialog>

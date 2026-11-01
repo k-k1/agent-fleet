@@ -151,4 +151,21 @@ describe("SessionRow link line", () => {
     expect(detail?.reference).toBe(true);
     useWorkItemModal.getState().close();
   });
+
+  it("draws a merged PR link dimmed, with the merge icon and its state in the title (#3166)", async () => {
+    await render({
+      links: [
+        { provider: "github", key: "o/r#3", role: "working", state: "merged" },
+        { provider: "github", key: "o/r#4", role: "working", state: "open" },
+      ],
+    });
+    const chips = [...host.querySelectorAll<HTMLButtonElement>(".sess-item")];
+    expect(chips.map((c) => [c.textContent, c.classList.contains("done")])).toEqual([
+      ["o/r#4", false],
+      ["o/r#3", true],
+    ]);
+    expect(chips[1].querySelector(".codicon-git-merge")).not.toBeNull();
+    expect(chips[1].title).toContain(t("srow.pr_state.merged"));
+    expect(chips[0].querySelector(".codicon-tools")).not.toBeNull();
+  });
 });

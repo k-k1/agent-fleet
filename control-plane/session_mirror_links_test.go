@@ -35,7 +35,7 @@ func TestSessionsPayloadKeepsLinksThroughTheMirror(t *testing.T) {
 	}
 
 	const links = `[{"provider":"jira","key":"PROJ-1","role":"started","title":"Login"},` +
-		`{"provider":"github","key":"o/r#45","role":"working","url":"https://github.com/o/r/pull/45","at":"2026-11-01T00:00:00Z"}]`
+		`{"provider":"github","key":"o/r#45","role":"working","url":"https://github.com/o/r/pull/45","at":"2026-11-01T00:00:00Z","state":"merged"}]`
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"sessions":[

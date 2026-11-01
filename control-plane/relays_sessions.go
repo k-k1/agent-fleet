@@ -67,6 +67,9 @@ var sessionRelays = []agentRelay{
 	// Keep-awake pin (docs/log/75) — shields the session and the Workspace from idle
 	// auto-stop for a bounded time.
 	{route: "POST /api/sessions/{name}/keep-awake"},
+	// Work item links (#3134, #3166): the item details' Remove button. The Agent validates the
+	// key and refuses to drop the launch item.
+	{route: "POST /api/sessions/{name}/links"},
 	// Stop-after-turn arm (docs/log/85) — fold this session away once the turn it is
 	// running ends. The pin's mirror image, and proxied the same way.
 	{route: "POST /api/sessions/{name}/stop-after-turn"},

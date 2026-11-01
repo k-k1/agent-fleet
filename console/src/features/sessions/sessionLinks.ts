@@ -55,16 +55,33 @@ export function rowPorts(ports: number[] | undefined): number[] {
   return ports.filter((p) => browserTarget(p, "/") !== null);
 }
 
-/** The work items a row names (#3134), strongest role first. The branch's own PR is left out
- * while the row draws it as the PR chip: the same PR twice on one line says nothing new. Keys
- * compare case-insensitively, as the Agent compares them (owner/repo names are). */
+/** The work items a row names (#3134), strongest role first and finished pull requests last
+ * (#3166): a merged PR is history, and the items still in flight are what the row is for. The
+ * branch's own PR is left out while the row draws it as the PR chip: the same PR twice on one
+ * line says nothing new. Keys compare case-insensitively, as the Agent compares them
+ * (owner/repo names are). */
 export function rowWorkLinks(s: Pick<Session, "links" | "pr">): SessionWorkLink[] {
   const prKey = s.pr ? prKeyOf(s.pr.url) : null;
   return (s.links || [])
     .filter((l) => l.key && !(prKey && sameWorkItem(l, "github", prKey)))
     .map((l, i) => ({ l, i }))
-    .sort((a, b) => roleRank(b.l.role) - roleRank(a.l.role) || a.i - b.i)
+    .sort(
+      (a, b) =>
+        Number(linkDone(a.l)) - Number(linkDone(b.l)) || roleRank(b.l.role) - roleRank(a.l.role) || a.i - b.i,
+    )
     .map(({ l }) => l);
+}
+
+/** Whether a link names a pull request last seen merged or closed: work that has ended. */
+export function linkDone(l: Pick<SessionWorkLink, "state">): boolean {
+  return l.state === "merged" || l.state === "closed";
+}
+
+/** The PR state a link records, as the PR chip names it, or null when it records none (or one
+ * the Console does not know: the value arrives from the Agent's meta). */
+export function linkPRState(l: Pick<SessionWorkLink, "state">): PRStateKey | null {
+  const s = l.state;
+  return s === "open" || s === "draft" || s === "merged" || s === "closed" ? s : null;
 }
 
 /** Whether a link names provider/key, ignoring case on both, as the Agent does. */

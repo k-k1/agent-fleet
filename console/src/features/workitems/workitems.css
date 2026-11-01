@@ -372,6 +372,28 @@
   flex-direction: column;
   gap: 3px;
 }
+/* A session row with its Remove button (#3166) at the far end, out of the way of the open click. */
+.wi-dsrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wi-dunlink {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.wi-dunlink:hover {
+  color: var(--fg);
+  background: var(--btn);
+}
 .wi-dsession {
   display: inline-flex;
   align-items: center;

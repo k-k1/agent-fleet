@@ -434,6 +434,10 @@
 .sess-item.role-watching {
   opacity: 0.75;
 }
+/* A pull request last seen merged or closed (#3166): kept as history, drawn as the faintest. */
+.sess-item.done {
+  opacity: 0.55;
+}
 /* One globe for the group rather than one per port: at the rail's narrowest a per-port icon
    pushed the third port onto a line of its own. */
 .sess-ports {
