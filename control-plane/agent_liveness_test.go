@@ -277,3 +277,53 @@ func TestSweepRetiresAMarkLeftByAnotherReplicaOnceTheAgentAnswers(t *testing.T) 
 		t.Fatal("the mark survived a sweep in which the Agent answered")
 	}
 }
+
+// Stopping and starting a workspace between two sweeps must reset the check through the
+// handlers a Console actually polls, so the next running spell gets a fresh clock.
+func TestPayloadAndMemberStatsResetTheClockOnNonRunningStates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Close()
+	key := endpointKey(srv.URL)
+	defer agentLive.forget(key)
+	seed := func() {
+		now := time.Now()
+		agentLive.mu.Lock()
+		agentLive.m[key] = &liveEntry{since: now.Add(-time.Hour), answered: now.Add(-time.Hour), probedAt: now, silent: true, gen: 1}
+		agentLive.mu.Unlock()
+	}
+	_, mgr, _, _ := destroyFixture(t, stateOnlyFactory{state: "running"})
+	api := newWorkspaceAPI(mgr, false)
+	ctx := context.Background()
+	res := func(state string) *resolved {
+		return &resolved{rt: stateOnlyRuntime{stubRuntime: stubRuntime{endpoint: srv.URL}, state: state}}
+	}
+	seed()
+	if p := api.workspacePayload(ctx, res("running"), "running"); p["agentSilent"] != true {
+		t.Fatalf("setup: %v", p)
+	}
+	for _, st := range []string{"stopped", "starting"} {
+		if p := api.workspacePayload(ctx, res(st), st); p["agentSilent"] != nil {
+			t.Fatalf("%s payload flagged: %v", st, p)
+		}
+	}
+	if p := api.workspacePayload(ctx, res("running"), "running"); p["agentSilent"] != nil {
+		t.Fatalf("a new running spell inherited the old verdict: %v", p)
+	}
+
+	// The administrator's stats read does the same.
+	for _, c := range []struct{ state string }{{"stopped"}} {
+		_, mgr2, _, _ := destroyFixture(t, endpointFactory{state: c.state, endpoint: srv.URL})
+		seed()
+		r := httptest.NewRequest(http.MethodGet, "/api/admin/tenants/sales/members/leaver-acme-co-jp/stats", nil)
+		r.SetPathValue("slug", "sales")
+		r.SetPathValue("key", "leaver-acme-co-jp")
+		r.Header.Set("X-Forwarded-Email", "boss@acme.co.jp")
+		newAdminAPI(mgr2).memberStats(httptest.NewRecorder(), r)
+		agentLive.mu.Lock()
+		_, still := agentLive.m[key]
+		agentLive.mu.Unlock()
+		if still {
+			t.Fatal("memberStats on a stopped workspace left the entry")
+		}
+	}
+}

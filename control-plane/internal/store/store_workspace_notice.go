@@ -149,11 +149,16 @@ func (s *SQL) SyncWorkspaceNotice(ctx context.Context, ws Workspace, kind string
 			}
 		}
 	case !d.Want && prev:
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM workspace_notice WHERE workspace_id=? AND kind=?`, ws.ID, kind); err != nil {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM workspace_notice WHERE workspace_id=? AND kind=?`, ws.ID, kind)
+		if err != nil {
 			return err
 		}
-		if d.Retired != nil {
+		// Kinds without a locked source row can read prev=true in two transactions at once; only
+		// the one whose DELETE removed the mark records the retirement.
+		if c, err := res.RowsAffected(); err != nil {
+			return err
+		} else if d.Retired != nil && c == 1 {
 			if err := insertAuditTx(ctx, tx, *d.Retired); err != nil {
 				return err
 			}

@@ -233,7 +233,8 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	// The runtime says running but the Agent has not answered for minutes and a probe
 	// confirms it (agent_liveness.go). Emitted only when true. The Console tells the member
 	// the workspace is not responding and to stop and start it.
-	if state == "running" && a.mgr != nil && a.mgr.store != nil && a.mgr.checkAgentSilent(ctx, res.ws, rt, state) {
+	// Called for every state: a non-running one is what resets the check's clock.
+	if a.mgr != nil && a.mgr.store != nil && a.mgr.checkAgentSilent(ctx, res.ws, rt, state) {
 		m["agentSilent"] = true
 	}
 	// The runtime offers no browser features at all (runtime/browser_support.go). Sent in

@@ -83,7 +83,12 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	out := workspaceStats(ctx, a.mgr, rt, state)
 	// Running per the runtime, yet the Agent is silent (agent_liveness.go): the detail says so
 	// next to the Force-stop it already offers.
-	if out["running"] == true && a.mgr.checkAgentSilent(ctx, ws, rt, "running") {
+	// A non-running read still has to reach the check: it is what resets the clock.
+	checkState := "stopped"
+	if out["running"] == true {
+		checkState = "running"
+	}
+	if a.mgr.checkAgentSilent(ctx, ws, rt, checkState) {
 		out["agent_silent"] = true
 	}
 	// The member detail is opened from a roster snapshot and polls only this, so the
