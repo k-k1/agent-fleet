@@ -16,6 +16,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 // Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
 // component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
+import { useSettingsUI } from "../store.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 import { relTime } from "../../../lib/intl.ts";
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
@@ -51,6 +52,9 @@ export function MembersPanel({
 }) {
   const tr = useT();
   const [members, setMembers] = useState<Member[] | null>(null);
+  // Which tenant `members` belongs to: a slug change shows the old list for one render, and a
+  // notification link must not be resolved against it.
+  const [loadedSlug, setLoadedSlug] = useState("");
   // The roster shows what each member is sized to, and that only reads correctly once
   // the runtime has said what the numbers mean (ADR 0045 decision 21). Same fetch the member
   // detail does — it is a small, cacheable, identity-agnostic document.
@@ -76,11 +80,23 @@ export function MembersPanel({
     } catch {
       setMembers([]);
     }
+    setLoadedSlug(slug);
   }, [slug]);
   useEffect(() => {
     setMembers(null);
     loadMembers();
   }, [loadMembers]);
+
+  // An admin notification linked to this member: open the detail once the roster has them.
+  const target = useSettingsUI((s) => s.tenantMemberTarget);
+  const clearTarget = useSettingsUI((s) => s.clearTenantMemberTarget);
+  useEffect(() => {
+    if (!target || target.slug !== slug || loadedSlug !== slug || !members) return;
+    const m = members.find((x) => x.user_key === target.userKey);
+    if (!m) return;
+    clearTarget();
+    onOpenMember(m);
+  }, [target, slug, loadedSlug, members, clearTarget, onOpenMember]);
 
   return (
     <section className="admin-panel">

@@ -199,3 +199,27 @@ describe("terminal notification", () => {
     setLocale("ja");
   });
 });
+
+// #2427: an admin hears about a member's home or tool install; the row names the member, never a
+// raw identifier, in both locales.
+describe("member admin notices", () => {
+  it("member-home-full names the member and the figures", () => {
+    setLocale("en");
+    const w = notificationWording({
+      kind: "member-home-full", displayName: "w@acme.co.jp", payload: { used: 95 * 1024 ** 3, total: 100 * 1024 ** 3 },
+    });
+    expect(w.title).toBe("w@acme.co.jp's home is nearly full");
+    expect(w.body).toBe("w@acme.co.jp: 95.0 GiB of 100.0 GiB used");
+    expect(notificationKindLabel("member-home-full")).toBe(en["noti.kind_member_home_full"]);
+    setLocale("ja");
+    expect(notificationWording({ kind: "member-home-full", displayName: "山田", payload: {} }).title).toBe("山田 さんのホームの空きが少なくなっています");
+    expect(notificationKindLabel("member-home-full")).toBe(ja["noti.kind_member_home_full"]);
+  });
+
+  it("member-boot-install lists the tools", () => {
+    setLocale("en");
+    const w = notificationWording({ kind: "member-boot-install", displayName: "w@acme.co.jp", payload: { tools: ["claude", "codex"] } });
+    expect(w.body).toBe("w@acme.co.jp: claude, codex");
+    expect(notificationRowSubtitle({ kind: "member-boot-install", displayName: "w@acme.co.jp", payload: { tools: ["claude"] } })).toBe("w@acme.co.jp: claude");
+  });
+});

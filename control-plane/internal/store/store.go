@@ -57,6 +57,7 @@ type Store interface {
 	MemberUIStateStore
 	WorkspaceDiskStore
 	WorkspaceBootStore
+	WorkspaceNoticeStore
 	TenantMemberDefaultsStore
 	HomeOperationStore
 	CPLeaseStore

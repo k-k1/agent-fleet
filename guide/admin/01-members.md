@@ -60,6 +60,25 @@ the reasons, which are:
 In the default order, cards whose home disk is full or almost out of space come first, then cards
 with any other reason, then everyone else, each group by name.
 
+### Notifications to tenant admins
+
+You do not have to open the roster to find these two cases. The Control Plane sends each admin of
+the member's tenant one Console notification (the bell) when:
+
+- **A member's own home volume is nearly full.** It uses the same thresholds and hysteresis as the
+  member's own notice (raised above 90 % used or with less than 2 GiB free, re-armed only after
+  more than 3 GiB free and under 85 % used). It is sent only where the home is that member's own
+  volume; on a shared host or filesystem the figure is not the member's and nothing is sent.
+- **The member's last observed start failed to install a CLI.** A skipped upgrade is not a
+  failure and sends nothing.
+
+Each notice names the member and opens their detail when you click it. It is sent once per
+crossing, not on every sample, and the "already notified" mark is stored in the database, so a
+Control Plane restart does not repeat it. The mark is cleared when the condition recovers (or the
+home is wiped), so a later crossing notifies again. A stopped or unreachable workspace, whose
+reading is unknown, never sends one. Only admins of the member's own tenant receive it; there is
+no email.
+
 ### Where the numbers come from
 
 The session counts, last active, disk gauge and install flag are what the Control Plane recorded,

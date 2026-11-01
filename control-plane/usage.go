@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/adminnotice"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -303,6 +304,11 @@ func (u *usageSampler) recordDisk(ctx context.Context, ws store.Workspace, rt ru
 		WorkspaceID: ws.ID, Used: used, Total: total, ObservedAt: store.DiskObservedAt(taken),
 	}); err != nil {
 		log.Printf("showback: record disk (%s): %v", ws.ContainerName, err)
+		return
+	}
+	// Only a home that is the member's own volume says anything about the member (home_own).
+	if u.mgr.workspaceSizing().DiskMeaning == runtime.DiskMeaningHome && homeIsOwnVolume(rt) {
+		adminnotice.HomeDisk(ctx, u.mgr.store, ws)
 	}
 }
 
@@ -507,5 +513,7 @@ func (u *usageSampler) recordBootFailed(ctx context.Context, ws store.Workspace,
 	}
 	if err := u.mgr.store.PutWorkspaceBootFailed(ctx, ws.ID, failed, store.DiskObservedAt(at)); err != nil {
 		log.Printf("showback: record boot install (%s): %v", ws.ContainerName, err)
+		return
 	}
+	adminnotice.BootInstall(ctx, u.mgr.store, ws)
 }

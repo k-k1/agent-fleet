@@ -32,6 +32,7 @@ export function TenantDialog() {
   const costProfile = useCostProfile();
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
   const tenantSection = useSettingsUI((s) => s.tenantSection);
+  const memberTarget = useSettingsUI((s) => s.tenantMemberTarget);
   const [section, setSection] = useState(
     TENANT_SCOPE_SECTIONS.includes(tenantSection) ? tenantSection : "signin",
   );
@@ -65,10 +66,24 @@ export function TenantDialog() {
   // when it is no longer in the list.
   const [slug, setSlug] = useState(lastTenantSlug);
 
+
   // Members are two levels, list → detail. Growing the rail by one item per person breaks down
   // in a 40-person department, and the rail would shift the moment someone is added or removed,
   // so the second level is stacked here in the body instead.
   const [member, setMember] = useState<Member | null>(null);
+  // A notification that links to a member: show that tenant's roster (dropping any member open
+  // now, which may be someone else or another tenant's) and, on a phone, step past the rail.
+  // MembersPanel then opens the detail once its list has loaded and clears the target.
+  useEffect(() => {
+    if (!memberTarget) return;
+    setSlug(memberTarget.slug);
+    setSection("members");
+    // Keep the member MembersPanel has just opened for this very target (its effect runs
+    // before this one in the same commit); drop any other.
+    setMember((cur) => (cur && cur.user_key === memberTarget.userKey && memberTarget.slug === slug ? cur : null));
+    setEntered(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to a new target only
+  }, [memberTarget]);
   // Device back closes the detail first rather than the whole modal: this layer is pushed after
   // the rail's, so it is popped first.
   useBackClose(() => setMember(null), !!member);

@@ -26,6 +26,23 @@ func (f sizedFactory) SizingProfile() runtime.WorkspaceSizing {
 	return runtime.WorkspaceSizing{Runtime: "stub", DiskMeaning: f.meaning}
 }
 
+// diskAgentFunc is diskAgent whose stats answer is read at request time.
+func diskAgentFunc(t *testing.T, stats func() string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions":
+			_, _ = w.Write([]byte(`{"sessions":[]}`))
+		case "/workspace/stats":
+			_, _ = w.Write([]byte(stats()))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // diskAgent plays the Agent: /sessions for the sampler's session read, /workspace/stats for statfs.
 func diskAgent(t *testing.T, stats string) *httptest.Server {
 	t.Helper()
