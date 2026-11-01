@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,25 +78,40 @@ func TestContractV2EventStreamHasNoOpencode1Events(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := agents.ThreadSettings{Model: "stub/m"}
+	// A turn left running by a Fatal must not report after the test completes (that panics the
+	// binary): cleanup interrupts the session and waits for the background turns, and only after a
+	// wait that timed out are their reports dropped.
+	var backgrounds []<-chan struct{}
+	var reportsOff atomic.Bool
+	t.Cleanup(func() {
+		_ = serveAbort(addr, ses)
+		for _, done := range backgrounds {
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				reportsOff.Store(true)
+			}
+		}
+	})
 	// turn runs one turn to its end. It also runs on its own goroutine, so a failure is reported
 	// with Errorf, not Fatal.
 	turn := func(prompt string) {
 		req, err := newTurnRequest(addr, ses, agents.TurnInput{Prompt: prompt})
-		if err != nil {
-			t.Errorf("turn %q: %v", prompt, err)
-			return
+		if err == nil {
+			var res *http.Response
+			res, err = sendTurn(addr, ses, req, st)
+			if res != nil {
+				res.Body.Close()
+			}
 		}
-		res, err := sendTurn(addr, ses, req, st)
-		if res != nil {
-			res.Body.Close()
-		}
-		if err != nil {
+		if err != nil && !reportsOff.Load() {
 			t.Errorf("turn %q: %v", prompt, err)
 		}
 	}
 	// background starts a turn and returns a channel closed when it has ended.
 	background := func(prompt string) <-chan struct{} {
 		done := make(chan struct{})
+		backgrounds = append(backgrounds, done)
 		go func() { defer close(done); turn(prompt) }()
 		return done
 	}
