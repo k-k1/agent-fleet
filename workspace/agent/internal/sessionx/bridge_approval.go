@@ -134,7 +134,8 @@ var approvalNowMs = chatx.NowMs
 // bridgeApprovalClaims holds one claim file per approval: the single arbiter of who
 // resolved it. Whoever creates <id>.claim first wins, and the content names the winner
 // (claimTaken: the waiter consumed a decision; claimExpired: the waiter gave up;
-// claimRetracted: the daemon withdrew a decision it wrote too late). Creation is an atomic
+// claimConfirmed: the daemon wrote an on-time decision and confirmed it before telling the
+// user; claimRetracted: the daemon withdrew a decision it wrote too late). Creation is an atomic
 // hard link, so it holds with no flock — the lock can be unavailable, or the no-op one on a
 // non-unix build, and the arbiter still serializes the two processes.
 var bridgeApprovalClaims = fstore.Strings(paths.AgentStateDir, "bridge-approvals", ".claim")
@@ -143,7 +144,16 @@ const (
 	claimTaken     = "taken"
 	claimExpired   = "expired"
 	claimRetracted = "retracted"
+	claimConfirmed = "confirmed"
 )
+
+// claimApprovalFn is the arbiter every caller goes through; a var so a test can make one
+// side's claim fail (a filesystem without hard links, a transient I/O error).
+var claimApprovalFn = claimApproval
+
+// claimHonored reports whether a claim's winner means the waiter may act on the decision:
+// its own "taken", or the daemon's "confirmed" (the user was already told the outcome).
+func claimHonored(winner string) bool { return winner == claimTaken || winner == claimConfirmed }
 
 // claimApprovalRetry rides out a transient I/O failure of the arbiter (not a lost race,
 // which is a result): the waiter's claim sits on the most common path, an on-time approval.
@@ -151,7 +161,7 @@ func claimApprovalRetry(id, who string) (string, error) {
 	var winner string
 	var err error
 	for i := 0; i < 3; i++ {
-		if winner, err = claimApproval(id, who); err == nil {
+		if winner, err = claimApprovalFn(id, who); err == nil {
 			return winner, nil
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -264,13 +274,23 @@ func approvalOutcome(id string, cur bridgeApprovalRec) (decided bool, err error)
 		return false, nil
 	}
 	winner, cerr := claimApprovalRetry(id, claimTaken)
+	if cerr != nil {
+		// Not a lost race: the waiter's own claim failed. The daemon may already have
+		// confirmed the decision and told the user "Approved"; reading the claim needs no
+		// link, so honor it when it says so.
+		if b, ok := bridgeApprovalClaims.Read(id); ok && b == claimConfirmed {
+			winner, cerr = claimConfirmed, nil
+		} else if ok && b != "" {
+			winner, cerr = b, nil // expired / retracted: a plain timeout
+		}
+	}
 	bridgeApprovals.Remove(id)
 	if cerr != nil {
-		// Not a lost race: the arbiter itself failed. The daemon may already have said
-		// "Approved", so report that the decision arrived but was not confirmed.
+		// Unknown outcome. The daemon either did not confirm (it then told the user "not
+		// confirmed") or its confirmation cannot be read: report "arrived, not confirmed".
 		return true, errApprovalUnconfirmed
 	}
-	if winner != claimTaken {
+	if !claimHonored(winner) {
 		return true, errApprovalTimeout
 	}
 	if cur.Decision == "approve" {
@@ -299,7 +319,15 @@ func expireApproval(id string) error {
 		// Record the expiry. It does not decide anything (a late daemon wins "retracted"
 		// or loses to this; either way the answer is "expired"); it keeps the claim file
 		// readable evidence of who resolved the approval.
-		_, _ = claimApproval(id, claimExpired)
+		if w, cerr := claimApprovalFn(id, claimExpired); cerr == nil && w == claimConfirmed {
+			// The daemon confirmed (and said "Approved") between the look above and this
+			// claim: its decision is in the record, written before it claimed.
+			if cur, ok := bridgeApprovals.Read(id); ok {
+				if decided, derr := approvalOutcome(id, cur); decided {
+					return derr
+				}
+			}
+		}
 		return errApprovalTimeout
 	}
 	defer unlock()
@@ -308,7 +336,7 @@ func expireApproval(id string) error {
 			return err
 		}
 	}
-	_, _ = claimApproval(id, claimExpired)
+	_, _ = claimApprovalFn(id, claimExpired)
 	bridgeApprovals.Remove(id)
 	return errApprovalTimeout
 }
@@ -322,13 +350,15 @@ func expireApproval(id string) error {
 // re-created and a click after the deadline is reported as expired.
 //
 // The lock alone cannot cover a waiter that failed to take it, or a build whose lock is a
-// no-op. So after the write the daemon looks at the clock once more: still before Deadline
-// means the waiter's final look (which is at or after Deadline) will see the decision;
-// otherwise the waiter may already have given up, and the claim file arbitrates. The daemon
-// claims "retracted" and reports expired, unless the waiter got there first — "taken" is
-// reported as the decision, "expired" as expired. When the claim cannot be made the outcome
-// is unknown and the click is answered with an error, never with "Approved". No wait on the
-// waiter is involved, so the request path stays bounded.
+// no-op, so after the write the claim file arbitrates. Late (the clock is at or past
+// Deadline, the waiter may already have given up): the daemon claims "retracted" and reports
+// expired, unless the waiter got there first. On time: the daemon claims "confirmed" before
+// replying, and the waiter honors that claim even when its own claim fails, so "Approved" is
+// never shown for a decision the waiter cannot act on. A winner of "taken" or "confirmed" is
+// reported as the decision, "expired" as expired. When the daemon's claim cannot be made the
+// outcome is unknown: the record is removed, and the user is told "not confirmed", never
+// "Approved". Retries are bounded (3x50 ms) and nothing waits on the waiter, so the request
+// path stays bounded.
 func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
 	unlock, err := lockApprovals()
 	if err != nil {
@@ -356,16 +386,23 @@ func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
 	if h := bridgeApprovalAfterWrite; h != nil {
 		h(id)
 	}
+	// The claim decides, on time or late. Late: withdraw the decision unless the waiter
+	// already took it. On time: confirm it, so a waiter whose own claim fails can still act
+	// on what the user is about to be told; a claim that cannot be made means the waiter
+	// may not act, so the user is not told "Approved".
+	mine := claimConfirmed
 	if rec.Deadline > 0 && approvalNowMs() >= rec.Deadline {
-		winner, cerr := claimApproval(id, claimRetracted)
-		if cerr != nil {
-			bridgeApprovals.Remove(id)
-			return "", errors.New("approval outcome not confirmed")
-		}
-		if winner != claimTaken {
-			bridgeApprovals.Remove(id) // the waiter will not (or did not) act on it
-			return expired, nil
-		}
+		mine = claimRetracted
+	}
+	winner, cerr := claimApprovalRetry(id, mine)
+	if cerr != nil {
+		bridgeApprovals.Remove(id)
+		return Fb(en, "⚠ 承認を受け付けましたが確定できませんでした（実行しません）。もう一度依頼してください",
+			"⚠ Received, but it could not be confirmed (not running it). Ask again if needed"), errors.New("approval outcome not confirmed")
+	}
+	if !claimHonored(winner) {
+		bridgeApprovals.Remove(id) // the waiter will not (or did not) act on it
+		return expired, nil
 	}
 	if choice == "approve" {
 		return Fb(en, "✓ 承認しました（実行します）", "✓ Approved (running it)"), nil

@@ -657,3 +657,121 @@ func TestSweepStaleApprovalClaims(t *testing.T) {
 		t.Fatal("fresh claim must stay")
 	}
 }
+
+// failClaims makes the claim of every who in `who` fail with an I/O error (nothing in the
+// claim dir changes), leaving the others real. No who given = every claim fails, which is
+// what a filesystem without hard links looks like.
+func failClaims(t *testing.T, who ...string) {
+	t.Helper()
+	orig := claimApprovalFn
+	t.Cleanup(func() { claimApprovalFn = orig })
+	claimApprovalFn = func(id, w string) (string, error) {
+		if len(who) == 0 {
+			return "", errors.New("injected: hard links unsupported")
+		}
+		for _, x := range who {
+			if x == w {
+				return "", errors.New("injected claim I/O failure")
+			}
+		}
+		return orig(id, w)
+	}
+}
+
+// #3157: the decision is written in time and the user is told "Approved", then the waiter's
+// own claim fails. The daemon's "confirmed" claim lets the waiter act anyway.
+func TestApprovalWaiterClaimFailureStillActsOnConfirmedDecision(t *testing.T) {
+	for _, tc := range []struct {
+		choice, told string
+		want         error
+	}{{"approve", "Approved", nil}, {"reject", "Rejected", errApprovalRejected}} {
+		t.Run(tc.choice, func(t *testing.T) {
+			withTempHome(t)
+			id := pendingWithDeadline(t)
+			msg, err := bridgeApprovalDecision(id, tc.choice, true)
+			if err != nil || !strings.Contains(msg, tc.told) {
+				t.Fatalf("msg=%q err=%v", msg, err)
+			}
+			failClaims(t, claimTaken)
+			cur, _ := bridgeApprovals.Read(id)
+			decided, werr := approvalOutcome(id, cur)
+			if !decided || !errors.Is(werr, tc.want) {
+				t.Fatalf("user told %q but waiter decided=%v err=%v", msg, decided, werr)
+			}
+		})
+	}
+}
+
+// Every claim fails (no hard links, unwritable claim dir): the daemon must not say
+// "Approved", and the waiter, whether it had already read the decision or not, must not act.
+func TestApprovalNoClaimsAtAllNeitherApprovedNorRun(t *testing.T) {
+	for _, choice := range []string{"approve", "reject"} {
+		t.Run(choice, func(t *testing.T) {
+			withTempHome(t)
+			id := pendingWithDeadline(t)
+			var cur bridgeApprovalRec
+			bridgeApprovalAfterWrite = func(id string) { cur, _ = bridgeApprovals.Read(id) }
+			t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+			failClaims(t)
+			msg, err := bridgeApprovalDecision(id, choice, true)
+			if err == nil || strings.Contains(msg, "Approved") || strings.Contains(msg, "Rejected") || !strings.Contains(msg, "not be confirmed") {
+				t.Fatalf("msg=%q err=%v", msg, err)
+			}
+			if decided, werr := approvalOutcome(id, cur); !decided || werr == nil || errors.Is(werr, errApprovalRejected) && choice == "approve" {
+				t.Fatalf("waiter ran or misreported: decided=%v err=%v", decided, werr)
+			}
+			if _, ok := bridgeApprovals.Read(id); ok {
+				t.Fatal("record must not stay published")
+			}
+		})
+	}
+}
+
+// The waiter's deadline step lands between the decision write and the daemon's claim, on a
+// build with a no-op lock. The waiter's last look takes the decision, so the daemon's claim
+// loses to "taken" and "Approved" is truthful.
+func TestApprovalDeadlineAtWriteWaiterTakesDecision(t *testing.T) {
+	withTempHome(t)
+	orig := lockApprovals
+	t.Cleanup(func() { lockApprovals = orig })
+	lockApprovals = func() (func(), error) { return func() {}, nil }
+	id := pendingWithDeadline(t)
+	var werr error
+	bridgeApprovalAfterWrite = func(id string) { werr = expireApproval(id) }
+	t.Cleanup(func() { bridgeApprovalAfterWrite = nil })
+	msg, err := bridgeApprovalDecision(id, "approve", true)
+	if err != nil || werr != nil || !strings.Contains(msg, "Approved") {
+		t.Fatalf("msg=%q err=%v waiter=%v", msg, err, werr)
+	}
+}
+
+// Lock unavailable, and the daemon confirms between the waiter's last look and its expiry
+// claim: the waiter loses "expired" to "confirmed" and must act on the record.
+func TestApprovalExpireLosesToConfirmedActs(t *testing.T) {
+	withTempHome(t)
+	failApprovalLock(t)
+	id := pendingWithDeadline(t)
+	orig := claimApprovalFn
+	t.Cleanup(func() { claimApprovalFn = orig })
+	claimApprovalFn = func(id, w string) (string, error) {
+		if w == claimExpired {
+			if _, err := bridgeApprovalDecisionNoLock(id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return orig(id, w)
+	}
+	if err := expireApproval(id); err != nil {
+		t.Fatalf("daemon said Approved, waiter → %v", err)
+	}
+}
+
+// bridgeApprovalDecisionNoLock plays an on-time daemon: write, then confirm.
+func bridgeApprovalDecisionNoLock(id string) (string, error) {
+	rec, _ := bridgeApprovals.Read(id)
+	rec.Decision = "approve"
+	if err := bridgeApprovals.Write(id, rec); err != nil {
+		return "", err
+	}
+	return claimApproval(id, claimConfirmed)
+}
