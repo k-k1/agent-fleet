@@ -339,6 +339,35 @@ describe("PendingQuestions free text kept under a pick", () => {
     expect(sent).toEqual([[{ k: "Down" }, { k: "Enter" }]]);
   });
 
+  // opencode (menuKeys=false): its TUI form is not the one-page menu, so a card without an id
+  // must not send any keys; with an id it answers through /respond as before.
+  it("a menu with unknown keys and no id is read-only and sends nothing", async () => {
+    mountWith(ONE, { answerMode: "menu", menuKeys: false });
+    expect(opts().every((b) => b.disabled)).toBe(true);
+    expect(document.querySelector(".mq-submit")).toBeNull();
+    expect(document.querySelector(".mq-terminal-hint")).not.toBeNull();
+    click(opts()[1]);
+    await act(async () => {});
+    expect(sent).toEqual([]);
+  });
+
+  it("a menu with unknown keys still answers by id", async () => {
+    const answers: unknown[] = [];
+    mountWith(ONE, { answerMode: "menu", menuKeys: false, onRespond: (a) => void answers.push(a) });
+    expect(document.querySelector(".mq-terminal-hint")).toBeNull();
+    click(opts()[1]);
+    await submitNow();
+    expect(answers).toEqual([[{ options: [1] }]]);
+    expect(sent).toEqual([]);
+  });
+
+  it("a menu with known keys and no id drives the menu", async () => {
+    mountWith(ONE, { answerMode: "menu" });
+    click(opts()[1]);
+    await submitNow();
+    expect(sent).toEqual([[{ k: "Down" }, { k: "Enter" }]]);
+  });
+
   it("multi-select still sends checked options AND the text", async () => {
     const answers: unknown[] = [];
     mountWith([{ question: "どれ？", multiSelect: true, options: [{ label: "X" }, { label: "Y" }] }], {

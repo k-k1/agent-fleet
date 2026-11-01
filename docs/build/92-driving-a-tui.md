@@ -212,8 +212,10 @@ What to re-read when this playbook finds a change:
 
 - **The key sequences** — `console/src/features/mirror/questionKeys.ts`:
   `buildClaudeSeq` / `buildClaudeSubmit` for claude's tabbed modal, `buildMenuSeq` for
-  the one-page-per-question menus (codex, opencode, agy; agy's write-in row is entered
-  with Enter before it takes text), `buildRespondAnswers` for managed sessions. Plan and
+  the one-page-per-question menus (codex, agy; agy's write-in row is entered with Enter
+  before it takes text), `buildRespondAnswers` for managed sessions and for opencode
+  Terminal questions, which carry a form id (an opencode question without one is shown
+  read-only: its tabbed form's keys are unmeasured). Plan and
   permission buttons are wired in `MirrorView.tsx`.
 - **What counts as pending** — `DriveState` (`internal/sessionx/agent.go`) derives a
   session's live state: the status store (`internal/status`), which claude's hooks fill

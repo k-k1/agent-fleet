@@ -91,6 +91,11 @@ export interface AgentCaps {
   // control-plane/tenant_member_defaults.go accepts exactly these (memberDefaultAgents;
   // derivedKindLists.test.ts reads it).
   memberDefault: boolean;
+  // A Terminal question is answered only by its id (/respond); one without an id is shown
+  // read-only with the terminal hint, never driven by keys. opencode: its cards on the shared
+  // serve carry a form id, and its TUI form is tabbed (not the one-page menu the Console's keys
+  // drive) with no measured key sequence (questionKeys.ts).
+  questionByIdOnly: boolean;
 }
 
 // A status chip for a session: codicon + label + color class (+ optional spinner).
@@ -198,6 +203,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     concreteModel: false,
     skillsCatalog: false,
     memberDefault: false,
+    questionByIdOnly: false,
     ...overrides,
   };
 }
@@ -533,6 +539,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
     tuiMemoryCost: "300MiB",
     assistantRank: 3,
     caps: caps({
+      questionByIdOnly: true,
       liveModels: true,
       skillsCatalog: true,
       memberDefault: true,
