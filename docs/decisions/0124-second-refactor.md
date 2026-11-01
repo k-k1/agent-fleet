@@ -463,3 +463,18 @@ Still hand-kept: `session.Kind*`, `agentreg`, `kinds.registered`, `moveUnmeasure
 and the Console lists.
 
 Follow-ups: #2933.
+
+## Note (2026-11-01): `mcpreg/materialize.go` writer table (#2925, slice 3)
+
+`writerFor` in `internal/mcpreg/materialize.go` held all 7 of that file's kind-literal branches: a
+`switch` choosing each CLI's native MCP config writer. #2925 listed the "MCP config writers" as a
+capability candidate; it is consolidated into a package-local table instead, because
+`internal/agents/{claude,codex,muse,lcpp}` import `mcpreg`, so `mcpreg` cannot import `agents`
+(or name an `agents` capability) without a cycle. It is not a measured-per-kind list and not one
+product's behaviour: the answer is simply "which function writes this kind's file". The `writers`
+map is keyed by the exact registry key, so an alias, a different spelling or an unknown kind still
+finds no writer and is reported as skipped. `kindLiteralCeiling` goes 112 → 105 (the base measured
+exactly 112; this slice removes 7). `TestWriterForMatchesOldSwitch` holds the lookup to a literal
+copy of the old switch over every registered kind plus alias, case and unknown spellings; the
+existing `materialize*` tests (the written files per kind) are unchanged. The remaining sites stay
+in #2925.
