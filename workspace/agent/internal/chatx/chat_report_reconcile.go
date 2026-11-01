@@ -35,9 +35,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -517,11 +517,10 @@ func reportTranscriptBusy(sid string, marker time.Time) bool {
 // sessions. An abort at the tail is excluded by the caller: that is how the continued turn
 // ended, with no further Stop.
 func reportStopContinued(m session.Meta, sid string, marker time.Time) bool {
-	switch normalizeKind(m.Kind) {
-	case session.KindClaude:
-		return claude.StopContinued(sid, marker)
-	case session.KindCodex:
-		return m.DriverKind() != session.DriverManaged && codex.StopContinued(m, marker)
+	if a, ok := agentreg.Lookup(normalizeKind(m.Kind)); ok {
+		if c, ok := a.(agents.StopContinuer); ok {
+			return c.StopContinued(m, sid, marker)
+		}
 	}
 	return false
 }

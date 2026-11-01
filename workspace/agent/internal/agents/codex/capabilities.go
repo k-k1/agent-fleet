@@ -116,3 +116,9 @@ func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 	return agents.TUIInterruptEscape()
 }
+
+// StopContinued is agents.StopContinuer. A managed codex ends on turn/completed, which the
+// app-server sends after every Stop hook has decided, so only a Terminal session can be fooled.
+func (agentImpl) StopContinued(m session.Meta, _ string, marker time.Time) bool {
+	return m.DriverKind() != session.DriverManaged && StopContinued(m, marker)
+}
