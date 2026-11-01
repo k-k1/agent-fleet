@@ -283,13 +283,14 @@ func BridgeApprovalGate(op, summary string) error {
 	return waitApprovalDecision(id)
 }
 
-// bridgeApprovalBetweenReadAndWrite is a test seam: it runs inside bridgeApprovalDecision's
-// critical section, after the pending check and before the decision is written, so a test
-// can land the waiter's deadline exactly there.
-var bridgeApprovalBetweenReadAndWrite func(id string)
+// bridgeApprovalBetweenReadAndClaim is a test seam: it runs inside bridgeApprovalDecision's
+// critical section, after the pending and deadline checks and before the daemon claims, so a
+// test can land the waiter's deadline step exactly there (the daemon then loses the claim).
+var bridgeApprovalBetweenReadAndClaim func(id string)
 
-// bridgeApprovalAfterWrite is a test seam: it runs after the decision is written and before
-// the daemon's late-write check.
+// bridgeApprovalAfterWrite is a test seam: it runs after the daemon has claimed and written
+// the decision, before it replies. The gap between the claim and the write is not seamed;
+// tests reach it by acting inside the claim function (claimApprovalFn).
 var bridgeApprovalAfterWrite func(id string)
 
 // waitApprovalDecision polls the handshake record until the daemon writes a decision or the
@@ -414,7 +415,7 @@ func bridgeApprovalDecision(id, choice string, en bool) (string, error) {
 	if rec.Deadline > 0 && approvalNowMs() >= rec.Deadline {
 		return expired, nil // the waiter has given up (or is about to)
 	}
-	if h := bridgeApprovalBetweenReadAndWrite; h != nil {
+	if h := bridgeApprovalBetweenReadAndClaim; h != nil {
 		h(id)
 	}
 	winner, cerr := claimApprovalRetry(id, claimConfirmed)
@@ -455,7 +456,8 @@ func sweepStaleApprovals() {
 		}
 	}
 	// Claim files carry no timestamp; the file's mtime is when the approval was resolved.
-	// They must outlive a stalled daemon's late check, which the horizon far exceeds.
+	// They must outlive any gate still deciding (a waiter's wait is minutes, the claim
+	// wait seconds), which the horizon far exceeds.
 	claims, _ := os.ReadDir(bridgeApprovalClaims.Dir())
 	for _, e := range claims {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".claim") {
