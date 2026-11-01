@@ -444,6 +444,16 @@ func IsRateLimitedMeta(m session.Meta) bool {
 		if ce := h.turnError(); ce != nil {
 			return ce.label == "usageLimitExceeded"
 		}
+		// This process already attempted a turn (runTurn cleared the error and stamped the
+		// start): a nil error is then the truth. The rollout may still end on the OLD failed
+		// task_complete when turn/start is slow or times out before codex writes task_started,
+		// and falling back would resurrect that failure and re-book on it.
+		h.mu.Lock()
+		tried := !h.turnStartedAt.IsZero()
+		h.mu.Unlock()
+		if tried {
+			return false
+		}
 	}
 	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
 	return path != "" && rolloutUsageLimited(path)

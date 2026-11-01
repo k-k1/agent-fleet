@@ -189,3 +189,25 @@ func TestIsRateLimitedMetaFallsBackToRollout(t *testing.T) {
 		t.Fatal("IsRateLimitedMeta stayed true after a newer turn started")
 	}
 }
+
+// An old failed task_complete must not come back once this process has started a new turn: the
+// handle cleared its error and stamped the start, but a slow / timed-out turn/start leaves the
+// rollout still ending on the old failure.
+func TestIsRateLimitedMetaIgnoresOldFailureAfterANewTurnAttempt(t *testing.T) {
+	m := session.Meta{Name: "cx-lim2", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	h := newCodexTestHandle(t, nil, m.Name) // sets HOME
+	registerCodexTestHandle(t, h)
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-0000000000bb",
+		taskStarted("2026-10-30T02:01:00.000Z", "t2"),
+		taskFailed("2026-10-30T02:01:00.900Z", "t2", limitErrSnake))
+	if !IsRateLimitedMeta(m) {
+		t.Fatal("a restored handle that has tried no turn must still see the rollout's limit")
+	}
+	h.clearLastError()
+	h.mu.Lock()
+	h.turnStartedAt = time.Now()
+	h.mu.Unlock()
+	if IsRateLimitedMeta(m) {
+		t.Fatal("IsRateLimitedMeta resurrected the old failure after a new turn attempt")
+	}
+}
