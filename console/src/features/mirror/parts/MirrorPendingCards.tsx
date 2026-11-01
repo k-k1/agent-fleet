@@ -1,4 +1,5 @@
 import type { Session } from "../../../types/session.ts";
+import { agentOf } from "../../../agents/registry.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { CarriedBlock } from "../CarriedBlock.tsx";
@@ -44,6 +45,9 @@ export function MirrorPendingCards({
   const { sendKeys, sendSeq, sendInterrupt, cancelQuestion, sendApproval, sendRespond } = actions;
   const { openPlan, openFile, planSendBlocked, sendPlanComments, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, rereviewing } = plan;
   const byId = answersByRespond(managed, pending);
+  // A kind answered only by id (opencode) gets no Cancel on a card without one: the Terminal Cancel
+  // is an Escape, a key into a modal whose keys are unmeasured (registry questionByIdOnly).
+  const keysAllowed = !agentOf(sessionMeta?.kind).caps.questionByIdOnly;
   return (
     <>
       {carried && (
@@ -131,6 +135,7 @@ export function MirrorPendingCards({
           repo={sessionMeta?.repo ?? null}
           sending={sending}
           answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
+          menuKeys={keysAllowed}
           multiPage={sessionMeta?.kind === "codex"}
           writeIn={sessionMeta?.kind === "agy"}
           onOpenFile={openFile}
@@ -148,8 +153,14 @@ export function MirrorPendingCards({
           // By id: decline the question through /respond, which every driver answers with the
           // runtime's own rejection (codex alone turns it into a stop, ADR 0105 decision 7). A
           // stop here would be a second stop inside an episode and discard the queue. Terminal
-          // (CLI) without an id: the card's Cancel is the Esc, as before.
-          onCancel={() => void (byId ? cancelQuestion(pending[0]?.id || "") : sendInterrupt())}
+          // (CLI) without an id: the card's Cancel is the Esc, and none where keys are not allowed.
+          onCancel={
+            byId
+              ? () => void cancelQuestion(pending[0]?.id || "")
+              : keysAllowed
+                ? () => void sendInterrupt()
+                : undefined
+          }
           translate={translate}
         />
       )}

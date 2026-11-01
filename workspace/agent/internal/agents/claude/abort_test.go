@@ -477,3 +477,30 @@ func TestAbortAuthAxis(t *testing.T) {
 		})
 	}
 }
+
+// Only the END of an ordinary turn after the episode counts as having moved on: a thinking /
+// tool_use record is a turn still running (it may end on the limit again), and an API error is
+// the limit itself.
+func TestTurnEndedCleanSince(t *testing.T) {
+	at := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
+	rec := func(ts, extra string) []byte {
+		return []byte(`{"type":"assistant","timestamp":"` + ts + `",` + extra + `}`)
+	}
+	const later = "2026-10-30T03:00:00.000Z"
+	for _, c := range []struct {
+		name string
+		line []byte
+		want bool
+	}{
+		{"end_turn after", rec(later, `"message":{"stop_reason":"end_turn"}`), true},
+		{"end_turn before the episode", rec("2026-10-30T01:00:00.000Z", `"message":{"stop_reason":"end_turn"}`), false},
+		{"tool_use", rec(later, `"message":{"stop_reason":"tool_use"}`), false},
+		{"thinking, no stop reason", rec(later, `"message":{"stop_reason":null}`), false},
+		{"api error", rec(later, `"isApiErrorMessage":true,"message":{"stop_reason":"end_turn"}`), false},
+		{"user record", []byte(`{"type":"user","timestamp":"` + later + `"}`), false},
+	} {
+		if got := turnEndedCleanSince(c.line, at); got != c.want {
+			t.Errorf("%s: = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

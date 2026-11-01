@@ -54,3 +54,9 @@ func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredNone: no tokens in the transcript.
 func (agentImpl) UsageMeasured() string { return usagex.MeasuredNone }
+
+// TUIInterrupt is agents.TUIInterrupter: Esc is not a stop here, Ctrl+C is, and only on a
+// running turn (docs/log/133 §1).
+func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
+	return agents.TUIInterruptCtrlC()
+}

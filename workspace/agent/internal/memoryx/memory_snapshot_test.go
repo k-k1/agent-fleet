@@ -62,11 +62,19 @@ func memoryTestEnv(t *testing.T) (home, cfg, slug string) {
 // and `gc --auto` detach it once it triggers, and the daemon keeps writing into af-memory.git
 // after the test returns, so TempDir cleanup fails with "directory not empty". memoryGit
 // inherits the environment, so this reaches every git call of the code under test.
+//
+// It also turns off the auto-maintenance that every `commit` would otherwise spawn as a child
+// process: a test repo never holds the thousands of loose objects that make it do anything, so
+// it is a pure extra exec per commit (the threshold is never reached, so what it hides is
+// nothing the tests could observe). A test that wants the trigger (the auto-gc proof below)
+// adds its own entry after these two.
 func memoryTestGitForeground(t *testing.T) {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "2")
 	t.Setenv("GIT_CONFIG_KEY_0", "gc.autoDetach")
 	t.Setenv("GIT_CONFIG_VALUE_0", "false")
+	t.Setenv("GIT_CONFIG_KEY_1", "maintenance.auto")
+	t.Setenv("GIT_CONFIG_VALUE_1", "false")
 }
 
 func memoryWrite(t *testing.T, p, s string) {
@@ -287,9 +295,9 @@ func TestMemoryTestEnvRunsAutoGCInForeground(t *testing.T) {
 	if err := memoryEnsureRepo(); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_CONFIG_COUNT", "2")
-	t.Setenv("GIT_CONFIG_KEY_1", "gc.auto")
-	t.Setenv("GIT_CONFIG_VALUE_1", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "3")
+	t.Setenv("GIT_CONFIG_KEY_2", "gc.auto")
+	t.Setenv("GIT_CONFIG_VALUE_2", "1")
 	// pre-auto-gc runs only when gc --auto is about to do work, so it proves the trigger fired.
 	marker := filepath.Join(t.TempDir(), "triggered")
 	memoryWrite(t, filepath.Join(memoryRepoDir(), "hooks", "pre-auto-gc"), "#!/bin/sh\n: > '"+marker+"'\n")

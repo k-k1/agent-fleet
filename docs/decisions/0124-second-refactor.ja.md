@@ -387,6 +387,26 @@ muse、kiro（測定済み）と cursor（未測定）が、各パッケージ�
 
 Follow-ups: #2933.
 
+## 追記 (2026-11-01): Terminal の停止キーを `agents.TUIInterrupter` の後ろへ (#2925、スライス 4)
+
+`sessionx/session_handlers.go` には kind リテラルの分岐がもう無い（Issue の 7 件は、ファイル分割で
+`session_create.go` に移った）。そこで今回は `sessionx/session_turn.go`（6 件）を対象にした。分類:
+`driverOf` の codex の切替ガードは 1 製品の挙動なので残す（残り 1 件）。`tuiInterruptFor` の停止キーの
+`switch`（4 件）と `interruptLiveState` の cursor/copilot の `case`（2 行）は capability の候補だった。
+各 kind が docs/log/133 §1 の実測どおりに自分で宣言する: `agents.TUIInterrupter`
+（`TUIInterrupt(inSubagentView)` が `TUIInterruptTraits{Keys, Gap, Measured, NeedsWorking}` を返す）を
+claude・codex・kiro（Esc）、opencode（二度押しの Esc。サブエージェント表示の変種と自前の間隔つき）、
+cursor・copilot（Ctrl+C、`NeedsWorking`）が実装する。実装の無い kind と未登録の kind は、これまでどおり
+単発の Esc（未実測）。引きは registry の完全一致キー。`NeedsWorking` は kind が既に宣言している
+`LiveStateTraits.State` を読む（cursor と copilot は `LiveState` をそこに宣言済み）ので、
+`interruptLiveState` に kind の一覧は無い。`TestTUIInterruptForMatchesOldSwitch` が、旧 `switch` の
+リテラルコピーとの一致を、登録済みの全 kind・別名の綴り・未知の kind、サブエージェント表示の有無の
+両方で固定する。`TestUsageLimitWrapperKeepsTUIInterrupt` はテスト用ラッパー `editedUsageLimitAgent` が
+capability を転送することを確かめる。`kindLiteralCeiling` は 105 → 100（base の実測は 105）。挙動の変更なし。
+実機では未確認。
+
+Follow-ups: #2933.
+
 ## 追記 (2026-11-01): `usageMeasuredByKind` と `noChatProvider` を廃止 (#2933、第 4 スライス)
 
 どちらのテスト表もレジストリを写しているだけだった。使用量の精度は種別自身の宣言

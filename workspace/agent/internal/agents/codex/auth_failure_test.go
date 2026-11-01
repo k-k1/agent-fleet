@@ -137,3 +137,77 @@ func TestManagedTurnStartRejectionIsNoTurn(t *testing.T) {
 		t.Fatalf("a failed turn: %+v ok=%v, want a real turn", f, ok)
 	}
 }
+
+const limitErrSnake = `{"message":"You've hit your usage limit.","codex_error_info":"usage_limit_exceeded"}`
+
+// Only the NEWEST turn-ending record decides: a failed task_complete is the limit, a later
+// started turn / clean completion / abort is not, and both spellings of the label count.
+func TestRolloutTailUsageLimited(t *testing.T) {
+	const at = "2026-10-30T02:01:00.900Z"
+	for _, c := range []struct {
+		name  string
+		lines [][]byte
+		want  bool
+	}{
+		{"snake_case label", [][]byte{taskStarted(at, "t2"), taskFailed(at, "t2", limitErrSnake)}, true},
+		{"camelCase label", [][]byte{taskFailed(at, "t2", `{"message":"x","codex_error_info":"usageLimitExceeded"}`)}, true},
+		{"other error", [][]byte{taskFailed(at, "t2", `{"message":"x","codex_error_info":"server_overloaded"}`)}, false},
+		{"clean turn", [][]byte{taskComplete(at, "t2")}, false},
+		{"a later turn started", [][]byte{taskFailed(at, "t2", limitErrSnake), taskStarted(at, "t3")}, false},
+		{"a later clean turn", [][]byte{taskFailed(at, "t2", limitErrSnake), taskComplete(at, "t3")}, false},
+		{"empty", nil, false},
+	} {
+		if got := rolloutTailUsageLimited(c.lines); got != c.want {
+			t.Errorf("%s: = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// After a stop or an Agent restart there is no handle, and IsRateLimitedMeta must still see the
+// limit from the rollout (the handle-only IsRateLimited cannot). A newer turn clears it.
+func TestIsRateLimitedMetaFallsBackToRollout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "cx-lim", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-0000000000aa",
+		taskStarted("2026-10-30T02:01:00.000Z", "t2"),
+		taskFailed("2026-10-30T02:01:00.900Z", "t2", limitErrSnake))
+	if IsRateLimited(m.Name) {
+		t.Fatal("IsRateLimited is handle-only and must stay false without one")
+	}
+	if !IsRateLimitedMeta(m) {
+		t.Fatal("IsRateLimitedMeta = false, want true from the rollout's failed task_complete")
+	}
+	// A later turn appends to the same file (size and mtime change, so the memo is dropped).
+	p := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(append(taskStarted("2026-10-30T03:00:00.000Z", "t3"), '\n'))
+	f.Close()
+	if IsRateLimitedMeta(m) {
+		t.Fatal("IsRateLimitedMeta stayed true after a newer turn started")
+	}
+}
+
+// An old failed task_complete must not come back once this process has started a new turn: the
+// handle cleared its error and stamped the start, but a slow / timed-out turn/start leaves the
+// rollout still ending on the old failure.
+func TestIsRateLimitedMetaIgnoresOldFailureAfterANewTurnAttempt(t *testing.T) {
+	m := session.Meta{Name: "cx-lim2", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	h := newCodexTestHandle(t, nil, m.Name) // sets HOME
+	registerCodexTestHandle(t, h)
+	writeSlotRollout(t, m, "01a0ee31-0000-7000-8000-0000000000bb",
+		taskStarted("2026-10-30T02:01:00.000Z", "t2"),
+		taskFailed("2026-10-30T02:01:00.900Z", "t2", limitErrSnake))
+	if !IsRateLimitedMeta(m) {
+		t.Fatal("a restored handle that has tried no turn must still see the rollout's limit")
+	}
+	h.clearLastError()
+	h.mu.Lock()
+	h.turnStartedAt = time.Now()
+	h.mu.Unlock()
+	if IsRateLimitedMeta(m) {
+		t.Fatal("IsRateLimitedMeta resurrected the old failure after a new turn attempt")
+	}
+}

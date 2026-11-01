@@ -501,6 +501,27 @@ Console lists, `usageMeasuredByKind` / `noChatProvider`.
 
 Follow-ups: #2933.
 
+## Note (2026-11-01): the Terminal stop keys behind `agents.TUIInterrupter` (#2925, slice 4)
+
+`sessionx/session_handlers.go` no longer holds a kind-literal branch (the 7 counted in the issue
+moved to `session_create.go` when the file was split), so this slice took `sessionx/session_turn.go`
+(6). Classified: `driverOf`'s codex switch guard is one product's behaviour and stays (1 left);
+the stop-key `switch` in `tuiInterruptFor` (4) and the cursor/copilot `case`s in
+`interruptLiveState` (2 lines) were capability candidates. Each kind now declares what
+docs/log/133 §1 measured for it: `agents.TUIInterrupter` (`TUIInterrupt(inSubagentView)` returning
+`TUIInterruptTraits{Keys, Gap, Measured, NeedsWorking}`) on claude, codex, kiro (Esc), opencode
+(double Esc, with the subagent-view variant and its own gap) and cursor, copilot (Ctrl+C,
+`NeedsWorking`). A kind without it, and an unregistered kind, still get the single unmeasured Escape;
+lookup is by exact registry key. `NeedsWorking` reads the kind's existing
+`LiveStateTraits.State` (cursor and copilot already declare `LiveState` there), so
+`interruptLiveState` has no kind list. `TestTUIInterruptForMatchesOldSwitch` holds the answer to a
+literal copy of the old switch over every registered kind, alias spellings and an unknown kind,
+with the subagent view both ways; `TestUsageLimitWrapperKeepsTUIInterrupt` checks the test wrapper
+`editedUsageLimitAgent` forwards the capability. `kindLiteralCeiling` goes 105 → 100 (base measured
+105). Behaviour unchanged; not verified against a live fleet.
+
+Follow-ups: #2933.
+
 ## Note (2026-11-01): `usageMeasuredByKind` and `noChatProvider` retired (#2933, fourth slice)
 
 Both test tables only re-listed the registry. The usage accuracy is now the kind's own

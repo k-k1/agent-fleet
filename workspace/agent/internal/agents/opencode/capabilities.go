@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -70,3 +71,18 @@ func (agentImpl) LiveStateTraits() agents.LiveStateTraits {
 
 // UsageMeasured is agents.UsageMeasurer: usagex.MeasuredExact.
 func (agentImpl) UsageMeasured() string { return usagex.MeasuredExact }
+
+// DoubleEscGap sits inside opencode 2.x's window: the first Esc only arms "esc again to
+// interrupt" and the arm lapses after a few seconds (measured: two Esc 0.5 s apart interrupt,
+// one Esc does nothing). The gap is the time /turn holds the request.
+const DoubleEscGap = 600 * time.Millisecond
+
+// TUIInterrupt is agents.TUIInterrupter: two Esc within ~1 s. In the subagent detail view
+// Escape only navigates, so Up goes first (as /input does); the double Esc after it is not
+// measured there, nor is Up itself in docs/log/133.
+func (agentImpl) TUIInterrupt(inSubagentView func() bool) agents.TUIInterruptTraits {
+	if inSubagentView() {
+		return agents.TUIInterruptTraits{Keys: []string{"Up", "Escape", "Escape"}, Gap: DoubleEscGap}
+	}
+	return agents.TUIInterruptTraits{Keys: []string{"Escape", "Escape"}, Gap: DoubleEscGap, Measured: true}
+}

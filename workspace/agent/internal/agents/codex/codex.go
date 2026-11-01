@@ -434,3 +434,27 @@ func IsRateLimited(name string) bool {
 	ce := h.turnError()
 	return ce != nil && ce.label == "usageLimitExceeded"
 }
+
+// IsRateLimitedMeta is IsRateLimited that survives the handle: a Managed session that was
+// stopped, or whose Agent restarted, has no in-memory turn error, so the rollout's newest
+// turn-ending record answers instead (rolloutUsageLimited, a memoized tail read - no full
+// parse). A handle that holds an error is authoritative either way.
+func IsRateLimitedMeta(m session.Meta) bool {
+	if h := handleFor(m.Name); h != nil {
+		if ce := h.turnError(); ce != nil {
+			return ce.label == "usageLimitExceeded"
+		}
+		// This process already attempted a turn (runTurn cleared the error and stamped the
+		// start): a nil error is then the truth. The rollout may still end on the OLD failed
+		// task_complete when turn/start is slow or times out before codex writes task_started,
+		// and falling back would resurrect that failure and re-book on it.
+		h.mu.Lock()
+		tried := !h.turnStartedAt.IsZero()
+		h.mu.Unlock()
+		if tried {
+			return false
+		}
+	}
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	return path != "" && rolloutUsageLimited(path)
+}

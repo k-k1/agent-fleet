@@ -54,3 +54,13 @@ func (e editedUsageLimitAgent) MoveTarget() agents.MoveTargetState {
 	}
 	return 0
 }
+
+// TUIInterrupt forwards the wrapped kind's stop keys. A kind without the capability gets the
+// default single unmeasured Escape here, which is what tuiInterruptFor answers for it too, so
+// wrapping any kind leaves its stop unchanged.
+func (e editedUsageLimitAgent) TUIInterrupt(inSubagentView func() bool) agents.TUIInterruptTraits {
+	if i, ok := e.Agent.(agents.TUIInterrupter); ok {
+		return i.TUIInterrupt(inSubagentView)
+	}
+	return agents.TUIInterruptTraits{Keys: []string{"Escape"}, Gap: agents.TUIInterruptDefaultGap}
+}

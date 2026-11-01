@@ -1,13 +1,17 @@
 package sessionx
 
 import (
+	"fmt"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -136,8 +140,8 @@ func TestHandleSessionTurnInterruptCoalesces(t *testing.T) {
 	if got := sendKeysLines(t, logPath); strings.Join(got, ",") != "Escape,Escape" {
 		t.Fatalf("keys = %v, want exactly one Escape pair", got)
 	}
-	if time.Since(start) < opencodeDoubleEscGap {
-		t.Fatalf("the Esc pair was sent without the %v gap", opencodeDoubleEscGap)
+	if time.Since(start) < opencode.DoubleEscGap {
+		t.Fatalf("the Esc pair was sent without the %v gap", opencode.DoubleEscGap)
 	}
 	if !strings.Contains(bodies[1], `"coalesced":true`) || strings.Contains(bodies[0], "coalesced") {
 		t.Fatalf("bodies = %v, want only the second coalesced", bodies)
@@ -159,5 +163,76 @@ func TestTUIInterruptKeysMatchesStopButton(t *testing.T) {
 	}
 	if keys, _ := TUIInterruptKeys(session.KindCopilot); strings.Join(keys, ",") != "C-c" {
 		t.Errorf("copilot stop = %v, want Ctrl+C", keys)
+	}
+}
+
+// oldTUIInterruptFor is the kind switch tuiInterruptFor held before each kind declared its own
+// agents.TUIInterrupter. It is a deliberate literal copy: the lookup must answer exactly what it
+// did for every registered kind, for an alias or case variant the exact-match switch never
+// matched, and for an unregistered kind.
+func oldTUIInterruptFor(kind string, inOpencodeSubagentView func() bool) tuiInterrupt {
+	const defaultGap = 90 * time.Millisecond
+	switch kind {
+	case session.KindClaude, session.KindCodex, session.KindKiro:
+		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: true}
+	case session.KindOpencode:
+		if inOpencodeSubagentView() {
+			return tuiInterrupt{keys: []string{"Up", "Escape", "Escape"}, gap: 600 * time.Millisecond}
+		}
+		return tuiInterrupt{keys: []string{"Escape", "Escape"}, gap: 600 * time.Millisecond, measured: true}
+	case session.KindCursor, session.KindCopilot:
+		return tuiInterrupt{keys: []string{"C-c"}, gap: defaultGap, measured: true, needsWorking: true}
+	default:
+		return tuiInterrupt{keys: []string{"Escape"}, gap: defaultGap, measured: false}
+	}
+}
+
+func TestTUIInterruptForMatchesOldSwitch(t *testing.T) {
+	probes := append([]string{"", "Claude", "CODEX", " cursor", "unknown-kind", "claude-code"}, RegisteredKinds()...)
+	for _, kind := range probes {
+		for _, sub := range []bool{false, true} {
+			got := tuiInterruptFor(kind, func() bool { return sub })
+			want := oldTUIInterruptFor(kind, func() bool { return sub })
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%q (subagent view %v): %+v, old switch %+v", kind, sub, got, want)
+			}
+		}
+	}
+}
+
+// A stop that needs a running turn reads the kind's own live-state verdict, and the old switch
+// had one for exactly cursor and copilot; a NeedsWorking kind without it would be refused as
+// "not working" forever.
+func TestInterruptLiveStateCoversNeedsWorkingKinds(t *testing.T) {
+	for _, kind := range RegisteredKinds() {
+		if !tuiInterruptFor(kind, func() bool { return false }).needsWorking {
+			continue
+		}
+		if kind != session.KindCursor && kind != session.KindCopilot {
+			t.Errorf("%s needs a working verdict before its stop key; the old table had cursor and copilot only", kind)
+		}
+		if liveStateTraits(kind).State == nil {
+			t.Errorf("%s: NeedsWorking but LiveStateTraits has no State, its stop would always be refused", kind)
+		}
+	}
+}
+
+// editedUsageLimitAgent must not hide the wrapped kind's stop keys.
+func TestUsageLimitWrapperKeepsTUIInterrupt(t *testing.T) {
+	want := map[string]tuiInterrupt{}
+	for _, kind := range RegisteredKinds() {
+		for _, sub := range []bool{false, true} {
+			want[fmt.Sprint(kind, sub)] = tuiInterruptFor(kind, func() bool { return sub })
+		}
+	}
+	for _, kind := range RegisteredKinds() {
+		editUsageLimitTraits(t, kind, func(*agents.UsageLimitTraits) {})
+	}
+	for _, kind := range RegisteredKinds() {
+		for _, sub := range []bool{false, true} {
+			if got := tuiInterruptFor(kind, func() bool { return sub }); !reflect.DeepEqual(got, want[fmt.Sprint(kind, sub)]) {
+				t.Errorf("%s (subagent view %v) behind the wrapper: %+v, want %+v", kind, sub, got, want[fmt.Sprint(kind, sub)])
+			}
+		}
 	}
 }

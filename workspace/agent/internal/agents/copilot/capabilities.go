@@ -54,3 +54,9 @@ func (agentImpl) UsageMeasured() string { return usagex.MeasuredPartial }
 
 // NoHeadlessChat is agents.NoHeadlessChat: chatx has no provider for this kind.
 func (agentImpl) NoHeadlessChat() {}
+
+// TUIInterrupt is agents.TUIInterrupter: Esc is not a stop here, Ctrl+C is, and only on a
+// running turn (docs/log/133 §1).
+func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
+	return agents.TUIInterruptCtrlC()
+}
