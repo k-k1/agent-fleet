@@ -459,9 +459,9 @@ bin_broken() { [ -e "$1" ] && ! timeout 30 "$1" --version >/dev/null 2>&1; }
 # opencode 1.
 #
 # Called under `||`, so `set -e` is off inside: every step that matters checks itself, and the
-# backup is deleted only once the package in it is back. A bin link that cannot be put back is
-# left to npm: a missing `opencode` makes the boot-install reinstall @opencode/cli. A failure costs
-# a warning, never the start.
+# backup is deleted only once the package in it is back. A bin link that cannot be put back costs
+# nothing lasting: a missing `opencode` makes the lean boot-install reinstall @opencode/cli, and a
+# baked image falls back to /usr/local. A failure costs a warning, never the start.
 oc_drop_v1() { # oc_drop_v1 <prefix>
   local pfx="$1" bak="$1/.af-oc-swap" b l
   if [ -d "$bak" ]; then
