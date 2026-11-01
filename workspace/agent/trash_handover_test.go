@@ -222,3 +222,18 @@ func TestTrashRefusesAHandoverFileTooBigToRestore(t *testing.T) {
 		t.Fatalf("restored file: %v %v", fi, err)
 	}
 }
+
+// The trash is the delete path; the per-name caches must be gone after it. Pins the
+// ForgetRuntime call in trashSession, which the sessionx tests cannot reach.
+func TestTrashSessionForgetsSessionCaches(t *testing.T) {
+	home := handoverEnv(t)
+	m := shellSession(t, home, "tgtcache1")
+	sessionx.SeedSessionCachesForTest(m.Name)
+	t.Cleanup(func() { sessionx.ForgetRuntime(m) })
+	if _, _, err := trashSession(m, false); err != nil {
+		t.Fatal(err)
+	}
+	if sessionx.SessionCachesHeldForTest(m.Name) {
+		t.Fatal("the file / spend caches survived the trash")
+	}
+}

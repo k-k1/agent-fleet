@@ -224,6 +224,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 				return true
 			})
 			if wrote {
+				forgetSessionCaches(name) // this path does not go through ArchiveSession
 				finalizeSessionUsage(cur) // fold into the usage ledger at the same moment as before (docs/log/46 §3-b)
 				continue
 			}
@@ -1183,6 +1184,18 @@ func ForgetRuntime(m session.Meta) {
 	status.RemoveExit(m.Name)
 	status.RemoveCarried(sid)
 	status.RemoveRestoreNotes(sid)
+	forgetSessionCaches(m.Name)
+}
+
+// forgetSessionCaches drops the per-name read caches (folded file list, priced spend) of a
+// session being folded away by delete, archive or recreate. Both are rebuilt from the
+// transcript on the next read, so a restore loses nothing; left in place the spend map would
+// grow by one entry per session for the Agent's lifetime. Halt does not call it: a halted
+// session is resumed in place and its entries are still valid. Each forget takes only its own
+// mutex, briefly, so it nests under no other lock.
+func forgetSessionCaches(name string) {
+	forgetSessionFiles(name)
+	forgetSpend(name)
 }
 
 // RemoveManagedLedger is removeManagedLedger for package main. The trash keeps the ledger (a
@@ -1372,6 +1385,7 @@ func ArchiveSession(m session.Meta) {
 	// A held input waits for the next start, and an archived session has none.
 	agents.DropHeld(name, agents.DropArchived)
 	dropPendingPeers(name, "archived")
+	forgetSessionCaches(name)
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	if wasAlive {
@@ -1494,6 +1508,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	agents.DropHeld(m.Name, agents.DropRecreated)
 	dropPendingPeers(m.Name, "recreated: the old session is archived")
+	forgetSessionCaches(m.Name)
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
 	if wasAlive {
