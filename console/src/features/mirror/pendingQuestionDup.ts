@@ -24,8 +24,16 @@ function sig(qs: Question[]): string {
   return JSON.stringify(s);
 }
 
-export function hidePendingQuestionDup(turns: Turn[], pending: Question[] | null | undefined): Turn[] {
-  if (!pending || pending.length === 0) return turns;
+export interface PendingDupResult {
+  turns: Turn[];
+  // A transcript part was hidden: the prose claude wrote just before the question is in the
+  // transcript too, so the pending card must not repeat it (pendingText).
+  hidden: boolean;
+}
+
+export function hidePendingQuestionDup(turns: Turn[], pending: Question[] | null | undefined): PendingDupResult {
+  const none = { turns, hidden: false };
+  if (!pending || pending.length === 0) return none;
   const want = sig(pending);
   let ti = -1;
   let pi = -1;
@@ -42,7 +50,13 @@ export function hidePendingQuestionDup(turns: Turn[], pending: Question[] | null
       }
     }
   }
-  if (ti < 0 || turns[ti].parts![pi].answer) return turns;
+  if (ti < 0 || turns[ti].parts![pi].answer) return none;
+  // The modal blocks the turn, so nothing from the assistant can follow the pending question's
+  // own line. An assistant turn after the match means the match is an older ask and the real
+  // one was hidden by the Agent in its own poll — leave the history alone.
+  for (let i = ti + 1; i < turns.length; i++) {
+    if (turns[i].role === "assistant" && (turns[i].parts?.length || turns[i].text)) return none;
+  }
   const rest = turns[ti].parts!.filter((_, j) => j !== pi);
   const next = turns.slice();
   if (rest.length === 0) {
@@ -51,5 +65,5 @@ export function hidePendingQuestionDup(turns: Turn[], pending: Question[] | null
   } else {
     next[ti] = { ...turns[ti], parts: rest };
   }
-  return next;
+  return { turns: next, hidden: true };
 }

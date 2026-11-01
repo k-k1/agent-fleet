@@ -27,6 +27,7 @@ export function MirrorPendingCards({
   st,
   actions,
   plan,
+  questionInline,
 }: {
   session: string;
   sessionMeta?: Session | null;
@@ -37,11 +38,15 @@ export function MirrorPendingCards({
   st: MirrorState;
   actions: MirrorActions;
   plan: ReturnType<typeof usePlanActions>;
+  // The question's own transcript part was hidden in favour of this card, so the prose before
+  // it is already drawn inline: drop pendingText rather than print it twice.
+  questionInline?: boolean;
 }) {
   const {
-    busy, queuedCount, pending, pendingText, liveMode, liveText, pendingPlan, pendingPerm, pendingApproval,
+    busy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingApproval,
     carried, setCarried, markRejected, sending,
   } = st;
+  const pendingText = questionInline ? "" : st.pendingText;
   const { sendKeys, sendSeq, sendInterrupt, cancelQuestion, sendApproval, sendRespond } = actions;
   const { openPlan, openFile, planSendBlocked, sendPlanComments, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, reviewAuto, rereviewing } = plan;
   const byId = answersByRespond(managed, pending);

@@ -364,17 +364,12 @@ function MirrorViewBody({
   // block, and MirrorView re-renders for reasons that have nothing to do with the conversation —
   // a keystroke in the composer, a scroll flag, a chip. Recomputing then also hands every block a
   // new identity, which is what makes the memoized TranscriptTurn below actually skip.
+  // The pending question card is the one actionable copy; the held transcript part of the same
+  // ask is hidden (hidePendingQuestionDup). It reappears, decided, once the answer lands.
+  const dedup = useMemo(() => hidePendingQuestionDup(turns, pending), [turns, pending]);
   const grouped = useMemo(
-    // The pending question card is the one actionable copy; the held transcript part of the same
-    // ask is hidden (hidePendingQuestionDup). It reappears, decided, once the answer lands.
-    () =>
-      groupWithQueue(
-        hidePendingQuestionDup(turns, pending),
-        pendingSends,
-        queueShown,
-        restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite),
-      ),
-    [turns, pending, pendingSends, queueShown, restoredAt],
+    () => groupWithQueue(dedup.turns, pendingSends, queueShown, restoredAt.map((s) => Date.parse(s)).filter(Number.isFinite)),
+    [dedup, pendingSends, queueShown, restoredAt],
   );
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
@@ -710,6 +705,7 @@ function MirrorViewBody({
           st={st}
           actions={actions}
           plan={plan}
+          questionInline={dedup.hidden}
         />
         </div>
         <JumpPills

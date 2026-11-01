@@ -162,11 +162,10 @@ func TestHidePendingInteractionQuestion(t *testing.T) {
 	}
 }
 
-// Issue #3190, cause confirmed: when claude's jsonl line lands BEFORE the hook's pending
-// payload, poll N delivers the question part (nothing to hide yet, no hold) and the client
-// cursor moves past it; poll N+1 carries the payload but its window no longer contains the
-// line, so there is nothing to strip. The Agent cannot recall the part it already sent —
-// de-duplicating against pendingQuestions is the Console's job (mirror/pendingQuestionDup.ts).
+// When the jsonl line lands before the payload, an earlier poll has already delivered the
+// part and moved the cursor past it, so the later poll cannot hide it: the Agent only strips
+// a part inside the window that also carries the payload. The Console de-duplicates the rest
+// (mirror/pendingQuestionDup.ts). Content matching itself must not be what misses.
 func TestHidePendingInteractionQuestionLineBeforePayload(t *testing.T) {
 	const input = `[{"header":"方式","question":"どれ？","multiSelect":true,"options":[{"label":"A","description":"","preview":"  +--+\n  |  |"},{"label":"B"}]}]`
 	ask := []byte(`{"type":"assistant","timestamp":"2026-11-01T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":` + input + `}}]}}`)
