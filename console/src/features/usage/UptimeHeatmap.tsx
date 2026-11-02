@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { effectiveTimeZone, shiftDayKey } from "../../lib/intl.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import {
   buildGrid,
@@ -46,7 +47,7 @@ const DEFAULT_DAYS = 14;
 function defaultRange(): { from: string; to: string } {
   const now = new Date();
   return {
-    from: localDayKey(new Date(now.getTime() - (DEFAULT_DAYS - 1) * 86400000)),
+    from: shiftDayKey(localDayKey(now), -(DEFAULT_DAYS - 1)),
     to: localDayKey(now),
   };
 }
@@ -300,7 +301,10 @@ export function UptimeHeatmap({
   const [showTable, setShowTable] = useState(false);
   const [hover, setHover] = useState<{ day: string; hour: number } | null>(null);
 
-  const grid = useMemo(() => buildGrid(data), [data]);
+  // The grid buckets UTC hours into the member's zone, so a zone change must rebuild it even
+  // though `data` is the same object.
+  const zone = effectiveTimeZone();
+  const grid = useMemo(() => buildGrid(data), [data, zone]);
   const days = useMemo(() => dayRange(from, to), [from, to]);
   const max = useMemo(() => maxValue(grid, days, metric), [grid, days, metric]);
   const zeroFloor = metric !== "running";

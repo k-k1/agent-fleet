@@ -228,6 +228,42 @@ export function zonedParts(when: string | number | Date): ZonedParts | null {
   return { year: out.year, month: out.month, day: out.day, hour: out.hour % 24, minute: out.minute };
 }
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+// zonedDayKey — "YYYY-MM-DD" of an instant in the effective time zone (Latin digits, so it is a
+// machine key as much as a display string), or "" when the input is not a date. Never use
+// toISOString for a local day: that is the UTC day.
+export function zonedDayKey(when: string | number | Date): string {
+  const p = zonedParts(when);
+  return p ? `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}` : "";
+}
+
+// zonedMdHm — "MM-DD HH:MM" in the effective time zone, or "" when the input is not a date.
+export function zonedMdHm(when: string | number | Date): string {
+  const p = zonedParts(when);
+  return p ? `${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}` : "";
+}
+
+// shiftDayKey — the "YYYY-MM-DD" key n calendar days after (negative: before) key. Pure calendar
+// arithmetic on the key, so a DST change in the zone cannot repeat or skip a date. An
+// unparseable key is returned unchanged.
+export function shiftDayKey(key: string, n: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (!m) return key;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + n));
+  return `${String(d.getUTCFullYear()).padStart(4, "0")}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+// zoneOffsetMinutes — UTC offset of the effective time zone at an instant, in minutes (east is
+// positive). Stands in for Date#getTimezoneOffset, which reads the browser's zone and has the
+// opposite sign.
+export function zoneOffsetMinutes(when: string | number | Date = Date.now()): number {
+  const ms = toMs(when);
+  const p = zonedParts(ms);
+  if (!p) return 0;
+  return Math.round((Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ms / 60000) * 60000) / 60000);
+}
+
 // fmtDateTime — absolute date-time. An invalid value is echoed back when the input was a string,
 // otherwise "" (the previous implementation's behaviour).
 export function fmtDateTime(when: string | number | Date, opts: Intl.DateTimeFormatOptions = DATETIME_MD): string {

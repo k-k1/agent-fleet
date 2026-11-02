@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
+import { fmtDateTime, TIME_HM, zonedDayKey } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI } from "../../features/settings/store.ts";
 import { refreshUsage, subscribeUsage } from "./usageAll.ts";
@@ -157,8 +157,6 @@ export function expiryText(iso: string) {
 export function resetChipText(iso: string) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const sameDay = zonedDayKey(d) === zonedDayKey(Date.now());
   return sameDay ? fmtDateTime(d, TIME_HM) : fmtDateTime(d);
 }

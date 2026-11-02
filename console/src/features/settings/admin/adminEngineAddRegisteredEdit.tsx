@@ -6,6 +6,7 @@ import { kvKnown, kvPriceOf, modelFit, NO_KV, windowThatFits } from "./engineFit
 import { familyVramMeasurement } from "./engineFamilyVram.ts";
 import { FitTag } from "./adminEngineRepo.tsx";
 import { engineIsImage, type EngineModel, type EngineParams, type EngineRow } from "./engineTypes.ts";
+import { fmtNum } from "../../../lib/intl.ts";
 
 export function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
   row: EngineRow;
@@ -96,20 +97,20 @@ export function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
         beside the field rather than in the grid, next to the window's own one-press fit below. */}
     {editMeasured && <p className="muted engine-operation-vram-measured">
       {(tr("admin.engines_vram_measured" as never) as string)
-        .replace("{n}", editMeasured.mib.toLocaleString()).replace("{s}", editMeasured.size)
+        .replace("{n}", fmtNum(editMeasured.mib)).replace("{s}", editMeasured.size)
         .replace("{b}", String(editMeasured.batch)).replace("{i}", String(editMeasured.inputs))
         .replace("{f}", editMeasured.file).replace("{c}", editMeasured.card)}
       {" "}
       <Button variant="ghost" disabled={busy || vramNumber === editMeasured.mib}
         onClick={() => setVram(String(editMeasured.mib))}>
-        {(tr("admin.engines_vram_measured_use" as never) as string).replace("{n}", editMeasured.mib.toLocaleString())}
+        {(tr("admin.engines_vram_measured_use" as never) as string).replace("{n}", fmtNum(editMeasured.mib))}
       </Button>
     </p>}
     {!image && !lora && <p className="engine-operation-window-hint muted">
-      {!!model.context_length && <>{(tr("admin.engines_ingest_ctx_ceiling" as never) as string).replace("{n}", model.context_length.toLocaleString())} </>}
+      {!!model.context_length && <>{(tr("admin.engines_ingest_ctx_ceiling" as never) as string).replace("{n}", fmtNum(model.context_length))} </>}
       {!!editBestWindow && <Button variant="ghost" disabled={busy || editBestWindow === contextNumber} onClick={() => {
         setContext(String(editBestWindow)); setOutput(String(Math.floor(editBestWindow / 8)));
-      }}>{(tr("admin.catalog_edit_window_fit" as never) as string).replace("{n}", editBestWindow.toLocaleString())}</Button>}
+      }}>{(tr("admin.catalog_edit_window_fit" as never) as string).replace("{n}", fmtNum(editBestWindow))}</Button>}
       {!kvKnown(editKv) && <> {tr("admin.fit_no_kv" as never)}</>}
     </p>}
     {!image && !lora && editFit.needMiB > 0 && <p className={`engine-operation-fit ${editFit.state === "over" ? "form-err" : "muted"}`}>
