@@ -92,7 +92,7 @@ type writerEntry struct {
 // It lives here and not on agents.Agent because internal/agents (and the kind packages under it)
 // import mcpreg, so mcpreg cannot import agents without a cycle; the agentreg test holds it to
 // the registry. The order is the order MaterializeAll sweeps the kinds and reports their
-// results; it is the kind table's order except copilot, which was added last. A kind with no
+// results; keep it stable (a pin test holds it). A kind with no
 // entry (shell, ssm: no agent CLI; muse, lcpp: served without a file, see ServedKinds) has no
 // config to write; an alias or unknown kind finds none either.
 var writerTable = []writerEntry{
