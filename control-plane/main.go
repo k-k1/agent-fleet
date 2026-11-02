@@ -553,7 +553,9 @@ func main() {
 	// In oauth mode the CP is the edge (behind Funnel): gate every request on a
 	// verified session. dev/proxy modes keep the prior behavior (no gate; proxy
 	// trusts the upstream oauth2-proxy header).
-	var handler http.Handler = mux
+	// Invalidation of the shared sessions read sits on the mux itself (agent_sessions_share.go).
+	invalidating := cfg.mgr.invalidatesSessionsOnWrite(mux)
+	var handler http.Handler = invalidating
 	if cfg.mgr.authMode == "oauth" {
 		if provErr != nil {
 			log.Fatalf("AUTH=oauth: %v", provErr)
@@ -593,7 +595,7 @@ func main() {
 			ids = append(ids, p.ID())
 		}
 		log.Printf("login providers: %s", strings.Join(ids, ", "))
-		handler = cfg.authGate(mux)
+		handler = cfg.authGate(invalidating)
 	} else if provErr != nil {
 		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
@@ -654,7 +656,7 @@ func main() {
 		if workspaceListenerOnEveryInterface(rtProfile, addr) {
 			log.Printf("WARNING: AF_CP_INTERNAL_LISTEN=%s binds every interface of this docker host, so the workspace listener is reachable from the LAN as well as from workspaces — bind the docker0 gateway address instead (09 §9.3)", addr)
 		}
-		serveWorkspaceListener(addr, mux, cfg.mgr.emailHeader)
+		serveWorkspaceListener(addr, mux, cfg.mgr)
 	} else if mgr.internalBaseURL != "" {
 		log.Printf("WARNING: AF_CP_INTERNAL_URL is set without AF_CP_INTERNAL_LISTEN — workspaces are sent to an address this CP does not serve")
 	}
