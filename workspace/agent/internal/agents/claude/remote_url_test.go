@@ -25,7 +25,7 @@ func countOpens(t *testing.T) *atomic.Int64 {
 
 func remoteFixture(t *testing.T, sid, body string) string {
 	t.Helper()
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	isolateSlot(t) // HOME too: sids.Write lands under the agent state dir
 	dir := filepath.Join(ConfigDir(), "projects", "p")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

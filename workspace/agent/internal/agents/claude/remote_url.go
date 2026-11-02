@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // remoteURLs memoizes RemoteSessionURL per config dir + sid.
@@ -65,11 +67,12 @@ func (r *remoteURLMemo) put(key string, e remoteURLEntry) {
 func RemoteSessionURL(sid string) string {
 	// Keyed by the live id, not the slot: after a self-restart (/tui, sign-in, model switch)
 	// the ledger points the slot at a new conversation whose URL differs.
-	key := ConfigDir() + "\x00" + LiveSID(sid)
+	live := LiveSID(sid) // resolved once: key and paths must agree even if a hook rewrites the ledger meanwhile
+	key := ConfigDir() + "\x00" + live
 	if e, ok := remoteURLs.get(key); ok && e.url != "" {
 		return e.url
 	}
-	paths := jsonlPaths(sid)
+	paths := rawJSONLPathsIn(live, session.CWDForUUID(sid))
 	var sig strings.Builder
 	for _, p := range paths {
 		fi, err := os.Stat(p)
