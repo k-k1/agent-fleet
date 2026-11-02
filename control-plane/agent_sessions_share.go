@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 
@@ -174,4 +175,20 @@ func cloneEnvelope(e agentSessionsEnvelope) agentSessionsEnvelope {
 		e.Sessions = append(make([]sessionWire, 0, len(e.Sessions)), e.Sessions...)
 	}
 	return e
+}
+
+// invalidatesSessionsOnWrite wraps the whole mux, so that every route that may change the session
+// list drops the shared read, whichever auth wrapper (or none: /mcp, /internal/*, admin and
+// schedule routes) the route uses. Invalidating inside one wrapper missed every route registered
+// through another. It runs after the handler, so a read begun during the write is dropped too.
+// GET/HEAD/OPTIONS never invalidate: the 4 s event ticks are GETs and would defeat the sharing.
+func (m *manager) invalidatesSessionsOnWrite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			defer m.sessionsShare.invalidate()
+		}
+		next.ServeHTTP(w, r)
+	})
 }
