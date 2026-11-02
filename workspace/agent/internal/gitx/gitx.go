@@ -27,6 +27,7 @@ func Cmd(dir string, args ...string) *exec.Cmd {
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
 	}
+	spawned.Add(1)
 	cmd := exec.Command("git", args...)
 	cmd.Env = append(os.Environ(), gitEnv...)
 	return cmd
@@ -40,6 +41,7 @@ func CmdContext(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
 	}
+	spawned.Add(1)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), gitEnv...)
 	return cmd
