@@ -587,6 +587,20 @@ session constant and table row, and one constructor line. Still hand-kept: the C
 
 Follow-ups: #2933.
 
+## Note (2026-11-02): the Console's kind lists (#2933, slice 6)
+
+`SessionKind` is now `(typeof SESSION_KINDS)[number]` with `SESSION_KINDS` an `as const` tuple, so the
+Console's kind list and its type are one edit. `availability.test.ts` computes what the launch gate
+offers from the registry and keeps two pinned literals (the credential-free kinds and the kinds that
+need a sign-in), and `derivedKindLists.test.ts` pins `repoLaunchKinds` as the ordered kinds that exist
+today instead of the whole list; a new kind edits neither test. `scripts/stub-kind/zz.patch` was
+refreshed to match. Stub count: 14 non-test, non-Markdown files (unchanged), 16 with tests and
+Markdown (was 18); not a full `--verify` run. Left as it is: `FALLBACK_KIND_FACTS` in `kindCatalog.ts`
+stays hand-kept next to its equality test against `catalog.json` (the stub still edits it); deriving it
+from that file would be a Console build import across directories or a generated file, not done here.
+
+Follow-ups: #2933.
+
 ## Note (2026-11-02): the live-catalog chain in session creation (#2925, slice 6)
 
 `sessionx/session_create.go` held 7 kind-literal branches (base measured 90 module-wide). Classified:

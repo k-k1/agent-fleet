@@ -19,6 +19,7 @@ import { useDismiss } from "../../lib/useDismiss.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
 import { errText } from "../../core/api/client.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -70,7 +71,7 @@ function shortLocal(iso?: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return fmtDateTime(d, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 // Open the session a fire drove. new-mode sessions take the schedule's agent kind, so a

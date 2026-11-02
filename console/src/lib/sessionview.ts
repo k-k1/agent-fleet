@@ -8,6 +8,7 @@ import type { StateInfo } from "../agents/registry.ts";
 import type { Session } from "../types/session.ts";
 import { t } from "./i18n/index.ts";
 import type { MsgKey } from "./i18n/index.ts";
+import { zonedParts } from "./intl.ts";
 
 // backgroundBusyKey maps the agent's reason (claude.BGReason*) to the chip's wording.
 // Unknown / absent → the generic line: the reason only refines the label, so a value we
@@ -23,10 +24,10 @@ const backgroundBusyKey = (reason: string | undefined): MsgKey =>
 // stamp formats a timestamp as MMDD-HHMM (matching the agent's claude --name), so
 // shell rows show a launch time consistent with claude rows.
 export const stamp = (iso: string | undefined): string => {
-  const d = new Date(iso ?? "");
-  if (isNaN(d.getTime())) return "";
+  const z = zonedParts(iso ?? "");
+  if (!z) return "";
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  return `${p(z.month)}${p(z.day)}-${p(z.hour)}${p(z.minute)}`;
 };
 
 // LABEL_TAG_RE matches the leading tag the Agent puts on a label
@@ -86,11 +87,13 @@ const handoffChip = (idle: boolean): StateInfo => ({
 // time would then read as "in a few minutes"). "" for absent/unparsable input — the
 // chip then says only that the session is waiting, which is still true.
 export const resumeClock = (iso: string | undefined, now: Date = new Date()): string => {
-  const d = new Date(iso ?? "");
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
-  return d.toDateString() === now.toDateString() ? hm : `${p(d.getMonth() + 1)}/${p(d.getDate())} ${hm}`;
+  const z = zonedParts(iso ?? "");
+  if (!z) return "";
+  const n = zonedParts(now);
+  const p = (v: number) => String(v).padStart(2, "0");
+  const hm = `${p(z.hour)}:${p(z.minute)}`;
+  const sameDay = !!n && n.year === z.year && n.month === z.month && n.day === z.day;
+  return sameDay ? hm : `${p(z.month)}/${p(z.day)} ${hm}`;
 };
 
 // exitLabel describes why a stopped session's agent process died, when the pane

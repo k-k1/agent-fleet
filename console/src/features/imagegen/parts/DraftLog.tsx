@@ -5,13 +5,14 @@
 // row. Only the FIRST one per version counts (versionsOf).
 import { useMemo } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
+import { fmtDateTime } from "../../../lib/intl.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import type { DraftLogEntry } from "../wire.ts";
 import { describeChange, rewindable, versionsOf } from "../studioSync.ts";
 
 const hhmm = (at: string): string => {
   const d = new Date(at);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return Number.isNaN(d.getTime()) ? "" : fmtDateTime(d, { hour: "2-digit", minute: "2-digit" });
 };
 
 export function DraftLog({

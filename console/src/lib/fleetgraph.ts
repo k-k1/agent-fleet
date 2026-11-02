@@ -4,6 +4,7 @@
 // plain-data model out, no methods on the model itself.
 import type { Session, SessionKind } from "../types/session.ts";
 import { displayName } from "./sessionview.ts";
+import { zonedParts } from "./intl.ts";
 import type {
   ActorId,
   ArchivedEvent,
@@ -114,9 +115,10 @@ export const isExternalActor: GraphIsExternalActor = (id) => {
 // from sessionview.ts instead, imported above).
 function stampMs(ms: number | undefined): string {
   if (ms === undefined || Number.isNaN(ms)) return "";
-  const d = new Date(ms);
+  const z = zonedParts(ms);
+  if (!z) return "";
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  return `${p(z.month)}${p(z.day)}-${p(z.hour)}${p(z.minute)}`;
 }
 
 // ── Runs (decision 12) ───────────────────────────────────────────────────────

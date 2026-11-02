@@ -467,6 +467,20 @@ panic する。順序は挙動（main.go が managed の kind を再接続し、
 
 Follow-ups: #2933.
 
+## 追記 (2026-11-02): Console の kind 一覧 (#2933、スライス 6)
+
+`SessionKind` は `(typeof SESSION_KINDS)[number]` になり、`SESSION_KINDS` は `as const` のタプルなので、
+Console の kind 一覧と型は 1 か所の編集で済む。`availability.test.ts` は起動ゲートの出力をレジストリから
+計算し、固定するリテラルは 2 つ（サインイン不要の kind と、サインインが要る kind）だけ。
+`derivedKindLists.test.ts` は `repoLaunchKinds` を一覧全体ではなく「今ある kind の順序」で固定する。
+新しい kind はどちらのテストも編集しない。`scripts/stub-kind/zz.patch` は合わせて更新した。stub の数:
+テスト・Markdown を除いて 14 ファイル（変わらず）、含めて 16（18 から）。`--verify` の完走はしていない。
+意図して残したもの: `kindCatalog.ts` の `FALLBACK_KIND_FACTS` は `catalog.json` との一致テストとともに手書きの
+まま（stub はまだこれを編集する）。`catalog.json` から導くには、Console のビルドがディレクトリをまたいで
+import するか、生成ファイルが要る。今回は行わない。
+
+Follow-ups: #2933.
+
 ## 追記 (2026-11-02): セッション作成の live カタログの連鎖 (#2925、スライス 6)
 
 `sessionx/session_create.go` には kind リテラルの分岐が 7 件あった（base はモジュール全体で 90 と実測）。
