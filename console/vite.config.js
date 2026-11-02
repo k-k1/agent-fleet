@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { afKindTokens } from "./scripts/afKindTokens.js";
 
 // marp-core statically requires mathjax-full (~43MB) and katex for its math
 // feature. We render with { math: false } and verified those modules are never
@@ -107,7 +108,7 @@ export default defineConfig({
   base: "./",
   // Build id available to the client as a compile-time constant (src/lib/version.ts).
   define: { __AF_BUILD__: JSON.stringify(AF_BUILD), __AF_PDFJS_VERSION__: JSON.stringify(pdfjsVersion) },
-  plugins: [react(), afVersionManifest(AF_BUILD), afPdfjsAssets(pdfjsVersion)],
+  plugins: [react(), afKindTokens(), afVersionManifest(AF_BUILD), afPdfjsAssets(pdfjsVersion)],
   server: { fs: { allow: afFsAllow() } },
   resolve: {
     alias: [

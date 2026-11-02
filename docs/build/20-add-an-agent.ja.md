@@ -58,7 +58,7 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 | 資格の置き場と fs denylist | 自パッケージと `fsDeny`（`fs.go`）| CLI が資格情報や状態を書く場所は**ファイルブラウザから隠す** |
 | MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerTable` への 1 行（`MaterializedKinds()` はここから導出）、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`Caps().MCPClient`。`knownKinds` は `ServedKinds` から、CP の `mcpKnownKinds` は kind カタログのスナップショット（§20.7）から導出される | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
 | エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または Agent の `agents.InstructionsUnsupported`（理由コードを返す 1 行のメソッド。`cursor/instructions.go`） | Console の配布先一覧は `instrSupportedKinds` とレジストリの `InstructionsUnsupported` の答えから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
-| Console の descriptor | `console/src/types/session.ts` の `SESSION_KINDS` と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。driver に関する事実（`managedDriver`、`terminalDriver`）はカタログから読み、読み込み前は `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS` が答える。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
+| Console の descriptor | `console/src/agents/kindTable.ts` の行（順序・カタログの事実・色）と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。driver に関する事実（`managedDriver`、`terminalDriver`）はカタログから読み、読み込み前は kind 表から導いた `FALLBACK_KIND_FACTS` が答える。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
 | contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
 
@@ -248,8 +248,9 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 - [ ] モデル一覧: `internal/agents/<kind>/capabilities.go` の `ListModels`（`agents.ModelLister`）。
       `GET /agents/{kind}/models` がこれを返す（`TestEveryAgentKindListsModels`）
 - [ ] Console のフォールバック（`GET /api/agents/kinds` が答えるまで使う）:
-      `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS`（`MCP_KINDS` はここから作る）。
-      `kindCatalog.test.ts` がそれと `SESSION_KINDS` をカタログのスナップショットと突き合わせる
+      `console/src/agents/kindTable.ts` の自分の行の `managedOnly` / `managedDefault` / `mcpClient`
+      （`FALLBACK_KIND_FACTS`・`SESSION_KINDS`・`MCP_KINDS` はここから導く）。
+      `kindCatalog.test.ts` がその行をカタログのスナップショットと突き合わせる
 - [ ] 種別ごとに実測した一覧。どれも、漏れた種別を名指しするテストが守る:
       使用量の精度（Agent の `agents.UsageMeasurer`。exact / partial / none を全種別が宣言する。
       `TestEveryKindDeclaresItsUsageAccuracy`）、
@@ -283,13 +284,14 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 
 **表示だけ — Console:**
 
-- [ ] `console/src/types/session.ts` の `SESSION_KINDS`（表示順）と `console/src/agents/registry.ts` の記述子
-      （`caps`）。記述子が無い種別も汎用アイコンで表示はされるが、Console からは起動できない
-- [ ] 色・アイコン・文言。i18n の文字列を両言語で。色は `console/src/styles/tokens.css` の両テーマの
-      ブロックに置く `--kind-<slug>` と、同じファイルの対応表の `.kind-<slug>` 行（`kindCssMap.test.ts`）
-- [ ] `available()`: 接続の要らない種別は `availability.test.ts` の期待する一覧を変え、
-      `caps.launchableFromRepo` を持つ種別は `derivedKindLists.test.ts` の `repoLaunchKinds` の
-      リテラルを変える
+- [ ] `console/src/agents/kindTable.ts` の行（位置が表示順。`SessionKind` はリテラルのユニオンのまま）と
+      `console/src/agents/registry.ts` の記述子（`caps`。`Record<SessionKind, …>` なので無いとコンパイルが通らない）。記述子が無い種別も汎用アイコンで表示はされるが、Console からは起動できない
+- [ ] 色・アイコン・文言。i18n の文字列を両言語で。色は行の `hue.dark` / `hue.light`。ビルドが
+      `console/src/styles/tokens.css` の `--kind-<slug>` と `.kind-<slug>` の対応表に展開する（`kindCssMap.test.ts`）ので、
+      そのファイルは編集しない
+- [ ] `available()`: 接続の要らない種別は `availability.test.ts` の `NEEDS_SIGN_IN` を変え、
+      `caps.launchableFromRepo` を持つ種別は `derivedKindLists.test.ts` の `launchable` を変える
+      （どちらも今ある kind を固定するだけなので、新しい kind が行を足す必要は無い）
 - [ ] 記述子の一覧向けの事実: `caps.liveModels` / `caps.concreteModel`（モデル選択）、
       `caps.skillsCatalog`（設定 > スキル）、`caps.memberDefault`（CP の `memberDefaultAgents` と
       一致させる。`derivedKindLists.test.ts`）、`caps.headlessChat` なら `assistantRank`
@@ -328,6 +330,11 @@ scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-
 暫定値（2026-11-02、`availability.test.ts` と `derivedKindLists.test.ts` が全 kind を並べなくなり、
 `SessionKind` を `SESSION_KINDS` から導くようにした後、#2933）: テスト・Markdown 以外 14 ファイル（変化なし）、
 含めて 16 ファイル（それまでは 18）。スタブが Console のテストを編集することは無くなった。これも `--verify` 未実行。
+
+暫定値（2026-11-02、`SessionKind`・`SESSION_KINDS`・`FALLBACK_KIND_FACTS`・kind の色トークンを
+`console/src/agents/kindTable.ts` から導くようにした後、#2933）: テスト・Markdown 以外 12 ファイル（それまでは 14）、
+含めて 14 ファイル（それまでは 16）。スタブが編集するのは Console の kind 表の 1 行で、`session.ts`・`kindCatalog.ts`・
+`tokens.css` ではなくなった。これも `--verify` 未実行。
 
 数値として使えるのは、`--verify` が通った実行だけです。パッチが当たらなくなったとき、または
 `--verify` で新しいガードが落ちたときはパッチを作り直します。`--keep` で実行し、残したクローンで

@@ -6,14 +6,12 @@
 // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
 // renders — terminal/file/scm/doc/diff, see layout/types PaneContent). Keep distinct.
 
-// The canonical session kinds in display order (New Session buttons, etc.). lcpp and muse sit
-// just before shell/ssm: both are registered (ADR 0093 / ADR 0095) and launchable only once their
-// own precondition is met — see each descriptor's available() in registry.ts, and
-// guide/ref/agents.md's footnotes.
-export const SESSION_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell", "ssm"] as const;
-
-// Derived from the list above, so a new kind is one edit here.
-export type SessionKind = (typeof SESSION_KINDS)[number];
+// The session kinds and their display order are rows of agents/kindTable.ts, the one place a new
+// kind is declared; SessionKind stays a literal union there. Re-exported so the many importers of
+// this module keep one import site.
+export { SESSION_KINDS } from "../agents/kindTable.ts";
+export type { SessionKind } from "../agents/kindTable.ts";
+import type { SessionKind } from "../agents/kindTable.ts";
 
 // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
 // emits question/plan/permission; codex/opencode emit working/idle; agy emits

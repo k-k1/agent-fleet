@@ -20,6 +20,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+import { expandKindTokens } from '../../src/agents/kindTable.ts';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOKENS = join(HERE, '..', '..', 'src', 'styles', 'tokens.css');
 
@@ -34,7 +36,7 @@ const KINDS = ['claude', 'codex', 'cursor', 'agy', 'kiro', 'copilot', 'opencode'
 // regexp starts matching inside a comment that happens to contain one, silently swallowing
 // the declaration after it. A harness that lies looks exactly like a harness that works.
 function readPalettes() {
-  const css = readFileSync(TOKENS, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = expandKindTokens(readFileSync(TOKENS, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
   // The file declares the dark palette first and then overrides it under the light theme, so
   // the FIRST occurrence of a token is dark and the LAST is light.
   const dark = {};

@@ -1,27 +1,17 @@
 import type { MsgKey } from "./i18n/index.ts";
+import { KIND_TABLE } from "../agents/kindTable.ts";
 
 // Terminal background tints. Each session's terminal gets a subtle dark background so
 // the agent kind (and, for SSM, the target host) is recognizable at a glance without
 // hurting readability. The tint is a mostly-black base with a small amount of a vivid
 // hue mixed in.
 
-// Vivid base color per kind — mirrors the --kind-* values in tokens.css (the dark-theme
-// ones). The terminal background is always dark (TERM_BASE) regardless of theme, so the dark
-// values are what gets mixed in. Change the palette in tokens.css and this must be updated
-// with it (kind-color-css-checklist). SSM uses a per-host
-// color instead (its kind base is only the fallback when a session carries no explicit
-// host color).
-const KIND_BASE: Record<string, string> = {
-  claude: "#e0a45e",
-  codex: "#4ec97a",
-  cursor: "#d96ba1",
-  agy: "#4285f4",
-  kiro: "#a371f7",
-  copilot: "#7d8590",
-  opencode: "#aab4be",
-  shell: "#46c9d0",
-  ssm: "#6d8bf5",
-};
+// Vivid base color per kind: the dark-theme hue of the kind table (agents/kindTable.ts). The
+// terminal background is always dark (TERM_BASE) regardless of theme, so the dark values are what
+// gets mixed in. SSM uses a per-host color instead (its kind base is only the fallback when a
+// session carries no explicit host color). lcpp and muse have a base too but no Terminal (CLI)
+// pane to paint it on.
+const KIND_BASE: Record<string, string> = Object.fromEntries(KIND_TABLE.map((r) => [r.id, r.hue.dark]));
 
 // SSM host color palette offered in settings. The terminal shows a dark tint of the
 // chosen hue, so prod / staging / … hosts are visually distinct. "auto" derives a

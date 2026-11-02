@@ -61,7 +61,7 @@ unless they name another tree.
 | Credential location and the filesystem denylist | your package, plus `fsDeny` (`fs.go`) | Anything the CLI writes credentials or state into must be **hidden from the file browser** |
 | MCP | `internal/mcpreg`: one row in `writerTable` when the CLI reads a config file (`MaterializedKinds()` is derived from it); `ServedKinds` when servers reach it another way (on the wire, or in-process); `Caps().MCPClient`. `knownKinds` is derived from `ServedKinds`, and the CP's `mcpKnownKinds` from the kind catalog snapshot (§20.7) | Each CLI has its own config shape and placeholder dialect. A config-file kind whose CLI can run in CI goes into `mcp-config-contract.yml` too |
 | Agent instructions | `agents.Instructions` on the Agent (an `instructions_ops.go` in your package: shape, apply functions) and the kind in `instrSupportedKinds` (display order), or `agents.InstructionsUnsupported` on the Agent (a one-line method returning the reason code; `cursor/instructions.go`) | The Console's list of targets is built from `instrSupportedKinds` and the registry's `InstructionsUnsupported` answers; `agent_instructions.go` has no per-kind switch left. If the CLI has no per-user place, **list it with the reason** rather than silently dropping it. A kind that writes its own system prompt reads the layers there instead (lcpp does, each turn, through `harness.SystemPrompt`): `prompt` delivery, no path, no apply functions |
-| Console descriptor | `SESSION_KINDS` in `console/src/types/session.ts`, and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances; the driver facts (`managedDriver`, `terminalDriver`) are read from the catalog, with `FALLBACK_KIND_FACTS` in `console/src/agents/kindCatalog.ts` answering until it loads. Some screens still switch on the kind name, so grep them (below) |
+| Console descriptor | a row in `console/src/agents/kindTable.ts` (order, catalog facts, colour), and one descriptor in `console/src/agents/registry.ts` | The descriptor's `caps` decide the affordances; the driver facts (`managedDriver`, `terminalDriver`) are read from the catalog, with `FALLBACK_KIND_FACTS`, derived from the kind table, answering until it loads. Some screens still switch on the kind name, so grep them (below) |
 | Version pin | an ARG in `workspace/Dockerfile`, the `versions.json` it writes, and a row in `deploy/local/cli-drift-check.sh` | [10 §10.2.1](10-development.md). A kind that runs no vendor CLI has nothing to pin |
 | A contract workflow | its own file under `.github/workflows/`, for a kind whose CLI or host the workspace image pins | **One file per agent**, registered with the release watcher. lcpp pins nothing in the image and has a manual check instead (§20.5) |
 
@@ -272,8 +272,9 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 - [ ] model menu: `ListModels` (`agents.ModelLister`) in `internal/agents/<kind>/capabilities.go`,
       which `GET /agents/{kind}/models` serves (`TestEveryAgentKindListsModels`)
 - [ ] the Console's fallback, used until `GET /api/agents/kinds` answers:
-      `FALLBACK_KIND_FACTS` (`console/src/agents/kindCatalog.ts`; `MCP_KINDS` is derived from
-      it). `kindCatalog.test.ts` holds it, and `SESSION_KINDS`, equal to the catalog snapshot
+      the `managedOnly` / `managedDefault` / `mcpClient` fields of your row in
+      `console/src/agents/kindTable.ts` (`FALLBACK_KIND_FACTS`, `SESSION_KINDS` and `MCP_KINDS` are
+      derived from it). `kindCatalog.test.ts` holds the row equal to the catalog snapshot
 - [ ] the measured-per-kind lists, each held by a test that names the kind it is missing:
       usage accuracy (`agents.UsageMeasurer` on the Agent: exact, partial or none, every kind says it;
       `TestEveryKindDeclaresItsUsageAccuracy`),
@@ -311,15 +312,18 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
 
 **Display-only — the Console:**
 
-- [ ] `SESSION_KINDS` in `console/src/types/session.ts` (display order) and a descriptor in
-      `console/src/agents/registry.ts` (`caps`). A kind with no descriptor still renders, with a
+- [ ] a row in `console/src/agents/kindTable.ts` (its position is the display order; `SessionKind`
+      stays a literal union) and a descriptor in `console/src/agents/registry.ts` (`caps`; the
+      `Record<SessionKind, …>` type fails to compile until it exists). A kind with no descriptor still renders, with a
       generic icon, but is not launchable from the Console
-- [ ] colour, icon and wording; the i18n strings in both languages. The colour is a
-      `--kind-<slug>` token in both theme blocks of `console/src/styles/tokens.css` plus its
-      `.kind-<slug>` line in the map there (`kindCssMap.test.ts`)
+- [ ] colour, icon and wording; the i18n strings in both languages. The colour is the
+      row's `hue.dark` / `hue.light`: the build expands them into the `--kind-<slug>` tokens and the
+      `.kind-<slug>` map of `console/src/styles/tokens.css` (`kindCssMap.test.ts`), so that file
+      is not edited
 - [ ] `available()`: a kind that needs no connection changes the expected lists in
-      `availability.test.ts`, and one with `caps.launchableFromRepo` changes the `repoLaunchKinds`
-      literal in `derivedKindLists.test.ts`
+      `availability.test.ts` (`NEEDS_SIGN_IN`), and one with `caps.launchableFromRepo` changes the
+      `launchable` declarations in `derivedKindLists.test.ts`; both only pin the kinds that exist
+      today, so a new kind need not add a line
 - [ ] the descriptor's list facts: `caps.liveModels` / `caps.concreteModel` (model picker),
       `caps.skillsCatalog` (Settings > Skills), `caps.memberDefault` (equal to the CP's
       `memberDefaultAgents`; `derivedKindLists.test.ts`), and `assistantRank` with
@@ -361,6 +365,11 @@ Provisional count at 2026-11-02 (after `availability.test.ts` and `derivedKindLi
 listing every kind, and `SessionKind` was derived from `SESSION_KINDS`, #2933): 14 non-test,
 non-Markdown files (unchanged), 16 including tests and Markdown (was 18): the stub no longer edits a
 Console test. Again without `--verify`.
+
+Provisional count at 2026-11-02 (after `SessionKind`, `SESSION_KINDS`, `FALLBACK_KIND_FACTS` and the
+kind colour tokens were derived from `console/src/agents/kindTable.ts`, #2933): 12 non-test,
+non-Markdown files (was 14), 14 including tests and Markdown (was 16): the stub edits one Console
+table row instead of `session.ts`, `kindCatalog.ts` and `tokens.css`. Again without `--verify`.
 
 Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
 guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until
