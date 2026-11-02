@@ -784,8 +784,14 @@ func MergedLocalBranches(dir string) []string {
 
 // GitDirInfo returns dir's current branch AND whether it's a linked worktree in a
 // single rev-parse (branch line + absolute-git-dir line), so the session list can
-// enrich every row with one git call per unique dir. "" branch / false for a non-repo.
+// enrich every row. "" branch / false for a non-repo. The common cases are answered
+// from the repository's files (no process: every git start reads the global config,
+// which is an NFS round trip per poll in production); anything those files cannot
+// settle falls back to the rev-parse (see gitDirInfoFromFiles).
 func GitDirInfo(dir string) (branch string, worktree bool) {
+	if b, wt, ok := gitDirInfoFromFiles(dir); ok {
+		return b, wt
+	}
 	out, err := Run(dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir")
 	if err != nil {
 		return "", false
