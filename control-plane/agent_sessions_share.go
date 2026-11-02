@@ -89,6 +89,9 @@ func (s *sessionsShare) invalidate() {
 	s.mu.Lock()
 	s.gen++
 	s.entries = nil
+	// Detach reads in flight: a caller arriving after the write must start its own read, not join
+	// one that may have sampled the Agent before the write.
+	s.inflight = nil
 	s.mu.Unlock()
 }
 
@@ -140,7 +143,9 @@ func (m *manager) runSharedSessions(rt runtime.Runtime, key sharedSessionsKey, c
 	c.readAt = s.clock()
 	c.env, c.err = fetch(ctx, rt, "")
 	s.mu.Lock()
-	delete(s.inflight, key)
+	if s.inflight[key] == c {
+		delete(s.inflight, key)
+	}
 	if c.err == nil && gen == s.gen {
 		now := s.clock()
 		if s.entries == nil {
@@ -163,6 +168,10 @@ func (m *manager) runSharedSessions(rt runtime.Runtime, key sharedSessionsKey, c
 // fields (applyInboxOrigins does). Fields that hold pointers or raw JSON are shared and must be
 // replaced, never edited in place.
 func cloneEnvelope(e agentSessionsEnvelope) agentSessionsEnvelope {
-	e.Sessions = append([]sessionWire(nil), e.Sessions...)
+	// nil stays nil and an empty list stays empty: {"sessions":[]} must not become null, which the
+	// Console ignores as "no list".
+	if e.Sessions != nil {
+		e.Sessions = append(make([]sessionWire, 0, len(e.Sessions)), e.Sessions...)
+	}
 	return e
 }

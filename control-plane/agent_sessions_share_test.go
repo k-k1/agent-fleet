@@ -256,3 +256,62 @@ func TestSessionsPayloadPerMemberContentWithSharedRead(t *testing.T) {
 		t.Fatalf("Agent saw %d reads for 6 subscribers, want 1", n.Load())
 	}
 }
+
+// An empty Agent list stays an empty array on the wire (the Console ignores null), also after
+// a list that had sessions.
+func TestSharedSessionsKeepsEmptyListNonNil(t *testing.T) {
+	body := atomic.Value{}
+	body.Store(sharedOneSession)
+	srv, _ := countingAgent(t, func(int64) (int, string) { return 200, body.Load().(string) })
+	m := &manager{}
+	rt := stubRuntime{endpoint: srv.URL}
+	if env, _, err := m.agentSessionsShared(context.Background(), rt); err != nil || len(env.Sessions) != 1 {
+		t.Fatalf("first: %+v %v", env, err)
+	}
+	body.Store(`{"sessions":[]}`)
+	m.sessionsShare.invalidate()
+	for i := 0; i < 2; i++ { // the fresh read, then the cached one
+		env, _, err := m.agentSessionsShared(context.Background(), rt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(map[string]any{"sessions": env.Sessions})
+		if string(raw) != `{"sessions":[]}` {
+			t.Fatalf("read %d: %s, want {\"sessions\":[]}", i, raw)
+		}
+	}
+}
+
+// A read begun after a write must not join one that was already in flight when the write landed.
+func TestSharedSessionsReadAfterWriteDoesNotJoinOlderFlight(t *testing.T) {
+	var calls atomic.Int64
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if calls.Add(1) == 1 { // the pre-write read: it saw the row and is slow to answer
+			<-release
+			_, _ = w.Write([]byte(sharedOneSession))
+			return
+		}
+		_, _ = w.Write([]byte(`{"sessions":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	m := &manager{}
+	rt := stubRuntime{endpoint: srv.URL}
+	oldDone := make(chan int, 1)
+	go func() { env, _, _ := m.agentSessionsShared(context.Background(), rt); oldDone <- len(env.Sessions) }()
+	for calls.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	m.sessionsShare.invalidate() // the write completes
+	env, _, err := m.agentSessionsShared(context.Background(), rt)
+	if err != nil || len(env.Sessions) != 0 {
+		t.Fatalf("read after the write: %+v %v, want the post-write empty list", env, err)
+	}
+	close(release)
+	<-oldDone
+	// The old flight finishing must not have evicted or overwritten the newer entry.
+	if env, _, _ := m.agentSessionsShared(context.Background(), rt); len(env.Sessions) != 0 {
+		t.Fatalf("after the old flight landed: %+v, want the post-write list", env)
+	}
+}
