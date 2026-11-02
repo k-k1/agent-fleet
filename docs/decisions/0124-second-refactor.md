@@ -634,3 +634,19 @@ registered kind, with muse (wire) and lcpp (in process) named as the served-with
 old literal had codex first; the only reader of the order is the `OneShotSettingsKey` cache key, so the
 one visible effect is a one-time cache miss. Pinned per kind against the old literals. Left undone:
 the bracketed-paste chain and per-kind instruction apply.
+
+## Note (2026-11-02): create-time policy of `session_create.go` behind `agents.CreatePolicy` (#2925)
+
+The three kind branches left in `sessionx/session_create.go` (lcpp disabled, lcpp requires a model,
+muse contributor mode) now read an optional `agents.CreatePolicy`, looked up by exact registry key.
+It returns traits, not values: `EnabledPref` / `ContributorModePref` name ui-prefs keys because
+`internal/agents` cannot import `uiprefs`, and `sessionx.prefReaders` reads them at create time
+with each key's own default (lcppEnabled true when unset, museContributorMode false). lcpp and muse
+declare it; every other kind has no gate. The refusal order (disabled, then model) and texts are
+unchanged. The `liveCatalogs` table in the same file stays package-local (see the earlier note: its
+rows read test seams owned by `sessionx`). `TestCreateRefusalMatchesLegacyGates` and
+`TestContributorModeOnMatchesLegacy` pin the answers to a copy of the old branches over every
+registered kind, aliases and prefs; the classification test holds the declaring kinds to a list.
+`kindLiteralCeiling` 86 → 83. Behaviour unchanged; not verified against a live fleet.
+
+Follow-ups: #2925.

@@ -496,3 +496,16 @@ live カタログ（codex・copilot・opencode・lcpp）で解決する if/else 
 retired の id／モデルなしで固定する。`kindLiteralCeiling` は 90 → 86（実測）。挙動の変更なし。実機では未確認。
 
 Follow-ups: #2925.
+
+## 追記 (2026-11-02): `session_create.go` の作成時ポリシーを `agents.CreatePolicy` の裏へ (#2925)
+
+`sessionx/session_create.go` に残っていた kind 分岐 3 つ（lcpp の無効化、lcpp のモデル必須、muse の
+contributor mode）を、レジストリのキーで完全一致引きする任意の `agents.CreatePolicy` に移した。値ではなく
+特性を返す：`internal/agents` は `uiprefs` を import できないため、`EnabledPref` / `ContributorModePref` は
+ui-prefs のキー名で、`sessionx.prefReaders` が作成時に各キー固有の既定値（lcppEnabled は未設定で true、
+museContributorMode は false）で読む。宣言するのは lcpp と muse だけで、他の kind にゲートはない。拒否の順序
+（無効 → モデル）と文面は変更なし。同ファイルの `liveCatalogs` は従来どおりパッケージローカル。
+`TestCreateRefusalMatchesLegacyGates` と `TestContributorModeOnMatchesLegacy` が旧分岐のコピーとの一致を、登録済みの
+全 kind・別名・設定値で固定する。`kindLiteralCeiling` は 86 → 83。挙動の変更なし。実機では未確認。
+
+Follow-ups: #2925.

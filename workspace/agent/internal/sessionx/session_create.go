@@ -254,6 +254,54 @@ func (c *createRun) resolveDriver() bool {
 	return true
 }
 
+// createTraitsOf is kind's agents.CreatePolicy, by exact registry key.
+func createTraitsOf(kind string) (agents.CreateTraits, bool) {
+	a, _ := RegisteredAgent(kind)
+	p, ok := a.(agents.CreatePolicy)
+	if !ok {
+		return agents.CreateTraits{}, false
+	}
+	return p.CreateTraits(), true
+}
+
+// createRefusal is the kind's agents.CreatePolicy gate: status 0 passes, otherwise the refusal
+// to write. The member's setting is checked before the model, as it always was.
+func createRefusal(kind, model string) (status int, code, msg string) {
+	t, ok := createTraitsOf(kind)
+	if !ok {
+		return 0, "", ""
+	}
+	if t.EnabledPref != "" && !prefOn(t.EnabledPref) {
+		return http.StatusForbidden, t.DisabledCode, t.DisabledMessage
+	}
+	if t.RequiresModel && strings.TrimSpace(model) == "" {
+		return http.StatusBadRequest, "bad_model", t.ModelRequiredMessage
+	}
+	return 0, "", ""
+}
+
+// prefReaders reads the ui-prefs keys a CreateTraits may name, each with its own default
+// (lcppEnabled reads true when unset, museContributorMode false); a test pins that every key
+// a registered kind names has a reader here.
+var prefReaders = map[string]func() bool{
+	"lcppEnabled":         uiprefs.LcppEnabled,
+	"museContributorMode": uiprefs.MuseContributorMode,
+}
+
+// prefOn reads pref live; an unknown key reads false.
+func prefOn(pref string) bool {
+	r := prefReaders[pref]
+	return r != nil && r()
+}
+
+// contributorModeOn is the member's contributor-mode setting for kind. From the setting only,
+// never the request: a session can call create_session, and turning the mode on is the member's
+// decision (ui_prefs.go's mark gate).
+func contributorModeOn(kind string) bool {
+	t, ok := createTraitsOf(kind)
+	return ok && t.ContributorModePref != "" && prefOn(t.ContributorModePref)
+}
+
 // liveCatalog is how a kind with a live model catalog resolves an explicit model at create.
 // retired, when set, marks an id the vendor stopped offering so the refusal can say so.
 type liveCatalog struct {
@@ -299,34 +347,12 @@ var liveCatalogs = map[string]liveCatalog{
 // checkModel is stage 5: the model checks, all before any side effect (clone / worktree). It
 // leaves c.req.Model resolved against the kind's live catalog where there is one.
 func (c *createRun) checkModel() bool {
-	// lcpp can be turned off by the user's own display setting (ui-prefs lcppEnabled,
-	// docs/log/105 §106.2). registry.ts's available() is only the signpost that hides it from
-	// the launch menus; this is the actual gate, reached the same way as the model-hidden
-	// guard below (Console, the schedule, MCP create_session, or a direct POST /sessions all
-	// funnel through here) so turning lcpp off cannot be bypassed by any of them.
-	if kind := NormalizeKind(c.req.Kind); kind == session.KindLcpp && !uiprefs.LcppEnabled() {
-		httpx.WriteErr(c.w, http.StatusForbidden, "lcpp_disabled",
-			"llama.cpp は設定でオフになっています。設定 > エージェント > llama.cpp でオンにしてください。")
-		return false
-	}
-	// lcpp has no CLI-picked "own default" the way codex/opencode do. This is not because
-	// llama-server itself demands a model name on every request — measured live
-	// (docs/log/107's 2026-09-21 addendum), a single-model instance ignores the request's own
-	// `model` field entirely (any string, or none, answers 200) — it is the Agent's own
-	// requirement: a router deployment (`--models-max`, ADR 0093 decision 7's own measured
-	// `role: "router"`) DOES dispatch on this field, the id pins the session to one entry of
-	// the model list the launch menu itself is built from (there is no vendor "tier alias" the
-	// way claude has), and it is the Console's only record of which model a conversation
-	// believes it is talking to (engines.go's lcppMemberReachable doc comment: a member
-	// swapping the LAN box under an unchanged URL is served by whatever loaded now, silently,
-	// unless something recorded the name it meant to use). So unlike every other kind,
-	// req.Model=="" is never a valid launch here, and letting it through used to reach worktree
-	// creation and the managed driver before failing, with the session left holding only the
-	// user's own first message (docs/log/109). Refused up front, before any side effect, the
-	// same place the disabled/hidden-model guards already sit.
-	if kind := NormalizeKind(c.req.Kind); kind == session.KindLcpp && strings.TrimSpace(c.req.Model) == "" {
-		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_model",
-			"llama.cpp セッションにはモデルの指定が必須です（CLI 自身の既定は存在しません）")
+	// A kind's own create policy (agents.CreatePolicy): lcpp can be switched off by the member's
+	// display setting and never launches without a model. Both are refused here, before any
+	// side effect, so the Console, the schedule, MCP create_session and a direct POST /sessions
+	// all meet the same gate; the order (disabled, then model) is the old one.
+	if status, code, msg := createRefusal(NormalizeKind(c.req.Kind), c.req.Model); status != 0 {
+		httpx.WriteErr(c.w, status, code, msg)
 		return false
 	}
 	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every
@@ -601,7 +627,7 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 
 		// From the member's setting only, never the request: a session can call create_session,
 		// and turning contributor mode on is the member's decision (ui_prefs.go's mark gate).
-		MuseContributorMode: c.kind == session.KindMuse && uiprefs.MuseContributorMode(),
+		MuseContributorMode: contributorModeOn(c.kind),
 	}
 	applyCreateLinks(&meta, req)
 	// pending from the first write of the meta: the pane must not offer a resend while the
