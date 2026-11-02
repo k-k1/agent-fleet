@@ -248,9 +248,15 @@ red になる。contract が通った CLI は更新 issue を開かない（版�
 
 ```bash
 (cd control-plane   && go test ./...)
-(cd workspace/agent && go test ./...)
+(cd workspace/agent && go test -timeout 20m ./...)
 ```
 
+- `workspace/agent/internal/memoryx` は exec 律速: 直列の約 384 テストが実 `git` プロセスを約 16,500 回
+  起こし、コストは均等に散る（重い上位 30 テストで 3 分の 1）。`t.Setenv`（HOME、`CLAUDE_CONFIG_DIR`）
+  と共有グローバル（`AgentMemoryEnabled` など）のため `t.Parallel` は使えない。単独実測（#3102）:
+  アイドル時（load 約 2）で約 107 秒、load 25–37 で 349 秒。Issue の報告は別ブランチ・load 約 14 で
+  269–509 秒。このばらつきのため上の `-timeout 20m` は外せない。フィクスチャへの
+  `core.fsync=none` / `gc.auto=0` は効果が測れなかった（107.5 秒 vs 109 秒）ので入れていない。
 - CP 側は `httptest` ベースのスモークを多数含む（監査・egress・内部 git の smart-HTTP と LFS
   など）。Postgres のテストは `AF_TEST_DATABASE_URL` が無ければ skip し、CI はこれを設定しない。
 - ⚠️ **マイグレーションを足したら、実 Postgres で 1 度回す** — 理由は
