@@ -41,7 +41,7 @@ source_of_truth: "Console そのもの（画面と食い違ったら画面が正
 12. [他の人と扱う](12-collaboration.ja.md) — 共有、セッションの引き渡し、受信箱、使用量の上限
 13. [画像](13-images.ja.md) — ギャラリー、生成、スタジオ
 14. [プレビューとブラウザ](14-preview-browser.ja.md) — ブラウザペイン、プレビュー URL、開発用サインイン、エージェントが開いたブラウザ
-15. [外部サービスとログイン済み CLI](15-external-services.ja.md) — `gh` / `bkt` / `jira`、Discord / Slack、運用ツール（実験的）
+15. [外部サービスとログイン済み CLI](15-external-services.ja.md) — `gh` / `bkt` / `jira` / `confluence`、Discord / Slack、運用ツール（実験的）
 16. [クラウドのアカウント](16-cloud-accounts.ja.md) — AWS プロファイル、SSM ホスト、`af-aws-exec`、Google Cloud
 17. [ワークスペースの環境](17-workspace-environment.ja.md) — 環境設定、再作成、テスト用データベース、ローカルの AWS エミュレータ
 18. [エージェントメモリ](18-agent-memory.ja.md) — 種類やセッションをまたいで覚えること、その取り込み、エージェント自身のメモリのスナップショット

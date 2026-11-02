@@ -325,6 +325,13 @@ jobs:
         run: |
           bash -n workspace/jira-auth-wrapper.sh
           ./workspace/jira-auth-wrapper-test.sh
+      # The confluence wrapper shares the Atlassian connection with jira: a user's own config or
+      # explicit token must never be overridden, and the token must never reach argv, a file or output.
+      - name: confluence auth wrapper (real script, stub workspace-agent / confluence)
+        working-directory: .
+        run: |
+          bash -n workspace/confluence-auth-wrapper.sh
+          ./workspace/confluence-auth-wrapper-test.sh
 
   # The deployment scripts (deploy/aws/ecs) only run in full against real AWS, but if that
   # is taken as a reason to check nothing, a break is discovered on the day the stack

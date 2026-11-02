@@ -197,6 +197,9 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
           {st.authKind === "oauth" && st.softwareScopes === "missing" && (
             <Hint>{tr("tracker.jira_software_missing")}</Hint>
           )}
+          {st.authKind === "oauth" && st.confluenceScopes === "missing" && (
+            <Hint>{tr("tracker.confluence_missing")}</Hint>
+          )}
         </div>
       ) : mode === "waiting" ? (
         <div className="p-body">

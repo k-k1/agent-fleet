@@ -125,6 +125,18 @@ device flow には secret が無く、トークンはメンバー自身のワー
 > 出ているメンバーは、これらのスコープなしで接続しています。接続済みのメンバーは、
 > Jira を接続し直すと新しいスコープを受け取れます。
 
+> **Jira: `confluence` CLI で Confluence を使うにはスコープの追加が要ります。** メンバーのセッションの
+> Confluence CLI は、Jira と同じ Atlassian 認可を使います。Developer Console でアプリの
+> **Permissions → Confluence API → Configure → Edit Scopes** を開き、次の 7 つのクラシックスコープを
+> 選んでください: `read:confluence-content.all`、`read:confluence-content.summary`、
+> `read:confluence-space.summary`、`search:confluence`、`write:confluence-content`、
+> `readonly:content.attachment:confluence`、`write:confluence-file`。**そのあとで** Jira のカードの
+> 「このアプリに Confluence のスコープ（confluence CLI 用）も許可済み」にチェックを入れて保存します。
+> 順番が大事な理由は上と同じで、先にチェックを入れると全メンバーが接続できなくなります。チェックを
+> 入れないテナントはこれまでどおり動き、メンバーが `confluence` CLI を使えないだけです。接続済みの
+> メンバーは、Jira を接続し直すとスコープを受け取れます。Jira カードに「Confluence: 利用できません」と
+> 出ているメンバーは、これらのスコープなしで接続しています。
+
 secret は**保存時に暗号化され、二度と表示されません**。後で登録を編集するとき、
 secret を空のままにすれば保存済みのものが保たれます——**変更するときだけ**入力してください。
 **登録を削除**すると OAuth ボタンが消えます。トークンで接続済みのメンバーには影響しません。

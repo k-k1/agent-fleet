@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Confluence CLI (confluence, pchuri/confluence-cli) transparent-auth wrapper — the Confluence
+# counterpart of jira-auth-wrapper.sh, over the same Atlassian connection.
+#
+# confluence-cli reads its token from CONFLUENCE_API_TOKEN or a config file, neither of which
+# can follow a one-hour OAuth token. This sits in front of the real CLI
+# (/usr/local/libexec/confluence), asks the Agent for the Connections credential on every call
+# (`workspace-agent confluence-cred`, which renews an OAuth token about to expire through the
+# same cross-process refresh lock jira uses, so a rotating refresh token is exchanged once) and
+# hands it over through the CLI's environment (CONFLUENCE_DOMAIN, CONFLUENCE_API_PATH,
+# CONFLUENCE_AUTH_TYPE, CONFLUENCE_API_TOKEN, CONFLUENCE_EMAIL). Environment variables make the
+# CLI ignore its config file entirely, which is why the user's own setup is detected first.
+#
+# - Whose setup is it? Decided by what is there, never by reading a config: any CONFLUENCE_*
+#   variable that selects a host, identity or credential, a --profile flag, or a config.json in
+#   any directory the CLI may use is the user's own, and the CLI runs unchanged. A misdetection
+#   can only make a setup look like someone else's, which runs the CLI without the token: that
+#   is the direction to fail in.
+# - `init`, `profile` and `stats` manage or read the user's configuration and never need the
+#   token; `--version` / `--help` do not either. Skipping the Agent for them keeps the Toolchains
+#   probe (which runs this wrapper) from taking the store lock or renewing a token over the network.
+# - Fails closed: any helper error leaves the CLI running with no injected auth. The one exception
+#   is a connection the Agent reports as unusable (`unusable=<reason>` on confluence-cred's
+#   stderr: an OAuth authorization that expired and could not be renewed, or one that holds no
+#   Confluence scope): the CLI would print "run confluence init", which is the wrong advice, so
+#   one line naming the real next step is printed and the CLI is not run. No connection at all is
+#   not that case and still runs the CLI as before, after a one-line hint.
+# - The token only ever lives in this shell's variables and, at the very end, in the exec'd CLI's
+#   environment: never argv, never a file, never printed. xtrace and allexport are switched off
+#   first, and the variables are unset so none inherits an export attribute: otherwise the
+#   assignments below would be echoed, or exported to every helper.
+# - CONFLUENCE_CLI_ANALYTICS=false: the CLI otherwise writes a usage counter file into its config
+#   directory on every call, which would also create that directory.
+set +xa
+unset cred tok site domain apipath auth login why sub arg own v d
+
+real="${AF_CONFLUENCE_REAL:-/usr/local/libexec/confluence}"
+
+# First non-option word: the subcommand. Options before it that take a value are not told
+# apart, which is harmless: a value read as the subcommand just is not one of the skipped ones.
+sub=""
+own=""
+for arg in "$@"; do
+  case "$arg" in
+    --profile | --profile=*) own=1 ;;
+    --help | -h | --version | -V) sub=help ;;
+    -*) ;;
+    *) [ -n "$sub" ] || sub="$arg" ;;
+  esac
+done
+case "$sub" in
+  "" | help | init | profile | stats | completion) exec "$real" "$@" ;;
+esac
+[ -z "$own" ] || exec "$real" "$@"
+
+for v in CONFLUENCE_DOMAIN CONFLUENCE_HOST CONFLUENCE_API_TOKEN CONFLUENCE_PASSWORD \
+  CONFLUENCE_EMAIL CONFLUENCE_USERNAME CONFLUENCE_AUTH_TYPE CONFLUENCE_API_PATH \
+  CONFLUENCE_COOKIE CONFLUENCE_PROFILE CONFLUENCE_TLS_CLIENT_CERT CONFLUENCE_TLS_CLIENT_KEY; do
+  [ -z "${!v:-}" ] || exec "$real" "$@"
+done
+# The CLI uses CONFLUENCE_CONFIG_DIR alone when set, else the XDG directory, else the legacy one.
+if [ -n "${CONFLUENCE_CONFIG_DIR:-}" ]; then
+  [ ! -e "$CONFLUENCE_CONFIG_DIR/config.json" ] || exec "$real" "$@"
+else
+  for d in "${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/confluence-cli" "${HOME:-/nonexistent}/.confluence-cli"; do
+    [ ! -e "$d/config.json" ] || exec "$real" "$@"
+  done
+fi
+
+# First value of a `key=value` line in the helper's answer on stdin.
+field() { sed -n "s/^$1=//;T;p;q"; }
+
+# A stuck helper must cost a command a delay, not a hang. No terminal on any of stdin / stdout /
+# stderr means nobody can interrupt it, so only that run is bounded.
+bounded() {
+  if [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] && command -v timeout >/dev/null 2>&1; then
+    timeout -k 5 30 "$@"
+  else
+    "$@"
+  fi
+}
+
+# stderr joins the capture: confluence-cred writes nothing there but an `unusable=` reason line,
+# and fields are picked by their key, so noise on it cannot become a credential.
+cred="$(bounded workspace-agent confluence-cred 2>&1)" || cred=""
+why="$(printf '%s\n' "$cred" | field unusable | tr -cd '[:print:]' | cut -c1-200)"
+tok="$(printf '%s\n' "$cred" | field token)"
+domain="$(printf '%s\n' "$cred" | field domain)"
+apipath="$(printf '%s\n' "$cred" | field apipath)"
+auth="$(printf '%s\n' "$cred" | field auth)"
+site="$(printf '%s\n' "$cred" | field site)"
+login="$(printf '%s\n' "$cred" | field login)"
+
+if [ -z "$tok" ] || [ -z "$domain" ] || [ -z "$apipath" ] || [ -z "$auth" ]; then
+  if [ -n "$why" ]; then
+    echo "confluence: the Atlassian connection cannot be used for Confluence [$why]. Reconnect Jira in Settings (one Atlassian connection serves both); if the authorization has no Confluence scopes, the tenant administrator first adds them to the Atlassian app and ticks the Confluence option on the tenant's Jira card." >&2
+    exit 1
+  fi
+  echo "confluence: no Atlassian connection in this workspace. Connect Jira in Settings (it serves Confluence too), or set up your own with 'confluence init'." >&2
+  exec "$real" "$@"
+fi
+
+export CONFLUENCE_DOMAIN="$domain" CONFLUENCE_API_PATH="$apipath" CONFLUENCE_AUTH_TYPE="$auth" \
+  CONFLUENCE_PROTOCOL=https CONFLUENCE_FORCE_CLOUD=true CONFLUENCE_CLI_ANALYTICS=false
+unset CONFLUENCE_ALLOW_INSECURE_HTTP CONFLUENCE_SITE_URL CONFLUENCE_EMAIL
+[ -z "$site" ] || export CONFLUENCE_SITE_URL="$site"
+[ "$auth" != basic ] || [ -z "$login" ] || export CONFLUENCE_EMAIL="$login"
+export CONFLUENCE_API_TOKEN="$tok"
+exec "$real" "$@"

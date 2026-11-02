@@ -122,6 +122,9 @@ var toolSpecs = []toolSpec{
 	// /usr/local/bin/jira is the transparent-auth wrapper. `jira version` prints
 	// `(Version="1.7.0", GitCommit=…, GoVersion="go1.24…")`; the first number is the release.
 	{Name: "jira", Cmd: "jira", Baked: "/usr/local/libexec/jira", Args: []string{"version"}, Pin: "jira"},
+	// /usr/local/bin/confluence is the transparent-auth wrapper over pchuri/confluence-cli (npm);
+	// /usr/local/libexec/confluence links to its bin. `confluence --version` prints the bare number.
+	{Name: "confluence", Cmd: "confluence", Baked: "/usr/local/libexec/confluence", Pin: "confluence"},
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
 	{Name: "node", Cmd: "node", Baked: "/usr/local/bin/node"},
 	{Name: "python", Cmd: "python3", Baked: "/usr/bin/python3"},

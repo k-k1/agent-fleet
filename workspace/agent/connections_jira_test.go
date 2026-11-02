@@ -277,3 +277,26 @@ func TestConnectionsGetBackfillsJiraScopes(t *testing.T) {
 		t.Fatal("scopes not stored")
 	}
 }
+
+// The card learns whether the confluence CLI can work: only an OAuth site with recorded scopes
+// gets a verdict, so an API token or an older connection never shows a false warning.
+func TestJiraStatusConfluenceScopes(t *testing.T) {
+	site := func(scopes ...string) *secrets.Data {
+		return &secrets.Data{Jira: &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "fake-at", CloudID: "c1",
+			Sites: []secrets.JiraSite{{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: scopes}}}}
+	}
+	for _, tc := range []struct {
+		name string
+		s    *secrets.Data
+		want any
+	}{
+		{"granted", site("read:jira-work", "search:confluence"), "granted"},
+		{"missing", site("read:jira-work", "offline_access"), "missing"},
+		{"unrecorded", site(), nil},
+		{"api token", &secrets.Data{Jira: &secrets.JiraCreds{Site: "https://a.atlassian.net", Email: "e@x", Token: "t"}}, nil},
+	} {
+		if got := jiraStatus(tc.s)["confluenceScopes"]; got != tc.want {
+			t.Errorf("%s: confluenceScopes = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

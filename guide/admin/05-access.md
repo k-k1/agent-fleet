@@ -131,6 +131,18 @@ To register one:
 > connected without these scopes. Members who are already
 > connected get the new scopes when they reconnect Jira.
 
+> **Jira: Confluence for the `confluence` CLI needs more scopes.** The Confluence CLI in
+> members' sessions uses the same Atlassian authorization as Jira. In the Developer Console, open
+> the app's **Permissions → Confluence API → Configure → Edit Scopes** and select these seven
+> classic scopes: `read:confluence-content.all`, `read:confluence-content.summary`,
+> `read:confluence-space.summary`, `search:confluence`, `write:confluence-content`,
+> `readonly:content.attachment:confluence` and `write:confluence-file`. **Then** tick *The app
+> also grants the Confluence scopes* on the Jira card and save, in that order, for the same reason
+> as above: ticking first stops every member from connecting. A tenant that never ticks it keeps
+> working as before; its members just have no `confluence` CLI. Members who are already connected
+> get the scopes when they reconnect Jira, and a member whose Jira card says "Confluence: not
+> available" is connected without them.
+
 The secret is **encrypted on save and never shown again**. When you edit the
 registration later, leaving the secret field empty keeps the stored one; fill it in
 only when you actually want to change it. **Remove registration** takes the OAuth

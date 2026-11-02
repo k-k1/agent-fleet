@@ -139,6 +139,33 @@ describe("git provider OAuth", () => {
     });
   });
 
+  it("offers the Confluence scope group next to Jira Software and saves each independently", async () => {
+    api.mockResolvedValue({
+      providers: [
+        {
+          provider: "jira",
+          client_id: "cid-1",
+          has_secret: true,
+          needs_secret: true,
+          scope_groups_available: ["jira_software", "confluence"],
+        },
+      ],
+    });
+    apiJSON.mockResolvedValue({ provider: "jira", client_id: "cid-1", scope_groups: ["confluence"] });
+    await mount();
+    const jira = groupFor("Jira");
+    const boxes = jira.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect(boxes.length).toBe(2);
+    expect(jira.textContent).toContain("search:confluence");
+    await act(async () => boxes[1].click());
+    await act(async () => buttonIn(jira, "保存").click());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/jira", "PUT", {
+      client_id: "cid-1",
+      client_secret: "",
+      scope_groups: ["confluence"],
+    });
+  });
+
   it("shows a stored scope group as ticked", async () => {
     api.mockResolvedValue({
       providers: [

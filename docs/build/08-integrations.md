@@ -385,6 +385,58 @@ those variables in for one `exec`:
   ADF) renders Japanese correctly, so there is no reason to build `main` from source while the
   connection is Cloud-only. The image smoke checks the pinned version.
 
+### 8.4.3 Confluence
+
+`confluence` ([pchuri/confluence-cli](https://github.com/pchuri/confluence-cli), MIT, npm) gives
+every agent kind reading, searching, creating and updating Confluence pages. It rides the Jira
+connection: one Atlassian 3LO authorization covers both products, so there is no second
+connection to make or to refresh. The package is installed into `/usr/local/lib/confluence-cli`,
+`/usr/local/libexec/confluence` links to its bin, and `/usr/local/bin/confluence` is
+`workspace/confluence-auth-wrapper.sh`. The CLI reads `CONFLUENCE_DOMAIN`, `CONFLUENCE_API_PATH`,
+`CONFLUENCE_AUTH_TYPE`, `CONFLUENCE_API_TOKEN` and `CONFLUENCE_EMAIL` from the environment, and
+when they are set it ignores its config file altogether. On each run the wrapper asks
+`workspace-agent confluence-cred` (`workspace/agent/internal/jirax/confluence_cred.go`) and fills
+them in for one `exec`:
+
+- **OAuth connection**: `bearer` against `api.atlassian.com`, path
+  `/ex/confluence/{cloudId}/wiki/rest/api`. The site's own host refuses a 3LO token.
+  `CONFLUENCE_SITE_URL` is the site, so page links point at it. Measured against a stub server
+  with the pinned CLI: it sends `Authorization: Bearer …` to exactly that path.
+- **API-token connection**: `basic` with the stored email, against the site's host and
+  `/wiki/rest/api`.
+- **One refresh, one lock.** `confluence-cred` and `jira-cred` share `freshConnection`, so the
+  renewal takes the same `jira-refresh` store lock and re-reads the store inside it. A rotating
+  refresh token is exchanged once whichever of jira, confluence or the Agent notices the expiry
+  (`TestConfluenceAndJiraCredShareOneRefreshExchange`).
+- **Scopes are an opt-in group, like Jira Software.** Atlassian refuses an authorization that
+  asks for a scope the app was not given, so the Confluence scopes (`confluenceScopes` in
+  `control-plane/oauth_jira.go`) are requested only when the administrator ticks the
+  *Confluence* group on the tenant's Jira card (`scope_groups: ["confluence"]`) after adding them
+  to the app. A tenant that does nothing keeps connecting with the Jira scopes exactly as before.
+  A connection made without them gets, from `confluence-cred`, an `unusable=` reason (the site's
+  recorded scopes contain nothing with `confluence`), and the wrapper prints one line telling the
+  member to reconnect Jira instead of running into a bare 401. Unknown scopes (an older store,
+  a failed lookup) are never a refusal. Settings shows the same verdict
+  (`confluenceScopes: "missing"` in the connection status).
+- **The user's own setup wins, decided by what is there, never by reading a config**: any
+  `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a
+  `config.json` in `CONFLUENCE_CONFIG_DIR` (else `$XDG_CONFIG_HOME/confluence-cli` and
+  `~/.confluence-cli`) runs the CLI unchanged. `init`, `profile`, `stats`, `help`, `--version` and
+  `--help` never ask the Agent, which also keeps the Toolchains probe off the store lock.
+- **Fails closed**: any helper error runs the CLI with no injected auth (after a one-line hint
+  that names Settings and `confluence init`); only an `unusable=` answer stops it. The token
+  lives in the wrapper's variables and, at the end, in the exec'd CLI's environment: never argv,
+  never a file, never printed (`workspace/confluence-auth-wrapper-test.sh`, run by CI, checks
+  each of these against stubs). `CONFLUENCE_CLI_ANALYTICS=false` stops the CLI writing a usage
+  counter into its config directory.
+- **Pin**: `CONFLUENCE_CLI_VERSION` in the Dockerfile. The package ships an
+  `npm-shrinkwrap.json`, so its dependency tree is pinned with it. The Dockerfile checks that
+  `--version` prints the pin.
+- **Not verified end to end**: the image build and a live Atlassian authorization have not been
+  run (neither is reachable from a development workspace). The scope list follows the CLI's
+  README for the commands it documents; granular scopes such as folder listing
+  (`read:hierarchical-content:confluence`) are not requested.
+
 ## 8.5 Claude authentication and onboarding
 
 **The method**: the CLI's own subscription sign-in, `claude auth login --claudeai`. The

@@ -419,7 +419,8 @@ func TestJiraScopeGroupsAreOptInAndReachTheAuthorizeURL(t *testing.T) {
 	if sc := scope(); strings.Contains(sc, "jira-software") || !strings.Contains(sc, "write:jira-work") {
 		t.Fatalf("without the group: scope = %q", sc)
 	}
-	if c := card(); len(c.ScopeGroups) != 0 || len(c.ScopeGroupsAvailable) != 1 || c.ScopeGroupsAvailable[0] != "jira_software" {
+	if c := card(); len(c.ScopeGroups) != 0 || len(c.ScopeGroupsAvailable) != 2 ||
+		c.ScopeGroupsAvailable[0] != "jira_software" || c.ScopeGroupsAvailable[1] != "confluence" {
 		t.Fatalf("card = %+v", c)
 	}
 
@@ -437,6 +438,22 @@ func TestJiraScopeGroupsAreOptInAndReachTheAuthorizeURL(t *testing.T) {
 		t.Fatalf("card after save = %+v", c)
 	}
 
+	// The confluence group adds its own scopes on top, and only when ticked: an app that was not
+	// given them makes Atlassian refuse the whole authorization, Jira-only members included.
+	if w := gitOAuthCall(api, http.MethodPut, "sub", "jira", "admin@sub.co.jp",
+		`{"client_id":"cid-1","scope_groups":["confluence"]}`); w.Code != http.StatusOK {
+		t.Fatalf("save with confluence: %d %s", w.Code, w.Body.String())
+	}
+	sc = scope()
+	for _, want := range strings.Fields(jiraScopes + " " + confluenceScopes) {
+		if !strings.Contains(" "+sc+" ", " "+want+" ") {
+			t.Errorf("confluence scope %q is missing %q", sc, want)
+		}
+	}
+	if strings.Contains(sc, "jira-software") {
+		t.Errorf("confluence group pulled in the Jira Software scopes: %q", sc)
+	}
+
 	// Unticking is a save without the field.
 	if w := gitOAuthCall(api, http.MethodPut, "sub", "jira", "admin@sub.co.jp", `{"client_id":"cid-1"}`); w.Code != http.StatusOK {
 		t.Fatalf("save without group: %d %s", w.Code, w.Body.String())
@@ -447,7 +464,7 @@ func TestJiraScopeGroupsAreOptInAndReachTheAuthorizeURL(t *testing.T) {
 
 	// A group the provider does not have is refused, not silently dropped.
 	for _, tc := range []struct{ provider, body string }{
-		{"jira", `{"client_id":"cid-1","scope_groups":["confluence"]}`},
+		{"jira", `{"client_id":"cid-1","scope_groups":["from_a_newer_server"]}`},
 		{"bitbucket", `{"client_id":"key-1","client_secret":"s","scope_groups":["jira_software"]}`},
 	} {
 		if w := gitOAuthCall(api, http.MethodPut, "sub", tc.provider, "admin@sub.co.jp", tc.body); w.Code != http.StatusBadRequest ||

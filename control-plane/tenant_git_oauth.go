@@ -114,13 +114,17 @@ func (m *manager) gitOAuthConfigured(ctx context.Context, tenantID, provider str
 // scopeGroupJiraSoftware is the Jira Software scopes (boards, sprints, epics) on a Jira app.
 const scopeGroupJiraSoftware = "jira_software"
 
+// scopeGroupConfluence is the Confluence scopes on a Jira app: the same Atlassian authorization
+// then also serves the Confluence CLI.
+const scopeGroupConfluence = "confluence"
+
 // gitOAuthScopeGroupsFor is the closed set of optional scope groups per provider.
 //
 // A group is opt-in rather than always requested because Atlassian refuses an authorize
 // request naming a scope the app was not given in the developer console, and that would
 // break connecting for every member of a tenant whose administrator has not added it yet.
 var gitOAuthScopeGroupsFor = map[string][]string{
-	gitOAuthJira: {scopeGroupJiraSoftware},
+	gitOAuthJira: {scopeGroupJiraSoftware, scopeGroupConfluence},
 }
 
 // parseScopeGroups splits the stored column, dropping anything outside the provider's set.

@@ -325,3 +325,69 @@ func TestJiraWrapperVersionSkipsCredentialHelper(t *testing.T) {
 		t.Errorf("probe through wrapper = %+v, want 1.7.0", got)
 	}
 }
+
+// confluence is an npm package behind a wrapper: Baked is the libexec link, the pin follows jira's
+// in the positional versions.json printf, and `--version` prints the bare number.
+func TestConfluenceRowAndPin(t *testing.T) {
+	var spec *toolSpec
+	for i := range toolSpecs {
+		if toolSpecs[i].Name == "confluence" {
+			spec = &toolSpecs[i]
+		}
+	}
+	if spec == nil {
+		t.Fatal("toolSpecs has no confluence row")
+	}
+	if spec.Cmd != "confluence" || spec.Baked != "/usr/local/libexec/confluence" || spec.Pin != "confluence" || len(spec.Args) != 0 {
+		t.Errorf("confluence row = %+v", *spec)
+	}
+	df, err := os.ReadFile("../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(df)
+	if !strings.Contains(s, `"jira":"%s","confluence":"%s"`) || !strings.Contains(s, `"$JIRA_CLI_VERSION" "$CONFLUENCE_CLI_VERSION"`) {
+		t.Error("confluence key and CONFLUENCE_CLI_VERSION must directly follow jira in the versions.json printf")
+	}
+	if !strings.Contains(s, "COPY confluence-auth-wrapper.sh /usr/local/bin/confluence") ||
+		!strings.Contains(s, "/usr/local/bin/jira /usr/local/bin/confluence ") {
+		t.Error("Dockerfile must install and chmod the confluence wrapper")
+	}
+	if got := extractVer("2.31.0"); got != "2.31.0" {
+		t.Errorf("extractVer(confluence) = %q, want 2.31.0", got)
+	}
+}
+
+// The Toolchains probe runs the wrapper; `--version` must not reach confluence-cred, which takes
+// the store lock and may renew an OAuth token over the network.
+func TestConfluenceWrapperVersionSkipsCredentialHelper(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real-confluence")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\necho 2.31.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "agent-calls")
+	agentStub := "#!/bin/sh\necho called >> " + calls + "\nsleep 3\nprintf 'token=fake-tok\\n'\n"
+	if err := os.WriteFile(filepath.Join(bin, "workspace-agent"), []byte(agentStub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", dir)
+	t.Setenv("AF_CONFLUENCE_REAL", real)
+
+	start := time.Now()
+	got := probeVersion(context.Background(), "../confluence-auth-wrapper.sh", []string{"--version"}, nil)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("wrapper --version took %v, want no credential round trip", d)
+	}
+	if _, err := os.Stat(calls); err == nil {
+		t.Error("wrapper --version called workspace-agent confluence-cred")
+	}
+	if got == nil || got.Version != "2.31.0" {
+		t.Errorf("probe through wrapper = %+v, want 2.31.0", got)
+	}
+}

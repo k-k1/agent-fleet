@@ -2,11 +2,11 @@
 audience: "セッションをワークスペースの外のサービスとつなぐ人"
 ---
 
-# 15. 外部サービスとログイン済み CLI — gh / bkt / jira・Discord / Slack・運用ツール
+# 15. 外部サービスとログイン済み CLI — gh / bkt / jira / confluence・Discord / Slack・運用ツール
 
 [English](15-external-services.md) | 日本語
 
-この章は、セッションから使う外部サービスを扱います。`gh`・`bkt`・`jira` の CLI、ほかのログイン済み CLI、Discord / Slack のチャット連携、監視ツールを会話につなぐ方法です。AWS と Google Cloud は [16 クラウドのアカウント](16-cloud-accounts.ja.md) にあります。
+この章は、セッションから使う外部サービスを扱います。`gh`・`bkt`・`jira`・`confluence` の CLI、ほかのログイン済み CLI、Discord / Slack のチャット連携、監視ツールを会話につなぐ方法です。AWS と Google Cloud は [16 クラウドのアカウント](16-cloud-accounts.ja.md) にあります。
 
 ## セッションで `gh` と `bkt` を使う
 
@@ -116,6 +116,29 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
   ください（自分の `--server` を付けた `jira init`、自分で用意した設定ファイル、
   または `JIRA_API_TOKEN`）。その場合 `jira` は、保存済みの接続を使わず、あなたの設定どおりに動きます。
 
+## セッションで `confluence` を使う
+
+Jira を OAuth または API トークンでつなぐ（設定 > **課題管理**）と、Confluence の CLI である
+`confluence` が、どのエージェントのセッションでも `confluence init` もログインもなしで動きます。
+`jira` と同じ Atlassian の接続を使い、期限が近づけば更新するので、そのためにセッションを再起動する
+必要はありません: `confluence search "リリースノート"`、`confluence read PAGE_ID`、`confluence spaces`、
+`confluence create "タイトル" SPACE --content "…"`、`confluence update PAGE_ID …`。
+そのほかは `confluence --help` で確認できます。
+
+- **OAuth では Confluence のスコープが要ります。** テナント管理者が有効にします（Atlassian アプリに
+  スコープを追加したあと、テナントの Jira カードの *Confluence* にチェックを入れます）。そのあと
+  あなたが一度 **Jira を接続し直して**ください。それまで `confluence` は、Atlassian の認可に
+  Confluence のスコープがないという 1 行を表示して、実行しません。Jira はそのまま使え、設定 > 課題管理に
+  「Confluence: 利用できません」と出ます。API トークンの接続には追加の作業は要りません。
+- **変更できる範囲**は、あなたの接続でできる範囲です。CLI はあなたとして書き込みます。
+- **あなた自身の設定は上書きしません。** `CONFLUENCE_DOMAIN`・`CONFLUENCE_API_TOKEN`（ほか、ホストや
+  認証情報を決める `CONFLUENCE_*` 変数）を設定した、`--profile` を付けた、`confluence init` を実行した
+  （`~/.config/confluence-cli` に `config.json` がある）場合、`confluence` は保存済みの接続を使わず、
+  あなたの設定どおりに動きます。Confluence Data Center はこの方法で設定します。
+- **認可が期限切れ・取り消し**のときは、CLI 自身の「`confluence init` を実行してください」ではなく、
+  設定で Jira を接続し直すよう伝える 1 行を表示します。
+- CLI が表示するページのリンクは、あなたの Confluence サイトを指します。
+
 ## サインイン済みの CLI
 
 次のコマンドは、セッションでも端末でも、どのエージェントでも、設定でつないだ接続を使います。端末でログインする
@@ -127,6 +150,7 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 | `gh` | **Git ホスティング**の GitHub | [15](15-external-services.ja.md#セッションで-gh-と-bkt-を使う) |
 | `bkt` | **Git ホスティング**の Bitbucket Cloud（bitbucket.org） | [15](15-external-services.ja.md#セッションで-gh-と-bkt-を使う) |
 | `jira` | **課題管理**の Jira | [15](15-external-services.ja.md#セッションで-jira-を使う) |
+| `confluence` | **課題管理**の Jira（同じ Atlassian 接続） | [15](15-external-services.ja.md#セッションで-confluence-を使う) |
 | `af-aws-exec --profile <名前> -- <コマンド>` | **AWS プロファイル/SSM**。プロファイルの**ログイン**のあと | [16](16-cloud-accounts.ja.md#プロファイルを端末sdkビルドツールから使う) |
 | `af-gcloud-exec --profile <名前> -- <コマンド>` | **Google Cloud**。プロファイルの**ログイン**のあと | [16](16-cloud-accounts.ja.md#プロファイルとしてコマンドを実行する) |
 
