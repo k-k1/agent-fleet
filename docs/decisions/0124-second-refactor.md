@@ -586,3 +586,22 @@ still reads the constants and passes. `scripts/stub-kind-count.sh`: 14 non-test,
 session constant and table row, and one constructor line. Still hand-kept: the Console lists.
 
 Follow-ups: #2933.
+
+## Note (2026-11-02): the live-catalog chain in session creation (#2925, slice 6)
+
+`sessionx/session_create.go` held 7 kind-literal branches (base measured 90 module-wide). Classified:
+the two lcpp lines at the head of `checkModel` (the user's display-setting gate and "an lcpp session
+needs a model") and `MuseContributorMode` (`c.kind == muse`) are one product's behaviour and stay.
+The other 4 were the if/else chain that resolves an explicit model against a live catalog (codex,
+copilot, opencode, lcpp). It is now the package-local table `liveCatalogs` (exact normalized kind,
+rows `choices` plus an optional `retired` for opencode's own refusal wording), reached through
+`createRun.resolveLiveCatalogModel`. It is a table and not an `agents` capability because every row
+reads a seam owned by `sessionx` (`codexModelsFn`, `copilotModelsFn`, `opencodeModelsFn`,
+`opencodeRetiredFn`, `LcppLiveModels`), read at call time, and an agent package cannot import
+`sessionx`; the seams are untouched, so the existing tests keep injecting through them.
+`TestLiveCatalogsMatchOldChain` holds the table to a literal copy of the old chain over every
+registered kind, alias spellings, an unregistered kind and short names, exact ids, misses, a retired id
+and no model. `kindLiteralCeiling` goes 90 → 86 (measured). Behaviour unchanged; not verified against
+a live fleet.
+
+Follow-ups: #2925.

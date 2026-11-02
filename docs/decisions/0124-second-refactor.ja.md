@@ -466,3 +466,19 @@ panic する。順序は挙動（main.go が managed の kind を再接続し、
 コンストラクタ 1 行。手書きのまま残るのは Console の一覧。
 
 Follow-ups: #2933.
+
+## 追記 (2026-11-02): セッション作成の live カタログの連鎖 (#2925、スライス 6)
+
+`sessionx/session_create.go` には kind リテラルの分岐が 7 件あった（base はモジュール全体で 90 と実測）。
+分類: `checkModel` 冒頭の lcpp 2 行（表示設定によるゲートと「lcpp にはモデル必須」）と
+`MuseContributorMode`（`c.kind == muse`）は 1 製品の挙動なので残す。残り 4 件は、明示されたモデルを
+live カタログ（codex・copilot・opencode・lcpp）で解決する if/else の連鎖で、パッケージ内の表
+`liveCatalogs`（正規化後の kind の完全一致。行は `choices` と、opencode 専用の文言用の任意の `retired`）に
+なり、`createRun.resolveLiveCatalogModel` から引く。`agents` の capability にしなかったのは、どの行も
+`sessionx` が持つ継ぎ目（`codexModelsFn`・`copilotModelsFn`・`opencodeModelsFn`・`opencodeRetiredFn`・
+`LcppLiveModels`）を呼び出し時に読むためで、agent パッケージは `sessionx` を import できない。継ぎ目は
+そのままなので既存のテストはこれまでどおり差し込める。`TestLiveCatalogsMatchOldChain` が旧連鎖の
+リテラルコピーとの一致を、登録済みの全 kind・別名の綴り・未登録の kind・短い名前／完全な id／外れ／
+retired の id／モデルなしで固定する。`kindLiteralCeiling` は 90 → 86（実測）。挙動の変更なし。実機では未確認。
+
+Follow-ups: #2925.
