@@ -175,7 +175,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if err := startSessionTmux(m, false); err != nil {
 			if !writeCodexReleasingErr(w, err) {
-				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+				writeTmuxLaunchErr(w, err)
 			}
 			return
 		}

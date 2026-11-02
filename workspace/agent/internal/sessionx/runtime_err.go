@@ -80,6 +80,17 @@ func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error)
 	return d.Resume(m)
 }
 
+// writeTmuxLaunchErr answers a failed Terminal (CLI) launch. An opencode version the Agent
+// refuses is permanent and gets the same 409 code as the Managed path; every other failure stays
+// 500 tmux_failed.
+func writeTmuxLaunchErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, opencode.ErrUnsupportedVersion) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
+		return
+	}
+	httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+}
+
 // writeStartRefusal answers err with its typed code when it is a StartRefusalError.
 func writeStartRefusal(w http.ResponseWriter, err error) bool {
 	var refusal *StartRefusalError
