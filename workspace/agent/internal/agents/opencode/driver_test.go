@@ -283,7 +283,14 @@ func waitPumpIdle(t *testing.T, h *threadHandle) {
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	waitStateWithin(t, h, want, 5*time.Second)
+}
+
+// waitStateWithin is waitState with a caller-chosen deadline, for tests that must survive a
+// loaded host.
+func waitStateWithin(t *testing.T, h *threadHandle, want agents.TurnState, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		h.mu.Lock()
 		st := h.state
