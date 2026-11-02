@@ -113,28 +113,20 @@ func TestAgyCollectsFromConversationDir(t *testing.T) {
 func TestAgyLeavesNoHomeBehind(t *testing.T) {
 	exe, _, _ := fakeAgy(t, map[string][]byte{"conv-1/a.png": tinyPNG(t, 8, 8)}, agyHappyStream, 0)
 	p := newAgyTestProvider(t, exe)
-	before := tempEntries(t)
+	// A private temp root: the shared /tmp also holds other processes' af-imagegen-agy-* homes
+	// (parallel sessions, a concurrent run of this very test), which are not ours to judge.
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a cat"}); err != nil {
 		t.Fatal(err)
 	}
-	for name := range tempEntries(t) {
-		if !before[name] && strings.HasPrefix(name, "af-imagegen-agy-") {
-			t.Fatalf("the throwaway home %s survived the run", name)
-		}
-	}
-}
-
-func tempEntries(t *testing.T) map[string]bool {
-	t.Helper()
-	out := map[string]bool{}
-	ents, err := os.ReadDir(os.TempDir())
+	ents, err := os.ReadDir(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range ents {
-		out[e.Name()] = true
+		t.Fatalf("the throwaway home %s survived the run", e.Name())
 	}
-	return out
 }
 
 // The whole reason the route is worth having: the aspect ratio really does reach the tool, so

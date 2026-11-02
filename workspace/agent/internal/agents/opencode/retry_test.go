@@ -133,7 +133,10 @@ func TestPermanentRetryFailsTheTurn(t *testing.T) {
 		if !strings.Contains(excerpt, "requires Global regions") {
 			t.Errorf("failure = %q, want the upstream message", excerpt)
 		}
-	case <-time.After(2 * time.Second):
+	// The notifier fires on its own goroutine after the state is settled (agents.notify), so on a
+	// loaded host the report can trail waitState by more than a couple of seconds. The deadline
+	// only bounds a report that never comes; it is not a timing assertion.
+	case <-time.After(30 * time.Second):
 		t.Fatal("the failed turn was not reported")
 	}
 	got := enriched(h)
