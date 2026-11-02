@@ -48,12 +48,14 @@ keep it in mind.
   deployment row.
   Credential writes are recorded too, without ever naming a secret: `connection.<kind>.save` and
   `connection.<kind>.delete` (git, aws, cloudwatch, discord, grafana, jira, lcpp, pagerduty, slack,
-  svn, opencode and the agent CLIs), `connection.<kind>.api_key` (codex, muse),
+  svn, opencode and the agent CLIs), `connection.<kind>.api_key` (codex, muse), `connection.opencode.oauth_delete`,
   `connection.<kind>.signin` (one row, written by the call that finished the sign-in; a still-pending poll, a repeat of
   the finishing poll and a poll made while already signed in write nothing) and `mcp.server.create` / `update` / `delete` / `secrets` / `oauth_client`.
   The target is the git host, the provider key's variable name or the MCP server id, and empty
   otherwise. A failed write (an error answer from the workspace) leaves no row. `session.spend_cap`,
   `session.lock` and `repo.lock` record who set a spend cap or flipped a deletion lock.
+  The Control Plane itself writes `workspace.agent_silent` when a running workspace's Agent stops
+  answering and `workspace.agent_recovered` when it answers again.
 - **Not recorded**: plain **reads** (just opening and viewing a file, just browsing a list) are
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.

@@ -12,6 +12,31 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.39.0](0.39.0.ja.md) — 2026-11-02
+
+**New / Improved**
+
+- **[作業項目]** セッションがブランチの PR（GitHub・Bitbucket）、ブランチ名や PR タイトルの Jira キー、PR がクローズする Issue にリンク。`link_work_item` ツール。リンクの引き継ぎ。項目の詳細にリンクしたセッションの一覧（停止中も）と「外す」。マージ済み・クローズの PR は完了表示 ([#3134](https://github.com/k-k1/agent-fleet/issues/3134), [#3147](https://github.com/k-k1/agent-fleet/issues/3147), [#3166](https://github.com/k-k1/agent-fleet/issues/3166))
+- **[通知]** セッションの PR のマージ・クローズ、GitHub ではマージ可能になったことを 1 回通知 ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
+- **[プランレビュー]** ライブのプランカードに「最大 N 回まで自動で再レビュー」 ([#2810](https://github.com/k-k1/agent-fleet/issues/2810))
+- **[ホーム]** 「ひと目で」のタイル（マシン・稼働時間・エージェント・モデル使用量・使用量の上限） ([#2362](https://github.com/k-k1/agent-fleet/issues/2362))
+- **[設定]** 設定 › 表示に地域の形式とタイムゾーン。Console の日時・数値と Markdown のエクスポートが従う ([#2185](https://github.com/k-k1/agent-fleet/issues/2185))
+- **[ワークスペース]** Agent が応答しない実行中のワークスペースに「応答なし」のバッジ。テナント管理者にも表示・通知し、自動では止めない ([#2518](https://github.com/k-k1/agent-fleet/issues/2518))
+- **[管理]** メンバーのホームボリュームがほぼいっぱい、または起動時のインストール失敗をテナント管理者に通知 ([#2427](https://github.com/k-k1/agent-fleet/issues/2427))
+- **[gke]** GKE の Terraform スタックに外向き通信のアーカイブ用 Cloud Storage バケット（任意）。実環境での受け入れ確認は未了 ([#2733](https://github.com/k-k1/agent-fleet/issues/2733))
+- **[エージェント]** Antigravity・Cursor・Kiro・Muse Code のカードに再認証。ログイン切れのトーストがエージェント名を出す ([#3025](https://github.com/k-k1/agent-fleet/issues/3025), [#3122](https://github.com/k-k1/agent-fleet/issues/3122))
+- **[使用量の上限]** 予約した自動再開を停止中のセッションにも表示。Claude・Codex の上限が早く解けたら前倒し、手で続けたら取り消し ([#3185](https://github.com/k-k1/agent-fleet/issues/3185), [#3186](https://github.com/k-k1/agent-fleet/issues/3186), [#3196](https://github.com/k-k1/agent-fleet/issues/3196))
+- **[使用量]** 使用量のチップが Agent の再起動後も最後の読み取りを保持 ([#3127](https://github.com/k-k1/agent-fleet/issues/3127))
+- **[ワークスペース]** 設定 › マシンのツールキャッシュに Maven と npx ([#3079](https://github.com/k-k1/agent-fleet/issues/3079))
+- **[監査]** 接続と API キー、MCP サーバー、ロック、支出の上限の変更を監査 ([#2883](https://github.com/k-k1/agent-fleet/issues/2883))
+- **[opencode]** OpenCode 1.x のサポート終了。1.x の起動は断り、戻すときは以前の 2.x へピン。`~/.local` に残った `opencode-ai` は取り除く ([#3132](https://github.com/k-k1/agent-fleet/issues/3132))
+
+**Fixed**
+
+- **[承認]** タイムアウトちょうどに決めた承認が、何も実行されていないのに承認済みと報告されることがあった ([#3042](https://github.com/k-k1/agent-fleet/issues/3042), [#3157](https://github.com/k-k1/agent-fleet/issues/3157))
+- **[ミラー]** Claude の回答待ちの質問が 2 回描かれた ([#3190](https://github.com/k-k1/agent-fleet/issues/3190))
+- **[作業項目]** 狭い画面で項目の詳細のセッションの行がダイアログからはみ出した ([#3175](https://github.com/k-k1/agent-fleet/issues/3175))
+
 ## [0.38.0](0.38.0.ja.md) — 2026-10-31
 
 **CLI ピン** — Claude Code 2.1.316 / Codex 0.166.0 / Antigravity 1.4.12 / Kiro 2.37.0 / OpenCode 2.2.5

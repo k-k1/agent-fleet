@@ -13,6 +13,31 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.39.0](0.39.0.md) — 2026-11-02
+
+**New / Improved**
+
+- **[work items]** Sessions link to their branch's PR (GitHub, Bitbucket), Jira keys in the branch or PR title and issues the PR closes; `link_work_item` tool; links inherited; item details list linked sessions (also when stopped) with Remove; merged / closed PRs shown done ([#3134](https://github.com/k-k1/agent-fleet/issues/3134), [#3147](https://github.com/k-k1/agent-fleet/issues/3147), [#3166](https://github.com/k-k1/agent-fleet/issues/3166))
+- **[notifications]** A session's PR merged or closed, or on GitHub ready to merge, is notified once ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
+- **[plan review]** "Review automatically, up to N rounds" on the live plan card ([#2810](https://github.com/k-k1/agent-fleet/issues/2810))
+- **[home]** "At a glance" tiles: machine, running time, agents, model usage, usage limits ([#2362](https://github.com/k-k1/agent-fleet/issues/2362))
+- **[settings]** Region format and time zone in Settings › Display; Console dates and numbers and Markdown exports follow them ([#2185](https://github.com/k-k1/agent-fleet/issues/2185))
+- **[workspace]** "Not responding" badge for a running workspace whose Agent went silent; shown to tenant admins and notified, never stopped automatically ([#2518](https://github.com/k-k1/agent-fleet/issues/2518))
+- **[admin]** Tenant admins notified of a member's nearly full home volume or a failed boot install ([#2427](https://github.com/k-k1/agent-fleet/issues/2427))
+- **[gke]** Optional Cloud Storage bucket for the egress archive in the GKE Terraform stack; real-GCS acceptance open ([#2733](https://github.com/k-k1/agent-fleet/issues/2733))
+- **[agents]** Re-authenticate on Antigravity, Cursor, Kiro and Muse Code cards; auth-expired toasts name the agent ([#3025](https://github.com/k-k1/agent-fleet/issues/3025), [#3122](https://github.com/k-k1/agent-fleet/issues/3122))
+- **[usage limit]** Booked auto-resume shown on stopped sessions, moved earlier when a Claude / Codex limit lifts early, cancelled when you carry on by hand ([#3185](https://github.com/k-k1/agent-fleet/issues/3185), [#3186](https://github.com/k-k1/agent-fleet/issues/3186), [#3196](https://github.com/k-k1/agent-fleet/issues/3196))
+- **[usage]** Usage chips keep their last reading across Agent restarts ([#3127](https://github.com/k-k1/agent-fleet/issues/3127))
+- **[workspace]** Maven and npx caches in Settings › Machine tool caches ([#3079](https://github.com/k-k1/agent-fleet/issues/3079))
+- **[audit]** Connections and API keys, MCP servers, locks and spend caps audited ([#2883](https://github.com/k-k1/agent-fleet/issues/2883))
+- **[opencode]** OpenCode 1.x no longer supported: a 1.x is refused, rollback is an earlier 2.x pin, a leftover `opencode-ai` in `~/.local` is removed ([#3132](https://github.com/k-k1/agent-fleet/issues/3132))
+
+**Fixed**
+
+- **[approvals]** An approval decided right at its timeout could be reported approved although nothing ran ([#3042](https://github.com/k-k1/agent-fleet/issues/3042), [#3157](https://github.com/k-k1/agent-fleet/issues/3157))
+- **[mirror]** A pending Claude question was drawn twice ([#3190](https://github.com/k-k1/agent-fleet/issues/3190))
+- **[work items]** Item details' session rows overflowed the dialog on narrow screens ([#3175](https://github.com/k-k1/agent-fleet/issues/3175))
+
 ## [0.38.0](0.38.0.md) — 2026-10-31
 
 **CLI pins** — Claude Code 2.1.316, Codex 0.166.0, Antigravity 1.4.12, Kiro 2.37.0, OpenCode 2.2.5

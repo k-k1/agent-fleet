@@ -55,8 +55,8 @@ Everything about appearance.
 - **Language**, **region format** and **time zone**: the region format (how dates and numbers are
   written) follows the display language by default, and the time zone follows your browser by default.
   "Follow browser" is a setting of its own, not a copy of today's zone, so it moves with you when you
-  travel. Pick a zone to pin it instead. Session mirror times and the times in files the Agent writes
-  (the Markdown export) use it, and a change applies immediately, without restarting the workspace.
+  travel. Pick a zone to pin it instead. Dates and times across the Console, including the session
+  mirror, and the times in files the Agent writes (the Markdown export) use it, and a change applies immediately, without restarting the workspace.
   Notifications, the assistant chat and schedules do not use these two settings yet.
 - **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes

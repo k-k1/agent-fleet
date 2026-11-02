@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.39.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.39.0) — 2026-11-02
+
+セッションが取り組んでいる Issue・チケット・プルリクエストに自分でリンクし、プルリクエストがマージ可能・
+マージ済み・クローズになると知らせるようになりました。プランは複数回まで自動でレビューでき、ホームに
+「ひと目で」が加わり、OpenCode 1.x のサポートは終了しました。
+
 ## [0.38.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.38.0) — 2026-10-31
 
 同じ IAM Identity Center ポータルを使う Settings の AWS プロファイルが 1 回のログインを共有でき、
