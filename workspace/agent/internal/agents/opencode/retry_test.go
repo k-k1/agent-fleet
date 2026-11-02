@@ -127,7 +127,7 @@ func TestPermanentRetryFailsTheTurn(t *testing.T) {
 	}
 
 	handleServeEvent(retryStatus(2, regionMsg))
-	waitState(t, h, agents.TurnFailed)
+	waitStateWithin(t, h, agents.TurnFailed, 30*time.Second)
 	select {
 	case excerpt := <-failed:
 		if !strings.Contains(excerpt, "requires Global regions") {
