@@ -31,6 +31,12 @@ func gitDirInfoFromFiles(dir string) (branch string, worktree, ok bool) {
 			return "", false, false
 		}
 	}
+	// Abs cleans ".." lexically, but git resolves it after following symlinks.
+	for _, el := range strings.Split(filepath.ToSlash(dir), "/") {
+		if el == ".." {
+			return "", false, false
+		}
+	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", false, false

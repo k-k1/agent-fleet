@@ -61,8 +61,8 @@ func TestGitDirInfoFromFilesMatchesRevParse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Review round 1: symlink into another repo's subdir / into no repo, and repos
-	// whose files disagree with what git accepts.
+	// Symlinks into another repo's subdir / into no repo, and repos whose files
+	// disagree with what git accepts.
 	other := filepath.Join(root, "other")
 	gitAt(t, root, "init", "-q", "-b", "target-branch", other)
 	gitAt(t, other, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i")
@@ -97,6 +97,7 @@ func TestGitDirInfoFromFilesMatchesRevParse(t *testing.T) {
 	cases := map[string]string{
 		"symlink into other repo subdir": filepath.Join(main, "alias-into-repo"),
 		"symlink out of any repo":        filepath.Join(main, "alias-out"),
+		"dotdot after symlink":           main + "/alias-into-repo/..", // concatenated: Join would clean the ".."
 		"symbolic loose branch ref":      symref,
 		"garbage loose branch ref":       broken,
 		"objects dir missing":            noobj,
