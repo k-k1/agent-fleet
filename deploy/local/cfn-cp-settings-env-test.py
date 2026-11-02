@@ -40,6 +40,7 @@ PLAIN = {
     "BackgroundHoldMax": "AF_BACKGROUND_HOLD_MAX",
     "WorkspaceStartDeadline": "AF_WORKSPACE_START_DEADLINE",
     "UsageSampleInterval": "AF_USAGE_SAMPLE_INTERVAL",
+    "AgentSilentStopAfter": "AF_AGENT_SILENT_STOP_AFTER",
     "GithubLoginClientId": "AF_GITHUB_LOGIN_CLIENT_ID",
     "GithubLabelJa": "AF_GITHUB_LABEL_JA",
     "GithubLabelEn": "AF_GITHUB_LABEL_EN",

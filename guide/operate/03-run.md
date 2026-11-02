@@ -346,6 +346,9 @@ shorter than `10m` (a smaller value is raised to it, with a log line), and needs
 within one `AF_USAGE_SAMPLE_INTERVAL` of the ceiling; it is later when the guards below hold it
 back, the lifecycle lock is busy, or the sweep did not complete.
 
+Where to set it: on ECS the `AgentSilentStopAfter` parameter of `30-ingress.yaml`; on Compose `.env`;
+on Kubernetes (and GKE) the `cp.env` behind the `af-cp-env` ConfigMap.
+
 The stop takes the same fences as an administrator's stop (the member's start lock, the lifecycle
 lease and the runtime operation fence), then decides again with them held: the workspace must
 still be `running` (a `starting` one, including a restart by the member, is left alone) and a
