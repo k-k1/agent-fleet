@@ -211,7 +211,7 @@ Two conventions recur in them:
   path. How the browser pane is meant to be used is
   [guide/ref/browser-pane.md](../../guide/ref/browser-pane.md).
 - **`agents/registry.ts` has one descriptor per session kind** — the agents plus `shell`
-  and `ssm` (`SESSION_KINDS` in `types/session.ts`). A descriptor holds the display
+  and `ssm` (`SESSION_KINDS`, from the rows of `agents/kindTable.ts`). A descriptor holds the display
   names, an availability predicate and a capability set, and the UI branches on
   capabilities rather than on kind names. Adding a kind starts with a descriptor; the
   other places that name kinds include the colours (§2.6) and
@@ -284,10 +284,11 @@ shape a change has to fit.
   theme does not end up with unreadable dark bars. highlight.js follows the theme through
   `--hl-*` variables. **Known limit: the terminal has no light theme** — it stays dark in
   light mode.
-- **Agent kind colours** come from `--kind-*` in `tokens.css`, for both themes. CSS uses
+- **Agent kind colours** are `hue.dark` / `hue.light` of a kind's row in `agents/kindTable.ts`;
+  the build expands them into `--kind-*` in `tokens.css` (markers, not literals), for both themes. CSS uses
   `var(--kind-*)`, and `color-mix(…)` for tints; **a CSS file does not repeat a kind's
-  colour literal**. The one copy outside `tokens.css` is `lib/termcolor.ts`, which mixes the
-  dark values into terminal backgrounds and has to change with them. A new kind's hue is
+  colour literal**. `lib/termcolor.ts` reads the dark values from the same table to mix
+  them into terminal backgrounds. A new kind's hue is
   checked against the existing hues and the semantic colours in both themes
   (`console/scripts/kindcolor/`).
 - **Icons split by role**: chrome is monochrome codicons following `currentColor`; file

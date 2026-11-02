@@ -15,11 +15,14 @@ import { kindDisplayName, kindLabel } from "../lib/sessionkind.ts";
 const ready = (k: string, conns: AvailCtx["conns"]) => !!conns && AGENTS[k as keyof typeof AGENTS].available({ conns });
 const gate = (conns: AvailCtx["conns"]) => repoLaunchKinds.filter((k) => ready(k, conns));
 
-// The kinds with no sign-in step. The pinned literals of this file: a kind that changes side
-// edits these lines on purpose; a new kind need not. Every other expectation below is
-// computed from the registry, so a new kind that needs a sign-in changes none of them.
-const CREDENTIAL_FREE = ["lcpp", "shell"];
-const NEEDS_SIGN_IN = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "muse"];
+// Whether each existing kind needs a sign-in before it is launchable: one declaration per kind,
+// not two lists. The pinned literal of this file: a kind that changes side edits its line on
+// purpose; a new kind need not add one. Every other expectation below is computed from the
+// registry, so a new kind that needs a sign-in changes none of them.
+const NEEDS_SIGN_IN: Record<string, boolean> = {
+  claude: true, codex: true, cursor: true, copilot: true, kiro: true, agy: true, opencode: true, muse: true,
+  lcpp: false, shell: false,
+};
 const credentialFree = repoLaunchKinds.filter((k) => ready(k, {}));
 // What the gate offers: the authenticated kinds plus the credential-free ones, in menu order.
 const offered = (authed: string[], free = credentialFree) => repoLaunchKinds.filter((k) => authed.includes(k) || free.includes(k));
@@ -38,7 +41,10 @@ describe("launch gate — unknown / failed connection state", () => {
     // kind either — ADR 0093 決定 10) are correctly still offered.
     expect(gate({})).toEqual(credentialFree);
     // the pin: each kind that exists today is on its side; a kind added later is unconstrained
-    expect(credentialFree.filter((k) => CREDENTIAL_FREE.includes(k) || NEEDS_SIGN_IN.includes(k))).toEqual(CREDENTIAL_FREE);
+    for (const [kind, needs] of Object.entries(NEEDS_SIGN_IN)) {
+      expect(ready(kind, {}), kind).toBe(!needs);
+      expect(credentialFree.includes(kind as keyof typeof AGENTS), kind).toBe(!needs);
+    }
   });
 });
 

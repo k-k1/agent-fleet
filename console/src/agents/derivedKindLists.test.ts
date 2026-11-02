@@ -7,17 +7,24 @@ import { AGENTS, MEMBER_DEFAULT_AGENTS, repoLaunchKinds, skillsCatalogKinds } fr
 import { ASSISTANT_AGENT_KINDS } from "../lib/settings/options.ts";
 import { MCP_KINDS, mcpKinds } from "../features/settings/mcp/mcpWire.ts";
 import { copyTargetKinds, type ProjectKindInfo } from "../features/repos/projectMcpWire.ts";
-import { SESSION_KINDS } from "../types/session.ts";
+import { SESSION_KINDS, type SessionKind } from "../types/session.ts";
 
 // projectMcpWire.ts imports the API client, which reads localStorage at load.
 vi.mock("../core/api/client.ts", () => ({ api: vi.fn(), apiJSON: vi.fn(), getTenant: () => "" }));
 
 describe("derived kind lists equal the literals they replaced", () => {
   it("repoLaunchKinds", () => {
-    // The pinned literal is the regression pin: every kind that was launchable stays, in this
-    // order. A kind added later lands wherever SESSION_KINDS puts it without editing the pin.
-    const pinned = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"];
-    expect(repoLaunchKinds.filter((k) => pinned.includes(k))).toEqual(pinned);
+    // One declaration per existing kind (launchableFromRepo), instead of a second copy of the
+    // list: ssm is the only kind a repo row cannot start. A kind added later is unconstrained
+    // here and lands in the menu wherever SESSION_KINDS puts it.
+    const launchable: Record<string, boolean> = {
+      claude: true, codex: true, cursor: true, copilot: true, kiro: true,
+      agy: true, opencode: true, lcpp: true, muse: true, shell: true, ssm: false,
+    };
+    for (const [kind, want] of Object.entries(launchable)) {
+      expect(repoLaunchKinds.includes(kind as SessionKind), kind).toBe(want);
+      expect(AGENTS[kind as SessionKind].caps.launchableFromRepo, kind).toBe(want);
+    }
     expect(repoLaunchKinds).toEqual(SESSION_KINDS.filter((k) => AGENTS[k].caps.launchableFromRepo));
   });
 

@@ -1,15 +1,14 @@
-diff --git a/console/src/agents/kindCatalog.ts b/console/src/agents/kindCatalog.ts
-index 141da6a67..98a2d741b 100644
---- a/console/src/agents/kindCatalog.ts
-+++ b/console/src/agents/kindCatalog.ts
-@@ -38,6 +38,7 @@ export const FALLBACK_KIND_FACTS: Record<SessionKind, KindFacts> = {
-   opencode: f(false, true, "yes"),
-   lcpp: f(true, true, "yes"),
-   muse: f(true, true, "yes"),
-+  zz: f(false, false, "no"),
-   shell: f(false, false, "no"),
-   ssm: f(false, false, "no"),
- };
+diff --git a/console/src/agents/kindTable.ts b/console/src/agents/kindTable.ts
+--- a/console/src/agents/kindTable.ts
++++ b/console/src/agents/kindTable.ts
+@@ -72,6 +72,7 @@
+   // Not Meta's brand blue: agy and ssm hold that region, and this palette chooses
+   // distinguishability over brand fidelity.
+   { id: "muse", managedOnly: true, managedDefault: true, mcpClient: "yes", hue: { dark: "#dbabe6", light: "#6b2d7e" } },
++  { id: "zz", managedOnly: false, managedDefault: false, mcpClient: "no", hue: { dark: "#c9a646", light: "#6b5410" } },
+   { id: "shell", managedOnly: false, managedDefault: false, mcpClient: "no", hue: { dark: "#46c9d0", light: "#0f676d" } },
+   { id: "ssm", managedOnly: false, managedDefault: false, mcpClient: "no", hue: { dark: "#6d8bf5", light: "#2c39a3" } },
+ ] as const satisfies readonly KindRow[];
 diff --git a/console/src/agents/registry.ts b/console/src/agents/registry.ts
 index 0c7c3b4dd..4022164b4 100644
 --- a/console/src/agents/registry.ts
@@ -62,44 +61,6 @@ index 2bb369af8..8f1b6d73a 100644
    "agent.launch_hint.shell": "通常のシェル（bash）",
    "agent.launch_hint.ssm": "AWS EC2 に SSM ログイン",
  
-diff --git a/console/src/styles/tokens.css b/console/src/styles/tokens.css
-index 7a2495056..c25fe5335 100644
---- a/console/src/styles/tokens.css
-+++ b/console/src/styles/tokens.css
-@@ -172,6 +172,7 @@
-   --kind-muse: #dbabe6;
-   --kind-shell: #46c9d0;
-   --kind-ssm: #6d8bf5;
-+  --kind-zz: #c9a646;
-   /* Spawn-lineage spines (ADR 0073) — the 2px rule the left rail draws down the side
-      of every working copy and session row of one family (lib/project.ts's
-      lineageColor picks the slot from the family root's name). NOT a third session
-@@ -333,6 +334,7 @@
-   --kind-muse: #6b2d7e;
-   --kind-shell: #0f676d;
-   --kind-ssm: #2c39a3;
-+  --kind-zz: #6b5410;
-   /* Lineage spines, dark steps of the same six hues — a 2px rule on a near-white rail
-      has to go dark, not light (measured against --panel #f4f5f7: 4.6–5.4:1). */
-   --lineage-0: #4a6a95;
-@@ -404,3 +406,4 @@
- .kind-muse { --kind: var(--kind-muse); }
- .kind-shell { --kind: var(--kind-shell); }
- .kind-ssm { --kind: var(--kind-ssm); }
-+.kind-zz { --kind: var(--kind-zz); }
-diff --git a/console/src/types/session.ts b/console/src/types/session.ts
-index 1c6c956a7..8e28617ff 100644
---- a/console/src/types/session.ts
-+++ b/console/src/types/session.ts
-@@ -10,7 +10,7 @@
- // just before shell/ssm: both are registered (ADR 0093 / ADR 0095) and launchable only once their
- // own precondition is met — see each descriptor's available() in registry.ts, and
- // guide/ref/agents.md's footnotes.
--export const SESSION_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell", "ssm"] as const;
-+export const SESSION_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "zz", "shell", "ssm"] as const;
- 
- // Derived from the list above, so a new kind is one edit here.
- export type SessionKind = (typeof SESSION_KINDS)[number];
 diff --git a/workspace/agent/internal/agentreg/agentreg.go b/workspace/agent/internal/agentreg/agentreg.go
 index 5701ffc29..9a1dc22f3 100644
 --- a/workspace/agent/internal/agentreg/agentreg.go

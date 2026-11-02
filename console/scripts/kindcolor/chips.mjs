@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { expandKindTokens } from "../../src/agents/kindTable.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -28,8 +29,8 @@ const OUT = (() => {
 // matching inside that prose, then runs its value up to the next real semicolon and eats the
 // declaration that follows. Measured here: --kind-lcpp vanished from the parse, because the
 // comment above it ends in exactly that phrase. The count assertion below is what noticed.
-const css = fs
-  .readFileSync(path.join(ROOT, "console/src/styles/tokens.css"), "utf8")
+// The kind tokens are generated from agents/kindTable.ts (markers in tokens.css); expand them first.
+const css = expandKindTokens(fs.readFileSync(path.join(ROOT, "console/src/styles/tokens.css"), "utf8"))
   .replace(/\/\*[\s\S]*?\*\//g, "");
 
 // The two theme blocks. `:root` is dark; `[data-theme="light"]` overrides it.

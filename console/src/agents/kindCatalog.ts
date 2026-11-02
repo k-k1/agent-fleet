@@ -2,18 +2,19 @@
 //
 // The catalog owns the facts about a kind that the Agent also enforces: whether it has any
 // Terminal (CLI) route (managedOnly), which driver a caller that cannot drive a pane should
-// ask for (managedDefault), and whether it takes MCP servers (mcpClient). Colour, icon and
-// wording stay with the descriptors in registry.ts.
+// ask for (managedDefault), and whether it takes MCP servers (mcpClient). Icon and wording stay
+// with the descriptors in registry.ts; the facts and the colour are rows of kindTable.ts.
 //
 // Safe by construction: every read answers from FALLBACK_KIND_FACTS until a catalog has
 // arrived, and again if it never does, so the session list and the launch dialogs render
-// whether the request is slow, fails or returns nothing usable. The fallback is a copy, so
-// kindCatalog.test.ts holds it equal to control-plane/internal/agentkinds/catalog.json —
-// the build-time snapshot of the same answer — and fails when either side drifts.
+// whether the request is slow, fails or returns nothing usable. The fallback is a copy (derived
+// from kindTable.ts), so kindCatalog.test.ts holds it equal to
+// control-plane/internal/agentkinds/catalog.json — the build-time snapshot of the same answer —
+// and fails when either side drifts.
 import { useSyncExternalStore } from "react";
-import type { SessionKind } from "../types/session.ts";
+import { KIND_TABLE, type SessionKind, type Tri } from "./kindTable.ts";
 
-export type Tri = "yes" | "no" | "unverified";
+export type { Tri };
 
 export interface KindFacts {
   managedOnly: boolean;
@@ -21,26 +22,13 @@ export interface KindFacts {
   mcpClient: Tri;
 }
 
-const f = (managedOnly: boolean, managedDefault: boolean, mcpClient: Tri): KindFacts => ({
-  managedOnly,
-  managedDefault: managedOnly || managedDefault,
-  mcpClient,
-});
-
-// The order of this table is not significant; SESSION_KINDS owns display order.
-export const FALLBACK_KIND_FACTS: Record<SessionKind, KindFacts> = {
-  claude: f(false, false, "yes"),
-  codex: f(false, true, "yes"),
-  cursor: f(false, true, "yes"),
-  copilot: f(false, true, "yes"),
-  kiro: f(false, true, "yes"),
-  agy: f(false, false, "yes"),
-  opencode: f(false, true, "yes"),
-  lcpp: f(true, true, "yes"),
-  muse: f(true, true, "yes"),
-  shell: f(false, false, "no"),
-  ssm: f(false, false, "no"),
-};
+// Derived from the kind table (agents/kindTable.ts); the order of a Record is not significant.
+export const FALLBACK_KIND_FACTS = Object.fromEntries(
+  KIND_TABLE.map((r): [SessionKind, KindFacts] => [
+    r.id,
+    { managedOnly: r.managedOnly, managedDefault: r.managedOnly || r.managedDefault, mcpClient: r.mcpClient },
+  ]),
+) as Record<SessionKind, KindFacts>;
 
 let live: ReadonlyMap<string, KindFacts> | null = null;
 let version = 0;

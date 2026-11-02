@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { AGENTS } from "../agents/registry.ts";
+import { expandKindTokens } from "../agents/kindTable.ts";
 import { kindClasses, kindColorClasses } from "../lib/sessionkind.ts";
 import { SESSION_KINDS } from "../types/session.ts";
 
@@ -23,6 +24,8 @@ function files(dir: string, re: RegExp, out: string[] = []): string[] {
 }
 
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+// tokens.css as the build sees it: the kind-token markers are expanded from the kind table.
+const builtTokens = () => stripComments(expandKindTokens(readFileSync(TOKENS, "utf8")));
 
 // `.kind-<slug>` as a selector, for every registered slug; `.kind-tag` and the like are not kinds.
 const KIND_SELECTOR = new RegExp(`\\.kind-(${SLUGS.join("|")})(?![\\w-])`, "g");
@@ -33,7 +36,7 @@ const KIND_TOKEN = new RegExp(`var\\(--kind-(${SLUGS.join("|")})\\)`, "g");
 
 describe("kind colour map", () => {
   it("maps exactly the registry's slugs in tokens.css, each to its own token", () => {
-    const css = stripComments(readFileSync(TOKENS, "utf8"));
+    const css = builtTokens();
     const mapped = [...css.matchAll(/^\.kind-([a-z]+) \{ --kind: var\(--kind-([a-z]+)\); \}$/gm)];
     expect(mapped.length, "the map in tokens.css was not found").toBeGreaterThan(0);
     for (const m of mapped) expect(m[2], `.kind-${m[1]}`).toBe(m[1]);
@@ -42,6 +45,12 @@ describe("kind colour map", () => {
     for (const s of SLUGS) {
       expect(css.match(new RegExp(`--kind-${s}:`, "g"))?.length ?? 0, `--kind-${s}`).toBeGreaterThanOrEqual(2);
     }
+  });
+
+  it("leaves no marker unexpanded, and the source holds one of each", () => {
+    const raw = readFileSync(TOKENS, "utf8");
+    expect([...raw.matchAll(/\/\* @af-kind-tokens (\w+) \*\//g)].map((m) => m[1])).toEqual(["dark", "light", "map"]);
+    expect(builtTokens()).not.toContain("@af-kind-tokens");
   });
 
   it("names no kind and reads no per-kind token in any other stylesheet", () => {
