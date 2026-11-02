@@ -283,7 +283,16 @@ The product is **two Go modules**, run separately (`e2e/` and the release scanne
 
 - CI also runs the race detector: `ci.yml`'s `go-race` job on the goroutine-heavy packages
   of both modules (the packages are listed in its matrix), and `go-race-nightly.yml` on whole
-  modules. Locally: `go test -race -p 2 ./internal/memoryx/` (about 5 minutes).
+  modules. Locally: `go test -race -p 2 -timeout 20m ./internal/memoryx/` (about 5 minutes).
+- `workspace/agent/internal/memoryx` is exec-bound: ~384 serial tests issue ~16,500 real `git`
+  processes, spread evenly (the 30 heaviest tests are a third of the calls). `t.Parallel` is
+  ruled out by `t.Setenv` (HOME, `CLAUDE_CONFIG_DIR`) and by shared package globals such as
+  `AgentMemoryEnabled` (`agent_memory_test.go`), so injecting the environment alone would not
+  make them safe. Measured alone with this change's tooling (#3102): ~107 s on an idle host
+  (load ~2) and 349 s at load 25–37. The issue itself reported 269–509 s at load ~14 on other
+  branches. That spread is why the `-timeout 20m` above is not optional. Setting
+  `core.fsync=none` or `gc.auto=0` for the fixtures changed nothing measurable (107.5 s vs
+  109 s), so they are not set.
 - The CP side carries many `httptest`-based smoke tests (audit, egress, the internal
   git smart-HTTP and LFS, among others). The Postgres tests skip themselves unless
   `AF_TEST_DATABASE_URL` is set, and CI does not set it.
