@@ -65,6 +65,9 @@ func newStalledFixture(t *testing.T) *stalledFixture {
 func (f *stalledFixture) session(name, parent string, state string) {
 	f.t.Helper()
 	m := session.Meta{Name: name, Kind: session.KindClaude, Dir: f.t.TempDir(), OriginSession: parent}
+	if parent != "" {
+		m.Origin = session.OriginSession
+	}
 	session.WriteMeta(m)
 	f.alive[name] = true
 	f.state[name] = state
@@ -233,6 +236,24 @@ func TestStalledTree_OnlyTheTopmostLiveParentIsNudged(t *testing.T) {
 	f.tickAt(mins(15))
 	if len(f.sent) != 1 || f.target[0] != "root" || !strings.Contains(f.sent[0], "leaf") {
 		t.Fatalf("want one notice to root naming the whole subtree, got %v -> %v", f.target, f.sent)
+	}
+}
+
+// A person's Console launch from a handoff proposal records the proposer in OriginSession with
+// origin=user. It is not the proposer's child: the proposer is never nudged about it, and it
+// roots a tree of its own for the children it starts.
+func TestStalledTree_ProposalLaunchIsNotAChild(t *testing.T) {
+	f := newStalledFixture(t)
+	f.session("proposer", "", "idle")
+	f.session("launched", "proposer", "idle")
+	launched, _ := session.ReadMeta("launched")
+	launched.Origin = session.OriginUser
+	session.WriteMeta(launched)
+	f.session("kid", "launched", "idle")
+	f.tickAt(0)
+	f.tickAt(mins(15))
+	if len(f.sent) != 1 || f.target[0] != "launched" || !strings.Contains(f.sent[0], "children (kid)") {
+		t.Fatalf("want one notice to the launched session naming only its own child, got %v -> %v", f.target, f.sent)
 	}
 }
 

@@ -6,7 +6,7 @@ package sessionx
 // stalledTreeAfter, naming the idle children so the parent can find whoever holds the ball.
 //
 // A tree is a root (a live session with a live child, whose own parent is not live) and every
-// live descendant through Meta.OriginSession. It is quiet when ALL of these hold: the root and
+// live descendant it started with create_session (stalledTreeParent). It is quiet when ALL of these hold: the root and
 // every live descendant read idle (the state wireSession computes for the session list, the same
 // one fleetgraph.ObserveState records, so there is no second classifier; a question, plan,
 // permission or limit wait is not idle), none holds background work, and no held or pending peer
@@ -238,8 +238,8 @@ func collectStalledTrees() []stalledTree {
 			continue
 		}
 		metas[m.Name] = m
-		if m.OriginSession != "" && m.OriginSession != m.Name {
-			kids[m.OriginSession] = append(kids[m.OriginSession], m.Name)
+		if p := stalledTreeParent(m); p != "" {
+			kids[p] = append(kids[p], m.Name)
 		}
 	}
 	alive := map[string]bool{}
@@ -260,7 +260,7 @@ func collectStalledTrees() []stalledTree {
 	var out []stalledTree
 	for _, root := range names {
 		m, ok := metas[root]
-		if !ok || !isLive(root) || (m.OriginSession != "" && isLive(m.OriginSession)) {
+		if p := stalledTreeParent(m); !ok || !isLive(root) || (p != "" && isLive(p)) {
 			continue // not a live root, or a part of its live parent's tree
 		}
 		t := stalledTree{Root: root}
@@ -283,6 +283,17 @@ func collectStalledTrees() []stalledTree {
 		}
 	}
 	return out
+}
+
+// stalledTreeParent names the session that started m with create_session, or "". OriginSession
+// alone is not that: a Console launch from a handoff proposal carries the proposer there too
+// (origin=user), and counting it nudges the proposer about a session it neither started nor can
+// steer, again after every turn that session ends.
+func stalledTreeParent(m session.Meta) string {
+	if session.OriginOf(m) != session.OriginSession || m.OriginSession == m.Name {
+		return ""
+	}
+	return m.OriginSession
 }
 
 func observeStalledMember(m session.Meta, child bool, t *stalledTree) stalledMember {
