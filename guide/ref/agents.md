@@ -371,7 +371,9 @@ turn is refused rather than quietly run on Muse Code's default.
 can go and fetch: Muse Code reports its own subscription usage over the session protocol, and
 only after a turn finishes. Until you have run muse in this workspace the chip shows "—",
 which means "no reading yet" rather than "nothing used". The first window's length is the
-provider's own (measured: five hours), so the row is labelled "current window".
+provider's own (measured: five hours), so the row is labelled "current window". The last reading survives an Agent restart (it is kept
+on disk and restored only for the account it was recorded under). A window whose reset time has
+already passed by then is shown as "—" (stale), not as a number.
 
 ¹⁶ Muse Code keeps your personal rules in one file, `~/.config/muse/AGENTS.md`, and both the
 workspace policy and your own instructions have to go there. Agent Fleet writes them as two

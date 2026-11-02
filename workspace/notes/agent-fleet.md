@@ -140,6 +140,12 @@ work you could simply do.
 - **You may only steer what you started** — list them, read their output, stop one, book a stop,
   resume it, rename it. Not peers, not your user's sessions. Nothing deletes: folding a child up
   is a stop, and removing it is the user's call in the Console.
+- **`work_item`** (`{provider: github|jira|bitbucket, key: owner/repo#45 | PROJ-12, title?, type?}`)
+  names the ticket the child works on, so its row and the item show the link and `type` picks the
+  branch prefix. Omitted, the child watches the items you were started for or work on.
+- **`link_work_item`** links *your own* session to an issue, ticket or PR you were not launched for
+  (`role`: working default / reviewing / watching; `remove: true` unlinks). `branch_name` with an
+  item and your branch's PR are linked for you.
 - **`list_child_sessions` is how you get a name back.** `create_session` hands one out once, and a
   compaction takes it away — every other tool here needs that name. It also carries each child's
   state, when its last turn ended, and how many slots you have left.

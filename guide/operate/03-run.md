@@ -220,6 +220,8 @@ AF_OPENCODE_TUI_STANDALONE=1
   sessions keep the mode they started in.
 - `AF_OPENCODE_SERVE_DISABLE=1` (managed opencode off) also gives private servers, because
   there is no shared server to attach to.
+- A pane on a private server raises **no question card** in the Console: the question lives on
+  that pane's own server, which the Agent does not read. Answer it in the terminal.
 
 ### When an opencode release misbehaves
 
@@ -335,6 +337,10 @@ storm. The sweep that reaches workspaces nobody has open is the usage sampler, s
 `AF_USAGE_SAMPLE_INTERVAL=0` leaves only the checks done while someone polls. The workspace
 container has no ECS health check of its own, so ECS reports the task running whatever the Agent is
 doing; this check is what notices.
+
+`AF_AGENT_SILENT_AFTER` is set through the Control Plane's environment only: Compose `.env`, or
+`cp.env` on Kubernetes (and GKE). The ECS template has no parameter for it, so an ECS deployment
+runs with the `3m` default.
 
 #### Stopping a silent Agent automatically (off by default)
 

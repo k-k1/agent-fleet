@@ -153,7 +153,13 @@ replies.
 - **Fleet operator**: write in the standing thread "🛰 Fleet Operator" to talk with the
   [11 Running many sessions](11-many-sessions.md) from chat (the same conversation as the operator on the Console
   side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button
-  before executing.
+  before executing. The button only counts if it is pressed in time and the press can be confirmed:
+  a press after the approval has expired is answered "expired or already handled", and one that
+  cannot be confirmed is answered "received, but it could not be confirmed (not running it)". Neither
+  press runs anything. "Expired or already handled" is also what a second press on an approval you
+  already approved gets, and that first press may well have run the operation: check the earlier
+  result before asking again. Ask again only after "could not be confirmed", or when the first
+  approval clearly lapsed unanswered.
 - **Just want to silence notifications**: under Personal → the "Notifications" tab, **Service notifications**
   lets you turn off delivery without disconnecting.
 

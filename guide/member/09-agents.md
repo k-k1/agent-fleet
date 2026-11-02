@@ -30,6 +30,11 @@ It shows **"Connected"**, and for claude / codex also the signed-in account (ema
 plan. Once one agent is connected, it appears among the session types when you launch a
 new session ([03](03-starting-sessions.md)).
 
+A connected card also has **Re-authenticate** (next to Disconnect) for claude, codex, Antigravity,
+Cursor, Kiro and Muse Code. Those CLIs have no separate re-login, so it **signs out first and then
+reopens the sign-in**; running sessions are not stopped. If the new sign-in then fails or is
+abandoned, the agent stays disconnected until you connect it again.
+
 > **A note on autonomous execution.** Agents run commands, edit files, and push on your
 > behalf, including unattended (scheduled runs) and, in permission-bypassing modes,
 > without asking each time. shell / SSM sessions run the string you send **verbatim**.

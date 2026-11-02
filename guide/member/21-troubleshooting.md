@@ -273,6 +273,10 @@ is under "Details".
 
 ### A Claude session shows "Login expired — sign in again", or sending starts nothing
 
+(Codex behaves the same once a turn has died on its login: sends are refused until you sign in
+again. The refusal toast and its **Re-authenticate** button name the agent that was refused and
+open that agent's card; the rest of this section describes Claude.)
+
 **This workspace's Claude login has expired.** The credentials are still on disk, so the
 terminal looks like an ordinary ready prompt, but nothing you send there ever starts a turn.
 That is why the Console shows the **Login expired** chip instead of Ready and refuses the send
