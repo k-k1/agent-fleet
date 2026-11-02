@@ -23,6 +23,7 @@ package chatx
 // SUBSET of the facts (fixing one and letting the two drift apart is the failure mode).
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/regionfmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 	"strconv"
 	"strings"
@@ -418,12 +419,12 @@ func (v reportView) orders(lang string) string {
 // rateLimitResumeFact is the sentence saying it stopped on the usage limit and an automatic
 // resume is already booked (docs/log/47 §4-4).
 func rateLimitResumeFact(atMs int64, lang string) string {
-	at := time.UnixMilli(atMs).Local()
+	at := time.UnixMilli(atMs)
 	if lang == "en" {
-		return "[Stopped by the usage limit] An automatic resume is booked for " + at.Format("Jan 2 15:04") +
+		return "[Stopped by the usage limit] An automatic resume is booked for " + regionfmt.DateTime(at, "Jan 2 15:04") +
 			" (when the limit lifts), which will send this session a nudge to continue."
 	}
-	return "【利用上限による停止です】" + at.Format("1月2日 15:04") +
+	return "【利用上限による停止です】" + regionfmt.DateTime(at, "1月2日 15:04") +
 		"（上限が解ける時刻）に、このセッションへ続行を送る自動再開の予約が入っています。"
 }
 
@@ -446,7 +447,7 @@ func foldFact(n int, ats, lang string) string {
 // reopenTargetFact is the sentence naming which report a correction targets
 // (docs/log/51 §compensation).
 func reopenTargetFact(atMs int64, lang string) string {
-	at := time.UnixMilli(atMs).Local().Format("2006-01-02 15:04")
+	at := regionfmt.DateTime(time.UnixMilli(atMs), "2006-01-02 15:04")
 	if lang == "en" {
 		return "(correcting the completion report of " + at + ")"
 	}

@@ -307,6 +307,11 @@ func writePart(b *strings.Builder, p Part, o MarkdownOptions, lb mdLabels) {
 
 // ShortTime shows an RFC3339 stamp to the minute in loc (nil = time.Local). A stamp that
 // does not parse is returned as it is rather than dropped.
+//
+// The layout is deliberately fixed and does not follow the member's regionFormat (#3217): the
+// export is a document that is filed, diffed, grepped and pasted to people in other regions, and
+// YYYY-MM-DD HH:MM is the one layout the five offered regions all read the same way (01/02 is
+// January 2nd in en-US and 1 February in en-GB). Only the zone follows the setting.
 func ShortTime(ts string, loc *time.Location) string {
 	t, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {

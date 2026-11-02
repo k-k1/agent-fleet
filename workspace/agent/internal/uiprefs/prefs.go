@@ -659,3 +659,14 @@ func resolveLink(path string) (string, error) {
 	}
 	return "", fmt.Errorf("ui-prefs: too many symlinks at %s", Path())
 }
+
+// RegionFormat returns the BCP 47 tag the member picked (Settings > Display > Region format,
+// #2185), or "" for "follow the display language" and for anything that is not a string. The
+// value is not validated here: regionfmt owns the table of tags it can write.
+func RegionFormat() string {
+	v, _ := Read()["regionFormat"].(string)
+	if v == "auto" {
+		return ""
+	}
+	return v
+}

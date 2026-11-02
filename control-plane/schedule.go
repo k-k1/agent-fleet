@@ -105,6 +105,12 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 	}
 	// Render the next fire in the schedule's own zone so the operator can read back a
 	// human-friendly "next: 2026-07-23 09:00 JST" for confirmation (ADR0021 §④'').
+	//
+	// Deliberately NOT the member's timeZone / regionFormat (#3217): those live in the
+	// workspace's ui-prefs, which the CP neither stores nor can read while the workspace is
+	// stopped, and the read-back must match the spec it confirms ("daily 09:00 JST"). A viewer
+	// that wants its own zone formats the machine field next_run (RFC 3339 UTC) instead; the
+	// Console does so when the member has chosen a zone or region.
 	if t, err := time.Parse(time.RFC3339, s.NextRun); err == nil {
 		d.NextRunLocal = t.In(scheduleLocation(s.TZ)).Format("2006-01-02 15:04 MST")
 	}

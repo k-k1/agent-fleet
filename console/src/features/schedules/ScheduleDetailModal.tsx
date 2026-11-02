@@ -20,6 +20,7 @@ import {
   type ScheduleDTO,
   type ScheduleEditable,
   canonicalTargets,
+  nextRunDetail,
   scheduleTargets,
   scheduleTitle,
 } from "./read.ts";
@@ -300,7 +301,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
             )}
             <ReadRow label={tr("sched.f_repo")} value={s.repo} />
             {s.worktree && <ReadRow label={tr("sched.f_worktree")} value={s.worktree} />}
-            <ReadRow label={tr("sched.f_next")} value={s.enabled ? s.next_run_local : tr("sched.paused_tag")} />
+            <ReadRow label={tr("sched.f_next")} value={s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
             <ReadRow label={tr("sched.f_last_status")} value={s.last_status} />
             <ReadRow label={tr("sched.f_updated")} value={s.updated_at} />
           </dl>
