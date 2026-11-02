@@ -494,6 +494,7 @@ func renderHandover(h Handover, lang string) string {
 		if hd.Loc != nil {
 			at = at.In(hd.Loc)
 		}
+		// Fixed layout with the zone abbreviation: the reader is the next agent, not the member.
 		bullet(l.Moved, at.Format("2006-01-02 15:04 MST"))
 	}
 	for _, f := range hd.Earlier {

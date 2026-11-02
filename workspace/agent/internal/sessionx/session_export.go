@@ -145,6 +145,8 @@ func exportTitle(m session.Meta) string {
 	return m.Name
 }
 
+// exportHeader's "Exported" stamp keeps the fixed layout of transcript.ShortTime for the same
+// reason (see there): the file is a shareable document, not a screen.
 func exportHeader(m session.Meta, lang string, now time.Time) []string {
 	label := map[string]string{"session": "セッション", "agent": "エージェント", "dir": "作業フォルダ", "branch": "ブランチ", "exported": "書き出し"}
 	if lang == "en" {

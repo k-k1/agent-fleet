@@ -3,6 +3,7 @@
 // tests pure logic, not React rendering — see notifications/read.test.ts). The section
 // component owns fetch/poll/state; everything here is a plain function over the DTO.
 import { t, type MsgKey } from "../../lib/i18n/index.ts";
+import { fmtDateTime, hasExplicitFormat } from "../../lib/intl.ts";
 
 // Wire shape returned by GET /api/schedules — mirrors the CP scheduleDTO (schedule.go).
 // The list response already carries every field below; the detail/edit modal (P5.2) reads
@@ -233,4 +234,25 @@ export function sortSchedules(list: ScheduleDTO[]): ScheduleDTO[] {
     if (an !== bn) return an ? -1 : 1; // one has a next_run, the other doesn't
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
+}
+
+// The next fire as the list shows it. The CP renders next_run_local in the schedule's own zone
+// ("2026-07-23 09:00 JST"); while the member follows the browser and the display language that
+// text is kept as it is. Once they chose a zone or region format the machine field next_run
+// (RFC 3339 UTC) is formatted through lib/intl.ts instead, and next_run_local is left to a tooltip.
+const NEXT_RUN_FMT: Intl.DateTimeFormatOptions = { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
+
+export function nextRunText(s: Pick<ScheduleDTO, "next_run" | "next_run_local">): string {
+  const local = s.next_run_local ?? "";
+  if (!hasExplicitFormat() || !s.next_run) return local;
+  const d = new Date(s.next_run);
+  return Number.isNaN(d.getTime()) ? local : fmtDateTime(d, NEXT_RUN_FMT);
+}
+
+// The detail view: the member's own time first, then the schedule's zone for the confirmation the
+// spec ("09:00 JST") is read against, when the two differ.
+export function nextRunDetail(s: Pick<ScheduleDTO, "next_run" | "next_run_local">): string {
+  const mine = nextRunText(s);
+  const local = s.next_run_local ?? "";
+  return mine && local && mine !== local ? `${mine} (${local})` : mine;
 }

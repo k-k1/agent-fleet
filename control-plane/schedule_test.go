@@ -408,3 +408,19 @@ func TestScheduleTokenRoundTrip(t *testing.T) {
 		t.Error("memo token accepted as schedule token")
 	}
 }
+
+// next_run_local is the schedule's own zone and stays that way whatever the member's display
+// settings are (#3217): the CP does not hold them. Pinned across a DST shift (the abbreviation and
+// offset change, the wall-clock does not) and for a zone name that does not load (UTC, no error).
+func TestScheduleToDTONextRunLocalPinned(t *testing.T) {
+	for _, c := range []struct{ next, tz, want string }{
+		{"2026-03-07T14:00:00Z", "America/New_York", "2026-03-07 09:00 EST"},
+		{"2026-03-08T13:00:00Z", "America/New_York", "2026-03-08 09:00 EDT"},
+		{"2026-07-23T00:00:00Z", "Asia/Tokyo", "2026-07-23 09:00 JST"},
+		{"2026-07-23T00:00:00Z", "Not/AZone", "2026-07-23 00:00 UTC"},
+	} {
+		if got := scheduleToDTO(store.Schedule{NextRun: c.next, TZ: c.tz}).NextRunLocal; got != c.want {
+			t.Errorf("%s in %s: got %q want %q", c.next, c.tz, got, c.want)
+		}
+	}
+}

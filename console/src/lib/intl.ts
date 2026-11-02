@@ -77,6 +77,13 @@ export function selectedTimeZone(): string | undefined {
   return isValidTimeZone(zonePref) ? zonePref : undefined;
 }
 
+// hasExplicitFormat — true when the member chose a region format or a time zone of their own. A
+// caller holding a server-rendered text (in a zone the server picked) keeps that text while this is
+// false, and formats the machine timestamp itself once it is true.
+export function hasExplicitFormat(): boolean {
+  return isValidRegion(regionPref) || selectedTimeZone() !== undefined;
+}
+
 // effectiveTimeZone — the IANA zone every timestamp is shown in right now.
 export function effectiveTimeZone(): string {
   return selectedTimeZone() ?? browserTimeZone();

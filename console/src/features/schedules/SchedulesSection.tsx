@@ -57,6 +57,7 @@ import {
   statusIcon,
   runStatusLabelKey,
   isManualRun,
+  nextRunText,
   sortSchedules,
 } from "./read.ts";
 
@@ -66,7 +67,7 @@ const POLL_MS = 15000;
 const SECTION_KEY = "af-section-schedules";
 
 // Compact local timestamp for last_run / fired_at (RFC3339 UTC → the viewer's locale).
-// next_run uses the server-rendered next_run_local (already in the schedule's own tz).
+// next_run shows through nextRunText (the schedule's own zone, or the member's own choice).
 function shortLocal(iso?: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -167,8 +168,8 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
           </div>
           <div className="sched-times">
             {!paused && s.next_run_local && (
-              <span className="sched-next" title={tr("sched.next_run")}>
-                <Icon name="arrow-small-right" /> {s.next_run_local}
+              <span className="sched-next" title={`${tr("sched.next_run")}: ${s.next_run_local}`}>
+                <Icon name="arrow-small-right" /> {nextRunText(s)}
               </span>
             )}
             {s.last_run && (

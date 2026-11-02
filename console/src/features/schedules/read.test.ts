@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { setFormatPrefs } from "../../lib/intl.ts";
 import {
   type ScheduleDTO,
   readScheduleList,
@@ -11,6 +12,8 @@ import {
   formatInterval,
   sortSchedules,
   scheduleTargets,
+  nextRunText,
+  nextRunDetail,
   canonicalTargets,
 } from "./read.ts";
 
@@ -144,5 +147,40 @@ describe("readScheduleList", () => {
     for (const res of [null, undefined, {}, "boom", 0]) {
       expect(readScheduleList(res).items).toBeNull();
     }
+  });
+});
+
+describe("nextRunText / nextRunDetail (#3217)", () => {
+  // 2026-03-08 13:00Z: after New York's spring-forward, so 09:00 EDT.
+  const s = { next_run: "2026-03-08T13:00:00Z", next_run_local: "2026-03-08 09:00 EDT" };
+  afterEach(() => setFormatPrefs("auto", "auto"));
+
+  it("keeps the server text while both settings are auto", () => {
+    setFormatPrefs("auto", "auto");
+    expect(nextRunText(s)).toBe("2026-03-08 09:00 EDT");
+    expect(nextRunDetail(s)).toBe("2026-03-08 09:00 EDT");
+  });
+
+  it("formats next_run in the member's explicit zone", () => {
+    setFormatPrefs("auto", "Asia/Tokyo");
+    expect(nextRunText(s)).toMatch(/22:00/);
+    expect(nextRunDetail(s)).toContain("(2026-03-08 09:00 EDT)");
+  });
+
+  it("follows an explicit region format", () => {
+    setFormatPrefs("en-GB", "America/New_York");
+    expect(nextRunText(s)).toBe("08/03, 09:00");
+  });
+
+  it("falls back to the server text when next_run is missing or invalid", () => {
+    setFormatPrefs("en-GB", "Asia/Tokyo");
+    expect(nextRunText({ next_run_local: "x" })).toBe("x");
+    expect(nextRunText({ next_run: "garbage", next_run_local: "x" })).toBe("x");
+    expect(nextRunText({})).toBe("");
+  });
+
+  it("an unknown zone name is still auto", () => {
+    setFormatPrefs("auto", "Not/AZone");
+    expect(nextRunText(s)).toBe(s.next_run_local);
   });
 });
