@@ -357,6 +357,11 @@ table and `agentreg` was keyed by each agent's `Kind()`, #2933): 14 non-test, no
 (was 15), 18 including tests and Markdown (was 19): the stub now edits `session.go` and
 `agentreg.go` for the Go lists. Again without `--verify`.
 
+Provisional count at 2026-11-02 (after `availability.test.ts` and `derivedKindLists.test.ts` stopped
+listing every kind, and `SessionKind` was derived from `SESSION_KINDS`, #2933): 14 non-test,
+non-Markdown files (unchanged), 16 including tests and Markdown (was 18): the stub no longer edits a
+Console test. Again without `--verify`.
+
 Only a `--verify` run that passes gives the figure. When the patch stops applying, or a new
 guard fails under `--verify`, refresh the patch: run with `--keep`, fix the kept clone until
 `--verify`'s steps pass there, then write the clone's diff back without the generated files and

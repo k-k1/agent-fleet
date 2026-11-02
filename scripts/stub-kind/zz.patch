@@ -1,48 +1,3 @@
-diff --git a/console/src/agents/availability.test.ts b/console/src/agents/availability.test.ts
-index d312fb3d9..ea80ebcc9 100644
---- a/console/src/agents/availability.test.ts
-+++ b/console/src/agents/availability.test.ts
-@@ -27,14 +27,14 @@ describe("launch gate — unknown / failed connection state", () => {
-     // {} is a successful response that happens to list no authenticated agent — unlike
-     // null it is an answer, so credential-free shell and lcpp (no sign-in exists for this
-     // kind either — ADR 0093 決定 10) are correctly still offered.
--    expect(gate({})).toEqual(["lcpp", "shell"]);
-+    expect(gate({})).toEqual(["lcpp", "zz", "shell"]);
-   });
- });
- 
- describe("launch gate — per-agent predicates", () => {
-   it("offers only the authenticated agents (plus the credential-free ones)", () => {
-     const conns = { claude: { connected: true }, codex: { connected: false }, agy: { connected: false } };
--    expect(gate(conns)).toEqual(["claude", "lcpp", "shell"]);
-+    expect(gate(conns)).toEqual(["claude", "lcpp", "zz", "shell"]);
-   });
- 
-   it("keeps an unauthenticated agy out even though it is installed and supported", () => {
-@@ -121,8 +121,8 @@ describe("lcpp — on/off gate (docs/log/105 §106.2, the user's own display set
-   });
- 
-   it("does not affect any other kind's availability", () => {
--    expect(gate({ lcpp: { enabled: false } })).toEqual(["shell"]);
--    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(["claude", "shell"]);
-+    expect(gate({ lcpp: { enabled: false } })).toEqual(["zz", "shell"]);
-+    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(["claude", "zz", "shell"]);
-   });
- });
- 
-diff --git a/console/src/agents/derivedKindLists.test.ts b/console/src/agents/derivedKindLists.test.ts
-index d6c61239b..ca11a5384 100644
---- a/console/src/agents/derivedKindLists.test.ts
-+++ b/console/src/agents/derivedKindLists.test.ts
-@@ -14,7 +14,7 @@ vi.mock("../core/api/client.ts", () => ({ api: vi.fn(), apiJSON: vi.fn(), getTen
- 
- describe("derived kind lists equal the literals they replaced", () => {
-   it("repoLaunchKinds", () => {
--    expect(repoLaunchKinds).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"]);
-+    expect(repoLaunchKinds).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "zz", "shell"]);
-   });
- 
-   it("ASSISTANT_AGENT_KINDS, the default backend priority", () => {
 diff --git a/console/src/agents/kindCatalog.ts b/console/src/agents/kindCatalog.ts
 index 141da6a67..98a2d741b 100644
 --- a/console/src/agents/kindCatalog.ts
@@ -84,7 +39,7 @@ index 0c7c3b4dd..4022164b4 100644
      id: "shell",
      icon: "terminal",
 diff --git a/console/src/lib/i18n/locales/en/sessions.ts b/console/src/lib/i18n/locales/en/sessions.ts
-index 3c3bdf793..f463aabdc 100644
+index d88455538..265ccac3e 100644
 --- a/console/src/lib/i18n/locales/en/sessions.ts
 +++ b/console/src/lib/i18n/locales/en/sessions.ts
 @@ -24,6 +24,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
@@ -96,7 +51,7 @@ index 3c3bdf793..f463aabdc 100644
    "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
  
 diff --git a/console/src/lib/i18n/locales/ja/sessions.ts b/console/src/lib/i18n/locales/ja/sessions.ts
-index 73cd78bbf..e4520aaa4 100644
+index 2bb369af8..8f1b6d73a 100644
 --- a/console/src/lib/i18n/locales/ja/sessions.ts
 +++ b/console/src/lib/i18n/locales/ja/sessions.ts
 @@ -22,6 +22,7 @@ export const sessions = {
@@ -133,25 +88,18 @@ index 7a2495056..c25fe5335 100644
  .kind-ssm { --kind: var(--kind-ssm); }
 +.kind-zz { --kind: var(--kind-zz); }
 diff --git a/console/src/types/session.ts b/console/src/types/session.ts
-index d9638d528..1814ed965 100644
+index 1c6c956a7..8e28617ff 100644
 --- a/console/src/types/session.ts
 +++ b/console/src/types/session.ts
-@@ -6,13 +6,13 @@
- // NOTE: this session `kind` is a DIFFERENT axis from a *pane's* kind (which VIEW
- // renders — terminal/file/scm/doc/diff, see layout/types PaneContent). Keep distinct.
- 
--export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "lcpp" | "muse" | "shell" | "ssm";
-+export type SessionKind = "claude" | "codex" | "cursor" | "copilot" | "kiro" | "opencode" | "agy" | "lcpp" | "muse" | "zz" | "shell" | "ssm";
- 
- // The canonical session kinds in display order (New Session buttons, etc.). lcpp and muse sit
+@@ -10,7 +10,7 @@
  // just before shell/ssm: both are registered (ADR 0093 / ADR 0095) and launchable only once their
  // own precondition is met — see each descriptor's available() in registry.ts, and
  // guide/ref/agents.md's footnotes.
--export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell", "ssm"];
-+export const SESSION_KINDS: SessionKind[] = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "zz", "shell", "ssm"];
+-export const SESSION_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell", "ssm"] as const;
++export const SESSION_KINDS = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "zz", "shell", "ssm"] as const;
  
- // Live run state, reported by per-agent hooks/plugins. "" (empty) = idle. claude
- // emits question/plan/permission; codex/opencode emit working/idle; agy emits
+ // Derived from the list above, so a new kind is one edit here.
+ export type SessionKind = (typeof SESSION_KINDS)[number];
 diff --git a/workspace/agent/internal/agentreg/agentreg.go b/workspace/agent/internal/agentreg/agentreg.go
 index 5701ffc29..9a1dc22f3 100644
 --- a/workspace/agent/internal/agentreg/agentreg.go
@@ -260,7 +208,7 @@ index 000000000..ce329870e
 +	return agents.SkillsLayout{Native: agents.SkillsForeignOnly}
 +}
 diff --git a/workspace/agent/internal/session/session.go b/workspace/agent/internal/session/session.go
-index 2cebd3166..c8bbd5187 100644
+index 5e6ddd9d5..8fb614ef9 100644
 --- a/workspace/agent/internal/session/session.go
 +++ b/workspace/agent/internal/session/session.go
 @@ -31,6 +31,7 @@ const (
