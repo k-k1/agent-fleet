@@ -82,6 +82,7 @@ const (
 	cleanReasonLocked       = "clean.reason.locked"
 	cleanReasonArchived     = "clean.reason.archived"
 	cleanReasonStopped      = "clean.reason.stopped"
+	cleanReasonPRsMerged    = "clean.reason.prs_merged"
 	cleanReasonEphemeral    = "clean.reason.ephemeral"
 	cleanReasonOrphanPane   = "clean.reason.orphan_pane"
 	cleanReasonWtLive       = "clean.reason.wt_live"
@@ -103,6 +104,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonLocked:       "ロック中（削除保護。解除するまで掃除対象外）",
 	cleanReasonArchived:     "アーカイブ済み（自動では消えない。delete_session で回収可・復元可）",
 	cleanReasonStopped:      "停止中（再開可能）。完了していれば archive で一覧から整理（放置でも期限が来ればアーカイブへ移る）",
+	cleanReasonPRsMerged:    "停止中で、このセッションのプルリクエストはすべてマージ済み。archive で一覧から整理（復元可）",
 	cleanReasonEphemeral:    "停止中の shell/ssm（残す会話なし）。削除で片付く",
 	cleanReasonOrphanPane:   "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
 	cleanReasonWtLive:       "稼働中のセッションがある（先に停止が必要）",
@@ -133,7 +135,10 @@ func cleanupReasonText(key string) string {
 // (it is live — working, not clutter). ephemeral = shell/ssm: no conversation worth
 // keeping, so archiving is meaningless — deletion is the whole tidy-up. Pure: no
 // git/tmux, so it is unit-tested.
-func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, safety, reasonKey string, ok bool) {
+//
+// prsMerged is session.PRsAllMerged: a stopped session whose own PRs all landed is finished work
+// by its own record, so its archive (restorable) is graded safe rather than left to review.
+func classifySessionCleanup(locked, archived, live, ephemeral, prsMerged bool) (action, safety, reasonKey string, ok bool) {
 	switch {
 	case live:
 		return "", "", "", false // running — not a cleanup target
@@ -151,6 +156,8 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 		// A stopped shell/ssm holds nothing restorable — delete_session still bundles
 		// its meta to the recoverable archive, so this is safe to act on in bulk.
 		return "delete_session", "safe", cleanReasonEphemeral, true
+	case prsMerged:
+		return "archive_session", "safe", cleanReasonPRsMerged, true
 	default:
 		// Stopped but resumable: finished work sitting in the active list. archive is
 		// reversible (restore), but "stopped" ≠ "finished", so review before acting.
@@ -193,7 +200,7 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 	for _, m := range metas {
 		isLive := live[m.Name] || (m.DriverKind() == session.DriverManaged && ManagedAlive(m))
 		ephemeral := m.Kind == session.KindShell || m.Kind == session.KindSSM
-		action, safety, reasonKey, ok := classifySessionCleanup(m.Locked, m.Archived, isLive, ephemeral)
+		action, safety, reasonKey, ok := classifySessionCleanup(m.Locked, m.Archived, isLive, ephemeral, session.PRsAllMerged(m))
 		if !ok {
 			continue
 		}

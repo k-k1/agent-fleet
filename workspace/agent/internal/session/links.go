@@ -249,3 +249,24 @@ func InheritedLinks(parent Meta, at string) []WorkItemLink {
 	}
 	return out
 }
+
+// PRsAllMerged reports a session whose own pull requests are all finished, at least one of them
+// merged (#3131): the PRs it started from, worked on or created, as their links last recorded
+// them. A PR it only reviews or watches is someone else's to finish, and an item with no
+// recorded state is not a PR, or one seen before states were, so it neither counts nor blocks.
+// The Console's prsAllMerged (sessionLinks.ts) reads the same rule off the row.
+func PRsAllMerged(m Meta) bool {
+	merged := false
+	for _, l := range LinksOf(m) {
+		if l.State == "" || (l.Role != LinkStarted && l.Role != LinkWorking && l.Role != LinkCreated) {
+			continue
+		}
+		switch l.State {
+		case "merged":
+			merged = true
+		case "open", "draft":
+			return false
+		}
+	}
+	return merged
+}

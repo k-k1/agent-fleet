@@ -7,29 +7,29 @@ import (
 
 func TestClassifySessionCleanup(t *testing.T) {
 	// Live → skipped entirely (working, not clutter).
-	if _, _, _, ok := classifySessionCleanup(false, false, true, false); ok {
+	if _, _, _, ok := classifySessionCleanup(false, false, true, false, false); ok {
 		t.Fatal("live session must not be a cleanup candidate")
 	}
 	// Stopped, not archived → propose archive, but review (stopped ≠ finished).
-	action, safety, _, ok := classifySessionCleanup(false, false, false, false)
+	action, safety, _, ok := classifySessionCleanup(false, false, false, false, false)
 	if !ok || action != "archive_session" || safety != "review" {
 		t.Fatalf("stopped: action=%q safety=%q ok=%v", action, safety, ok)
 	}
 	// Already archived → delete_session reclaims it (TTL-exempt, so it accumulates).
-	action, safety, _, ok = classifySessionCleanup(false, true, false, false)
+	action, safety, _, ok = classifySessionCleanup(false, true, false, false, false)
 	if !ok || action != "delete_session" || safety != "review" {
 		t.Fatalf("archived: action=%q safety=%q ok=%v", action, safety, ok)
 	}
 	// Stopped shell/ssm: no conversation to archive — propose deletion, and safe
 	// (delete_session still bundles the meta to the recoverable archive).
-	action, safety, reasonKey, ok := classifySessionCleanup(false, false, false, true)
+	action, safety, reasonKey, ok := classifySessionCleanup(false, false, false, true, false)
 	if !ok || action != "delete_session" || safety != "safe" || reasonKey != cleanReasonEphemeral {
 		t.Fatalf("ephemeral: action=%q safety=%q reason=%q ok=%v", action, safety, reasonKey, ok)
 	}
 	// Deletion lock (docs/log/45): listed, but keep and with no action — the operator must
 	// never propose a tool call that the Agent will refuse with 403.
 	for _, archived := range []bool{false, true} {
-		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false, false)
+		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false, false, false)
 		if !ok || action != "" || safety != "keep" || reasonKey != cleanReasonLocked {
 			t.Fatalf("locked(archived=%v): action=%q safety=%q reason=%q ok=%v", archived, action, safety, reasonKey, ok)
 		}
@@ -97,5 +97,25 @@ func TestCleanupReasonKeysExistInConsoleCatalogs(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestAStoppedSessionWhosePRsAllMergedIsSafeToArchive(t *testing.T) {
+	action, safety, reasonKey, ok := classifySessionCleanup(false, false, false, false, true)
+	if !ok || action != "archive_session" || safety != "safe" || reasonKey != cleanReasonPRsMerged {
+		t.Fatalf("got %q %q %q %v, want archive_session safe prs_merged", action, safety, reasonKey, ok)
+	}
+	// Still running, locked, already archived or a shell: the merged PRs change nothing.
+	if _, _, _, ok := classifySessionCleanup(false, false, true, false, true); ok {
+		t.Fatal("a live session became a cleanup candidate")
+	}
+	if _, safety, _, _ := classifySessionCleanup(true, false, false, false, true); safety != "keep" {
+		t.Fatalf("locked: safety %q, want keep", safety)
+	}
+	if action, _, reasonKey, _ := classifySessionCleanup(false, true, false, false, true); action != "delete_session" || reasonKey != cleanReasonArchived {
+		t.Fatalf("archived: %q %q, want the archived row unchanged", action, reasonKey)
+	}
+	if reasonKey := cleanupReasonText(cleanReasonPRsMerged); reasonKey == cleanReasonPRsMerged {
+		t.Fatal("no source-language sentence for prs_merged")
 	}
 }

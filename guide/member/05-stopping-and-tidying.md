@@ -69,7 +69,7 @@ Every candidate carries a **safety** rating and a reason.
 
 | Safety | Meaning |
 |---|---|
-| **Safe** | Merged and clean; nothing is lost by removing it |
+| **Safe** | Merged and clean, or a stopped session whose pull requests are all merged; nothing is lost by removing or archiving it |
 | **Review** | A stopped session, a clean but unmerged worktree, and the like. Look before you decide |
 | **Keep** | Running, uncommitted / unpushed, or delete-locked. Cleanup leaves it alone |
 

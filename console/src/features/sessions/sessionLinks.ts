@@ -123,3 +123,33 @@ function prItemOf(url: string): { provider: string; key: string } | null {
   const [, owner, repo, , n] = u.pathname.split("/");
   return { provider: u.hostname === "bitbucket.org" ? "bitbucket" : "github", key: `${owner}/${repo}#${n}` };
 }
+
+const OWN_PR_ROLES = new Set(["started", "working", "created"]);
+
+/** Whether every pull request the session started from, worked on or created is finished, at
+ *  least one of them merged (#3131): the session's work has landed. The branch's PR counts too,
+ *  read off the row, since it is linked one poll after it is first seen. A PR the session only
+ *  reviews or watches is someone else's to finish. The Agent's session.PRsAllMerged grades the
+ *  Cleanup modal by the same rule. */
+export function prsAllMerged(s: Pick<Session, "links" | "pr">): boolean {
+  let merged = false;
+  for (const l of s.links || []) {
+    if (!l.state || !OWN_PR_ROLES.has(l.role)) continue;
+    if (l.state === "open" || l.state === "draft") return false;
+    if (l.state === "merged") merged = true;
+  }
+  if (s.pr && safePRURL(s.pr.url)) {
+    if (s.pr.state === "open") return false;
+    if (s.pr.state === "merged") merged = true;
+  }
+  return merged;
+}
+
+/** Whether the row offers to tidy a session whose PRs all merged: only while nothing is going
+ *  on in it. A working session may be preparing its next PR, and one waiting on a question,
+ *  a plan or a permission needs an answer first. */
+export function offersMergedTidy(s: Pick<Session, "links" | "pr" | "state" | "alive" | "locked">): boolean {
+  if (s.locked) return false;
+  const quiet = !s.alive || !s.state || s.state === "idle";
+  return quiet && prsAllMerged(s);
+}

@@ -34,6 +34,8 @@ const tidyOne = (s: Session, op: "archive" | "delete") =>
 export interface SessionActions {
   /** Hide from the list but KEEP it (restorable). Live sessions stop first. */
   archive(s: Session): Promise<void>;
+  /** Archive a session whose PRs all merged (#3131), after a confirm that says why it is offered. */
+  archiveMerged(s: Session): Promise<void>;
   /** Delete (shell/ssm — AI rows archive instead): moves it to the cleanup trash, stopping it
    *  first if it runs. Restorable from the trash (ADR 0101). */
   deleteSession(s: Session): Promise<void>;
@@ -82,6 +84,15 @@ export function useSessionActions(): SessionActions {
     }
     closeSessionPanes(s.name);
     void refreshSessions();
+  };
+
+  const archiveMerged = async (s: Session) => {
+    const ok = await askConfirm({
+      title: tr("srow.prs_merged_title"),
+      body: tr("srow.prs_merged_body", { name: displayName(s) }),
+      confirmLabel: tr("srow.prs_merged_confirm"),
+    });
+    if (ok) await archive(s);
   };
 
   const deleteSession = async (s: Session) => {
@@ -352,5 +363,5 @@ export function useSessionActions(): SessionActions {
     }
   };
 
-  return { archive, deleteSession, setLocked, setKeepAwake, setStopAfterTurn, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
+  return { archive, archiveMerged, deleteSession, setLocked, setKeepAwake, setStopAfterTurn, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
 }

@@ -159,3 +159,29 @@ func TestSetLinkStateRecordsOnlyAKnownStateOnAHeldLink(t *testing.T) {
 		t.Fatalf("launch link = %+v, want started and merged", l[0])
 	}
 }
+
+func TestPRsAllMergedCountsOnlyTheSessionsOwnPRs(t *testing.T) {
+	pr := func(key, role, state string) WorkItemLink {
+		return WorkItemLink{Provider: "github", Key: key, Role: role, State: state}
+	}
+	for _, c := range []struct {
+		name   string
+		m      Meta
+		merged bool
+	}{
+		{"one merged", Meta{Links: []WorkItemLink{pr("o/r#1", LinkWorking, "merged")}}, true},
+		{"merged and closed", Meta{Links: []WorkItemLink{pr("o/r#1", LinkWorking, "merged"), pr("o/r#2", LinkCreated, "closed")}}, true},
+		{"one still open", Meta{Links: []WorkItemLink{pr("o/r#1", LinkWorking, "merged"), pr("o/r#2", LinkWorking, "open")}}, false},
+		{"a draft", Meta{Links: []WorkItemLink{pr("o/r#1", LinkWorking, "merged"), pr("o/r#2", LinkWorking, "draft")}}, false},
+		{"only closed", Meta{Links: []WorkItemLink{pr("o/r#2", LinkWorking, "closed")}}, false},
+		{"an open PR it only watches", Meta{Links: []WorkItemLink{pr("o/r#1", LinkWorking, "merged"), pr("o/r#2", LinkWatching, "open")}}, true},
+		{"merged PR it only reviews", Meta{Links: []WorkItemLink{pr("o/r#2", LinkReviewing, "merged")}}, false},
+		{"issues without state", Meta{Links: []WorkItemLink{{Provider: "jira", Key: "P-1", Role: LinkWorking}, pr("o/r#1", LinkWorking, "merged")}}, true},
+		{"launch PR merged", Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#5"}, WorkItemState: "merged"}, true},
+		{"no PR", Meta{}, false},
+	} {
+		if got := PRsAllMerged(c.m); got != c.merged {
+			t.Errorf("%s: PRsAllMerged = %v, want %v", c.name, got, c.merged)
+		}
+	}
+}
