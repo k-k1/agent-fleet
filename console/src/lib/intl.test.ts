@@ -108,16 +108,19 @@ describe("intl region format and time zone", () => {
     expect(fmtDateTime(US_DST_AFTER, HM)).toBe("19:30");
   });
 
-  it("follows the browser's zone while the setting is auto, and re-reads it each call", () => {
+  it("follows the browser's zone while the setting is auto, re-reading it after the short cache expires", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000_000_000_000);
     const spy = vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions");
     spy.mockReturnValue({ timeZone: "Asia/Tokyo" } as Intl.ResolvedDateTimeFormatOptions);
     expect(effectiveTimeZone()).toBe("Asia/Tokyo");
     expect(fmtDateTime(US_DST_AFTER, HM)).toBe("19:30");
     // The member travelled: same stored "auto", new browser zone, no stale cached formatter.
     spy.mockReturnValue({ timeZone: "America/Los_Angeles" } as Intl.ResolvedDateTimeFormatOptions);
+    clock.mockReturnValue(1_000_000_005_000);
     expect(effectiveTimeZone()).toBe("America/Los_Angeles");
     expect(fmtDateTime(US_DST_AFTER, HM)).toBe("03:30");
     spy.mockRestore();
+    clock.mockRestore();
   });
 
   it("falls back to the browser's zone for an unknown stored zone instead of throwing", () => {
@@ -150,5 +153,19 @@ describe("intl region format and time zone", () => {
     expect(isValidTimeZone("Nope/Zone")).toBe(false);
     expect(isValidTimeZone("")).toBe(false);
     expect(isValidTimeZone(42)).toBe(false);
+  });
+});
+
+describe("zone resolution is cheap on the hot path", () => {
+  it("probes an explicit zone and the browser zone once, not per call", async () => {
+    const { vi } = await import("vitest");
+    const { fmtDateTime: fmt } = await import("./intl.ts");
+    setFormatPrefs("auto", "Asia/Seoul");
+    fmt(0); // warm every cache
+    const spy = vi.spyOn(Intl, "DateTimeFormat");
+    for (let i = 0; i < 200; i++) fmt(i * 1000);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+    setFormatPrefs("auto", "auto");
   });
 });

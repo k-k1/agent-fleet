@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
+import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../lib/intl.ts";
 import { cloudRunParts, parseCloudRuns, type CloudRun } from "./cloudRunsModel.ts";
 import "./cloudRuns.css";
 
@@ -63,7 +64,7 @@ export function RecentCloudRuns() {
         <ul className="cloud-runs-list">
           {runs.map((r) => (
             <li key={r.id}>
-              <time dateTime={r.startedAt}>{new Date(r.startedAt).toLocaleString()}</time>
+              <time dateTime={r.startedAt}>{fmtDateTime(r.startedAt, DATETIME_LOCALE_DEFAULT)}</time>
               <CloudRunLine run={r} session />
             </li>
           ))}

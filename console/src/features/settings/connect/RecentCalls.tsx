@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { api, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 
 // Mirrors mcpsrv.CallRecord (control-plane/internal/mcpsrv/mcp_calls.go).
 interface CallItem {
@@ -95,7 +96,7 @@ export function RecentCalls({ url }: { url: string }) {
                   const client = first?.client_name ? `${first.client_name}/${first.client_version ?? ""}` : c.user_agent ?? "";
                   return (
                     <tr key={`${c.at}-${i}`} className={c.status >= 400 || c.items.some((it) => it.tool_error) ? "calls-bad" : ""}>
-                      <td>{new Date(c.at).toLocaleString()}</td>
+                      <td>{fmtDateTime(c.at, DATETIME_LOCALE_DEFAULT)}</td>
                       <td>{c.http_method} {c.status}</td>
                       <td>{c.items.map((it, j) => <div key={j}>{summary(it, tr)}</div>)}
                         {c.items_omitted ? <div className="muted">+{c.items_omitted}</div> : null}</td>
