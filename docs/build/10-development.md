@@ -284,6 +284,12 @@ The product is **two Go modules**, run separately (`e2e/` and the release scanne
 - CI also runs the race detector: `ci.yml`'s `go-race` job on the goroutine-heavy packages
   of both modules (the packages are listed in its matrix), and `go-race-nightly.yml` on whole
   modules. Locally: `go test -race -p 2 ./internal/memoryx/` (about 5 minutes).
+- `workspace/agent/internal/memoryx` is exec-bound: ~384 serial tests (`t.Setenv` rules out
+  `t.Parallel`) issue ~16,500 real `git` processes, spread evenly (the 30 heaviest tests are a
+  third of the calls). Measured alone: ~107 s on an idle host (load ~2), 350–600 s at load
+  15–40, which is why the `-timeout 20m` above is not optional. Setting `core.fsync=none` or
+  `gc.auto=0` for the fixtures changed nothing measurable (107.5 s vs 109 s), so they are not
+  set. See #3102.
 - The CP side carries many `httptest`-based smoke tests (audit, egress, the internal
   git smart-HTTP and LFS, among others). The Postgres tests skip themselves unless
   `AF_TEST_DATABASE_URL` is set, and CI does not set it.
