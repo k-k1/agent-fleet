@@ -145,3 +145,44 @@ func TestPublicWritesKeepSharedSessions(t *testing.T) {
 		}
 	}
 }
+
+// The mux redirects an unclean path (//, /./, /../) before the route's own auth runs, and the
+// middleware sits behind authGate, which exempts /internal/ and /mcp/ by raw path. Run with the
+// MCP OAuth issuer enabled so /mcp-oauth/token and revoke really answer 400 and not 404.
+func TestAnonymousRoutingAndOAuthPostsKeepSharedSessions(t *testing.T) {
+	t.Setenv("AF_MCP_ENABLED", "true")
+	t.Setenv("AF_MCP_OAUTH", "1")
+	srv, n := countingAgent(t, func(int64) (int, string) { return 200, sharedOneSession })
+	cfg, _ := smokeEnvWith(t, allRouteSwitches(t)...)
+	cfg.publicBaseURL = "https://af.example"
+	cfg.mgr.publicBaseURL = "https://af.example"
+	mux := buildMux(cfg)
+	rt := stubRuntime{endpoint: srv.URL, token: "tok"}
+	read := func() { _, _, _ = cfg.mgr.agentSessionsShared(context.Background(), rt) }
+	h := cfg.authGate(cfg.mgr.invalidatesSessionsOnWrite(mux))
+	cases := []struct {
+		path string
+		want func(int) bool
+	}{
+		{"/internal//memos", func(c int) bool { return c >= 300 && c < 400 }},
+		{"/internal/./memos", func(c int) bool { return c >= 300 && c < 400 }},
+		{"/internal/memos/../memos", func(c int) bool { return c >= 300 && c < 400 }},
+		{"/mcp//memory", func(c int) bool { return c >= 300 && c < 400 }},
+		{"/mcp-oauth/token", func(c int) bool { return c == 400 }},
+		{"/mcp-oauth/revoke", func(c int) bool { return c == 400 || c == 200 }},
+	}
+	for _, tc := range cases {
+		cfg.mgr.sessionsShare.invalidate()
+		n.Store(0)
+		read()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", tc.path, nil))
+		if !tc.want(rec.Code) {
+			t.Errorf("POST %s: status %d is not the case under test", tc.path, rec.Code)
+		}
+		read()
+		if n.Load() != 1 {
+			t.Errorf("POST %s (%d) dropped the shared read (reads=%d)", tc.path, rec.Code, n.Load())
+		}
+	}
+}

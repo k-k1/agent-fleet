@@ -188,7 +188,7 @@ func cloneEnvelope(e agentSessionsEnvelope) agentSessionsEnvelope {
 // they answer anonymous callers with 302/400/200/503, which no status list can tell from a real
 // write.
 //
-// A refusal that happened before any handler work (401, 403, 404, 405) does not invalidate either:
+// A refusal or routing redirect that happened before any handler work (401, 403, 404, 405, 3xx) does not invalidate either:
 // an anonymous POST to /internal/* or to a route that does not exist would otherwise flush every
 // workspace's cache and detach its in-flight read. Any other status, 5xx after a partial success
 // included, invalidates.
@@ -205,8 +205,12 @@ func (m *manager) invalidatesSessionsOnWrite(next http.Handler) http.Handler {
 		}
 		sw := &statusWriter{ResponseWriter: w} // keeps Flusher, Hijacker and ResponseController working
 		defer func() {
-			switch sw.code() {
-			case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed:
+			switch c := sw.code(); {
+			case c == http.StatusUnauthorized, c == http.StatusForbidden, c == http.StatusNotFound,
+				c == http.StatusMethodNotAllowed,
+				// ServeMux answers a cleaned or subtree path with a redirect before any handler
+				// (or its auth) runs; no session-changing route answers a write with a redirect.
+				c >= 300 && c < 400:
 			default:
 				m.sessionsShare.invalidate()
 			}
