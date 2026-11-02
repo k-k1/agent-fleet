@@ -6,7 +6,7 @@ import { execSync } from "node:child_process";
 import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import { expandKindTokens } from "./src/agents/kindTable.ts";
+import { afKindTokens } from "./scripts/afKindTokens.js";
 
 // marp-core statically requires mathjax-full (~43MB) and katex for its math
 // feature. We render with { math: false } and verified those modules are never
@@ -71,22 +71,6 @@ function afPdfjsAssets(version) {
         }
         fs.cpSync(src, path.join(to, dir), { recursive: true });
       }
-    },
-  };
-}
-
-// styles/tokens.css carries `/* @af-kind-tokens … */` markers where the per-kind colour tokens and
-// the `.kind-<slug>` map go; they are generated from agents/kindTable.ts so that a new kind is
-// declared once. `enforce: "pre"` runs this before Vite's CSS pipeline sees the file.
-function afKindTokens() {
-  return {
-    name: "af-kind-tokens",
-    enforce: "pre",
-    transform(code, id) {
-      if (!id.split("?")[0].endsWith("/styles/tokens.css")) return null;
-      const out = expandKindTokens(code);
-      if (out.includes("@af-kind-tokens")) this.error("tokens.css has a kind-token marker the table does not know");
-      return { code: out, map: null };
     },
   };
 }
