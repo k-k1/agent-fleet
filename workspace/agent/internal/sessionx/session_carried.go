@@ -346,7 +346,7 @@ func promoteCarriedOther(m session.Meta) bool {
 func sendManagedPrompt(m session.Meta, prompt string) error {
 	d, ok := driverOf(m)
 	if !ok {
-		return fmt.Errorf("managed driver はこの kind ではまだ利用できません: %s", m.Kind)
+		return fmt.Errorf("%s: %s", msgDriverUnavailable, m.Kind)
 	}
 	h, err := resumeManaged(d, m)
 	if err != nil {

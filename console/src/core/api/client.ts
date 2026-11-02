@@ -163,6 +163,17 @@ export const errText = (error: ApiError | string | null | undefined): string => 
   return String(error ?? "");
 };
 
+// Codes whose server message is a "ja / en" pair that only repeats the catalogue line.
+const BILINGUAL_MESSAGE_CODES = new Set([
+  "agent_unsupported_version",
+  "codex_releasing",
+  "codex_stop_first",
+  "driver_switching",
+  "driver_unavailable",
+  "driver_unsupported",
+  "busy_switch",
+]);
+
 // errDetail appends the server's raw message to errText's wording. A generic code such as
 // `*_failed` can only say WHAT failed; WHY it failed lives only in the message, and a failure
 // that reproduces on the user's machine alone (agent-memory import, say) loses its only clue
@@ -174,7 +185,7 @@ export const errDetail = (error: ApiError | string | null | undefined): string =
   if (error && typeof error === "object" && error.code?.startsWith("cli_install_")) return head;
   // These refusals' messages are ja / en pairs for the logs; the catalogue line already says it in
   // the member's language.
-  if (error && typeof error === "object" && (error.code === "agent_unsupported_version" || error.code === "codex_releasing")) return head;
+  if (error && typeof error === "object" && error.code && BILINGUAL_MESSAGE_CODES.has(error.code)) return head;
   const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
   return detail && detail !== head ? head + ": " + detail : head;
 };

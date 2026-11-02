@@ -18,6 +18,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -105,7 +106,8 @@ var errNoPendingQuestion = fmt.Errorf("no pending question")
 
 // errPendingApproval tells the operator WHICH modal is open. A tool approval cannot be
 // answered by choosing an option; it takes allow or deny.
-var errPendingApproval = fmt.Errorf("このセッションはツールの承認待ちです（質問ではありません）。Console で許可／拒否を選んでください")
+var errPendingApproval = errors.New("このセッションはツールの承認待ちです（質問ではありません）。Console で許可／拒否を選んでください / " +
+	"this session is waiting for a tool approval (not a question); choose allow or deny in the Console")
 
 // HandleSessionAnswerQuestion (POST /sessions/{name}/answer-question) applies a
 // full-form AskUserQuestion answer from the operator's MCP tool.
@@ -141,7 +143,7 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 		d, ok := driverOf(meta)
 		if !ok {
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-				"managed driver はこの kind ではまだ利用できません")
+				msgDriverUnavailable)
 			return
 		}
 		h, err := resumeManaged(d, meta)

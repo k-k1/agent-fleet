@@ -23,7 +23,8 @@ var (
 )
 
 // errDriverSwitching refuses a Managed Resume that races a codex switch to Terminal.
-var errDriverSwitching = errors.New("実行方式を切り替えています。切り替えが終わってからもう一度お試しください")
+var errDriverSwitching = errors.New("実行方式を切り替えています。切り替えが終わってからもう一度お試しください / " +
+	"the execution method is being switched; try again once it has finished")
 
 // errCodeDriverSwitching is its HTTP code (writeRuntimeErr, and the switch refused while a
 // Resume is in flight).

@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 // forkLine is the slice of a transcript line the cut logic reasons about. Everything else
@@ -45,7 +47,7 @@ type forkLine struct {
 // arrives from the client, so every rule is re-checked here.
 func cutIndex(lines [][]byte, anchor string) (int, error) {
 	if anchor == "" {
-		return 0, errors.New("分岐点が指定されていません")
+		return 0, agents.ErrNoForkPoint
 	}
 	for i, ln := range lines {
 		var fl forkLine
@@ -54,26 +56,26 @@ func cutIndex(lines [][]byte, anchor string) (int, error) {
 		}
 		switch {
 		case fl.Type != "user":
-			return 0, errors.New("エージェントの発言からは分岐できません")
+			return 0, errors.New("エージェントの発言からは分岐できません / cannot fork from an agent message")
 		case fl.IsMeta:
-			return 0, errors.New("この行からは分岐できません")
+			return 0, errors.New("この行からは分岐できません / cannot fork from this line")
 		case fl.IsSidechain:
 			// A subagent's prompt. Cutting the parent conversation here would cut at a
 			// point that only exists inside the sidechain.
-			return 0, errors.New("サブエージェントの発言からは分岐できません")
+			return 0, errors.New("サブエージェントの発言からは分岐できません / cannot fork from a subagent message")
 		case fl.IsCompactSummary:
 			// A compaction summary is recorded as a user message, but it is a summary of the
 			// conversation rather than part of it.
-			return 0, errors.New("圧縮の要約からは分岐できません")
+			return 0, errors.New("圧縮の要約からは分岐できません / cannot fork from a compaction summary")
 		case !isUserPrompt(fl.Message.Content):
 			// The easiest trap to fall into: a tool result is recorded as type:"user" too.
 			// Selecting naively on type=="user" cuts between a tool call and its result and
 			// breaks the conversation.
-			return 0, errors.New("ツールの実行結果からは分岐できません")
+			return 0, errors.New("ツールの実行結果からは分岐できません / cannot fork from a tool result")
 		}
 		return i, nil
 	}
-	return 0, errors.New("指定された分岐点がこの会話に見つかりません")
+	return 0, agents.ErrForkPointNotFound
 }
 
 // nextPromptUUID returns the uuid of the first real user prompt AFTER anchor — the cut

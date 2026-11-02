@@ -99,7 +99,7 @@ body "{\"error\":{\"code\":\"permission_choice_unsupported\",\"message\":\"this 
 == driver_unsupported
 status 400
 header Content-Type: application/json
-body "{\"error\":{\"code\":\"driver_unsupported\",\"message\":\"managed ドライバはこの kind では利用できません\"}}\n"
+body "{\"error\":{\"code\":\"driver_unsupported\",\"message\":\"managed ドライバはこの kind ではまだ利用できません / the managed driver is not available for this kind yet\"}}\n"
 == bad_driver
 status 400
 header Content-Type: application/json

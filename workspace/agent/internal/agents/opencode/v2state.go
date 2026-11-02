@@ -580,7 +580,7 @@ func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, s
 		return "", "", errors.New("opencode の会話ストアを読めません / cannot read the opencode conversation store")
 	}
 	if info == nil {
-		return "", "", errors.New("分岐できる会話がまだありません / there is no conversation to fork yet")
+		return "", "", agents.ErrNoConversationToFork
 	}
 	msgs, err := t.messages(info.ID)
 	if err != nil {
@@ -596,7 +596,7 @@ func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, s
 	// A subagent turn lives in a child session, which this list does not contain, so it is
 	// refused here as "not found" along with a stray id.
 	if idx < 0 {
-		return "", "", errors.New("指定された分岐点がこの会話に見つかりません / the given fork point is not in this conversation")
+		return "", "", agents.ErrForkPointNotFound
 	}
 	if !at.Include {
 		return at.Anchor, info.ID, nil

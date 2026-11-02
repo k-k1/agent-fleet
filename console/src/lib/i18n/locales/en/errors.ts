@@ -91,6 +91,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   // that needs the Agent arrived. Not a failure — a "not yet", so it asks for a retry.
   "err.workspace_starting": "The workspace is still starting. Try again once it is ready.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
+  "err.driver_unsupported": "This agent kind doesn't support that execution method.",
+  "err.busy_switch": "A turn is running. Wait for it to finish or stop it before switching.",
   "err.member_origin_required": "Only the Console can do this. It was not sent from your signed-in session.",
   "err.member_origin_invalid": "The request could not be verified as yours (it may have expired). Try again.",
   "err.member_origin_unavailable": "The workspace's agent just started or needs a restart. Try again in a minute.",

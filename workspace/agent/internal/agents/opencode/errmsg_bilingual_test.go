@@ -37,10 +37,9 @@ func TestErrorLiteralsAreBilingual(t *testing.T) {
 	files, _ := filepath.Glob("*.go")
 	seen := 0
 	for _, f := range files {
-		// The files whose errors reach the Console as free text; the rest of the package
-		// (driver.go, serve.go's start failures) is not covered here.
+		// The files whose errors reach the Console as free text.
 		switch f {
-		case "opencode.go", "v2form.go", "v2state.go", "oauth.go":
+		case "opencode.go", "v2form.go", "v2state.go", "oauth.go", "driver.go", "serve.go":
 		default:
 			continue
 		}

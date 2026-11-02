@@ -59,7 +59,7 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 		return "", errors.New("opencode の会話ストアを読めません / cannot read the opencode conversation store")
 	}
 	if info == nil {
-		return "", errors.New("分岐できる会話がまだありません / there is no conversation to fork yet")
+		return "", agents.ErrNoConversationToFork
 	}
 	return info.ID, nil
 }
@@ -78,7 +78,7 @@ func (a agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, e
 func (agentImpl) ResolveForkAtPinned(m session.Meta, at agents.ForkPoint) (string, string, error) {
 	anchor := at.Anchor
 	if anchor == "" {
-		return "", "", errors.New("分岐点が指定されていません / no fork point was given")
+		return "", "", agents.ErrNoForkPoint
 	}
 	// Only the serve API takes a fork point; `--session <src> --fork` has no such argument.
 	// A managed session talks to it directly and a Terminal pane attached to af's shared serve
@@ -171,9 +171,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		// does (docs/log/55 §55.5). Refuse rather than launch a CLI fork that would quietly
 		// copy the WHOLE conversation when the user asked for a point.
 		if m.ForkAt != "" {
-			return agents.LaunchPlan{}, errors.New(
-				"発言時点からの分岐は managed のセッションでのみ利用できます / " +
-					"forking at a past message works only for a managed session")
+			return agents.LaunchPlan{}, agents.ErrForkAtManagedOnly
 		}
 		resume, fork = m.ForkFrom, true
 	}

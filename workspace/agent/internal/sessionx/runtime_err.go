@@ -117,3 +117,16 @@ func writeStartRefusal(w http.ResponseWriter, err error) bool {
 	httpx.WriteErr(w, refusal.Ref.Status, refusal.Ref.Code, refusal.Ref.Message)
 	return true
 }
+
+// Messages of the driver-selection refusals. The Agent does not know the member's language, so
+// each is a "ja / en" pair; the Console renders the code from its catalogue and errDetail()
+// shows that line alone for these codes.
+const (
+	msgDriverUnavailable = "managed driver はこの kind ではまだ利用できません / the managed driver is not available for this kind yet"
+	msgDriverUnsupported = "managed ドライバはこの kind ではまだ利用できません / the managed driver is not available for this kind yet"
+	msgNoTerminalRoute   = "この kind には Terminal(CLI) 実行方式がありません（managed 専用です） / this kind has no Terminal (CLI) execution method (managed only)"
+	msgBusySwitch        = "実行中のターンがあります。完了を待つか停止してから切り替えてください / " +
+		"a turn is running; wait for it to finish or stop it before switching"
+	msgCodexStopFirst = "codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます） / " +
+		"stop the codex session first, then switch it to Terminal (CLI) (about a minute after the stop)"
+)

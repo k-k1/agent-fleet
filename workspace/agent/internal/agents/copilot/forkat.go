@@ -29,6 +29,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 // forkEvent is the slice of an events.jsonl line the cut logic reasons about. Lines
@@ -42,7 +44,7 @@ type forkEvent struct {
 // — the mirror only offers those, but the value arrives from the client.
 func cutIndexAt(lines [][]byte, anchor string) (int, error) {
 	if anchor == "" {
-		return 0, errors.New("分岐点が指定されていません")
+		return 0, agents.ErrNoForkPoint
 	}
 	for i, ln := range lines {
 		var ev forkEvent
@@ -50,11 +52,11 @@ func cutIndexAt(lines [][]byte, anchor string) (int, error) {
 			continue
 		}
 		if ev.Type != "user.message" {
-			return 0, errors.New("この行からは分岐できません（ユーザーの発言を選んでください）")
+			return 0, errors.New("この行からは分岐できません（ユーザーの発言を選んでください） / cannot fork from this line (pick a user message)")
 		}
 		return i, nil
 	}
-	return 0, errors.New("指定された分岐点がこの会話に見つかりません")
+	return 0, agents.ErrForkPointNotFound
 }
 
 // nextPromptID returns the id of the first user.message after anchor — the cut point for

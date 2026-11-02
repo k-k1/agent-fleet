@@ -84,4 +84,15 @@ describe("errDetail", () => {
     expect(got).not.toContain(" / ");
     expect(got.length).toBeGreaterThan(20);
   });
+
+  it.each(["codex_stop_first", "driver_switching", "driver_unavailable", "driver_unsupported", "busy_switch"])(
+    "shows the localized %s text alone",
+    (code) => {
+      const e = { code, message: "日本語のメッセージ / English message" };
+      const got = client.errDetail(e);
+      expect(got).toBe(client.errText(e));
+      expect(got).not.toContain(" / ");
+      expect(got.length).toBeGreaterThan(20);
+    },
+  );
 });

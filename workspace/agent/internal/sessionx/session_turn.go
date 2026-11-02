@@ -189,7 +189,7 @@ func handleManagedTurn(lease *lifegate.Lease, w http.ResponseWriter, meta sessio
 	d, ok := driverOf(meta)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-			"managed driver はこの kind ではまだ利用できません")
+			msgDriverUnavailable)
 		return
 	}
 	if req.Op == "remove" || req.Op == "dismiss_discard" {
@@ -348,7 +348,7 @@ func HandleSessionRespond(w http.ResponseWriter, r *http.Request) {
 		d, ok := driverOf(meta)
 		if !ok {
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-				"managed driver はこの kind ではまだ利用できません")
+				msgDriverUnavailable)
 			return
 		}
 		h, err := resumeManaged(d, meta)
@@ -424,7 +424,7 @@ func HandleSessionSettingsGet(w http.ResponseWriter, r *http.Request) {
 	d, ok := driverOf(meta)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-			"managed driver はこの kind ではまだ利用できません")
+			msgDriverUnavailable)
 		return
 	}
 	caps := d.Capabilities()
@@ -500,7 +500,7 @@ func HandleSessionSettings(w http.ResponseWriter, r *http.Request) {
 	d, ok := driverOf(meta)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-			"managed driver はこの kind ではまだ利用できません")
+			msgDriverUnavailable)
 		return
 	}
 	h, err := resumeManaged(d, meta)

@@ -639,7 +639,7 @@ func handleManagedInputPrompt(lease *lifegate.Lease, w http.ResponseWriter, meta
 	d, ok := driverOf(meta)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-			"managed driver はこの kind ではまだ利用できません")
+			msgDriverUnavailable)
 		return
 	}
 	h, err := resumeManaged(d, meta)

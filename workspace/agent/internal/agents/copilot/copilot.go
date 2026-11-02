@@ -53,11 +53,11 @@ func (agentImpl) Caps() agents.Caps {
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
 	sid := SessionID(m)
 	if sid == "" {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	lines, err := readEventLines(sid)
 	if err != nil || !hasUserMessage(lines) {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	return sid, nil
 }
@@ -69,11 +69,11 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
 	sid := SessionID(m)
 	if sid == "" {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	lines, err := readEventLines(sid)
 	if err != nil {
-		return "", errors.New("copilot の会話ログを読めません")
+		return "", errors.New("copilot の会話ログを読めません / cannot read the copilot conversation log")
 	}
 	anchor := at.Anchor
 	if at.Include {

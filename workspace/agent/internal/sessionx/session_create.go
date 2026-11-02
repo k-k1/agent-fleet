@@ -243,7 +243,7 @@ func (c *createRun) resolveDriver() bool {
 		// using the normalized value.
 		if _, ok := managedDrivers[NormalizeKind(c.req.Kind)]; !ok {
 			httpx.WriteErr(c.w, http.StatusBadRequest, "driver_unsupported",
-				"managed ドライバはこの kind では利用できません")
+				msgDriverUnsupported)
 			return false
 		}
 	default:
