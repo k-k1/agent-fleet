@@ -150,7 +150,7 @@ Reads out replies from sessions and assistants.
   | Handoffs | a handoff offered to you, accepted or expired, or a session that started from one you gave back |
   | Cloud sign-in | AWS or Google Cloud needs you to sign in, or an SSO session is about to expire |
   | Terminal notifications | a program in a session sent OSC 9 / 99 / 777 |
-  | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, and any kind added later |
+  | Other notices | assistant chat paused or near its context limit, submodule sync, stop after turn, a workspace start that was stopped, memory suggestions, and, for administrators, a member's home nearly full, a member's workspace not responding or a member's tool install failing (and any kind added later) |
 
   - **Unread dot**: off marks the notification read the moment it arrives: no red dot on the session and no
     unread count, while the notification centre keeps it as a read row. This column follows you to your
@@ -587,6 +587,8 @@ administrator's to set.
   automatically. **"Measure"** counts them (it reads every file, so only on a press); **"Empty"** deletes
   one after a confirmation. The next build or install that needs it is slower once. A cache a running
   build or install is using shows **"In use"** and cannot be emptied until that finishes.
+  A `~/.m2/repository` or `~/.npm/_npx` that is a symlink is not listed and cannot be emptied here,
+  so the link's target is never touched; empty it from a terminal if you need to.
   Old versions of the Copilot and Cursor CLIs are not listed here: they are removed automatically when
   the Workspace starts, keeping the current version, the pinned one, and any a running session still uses.
 - **Leftover files**, meaning things nothing reads again: throwaway profiles that killed headless Chromium

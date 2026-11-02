@@ -30,7 +30,7 @@ If a feature ships and does not appear here, it is not done
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [08 Terminal](../member/08-terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [08 Terminal](../member/08-terminal.md#copy-paste) |
 | Resume a stopped session | member | left pane → the session | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md) |
-| Home — what waits for you, where you left off, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
+| Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, action bar → Home, or leader `g h` | [01 First day](../member/01-first-day.md) |
 | Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [11 Running many sessions](../member/11-many-sessions.md) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [11 Running many sessions](../member/11-many-sessions.md#seeing-how-sessions-relate-over-time-the-fleet-graph) |
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [05 Stopping and tidying up](../member/05-stopping-and-tidying.md#stopping-and-tidying-up-sessions) |
@@ -93,6 +93,9 @@ If a feature ships and does not appear here, it is not done
 | Inbox recipes — send a prompt with a suggested agent and repository, take it into your memos | member | inbox → New / a card | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Attach a session to an inbox message, sharing it with the recipients | member | inbox → New | [12 Working with others](../member/12-collaboration.md#asking-a-teammate-the-inbox) |
 | Red dot on a session with an unread notification | member | left pane, tabs | [03 Starting sessions](../member/03-starting-sessions.md#reading-state-badges-and-notifications) |
+| Work-item links on a session row — its branch's pull request and the tickets it is linked to | member | left pane, session row | [03 Starting sessions](../member/03-starting-sessions.md#from-a-row-to-a-session); [repos.md](repos.md) for which providers |
+| Pull request notifications — ready to merge, merged, closed | member | Settings → Notifications | [20 Settings](../member/20-settings.md#notifications) |
+| Not responding badge — the workspace is up but its Agent does not answer | member | beside the workspace power button | [21 Troubleshooting](../member/21-troubleshooting.md#a-not-responding-badge-sits-next-to-the-power-button) |
 | Engine pills — is the chat / image engine up | member | top bar | [Icons, badges and menus](../member/badges-and-menus.md#the-engine-pills-in-the-top-bar) |
 | Assistant chat | member | Assistants | [10 Chat and memos](../member/10-chat-memo.md) |
 | Chat bridge — Discord / Slack | member | Settings → Chat | [15 External services](../member/15-external-services.md) |

@@ -1616,7 +1616,7 @@ would follow the same pattern. `AF_ENGINE_WAKE_TIMEOUT` is shared by all of them
 ### Holding the first request (why there is no retry)
 
 A cold engine takes minutes and opencode gives up at 300 seconds — but **not on elapsed
-time**. Measured three ways against opencode 1.18.29: holding the connection with nothing
+time**. Measured three ways on opencode 1.18.29 (the release pinned then; the current 2.x has not been re-measured): holding the connection with nothing
 sent is cut at 300.1 s; sending the 200 and the headers and then nothing is cut at 306.9 s;
 sending the headers and then one SSE **comment** line every 10 seconds is not cut at all, and
 a 400-second wait produced the answer with no resend. So the gateway answers a streaming

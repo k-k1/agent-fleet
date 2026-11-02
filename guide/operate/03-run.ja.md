@@ -205,6 +205,8 @@ AF_OPENCODE_TUI_STANDALONE=1
   セッションは起動したときのモードのままです。
 - `AF_OPENCODE_SERVE_DISABLE=1`（マネージド opencode を無効にする）でも、つなぐ共有サーバーが
   無いため専用サーバーになります。
+- 専用サーバーのペインでは、Console に**質問カードが出ません**。質問はそのペイン自身のサーバーにあり、
+  Agent はそれを読まないためです。ターミナルで答えてください。
 
 ### opencode の版に問題があったとき
 
@@ -311,6 +313,10 @@ Agent からの応答（Console のポーリング、リレー、usage サンプ
 `AF_USAGE_SAMPLE_INTERVAL=0` にすると、誰かがポーリングしている間の確認だけが残ります。ワークスペースの
 コンテナには ECS のヘルスチェックがなく、Agent が何をしていても ECS はタスクを running と報告します。
 これに気づくのがこの検知です。
+
+`AF_AGENT_SILENT_AFTER` を設定できるのは Control Plane の環境だけです。Compose は `.env`、
+Kubernetes（GKE も同じ）は `cp.env` に書きます。ECS のテンプレートにはこれ用のパラメータがないので、
+ECS では既定の `3m` で動きます。
 
 #### 応答しない Agent の自動停止（既定は無効）
 

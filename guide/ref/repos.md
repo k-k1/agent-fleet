@@ -31,7 +31,10 @@ the review flow can offer at all.
 | Pull requests in the work-item inbox | ✓ | ✓⁶ | — | — | — |
 | Start a review from a pull request (its head branch checked out) | ✓ | ✓⁶ | — | — | — |
 | Search across repositories | ✓ | —⁷ | — | — | — |
-| Write back to the item (comment) | ✓ | —⁸ | — | — | — |
+| Write back to the item (comment) | ✓ | ✓⁸ | — | — | — |
+| Pull request chip on a session's row (state, draft, checks) | ✓ | ✓ | — | — | — |
+| Notification when the branch's pull request is merged or closed | ✓ | ✓ | — | — | — |
+| Notification when the branch's pull request is ready to merge | ✓ | — | — | — | — |
 
 ¹ The internal provider is hosted by the deployment itself, and credentials are
 derived per membership rather than stored; there is nothing for you to connect.
@@ -56,10 +59,12 @@ list and per-revision diff) and **Local changes** (`svn status`) instead.
 rather than asking you to write them. A query with no workspace comes back empty,
 which is easy to mistake for "there is nothing assigned to me".
 
-⁸ Reading was added without writing on purpose: posting a comment needs a broader
-permission on the app, which means a tenant administrator widening the scope and
-**every member re-authorising**. That is not a price worth paying to show a list. The
-Console does not offer the button for Bitbucket rows.
+⁸ Posting a comment on a Bitbucket pull request needs the pull request write permission
+(`pullrequest:write` on the OAuth app), which means a tenant administrator widening the scope
+and **every member re-authorising**; reading was added without it on purpose. The Console
+offers the button on a Bitbucket row only when the connection is known to hold that scope, and
+otherwise Agent Fleet only reads ([15](../member/15-external-services.md)). Bitbucket issues are
+never listed, so only pull requests can be commented on.
 
 ## Issue trackers are a separate axis
 
@@ -70,7 +75,7 @@ Bitbucket or GitHub, and is connected separately.
 |---|---|---|
 | GitHub | issues and pull requests, in one query | ✓ comment |
 | Jira | issues | ✓ comment |
-| Bitbucket | pull requests | — |
+| Bitbucket | pull requests | ✓ comment (needs the write scope⁸) |
 
 **A 404 from a provider is never evidence that a thing does not exist.** It is equally
 consistent with "you cannot see it", and treating it as absence is how an inbox
