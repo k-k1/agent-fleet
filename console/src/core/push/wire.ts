@@ -5,7 +5,7 @@
 // The stats stream alone has no global store — a value changing every 4s must not redraw
 // everything (see the comment in WsBar) — so WsBar subscribes with onPush itself, and the
 // Machine tab's series (wsStatsFeed) is its own module with its own subscribers.
-import { onPush, onPushConnect } from "./events.ts";
+import { onPush, onPushConnect, setPushBusyProbe } from "./events.ts";
 import { wireWsStatsFeed } from "../store/wsStatsFeed.ts";
 import { useWorkspaceStore } from "../store/workspace.ts";
 import { useTenantStore } from "../store/tenant.ts";
@@ -14,9 +14,18 @@ import { applyPushedNotifications } from "../../features/notifications/store.ts"
 import { useWorkItemStore } from "../../features/workitems/store.ts";
 import { useEnginesStore } from "../../features/engines/store.ts";
 
+/** A live session whose state the user would watch change: mid-turn, or idle by hook with a
+ * background task still running. Waiting-on-a-human states are deliberately not counted —
+ * they can last for hours and would keep every unattended window streaming. */
+export function anySessionWorking(): boolean {
+  return useSessionsStore.getState().sessions.some((s) => s.alive !== false && (s.state === "working" || !!s.backgroundBusy));
+}
+
 /** Register the store-apply handlers. Returns the cleanup (StrictMode-safe). */
 export function wirePushApply(): () => void {
   const un = [
+    // The idle pause (events.ts) never closes the stream while this says true.
+    setPushBusyProbe(anySessionWorking),
     onPush("workspace", (d) => useWorkspaceStore.getState().applyPush(d || {})),
     // Only an actual list clears the rail. A frame that carries no `sessions` array (a
     // truncated or partial payload) used to publish [] through the same `|| []` that the

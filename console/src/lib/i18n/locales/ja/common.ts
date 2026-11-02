@@ -162,6 +162,7 @@ export const common = {
   "wsstart.home_restoring": "退避してあった home を復元しています…",
   "wsstart.home_attaching": "home のディスクを接続しています…",
   "wsstart.home_clearing": "作り直し・ホームの掃除で消す分を home から削除しています…",
+  "pushpause.note": "ライブ更新を一時停止中 — クリックで再開",
   "wsstart.hint": "進捗は agent.log にも記録されます。このダイアログは閉じても起動は続きます。",
 
   // === P2 TopBar（app/TopBar.tsx）===

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const toast = vi.fn(() => true);
 vi.mock("../../ui/toast.ts", () => ({ toast: (...a: unknown[]) => toast(...(a as [])) }));
 vi.mock("../api/client.ts", () => ({ api: vi.fn(), getTenant: () => "t" }));
-vi.mock("../push/events.ts", () => ({ onPush: vi.fn(), pushHealthy: () => true }));
+vi.mock("../push/events.ts", () => ({ onPush: vi.fn(), pushHealthy: () => true, pushPaused: () => false }));
 
 import { __test } from "./wsStatsFeed.ts";
 
