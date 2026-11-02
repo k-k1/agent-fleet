@@ -38,7 +38,11 @@ func gitDirInfoFromFiles(dir string) (branch string, worktree, ok bool) {
 	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
 		return "", false, true // git -C on a missing dir fails
 	}
-	// git discovers the repo by walking up from the logical cwd.
+	// git chdirs into dir, so discovery walks up from the PHYSICAL cwd: a symlink to a
+	// subdirectory of another repo (or of no repo) must not pick up the link's parents.
+	if abs, err = filepath.EvalSymlinks(abs); err != nil {
+		return "", false, false
+	}
 	for cur := abs; ; {
 		dotgit := filepath.Join(cur, ".git")
 		if fi, err := os.Lstat(dotgit); err == nil {
@@ -66,7 +70,7 @@ func looksLikeGitDir(d string) bool {
 }
 
 func readDotGit(top, dotgit string, fi os.FileInfo) (string, bool, bool) {
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+	if !ownedByMe(fi) {
 		return "", false, false
 	}
 	gitdir := dotgit
@@ -95,25 +99,37 @@ func readDotGit(top, dotgit string, fi os.FileInfo) (string, bool, bool) {
 		return "", false, false
 	}
 	gitdir = filepath.Clean(real)
+	// safe.directory: git also checks the worktree root and the gitdir an `.git` file names.
+	for _, p := range []string{top, gitdir} {
+		if st, err := os.Stat(p); err != nil || !ownedByMe(st) {
+			return "", false, false
+		}
+	}
+	common := gitdir
+	if b, err := os.ReadFile(filepath.Join(gitdir, "commondir")); err == nil {
+		common = strings.TrimSuffix(string(b), "\n")
+		if !filepath.IsAbs(common) {
+			common = filepath.Join(gitdir, common)
+		}
+	}
+	// A directory git would not accept as a repository (moved, half-deleted) is git's call.
+	for _, p := range []string{filepath.Join(common, "objects"), filepath.Join(common, "refs")} {
+		if st, err := os.Stat(p); err != nil || !st.IsDir() {
+			return "", false, false
+		}
+	}
 	head, err := os.ReadFile(filepath.Join(gitdir, "HEAD"))
 	if err != nil {
 		return "", false, false
 	}
 	worktree := strings.Contains(filepath.ToSlash(gitdir), "/.git/worktrees/")
-	h := strings.TrimSpace(string(head))
+	h := strings.TrimSuffix(string(head), "\n") // strict: no leading/trailing blanks
 	if isFullSHA(h) {
 		return "(detached)", worktree, true
 	}
 	name, found := strings.CutPrefix(h, "ref: refs/heads/")
-	if !found || name == "" {
+	if !found || name == "" || strings.TrimSpace(name) != name {
 		return "", false, false
-	}
-	common := gitdir
-	if b, err := os.ReadFile(filepath.Join(gitdir, "commondir")); err == nil {
-		common = strings.TrimSpace(string(b))
-		if !filepath.IsAbs(common) {
-			common = filepath.Join(gitdir, common)
-		}
 	}
 	exists, ok := branchRefState(common, name)
 	switch {
@@ -123,6 +139,11 @@ func readDotGit(top, dotgit string, fi os.FileInfo) (string, bool, bool) {
 		return "", false, true // rev-parse HEAD fails on an unborn branch
 	}
 	return name, worktree, true
+}
+
+func ownedByMe(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return !ok || int(st.Uid) == os.Getuid()
 }
 
 func isFullSHA(s string) bool {
@@ -143,19 +164,36 @@ func branchRefState(common, name string) (exists, ok bool) {
 	packed := map[string]bool{}
 	if b, err := os.ReadFile(filepath.Join(common, "packed-refs")); err == nil {
 		for _, ln := range strings.Split(string(b), "\n") {
-			if f := strings.Fields(ln); len(f) == 2 && !strings.HasPrefix(ln, "#") && !strings.HasPrefix(ln, "^") {
-				packed[f[1]] = true
+			if strings.HasPrefix(ln, "#") || strings.HasPrefix(ln, "^") || ln == "" {
+				continue
 			}
+			f := strings.Split(ln, " ")
+			if len(f) != 2 || !isFullSHA(f[0]) {
+				return false, false // malformed: let git judge
+			}
+			packed[f[1]] = true
 		}
 	} else if !os.IsNotExist(err) {
 		return false, false
 	}
+	// has reports whether ref exists; bad=true when its loose file is anything but a
+	// plain object id (a symbolic ref, garbage, a directory), which git resolves
+	// differently and which also shadows packed-refs.
+	bad := false
 	has := func(ref string) bool {
-		if packed[ref] {
+		b, err := os.ReadFile(filepath.Join(common, filepath.FromSlash(ref)))
+		switch {
+		case err == nil:
+			if !isFullSHA(strings.TrimSuffix(string(b), "\n")) {
+				bad = true
+			}
+			return true
+		case os.IsNotExist(err):
+			return packed[ref]
+		default:
+			bad = true // unreadable, or a directory
 			return true
 		}
-		_, err := os.Lstat(filepath.Join(common, filepath.FromSlash(ref)))
-		return err == nil
 	}
 	for _, other := range []string{"refs/" + name, "refs/tags/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD"} {
 		if has(other) {
@@ -165,8 +203,6 @@ func branchRefState(common, name string) (exists, ok bool) {
 	if _, err := os.Lstat(filepath.Join(common, filepath.FromSlash(name))); err == nil {
 		return false, false
 	}
-	if has("refs/heads/" + name) {
-		return true, true
-	}
-	return false, true
+	exists = has("refs/heads/" + name)
+	return exists, !bad
 }

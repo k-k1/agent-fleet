@@ -61,24 +61,64 @@ func TestGitDirInfoFromFilesMatchesRevParse(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Review round 1: symlink into another repo's subdir / into no repo, and repos
+	// whose files disagree with what git accepts.
+	other := filepath.Join(root, "other")
+	gitAt(t, root, "init", "-q", "-b", "target-branch", other)
+	gitAt(t, other, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i")
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.MkdirAll(filepath.Join(other, "sub"), 0o755))
+	must(os.Symlink(filepath.Join(other, "sub"), filepath.Join(main, "alias-into-repo")))
+	must(os.MkdirAll(filepath.Join(root, "norepo", "d"), 0o755))
+	must(os.Symlink(filepath.Join(root, "norepo", "d"), filepath.Join(main, "alias-out")))
+	clone := func(name string) string {
+		d := filepath.Join(root, name)
+		gitAt(t, root, "clone", "-q", main, d)
+		return d
+	}
+	symref := clone("symref") // refs/heads/main is a symbolic ref to another branch
+	gitAt(t, symref, "branch", "elsewhere")
+	must(os.WriteFile(filepath.Join(symref, ".git", "refs", "heads", "main"), []byte("ref: refs/heads/elsewhere\n"), 0o644))
+	broken := clone("broken") // loose ref with garbage content
+	must(os.WriteFile(filepath.Join(broken, ".git", "refs", "heads", "main"), []byte("garbage\n"), 0o644))
+	noobj := clone("noobjects")
+	must(os.Rename(filepath.Join(noobj, ".git", "objects"), filepath.Join(noobj, ".git", "objects.away")))
+	spaced := clone("spaced") // leading blank in HEAD
+	must(os.WriteFile(filepath.Join(spaced, ".git", "HEAD"), []byte(" ref: refs/heads/main\n"), 0o644))
+	badpacked := clone("badpacked")
+	gitAt(t, badpacked, "pack-refs", "--all")
+	must(os.WriteFile(filepath.Join(badpacked, ".git", "packed-refs"), []byte("zzzz refs/heads/main\n"), 0o644))
+
 	cases := map[string]string{
-		"main checkout":          main,
-		"slash branch worktree":  filepath.Join(root, "wt"),
-		"detached worktree":      filepath.Join(root, "wt-det"),
-		"detached clone":         detMain,
-		"packed-refs branch":     filepath.Join(root, "wt-packed"),
-		"ambiguous with tag":     filepath.Join(root, "wt-amb"),
-		"subdir":                 filepath.Join(main, "sub"),
-		"nested subdir":          filepath.Join(main, "sub", "deeper"),
-		"unborn branch":          unborn,
-		"bare repo":              bare,
-		"non-repo":               filepath.Join(root, "plain"),
-		"missing dir":            filepath.Join(root, "nope"),
-		"symlinked main":         link,
-		"symlinked worktree":     wtlink,
-		"symlinked main subdir":  filepath.Join(link, "sub"),
-		"inside .git of main":    filepath.Join(main, ".git"),
-		"inside worktree gitdir": filepath.Join(main, ".git", "worktrees", "wt"),
+		"symlink into other repo subdir": filepath.Join(main, "alias-into-repo"),
+		"symlink out of any repo":        filepath.Join(main, "alias-out"),
+		"symbolic loose branch ref":      symref,
+		"garbage loose branch ref":       broken,
+		"objects dir missing":            noobj,
+		"HEAD with leading blank":        spaced,
+		"malformed packed-refs":          badpacked,
+		"main checkout":                  main,
+		"slash branch worktree":          filepath.Join(root, "wt"),
+		"detached worktree":              filepath.Join(root, "wt-det"),
+		"detached clone":                 detMain,
+		"packed-refs branch":             filepath.Join(root, "wt-packed"),
+		"ambiguous with tag":             filepath.Join(root, "wt-amb"),
+		"subdir":                         filepath.Join(main, "sub"),
+		"nested subdir":                  filepath.Join(main, "sub", "deeper"),
+		"unborn branch":                  unborn,
+		"bare repo":                      bare,
+		"non-repo":                       filepath.Join(root, "plain"),
+		"missing dir":                    filepath.Join(root, "nope"),
+		"symlinked main":                 link,
+		"symlinked worktree":             wtlink,
+		"symlinked main subdir":          filepath.Join(link, "sub"),
+		"inside .git of main":            filepath.Join(main, ".git"),
+		"inside worktree gitdir":         filepath.Join(main, ".git", "worktrees", "wt"),
 	}
 	for name, dir := range cases {
 		t.Run(name, func(t *testing.T) {
