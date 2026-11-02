@@ -125,9 +125,11 @@ container is busy.
 (cd workspace/agent && go test -timeout 20m ./...)
 ```
 
-`workspace/agent/internal/memoryx` alone takes about 5 minutes, up to ~8 under load (real git processes and
-regexp scans, run serially because the tests use `t.Setenv`) and crosses `go test`'s
-default 10-minute timeout on a busy host, so pass `-timeout 20m` for the module.
+`workspace/agent/internal/memoryx` spends its time in real git processes. Its tests use `t.Setenv`
+and cannot run in parallel, so its `TestMain` runs them in up to `min(4, GOMAXPROCS)` child
+processes (`AF_MEMORYX_SHARDS=1` for the plain serial run): about 30 s on an idle host, 1–2
+minutes under load, against 1.5–3.5 minutes serially. A busy host can still stretch that
+past `go test`'s default 10-minute timeout, so keep `-timeout 20m` for the module.
 
 Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; in a Workspace,
 `af-db url` provides one — see `docs/build/10-development.md` §10.4. No Docker in the workspace.

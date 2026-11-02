@@ -283,16 +283,19 @@ The product is **two Go modules**, run separately (`e2e/` and the release scanne
 
 - CI also runs the race detector: `ci.yml`'s `go-race` job on the goroutine-heavy packages
   of both modules (the packages are listed in its matrix), and `go-race-nightly.yml` on whole
-  modules. Locally: `go test -race -p 2 -timeout 20m ./internal/memoryx/` (about 5 minutes).
-- `workspace/agent/internal/memoryx` is exec-bound: ~384 serial tests issue ~16,500 real `git`
-  processes, spread evenly (the 30 heaviest tests are a third of the calls). `t.Parallel` is
-  ruled out by `t.Setenv` (HOME, `CLAUDE_CONFIG_DIR`) and by shared package globals such as
-  `AgentMemoryEnabled` (`agent_memory_test.go`), so injecting the environment alone would not
-  make them safe. Measured alone with this change's tooling (#3102): ~107 s on an idle host
-  (load ~2) and 349 s at load 25–37. The issue itself reported 269–509 s at load ~14 on other
-  branches. That spread is why the `-timeout 20m` above is not optional. Setting
-  `core.fsync=none` or `gc.auto=0` for the fixtures changed nothing measurable (107.5 s vs
-  109 s), so they are not set.
+  modules. Locally: `go test -race -p 2 -timeout 20m ./internal/memoryx/` (about 2 minutes).
+- `workspace/agent/internal/memoryx` is exec-bound: ~384 tests issue ~16,500 real `git`
+  processes, 88 % of them from the code under test. The tests cannot use `t.Parallel`
+  (`t.Setenv` of HOME / `CLAUDE_CONFIG_DIR`, shared package globals such as
+  `AgentMemoryEnabled`), so the package's `TestMain` runs them in up to `min(4, GOMAXPROCS)`
+  child processes of the test binary instead (`internal/memoryx/shard_main_test.go`); each
+  child has its own environment and globals, and its output is replayed in one piece, so
+  `go test -json` still sees one test at a time. `AF_MEMORYX_SHARDS=N` sets the count, and `1`
+  is the plain serial run. Coverage, profiles, `-test.list`, fuzzing, benchmarks and a
+  subtest `-run` pattern always run serially. Measured (#3102): 26 s sharded vs 90 s serial on
+  an idle host, 82 s vs 208 s at load ~11, `-race` 132 s vs 303 s at load 9–12. A busy host
+  can still stretch it several-fold, so the `-timeout 20m` above stays. The production side
+  of the git exec count is #3255.
 - The CP side carries many `httptest`-based smoke tests (audit, egress, the internal
   git smart-HTTP and LFS, among others). The Postgres tests skip themselves unless
   `AF_TEST_DATABASE_URL` is set, and CI does not set it.
