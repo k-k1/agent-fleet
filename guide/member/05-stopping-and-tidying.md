@@ -302,7 +302,9 @@ A session stopped at a usage limit (or a spend limit) also shows a band above it
 quota left in front (and marked). Agents whose usage is not shown stay selectable, unmarked. The
 band is not shown when no agent can take the session, or every candidate is at its own cap.
 When the move completes, the automatic resume that was booked for the limit's reset is
-cancelled, so the original does not start again on its own.
+cancelled, so the original does not start again on its own. Stopping the session does **not**
+cancel it: the row shows **Stopped · auto-resume** with the time, and at that time the session
+resumes, starting the workspace if it has been stopped.
 
 The dialog shows, before you confirm:
 

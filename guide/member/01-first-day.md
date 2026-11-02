@@ -36,10 +36,13 @@ Next comes a two-way choice: **"Where do you want to start?"** (you can use both
   2. **Clone a repository and start a session**: from **"Start"** on the workspace action bar you can clone and launch in one go ([03 Starting sessions](03-starting-sessions.md)).
 
 The card leaves Home once you create your first session or start your first chat. From then
-on Home shows three sections:
+on Home shows four sections:
 
 - **Waiting for you**: sessions waiting for your answer, a permission or a plan approval.
 - **Continue**: the sessions you can pick up again, most recent first.
+- **At a glance**: tiles for the machine, running time, agents, model usage and usage limits, each
+  opening its detailed view. Fold it to hide it; the choice is kept in this browser, and on a phone
+  it starts folded.
 - **Start something**: "Get started" (clone and launch) and "Start chatting".
 
 Home is what an empty screen shows, so closing every pane ("Close all") brings you back to it.

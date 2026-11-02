@@ -62,7 +62,7 @@ with any other reason, then everyone else, each group by name.
 
 ### Notifications to tenant admins
 
-You do not have to open the roster to find these two cases. The Control Plane sends each admin of
+You do not have to open the roster to find these three cases. The Control Plane sends each admin of
 the member's tenant one Console notification (the bell) when:
 
 - **A member's own home volume is nearly full.** It uses the same thresholds and hysteresis as the
@@ -71,6 +71,9 @@ the member's tenant one Console notification (the bell) when:
   volume; on a shared host or filesystem the figure is not the member's and nothing is sent.
 - **The member's last observed start failed to install a CLI.** A skipped upgrade is not a
   failure and sends nothing.
+- **A running workspace's Agent has stopped answering** for several minutes: one notice per outage,
+  and the member detail marks it **Not responding**
+  ([02-limits.md](02-limits.md#force-stopping-a-workspace)).
 
 Each notice names the member and opens their detail when you click it. It is sent once per
 crossing, not on every sample, and the "already notified" mark is stored in the database, so a

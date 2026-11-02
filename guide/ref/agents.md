@@ -130,7 +130,9 @@ stays Working. muse asks for no tool approvals (footnote 13), so it never shows 
 permission.
 
 After a usage limit stops a turn, claude, codex under Managed and muse show **Waiting for
-limit reset** with the time, and resume by themselves once the limit resets. When a turn
+limit reset** with the time, and resume by themselves once the limit resets. For claude and codex
+the resume moves earlier when the limit lifts before its stated reset, and a turn you complete
+by hand in the meantime cancels it; stopping the session does not. When a turn
 has ended but work it started is still running, claude, codex under Managed, agy and muse
 show **Ready · running in background**.
 

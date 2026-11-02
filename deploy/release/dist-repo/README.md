@@ -54,6 +54,11 @@ Main features:
   a notification center, English/Japanese UI, keyboard-first operation
   (command palette / leader key), and optional text-to-speech for replies
   (VOICEVOX / Zundamon, AWS Polly).
+- **Work items**: Jira issues, GitHub issues and pull requests, and Bitbucket
+  pull requests listed beside your sessions; start a session from one, see
+  which sessions are linked to it (through the branch, its PR, Jira keys or
+  the issues the PR closes), and get notified when a PR is ready, merged or
+  closed.
 - **Live app preview**: web apps started inside a workspace (Vite HMR,
   WebSocket, Spring Boot, …) render in an embedded browser pane; ports are
   reachable through lightweight previews.
