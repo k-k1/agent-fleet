@@ -81,18 +81,27 @@ func TestMCPKindAlternateSpellingsRefused(t *testing.T) {
 	}
 }
 
-// A writer and a MaterializedKinds entry go together, for every REGISTERED kind: one added
-// without the other is either skipped by MaterializeAll for ever or never run. Walking the real
-// registry (not a copy of its names) is what catches a kind registered later.
-func TestMaterializedKindsMatchWritersForEveryRegisteredKind(t *testing.T) {
+// An MCP config writer is exactly what separates a kind that gets a native config file from one
+// that is served some other way. Every registered kind lands in one of three places, walked from
+// the real registry (not a copy of its names) so a kind registered later is caught: a writer, a
+// listed non-file route (muse on the wire, lcpp in process), or no MCP client at all.
+func TestMCPWriterMatchesMCPClientForEveryRegisteredKind(t *testing.T) {
+	servedWithoutFile := map[string]bool{"muse": true, "lcpp": true}
 	for _, k := range Kinds() {
-		if has, listed := mcpreg.HasWriter(k), slices.Contains(mcpreg.MaterializedKinds, k); has != listed {
-			t.Errorf("%s: has an MCP config writer=%v, in mcpreg.MaterializedKinds=%v", k, has, listed)
+		a, _ := Lookup(k)
+		client := a.Caps().MCPClient == agents.TriYes
+		switch has := mcpreg.HasWriter(k); {
+		case has && !client:
+			t.Errorf("%s: has an MCP config writer but Caps().MCPClient is not yes", k)
+		case !has && client && !servedWithoutFile[k]:
+			t.Errorf("%s: MCPClient yes but no config writer and not listed as served without a file", k)
+		case has && servedWithoutFile[k]:
+			t.Errorf("%s: listed as served without a file but has a config writer", k)
 		}
 	}
-	for _, k := range mcpreg.MaterializedKinds {
+	for _, k := range mcpreg.MaterializedKinds() {
 		if _, ok := registry[k]; !ok {
-			t.Errorf("mcpreg.MaterializedKinds has %q, which is not a registered kind", k)
+			t.Errorf("mcpreg.MaterializedKinds() has %q, which is not a registered kind", k)
 		}
 	}
 }

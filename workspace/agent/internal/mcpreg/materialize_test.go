@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -375,8 +376,8 @@ func TestMaterializeSkipsKindsWithoutCLI(t *testing.T) {
 func TestMaterializeAllCoversImplementedKinds(t *testing.T) {
 	withTempCLIHomes(t)
 	res := MaterializeAll()
-	if len(res) != len(MaterializedKinds) {
-		t.Fatalf("MaterializeAll = %d results, want %d", len(res), len(MaterializedKinds))
+	if len(res) != len(MaterializedKinds()) {
+		t.Fatalf("MaterializeAll = %d results, want %d", len(res), len(MaterializedKinds()))
 	}
 	for _, r := range res {
 		if r.Err != "" || r.Skipped {
@@ -395,34 +396,40 @@ func TestMaterializeRefusesCorruptLedger(t *testing.T) {
 	}
 }
 
-// MaterializedKinds says which kinds get a config file; writerFor is what writes it. A kind
-// listed without a writer would be reported "skipped" for ever, and a writer without a list
-// entry would never run.
-func TestMaterializedKindsHaveWriters(t *testing.T) {
-	for _, k := range MaterializedKinds {
-		if writerFor(k) == nil {
-			t.Errorf("%s is in MaterializedKinds but writerFor has no writer", k)
+// writerTable is the one declaration, so the derived list cannot lack a writer; what can go
+// wrong is a duplicate row (the second would be swept twice and the first silently shadowed) or
+// a key that is not a registered kind. Spellings that are not kinds find no writer.
+func TestWriterTableRowsAreUniqueRegisteredKinds(t *testing.T) {
+	seen := map[string]bool{}
+	for _, e := range writerTable {
+		if e.w == nil {
+			t.Errorf("%s: writerTable row has no writer", e.kind)
+		}
+		if seen[e.kind] {
+			t.Errorf("%s: listed twice in writerTable", e.kind)
+		}
+		seen[e.kind] = true
+		if !kinds.Known(e.kind) {
+			t.Errorf("writerTable key %q is not a registered kind", e.kind)
 		}
 	}
-	for _, k := range []string{session.KindClaude, session.KindOpencode, session.KindCodex, session.KindCursor,
-		session.KindKiro, session.KindAgy, session.KindCopilot, session.KindMuse, session.KindLcpp,
-		session.KindShell, session.KindSSM} {
-		if has := writerFor(k) != nil; has != slices.Contains(MaterializedKinds, k) {
-			t.Errorf("%s: has a writer=%v, in MaterializedKinds=%v", k, has, !has)
+	for _, k := range []string{session.KindMuse, session.KindLcpp, session.KindShell, session.KindSSM} {
+		if writerFor(k) != nil {
+			t.Errorf("%s has a config writer", k)
 		}
 	}
 }
 
 // The pre-change lists, and the kinds that are served without a config file.
 func TestMaterializedAndServedKindsAreUnchanged(t *testing.T) {
-	if want := []string{"claude", "opencode", "codex", "cursor", "kiro", "agy", "copilot"}; !slices.Equal(MaterializedKinds, want) {
-		t.Errorf("MaterializedKinds = %v, want %v", MaterializedKinds, want)
+	if want := []string{"claude", "opencode", "codex", "cursor", "kiro", "agy", "copilot"}; !slices.Equal(MaterializedKinds(), want) {
+		t.Errorf("MaterializedKinds() = %v, want %v", MaterializedKinds(), want)
 	}
 	if want := []string{"claude", "opencode", "codex", "cursor", "kiro", "agy", "copilot", "muse", "lcpp"}; !slices.Equal(ServedKinds, want) {
 		t.Errorf("ServedKinds = %v, want %v", ServedKinds, want)
 	}
 	for _, k := range []string{"", "Claude", " claude", "claude-code", "cursor-agent", "kiro-cli", "github-copilot", "antigravity", "shell", "ssm"} {
-		if writerFor(k) != nil || slices.Contains(MaterializedKinds, k) {
+		if writerFor(k) != nil || slices.Contains(MaterializedKinds(), k) {
 			t.Errorf("%q is treated as a materialized kind", k)
 		}
 	}

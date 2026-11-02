@@ -41,14 +41,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// MaterializedKinds are the agent kinds whose native MCP config af writes — since P5,
-// every kind that runs an agent CLI. Ordered (session.go's declaration order) so
-// MaterializeAll's results read deterministically.
-var MaterializedKinds = []string{
-	session.KindClaude, session.KindOpencode, session.KindCodex,
-	session.KindCursor, session.KindKiro, session.KindAgy, session.KindCopilot,
-}
-
 // ServedKinds are the kinds whose sessions actually RECEIVE af's MCP servers — including the
 // builtin `af` one, and with it the self-report tool.
 //
@@ -64,7 +56,7 @@ var MaterializedKinds = []string{
 // (internal/agents/lcpp/mcp.go) resolves ForSession and calls internal/mcpc directly, in
 // process — no config file, no wire message, just a Go call at the start of every turn. It
 // belongs here and not in MaterializedKinds for the identical reason muse does.
-var ServedKinds = append(append([]string(nil), MaterializedKinds...), session.KindMuse, session.KindLcpp)
+var ServedKinds = append(MaterializedKinds(), session.KindMuse, session.KindLcpp)
 
 // MaterializeResult is one kind's outcome, shaped for a log line and for a future
 // Console surface (docs/log/48 §11.3).
@@ -90,24 +82,50 @@ type writer func(defs []ServerDef, prev []string) (written, removed []string, ch
 // this package can hold the writers to the real kind registry.
 func HasWriter(kind string) bool { return writerFor(kind) != nil }
 
-// writers is the kind → native-config editor table, keyed by the exact registry key. It is a
-// package-local table and not an agents capability because internal/agents (and the kind
-// packages under it) import mcpreg, so mcpreg cannot import agents without a cycle. A kind
-// with no entry (shell, ssm: no agent CLI) has no config to write; an alias or unknown kind
-// finds none either.
-var writers = map[string]writer{
-	session.KindClaude:   materializeClaude,
-	session.KindCodex:    materializeCodex,
-	session.KindOpencode: materializeOpencode,
-	session.KindCursor:   materializeCursor,
-	session.KindKiro:     materializeKiro,
-	session.KindAgy:      materializeAgy,
-	session.KindCopilot:  materializeCopilot,
+// writerEntry is one kind's native-config editor, keyed by the exact registry key.
+type writerEntry struct {
+	kind string
+	w    writer
+}
+
+// writerTable is the one declaration of which kinds af writes a native MCP config for, and how.
+// It lives here and not on agents.Agent because internal/agents (and the kind packages under it)
+// import mcpreg, so mcpreg cannot import agents without a cycle; the agentreg test holds it to
+// the registry. The order is the order MaterializeAll sweeps the kinds and reports their
+// results; it is the kind table's order except copilot, which was added last. A kind with no
+// entry (shell, ssm: no agent CLI; muse, lcpp: served without a file, see ServedKinds) has no
+// config to write; an alias or unknown kind finds none either.
+var writerTable = []writerEntry{
+	{session.KindClaude, materializeClaude},
+	{session.KindOpencode, materializeOpencode},
+	{session.KindCodex, materializeCodex},
+	{session.KindCursor, materializeCursor},
+	{session.KindKiro, materializeKiro},
+	{session.KindAgy, materializeAgy},
+	{session.KindCopilot, materializeCopilot},
+}
+
+// MaterializedKinds are the agent kinds whose native MCP config af writes — every kind that
+// runs an agent CLI — derived from writerTable so the list and the writers cannot disagree.
+// A fresh slice, in writerTable order.
+func MaterializedKinds() []string {
+	out := make([]string, len(writerTable))
+	for i, e := range writerTable {
+		out[i] = e.kind
+	}
+	return out
 }
 
 // writerFor returns nil for a kind with no writer, which Materialize reports as skipped, not
 // an error — see MaterializeResult.Skipped.
-func writerFor(kind string) writer { return writers[kind] }
+func writerFor(kind string) writer {
+	for _, e := range writerTable {
+		if e.kind == kind {
+			return e.w
+		}
+	}
+	return nil
+}
 
 // materializeMu serializes materialize passes. Every pass is read → merge → rename over
 // a shared config file AND a read-modify-write of the ownership ledger, and there are
@@ -168,9 +186,9 @@ func MaterializeAll() []MaterializeResult {
 	// releasing between them would reopen the lost-update window this lock closes.
 	materializeMu.Lock()
 	defer materializeMu.Unlock()
-	out := make([]MaterializeResult, 0, len(MaterializedKinds))
-	for _, k := range MaterializedKinds {
-		out = append(out, materializeLocked(k))
+	out := make([]MaterializeResult, 0, len(writerTable))
+	for _, e := range writerTable {
+		out = append(out, materializeLocked(e.kind))
 	}
 	return out
 }

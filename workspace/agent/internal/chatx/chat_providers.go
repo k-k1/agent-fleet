@@ -29,6 +29,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/cursor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routehealth"
@@ -263,15 +264,27 @@ func PreferredHeadlessAgent() string { return preferredFrom(assistantAgentOrderP
 // works (docs/log/84).
 func PreferredAssistAgent() string { return preferredFrom(oneShotOrder()) }
 
-// oneShotKinds are exactly the kinds oneShotRunOn has a case for. A kind outside this list
-// is never selected for a one-shot — neither by a feature pin nor from the priority order — even
-// when ChatProviders knows it: the run used to fall through to the claude path for any kind
-// without a case, so a Muse pick ran and was billed on claude (#1020). lcpp is left out on
-// purpose (ADR 0093: auto-selecting into a self-hosted engine is a phase 2 decision).
-// TestOneShotKindsMatchTheRunnerSwitch keeps this list and the switch in step.
-var oneShotKinds = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy, session.KindMuse}
+// oneShotKinds are the registered kinds whose chat backend has a oneShotRunner, in kind table
+// order (internal/kinds). oneShotRunOn reads the same runner off chatBackends, so selection and
+// execution cannot disagree. A kind outside this list is never selected for a one-shot — neither by a feature pin nor from
+// the priority order — even when ChatProviders knows it: the run used to fall through to the
+// claude path for any kind without a runner, so a Muse pick ran and was billed on claude (#1020).
+// lcpp has no runner on purpose (ADR 0093: auto-selecting into a self-hosted engine is a phase 2
+// decision). Registry key by exact match: an alias or unregistered kind is never listed.
+func oneShotKinds() []string {
+	var out []string
+	for _, k := range kinds.All() {
+		if oneShotRunnable(k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
 
-func oneShotRunnable(kind string) bool { return slices.Contains(oneShotKinds, kind) }
+func oneShotRunnable(kind string) bool {
+	_, ok := backend(kind).(oneShotRunner)
+	return ok
+}
 
 // oneShotOrder is the AI assist priority order minus the kinds no one-shot can run on. Never
 // empty: agentOrderPref appends every DefaultHeadlessOrder kind, and all of them are runnable.
@@ -1927,7 +1940,7 @@ func OneShotSettingsKey(feature string, tier OneShotTier) string {
 	var b strings.Builder
 	b.WriteString(aiFeatureAgentPref(feature))
 	b.WriteString("|" + strings.Join(oneShotOrder(), ","))
-	for _, k := range oneShotKinds {
+	for _, k := range oneShotKinds() {
 		m, configured := resolveOneShotModel(feature, tier, k)
 		fmt.Fprintf(&b, "|%s=%q,%t,%q", k, m, configured, os.Getenv(oneShotEnvModels[k]))
 	}
@@ -2171,7 +2184,7 @@ func noteOneShotResult(ctx context.Context, kind, model string, started time.Tim
 // oneShotRunOn runs one one-shot on kind.
 func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, persona, prompt, claudeModel string) (reply, ranKind, model string, err error) {
 	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
-	// the priority order (oneShotKinds), so kind is filled in inside the branch, as a
+	// the priority order (oneShotKinds()), so kind is filled in inside the branch, as a
 	// result of what ran: writing the requested value instead would turn all consumption of a
 	// claude-less workspace into claude's (docs/log/46 §2). Recording inside rather than
 	// widening the return value keeps the four call sites untouched, since the recording point
@@ -2191,7 +2204,7 @@ func oneShotRunOn(ctx context.Context, kind, feature string, tier OneShotTier, p
 		tier: tier, persona: persona, prompt: prompt, claudeModel: claudeModel}
 	r, ok := backend(kind).(oneShotRunner)
 	if !ok {
-		// oneShotKind never returns a kind outside oneShotKinds; this is the backstop that keeps
+		// oneShotKind never returns a kind outside oneShotKinds(); this is the backstop that keeps
 		// a new kind from silently running (and being billed) on claude.
 		call.Kind = kind
 		return "", "", "", fmt.Errorf("AI assist cannot run on %q", kind)

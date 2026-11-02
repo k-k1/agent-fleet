@@ -714,7 +714,7 @@ func TestForSessionWritesAnOAuthServerOnlyWhileAGrantIsLive(t *testing.T) {
 		}
 		return nil
 	}
-	for _, kind := range append(append([]string(nil), MaterializedKinds...), session.KindMuse, session.KindLcpp) {
+	for _, kind := range append(MaterializedKinds(), session.KindMuse, session.KindLcpp) {
 		defs, err := ForSession(kind)
 		if err != nil {
 			t.Fatal(err)
@@ -956,7 +956,7 @@ func TestKeyBearingConfigsStayPrivateWhenNothingChanges(t *testing.T) {
 		return out
 	}
 	known := map[string]bool{}
-	for _, kind := range MaterializedKinds {
+	for _, kind := range MaterializedKinds() {
 		if r := Materialize(kind); r.Err != "" {
 			t.Fatalf("%s: %+v", kind, r)
 		}
