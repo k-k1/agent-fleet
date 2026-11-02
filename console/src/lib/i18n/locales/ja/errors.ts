@@ -90,6 +90,8 @@ export const errors = {
   // 来たとき。失敗ではなく「まだ」なので、赤くしても再試行を促す言い方にする。
   "err.workspace_starting": "ワークスペースを起動中です。準備ができてからもう一度お試しください。",
   "err.driver_unavailable": "このエージェントではマネージド実行を利用できません。",
+  "err.driver_unsupported": "この種類のエージェントでは、その実行方式を利用できません。",
+  "err.busy_switch": "実行中のターンがあります。完了を待つか停止してから切り替えてください。",
   "err.member_origin_required": "この操作は Console からのみ行えます。ログイン中のセッションから送られた要求ではありません。",
   "err.member_origin_invalid": "要求があなたのものだと確認できませんでした（期限切れの可能性があります）。もう一度お試しください。",
   "err.member_origin_unavailable": "ワークスペースのエージェントが起動直後か、再起動が必要です。1 分ほど待ってから再試行してください。",

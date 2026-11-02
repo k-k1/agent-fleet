@@ -134,7 +134,7 @@ func (agentImpl) Caps() agents.Caps {
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
 	id := sids.Read(session.UUID(m.Dir, m.Name))
 	if id == "" || rolloutPath(id) == "" {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	return id, nil
 }
@@ -152,21 +152,21 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
 	anchor := at.Anchor
 	if anchor == "" {
-		return "", errors.New("分岐点が指定されていません")
+		return "", agents.ErrNoForkPoint
 	}
 	// Only the app-server takes a fork point; `codex fork <id>` has no such argument.
 	if m.DriverKind() != session.DriverManaged {
-		return "", fmt.Errorf("%w: codex の発言時点からの分岐は managed のセッションでのみ利用できます",
+		return "", fmt.Errorf("%w: codex の発言時点からの分岐は managed のセッションでのみ利用できます / forking codex at a past message works only for a managed session",
 			agents.ErrForkAtRoute)
 	}
 	id := sids.Read(session.UUID(m.Dir, m.Name))
 	path := rolloutPath(id)
 	if id == "" || path == "" {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	lines, err := rolloutLines(path)
 	if err != nil {
-		return "", errors.New("codex の会話ログを読めません")
+		return "", errors.New("codex の会話ログを読めません / cannot read the codex conversation log")
 	}
 	ids := rolloutTurnIDs(lines)
 	for i, tid := range ids {
@@ -179,11 +179,11 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 			return tid, nil
 		}
 		if i == 0 {
-			return "", errors.New("最初のやり取りからは分岐できません（新しいセッションを作ってください）")
+			return "", errors.New("最初のやり取りからは分岐できません（新しいセッションを作ってください） / cannot fork from the first exchange (create a new session instead)")
 		}
 		return ids[i-1], nil
 	}
-	return "", errors.New("指定された分岐点がこの会話に見つかりません")
+	return "", agents.ErrForkPointNotFound
 }
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
@@ -243,7 +243,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// WHOLE conversation when the user asked for a point. The handler gates on managed
 	// first; this is the second line.
 	if forkFrom != "" && m.ForkAt != "" {
-		return agents.LaunchPlan{}, errors.New("発言時点からの分岐は managed のセッションでのみ利用できます")
+		return agents.LaunchPlan{}, agents.ErrForkAtManagedOnly
 	}
 	resumeID := sids.Read(cxSid)
 	// A thread the shared app-server still holds (a managed session just stopped) locks the

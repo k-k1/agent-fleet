@@ -89,7 +89,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 // resume is Resume without the held peer messages.
 func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindOpencode {
-		return nil, errors.New("opencode driver は opencode セッション専用です")
+		return nil, errors.New("opencode driver は opencode セッション専用です / the opencode driver only serves opencode sessions")
 	}
 	if !session.DirExists(m.Dir) {
 		return nil, agents.DirGoneErr(m.Dir)
@@ -619,7 +619,7 @@ func (h *threadHandle) accept(in agents.TurnInput) (queued bool, err error) {
 	h.mu.Lock()
 	if !h.alive {
 		h.mu.Unlock()
-		return false, errors.New("runtime が停止しています（再開してください）")
+		return false, errors.New("runtime が停止しています（再開してください） / the runtime is stopped (resume the session)")
 	}
 	if h.inter != nil {
 		// Free text sent while a question is pending invites a mis-answer (the same
@@ -1124,12 +1124,12 @@ func serveCreateSession(addr, dir, title string) (string, error) {
 	u, body := createSessionRequest(addr, dir, title)
 	res, err := serveClient.Post(u, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("opencode session の作成に失敗しました: %w", err)
+		return "", fmt.Errorf("opencode session の作成に失敗しました / failed to create the opencode session: %w", err)
 	}
 	defer res.Body.Close()
 	id := sessionID(res.Body)
 	if id == "" {
-		return "", errors.New("opencode session の作成応答を解釈できません")
+		return "", errors.New("opencode session の作成応答を解釈できません / cannot parse the opencode session creation response")
 	}
 	return id, nil
 }
@@ -1141,11 +1141,11 @@ func serveCreateSession(addr, dir, title string) (string, error) {
 func serveForkSession(addr, src, at string) (string, error) {
 	body, err := forkBody(at)
 	if err != nil {
-		return "", fmt.Errorf("opencode session の分岐点を組み立てられません: %w", err)
+		return "", fmt.Errorf("opencode session の分岐点を組み立てられません / cannot build the opencode fork point: %w", err)
 	}
 	res, err := serveClient.Post(forkURL(addr, src), "application/json", strings.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("opencode session の分岐に失敗しました: %w", err)
+		return "", fmt.Errorf("opencode session の分岐に失敗しました / failed to fork the opencode session: %w", err)
 	}
 	defer res.Body.Close()
 	// The anchor is client-supplied, so this is the one serve call that can be rejected
@@ -1153,13 +1153,13 @@ func serveForkSession(addr, src, at string) (string, error) {
 	// letting it fall through to the generic "cannot parse the response" error.
 	if res.StatusCode >= 400 {
 		if at != "" {
-			return "", fmt.Errorf("opencode が分岐点を受け付けませんでした (HTTP %d)", res.StatusCode)
+			return "", fmt.Errorf("opencode が分岐点を受け付けませんでした (HTTP %d) / opencode rejected the fork point (HTTP %[1]d)", res.StatusCode)
 		}
-		return "", fmt.Errorf("opencode session の分岐に失敗しました (HTTP %d)", res.StatusCode)
+		return "", fmt.Errorf("opencode session の分岐に失敗しました (HTTP %d) / failed to fork the opencode session (HTTP %[1]d)", res.StatusCode)
 	}
 	id := sessionID(res.Body)
 	if id == "" {
-		return "", errors.New("opencode session の分岐応答を解釈できません")
+		return "", errors.New("opencode session の分岐応答を解釈できません / cannot parse the opencode session fork response")
 	}
 	return id, nil
 }

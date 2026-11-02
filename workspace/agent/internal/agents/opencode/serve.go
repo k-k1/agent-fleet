@@ -310,7 +310,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// Something already answers 401 on the port: a daemon whose password we lost. Spawning
 	// would only collide, and rotating the password would make the loss permanent.
 	if serveRejectsAuth(addr) {
-		return "", 0, fmt.Errorf("opencode serve が %s で認証を要求しています（パスワードが一致しません）。起動済みのデーモンを止めてください", addr)
+		return "", 0, fmt.Errorf("opencode serve が %s で認証を要求しています（パスワードが一致しません）。起動済みのデーモンを止めてください / "+
+			"opencode serve at %[1]s is asking for authentication (the password does not match); stop the daemon that is already running", addr)
 	}
 	// The candidate is only adopted for the probe below; the previous password comes back
 	// unless the new daemon proves it holds this one, so a failed start (or an Ensure that
@@ -321,7 +322,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	sharedWanted := sharedTUI() || sharedTerminals() > 0
 	password, err := nextServePassword(prevPassword, sharedWanted)
 	if err != nil {
-		return "", 0, fmt.Errorf("opencode serve のパスワードを用意できません: %w", err)
+		return "", 0, fmt.Errorf("opencode serve のパスワードを用意できません / cannot prepare the opencode serve password: %w", err)
 	}
 	useServePassword(password)
 	started := false
@@ -348,7 +349,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	cmd.Dir = paths.HomeDir()
 	tail, err := agents.StartWithStderrTail(cmd)
 	if err != nil {
-		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました: %w", err)
+		return "", 0, fmt.Errorf("opencode serve の起動に失敗しました / failed to start opencode serve: %w", err)
 	}
 	defer tail.Settle() // after any failure snapshot; see StderrTail.Release
 	deadline := time.Now().Add(serveStartTimeout)
@@ -375,7 +376,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 			return addr, gen, nil
 		}
 	}
-	err = tail.Wrap(errors.New("opencode serve が時間内に起動しませんでした")) // before the kill adds noise
+	err = tail.Wrap(errors.New("opencode serve が時間内に起動しませんでした / opencode serve did not start in time")) // before the kill adds noise
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // reap: waitDaemon is only started on success — Kill alone leaves a zombie
 	tail.Release()

@@ -6,7 +6,6 @@
 package claude
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -42,7 +41,7 @@ func (agentImpl) Caps() agents.Caps {
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
 	sid := LiveSID(session.UUID(m.Dir, m.Name))
 	if !JSONLResumable(sid) {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	return sid, nil
 }
@@ -60,7 +59,7 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 	sid := session.UUID(m.Dir, m.Name)
 	lines, path, _ := TranscriptRead(sid)
 	if len(lines) == 0 || path == "" {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", agents.ErrNoConversationToFork
 	}
 	anchor := at.Anchor
 	if at.Include {
@@ -133,7 +132,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// `--fork-session`, which would copy the WHOLE conversation the user asked to cut.
 	if m.ForkAt != "" && m.ForkFrom != "" && !SessionJSONLExists(sid) {
 		if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
-			return agents.LaunchPlan{}, fmt.Errorf("発言時点からの分岐を作成できませんでした: %w", err)
+			return agents.LaunchPlan{}, fmt.Errorf("発言時点からの分岐を作成できませんでした / could not create the fork at that message: %w", err)
 		}
 	}
 	// No env token is injected: the interactive TUI authenticates from claude's own

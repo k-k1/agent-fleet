@@ -1077,7 +1077,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		d, ok := driverOf(meta)
 		if !ok {
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-				"managed driver はこの kind ではまだ利用できません")
+				msgDriverUnavailable)
 			return
 		}
 		if _, err := mcpx.StartManagedSession(d, meta); err != nil {
@@ -1562,7 +1562,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			// fake alive=true.
 			unarchiveAfterFailedRecreate(m.Name)
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-				"managed driver はこの kind ではまだ利用できません")
+				msgDriverUnavailable)
 			return
 		}
 		if _, err := mcpx.StartManagedSession(d, newMeta); err != nil {

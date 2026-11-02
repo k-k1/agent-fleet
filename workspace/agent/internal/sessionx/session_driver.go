@@ -77,7 +77,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	if target == session.DriverManaged {
 		if _, ok := driverOf(m); !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
-				"managed ドライバはこの kind ではまだ利用できません")
+				msgDriverUnsupported)
 			return
 		}
 	} else if AgentOf(m.Kind).Caps().ManagedOnly {
@@ -85,7 +85,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		// all can never be switched TO tui, unlike the managed-unsupported case above where
 		// the kind might grow a driver later.
 		httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
-			"この kind には Terminal(CLI) 実行方式がありません（managed 専用です）")
+			msgNoTerminalRoute)
 		return
 	}
 
@@ -104,7 +104,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		defer end()
 		if switchSourceAlive(m) {
 			httpx.WriteErr(w, http.StatusConflict, errCodeCodexStopFirst,
-				"codex のセッションは停止してからターミナル（CLI）に切り替えてください（停止から 1 分ほどで切り替えられます）")
+				msgCodexStopFirst)
 			return
 		}
 	}
@@ -115,12 +115,12 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	if m.DriverKind() == session.DriverTUI {
 		if st, ok := status.Read(sid); ok && st.State == "working" {
 			httpx.WriteErr(w, http.StatusConflict, "busy_switch",
-				"実行中のターンがあります。完了を待つか停止してから切り替えてください")
+				msgBusySwitch)
 			return
 		}
 	} else if managedBusy(m) {
 		httpx.WriteErr(w, http.StatusConflict, "busy_switch",
-			"実行中のターンがあります。完了を待つか停止してから切り替えてください")
+			msgBusySwitch)
 		return
 	}
 
