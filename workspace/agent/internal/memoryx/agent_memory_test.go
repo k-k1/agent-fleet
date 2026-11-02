@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -40,9 +41,23 @@ func agentMemTestEnv(t *testing.T) (home, clone, wt string) {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	git(clone, "init", "--quiet", "-b", "main")
-	git(clone, "commit", "--quiet", "--allow-empty", "-m", "init")
-	git(clone, "worktree", "add", "--quiet", "-b", "feature-x", wt)
+	agentMemTemplateOnce.Do(func() {
+		tpl, err := os.MkdirTemp(os.Getenv("AF_TESTGUARD_ROOT"), "memx-clone-tpl-")
+		if err != nil {
+			agentMemTemplateErr = err
+			return
+		}
+		tc, tw := filepath.Join(tpl, "demo"), filepath.Join(tpl, "demo@feature-x")
+		_ = os.MkdirAll(tc, 0o700)
+		git(tc, "init", "--quiet", "-b", "main")
+		git(tc, "commit", "--quiet", "--allow-empty", "-m", "init")
+		git(tc, "worktree", "add", "--quiet", "-b", "feature-x", tw)
+		agentMemTemplateDir = tpl
+	})
+	if agentMemTemplateErr != nil {
+		t.Fatalf("clone template: %v", agentMemTemplateErr)
+	}
+	agentMemCopyTemplate(t, agentMemTemplateDir, filepath.Join(home, "repos"), clone, wt)
 
 	session.WriteMeta(session.Meta{Name: "claude-main", Dir: clone, Kind: "claude"})
 	session.WriteMeta(session.Meta{Name: "codex-wt", Dir: wt, Kind: "codex"})
@@ -923,5 +938,27 @@ func TestIndexJSONForServesAWorkingCopyWithoutASession(t *testing.T) {
 	}
 	if strings.Contains(raw, "build-cmd") {
 		t.Errorf("a directory outside ~/repos must not see the project's memory: %s", raw)
+	}
+}
+
+// Prototype (#3102 study): the clone + worktree fixture is built once and copied per test; only
+// the two absolute worktree links are rewritten.
+var (
+	agentMemTemplateOnce sync.Once
+	agentMemTemplateDir  string
+	agentMemTemplateErr  error
+)
+
+func agentMemCopyTemplate(t *testing.T, tpl, dst, clone, wt string) {
+	t.Helper()
+	if err := os.CopyFS(dst, os.DirFS(tpl)); err != nil {
+		t.Fatalf("copy template: %v", err)
+	}
+	link := filepath.Join(clone, ".git", "worktrees", "demo@feature-x", "gitdir")
+	if err := os.WriteFile(link, []byte(filepath.Join(wt, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+filepath.Join(clone, ".git", "worktrees", "demo@feature-x")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
