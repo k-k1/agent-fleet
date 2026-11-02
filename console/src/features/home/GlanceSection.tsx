@@ -108,6 +108,15 @@ export function GlanceSection() {
     },
   );
   const zone = effectiveTimeZone();
+  // The request window is cut in the zone of the moment, so a zone change also needs a new read:
+  // two zones can disagree on "today" by two days.
+  const zoneRead = useRef(zone);
+  const reloadUptime = uptimeRaw.reload;
+  useEffect(() => {
+    if (zoneRead.current === zone) return;
+    zoneRead.current = zone;
+    if (seen.current) reloadUptime();
+  }, [zone, reloadUptime]);
   const uptime = useMemo<Loaded<UptimeSummary>>(
     () => ({ ...uptimeRaw, data: uptimeRaw.data ? uptimeSummary(uptimeRaw.data.res, uptimeRaw.data.now) : null }),
     [uptimeRaw.data, uptimeRaw.failed, uptimeRaw.loading, uptimeRaw.reload, zone],

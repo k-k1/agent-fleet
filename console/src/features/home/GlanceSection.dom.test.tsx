@@ -340,9 +340,9 @@ describe("At a glance: cost", () => {
 });
 
 describe("At a glance: time zone setting", () => {
-  // The answer is fetched once; changing the zone while it is on screen must re-bucket the days
-  // without a new request.
-  it("re-buckets the uptime days when the zone changes", async () => {
+  // Changing the zone while the tile is on screen re-buckets the days and re-reads the window
+  // (it is cut in the zone of the moment).
+  it("re-buckets the uptime days and re-reads the window when the zone changes", async () => {
     const { setFormatPrefs } = await import("../../lib/intl.ts");
     const now = Date.parse("2026-08-19T14:00:00Z");
     const spy = vi.spyOn(Date, "now").mockReturnValue(now);
@@ -359,13 +359,37 @@ describe("At a glance: time zone setting", () => {
         [...host.querySelectorAll('[data-tile="uptime"] .uh-cell')]
           .filter((e) => /uh-lv-/.test(e.className))
           .map((e) => (e.getAttribute("title") || "").slice(0, 10));
-      const fetches = calls().length;
+      const fetches = calls().filter((c) => c.startsWith("api/usage/me/hourly")).length;
       expect(running()).toEqual(["2026-08-19"]);
       await act(async () => {
         setFormatPrefs("auto", "America/Los_Angeles");
       });
       expect(running()).toEqual(["2026-08-18"]);
-      expect(calls().length).toBe(fetches);
+      // The window is cut in the zone of the moment, so the read is repeated.
+      await settle();
+      expect(calls().filter((c) => c.startsWith("api/usage/me/hourly")).length).toBe(fetches + 1);
+    } finally {
+      spy.mockRestore();
+      setFormatPrefs("auto", "auto");
+    }
+  });
+});
+
+describe("At a glance: window follows the zone", () => {
+  it("asks for the new zone's 7-day window after a zone change", async () => {
+    const { setFormatPrefs } = await import("../../lib/intl.ts");
+    const spy = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-19T11:00:00Z"));
+    try {
+      setFormatPrefs("auto", "Pacific/Kiritimati");
+      await mount(<GlanceSection />);
+      const reads = () => calls().filter((c) => c.startsWith("api/usage/me/hourly"));
+      expect(reads()[0]).toContain("from=2026-08-13");
+      await act(async () => {
+        setFormatPrefs("auto", "Etc/GMT+12");
+      });
+      await settle();
+      expect(reads().length).toBe(2);
+      expect(reads()[1]).toContain("from=2026-08-11");
     } finally {
       spy.mockRestore();
       setFormatPrefs("auto", "auto");
