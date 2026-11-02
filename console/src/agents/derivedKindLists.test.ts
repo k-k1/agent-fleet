@@ -14,7 +14,11 @@ vi.mock("../core/api/client.ts", () => ({ api: vi.fn(), apiJSON: vi.fn(), getTen
 
 describe("derived kind lists equal the literals they replaced", () => {
   it("repoLaunchKinds", () => {
-    expect(repoLaunchKinds).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"]);
+    // The pinned literal is the regression pin: every kind that was launchable stays, in this
+    // order. A kind added later lands wherever SESSION_KINDS puts it without editing the pin.
+    const pinned = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell"];
+    expect(repoLaunchKinds.filter((k) => pinned.includes(k))).toEqual(pinned);
+    expect(repoLaunchKinds).toEqual(SESSION_KINDS.filter((k) => AGENTS[k].caps.launchableFromRepo));
   });
 
   it("ASSISTANT_AGENT_KINDS, the default backend priority", () => {

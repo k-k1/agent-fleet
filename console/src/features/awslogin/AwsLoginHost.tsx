@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { ToastCountdown, ToastIdentity } from "../cloudlogin/LoginToastParts.tsx";
 import { AwsLoginModal } from "./AwsLoginModal.tsx";
@@ -28,7 +29,7 @@ const expiryToastKey = (p: AwsProfileExpiry) => "aws-sso-expiring:" + expiryKey(
 // browser's clock may be off, and the Agent already decided that the end is near.
 function endTime(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return Number.isNaN(d.getTime()) ? iso : fmtDateTime(d, { hour: "2-digit", minute: "2-digit" });
 }
 
 function AwsExpiryToast({ p }: { p: AwsProfileExpiry }) {

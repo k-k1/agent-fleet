@@ -15,6 +15,15 @@ import { kindDisplayName, kindLabel } from "../lib/sessionkind.ts";
 const ready = (k: string, conns: AvailCtx["conns"]) => !!conns && AGENTS[k as keyof typeof AGENTS].available({ conns });
 const gate = (conns: AvailCtx["conns"]) => repoLaunchKinds.filter((k) => ready(k, conns));
 
+// The kinds with no sign-in step. The pinned literals of this file: a kind that changes side
+// edits these lines on purpose; a new kind need not. Every other expectation below is
+// computed from the registry, so a new kind that needs a sign-in changes none of them.
+const CREDENTIAL_FREE = ["lcpp", "shell"];
+const NEEDS_SIGN_IN = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "muse"];
+const credentialFree = repoLaunchKinds.filter((k) => ready(k, {}));
+// What the gate offers: the authenticated kinds plus the credential-free ones, in menu order.
+const offered = (authed: string[], free = credentialFree) => repoLaunchKinds.filter((k) => authed.includes(k) || free.includes(k));
+
 describe("launch gate — unknown / failed connection state", () => {
   it("offers NOTHING while the connection state is unknown", () => {
     // The regression: a null conns (in flight, or the fetch errored) must not be read
@@ -27,14 +36,16 @@ describe("launch gate — unknown / failed connection state", () => {
     // {} is a successful response that happens to list no authenticated agent — unlike
     // null it is an answer, so credential-free shell and lcpp (no sign-in exists for this
     // kind either — ADR 0093 決定 10) are correctly still offered.
-    expect(gate({})).toEqual(["lcpp", "shell"]);
+    expect(gate({})).toEqual(credentialFree);
+    // the pin: each kind that exists today is on its side; a kind added later is unconstrained
+    expect(credentialFree.filter((k) => CREDENTIAL_FREE.includes(k) || NEEDS_SIGN_IN.includes(k))).toEqual(CREDENTIAL_FREE);
   });
 });
 
 describe("launch gate — per-agent predicates", () => {
   it("offers only the authenticated agents (plus the credential-free ones)", () => {
     const conns = { claude: { connected: true }, codex: { connected: false }, agy: { connected: false } };
-    expect(gate(conns)).toEqual(["claude", "lcpp", "shell"]);
+    expect(gate(conns)).toEqual(offered(["claude"]));
   });
 
   it("keeps an unauthenticated agy out even though it is installed and supported", () => {
@@ -121,8 +132,9 @@ describe("lcpp — on/off gate (docs/log/105 §106.2, the user's own display set
   });
 
   it("does not affect any other kind's availability", () => {
-    expect(gate({ lcpp: { enabled: false } })).toEqual(["shell"]);
-    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(["claude", "shell"]);
+    const noLcpp = credentialFree.filter((k) => k !== "lcpp");
+    expect(gate({ lcpp: { enabled: false } })).toEqual(noLcpp);
+    expect(gate({ lcpp: { enabled: false }, claude: { connected: true } })).toEqual(offered(["claude"], noLcpp));
   });
 });
 

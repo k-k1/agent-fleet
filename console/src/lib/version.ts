@@ -9,6 +9,7 @@
 // running app notice a newer deploy and reload past the stale cache (see reloadForUpdate
 // / useUpdateCheck).
 import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
+import { zonedParts } from "./intl.ts";
 
 export interface BuildId {
   time: string; // ISO 8601 build time — the canonical, unique-per-build id
@@ -27,12 +28,10 @@ export function buildLabel(): string {
   const { time, sha } = buildInfo;
   let when = time;
   if (time) {
-    try {
-      const d = new Date(time);
+    const z = zonedParts(time);
+    if (z) {
       const p = (n: number) => String(n).padStart(2, "0");
-      when = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-    } catch {
-      /* keep the raw ISO string */
+      when = `${z.year}-${p(z.month)}-${p(z.day)} ${p(z.hour)}:${p(z.minute)}`;
     }
   }
   return sha ? `${when} (${sha})` : when || "unknown";

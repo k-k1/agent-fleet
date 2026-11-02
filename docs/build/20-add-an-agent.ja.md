@@ -325,6 +325,10 @@ scripts/stub-kind-count.sh --verify   # 両 Go モジュール、Console、docs-
 `Kind()` で引くようにした後、#2933）: テスト・Markdown 以外 14 ファイル（それまでは 15）、含めて 18 ファイル
 （それまでは 19）。スタブが Go の一覧のために編集するのは `session.go` と `agentreg.go`。これも `--verify` 未実行。
 
+暫定値（2026-11-02、`availability.test.ts` と `derivedKindLists.test.ts` が全 kind を並べなくなり、
+`SessionKind` を `SESSION_KINDS` から導くようにした後、#2933）: テスト・Markdown 以外 14 ファイル（変化なし）、
+含めて 16 ファイル（それまでは 18）。スタブが Console のテストを編集することは無くなった。これも `--verify` 未実行。
+
 数値として使えるのは、`--verify` が通った実行だけです。パッチが当たらなくなったとき、または
 `--verify` で新しいガードが落ちたときはパッチを作り直します。`--keep` で実行し、残したクローンで
 `--verify` の各段が通るまで直してから、スクリプトが自分で作る生成物と `ref/agents` の表を除いた差分を
