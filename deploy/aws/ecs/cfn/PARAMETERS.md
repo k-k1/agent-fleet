@@ -885,7 +885,9 @@ only matter while the reaper runs (`AF_IDLE_SWEEP_INTERVAL`, not exposed). Behav
 `AgentSilentStopAfter` is the only one of these that is off by default. `update.sh` does not set
 it, so turn it on (or change it) with
 `aws cloudformation deploy … --parameter-overrides AgentSilentStopAfter=30m`; the next `update.sh`
-keeps the value. Setting it back to empty turns it off again. It needs `AF_AGENT_SILENT_AFTER`
+keeps the value. To turn it off, deploy `AgentSilentStopAfter=0` (the CP reads `0` as off). Do not
+pass an empty override: `deploy --parameter-overrides AgentSilentStopAfter=` did not clear a value on a
+live stack; to return to empty use `clear-params.sh` (README, "Clearing a parameter"). It needs `AF_AGENT_SILENT_AFTER`
 (default `3m`, not exposed as a parameter) to be on; see
 `guide/operate/03-run.md#stopping-a-silent-agent-automatically-off-by-default`.
 
