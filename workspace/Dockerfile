@@ -294,6 +294,19 @@ RUN set -eux; \
     rm -rf /tmp/jira; \
     /usr/local/libexec/jira version
 
+# Confluence CLI (confluence-cli, pchuri/confluence-cli): the Confluence counterpart of jira,
+# over the same Atlassian connection. It is an npm package (Node >= 20, the base image's node),
+# installed into its own prefix so nothing lands in the global node_modules, and the package
+# ships an npm-shrinkwrap.json that pins its dependency tree. /usr/local/libexec/confluence links
+# to its bin and /usr/local/bin/confluence is the transparent-auth wrapper
+# (confluence-auth-wrapper.sh). Bump CONFLUENCE_CLI_VERSION to upgrade (docs/build/08 §8.4.3).
+ARG CONFLUENCE_CLI_VERSION=2.31.0
+RUN set -eux; \
+    npm install -g --prefix /usr/local/lib/confluence-cli "confluence-cli@${CONFLUENCE_CLI_VERSION}"; \
+    install -d /usr/local/libexec; \
+    ln -sfn /usr/local/lib/confluence-cli/bin/confluence /usr/local/libexec/confluence; \
+    test "$(/usr/local/libexec/confluence --version)" = "${CONFLUENCE_CLI_VERSION}"
+
 # rtk (token-saving claude Bash hook): fetched pinned at build time, but only when
 # both BAKE_RTK=1 and BAKE_AGENT_CLIS=1. In the default lean build (BAKE_AGENT_CLIS=0)
 # the entrypoint's boot-install puts the rtk pin from versions.json into ~/.local/bin
@@ -609,8 +622,8 @@ RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
       arm64) agy_sha="${AGY_SHA256_ARM64}"; cursor_sha="${CURSOR_SHA256_ARM64}"; kiro_sha="${KIRO_SHA256_ARM64}"; muse_sha="${MUSE_SHA256_ARM64}"; pg_sha="${POSTGRES_SHA256_ARM64}"; mysql_sha="${MYSQL_SHA256_ARM64}"; gcloud_sha="${GCLOUD_SHA256_ARM64}" ;; \
       *) agy_sha=""; cursor_sha=""; kiro_sha=""; muse_sha=""; pg_sha=""; mysql_sha=""; gcloud_sha="" ;; \
     esac; \
-    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","bkt":"%s","jira":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s"}\n' \
-      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$BKT_VERSION" "$JIRA_CLI_VERSION" "$CHROMIUM_VERSION" \
+    printf '{"claude":"%s","opencode":"%s","codex":"%s","agy":"%s","agy_build":"%s","agy_sha256":"%s","copilot":"%s","cursor":"%s","cursor_sha256":"%s","kiro":"%s","kiro_sha256":"%s","muse":"%s","muse_sha256":"%s","postgres":"%s","postgres_sha256":"%s","mysql":"%s","mysql_sha256":"%s","rtk":"%s","go":"%s","gh":"%s","bkt":"%s","jira":"%s","confluence":"%s","chromium":"%s","chromium_cft":"%s","chromium_dl":"%s","noto_cjk":"%s","mcp_grafana":"%s","cloudwatch_mcp":"%s","aws_mcp_proxy":"%s","awscli":"%s","session_manager_plugin":"%s","gcloud":"%s","gcloud_sha256":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$AGY_VERSION" "$AGY_RELEASE_BUILD" "$agy_sha" "$COPILOT_VERSION" "$CURSOR_VERSION" "$cursor_sha" "$KIRO_VERSION" "$kiro_sha" "$MUSE_VERSION" "$muse_sha" "$POSTGRES_VERSION" "$pg_sha" "$MYSQL_VERSION" "$mysql_sha" "$RTK_VERSION" "$GO_VERSION" "$GH_VERSION" "$BKT_VERSION" "$JIRA_CLI_VERSION" "$CONFLUENCE_CLI_VERSION" "$CHROMIUM_VERSION" \
       "$CHROMIUM_CFT_VERSION" "$CHROMIUM_DL_VERSION" "$NOTO_CJK_VERSION" "$MCP_GRAFANA_VERSION" "$CLOUDWATCH_MCP_VERSION" "$AWS_MCP_PROXY_VERSION" "$AWSCLI_VERSION" "$SESSION_MANAGER_PLUGIN_VERSION" \
       "$GCLOUD_VERSION" "$gcloud_sha" \
       > /usr/local/share/agent-fleet/versions.json
@@ -744,6 +757,9 @@ COPY gh-auth-wrapper.sh /usr/local/bin/gh
 COPY bkt-auth-wrapper.sh /usr/local/bin/bkt
 # jira (Jira CLI) transparent-auth wrapper, same idea (real binary in /usr/local/libexec/jira).
 COPY jira-auth-wrapper.sh /usr/local/bin/jira
+# confluence (Confluence CLI) transparent-auth wrapper over the same Atlassian connection
+# (real CLI in /usr/local/libexec/confluence).
+COPY confluence-auth-wrapper.sh /usr/local/bin/confluence
 # svn transparent-auth wrapper. Same shape as the gh one, except the real binary stays
 # where apt put it (/usr/bin/svn) and the shim only takes precedence through PATH order —
 # /usr/local/bin comes first. It resolves the credential from the encrypted store, so an
@@ -767,7 +783,7 @@ COPY af-aws-exec.sh /usr/local/bin/af-aws-exec
 # Runs one command with one Google Cloud profile's access token from the Agent's own gcloud
 # store, never the VM's or node's identity (ADR 0107 decision 2): `workspace-agent gcloud-exec`.
 COPY af-gcloud-exec.sh /usr/local/bin/af-gcloud-exec
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/bkt /usr/local/bin/jira /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/bkt /usr/local/bin/jira /usr/local/bin/confluence /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-db /usr/local/bin/af-memory /usr/local/bin/af-arch-repair /usr/local/bin/af-aws-exec /usr/local/bin/af-gcloud-exec
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # agent-fleet-caller.js (stamps the calling opencode session on af's MCP tools so a

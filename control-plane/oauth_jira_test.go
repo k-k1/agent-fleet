@@ -493,3 +493,26 @@ func TestJiraExchangeCodeHonoursContext(t *testing.T) {
 		t.Errorf("took %v after cancel", el)
 	}
 }
+
+// Each scope group adds only its own scopes, and no group leaves the Jira-only list untouched:
+// that is what keeps an app registered before the Confluence scopes existed connectable.
+func TestJiraScopesForGroups(t *testing.T) {
+	if got := jiraScopesFor(nil); got != jiraScopes {
+		t.Fatalf("no groups: %q, want exactly the Jira scopes", got)
+	}
+	got := jiraScopesFor([]string{scopeGroupConfluence})
+	if got != jiraScopes+" "+confluenceScopes {
+		t.Fatalf("confluence: %q", got)
+	}
+	both := jiraScopesFor([]string{scopeGroupJiraSoftware, scopeGroupConfluence})
+	if both != jiraScopes+" "+jiraSoftwareScopes+" "+confluenceScopes {
+		t.Fatalf("both: %q", both)
+	}
+	seen := map[string]bool{}
+	for _, sc := range strings.Fields(both) {
+		if seen[sc] {
+			t.Errorf("scope %q requested twice", sc)
+		}
+		seen[sc] = true
+	}
+}

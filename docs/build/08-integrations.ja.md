@@ -359,6 +359,51 @@ Jira は git でなく作業項目インボックス
   （`/rest/api/3`、ADF）は日本語を正しく表示した。接続が Cloud 専用である限り、`main` を
   ソースからビルドする理由はない。イメージのスモークが固定した版を確認する。
 
+### 8.4.3 Confluence
+
+`confluence`（[pchuri/confluence-cli](https://github.com/pchuri/confluence-cli)、MIT、npm）は、
+すべてのエージェント種別に Confluence ページの閲覧・検索・作成・更新を提供する。Jira の接続に
+相乗りする: 1 つの Atlassian 3LO 認可が両方の製品を覆うので、増える接続も、増える更新処理もない。
+パッケージは `/usr/local/lib/confluence-cli` に入り、`/usr/local/libexec/confluence` がその bin への
+リンク、`/usr/local/bin/confluence` が `workspace/confluence-auth-wrapper.sh`。CLI は環境変数
+`CONFLUENCE_DOMAIN` / `CONFLUENCE_API_PATH` / `CONFLUENCE_AUTH_TYPE` / `CONFLUENCE_API_TOKEN` /
+`CONFLUENCE_EMAIL` を読み、これらがあると設定ファイルを丸ごと無視する。ラッパーは実行のたびに
+`workspace-agent confluence-cred`（`workspace/agent/internal/jirax/confluence_cred.go`）に尋ね、
+1 回の `exec` のために埋める:
+
+- **OAuth 接続**: `api.atlassian.com` に対して `bearer`、パスは
+  `/ex/confluence/{cloudId}/wiki/rest/api`。サイト自身のホストは 3LO トークンを拒否する。
+  `CONFLUENCE_SITE_URL` はサイトなので、ページのリンクはサイトを指す。固定した版の CLI をスタブ
+  サーバーに向けて実測: ちょうどそのパスへ `Authorization: Bearer …` を送る。
+- **API トークン接続**: 保存済みのメールで `basic`、サイトのホストと `/wiki/rest/api` に対して。
+- **更新は 1 回、ロックは 1 つ。** `confluence-cred` と `jira-cred` は `freshConnection` を共有するので、
+  更新は同じ `jira-refresh` ストアロックを取り、ロックの中でストアを読み直す。jira・confluence・
+  Agent のどれが期限切れに気づいても、回転する refresh token は 1 回しか交換されない
+  （`TestConfluenceAndJiraCredShareOneRefreshExchange`）。
+- **スコープは Jira Software と同じ opt-in のグループ。** アプリに与えていないスコープを求める認可は
+  Atlassian に拒否されるので、Confluence のスコープ（`control-plane/oauth_jira.go` の
+  `confluenceScopes`）は、管理者がアプリへ追加したあとテナントの Jira カードの *Confluence* グループに
+  チェックを入れたとき（`scope_groups: ["confluence"]`）だけ求める。何もしないテナントは、これまでどおり
+  Jira のスコープだけで接続できる。スコープなしで作った接続には、`confluence-cred` が `unusable=` の理由
+  （記録済みのスコープに `confluence` を含むものがない）を返し、ラッパーは素の 401 に当たらせる代わりに
+  Jira を接続し直すよう 1 行で伝える。スコープが不明（古いストア、取得失敗）の場合は拒否しない。判定は、サイトの id を持つ accessible-resources の全行（Jira と Confluence の行は同じ id）のスコープの和集合で行う。
+  設定画面も同じ判定を出す（接続状態の `confluenceScopes: "missing"`）。
+- **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
+  `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ
+  `$XDG_CONFIG_HOME/confluence-cli` と `~/.confluence-cli`）の `config.json` のどれかがあれば、CLI は
+  そのまま走る。`init` / `profile` / `stats` / `help` / `--version` / `--help` は Agent に尋ねないので、
+  Toolchains のプローブがストアロックに触れることもない。
+- **フェイルクローズ**: ヘルパーのエラーは認証を注入せずに CLI を走らせる（設定画面と
+  `confluence init` を示す 1 行のヒントつき）。止めるのは `unusable=` の返答だけ。トークンは
+  ラッパーの変数と、最後に exec される CLI の環境にだけ存在し、argv にも、ファイルにも、出力にも出ない
+  （`workspace/confluence-auth-wrapper-test.sh` が CI で、スタブ相手にそれぞれを確かめる）。
+  `CONFLUENCE_CLI_ANALYTICS=false` で、CLI が設定ディレクトリに利用回数ファイルを書くのを止める。
+- **版の固定**: Dockerfile の `CONFLUENCE_CLI_VERSION`。パッケージは `npm-shrinkwrap.json` を
+  同梱するので、依存ツリーも一緒に固定される。Dockerfile は `--version` が固定した版を出すことを確かめる。
+- **エンドツーエンドでは未検証**: イメージのビルドと、実際の Atlassian 認可は実行していない
+  （どちらも開発用ワークスペースからは届かない）。スコープ一覧は CLI の README が書くコマンドに
+  沿っている。フォルダ一覧の `read:hierarchical-content:confluence` のような granular スコープは求めない。
+
 ## 8.5 Claude 認証・オンボーディング（L2 の本丸）
 
 **方式**: CLI 自身のサブスクリプションサインイン `claude auth login --claudeai`。Agent が

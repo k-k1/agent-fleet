@@ -62,6 +62,10 @@ const SCOPE_GROUP_TEXT = {
     label: "tenant.git_oauth_scope_group_jira_software",
     hint: "tenant.git_oauth_scope_group_jira_software_hint",
   },
+  confluence: {
+    label: "tenant.git_oauth_scope_group_confluence",
+    hint: "tenant.git_oauth_scope_group_confluence_hint",
+  },
 } as const;
 type ScopeGroup = keyof typeof SCOPE_GROUP_TEXT;
 const isScopeGroup = (g: string): g is ScopeGroup => Object.hasOwn(SCOPE_GROUP_TEXT, g);

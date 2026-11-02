@@ -51,14 +51,26 @@ const (
 		"read:sprint:jira-software write:sprint:jira-software " +
 		"read:epic:jira-software write:epic:jira-software " +
 		"read:issue-details:jira read:jql:jira"
+	// confluenceScopes are added when the tenant's app grants scope group confluence: the
+	// Confluence CLI in members' sessions rides this same authorization (one 3LO grant covers
+	// both products). Classic scopes, as the CLI's README lists them for its commands: read and
+	// search pages, list spaces, write pages, download and upload attachments. Not requested:
+	// space administration, and read:hierarchical-content:confluence (folder listing) which is
+	// granular and has to be added by hand if wanted.
+	confluenceScopes = "read:confluence-content.all read:confluence-content.summary " +
+		"read:confluence-space.summary search:confluence write:confluence-content " +
+		"readonly:content.attachment:confluence write:confluence-file"
 )
 
 // jiraScopesFor is the scope parameter of the authorize URL for an app granting groups.
 func jiraScopesFor(groups []string) string {
 	sc := jiraScopes
 	for _, g := range groups {
-		if g == scopeGroupJiraSoftware {
+		switch g {
+		case scopeGroupJiraSoftware:
 			sc += " " + jiraSoftwareScopes
+		case scopeGroupConfluence:
+			sc += " " + confluenceScopes
 		}
 	}
 	return sc

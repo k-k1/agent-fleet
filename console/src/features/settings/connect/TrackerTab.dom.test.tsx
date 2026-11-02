@@ -142,6 +142,19 @@ describe("TrackerTab", () => {
     expect(text().includes(t("tracker.jira_software_missing"))).toBe(shown);
   });
 
+  it.each([
+    ["an OAuth connection that lacks them", { ...swBase, authKind: "oauth", confluenceScopes: "missing" }, true],
+    ["an OAuth connection that holds them", { ...swBase, authKind: "oauth", confluenceScopes: "granted" }, false],
+    ["an OAuth connection with unknown scopes", { ...swBase, authKind: "oauth" }, false],
+    ["an API token connection", { ...swBase, authKind: "token", confluenceScopes: "missing" }, false],
+  ])("Confluence scope notice for %s", async (_n, jira, shown) => {
+    apiMock.mockImplementation((p: string) =>
+      Promise.resolve(p === "api/git-oauth" ? { jira: { configured: true } } : conns(jira)),
+    );
+    await render();
+    expect(text().includes(t("tracker.confluence_missing"))).toBe(shown);
+  });
+
   it("shows no picker when there is only one site", async () => {
     apiMock.mockImplementation((p: string) =>
       Promise.resolve(

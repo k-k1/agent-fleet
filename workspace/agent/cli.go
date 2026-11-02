@@ -213,6 +213,14 @@ var subcommands = []subcommand{
 		run:     jirax.RunCred,
 	},
 	{
+		// The same Atlassian connection for the PATH wrapper at /usr/local/bin/confluence. See
+		// internal/jirax/confluence_cred.go.
+		name:    "confluence-cred",
+		summary: "Confluence API host, path and token for the confluence wrapper",
+		hidden:  true,
+		run:     jirax.RunConfluenceCred,
+	},
+	{
 		// The project's issue types for `jira issue create`, which reads them from the config
 		// only. See internal/jirax/jira_issue_types.go.
 		name:    "jira-issue-types",

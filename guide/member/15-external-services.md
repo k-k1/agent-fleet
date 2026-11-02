@@ -2,11 +2,11 @@
 audience: "anyone connecting a session to services outside the workspace"
 ---
 
-# 15. External services and signed-in CLIs — gh / bkt / jira, Discord / Slack, ops tooling
+# 15. External services and signed-in CLIs — gh / bkt / jira / confluence, Discord / Slack, ops tooling
 
 English | [日本語](15-external-services.ja.md)
 
-This chapter covers the outside services you use from a session: the `gh`, `bkt` and `jira` CLIs, the other CLIs that are already signed in, the Discord / Slack chat bridge, and wiring monitoring tools into a conversation. AWS and Google Cloud are in [16 Cloud accounts](16-cloud-accounts.md).
+This chapter covers the outside services you use from a session: the `gh`, `bkt`, `jira` and `confluence` CLIs, the other CLIs that are already signed in, the Discord / Slack chat bridge, and wiring monitoring tools into a conversation. AWS and Google Cloud are in [16 Cloud accounts](16-cloud-accounts.md).
 
 ## Use `gh` and `bkt` in a session
 
@@ -114,6 +114,29 @@ session. You can view, list, create, edit, comment on and transition issues:
   (`jira init` with your own `--server`, a configuration file of your own, or
   `JIRA_API_TOKEN`); `jira` then runs as you configured it, without the saved connection.
 
+## Use `confluence` in a session
+
+Once Jira is connected with OAuth or an API token (Settings, **Issue tracker**), `confluence`, the
+Confluence CLI, works in a session for every agent, with no `confluence init` and no login. It uses
+the same Atlassian connection as `jira` and renews it when it is about to expire, so you never
+restart a session for it: `confluence search "release notes"`, `confluence read PAGE_ID`,
+`confluence spaces`, `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`.
+`confluence --help` lists the rest.
+
+- **OAuth needs the Confluence scopes**, which the tenant administrator turns on (the *Confluence*
+  option on the tenant's Jira card, after adding the scopes to the Atlassian app). You then
+  **reconnect Jira** once. Until then `confluence` prints one line saying the Atlassian
+  authorization has no Confluence scopes and does not run; Jira keeps working, and Settings › Issue
+  tracker shows "Confluence: not available". An API-token connection needs nothing extra.
+- **What it can change** is what your connection can: the CLI writes as you.
+- **Your own setup is never overridden.** If you set `CONFLUENCE_DOMAIN`, `CONFLUENCE_API_TOKEN` (or
+  any other `CONFLUENCE_*` variable that names a host or a credential), pass `--profile`, or have run
+  `confluence init` (a `config.json` in `~/.config/confluence-cli`), `confluence` runs exactly as you
+  configured it, without the saved connection. Confluence Data Center is set up that way.
+- **An expired or revoked authorization** prints a line telling you to reconnect Jira in Settings
+  instead of the CLI's own "run `confluence init`".
+- Page links the CLI prints point at your Confluence site.
+
 ## CLIs that are already signed in
 
 These commands in a session or terminal use a connection you made in Settings, for every agent. You never log
@@ -125,6 +148,7 @@ them in from the terminal, and an expiring token is renewed on use.
 | `gh` | **Git hosting**, GitHub | [15](15-external-services.md#use-gh-and-bkt-in-a-session) |
 | `bkt` | **Git hosting**, Bitbucket Cloud (bitbucket.org) | [15](15-external-services.md#use-gh-and-bkt-in-a-session) |
 | `jira` | **Issue tracker**, Jira | [15](15-external-services.md#use-jira-in-a-session) |
+| `confluence` | **Issue tracker**, Jira (the same Atlassian connection) | [15](15-external-services.md#use-confluence-in-a-session) |
 | `af-aws-exec --profile <name> -- <command>` | **AWS profiles/SSM**, after **Log in** on the profile | [16](16-cloud-accounts.md#using-the-profiles-from-the-terminal-sdks-and-build-tools) |
 | `af-gcloud-exec --profile <name> -- <command>` | **Google Cloud**, after **Log in** on the profile | [16](16-cloud-accounts.md#running-a-command-as-a-profile) |
 

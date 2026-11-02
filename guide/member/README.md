@@ -42,7 +42,7 @@ to going further. When you are stuck, it is fine to open [21 Troubleshooting](21
 12. [Working with others](12-collaboration.md): sharing, handing a session over, the inbox, usage limits
 13. [Images](13-images.md): the gallery, generation and the studio
 14. [Preview and browser](14-preview-browser.md): the browser pane, preview URLs, the development sign-in, a browser the agent opened
-15. [External services and signed-in CLIs](15-external-services.md): `gh` / `bkt` / `jira`, Discord / Slack, ops tooling (experimental)
+15. [External services and signed-in CLIs](15-external-services.md): `gh` / `bkt` / `jira` / `confluence`, Discord / Slack, ops tooling (experimental)
 16. [Cloud accounts](16-cloud-accounts.md): AWS profiles, SSM hosts, `af-aws-exec` and Google Cloud
 17. [Workspace environment](17-workspace-environment.md): environment settings, recreating, test databases, a local AWS emulator
 18. [Agent memory](18-agent-memory.md): what agents remember across kinds and sessions, importing it, and snapshots of their own memory

@@ -57,6 +57,9 @@ func jiraStatus(s *secrets.Data) map[string]any {
 	if v := jirax.SoftwareScopes(c); v != "" {
 		m["softwareScopes"] = v
 	}
+	if v := jirax.ConfluenceScopes(c); v != "" {
+		m["confluenceScopes"] = v
+	}
 	return m
 }
 

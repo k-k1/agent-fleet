@@ -184,6 +184,13 @@ directory belongs to someone else.
   `issue create` / `issue edit -b` exit **3** when only the description was not set (a create's issue
   exists, an edit's other changes applied): **never re-run the create**; set it with
   `jira issue edit KEY --no-input -b "…"`.
+- **Confluence: the `confluence` CLI** (pchuri/confluence-cli) rides the same Atlassian connection and is
+  pre-authenticated and token-renewing like `jira`: `confluence search "…"`, `confluence read PAGE_ID`,
+  `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. Never run
+  `confluence init`, never set `CONFLUENCE_*` variables or `--profile` (a config of the user's own is
+  theirs and turns the injection off). Its "authorization has no Confluence scopes" / "cannot be
+  used" line is the answer: report it (reconnect Jira; the tenant administrator enables the scopes
+  first), do not work around it or switch to an MCP tool. Data Center is the user's own setup.
 - **Jira comments: `jira issue comment edit KEY ID` and `delete KEY ID`** exist only through the
   wrapper (jira-cli has none); edit takes `-b`, `-T FILE` (`-` = stdin) or piped stdin and sends
   the Markdown as ADF (no glue bug). Find ID with

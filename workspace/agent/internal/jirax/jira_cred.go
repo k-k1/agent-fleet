@@ -48,31 +48,14 @@ func RunCred(_ []string) { jiraCredGet(os.Stdout, os.Stderr) }
 // reason instead of jira-cli's "generate an API token" advice. The reason is a fixed phrase
 // chosen here, never the error text: that can carry a response body.
 func jiraCredGet(w, errw io.Writer) {
-	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
-	defer cancel()
-	s, err := secrets.LoadContext(ctx)
-	if err != nil || !Connected(s.Jira) {
+	c, ok := freshConnection(errw)
+	if !ok {
 		return
 	}
 	unusable := func(why string) { fmt.Fprintf(errw, "unusable=%s\n", why) }
-	c := *s.Jira
 	auth, login, token := "basic", c.Email, c.Token
 	if c.AuthKind == "oauth" {
-		if c.CloudID == "" {
-			unusable("no Jira site is selected for the connection")
-			return
-		}
-		if c.Expiry != 0 && time.Now().Add(jiraCredFreshWindow).Unix() >= c.Expiry {
-			// A failed renewal still serves a token that has not expired yet: the run may
-			// well finish in time, and refusing would fail it for certain.
-			if err := RefreshNow(&c); err != nil && time.Now().Unix() >= c.Expiry {
-				unusable(jiraRenewalReason(err))
-				return
-			}
-		}
 		auth, login, token = "bearer", c.Login, c.AccessToken
-	}
-	if c.AuthKind == "oauth" {
 		jiraBackfillScopes(&c)
 	}
 	if token == "" || strings.ContainsAny(token+login+c.Site, "\r\n") {
@@ -87,6 +70,36 @@ func jiraCredGet(w, errw io.Writer) {
 		fmt.Fprint(w, "software=missing\n")
 	}
 	fmt.Fprintf(w, "token=%s\n", token)
+}
+
+// freshConnection loads the stored Atlassian connection and, for OAuth, renews an access token
+// that is about to expire. ok is false when there is nothing to hand out: no connection (silent),
+// or one that exists but cannot be used (one `unusable=<reason>` line on errw). It is the one
+// path shared by the jira and confluence wrappers, so both go through the same refresh lock.
+func freshConnection(errw io.Writer) (c secrets.JiraCreds, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), jiraCredStoreWait)
+	defer cancel()
+	s, err := secrets.LoadContext(ctx)
+	if err != nil || !Connected(s.Jira) {
+		return c, false
+	}
+	unusable := func(why string) { fmt.Fprintf(errw, "unusable=%s\n", why) }
+	c = *s.Jira
+	if c.AuthKind == "oauth" {
+		if c.CloudID == "" {
+			unusable("no Jira site is selected for the connection")
+			return c, false
+		}
+		if c.Expiry != 0 && time.Now().Add(jiraCredFreshWindow).Unix() >= c.Expiry {
+			// A failed renewal still serves a token that has not expired yet: the run may
+			// well finish in time, and refusing would fail it for certain.
+			if err := RefreshNow(&c); err != nil && time.Now().Unix() >= c.Expiry {
+				unusable(jiraRenewalReason(err))
+				return c, false
+			}
+		}
+	}
+	return c, true
 }
 
 // jiraRenewalReason words a failed OAuth renewal without quoting the error.
