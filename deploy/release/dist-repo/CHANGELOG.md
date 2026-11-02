@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.39.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.39.0) — 2026-11-02
+
+Sessions now link themselves to the issues, tickets and pull requests they work on, and tell you
+when a pull request is ready to merge, merged or closed. Plans can be reviewed automatically for
+several rounds, Home gets an "At a glance" section, and OpenCode 1.x is no longer supported.
+
 ## [0.38.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.38.0) — 2026-10-31
 
 Settings AWS profiles on one IAM Identity Center portal can share a single login, every
