@@ -156,6 +156,38 @@ describe("push idle pause", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("a pause is lifted when the window turns hidden, so hidden-tab pollers run again", async () => {
+    await start();
+    await min(11);
+    expect(push.pushHealthy()).toBe(true);
+    doc.hidden = true;
+    fire(docL, "visibilitychange");
+    await settle();
+    expect(push.pushPaused()).toBe(false);
+    expect(push.pushHealthy()).toBe(false); // pollers' fallback is allowed again
+    doc.hidden = false;
+    fire(docL, "visibilitychange");
+    await settle();
+    expect(push.pushHealthy()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not pause when the stream never connected (old CP 404)", async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(new Response("", { status: 404 })));
+    await start();
+    await min(30);
+    expect(push.pushPaused()).toBe(false);
+    expect(push.pushHealthy()).toBe(false); // REST pollers keep running
+  });
+
+  it("does not pause while the connection keeps failing (network error)", async () => {
+    fetchMock.mockImplementation(() => Promise.reject(new Error("net")));
+    await start();
+    await min(30);
+    expect(push.pushPaused()).toBe(false);
+    expect(push.pushHealthy()).toBe(false);
+  });
+
   it("pauses again after the next idle period", async () => {
     await start();
     await min(11);

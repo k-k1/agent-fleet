@@ -20,7 +20,7 @@
 // already paying for one of those every 4 seconds — a second poller doubles that per user.
 import { useSyncExternalStore } from "react";
 import { api, getTenant } from "../api/client.ts";
-import { onPush, pushHealthy } from "../push/events.ts";
+import { onPush, pushHealthy, pushPaused } from "../push/events.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { nextHomeDiskPressure } from "./homeDiskPressure.ts";
@@ -108,6 +108,9 @@ function reset(): void {
  *  because the CP would have sent a frame otherwise; a dead one means "unknown". */
 function believable(now: number): boolean {
   if (!latest) return false;
+  // A paused stream (events.ts idle pause) is "unknown" too: pushHealthy() is true then only
+  // to keep the pollers quiet, and nobody is telling us the figures stayed the same.
+  if (pushPaused()) return false;
   if (pushHealthy()) return true;
   // Polling fallback: trust our own reading for a couple of intervals, then admit ignorance.
   return now - latestAt < 3 * SAMPLE_MS;

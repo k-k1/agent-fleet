@@ -241,6 +241,9 @@ export function startPushChannel(): () => void {
     if (left > 0) return armIdle(left);
     if (document.hidden || paused) return; // hidden has its own path; resume re-arms
     if (busyProbe()) return armIdle(IDLE_RECHECK_MS);
+    // No live stream (old CP's 404, auth or network trouble) means the REST pollers are the
+    // only thing keeping the data fresh and there is no CP tick to save: do not stop them.
+    if (!healthy) return armIdle(IDLE_RECHECK_MS);
     setPaused(true);
     window.clearTimeout(retryTimer);
     ctrl?.abort();
@@ -261,6 +264,9 @@ export function startPushChannel(): () => void {
   };
   const onVis = () => {
     if (document.hidden) {
+      // Hand the notification / list fallback pollers their hidden-tab cadence back: a
+      // paused flag left set would keep pushHealthy() true and silence them.
+      setPaused(false);
       ctrl?.abort();
       return;
     }

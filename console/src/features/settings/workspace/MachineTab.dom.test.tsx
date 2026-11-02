@@ -31,7 +31,7 @@ vi.mock("../../../core/api/client.ts", () => ({
   getTenant: () => "default",
 }));
 // The feed is driven directly (feed.sample()) rather than by its 4s timer.
-vi.mock("../../../core/push/events.ts", () => ({ onPush: () => () => {}, pushHealthy: () => true }));
+vi.mock("../../../core/push/events.ts", () => ({ onPush: () => () => {}, pushHealthy: () => true, pushPaused: () => false }));
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;

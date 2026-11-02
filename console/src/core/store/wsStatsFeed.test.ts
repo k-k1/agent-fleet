@@ -4,9 +4,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const healthy = vi.fn(() => true);
+const paused = vi.fn(() => false);
 vi.mock("../push/events.ts", () => ({
   onPush: () => () => {},
-  pushHealthy: () => healthy(),
+  pushHealthy: () => healthy() || paused(),
+  pushPaused: () => paused(),
 }));
 vi.mock("../api/client.ts", () => ({
   api: () => Promise.resolve({}),
@@ -21,10 +23,24 @@ const RUNNING = { running: true, mem_used: 1073741824, mem_max: 4294967296, cpu_
 beforeEach(() => {
   tenant = "acme";
   healthy.mockReturnValue(true);
+  paused.mockReturnValue(false);
   __test.reset();
 });
 
 describe("wsStatsFeed", () => {
+  // The idle pause keeps pushHealthy() true to silence pollers, but nothing vouches for the
+  // figures then: the history must show a gap, not a flat line of stale numbers.
+  it("records gaps, not the held value, while the push stream is paused; resumes after", () => {
+    __test.setLatest(RUNNING);
+    __test.sample();
+    paused.mockReturnValue(true);
+    __test.sample();
+    __test.sample();
+    paused.mockReturnValue(false);
+    __test.sample();
+    expect(__test.samples().map((x) => x.memUsed)).toEqual([1073741824, null, null, 1073741824]);
+  });
+
   // The CP does not send an unchanged stats frame, so an idle workspace delivers nothing for
   // minutes. Holding the last value is what turns that into a moving chart.
   it("appends a point per tick even when no new frame arrived", () => {
