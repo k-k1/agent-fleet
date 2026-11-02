@@ -1,6 +1,7 @@
 package session
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -252,13 +253,14 @@ func InheritedLinks(parent Meta, at string) []WorkItemLink {
 
 // PRsAllMerged reports a session whose own pull requests are all finished, at least one of them
 // merged (#3131): the PRs it started from, worked on or created, as their links last recorded
-// them. A PR it only reviews or watches is someone else's to finish, and an item with no
-// recorded state is not a PR, or one seen before states were, so it neither counts nor blocks.
-// The Console's prsAllMerged (sessionLinks.ts) reads the same rule off the row.
+// them. A PR it only reviews or watches is someone else's to finish. A PR link with no recorded
+// state (one linked before states were) is not known to be finished, so it blocks; an item with
+// no state that is not a PR (an issue, a ticket) neither counts nor blocks. The Console's
+// prsAllMerged (sessionLinks.ts) reads the same rule off the row.
 func PRsAllMerged(m Meta) bool {
 	merged := false
 	for _, l := range LinksOf(m) {
-		if l.State == "" || (l.Role != LinkStarted && l.Role != LinkWorking && l.Role != LinkCreated) {
+		if l.Role != LinkStarted && l.Role != LinkWorking && l.Role != LinkCreated {
 			continue
 		}
 		switch l.State {
@@ -266,7 +268,24 @@ func PRsAllMerged(m Meta) bool {
 			merged = true
 		case "open", "draft":
 			return false
+		case "":
+			if isPRURL(l.URL) {
+				return false
+			}
 		}
 	}
 	return merged
+}
+
+// isPRURL reports a github.com or bitbucket.org pull request page, the URLs PR links carry.
+func isPRURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 {
+		return false
+	}
+	return u.Host == "github.com" && parts[2] == "pull" || u.Host == "bitbucket.org" && parts[2] == "pull-requests"
 }

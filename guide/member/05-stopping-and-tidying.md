@@ -69,8 +69,8 @@ Every candidate carries a **safety** rating and a reason.
 
 | Safety | Meaning |
 |---|---|
-| **Safe** | Merged and clean, or a stopped session whose pull requests are all merged; nothing is lost by removing or archiving it |
-| **Review** | A stopped session, a clean but unmerged worktree, and the like. Look before you decide |
+| **Safe** | Merged and clean; nothing is lost by removing it |
+| **Review** | A stopped session (its reason says so when all its pull requests were finished, at least one merged, when last seen), a clean but unmerged worktree, and the like. Look before you decide |
 | **Keep** | Running, uncommitted / unpushed, or delete-locked. Cleanup leaves it alone |
 
 To clear a **Keep**, stop it or push first (as a last resort, force-delete from the Console).

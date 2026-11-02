@@ -100,10 +100,12 @@ func TestCleanupReasonKeysExistInConsoleCatalogs(t *testing.T) {
 	}
 }
 
-func TestAStoppedSessionWhosePRsAllMergedIsSafeToArchive(t *testing.T) {
+func TestAStoppedSessionWhosePRsAllMergedSaysSoButStaysReview(t *testing.T) {
+	// Review, not safe: the links are as last polled, and "select all safe" must not archive a
+	// session whose branch may have gained an open PR since.
 	action, safety, reasonKey, ok := classifySessionCleanup(false, false, false, false, true)
-	if !ok || action != "archive_session" || safety != "safe" || reasonKey != cleanReasonPRsMerged {
-		t.Fatalf("got %q %q %q %v, want archive_session safe prs_merged", action, safety, reasonKey, ok)
+	if !ok || action != "archive_session" || safety != "review" || reasonKey != cleanReasonPRsMerged {
+		t.Fatalf("got %q %q %q %v, want archive_session review prs_merged", action, safety, reasonKey, ok)
 	}
 	// Still running, locked, already archived or a shell: the merged PRs change nothing.
 	if _, _, _, ok := classifySessionCleanup(false, false, true, false, true); ok {

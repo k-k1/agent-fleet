@@ -124,12 +124,22 @@ describe("prsAllMerged (#3131)", () => {
     expect(prsAllMerged({})).toBe(false);
   });
 
-  it("reads the branch's PR off the row before it is linked", () => {
+  it("lets the branch's PR on the row block, never prove a merge", () => {
     const open = { number: 2, state: "open" as const, url: "https://github.com/o/r/pull/2" };
     const merged = { number: 2, state: "merged" as const, url: "https://github.com/o/r/pull/2" };
+    // Opened since the last poll: not linked yet, but it is open.
     expect(prsAllMerged({ links: [pr("o/r#1", "working", "merged")], pr: open })).toBe(false);
-    expect(prsAllMerged({ pr: merged })).toBe(true);
-    expect(prsAllMerged({ pr: { ...merged, url: "https://example.com/x" } })).toBe(false);
+    // A reviewer sharing its parent's copy only watches the parent's PR: its merge is not this
+    // session's, and an unlinked merged PR proves nothing either.
+    expect(prsAllMerged({ links: [pr("o/r#2", "watching", "merged")], pr: merged })).toBe(false);
+    expect(prsAllMerged({ pr: merged })).toBe(false);
+  });
+
+  it("does not take a PR linked before states were as finished", () => {
+    const old = { provider: "github", key: "o/r#2", role: "working", url: "https://github.com/o/r/pull/2" } as never;
+    const issue = { provider: "github", key: "o/r#3", role: "working", url: "https://github.com/o/r/issues/3" } as never;
+    expect(prsAllMerged({ links: [pr("o/r#1", "working", "merged"), old] })).toBe(false);
+    expect(prsAllMerged({ links: [pr("o/r#1", "working", "merged"), issue] })).toBe(true);
   });
 
   it("offers the tidy only while nothing is going on in the session", () => {

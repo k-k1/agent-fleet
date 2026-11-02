@@ -55,9 +55,9 @@ repository's default branch, and it is refreshed every couple of minutes, so a m
 that long to show. On Bitbucket the connection needs the pull request read permission
 (`pullrequest`, or `read:pullrequest:bitbucket` on an API token); a connection made only for
 cloning shows no PR. When every pull request the session started from, worked on or created is
-merged (none still open) and the session is not busy, the line also shows **Merged**: press it to
-archive the session after a confirm (the conversation is kept and can be restored). Nothing is
-archived unasked. The others are the
+finished (at least one merged, any other closed, none still open) and the session is not busy, the
+line also shows **Merged**: press it to archive the session after a confirm (the conversation is
+kept and can be restored). Nothing is archived unasked. The others are the
 ports the session's own processes listen on (`:5173`): click one to open it in the default target: the preview
 subdomain where one is issued, else a browser pane, else (on a deployment with no browser pane, such as
 Kubernetes, a preview runtime) the lightweight preview. Ctrl / middle-click always opens a pane in a new tab

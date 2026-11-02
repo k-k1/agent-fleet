@@ -104,7 +104,7 @@ var cleanupReasonJA = map[string]string{
 	cleanReasonLocked:       "ロック中（削除保護。解除するまで掃除対象外）",
 	cleanReasonArchived:     "アーカイブ済み（自動では消えない。delete_session で回収可・復元可）",
 	cleanReasonStopped:      "停止中（再開可能）。完了していれば archive で一覧から整理（放置でも期限が来ればアーカイブへ移る）",
-	cleanReasonPRsMerged:    "停止中で、このセッションのプルリクエストはすべてマージ済み。archive で一覧から整理（復元可）",
+	cleanReasonPRsMerged:    "停止中で、このセッションのプルリクエストはすべて終わっている（1 件以上マージ済み、残りはクローズ）。最後に見た状態なので、確認してから archive で整理（復元可）",
 	cleanReasonEphemeral:    "停止中の shell/ssm（残す会話なし）。削除で片付く",
 	cleanReasonOrphanPane:   "orphan（メタ無しの実行中ペイン）。Console でアタッチ/整理",
 	cleanReasonWtLive:       "稼働中のセッションがある（先に停止が必要）",
@@ -136,8 +136,9 @@ func cleanupReasonText(key string) string {
 // keeping, so archiving is meaningless — deletion is the whole tidy-up. Pure: no
 // git/tmux, so it is unit-tested.
 //
-// prsMerged is session.PRsAllMerged: a stopped session whose own PRs all landed is finished work
-// by its own record, so its archive (restorable) is graded safe rather than left to review.
+// prsMerged is session.PRsAllMerged. It only changes the reason a stopped session gives: still
+// review, never safe, because the record is the links as last polled, and a PR opened on the
+// session's branch since then is not in it, so "select all safe" must not archive on it alone.
 func classifySessionCleanup(locked, archived, live, ephemeral, prsMerged bool) (action, safety, reasonKey string, ok bool) {
 	switch {
 	case live:
@@ -157,7 +158,7 @@ func classifySessionCleanup(locked, archived, live, ephemeral, prsMerged bool) (
 		// its meta to the recoverable archive, so this is safe to act on in bulk.
 		return "delete_session", "safe", cleanReasonEphemeral, true
 	case prsMerged:
-		return "archive_session", "safe", cleanReasonPRsMerged, true
+		return "archive_session", "review", cleanReasonPRsMerged, true
 	default:
 		// Stopped but resumable: finished work sitting in the active list. archive is
 		// reversible (restore), but "stopped" ≠ "finished", so review before acting.
