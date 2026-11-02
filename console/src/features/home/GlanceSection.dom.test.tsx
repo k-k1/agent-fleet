@@ -338,3 +338,37 @@ describe("At a glance: cost", () => {
     expect(tile("models")!.textContent).not.toContain("model-a");
   });
 });
+
+describe("At a glance: time zone setting", () => {
+  // The answer is fetched once; changing the zone while it is on screen must re-bucket the days
+  // without a new request.
+  it("re-buckets the uptime days when the zone changes", async () => {
+    const { setFormatPrefs } = await import("../../lib/intl.ts");
+    const now = Date.parse("2026-08-19T14:00:00Z");
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      setFormatPrefs("auto", "UTC");
+      // 05:00Z is 08-19 in UTC but 22:00 on 08-18 in Los Angeles.
+      uptime = {
+        interval_secs: 60,
+        observed: [{ hour: "2026-08-19T05", samples: 60 }],
+        members: [{ tenant: "", user_key: "u", email: "", hours: [{ hour: "2026-08-19T05", samples: 60, running_secs: 3000, measured_secs: 3000, session_secs: 0 }] }],
+      };
+      await mount(<GlanceSection />);
+      const running = () =>
+        [...host.querySelectorAll('[data-tile="uptime"] .uh-cell')]
+          .filter((e) => /uh-lv-/.test(e.className))
+          .map((e) => (e.getAttribute("title") || "").slice(0, 10));
+      const fetches = calls().length;
+      expect(running()).toEqual(["2026-08-19"]);
+      await act(async () => {
+        setFormatPrefs("auto", "America/Los_Angeles");
+      });
+      expect(running()).toEqual(["2026-08-18"]);
+      expect(calls().length).toBe(fetches);
+    } finally {
+      spy.mockRestore();
+      setFormatPrefs("auto", "auto");
+    }
+  });
+});

@@ -175,3 +175,23 @@ describe("the way out for a reader who cannot tell the colours apart", () => {
     expect(host?.querySelectorAll(".uh-legend .uh-swatch").length).toBe(7);
   });
 });
+
+describe("changing the time zone setting", () => {
+  // Same `data` object throughout: only the zone changes, and the grid has to be re-bucketed.
+  it("moves the cells without new data", async () => {
+    const { setFormatPrefs } = await import("../../lib/intl.ts");
+    try {
+      setFormatPrefs("auto", "UTC");
+      await mount();
+      expect(cellAt(0)!.className).toMatch(/uh-lv-[1-5]/);
+      expect(cellAt(9)!.className).toContain("uh-unobserved");
+      await act(async () => {
+        setFormatPrefs("auto", "Asia/Tokyo");
+      });
+      expect(cellAt(0)!.className).toContain("uh-unobserved");
+      expect(cellAt(9)!.className).toMatch(/uh-lv-[1-5]/);
+    } finally {
+      setFormatPrefs("auto", "auto");
+    }
+  });
+});

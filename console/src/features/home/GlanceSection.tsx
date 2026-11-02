@@ -10,11 +10,12 @@
 //
 // LIMITS ARE READ FROM THE CHIPS' STORE, NEVER POLLED. The WS bar chips own the one poll of the
 // usage-limit endpoints and write every reading to usageReadings.ts; mounting Home adds no request.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { effectiveTimeZone } from "../../lib/intl.ts";
 import { fmtGiB } from "../../lib/bytes.ts";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { useIsMobile } from "../../lib/device.ts";
@@ -95,14 +96,21 @@ export function GlanceSection() {
   if (open) seen.current = true;
 
   // 7 days of hourly uptime; the CP answers while the workspace is stopped.
-  const uptime = useLoad<UptimeSummary>(
+  // The answer is kept raw and summarised at render: the day buckets depend on the member's time
+  // zone, which can change while the tile is on screen.
+  const uptimeRaw = useLoad<{ res: UptimeResponse; now: number }>(
     seen.current,
     tenant,
     async (signal) => {
       const now = Date.now();
       const d = await api(`api/usage/me/hourly?${new URLSearchParams(uptimeWindow(now)).toString()}`, { signal });
-      return d && !d.error ? uptimeSummary(d as UptimeResponse, now) : null;
+      return d && !d.error ? { res: d as UptimeResponse, now } : null;
     },
+  );
+  const zone = effectiveTimeZone();
+  const uptime = useMemo<Loaded<UptimeSummary>>(
+    () => ({ ...uptimeRaw, data: uptimeRaw.data ? uptimeSummary(uptimeRaw.data.res, uptimeRaw.data.now) : null }),
+    [uptimeRaw.data, uptimeRaw.failed, uptimeRaw.loading, uptimeRaw.reload, zone],
   );
 
   // 24 h, hourly buckets, by model, never forced. The Agent is the source, so nothing is asked
