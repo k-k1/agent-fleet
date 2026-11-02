@@ -50,6 +50,9 @@ type liveEntry struct {
 	// another gen, or before a later answer, must not flip the entry.
 	gen, rev uint64
 	silent   bool
+	// silentAt is when the probe flipped silent; the auto-stop ceiling (agent_silent_stop.go)
+	// is measured from it, never from the last answer, so a CP restart restarts that clock too.
+	silentAt time.Time
 	// recovered is set by an answer that arrived while silent; the next assess reports it
 	// once so the caller (which holds the workspace row) can retire the notice.
 	recovered bool
@@ -88,7 +91,7 @@ func (l *agentLiveness) note(key string, now time.Time) {
 		e.answered = now
 		e.rev++
 		if e.silent {
-			e.silent = false
+			e.silent, e.silentAt = false, time.Time{}
 			e.recovered = true
 		}
 	}
@@ -153,8 +156,18 @@ func (l *agentLiveness) probeDone(key string, tok probeToken, answered bool) (ch
 	if answered || e.silent || e.rev != tok.rev {
 		return false
 	}
-	e.silent = true
+	e.silent, e.silentAt = true, time.Now()
 	return true
+}
+
+// silentFor is how long the entry has been flagged silent (0 when it is not).
+func (l *agentLiveness) silentFor(key string, now time.Time) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.m[key]; e != nil && e.silent && !e.silentAt.IsZero() {
+		return now.Sub(e.silentAt)
+	}
+	return 0
 }
 
 // genOf is the current generation of key's entry (0 if none).

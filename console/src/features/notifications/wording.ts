@@ -35,6 +35,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "memory-sync": "noti.kind_memory_sync",
   "memory-review": "noti.kind_memory_review",
   "start-deadline": "noti.kind_start_deadline",
+  "agent-silent-stop": "noti.kind_agent_silent_stop",
   "aws-login-required": "noti.kind_aws_login_required",
   "aws-sso-expiring": "noti.kind_aws_sso_expiring",
   "aws-use-confirm": "noti.kind_aws_use_confirm",
@@ -62,7 +63,7 @@ export function notificationRowSubtitle(n: NotificationWordingInput): string {
   // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
   // design (below), so the list of what has to be reinstalled has to be ON the row or it is
   // nowhere.
-  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
+  if (n.kind === "arch-residue" || n.kind === "start-deadline" || n.kind === "agent-silent-stop" || n.kind === "member-home-full" || n.kind === "member-boot-install" || n.kind === "member-agent-silent" || n.kind === "memory-sync" || n.kind === "memory-review") return notificationWording(n).body;
   // The message is the point of a terminal notification; the kind label alone says nothing.
   if (n.kind === "terminal-notification") {
     const text = terminalNotificationText(n.payload);
@@ -81,6 +82,12 @@ const isPRKind = (kind: string) => kind === "pr-ready" || kind === "pr-merged" |
 // prKeyOf is the PR as the Agent keys it ("owner/repo#7"), "" when the payload has none.
 function prKeyOf(payload: Record<string, unknown>): string {
   return typeof payload.key === "string" ? payload.key : "";
+}
+
+// agentSilentStopBody words why the Control Plane stopped a workspace whose Agent went silent
+// (control-plane/agent_silent_stop.go); the same text is the notification body and the admin chip.
+export function agentSilentStopBody(minutes: unknown): string {
+  return t("notif.agent_silent_stop.body", { minutes: typeof minutes === "number" && minutes > 0 ? minutes : "?" });
 }
 
 // startDeadlineBody words why the start deadline stopped a launch: the limit, then the last
@@ -384,6 +391,13 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       title: t("notif.member_agent_silent.title", { name }),
       body: t("notif.member_agent_silent.body", { name }),
       speech: t("notif.member_agent_silent.speech", { name }),
+    };
+  }
+  if (n.kind === "agent-silent-stop") {
+    return {
+      title: t("notif.agent_silent_stop.title"),
+      body: agentSilentStopBody(n.payload.silentMinutes),
+      speech: t("notif.agent_silent_stop.speech"),
     };
   }
   if (n.kind === "start-deadline") {
