@@ -17,6 +17,8 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,4 +176,60 @@ func cloneEnvelope(e agentSessionsEnvelope) agentSessionsEnvelope {
 		e.Sessions = append(make([]sessionWire, 0, len(e.Sessions)), e.Sessions...)
 	}
 	return e
+}
+
+// invalidatesSessionsOnWrite wraps the whole mux, so that every route that may change the session
+// list drops the shared read, whichever auth wrapper (or none: /mcp, /internal/*, admin and
+// schedule routes) the route uses. It runs after the handler, so a read begun during the write is
+// dropped too. GET/HEAD/OPTIONS never invalidate: the 4 s event ticks are GETs and would defeat
+// the sharing.
+//
+// Public surfaces that cannot change the session list never invalidate (writeMayChangeSessions):
+// they answer anonymous callers with 302/400/200/503, which no status list can tell from a real
+// write.
+//
+// A refusal or routing redirect that happened before any handler work (401, 403, 404, 405, 3xx) does not invalidate either:
+// an anonymous POST to /internal/* or to a route that does not exist would otherwise flush every
+// workspace's cache and detach its in-flight read. Any other status, 5xx after a partial success
+// included, invalidates.
+func (m *manager) invalidatesSessionsOnWrite(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !writeMayChangeSessions(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		sw := &statusWriter{ResponseWriter: w} // keeps Flusher, Hijacker and ResponseController working
+		defer func() {
+			switch c := sw.code(); {
+			case c == http.StatusUnauthorized, c == http.StatusForbidden, c == http.StatusNotFound,
+				c == http.StatusMethodNotAllowed,
+				// ServeMux answers a cleaned or subtree path with a redirect before any handler
+				// (or its auth) runs; no session-changing route answers a write with a redirect.
+				c >= 300 && c < 400:
+			default:
+				m.sessionsShare.invalidate()
+			}
+		}()
+		next.ServeHTTP(sw, r)
+	})
+}
+
+// writeMayChangeSessions reports whether a non-GET on path can change the session list. Routes
+// reachable without a session (the auth-exempt registry: login, OAuth/MCP-OAuth, legacy redirect,
+// git, engine gateway) cannot, except /mcp and the token-authenticated /internal/* routes (session
+// tools, schedule run-now), which authenticate inside the handler. Deriving this from the registry
+// keeps a newly exempted public route from becoming an anonymous cache-flush.
+func writeMayChangeSessions(path string) bool {
+	if strings.HasPrefix(path, "/internal/engine/") {
+		return false
+	}
+	if path == "/mcp" || strings.HasPrefix(path, "/mcp/") || strings.HasPrefix(path, "/internal/") {
+		return true
+	}
+	return !isAuthExempt(path)
 }
