@@ -19,10 +19,11 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 
 - **[work items]** Sessions link to their branch's PR (GitHub, Bitbucket), Jira keys in the branch or PR title and issues the PR closes; `link_work_item` tool; links inherited; item details list linked sessions (also when stopped) with Remove; merged / closed PRs shown done ([#3134](https://github.com/k-k1/agent-fleet/issues/3134), [#3147](https://github.com/k-k1/agent-fleet/issues/3147), [#3166](https://github.com/k-k1/agent-fleet/issues/3166))
 - **[notifications]** A session's PR merged or closed, or on GitHub ready to merge, is notified once ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
+- **[sessions]** A session whose own PRs are all finished shows a **Merged** chip that archives it after a confirm; Cleanup lists it for review ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
 - **[plan review]** "Review automatically, up to N rounds" on the live plan card ([#2810](https://github.com/k-k1/agent-fleet/issues/2810))
 - **[home]** "At a glance" tiles: machine, running time, agents, model usage, usage limits ([#2362](https://github.com/k-k1/agent-fleet/issues/2362))
 - **[settings]** Region format and time zone in Settings › Display; Console dates and numbers and Markdown exports follow them ([#2185](https://github.com/k-k1/agent-fleet/issues/2185))
-- **[workspace]** "Not responding" badge for a running workspace whose Agent went silent; shown to tenant admins and notified, never stopped automatically ([#2518](https://github.com/k-k1/agent-fleet/issues/2518))
+- **[workspace]** "Not responding" badge for a running workspace whose Agent went silent; shown to tenant admins and notified; optional automatic stop via `AF_AGENT_SILENT_STOP_AFTER` ([#3212](https://github.com/k-k1/agent-fleet/issues/3212), [#2518](https://github.com/k-k1/agent-fleet/issues/2518))
 - **[admin]** Tenant admins notified of a member's nearly full home volume or a failed boot install ([#2427](https://github.com/k-k1/agent-fleet/issues/2427))
 - **[gke]** Optional Cloud Storage bucket for the egress archive in the GKE Terraform stack; real-GCS acceptance open ([#2733](https://github.com/k-k1/agent-fleet/issues/2733))
 - **[agents]** Re-authenticate on Antigravity, Cursor, Kiro and Muse Code cards; auth-expired toasts name the agent ([#3025](https://github.com/k-k1/agent-fleet/issues/3025), [#3122](https://github.com/k-k1/agent-fleet/issues/3122))

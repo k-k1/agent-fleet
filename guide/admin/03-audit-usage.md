@@ -55,7 +55,8 @@ keep it in mind.
   otherwise. A failed write (an error answer from the workspace) leaves no row. `session.spend_cap`,
   `session.lock` and `repo.lock` record who set a spend cap or flipped a deletion lock.
   The Control Plane itself writes `workspace.agent_silent` when a running workspace's Agent stops
-  answering and `workspace.agent_recovered` when it answers again.
+  answering, `workspace.agent_recovered` when it answers again, and `workspace.agent_silent_stop`
+  when the deployment's automatic stop for a silent Agent stops the workspace.
 - **Not recorded**: plain **reads** (just opening and viewing a file, just browsing a list) are
   not kept by default. And **raw terminal input/output (the very characters flowing across the
   screen) is not stored**. This is by design, to avoid the risk of passwords or tokens slipping in.
