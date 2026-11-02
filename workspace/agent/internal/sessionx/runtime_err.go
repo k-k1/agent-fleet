@@ -84,11 +84,20 @@ func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error)
 // refuses is permanent and gets the same 409 code as the Managed path; every other failure stays
 // 500 tmux_failed.
 func writeTmuxLaunchErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, opencode.ErrUnsupportedVersion) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
+	if writeUnsupportedVersion(w, err) {
 		return
 	}
 	httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+}
+
+// writeUnsupportedVersion answers the refused-opencode-version sentinel with the permanent 409
+// code and reports whether it did; callers keep their own generic code for everything else.
+func writeUnsupportedVersion(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, opencode.ErrUnsupportedVersion) {
+		return false
+	}
+	httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
+	return true
 }
 
 // writeStartRefusal answers err with its typed code when it is a StartRefusalError.
