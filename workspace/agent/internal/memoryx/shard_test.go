@@ -20,6 +20,16 @@ import (
 // sharded runs started by the tests below set it.
 const shardProbeEnv = "AF_MEMORYX_SHARD_PROBE"
 
+// shardProbePidsEnv names a file the pipehold probe appends its leftover process's pid to, so the
+// test that started it can kill it.
+const shardProbePidsEnv = "AF_MEMORYX_SHARD_PROBE_PIDS"
+
+// shardProbeHold is how long a stuck probe would hold the run up (a hanging test, a leftover
+// process keeping the pipe open). The runner must end the run in well under it: a fixed
+// wall-clock bound fails on a slow host, where -race alone makes each sharded probe run take
+// 2-4 s of process start-up (measured on a CI runner and locally).
+const shardProbeHold = time.Minute
+
 func TestShardProbeA(t *testing.T) {}
 
 func TestShardProbeB(t *testing.T) {
@@ -33,15 +43,20 @@ func TestShardProbeB(t *testing.T) {
 	case "exit0":
 		os.Exit(0)
 	case "hang":
-		time.Sleep(time.Minute)
+		time.Sleep(shardProbeHold)
 	case "stop":
 		// Stopped, the child cannot even run its own -test.timeout; only the parent's kill ends it.
 		_ = syscall.Kill(os.Getpid(), syscall.SIGSTOP)
 	case "pipehold":
 		// A process left behind that keeps the child's output pipe open after the child exits.
-		cmd := exec.Command("sleep", "8")
+		cmd := exec.Command("sleep", strconv.Itoa(int(shardProbeHold/time.Second)))
 		cmd.Stdout = os.Stdout
-		_ = cmd.Start()
+		if cmd.Start() == nil {
+			if f, err := os.OpenFile(os.Getenv(shardProbePidsEnv), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+				fmt.Fprintln(f, cmd.Process.Pid)
+				f.Close()
+			}
+		}
 	}
 }
 
@@ -68,6 +83,16 @@ func shardProbeCmd(mode string, extra ...string) *exec.Cmd {
 func runShardedProbes(t *testing.T, mode string, extra ...string) (string, int) {
 	t.Helper()
 	cmd := shardProbeCmd(mode, extra...)
+	pids := filepath.Join(t.TempDir(), "pids")
+	cmd.Env = append(cmd.Env, shardProbePidsEnv+"="+pids)
+	t.Cleanup(func() {
+		b, _ := os.ReadFile(pids)
+		for _, s := range strings.Fields(string(b)) {
+			if pid, err := strconv.Atoi(s); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()
@@ -139,8 +164,8 @@ func TestShardedRunReportsAFailingChild(t *testing.T) {
 			if !strings.Contains(out, c.want) {
 				t.Fatalf("output lacks %q:\n%s", c.want, out)
 			}
-			if d := time.Since(start); d > 7*time.Second {
-				t.Errorf("the run took %v; a stuck child must not hold it up", d)
+			if d := time.Since(start); d > shardProbeHold/2 {
+				t.Errorf("the run took %v; a stuck child must not hold it up for %v", d, shardProbeHold)
 			}
 		})
 	}
