@@ -255,8 +255,12 @@ func InheritedLinks(parent Meta, at string) []WorkItemLink {
 // merged (#3131): the PRs it started from, worked on or created, as their links last recorded
 // them. A PR it only reviews or watches is someone else's to finish. A PR link with no recorded
 // state (one linked before states were) is not known to be finished, so it blocks; an item with
-// no state that is not a PR (an issue, a ticket) neither counts nor blocks. The Console's
-// prsAllMerged (sessionLinks.ts) reads the same rule off the row.
+// no state that is not a PR (an issue, a ticket) neither counts nor blocks. A launch item with no
+// state is taken as an issue: the meta does not say whether it is a PR, and blocking on it would
+// stop every session launched from an issue. A PR launch gets its state while the session is on
+// its branch, so only one launched before states were and moved off since can be misjudged, and
+// the offer is confirmed and restorable. The Console's prsAllMerged (sessionLinks.ts) reads the
+// same rule off the row.
 func PRsAllMerged(m Meta) bool {
 	merged := false
 	for _, l := range LinksOf(m) {
