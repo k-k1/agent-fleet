@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 import { useSettings, setSettings } from "../../../lib/settings.ts";
 import { useOpencodeAppliedRoute } from "../../../lib/agentModels.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -225,7 +226,7 @@ function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
             <Hint>
               {tr("agents.oc_ws_limit", {
                 name: limit.name || tr("agents.oc_ws_limit_unknown"),
-                at: limit.reset_at ? new Date(limit.reset_at).toLocaleString() : "-",
+                at: limit.reset_at ? fmtDateTime(limit.reset_at, DATETIME_LOCALE_DEFAULT) : "-",
               })}
             </Hint>
           )}

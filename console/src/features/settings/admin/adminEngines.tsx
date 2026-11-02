@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { fmtNum, zonedMdHm } from "../../../lib/intl.ts";
 import { useSettingsUI } from "../store.ts";
 import { openEngineAdd } from "./openEngineAdd.ts";
 import { EngineModelsAdminView } from "./adminEngineModels.tsx";
@@ -715,9 +716,9 @@ function EngineClassPicker({
                 {refit.done.map((r) => (
                   <li key={r.id}>
                     <span className="engines-offer-label">{r.id}</span>
-                    <span className="mono">{r.from.toLocaleString()}</span>
+                    <span className="mono">{fmtNum(r.from)}</span>
                     <span aria-hidden="true">→</span>
-                    <span className="mono">{r.to.toLocaleString()}</span>
+                    <span className="mono">{fmtNum(r.to)}</span>
                   </li>
                 ))}
               </ul>
@@ -1150,10 +1151,7 @@ function EngineStatus({ row }: { row: EngineRow }) {
 /** An instant in the reader's own timezone. The CP speaks UTC throughout (the buckets are cut
  *  there), and an operator deciding whether to stop a GPU should not have to do the arithmetic. */
 function localStamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return zonedMdHm(iso) || iso;
 }
 
 /** The badge colour for a state. `stopped` is the resting state of an on-demand GPU, not a

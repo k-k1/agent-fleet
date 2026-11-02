@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { shiftDayKey } from "../../../lib/intl.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 import {
   cellLevel,
@@ -57,7 +58,7 @@ const FULL = 1;
 function defaultRange(): { from: string; to: string } {
   const now = new Date();
   return {
-    from: localDayKey(new Date(now.getTime() - (DAYS - 1) * 86400000)),
+    from: shiftDayKey(localDayKey(now), -(DAYS - 1)),
     to: localDayKey(now),
   };
 }

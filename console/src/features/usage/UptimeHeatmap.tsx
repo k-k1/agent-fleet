@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { shiftDayKey } from "../../lib/intl.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import {
   buildGrid,
@@ -46,7 +47,7 @@ const DEFAULT_DAYS = 14;
 function defaultRange(): { from: string; to: string } {
   const now = new Date();
   return {
-    from: localDayKey(new Date(now.getTime() - (DEFAULT_DAYS - 1) * 86400000)),
+    from: shiftDayKey(localDayKey(now), -(DEFAULT_DAYS - 1)),
     to: localDayKey(now),
   };
 }

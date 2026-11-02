@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
+import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -152,7 +153,7 @@ export function ClaudeCard({
               This surface does not disappear, so it shows the expiry quietly beforehand; the
               exact timestamp is a tooltip, to keep the row from growing. */}
           {(st.expired || st.days_left !== undefined) && (
-            <span className="p-exp" title={st.expires_at ? new Date(st.expires_at).toLocaleString() : undefined}>
+            <span className="p-exp" title={st.expires_at ? fmtDateTime(st.expires_at, DATETIME_LOCALE_DEFAULT) : undefined}>
               {st.expired
                 ? tr("conn.expired")
                 : st.days_left

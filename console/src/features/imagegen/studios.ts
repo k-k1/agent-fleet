@@ -2,6 +2,7 @@
 //
 // A studio the member has not named is told apart by when it was made ("Studio 9/27 14:05"),
 // not by an id fragment: two "Untitled 48c71fb2" rows say nothing a person can recognise.
+import { zonedParts } from "../../lib/intl.ts";
 import type { StudioSummary } from "./wire.ts";
 
 /** The picker's value for "＋ new studio": never a studio id (those are UUIDs). */
@@ -10,14 +11,14 @@ export const NEW_STUDIO = "__new__";
 /** The Agent's own cap on the title (`studioShortTextMax`, studio_validate.go). */
 export const STUDIO_TITLE_MAX = 200;
 
-/** `M/D HH:MM` in local time, or "" for a missing or unreadable stamp. */
+/** `M/D HH:MM` in the member's time zone, or "" for a missing or unreadable stamp. */
 export function studioStamp(iso: string | undefined): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`;
+  const p = zonedParts(iso);
+  if (!p) return "";
+  const hh = String(p.hour).padStart(2, "0");
+  const mm = String(p.minute).padStart(2, "0");
+  return `${p.month}/${p.day} ${hh}:${mm}`;
 }
 
 /**

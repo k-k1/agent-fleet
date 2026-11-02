@@ -13,6 +13,7 @@ import { IngestPlanDialog } from "./adminEngineAddIngestPlan.tsx";
 import { EngineLedger, inFlight } from "./adminEngineAddLedger.tsx";
 import { RegisteredEditDialog } from "./adminEngineAddRegisteredEdit.tsx";
 import { type CatalogProps, EngineRefusal, formatBytes, objectsPath, otherOf } from "./adminEngineAddShared.tsx";
+import { fmtNum } from "../../../lib/intl.ts";
 
 /** Whether a `complete` answer has a question in it. Two things are worth a dialog and nothing
  * else is: a role the CP wants a pick for — which it asks even with ONE candidate, because
@@ -598,8 +599,8 @@ function LLMRegisteredCardBody({ model }: { model: EngineModel }) {
   return <div className="engine-registered-body"><p>{model.description || tr("admin.catalog_no_description" as never)}</p><div className="engine-catalog-card-tags">
     <span className="engines-model-tag">{model.kind === "lora" ? "LoRA" : "GGUF"}</span>
     {bytes > 0 && <span className="engines-model-tag">{formatBytes(bytes)}</span>}
-    {model.context_tokens && <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {model.context_tokens.toLocaleString()}</span>}
-    {model.max_output_tokens && <span className="engines-model-tag">{tr("admin.catalog_output" as never)}: {model.max_output_tokens.toLocaleString()}</span>}
+    {model.context_tokens && <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {fmtNum(model.context_tokens)}</span>}
+    {model.max_output_tokens && <span className="engines-model-tag">{tr("admin.catalog_output" as never)}: {fmtNum(model.max_output_tokens)}</span>}
     {model.precision && <span className="engines-model-tag">{model.precision}</span>}
     {model.vram_need_mib && <span className="engines-model-tag">VRAM {model.vram_need_mib} MiB</span>}
     {(model.license_name || model.license) && <span className="engines-model-tag">{model.license_name || model.license}</span>}

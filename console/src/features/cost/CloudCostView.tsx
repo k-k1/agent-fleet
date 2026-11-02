@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { api, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { fmtNum } from "../../lib/intl.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import "./cost.css";
 
@@ -72,7 +73,7 @@ function fmtMoney(micro: number, currency: string): string {
   const v = (micro || 0) / 1_000_000;
   const cur = currency || "USD";
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: 2 }).format(v);
+    return fmtNum(v, { style: "currency", currency: cur, maximumFractionDigits: 2 });
   } catch {
     // Still show the number for an unknown currency code; Intl throws on codes it does not know.
     return `${v.toFixed(2)} ${cur}`;

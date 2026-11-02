@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText, rel } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
+import { zonedDayKey } from "../../../lib/intl.ts";
 
 // AccountTab — the sign-in methods linked to your own account, and adding a second one
 // (docs/log/61 §61.16 + ADR0043 decision 37).
@@ -171,8 +172,5 @@ export function AccountTab() {
 
 function fmtDate(s: string | undefined): string {
   if (!s) return "";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return zonedDayKey(s);
 }

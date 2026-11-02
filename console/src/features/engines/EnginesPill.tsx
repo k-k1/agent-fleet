@@ -11,6 +11,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
+import { zonedMdHm } from "../../lib/intl.ts";
 import { useEnginesStore, startEnginesPolling } from "./store.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import {
@@ -92,10 +93,7 @@ function useEngineDur(): (secs: number) => string {
  *  minutes-away countdown. Same shape as the admin panel's `localStamp`, duplicated for the
  *  same bundle-isolation reason. */
 function localStamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return zonedMdHm(iso) || iso;
 }
 
 /** The member's own lcpp connection (docs/log/107 follow-up), as far as this pill needs it:

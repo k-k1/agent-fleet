@@ -10,6 +10,7 @@ import { familyVramMeasurement } from "./engineFamilyVram.ts";
 import { FitTag } from "./adminEngineRepo.tsx";
 import { engineIsImage, type CatalogSource, type EngineApiError, type EngineParams, type EngineRow, type IngestCandidate, type IngestHit, type IngestJob, type IngestPlan, type IngestVersion, type ResolvedSource } from "./engineTypes.ts";
 import { CATALOG_HARD_RESTRICTIONS, EngineRefusal, formatBytes } from "./adminEngineAddShared.tsx";
+import { fmtNum } from "../../../lib/intl.ts";
 
 /** The plan card (ADR 0085 decision 4). One press, and the CP decided what that press does.
  *
@@ -363,7 +364,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
         <label><span>{tr("admin.engines_model_window_context")}</span>
           <input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label>
         {!!resolved.context_length && <span className="muted">{(tr("admin.engines_ingest_ctx_ceiling" as never) as string)
-          .replace("{n}", resolved.context_length.toLocaleString())}</span>}
+          .replace("{n}", fmtNum(resolved.context_length))}</span>}
       </div>}
       {needMiB > 0 && <p className={`engine-operation-fit ${fit.state === "over" ? "form-err" : "muted"}`}>
         {(tr("admin.engines_ingest_fit_weights") as string).replace("{n}", String(weightsMiB))}
@@ -377,7 +378,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
           says the number and where to put it, and the row's Edit is where it goes in. */}
       {ingestMeasured && <p className="muted engine-operation-vram-measured">
         {(tr("admin.engines_vram_measured" as never) as string)
-          .replace("{n}", ingestMeasured.mib.toLocaleString()).replace("{s}", ingestMeasured.size)
+          .replace("{n}", fmtNum(ingestMeasured.mib)).replace("{s}", ingestMeasured.size)
           .replace("{b}", String(ingestMeasured.batch)).replace("{i}", String(ingestMeasured.inputs))
         .replace("{f}", ingestMeasured.file).replace("{c}", ingestMeasured.card)}
         {" "}{tr("admin.engines_vram_measured_after" as never)}

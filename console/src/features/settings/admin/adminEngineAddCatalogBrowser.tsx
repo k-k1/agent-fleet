@@ -11,6 +11,7 @@ import { catalogKey, loadObjects as loadObjectsMemory, loadSearch, saveObjects a
 import { type CatalogSource, type EngineObjectRow, type IngestHit, type IngestSearchAnswer, type IngestSearchRequest } from "./engineTypes.ts";
 import { IngestPlanDialog } from "./adminEngineAddIngestPlan.tsx";
 import { type BrowseProps, CATALOG_HARD_RESTRICTIONS, compactCount, formatBytes, objectsPath, savedObjectsForHit, sourceObjectsForHit } from "./adminEngineAddShared.tsx";
+import { fmtNum } from "../../../lib/intl.ts";
 
 /** The question a page of hits answers. Two lists are the same list when this is equal — which is
  *  what decides both where the scroll position is filed and whether a search starts at the top. */
@@ -323,7 +324,7 @@ function LLMCatalogCard({ hit, kind, saved, ...actions }: BrowseCardProps) {
       <div className="engine-catalog-card-title"><span>{hit.name}</span><span className="engines-model-tag">{kind === "lora" ? "LoRA" : "GGUF"}</span></div>
       <div className="engine-catalog-card-tags"><span className="engines-model-tag">Hugging Face</span>
         {hit.bytes ? <span className="engines-model-tag">{formatBytes(hit.bytes)}</span> : null}
-        {hit.context_length ? <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {hit.context_length.toLocaleString()}</span> : null}
+        {hit.context_length ? <span className="engines-model-tag">{tr("admin.catalog_context" as never)}: {fmtNum(hit.context_length)}</span> : null}
         {license && <span className="engines-model-tag">{license}</span>}
         <CatalogRestrictionTags value={hit} />
       </div>

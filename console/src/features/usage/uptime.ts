@@ -8,6 +8,8 @@
 // estimate (ADR 0048 decision 2). A cell shows occupancy and session counts; colour never means
 // a price.
 
+import { shiftDayKey, zoneOffsetMinutes, zonedDayKey, zonedParts } from "../../lib/intl.ts";
+
 /** One hour for one member as the CP returns it (GET /api/usage/me/hourly and friends). Zeroes
  *  are omitted from the wire. */
 export type UptimePoint = {
@@ -85,35 +87,32 @@ export type UptimeCell = {
 export function localBucket(utcHour: string): { day: string; hour: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/.exec(utcHour);
   if (!m) return null;
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4]));
-  if (Number.isNaN(d.getTime())) return null;
-  return { day: localDayKey(d), hour: d.getHours() };
+  const at = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4]);
+  const z = zonedParts(at);
+  if (!z) return null;
+  return { day: zonedDayKey(at), hour: z.hour };
 }
 
-/** Local YYYY-MM-DD. Do not use toISOString here — it converts back to UTC. */
+/** YYYY-MM-DD in the member's time zone (Settings, else the browser's). Do not use toISOString
+ *  here — it converts back to UTC. */
 export function localDayKey(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return zonedDayKey(d);
 }
 
 /** Local dates from `from` to `to`, both ends inclusive. */
 export function dayRange(from: string, to: string): string[] {
   const out: string[] = [];
-  const start = new Date(from + "T00:00:00");
-  const end = new Date(to + "T00:00:00");
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return out;
-  for (let d = start; d <= end && out.length < 400; d = new Date(d.getTime() + 86400000)) {
-    out.push(localDayKey(d));
-  }
+  const ok = /^\d{4}-\d{2}-\d{2}$/;
+  if (!ok.test(from) || !ok.test(to) || Number.isNaN(Date.parse(from + "T00:00:00Z")) || Number.isNaN(Date.parse(to + "T00:00:00Z"))) return out;
+  // Keys are compared as strings and stepped by calendar arithmetic, so the zone never enters.
+  for (let d = from; d <= to && out.length < 400; d = shiftDayKey(d, 1)) out.push(d);
   return out;
 }
 
 /** One day before `from` and one after `to`. The server cuts on UTC days, so filling the local
  *  edge cells needs an extra day at each end (at +09:00, UTC 15:00 is midnight the next day). */
 export function widenForTimezone(from: string, to: string): { from: string; to: string } {
-  const shift = (day: string, days: number) =>
-    localDayKey(new Date(new Date(day + "T00:00:00").getTime() + days * 86400000));
-  return { from: shift(from, -1), to: shift(to, 1) };
+  return { from: shiftDayKey(from, -1), to: shiftDayKey(to, 1) };
 }
 
 /** Display name for a member: user_key, else email, else empty (which reads as unknown). */
@@ -260,8 +259,8 @@ export function minutesOf(secs: number): number {
   return secs > 0 ? Math.max(1, Math.round(secs / 60)) : 0;
 }
 
-/** Whether the local timezone aligns to hour boundaries. If it does not, cells are rounded with a
- *  30-minute skew and the UI has to say so. */
+/** Whether the effective time zone aligns to hour boundaries. If it does not, cells are rounded
+ *  with a 30-minute skew and the UI has to say so. */
 export function timezoneAlignsToHours(d: Date = new Date()): boolean {
-  return d.getTimezoneOffset() % 60 === 0;
+  return zoneOffsetMinutes(d) % 60 === 0;
 }
