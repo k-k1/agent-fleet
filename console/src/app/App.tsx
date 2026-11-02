@@ -12,6 +12,7 @@ import { useTenantStore } from "../core/store/tenant.ts";
 import { useT } from "../lib/i18n/index.ts";
 import { startPushChannel, restartPush } from "../core/push/events.ts";
 import { wirePushApply } from "../core/push/wire.ts";
+import { PushPausedNote } from "./PushPausedNote.tsx";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
@@ -635,6 +636,7 @@ export function App() {
       <AwsConfirmHost />
       <GcpLoginHost />
       <WsStartingDialog />
+      <PushPausedNote />
       <AuthExpiredModal />
       <ProviderRequiredModal />
       <DirtyGuardHost />

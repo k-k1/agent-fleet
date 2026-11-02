@@ -162,6 +162,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "wsstart.home_restoring": "Restoring your home from its saved copy…",
   "wsstart.home_attaching": "Attaching your home disk…",
   "wsstart.home_clearing": "Removing what Recreate / Clean home deletes from your home…",
+  "pushpause.note": "Live updates paused — click to resume",
   "wsstart.hint": "Progress is also recorded in agent.log. Closing this dialog does not stop the start.",
 
   // === P2 TopBar (app/TopBar.tsx) ===
