@@ -163,3 +163,12 @@ func TestReconcileManagedAsksTheSwitchClaim(t *testing.T) {
 		t.Fatal("a refused claim still resumed the session")
 	}
 }
+
+// The refusal reaches the Console as free text next to the code's catalogue line; the Agent does
+// not know the member's language, so it carries both.
+func TestErrThreadReleasingIsBilingual(t *testing.T) {
+	ja, en, ok := strings.Cut(ErrThreadReleasing.Error(), " / ")
+	if !ok || !strings.Contains(ja, "手放していません") || !strings.Contains(en, "has not let go") {
+		t.Fatalf("ErrThreadReleasing = %q, want a \"ja / en\" pair", ErrThreadReleasing)
+	}
+}

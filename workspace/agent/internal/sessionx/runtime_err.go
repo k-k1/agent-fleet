@@ -80,23 +80,31 @@ func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error)
 	return d.Resume(m)
 }
 
-// writeTmuxLaunchErr answers a failed Terminal (CLI) launch. An opencode version the Agent
-// refuses is permanent and gets the same 409 code as the Managed path; every other failure stays
-// 500 tmux_failed.
+// writeTmuxLaunchErr answers a failed Terminal (CLI) launch. Refusals that waiting does not fix
+// (opencode version, not connected) or that a retry in a minute does (codex still holding the
+// thread) get the same 409 codes as the Managed path; every other failure stays 500 tmux_failed.
 func writeTmuxLaunchErr(w http.ResponseWriter, err error) {
-	if writeUnsupportedVersion(w, err) {
+	if writeLaunchRefusal(w, err) {
 		return
 	}
 	httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 }
 
-// writeUnsupportedVersion answers the refused-opencode-version sentinel with the permanent 409
-// code and reports whether it did; callers keep their own generic code for everything else.
-func writeUnsupportedVersion(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, opencode.ErrUnsupportedVersion) {
+// writeLaunchRefusal answers the sentinels a launch can be refused with, as 409 + a code the
+// Console renders from its catalogue, and reports whether it did; callers keep their own
+// generic code for everything else. Used by the /start-shaped handlers that do not go through
+// writeRuntimeErr (which keeps its own copy of the first two branches for the 502 fallthrough).
+func writeLaunchRefusal(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, opencode.ErrUnsupportedVersion):
+		httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
+	case errors.Is(err, codex.ErrNotLoggedIn), errors.Is(err, opencode.ErrNotConnected):
+		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())
+	case errors.Is(err, codex.ErrThreadReleasing):
+		httpx.WriteErr(w, http.StatusConflict, errCodeCodexReleasing, err.Error())
+	default:
 		return false
 	}
-	httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
 	return true
 }
 

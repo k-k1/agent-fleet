@@ -117,7 +117,7 @@ func (f v2Form) interaction() *agents.Interaction {
 func (f v2Form) answer(answers []agents.InteractionAnswer) (map[string]any, error) {
 	fields := f.visibleFields()
 	if len(answers) != len(fields) {
-		return nil, fmt.Errorf("回答数が質問数と一致しません (%d != %d)", len(answers), len(fields))
+		return nil, fmt.Errorf("回答数が質問数と一致しません (%d != %d) / the number of answers does not match the number of questions (%[1]d != %[2]d)", len(answers), len(fields))
 	}
 	out := map[string]any{}
 	for i, fl := range fields {
@@ -132,7 +132,7 @@ func (f v2Form) answer(answers []agents.InteractionAnswer) (map[string]any, erro
 		var picked []string
 		for _, oi := range a.Options {
 			if oi < 0 || oi >= len(opts) {
-				return nil, fmt.Errorf("質問 %d の選択肢 %d は範囲外です", i+1, oi)
+				return nil, fmt.Errorf("質問 %d の選択肢 %d は範囲外です / option %[2]d of question %[1]d is out of range", i+1, oi)
 			}
 			picked = append(picked, opts[oi].Value)
 		}
@@ -155,7 +155,7 @@ func (f v2Form) answer(answers []agents.InteractionAnswer) (map[string]any, erro
 		case text != "":
 			v = text
 		case fl.Required:
-			return nil, fmt.Errorf("質問 %d に回答がありません", i+1)
+			return nil, fmt.Errorf("質問 %d に回答がありません / question %[1]d has no answer", i+1)
 		default:
 			continue // optional and left blank
 		}
@@ -163,19 +163,19 @@ func (f v2Form) answer(answers []agents.InteractionAnswer) (map[string]any, erro
 		case "number":
 			n, err := strconv.ParseFloat(v, 64)
 			if err != nil {
-				return nil, fmt.Errorf("質問 %d の回答は数値ではありません", i+1)
+				return nil, fmt.Errorf("質問 %d の回答は数値ではありません / the answer to question %[1]d is not a number", i+1)
 			}
 			out[fl.Key] = n
 		case "integer":
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("質問 %d の回答は整数ではありません", i+1)
+				return nil, fmt.Errorf("質問 %d の回答は整数ではありません / the answer to question %[1]d is not an integer", i+1)
 			}
 			out[fl.Key] = n
 		case "boolean":
 			b, err := strconv.ParseBool(v)
 			if err != nil {
-				return nil, fmt.Errorf("質問 %d の回答は真偽値ではありません", i+1)
+				return nil, fmt.Errorf("質問 %d の回答は真偽値ではありません / the answer to question %[1]d is not a boolean", i+1)
 			}
 			out[fl.Key] = b
 		default:
@@ -183,7 +183,7 @@ func (f v2Form) answer(answers []agents.InteractionAnswer) (map[string]any, erro
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("回答がありません")
+		return nil, errors.New("回答がありません / there is no answer")
 	}
 	return out, nil
 }
@@ -243,7 +243,7 @@ func respondForm(addr, ses string, reply agents.InteractionReply) error {
 		if err != nil {
 			return err
 		}
-		return doForm(req, "質問の却下")
+		return doForm(req, "質問の却下", "dismissing the question")
 	case agents.DecisionAnswer, agents.DecisionAllow:
 		var w struct {
 			Data v2Form `json:"data"`
@@ -252,7 +252,7 @@ func respondForm(addr, ses string, reply agents.InteractionReply) error {
 			if errors.Is(err, statusError(http.StatusNotFound)) {
 				return errFormSettled // the daemon forgot it (restart) or it never was
 			}
-			return fmt.Errorf("質問を読めません: %w", err)
+			return fmt.Errorf("質問を読めません / cannot read the question: %w", err)
 		}
 		if w.Data.State.Status != "pending" {
 			return fmt.Errorf("%w (%s)", errFormSettled, w.Data.State.Status)
@@ -267,12 +267,12 @@ func respondForm(addr, ses string, reply agents.InteractionReply) error {
 			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		return doForm(req, "質問への回答")
+		return doForm(req, "質問への回答", "answering the question")
 	}
 	return fmt.Errorf("unsupported decision: %s", reply.Decision)
 }
 
-func doForm(req *http.Request, what string) error {
+func doForm(req *http.Request, whatJa, whatEn string) error {
 	res, err := serveClient.Do(req)
 	if err != nil {
 		return err
@@ -282,7 +282,7 @@ func doForm(req *http.Request, what string) error {
 		return errFormSettled // already settled (409) or forgotten (404): somebody else got there first
 	}
 	if res.StatusCode >= 400 {
-		return fmt.Errorf("%sが拒否されました (HTTP %d)", what, res.StatusCode)
+		return fmt.Errorf("%sが拒否されました (HTTP %d) / %s was rejected (HTTP %[2]d)", whatJa, res.StatusCode, whatEn)
 	}
 	return nil
 }

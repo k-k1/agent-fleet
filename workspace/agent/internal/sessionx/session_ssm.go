@@ -64,7 +64,7 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		if writeStartRefusal(w, err) {
 			return
 		}
-		if writeUnsupportedVersion(w, err) {
+		if writeLaunchRefusal(w, err) {
 			return
 		}
 		if !writeCodexReleasingErr(w, err) {

@@ -56,10 +56,10 @@ func forkAtOnSharedTerminal(m session.Meta) bool {
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
 	info, err := v2TargetFor(m).v2Session(m)
 	if err != nil {
-		return "", errors.New("opencode の会話ストアを読めません")
+		return "", errors.New("opencode の会話ストアを読めません / cannot read the opencode conversation store")
 	}
 	if info == nil {
-		return "", errors.New("分岐できる会話がまだありません")
+		return "", errors.New("分岐できる会話がまだありません / there is no conversation to fork yet")
 	}
 	return info.ID, nil
 }
@@ -78,14 +78,15 @@ func (a agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, e
 func (agentImpl) ResolveForkAtPinned(m session.Meta, at agents.ForkPoint) (string, string, error) {
 	anchor := at.Anchor
 	if anchor == "" {
-		return "", "", errors.New("分岐点が指定されていません")
+		return "", "", errors.New("分岐点が指定されていません / no fork point was given")
 	}
 	// Only the serve API takes a fork point; `--session <src> --fork` has no such argument.
 	// A managed session talks to it directly and a Terminal pane attached to af's shared serve
 	// forks through the same endpoint (buildSharedLaunch).
 	if m.DriverKind() != session.DriverManaged && !forkAtOnSharedTerminal(m) {
 		return "", "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッション、"+
-			"または opencode 2 の共有サーバに接続したターミナルでのみ利用できます",
+			"または opencode 2 の共有サーバに接続したターミナルでのみ利用できます / "+
+			"forking opencode at a past message works only for a managed session or a terminal attached to the shared opencode 2 server",
 			agents.ErrForkAtRoute)
 	}
 	return resolveForkAtV2(v2TargetFor(m), m, at)
@@ -171,7 +172,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		// copy the WHOLE conversation when the user asked for a point.
 		if m.ForkAt != "" {
 			return agents.LaunchPlan{}, errors.New(
-				"発言時点からの分岐は managed のセッションでのみ利用できます")
+				"発言時点からの分岐は managed のセッションでのみ利用できます / " +
+					"forking at a past message works only for a managed session")
 		}
 		resume, fork = m.ForkFrom, true
 	}

@@ -210,6 +210,10 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, true))
 }
 
+// errCodeCodexReleasing is the retry-shortly refusal while codex's shared app-server still holds
+// the conversation; the Console renders it from its catalogue (and the switch toast keys on it).
+const errCodeCodexReleasing = "codex_releasing"
+
 // errCodeCodexStopFirst refuses a codex Managed-to-Terminal switch while the session runs.
 const errCodeCodexStopFirst = "codex_stop_first"
 
@@ -222,7 +226,7 @@ var switchSourceAlive = ManagedAlive
 func writeCodexReleasingErr(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, codex.ErrThreadReleasing):
-		httpx.WriteErr(w, http.StatusConflict, "codex_releasing", err.Error())
+		httpx.WriteErr(w, http.StatusConflict, errCodeCodexReleasing, err.Error())
 	case errors.Is(err, claude.ErrTranscriptLost):
 		httpx.WriteErr(w, http.StatusConflict, "transcript_lost", err.Error())
 	case errors.Is(err, claude.ErrTranscriptRestore):
