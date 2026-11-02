@@ -61,7 +61,7 @@ func TestWorkspaceRoutesAreRegistered(t *testing.T) {
 // the Console, the admin API, login, the egress proxy's /internal/egress* — answers 404.
 func TestWorkspaceListenerServesOnlyWorkspaceRoutes(t *testing.T) {
 	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
-	h := workspaceListenerHandler(mux, cfg.mgr.emailHeader)
+	h := workspaceListenerHandler(mux, cfg.mgr)
 	var served, refused int
 	for _, line := range muxRoutes(t, mux) {
 		pattern, req := routeSample(line)
@@ -123,7 +123,7 @@ func TestWorkspaceListenerIgnoresForgedIdentity(t *testing.T) {
 		t.Fatalf("control: main mux whoami = %d %s", w.Code, w.Body.String())
 	}
 
-	h := workspaceListenerHandler(mux, cfg.mgr.emailHeader)
+	h := workspaceListenerHandler(mux, cfg.mgr)
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, forged("GET", "/api/whoami"))
 	if w.Code != http.StatusNotFound {
@@ -231,7 +231,7 @@ func TestWorkspaceEnvCarriesInternalURL(t *testing.T) {
 // added here and to workspaceRoutes together; nothing detects one that was not.
 func TestWorkspaceListenerServesKnownAgentCalls(t *testing.T) {
 	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
-	h := workspaceListenerHandler(mux, cfg.mgr.emailHeader)
+	h := workspaceListenerHandler(mux, cfg.mgr)
 	calls := []struct{ method, path string }{
 		{"GET", "/internal/docs"},
 		{"GET", "/internal/branch-rules"},

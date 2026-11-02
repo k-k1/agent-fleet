@@ -128,15 +128,15 @@ func viaWorkspaceListener(ctx context.Context) bool {
 
 // workspaceListenerHandler is the whole handler of the workspace listener: no auth gate
 // (every route carries its own token), no preview dispatcher, no Console.
-func workspaceListenerHandler(full *http.ServeMux, identityHeader string) http.Handler {
-	return workspaceEdge(logRequests(gzipMiddleware(etagJSON(workspaceOnly(full)))), identityHeader)
+func workspaceListenerHandler(full *http.ServeMux, mgr *manager) http.Handler {
+	return workspaceEdge(logRequests(gzipMiddleware(etagJSON(mgr.invalidatesSessionsOnWrite(workspaceOnly(full))))), mgr.emailHeader)
 }
 
 // serveWorkspaceListener starts the workspace listener on addr. A listener that cannot
 // bind is fatal, like the main one: workspaces configured to call it would otherwise fail
 // one feature at a time with nothing in the log saying why.
-func serveWorkspaceListener(addr string, full *http.ServeMux, identityHeader string) {
-	srv := &http.Server{Addr: addr, Handler: workspaceListenerHandler(full, identityHeader), ReadHeaderTimeout: 10 * time.Second}
+func serveWorkspaceListener(addr string, full *http.ServeMux, mgr *manager) {
+	srv := &http.Server{Addr: addr, Handler: workspaceListenerHandler(full, mgr), ReadHeaderTimeout: 10 * time.Second}
 	log.Printf("workspace listener on %s (%d routes, ADR 0106 decision 8)", addr, len(workspaceRoutes))
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
