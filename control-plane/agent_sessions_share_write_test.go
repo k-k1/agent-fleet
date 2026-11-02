@@ -69,3 +69,48 @@ func TestInboxLaunchInvalidatesSharedSessions(t *testing.T) {
 		t.Fatalf("reads = %d after the launch, want 2 (cache dropped)", reads.Load())
 	}
 }
+
+// A refused write must not flush the shared read, on either listener: anonymous POSTs would
+// otherwise defeat the sharing for every workspace. A write that got past routing and auth, or
+// failed after partial success, still does.
+func TestRefusedWritesKeepSharedSessions(t *testing.T) {
+	srv, n := countingAgent(t, func(int64) (int, string) { return 200, sharedOneSession })
+	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
+	rt := stubRuntime{endpoint: srv.URL, token: "tok"}
+	read := func() { _, _, _ = cfg.mgr.agentSessionsShared(context.Background(), rt) }
+	mux.HandleFunc("POST /test/ok", func(w http.ResponseWriter, r *http.Request) {})
+	mux.HandleFunc("POST /test/boom", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) })
+	listeners := map[string]http.Handler{
+		"main":      cfg.mgr.invalidatesSessionsOnWrite(mux),
+		"workspace": workspaceListenerHandler(mux, cfg.mgr),
+	}
+	for name, h := range listeners {
+		for _, path := range []string{"/internal/memos", "/no-such-route"} {
+			cfg.mgr.sessionsShare.invalidate()
+			n.Store(0)
+			read()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("POST", path, nil))
+			if rec.Code != 401 && rec.Code != 404 {
+				t.Fatalf("%s %s: %d, want a refusal", name, path, rec.Code)
+			}
+			read()
+			if n.Load() != 1 {
+				t.Errorf("%s: refused POST %s dropped the shared read (reads=%d)", name, path, n.Load())
+			}
+		}
+	}
+	// Positive control: a handled write, and a 5xx, invalidate (main listener; the workspace
+	// listener only serves its own routes).
+	for _, path := range []string{"/test/ok", "/test/boom"} {
+		cfg.mgr.sessionsShare.invalidate()
+		n.Store(0)
+		read()
+		rec := httptest.NewRecorder()
+		listeners["main"].ServeHTTP(rec, httptest.NewRequest("POST", path, nil))
+		read()
+		if n.Load() != 2 {
+			t.Errorf("POST %s did not invalidate (reads=%d)", path, n.Load())
+		}
+	}
+}

@@ -179,16 +179,29 @@ func cloneEnvelope(e agentSessionsEnvelope) agentSessionsEnvelope {
 
 // invalidatesSessionsOnWrite wraps the whole mux, so that every route that may change the session
 // list drops the shared read, whichever auth wrapper (or none: /mcp, /internal/*, admin and
-// schedule routes) the route uses. Invalidating inside one wrapper missed every route registered
-// through another. It runs after the handler, so a read begun during the write is dropped too.
-// GET/HEAD/OPTIONS never invalidate: the 4 s event ticks are GETs and would defeat the sharing.
+// schedule routes) the route uses. It runs after the handler, so a read begun during the write is
+// dropped too. GET/HEAD/OPTIONS never invalidate: the 4 s event ticks are GETs and would defeat
+// the sharing.
+//
+// A refusal that happened before any handler work (401, 403, 404, 405) does not invalidate either:
+// an anonymous POST to /internal/* or to a route that does not exist would otherwise flush every
+// workspace's cache and detach its in-flight read. Any other status, 5xx after a partial success
+// included, invalidates.
 func (m *manager) invalidatesSessionsOnWrite(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
-		default:
-			defer m.sessionsShare.invalidate()
+			next.ServeHTTP(w, r)
+			return
 		}
-		next.ServeHTTP(w, r)
+		sw := &statusWriter{ResponseWriter: w} // keeps Flusher, Hijacker and ResponseController working
+		defer func() {
+			switch sw.code() {
+			case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusMethodNotAllowed:
+			default:
+				m.sessionsShare.invalidate()
+			}
+		}()
+		next.ServeHTTP(sw, r)
 	})
 }
