@@ -108,6 +108,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   // message for that.
   "err.agent_not_connected":
     "Couldn't start: you aren't signed in to this agent. Connect it from Settings > Agents.",
+  // An unsupported opencode (1.x) was found. Waiting never fixes it (paired with runtime_err.go
+  // on the Agent). errDetail() does not append the server's bilingual message for this code.
+  "err.agent_unsupported_version":
+    "This opencode version is not supported. Agent Fleet only runs opencode 2 (@opencode/cli).",
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.unknown": "An unknown error occurred.",

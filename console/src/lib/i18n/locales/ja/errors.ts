@@ -106,6 +106,10 @@ export const errors = {
   // errDetail() がサーバの message を併記して伝える。
   "err.agent_not_connected":
     "このエージェントにログインしていないため起動できませんでした。設定 > エージェント から接続してください。",
+  // 対応外のバージョンの opencode（1.x）が見つかった。待っても直らない（workspace/agent の
+  // runtime_err.go と対）。バージョンは errDetail() ではなく message 側にあるが、文言が重複するので併記しない。
+  "err.agent_unsupported_version":
+    "この opencode のバージョンには対応していません。Agent Fleet が動かせるのは opencode 2（@opencode/cli）だけです。",
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
   "err.unknown": "不明なエラーが発生しました",

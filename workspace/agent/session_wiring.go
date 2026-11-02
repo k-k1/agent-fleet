@@ -61,6 +61,7 @@ func sessionDeps() sessionx.Deps {
 		RunOperatorTurn: runOperatorTurn,
 
 		ErrCodeAgentNotConnected:      errCodeAgentNotConnected,
+		ErrCodeAgentUnsupportedVer:    errCodeAgentUnsupportedVersion,
 		ErrCodeChatConversationNotFnd: errCodeChatConversationNotFnd,
 		ErrCodeForkAtUnsupported:      errCodeForkAtUnsupported,
 		ErrCodeForkBadAnchor:          errCodeForkBadAnchor,

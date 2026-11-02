@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,6 +50,23 @@ func installedMajor() int {
 	return 0
 }
 
+// ErrUnsupportedVersion matches (errors.Is) the refusal of an opencode older than 2. The agent
+// does not know the member's UI language, so the HTTP layer answers with a stable code the
+// Console renders from its own catalogue (sessionx/runtime_err.go) instead of this text.
+var ErrUnsupportedVersion = errors.New("unsupported opencode version")
+
+// UnsupportedVersionError is the refusal itself. Its text is bilingual for the callers that
+// show Error() as is (logs, chat): the language is unknown here, and one language only would
+// be unreadable for half the members.
+type UnsupportedVersionError struct{ Version string }
+
+func (e *UnsupportedVersionError) Error() string {
+	return fmt.Sprintf("opencode %s には対応していません。Agent Fleet が動かせるのは opencode 2（@opencode/cli）だけです / "+
+		"opencode %s is not supported. Agent Fleet only runs opencode 2 (@opencode/cli)", e.Version, e.Version)
+}
+
+func (e *UnsupportedVersionError) Is(target error) bool { return target == ErrUnsupportedVersion }
+
 // checkSupported refuses an opencode whose major is known to be older than 2. An unknown major
 // is let through: the launch then fails or works on its own, and a wrapped binary of the
 // supported major must not be refused for hiding its manifest.
@@ -58,7 +76,7 @@ func checkSupported() error {
 		if v == "" {
 			v = strconv.Itoa(m) + ".x"
 		}
-		return fmt.Errorf("opencode %s には対応していません。Agent Fleet が動かせるのは opencode 2（@opencode/cli）だけです", v)
+		return &UnsupportedVersionError{Version: v}
 	}
 	return nil
 }

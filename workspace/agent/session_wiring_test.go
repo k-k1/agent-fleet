@@ -5,7 +5,7 @@ package main
 // `sessionx.Configure` catches only unwired fields (nil / zero value), never wrong wiring,
 // and the session family's Deps is dense with same-typed fields:
 //
-//   - 12 of `string` (the error codes)
+//   - 13 of `string` (the error codes)
 //   - 2 of `func() string` (BrowseRoot / ToolchainShellPrefix)
 //
 // Swapping two fields of the same type sets off neither the type checker nor `Configure`'s
@@ -80,10 +80,13 @@ func TestSessionWiringIsLive(t *testing.T) {
 		},
 
 		// An error code must be spelled exactly as in errcodes.go; otherwise the Console's
-		// i18n cannot resolve it and the raw code reaches the screen. All 12 share one type,
-		// so these 12 lines are the only thing standing between them and a swap.
+		// i18n cannot resolve it and the raw code reaches the screen. All 13 share one type,
+		// so these 13 lines are the only thing standing between them and a swap.
 		"ErrCodeAgentNotConnected": func(t *testing.T) {
 			sameSessionCode(t, w.ErrCodeAgentNotConnected, errCodeAgentNotConnected)
+		},
+		"ErrCodeAgentUnsupportedVer": func(t *testing.T) {
+			sameSessionCode(t, w.ErrCodeAgentUnsupportedVer, errCodeAgentUnsupportedVersion)
 		},
 		"ErrCodeChatConversationNotFnd": func(t *testing.T) {
 			sameSessionCode(t, w.ErrCodeChatConversationNotFnd, errCodeChatConversationNotFnd)
@@ -141,7 +144,7 @@ func TestSessionWiringIsLive(t *testing.T) {
 	}
 }
 
-// TestSessionWiringErrorCodesAreDistinct checks that the 12 error codes are all spelled
+// TestSessionWiringErrorCodesAreDistinct checks that the 13 error codes are all spelled
 // differently.
 //
 // Why it is needed: the per-field comparison above only asks "is it the same as the real
@@ -173,8 +176,8 @@ func TestSessionWiringErrorCodesAreDistinct(t *testing.T) {
 		seen[code] = f.Name
 	}
 	// Lower bound on how much was scanned (#320: "finding nothing checks nothing").
-	if n != 12 {
-		t.Fatalf("only %d string fields were scanned (want 12) = this check has gone silent", n)
+	if n != 13 {
+		t.Fatalf("only %d string fields were scanned (want 13) = this check has gone silent", n)
 	}
 }
 

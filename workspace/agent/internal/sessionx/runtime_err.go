@@ -45,6 +45,10 @@ func writeRuntimeErr(w http.ResponseWriter, err error) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeDriverSwitching, err.Error())
 		return
 	}
+	if errors.Is(err, opencode.ErrUnsupportedVersion) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeAgentUnsupportedVer, err.Error())
+		return
+	}
 	if errors.Is(err, codex.ErrNotLoggedIn) || errors.Is(err, opencode.ErrNotConnected) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeAgentNotConnected, err.Error())
 		return

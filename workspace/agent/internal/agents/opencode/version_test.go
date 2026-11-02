@@ -1,8 +1,10 @@
 package opencode
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +86,24 @@ func TestInstalledMajorFallsBackToPinThenUnknown(t *testing.T) {
 	useOpencode(t, other)
 	if got := installedMajor(); got != 0 {
 		t.Fatalf("foreign manifest: major = %d, want 0", got)
+	}
+}
+
+// The refusal must be typed (the HTTP layer maps it to a code the Console renders in the
+// member's language) and its own text must carry both languages for the callers that print it.
+func TestCheckSupportedRefusalIsTypedAndBilingual(t *testing.T) {
+	useMajor(t, 1)
+	err := checkSupported()
+	if !errors.Is(err, ErrUnsupportedVersion) {
+		t.Fatalf("checkSupported() = %v, want errors.Is ErrUnsupportedVersion", err)
+	}
+	for _, want := range []string{"1.19.0", "には対応していません", "is not supported"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q lacks %q", err.Error(), want)
+		}
+	}
+	useMajor(t, 2)
+	if err := checkSupported(); err != nil {
+		t.Errorf("opencode 2 refused: %v", err)
 	}
 }

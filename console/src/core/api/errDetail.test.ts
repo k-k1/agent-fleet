@@ -68,4 +68,12 @@ describe("errDetail", () => {
     expect(got).not.toContain("codex could not");
     expect(got.length).toBeGreaterThan(20);
   });
+
+  it("shows the localized unsupported-version text alone", () => {
+    const e = { code: "agent_unsupported_version", message: "opencode 1.14.0 には対応していません。… / opencode 1.14.0 is not supported. …" };
+    const got = client.errDetail(e);
+    expect(got).toBe(client.errText(e));
+    expect(got).not.toContain("1.14.0");
+    expect(got.length).toBeGreaterThan(20);
+  });
 });
