@@ -18,7 +18,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
-import { relTime } from "../../../lib/intl.ts";
+import { DATETIME_LOCALE_DEFAULT, TIME_LOCALE_DEFAULT, fmtDateTime, relTime } from "../../../lib/intl.ts";
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
@@ -340,7 +340,7 @@ function MemberSessions({ m }: { m: Member }) {
           )}
           <span className="mc-sess-text">{text}</span>
           {s.observed_at && (
-            <span className="muted" title={new Date(s.observed_at).toLocaleString()}>
+            <span className="muted" title={fmtDateTime(s.observed_at, DATETIME_LOCALE_DEFAULT)}>
               {tr("admin.roster_observed", { ago: relTime(s.observed_at) })}
             </span>
           )}
@@ -531,7 +531,7 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
   const left = remainingShort(idle.stopAt);
   if (!left) return null;
   return (
-    <span className="mr-idle" title={tr("admin.idle_stop_at", { at: new Date(idle.stopAt!).toLocaleString() })}>
+    <span className="mr-idle" title={tr("admin.idle_stop_at", { at: fmtDateTime(idle.stopAt!, DATETIME_LOCALE_DEFAULT) })}>
       {tr("admin.idle_stop_in", { left })}
     </span>
   );
@@ -584,7 +584,7 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
       ) : holders.length === 0 ? (
         <p className="muted">
           {left
-            ? tr("admin.idle_stop_in", { left }) + tr("admin.idle_stop_at_paren", { at: new Date(idle.stopAt!).toLocaleString() })
+            ? tr("admin.idle_stop_in", { left }) + tr("admin.idle_stop_at_paren", { at: fmtDateTime(idle.stopAt!, DATETIME_LOCALE_DEFAULT) })
             : tr("admin.idle_stopping_soon")}
         </p>
       ) : (
@@ -609,7 +609,7 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
           </ul>
         </>
       )}
-      <p className="admin-hint">{tr("admin.idle_observed", { at: new Date(idle.observedAt).toLocaleTimeString() })}</p>
+      <p className="admin-hint">{tr("admin.idle_observed", { at: fmtDateTime(idle.observedAt, TIME_LOCALE_DEFAULT) })}</p>
     </section>
   );
 }
@@ -654,7 +654,7 @@ export function MemberAutoStopDetail({ autoStop }: { autoStop?: MemberAutoStop }
         {/* Only the start deadline writes the member a notification; a failed home wipe reaches
             them as a toast in a Console that happens to be open, so it claims nothing. */}
         {tr(autoStop.kind === "home-wipe-failed" ? "admin.auto_stop_home_wipe_at" : "admin.auto_stop_at", {
-          at: new Date(autoStop.stopped_at).toLocaleString(),
+          at: fmtDateTime(autoStop.stopped_at, DATETIME_LOCALE_DEFAULT),
         })}
       </p>
     </section>

@@ -7,6 +7,7 @@ import { knownRole, sameWorkItem } from "../sessions/sessionLinks.ts";
 import type { Session, SessionWorkLink, SessionWorkLinkRole } from "../../types/session.ts";
 import type { ApiError } from "../../core/api/client.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
 import { normalizeHex } from "./labelColor.ts";
 
 export interface WorkItem {
@@ -620,7 +621,7 @@ export function fullLocal(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
+  return fmtDateTime(d, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -667,7 +668,7 @@ export function shortLocal(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return fmtDateTime(d, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 /** Slug for a branch name: ASCII words from the title, dashed, short. Returns "" when the

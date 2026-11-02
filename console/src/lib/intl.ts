@@ -159,6 +159,58 @@ export const DATETIME_FULL: Intl.DateTimeFormatOptions = {
   hourCycle: "h23",
 };
 
+// The shapes a bare toLocaleString() / toLocaleTimeString() produce (numeric fields, seconds
+// included), for call sites that keep that look but must honour the region format and time zone.
+export const DATETIME_LOCALE_DEFAULT: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+};
+export const TIME_LOCALE_DEFAULT: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "numeric", second: "numeric" };
+
+// ZonedParts — a calendar reading of an instant, as plain numbers.
+export interface ZonedParts {
+  year: number;
+  month: number; // 1-12
+  day: number;
+  hour: number; // 0-23
+  minute: number;
+}
+
+// Machine-readable parts need Latin digits whatever the region format is, so they get their own
+// formatter (fixed en-US + latn) instead of dtf().
+const partsCache = new Map<string, Intl.DateTimeFormat>();
+
+// zonedParts — year..minute of an instant in the effective time zone, or null when the input is
+// not a date. Use it for date math and compact numeric stamps (bucketing, "same day" tests):
+// Date#getHours and friends read the browser's zone and ignore the member's setting.
+export function zonedParts(when: string | number | Date): ZonedParts | null {
+  const ms = toMs(when);
+  if (isNaN(ms)) return null;
+  const zone = effectiveTimeZone();
+  let f = partsCache.get(zone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      numberingSystem: "latn",
+      calendar: "gregory",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    });
+    partsCache.set(zone, f);
+  }
+  const out: Record<string, number> = {};
+  for (const p of f.formatToParts(ms)) if (p.type !== "literal") out[p.type] = parseInt(p.value, 10);
+  return { year: out.year, month: out.month, day: out.day, hour: out.hour % 24, minute: out.minute };
+}
+
 // fmtDateTime — absolute date-time. An invalid value is echoed back when the input was a string,
 // otherwise "" (the previous implementation's behaviour).
 export function fmtDateTime(when: string | number | Date, opts: Intl.DateTimeFormatOptions = DATETIME_MD): string {
