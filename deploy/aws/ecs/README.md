@@ -341,7 +341,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 Control Plane variables that the operator guide calls configurable have a parameter each:
 `SessionIdleTimeout`, `InteractionIdleTimeout`, `WsIdleTimeout`, `PresenceIdleTimeout`,
-`BackgroundHoldMax`, `WorkspaceStartDeadline`, `UsageSampleInterval`; `GithubLoginClientId`,
+`BackgroundHoldMax`, `WorkspaceStartDeadline`, `UsageSampleInterval`, `AgentSilentStopAfter`; `GithubLoginClientId`,
 `GithubLabelJa`, `GithubLabelEn`, `GithubMembershipTtl`, `GithubMembershipGrace`; `LlmUrl`,
 `ComfyUrl`, `RemoteEngineUrl`, `RemoteEngineKeys`. Empty (the default) adds no environment entry,
 so an existing stack is unchanged and `update.sh` (which overrides only `ImageTag`,

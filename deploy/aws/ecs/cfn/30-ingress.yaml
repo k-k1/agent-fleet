@@ -344,6 +344,10 @@ Parameters:
     Type: String
     Default: ""
     Description: "AF_USAGE_SAMPLE_INTERVAL; empty = default. PARAMETERS.md"
+  AgentSilentStopAfter:
+    Type: String
+    Default: ""
+    Description: "AF_AGENT_SILENT_STOP_AFTER; empty = off. PARAMETERS.md"
   GithubLoginClientId:
     Type: String
     Default: ""
@@ -455,6 +459,7 @@ Conditions:
   HasBackgroundHoldMax: !Not [ !Equals [ !Ref BackgroundHoldMax, "" ] ]
   HasWorkspaceStartDeadline: !Not [ !Equals [ !Ref WorkspaceStartDeadline, "" ] ]
   HasUsageSampleInterval: !Not [ !Equals [ !Ref UsageSampleInterval, "" ] ]
+  HasAgentSilentStopAfter: !Not [ !Equals [ !Ref AgentSilentStopAfter, "" ] ]
   HasGithubLoginClientId: !Not [ !Equals [ !Ref GithubLoginClientId, "" ] ]
   HasGithubLabelJa: !Not [ !Equals [ !Ref GithubLabelJa, "" ] ]
   HasGithubLabelEn: !Not [ !Equals [ !Ref GithubLabelEn, "" ] ]
@@ -893,6 +898,7 @@ Resources:
             - !If [ HasBackgroundHoldMax, { Name: AF_BACKGROUND_HOLD_MAX, Value: !Ref BackgroundHoldMax }, !Ref "AWS::NoValue" ]
             - !If [ HasWorkspaceStartDeadline, { Name: AF_WORKSPACE_START_DEADLINE, Value: !Ref WorkspaceStartDeadline }, !Ref "AWS::NoValue" ]
             - !If [ HasUsageSampleInterval, { Name: AF_USAGE_SAMPLE_INTERVAL, Value: !Ref UsageSampleInterval }, !Ref "AWS::NoValue" ]
+            - !If [ HasAgentSilentStopAfter, { Name: AF_AGENT_SILENT_STOP_AFTER, Value: !Ref AgentSilentStopAfter }, !Ref "AWS::NoValue" ]
             - !If [ HasGithubLoginClientId, { Name: AF_GITHUB_LOGIN_CLIENT_ID, Value: !Ref GithubLoginClientId }, !Ref "AWS::NoValue" ]
             - !If [ HasGithubLabelJa, { Name: AF_GITHUB_LABEL_JA, Value: !Ref GithubLabelJa }, !Ref "AWS::NoValue" ]
             - !If [ HasGithubLabelEn, { Name: AF_GITHUB_LABEL_EN, Value: !Ref GithubLabelEn }, !Ref "AWS::NoValue" ]

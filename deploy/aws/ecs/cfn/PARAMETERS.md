@@ -874,11 +874,20 @@ route. All three default to empty, and the CP treats an empty value as unset (`e
 | `BackgroundHoldMax` | `AF_BACKGROUND_HOLD_MAX`: upper bound on background work holding a Workspace awake | 2h |
 | `WorkspaceStartDeadline` | `AF_WORKSPACE_START_DEADLINE`: a start with no task running longer than this is stopped | 30m |
 | `UsageSampleInterval` | `AF_USAGE_SAMPLE_INTERVAL`: the usage sampler (also runs the start deadline) | 5m |
+| `AgentSilentStopAfter` | `AF_AGENT_SILENT_STOP_AFTER`: stop a Workspace whose Agent stays flagged Not responding this long (minimum `10m`) | off |
 
-Go durations (`90m`). `0` turns a timer off where the CP reads it with `intervalOff` (all seven);
+Go durations (`90m`). `0` turns a timer off where the CP reads it with `intervalOff` (the first
+seven; `AgentSilentStopAfter` is off when empty or `0`);
 an unparseable value falls back to the default, so a typo does not stop the task. The idle timers
 only matter while the reaper runs (`AF_IDLE_SWEEP_INTERVAL`, not exposed). Behaviour:
 `guide/operate/03-run.md`; defaults: `guide/ref/limits.md`.
+
+`AgentSilentStopAfter` is the only one of these that is off by default. `update.sh` does not set
+it, so turn it on (or change it) with
+`aws cloudformation deploy … --parameter-overrides AgentSilentStopAfter=30m`; the next `update.sh`
+keeps the value. Setting it back to empty turns it off again. It needs `AF_AGENT_SILENT_AFTER`
+(default `3m`, not exposed as a parameter) to be on; see
+`guide/operate/03-run.md#stopping-a-silent-agent-automatically-off-by-default`.
 
 ### GitHub sign-in extras
 
