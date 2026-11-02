@@ -53,7 +53,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	cfg := config{consoleDir: t.TempDir(), mgr: mgr, egressDedup: &egressAuditDedup{},
 		publicBaseURL: "https://af.example"}
 	mux := buildMux(cfg)
-	h := workspaceListenerHandler(mux, mgr.emailHeader)
+	h := workspaceListenerHandler(mux, mgr)
 
 	ident, _ := st.UpsertIdentity(ctx, "leaver@x", "leaver-x", "")
 	mem, err := st.EnsureMembership(ctx, ident.ID, dt.ID, "member")
