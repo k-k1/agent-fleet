@@ -240,7 +240,16 @@ export function sortSchedules(list: ScheduleDTO[]): ScheduleDTO[] {
 // ("2026-07-23 09:00 JST"); while the member follows the browser and the display language that
 // text is kept as it is. Once they chose a zone or region format the machine field next_run
 // (RFC 3339 UTC) is formatted through lib/intl.ts instead, and next_run_local is left to a tooltip.
-const NEXT_RUN_FMT: Intl.DateTimeFormatOptions = { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" };
+// Year and zone name are shown: a far one-shot needs its year, and the text sits beside a spec in
+// the schedule's zone, so the reader must be able to tell which zone this time is in.
+const NEXT_RUN_FMT: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZoneName: "short",
+};
 
 export function nextRunText(s: Pick<ScheduleDTO, "next_run" | "next_run_local">): string {
   const local = s.next_run_local ?? "";

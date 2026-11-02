@@ -157,19 +157,21 @@ describe("nextRunText / nextRunDetail (#3217)", () => {
 
   it("keeps the server text while both settings are auto", () => {
     setFormatPrefs("auto", "auto");
-    expect(nextRunText(s)).toBe("2026-03-08 09:00 EDT");
-    expect(nextRunDetail(s)).toBe("2026-03-08 09:00 EDT");
+    expect(nextRunText(s)).toBe("2026-03-08 09:00 GMT-4");
+    expect(nextRunDetail(s)).toBe("2026-03-08 09:00 GMT-4");
   });
 
   it("formats next_run in the member's explicit zone", () => {
     setFormatPrefs("auto", "Asia/Tokyo");
-    expect(nextRunText(s)).toMatch(/22:00/);
+    expect(nextRunText(s)).toMatch(/2026.*22:00.*(GMT\+9|JST)/);
     expect(nextRunDetail(s)).toContain("(2026-03-08 09:00 EDT)");
   });
 
   it("follows an explicit region format", () => {
     setFormatPrefs("en-GB", "America/New_York");
-    expect(nextRunText(s)).toBe("08/03, 09:00");
+    expect(nextRunText(s)).toBe("08/03/2026, 09:00 GMT-4");
+    // a far one-shot keeps its year
+    expect(nextRunText({ ...s, next_run: "2031-03-08T13:00:00Z" })).toContain("2031");
   });
 
   it("falls back to the server text when next_run is missing or invalid", () => {

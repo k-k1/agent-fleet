@@ -44,7 +44,18 @@ func zone(name string) *time.Location {
 // DateTime formats t to the minute for the member: in their explicit zone, and in their region
 // format's layout when one is set. fallbackLayout is what "auto" produces.
 func DateTime(t time.Time, fallbackLayout string) string {
-	return format(t, fallbackLayout, uiprefs.RegionFormat(), uiprefs.TimeZone())
+	// One read for both values, so a PUT in between cannot hand us region and zone of different
+	// generations.
+	p := uiprefs.Read()
+	region, _ := p["regionFormat"].(string)
+	tz, _ := p["timeZone"].(string)
+	if region == "auto" {
+		region = ""
+	}
+	if tz == "auto" {
+		tz = ""
+	}
+	return format(t, fallbackLayout, region, tz)
 }
 
 func format(t time.Time, fallbackLayout, region, tz string) string {
