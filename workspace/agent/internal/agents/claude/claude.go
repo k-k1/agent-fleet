@@ -6,11 +6,9 @@
 package claude
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -295,32 +293,3 @@ var (
 	_ agents.TextReader          = agentImpl{}
 	_ agents.LegacyCappedUsage   = agentImpl{}
 )
-
-// RemoteSessionURL derives the claude.ai Remote Control page for sid from its
-// jsonl "bridge-session" line (written when RC connects). The web URL is
-// "…/code/session_<bridgeSessionId without the cse_ prefix>". We read only the
-// head of the log (the bridge line is written at session start) to stay cheap on
-// the polled list. Returns "" when there is no bridge (RC off / not yet connected).
-func RemoteSessionURL(sid string) string {
-	for _, p := range jsonlPaths(sid) {
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		buf := make([]byte, 64*1024)
-		n, _ := f.Read(buf)
-		f.Close()
-		for _, line := range strings.Split(string(buf[:n]), "\n") {
-			if !strings.Contains(line, `"type":"bridge-session"`) {
-				continue
-			}
-			var b struct {
-				BridgeSessionID string `json:"bridgeSessionId"`
-			}
-			if json.Unmarshal([]byte(line), &b) == nil && b.BridgeSessionID != "" {
-				return "https://claude.ai/code/session_" + strings.TrimPrefix(b.BridgeSessionID, "cse_")
-			}
-		}
-	}
-	return ""
-}
