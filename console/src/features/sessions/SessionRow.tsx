@@ -24,6 +24,7 @@ import { openSessionByName, openSessionFromList } from "./open.ts";
 import { useSessionUI } from "./ui.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
 import { SessionLinks, hasSessionLinks } from "./SessionLinks.tsx";
+import { offersMergedTidy } from "./sessionLinks.ts";
 import { useMySharesStore } from "../sharing/store.ts";
 import { useSessionUnread } from "../notifications/unread.ts";
 import { isWaiting } from "./waiting.ts";
@@ -93,6 +94,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const needsYou = isWaiting(s);
   // The branch's PR and the session's listening ports (#1062), on a second line of their own.
   const links = hasSessionLinks(s, running);
+  // Every PR of the session merged and nothing going on in it (#3131): offer to archive it,
+  // never do it unasked. Not on a read-only row, and not while the workspace is stopped, when
+  // the archive cannot reach the Agent.
+  const tidy = !readOnly && running && actions && offersMergedTidy(s) ? () => void actions.archiveMerged(s) : undefined;
 
   return (
     <li
@@ -260,7 +265,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           />
         </div>
       )}
-      {links && <SessionLinks s={s} running={running} />}
+      {links && <SessionLinks s={s} running={running} onTidy={tidy} />}
       {(s.movedTo || s.moving) && <SessionMoveLine s={s} running={running} readOnly={readOnly} />}
     </li>
   );

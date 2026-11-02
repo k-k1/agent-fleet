@@ -461,6 +461,9 @@ func main() {
 		// slowest launch that does converge — a Fargate cold pull, an ecs-ec2 slot built
 		// from nothing — and only a launch that cannot converge reaches it. "0" = off.
 		sampler.deadline = newStartDeadline(mgr, intervalOff(os.Getenv("AF_WORKSPACE_START_DEADLINE"), 30*time.Minute))
+		// Off unless set (agent_silent_stop.go): stopping a workspace on the CP's own verdict
+		// that its Agent is gone is an operator's decision. 30m is a sensible start.
+		sampler.silentStop = newSilentStop(mgr, intervalOff(os.Getenv("AF_AGENT_SILENT_STOP_AFTER"), 0))
 		go sampler.run(context.Background())
 	}
 

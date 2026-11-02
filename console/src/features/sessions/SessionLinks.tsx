@@ -42,7 +42,9 @@ export function hasSessionLinks(s: Session, running: boolean): boolean {
   );
 }
 
-export function SessionLinks({ s, running }: { s: Session; running: boolean }) {
+/** onTidy, when set, draws the "merged" chip that offers to archive a session whose PRs all
+ *  landed (#3131); the row decides when, and confirms before it archives. */
+export function SessionLinks({ s, running, onTidy }: { s: Session; running: boolean; onTidy?: () => void }) {
   const tr = useT();
   const [allPorts, setAllPorts] = useState(false);
   const [allLinks, setAllLinks] = useState(false);
@@ -91,6 +93,13 @@ export function SessionLinks({ s, running }: { s: Session; running: boolean }) {
             </button>
           )}
         </span>
+      )}
+      {onTidy && (
+        <button type="button" className="sess-tidy" title={tr("srow.prs_merged_hint")} onClick={onTidy}>
+          <Icon name="git-merge" />
+          {tr("srow.prs_merged")}
+          <Icon name="archive" />
+        </button>
       )}
       {ports.length > 0 && (
         <span className="sess-ports">

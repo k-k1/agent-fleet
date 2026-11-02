@@ -49,7 +49,9 @@ cause is that it ran out of memory and is thrashing. Nothing will work until it 
 open the badge and press **Stop workspace**, then start it again. Running sessions become
 Stopped and stay resumable; repos and files are untouched. If it answers again by itself,
 the badge disappears on its own. Your tenant's admins are notified as well, and can
-Force-stop the workspace from the member detail.
+Force-stop the workspace from the member detail. If your operator has turned on the automatic
+stop, a workspace that stays unresponsive for the configured time is stopped for you and a
+notification says so; start it again to continue.
 
 ### The workspace went from "starting" to "stopped" on its own
 

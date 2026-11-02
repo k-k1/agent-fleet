@@ -67,6 +67,7 @@ Defaults are the Control Plane's own; `deploy/compose/.env.example` annotates mo
 | Background work keeps a Workspace awake for | 2 hours | `AF_BACKGROUND_HOLD_MAX`; `0` = unbounded |
 | A terminal with no typing still counts as someone there for | 30 minutes | `AF_PRESENCE_IDLE_TIMEOUT` |
 | A Workspace still starting is stopped after | 30 minutes | `AF_WORKSPACE_START_DEADLINE`; `0` turns it off ([operate/03](../operate/03-run.md#a-start-that-never-finishes)) |
+| A Workspace whose Agent stays silent is stopped after | off | `AF_AGENT_SILENT_STOP_AFTER` (minimum `10m`; [operate/03](../operate/03-run.md#stopping-a-silent-agent-automatically-off-by-default)) |
 | Home and state volumes (kubernetes) | 50 GiB and 5 GiB | `AF_K8S_HOME_GIB`, `AF_K8S_STATE_GIB` |
 | Raw egress events (one per workspace connection through the egress gateway) kept for | 30 days | `AF_EGRESS_EVENT_RETENTION_DAYS`; `0` keeps them forever. The per-host daily counts stay; the AWS templates have no parameter for it ([operate/04](../operate/04-secure.md#operating-egress-control)) |
 

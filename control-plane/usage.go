@@ -59,6 +59,9 @@ type usageSampler struct {
 	// tenant's workspaces and each one's State() — and a second ticker repeating it is the
 	// cost usage.go avoids for the hourly bucket too. nil = no deadline.
 	deadline *startDeadline
+	// silentStop optionally stops a workspace whose Agent stays silent (agent_silent_stop.go);
+	// nil = flag only.
+	silentStop *silentStop
 	// backgroundDef is the deployment default of background_hold_max, so the heatmap reads a
 	// lapsed background row as the reaper does (0 = unbounded).
 	backgroundDef time.Duration
@@ -121,6 +124,8 @@ func (u *usageSampler) sample(ctx context.Context) {
 	defer func() { u.recordDisks(ctx, disks) }()
 	found := map[string]bool{}
 	var overdue []overdueStart
+	var silent []silentCandidate
+	var runningKeys []string
 	for _, t := range tenants {
 		wss, err := u.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
@@ -138,9 +143,16 @@ func (u *usageSampler) sample(ctx context.Context) {
 			}
 			// The dead-man check rides the sweep: it is the traffic that reaches a workspace
 			// nobody has open.
-			u.mgr.checkAgentSilent(ctx, ws, rt, state)
+			flagged := u.mgr.checkAgentSilent(ctx, ws, rt, state)
 			if state != "running" {
 				continue
+			}
+			if key := endpointKey(rt.Endpoint()); key != "" {
+				if flagged {
+					silent = append(silent, silentCandidate{rt: rt, ws: ws, key: key})
+				} else {
+					runningKeys = append(runningKeys, key)
+				}
 			}
 			if err := u.mgr.store.AddUsage(ctx, ws.MembershipID, ws.TenantID, day, secs); err != nil {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
@@ -157,6 +169,17 @@ func (u *usageSampler) sample(ctx context.Context) {
 		}
 	}
 	u.deadline.dispatch(ctx, overdue)
+	if u.silentStop != nil && len(silent) > 0 {
+		// Judged after the walk: the sweep's own Agent calls are the evidence that other
+		// workspaces answer, and a partial walk proves nothing.
+		answering, now := 0, time.Now()
+		for _, k := range runningKeys {
+			if agentLive.answeredWithin(k, now, agentSilentAfter()) {
+				answering++
+			}
+		}
+		u.silentStop.dispatch(ctx, silent, answering, complete)
+	}
 	if !complete {
 		return
 	}

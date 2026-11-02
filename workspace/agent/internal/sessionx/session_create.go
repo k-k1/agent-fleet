@@ -254,6 +254,48 @@ func (c *createRun) resolveDriver() bool {
 	return true
 }
 
+// liveCatalog is how a kind with a live model catalog resolves an explicit model at create.
+// retired, when set, marks an id the vendor stopped offering so the refusal can say so.
+type liveCatalog struct {
+	choices func(c *createRun) []agents.ModelChoice
+	retired func(id string) bool
+}
+
+// liveCatalogs is keyed by exact normalized kind; a kind without a row (claude, agy, cursor,
+// muse, ...) passes its model through unchecked. A package-local table rather than an agents
+// capability: every row reads a test seam owned by this package (codexModelsFn,
+// copilotModelsFn, opencodeModelsFn, opencodeRetiredFn, LcppLiveModels), read at call time, and
+// an agent package cannot import sessionx to reach them. The rows are the old if/else chain.
+var liveCatalogs = map[string]liveCatalog{
+	session.KindCodex: {choices: func(*createRun) []agents.ModelChoice {
+		return FilterVisibleModels(session.KindCodex, codexModelsFn())
+	}},
+	session.KindCopilot: {choices: func(*createRun) []agents.ModelChoice {
+		return FilterVisibleModels(session.KindCopilot, copilotModelsFn())
+	}},
+	session.KindOpencode: {
+		choices: func(*createRun) []agents.ModelChoice {
+			ids := VisibleModelIDs(session.KindOpencode, opencodeModelsFn())
+			choices := make([]agents.ModelChoice, 0, len(ids))
+			for _, id := range ids {
+				choices = append(choices, agents.ModelChoice{ID: id, Label: id})
+			}
+			return choices
+		},
+		retired: func(id string) bool { return opencodeRetiredFn(id) },
+	},
+	// Membership check only: an explicit id is never rejected because the catalog could not be
+	// reached (LcppLiveModels nil, or the engine not answering) -- resolveLiveModel passes an
+	// empty catalog straight through (docs/log/109); the "no model at all" case is refused
+	// earlier in checkModel.
+	session.KindLcpp: {choices: func(c *createRun) []agents.ModelChoice {
+		if LcppLiveModels == nil {
+			return nil
+		}
+		return FilterVisibleModels(session.KindLcpp, LcppLiveModels(c.r.Context()))
+	}},
+}
+
 // checkModel is stage 5: the model checks, all before any side effect (clone / worktree). It
 // leaves c.req.Model resolved against the kind's live catalog where there is one.
 func (c *createRun) checkModel() bool {
@@ -299,52 +341,22 @@ func (c *createRun) checkModel() bool {
 	// For kinds with a live catalog, drop the hidden models from the candidate set too:
 	// resolveLiveModel expands an unambiguous short name into the full id, so without that
 	// a short name like "fab" would resolve to an excluded model.
-	if NormalizeKind(c.req.Kind) == session.KindCodex && strings.TrimSpace(c.req.Model) != "" {
-		model, err := resolveLiveModel(c.req.Model, FilterVisibleModels(session.KindCodex, codexModelsFn()))
-		if err != nil {
-			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_model", err.Error())
-			return false
-		}
-		c.req.Model = model
-	} else if NormalizeKind(c.req.Kind) == session.KindCopilot && strings.TrimSpace(c.req.Model) != "" {
-		model, err := resolveLiveModel(c.req.Model, FilterVisibleModels(session.KindCopilot, copilotModelsFn()))
-		if err != nil {
-			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_model", err.Error())
-			return false
-		}
-		c.req.Model = model
-	} else if NormalizeKind(c.req.Kind) == session.KindOpencode && strings.TrimSpace(c.req.Model) != "" {
-		ids := VisibleModelIDs(session.KindOpencode, opencodeModelsFn())
-		choices := make([]agents.ModelChoice, 0, len(ids))
-		for _, id := range ids {
-			choices = append(choices, agents.ModelChoice{ID: id, Label: id})
-		}
+	return c.resolveLiveCatalogModel()
+}
+
+// resolveLiveCatalogModel resolves an explicit model against the kind's live catalog, if it has one.
+func (c *createRun) resolveLiveCatalogModel() bool {
+	if cat, ok := liveCatalogs[NormalizeKind(c.req.Kind)]; ok && strings.TrimSpace(c.req.Model) != "" {
+		choices := cat.choices(c)
 		model, err := resolveLiveModel(c.req.Model, choices)
 		if err != nil {
 			// A retired model needs its own wording: with the typo message the user never
 			// reaches the cause, since the id and the billing route are both right and
-			// only opencode.ai stopped offering it (models.go Retired).
-			if requested := strings.TrimSpace(c.req.Model); opencodeRetiredFn(requested) {
+			// only the vendor stopped offering it (opencode's models.go Retired).
+			if requested := strings.TrimSpace(c.req.Model); cat.retired != nil && cat.retired(requested) {
 				httpx.WriteErr(c.w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
 				return false
 			}
-			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_model", err.Error())
-			return false
-		}
-		c.req.Model = model
-	} else if NormalizeKind(c.req.Kind) == session.KindLcpp && strings.TrimSpace(c.req.Model) != "" {
-		// Membership check only, for consistency with the other live-catalog kinds above —
-		// never a rejection of an explicit id just because the catalog could not be reached
-		// (LcppLiveModels nil, or the member/deployment engine not answering): resolveLiveModel
-		// itself passes an empty catalog straight through unchanged (docs/log/109), which is
-		// the right call here too — the create-time guard above already refused "no model at
-		// all"; this only catches a typo'd or since-retired id when the catalog IS known.
-		var choices []agents.ModelChoice
-		if LcppLiveModels != nil {
-			choices = FilterVisibleModels(session.KindLcpp, LcppLiveModels(c.r.Context()))
-		}
-		model, err := resolveLiveModel(c.req.Model, choices)
-		if err != nil {
 			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_model", err.Error())
 			return false
 		}

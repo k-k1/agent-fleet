@@ -417,6 +417,28 @@
   background: var(--btn);
   color: var(--fg);
 }
+/* Every PR of the session merged (#3131): the one chip on the line that proposes an action, so
+   it is outlined in the merged colour instead of sitting muted like the links beside it. */
+.sess-tidy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  border: 1px solid var(--pr-merged);
+  border-radius: 4px;
+  background: none;
+  color: var(--pr-merged);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sess-tidy:hover {
+  background: var(--btn);
+}
+.sess-tidy > .codicon {
+  font-size: 12px;
+}
 .sess-pr > .codicon,
 .sess-item > .codicon,
 .sess-ports > .codicon {

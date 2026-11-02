@@ -111,7 +111,8 @@ export interface Member {
 }
 
 /** GET …/members auto_stop (store.WorkspaceAutoStop). kind is "start-deadline" (phase: the last
- *  boot phase before the stop, raw, worded through startDeadlineBody) or "home-wipe-failed"
+ *  boot phase before the stop, raw, worded through startDeadlineBody), "agent-silent" (limit_minutes:
+ *  how long the Agent had been silent) or "home-wipe-failed"
  *  (phase: why a background Recreate / Clean home left the workspace stopped). */
 export interface MemberAutoStop {
   kind: string;

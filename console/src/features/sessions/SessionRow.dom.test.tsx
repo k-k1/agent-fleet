@@ -143,3 +143,44 @@ describe("SessionRow needs-you marks", () => {
     expect(row()?.classList.contains("sess-unread")).toBe(false);
   });
 });
+
+const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
+
+describe("SessionRow merged tidy (#3131)", () => {
+  const merged = { links: [{ provider: "github", key: "o/r#1", role: "working", state: "merged" }] } as Partial<Session>;
+  const renderWith = async (over: Partial<Session>, opts: { readOnly?: boolean; running?: boolean } = {}) => {
+    const calls: string[] = [];
+    const actions = { archiveMerged: async (s: Session) => void calls.push(s.name) } as never;
+    const s: Session = { name: "s1", kind: "claude", alive: true, state: "idle", title: "作業", ...over };
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <ul>
+              <SessionRow s={s} selected={false} opens={[]} multi={false} running={opts.running ?? true} actions={actions} readOnly={opts.readOnly ?? false} />
+            </ul>
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    return calls;
+  };
+  const tidy = () => host.querySelector<HTMLButtonElement>(".sess-tidy");
+
+  it("offers to archive an idle session whose PRs all merged, through the confirming action", async () => {
+    const calls = await renderWith(merged);
+    expect(tidy()?.textContent).toContain(t("srow.prs_merged"));
+    await act(async () => tidy()!.click());
+    expect(calls).toEqual(["s1"]);
+  });
+
+  it("offers nothing while working, read-only, or with the workspace stopped", async () => {
+    await renderWith({ ...merged, state: "working" });
+    expect(tidy()).toBeNull();
+    await renderWith(merged, { readOnly: true });
+    expect(tidy()).toBeNull();
+    await renderWith(merged, { running: false });
+    expect(tidy()).toBeNull();
+  });
+});

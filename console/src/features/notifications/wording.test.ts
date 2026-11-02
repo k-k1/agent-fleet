@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { NOTIFICATION_KIND_LABELS, notificationKindLabel, notificationRowSubtitle, notificationWording } from "./wording.ts";
+import { NOTIFICATION_KIND_LABELS, agentSilentStopBody, notificationKindLabel, notificationRowSubtitle, notificationWording } from "./wording.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
 import { en } from "../../lib/i18n/locales/en.ts";
@@ -141,6 +141,20 @@ describe("notification row headings", () => {
     expect(notificationRowSubtitle(n)).toBe(w.body);
     expect(notificationKindLabel("start-deadline")).toBe(en["noti.kind_start_deadline"]);
     setLocale("ja");
+  });
+
+  it("an agent-silent-stop names the minutes in both languages and the row carries the body", () => {
+    setLocale("en");
+    const n = { kind: "agent-silent-stop", displayName: "", payload: { silentMinutes: 30 } };
+    const w = notificationWording(n);
+    expect(w.title).toBe(en["notif.agent_silent_stop.title"]);
+    expect(w.body).toContain("30 min");
+    expect(notificationRowSubtitle(n)).toBe(w.body);
+    expect(notificationKindLabel("agent-silent-stop")).toBe(en["noti.kind_agent_silent_stop"]);
+    expect(agentSilentStopBody(undefined)).toContain("? min");
+    setLocale("ja");
+    expect(notificationWording(n).body).toContain("30 分");
+    setLocale("en");
   });
 
   // The phase is worded the way the starting dialog words it; the member reading the
