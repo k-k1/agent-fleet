@@ -1,0 +1,28 @@
+package memoryx
+
+import (
+	"os"
+	"os/exec"
+)
+
+// Temporary measurement shim (not to be committed): marks git calls issued by test code.
+func zzEnv() []string { return append(os.Environ(), "AF_GITSRC=test") }
+
+func zzGitCmd(args ...string) *exec.Cmd {
+	c := exec.Command("git", args...)
+	c.Env = zzEnv()
+	return c
+}
+
+func zzMemoryGit(args ...string) *exec.Cmd {
+	c := memoryGit(args...)
+	c.Env = append(c.Env, "AF_GITSRC=test")
+	return c
+}
+
+func zzMemoryGitRun(args ...string) (string, error) {
+	old := os.Getenv("AF_GITSRC")
+	os.Setenv("AF_GITSRC", "test")
+	defer os.Setenv("AF_GITSRC", old)
+	return memoryGitRun(args...)
+}

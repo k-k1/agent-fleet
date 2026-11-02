@@ -1,6 +1,7 @@
 package memoryx
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"testing"
@@ -14,7 +15,13 @@ import (
 // It also points git at an empty template directory: the stock one copies ~14 sample hooks into
 // every `git init` (and the test's TempDir cleanup unlinks them again), and no test reads them.
 // A test that needs a hook writes it itself.
-func TestMain(m *testing.M) { os.Exit(testguard.Run(m, emptyGitTemplate)) }
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if shardable() {
+		os.Exit(runSharded())
+	}
+	os.Exit(testguard.Run(m, emptyGitTemplate))
+}
 
 func emptyGitTemplate() {
 	// Inside the guard's scratch root (removed on exit) when there is one.

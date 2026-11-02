@@ -1,0 +1,1076 @@
+diff --git a/workspace/agent/internal/memoryx/agent_memory_autosync_test.go b/workspace/agent/internal/memoryx/agent_memory_autosync_test.go
+index b664d9e63..080f38555 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_autosync_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_autosync_test.go
+@@ -7,7 +7,6 @@ import (
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"sort"
+ 	"strings"
+@@ -77,9 +76,9 @@ func (e *autoEnv) otherProject(name string) (pid, slug string) {
+ 		e.t.Fatal(err)
+ 	}
+ 	for _, args := range [][]string{{"init", "--quiet", "-b", "main"}, {"commit", "--quiet", "--allow-empty", "-m", "init"}} {
+-		cmd := exec.Command("git", args...)
++		cmd := zzGitCmd(args...)
+ 		cmd.Dir = dir
+-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++		cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 		if out, err := cmd.CombinedOutput(); err != nil {
+ 			e.t.Fatalf("git %v: %v: %s", args, err, out)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_bundle_import_test.go b/workspace/agent/internal/memoryx/agent_memory_bundle_import_test.go
+index 417863552..d513e2b6e 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_bundle_import_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_bundle_import_test.go
+@@ -7,7 +7,6 @@ import (
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"runtime"
+ 	"sort"
+@@ -22,9 +21,9 @@ const bundleRemote = "example.com/acme/demo"
+ 
+ func testGit(t *testing.T, dir string, args ...string) string {
+ 	t.Helper()
+-	cmd := exec.Command("git", args...)
++	cmd := zzGitCmd(args...)
+ 	cmd.Dir = dir
+-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++	cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 	out, err := cmd.CombinedOutput()
+ 	if err != nil {
+@@ -216,7 +215,7 @@ func TestBundleImportMapsPreviewsAndResets(t *testing.T) {
+ 		t.Error("an unmatched project got a directory")
+ 	}
+ 	// The history records the operation.
+-	log, err := memoryGitRun("log", "-n", "6", "--format=%B")
++	log, err := zzMemoryGitRun("log", "-n", "6", "--format=%B")
+ 	if err != nil || !strings.Contains(log, "AF-Bundle-Import: "+id) || !strings.Contains(log, "AF-Bundle-Source: projects/foreign-aaaaaaaaaaaa/alpha.md@7") {
+ 		t.Errorf("no provenance in the history: %v\n%s", err, log)
+ 	}
+diff --git a/workspace/agent/internal/memoryx/agent_memory_changes_test.go b/workspace/agent/internal/memoryx/agent_memory_changes_test.go
+index d8c60ee30..0f7b64ae2 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_changes_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_changes_test.go
+@@ -85,7 +85,7 @@ func TestAgentMemoryRevertUpdate(t *testing.T) {
+ 	if e.Body != "v1" || e.Revision != 3 || e.AuthorKind != "member" || e.AuthorSession != "console" {
+ 		t.Fatalf("after revert = %+v", e)
+ 	}
+-	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	if !strings.Contains(msg, "AF-Op: revert") || !strings.Contains(msg, "AF-Revert-Of: "+newer) || !strings.Contains(msg, "AF-Author-Kind: member") {
+ 		t.Fatalf("revert commit:\n%s", msg)
+ 	}
+@@ -138,7 +138,7 @@ func TestAgentMemoryRevertCreateAndForget(t *testing.T) {
+ 	if _, err := agentMemRead(c, "", "a"); agentMemCode(err) != errCodeMemoryNotFound {
+ 		t.Fatalf("read after a Console forget: %v", err)
+ 	}
+-	if msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch); !strings.Contains(msg, "AF-Op: forget") || !strings.Contains(msg, "AF-Author-Kind: member") {
++	if msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch); !strings.Contains(msg, "AF-Op: forget") || !strings.Contains(msg, "AF-Author-Kind: member") {
+ 		t.Fatalf("forget commit:\n%s", msg)
+ 	}
+ }
+@@ -225,13 +225,13 @@ func agentMemCommitRaw(t *testing.T, files map[string]string, msg string) string
+ 		memoryWrite(t, stg, body)
+ 		paths = append(paths, p)
+ 	}
+-	if _, err := memoryGitRun(append([]string{"add", "--"}, paths...)...); err != nil {
++	if _, err := zzMemoryGitRun(append([]string{"add", "--"}, paths...)...); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun(append([]string{"commit", "--quiet", "--no-verify", "-m", msg, "--"}, paths...)...); err != nil {
++	if _, err := zzMemoryGitRun(append([]string{"commit", "--quiet", "--no-verify", "-m", msg, "--"}, paths...)...); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	rev, _ := memoryGitRun("rev-parse", memoryBranch)
++	rev, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	return rev
+ }
+ 
+@@ -364,7 +364,7 @@ func TestAgentMemoryRevertUnreadableHistoryIsAnError(t *testing.T) {
+ 	if _, err := agentMemSave(c, agentMemSaveReq{Name: "a", Description: "d", Body: "v2", Revision: 1}, now); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	blob, err := memoryGitRun("rev-parse", memoryBranch+"^:af/user/a.md")
++	blob, err := zzMemoryGitRun("rev-parse", memoryBranch+"^:af/user/a.md")
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -454,7 +454,7 @@ func TestAgentMemoryRevertRefusesSecretShapedName(t *testing.T) {
+ 	if agentMemCode(err) != errCodeMemorySecretDetected || strings.Contains(err.Error(), name) {
+ 		t.Fatalf("revert = %v", err)
+ 	}
+-	if head, _ := memoryGitRun("rev-parse", memoryBranch); head != commit {
++	if head, _ := zzMemoryGitRun("rev-parse", memoryBranch); head != commit {
+ 		t.Fatal("a commit was made")
+ 	}
+ }
+@@ -525,14 +525,14 @@ func TestAgentMemoryLatestChangeParsesTrailers(t *testing.T) {
+ 	stg := filepath.Join(memoryStagingDir(), "af", "user", "b.md")
+ 	memoryMkdirAll(t, filepath.Dir(stg))
+ 	memoryWrite(t, stg, body)
+-	if _, err := memoryGitRun("add", "--", "af/user/b.md"); err != nil {
++	if _, err := zzMemoryGitRun("add", "--", "af/user/b.md"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	msg := "agent-memory: create\n\nAF-Trigger: agent-memory\nAF-Op: create\nAF-Memory: af/user/b.md   \nAF-Author-Kind: claude\nAF-Author-Session: s\n"
+-	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", msg, "--", "af/user/b.md"); err != nil {
++	if _, err := zzMemoryGitRun("commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", msg, "--", "af/user/b.md"); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	head, _ := memoryGitRun("rev-parse", memoryBranch)
++	head, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	if got, err := agentMemLatestChange("user/b.md"); err != nil || got != head {
+ 		t.Fatalf("latest with trailing blanks = %q, %v; want %s", got, err, head)
+ 	}
+@@ -549,7 +549,7 @@ func TestMemoryDiffNativeOnlyExcludesAFMemory(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	mux := buildMux()
+-	head, _ := memoryGitRun("rev-parse", memoryBranch)
++	head, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	w := smokeDo(t, mux, http.MethodGet, "/agents/memory/diff?to="+head+"&native=1", "", "")
+ 	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "af-only-text") {
+ 		t.Fatalf("native diff %d: %s", w.Code, w.Body)
+@@ -581,7 +581,7 @@ func TestMemoryNativeSnapshotsAndTreeLeaveOutAFMemory(t *testing.T) {
+ 	if len(full) != 1 || full[0].Trigger != memoryTriggerAgentMemory {
+ 		t.Fatalf("full list = %+v", full)
+ 	}
+-	head, _ := memoryGitRun("rev-parse", memoryBranch)
++	head, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	kinds, _, err := memoryTreeOfRev(head)
+ 	if err != nil {
+ 		t.Fatal(err)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_claude_import_test.go b/workspace/agent/internal/memoryx/agent_memory_claude_import_test.go
+index 7a29745f3..a7631b216 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_claude_import_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_claude_import_test.go
+@@ -178,13 +178,13 @@ func TestClaudeImportNestedTypeAndLongDescription(t *testing.T) {
+ 		!strings.HasPrefix(got.Source, "claude:projects/"+e.slug+"/memory/") || got.SourceHash == "" || got.Type != "project" {
+ 		t.Errorf("imported entry = %+v", got)
+ 	}
+-	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	for _, w := range []string{"AF-Op: import", "AF-Author-Kind: member", "AF-Author-Session: console"} {
+ 		if !strings.Contains(msg, w) {
+ 			t.Errorf("commit lacks %q:\n%s", w, msg)
+ 		}
+ 	}
+-	files, _ := memoryGitRun("log", "--name-only", "--format=", memoryBranch)
++	files, _ := zzMemoryGitRun("log", "--name-only", "--format=", memoryBranch)
+ 	if !strings.Contains(files, "projects/"+e.pid+"/project.json") {
+ 		t.Errorf("project.json not committed: %s", files)
+ 	}
+@@ -262,7 +262,7 @@ func TestClaudeImportSecretIsSkippedAndNeverEchoed(t *testing.T) {
+ 
+ 	wire, _ := json.Marshal(pv)
+ 	src, _ := json.Marshal(agentMemImportList())
+-	all, _ := memoryGitRun("log", "-p", memoryBranch)
++	all, _ := zzMemoryGitRun("log", "-p", memoryBranch)
+ 	for label, text := range map[string]string{"preview": string(wire), "sources": string(src), "history": all, "log": logs.String()} {
+ 		if strings.Contains(strings.ToLower(text), strings.ToLower(key)) || strings.Contains(strings.ToLower(text), nameKey) {
+ 			t.Errorf("a secret leaked into the %s", label)
+@@ -305,11 +305,11 @@ func TestClaudeImportStatusesAndIdempotence(t *testing.T) {
+ 	if pv.Counts[claudeImportUnchanged] != 2 || len(pv.Counts) != 1 {
+ 		t.Fatalf("after import counts = %v", pv.Counts)
+ 	}
+-	head, _ := memoryGitRun("rev-parse", memoryBranch)
++	head, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	if out := e.apply(t0.Add(2*time.Hour), "one"); claudeImportResult(out, "one").Reason != "status_unchanged" {
+ 		t.Errorf("second apply = %+v", out)
+ 	}
+-	if h, _ := memoryGitRun("rev-parse", memoryBranch); h != head {
++	if h, _ := zzMemoryGitRun("rev-parse", memoryBranch); h != head {
+ 		t.Errorf("a no-op apply committed")
+ 	}
+ 
+diff --git a/workspace/agent/internal/memoryx/agent_memory_external_start_test.go b/workspace/agent/internal/memoryx/agent_memory_external_start_test.go
+index 4f1a801ba..b487d16cf 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_external_start_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_external_start_test.go
+@@ -165,7 +165,7 @@ func TestAgentMemoryExternalRetryAfterRefusedStartKeepsRecord(t *testing.T) {
+ 	if err := json.Unmarshal([]byte(projectJSON(t, want.ID)), &got); err != nil || got != *want {
+ 		t.Fatalf("record %+v %v, want %+v", got, err, *want)
+ 	}
+-	if out, err := memoryGitRun("show", "--stat", "--format=", "HEAD"); err != nil || !strings.Contains(out, "project.json") || !strings.Contains(out, "fact.md") {
++	if out, err := zzMemoryGitRun("show", "--stat", "--format=", "HEAD"); err != nil || !strings.Contains(out, "project.json") || !strings.Contains(out, "fact.md") {
+ 		t.Fatalf("commit should hold record and memory: %q %v", out, err)
+ 	}
+ }
+diff --git a/workspace/agent/internal/memoryx/agent_memory_external_test.go b/workspace/agent/internal/memoryx/agent_memory_external_test.go
+index 2c55bf924..ed21ea2c0 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_external_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_external_test.go
+@@ -99,7 +99,7 @@ func TestAgentMemoryExternalRoundTrip(t *testing.T) {
+ 	if code != 200 || json.Unmarshal(b, &e) != nil || e.AuthorKind != "external" || e.AuthorSession != "unknown" || e.Body != "hello" {
+ 		t.Fatalf("read: %d %s", code, b)
+ 	}
+-	msg, err := memoryGitRun("log", "-1", "--format=%B")
++	msg, err := zzMemoryGitRun("log", "-1", "--format=%B")
+ 	if err != nil || !strings.Contains(msg, "AF-Author-Kind: external") || !strings.Contains(msg, "AF-External-Client: claude-code/1.2 x") {
+ 		t.Fatalf("commit message: %q %v", msg, err)
+ 	}
+diff --git a/workspace/agent/internal/memoryx/agent_memory_live_scan_test.go b/workspace/agent/internal/memoryx/agent_memory_live_scan_test.go
+index cbc4034c7..b86172eeb 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_live_scan_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_live_scan_test.go
+@@ -3,7 +3,6 @@ package memoryx
+ import (
+ 	"fmt"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"reflect"
+ 	"runtime"
+@@ -18,9 +17,9 @@ import (
+ 
+ func liveScanGit(t *testing.T, dir string, args ...string) {
+ 	t.Helper()
+-	cmd := exec.Command("git", args...)
++	cmd := zzGitCmd(args...)
+ 	cmd.Dir = dir
+-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++	cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 	if out, err := cmd.CombinedOutput(); err != nil {
+ 		t.Fatalf("git %v: %v %s", args, err, out)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_member_forgotten_test.go b/workspace/agent/internal/memoryx/agent_memory_member_forgotten_test.go
+index fad4febac..3cb050689 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_member_forgotten_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_member_forgotten_test.go
+@@ -166,10 +166,10 @@ func TestAgentMemoryMemberForgottenWithholdsAndSkipsLive(t *testing.T) {
+ 		return "agent-memory: " + op + "\n\nAF-Trigger: agent-memory\nAF-Op: " + op + "\nAF-Memory: af/user/" + name + ".md\nAF-Author-Kind: claude\nAF-Author-Session: s\n"
+ 	}
+ 	agentMemCommitRaw(t, map[string]string{"af/user/esc.md": "---\nname: esc\ndescription: \"key \\u0041" + agentMemFakeAWS()[1:] + "\"\nrevision: 1\n---\nb\n"}, trailers("create", "esc"))
+-	if _, err := memoryGitRun("rm", "--quiet", "--", "af/user/esc.md"); err != nil {
++	if _, err := zzMemoryGitRun("rm", "--quiet", "--", "af/user/esc.md"); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", trailers("forget", "esc")); err != nil {
++	if _, err := zzMemoryGitRun("commit", "--quiet", "--no-verify", "-m", trailers("forget", "esc")); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	tomb, err := agentMemCheckDir("user/"+agentMemTombDir, true)
+@@ -207,10 +207,10 @@ func forgeForgotten(t *testing.T, rel, name, when string, secret bool) {
+ 		return "agent-memory: " + op + "\n\nAF-Trigger: agent-memory\nAF-Op: " + op + "\nAF-Memory: " + path + "\nAF-Author-Kind: claude\nAF-Author-Session: s\n" + agentMemSeqTrailer + ": " + strconv.FormatInt(time.Now().UnixNano(), 10) + "\n"
+ 	}
+ 	agentMemCommitRaw(t, map[string]string{path: "---\nname: " + name + "\ndescription: " + desc + "\nrevision: 1\n---\nb\n"}, tr("create"))
+-	if _, err := memoryGitRun("rm", "--quiet", "--", path); err != nil {
++	if _, err := zzMemoryGitRun("rm", "--quiet", "--", path); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", tr("forget")); err != nil {
++	if _, err := zzMemoryGitRun("commit", "--quiet", "--no-verify", "-m", tr("forget")); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	dir, err := agentMemCheckDir(rel+"/"+agentMemTombDir, true)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_member_test.go b/workspace/agent/internal/memoryx/agent_memory_member_test.go
+index 98e2ce66a..2b451373b 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_member_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_member_test.go
+@@ -267,10 +267,10 @@ func TestAgentMemoryMemberLatestWithholdsForgottenSecretBehindEscape(t *testing.
+ 		t.Run(name, func(t *testing.T) {
+ 			_, _, _ = agentMemTestEnv(t)
+ 			agentMemCommitRaw(t, map[string]string{"af/user/" + name + ".md": text}, trailers("create", name))
+-			if _, err := memoryGitRun("rm", "--quiet", "--", "af/user/"+name+".md"); err != nil {
++			if _, err := zzMemoryGitRun("rm", "--quiet", "--", "af/user/"+name+".md"); err != nil {
+ 				t.Fatal(err)
+ 			}
+-			if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", trailers("forget", name)); err != nil {
++			if _, err := zzMemoryGitRun("commit", "--quiet", "--no-verify", "-m", trailers("forget", name)); err != nil {
+ 				t.Fatal(err)
+ 			}
+ 			code, b := memberDo(t, http.MethodGet, "/agents/memory/entries/member-latest?scope=user&name="+name, nil)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_muse_import_test.go b/workspace/agent/internal/memoryx/agent_memory_muse_import_test.go
+index 32c974011..130eb095b 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_muse_import_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_muse_import_test.go
+@@ -75,9 +75,9 @@ func (e *museImportEnv) apply(now time.Time, names ...string) agentMemImportAppl
+ 
+ func (e *museImportEnv) git(args ...string) {
+ 	e.t.Helper()
+-	cmd := exec.Command("git", args...)
++	cmd := zzGitCmd(args...)
+ 	cmd.Dir = e.clone
+-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++	cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 	if out, err := cmd.CombinedOutput(); err != nil {
+ 		e.t.Fatalf("git %v: %v: %s", args, err, out)
+@@ -145,13 +145,13 @@ func TestMuseImportAppliesToProjectOnly(t *testing.T) {
+ 		got.Source != "muse:project/.agents/memory/pref.md" || got.SourceHash == "" || got.Revision != 1 || got.Body != "use tabs" {
+ 		t.Errorf("entry = %+v", got)
+ 	}
+-	files, _ := memoryGitRun("log", "--name-only", "--format=", memoryBranch)
++	files, _ := zzMemoryGitRun("log", "--name-only", "--format=", memoryBranch)
+ 	for _, f := range strings.Fields(files) {
+ 		if !strings.HasPrefix(f, "af/projects/"+e.pid+"/") {
+ 			t.Errorf("import wrote outside the project: %s", f)
+ 		}
+ 	}
+-	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	if !strings.Contains(msg, "AF-Op: import") || !strings.Contains(msg, "AF-Author-Kind: member") {
+ 		t.Errorf("commit = %s", msg)
+ 	}
+@@ -263,7 +263,7 @@ func TestMuseImportForgottenAndSecrets(t *testing.T) {
+ 			}
+ 		}
+ 	}
+-	if all, _ := memoryGitRun("log", "-p", memoryBranch); strings.Contains(all, "ghp_") {
++	if all, _ := zzMemoryGitRun("log", "-p", memoryBranch); strings.Contains(all, "ghp_") {
+ 		t.Errorf("the secret reached the store")
+ 	}
+ }
+diff --git a/workspace/agent/internal/memoryx/agent_memory_muse_scopes_test.go b/workspace/agent/internal/memoryx/agent_memory_muse_scopes_test.go
+index 088f5c5dd..d28d19fe4 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_muse_scopes_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_muse_scopes_test.go
+@@ -255,7 +255,7 @@ func TestMusePersonalNeedsExplicitUserChoice(t *testing.T) {
+ 	if err != nil || got.Scope != agentMemScopeUser || got.Source != "muse:personal/likes-go.md" || got.AuthorKind != agentMemUnknown {
+ 		t.Errorf("entry = %+v, %v", got, err)
+ 	}
+-	files, _ := memoryGitRun("log", "--name-only", "--format=", memoryBranch)
++	files, _ := zzMemoryGitRun("log", "--name-only", "--format=", memoryBranch)
+ 	for _, f := range strings.Fields(files) {
+ 		if !strings.HasPrefix(f, "af/user/") {
+ 			t.Errorf("personal import wrote outside the user scope: %s", f)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_project_move_test.go b/workspace/agent/internal/memoryx/agent_memory_project_move_test.go
+index a42b5b5b9..b52b482b6 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_project_move_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_project_move_test.go
+@@ -5,7 +5,6 @@ import (
+ 	"errors"
+ 	"net/http"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
+@@ -21,9 +20,9 @@ func moveOrphan(t *testing.T, home string, names ...string) (orphan string, toID
+ 	t.Helper()
+ 	old := filepath.Join(home, "repos", "old")
+ 	memoryMkdirAll(t, old)
+-	cmd := exec.Command("git", "init", "--quiet", "-b", "main")
++	cmd := zzGitCmd("init", "--quiet", "-b", "main")
+ 	cmd.Dir = old
+-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
++	cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+ 	if out, err := cmd.CombinedOutput(); err != nil {
+ 		t.Fatalf("git init: %v %s", err, out)
+ 	}
+@@ -222,7 +221,7 @@ func TestAgentMemoryMoveProject(t *testing.T) {
+ 	if creates != 2 || forgets != 2 {
+ 		t.Fatalf("changes: %d creates in the target, %d forgets in the source: %+v", creates, forgets, ch.Changes)
+ 	}
+-	body, _ := memoryGitRun("log", "-1", "--format=%B", "--grep=AF-Moved-To")
++	body, _ := zzMemoryGitRun("log", "-1", "--format=%B", "--grep=AF-Moved-To")
+ 	if !strings.Contains(body, "AF-Moved-To: projects/"+to+"/") {
+ 		t.Errorf("a forget does not say where the memory went: %q", body)
+ 	}
+@@ -569,9 +568,9 @@ func TestAgentMemoryMoveRefusesAProjectWithANestedLiveWorktree(t *testing.T) {
+ 	home, _, _ := agentMemTestEnv(t)
+ 	git := func(dir string, args ...string) {
+ 		t.Helper()
+-		cmd := exec.Command("git", args...)
++		cmd := zzGitCmd(args...)
+ 		cmd.Dir = dir
+-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++		cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 		if out, err := cmd.CombinedOutput(); err != nil {
+ 			t.Fatalf("git %v: %v %s", args, err, out)
+@@ -639,9 +638,9 @@ func nestedWorktreeFixture(t *testing.T, home, rel string) (orphan, to string) {
+ 	t.Helper()
+ 	git := func(dir string, args ...string) {
+ 		t.Helper()
+-		cmd := exec.Command("git", args...)
++		cmd := zzGitCmd(args...)
+ 		cmd.Dir = dir
+-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++		cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 		if out, err := cmd.CombinedOutput(); err != nil {
+ 			t.Fatalf("git %v: %v %s", args, err, out)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_purge_test.go b/workspace/agent/internal/memoryx/agent_memory_purge_test.go
+index 948ff0f9f..62c4a4e93 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_purge_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_purge_test.go
+@@ -43,8 +43,8 @@ func purgeSetup(t *testing.T) purgeFixture {
+ 		}
+ 	}
+ 	save("a", purgeOldText, 0)
+-	f.oldBlob, _ = memoryGitRun("rev-parse", memoryBranch+":af/projects/"+f.pid+"/a.md")
+-	f.oldCommit, _ = memoryGitRun("rev-parse", memoryBranch)
++	f.oldBlob, _ = zzMemoryGitRun("rev-parse", memoryBranch+":af/projects/"+f.pid+"/a.md")
++	f.oldCommit, _ = zzMemoryGitRun("rev-parse", memoryBranch)
+ 	save("b", "b one", 0)
+ 	save("a", purgeMidText, 1)
+ 	save("b", "b two", 1)
+@@ -56,10 +56,10 @@ func purgeSetup(t *testing.T) purgeFixture {
+ 	}
+ 	save("a", purgeNewText, 2)
+ 	// An imported lineage and a rescue ref that still hold the old commits.
+-	if _, err := memoryGitRun("update-ref", "refs/imports/20261004T090000Z/main", f.oldCommit); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", "refs/imports/20261004T090000Z/main", f.oldCommit); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("update-ref", "refs/premigrate/20261004T090000Z", f.oldCommit); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", "refs/premigrate/20261004T090000Z", f.oldCommit); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	return f
+@@ -77,7 +77,7 @@ func purgeDo(t *testing.T, f purgeFixture, name string) (agentMemPurgeResult, er
+ // allObjectsContain reads every object on disk, loose or packed, reachable or not.
+ func allObjectsContain(t *testing.T, needle string) bool {
+ 	t.Helper()
+-	cmd := memoryGit("cat-file", "--batch-all-objects", "--batch")
++	cmd := zzMemoryGit("cat-file", "--batch-all-objects", "--batch")
+ 	out, err := cmd.Output()
+ 	if err != nil {
+ 		t.Fatal(err)
+@@ -86,13 +86,13 @@ func allObjectsContain(t *testing.T, needle string) bool {
+ }
+ 
+ func objectExists(sha string) bool {
+-	_, err := memoryGitRun("cat-file", "-e", sha)
++	_, err := zzMemoryGitRun("cat-file", "-e", sha)
+ 	return err == nil
+ }
+ 
+ func fsckClean(t *testing.T) {
+ 	t.Helper()
+-	if out, err := memoryGitRun("fsck", "--no-dangling", "--strict"); err != nil {
++	if out, err := zzMemoryGitRun("fsck", "--no-dangling", "--strict"); err != nil {
+ 		t.Fatalf("fsck: %v\n%s", err, out)
+ 	}
+ }
+@@ -118,11 +118,11 @@ func TestAgentMemoryPurgeRemovesPastRevisionsEverywhere(t *testing.T) {
+ 		t.Fatal("the current text must stay")
+ 	}
+ 	for _, ref := range []string{"refs/imports/20261004T090000Z/main", "refs/premigrate/20261004T090000Z"} {
+-		if out, err := memoryGitRun("log", "--format=%H", "--", "af"); err == nil && strings.Contains(out, f.oldCommit) {
++		if out, err := zzMemoryGitRun("log", "--format=%H", "--", "af"); err == nil && strings.Contains(out, f.oldCommit) {
+ 			t.Fatalf("%s still reaches the old commit", ref)
+ 		}
+-		if _, err := memoryGitRun("rev-parse", "--verify", "--quiet", ref); err == nil {
+-			if _, err := memoryGitRun("cat-file", "-e", f.oldCommit); err == nil {
++		if _, err := zzMemoryGitRun("rev-parse", "--verify", "--quiet", ref); err == nil {
++			if _, err := zzMemoryGitRun("cat-file", "-e", f.oldCommit); err == nil {
+ 				t.Fatalf("%s: old commit object survived", ref)
+ 			}
+ 		}
+@@ -136,7 +136,7 @@ func TestAgentMemoryPurgeRemovesPastRevisionsEverywhere(t *testing.T) {
+ 	if err != nil || e.Body != purgeNewText || e.Revision != 3 {
+ 		t.Fatalf("a = %+v, %v", e, err)
+ 	}
+-	if out, _ := memoryGitRun("show", memoryBranch+":af/projects/"+f.pid+"/a.md"); !strings.Contains(out, purgeNewText) {
++	if out, _ := zzMemoryGitRun("show", memoryBranch+":af/projects/"+f.pid+"/a.md"); !strings.Contains(out, purgeNewText) {
+ 		t.Fatalf("the tip lost the current text")
+ 	}
+ }
+@@ -219,7 +219,7 @@ func TestAgentMemoryPurgeKeepsWorkingAfterwards(t *testing.T) {
+ 	if _, err := memorySnapshot(memoryTriggerManual, now); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if st, err := memoryGitRun("status", "--porcelain"); err != nil || strings.Contains(st, "Hollowbrook") {
++	if st, err := zzMemoryGitRun("status", "--porcelain"); err != nil || strings.Contains(st, "Hollowbrook") {
+ 		t.Fatalf("status: %q %v", st, err)
+ 	}
+ 	newest := agentMemChangesT(t)[0]
+@@ -291,7 +291,7 @@ func TestAgentMemoryPurgePreviewShowsNoText(t *testing.T) {
+ 	if !kinds["main"] || !kinds["import"] || !kinds["rescue"] {
+ 		t.Fatalf("refs = %+v", pv.Refs)
+ 	}
+-	if _, err := memoryGitRun("cat-file", "-e", f.oldBlob); err != nil {
++	if _, err := zzMemoryGitRun("cat-file", "-e", f.oldBlob); err != nil {
+ 		t.Fatal("the preview changed the repo")
+ 	}
+ }
+@@ -314,19 +314,19 @@ func TestAgentMemoryPurgeReportsScannerFindingsMasked(t *testing.T) {
+ 	if err := os.WriteFile(staging, []byte(bad), 0o600); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("add", "-A", "--", "af"); err != nil {
++	if _, err := zzMemoryGitRun("add", "-A", "--", "af"); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("commit", "--quiet", "-m", "hand edit"); err != nil {
++	if _, err := zzMemoryGitRun("commit", "--quiet", "-m", "hand edit"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if err := os.WriteFile(staging, orig, 0o600); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("add", "-A", "--", "af"); err != nil {
++	if _, err := zzMemoryGitRun("add", "-A", "--", "af"); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("commit", "--quiet", "-m", "hand edit back"); err != nil {
++	if _, err := zzMemoryGitRun("commit", "--quiet", "-m", "hand edit back"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	pv, err := agentMemPurgePreview(agentMemScopeProject, pid, "a")
+@@ -398,7 +398,7 @@ func TestAgentMemoryPurgeRefusals(t *testing.T) {
+ 
+ func TestAgentMemoryPurgeRefusesAnUnknownRef(t *testing.T) {
+ 	f := purgeSetup(t)
+-	if _, err := memoryGitRun("update-ref", "refs/tags/keepsake", f.oldCommit); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", "refs/tags/keepsake", f.oldCommit); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if _, err := agentMemPurgePreview(agentMemScopeProject, f.pid, "a"); agentMemCode(err) != errCodeMemoryConflict {
+@@ -415,7 +415,7 @@ func TestAgentMemoryPurgeCrashSafety(t *testing.T) {
+ 	for _, stage := range []string{"objects", "refs", "gc"} {
+ 		t.Run(stage, func(t *testing.T) {
+ 			f := purgeSetup(t)
+-			headBefore, _ := memoryGitRun("rev-parse", memoryBranch)
++			headBefore, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 			agentMemPurgeFault = func(s string) error {
+ 				if s == stage {
+ 					return boom
+@@ -428,7 +428,7 @@ func TestAgentMemoryPurgeCrashSafety(t *testing.T) {
+ 			}
+ 			agentMemPurgeFault = nil
+ 			fsckClean(t)
+-			head, _ := memoryGitRun("rev-parse", memoryBranch)
++			head, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 			switch stage {
+ 			case "objects":
+ 				if head != headBefore || !objectExists(f.oldBlob) {
+@@ -540,11 +540,11 @@ func TestAgentMemoryPurgeDropsAStagedOldRevision(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	old, _ := memoryGitRun("show", f.oldBlob)
++	old, _ := zzMemoryGitRun("show", f.oldBlob)
+ 	if err := os.WriteFile(staging, []byte(old+"\n"), 0o600); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("add", "--", "af"); err != nil {
++	if _, err := zzMemoryGitRun("add", "--", "af"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if err := os.WriteFile(staging, cur, 0o600); err != nil {
+@@ -568,11 +568,11 @@ func stageOldRevision(t *testing.T, f purgeFixture, restore bool) string {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	old, _ := memoryGitRun("show", f.oldBlob)
++	old, _ := zzMemoryGitRun("show", f.oldBlob)
+ 	if err := os.WriteFile(staging, []byte(old+"\n"), 0o600); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("add", "--", "af"); err != nil {
++	if _, err := zzMemoryGitRun("add", "--", "af"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if restore {
+@@ -612,7 +612,7 @@ func TestAgentMemoryPurgeRecoveryRebuildsTheIndex(t *testing.T) {
+ // A failed check keeps the marker, and the retry works without the old history to rediscover.
+ func TestAgentMemoryPurgeKeepsTheMarkerUntilVerified(t *testing.T) {
+ 	f := purgeSetup(t)
+-	if _, err := memoryGitRun("gc", "--quiet"); err != nil {
++	if _, err := zzMemoryGitRun("gc", "--quiet"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	packs, _ := os.ReadDir(memoryRepoDir() + "/objects/pack")
+@@ -804,7 +804,7 @@ func partialRefFixture(t *testing.T) (purgeFixture, map[string]string) {
+ 	t.Helper()
+ 	f := purgeSetup(t)
+ 	before := map[string]string{}
+-	out, _ := memoryGitRun("for-each-ref", "--format=%(refname) %(objectname)")
++	out, _ := zzMemoryGitRun("for-each-ref", "--format=%(refname) %(objectname)")
+ 	for _, l := range strings.Split(out, "\n") {
+ 		if n, sha, ok := strings.Cut(l, " "); ok {
+ 			before[n] = sha
+@@ -829,11 +829,11 @@ func TestAgentMemoryPurgeRollsForwardAPartialRefUpdate(t *testing.T) {
+ 	staleLocksProvable(t)
+ 	// The crash state: main already moved, the import ref is back at its old value.
+ 	imp := "refs/imports/20261004T090000Z/main"
+-	if _, err := memoryGitRun("update-ref", imp, before[imp]); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", imp, before[imp]); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	// ...and the dead git's lock file on the other ref.
+-	if _, err := memoryGitRun("update-ref", "refs/premigrate/20261004T090000Z", before["refs/premigrate/20261004T090000Z"]); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", "refs/premigrate/20261004T090000Z", before["refs/premigrate/20261004T090000Z"]); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if err := os.WriteFile(memoryRepoDir()+"/refs/premigrate/20261004T090000Z.lock", nil, 0o600); err != nil {
+@@ -852,23 +852,23 @@ func TestAgentMemoryPurgeRollsForwardAPartialRefUpdate(t *testing.T) {
+ func TestAgentMemoryPurgeKeepsTheMarkerOnAnUnexpectedRef(t *testing.T) {
+ 	_, before := partialRefFixture(t)
+ 	imp := "refs/imports/20261004T090000Z/main"
+-	if _, err := memoryGitRun("update-ref", imp, before[imp]); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", imp, before[imp]); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	// Someone moved the other ref to a value the purge never recorded.
+-	empty, _ := memoryGitRun("hash-object", "-t", "tree", "/dev/null")
+-	stranger, err := memoryGitRun("commit-tree", "-m", "unrelated", empty)
++	empty, _ := zzMemoryGitRun("hash-object", "-t", "tree", "/dev/null")
++	stranger, err := zzMemoryGitRun("commit-tree", "-m", "unrelated", empty)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("update-ref", "refs/premigrate/20261004T090000Z", stranger); err != nil {
++	if _, err := zzMemoryGitRun("update-ref", "refs/premigrate/20261004T090000Z", stranger); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	ResumeMemoryPurge()
+ 	if _, err := os.Stat(agentMemPurgePendingPath()); err != nil {
+ 		t.Fatal("an unrecognised ref state dropped the marker")
+ 	}
+-	got, _ := memoryGitRun("rev-parse", imp)
++	got, _ := zzMemoryGitRun("rev-parse", imp)
+ 	if got != before[imp] {
+ 		t.Fatal("the recovery overwrote refs it could not account for")
+ 	}
+@@ -926,8 +926,8 @@ func staleLocksProvable(t *testing.T) {
+ 
+ func strangerCommit(t *testing.T) string {
+ 	t.Helper()
+-	empty, _ := memoryGitRun("hash-object", "-t", "tree", "/dev/null")
+-	c, err := memoryGitRun("commit-tree", "-m", "unrelated", empty)
++	empty, _ := zzMemoryGitRun("hash-object", "-t", "tree", "/dev/null")
++	c, err := zzMemoryGitRun("commit-tree", "-m", "unrelated", empty)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -942,20 +942,20 @@ func TestAgentMemoryPurgeUnknownMainKeepsTheMarker(t *testing.T) {
+ 		_ = f
+ 		if resetOthers {
+ 			for _, r := range []string{"refs/imports/20261004T090000Z/main", "refs/premigrate/20261004T090000Z"} {
+-				if _, err := memoryGitRun("update-ref", r, before[r]); err != nil {
++				if _, err := zzMemoryGitRun("update-ref", r, before[r]); err != nil {
+ 					t.Fatal(err)
+ 				}
+ 			}
+ 		}
+ 		stranger := strangerCommit(t)
+-		if _, err := memoryGitRun("update-ref", "refs/heads/"+memoryBranch, stranger); err != nil {
++		if _, err := zzMemoryGitRun("update-ref", "refs/heads/"+memoryBranch, stranger); err != nil {
+ 			t.Fatal(err)
+ 		}
+ 		ResumeMemoryPurge()
+ 		if _, err := os.Stat(agentMemPurgePendingPath()); err != nil {
+ 			t.Fatalf("resetOthers=%v: the marker was dropped for a ref in an unknown state", resetOthers)
+ 		}
+-		if got, _ := memoryGitRun("rev-parse", memoryBranch); got != stranger {
++		if got, _ := zzMemoryGitRun("rev-parse", memoryBranch); got != stranger {
+ 			t.Fatalf("resetOthers=%v: the recovery overwrote main", resetOthers)
+ 		}
+ 		if _, err := agentMemPurgePreview(agentMemScopeProject, f.pid, "a"); err != nil {
+@@ -1037,14 +1037,14 @@ func TestAgentMemoryPurgeNeverDeletesALiveWritersLock(t *testing.T) {
+ 	f, before := partialRefFixture(t)
+ 	_ = f
+ 	for r, sha := range before {
+-		if _, err := memoryGitRun("update-ref", r, sha); err != nil {
++		if _, err := zzMemoryGitRun("update-ref", r, sha); err != nil {
+ 			t.Fatal(err)
+ 		}
+ 	}
+ 	// Refs older than the purge also have to be old again after the fixture's rewrite.
+-	cur, _ := memoryGitRun("rev-parse", memoryBranch)
++	cur, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	next := strangerCommit(t)
+-	w := memoryGit("update-ref", "--stdin")
++	w := zzMemoryGit("update-ref", "--stdin")
+ 	in, _ := w.StdinPipe()
+ 	if err := w.Start(); err != nil {
+ 		t.Fatal(err)
+diff --git a/workspace/agent/internal/memoryx/agent_memory_remote_test.go b/workspace/agent/internal/memoryx/agent_memory_remote_test.go
+index 92c899b5a..645d771d2 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_remote_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_remote_test.go
+@@ -3,7 +3,6 @@ package memoryx
+ import (
+ 	"encoding/json"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+ 	"testing"
+@@ -56,9 +55,9 @@ func TestAgentMemoryNormalizeRemote(t *testing.T) {
+ 
+ func remoteGit(t *testing.T, dir string, args ...string) {
+ 	t.Helper()
+-	cmd := exec.Command("git", args...)
++	cmd := zzGitCmd(args...)
+ 	cmd.Dir = dir
+-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
++	cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+ 	if out, err := cmd.CombinedOutput(); err != nil {
+ 		t.Fatalf("git %v: %v: %s", args, err, out)
+ 	}
+@@ -226,14 +225,14 @@ func TestAgentMemoryRemoteBackfill(t *testing.T) {
+ 		t.Errorf("backfilled record: %s", got)
+ 	}
+ 	// A second run changes nothing.
+-	before, _ := exec.Command("git", "-C", memoryRepoDir(), "rev-parse", "HEAD").Output()
++	before, _ := zzGitCmd("-C", memoryRepoDir(), "rev-parse", "HEAD").Output()
+ 	agentMemBackfillRemotes(now.Add(2 * time.Hour))
+-	after, _ := exec.Command("git", "-C", memoryRepoDir(), "rev-parse", "HEAD").Output()
++	after, _ := zzGitCmd("-C", memoryRepoDir(), "rev-parse", "HEAD").Output()
+ 	if string(before) != string(after) {
+ 		t.Error("a second backfill committed again")
+ 	}
+ 	// The record's commit is not a memory change.
+-	body, _ := exec.Command("git", "-C", memoryRepoDir(), "log", "-1", "--format=%B").Output()
++	body, _ := zzGitCmd("-C", memoryRepoDir(), "log", "-1", "--format=%B").Output()
+ 	if !strings.Contains(string(body), "AF-Op: project-info") {
+ 		t.Fatalf("last commit is not the backfill: %s", body)
+ 	}
+@@ -315,9 +314,9 @@ func TestAgentMemoryBackfillScansTheDecodedRecord(t *testing.T) {
+ 		if err := os.WriteFile(path, []byte(rec), 0o600); err != nil {
+ 			t.Fatal(err)
+ 		}
+-		head, _ := exec.Command("git", "-C", memoryRepoDir(), "rev-parse", "HEAD").Output()
++		head, _ := zzGitCmd("-C", memoryRepoDir(), "rev-parse", "HEAD").Output()
+ 		agentMemBackfillRemotes(now.Add(time.Hour))
+-		if after, _ := exec.Command("git", "-C", memoryRepoDir(), "rev-parse", "HEAD").Output(); string(head) != string(after) {
++		if after, _ := zzGitCmd("-C", memoryRepoDir(), "rev-parse", "HEAD").Output(); string(head) != string(after) {
+ 			t.Errorf("%s: a record with a hidden secret was committed", name)
+ 		}
+ 		if got := projectJSON(t, c.Project.ID); got != rec {
+diff --git a/workspace/agent/internal/memoryx/agent_memory_review_publish_test.go b/workspace/agent/internal/memoryx/agent_memory_review_publish_test.go
+index 3b36afebd..fc21fa27e 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_review_publish_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_review_publish_test.go
+@@ -30,7 +30,7 @@ func withProject(t *testing.T, p ReviewProposal) ReviewProposal {
+ 
+ func headMessage(t *testing.T, rev string) string {
+ 	t.Helper()
+-	msg, err := memoryGitRun("log", "-1", "--format=%B", rev)
++	msg, err := zzMemoryGitRun("log", "-1", "--format=%B", rev)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -39,7 +39,7 @@ func headMessage(t *testing.T, rev string) string {
+ 
+ func commitCount(t *testing.T) string {
+ 	t.Helper()
+-	n, err := memoryGitRun("rev-list", "--count", memoryBranch)
++	n, err := zzMemoryGitRun("rev-list", "--count", memoryBranch)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -182,7 +182,7 @@ func TestPublishReviewRefusesASecretAtApproval(t *testing.T) {
+ }
+ 
+ func commitCountOrZero() string {
+-	n, err := memoryGitRun("rev-list", "--count", memoryBranch)
++	n, err := zzMemoryGitRun("rev-list", "--count", memoryBranch)
+ 	if err != nil {
+ 		return "0"
+ 	}
+@@ -661,7 +661,7 @@ func TestReviewForgetCommittedDoesNotUseAnOlderForgetWhenTheBaseIsGone(t *testin
+ 	}
+ 	// Controls: the old base is gone from the history, the live topic is untouched, and the older
+ 	// forget is still there.
+-	if _, err := memoryGitRun("cat-file", "-e", base+"^{commit}"); err == nil {
++	if _, err := zzMemoryGitRun("cat-file", "-e", base+"^{commit}"); err == nil {
+ 		t.Skip("the purge kept the base commit; the scenario needs its id to change")
+ 	}
+ 	if e, err := agentMemRead(c, "project", "topic"); err != nil || e.Body != "second incarnation" {
+diff --git a/workspace/agent/internal/memoryx/agent_memory_search_test.go b/workspace/agent/internal/memoryx/agent_memory_search_test.go
+index 2afcec97e..57dd0a7b8 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_search_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_search_test.go
+@@ -70,10 +70,10 @@ func memSeedMany(t *testing.T, c agentMemCaller, n int, req func(i int) agentMem
+ 		}
+ 		agentMemPrimeScan(data, r.Scope, r.Name)
+ 	}
+-	if _, err := memoryGitRun("add", "-A"); err != nil {
++	if _, err := zzMemoryGitRun("add", "-A"); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "-m", "agent-memory: seed"); err != nil {
++	if _, err := zzMemoryGitRun("commit", "--quiet", "--no-verify", "-m", "agent-memory: seed"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ }
+diff --git a/workspace/agent/internal/memoryx/agent_memory_test.go b/workspace/agent/internal/memoryx/agent_memory_test.go
+index dd80ca9f7..3aea51027 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_test.go
+@@ -8,7 +8,6 @@ import (
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"os"
+-	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+ 	"syscall"
+@@ -32,9 +31,9 @@ func agentMemTestEnv(t *testing.T) (home, clone, wt string) {
+ 	memoryMkdirAll(t, clone)
+ 	git := func(dir string, args ...string) {
+ 		t.Helper()
+-		cmd := exec.Command("git", args...)
++		cmd := zzGitCmd(args...)
+ 		cmd.Dir = dir
+-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++		cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 		if out, err := cmd.CombinedOutput(); err != nil {
+ 			t.Fatalf("git %v: %v: %s", args, err, out)
+@@ -96,7 +95,7 @@ func TestAgentMemorySharedAcrossKindsAndWorktrees(t *testing.T) {
+ 		t.Fatalf("read by codex = %+v", got)
+ 	}
+ 
+-	msg, err := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, err := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -107,7 +106,7 @@ func TestAgentMemorySharedAcrossKindsAndWorktrees(t *testing.T) {
+ 	}
+ 	// The commit carries af/ alone: claude's live memory waits for its own snapshot rather than
+ 	// being attributed to this author.
+-	files, err := memoryGitRun("show", "--name-only", "--format=", memoryBranch)
++	files, err := zzMemoryGitRun("show", "--name-only", "--format=", memoryBranch)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -196,11 +195,11 @@ func TestAgentMemoryForgetKeepsHistory(t *testing.T) {
+ 	if _, err := agentMemRead(c, "", "old"); agentMemCode(err) != errCodeMemoryNotFound {
+ 		t.Errorf("forgotten memory still readable: %v", err)
+ 	}
+-	body, err := memoryGitRun("show", memoryBranch+"~1:af/projects/"+c.Project.ID+"/old.md")
++	body, err := zzMemoryGitRun("show", memoryBranch+"~1:af/projects/"+c.Project.ID+"/old.md")
+ 	if err != nil || !strings.Contains(body, "lesson") {
+ 		t.Errorf("history lost the forgotten memory: %q, %v", body, err)
+ 	}
+-	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	if !strings.Contains(msg, "AF-Op: forget") || !strings.Contains(msg, "AF-Author-Kind: codex") {
+ 		t.Errorf("forget commit message:\n%s", msg)
+ 	}
+@@ -425,7 +424,7 @@ func TestAgentMemoryHandEditedFileIsWithheldAndNotCommitted(t *testing.T) {
+ 	if _, err := agentMemSave(c, agentMemSaveReq{Name: "safe", Description: "d", Body: "b"}, time.Now()); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	files, _ := memoryGitRun("ls-tree", "-r", "--name-only", memoryBranch)
++	files, _ := zzMemoryGitRun("ls-tree", "-r", "--name-only", memoryBranch)
+ 	if strings.Contains(files, "manual.md") {
+ 		t.Fatalf("a hand-edited file was committed with someone else's write:\n%s", files)
+ 	}
+@@ -453,7 +452,7 @@ func TestAgentMemoryFailedCommitRollsBackStaging(t *testing.T) {
+ 	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	body, _ := memoryGitRun("show", memoryBranch+":af/projects/"+c.Project.ID+"/m.md")
++	body, _ := zzMemoryGitRun("show", memoryBranch+":af/projects/"+c.Project.ID+"/m.md")
+ 	if strings.Contains(body, "v2") {
+ 		t.Fatalf("the failed change reached history through a later snapshot:\n%s", body)
+ 	}
+@@ -496,8 +495,8 @@ func TestAgentMemorySeparateGitDirsAreDistinctProjects(t *testing.T) {
+ 	for _, n := range []string{"a", "b"} {
+ 		dir := filepath.Join(home, "repos", n)
+ 		memoryMkdirAll(t, dir)
+-		cmd := exec.Command("git", "init", "--quiet", "--separate-git-dir", filepath.Join(meta, n), dir)
+-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
++		cmd := zzGitCmd("init", "--quiet", "--separate-git-dir", filepath.Join(meta, n), dir)
++		cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+ 		if out, err := cmd.CombinedOutput(); err != nil {
+ 			t.Fatalf("git init: %v: %s", err, out)
+ 		}
+@@ -735,9 +734,9 @@ func TestAgentMemoryBareRepoWorktreesShareAProject(t *testing.T) {
+ 	bare := filepath.Join(home, "bare.git")
+ 	git := func(dir string, args ...string) {
+ 		t.Helper()
+-		cmd := exec.Command("git", args...)
++		cmd := zzGitCmd(args...)
+ 		cmd.Dir = dir
+-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
++		cmd.Env = append(zzEnv(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+ 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+ 		if out, err := cmd.CombinedOutput(); err != nil {
+ 			t.Fatalf("git %v: %v: %s", args, err, out)
+@@ -771,7 +770,7 @@ func TestAgentMemoryForgetUntrackedFile(t *testing.T) {
+ 	if _, err := agentMemRead(c, "", "manual"); agentMemCode(err) != errCodeMemoryNotFound {
+ 		t.Fatalf("read after forget: %v", err)
+ 	}
+-	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	if !strings.Contains(msg, "AF-Op: forget") || !strings.Contains(msg, "AF-Author-Kind: shell") {
+ 		t.Fatalf("forget not recorded:\n%s", msg)
+ 	}
+@@ -800,12 +799,12 @@ func TestAgentMemoryForgetFailsWhenIndexUnreadable(t *testing.T) {
+ 	if _, err := agentMemSave(c, agentMemSaveReq{Name: "x", Description: "d", Body: "b"}, time.Now()); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	head, _ := memoryGitRun("rev-parse", memoryBranch)
++	head, _ := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	memoryWrite(t, filepath.Join(memoryRepoDir(), "index"), "corrupt")
+ 	if _, err := agentMemForget(c, agentMemForgetReq{Name: "x", Revision: 1}, time.Now()); err == nil {
+ 		t.Fatal("forget succeeded with an unreadable index")
+ 	}
+-	if now, _ := memoryGitRun("rev-parse", memoryBranch); now != head {
++	if now, _ := zzMemoryGitRun("rev-parse", memoryBranch); now != head {
+ 		t.Fatal("a commit was recorded")
+ 	}
+ 	if e, err := agentMemRead(c, "", "x"); err != nil || e.Body != "b" {
+diff --git a/workspace/agent/internal/memoryx/agent_memory_usage_test.go b/workspace/agent/internal/memoryx/agent_memory_usage_test.go
+index 0e36c49ba..ab56fe951 100644
+--- a/workspace/agent/internal/memoryx/agent_memory_usage_test.go
++++ b/workspace/agent/internal/memoryx/agent_memory_usage_test.go
+@@ -153,7 +153,7 @@ func TestAgentMemoryPinRanksFirstAndSurvivesUpdate(t *testing.T) {
+ 	if _, names := agentMemIndexNames(t, c, 0); names != "ref,fb" {
+ 		t.Fatalf("pinned: %s", names)
+ 	}
+-	msg, _ := memoryGitRun("log", "-1", "--format=%B", memoryBranch)
++	msg, _ := zzMemoryGitRun("log", "-1", "--format=%B", memoryBranch)
+ 	for _, want := range []string{"AF-Op: pin", "AF-Author-Kind: member"} {
+ 		if !strings.Contains(msg, want) {
+ 			t.Errorf("pin commit lacks %q:\n%s", want, msg)
+diff --git a/workspace/agent/internal/memoryx/memory_import_test.go b/workspace/agent/internal/memoryx/memory_import_test.go
+index 85113ecce..79a3e686c 100644
+--- a/workspace/agent/internal/memoryx/memory_import_test.go
++++ b/workspace/agent/internal/memoryx/memory_import_test.go
+@@ -228,7 +228,7 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
+ 	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	localHead, err := memoryGitRun("rev-parse", memoryBranch)
++	localHead, err := zzMemoryGitRun("rev-parse", memoryBranch)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -246,10 +246,10 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
+ 	if !res.Adopted || res.Replaced != localHead || res.ReplacedRef == "" {
+ 		t.Fatalf("migrate result = %+v (local head was %s)", res, localHead)
+ 	}
+-	if got, err := memoryGitRun("rev-parse", "--verify", "--quiet", res.ReplacedRef); err != nil || got != localHead {
++	if got, err := zzMemoryGitRun("rev-parse", "--verify", "--quiet", res.ReplacedRef); err != nil || got != localHead {
+ 		t.Fatalf("replaced lineage was not stashed: %q %v", got, err)
+ 	}
+-	if _, err := memoryGitRun("merge-base", "--is-ancestor", pv.Head, memoryBranch); err != nil {
++	if _, err := zzMemoryGitRun("merge-base", "--is-ancestor", pv.Head, memoryBranch); err != nil {
+ 		t.Fatalf("main does not descend from the imported head: %v", err)
+ 	}
+ 	// The pre-swap main is not part of the new lineage: the two contents are not mixed.
+@@ -287,7 +287,7 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
+ // make the caller's intent easier to read.
+ func memoryGitRun2(t *testing.T, args ...string) error {
+ 	t.Helper()
+-	_, err := memoryGitRun(args...)
++	_, err := zzMemoryGitRun(args...)
+ 	return err
+ }
+ 
+@@ -329,7 +329,7 @@ func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {
+ 		t.Errorf("rejected = %v, want the 5 hostile entries", pv.Rejected)
+ 	}
+ 	// The imported tree holds the one permitted entry and nothing else.
+-	files, err := memoryGitRun("ls-tree", "-r", "--name-only", pv.Head)
++	files, err := zzMemoryGitRun("ls-tree", "-r", "--name-only", pv.Head)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+diff --git a/workspace/agent/internal/memoryx/memory_restore_test.go b/workspace/agent/internal/memoryx/memory_restore_test.go
+index 3b9bdfc68..79a86080a 100644
+--- a/workspace/agent/internal/memoryx/memory_restore_test.go
++++ b/workspace/agent/internal/memoryx/memory_restore_test.go
+@@ -94,7 +94,7 @@ func TestMemoryRestoreProjectScope(t *testing.T) {
+ 	}
+ 	// The source and the applied scope can be recovered from the trailers (audit, and the clue
+ 	// for undoing the undo).
+-	body, err := memoryGitRun("log", "-1", "--pretty=%B", res.Rev)
++	body, err := zzMemoryGitRun("log", "-1", "--pretty=%B", res.Rev)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -131,7 +131,7 @@ func TestMemoryRestoreAllScopeIsReversible(t *testing.T) {
+ 	if err != nil || !v3.Committed {
+ 		t.Fatalf("v3: %+v err=%v", v3, err)
+ 	}
+-	at, err := memoryGitRun("log", "-1", "--pretty=%aI", v3.Rev)
++	at, err := zzMemoryGitRun("log", "-1", "--pretty=%aI", v3.Rev)
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -219,7 +219,7 @@ func TestMemoryRestoreNeverTouchesNonMemoryFiles(t *testing.T) {
+ 		t.Errorf("credentials were modified: %q", got)
+ 	}
+ 	// The credential contents are absent from the history after the restore too.
+-	if blobs, _ := memoryGitRun("grep", "-I", "-l", "SECRET", memoryBranch); strings.TrimSpace(blobs) != "" {
++	if blobs, _ := zzMemoryGitRun("grep", "-I", "-l", "SECRET", memoryBranch); strings.TrimSpace(blobs) != "" {
+ 		t.Errorf("credential contents reachable in repo: %s", blobs)
+ 	}
+ }
+diff --git a/workspace/agent/internal/memoryx/memory_snapshot_test.go b/workspace/agent/internal/memoryx/memory_snapshot_test.go
+index 63ec3001c..bca650705 100644
+--- a/workspace/agent/internal/memoryx/memory_snapshot_test.go
++++ b/workspace/agent/internal/memoryx/memory_snapshot_test.go
+@@ -88,7 +88,7 @@ func memoryWrite(t *testing.T, p, s string) {
+ // memoryTree returns the repo's HEAD tree (every path).
+ func memoryTree(t *testing.T) []string {
+ 	t.Helper()
+-	out, err := memoryGitRun("ls-tree", "-r", "--name-only", "HEAD")
++	out, err := zzMemoryGitRun("ls-tree", "-r", "--name-only", "HEAD")
+ 	if err != nil {
+ 		t.Fatalf("ls-tree: %v", err)
+ 	}
+@@ -104,7 +104,7 @@ func memoryTree(t *testing.T) []string {
+ 
+ func memoryCommitCount(t *testing.T) int {
+ 	t.Helper()
+-	out, err := memoryGitRun("rev-list", "--count", memoryBranch)
++	out, err := zzMemoryGitRun("rev-list", "--count", memoryBranch)
+ 	if err != nil {
+ 		return 0
+ 	}
+@@ -161,7 +161,7 @@ func TestMemorySnapshotOnlyCapturesAllowlistedFiles(t *testing.T) {
+ 		t.Error("snapshot created a .git inside the live memory dir")
+ 	}
+ 	// The credential contents are nowhere in the repo, blob contents included.
+-	if blobs, _ := memoryGitRun("grep", "-I", "-l", "SECRET", memoryBranch); strings.TrimSpace(blobs) != "" {
++	if blobs, _ := zzMemoryGitRun("grep", "-I", "-l", "SECRET", memoryBranch); strings.TrimSpace(blobs) != "" {
+ 		t.Errorf("credential contents reachable in repo: %s", blobs)
+ 	}
+ }
+@@ -259,7 +259,7 @@ func TestMemoryListSnapshotsAndIdentity(t *testing.T) {
+ 		t.Errorf("At is not RFC3339: %q", list[0].At)
+ 	}
+ 
+-	who, err := memoryGitRun("log", "-1", "--pretty=%an <%ae> / %cn")
++	who, err := zzMemoryGitRun("log", "-1", "--pretty=%an <%ae> / %cn")
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -314,7 +314,7 @@ func TestMemoryTestEnvRunsAutoGCInForeground(t *testing.T) {
+ 	index := filepath.Join(t.TempDir(), "index")
+ 	run := func(args ...string) string {
+ 		t.Helper()
+-		cmd := memoryGit(args...)
++		cmd := zzMemoryGit(args...)
+ 		cmd.Dir = srcDir
+ 		cmd.Env = append(cmd.Env, "GIT_WORK_TREE="+srcDir, "GIT_INDEX_FILE="+index)
+ 		out, err := cmd.CombinedOutput()
+@@ -329,7 +329,7 @@ func TestMemoryTestEnvRunsAutoGCInForeground(t *testing.T) {
+ 	if ents, _ := os.ReadDir(filepath.Join(memoryRepoDir(), "objects", "17")); len(ents) < 2 {
+ 		t.Fatalf("objects/17 holds %d loose objects, gc --auto would not trigger", len(ents))
+ 	}
+-	if out, err := memoryGit("gc", "--auto").CombinedOutput(); err != nil {
++	if out, err := zzMemoryGit("gc", "--auto").CombinedOutput(); err != nil {
+ 		t.Fatalf("gc --auto: %v: %s", err, out)
+ 	}
+ 	if _, err := os.Stat(marker); err != nil {
+@@ -337,7 +337,7 @@ func TestMemoryTestEnvRunsAutoGCInForeground(t *testing.T) {
+ 	}
+ 	// The repack must be complete when the call returns. A pidfile check alone cannot prove it:
+ 	// a detaching gc removes gc.pid in the parent before the child recreates it.
+-	if out, err := memoryGitRun("count-objects"); err != nil || !strings.HasPrefix(out, "0 objects") {
++	if out, err := zzMemoryGitRun("count-objects"); err != nil || !strings.HasPrefix(out, "0 objects") {
+ 		t.Fatalf("loose objects left after gc --auto returned: %q, %v", out, err)
+ 	}
+ 	if packs, _ := filepath.Glob(filepath.Join(memoryRepoDir(), "objects", "pack", "*.pack")); len(packs) == 0 {
