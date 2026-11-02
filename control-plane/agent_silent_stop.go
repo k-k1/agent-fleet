@@ -159,8 +159,20 @@ func (d *silentStop) stop(ctx context.Context, c silentCandidate) {
 	if rt.State(lease.Context()) != "running" {
 		return
 	}
-	silentFor := agentLive.silentFor(c.key, time.Now())
-	if silentFor < d.after || !d.probeFails(lease.Context(), rt) {
+	// A launch or activity after the flag was raised means this verdict is about an earlier
+	// Agent: a Stop/Start completed on another replica that this one never saw leave `running`.
+	// The tracker restarts its clock; the new Agent gets its grace period.
+	if t, err := time.Parse(time.RFC3339, fresh.LastActiveAt); err == nil && t.After(agentLive.silentSince(c.key)) {
+		agentLive.forget(c.key)
+		return
+	}
+	tok, silentFor, ok := agentLive.silentToken(c.key, time.Now())
+	if !ok || silentFor < d.after || !d.probeFails(lease.Context(), rt) {
+		return
+	}
+	// The probe may have waited seconds; an answer to any other call meanwhile (or a recovery
+	// and a fresh flag) makes that verdict stale, the same rule probeDone applies.
+	if !agentLive.sameVerdict(c.key, tok) {
 		return
 	}
 	if err := rt.Stop(lease.Context()); err != nil {

@@ -342,8 +342,9 @@ doing; this check is what notices.
 Control Plane stop a workspace whose Agent has stayed flagged **Not responding** for that long. It
 counts from the moment the flag was raised on that replica (a restart starts it again), is never
 shorter than `10m` (a smaller value is raised to it, with a log line), and needs
-`AF_AGENT_SILENT_AFTER` to be on. The check runs on the usage sweep, so the stop lands within one
-`AF_USAGE_SAMPLE_INTERVAL` of the ceiling.
+`AF_AGENT_SILENT_AFTER` to be on. The check runs on the usage sweep, so normally the stop lands
+within one `AF_USAGE_SAMPLE_INTERVAL` of the ceiling; it is later when the guards below hold it
+back, the lifecycle lock is busy, or the sweep did not complete.
 
 The stop takes the same fences as an administrator's stop (the member's start lock, the lifecycle
 lease and the runtime operation fence), then decides again with them held: the workspace must
@@ -356,8 +357,13 @@ in the tenant roster until the next start.
 Guards against a Control Plane that is itself cut off: nothing is stopped in a sweep unless the
 walk completed **and** at least one other running workspace answered it, and at most two
 workspaces are stopped per sweep (longest-silent first). A deployment with one running workspace
-therefore only ever flags it. Running sessions are lost as with any stop (they stay resumable);
-choose the ceiling with that in mind. `30m` is a reasonable start.
+therefore only ever flags it.
+
+Limits you accept by turning it on: the Control Plane cannot reliably tell a dead or thrashing
+Agent from a broken network path. The peer check only rules out the Control Plane being cut off
+from everything; if just the path to one host or workspace is broken, a healthy workspace with
+live sessions is stopped once the ceiling passes. Running sessions are lost as with any stop (they
+stay resumable). Choose the ceiling with that in mind; `30m` is a reasonable start.
 
 ### Automatic idle stop (scale-to-zero)
 

@@ -170,6 +170,37 @@ func (l *agentLiveness) silentFor(key string, now time.Time) time.Duration {
 	return 0
 }
 
+// silentToken identifies the silent verdict of key's entry: its generation and answer count, and
+// how long it has stood. ok is false when the entry is not flagged.
+func (l *agentLiveness) silentToken(key string, now time.Time) (tok probeToken, silentFor time.Duration, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.m[key]
+	if e == nil || !e.silent || e.silentAt.IsZero() {
+		return probeToken{}, 0, false
+	}
+	return probeToken{gen: e.gen, rev: e.rev}, now.Sub(e.silentAt), true
+}
+
+// silentSince is when key's entry was flagged (zero when it is not).
+func (l *agentLiveness) silentSince(key string) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.m[key]; e != nil && e.silent {
+		return e.silentAt
+	}
+	return time.Time{}
+}
+
+// sameVerdict reports whether the entry is still flagged under tok: no answer, recovery or new
+// running spell since the token was taken.
+func (l *agentLiveness) sameVerdict(key string, tok probeToken) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.m[key]
+	return e != nil && e.silent && e.gen == tok.gen && e.rev == tok.rev
+}
+
 // genOf is the current generation of key's entry (0 if none).
 func (l *agentLiveness) genOf(key string) uint64 {
 	l.mu.Lock()

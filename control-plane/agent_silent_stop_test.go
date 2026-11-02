@@ -297,3 +297,80 @@ func TestSilentStopRespectsTheLeaseAndDoesNotDoubleStop(t *testing.T) {
 		t.Fatalf("notifications = %d, want 1", n)
 	}
 }
+
+// A Stop/Start completed through another replica between this replica's flag and its stop: the
+// row's last_active_at is newer than the flag, so the verdict is about the previous Agent.
+func TestSilentStopIgnoresAVerdictOlderThanTheCurrentLaunch(t *testing.T) {
+	ctx := context.Background()
+	f := newSilentFx(t, deadEndpoint())
+	d := newSilentStop(f.mgr, 20*time.Minute)
+	f.flag(0, time.Hour)
+	setLastActive(t, f.st, f.ws[0].ID, time.Now()) // the member restarted it; this replica never saw it leave running
+	d.stop(ctx, silentCandidate{rt: f.rts[0], ws: f.ws[0], key: f.keys[0]})
+	if n := f.rts[0].stops.Load(); n != 0 {
+		t.Fatalf("a launch newer than the silent verdict was stopped (%d)", n)
+	}
+	if agentLive.silentFor(f.keys[0], time.Now()) != 0 {
+		t.Fatal("the stale verdict was kept")
+	}
+}
+
+// An answer to any other call while the final probe waits makes the probe's failure stale.
+func TestSilentStopDropsAProbeFailureOutdatedByAnAnswer(t *testing.T) {
+	ctx := context.Background()
+	var f *silentFx
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agentLive.note(f.keys[0], time.Now()) // /sessions answered meanwhile
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	f = newSilentFx(t, srv.URL)
+	d := newSilentStop(f.mgr, 20*time.Minute)
+	f.flag(0, time.Hour)
+	d.stop(ctx, silentCandidate{rt: f.rts[0], ws: f.ws[0], key: f.keys[0]})
+	if n := f.rts[0].stops.Load(); n != 0 {
+		t.Fatalf("stopped on a probe failure outdated by an answer (%d)", n)
+	}
+}
+
+// An incomplete walk proves nothing, even with other Agents answering.
+func TestSilentStopNeedsACompleteWalk(t *testing.T) {
+	ctx := context.Background()
+	f := newSilentFx(t, deadEndpoint())
+	d := newSilentStop(f.mgr, 20*time.Minute)
+	f.flag(0, time.Hour)
+	c := []silentCandidate{{rt: f.rts[0], ws: f.ws[0], key: f.keys[0]}}
+	d.dispatch(ctx, c, 3, false)
+	d.wg.Wait()
+	if n := f.rts[0].stops.Load(); n != 0 {
+		t.Fatalf("stopped after an incomplete walk (%d)", n)
+	}
+	d.dispatch(ctx, c, 3, true)
+	d.wg.Wait()
+	if n := f.rts[0].stops.Load(); n != 1 {
+		t.Fatalf("Stop calls after a complete walk = %d, want 1", n)
+	}
+}
+
+// Replicas do not share a manager (nor its start locks): the lifecycle lease and the runtime
+// state under it are what keep a second one out.
+func TestSilentStopTwoIndependentManagersStopOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newSilentFx(t, deadEndpoint())
+	f.flag(0, time.Hour)
+	other := &manager{store: f.st, conns: newConnRegistry(), rtFactory: f.mgr.rtFactory}
+	da, db := newSilentStop(f.mgr, 20*time.Minute), newSilentStop(other, 20*time.Minute)
+	c := silentCandidate{rt: f.rts[0], ws: f.ws[0], key: f.keys[0]}
+	var wg sync.WaitGroup
+	for _, d := range []*silentStop{da, db} {
+		wg.Add(1)
+		go func() { defer wg.Done(); d.stop(ctx, c) }()
+	}
+	wg.Wait()
+	if n := f.rts[0].stops.Load(); n != 1 {
+		t.Fatalf("Stop calls from two independent managers = %d, want 1", n)
+	}
+	if n := countAuditAction(t, f.st, f.ws[0].TenantID, "workspace.agent_silent_stop"); n != 1 {
+		t.Fatalf("audit rows = %d, want 1", n)
+	}
+}
