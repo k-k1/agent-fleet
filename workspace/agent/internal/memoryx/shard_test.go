@@ -2,11 +2,16 @@ package memoryx
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -25,8 +30,18 @@ func TestShardProbeB(t *testing.T) {
 		panic("shard probe panic")
 	case "exit":
 		os.Exit(3)
+	case "exit0":
+		os.Exit(0)
 	case "hang":
 		time.Sleep(time.Minute)
+	case "stop":
+		// Stopped, the child cannot even run its own -test.timeout; only the parent's kill ends it.
+		_ = syscall.Kill(os.Getpid(), syscall.SIGSTOP)
+	case "pipehold":
+		// A process left behind that keeps the child's output pipe open after the child exits.
+		cmd := exec.Command("sleep", "8")
+		cmd.Stdout = os.Stdout
+		_ = cmd.Start()
 	}
 }
 
@@ -34,10 +49,10 @@ func TestShardProbeC(t *testing.T) {}
 
 var shardProbes = []string{"TestShardProbeA", "TestShardProbeB", "TestShardProbeC"}
 
-// runShardedProbes runs this binary as a sharded parent over the probes, two children at a time.
-// The child marker of this process (when it is a child itself) is dropped so that it shards.
-func runShardedProbes(t *testing.T, mode string, extra ...string) (string, int) {
-	t.Helper()
+// shardProbeCmd is this binary as a sharded parent over the probes, two children at a time. The
+// child marker of this process (when it is a child itself) is dropped so that it shards. Flags in
+// extra come last and so win over the defaults.
+func shardProbeCmd(mode string, extra ...string) *exec.Cmd {
 	args := append([]string{"-test.run", "^(" + strings.Join(shardProbes, "|") + ")$", "-test.v=test2json",
 		"-test.count=1", "-test.timeout=2m"}, extra...)
 	cmd := exec.Command(os.Args[0], args...)
@@ -47,6 +62,12 @@ func runShardedProbes(t *testing.T, mode string, extra ...string) (string, int) 
 		}
 	}
 	cmd.Env = append(cmd.Env, shardsEnv+"=2", shardProbeEnv+"="+mode)
+	return cmd
+}
+
+func runShardedProbes(t *testing.T, mode string, extra ...string) (string, int) {
+	t.Helper()
+	cmd := shardProbeCmd(mode, extra...)
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()
@@ -64,6 +85,16 @@ func shardLastLine(out string) string {
 	return lines[len(lines)-1]
 }
 
+func shardStatusLines(out string) int {
+	n := 0
+	for _, l := range strings.Split(out, "\n") {
+		if s := strings.TrimPrefix(l, "\x16"); s == "PASS" || s == "FAIL" {
+			n++
+		}
+	}
+	return n
+}
+
 func TestShardedRunPassesAndRunsEveryTestOnce(t *testing.T) {
 	out, code := runShardedProbes(t, "")
 	if code != 0 || shardLastLine(out) != "\x16PASS" {
@@ -74,18 +105,16 @@ func TestShardedRunPassesAndRunsEveryTestOnce(t *testing.T) {
 	if want := map[string]int{"TestShardProbeA": 1, "TestShardProbeB": 1, "TestShardProbeC": 1}; !reflect.DeepEqual(runs, want) {
 		t.Fatalf("runs = %v, want %v:\n%s", runs, want, out)
 	}
-	status := 0
-	for _, l := range strings.Split(out, "\n") {
-		if strings.TrimPrefix(l, "\x16") == "PASS" {
-			status++
-		}
+	if n := shardStatusLines(out); n != 1 {
+		t.Errorf("%d status lines, want each child's dropped and one for the run:\n%s", n, out)
 	}
-	if status != 1 {
-		t.Errorf("%d status lines, want each child's dropped and one for the run:\n%s", status, out)
+	if strings.Contains(out, "memoryx-shard-done") {
+		t.Errorf("a child's done line reached the output:\n%s", out)
 	}
 }
 
-// A child that fails, panics, exits or hangs fails the whole run, and its output names the test.
+// A child that fails, panics, exits (with any status) or hangs fails the whole run, and the
+// output names the test.
 func TestShardedRunReportsAFailingChild(t *testing.T) {
 	for _, c := range []struct {
 		mode  string
@@ -94,22 +123,133 @@ func TestShardedRunReportsAFailingChild(t *testing.T) {
 	}{
 		{"fail", nil, "--- FAIL: TestShardProbeB"},
 		{"panic", nil, "panic: shard probe panic"},
-		{"exit", nil, "-test.run ^(TestShardProbeB)$ ended with exit status 3"},
+		{"exit", nil, "-test.run ^(TestShardProbeB)$: exit status 3"},
+		{"exit0", nil, "-test.run ^(TestShardProbeB)$: exited 0 before its tests returned"},
+		{"exit0", []string{"-test.v=false"}, "-test.run ^(TestShardProbeB)$: exited 0 before its tests returned"},
 		{"hang", []string{"-test.timeout=3s"}, "test timed out after"},
+		{"stop", []string{"-test.timeout=2s"}, "-test.run ^(TestShardProbeB)$: signal: killed"},
+		{"pipehold", nil, "-test.run ^(TestShardProbeB)$: exec: WaitDelay expired"},
 	} {
-		t.Run(c.mode, func(t *testing.T) {
+		t.Run(c.mode+strings.Join(c.extra, ""), func(t *testing.T) {
+			start := time.Now()
 			out, code := runShardedProbes(t, c.mode, c.extra...)
-			if code != 1 || shardLastLine(out) != "\x16FAIL" {
-				t.Fatalf("exit %d, last line %q, want 1 and a framed FAIL:\n%s", code, shardLastLine(out), out)
+			if code != 1 || !strings.HasSuffix(shardLastLine(out), "FAIL") {
+				t.Fatalf("exit %d, last line %q, want 1 and FAIL:\n%s", code, shardLastLine(out), out)
 			}
 			if !strings.Contains(out, c.want) {
 				t.Fatalf("output lacks %q:\n%s", c.want, out)
 			}
-			if !strings.Contains(out, "TestShardProbeB") {
-				t.Fatalf("output does not name the test:\n%s", out)
+			if d := time.Since(start); d > 7*time.Second {
+				t.Errorf("the run took %v; a stuck child must not hold it up", d)
 			}
 		})
 	}
+}
+
+// -test.list ignores -test.skip, so the parent must apply it, or a skipped test reads as lost.
+func TestShardedRunHonoursSkip(t *testing.T) {
+	for _, v := range []string{"-test.v=false", "-test.v=true", "-test.v=test2json"} {
+		t.Run(v, func(t *testing.T) {
+			out, code := runShardedProbes(t, "fail", v, "-test.skip", "TestShardProbeB")
+			if code != 0 || strings.Contains(out, "TestShardProbeB") {
+				t.Fatalf("exit %d, want 0 with TestShardProbeB skipped:\n%s", code, out)
+			}
+		})
+	}
+}
+
+// -test.cpu runs every test once per entry and -test.count=0 runs none; neither is a lost test.
+func TestShardedRunHonoursCountAndCPU(t *testing.T) {
+	for _, c := range []struct {
+		flags []string
+		want  int
+	}{
+		{[]string{"-test.cpu=1,2"}, 2},
+		{[]string{"-test.cpu=1,2", "-test.count=2"}, 4},
+		{[]string{"-test.count=0"}, 0},
+	} {
+		t.Run(strings.Join(c.flags, " "), func(t *testing.T) {
+			out, code := runShardedProbes(t, "", c.flags...)
+			if code != 0 {
+				t.Fatalf("exit %d, want 0:\n%s", code, out)
+			}
+			runs := map[string]int{}
+			shardRuns([]byte(out), runs)
+			for _, p := range shardProbes {
+				if runs[p] != c.want {
+					t.Errorf("%s ran %d times, want %d", p, runs[p], c.want)
+				}
+			}
+		})
+	}
+}
+
+// A killed parent takes its children with it (Pdeathsig): a go test interrupted or OOM-killed
+// must not leave tests running in a guard root whose owner is gone.
+func TestShardChildrenDieWithTheParent(t *testing.T) {
+	cmd := shardProbeCmd("hang", "-test.run", "^TestShardProbeB$")
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+	var child int
+	for deadline := time.Now().Add(20 * time.Second); child == 0; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no shard child running TestShardProbeB appeared")
+		}
+		for _, pid := range procChildren(cmd.Process.Pid) {
+			if b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); bytes.Contains(b, []byte("^(TestShardProbeB)$")) {
+				child = pid
+			}
+		}
+	}
+	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	for deadline := time.Now().Add(10 * time.Second); procAlive(child); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("shard child %d outlived its killed parent", child)
+		}
+	}
+}
+
+// A child whose parent is already gone when it starts (the window before the parent-death
+// signal is armed) exits without running anything.
+func TestShardChildExitsWhenItsParentIsGone(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestShardProbeA$")
+	cmd.Env = append(os.Environ(), shardChildEnv+"=1:feedface")
+	out, err := cmd.CombinedOutput()
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 || !strings.Contains(string(out), "parent process is gone") {
+		t.Fatalf("err %v, want exit 1 for an orphaned child:\n%s", err, out)
+	}
+}
+
+func procChildren(pid int) []int {
+	var out []int
+	tasks, _ := filepath.Glob(fmt.Sprintf("/proc/%d/task/*/children", pid))
+	for _, f := range tasks {
+		b, _ := os.ReadFile(f)
+		for _, s := range strings.Fields(string(b)) {
+			if n, err := strconv.Atoi(s); err == nil {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
+}
+
+// procAlive is false for a process that is gone or a zombie (dead, not yet reaped by whoever
+// inherited it).
+func procAlive(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	_, rest, ok := strings.Cut(string(b), ") ")
+	return ok && !strings.HasPrefix(rest, "Z") && !strings.HasPrefix(rest, "X")
 }
 
 func TestShardableKeepsSingleArtefactRunsSerial(t *testing.T) {
@@ -123,7 +263,7 @@ func TestShardableKeepsSingleArtefactRunsSerial(t *testing.T) {
 			return ""
 		}
 	}
-	if !shardableWith(flags("test.run", "TestA|TestB", "test.count", "3"), "", "", 4) {
+	if !shardableWith(flags("test.run", "TestA|TestB", "test.skip", "TestC", "test.count", "3"), "", "", 4) {
 		t.Error("a plain run must shard")
 	}
 	for _, c := range []struct {
@@ -133,10 +273,12 @@ func TestShardableKeepsSingleArtefactRunsSerial(t *testing.T) {
 		child string
 		n     int
 	}{
-		{"child", flags(), "", "1", 4},
+		{"child", flags(), "", "1:abc", 4},
+		{"nested", flags(), "", shardNested, 4},
 		{"one shard", flags(), "", "", 1},
 		{"cover", flags(), "set", "", 4},
-		{"subtest pattern", flags("test.run", "TestA/sub"), "", "", 4},
+		{"subtest run pattern", flags("test.run", "TestA/sub"), "", "", 4},
+		{"subtest skip pattern", flags("test.skip", "TestA/sub"), "", "", 4},
 		{"list", flags("test.list", "."), "", "", 4},
 		{"coverprofile", flags("test.coverprofile", "c.out"), "", "", 4},
 		{"cpuprofile", flags("test.cpuprofile", "c.prof"), "", "", 4},
@@ -159,6 +301,56 @@ func TestShardArgsDropsRunAndTimeout(t *testing.T) {
 	want := []string{"-test.v=test2json", "-test.count=1", "-test.paniconexit0", "-test.skip", "TestB"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("shardArgs = %q, want %q", got, want)
+	}
+}
+
+func TestShardSelect(t *testing.T) {
+	list := []byte("TestA\nTestAB\nFuzzC\nExampleD\nBenchmarkE\n\n")
+	for _, c := range []struct {
+		skip string
+		want []string
+	}{
+		{"", []string{"TestA", "TestAB", "FuzzC", "ExampleD"}},
+		{"TestA", []string{"FuzzC", "ExampleD"}},
+		{"^TestA$|Example", []string{"TestAB", "FuzzC"}},
+	} {
+		got, err := shardSelect(list, c.skip)
+		if err != nil || !slices.Equal(got, c.want) {
+			t.Errorf("shardSelect(skip %q) = %q, %v; want %q", c.skip, got, err, c.want)
+		}
+	}
+	if _, err := shardSelect(list, "("); err == nil {
+		t.Error("a bad -test.skip must be an error")
+	}
+}
+
+func TestShardWantRuns(t *testing.T) {
+	for _, c := range []struct {
+		count, cpu string
+		want       int
+	}{{"1", "", 1}, {"3", "", 3}, {"0", "", 0}, {"2", "1,2,4", 6}, {"", "", 1}, {"1", "8", 1}} {
+		if got := shardWantRuns(c.count, c.cpu); got != c.want {
+			t.Errorf("shardWantRuns(%q, %q) = %d, want %d", c.count, c.cpu, got, c.want)
+		}
+	}
+}
+
+func TestShardFinished(t *testing.T) {
+	const done = "memoryx-shard-done 00"
+	for _, c := range []struct {
+		in, out string
+		ok      bool
+	}{
+		{"PASS\n\n" + done + "\n", "PASS\n", true},
+		{"partial\n" + done + "\n", "partial", true},
+		{"PASS\n", "PASS\n", false},
+		{"\n" + done + "\nlater\n", "\n" + done + "\nlater\n", false},
+		{"\nmemoryx-shard-done 01\n", "\nmemoryx-shard-done 01\n", false},
+	} {
+		got, ok := shardFinished([]byte(c.in), done)
+		if string(got) != c.out || ok != c.ok {
+			t.Errorf("shardFinished(%q) = %q, %v; want %q, %v", c.in, got, ok, c.out, c.ok)
+		}
 	}
 }
 

@@ -291,6 +291,10 @@ jobs:
         # internal/memoryx is bound by real git processes; sharded over child processes it is
         # minutes, not seconds, on a loaded host, close enough to the 10 min default to keep 20m.
         run: go test -timeout 20m ./...
+      - name: memoryx shard runner smoke
+        # The sharded runner's own tests cannot catch a runner that swallows failures; the
+        # script checks it from outside.
+        run: ../../scripts/memoryx-shard-smoke.sh
       # Build-tagged files are not part of the default build, and none of the gofmt / vet /
       # build / test steps above touch them (measured: an unused import in tagged code left
       # every gate green and only `go vet -tags contract` red). The reason and what the

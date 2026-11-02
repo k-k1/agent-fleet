@@ -292,7 +292,9 @@ The product is **two Go modules**, run separately (`e2e/` and the release scanne
   child has its own environment and globals, and its output is replayed in one piece, so
   `go test -json` still sees one test at a time. `AF_MEMORYX_SHARDS=N` sets the count, and `1`
   is the plain serial run. Coverage, profiles, `-test.list`, fuzzing, benchmarks and a
-  subtest `-run` pattern always run serially. Measured (#3102): 26 s sharded vs 90 s serial on
+  subtest `-run` / `-skip` pattern always run serially. A child passes only when it exits 0
+  after its tests returned, and dies with the parent. `scripts/memoryx-shard-smoke.sh` (CI's
+  `workspace-agent` job) checks from outside that a failing child fails the run. Measured (#3102): 26 s sharded vs 90 s serial on
   an idle host, 82 s vs 208 s at load ~11, `-race` 132 s vs 303 s at load 9–12. A busy host
   can still stretch it several-fold, so the `-timeout 20m` above stays. The production side
   of the git exec count is #3255.

@@ -258,7 +258,9 @@ red になる。contract が通った CLI は更新 issue を開かない（版�
   （`internal/memoryx/shard_main_test.go`）。子ごとに環境とグローバルが別で、出力は子ごとに
   まとめて流すので `go test -json` から見ると 1 度に 1 テストのまま。`AF_MEMORYX_SHARDS=N` で数を
   指定でき、`1` は従来の直列実行。カバレッジ・プロファイル・`-test.list`・fuzz・ベンチマーク・
-  サブテストを指す `-run` は常に直列。実測（#3102）: アイドル時 分割 26 秒 vs 直列 90 秒、
+  サブテストを指す `-run` / `-skip` は常に直列。子はテストが戻ったうえで exit 0 したときだけ合格で、
+  親が死ねば子も止まる。失敗する子が実行全体を失敗させることは `scripts/memoryx-shard-smoke.sh`（CI の
+  `workspace-agent` ジョブ）が外から確かめる。実測（#3102）: アイドル時 分割 26 秒 vs 直列 90 秒、
   load 約 11 で 82 秒 vs 208 秒、`-race` は load 9–12 で 132 秒 vs 303 秒。混んだホストでは
   なお数倍に伸びうるので、上の `-timeout 20m` は外さない。git 実行回数の本番コード側は #3255。
 - CP 側は `httptest` ベースのスモークを多数含む（監査・egress・内部 git の smart-HTTP と LFS
