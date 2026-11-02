@@ -76,4 +76,12 @@ describe("errDetail", () => {
     expect(got).not.toContain("1.14.0");
     expect(got.length).toBeGreaterThan(20);
   });
+
+  it("shows the localized codex-releasing text alone", () => {
+    const e = { code: "codex_releasing", message: "codex がまだこの会話を手放していません / codex has not let go of this conversation yet" };
+    const got = client.errDetail(e);
+    expect(got).toBe(client.errText(e));
+    expect(got).not.toContain(" / ");
+    expect(got.length).toBeGreaterThan(20);
+  });
 });

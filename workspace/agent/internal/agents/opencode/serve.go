@@ -262,7 +262,7 @@ func healthy(addr string) bool { return probeServe(addr) }
 // free-tier choice), so the shared daemon is not started. serve would happily listen
 // without looking at auth at all, but at a measured ~305 MB RSS there is no reason to keep
 // it resident in a workspace that does not use it.
-var ErrNotConnected = errors.New("opencode が未接続のため serve を起動しません")
+var ErrNotConnected = errors.New("opencode が未接続のため serve を起動しません / opencode is not connected, so serve is not started")
 
 // Ensure starts (or adopts) the shared serve daemon, idempotently. Returns the
 // base URL and the runtime generation the caller should stamp on its handles.

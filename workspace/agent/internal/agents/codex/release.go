@@ -33,7 +33,8 @@ var RestoreObservedThread = func(threadID string) {}
 
 // ErrThreadReleasing refuses a Terminal launch while the shared app-server still has the
 // conversation loaded; the caller answers 409 codex_releasing.
-var ErrThreadReleasing = errors.New("codex がまだこの会話を手放していません（停止から通常 1 分ほど）。少し待ってからもう一度お試しください")
+var ErrThreadReleasing = errors.New("codex がまだこの会話を手放していません（停止から通常 1 分ほど）。少し待ってからもう一度お試しください / " +
+	"codex has not let go of this conversation yet (usually about a minute after the stop). Try again shortly")
 
 // threadHeld reports whether the shared app-server still has threadID loaded, with one
 // read-only thread/loaded/list (it subscribes to nothing, so it never becomes a holder itself).

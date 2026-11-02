@@ -172,9 +172,9 @@ export const errDetail = (error: ApiError | string | null | undefined): string =
   // The cli_install_* wording already says what and why; the server's English sentence would
   // only repeat it in the wrong language.
   if (error && typeof error === "object" && error.code?.startsWith("cli_install_")) return head;
-  // The refusal's message is a ja / en pair for the logs; the catalogue line already says it in
+  // These refusals' messages are ja / en pairs for the logs; the catalogue line already says it in
   // the member's language.
-  if (error && typeof error === "object" && error.code === "agent_unsupported_version") return head;
+  if (error && typeof error === "object" && (error.code === "agent_unsupported_version" || error.code === "codex_releasing")) return head;
   const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
   return detail && detail !== head ? head + ": " + detail : head;
 };

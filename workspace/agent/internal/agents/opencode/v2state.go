@@ -577,14 +577,14 @@ func recallSettingsV2(t apiTarget, m session.Meta) agents.RecalledSettings {
 func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, source string, err error) {
 	info, err := t.v2Session(m)
 	if err != nil {
-		return "", "", fmt.Errorf("opencode の会話ストアを読めません")
+		return "", "", errors.New("opencode の会話ストアを読めません / cannot read the opencode conversation store")
 	}
 	if info == nil {
-		return "", "", fmt.Errorf("分岐できる会話がまだありません")
+		return "", "", errors.New("分岐できる会話がまだありません / there is no conversation to fork yet")
 	}
 	msgs, err := t.messages(info.ID)
 	if err != nil {
-		return "", "", fmt.Errorf("opencode の会話ストアを読めません")
+		return "", "", errors.New("opencode の会話ストアを読めません / cannot read the opencode conversation store")
 	}
 	idx := -1
 	for i, mm := range msgs {
@@ -596,7 +596,7 @@ func resolveForkAtV2(t apiTarget, m session.Meta, at agents.ForkPoint) (point, s
 	// A subagent turn lives in a child session, which this list does not contain, so it is
 	// refused here as "not found" along with a stray id.
 	if idx < 0 {
-		return "", "", fmt.Errorf("指定された分岐点がこの会話に見つかりません")
+		return "", "", errors.New("指定された分岐点がこの会話に見つかりません / the given fork point is not in this conversation")
 	}
 	if !at.Include {
 		return at.Anchor, info.ID, nil
