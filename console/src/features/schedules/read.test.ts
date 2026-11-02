@@ -157,8 +157,8 @@ describe("nextRunText / nextRunDetail (#3217)", () => {
 
   it("keeps the server text while both settings are auto", () => {
     setFormatPrefs("auto", "auto");
-    expect(nextRunText(s)).toBe("2026-03-08 09:00 GMT-4");
-    expect(nextRunDetail(s)).toBe("2026-03-08 09:00 GMT-4");
+    expect(nextRunText(s)).toBe("2026-03-08 09:00 EDT");
+    expect(nextRunDetail(s)).toBe("2026-03-08 09:00 EDT");
   });
 
   it("formats next_run in the member's explicit zone", () => {
