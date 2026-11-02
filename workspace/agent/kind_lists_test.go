@@ -1,9 +1,10 @@
 package main
 
 // Per-kind facts that are measured or declared rather than capabilities live in the kind's own
-// package (agents.UsageMeasurer, agents.NoHeadlessChat) or stay hand-kept lists (moveRefusals in
-// sessionx, oneShotKinds in chatx). What keeps them from drifting is that a newly registered
-// kind has to say so, and the tests below derive their rows from the registry.
+// package (agents.UsageMeasurer, agents.NoHeadlessChat, agents.MoveTarget), or are derived from a
+// per-kind table (oneShotKinds in chatx from its runners, mcpreg.MaterializedKinds from its
+// writers). What keeps them from drifting is that a newly registered kind has to say so, and the
+// tests below derive their rows from the registry.
 
 import (
 	"testing"

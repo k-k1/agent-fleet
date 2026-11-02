@@ -380,7 +380,7 @@ func TestDenyAllKindIsClaudeOnly(t *testing.T) {
 // one with a recorded limitation, never both and never neither: a new kind has to be classified
 // before it can be picked for a feature that reads a third party's text.
 func TestDenyAllLimitsCoverEveryOneShotKind(t *testing.T) {
-	for _, k := range oneShotKinds {
+	for _, k := range oneShotKinds() {
 		run, qualified := denyAllBackends[k]
 		why, limited := denyAllLimits[k]
 		switch {

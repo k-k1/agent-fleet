@@ -40,7 +40,7 @@ func TestBrowserUnavailableRunArg(t *testing.T) {
 }
 
 // Every kind that receives the af server gets the flag, whichever way its definition travels:
-// a config file (MaterializedKinds), the wire (muse), an in-process call (lcpp) or a codex
+// a config file (MaterializedKinds()), the wire (muse), an in-process call (lcpp) or a codex
 // thread config. The env is not a substitute — codex and muse forward only named variables.
 func TestBrowserUnavailableReachesEveryServedKind(t *testing.T) {
 	withTempCLIHomes(t)
@@ -84,7 +84,7 @@ func TestBrowserUnavailableReachesEveryServedKind(t *testing.T) {
 		session.KindAgy:      agyMCPConfigPath(),
 		session.KindCopilot:  copilotMCPConfigPath(),
 	}
-	for _, kind := range MaterializedKinds {
+	for _, kind := range MaterializedKinds() {
 		path, ok := paths[kind]
 		if !ok {
 			t.Fatalf("%s: no config path in this test; add it", kind)

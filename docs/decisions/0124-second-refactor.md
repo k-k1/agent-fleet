@@ -619,3 +619,18 @@ and no model. `kindLiteralCeiling` goes 90 → 86 (measured). Behaviour unchange
 a live fleet.
 
 Follow-ups: #2925.
+
+## Note (2026-11-02): `oneShotKinds` and `MaterializedKinds` derived (#2279)
+
+Two more hand-kept lists became derived answers; `usageMeasuredForKind` and `moveTargetKinds` already
+were. `chatx.oneShotKinds` is now a function over the kind table filtered by "the chat backend has a
+`oneShotRunner`", the same assertion `oneShotRunOn` makes, so selection and execution cannot disagree
+(lcpp has no runner and stays out). `mcpreg.MaterializedKinds` is now a function over `writerTable`, one
+ordered row per kind with a config writer, replacing the `writers` map plus the separate list. It
+stays in `mcpreg` and not on `agents.Agent` because the agent packages import `mcpreg`; the agentreg
+test `TestMCPWriterMatchesMCPClientForEveryRegisteredKind` holds it to `Caps().MCPClient` for every
+registered kind, with muse (wire) and lcpp (in process) named as the served-without-a-file kinds.
+`MaterializeAll` keeps its order. `oneShotKinds()` follows the kind table (opencode before codex), the
+old literal had codex first; the only reader of the order is the `OneShotSettingsKey` cache key, so the
+one visible effect is a one-time cache miss. Pinned per kind against the old literals. Left undone:
+the bracketed-paste chain and per-kind instruction apply.

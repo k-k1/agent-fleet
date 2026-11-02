@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/kinds"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -26,19 +27,23 @@ func TestEveryChatProviderIsRunnableOrExcluded(t *testing.T) {
 	}
 }
 
-// oneShotKinds is what selection trusts; a backend's oneShotRunner is what runs. They must name
-// the same kinds, or a selectable kind reaches oneShotRunOn's backstop (or a runner is
-// unreachable).
-func TestOneShotKindsMatchTheRunners(t *testing.T) {
-	var runners []string
+// The list is derived from the runners, so what can go wrong is a runner on a backend that is not
+// a registered kind (it would never be listed) or a listed kind that cannot run.
+func TestEveryOneShotRunnerIsAListedRegisteredKind(t *testing.T) {
+	listed := oneShotKinds()
 	for k, b := range chatBackends {
-		if _, ok := b.(oneShotRunner); ok {
-			runners = append(runners, k)
+		_, isRunner := b.(oneShotRunner)
+		if isRunner != slices.Contains(listed, k) {
+			t.Errorf("kind %q: has a one-shot runner=%v, in oneShotKinds()=%v", k, isRunner, !isRunner)
+		}
+		if isRunner && !kinds.Known(k) {
+			t.Errorf("one-shot runner on %q, which is not a registered kind", k)
 		}
 	}
-	slices.Sort(runners)
-	if want := slices.Sorted(slices.Values(oneShotKinds)); !slices.Equal(runners, want) {
-		t.Errorf("one-shot runners %v, oneShotKinds %v — they must match", runners, want)
+	for _, k := range listed {
+		if _, ok := backend(k).(oneShotRunner); !ok {
+			t.Errorf("oneShotKinds() lists %q, which has no runner", k)
+		}
 	}
 }
 
@@ -187,5 +192,25 @@ func TestRecommendedModelsMuseOneShotTiers(t *testing.T) {
 	got = RecommendedModelsWithHidden(session.KindMuse, []string{"muse-spark-1.3"}, nil)
 	if got.Short != "muse-spark-1.2" || got.Prose != "muse-spark-1.2" {
 		t.Errorf("with muse-spark-1.3 hidden: %+v, want muse-spark-1.2", got)
+	}
+}
+
+// Each registered kind is checked against the literal oneShotKinds held before it was derived:
+// the answer per kind must not move, and an alias or unregistered spelling stays refused.
+func TestOneShotRunnableMatchesTheOldLiteralForEveryKind(t *testing.T) {
+	old := []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy, session.KindMuse}
+	for _, k := range kinds.All() {
+		if got, want := oneShotRunnable(k), slices.Contains(old, k); got != want {
+			t.Errorf("oneShotRunnable(%q) = %v, old literal %v", k, got, want)
+		}
+	}
+	for _, k := range []string{"", "Claude", " claude", "claude-code", "antigravity", "cursor-agent", "Muse", "llamacpp"} {
+		if oneShotRunnable(k) {
+			t.Errorf("oneShotRunnable(%q) = true", k)
+		}
+	}
+	// Order is the kind table's, which only OneShotSettingsKey's text depends on.
+	if want := []string{"claude", "opencode", "codex", "cursor", "agy", "muse"}; !slices.Equal(oneShotKinds(), want) {
+		t.Errorf("oneShotKinds() = %v, want %v", oneShotKinds(), want)
 	}
 }

@@ -98,8 +98,9 @@ func TestEveryChatProviderIsResumableOrExcluded(t *testing.T) {
 // oneShotKinds as the pre-change literal, and its alias refusals.
 func TestOneShotKindsAreUnchanged(t *testing.T) {
 	want := []string{"claude", "codex", "opencode", "cursor", "agy", "muse"}
-	if !slices.Equal(oneShotKinds, want) {
-		t.Errorf("oneShotKinds = %v, want %v", oneShotKinds, want)
+	// The derived list follows the kind table, not the old literal's order: same members.
+	if got := oneShotKinds(); !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("oneShotKinds() = %v, want the members of %v", got, want)
 	}
 	for _, k := range want {
 		if !oneShotRunnable(k) {

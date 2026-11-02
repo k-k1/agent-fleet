@@ -56,16 +56,15 @@ source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近
 | transcript | `Agent.Transcript` の裏のリーダー | **CLI が読めて安定した native store を持つなら、それを読む。会話を自前ストアへ複製しない**。パーサは統合しない。そういうストアが無い種別は自分で持つ。[04 §4.3](04-agent.ja.md) の 2 つの例外がそれ |
 | サインイン | Agent の `/connections/<kind>/…` ハンドラ、**および** CP で 1 本ずつ名指しで中継するルート（`control-plane/relays_connections.go` の行。ログインフローは `routes.go` の `restLogin`）| CP へのコールバックが要る種別は無い（[08 §8.6](08-integrations.ja.md)）。サインインする相手が無い種別にはフローも無い |
 | 資格の置き場と fs denylist | 自パッケージと `fsDeny`（`fs.go`）| CLI が資格情報や状態を書く場所は**ファイルブラウザから隠す** |
-| MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerFor` の writer と `MaterializedKinds` への追加、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`Caps().MCPClient`。`knownKinds` は `ServedKinds` から、CP の `mcpKnownKinds` は kind カタログのスナップショット（§20.7）から導出される | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
+| MCP | `internal/mcpreg`: CLI が設定ファイルを読むなら `writerTable` への 1 行（`MaterializedKinds()` はここから導出）、別経路（ワイヤ上・プロセス内）で渡るなら `ServedKinds`。`Caps().MCPClient`。`knownKinds` は `ServedKinds` から、CP の `mcpKnownKinds` は kind カタログのスナップショット（§20.7）から導出される | CLI ごとに設定の形もプレースホルダ方言も違う。設定ファイル型で CLI を CI で動かせる種別は `mcp-config-contract.yml` にも足す |
 | エージェントへの指示 | `agent_instructions.go`: `instrSupportedKinds` と種別ごとの適用、または Agent の `agents.InstructionsUnsupported`（理由コードを返す 1 行のメソッド。`cursor/instructions.go`） | Console の配布先一覧は `instrSupportedKinds` とレジストリの `InstructionsUnsupported` の答えから作られる。ユーザー単位の置き場が無い CLI は、**黙って捨てず理由付きで載せる**。システムプロンプトを自分で組む種別は、各層をそこで読む。lcpp は `harness.SystemPrompt` でターンごとにそうしている。こうした種別も `instrSupportedKinds` に載せ、配信方式 `prompt`・パス無し・`Applied` は true とする（行のスイッチがハーネスの読む値そのものになる）。プレビューの case も足す |
 | Console の descriptor | `console/src/types/session.ts` の `SESSION_KINDS` と、`console/src/agents/registry.ts` の descriptor 1 個 | 操作要素は descriptor の `caps` で決まる。driver に関する事実（`managedDriver`、`terminalDriver`）はカタログから読み、読み込み前は `console/src/agents/kindCatalog.ts` の `FALLBACK_KIND_FACTS` が答える。ただし kind 名で分岐する画面がまだあるので grep する（下記）|
 | 版ピン | `workspace/Dockerfile` の ARG、そこで書き出す `versions.json`、`deploy/local/cli-drift-check.sh` の行 | [10 §10.2.1](10-development.ja.md)。ベンダーの CLI を動かさない種別にはピンが無い |
 | contract ワークフロー | `.github/workflows/` の下に専用ファイル（ワークスペースイメージが CLI やホストをピンする種別）| **エージェント毎に 1 ファイル**。リリース監視に登録する。lcpp はイメージで何もピンせず、代わりに手動の検査を持つ（§20.5）|
 
 この表は kind 名が現れる場所の完全な一覧ではありません。手で持っている一覧がまだあります。
-たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別、`usage_fold.go` の
-`usageMeasuredForKind`。移動先の答えは、種別自身の `agents.MoveTarget` 宣言（自パッケージの
-`move_target.go`、§20.7）です。
+たとえば `internal/sessionx/session_io.go` の bracketed paste を使う種別。使用量の精度・移動先・ワンショットの
+答えは、種別自身の宣言（`agents.UsageMeasurer`、`agents.MoveTarget`、`chatBackends` の `runOneShot`。§20.7）です。
 `workspace/agent`・`control-plane`・`console/src` を、自分と同じ driver を持つ既存種別の名前で grep し、
 当たりを 1 つずつ判断してください。
 
@@ -243,7 +242,8 @@ Agent のイメージを先に、または同時に配備し、その間は断�
 - [ ] 指示: `agents.Instructions` と `instrSupportedKinds`、または `agents.InstructionsUnsupported`、
       CLI を動かさない種別なら `noInstructionTargets`（`TestInstructionsClassifyEveryRegisteredKind`。
       `agent_instructions_kinds_test.go` の `legacyInstr` に行を足すのは新しい形を固定するときだけ）
-- [ ] MCP: `MaterializedKinds`（と writer）か `ServedKinds` を `Caps().MCPClient` に合わせる。
+- [ ] MCP: `writerTable`（`internal/mcpreg/materialize.go`。`MaterializedKinds()` はここから作る）か `ServedKinds` を `Caps().MCPClient` に合わせる
+      （`TestMCPWriterMatchesMCPClientForEveryRegisteredKind`）。
       CP はスナップショット経由で追従する
 - [ ] モデル一覧: `internal/agents/<kind>/capabilities.go` の `ListModels`（`agents.ModelLister`）。
       `GET /agents/{kind}/models` がこれを返す（`TestEveryAgentKindListsModels`）
@@ -255,7 +255,7 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       `TestEveryKindDeclaresItsUsageAccuracy`）、
       移動先（Agent の `agents.MoveTarget`。測定済みか未測定かを、自パッケージの `move_target.go` で宣言する。
       移動先になれない種別は `session_move_kinds_test.go` の `moveRefusals` に載せる。どちらでもない種別はテストが落ちる）、チャットプロバイダか Agent の `agents.NoHeadlessChat`
-      （`TestEveryRegisteredKindHasAChatProviderOrIsExcluded`。プロバイダがあれば `chatx` の `oneShotKinds` と `providerResumeHandles` がそれぞれのテストに従う）。
+      （`TestEveryRegisteredKindHasAChatProviderOrIsExcluded`。プロバイダがあれば `chatBackends` の項目に `runOneShot` メソッドを持たせるのがワンショットの宣言のすべて（`oneShotKinds()` はそこから作る）で、`providerResumeHandles` は自分のテストに従う）。
       `providerResumeKinds` は `providerResumeHandles` から作る（この表は各 kind のメッセージカーソル欄も持つ。
       `TestEveryMessageCursorFieldIsListed`）。`TestShippedMoveClassificationHolds` は
       出荷済みの分類をリテラルで固定する。新しい種別はここに行を足さなくてよい
