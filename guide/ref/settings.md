@@ -24,7 +24,7 @@ value you set is not the value in force, look one layer out.
 
 | Tab | Configures |
 |---|---|
-| Display | language, theme, density |
+| Display | language, region format, time zone, theme, density |
 | Keyboard | shortcuts and rebinding |
 | Agents | connecting each agent, its default model, models to exclude, per-agent behaviour; llama.cpp on / off and your own llama-server connection; Muse Code install and sign-in; the Session group (messages between sessions, starting sessions from sessions and children per session, past-session search, image generation) |
 | Agent instructions | text added to every agent you start in this workspace |

@@ -57,6 +57,10 @@ GitHub Copilot CLI / Antigravity CLI / Cursor CLI / Kiro / OpenCode / Muse Code�
   セッション状態バッジ（実行中 / 入力待ち）、画像添付できるメモキュー、
   通知センター、日英 UI、キーボード主体の操作（コマンドパレット /
   リーダーキー）、返信の読み上げ（VOICEVOX / ずんだもん、AWS Polly・任意）。
+- **作業項目**：Jira の課題、GitHub の Issue とプルリクエスト、Bitbucket の
+  プルリクエストをセッションの横に並べ、そこからセッションを始められます。
+  ブランチ・その PR・Jira キー・PR が閉じる Issue を通じてどのセッションが
+  紐づいているかが分かり、PR がマージ可能・マージ・クローズになると通知します。
 - **起動中アプリのライブプレビュー**：ワークスペース内で起動した Web アプリ
   （Vite HMR・WebSocket・Spring Boot 等）を埋め込みブラウザペインで表示します。
   ポートは軽量プレビューでも開けます。

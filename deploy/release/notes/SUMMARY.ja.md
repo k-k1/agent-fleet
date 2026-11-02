@@ -16,8 +16,8 @@
 
 **New / Improved**
 
-- **[作業項目]** セッションがブランチの PR（GitHub・Bitbucket）、ブランチ名や PR タイトルの Jira キー、PR がクローズする Issue にリンク。`link_work_item` ツール。リンクの引き継ぎ。項目の詳細にリンクしたセッションの一覧（停止中も）と削除。マージ済み・クローズの PR は完了表示 ([#3134](https://github.com/k-k1/agent-fleet/issues/3134), [#3147](https://github.com/k-k1/agent-fleet/issues/3147), [#3166](https://github.com/k-k1/agent-fleet/issues/3166))
-- **[通知]** セッションの GitHub の PR がマージ可能・マージ済み・クローズになると 1 回通知 ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
+- **[作業項目]** セッションがブランチの PR（GitHub・Bitbucket）、ブランチ名や PR タイトルの Jira キー、PR がクローズする Issue にリンク。`link_work_item` ツール。リンクの引き継ぎ。項目の詳細にリンクしたセッションの一覧（停止中も）と「外す」。マージ済み・クローズの PR は完了表示 ([#3134](https://github.com/k-k1/agent-fleet/issues/3134), [#3147](https://github.com/k-k1/agent-fleet/issues/3147), [#3166](https://github.com/k-k1/agent-fleet/issues/3166))
+- **[通知]** セッションの PR のマージ・クローズ、GitHub ではマージ可能になったことを 1 回通知 ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
 - **[プランレビュー]** ライブのプランカードに「最大 N 回まで自動で再レビュー」 ([#2810](https://github.com/k-k1/agent-fleet/issues/2810))
 - **[ホーム]** 「ひと目で」のタイル（マシン・稼働時間・エージェント・モデル使用量・使用量の上限） ([#2362](https://github.com/k-k1/agent-fleet/issues/2362))
 - **[設定]** 設定 › 表示に地域の形式とタイムゾーン。Console の日時・数値と Markdown のエクスポートが従う ([#2185](https://github.com/k-k1/agent-fleet/issues/2185))

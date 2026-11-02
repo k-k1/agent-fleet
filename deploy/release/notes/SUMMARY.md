@@ -18,7 +18,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 **New / Improved**
 
 - **[work items]** Sessions link to their branch's PR (GitHub, Bitbucket), Jira keys in the branch or PR title and issues the PR closes; `link_work_item` tool; links inherited; item details list linked sessions (also when stopped) with Remove; merged / closed PRs shown done ([#3134](https://github.com/k-k1/agent-fleet/issues/3134), [#3147](https://github.com/k-k1/agent-fleet/issues/3147), [#3166](https://github.com/k-k1/agent-fleet/issues/3166))
-- **[notifications]** A session's GitHub PR ready to merge, merged or closed is notified once ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
+- **[notifications]** A session's PR merged or closed, or on GitHub ready to merge, is notified once ([#3131](https://github.com/k-k1/agent-fleet/issues/3131))
 - **[plan review]** "Review automatically, up to N rounds" on the live plan card ([#2810](https://github.com/k-k1/agent-fleet/issues/2810))
 - **[home]** "At a glance" tiles: machine, running time, agents, model usage, usage limits ([#2362](https://github.com/k-k1/agent-fleet/issues/2362))
 - **[settings]** Region format and time zone in Settings › Display; Console dates and numbers and Markdown exports follow them ([#2185](https://github.com/k-k1/agent-fleet/issues/2185))
