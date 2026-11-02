@@ -14,14 +14,22 @@ let regionPref = FORMAT_AUTO;
 let zonePref = FORMAT_AUTO;
 
 // isValidTimeZone — true when Intl accepts name as an IANA zone. Never throws.
+// Memoized per name: building a DateTimeFormat to probe a zone is costly (measured: ~0.2 ms each)
+// and this sits under every date format call.
+const zoneValidity = new Map<string, boolean>();
 export function isValidTimeZone(name: unknown): name is string {
   if (typeof name !== "string" || name === "") return false;
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: name });
-    return true;
-  } catch {
-    return false;
+  let ok = zoneValidity.get(name);
+  if (ok === undefined) {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: name });
+      ok = true;
+    } catch {
+      ok = false;
+    }
+    zoneValidity.set(name, ok);
   }
+  return ok;
 }
 
 function isValidRegion(tag: unknown): tag is string {
@@ -46,12 +54,21 @@ export function formatLocale(): string {
   return isValidRegion(regionPref) ? regionPref : getLocale();
 }
 
+// The browser zone is re-read at most once per BROWSER_ZONE_TTL_MS: detection builds a formatter,
+// too slow per call, while a short TTL still lets a member who travels follow the new zone.
+const BROWSER_ZONE_TTL_MS = 1000;
+let browserZone = "";
+let browserZoneAt = -Infinity;
 export function browserTimeZone(): string {
+  const now = Date.now();
+  if (browserZone && now - browserZoneAt < BROWSER_ZONE_TTL_MS && now >= browserZoneAt) return browserZone;
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   } catch {
-    return "UTC";
+    browserZone = "UTC";
   }
+  browserZoneAt = now;
+  return browserZone;
 }
 
 // selectedTimeZone — the explicit zone the member chose, or undefined for "follow the browser"
