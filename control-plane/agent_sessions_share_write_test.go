@@ -12,9 +12,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// TestInboxLaunchInvalidatesSharedSessions: the inbox launch is registered through withMembership,
-// which used to skip the invalidation, so the next list read served the list from before the
-// launch (#3256).
+// TestInboxLaunchInvalidatesSharedSessions: the inbox launch is registered through withMembership;
+// its completed write must invalidate the shared read, so the next list read sees the new session.
 func TestInboxLaunchInvalidatesSharedSessions(t *testing.T) {
 	e := newInboxEnv(t)
 	var reads atomic.Int64
@@ -111,6 +110,38 @@ func TestRefusedWritesKeepSharedSessions(t *testing.T) {
 		read()
 		if n.Load() != 2 {
 			t.Errorf("POST %s did not invalidate (reads=%d)", path, n.Load())
+		}
+	}
+}
+
+// Public POSTs that authGate lets through anonymously must not flush the cache whatever status they
+// answer (302 legacy redirect, 400/200 MCP-OAuth, 503 git without a base URL).
+func TestPublicWritesKeepSharedSessions(t *testing.T) {
+	srv, n := countingAgent(t, func(int64) (int, string) { return 200, sharedOneSession })
+	cfg, mux := smokeEnvWith(t, allRouteSwitches(t)...)
+	rt := stubRuntime{endpoint: srv.URL, token: "tok"}
+	read := func() { _, _, _ = cfg.mgr.agentSessionsShared(context.Background(), rt) }
+	mux.HandleFunc("POST /oauth2/test-ok", func(w http.ResponseWriter, r *http.Request) {})
+	listeners := map[string]http.Handler{
+		"main":      cfg.mgr.invalidatesSessionsOnWrite(mux),
+		"workspace": workspaceListenerHandler(mux, cfg.mgr),
+	}
+	for name, h := range listeners {
+		for _, path := range []string{"/agent-fleet/", "/mcp-oauth/token", "/mcp-oauth/revoke",
+			"/git/t/r.git/git-upload-pack", "/oauth2/test-ok", "/login/x"} {
+			cfg.mgr.sessionsShare.invalidate()
+			n.Store(0)
+			read()
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", path, nil))
+			read()
+			if n.Load() != 1 {
+				t.Errorf("%s: public POST %s dropped the shared read (reads=%d)", name, path, n.Load())
+			}
+		}
+	}
+	for _, p := range []string{"/mcp", "/internal/memos", "/api/sessions"} {
+		if !writeMayChangeSessions(p) {
+			t.Errorf("writeMayChangeSessions(%q) = false, want true", p)
 		}
 	}
 }
