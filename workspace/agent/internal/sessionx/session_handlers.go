@@ -1090,7 +1090,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := startSessionTmux(meta, false); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		writeTmuxLaunchErr(w, err)
 		return
 	}
 	session.WriteMeta(meta)
@@ -1582,7 +1582,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		// Un-archive the old session so a launch failure doesn't silently drop it from
 		// the active list.
 		unarchiveAfterFailedRecreate(m.Name)
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		writeTmuxLaunchErr(w, err)
 		return
 	}
 	session.WriteMeta(newMeta)

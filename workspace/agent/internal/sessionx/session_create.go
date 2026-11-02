@@ -694,7 +694,7 @@ func (c *createRun) launch(meta session.Meta) {
 	}
 	if err := launchTmuxFn(meta, req.SSMForceLogin); err != nil {
 		unbindStudioAfterFailedLaunch(c.studio, name)
-		httpx.WriteErr(c.w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		writeTmuxLaunchErr(c.w, err)
 		return
 	}
 	if !c.publish(meta) {

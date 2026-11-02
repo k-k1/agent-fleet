@@ -123,6 +123,7 @@ type Deps struct {
 	// transient failure) because both the Console's wording and isTransientErr turn on
 	// "does waiting fix it" (runtime_err.go).
 	ErrCodeAgentNotConnected      string
+	ErrCodeAgentUnsupportedVer    string
 	ErrCodeChatConversationNotFnd string
 	ErrCodeForkAtUnsupported      string
 	ErrCodeForkBadAnchor          string
@@ -168,6 +169,7 @@ func Configure(d Deps) {
 	}
 	deps = d
 	errCodeAgentNotConnected = d.ErrCodeAgentNotConnected
+	errCodeAgentUnsupportedVer = d.ErrCodeAgentUnsupportedVer
 	errCodeChatConversationNotFnd = d.ErrCodeChatConversationNotFnd
 	errCodeForkAtUnsupported = d.ErrCodeForkAtUnsupported
 	errCodeForkBadAnchor = d.ErrCodeForkBadAnchor
@@ -184,7 +186,7 @@ func Configure(d Deps) {
 // Wired returns the current wiring. It is a read port for a caller checking end to end that
 // the wiring is live; sessionx itself does not use it.
 //
-// Configure catches only what is unwired, never what is wired wrong. The 12 error codes are
+// Configure catches only what is unwired, never what is wired wrong. The 13 error codes are
 // all the same `string` type, so swapping two of them trips neither the type checker nor the
 // reflect completeness check. main's session_wiring_test.go stops that by matching them
 // against the real constants.
@@ -193,6 +195,7 @@ func Wired() Deps { return deps }
 // Taken by value. Configure writes them once; everything after that only reads.
 var (
 	errCodeAgentNotConnected      string
+	errCodeAgentUnsupportedVer    string
 	errCodeChatConversationNotFnd string
 	errCodeForkAtUnsupported      string
 	errCodeForkBadAnchor          string

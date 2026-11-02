@@ -6,7 +6,9 @@ package sessionx
 // the old write-back of the snapshot could undo it.
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -216,5 +219,38 @@ func TestHaltKeepsALockSetDuringTheKill(t *testing.T) {
 	stampHalted(snapshot)
 	if m := assertLocked(t, name); m.StoppedAt == "" || m.StopAfterTurnAt != "" {
 		t.Fatalf("meta = %+v, want StoppedAt written and the arm consumed", m)
+	}
+}
+
+// POST /start of a session whose launch hits the refused opencode version answers the permanent
+// 409 code; any other failure keeps the generic start_failed.
+func TestStartSessionUnsupportedOpencodeVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"unsupported", fmt.Errorf("launch: %w", &opencode.UnsupportedVersionError{Version: "1.14.0"}), http.StatusConflict, "agent_unsupported_version"},
+		{"other", errors.New("probe: boom"), http.StatusInternalServerError, "start_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := writebackEnv(t)
+			prevCode := errCodeAgentUnsupportedVer
+			errCodeAgentUnsupportedVer = "agent_unsupported_version"
+			t.Cleanup(func() { errCodeAgentUnsupportedVer = prevCode })
+			const name = "unsupp1"
+			session.WriteMeta(session.Meta{Name: name, Dir: home, Kind: session.KindCodex, Driver: session.DriverManaged,
+				StoppedAt: "2026-09-25T10:00:00+09:00"})
+			useLockingDriver(t, session.KindCodex, &lockingDriver{resumeErr: tc.err})
+			rec := callHandler(HandleStartSession, http.MethodPost, name, "")
+			var body struct {
+				Error struct{ Code string } `json:"error"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if rec.Code != tc.status || body.Error.Code != tc.code {
+				t.Errorf("status/code = %d/%q, want %d/%q (%s)", rec.Code, body.Error.Code, tc.status, tc.code, rec.Body.String())
+			}
+		})
 	}
 }

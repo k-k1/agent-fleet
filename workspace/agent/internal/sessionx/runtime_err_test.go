@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -89,5 +90,33 @@ func TestWriteRuntimeErrAppendsStderrTail(t *testing.T) {
 	want := err.Error() + "\n\n--- stderr (tail) ---\nError: You are not logged in"
 	if rec.Code != http.StatusBadGateway || body.Error.Code != "runtime_failed" || body.Error.Message != want {
 		t.Fatalf("got %d %q %q, want 502 runtime_failed %q", rec.Code, body.Error.Code, body.Error.Message, want)
+	}
+}
+
+// An opencode 1.x refusal is permanent and its wording comes from the Console's catalogue (the
+// Agent does not know the member's language): 409 + a dedicated code, never runtime_failed, and
+// still wrapped-error safe.
+func TestWriteRuntimeErrUnsupportedOpencodeVersion(t *testing.T) {
+	for _, err := range []error{
+		&opencode.UnsupportedVersionError{Version: "1.14.0"},
+		fmt.Errorf("start: %w", &opencode.UnsupportedVersionError{Version: "1.14.0"}),
+	} {
+		rec := httptest.NewRecorder()
+		writeRuntimeErr(rec, err)
+		var body struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if e := json.Unmarshal(rec.Body.Bytes(), &body); e != nil {
+			t.Fatalf("body is not the error envelope: %s", rec.Body.String())
+		}
+		if rec.Code != http.StatusConflict || body.Error.Code != errCodeAgentUnsupportedVer {
+			t.Errorf("status/code = %d/%q, want %d/%q", rec.Code, body.Error.Code, http.StatusConflict, errCodeAgentUnsupportedVer)
+		}
+		if !strings.Contains(body.Error.Message, "1.14.0") {
+			t.Errorf("message lost the version: %q", body.Error.Message)
+		}
 	}
 }

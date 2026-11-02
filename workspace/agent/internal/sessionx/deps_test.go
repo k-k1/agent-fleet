@@ -199,6 +199,7 @@ func testDeps() Deps {
 		// in a response body goes green merely because something is there. That these match the
 		// real ones is guarded by session_wiring_test.go in main, against errcodes.go.
 		ErrCodeAgentNotConnected:      "agent_not_connected",
+		ErrCodeAgentUnsupportedVer:    "agent_unsupported_version",
 		ErrCodeChatConversationNotFnd: "chat_conversation_not_found",
 		ErrCodeForkAtUnsupported:      "fork_at_unsupported",
 		ErrCodeForkBadAnchor:          "fork_bad_anchor",

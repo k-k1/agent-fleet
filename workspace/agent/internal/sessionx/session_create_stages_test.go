@@ -724,3 +724,33 @@ func (d modelProbeDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	*d.got = m.Model
 	return nil, errors.New("probe")
 }
+
+// A Terminal (CLI) create whose launch hits the refused opencode version answers the permanent
+// 409 code, as the Managed path does; any other launch failure stays 500 tmux_failed.
+func TestCreateTerminalUnsupportedOpencodeVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"unsupported", fmt.Errorf("build launch: %w", &opencode.UnsupportedVersionError{Version: "1.14.0"}), http.StatusConflict, "agent_unsupported_version"},
+		{"other", errors.New("probe: tmux died"), http.StatusInternalServerError, "tmux_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newCreateProbe(t)
+			prevCode := errCodeAgentUnsupportedVer
+			errCodeAgentUnsupportedVer = "agent_unsupported_version"
+			t.Cleanup(func() { errCodeAgentUnsupportedVer = prevCode })
+			launchTmuxFn = func(session.Meta, bool) error { return tc.err }
+			rec := p.post(map[string]any{"kind": "claude", "dir": p.repo}, "")
+			var body struct {
+				Error struct{ Code string } `json:"error"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if rec.Code != tc.status || body.Error.Code != tc.code {
+				t.Errorf("status/code = %d/%q, want %d/%q (%s)", rec.Code, body.Error.Code, tc.status, tc.code, rec.Body.String())
+			}
+		})
+	}
+}

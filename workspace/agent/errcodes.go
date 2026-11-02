@@ -184,4 +184,10 @@ const (
 	// Used by internal/sessionx/runtime_err.go; the value is passed in by session_wiring.go
 	// through sessionx.Deps — do not redefine it inside sessionx (see the note in deps.go).
 	errCodeAgentNotConnected = "agent_not_connected"
+
+	// The agent CLI found on PATH is a version af refuses (opencode 1.x). Permanent, so 409 and
+	// not runtime_failed; the Console renders it from its catalogue because the Agent does not
+	// know the member's language. Used by internal/sessionx/runtime_err.go, wired through
+	// sessionx.Deps like errCodeAgentNotConnected.
+	errCodeAgentUnsupportedVersion = "agent_unsupported_version"
 )

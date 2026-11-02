@@ -270,6 +270,9 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		if writeStartRefusal(w, err) {
 			return
 		}
+		if writeUnsupportedVersion(w, err) {
+			return
+		}
 		if !writeCodexReleasingErr(w, err) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		}
