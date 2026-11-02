@@ -34,21 +34,33 @@ const jiraBoardScope = "read:board-scope:jira-software"
 // scopes were never recorded are unknown, never "missing": the warning must not appear for
 // them.
 func SoftwareScopes(c *secrets.JiraCreds) string {
-	if c == nil || c.AuthKind != "oauth" {
+	sc := siteScopes(c)
+	if len(sc) == 0 {
 		return ""
 	}
-	for _, st := range c.Sites {
-		if st.CloudID != c.CloudID || len(st.Scopes) == 0 {
-			continue
+	for _, s := range sc {
+		if s == jiraBoardScope {
+			return "granted"
 		}
-		for _, sc := range st.Scopes {
-			if sc == jiraBoardScope {
-				return "granted"
-			}
-		}
-		return "missing"
 	}
-	return ""
+	return "missing"
+}
+
+// siteScopes is every scope recorded for the current site, across ALL of its rows. Atlassian's
+// accessible-resources lists a site once per product and the id is not unique across those
+// rows, so one product's row holding no scope of another says nothing: the answer is the union.
+// Empty means unknown (an API token, no site, or no row with recorded scopes).
+func siteScopes(c *secrets.JiraCreds) []string {
+	if c == nil || c.AuthKind != "oauth" {
+		return nil
+	}
+	var out []string
+	for _, st := range c.Sites {
+		if st.CloudID == c.CloudID {
+			out = append(out, st.Scopes...)
+		}
+	}
+	return out
 }
 
 // jiraAuthHeader is Basic on the API-token path and Bearer on the OAuth one.
@@ -177,7 +189,7 @@ func Request(c *secrets.JiraCreds, method, u string, payload []byte) ([]byte, in
 func jiraScopesRecorded(c *secrets.JiraCreds) bool {
 	for _, st := range c.Sites {
 		if st.CloudID == c.CloudID {
-			return len(st.Scopes) > 0
+			return len(siteScopes(c)) > 0
 		}
 	}
 	return true // no such site entry: nothing to fill in
@@ -248,7 +260,7 @@ func jiraBackfillScopes(c *secrets.JiraCreds) {
 	scopes := map[string][]string{}
 	for _, st := range r.sites {
 		if len(st.Scopes) > 0 {
-			scopes[st.CloudID] = st.Scopes
+			scopes[st.CloudID] = append(scopes[st.CloudID], st.Scopes...)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

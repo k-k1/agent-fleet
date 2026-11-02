@@ -100,6 +100,19 @@ if [ -z "$tok" ] || [ -z "$domain" ] || [ -z "$apipath" ] || [ -z "$auth" ]; the
   exec "$real" "$@"
 fi
 
+# `confluence api --jq EXPR` spawns jq, which would inherit the token with the rest of the CLI's
+# environment. Refuse it on an injected run (before anything is exported) and point at a pipe,
+# which gives jq the response body and nothing else. A run on the user's own setup never gets here.
+if [ "$sub" = api ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      --jq | --jq=*)
+        echo "confluence: --jq is not available with the saved Atlassian connection (jq would inherit the token). Pipe instead: confluence api ... | jq '<expr>'" >&2
+        exit 2 ;;
+    esac
+  done
+fi
+
 export CONFLUENCE_DOMAIN="$domain" CONFLUENCE_API_PATH="$apipath" CONFLUENCE_AUTH_TYPE="$auth" \
   CONFLUENCE_PROTOCOL=https CONFLUENCE_FORCE_CLOUD=true CONFLUENCE_CLI_ANALYTICS=false
 unset CONFLUENCE_ALLOW_INSECURE_HTTP CONFLUENCE_SITE_URL CONFLUENCE_EMAIL

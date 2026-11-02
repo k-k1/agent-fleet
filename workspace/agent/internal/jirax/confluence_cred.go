@@ -27,21 +27,16 @@ const confluenceAPIPath = "/wiki/rest/api"
 // scopes were never recorded are unknown, never "missing", so a connection stored before the
 // scopes were recorded is not refused on a guess.
 func ConfluenceScopes(c *secrets.JiraCreds) string {
-	if c == nil || c.AuthKind != "oauth" {
+	sc := siteScopes(c)
+	if len(sc) == 0 {
 		return ""
 	}
-	for _, st := range c.Sites {
-		if st.CloudID != c.CloudID || len(st.Scopes) == 0 {
-			continue
+	for _, s := range sc {
+		if strings.Contains(s, "confluence") {
+			return "granted"
 		}
-		for _, sc := range st.Scopes {
-			if strings.Contains(sc, "confluence") {
-				return "granted"
-			}
-		}
-		return "missing"
 	}
-	return ""
+	return "missing"
 }
 
 // RunConfluenceCred is `workspace-agent confluence-cred`: no arguments, no stdin.

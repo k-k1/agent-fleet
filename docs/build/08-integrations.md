@@ -416,7 +416,7 @@ them in for one `exec`:
   A connection made without them gets, from `confluence-cred`, an `unusable=` reason (the site's
   recorded scopes contain nothing with `confluence`), and the wrapper prints one line telling the
   member to reconnect Jira instead of running into a bare 401. Unknown scopes (an older store,
-  a failed lookup) are never a refusal. Settings shows the same verdict
+  a failed lookup) are never a refusal. The verdict is the union over every accessible-resources row with the site's id (Jira and Confluence rows share it). Settings shows the same verdict
   (`confluenceScopes: "missing"` in the connection status).
 - **The user's own setup wins, decided by what is there, never by reading a config**: any
   `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a

@@ -230,6 +230,23 @@ grep -q '^-k 5 30 workspace-agent confluence-cred' "$T/timeout.args" 2>/dev/null
 expect bounded API_TOKEN fake-oauth-tok
 rm -f "$T/bin/timeout"
 
+# 14. `api --jq` would hand the token to the jq child: refused on an injected run (CLI not started),
+#     with a positive control that the same call without --jq, and --jq on the user's own setup, run.
+reset; oauth_answer
+run -- api content --jq .
+[ "$rc" = 2 ] || fail "jq: exit status $rc, want 2"
+[ ! -f "$T/cf.seen" ] || fail "jq: the CLI was run with the token in reach of a child"
+grep -q "Pipe instead" "$T/err" || fail "jq: no pointer to a pipe"
+run -- api content --jq=.
+[ ! -f "$T/cf.seen" ] || fail "jq=: the CLI was run"
+run -- api content
+[ -f "$T/cf.seen" ] || fail "jq control: api without --jq did not run"
+expect jq-control API_TOKEN fake-oauth-tok
+run CONFLUENCE_API_TOKEN=mine -- api content --jq .
+[ -f "$T/cf.seen" ] || fail "jq own setup: the CLI did not run"
+run -- read 1 --jq .
+[ -f "$T/cf.seen" ] || fail "jq on another subcommand: the CLI did not run"
+
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2
   exit 1

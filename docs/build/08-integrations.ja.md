@@ -386,7 +386,7 @@ Jira は git でなく作業項目インボックス
   チェックを入れたとき（`scope_groups: ["confluence"]`）だけ求める。何もしないテナントは、これまでどおり
   Jira のスコープだけで接続できる。スコープなしで作った接続には、`confluence-cred` が `unusable=` の理由
   （記録済みのスコープに `confluence` を含むものがない）を返し、ラッパーは素の 401 に当たらせる代わりに
-  Jira を接続し直すよう 1 行で伝える。スコープが不明（古いストア、取得失敗）の場合は拒否しない。
+  Jira を接続し直すよう 1 行で伝える。スコープが不明（古いストア、取得失敗）の場合は拒否しない。判定は、サイトの id を持つ accessible-resources の全行（Jira と Confluence の行は同じ id）のスコープの和集合で行う。
   設定画面も同じ判定を出す（接続状態の `confluenceScopes: "missing"`）。
 - **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
   `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ

@@ -143,3 +143,59 @@ func TestConfluenceAndJiraCredShareOneRefreshExchange(t *testing.T) {
 		t.Fatalf("jira %q, confluence %q: both must carry the renewed token", jiraOut, confOut)
 	}
 }
+
+// accessible-resources lists a site once per product under the same id: Jira's row holding no
+// Confluence scope says nothing about Confluence's. The verdict is the union, in either order,
+// for both the Confluence and the Jira Software check.
+func TestScopeVerdictsUnionRowsOfTheSameSite(t *testing.T) {
+	jiraRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:jira-work"}}
+	confRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:confluence-content.all"}}
+	boardRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{jiraBoardScope}}
+	mk := func(rows ...secrets.JiraSite) *secrets.JiraCreds {
+		return &secrets.JiraCreds{AuthKind: "oauth", CloudID: "c1", Sites: rows}
+	}
+	for name, c := range map[string]*secrets.JiraCreds{"jira first": mk(jiraRow, confRow), "confluence first": mk(confRow, jiraRow)} {
+		if got := ConfluenceScopes(c); got != "granted" {
+			t.Errorf("%s: ConfluenceScopes = %q, want granted", name, got)
+		}
+	}
+	for name, c := range map[string]*secrets.JiraCreds{"jira first": mk(jiraRow, boardRow), "board first": mk(boardRow, jiraRow)} {
+		if got := SoftwareScopes(c); got != "granted" {
+			t.Errorf("%s: SoftwareScopes = %q, want granted", name, got)
+		}
+	}
+	if got := ConfluenceScopes(mk(jiraRow, jiraRow)); got != "missing" {
+		t.Errorf("no Confluence in any row: %q, want missing", got)
+	}
+	if got := ConfluenceScopes(mk(secrets.JiraSite{CloudID: "c1"}, jiraRow)); got != "missing" {
+		t.Errorf("an unrecorded row beside a recorded one: %q, want missing", got)
+	}
+	if got := ConfluenceScopes(mk(secrets.JiraSite{CloudID: "c1"})); got != "" {
+		t.Errorf("nothing recorded: %q, want unknown", got)
+	}
+}
+
+func TestConfluenceCredServesWhenAnotherRowOfTheSiteHoldsTheScope(t *testing.T) {
+	seedJiraStore(t, func(s *secrets.Data) {
+		s.Jira = &secrets.JiraCreds{AuthKind: "oauth", Site: "https://a.atlassian.net", CloudID: "c1",
+			AccessToken: "fake-at", Expiry: time.Now().Add(time.Hour).Unix(),
+			Sites: []secrets.JiraSite{
+				{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:confluence-content.all"}},
+				{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:jira-work"}}}}
+	})
+	got, why := confluenceCredBoth()
+	if !strings.HasSuffix(got, "token=fake-at\n") || why != "" {
+		t.Fatalf("answered %q (stderr %q)", got, why)
+	}
+}
+
+// The lookup keeps every row's scopes for an id instead of the last one winning.
+func TestBackfillKeepsTheUnionOfRowsWithOneID(t *testing.T) {
+	stubAccessibleResources(t, `[{"id":"cid-1","url":"https://acme.atlassian.net","scopes":["read:confluence-content.all"]},`+
+		`{"id":"cid-1","url":"https://acme.atlassian.net","scopes":["read:jira-work"]}]`, 200)
+	seedLegacyOAuth(t)
+	got, why := confluenceCredBoth()
+	if !strings.HasSuffix(got, "token=fake-at\n") || why != "" {
+		t.Fatalf("answered %q (stderr %q): the second row's scopes were lost", got, why)
+	}
+}
