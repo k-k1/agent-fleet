@@ -22,6 +22,8 @@ import (
 // (MetadataStore) is the source of truth; `rts` is an in-memory cache of built
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
+	// sessionsShare coalesces the per-tick Agent sessions read of /api/events subscribers.
+	sessionsShare sessionsShare
 	// memberConns has its own lock: in-flight requests per membership, closed on removal.
 	memberConns memberConnRegistry
 	// removalStops: workspace ids with a removed-member sweep stop in flight.

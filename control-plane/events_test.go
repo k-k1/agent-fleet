@@ -101,6 +101,9 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	t.Cleanup(func() { waitWorkItemFetchIdle(t, m.ID) })
 
 	mgr := &manager{store: st}
+	// These tests tick every 5 ms and count Agent polls (waitPolls); the production reuse window
+	// would swallow all but the first. Sharing across subscribers is covered in agent_sessions_share_test.go.
+	mgr.sessionsShare.ttl = time.Nanosecond
 	a := eventsAPI{memberAuth{mgr}, newWorkspaceAPI(mgr, false), notificationAPI{memberAuth: memberAuth{mgr}, store: st},
 		workItemsAPI{memberAuth{mgr}, st},
 		5 * time.Millisecond, time.Hour, /* ping effectively off; only the ping test overrides it */

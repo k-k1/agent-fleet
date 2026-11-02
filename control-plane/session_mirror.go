@@ -48,7 +48,9 @@ func (m *manager) mirrorSessions(ctx context.Context, wsID string, readStart tim
 	e := m.sessionMirror.entry(wsID)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if readStart.Before(e.applied) {
+	// Not After: subscribers sharing one read (agentSessionsShared) arrive with the same readStart,
+	// and rewriting the identical list per subscriber is a DB write each for nothing.
+	if !readStart.After(e.applied) {
 		return nil
 	}
 	if err := m.store.ReplaceSessions(ctx, wsID, sessionRows(list)); err != nil {

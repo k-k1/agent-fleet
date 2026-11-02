@@ -79,6 +79,11 @@ func (a memberAuth) withResolved(h func(http.ResponseWriter, *http.Request, *res
 		// terminal or event stream opened before the removal (member_removal.go).
 		ctx, untrack := a.mgr.memberConns.track(r.Context(), res.mv.MembershipID)
 		defer untrack()
+		// A write through this CP may change the session list; the shared read must not hide it
+		// (agent_sessions_share.go). Invalidate after, so a read begun during the write is dropped too.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			defer a.mgr.sessionsShare.invalidate()
+		}
 		h(w, r.WithContext(ctx), res)
 	}
 }
