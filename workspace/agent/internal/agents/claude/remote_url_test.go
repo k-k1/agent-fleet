@@ -105,3 +105,42 @@ func TestRemoteSessionURLMemoIsBoundedAndConcurrencySafe(t *testing.T) {
 		t.Fatalf("memo grew to %d, cap %d", len(m.m), remoteURLMemoMax)
 	}
 }
+
+func TestRemoteSessionURLFailedReadIsNotRemembered(t *testing.T) {
+	const sid = "11111111-2222-4333-8444-555555555555"
+	remoteFixture(t, sid, bridgeLine)
+	prev := openTranscript
+	t.Cleanup(func() { openTranscript = prev })
+	openTranscript = func(p string) (*os.File, error) {
+		f, err := os.Open(p)
+		if err == nil {
+			f.Close() // Read on a closed file fails, like a transient EIO
+		}
+		return f, err
+	}
+	if got := RemoteSessionURL(sid); got != "" {
+		t.Fatalf("url = %q from a failed read", got)
+	}
+	openTranscript = prev
+	if got := RemoteSessionURL(sid); got == "" {
+		t.Fatal("a failed Read was cached as a miss for the unchanged file")
+	}
+}
+
+func TestRemoteSessionURLFollowsLiveSIDDrift(t *testing.T) {
+	const slot = "11111111-2222-4333-8444-555555555556"
+	const live = "11111111-2222-4333-8444-555555555557"
+	remoteFixture(t, slot, bridgeLine)
+	if got := RemoteSessionURL(slot); got != "https://claude.ai/code/session_abc" {
+		t.Fatalf("url = %q", got)
+	}
+	dir := filepath.Join(ConfigDir(), "projects", "p")
+	other := `{"type":"bridge-session","bridgeSessionId":"cse_new"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, live+".jsonl"), []byte(other), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sids.Write(slot, live)
+	if got := RemoteSessionURL(slot); got != "https://claude.ai/code/session_new" {
+		t.Fatalf("url = %q after drift, want the new conversation's", got)
+	}
+}

@@ -3,6 +3,7 @@ package claude
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -62,7 +63,9 @@ func (r *remoteURLMemo) put(key string, e remoteURLEntry) {
 //     nanosecond granularity on the mounts we use, so that is accepted.
 //   - A read that failed (open error) is never remembered as a miss.
 func RemoteSessionURL(sid string) string {
-	key := ConfigDir() + "\x00" + sid
+	// Keyed by the live id, not the slot: after a self-restart (/tui, sign-in, model switch)
+	// the ledger points the slot at a new conversation whose URL differs.
+	key := ConfigDir() + "\x00" + LiveSID(sid)
 	if e, ok := remoteURLs.get(key); ok && e.url != "" {
 		return e.url
 	}
@@ -100,8 +103,11 @@ func scanBridgeURL(paths []string) (url string, readOK bool) {
 			continue
 		}
 		buf := make([]byte, 64*1024)
-		n, _ := f.Read(buf)
+		n, rerr := f.Read(buf)
 		f.Close()
+		if rerr != nil && rerr != io.EOF {
+			readOK = false // a transient EIO/ESTALE must not pin an empty answer
+		}
 		for _, line := range strings.Split(string(buf[:n]), "\n") {
 			if !strings.Contains(line, `"type":"bridge-session"`) {
 				continue
