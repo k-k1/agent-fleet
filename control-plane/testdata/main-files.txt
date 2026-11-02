@@ -7,6 +7,7 @@ admin_stats.go
 agent_client.go
 agent_dial.go
 agent_liveness.go
+agent_silent_stop.go
 audit.go
 aws_profiles_bridge.go
 brand.go

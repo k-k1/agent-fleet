@@ -27,7 +27,7 @@ describe("notifyRowOf", () => {
   // makes the choice explicit.
   it("places every known kind on purpose", () => {
     const other = Object.keys(NOTIFICATION_KIND_LABELS).filter((k) => notifyRowOf(k, false) === "other").sort();
-    expect(other).toEqual(["arch-residue", "chat-auto-paused", "chat-context-overflow", "chat-context-pressure", "member-agent-silent", "member-boot-install", "member-home-full", "memory-review", "memory-sync", "start-deadline", "stop-after-turn", "submodule-sync"]);
+    expect(other).toEqual(["agent-silent-stop", "arch-residue", "chat-auto-paused", "chat-context-overflow", "chat-context-pressure", "member-agent-silent", "member-boot-install", "member-home-full", "memory-review", "memory-sync", "start-deadline", "stop-after-turn", "submodule-sync"]);
   });
 });
 

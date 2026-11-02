@@ -542,3 +542,13 @@ notification (once per outage, through the `workspace_notice` mark) and an audit
 per replica, so a restart starts a fresh grace period. It never stops anything by itself. The workspace
 container definitions carry no ECS health check, so ECS has nothing to turn unhealthy for an unresponsive
 Agent. Not yet seen on a real runtime. Follow-ups: #3212.
+
+## Note (2026-11-02, automatic stop)
+
+The dead-man check can now also act, optionally (#3212 item 1, `control-plane/agent_silent_stop.go`).
+`AF_AGENT_SILENT_STOP_AFTER` (off by default; minimum 10 minutes) stops a workspace whose Agent has stayed
+flagged silent that long, under the administrator stop's rules: start lock, lifecycle lease and runtime
+operation fence, then the decision is taken again (still `running`, a fresh `/healthz` still fails). It writes
+an audit row (`workspace.agent_silent_stop`), notifies the member and marks the member in the roster. Against a
+CP that is itself cut off, a sweep stops nothing unless it completed and another running workspace answered, and
+stops at most two. Still open: the ECS container health check (item 2) and a run on a real runtime (item 3).

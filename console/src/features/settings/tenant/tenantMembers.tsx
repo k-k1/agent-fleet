@@ -22,7 +22,7 @@ import { DATETIME_LOCALE_DEFAULT, TIME_LOCALE_DEFAULT, fmtDateTime, relTime } fr
 import { elapsedShort, remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberAutoStop, MemberIdle, WsSizing } from "../parts/adminShared.ts";
-import { startDeadlineBody } from "../../notifications/wording.ts";
+import { agentSilentStopBody, startDeadlineBody } from "../../notifications/wording.ts";
 import {
   attentionReasons,
   diskLevel,
@@ -633,11 +633,13 @@ function MemberAutoStopChip({ autoStop }: { autoStop?: MemberAutoStop }) {
 // An unknown kind is shown raw rather than hidden: a newer CP may write one.
 function autoStopTitle(a: MemberAutoStop, tr: ReturnType<typeof useT>): string {
   if (a.kind === "start-deadline") return tr("noti.kind_start_deadline");
+  if (a.kind === "agent-silent") return tr("noti.kind_agent_silent_stop");
   if (a.kind === "home-wipe-failed") return tr("admin.auto_stop_home_wipe");
   return a.kind;
 }
 
 function autoStopReason(a: MemberAutoStop): string {
+  if (a.kind === "agent-silent") return agentSilentStopBody(a.limit_minutes);
   return a.kind === "start-deadline" ? startDeadlineBody(a.limit_minutes, a.phase) : a.phase;
 }
 
