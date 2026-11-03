@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // scriptedClient is a harness.Client double that answers Send with a fixed sequence of
@@ -190,6 +192,46 @@ func TestDriverSendPersistsTurnAndCompletes(t *testing.T) {
 	// route agent.go's WireLive and sessionx's DriveState both read.
 	if st, ok := status.Read(sidFor(m)); !ok || st.State != "idle" {
 		t.Fatalf("status = %+v, ok=%v, want idle", st, ok)
+	}
+}
+
+// The assistant record carries the route of the connection that served THAT turn. The resolver
+// is read per turn, so a connection set or cleared between two turns must move only the later
+// one; a fold that asked later would file both under the same route.
+func TestDriverRecordsServingRoutePerTurn(t *testing.T) {
+	testHome(t)
+	wireEngine(t, &scriptedClient{turns: []harness.Turn{{Content: "one"}, {Content: "two"}}})
+	route := usagex.RouteAFEngineLLM
+	harness.EngineToken = func(ctx context.Context, key, session string) (harness.EngineConn, bool) {
+		return harness.EngineConn{BaseURL: "http://test.invalid", Token: "t", Route: route}, true
+	}
+
+	d := NewDriver()
+	m := testMeta(t, "sess-route")
+	h, err := d.Resume(m)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	for _, r := range []string{usagex.RouteAFEngineLLM, usagex.RouteMemberLcpp} {
+		route = r
+		if err := h.Send(agents.TurnInput{Prompt: "hi"}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		waitState(t, h, agents.TurnCompleted)
+	}
+	recs, _, err := Open(sidFor(m)).Records()
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	var got []string
+	for _, r := range recs {
+		if r.Kind == KindAssistant {
+			got = append(got, r.Route)
+		}
+	}
+	want := []string{usagex.RouteAFEngineLLM, usagex.RouteMemberLcpp}
+	if !slices.Equal(got, want) {
+		t.Fatalf("assistant routes = %v, want %v", got, want)
 	}
 }
 

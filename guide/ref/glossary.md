@@ -21,6 +21,10 @@ thing.
 | Managed | paneless / managed driver | Runs on a shared runtime, operated from the chat view. No terminal |
 | Terminal (CLI) | tmux pane / PTY | You drive the agent's own interactive screen in a terminal |
 | Agent | kind | A CLI coding AI: claude, codex, opencode and the rest. See [agents.md](agents.md) |
+| Harness | kind | The program that runs the agent loop: Claude Code, opencode, codex, `lcpp`. This is the session kind, unchanged; "Agent" above is the screen word for it today. Not on screen as "harness" yet (ADR 0128) |
+| Route | route (`usagex.Record.Route`) | Where a model call went and with which credential: OpenCode Zen, the OpenCode Go subscription, the deployment's engine (`af-engine-llm`), a member's llama.cpp (`member-llamacpp`). Recorded per call in the usage ledger from the call's own evidence, never from the session's current settings; empty means not recorded |
+| Maker | maker / "provider" in `model_provider.go` | Who built the model: Anthropic, OpenAI, Zhipu. Not the route: one maker's model can be reached over several routes. The code's word "provider" means the maker here |
+| Billing | billing (`usagex.Record.Billing`) | How one call was charged: `subscription-included`, `subscription-extra` (usage credits past a window), `metered`, `self-hosted`, `free`, or `unknown`. A call whose billing cannot be told from evidence is `unknown` (also what an empty value reads as), never "included" |
 | Assistant | assistant chat | A purpose-specific chat that uses no repository. Not a session |
 | Mirror | transcript / mirror | The rendered view of a running or stopped conversation |
 | Working copy | working copy / dir | The folder of a repository inside the workspace that you actually edit |

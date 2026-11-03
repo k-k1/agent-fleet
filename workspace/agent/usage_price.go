@@ -175,6 +175,14 @@ const (
 //  3. Not in the catalog either: fall back to the built-in table, which still finds a
 //     claude-family model name.
 func usagePriceOf(kind, model string) (usagePrice, string, bool) {
+	return usagePriceOfOn(kind, "", model)
+}
+
+// usagePriceOfOn is usagePriceOf for a call whose route is recorded: the route's own
+// models.dev provider is consulted first, then the kind's providers exactly as before. An empty
+// or unmapped route is today's lookup unchanged, so rows written before routes were recorded
+// price as they always did.
+func usagePriceOfOn(kind, route, model string) (usagePrice, string, bool) {
 	if kind == session.KindLcpp {
 		// Never consult the builtin table or the catalog for this kind: a self-hosted model
 		// name that happens to collide with a hosted one (e.g. a "llama-3.1-70b" checkpoint
@@ -183,14 +191,14 @@ func usagePriceOf(kind, model string) (usagePrice, string, bool) {
 		return usagePrice{}, usagePriceSrcGPUBilled, true
 	}
 	base := usageNormalizeModel(model)
-	order := usageCatalogOrder(kind)
+	order := usageCatalogOrderOn(kind, route)
 	builtinFirst := len(order) > 0 && order[0] == "anthropic"
 	if builtinFirst {
 		if p, ok := usagePrices[base]; ok {
 			return p, usagePriceSrcBuiltin, true
 		}
 	}
-	if p, ref, ok := usageCatalogLookup(kind, model); ok {
+	if p, ref, ok := usageCatalogLookupOn(kind, route, model); ok {
 		return p, usagePriceSrcCatalog + ":" + ref, true
 	}
 	if !builtinFirst {
@@ -209,7 +217,12 @@ func usagePriceOf(kind, model string) (usagePrice, string, bool) {
 // Cache reads are outside the definition of spend but are billed, so deriving the amount from
 // spend makes a conversation look cheaper the longer it runs.
 func usageEstCostUSD(kind, model string, a usageAgg) (float64, string, bool) {
-	p, src, ok := usagePriceOf(kind, model)
+	return usageEstCostUSDOn(kind, "", model, a)
+}
+
+// usageEstCostUSDOn is usageEstCostUSD priced by the call's recorded route (usagePriceOfOn).
+func usageEstCostUSDOn(kind, route, model string, a usageAgg) (float64, string, bool) {
+	p, src, ok := usagePriceOfOn(kind, route, model)
 	if !ok {
 		return 0, "", false
 	}

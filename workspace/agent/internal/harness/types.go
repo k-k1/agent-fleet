@@ -182,6 +182,10 @@ type EngineConn struct {
 	// point), e.g. https://<cp>/engine/llm/v1. NewClient appends /chat/completions etc.
 	BaseURL string
 	Token   string
+	// Route names which connection EngineToken resolved (usagex.RouteAFEngineLLM or
+	// RouteMemberLcpp), so the caller can record on each call what served it. "" = the
+	// resolver did not say.
+	Route string
 }
 
 // EngineToken mints (or reuses) a connection scoped to one engine key ("llm" for chat)

@@ -1312,7 +1312,7 @@ func lcppMemberCacheReset() {
 func harnessEngineToken(ctx context.Context, key, session string) (harness.EngineConn, bool) {
 	if key == "llm" {
 		if conn, ok := harnessMemberConn(); ok {
-			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey}, true
+			return harness.EngineConn{BaseURL: lcppMemberBase(conn.URL) + "/v1", Token: conn.APIKey, Route: usagex.RouteMemberLcpp}, true
 		}
 	}
 	base := cpurl.Request()
@@ -1323,7 +1323,17 @@ func harnessEngineToken(ctx context.Context, key, session string) (harness.Engin
 	if tok == "" {
 		return harness.EngineConn{}, false
 	}
-	return harness.EngineConn{BaseURL: base + "/engine/" + key + "/v1", Token: tok}, true
+	return harness.EngineConn{BaseURL: base + "/engine/" + key + "/v1", Token: tok, Route: engineRouteOf(key)}, true
+}
+
+// engineRouteOf is the ledger route of a call served by the deployment's engine for one
+// catalogue key. Only the chat role ("llm") has a route id so far; any other key stays
+// unresolved rather than inventing one.
+func engineRouteOf(key string) string {
+	if key == "llm" {
+		return usagex.RouteAFEngineLLM
+	}
+	return ""
 }
 
 // harnessEngineWindowCache remembers harnessEngineWindow's own answer for a short time.

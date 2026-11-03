@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in the CP
 )
 
@@ -203,6 +204,7 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win win
 			t.EndTS = time.UnixMilli(md.Time.Completed).UTC().Format(time.RFC3339)
 		}
 		t.Model = md.ModelID
+		t.Route = usagex.RouteOfOpencodeProvider(md.ProviderID)
 		t.Effort = md.Variant
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output
 		t.CacheRead, t.CacheCreate = md.Tokens.Cache.Read, md.Tokens.Cache.Write

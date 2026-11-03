@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Kind is a Record's own type, one of the five decision 3 lists (user/assistant/tool-result/
@@ -93,6 +94,9 @@ type Record struct {
 	// Model is the new model id on a NoteModelChange, or the model that produced a
 	// KindAssistant record (empty on records written before it was recorded).
 	Model string `json:"model,omitempty"`
+	// Route is the connection that served a KindAssistant record's call (usagex.Route*), "" on
+	// records written before it was recorded.
+	Route string `json:"route,omitempty"`
 	// Usage is set on a KindUsage record (a pointer, not a value, so an all-zero
 	// harness.Usage that was never actually reported — types.go's own "Usage's zero value
 	// means the engine reported none" rule — round-trips as visibly present, not
@@ -296,6 +300,14 @@ func (s *Store) AppendMessage(m harness.Message) (Record, error) {
 // the mirror can badge each response with the model that actually answered it; the meta only
 // holds the current one.
 func (s *Store) AppendMessageFrom(m harness.Message, model string) (Record, error) {
+	return s.AppendMessageOn(m, model, "")
+}
+
+// AppendMessageOn is AppendMessageFrom also recording the route the call was served on
+// (usagex.RouteAFEngineLLM / RouteMemberLcpp), written when the call ran: the member connection
+// is read per turn and can be set or cleared between turns, so it cannot be recovered later.
+// route is kept on assistant records only; lines written before this field stay unresolved.
+func (s *Store) AppendMessageOn(m harness.Message, model, route string) (Record, error) {
 	switch m.Role {
 	case harness.RoleUser:
 		k := KindUser
@@ -304,7 +316,7 @@ func (s *Store) AppendMessageFrom(m harness.Message, model string) (Record, erro
 		}
 		return s.append(Record{Kind: k, Content: m.Content})
 	case harness.RoleAssistant:
-		return s.append(Record{Kind: KindAssistant, Content: m.Content, Reasoning: m.Reasoning, ToolCalls: m.ToolCalls, Model: model})
+		return s.append(Record{Kind: KindAssistant, Content: m.Content, Reasoning: m.Reasoning, ToolCalls: m.ToolCalls, Model: model, Route: route})
 	case harness.RoleTool:
 		return s.append(Record{Kind: KindToolResult, Content: m.Content, ToolCallID: m.ToolCallID})
 	case harness.RoleSystem:
@@ -534,6 +546,11 @@ func (b *transcriptBuilder) add(r Record) {
 		})
 	case KindAssistant:
 		t := transcript.Turn{Role: "assistant", TS: r.TS, AnchorID: r.ID, Idx: len(*turns), Text: r.Content, Model: r.Model}
+		if r.Route != "" {
+			// Both connections are self-hosted inference; the member's own llama.cpp and the
+			// deployment's engine are charged as GPU time, never per token.
+			t.Route, t.Billing = r.Route, usagex.BillingSelfHosted
+		}
 		if t.Model == "" {
 			if b.sawNote {
 				t.Model = b.model

@@ -78,6 +78,51 @@ const (
 	MeasuredNone    = "none"    // a CLI that reports no tokens — only the calls are counted
 )
 
+// Route ids: where a call's model traffic went and with which credential (ADR 0128
+// decision 1). A route is recorded only from per-call evidence in the transcript or log the
+// row comes from, never from the session's current settings at fold time. Empty means the
+// call's route is not recorded (a row written before the field existed, or a kind whose route
+// is not provable yet) and reads like unknown, never like a default route.
+const (
+	RouteOpencodeZen = "opencode-zen" // opencode's provider "opencode" (pay-per-request Zen)
+	RouteOpencodeGo  = "opencode-go"  // opencode's provider "opencode-go" (the Go subscription)
+	RouteAFEngineLLM = "af-engine-llm"
+	RouteMemberLcpp  = "member-llamacpp"
+)
+
+// Billing values: how a call was charged (ADR 0128 decision 8). Empty means "not recorded"
+// and must be read as BillingUnknown — never as included in a subscription.
+const (
+	BillingSubscriptionIncluded = "subscription-included"
+	BillingSubscriptionExtra    = "subscription-extra" // usage credits past a window, still on the login
+	BillingMetered              = "metered"
+	BillingSelfHosted           = "self-hosted"
+	BillingFree                 = "free"
+	BillingUnknown              = "unknown"
+)
+
+// BillingOrUnknown is the reading rule for Record.Billing: a row with none recorded is unknown.
+func BillingOrUnknown(b string) string {
+	if b == "" {
+		return BillingUnknown
+	}
+	return b
+}
+
+// RouteOfOpencodeProvider is the route of one opencode call, from the provider id opencode
+// itself wrote on that call's message. Only the two opencode.ai routes are provable from it;
+// a direct provider (anthropic, openrouter, …) could be a key or a login, so it stays empty.
+func RouteOfOpencodeProvider(providerID string) string {
+	return opencodeProviderRoutes[providerID]
+}
+
+// A table, not a switch: "opencode" is also a session kind, and a case on it reads as a
+// branch on the kind (the kind-literal ceiling counts those); here it is a provider id.
+var opencodeProviderRoutes = map[string]string{
+	"opencode":    RouteOpencodeZen,
+	"opencode-go": RouteOpencodeGo,
+}
+
 // Record is one ledger row. The JSON tags are the frozen wire it shares with the
 // Console/API (ADR0029 §1).
 type Record struct {
@@ -96,8 +141,13 @@ type Record struct {
 	ModelRaw string `json:"model_raw,omitempty"` // the raw reported id, version included
 	ModelReq string `json:"model_req,omitempty"` // the value requested; a mismatch detects a fallback
 	ModelSrc string `json:"model_src,omitempty"`
-	Ref      string `json:"ref,omitempty"`  // session name or conversation id
-	Verb     string `json:"verb,omitempty"` // sub-dimension of assistant.chat (translate|summarize)
+	// Route and Billing are what the call ran on and how it was charged. Both are dimensions
+	// (usageKey), so rows that differ in either are never merged; both are empty on rows
+	// written before they existed.
+	Route   string `json:"route,omitempty"`
+	Billing string `json:"billing,omitempty"`
+	Ref     string `json:"ref,omitempty"`  // session name or conversation id
+	Verb    string `json:"verb,omitempty"` // sub-dimension of assistant.chat (translate|summarize)
 	// Sidechain is a sub-dimension of feature=session (subagent / Workflow consumption).
 	Sidechain bool `json:"sidechain,omitempty"`
 	// Idx is the running number of a feature=session logical turn (1-based). The writer's

@@ -14,6 +14,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/harness"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // testHome redirects paths.HomeDir (and so sessionsDir) at a scratch directory for the
@@ -759,5 +760,39 @@ func TestTranscriptModelPerTurn(t *testing.T) {
 	}
 	if msgs, err := early.Full(); err != nil || len(msgs) != 2 {
 		t.Fatalf("fork's engine messages = %+v, %v; want the user and assistant only", msgs, err)
+	}
+}
+
+// The connection that served a call is written when the call runs. A line written before the
+// field existed stays unresolved: nothing later can say which connection served it.
+func TestTranscriptRecordsServingRoute(t *testing.T) {
+	testHome(t)
+	s := Open("route3280")
+	ask := func(route string) {
+		t.Helper()
+		if _, err := s.AppendUser("q"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.AppendMessageOn(harness.Message{Role: harness.RoleAssistant, Content: "a"}, "m", route); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask(usagex.RouteAFEngineLLM)
+	ask(usagex.RouteMemberLcpp)
+	ask("") // as AppendMessageFrom writes it: no evidence
+	turns, err := s.TranscriptFor("m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routes, billings []string
+	for _, tn := range turns {
+		if tn.Role == "assistant" {
+			routes, billings = append(routes, tn.Route), append(billings, tn.Billing)
+		}
+	}
+	wantR := []string{usagex.RouteAFEngineLLM, usagex.RouteMemberLcpp, ""}
+	wantB := []string{usagex.BillingSelfHosted, usagex.BillingSelfHosted, ""}
+	if !slices.Equal(routes, wantR) || !slices.Equal(billings, wantB) {
+		t.Fatalf("routes = %v billings = %v, want %v / %v", routes, billings, wantR, wantB)
 	}
 }

@@ -150,9 +150,15 @@ type Turn struct {
 	// the logical turn it falls in and never lets it open, close or split one — an extra logical
 	// turn would renumber every later one past the fold's watermark. AnchorID carries the
 	// message's own stable id: a cost-only ledger row is identified by it, not by position.
-	CostOnly bool   `json:"-"`
-	TS       string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
-	Idx      int    `json:"idx"` // transcript line index — a stable render key
+	CostOnly bool `json:"-"`
+	// Route and Billing are the per-call evidence of where this call ran and how it was
+	// charged (usagex.Route*/Billing*), read by the parser off the call's own record. Ledger-only
+	// (json:"-"). Empty = the transcript does not prove it; the usage fold must never fill the
+	// gap from the session's current settings.
+	Route   string `json:"-"`
+	Billing string `json:"-"`
+	TS      string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
+	Idx     int    `json:"idx"` // transcript line index — a stable render key
 	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
 	// claude = message uuid, codex = turn id, opencode = message id ("msg_…"). It is the
 	// handle "branch from this message" (docs/log/55) passes back to POST /fork {"at": …}.
