@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { PlanBlock } from "./transcript/blocks.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { t } from "../../lib/i18n/index.ts";
 
 let root: Root | null = null;
@@ -18,7 +19,7 @@ const mount = async (el: React.ReactElement) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => root!.render(el));
+  await act(async () => root!.render(<ConfirmProvider>{el}</ConfirmProvider>));
 };
 const again = () => host.querySelector<HTMLButtonElement>(".mt-plan-review-again");
 

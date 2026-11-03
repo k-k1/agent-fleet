@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
+import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import type { BackgroundShell } from "../../../core/api/client.ts";
 
 /** parseBackgroundShells keeps the well-formed entries of a messages payload's `backgroundShells`. */
@@ -65,6 +66,17 @@ export function BackgroundShellsPanel({
   /** Pins the clock (tests). */
   now?: number;
 }) {
+  const askConfirm = useConfirm();
+  // The dialog outlives this panel's rows: the shell may exit (or the panel unmount) while it is
+  // open, and stopping by pid afterwards could hit nothing or a reused pid.
+  const liveShells = useRef({ shells, mounted: true });
+  liveShells.current.shells = shells;
+  useEffect(() => {
+    liveShells.current.mounted = true;
+    return () => {
+      liveShells.current.mounted = false;
+    };
+  }, []);
   const [tick, setTick] = useState(() => Date.now());
   const has = shells.length > 0;
   useEffect(() => {
@@ -102,10 +114,24 @@ export function BackgroundShellsPanel({
                 className="ghost mbs-stop"
                 disabled={busy}
                 title={tr("mirror.bg_shell_stop_title")}
-                onClick={() => {
-                  if (!window.confirm(tr("mirror.bg_shell_stop_confirm", { command: s.command || `pid ${s.pid}` }))) return;
-                  onStop(s);
-                }}
+                onClick={() =>
+                  void (async () => {
+                    // The command goes in a scrollable, wrapping block: it can be arbitrarily long.
+                    const ok = await askConfirm({
+                      title: tr("mirror.bg_shell_stop_confirm_title"),
+                      body: (
+                        <>
+                          <pre className="ui-confirm-code">{s.command || `pid ${s.pid}`}</pre>
+                          <p>{tr("mirror.bg_shell_stop_confirm_body")}</p>
+                        </>
+                      ),
+                      confirmLabel: tr("mirror.bg_shell_stop"),
+                      danger: true,
+                    });
+                    const now = liveShells.current;
+                    if (ok && now.mounted && now.shells.some((x) => x.pid === s.pid && x.start === s.start)) onStop(s);
+                  })()
+                }
               >
                 {busy ? tr("mirror.bg_shell_stopping") : tr("mirror.bg_shell_stop")}
               </button>

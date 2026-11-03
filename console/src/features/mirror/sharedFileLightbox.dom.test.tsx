@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { MirrorView } from "./MirrorView.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
 
@@ -60,8 +61,10 @@ describe("the mirror's shared-file lightbox", () => {
     await act(async () => {
       root!.render(
         <ToastProvider>
+<ConfirmProvider>
           <MirrorView paneId="p1" session={SESSION} sessionMeta={meta} active mirror onToggleMirror={() => {}} />
-        </ToastProvider>,
+        </ConfirmProvider>
+</ToastProvider>,
       );
     });
     await until(() => !!document.querySelector(".mt-file-zoom"), "the shared image card");
