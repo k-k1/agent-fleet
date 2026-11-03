@@ -255,6 +255,32 @@ describe("stop and discard the queue", () => {
     expect(turnBodies).toEqual([{ op: "interrupt" }]);
   });
 
+  // claude puts a prompt stopped before its first reply byte back into its own input box; the
+  // Agent takes it out (or the next send is glued to it) and hands it here (issue #3290).
+  it("puts the prompt a Terminal stop took back into the empty input box", async () => {
+    turn = () => answer(T.interrupt_tui_restored);
+    await mount("tui");
+    await clearComposer();
+    await click($(".mirror-stop"));
+    expect(turnBodies).toEqual([T.interrupt_tui_restored.request]);
+    expect(composer()!.value).toBe(T.interrupt_tui_restored.response.restored);
+    expect(toasts()).toEqual([]);
+  });
+
+  it("keeps a draft typed before the stop came back, and says where the stopped prompt went", async () => {
+    turn = () => answer(T.interrupt_tui_restored);
+    await mount("tui");
+    await act(async () => {
+      const el = composer()!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, "my next message");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle(2);
+    await click($(".mirror-stop"));
+    expect(composer()!.value).toBe("my next message");
+    expect(toasts().length).toBe(1);
+  });
+
   it("keeps Terminal (CLI)'s stop out from under a question, whose Cancel owns the Esc", async () => {
     messages = {
       status: "working",

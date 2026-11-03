@@ -259,6 +259,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.stop_discard_title":
     "Stops the running turn and throws away everything still queued, other sessions' messages included. Your own discarded messages can be put back into the input box.",
   "mirror.stop_first_continues": "Stopped. The queued input starts next. Press Stop again to stop it too.",
+  "mirror.stop_restored_busy": "The stopped message was not put back into the input box because it holds text. Press ↑ to recall it.",
   "mirror.discarded_one": "Stopped. {count} queued input was discarded.",
   "mirror.discarded_other": "Stopped. {count} queued inputs were discarded.",
   "mirror.discarded_first_stop_one": "Stopped before it was sent. {count} input can be put back.",

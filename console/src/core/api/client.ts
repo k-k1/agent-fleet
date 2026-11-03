@@ -630,6 +630,9 @@ export interface TurnResult {
   removed?: QueueItem;
   /** dismiss_discard: false when another tab (or a newer discard) got there first. */
   dismissed?: boolean;
+  /** interrupt (Terminal claude): the stopped prompt the Agent took back out of the CLI's input
+   *  box, where claude puts a prompt stopped before its first reply byte (issue #3290). */
+  restored?: string;
 }
 export interface TurnOpts {
   /** interrupt: stop and discard everything still queued (decision 3). Managed only. */
@@ -673,6 +676,7 @@ export async function sessionTurn(
     if (r && "discard" in r) out.discard = parseDiscard(r.discard);
     if (op === "remove") out.removed = parseQueueItem(r?.removed) ?? undefined;
     if (typeof r?.dismissed === "boolean") out.dismissed = r.dismissed;
+    if (op === "interrupt" && typeof r?.restored === "string" && r.restored.trim()) out.restored = r.restored;
     return out;
   }
   const code = String(err.code || "");

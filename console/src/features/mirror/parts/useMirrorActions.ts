@@ -241,6 +241,22 @@ export function useMirrorActions({
     return await driveInput({ seq });
   };
 
+  // takeBackStopped puts a prompt the stop took back out of claude's input box into this
+  // composer, the place the member would look for it. Its echo goes too: the run it was sent for
+  // is over. A busy composer is not overwritten; the prompt is still one ↑ away in the history,
+  // because the transcript keeps its user line.
+  const takeBackStopped = (text: string) => {
+    applyEchoes((p) => withoutDiscarded(p, [text]));
+    if (draftBusy) {
+      toast(tr("mirror.stop_restored_busy"));
+      return;
+    }
+    setHistIdx(null);
+    // The stop took up to a second: what was typed meanwhile wins over the stopped prompt.
+    setDraft((d) => (d.trim() ? d : text));
+    inputRef.current?.focus();
+  };
+
   // sendInterrupt stops the running turn — the equivalent of turn/interrupt, which under tui
   // becomes Escape (opencode's sub-agent detail-view special case is handled server-side in
   // /turn). The next poll resyncs the real state, so no optimistic state change is needed.
@@ -260,6 +276,7 @@ export function useMirrorActions({
     finalizingRef.current = false;
     setFinalizing(false);
     const res = await sessionInterrupt(session, discardQueue && managed);
+    if (res.ok && res.restored) takeBackStopped(res.restored);
     if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
     // A first stop lets the queue go on, which looks like the stop did nothing unless said.
     else if (managed && res.stop === "first" && queuedCount > 0) toast(tr("mirror.stop_first_continues"));

@@ -723,6 +723,9 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		writeGateErr(w, err)
 		return "", false
 	}
+	// A stop still taking a restored prompt back out of the input box (reclaimInterruptedPrompt)
+	// would get this text typed in after it: the two would run as one prompt (issue #3290).
+	waitInterruptSettled(name)
 	// While ANY interaction is pending (question / plan approval / permission), the TUI
 	// is showing a modal that swallows typed text and lets the trailing Enter confirm
 	// its highlighted row — a wrong answer, a silent plan approval, or a silent allow.
