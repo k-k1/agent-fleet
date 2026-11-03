@@ -114,7 +114,9 @@ export function quoteImagePaths(body: string): string {
   }
   if (at < 0) return body;
   const tail = body.slice(at);
-  const fields = tail.split(/[ \t\r\n]+/).filter(Boolean);
+  // Same split as Go's strings.Fields (Unicode White_Space, NBSP included) for the test, while
+  // the rewrite below keeps Go's ASCII token boundaries: a path after an NBSP is quoted with it.
+  const fields = tail.split(/\p{White_Space}+/u).filter(Boolean);
   if (!fields.every((f) => f.startsWith("/")) || !fields.some(quotableImage)) return body;
   return body.slice(0, at) + tail.replace(/[^ \t\r\n]+/g, (tok) => (quotableImage(tok) ? "`" + tok + "`" : tok));
 }

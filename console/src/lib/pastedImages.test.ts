@@ -176,6 +176,17 @@ describe("quoteImagePaths", () => {
       "x\r\nOpen the following file(s) with the Read tool:\t" + p1 + "\r\n",
       "x\r\nOpen the following file(s) with the Read tool:\t`" + p1 + "`\r\n",
     ],
+    [
+      // strings.Fields splits on any Unicode space, the rewrite only on ASCII ones.
+      "NBSP before the path",
+      "Open the following file(s) with the Read tool:\u00a0" + p1,
+      "Open the following file(s) with the Read tool:`\u00a0" + p1 + "`",
+    ],
+    [
+      "vertical tab before the path",
+      "Open the following file(s) with the Read tool:\v" + p1,
+      "Open the following file(s) with the Read tool:`\v" + p1 + "`",
+    ],
   ];
   it.each(cases)("%s", (_name, input, want) => {
     expect(quoteImagePaths(input)).toBe(want);
