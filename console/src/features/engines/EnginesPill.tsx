@@ -14,6 +14,8 @@ import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { zonedMdHm } from "../../lib/intl.ts";
 import { useEnginesStore, startEnginesPolling } from "./store.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
+import { useSettings } from "../../lib/settings.ts";
+import type { ProviderConn } from "../../types/session.ts";
 import {
   ROLE_ORDER,
   groupByRole,
@@ -110,6 +112,16 @@ export interface MemberChatConn {
   modelCount?: number;
 }
 
+/** The member connection the `chat` pill should draw, or undefined for none. With llama.cpp
+ *  switched off nothing can use the connection, so a saved one must not draw a pill — its last
+ *  failed dial would otherwise sit in the top bar as a warning the member cannot act on.
+ *  `enabled` is the local ui-pref rather than the cached `conns.lcpp.enabled` mirror: the
+ *  connections cache is only refreshed by the repo rail, so the mirror lags the switch. */
+export function memberChatFromConn(lcpp: ProviderConn | undefined, enabled: boolean): MemberChatConn | undefined {
+  if (!enabled || !lcpp?.connected) return undefined;
+  return { url: lcpp.url, reachable: lcpp.reachable, model: lcpp.model, modelCount: lcpp.model_count };
+}
+
 /** Store-connected pill group — what TopBar renders. Starts the REST-fallback poll once per
  *  mount (TopBar mounts exactly once for the app's lifetime, same as the account menu).
  *
@@ -123,10 +135,8 @@ export function EnginesPill() {
   const rows = useEnginesStore((s) => s.rows);
   useEffect(() => startEnginesPolling(), []);
   const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
-  const lcpp = conns?.lcpp;
-  const memberChat: MemberChatConn | undefined = lcpp?.connected
-    ? { url: lcpp.url, reachable: lcpp.reachable, model: lcpp.model, modelCount: lcpp.model_count }
-    : undefined;
+  const lcppEnabled = useSettings().lcppEnabled;
+  const memberChat = memberChatFromConn(conns?.lcpp, lcppEnabled);
   return <EnginesPillView rows={rows || []} memberChat={memberChat} />;
 }
 

@@ -5,11 +5,12 @@
 // Every "no X" assertion here is paired with a positive control that goes through the same
 // render path and DOES show X, per AGENTS.md "Verifying your own work": an empty result and a
 // check that never ran read identically otherwise.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { EnginesPillView, type MemberChatConn } from "./EnginesPill.tsx";
+import { EnginesPillView, memberChatFromConn, type MemberChatConn } from "./EnginesPill.tsx";
 import type { EngineMemberRow } from "./wire.ts";
+import { setLocale } from "../../lib/i18n/index.ts";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -22,6 +23,10 @@ async function render(rows: EngineMemberRow[], memberChat?: MemberChatConn) {
     root.render(<EnginesPillView rows={rows} memberChat={memberChat} />);
   });
 }
+
+// EnginesPill.tsx imports lib/settings.ts, which applies the jsdom navigator's locale (en) on
+// load; the assertions below read the ja catalog.
+beforeAll(() => setLocale("ja"));
 
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -358,3 +363,31 @@ describe("engine pill — the control", () => {
   });
 });
 
+
+// #3291: with llama.cpp switched off, a saved connection must not draw the member pill — its
+// last failed dial read as "not reachable" in the top bar for a feature the member turned off.
+describe("engine pill — member connection while llama.cpp is switched off", () => {
+  const saved = { connected: true, url: "http://box:9931", reachable: false };
+
+  it("draws the member pill when llama.cpp is on (positive control)", async () => {
+    await render([], memberChatFromConn(saved, true));
+    expect(pills().length).toBe(1);
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("届いていません");
+  });
+
+  it("draws no member pill when llama.cpp is off", async () => {
+    await render([], memberChatFromConn(saved, false));
+    expect(pills().length).toBe(0);
+  });
+
+  it("falls back to the CP's chat row when llama.cpp is off", async () => {
+    await render([{ key: "llm", api: "chat", state: "running", warm: true }], memberChatFromConn(saved, false));
+    expect(pills().length).toBe(1);
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("準備済み");
+  });
+
+  it("draws nothing when no connection is saved, even with llama.cpp on", () => {
+    expect(memberChatFromConn({ connected: false }, true)).toBeUndefined();
+    expect(memberChatFromConn(undefined, true)).toBeUndefined();
+  });
+});
