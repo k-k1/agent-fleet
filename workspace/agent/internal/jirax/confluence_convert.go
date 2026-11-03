@@ -185,55 +185,113 @@ func parseStorage(s string) *sNode {
 
 // StorageToMarkdown renders storage format as Markdown.
 func StorageToMarkdown(storage string) string {
-	r := &storageWriter{md: true}
+	r := newStorageWriter(true, storage)
 	return r.finish(r.blocks(parseStorage(storage).children))
 }
 
 // StorageToText renders storage format as plain text.
 func StorageToText(storage string) string {
-	r := &storageWriter{}
+	r := newStorageWriter(false, storage)
 	return r.finish(r.blocks(parseStorage(storage).children))
 }
 
 type storageWriter struct {
 	md      bool
 	inTable bool // inside a table cell: a literal pipe must be written as \|
+
+	// mark are the four private-use runes protect writes in place of an NBSP, a trailing space,
+	// a trailing tab and an empty code line. They are chosen per document among runes the
+	// document does not contain, so a legitimate private-use character (a Japanese gaiji) is
+	// never mistaken for a marker.
+	mark   [4]rune
+	unprot *strings.Replacer
+}
+
+func newStorageWriter(md bool, doc string) *storageWriter {
+	w := &storageWriter{md: md}
+	n := 0
+	for r := rune(0xE000); r <= 0xF8FF && n < 4; r++ {
+		if !strings.ContainsRune(doc, r) {
+			w.mark[n] = r
+			n++
+		}
+	}
+	w.unprot = strings.NewReplacer(string(w.mark[0]), "\u00a0", string(w.mark[1]), " ", string(w.mark[2]), "\t", string(w.mark[3]), "")
+	return w
 }
 
 // Code content is literal: finish normalises prose (NBSP, trailing blanks, runs of empty lines),
 // which would silently rewrite whitespace-significant code. protect swaps what finish touches for
-// private-use runes (a code line that is empty becomes one holding only protEmpty, so the
-// block-quote / list prefixes still apply to it), and finish swaps them back at the very end.
-const (
-	protNBSP  = '\ue001'
-	protSpace = '\ue002'
-	protTab   = '\ue003'
-	protEmpty = '\ue004'
-)
-
-func protect(code string) string {
+// the markers (a code line that is empty becomes one holding only the last, so the block-quote /
+// list prefixes still apply to it), and finish swaps them back at the very end.
+func (w *storageWriter) protect(code string) string {
 	lines := strings.Split(strings.ReplaceAll(code, "\r\n", "\n"), "\n")
 	for i, l := range lines {
-		l = strings.ReplaceAll(l, "\u00a0", string(protNBSP))
+		l = strings.ReplaceAll(l, "\u00a0", string(w.mark[0]))
 		t := strings.TrimRight(l, " \t")
 		var tail strings.Builder
 		for _, r := range l[len(t):] {
 			if r == ' ' {
-				tail.WriteRune(protSpace)
+				tail.WriteRune(w.mark[1])
 			} else {
-				tail.WriteRune(protTab)
+				tail.WriteRune(w.mark[2])
 			}
 		}
 		l = t + tail.String()
 		if l == "" {
-			l = string(protEmpty)
+			l = string(w.mark[3])
 		}
 		lines[i] = l
 	}
 	return strings.Join(lines, "\n")
 }
 
-var unprotect = strings.NewReplacer(string(protNBSP), "\u00a0", string(protSpace), " ", string(protTab), "\t", string(protEmpty), "")
+// trim trims a paragraph; in Markdown it also drops a hard break at either end.
+func (w *storageWriter) trim(s string) string {
+	if !w.md {
+		return strings.TrimSpace(s)
+	}
+	return trimBreaks(s)
+}
+
+// codeSpan is inline code in Markdown (or the literal text in plain text).
+func (w *storageWriter) codeSpan(c string) string {
+	if !w.md {
+		return w.protect(c)
+	}
+	if w.inTable {
+		c = strings.ReplaceAll(c, "|", `\|`)
+	}
+	tick := "`"
+	for strings.Contains(c, tick) {
+		tick += "`"
+	}
+	if strings.HasPrefix(c, "`") || strings.HasSuffix(c, "`") ||
+		(strings.HasPrefix(c, " ") && strings.HasSuffix(c, " ") && strings.Trim(c, " ") != "") {
+		c = " " + c + " "
+	}
+	return tick + w.protect(c) + tick
+}
+
+// codeBlock renders block code. A table cell cannot hold a fenced block, so there each line
+// becomes a code span and the lines are joined by <br>: the structure changes, the characters of
+// every line do not (an empty line is just a break).
+func (w *storageWriter) codeBlock(code, lang string) string {
+	if w.md && w.inTable {
+		lines := strings.Split(strings.ReplaceAll(code, "\r\n", "\n"), "\n")
+		for i, l := range lines {
+			if l != "" {
+				lines[i] = w.codeSpan(l)
+			}
+		}
+		return strings.Join(lines, "<br>")
+	}
+	code = w.protect(code)
+	if w.md {
+		return fence(code, lang)
+	}
+	return code
+}
 
 func (w *storageWriter) finish(s string) string {
 	s = strings.ReplaceAll(s, "\u00a0", " ")
@@ -251,7 +309,7 @@ func (w *storageWriter) finish(s string) string {
 		}
 		out = append(out, l)
 	}
-	return unprotect.Replace(strings.Trim(strings.Join(out, "\n"), "\n"))
+	return w.unprot.Replace(strings.Trim(strings.Join(out, "\n"), "\n"))
 }
 
 var blockNames = map[string]bool{
@@ -291,11 +349,11 @@ func (w *storageWriter) blocks(ns []*sNode) string {
 func (w *storageWriter) block(n *sNode) string {
 	switch n.name {
 	case "p":
-		return trimBreaks(w.inlines(n.children))
+		return w.trim(w.inlines(n.children))
 	case "div", "ac:layout", "ac:layout-section", "ac:layout-cell":
 		return w.blocks(n.children)
 	case "h1", "h2", "h3", "h4", "h5", "h6":
-		t := trimBreaks(w.inlines(n.children))
+		t := w.trim(w.inlines(n.children))
 		if w.md {
 			return strings.Repeat("#", int(n.name[1]-'0')) + " " + t
 		}
@@ -308,11 +366,7 @@ func (w *storageWriter) block(n *sNode) string {
 		}
 		return "----"
 	case "pre":
-		code := protect(plainText(n))
-		if w.md {
-			return fence(code, "")
-		}
-		return code
+		return w.codeBlock(plainText(n), "")
 	case "blockquote":
 		inner := w.blocks(n.children)
 		if !w.md {
@@ -370,11 +424,7 @@ func (w *storageWriter) macro(n *sNode) string {
 		if body != nil {
 			code = plainText(body)
 		}
-		code = protect(code)
-		if w.md {
-			return fence(code, lang)
-		}
-		return code
+		return w.codeBlock(code, lang)
 	case "info", "note", "warning", "tip", "panel", "expand", "excerpt":
 		if body == nil {
 			return ""
@@ -584,22 +634,7 @@ func (w *storageWriter) inline(n *sNode) string {
 			return wrapMark(w.inlines(n.children), "~~", "~~")
 		}
 	case "code":
-		c := plainText(n)
-		if !w.md {
-			return protect(c)
-		}
-		if w.inTable {
-			c = strings.ReplaceAll(c, "|", `\|`)
-		}
-		tick := "`"
-		for strings.Contains(c, tick) {
-			tick += "`"
-		}
-		if strings.HasPrefix(c, "`") || strings.HasSuffix(c, "`") ||
-			(strings.HasPrefix(c, " ") && strings.HasSuffix(c, " ") && strings.Trim(c, " ") != "") {
-			c = " " + c + " "
-		}
-		return tick + protect(c) + tick
+		return w.codeSpan(plainText(n))
 	case "a":
 		inner := w.inlines(n.children)
 		href := n.a("href")

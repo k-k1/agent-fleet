@@ -233,3 +233,73 @@ func TestConfluenceNestedListsKeepStructure(t *testing.T) {
 		t.Errorf("want 3 <ol>, got %s", st)
 	}
 }
+
+// Private-use characters are legal input (gaiji): they come out as written, in prose, inline
+// code and code blocks, even when the document also needs the whitespace markers.
+func TestConfluenceReadKeepsPrivateUseCharacters(t *testing.T) {
+	pua := "\ue001\ue002\ue003\ue004\ue005"
+	in := "<p>外字" + pua + "終 <code>c" + pua + "  </code></p>" +
+		`<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[a` + pua + " \n\n\nb\u00a0\t]]></ac:plain-text-body></ac:structured-macro>"
+	md := StorageToMarkdown(in)
+	for _, w := range []string{"外字" + pua + "終", "`c" + pua + "  `", "a" + pua + " \n\n\nb\u00a0\t\n```"} {
+		if !strings.Contains(md, w) {
+			t.Errorf("markdown lost %q:\n%q", w, md)
+		}
+	}
+	if txt := StorageToText(in); !strings.Contains(txt, "外字"+pua+"終") {
+		t.Errorf("text lost the characters: %q", txt)
+	}
+}
+
+// Text has no hard-break syntax: a trailing backslash is just text.
+func TestConfluenceTextKeepsTrailingBackslash(t *testing.T) {
+	for in, want := range map[string]string{
+		`<p>パス C:\</p>`:          `パス C:\`,
+		`<p><code>x\</code></p>`: `x\`,
+		`<h2>dir\</h2>`:          `dir\`,
+	} {
+		if got := StorageToText(in); got != want {
+			t.Errorf("%s -> %q, want %q", in, got, want)
+		}
+	}
+	if got := StorageToMarkdown(`<p>パス C:\</p>`); got != `パス C:\\` {
+		t.Errorf("markdown = %q", got)
+	}
+}
+
+// A fenced block cannot live in a table cell. Each code line becomes a code span joined by a
+// break: no "<br>" text enters the code and every line's characters survive a round trip.
+func TestConfluenceCodeInTableCellKeepsEveryLine(t *testing.T) {
+	lines := []string{"echo あ", "  x|y\\z ", "", "echo い"}
+	code := strings.Join(lines, "\n")
+	for name, cell := range map[string]string{
+		"macro": `<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[` + code + `]]></ac:plain-text-body></ac:structured-macro>`,
+		"pre":   "<pre>" + strings.ReplaceAll(code, "|", "|") + "</pre>",
+	} {
+		in := `<table><tbody><tr><th>h</th></tr><tr><td>` + cell + `</td></tr></tbody></table>`
+		md := StorageToMarkdown(in)
+		if strings.Contains(md, "```") {
+			t.Errorf("%s: fence in a cell: %s", name, md)
+		}
+		st, _ := MarkdownToStorage(md)
+		if strings.Contains(st, "&lt;br") {
+			t.Errorf("%s: <br> became text: %s", name, st)
+		}
+		var spans []string
+		for _, part := range strings.Split(st, "<code>")[1:] {
+			spans = append(spans, strings.SplitN(part, "</code>", 2)[0])
+		}
+		want := []string{"echo あ", "  x|y\\z ", "echo い"}
+		if len(spans) != len(want) {
+			t.Fatalf("%s: spans %q in %s", name, spans, st)
+		}
+		for i := range want {
+			if html := strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`).Replace(spans[i]); html != want[i] {
+				t.Errorf("%s: line %d = %q, want %q", name, i, html, want[i])
+			}
+		}
+		if strings.Count(st, "<br />") != 3 {
+			t.Errorf("%s: want 3 breaks (one is an empty line): %s", name, st)
+		}
+	}
+}
