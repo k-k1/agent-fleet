@@ -322,20 +322,51 @@ func (b *bitbucket) checks(auth, repo string, pr int, head string) (string, []Ch
 	if !isHex(head) {
 		return "", nil, false
 	}
-	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url",
+	pages, more, err := b.statusPages(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url",
 		repoPath(repo), head, bitbucketPageLen))
 	if err == nil {
-		return bitbucketRollup(body, "")
+		return bitbucketRollupPages(pages, "", more)
 	}
 	if !errors.Is(err, errNotVisible) {
 		return "", nil, false
 	}
-	body, _, err = b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url,values.links.commit.href",
+	pages, more, err = b.statusPages(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url,values.links.commit.href",
 		repoPath(repo), pr, bitbucketPageLen))
 	if err != nil {
 		return "", nil, false
 	}
-	return bitbucketRollup(body, head)
+	return bitbucketRollupPages(pages, head, more)
+}
+
+// bitbucketStatusPages bounds the pages of statuses one PR's read follows: one call each, and
+// past 50 statuses a commit is rare.
+const bitbucketStatusPages = 4
+
+// statusPages reads a status list and the pages after it, up to bitbucketStatusPages. more
+// reports statuses left unread: past the bound, or behind a next link that is not this API's.
+// A failed later page is the same: what it held is unknown.
+func (b *bitbucket) statusPages(auth, path string) (pages [][]byte, more bool, err error) {
+	for {
+		body, _, err := b.get(auth, path)
+		if err != nil {
+			if len(pages) == 0 {
+				return nil, false, err
+			}
+			return pages, true, nil
+		}
+		pages = append(pages, body)
+		var p struct {
+			Next string `json:"next"`
+		}
+		if json.Unmarshal(body, &p) != nil || p.Next == "" {
+			return pages, false, nil
+		}
+		rest, ok := strings.CutPrefix(p.Next, b.c.Endpoint)
+		if !ok || !strings.HasPrefix(rest, "/") || len(pages) >= bitbucketStatusPages {
+			return pages, true, nil
+		}
+		path = rest
+	}
 }
 
 // conflict reports whether an open PR has files in conflict, from a cache held for
@@ -531,26 +562,35 @@ func (b *bitbucket) readConflict(auth, repo string, pr int) (bool, error) {
 // no status at all is "", which must not read as green. With head set, only the statuses of the
 // commit whose hash starts with it count.
 func bitbucketRollup(body []byte, head string) (state string, failing []Check, pending bool) {
-	var sr struct {
-		// Next is set when more statuses lie past this page; any of them may still run.
-		Next   string `json:"next"`
-		Values []struct {
-			State string `json:"state"`
-			Name  string `json:"name"`
-			Key   string `json:"key"`
-			URL   string `json:"url"`
-			Links struct {
-				Commit struct {
-					Href string `json:"href"`
-				} `json:"commit"`
-			} `json:"links"`
-		} `json:"values"`
+	return bitbucketRollupPages([][]byte{body}, head, false)
+}
+
+// bitbucketRollupPages is bitbucketRollup over several pages of one list. more says statuses are
+// left unread, which any of them may still run.
+func bitbucketRollupPages(pages [][]byte, head string, more bool) (state string, failing []Check, pending bool) {
+	type status struct {
+		State string `json:"state"`
+		Name  string `json:"name"`
+		Key   string `json:"key"`
+		URL   string `json:"url"`
+		Links struct {
+			Commit struct {
+				Href string `json:"href"`
+			} `json:"commit"`
+		} `json:"links"`
 	}
-	if json.Unmarshal(body, &sr) != nil {
-		return "", nil, false
+	var all []status
+	for _, body := range pages {
+		var sr struct {
+			Values []status `json:"values"`
+		}
+		if json.Unmarshal(body, &sr) != nil {
+			return "", nil, false
+		}
+		all = append(all, sr.Values...)
 	}
 	var failed, passed bool
-	for _, v := range sr.Values {
+	for _, v := range all {
 		if head != "" {
 			_, hash, _ := strings.Cut(v.Links.Commit.Href, "/commit/")
 			if !strings.HasPrefix(strings.ToLower(hash), strings.ToLower(head)) {
@@ -573,9 +613,7 @@ func bitbucketRollup(body []byte, head string) (state string, failing []Check, p
 	}
 	switch {
 	case failed:
-		// Statuses past this page may still run. Read only for the commit's own list: the PR's
-		// list spans its old commits, whose pages say nothing about this one.
-		return "failure", failing, pending || (sr.Next != "" && head == "")
+		return "failure", failing, pending || more
 	case pending:
 		return "pending", nil, true
 	case passed:

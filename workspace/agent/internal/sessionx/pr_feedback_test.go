@@ -497,3 +497,25 @@ func TestPRFeedbackReleasesAClaimWhoseSendFailed(t *testing.T) {
 		t.Fatalf("record %+v: on disk once sent", rec)
 	}
 }
+
+func TestPRFeedbackTellsTheMergeItRecordsBeforeTheList(t *testing.T) {
+	f := newFeedbackFixture(t)
+	var told []string
+	old := putPRNotice
+	putPRNotice = func(key string, e notice.Event) error { told = append(told, e.Kind+"|"+key); return nil }
+	t.Cleanup(func() { putPRNotice = old; prNoticesSent.Clear() })
+	f.session("a", prLink(9, session.LinkWorking, ""))
+	// Back on the PR's branch: the list asked, its branch answer has not arrived yet, and the
+	// number answer says merged.
+	rememberBranchAsk("a", "github", branchpr.Key{Repo: "o/r", Branch: "feature/x"})
+	pr := f.pr(9, "h9")
+	pr.State, pr.ClosedAt = "merged", "2026-11-04T08:00:00Z"
+	f.tick()
+	m, _ := session.ReadMeta("a")
+	if l, _ := heldLink(session.LinksOf(m), "github", "o/r#9"); l.State != "merged" {
+		t.Fatalf("link = %+v, want merged recorded", l)
+	}
+	if len(told) != 1 || told[0] != "pr-merged|pr-merged|github:o/r#9|2026-11-04T08:00:00Z" {
+		t.Fatalf("told %v: the merge is told where it is recorded, under the list's own key", told)
+	}
+}

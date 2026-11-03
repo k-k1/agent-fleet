@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -61,6 +62,9 @@ func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	case strings.HasSuffix(p, "/statuses"):
+		if pg := r.URL.Query().Get("page"); pg != "" {
+			p += "?page=" + pg // a later page, keyed on its own
+		}
 		if body, ok := b.statuses[p]; ok {
 			_, _ = w.Write([]byte(body))
 			return
@@ -663,5 +667,45 @@ func TestBitbucketGivesThePRItsHeadAndHoldsAFailureWithMorePages(t *testing.T) {
 	}
 	if got, _, pending := bitbucketRollup([]byte(`{"next":"x","values":[{"state":"SUCCESSFUL"}]}`), ""); got != "success" || pending {
 		t.Errorf("rollup = %q pending %v: another page does not turn a green page pending", got, pending)
+	}
+}
+
+func TestBitbucketFollowsTheStatusPagesToTheEnd(t *testing.T) {
+	b := &bbServer{statuses: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(b.handler))
+	t.Cleanup(srv.Close)
+	c := NewBitbucket(func() (string, error) { return "Bearer bb", nil })
+	c.Endpoint = srv.URL
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	commit := "/2.0/repositories/w/r/commit/c0ffee4/statuses"
+	next := func(path string, n int) string { return srv.URL + path + "?page=" + strconv.Itoa(n) }
+	// More than one page, every build finished, one failed on page 1: told, with page 2 read.
+	b.statuses[commit] = `{"next":"` + next(commit, 2) + `","values":[{"state":"FAILED","name":"unit"}]}`
+	b.statuses[commit+"?page=2"] = `{"values":[{"state":"SUCCESSFUL","name":"e2e"},{"state":"FAILED","name":"lint"}]}`
+	state, failing, pending := bb.checks("Bearer bb", "w/r", 4, "c0ffee4")
+	if state != "failure" || pending || len(failing) != 2 {
+		t.Fatalf("checks = %q %v pending %v: every page read, all finished", state, failing, pending)
+	}
+	// Still running on page 2: pending.
+	b.statuses[commit+"?page=2"] = `{"values":[{"state":"INPROGRESS","name":"e2e"}]}`
+	if _, _, pending := bb.checks("Bearer bb", "w/r", 4, "c0ffee4"); !pending {
+		t.Fatal("a build running on a later page holds the failure")
+	}
+	// The PR's own list (the commit not found): a later page's build of this head counts too.
+	delete(b.statuses, commit)
+	delete(b.statuses, commit+"?page=2")
+	pull := "/2.0/repositories/w/r/pullrequests/4/statuses"
+	b.statuses[pull] = `{"next":"` + next(pull, 2) + `","values":[{"state":"FAILED","name":"unit","links":{"commit":{"href":"x/commit/c0ffee4"}}}]}`
+	b.statuses[pull+"?page=2"] = `{"values":[{"state":"INPROGRESS","name":"e2e","links":{"commit":{"href":"x/commit/c0ffee4"}}},` +
+		`{"state":"INPROGRESS","name":"old","links":{"commit":{"href":"x/commit/0ld"}}}]}`
+	b.notFound = commit
+	if _, _, pending := bb.checks("Bearer bb", "w/r", 4, "c0ffee4"); !pending {
+		t.Fatal("the fallback's later page holds this head's running build")
+	}
+	// Past the bound, unread statuses count as running.
+	b.statuses[pull] = `{"next":"` + next(pull, 1) + `","values":[{"state":"FAILED","name":"unit","links":{"commit":{"href":"x/commit/c0ffee4"}}}]}`
+	b.statuses[pull+"?page=1"] = b.statuses[pull]
+	if _, _, pending := bb.checks("Bearer bb", "w/r", 4, "c0ffee4"); !pending {
+		t.Fatal("pages past the bound are unknown")
 	}
 }

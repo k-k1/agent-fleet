@@ -702,7 +702,8 @@ func prFeedbackMember(kind string, w *prWatched, name, what, once string) bool {
 }
 
 // recordWatchedLinkStates writes a held link's PR state when it moved, so a PR merged or closed
-// drops out of the watch (heldPRLinks skips it) and the row shows the state it has.
+// drops out of the watch (heldPRLinks skips it) and the row shows the state it has. A holder on
+// the PR's branch is left to recordBranchPRs, which reads the same answer.
 func recordWatchedLinkStates(watched []*prWatched) {
 	for _, w := range watched {
 		state := prLinkState(w.pr)
@@ -714,8 +715,19 @@ func recordWatchedLinkStates(watched []*prWatched) {
 			if !ok {
 				continue
 			}
-			if l, held := heldLink(session.LinksOf(m), w.provider, w.linkKey); !held || l.State == state {
+			l, held := heldLink(session.LinksOf(m), w.provider, w.linkKey)
+			if !held || l.State == state {
 				continue
+			}
+			// The merge or close of a working link is what recordBranchPRs tells, on this same
+			// change of the recorded state: recorded here first (the branch lookup not answered
+			// yet), the list would never see the change. So it is told here, under the list's own
+			// once key, and recorded only once it is in the outbox.
+			if kind, extra := prNotice(w.pr, l.Role, l.State); kind == prMergedNotice || kind == prClosedNotice {
+				s := session.Session{Name: m.Name, Kind: m.Kind, Display: session.Display(m)}
+				if !sendPRNotice(&s, kind, w.provider, w.linkKey, extra, w.pr) {
+					continue
+				}
 			}
 			UpdateSessionMeta(h.name, func(m *session.Meta) bool {
 				return session.SetLinkState(m, w.provider, w.linkKey, state)
