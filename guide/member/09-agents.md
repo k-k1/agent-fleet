@@ -106,6 +106,7 @@ Claude's behavior can be adjusted on the same screen.
   - **What else this switch was holding back**: for sessions started with the toggle on, this switch no longer suppresses release-note fetching, PR/MR status-badge checks or availability checks (for example whether fast mode is usable), and `/feedback` works. Telemetry metrics, error reports and auto-update stay off, because their own variables stay set.
   - **Not known**: whether Claude fetches feature flags in these sessions (`DISABLE_TELEMETRY`, which stays set, also skips that fetch according to the upstream documentation) and, if it does, what that fetch sends to Anthropic. Neither has been measured.
 - **Notifications**: whether to notify you of session state changes.
+- **Idle compaction**: whether Claude Code may compact a long conversation (200k tokens or more) while the session is idle. It does so about 54 minutes after the last activity, just before the 1-hour prompt cache expires: the next turn is cheaper because the whole conversation is not written to the cache again, but you come back to a summarized conversation. On by default, as in Claude Code. The toggle writes `idleCompaction` in the workspace's user-level Claude settings; a project or local Claude settings file can still override it. Sessions started or resumed afterwards are certain to follow it.
 - **RTK (token savings)**: see below.
 
 > **If "Select login method" or a login screen shows up**, it's almost always a

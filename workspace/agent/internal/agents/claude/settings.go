@@ -323,11 +323,22 @@ func RTKAvailable() bool {
 	return err == nil
 }
 
+// idleCompactionKey is Claude Code's switch for compacting a long conversation while the session
+// is idle, just before the 1-hour prompt cache expires. The CLI treats an absent key as on, so
+// reading it with settingBool would report off for exactly the sessions that compact.
+const idleCompactionKey = "idleCompaction"
+
+func idleCompactionEnabled(m map[string]any) bool {
+	v, ok := m[idleCompactionKey].(bool)
+	return !ok || v
+}
+
 func settingsBody(m map[string]any) map[string]any {
 	return map[string]any{
 		"remoteControlAtStartup":            settingBool(m, "remoteControlAtStartup"),
 		"agentPushNotifEnabled":             settingBool(m, "agentPushNotifEnabled"),
 		"skipDangerousModePermissionPrompt": settingBool(m, "skipDangerousModePermissionPrompt"),
+		idleCompactionKey:                   idleCompactionEnabled(m),
 		"rtk_enabled":                       rtkEnabled(m),
 		"rtk_available":                     RTKAvailable(),
 	}
@@ -341,6 +352,7 @@ func HandleSettingsGet(w http.ResponseWriter, r *http.Request) {
 type settingsReq struct {
 	RemoteControlAtStartup *bool `json:"remoteControlAtStartup"`
 	AgentPushNotifEnabled  *bool `json:"agentPushNotifEnabled"`
+	IdleCompaction         *bool `json:"idleCompaction"`
 	RTK                    *bool `json:"rtk"`
 }
 
@@ -358,6 +370,9 @@ func HandleSettingsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgentPushNotifEnabled != nil {
 		m["agentPushNotifEnabled"] = *req.AgentPushNotifEnabled
+	}
+	if req.IdleCompaction != nil {
+		m[idleCompactionKey] = *req.IdleCompaction
 	}
 	if req.RTK != nil {
 		setRTK(m, *req.RTK)

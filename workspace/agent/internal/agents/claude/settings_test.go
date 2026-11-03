@@ -2,7 +2,12 @@ package claude
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +139,72 @@ func TestEnsureStatusHooksPreservesWorkingAlternateExe(t *testing.T) {
 	EnsureStatusHooks()
 	if !reflect.DeepEqual(hooksMap(readSettings())["PreToolUse"], entries) {
 		t.Fatal("working alternate hooks changed or duplicated")
+	}
+}
+
+// TestIdleCompactionSetting pins the absent-means-on reading Claude Code itself uses, and that a
+// PUT of the switch writes only that key.
+func TestIdleCompactionSetting(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	get := func() map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		HandleSettingsGet(rec, httptest.NewRequest(http.MethodGet, "/claude/settings", nil))
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("GET body: %v", err)
+		}
+		return body
+	}
+	put := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		HandleSettingsPut(rec, httptest.NewRequest(http.MethodPut, "/claude/settings", strings.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT %s = %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	onDisk := func() map[string]any {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]any{}
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	if got := get()[idleCompactionKey]; got != true {
+		t.Fatalf("no settings.json: idleCompaction = %v, want true (the CLI default)", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"model":"opus","agentPushNotifEnabled":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := get()[idleCompactionKey]; got != true {
+		t.Fatalf("key absent: idleCompaction = %v, want true", got)
+	}
+
+	put(`{"idleCompaction":false}`)
+	if got := get()[idleCompactionKey]; got != false {
+		t.Fatalf("after PUT false: idleCompaction = %v", got)
+	}
+	m := onDisk()
+	if m[idleCompactionKey] != false || m["model"] != "opus" || m["agentPushNotifEnabled"] != true {
+		t.Fatalf("settings.json after PUT false = %v", m)
+	}
+
+	// A PUT of another switch must not touch the user's choice.
+	put(`{"agentPushNotifEnabled":false}`)
+	if m := onDisk(); m[idleCompactionKey] != false {
+		t.Fatalf("unrelated PUT changed idleCompaction: %v", m)
+	}
+
+	put(`{"idleCompaction":true}`)
+	if m := onDisk(); m[idleCompactionKey] != true {
+		t.Fatalf("after PUT true: %v", m)
 	}
 }
