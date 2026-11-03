@@ -152,6 +152,8 @@ var (
 	freshProcs  = procx.Fresh
 	paneRoot    = procx.PaneRoot
 	pinProc     = pinProcFD
+	readStat    = readProcStat
+	uptimeTicks = readUptimeTicks
 )
 
 // procPin is a process held by a handle that cannot be redirected to another process: a
@@ -159,48 +161,66 @@ var (
 // pid number meanwhile.
 type procPin interface {
 	Signal(sig syscall.Signal) error
+	// Alive reports that the process has not been reaped. While it holds, its pid (and the
+	// session or group id equal to it) cannot be handed to anyone else.
+	Alive() bool
 	Close()
 }
 
-// StopBackgroundShell ends one background shell of the session and everything that belongs
-// to it: its subtree, and the members of the process group it leads (claude starts each
-// background shell as a session leader, and a child that re-parented away from the tree is
-// still in that group). The pid must still be one of this session's background shells in a
-// FRESH snapshot and carry the start time the caller saw.
+// StopBackgroundShell ends one background shell of the session and what belongs to it, and
+// reports how many processes of its session may still be running (not proven to belong, so
+// left alone). The pid must still be one of this session's background shells in a FRESH
+// snapshot and carry the start time the caller saw.
 //
-// Every process is signalled through a pidfd opened BEFORE its start time is re-checked, so a
-// pid (or a process group id) reused at any point can never be signalled; the group itself is
-// never signalled by number for the same reason. A process that joins during the grace (a
-// child forked by a TERM handler) is taken in on the next scan. Returns once nothing is left or
-// SIGKILL has been sent to what is.
-func StopBackgroundShell(name string, pid int, start uint64) error {
+// What it signals, it signals through a pidfd opened BEFORE the process is re-read, so a
+// reused pid is never reached; nothing is signalled by group or session number. The /proc
+// scan is not atomic — it can mix a process that has since exited with one that took its
+// number — so the scan only nominates; a nominee is taken only on evidence re-read after its
+// pidfd is open, checked against a pinned process that is confirmed alive AFTER that read:
+//
+//   - its parent is a pinned process still alive, or
+//   - the shell leads its own session (claude starts it that way), the nominee is in that
+//     session, and it started before a moment the shell was confirmed alive. A session id
+//     changes only by setsid, which makes it the caller's own pid, so a process that started
+//     while the original session existed and still carries its id was born into it.
+//
+// A process of the session that fits neither — a child forked by a TERM handler just before
+// the shell exited — is counted, not signalled.
+func StopBackgroundShell(name string, pid int, start uint64) (int, error) {
 	root := paneRoot(name)
 	if root == 0 {
-		return ErrBGShellGone
+		return 0, ErrBGShellGone
 	}
 	tab := freshProcs()
 	if err := checkBGShell(root, tab, pid, start); err != nil {
-		return err
+		return 0, err
 	}
-	st := &bgStop{pgid: pid, pins: map[bgTarget]procPin{}}
+	leader := bgTarget{pid, start}
+	h, ok := pinProc(pid, start)
+	if !ok {
+		return 0, ErrBGShellGone // exited between the scan and the pin
+	}
+	st := &bgStop{leader: leader, pins: map[bgTarget]procPin{leader: h}, fresh: []bgTarget{leader}}
 	defer st.close()
-	if !st.absorb(tab, bgTarget{pid, start}) {
-		return ErrBGShellGone // exited between the scan and the pin
+	if r, ok := readStat(pid); ok && r.StartTicks == start && r.Sid == pid {
+		st.leadsSession = true
 	}
+	st.absorb(tab)
 	st.signalNew(syscall.SIGTERM)
 	for deadline := time.Now().Add(bgStopGrace); time.Now().Before(deadline); {
 		time.Sleep(100 * time.Millisecond)
 		tab = freshProcs()
-		st.absorb(tab, bgTarget{})
+		st.absorb(tab)
 		st.signalNew(syscall.SIGTERM)
-		if len(st.live(tab)) == 0 {
-			return nil
+		if len(st.live()) == 0 {
+			return st.leftovers(), nil
 		}
 	}
-	for _, t := range st.live(freshProcs()) {
+	for _, t := range st.live() {
 		_ = st.pins[t].Signal(syscall.SIGKILL)
 	}
-	return nil
+	time.Sleep(100 * time.Millisecond)
+	return st.leftovers(), nil
 }
 
 // bgTarget is a process identity: a pid alone can name a different process later.
@@ -228,58 +248,66 @@ func checkBGShell(root int, tab map[int]procInfo, pid int, start uint64) error {
 	return ErrBGShellGone
 }
 
-// bgStop is one stop in progress: the processes pinned so far, and which of them have not
-// been sent SIGTERM yet.
+// bgStop is one stop in progress.
 type bgStop struct {
-	pgid   int
-	pins   map[bgTarget]procPin
-	fresh  []bgTarget
-	leader bgTarget
+	leader       bgTarget
+	leadsSession bool
+	// aliveAt is an uptime (clock ticks) at which the shell was confirmed alive; a process of
+	// its session that started before it was born into the original session.
+	aliveAt uint64
+	pins    map[bgTarget]procPin
+	fresh   []bgTarget // pinned, not yet sent SIGTERM
 }
 
-// absorb pins every process in tab that belongs to the stop and is not pinned yet. leader is
-// set on the first call only. A process belongs when its parent is a pinned process alive in
-// this same table, or when it is in the shell's process group while a pinned process alive in
-// this table still is: a group id cannot be reused while any member lives, so that member
-// vouches for the group. Reports whether the leader was pinned.
-func (st *bgStop) absorb(tab map[int]procInfo, leader bgTarget) bool {
-	if leader.pid != 0 {
-		st.leader = leader
-		if !st.pin(leader) {
-			return false
+// absorb takes in the processes tab nominates and the evidence confirms (see
+// StopBackgroundShell), repeating while it finds any, since a new member can vouch for its
+// children.
+func (st *bgStop) absorb(tab map[int]procInfo) {
+	if st.leadsSession {
+		u := uptimeTicks()
+		if u > 0 && st.pins[st.leader].Alive() {
+			st.aliveAt = u
 		}
 	}
 	for changed := true; changed; {
 		changed = false
-		alive := map[int]bool{}
-		groupVouched := false
+		byPID := map[int]bgTarget{}
 		for t := range st.pins {
-			if pi, ok := tab[t.pid]; ok && pi.StartTicks == t.start && pi.State != 'Z' {
-				alive[t.pid] = true
-				if pi.Pgrp == st.pgid {
-					groupVouched = true
-				}
-			}
+			byPID[t.pid] = t
 		}
 		for pid, pi := range tab {
 			t := bgTarget{pid, pi.StartTicks}
 			if _, done := st.pins[t]; done || pi.State == 'Z' {
 				continue
 			}
-			if alive[pi.PPID] || (groupVouched && pi.Pgrp == st.pgid) {
-				if st.pin(t) {
-					changed = true
-				}
+			_, parentPinned := byPID[pi.PPID]
+			if !parentPinned && !(st.leadsSession && pi.Sid == st.leader.pid) {
+				continue // not nominated
+			}
+			if st.confirm(t, byPID) {
+				changed = true
 			}
 		}
 	}
-	return true
 }
 
-// pin opens a handle on t and keeps it only if the process behind it is still t.
-func (st *bgStop) pin(t bgTarget) bool {
+// confirm pins t and keeps it only on evidence read after the pin (see StopBackgroundShell).
+func (st *bgStop) confirm(t bgTarget, byPID map[int]bgTarget) bool {
 	h, ok := pinProc(t.pid, t.start)
 	if !ok {
+		return false
+	}
+	r, ok := readStat(t.pid)
+	member := false
+	if ok && r.StartTicks == t.start && r.State != 'Z' {
+		if p, pinned := byPID[r.PPID]; pinned && st.pins[p].Alive() {
+			member = true
+		} else if st.leadsSession && r.Sid == st.leader.pid && st.aliveAt > 0 && r.StartTicks < st.aliveAt {
+			member = true
+		}
+	}
+	if !member {
+		h.Close()
 		return false
 	}
 	st.pins[t] = h
@@ -303,15 +331,36 @@ func (st *bgStop) signalNew(sig syscall.Signal) {
 	st.fresh = nil
 }
 
-// live lists the pinned processes still running in tab (a zombie has already exited).
-func (st *bgStop) live(tab map[int]procInfo) []bgTarget {
+// live lists the pinned processes still running (re-read through their own pid, start-checked;
+// a zombie has already exited).
+func (st *bgStop) live() []bgTarget {
 	var out []bgTarget
 	for t := range st.pins {
-		if pi, ok := tab[t.pid]; ok && pi.StartTicks == t.start && pi.State != 'Z' {
+		if r, ok := readStat(t.pid); ok && r.StartTicks == t.start && r.State != 'Z' {
 			out = append(out, t)
 		}
 	}
 	return out
+}
+
+// leftovers counts running processes of the shell's session that the stop did not take: the
+// member is told rather than the stop reporting a clean end. It may include a process of a
+// later session that reused the id; it is only counted, never signalled.
+func (st *bgStop) leftovers() int {
+	if !st.leadsSession {
+		return 0
+	}
+	n := 0
+	for pid, pi := range freshProcs() {
+		if pi.Sid != st.leader.pid || pi.State == 'Z' {
+			continue
+		}
+		if _, pinned := st.pins[bgTarget{pid, pi.StartTicks}]; pinned {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 func (st *bgStop) close() {
@@ -320,12 +369,41 @@ func (st *bgStop) close() {
 	}
 }
 
+// readProcStat reads one process's stat now.
+func readProcStat(pid int) (procInfo, bool) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return procInfo{}, false
+	}
+	return procx.Parse(pid, string(b))
+}
+
+// readUptimeTicks is the time since boot in clock ticks, the clock of StartTicks; 0 if unread.
+func readUptimeTicks() uint64 {
+	b, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	f := strings.Fields(string(b))
+	if len(f) == 0 {
+		return 0
+	}
+	sec, err := strconv.ParseFloat(f[0], 64)
+	if err != nil {
+		return 0
+	}
+	return uint64(sec * clockTicks)
+}
+
 // pidfdPin is a procPin over a pidfd.
 type pidfdPin int
 
 func (p pidfdPin) Signal(sig syscall.Signal) error {
 	return unix.PidfdSendSignal(int(p), sig, nil, 0)
 }
+
+// Alive: signal 0 through the pidfd fails with ESRCH only once the process has been reaped.
+func (p pidfdPin) Alive() bool { return unix.PidfdSendSignal(int(p), 0, nil, 0) == nil }
 
 func (p pidfdPin) Close() { _ = unix.Close(int(p)) }
 
@@ -337,8 +415,7 @@ func pinProcFD(pid int, start uint64) (procPin, bool) {
 	if err != nil {
 		return nil, false
 	}
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
-	if pi, ok := procx.Parse(pid, string(b)); err != nil || !ok || pi.StartTicks != start {
+	if pi, ok := readProcStat(pid); !ok || pi.StartTicks != start {
 		_ = unix.Close(fd)
 		return nil, false
 	}

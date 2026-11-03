@@ -39,7 +39,8 @@ func HandleSessionBackgroundStop(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if err := claude.StopBackgroundShell(name, req.PID, req.Start); err != nil {
+	left, err := claude.StopBackgroundShell(name, req.PID, req.Start)
+	if err != nil {
 		if errors.Is(err, claude.ErrBGShellGone) {
 			httpx.WriteErr(w, http.StatusConflict, "gone", "that background shell is no longer running in this session")
 			return
@@ -47,10 +48,13 @@ func HandleSessionBackgroundStop(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "stop_failed", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, bgStopResp{Stopped: req.PID})
+	httpx.WriteJSON(w, http.StatusOK, bgStopResp{Stopped: req.PID, Leftover: left})
 }
 
-// bgStopResp is the answer to a background-stop: the pid that was ended.
+// bgStopResp is the answer to a background-stop: the pid that was ended, and how many
+// processes of its session may still run because they could not be proven to belong to it
+// (the mirror says so instead of reporting a clean stop).
 type bgStopResp struct {
-	Stopped int `json:"stopped"`
+	Stopped  int `json:"stopped"`
+	Leftover int `json:"leftover,omitempty"`
 }

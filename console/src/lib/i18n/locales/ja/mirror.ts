@@ -308,6 +308,8 @@ export const mirror = {
   "mirror.bg_shell_stopping": "停止中…",
   "mirror.bg_shell_stop_title": "このコマンドと、そこから起動したものをすべて終了します。下の停止ボタンが止めるのはターンで、バックグラウンドコマンドは止まりません。",
   "mirror.bg_shell_stop_confirm": "このバックグラウンドコマンドを停止しますか？\n\n{command}\n\nエージェントには終了が通知されるため、それを受けて新しいターンを始めることがあります。",
+  "mirror.bg_shell_leftover_one": "停止しました。このコマンドが起動した可能性のあるプロセスが {count} 個動いています。このコマンドのものだと確かめられなかったため、止めていません。",
+  "mirror.bg_shell_leftover_other": "停止しました。このコマンドが起動した可能性のあるプロセスが {count} 個動いています。このコマンドのものだと確かめられなかったため、止めていません。",
   "mirror.bg_shell_gone": "そのコマンドはすでに終了しています。",
   "mirror.peer_pending_one": "{name} からのメッセージ {count} 件は、回答のあとに届きます。",
   "mirror.peer_pending_other": "{name} からのメッセージ {count} 件は、回答のあとに届きます。",

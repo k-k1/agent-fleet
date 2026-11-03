@@ -18,8 +18,8 @@ func shellTree() map[int]procInfo {
 	return map[int]procInfo{
 		100: {PPID: 1, State: 'S', Comm: "bash"},
 		101: {PPID: 100, State: 'S', Comm: "claude"},
-		200: {PPID: 101, State: 'S', Comm: "bash", Pgrp: 200, StartTicks: 5000, CPUTicks: 2},
-		201: {PPID: 200, State: 'S', Comm: "cat", Pgrp: 200, StartTicks: 5001, CPUTicks: 1},
+		200: {PPID: 101, State: 'S', Comm: "bash", Pgrp: 200, Sid: 200, StartTicks: 5000, CPUTicks: 2},
+		201: {PPID: 200, State: 'S', Comm: "cat", Pgrp: 200, Sid: 200, StartTicks: 5001, CPUTicks: 1},
 		300: {PPID: 1, State: 'S', Comm: "bash", Pgrp: 300, StartTicks: 10},
 	}
 }
@@ -140,6 +140,10 @@ type fakeProcs struct {
 	onSignal func(pid int, sig syscall.Signal)
 	// beforePin runs just before a pin is opened, to race the table against it.
 	beforePin func(pid int)
+	// scan, when it returns a table, replaces the next /proc scan: a torn, non-atomic read.
+	scan func() map[int]procInfo
+	// now is the uptime in ticks (default 8000; shellTree's processes started before it).
+	now uint64
 }
 
 type fakePin struct {
@@ -162,15 +166,35 @@ func (p fakePin) Signal(sig syscall.Signal) error {
 	return nil
 }
 
+func (p fakePin) Alive() bool {
+	pi, ok := p.f.tab[p.t.pid]
+	return ok && pi.StartTicks == p.t.start
+}
+
 func (fakePin) Close() {}
 
 func (f *fakeProcs) install(t *testing.T) {
 	t.Helper()
-	oPin, oFresh, oRoot, oGrace := pinProc, freshProcs, paneRoot, bgStopGrace
-	t.Cleanup(func() { pinProc, freshProcs, paneRoot, bgStopGrace = oPin, oFresh, oRoot, oGrace })
+	oPin, oFresh, oRoot, oGrace, oStat, oUp := pinProc, freshProcs, paneRoot, bgStopGrace, readStat, uptimeTicks
+	t.Cleanup(func() {
+		pinProc, freshProcs, paneRoot, bgStopGrace, readStat, uptimeTicks = oPin, oFresh, oRoot, oGrace, oStat, oUp
+	})
+	if f.now == 0 {
+		f.now = 8000
+	}
+	uptimeTicks = func() uint64 { return f.now }
+	readStat = func(pid int) (procInfo, bool) {
+		pi, ok := f.tab[pid]
+		return pi, ok
+	}
 	bgStopGrace = 300 * time.Millisecond
 	paneRoot = func(string) int { return 100 }
 	freshProcs = func() map[int]procInfo {
+		if f.scan != nil {
+			if tab := f.scan(); tab != nil {
+				return tab
+			}
+		}
 		cp := map[int]procInfo{}
 		for k, v := range f.tab {
 			cp[k] = v
@@ -201,7 +225,7 @@ func TestStopBackgroundShell(t *testing.T) {
 	t.Run("SIGTERM is enough, children before the shell", func(t *testing.T) {
 		f := &fakeProcs{tab: shellTree()}
 		f.install(t)
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		want := []string{"terminated:201", "terminated:200"}
@@ -213,7 +237,7 @@ func TestStopBackgroundShell(t *testing.T) {
 	t.Run("SIGKILL after the grace, only for what is left", func(t *testing.T) {
 		f := &fakeProcs{tab: shellTree(), ignoreTerm: map[int]bool{201: true}}
 		f.install(t)
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := f.tab[201]; ok {
@@ -233,7 +257,7 @@ func TestStopBackgroundShell(t *testing.T) {
 				f.tab[201] = procInfo{PPID: 1, State: 'S', Comm: "other", StartTicks: 9999}
 			}
 		}
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		if f.signalled("terminated:201") || f.signalled("killed:201") || f.tab[201].Comm != "other" {
@@ -249,7 +273,7 @@ func TestStopBackgroundShell(t *testing.T) {
 				f.tab[201] = procInfo{PPID: 1, State: 'S', Comm: "other", StartTicks: 9999}
 			}
 		}
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		if f.signalled("killed:201") || f.tab[201].Comm != "other" {
@@ -259,10 +283,10 @@ func TestStopBackgroundShell(t *testing.T) {
 
 	t.Run("a group member that re-parented away and ignores SIGTERM is killed", func(t *testing.T) {
 		tab := shellTree()
-		tab[205] = procInfo{PPID: 1, State: 'S', Comm: "daemon", Pgrp: 200, StartTicks: 5005}
+		tab[205] = procInfo{PPID: 1, State: 'S', Comm: "daemon", Pgrp: 200, Sid: 200, StartTicks: 5005}
 		f := &fakeProcs{tab: tab, ignoreTerm: map[int]bool{205: true}}
 		f.install(t)
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := f.tab[205]; ok || !f.signalled("killed:205") {
@@ -275,11 +299,11 @@ func TestStopBackgroundShell(t *testing.T) {
 		f.install(t)
 		f.onSignal = func(pid int, sig syscall.Signal) {
 			if pid == 200 && sig == syscall.SIGTERM {
-				f.tab[206] = procInfo{PPID: 200, State: 'S', Comm: "cleanup", Pgrp: 200, StartTicks: 5006}
+				f.tab[206] = procInfo{PPID: 200, State: 'S', Comm: "cleanup", Pgrp: 200, Sid: 200, StartTicks: 5006}
 				f.ignoreTerm[206] = true
 			}
 		}
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := f.tab[206]; ok {
@@ -289,10 +313,10 @@ func TestStopBackgroundShell(t *testing.T) {
 
 	t.Run("an unrelated group is not taken in", func(t *testing.T) {
 		tab := shellTree()
-		tab[400] = procInfo{PPID: 1, State: 'S', Comm: "x", Pgrp: 400, StartTicks: 1}
+		tab[400] = procInfo{PPID: 1, State: 'S', Comm: "x", Pgrp: 400, Sid: 400, StartTicks: 1}
 		f := &fakeProcs{tab: tab}
 		f.install(t)
-		if err := StopBackgroundShell("s", 200, 5000); err != nil {
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
 			t.Fatal(err)
 		}
 		if f.signalled("terminated:400") || f.signalled("terminated:300") {
@@ -300,10 +324,109 @@ func TestStopBackgroundShell(t *testing.T) {
 		}
 	})
 
+	t.Run("a torn scan cannot vouch for a process of a session that reused the id", func(t *testing.T) {
+		f := &fakeProcs{tab: shellTree(), ignoreTerm: map[int]bool{201: true}}
+		f.install(t)
+		torn := false
+		f.onSignal = func(pid int, sig syscall.Signal) {
+			if pid == 200 && sig == syscall.SIGTERM && !torn {
+				torn = true
+				// The shell has exited and been reaped; time moves on and pid 200 now leads a new,
+				// unrelated session with a member 207. The next scan read the old shell's stat
+				// before it went and 207's after the reuse.
+				f.now = 9500
+				f.tab[207] = procInfo{PPID: 1, State: 'S', Comm: "other-job", Pgrp: 200, Sid: 200, StartTicks: 9100}
+				old := shellTree()[200]
+				f.scan = func() map[int]procInfo {
+					f.scan = nil
+					cp := map[int]procInfo{200: old}
+					for k, v := range f.tab {
+						cp[k] = v
+					}
+					return cp
+				}
+			}
+		}
+		left, err := StopBackgroundShell("s", 200, 5000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.signalled("terminated:207") || f.signalled("killed:207") {
+			t.Fatalf("a process of another session was signalled: %v", f.sent)
+		}
+		if left != 1 {
+			t.Fatalf("leftover = %d, want 1 (counted, not signalled)", left)
+		}
+	})
+
+	t.Run("a torn scan cannot vouch for the child of a process that reused the parent's pid", func(t *testing.T) {
+		f := &fakeProcs{tab: shellTree(), ignoreTerm: map[int]bool{201: true}}
+		f.install(t)
+		torn := false
+		f.onSignal = func(pid int, sig syscall.Signal) {
+			if pid == 200 && sig == syscall.SIGTERM && !torn {
+				torn = true
+				// pid 200 now belongs to an unrelated process in another session, and 210 is its
+				// child. The scan read the old shell first.
+				f.tab[200] = procInfo{PPID: 1, State: 'S', Comm: "new", Pgrp: 990, Sid: 990, StartTicks: 9000}
+				f.tab[210] = procInfo{PPID: 200, State: 'S', Comm: "new-child", Pgrp: 990, Sid: 990, StartTicks: 9001}
+				old := shellTree()[200]
+				f.scan = func() map[int]procInfo {
+					f.scan = nil
+					cp := map[int]procInfo{}
+					for k, v := range f.tab {
+						cp[k] = v
+					}
+					cp[200] = old
+					return cp
+				}
+			}
+		}
+		if _, err := StopBackgroundShell("s", 200, 5000); err != nil {
+			t.Fatal(err)
+		}
+		if f.signalled("terminated:210") || f.signalled("killed:210") || f.tab[210].Comm != "new-child" {
+			t.Fatalf("the child of a reused pid was signalled: %v", f.sent)
+		}
+	})
+
+	t.Run("a child forked by a TERM handler as the shell exits is reported, not hidden", func(t *testing.T) {
+		f := &fakeProcs{tab: shellTree()}
+		f.install(t)
+		f.onSignal = func(pid int, sig syscall.Signal) {
+			if pid == 200 && sig == syscall.SIGTERM {
+				// trap 'sleep 600 & exit' TERM: the sleep is orphaned to init after the shell exits,
+				// and it started after the last moment the shell was seen alive.
+				f.tab[208] = procInfo{PPID: 1, State: 'S', Comm: "sleep", Pgrp: 200, Sid: 200, StartTicks: 8050}
+			}
+		}
+		left, err := StopBackgroundShell("s", 200, 5000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if left != 1 {
+			t.Fatalf("leftover = %d, want 1: the orphan must not be reported as a clean stop", left)
+		}
+	})
+
+	t.Run("a session member that started while the shell was alive is taken even as an orphan", func(t *testing.T) {
+		tab := shellTree()
+		tab[209] = procInfo{PPID: 1, State: 'S', Comm: "nohup-job", Pgrp: 209, Sid: 200, StartTicks: 6000}
+		f := &fakeProcs{tab: tab, ignoreTerm: map[int]bool{209: true}}
+		f.install(t)
+		left, err := StopBackgroundShell("s", 200, 5000)
+		if err != nil || left != 0 {
+			t.Fatalf("left=%d err=%v", left, err)
+		}
+		if _, ok := f.tab[209]; ok {
+			t.Fatalf("orphaned session member survived: %v", f.sent)
+		}
+	})
+
 	t.Run("refused request signals nothing", func(t *testing.T) {
 		f := &fakeProcs{tab: shellTree()}
 		f.install(t)
-		if err := StopBackgroundShell("s", 300, 10); !errors.Is(err, ErrBGShellGone) {
+		if _, err := StopBackgroundShell("s", 300, 10); !errors.Is(err, ErrBGShellGone) {
 			t.Fatalf("err = %v", err)
 		}
 		if len(f.sent) != 0 {
@@ -335,11 +458,31 @@ func TestPinProcFDReal(t *testing.T) {
 		t.Skip("pidfd_open unavailable on this kernel")
 	}
 	defer h.Close()
+	if !h.Alive() {
+		t.Fatal("a running process reads as not alive")
+	}
 	if err := h.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
+	// Exited but not reaped: still alive to the pin, since its pid is still taken.
+	for i := 0; i < 50; i++ {
+		if r, ok := readProcStat(pid); ok && r.State == 'Z' {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	r, _ := readProcStat(pid)
+	if r.State != 'Z' {
+		t.Fatalf("the child never became a zombie (state %c)", r.State)
+	}
+	if !h.Alive() {
+		t.Fatal("a zombie reads as not alive")
+	}
 	if _, err := cmd.Process.Wait(); err != nil {
 		t.Fatal(err)
+	}
+	if h.Alive() {
+		t.Fatal("a reaped process reads as alive")
 	}
 	if err := h.Signal(syscall.SIGTERM); err == nil {
 		t.Fatal("a signal through the pin of a reaped process was delivered")

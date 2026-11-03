@@ -17,7 +17,7 @@ import {
 import type { BackgroundShell, Discard, InteractionAnswer, QueueItem, TurnResult } from "../../../core/api/client.ts";
 import type { Attachment } from "../../../lib/attachDraft.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
-import { t as tr } from "../../../lib/i18n/index.ts";
+import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { takeLaunchSeed } from "../../../lib/launchSeed.ts";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { withoutDiscarded } from "../pendingEcho.ts";
@@ -368,6 +368,7 @@ export function useMirrorActions({
     if (res.ok || res.code === "gone") {
       setBgShells((list) => list.filter((x) => x.pid !== sh.pid || x.start !== sh.start));
       if (!res.ok) toast(tr("mirror.bg_shell_gone"));
+      else if (res.leftover) toast(tCount("mirror.bg_shell_leftover", res.leftover));
     } else toast(res.message || tr("mirror.send_failed"));
     setTimeout(() => tickRef.current?.(), 250);
   };

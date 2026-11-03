@@ -285,6 +285,8 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.bg_shell_stopping": "Stopping…",
   "mirror.bg_shell_stop_title": "Ends this command and everything it started. The stop button below ends a turn, not a background command.",
   "mirror.bg_shell_stop_confirm": "Stop this background command?\n\n{command}\n\nThe agent is told when its background command ends and may start a turn to react to it.",
+  "mirror.bg_shell_leftover_one": "Stopped. {count} process it may have started is still running and was left alone, because it could not be confirmed as part of this command.",
+  "mirror.bg_shell_leftover_other": "Stopped. {count} processes it may have started are still running and were left alone, because they could not be confirmed as part of this command.",
   "mirror.bg_shell_gone": "That command has already ended.",
   "mirror.peer_pending_one": "{count} message from {name} will be delivered after you answer.",
   "mirror.peer_pending_other": "{count} messages from {name} will be delivered after you answer.",

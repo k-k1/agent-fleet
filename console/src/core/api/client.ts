@@ -552,19 +552,21 @@ export interface BackgroundShell {
   cpuSec: number;
 }
 
-/** sessionStopBackgroundShell ends one background shell and everything under it. code
- *  "gone" means it had already exited (or the pid now names another process). */
+/** sessionStopBackgroundShell ends one background shell and what belongs to it. code
+ *  "gone" means it had already exited (or the pid now names another process). `leftover`
+ *  counts processes of its session that may still run: the Agent could not prove they belong
+ *  to the shell, so it left them alone. */
 export async function sessionStopBackgroundShell(
   session: string,
   shell: Pick<BackgroundShell, "pid" | "start">,
-): Promise<{ ok: boolean; code?: string; message?: string }> {
+): Promise<{ ok: boolean; leftover?: number; code?: string; message?: string }> {
   const r = await apiJSON(
     `api/sessions/${encodeURIComponent(session)}/background-stop`,
     "POST",
     { pid: shell.pid, start: shell.start },
   ).catch(() => ({ error: { message: t("err.network") } }));
   const err = r?.error as ApiError | undefined;
-  if (!err) return { ok: true };
+  if (!err) return { ok: true, leftover: typeof r?.leftover === "number" ? r.leftover : 0 };
   const code = typeof err.code === "string" ? err.code : "";
   return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
 }
