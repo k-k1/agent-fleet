@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRegionFormat, normalizeTimeZone } from "./normalize.ts";
+import { normalizeBrowserTimeZone, normalizeRegionFormat, normalizeTimeZone } from "./normalize.ts";
 import { defaultSetting } from "./prefs.ts";
 
 describe("region format / time zone preferences (#2185)", () => {
@@ -17,5 +17,12 @@ describe("region format / time zone preferences (#2185)", () => {
   it("keeps a zone name this browser may not know", () => {
     expect(normalizeTimeZone("Asia/Tokyo")).toBe("Asia/Tokyo");
     expect(normalizeTimeZone("Mars/Olympus_Mons")).toBe("Mars/Olympus_Mons");
+  });
+
+  it("browserTimeZone defaults to empty and keeps only a bounded string", () => {
+    expect(defaultSetting("browserTimeZone")).toBe("");
+    expect(normalizeBrowserTimeZone("Asia/Tokyo")).toBe("Asia/Tokyo");
+    expect(normalizeBrowserTimeZone(5)).toBe("");
+    expect(normalizeBrowserTimeZone("x".repeat(65))).toBe("");
   });
 });

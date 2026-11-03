@@ -109,7 +109,7 @@ func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (me
 	// ★8 repo growth: leave the judgement to git (--auto acts only past its threshold). A
 	// failure is swallowed because the snapshot already succeeded - returning it here would
 	// read as "stacked, yet failed".
-	_, _ = memoryGitRun("gc", "--auto", "--quiet")
+	memoryRunGCAuto()
 	return res, nil
 }
 

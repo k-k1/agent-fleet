@@ -25,6 +25,7 @@
 //      in is not worth the risk.
 
 export const BUNDLE_KIND = "agent-fleet-settings";
+import { isMachineWrittenSetting } from "./settings/prefs.ts";
 import { validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
 
 export const BUNDLE_VERSION = 1;
@@ -123,7 +124,7 @@ export function exportablePrefs(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(defaults)) {
-    if (k in state) out[k] = state[k];
+    if (k in state && !isMachineWrittenSetting(k)) out[k] = state[k];
   }
   return out;
 }
@@ -289,7 +290,7 @@ export function sanitizeImportedPrefs(
   const patch: Record<string, unknown> = {};
   const skipped: string[] = [];
   for (const [k, v] of Object.entries(raw || {})) {
-    if (!(k in defaults)) {
+    if (!(k in defaults) || isMachineWrittenSetting(k)) {
       skipped.push(k);
       continue;
     }

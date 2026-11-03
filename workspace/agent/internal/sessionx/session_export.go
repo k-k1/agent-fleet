@@ -39,7 +39,7 @@ func HandleSessionExport(w http.ResponseWriter, r *http.Request) {
 	turns := exportTurns(meta)
 	tagInjectedTurns(name, turns)
 	q := r.URL.Query()
-	md := renderSessionExport(meta, turns, exportToolDetail(q.Get("tools")), pickExportZone(q.Get("tz"), uiprefs.TimeZone()), time.Now())
+	md := renderSessionExport(meta, turns, exportToolDetail(q.Get("tools")), pickExportZone(q.Get("tz"), uiprefs.EffectiveTimeZone()), time.Now())
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+exportFileName(name)+`"`)
 	w.Header().Set("Cache-Control", "no-store")

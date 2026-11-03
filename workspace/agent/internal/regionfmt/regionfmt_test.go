@@ -1,8 +1,12 @@
 package regionfmt
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 func TestFormat(t *testing.T) {
@@ -41,5 +45,41 @@ func TestBadZoneFallsBack(t *testing.T) {
 		if got := format(at, "2006-01-02 15:04", "", tz); got != want {
 			t.Errorf("tz %q: got %q want %q", tz, got, want)
 		}
+	}
+}
+
+// "auto" follows the browser zone the Console published; an explicit zone still wins, and a
+// garbage published value falls back to time.Local without an error.
+func TestDateTimeUsesPublishedBrowserZone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	at := time.Date(2026, 3, 7, 16, 0, 0, 0, time.UTC) // 11:00 on Mar 7 in New York (EST)
+	const fb = "Jan 2 15:04"
+	write := func(body string) {
+		p := uiprefs.Path()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local := at.In(time.Local).Format(fb)
+	cases := []struct{ body, want string }{
+		{`{"timeZone":"auto","browserTimeZone":"America/New_York"}`, "Mar 7 11:00"},
+		{`{"browserTimeZone":"America/New_York"}`, "Mar 7 11:00"},
+		{`{"timeZone":"UTC","browserTimeZone":"America/New_York"}`, "Mar 7 16:00"},
+		{`{"timeZone":"auto","browserTimeZone":"Not/AZone"}`, local},
+		{`{"timeZone":"auto","browserTimeZone":""}`, local},
+		{`{"timeZone":"auto"}`, local},
+	}
+	for _, c := range cases {
+		write(c.body)
+		if got := DateTime(at, fb); got != c.want {
+			t.Errorf("%s: got %q want %q", c.body, got, c.want)
+		}
+	}
+	write(`{"timeZone":"auto","browserTimeZone":"America/New_York"}`)
+	if got := Location().String(); got != "America/New_York" {
+		t.Errorf("Location() = %q, want America/New_York", got)
 	}
 }
