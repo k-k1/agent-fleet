@@ -175,6 +175,14 @@ appended to docs/62 §62.5).
 "that shape does not help", not "EC2 cannot be made fast". The axis for considering the EC2 launch type
 is **I/O and persistence**, not startup latency, and those are handled by decisions 2 and 5 of this ADR.
 
+**Note (2026-11-04, #3318): the AMI update route is now the Control Plane, not a stack deploy.** The "AMI
+updates increase" row above stays valid; what changed is how the patch reaches the slots. The CP reads
+Amazon's public ECS-optimized parameters (x86_64 and arm64) itself, passes the result as the `ImageId` on
+every slot launch, and calls a slot outdated when its ImageId differs from the current AMI for its
+architecture or when the launch template changed in more than its ImageId. The template version number
+alone no longer decides. `SlotAmiId` / `SlotAmiIdArm64` / `Ec2SlotAmiArm64` remain as the initial and
+fallback values.
+
 ## Decision 8 — if adopted, the shape is "a pool of generic slots plus swapping the EBS", not "one fixed instance per user"
 
 We measured the shape in which **instances are not tied to users and only the per-user EBS is swapped**

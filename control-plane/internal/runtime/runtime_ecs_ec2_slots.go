@@ -396,9 +396,9 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string, limit int, repla
 	}
 	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		LaunchTemplate: lt,
-		// Overrides the template's ImageId on arm64 and is nil everywhere else, so an
-		// x86_64 launch is byte-for-byte the call it has always been.
-		ImageId:      strOrNil(e.pool.amiFor(e.arch)),
+		// The SSM-current AMI for this architecture, else the CloudFormation value (arm64) or
+		// nil (x86: the template's own). Never an error: SSM trouble must not stop a launch.
+		ImageId:      strOrNil(e.pool.launchAMI(ctx, e.arch)),
 		InstanceType: ec2types.InstanceType(e.instanceType),
 		SubnetId:     aws.String(subnet),
 		MinCount:     aws.Int32(1),

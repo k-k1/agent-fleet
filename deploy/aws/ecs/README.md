@@ -556,6 +556,19 @@ not `AVAILABLE`, or not exactly the clear of those keys (it deletes such a chang
 builds, prints and executes in one go; `--dry-run` builds, prints and deletes the change set. A
 change set that fails to build (for example "didn't contain changes") is reported and deleted.
 
+### Upgrading: slot AMIs follow Amazon's SSM parameters (#3318)
+
+With `WsRuntime=ecs-ec2` the Control Plane now reads Amazon's public ECS-optimized AL2023 AMI parameters
+(x86_64 and arm64) itself, about hourly, and launches every slot with the result, so slots follow
+Amazon's updates **without a deploy**. `SlotAmiId`, `SlotAmiIdArm64` and `Ec2SlotAmiArm64` stay as the
+initial and fallback values. A slot is outdated when its AMI differs from the current one for its
+architecture, or the launch template changed in more than its ImageId; the version number alone no
+longer decides. The CP role needs `ssm:GetParameter` on
+`arn:aws:ssm:<region>::parameter/aws/service/ecs/optimized-ami/amazon-linux-2023/*` and
+`ec2:DescribeLaunchTemplateVersions`, both added to `20-platform`: deploy it **before or with** the new CP.
+Until then the CP falls back quietly (one log line) and calls no slot outdated on its AMI. The first
+new AMI after the upgrade makes every slot outdated at once; they are replaced at their next Start.
+
 ### Upgrading from v0.34.x
 
 v0.34.x's `00-network` has an S3 gateway endpoint without a policy and no workspace subnets.
@@ -1707,7 +1720,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `WsRuntime` | `AF_RUNTIME` | `ecs` | `ecs-ec2` switches the adapter. Rolling back is this value |
 | `Ec2SlotLaunchTemplate` | `AF_ECS_EC2_LAUNCH_TEMPLATE` | — | `SlotLaunchTemplateId` output of `40-ec2-pool`. The CP refuses to boot without it on this profile |
 | `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending — or several named **classes**, see below. The vCPU field is optional and display-only (the Console shows which instance a memory number lands on) |
-| `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | `""` | `SlotAmiIdArm64` output of `40-ec2-pool`. Required only when a class declares `arm64` — the CP refuses to boot otherwise |
+| `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | `""` | `SlotAmiIdArm64` output of `40-ec2-pool`. Required only when a class declares `arm64` — the CP refuses to boot otherwise. Initial/fallback only: the CP follows Amazon's SSM parameter itself (#3318) |
 | `Ec2DefaultSlotClass` | `AF_ECS_EC2_DEFAULT_SLOT_CLASS` | `""` (the first class) | Where a member with no per-user and no per-tenant choice lands |
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap **across all classes**. Start fails at the cap rather than growing the bill |
 | `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | How long an instance may sit with no task before it is **stopped**. Ends the compute charge; the root volume keeps billing. `0` = never |
@@ -1793,7 +1806,7 @@ Before declaring an `arm64` class, in this order:
 2. **Set `Ec2SlotAmiArm64`.** A launch template pins one AMI and Graviton cannot boot the
    x86_64 ECS-optimized one; the CP passes this as a `RunInstances` ImageId override.
    `aws ssm get-parameter --name /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id --query Parameter.Value --output text`.
-   Like the x86_64 AMI, patching it means redeploying `40-ec2-pool`.
+   This value is only the initial and fallback AMI: the CP reads the same SSM parameter itself and launches every slot with it, so patching needs no deploy (#3318).
 3. **Expect a second golden bake.** A golden is a home full of binaries, so there is one
    per architecture; until the arm64 one is baked, new members on an arm64 class start
    from an empty home (slower, not broken). The pool screen lists them per architecture.
@@ -1862,8 +1875,8 @@ loaded from a fresh snapshot: the instance took ~56s longer to join the cluster 
 first start measured **179–192s against 144s** on the stock ECS-optimized AMI. The script
 and the CP-side reporting were removed rather than left as a not-recommended option; the
 measurement and the reasoning are in docs/log/64 §64.24 / ADR 0045 decision 19. **`SlotAmiId` stays
-at its default** (the ECS-optimized AMI's SSM parameter — re-deploying this stack is how
-slots get patched, decision 7).
+at its default** (the ECS-optimized AMI's SSM parameter; since #3318 the CP also reads that parameter
+itself at launch, so slots follow it without a deploy — decision 7).
 
 **A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 decision 20):
 it leaves the pool so nobody else lands on it, its home is detached and freed for another

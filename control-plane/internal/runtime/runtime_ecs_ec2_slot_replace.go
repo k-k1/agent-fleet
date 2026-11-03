@@ -70,7 +70,7 @@ type SlotAutoReplace struct {
 // Refusals of a reservation, kept apart from AWS failures for the HTTP layer (404/409 vs 500).
 var (
 	ErrSlotQuarantined = errors.New("slot is quarantined; it runs nobody and is removed by terminating it")
-	ErrSlotNotOutdated = errors.New("slot is not on an older launch template version")
+	ErrSlotNotOutdated = errors.New("slot is neither behind the current AMI nor on a changed launch template")
 )
 
 // slotRetiring reports whether the sweeper and the replacement logic treat inst as on its way
@@ -96,8 +96,8 @@ func (p ec2PoolConfig) slotOutdated(inst ec2types.Instance, lt ec2LaunchTemplate
 	if p.noAutoReplace {
 		return false
 	}
-	_, outdated, known := slotTemplateOutdated(inst.Tags, lt)
-	return known && outdated
+	_, reasons, known := p.slotStale(inst, lt)
+	return known && len(reasons) > 0
 }
 
 // slotReserved reports whether an instance carries a replacement reservation.
@@ -175,7 +175,7 @@ func (e *ecsEC2Runtime) replaceReservedSlot(ctx context.Context, vol *ec2types.V
 	// An earlier replacement is only worth reusing if it is still what a launch now would
 	// give: the reservation's usual reason is a template change, and a box from the version
 	// before it would defeat that. lt is read here, authoritatively, every time.
-	lt, ltErr := describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate)
+	lt, ltErr := e.pool.readLaunchTemplate(ctx, e.ec2)
 	if ltErr != nil {
 		log.Printf("ecs-ec2: reading the slot launch template before reusing a replacement: %v", ltErr)
 	}
@@ -279,7 +279,7 @@ func (e *ecsEC2Runtime) recordAutoReplace(ctx context.Context, oldID, newID stri
 			}
 		}
 	}
-	if lt, err := describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); err == nil {
+	if lt, err := e.pool.readLaunchTemplate(ctx, e.ec2); err == nil {
 		ev.Latest = strconv.FormatInt(lt.latest, 10)
 	}
 	e.onAutoReplace(context.WithoutCancel(ctx), ev)
@@ -409,11 +409,11 @@ func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID 
 			if holder, err := e.slotHolder(ctx, id, volID); err != nil || holder != "" {
 				return false, replacementSkip
 			}
-			_, outdated, known := slotTemplateOutdated(inst.Tags, lt)
+			_, reasons, known := e.pool.slotStale(inst, lt)
 			switch {
 			case !known:
 				return false, replacementSkip
-			case outdated:
+			case len(reasons) > 0:
 				return false, replacementRetire
 			}
 			return inst.State.Name != ec2types.InstanceStateNameStopped, replacementAdopt
@@ -495,7 +495,7 @@ func (e *ecsEC2Runtime) pendingReplacementsForOthers(ctx context.Context, out *e
 	ltUnknown := false
 	if !e.pool.noAutoReplace {
 		var ltErr error
-		if lt, ltErr = describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); ltErr != nil {
+		if lt, ltErr = e.pool.readLaunchTemplate(ctx, e.ec2); ltErr != nil {
 			lt, ltUnknown = ec2LaunchTemplate{}, true
 		}
 	}
@@ -665,13 +665,31 @@ func (e *ecsEC2Runtime) SlotReplacePending(ctx context.Context) bool {
 
 // ec2LaunchTemplate is what the slots are compared against: the template the CP launches
 // from, and its $Latest — the version runSlot asks for (launchTemplateSpec).
+//
+// amis is the current AMI per architecture as read from SSM, and sigs the fingerprint of
+// each template version without its ImageId (launchTemplateSig); either may be missing, and
+// the half of the judgement that needs it is then unknown.
 type ec2LaunchTemplate struct {
 	id     string
 	latest int64
+	amis   map[string]string
+	sigs   map[int64]string
 }
 
 func (f *ecsEC2Factory) launchTemplateLatest(ctx context.Context) (ec2LaunchTemplate, error) {
-	return describeLaunchTemplate(ctx, f.ec2, f.pool.launchTemplate)
+	return f.pool.readLaunchTemplate(ctx, f.ec2)
+}
+
+// readLaunchTemplate is describeLaunchTemplate plus what a slot is judged against besides
+// the version number.
+func (p ec2PoolConfig) readLaunchTemplate(ctx context.Context, api ec2API) (ec2LaunchTemplate, error) {
+	lt, err := describeLaunchTemplate(ctx, api, p.launchTemplate)
+	if err != nil {
+		return lt, err
+	}
+	lt.amis = p.amis.snapshot(ctx)
+	lt.sigs = p.ltSigs.versions(ctx, api, lt)
+	return lt, nil
 }
 
 // describeLaunchTemplate reads the slot launch template ref (an id or a name) and its $Latest.
@@ -696,14 +714,16 @@ func describeLaunchTemplate(ctx context.Context, api ec2API, ref string) (ec2Lau
 
 // slotTemplateOutdated compares a slot's launch template stamp with the template's $Latest.
 // known=false when either side cannot be read — a missing template id, a version that is not
-// a positive integer — and such a slot is never called outdated, so the bulk reservation
-// cannot sweep up boxes nobody can account for. Both halves of the stamp are validated before
-// either is compared.
+// a positive integer, a version whose data was not read — and such a slot is never called
+// outdated, so the bulk reservation cannot sweep up boxes nobody can account for. Both halves
+// of the stamp are validated before either is compared.
 //
 //   - a slot launched from a DIFFERENT template (the pool stack replaced it) is outdated:
 //     a version number means nothing across templates;
-//   - otherwise outdated means its number is below $Latest. $Default plays no part: the CP
-//     launches with $Latest, so that is what a new slot gets.
+//   - on the same template, a lower version number is outdated only when that version's data
+//     differs from $Latest's in something other than ImageId (launchTemplateSig). The number
+//     alone moves whenever CloudFormation re-resolves the x86 AMI, which says nothing about
+//     an arm64 slot. $Default plays no part: the CP launches with $Latest.
 func slotTemplateOutdated(tags []ec2types.Tag, lt ec2LaunchTemplate) (version string, outdated, known bool) {
 	version = ec2TagValue(tags, ec2TagLaunchTemplateVersion)
 	id := ec2TagValue(tags, ec2TagLaunchTemplateID)
@@ -717,7 +737,14 @@ func slotTemplateOutdated(tags []ec2types.Tag, lt ec2LaunchTemplate) (version st
 	if id != lt.id {
 		return version, true, true
 	}
-	return version, v < lt.latest, true
+	if v >= lt.latest {
+		return version, false, true
+	}
+	mine, latest := lt.sigs[v], lt.sigs[lt.latest]
+	if mine == "" || latest == "" {
+		return version, false, false
+	}
+	return version, mine != latest, true
 }
 
 // SlotReservation is what a reservation acted on, for the reply and the audit log.
@@ -727,6 +754,9 @@ type SlotReservation struct {
 	TemplateVersion string `json:"template_version"`
 	TemplateLatest  string `json:"template_latest"`
 	Reserved        bool   `json:"reserved"`
+	// Reasons is why the slot is outdated (ami_behind, template_changed); empty when it is not.
+	// Additive: a Console that does not know it reads the same reply as before.
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 // ReserveSlotReplacement sets (reserve=true) or clears a slot's replacement reservation.
@@ -772,8 +802,10 @@ func (f *ecsEC2Factory) ReserveSlotReplacement(ctx context.Context, instanceID s
 	} else {
 		res.TemplateLatest = strconv.FormatInt(lt.latest, 10)
 	}
-	var outdated bool
-	res.TemplateVersion, outdated, _ = slotTemplateOutdated(inst.Tags, lt)
+	var reasons []string
+	res.TemplateVersion, reasons, _ = f.pool.slotStale(*inst, lt)
+	res.Reasons = reasons
+	outdated := len(reasons) > 0
 	if reserve && onlyOutdated && !outdated {
 		if ltErr != nil {
 			return res, fmt.Errorf("%w (the launch template could not be read: %v)", ErrSlotNotOutdated, ltErr)

@@ -144,6 +144,8 @@ export const ops = {
     "このスロットのワークスペースのタスクが、エージェントが停止を報告できないため ECS 上で {status} のままで、メンバーの次の Start がそれを待ちます。インスタンスが再び動けばエージェントが報告します。メンバーの次の Start がこのスロットを起こすか、EC2 コンソールでインスタンスを起動してください。Control Plane は自動では行いません。管理ガイドのプールの節を参照してください。",
   "pool.col_template": "テンプレート",
   "pool.outdated": "$Latest より古い",
+  "pool.reason_ami_behind": "理由: AMI（{ami}）がそのアーキテクチャ向けの Amazon 最新の ECS 最適化 AMI ではありません。",
+  "pool.reason_template_changed": "理由: 起動テンプレートが AMI 以外も変更されています。",
   "pool.outdated_title": "$Latest（v{latest}）より古い起動テンプレートのバージョンで起動されています。スロットはユーザーデータを起動時にしか読まないため、入れ替えるまで古いままです。",
   "pool.outdated_hint":
     "{n} 台のスロットが $Latest（v{latest}）より古い起動テンプレートで動いています。入れ替え予約すると、各ワークスペースの次回起動で新しいスロットへ移ります。実行中のセッションには触れません。",

@@ -170,7 +170,7 @@ func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) 
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			if !e.pool.noAutoReplace {
-				if lt, ltErr := describeLaunchTemplate(ctx, e.ec2, e.pool.launchTemplate); ltErr != nil {
+				if lt, ltErr := e.pool.readLaunchTemplate(ctx, e.ec2); ltErr != nil {
 					log.Printf("ecs-ec2: reading the slot launch template for %s: %v", e.base.name, ltErr)
 				} else {
 					outdated = e.pool.slotOutdated(inst, lt)

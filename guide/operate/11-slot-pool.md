@@ -18,6 +18,17 @@ same slot on its next Start, so a change to the slot launch template (a release'
 setting, for example) does not reach the slots you already have. Replace them from the
 Console instead of terminating instances by hand.
 
+**What "outdated" means.** A slot is outdated when its AMI is not Amazon's current ECS-optimized AMI
+for its architecture, or when the slot launch template changed in anything other than its AMI. The
+Control Plane reads Amazon's public SSM parameters itself (about hourly) and launches every slot,
+x86_64 and arm64, with the current AMI, so slots follow Amazon's updates without a stack deploy.
+The launch template version number alone no longer decides: a version that only moved the AMI does not
+make an arm64 slot outdated. The Slots tab says why (AMI behind / template changed). If SSM cannot be read,
+launches use the last value read, else the CloudFormation values, and no slot is called outdated on an AMI
+the Control Plane does not know. There is no grace period: a slot behind the current AMI is replaced at its
+next start, and a free one is terminated by the sweeper, so the first new AMI makes every slot outdated at once.
+Running workspaces are never touched outside a start.
+
 **Slots below `$Latest` are replaced automatically.** When a workspace starts and its home is on
 such a slot, that start moves it to a new slot exactly as a reservation does, but without the WS
 bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no new slot can be

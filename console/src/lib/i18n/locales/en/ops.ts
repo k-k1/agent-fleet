@@ -146,6 +146,8 @@ export const ops: Record<keyof typeof jaOps, string> = {
     "ECS still shows a task of this slot's workspace as {status}, because its agent cannot report the stop, and the member's next Start waits on it. Once the instance runs again its agent reports it: the member's next Start wakes this slot, or start the instance from the EC2 console. The Control Plane does not do it for you. See the pool section of the admin guide.",
   "pool.col_template": "Template",
   "pool.outdated": "older than $Latest",
+  "pool.reason_ami_behind": "Reason: its AMI ({ami}) is not Amazon's current ECS-optimized AMI for its architecture.",
+  "pool.reason_template_changed": "Reason: the launch template changed in more than its AMI.",
   "pool.outdated_title": "Launched from an older launch template version than $Latest (v{latest}). A slot reads its user data only when it is launched, so it keeps the old one until it is replaced.",
   "pool.outdated_hint":
     "{n} slot(s) run an older launch template version than $Latest (v{latest}). Reserving them makes each workspace's next start move to a new slot; nobody's running session is touched.",
