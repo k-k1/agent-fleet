@@ -64,6 +64,12 @@ func agentMemIdentKey(dir, repos string) string {
 		b.WriteByte(0)
 		b.WriteString(os.Getenv(k))
 	}
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "GIT_CONFIG_") {
+			b.WriteByte(0)
+			b.WriteString(kv)
+		}
+	}
 	return b.String()
 }
 
@@ -90,6 +96,13 @@ func agentMemStatLine(b *strings.Builder, path string) {
 // agentMemIdentStamp describes the files the identity of dir is read from. ok is false when
 // the layout is not one it understands, in which case the caller does not cache.
 func agentMemIdentStamp(dir string) (stamp string, ok bool) {
+	// These make git look somewhere other than dir/.git; the files stamped below would then
+	// not be the ones the answer comes from.
+	for _, k := range []string{"GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_CONFIG_PARAMETERS"} {
+		if _, set := os.LookupEnv(k); set {
+			return "", false
+		}
+	}
 	var b strings.Builder
 	agentMemStatLine(&b, dir)
 	dotGit := filepath.Join(dir, ".git")
@@ -118,6 +131,9 @@ func agentMemIdentStamp(dir string) (stamp string, ok bool) {
 		return "", false
 	}
 	agentMemStatLine(&b, gitDir)
+	// HEAD decides whether git accepts the directory as a repository at all (and
+	// includeIf.onbranch), so a deleted or rewritten one must miss.
+	agentMemStatLine(&b, filepath.Join(gitDir, "HEAD"))
 	common := gitDir
 	if raw, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
 		agentMemStatLine(&b, filepath.Join(gitDir, "commondir"))
@@ -130,11 +146,19 @@ func agentMemIdentStamp(dir string) (stamp string, ok bool) {
 		// The main working tree is the first `worktree list` entry, kept only if its .git exists.
 		agentMemStatLine(&b, filepath.Join(filepath.Dir(common), ".git"))
 	}
-	agentMemStatLine(&b, filepath.Join(common, "config"))
-	agentMemStatLine(&b, filepath.Join(common, "config.worktree"))
-	agentMemStatLine(&b, filepath.Join(gitDir, "config.worktree"))
-	for _, p := range agentMemGitConfigFiles() {
+	agentMemStatLine(&b, filepath.Join(common, "HEAD"))
+	cfgs := append([]string{filepath.Join(common, "config"), filepath.Join(common, "config.worktree"),
+		filepath.Join(gitDir, "config.worktree")}, agentMemGitConfigFiles()...)
+	for _, p := range cfgs {
 		agentMemStatLine(&b, p)
+		// Follow a symlinked config: replacing its target is not visible on the link itself.
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			fmt.Fprintf(&b, "%d|%d|%s\n", fi.Size(), fi.ModTime().UnixNano(), statExtra(fi, true))
+			// An include's target and condition are outside the stamp: do not cache at all.
+			if raw, err := os.ReadFile(p); err == nil && agentMemConfigHasInclude(raw) {
+				return "", false
+			}
+		}
 	}
 	return b.String(), true
 }
@@ -234,4 +258,11 @@ func statExtra(fi os.FileInfo, ctime bool) string {
 		return fmt.Sprint(st.Ino)
 	}
 	return fmt.Sprintf("%d,%d.%d", st.Ino, st.Ctim.Sec, st.Ctim.Nsec)
+}
+
+// agentMemConfigHasInclude reports whether a config file has an [include] or [includeIf]
+// section. It over-matches (a comment or value containing the word) on purpose: a false
+// positive only skips the cache.
+func agentMemConfigHasInclude(raw []byte) bool {
+	return strings.Contains(strings.ToLower(string(raw)), "include")
 }

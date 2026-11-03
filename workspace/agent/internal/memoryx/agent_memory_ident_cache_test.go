@@ -301,3 +301,60 @@ func TestAgentMemoryWritesRunGCAutoAtMostOncePerBatch(t *testing.T) {
 		t.Errorf("%d gc processes for %d writes, want at most %d", n, writes, want)
 	}
 }
+
+// GIT_DIR picks the repository, so the files under dir/.git say nothing about the answer.
+func TestAgentMemProjectForBypassesCacheUnderGitDirOverride(t *testing.T) {
+	home, clone, _ := agentMemTestEnv(t)
+	other := filepath.Join(home, "repos", "other")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agentMemIdentGit(t, other, "init", "-q")
+	link := filepath.Join(home, "gitdir-link")
+	if err := os.Symlink(filepath.Join(clone, ".git"), link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", link)
+	first := agentMemIdentSame(t, clone)
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, ".git"), link); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentMemIdentSame(t, clone); got.ID == first.ID {
+		t.Errorf("GIT_DIR retargeted yet the id stayed %s", got.ID)
+	}
+}
+
+// An include target (and its condition) is outside the stamp, so a config with includes is
+// never cached.
+func TestAgentMemProjectForSeesAnIncludedConfigChange(t *testing.T) {
+	home, clone, _ := agentMemTestEnv(t)
+	inc := filepath.Join(home, "inc.cfg")
+	write := func(url string) {
+		if err := os.WriteFile(inc, []byte("[remote \"origin\"]\n\turl = "+url+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("https://example.com/a/one.git")
+	agentMemIdentGit(t, clone, "config", "include.path", inc)
+	first := agentMemIdentSame(t, clone).Remote
+	if first == "" {
+		t.Fatal("include not seen")
+	}
+	write("https://example.com/b/two.git")
+	if got := agentMemIdentSame(t, clone).Remote; got == first {
+		t.Errorf("remote %q did not follow the included file", got)
+	}
+}
+
+// Without HEAD git no longer accepts the directory as a repository.
+func TestAgentMemProjectForSeesHEADRemoved(t *testing.T) {
+	_, clone, _ := agentMemTestEnv(t)
+	agentMemIdentSame(t, clone)
+	if err := os.Remove(filepath.Join(clone, ".git", "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	agentMemIdentSame(t, clone) // equal to the fresh (fallback) answer
+}
