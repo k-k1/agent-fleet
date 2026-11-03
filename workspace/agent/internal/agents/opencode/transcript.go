@@ -209,6 +209,7 @@ func parseMessage(msgID string, data []byte, partRows [][]byte, idx int, win win
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output
 		t.CacheRead, t.CacheCreate = md.Tokens.Cache.Read, md.Tokens.Cache.Write
 		t.CostUSD = md.Cost
+		t.Billing = usagex.BillingOfOpencodeCall(t.Route, md.Cost)
 		// The declared window, so the gauge is measured against what opencode itself is
 		// using rather than against usagex.WindowGuess's 200,000 (window.go: a self-hosted
 		// 32k engine read as 13% full while it compacted on every turn).

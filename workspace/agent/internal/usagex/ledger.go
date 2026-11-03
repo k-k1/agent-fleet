@@ -84,8 +84,9 @@ const (
 // call's route is not recorded (a row written before the field existed, or a kind whose route
 // is not provable yet) and reads like unknown, never like a default route.
 const (
-	RouteOpencodeZen = "opencode-zen" // opencode's provider "opencode" (pay-per-request Zen)
-	RouteOpencodeGo  = "opencode-go"  // opencode's provider "opencode-go" (the Go subscription)
+	RouteOpencodeZen = "opencode-zen"         // opencode's provider "opencode" (pay-per-request Zen)
+	RouteOpencodeGo  = "opencode-go"          // opencode's provider "opencode-go" (the Go subscription)
+	RouteChatGPT     = "chatgpt-subscription" // codex signed in with a ChatGPT account
 	RouteAFEngineLLM = "af-engine-llm"
 	RouteMemberLcpp  = "member-llamacpp"
 )
@@ -114,6 +115,18 @@ func BillingOrUnknown(b string) string {
 // a direct provider (anthropic, openrouter, …) could be a key or a login, so it stays empty.
 func RouteOfOpencodeProvider(providerID string) string {
 	return opencodeProviderRoutes[providerID]
+}
+
+// BillingOfOpencodeCall is how one opencode call was charged, from its route and the cost
+// opencode computed for that call. Only a priced Zen call is provable: Zen bills its balance per
+// request, so a Zen call that carries a cost was charged. A zero cost is a free model or an empty
+// step and proves nothing, and the Go route is left open because the Go subscription can spill
+// onto the balance past its limits without the message saying so.
+func BillingOfOpencodeCall(route string, costUSD float64) string {
+	if route == RouteOpencodeZen && costUSD > 0 {
+		return BillingMetered
+	}
+	return ""
 }
 
 // A table, not a switch: "opencode" is also a session kind, and a case on it reads as a

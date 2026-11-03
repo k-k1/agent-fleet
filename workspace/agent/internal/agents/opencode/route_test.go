@@ -81,3 +81,67 @@ func TestV2SessionTurnsRunRoute(t *testing.T) {
 		}
 	}
 }
+
+// A Zen call that carries a cost was charged to the balance; a zero cost (a free model or an
+// empty step), the Go route and a direct provider prove nothing.
+func TestBillingOfOpencodeCall(t *testing.T) {
+	for _, c := range []struct {
+		route string
+		cost  float64
+		want  string
+	}{
+		{usagex.RouteOpencodeZen, 0.02, usagex.BillingMetered},
+		{usagex.RouteOpencodeZen, 0, ""},
+		{usagex.RouteOpencodeGo, 0.02, ""},
+		{"", 0.02, ""},
+	} {
+		if got := usagex.BillingOfOpencodeCall(c.route, c.cost); got != c.want {
+			t.Errorf("(%q, %v) = %q, want %q", c.route, c.cost, got, c.want)
+		}
+	}
+}
+
+func TestParseMessageRecordsBillingFromRouteAndCost(t *testing.T) {
+	for _, c := range []struct {
+		provider string
+		cost     string
+		want     string
+	}{{"opencode", "0.03", usagex.BillingMetered}, {"opencode", "0", ""}, {"opencode-go", "0.03", ""}} {
+		data := []byte(`{"role":"assistant","modelID":"glm-5.2","providerID":"` + c.provider + `","cost":` + c.cost +
+			`,"tokens":{"input":10,"output":2,"cache":{"read":0,"write":0}},"time":{"created":2000,"completed":3000}}`)
+		turn, ok := parseMessage("m1", data, [][]byte{[]byte(`{"type":"text","text":"hi"}`)}, 0, nil)
+		if !ok || turn.Billing != c.want {
+			t.Errorf("%s cost %s: ok=%v Billing=%q, want %q", c.provider, c.cost, ok, turn.Billing, c.want)
+		}
+	}
+}
+
+// A run is metered only when every message in it is; one unpriced step hides inside a summed cost.
+func TestV2SessionTurnsRunBilling(t *testing.T) {
+	user := v2Msg{Type: "user"}
+	user.Time.Created = 1000
+	for name, c := range map[string]struct {
+		costs []float64
+		want  string
+	}{
+		"all priced":     {[]float64{0.1, 0.2}, usagex.BillingMetered},
+		"one free step":  {[]float64{0.1, 0}, ""},
+		"free then paid": {[]float64{0, 0.1}, ""},
+	} {
+		for _, text := range []bool{true, false} {
+			msgs := []v2Msg{user}
+			for _, cost := range c.costs {
+				msgs = append(msgs, routeMsg("opencode", text, cost))
+			}
+			var got []string
+			for _, tn := range v2SessionTurns(msgs, "/w", 0, false, true, nil) {
+				if tn.turn.Role == "assistant" {
+					got = append(got, tn.turn.Billing)
+				}
+			}
+			if len(got) != 1 || got[0] != c.want {
+				t.Errorf("%s (text=%v): billing = %q, want one %q", name, text, got, c.want)
+			}
+		}
+	}
+}

@@ -825,6 +825,13 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	}
 	if ev.Type == "assistant" {
 		u := ev.Message.Usage
+		// Route and Billing stay empty on purpose (ADR 0128 decision 8). The line carries only
+		// token counts and service_tier, which is a rate class and says nothing about who pays;
+		// no field says whether the login was OAuth or an API key, or whether the call drew on
+		// usage credits. The only other evidence is the current credentials file and
+		// environment (authexpiry.go envToken), which the member may have switched since the call
+		// and which a /login inside the pane changes under a running process — so a snapshot at
+		// launch is not evidence either. Unresolved until the transcript carries a per-call signal.
 		t.Model = ev.Message.Model
 		t.ReqID = ev.RequestID
 		t.InTok, t.OutTok = u.InputTokens, u.OutputTokens
