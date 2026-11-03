@@ -82,7 +82,7 @@ func peekPolicy(from, to string) error {
 // It reads the credentials directly rather than DriveState, which answers "stopped" for a
 // session that is not alive before it ever looks at the login.
 func peekAuthAllowed(m session.Meta) error {
-	if NormalizeKind(m.Kind) == session.KindClaude && claude.AuthExpired() {
+	if NormalizeKind(m.Kind) == session.KindClaude && claude.AuthExpiredFor(m) {
 		return peerReject("peek_target_auth", "このワークスペースの claude のログインが切れているので、claude セッションの出力は読めません")
 	}
 	return nil

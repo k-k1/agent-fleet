@@ -138,9 +138,27 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// No env token is injected: the interactive TUI authenticates from claude's own
 	// .credentials.json, written by `claude auth login` via the Connections flow
 	// (auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
+	program := buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m))
+	// An explicit route (ADR 0128): its credential rides this pane's environment only, and what
+	// would override it is removed from the process. No selection: the launch is exactly what it
+	// was, with no environment added and none removed.
+	var env []string
+	if m.Route != nil {
+		rp, err := agentImpl{}.ApplyRoute(m, *m.Route)
+		if err != nil {
+			return agents.LaunchPlan{}, err
+		}
+		// The CLI's own settings files can override the route after it starts (route.go).
+		if ref := settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
+			return agents.LaunchPlan{}, ref
+		}
+		env = rp.Env
+		program = routeLaunchProgram(program, rp.Unset)
+	}
 	return agents.LaunchPlan{
-		Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m)),
+		Program: program,
 		Cwd:     m.CWD(),
+		Env:     env,
 		Notices: notices,
 	}, nil
 }
@@ -192,7 +210,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// Folding the turn that is still recorded as running through HealIdle before saying so
 		// is the same shape as the limit case: a turn cut off by a 401 fires no Stop hook, and
 		// a session stuck at "running" makes the list lie before the badge ever appears.
-		if AuthExpired() {
+		if AuthExpiredFor(m) {
 			if li.State != "idle" {
 				HealIdle(sid)
 			}
@@ -256,7 +274,7 @@ func (agentImpl) ClearResume(sid string) { _ = StartFresh(sid) }
 // UsageTurns implements agents.UsageReader: every turn, usage fields only.
 func (agentImpl) UsageTurns(m session.Meta) []transcript.Turn {
 	lines, _, _ := TranscriptRead(session.UUID(m.Dir, m.Name))
-	return CollectUsageTurns(lines)
+	return stampRoute(m, CollectUsageTurns(lines))
 }
 
 // TextTurns implements agents.TextReader: the chat view's capped parse (newest 1 MiB of text).

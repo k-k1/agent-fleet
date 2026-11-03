@@ -789,7 +789,12 @@ type sessionWire struct {
 	// (re-serving while stopped) has no column for it, so a stopped session displays as
 	// tui and returns to the right driver on the first poll after it resumes.
 	Driver string `json:"driver,omitempty"`
-	Dir    string `json:"dir"`
+	// Route is the session's explicit model route selection (ADR 0128), as the Agent reports it;
+	// absent for a session with none. Same relay caveat as the fields around it, and the DB
+	// mirror has no column, so it is known only from a live Agent answer: a scheduled fire to an
+	// existing session reads it there.
+	Route *agentroutes.Selection `json:"route,omitempty"`
+	Dir   string                 `json:"dir"`
 	// Subdir: the folder BENEATH Dir the agent actually runs in ("" = Dir itself).
 	// Same relay caveat as the fields around it — absent here, the Console never sees
 	// which folder a session was launched in. The DB mirror has no column for it, so it is

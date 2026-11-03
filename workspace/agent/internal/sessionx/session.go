@@ -128,7 +128,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		recordPolledTurnEnd(m, li.State)
 	}
 	s := session.Session{
-		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
+		Route: m.Route.Clone(),
+		Name:  m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
 		PlanReviewers: planReviewersOrEmpty(m.PlanReviewers),
 		Display:       session.Display(m), Color: m.Color, Label: m.Label,
@@ -188,7 +189,10 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// session that died on an expired login is exactly where the reader goes to see whether
 	// re-authenticating took (docs/log/47 §4-11). Costs one stat, and the credential parse
 	// behind it is already cached on that stat for the state check above.
-	if NormalizeKind(m.Kind) == session.KindClaude {
+	if ownCredential(m) {
+		// An API-key session does not run on the OAuth login, so that login's moment says
+		// nothing about whether ITS credential was repaired: no moment is named.
+	} else if NormalizeKind(m.Kind) == session.KindClaude {
 		if at := claude.AuthOKAt(); !at.IsZero() {
 			s.AuthOkAt = at.Format(time.RFC3339)
 		}

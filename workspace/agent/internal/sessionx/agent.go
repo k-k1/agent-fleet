@@ -137,7 +137,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// (ahead of the usage-limit menu), for the same reason — when the mirror/chat chip and the
 	// list badge disagree, the user cannot tell which one is true. For the reason behind the
 	// order see the comment in WireLive (report the one waiting will not fix first).
-	if callTrue0(t.AuthExpired) {
+	if traitsAuthExpired(t, m) {
 		if heal && state != "idle" {
 			healIdle(t, sid)
 		}

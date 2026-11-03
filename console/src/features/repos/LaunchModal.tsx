@@ -21,7 +21,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
-import { useKindCatalogVersion } from "../../agents/kindCatalog.ts";
+import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -65,6 +65,9 @@ export interface LaunchOpts {
   driver: string;
   model: string;
   effort: string;
+  /** Explicit model route id (ADR 0128), or "" / undefined for the kind's own default, which
+   *  sends nothing. Only kinds that declare routes offer one. */
+  route?: string;
   startMode: "normal" | "plan";
   /** Whether to launch with permission prompts skipped (docs/log/76). undefined = follow the
    *  default (nothing is sent to the server). Selectable only for kinds with
@@ -231,6 +234,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     setEffort(resolveEffort(k, repo, d.effort));
     setStartMode(resolveStartMode(k, repo, d.startMode));
     setSkipPerm(undefined);
+    setRoute("");
     setDriverPick(null);
   }, [kinds, kind, settings, repo]);
   const tr = useT();
@@ -244,6 +248,9 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // setting later still takes effect). Only once touched is it sent, as an override for this
   // session alone.
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
+  // The explicit model route (ADR 0128). "" = the kind's default resolution, which is what a
+  // launch has always used and sends no field. Reset on a kind switch: a route belongs to one kind.
+  const [route, setRoute] = useState("");
   // Driver (docs/log/27 P2/P3): a kind that supports managed defaults to managed (§9.2).
   // CLI (TUI) is an explicit user choice — it costs one TUI process' memory per session.
   // null = untouched: the driver follows the kind's default, which can change under an open dialog
@@ -355,6 +362,9 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // Only for kinds whose pending approvals can be answered from the Console (the counterpart
   // of Caps.PermissionChoice on the Go side).
   const hasPermChoice = agentOf(kind).caps.permissionChoice;
+  // Routes the kind declares, and only for a Terminal launch: claude has no managed driver, so a
+  // managed launch could never honour one.
+  const routeOptions = driver === "managed" ? [] : kindRoutes(kind);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -600,6 +610,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       driver: agentOf(kind).managedDriver ? driver : "",
       model: hasModel ? model : "",
       effort: hasEffort ? effort : "",
+      route: routeOptions.includes(route) ? route : undefined,
       startMode: hasStartMode ? startMode : "normal",
       skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
@@ -684,6 +695,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                     setEffort(resolveEffort(k, repo, defaults.effort));
                     setStartMode(resolveStartMode(k, repo, defaults.startMode));
                     setSkipPerm(undefined);
+                    setRoute("");
                     setDriverPick(null);
                   }}
                 >
@@ -695,7 +707,8 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
           </div>
         </div>
 
-        <ClaudeExpiredHint kind={kind} expired={claudeExpired} />
+        {/* An API-key launch does not run on the OAuth login, so its expiry is not this launch's problem. */}
+        <ClaudeExpiredHint kind={kind} expired={claudeExpired && route !== "anthropic-api"} />
 
         {hasModel && (
           <div className="ui-field">
@@ -1078,6 +1091,21 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                   </span>
                 </button>
               </div>
+            </div>
+          )}
+
+          {routeOptions.length > 0 && (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.route")}</span>
+              <select value={routeOptions.includes(route) ? route : ""} onChange={(e) => setRoute(e.target.value)}>
+                <option value="">{tr("launch.route_default")}</option>
+                {routeOptions.map((r) => (
+                  <option key={r} value={r}>
+                    {tr(("launch.route." + r) as never)}
+                  </option>
+                ))}
+              </select>
+              <span className="ui-field-hint">{tr("launch.route_hint")}</span>
             </div>
           )}
 

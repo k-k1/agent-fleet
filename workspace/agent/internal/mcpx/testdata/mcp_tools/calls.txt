@@ -670,6 +670,20 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## create_schedule badtype-route {"route":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## create_schedule badtype-route_connection {"route_connection":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
 ## create_schedule badtype-session_mode {"session_mode":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -726,7 +740,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"定時実行機能はこの環境では利用できません（CP の公開URL/トークンが未設定）","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## create_schedule full {"agent_kind":"v","deliver_to":["v"],"missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
+## create_schedule full {"agent_kind":"v","deliver_to":["v"],"missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","route":"v","route_connection":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの登録を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
@@ -802,6 +816,16 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"new_branch\" for create_session: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_session","type":"text"}],"isError":true,"resultType":"complete"}}
+## create_session badtype-route {"route":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-spawn session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"route\" for create_session: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_session","type":"text"}],"isError":true,"resultType":"complete"}}
+## create_session badtype-route_connection {"route_connection":[[{}]]}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-spawn session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"route_connection\" for create_session: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_session","type":"text"}],"isError":true,"resultType":"complete"}}
 ## create_session badtype-subdir {"subdir":[[{}]]}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags session-spawn session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"subdir\" for create_session: got a JSON array, want string","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -817,22 +841,22 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"invalid argument \"worktree\" for create_session: got a JSON array, want bool","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## create_session full {"branch":"v","dir":"v","effort":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","subdir":"v","title":"v","worktree":true}
+## create_session full {"branch":"v","dir":"v","effort":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","route":"v","route_connection":"v","subdir":"v","title":"v","worktree":true}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはセッションの作成を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]
   -> GET /agents/v/models
-  -> POST /sessions {"branch":"v","dir":"v","driver":"","effort":"v","idempotency_key":"cs_86d1e6160a54d14f973cbd241f913dfda8819734663267ee4d35098221a40793","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","origin":"operator","origin_conv":"conv1","origin_session":"","report_to":"conv1","subdir":"v","title":"v","worktree":true}
+  -> POST /sessions {"branch":"v","dir":"v","driver":"","effort":"v","idempotency_key":"cs_f39f44d73619be664c427b45177788fee049b70aae72f66eb5f0663bf9de1534","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","origin":"operator","origin_conv":"conv1","origin_session":"","report_to":"conv1","route":{"connection":"v","route":"v"},"subdir":"v","title":"v","worktree":true}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-imagegen session-studio]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: create_session","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-spawn]
   -> GET /agents/v/models
-  -> POST /sessions {"branch":"v","dir":"v","driver":"","effort":"v","idempotency_key":"cs_8a4172bbb7be03bd2f306ea9e3ee3d4285bb278f4f77746909443a67b0b1d643","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","origin":"session","origin_conv":"","origin_session":"slot01","report_to":"","subdir":"v","title":"v","worktree":true}
+  -> POST /sessions {"branch":"v","dir":"v","driver":"","effort":"v","idempotency_key":"cs_da61580c022847becd9d6aa559307677813f12712f9cb35ed0bd07a6682041ab","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","origin":"session","origin_conv":"","origin_session":"slot01","report_to":"","route":{"connection":"v","route":"v"},"subdir":"v","title":"v","worktree":true}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 [session-all session-all-write]
   -> GET /agents/v/models
-  -> POST /sessions {"branch":"v","dir":"v","driver":"","effort":"v","idempotency_key":"cs_a0faceeaa3dfe42cfb0d86735c31bf26b6f740dbf0f09e456c983a0852772591","initial_prompt":"v\n\nWhen this task is finished, send exactly one message back with send_to_peer_session(name=\"slot01\", intent=\"answer\") saying what came of it (one short paragraph: what you did, what is left, what went wrong). Send it once, at the end - not on progress, and not to acknowledge this instruction.","kind":"v","model":"v","new_branch":"v","origin":"session","origin_conv":"","origin_session":"slot01","report_to":"","subdir":"v","title":"v","worktree":true}
+  -> POST /sessions {"branch":"v","dir":"v","driver":"","effort":"v","idempotency_key":"cs_e522e1e707c3c51b2e738a3de49f1d70c59377e87c5ddf947f6c9a4637329f57","initial_prompt":"v\n\nWhen this task is finished, send exactly one message back with send_to_peer_session(name=\"slot01\", intent=\"answer\") saying what came of it (one short paragraph: what you did, what is left, what went wrong). Send it once, at the end - not on progress, and not to acknowledge this instruction.","kind":"v","model":"v","new_branch":"v","origin":"session","origin_conv":"","origin_session":"slot01","report_to":"","route":{"connection":"v","route":"v"},"subdir":"v","title":"v","worktree":true}
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete"}}
 ## create_session kind= {"kind":""}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
@@ -3816,6 +3840,20 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## update_schedule badtype-route {"route":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
+## update_schedule badtype-route_connection {"route_connection":[[{}]]}
+[assistant-read assistant-read-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
+[assistant-write assistant-write-nobrowser]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
 ## update_schedule badtype-session_mode {"session_mode":[[{}]]}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
@@ -3872,7 +3910,7 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"id（スケジュール id）が必要です","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-search session-spawn session-imagegen session-studio session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: update_schedule","type":"text"}],"isError":true,"resultType":"complete"}}
-## update_schedule full {"agent_kind":"v","deliver_to":["v"],"id":"v","missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
+## update_schedule full {"agent_kind":"v","deliver_to":["v"],"id":"v","missing_target_policy":"v","model":"v","overlap_policy":"v","prompt":"v","repo":"v","report":true,"reuse_target":"v","rotation":"v","route":"v","route_connection":"v","session_mode":"v","silent":true,"spec":"v","spec_kind":"v","spec_label":"v","stop_after_run":true,"tz":"v","wake_policy":"v"}
 [assistant-read assistant-read-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このアシスタントはスケジュールの編集を許可されていません","type":"text"}],"isError":true,"resultType":"complete"}}
 [assistant-write assistant-write-nobrowser]

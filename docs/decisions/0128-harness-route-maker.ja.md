@@ -347,3 +347,39 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   移動の要求で行う。移動は元の選択を持ち越さず、要求が移動先自身の選択を指定する。許可リストは当面ドライバ別でなく
   種別別で、決定 5 の claude の Terminal 限定は、アダプタができたときにアダプタ側が守る。冪等キーの指紋にはルートを
   含めた（あるときだけ）。未実装: アダプタ全般、Console のピッカー、ルート別の認証ガード（P1b）。
+- 2026-11-04, P1b (#3281): claude が `anthropic-subscription` と `anthropic-api` について `RouteAdapter` と
+  `RouteChecker` を実装した。Terminal のみ（managed の create でルートを指定すると、create 自身のドライバ検査が断る）。
+  認証情報はこのペインにだけ届く。`anthropic-api` はメンバーの Anthropic API キー接続（メンバー自身のストアにある
+  プロバイダキー `ANTHROPIC_API_KEY`。使う権限は所有と同じで、他の接続参照は `route_connection_forbidden`、キーが無ければ
+  `route_connection_unavailable`）を `LaunchPlan.Env` に入れる。どちらのルートも CLI の前に `env -u` を付け、上書きしうる
+  ものを外す: もう一方のルートの認証情報（API ルートでは `CLAUDE_CODE_OAUTH_TOKEN`、サブスクルートでは
+  `ANTHROPIC_API_KEY` と `CLAUDE_CODE_OAUTH_TOKEN`）と、`ANTHROPIC_AUTH_TOKEN`・`ANTHROPIC_BASE_URL`・
+  `CLAUDE_CODE_USE_BEDROCK`・`CLAUDE_CODE_USE_VERTEX`。キーはコマンド文字列にも Agent の環境にも載らない。ガード
+  （決定 9）は `AuthExpiredFor(meta)`: 選択なしは `AuthExpired()` とまったく同じ答え、`anthropic-api` は OAuth
+  ファイルでは期限切れにならない、`anthropic-subscription` は起動時に環境の token を外すので、環境に token が
+  無いものとしてファイルを判定する。ライブ状態・送信ゲート・初回プロンプトの配送・peek の検査・ミラーのチップが
+  これを聞く。保存済みの選択は起動のたびに再検査する（`startRefusalOf`）。台帳: 明示的な選択を持つセッションの claude
+  の使用量ターンにそのルートを載せ、`anthropic-api` のターンは `metered`。サブスクのターンは、同じログインで追加クレジット
+  課金になりうるので課金区分は未解決のまま。選択はセッションの存続中に変わらないので、P4 の切り替えが境界を
+  永続化するまでは呼び出しごとの証拠になる。サブエージェントの transcript は印を付けない。ライブの種別カタログ
+  （`GET /agents/kinds`）が種別の `routes` を返し、Console の起動ダイアログはそれを持つ種別の Terminal 起動でだけ
+  選択欄を出す。未解決の問い 1 は当面「モデルのルート」（en は "Model route"）とし、用語集の「ルート」に揃えた。
+  未計測で、決定 14 までは候補のままである理由: カスタム API キーの初回承認を TUI が求めるか、`ANTHROPIC_API_KEY` が
+  あるとき OAuth ファイルが使われないままか、応えたルートについて transcript やヘッダが何を語るか。
+- 2026-11-04, P1b レビュー第 1 巡（#3316）: 上の追記への 5 件の訂正。(1) `env -u` は設定ファイルの `env` と
+  `apiKeyHelper` には届かず、CLI が起動後に再適用する。そこで、ユーザー・プロジェクト・ローカル・管理者のどの設定
+  ファイルであれ、ルートの認証情報やエンドポイントの変数を設定していれば、claude の明示ルートは
+  `route_settings_conflict`（ファイル名つき）で拒否する。検査は作成時、起動のたび、作業コピーが分かる起動時に行う。
+  ペイン実行中に編集された設定は対象外（#3317）。(2) 台帳の実際の読み口は `UsageTurns` でなく `UsageSource` で、
+  どちらもルートを載せる。(3) ルートを指定したスケジュール発火は、既存の対象がそのルートに居ないとき、何も送る前に
+  拒否する。Agent のセッション wire に `route` を載せ、対象が選択なし・別ルート・Agent が報告しない、のいずれも拒否する。
+  (4) API キーのセッションは OAuth ログインの更新では自動再開せず、wire にログインの時刻も載せない。キーの不良からの
+  復旧は新しいセッション。(5) 保存する接続参照はキーの実体に結びつける（`ANTHROPIC_API_KEY@<sha256 の先頭>`、秘密は
+  含まない）。Settings でキーを差し替え・削除すると、次の起動は別の請求先へ移さず拒否する。動いているペインは、停止
+  するまで起動時のキーを持ち続ける。
+- 2026-11-04, P1b レビュー第 2 巡（#3316）: ペイン実行中に編集された設定は、固定ではなく停止で受ける。
+  `agents.RouteWatcher`（claude は同じ設定検査）を reconciler の tick で巡回し（`SweepRouteGuards`）、ルートが保てなく
+  なった実行中のセッションを停止ボタンと同じ halt（再開可能）で止め、`route-stopped` 通知でファイルを示す。原因が残る間の
+  再起動は拒否する。空白は 1 tick 分。`CLAUDE_CODE_USE_FOUNDRY` を unset 一覧と設定検査に加えた。ルート指定のスケジュール
+  reuse は、束縛済みの接続参照を完全一致で比べる（裸のスロット名はスロットで比べる）。`BindRoute` は、束縛する 1 回の
+  キー読み取りに対して指紋を再確認する。#3317 は、任意のフラグ層での固定だけを追う。

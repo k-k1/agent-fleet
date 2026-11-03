@@ -58,7 +58,10 @@
     },
     {
       "kind": "claude",
-      "routes": []
+      "routes": [
+        "anthropic-api",
+        "anthropic-subscription"
+      ]
     },
     {
       "kind": "codex",

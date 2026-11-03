@@ -30,5 +30,5 @@ func authBlockedFor(m session.Meta) bool {
 // authExpiredFor is the full "refuse on the login" verdict for a session: claude's credentials
 // expiry, or a recoverer kind's failed turn.
 func authExpiredFor(m session.Meta) bool {
-	return callTrue0(normalizedTerminalTraits(m.Kind).AuthExpired) || authBlockedFor(m)
+	return traitsAuthExpired(normalizedTerminalTraits(m.Kind), m) || authBlockedFor(m)
 }

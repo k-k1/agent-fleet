@@ -725,6 +725,14 @@
             "description": "reuse×自動作成時のローテーション設定（JSON文字列。例 {\"every_runs\":20,\"after\":\"7d\",\"calendar\":\"weekly\"}）。every_runs=N発火ごと / after=経過(7d,12h,30m 等) / calendar=daily|weekly|monthly のどれか成立で新品に作り直す。weekly は週境界=「月曜は新セッション」。省略で作り直さない",
             "type": "string"
           },
+          "route": {
+            "description": "モデルの経路 id（任意。省略時は種別の既定のまま）。受け付けるのは claude の anthropic-subscription | anthropic-api だけで、他は登録時に理由つきで拒否される。assistant モードでは使えない",
+            "type": "string"
+          },
+          "route_connection": {
+            "description": "経路が使う接続の参照（任意・route と一緒に。anthropic-api は空か ANTHROPIC_API_KEY）",
+            "type": "string"
+          },
           "session_mode": {
             "description": "new（既定・毎回新規セッション）| reuse（同一の長寿命セッションへ毎回送信し文脈を継続）| assistant（アシスタント会話へ1ターン投入）",
             "type": "string"
@@ -799,6 +807,14 @@
             "description": "worktree に作る新規ブランチ名（任意、省略時は仮ブランチを自動生成）。",
             "type": "string"
           },
+          "route": {
+            "description": "モデルの経路 id（任意。省略時はその種別の既定の解決のまま）。経路を受け付ける種別は claude（anthropic-subscription | anthropic-api）だけで、それ以外の種別や宣言していない経路は理由つきで拒否される。既定の経路へ黙って戻ることはない。",
+            "type": "string"
+          },
+          "route_connection": {
+            "description": "経路が使う接続の安定した参照（任意・route と一緒に指定）。anthropic-api は空か ANTHROPIC_API_KEY（自分の Anthropic API キー接続）だけ。",
+            "type": "string"
+          },
           "subdir": {
             "description": "作業ディレクトリ内の相対パス（任意）。エージェントをその配下で起動する（例: console／apps/web）。worktree=true のときは新しく作られた worktree 内の相対パスとして解釈される。存在しないパスは拒否される。",
             "type": "string"
@@ -856,6 +872,14 @@
           "report_back": {
             "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead",
             "type": "boolean"
+          },
+          "route": {
+            "description": "Model route id (optional; omit to keep the kind's own default). Only claude accepts one today: anthropic-subscription or anthropic-api (Terminal sessions). Any other kind, or a route the kind does not declare, is refused with the reason - never run on the default route instead",
+            "type": "string"
+          },
+          "route_connection": {
+            "description": "Stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, your own Anthropic API key connection",
+            "type": "string"
           },
           "spend_cap_usd": {
             "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours",
@@ -2572,6 +2596,14 @@
           },
           "rotation": {
             "description": "ローテーション設定 JSON（任意・空で無効化）。create_schedule と同じ形式",
+            "type": "string"
+          },
+          "route": {
+            "description": "新しい経路 id（任意。空文字で明示選択を外す）",
+            "type": "string"
+          },
+          "route_connection": {
+            "description": "新しい接続の参照（任意）",
             "type": "string"
           },
           "session_mode": {

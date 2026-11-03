@@ -7,6 +7,7 @@ package main
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
@@ -89,9 +90,14 @@ func init() {
 				Feature: usagex.FeatureAssistantChat, Trigger: trigger, Ref: convID, Verb: seedVerb,
 			}
 		},
-		CleanTitle:             sessionx.CleanTitle,
-		StopArmedSession:       sessionx.StopArmedSession,
-		SweepSpendCaps:         sessionx.SweepSpendCaps,
+		CleanTitle:       sessionx.CleanTitle,
+		StopArmedSession: sessionx.StopArmedSession,
+		// The route guard rides the same tick: both stop a running session on a condition the
+		// session itself cannot report.
+		SweepSpendCaps: func(now time.Time) {
+			sessionx.SweepSpendCaps(now)
+			sessionx.SweepRouteGuards(now)
+		},
 		NormalizeKind:          sessionx.NormalizeKind,
 		SafeBrowsePath:         safeBrowsePath,
 		MaybePushOperatorReply: maybePushOperatorReply,

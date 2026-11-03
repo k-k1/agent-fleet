@@ -15,8 +15,9 @@ func TestCreateRouteArg(t *testing.T) {
 		t.Errorf("blank route: %v %v, want nil, nil", got, err)
 	}
 	for name, a := range map[string][3]string{
-		"known route, kind declares none": {"claude", "anthropic-api", ""},
-		"empty kind is claude":            {"", "anthropic-api", "c1"},
+		"known route, kind declares none": {"codex", "openai-api", ""},
+		"not on claude's list":            {"claude", "bedrock", ""},
+		"empty kind is claude":            {"", "bedrock", "c1"},
 		"unknown route":                   {"claude", "nope", ""},
 		"connection without route":        {"claude", "", "c1"},
 	} {
@@ -31,8 +32,8 @@ func TestCreateRouteArg(t *testing.T) {
 func TestCreateSessionRouteThroughTheTool(t *testing.T) {
 	cp := newMemCP(t, memStore(t), "running")
 	for name, args := range map[string]map[string]any{
-		"known route":      {"initial_prompt": "x", "route": "anthropic-api"},
-		"with connection":  {"initial_prompt": "x", "route": "anthropic-api", "route_connection": "c1"},
+		"known route":      {"initial_prompt": "x", "route": "bedrock"},
+		"with connection":  {"initial_prompt": "x", "route": "bedrock", "route_connection": "c1"},
 		"unknown route":    {"initial_prompt": "x", "route": "nope"},
 		"connection alone": {"initial_prompt": "x", "route_connection": "c1"},
 		// The REST body's shape used by mistake, and other wrong types: refused, never dropped.

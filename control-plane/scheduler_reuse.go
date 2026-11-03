@@ -87,6 +87,9 @@ func (f *wakeFirer) fireReuse(ctx context.Context, res *resolved, sch store.Sche
 
 	// The current session exists: apply overlap policy, then deliver. Link the run to it
 	// even on an overlap skip so the history can open the busy session that deferred us.
+	if err := reuseRouteMismatch(sch, cur); err != nil {
+		return "", "", err
+	}
 	skip, derr := f.deliverReuse(ctx, res.rt, sch, cur, slot)
 	if derr != nil {
 		return "", "", derr
@@ -577,4 +580,37 @@ func calendarCrossed(started, slot time.Time, calendar string) bool {
 	default:
 		return false
 	}
+}
+
+// reuseRouteMismatch refuses, before anything is sent, a fire whose schedule names a route when
+// the existing session it would send to does not demonstrably run on it (ADR 0128 decisions 3
+// and 12). A prompt sent to a session on another route, or one whose route the Agent did not
+// report, would run on that session's bill while the schedule says otherwise: a silently ignored
+// selection. A schedule with no route sends exactly as before.
+func reuseRouteMismatch(sch store.Schedule, cur *sessionWire) error {
+	want := scheduleRouteBody(sch)
+	if want == nil {
+		return nil
+	}
+	if cur.Route == nil {
+		return fmt.Errorf("schedule route %q: the session %s has no explicit route (or its Agent does not report one); a prompt is not sent to a session that is not on the schedule's route", want["route"], cur.Name)
+	}
+	if cur.Route.Route != want["route"] {
+		return fmt.Errorf("schedule route %q: the session %s runs on %q", want["route"], cur.Name, cur.Route.Route)
+	}
+	if conn, _ := want["connection"].(string); conn != "" {
+		// A bound reference ("SLOT@<key fingerprint>") names one key instance and has to match
+		// exactly: the slot alone would let a schedule bound to one account's key run on
+		// another's. A bare slot name means "the member's connection in that slot" and is
+		// compared by slot.
+		have := cur.Route.Connection
+		if strings.Contains(conn, "@") {
+			if conn != have {
+				return fmt.Errorf("schedule route %q: the session %s runs on connection %q, not %q", want["route"], cur.Name, have, conn)
+			}
+		} else if slot, _, _ := strings.Cut(have, "@"); slot != conn {
+			return fmt.Errorf("schedule route %q: the session %s runs on connection %q, not %q", want["route"], cur.Name, have, conn)
+		}
+	}
+	return nil
 }

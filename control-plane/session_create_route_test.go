@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -20,9 +21,10 @@ func TestSessionCreateRefusesRouteSelection(t *testing.T) {
 		body map[string]any
 		code string
 	}{
-		"known route, kind declares none": {map[string]any{"kind": "claude", "route": map[string]any{"route": "anthropic-api"}}, "route_unsupported"},
-		"no kind means claude":            {map[string]any{"route": map[string]any{"route": "anthropic-api", "connection": "c1"}}, "route_unsupported"},
-		"another kind":                    {map[string]any{"kind": "codex", "route": map[string]any{"route": "openai-api"}}, "route_unsupported"},
+		"known route, kind declares none": {map[string]any{"kind": "codex", "route": map[string]any{"route": "openai-api"}}, "route_unsupported"},
+		"claude, route not on its list":   {map[string]any{"kind": "claude", "route": map[string]any{"route": "bedrock"}}, "route_unsupported"},
+		"no kind means claude":            {map[string]any{"route": map[string]any{"route": "bedrock", "connection": "c1"}}, "route_unsupported"},
+		"claude route on another kind":    {map[string]any{"kind": "codex", "route": map[string]any{"route": "anthropic-api"}}, "route_unsupported"},
 		"unknown route":                   {map[string]any{"kind": "claude", "route": map[string]any{"route": "nope"}}, "bad_route"},
 		"empty selection":                 {map[string]any{"kind": "claude", "route": map[string]any{}}, "bad_route"},
 		"connection only":                 {map[string]any{"kind": "claude", "route": map[string]any{"connection": "c1"}}, "bad_route"},
@@ -37,17 +39,19 @@ func TestSessionCreateRefusesRouteSelection(t *testing.T) {
 	if len(rc.bodies) != 0 {
 		t.Fatalf("a refused route reached the Agent: %v", rc.bodies)
 	}
-	// The invariant: no selection, or a null one, is forwarded exactly as before.
+	// The invariant: no selection, or a null one, is forwarded exactly as before. A selection the
+	// snapshot accepts (claude on anthropic-api) is forwarded too, for the Agent's live checks.
 	for _, body := range []map[string]any{
 		{"kind": "claude", "dir": "/repos/app"},
 		{"kind": "codex", "dir": "/repos/app", "route": nil},
+		{"kind": "claude", "dir": "/repos/app", "route": map[string]any{"route": "anthropic-api"}},
 	} {
 		if rec := rc.create(t, body); rec.Code != http.StatusCreated {
 			t.Errorf("%v: %d %s, want the create forwarded", body, rec.Code, rec.Body.String())
 		}
 	}
-	if len(rc.bodies) != 2 {
-		t.Errorf("Agent saw %d creates, want 2", len(rc.bodies))
+	if len(rc.bodies) != 3 {
+		t.Errorf("Agent saw %d creates, want 3", len(rc.bodies))
 	}
 }
 
@@ -55,12 +59,12 @@ func TestScheduleRouteSelection(t *testing.T) {
 	api, _, mv := newSchedAPITest(t)
 	const base = `"spec_kind":"cron","spec":"0 9 * * *","prompt":"x"`
 	for name, b := range map[string]string{
-		"known route, kind declares none": `{` + base + `,"route":"anthropic-api"}`,
-		"on another kind":                 `{` + base + `,"agent_kind":"codex","route":"openai-api"}`,
-		"unknown route":                   `{` + base + `,"route":"nope"}`,
-		"connection without route":        `{` + base + `,"route_connection":"c1"}`,
-		"on an assistant schedule":        `{` + base + `,"session_mode":"assistant","route":"anthropic-api"}`,
-		"reuse mode":                      `{` + base + `,"session_mode":"reuse","reuse_target":"s1","route":"anthropic-api"}`,
+		"known route, not on the kind's list": `{` + base + `,"route":"bedrock"}`,
+		"on another kind":                     `{` + base + `,"agent_kind":"codex","route":"openai-api"}`,
+		"unknown route":                       `{` + base + `,"route":"nope"}`,
+		"connection without route":            `{` + base + `,"route_connection":"c1"}`,
+		"on an assistant schedule":            `{` + base + `,"session_mode":"assistant","route":"anthropic-api"}`,
+		"reuse mode":                          `{` + base + `,"session_mode":"reuse","reuse_target":"s1","route":"bedrock"}`,
 	} {
 		rec := doJSON(api.create, mv, "POST", b, "")
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "route") {
@@ -78,7 +82,7 @@ func TestScheduleRouteSelection(t *testing.T) {
 	var dto scheduleDTO
 	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 	for name, patch := range map[string]string{
-		"route":      `{"route":"anthropic-api"}`,
+		"route":      `{"route":"bedrock"}`,
 		"connection": `{"route_connection":"c1"}`,
 		"unknown":    `{"route":"nope"}`,
 	} {
@@ -99,7 +103,7 @@ func TestFireRefusesRouteSelection(t *testing.T) {
 		for _, kind := range []string{"", "claude", "codex"} {
 			// A zero wakeFirer would panic on the first store call: the refusal has to come first.
 			_, _, err := (&wakeFirer{}).fire(t.Context(), store.Schedule{ID: "s", SessionMode: mode, AgentKind: kind,
-				Route: "anthropic-api", RouteConnection: "c1"}, time.Now())
+				Route: "bedrock", RouteConnection: "c1"}, time.Now())
 			if err == nil || !strings.Contains(err.Error(), "route_unsupported") {
 				t.Errorf("fire %s/%q = %v, want a route_unsupported refusal", mode, kind, err)
 			}
@@ -150,5 +154,43 @@ func TestScheduleRouteStoreRoundTrip(t *testing.T) {
 	got, _, _ := st.GetSchedule(t.Context(), dto.ID)
 	if got.Route != "anthropic-api" || got.RouteConnection != "c1" {
 		t.Errorf("stored selection = %q/%q", got.Route, got.RouteConnection)
+	}
+}
+
+// A schedule that names a route never sends its prompt to an existing session that is not
+// demonstrably on it: not one with no selection (the reviewer's case: subscription by default),
+// not one on another route, and not one whose Agent does not report a route at all. A schedule
+// without a route sends exactly as before, whatever the target's selection.
+func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
+	sel := &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY@0123456789abcdef"}
+	for name, tc := range map[string]struct {
+		target  sessionWire
+		route   string
+		conn    string
+		wantErr bool
+	}{
+		"target has no selection":    {sessionWire{Name: "t", Alive: true, State: "idle"}, "anthropic-api", "", true},
+		"target on another route":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: &agentroutes.Selection{Route: "anthropic-subscription"}}, "anthropic-api", "", true},
+		"another connection":         {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "OTHER_KEY", true},
+		"same route, any connection": {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "", false},
+		"same route and slot":        {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY", false},
+		"bound, same instance":       {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY@0123456789abcdef", false},
+		"bound, another instance":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY@fedcba9876543210", true},
+		"bound, target bare":         {sessionWire{Name: "t", Alive: true, State: "idle", Route: &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY"}}, "anthropic-api", "ANTHROPIC_API_KEY@0123456789abcdef", true},
+		"no route on the schedule":   {sessionWire{Name: "t", Alive: true, State: "idle"}, "", "", false},
+	} {
+		a := &fakeAgent{sessions: []sessionWire{tc.target}}
+		sch := store.Schedule{ID: "sch_rt", SessionMode: "reuse", ReuseTarget: "t", Prompt: "go", Route: tc.route, RouteConnection: tc.conn}
+		f, res, _, ctx := newReuseFixture(t, a, sch)
+		status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+		if tc.wantErr {
+			if err == nil || len(a.inputs) != 0 {
+				t.Errorf("%s: status=%q err=%v inputs=%v, want a refusal before anything is sent", name, status, err, a.inputs)
+			}
+			continue
+		}
+		if err != nil || len(a.inputs) != 1 {
+			t.Errorf("%s: status=%q err=%v inputs=%v, want it sent", name, status, err, a.inputs)
+		}
 	}
 }

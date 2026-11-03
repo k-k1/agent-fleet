@@ -52,6 +52,16 @@ func callTrue(f func(name string) bool, name string) bool { return f != nil && f
 // callTrue0 calls a probe trait that takes nothing, false when the kind has none.
 func callTrue0(f func() bool) bool { return f != nil && f() }
 
+// traitsAuthExpired is the kind's "its login has expired" verdict for session m: the per-session
+// form when the kind has one (so a session on an explicit route is judged on that route's
+// credential), else the Workspace-wide one.
+func traitsAuthExpired(t agents.TerminalTraits, m session.Meta) bool {
+	if t.AuthExpiredFor != nil {
+		return t.AuthExpiredFor(m)
+	}
+	return callTrue0(t.AuthExpired)
+}
+
 // healIdle clears a stale non-idle live state: the kind's own heal when it has one, else the
 // marker is just removed.
 func healIdle(t agents.TerminalTraits, sid string) {
@@ -60,4 +70,10 @@ func healIdle(t agents.TerminalTraits, sid string) {
 		return
 	}
 	status.Remove(sid)
+}
+
+// ownCredential is the kind's "this session runs on a credential of its own" verdict.
+func ownCredential(m session.Meta) bool {
+	t := normalizedTerminalTraits(m.Kind)
+	return t.OwnCredential != nil && t.OwnCredential(m)
 }

@@ -35,6 +35,11 @@ type RouteAdapter interface {
 type RoutePlan struct {
 	// Env is KEY=VALUE pairs for this session's process only (LaunchPlan.Env).
 	Env []string
+	// Unset names environment variables the launch removes from the process before the CLI
+	// starts (`env -u`). A route that must not be overridden by something the Agent's own
+	// environment or the tmux server carries lists them here: the credential of the OTHER route
+	// is the case that matters.
+	Unset []string
 	// Args are extra program arguments.
 	Args []string
 	// Daemon names the shared runtime the session must run on when the route needs a daemon of
@@ -76,4 +81,26 @@ type RouteRefusal struct {
 	Status  int
 	Code    string
 	Message string
+}
+
+// Error makes a refusal usable as the error ApplyRoute returns.
+func (r *RouteRefusal) Error() string { return r.Message }
+
+// RouteBinder is an optional capability of a RouteAdapter: it turns a selection that has just
+// been accepted into the form that is STORED, binding it to the connection instance it was
+// chosen on (ADR 0128 decision 3). A connection reference that names a slot ("the API key
+// connection") would otherwise follow whatever is in the slot later, so replacing the key would
+// move a stored session to another account's bill; a bound reference no longer matches the
+// replacement and CheckRoute refuses it. The bound form must carry no secret.
+type RouteBinder interface {
+	BindRoute(sel RouteSelection) (RouteSelection, *RouteRefusal)
+}
+
+// RouteWatcher is an optional capability of a RouteAdapter: a check that an explicit selection
+// STILL holds on a session that is running. A route's credential is fixed when the process
+// starts, but the CLI re-reads its own settings while it runs, so something other than the
+// route can take over afterwards; the Agent stops such a session rather than let it spend on
+// another account. nil means the route still holds.
+type RouteWatcher interface {
+	RouteHeld(m session.Meta) *RouteRefusal
 }

@@ -121,6 +121,9 @@ const (
 	CodeRouteModel       = "route_model_mismatch"
 	CodeRouteForbidden   = "route_connection_forbidden"
 	CodeRouteUnavailable = "route_connection_unavailable"
+	// CodeRouteSettings: the route's credential or endpoint would be overridden by the CLI's own
+	// settings (an env block or apiKeyHelper in a settings file), so the route cannot be honoured.
+	CodeRouteSettings = "route_settings_conflict"
 )
 
 // CheckStatic is the part of the validation that needs no state: the selection names a route in

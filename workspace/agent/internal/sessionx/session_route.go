@@ -2,10 +2,13 @@ package sessionx
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -70,6 +73,19 @@ func (c *createRun) checkRoute() bool {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
 	}
+	// Stored in the form the adapter binds to the connection instance it was just checked on.
+	if c.req.Route != nil {
+		if a, _ := RegisteredAgent(NormalizeKind(c.req.Kind)); a != nil {
+			if b, ok := a.(agents.RouteBinder); ok {
+				bound, ref := b.BindRoute(*c.req.Route.Normalize())
+				if ref != nil {
+					httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+					return false
+				}
+				c.req.Route = &bound
+			}
+		}
+	}
 	return true
 }
 
@@ -88,4 +104,40 @@ func startRefusalOf(m session.Meta) *SpawnRefusal {
 		return &SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}
 	}
 	return nil
+}
+
+// SweepRouteGuards is one pass over every running session with an explicit route (the
+// reconciler's tick). A route's credential is fixed at process start, but the CLI re-reads its
+// settings while it runs; when the kind's RouteWatcher says the route no longer holds, the session
+// is stopped (the same halt as the stop button, so it stays resumable) and the member is
+// told why. Starting it again is refused while the cause remains (startRefusalOf). Fail closed:
+// a session that could be spending on another account is not left running.
+func SweepRouteGuards(now time.Time) {
+	for _, m := range session.ListMetas() {
+		// Liveness is judged on the process, never on StoppedAt: a Terminal resume (/start) leaves
+		// the old mark in place until the next session list clears it, and a session that is
+		// running must not escape the guard until somebody reads the list.
+		if m.Route == nil || m.Archived || !session.ValidName(m.Name) {
+			continue
+		}
+		a, _ := RegisteredAgent(NormalizeKind(m.Kind))
+		w, ok := a.(agents.RouteWatcher)
+		if !ok || !SessionAlive(m) {
+			continue
+		}
+		ref := w.RouteHeld(m)
+		if ref == nil {
+			continue
+		}
+		halted, err := haltSessionMeta(m)
+		if err != nil {
+			log.Printf("route-guard: %s: halt failed, retrying next tick: %v", m.Name, err)
+			continue
+		}
+		log.Printf("route-guard: stopped %s at %s: %s", m.Name, now.Format(time.RFC3339), ref.Message)
+		ev := notice.New("route-stopped", halted.Name, halted.Kind, session.Display(halted))
+		ev.Payload["route"] = m.Route.Route
+		ev.Payload["reason"] = ref.Message
+		_ = notice.Put(ev)
+	}
 }

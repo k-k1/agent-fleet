@@ -38,6 +38,11 @@ type kindEntryWire struct {
 	// "prompt"). Live only: opencode's depends on the installed major version, so the
 	// checked-in snapshot leaves it out.
 	InstructionDelivery string `json:"instructionDelivery,omitempty"`
+	// Routes are the model routes the harness's RouteAdapter declares (ADR 0128), sorted. Live
+	// only, like InstructionDelivery: the Control Plane's own copy is agentroutes/catalog.json,
+	// so the kind snapshot does not carry them twice. The Console offers a route picker only for
+	// a kind that lists some.
+	Routes []string `json:"routes,omitempty"`
 	// InstructionsReason is instrUnsupportedOf's reason when Instructions is "no".
 	InstructionsReason string `json:"instructionsReason,omitempty"`
 }
@@ -75,6 +80,9 @@ func buildKindCatalog(live bool) kindCatalogWire {
 		e.InstructionsReason = instrUnsupportedOf(k)
 		if live {
 			e.InstructionDelivery = instrDeliveryOf(k)
+			if ra, ok := sessionx.AgentOf(k).(agents.RouteAdapter); ok {
+				e.Routes = slices.Sorted(slices.Values(ra.Routes()))
+			}
 		}
 		out.Kinds = append(out.Kinds, e)
 	}

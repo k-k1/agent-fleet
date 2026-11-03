@@ -24,6 +24,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "carried-interaction": "noti.kind_carried_interaction",
   "stop-after-turn": "noti.kind_stop_after_turn",
   "spend-budget": "noti.kind_spend_budget",
+  "route-stopped": "noti.kind_route_stopped",
   "handoff-offer": "noti.kind_handoff_offer",
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
@@ -219,6 +220,16 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       title: midTurn ? t("notif.spend_budget.title_mid_turn") : t("notif.spend_budget.title"),
       body: t("notif.spend_budget.body", { name, cap }),
       speech: t("notif.spend_budget.speech", { name }),
+    };
+  }
+  if (n.kind === "route-stopped") {
+    // The Agent stopped a session whose explicit model route no longer holds (ADR 0128): its CLI
+    // settings now override the route's credential or endpoint. The reason names the file.
+    const reason = typeof n.payload.reason === "string" ? n.payload.reason : "";
+    return {
+      title: t("notif.route_stopped.title"),
+      body: t("notif.route_stopped.body", { name, reason }),
+      speech: t("notif.route_stopped.speech", { name }),
     };
   }
   if (n.kind === "handoff-offer") {

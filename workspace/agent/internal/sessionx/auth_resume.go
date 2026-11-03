@@ -136,6 +136,16 @@ func authResumeStep(m session.Meta, a claude.Abort, ok bool, now time.Time) {
 		}
 		return
 	}
+	if ownCredential(m) {
+		// The failure was the API key's, not the OAuth login's. Re-signing in to the subscription
+		// repairs nothing for this session, and the key is fixed in the pane's environment, so
+		// replacing it in Settings does not reach a running pane either: no episode, no automatic
+		// "continue". The user starts the session again (a stored route refuses a replaced key).
+		if _, has := authResumeStates.Read(m.Name); has {
+			authResumeStates.Remove(m.Name)
+		}
+		return
+	}
 	if t, rec := authRecovererOf(m.Kind); rec && t.LastFailure != nil {
 		if f, has := t.LastFailure(m); has && f.NoTurn {
 			// The login rejected turn/start itself: the thread holds no record of the user's
@@ -161,6 +171,9 @@ func authResumeStep(m session.Meta, a claude.Abort, ok bool, now time.Time) {
 // Split from the gates above so it can be driven without a tmux session (the same seam as
 // abortResumeAttempt).
 func authResumeAttempt(m session.Meta, st authResumeState, a claude.Abort, now time.Time) {
+	if ownCredential(m) {
+		return // never resumed on the OAuth login's renewal (see authResumeStep)
+	}
 	if st.At == "" {
 		st.At = abortEpisodeStart(a, now)
 		st.Msg = a.Msg

@@ -52,6 +52,9 @@ export interface Session {
   // itself). Sessions stay grouped by `dir` (the working copy) — this is only the
   // extra "where inside it" detail.
   subdir?: string;
+  // The explicit model route selection (ADR 0128), absent for a session with none: the route id and
+  // a stable reference to the connection it runs on.
+  route?: { route: string; connection?: string };
   // claude.ai Remote Control URL, set only while RC is bridged (agents/claude: RemoteSessionURL).
   // NOT the working copy's clone URL — the repository a session runs in is identified through
   // its working copy (repos: remote + remotePath).

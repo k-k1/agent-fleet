@@ -8,7 +8,7 @@ vi.mock("../core/auth/authExpired.ts", () => ({ isAuthExpired: () => expired }))
 vi.mock("../core/api/client.ts", () => ({ api: (...a: unknown[]) => apiMock(...a), getTenant: () => tenant }));
 
 const { AGENTS, agentOf, availableKinds, repoLaunchKinds } = await import("./registry.ts");
-const { FALLBACK_KIND_FACTS, catalogKinds, kindFacts, parseKindCatalog, setKindCatalog } = await import("./kindCatalog.ts");
+const { FALLBACK_KIND_FACTS, catalogKinds, kindFacts, kindRoutes, parseKindCatalog, setKindCatalog } = await import("./kindCatalog.ts");
 const { loadKindCatalog, loadKindCatalogAfter, resetKindCatalog, syncKindCatalogTenant } = await import("./kindCatalogLoad.ts");
 const { MCP_KINDS, mcpKinds } = await import("../features/settings/mcp/mcpWire.ts");
 const { SESSION_KINDS } = await import("../types/session.ts");
@@ -356,5 +356,21 @@ describe("loadKindCatalog", () => {
     resetKindCatalog();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("kind routes (ADR 0128)", () => {
+  afterEach(() => setKindCatalog(null));
+  it("reads a kind's routes from the live answer and ignores junk", () => {
+    setKindCatalog(parseKindCatalog({ kinds: [
+      { kind: "claude", managedOnly: false, managedDefault: false, mcpClient: "yes", routes: ["anthropic-api", "", 3, "anthropic-subscription"] },
+      { kind: "codex", managedOnly: false, managedDefault: false, mcpClient: "yes", routes: "nope" },
+    ] }));
+    expect(kindRoutes("claude")).toEqual(["anthropic-api", "anthropic-subscription"]);
+    expect(kindRoutes("codex")).toEqual([]);
+    expect(kindRoutes("not-a-kind")).toEqual([]);
+  });
+  it("offers none before a catalog arrives", () => {
+    expect(kindRoutes("claude")).toEqual([]);
   });
 });

@@ -20,6 +20,9 @@ export interface KindFacts {
   managedOnly: boolean;
   managedDefault: boolean;
   mcpClient: Tri;
+  /** The model routes the harness accepts an explicit selection of (ADR 0128), from the live
+   *  answer only. Absent = none: the launch dialog shows no route picker and sends no route. */
+  routes?: string[];
 }
 
 // Derived from the kind table (agents/kindTable.ts); the order of a Record is not significant.
@@ -52,10 +55,12 @@ export function parseKindCatalog(body: unknown): Map<string, KindFacts> | null {
     if (!e || typeof e !== "object" || typeof e.kind !== "string" || !e.kind) continue;
     if (typeof e.managedOnly !== "boolean" || typeof e.managedDefault !== "boolean") continue;
     if (e.mcpClient !== "yes" && e.mcpClient !== "no" && e.mcpClient !== "unverified") continue;
+    const routes = Array.isArray(e.routes) ? e.routes.filter((r: unknown): r is string => typeof r === "string" && !!r) : [];
     out.set(e.kind, {
       managedOnly: e.managedOnly,
       managedDefault: e.managedOnly || e.managedDefault,
       mcpClient: e.mcpClient,
+      ...(routes.length ? { routes } : {}),
     });
   }
   return out.size ? out : null;
@@ -66,6 +71,12 @@ export function parseKindCatalog(body: unknown): Map<string, KindFacts> | null {
  *  kinds, and resolving them here would let the Console accept what the Agent refuses. */
 export function kindFacts(kind: string): KindFacts | undefined {
   return live?.get(kind) ?? FALLBACK_KIND_FACTS[kind as SessionKind];
+}
+
+/** The routes an explicit selection may name for this kind: [] for a kind that declares none,
+ *  and before the first answer (never guessed from the build, so an older Agent shows no picker). */
+export function kindRoutes(kind: string): string[] {
+  return live?.get(kind)?.routes ?? [];
 }
 
 /** True when the loaded catalog names this kind. False before the first answer. */
