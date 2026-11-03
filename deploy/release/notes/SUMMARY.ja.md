@@ -12,6 +12,32 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.40.0](0.40.0.ja.md) — 2026-11-03
+
+**CLI ピン** — Claude Code 2.1.317 / Confluence CLI 2.31.0 を追加
+
+**New / Improved**
+
+- **[confluence]** `confluence` CLI を焼き込み、メンバーの Jira 接続でサインイン。テナントごとのオプトイン（Atlassian アプリに 10 個のスコープ、テナントの Jira カードで Confluence にチェック、メンバーは接続し直し） ([#2212](https://github.com/k-k1/agent-fleet/issues/2212), [#3266](https://github.com/k-k1/agent-fleet/issues/3266), [#3267](https://github.com/k-k1/agent-fleet/issues/3267), [#3309](https://github.com/k-k1/agent-fleet/issues/3309))
+- **[セッション]** セッションの行の PR チップに修正依頼とマージコンフリクトの印（GitHub・Bitbucket） ([#3129](https://github.com/k-k1/agent-fleet/issues/3129))
+- **[ミラー]** Claude のバックグラウンドコマンドを入力欄の上に一覧。動いている時間と「止まっているかもしれません」の警告。**停止** で 1 件ずつ終了 ([#3279](https://github.com/k-k1/agent-fleet/issues/3279))
+- **[起動]** **メモに一時保存** で「作業を始める」の下書きと添付を退避、メモの **この内容で始める** で戻す ([#3289](https://github.com/k-k1/agent-fleet/issues/3289))
+- **[claude]** 設定 › エージェント › Claude に **アイドル中の自動圧縮** のスイッチ ([#3303](https://github.com/k-k1/agent-fleet/issues/3303))
+- **[設定 › マシン]** 使われなくなったファイルに、アーカイブから 7 日以内のセッションの作業フォルダ。確認のあとすぐ削除 ([#3299](https://github.com/k-k1/agent-fleet/issues/3299))
+- **[設定]** タイムゾーンと地域の形式が Console に残っていた日時・グラフ、スケジュールの次回実行、Agent が書く文章（「ブラウザに合わせる」なら最後に使ったブラウザのゾーン）にも効く ([#3217](https://github.com/k-k1/agent-fleet/issues/3217))
+- **[Console]** 見えたまま放置された Console は、作業中のものがなければ 10 分でライブ更新を一時停止。Control Plane と Agent のセッション一覧の読み取りを軽量化 ([#3235](https://github.com/k-k1/agent-fleet/issues/3235), [#3236](https://github.com/k-k1/agent-fleet/issues/3236), [#3231](https://github.com/k-k1/agent-fleet/issues/3231), [#3239](https://github.com/k-k1/agent-fleet/issues/3239), [#3255](https://github.com/k-k1/agent-fleet/issues/3255))
+- **[アーカイブ]** 作業コピーのアーカイブ棚にアーカイブ済みの子セッションも並ぶ ([#3295](https://github.com/k-k1/agent-fleet/issues/3295))
+- **[Console]** 作業項目の **たたむ** が見える位置に留まる。残っていたブラウザの確認ボックスを Console のダイアログに ([#3296](https://github.com/k-k1/agent-fleet/issues/3296), [#3307](https://github.com/k-k1/agent-fleet/issues/3307))
+- **[エージェント]** Agent のエラーをさらに表示言語で。OpenCode 1.x を断るメッセージも ([#3227](https://github.com/k-k1/agent-fleet/issues/3227), [#3241](https://github.com/k-k1/agent-fleet/issues/3241), [#3246](https://github.com/k-k1/agent-fleet/issues/3246))
+
+**Fixed**
+
+- **[ミラー]** ターミナル（CLI）の Claude セッションを返答前に停止すると、止めたプロンプトが次のメッセージにつながり「反映待ち」のままになった ([#3290](https://github.com/k-k1/agent-fleet/issues/3290))
+- **[ミラー]** 画像を貼った Claude のプロンプトを待ち行列に入れるとサムネイルが 2 つ出た ([#3284](https://github.com/k-k1/agent-fleet/issues/3284))
+- **[llama.cpp]** llama.cpp をオフにしてもチャットのピルが「届いていません」で残った ([#3291](https://github.com/k-k1/agent-fleet/issues/3291))
+- **[セッション]** 停滞したツリーの通知が、引き継ぎの提案から起動したセッションを提案した側の子として数えた ([#3243](https://github.com/k-k1/agent-fleet/issues/3243))
+- **[jira]** Jira カードの「対象のサイト」に同じサイトが 2 回出ることがあった ([#3265](https://github.com/k-k1/agent-fleet/issues/3265))
+
 ## [0.39.0](0.39.0.ja.md) — 2026-11-02
 
 **New / Improved**

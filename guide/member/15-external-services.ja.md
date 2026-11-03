@@ -121,7 +121,7 @@ Jira を接続していれば（設定の**課題管理**）、Jira CLI の `jir
 Jira を OAuth または API トークンでつなぐ（設定 > **課題管理**）と、Confluence の CLI である
 `confluence` が、どのエージェントのセッションでも `confluence init` もログインもなしで動きます。
 `jira` と同じ Atlassian の接続を使い、期限が近づけば更新するので、そのためにセッションを再起動する
-必要はありません: `confluence search "リリースノート"`、`confluence read PAGE_ID`、`confluence spaces`、
+必要はありません: `confluence search "リリースノート"`、`confluence read PAGE_ID`、`confluence space-lookup KEY`、
 `confluence create "タイトル" SPACE --content "…"`、`confluence update PAGE_ID …`。
 そのほかは `confluence --help` で確認できます。
 
@@ -138,6 +138,10 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
   `write:page`・`read:space` が必要です。接続がそれより前のものだと、コマンドはその旨を 1 行表示し、
   設定 > 課題管理には「Confluence: 検索とコメントは使えますが…」と出ます。テナント管理者が Atlassian アプリに
   スコープを追加したあと、あなたが **Jira を接続し直して**ください。検索・コメント・添付は影響を受けません。
+- **読み取りは不安定な回線でもやり直します。** 読み取り系のコマンド（`search`・`read`・`info`・`spaces`・
+  `find`・`children`・`comments`・版・プロパティ、ダウンロードしない `attachments`）は、接続のリセットや
+  タイムアウトのあと最大 2 回やり直され、最後の実行の出力だけが表示されます。出力が端末でないとき、
+  1 回の上限は `AF_CONFLUENCE_TIMEOUT` 秒（既定 60、`0` = 無制限）です。
 - **書き込みは 1 回だけ送ります。** 作成や更新を送ったあとで通信が切れた場合、再送せず「結果が不明」と
   表示します。繰り返す前にページを確認してください。他の人の編集とぶつかった更新はバージョン競合として
   拒否され、何も上書きしません。

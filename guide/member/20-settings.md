@@ -340,7 +340,10 @@ issues and pull requests, Bitbucket pull requests), so that a session can be sta
 - **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
   (the address is half of that credential). The connection also signs in the `jira` CLI in sessions
   ([15](15-external-services.md#use-jira-in-a-session)). An OAuth connection without the Jira Software scopes says on its card
-  "Boards, sprints and epics: not available.", with what your tenant administrator has to add. **GitHub and
+  "Boards, sprints and epics: not available.", with what your tenant administrator has to add. The same connection signs in the `confluence` CLI
+  ([15](15-external-services.md#use-confluence-in-a-session)); an OAuth connection without the Confluence
+  scopes says "Confluence: not available.", and one that predates the page scopes says "Confluence: search
+  and comments work, but …". **GitHub and
   Bitbucket ride on the Git hosting connection**, so they need nothing of their own.
 - **Bitbucket** has no search across an account, so its query is **assembled from your connected
   repositories** (what to list × which target) instead of being typed by hand. Bitbucket items are

@@ -432,6 +432,13 @@ them in for one `exec`:
   serves it, search and comments work). Writes are sent once; update sends `version+1` so a
   concurrent edit is a 409. Still on v1 and expected to 410: move, delete, children, find, spaces,
   copy-tree, versions, properties. Folders: the shim refuses `create --type folder`; the CLI lists folder children over v2 `/pages/{id}/direct-children` (`read:hierarchical-content:confluence`, not requested).
+- **Read-only retry**: `readonly_cmd` in the wrapper re-runs the subcommands it lists
+  (`attachments` only without `-d`/`--download`/`--dest`) up to twice after a transport error read
+  from the CLI's own error line (ECONNRESET, ETIMEDOUT, …; never an HTTP status), replaying only the
+  last attempt, and only when stdout and stderr are not terminals. `AF_CONFLUENCE_TIMEOUT` (default
+  60 s, 0 = none) bounds one attempt with a shell watchdog rather than `timeout(1)`, so no helper
+  process inherits the token. Unknown words count as writes and run once. The v2 shim re-sends its
+  GETs, never its POST/PUT.
 - **The user's own setup wins, decided by what is there, never by reading a config**: any
   `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a
   `config.json` in `CONFLUENCE_CONFIG_DIR` (else `$XDG_CONFIG_HOME/confluence-cli` and
@@ -439,7 +446,7 @@ them in for one `exec`:
   `--help` never ask the Agent, which also keeps the Toolchains probe off the store lock.
 - **Fails closed**: any helper error runs the CLI with no injected auth (after a one-line hint
   that names Settings and `confluence init`); only an `unusable=` answer stops it. The token
-  lives in the wrapper's variables and, at the end, in the exec'd CLI's environment: never argv,
+  lives in the wrapper's variables and, at the end, in the CLI's environment (a prefix assignment on the one command that runs it): never argv,
   never a file, never printed (`workspace/confluence-auth-wrapper-test.sh`, run by CI, checks
   each of these against stubs). `CONFLUENCE_CLI_ANALYTICS=false` stops the CLI writing a usage
   counter into its config directory.

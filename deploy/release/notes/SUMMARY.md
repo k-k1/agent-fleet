@@ -13,6 +13,32 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.40.0](0.40.0.md) — 2026-11-03
+
+**CLI pins** — Claude Code 2.1.317; Confluence CLI 2.31.0 added
+
+**New / Improved**
+
+- **[confluence]** `confluence` CLI baked in, signed in through the member's Jira connection; opt-in per tenant (ten scopes on the Atlassian app, Confluence ticked on the tenant Jira card, members reconnect) ([#2212](https://github.com/k-k1/agent-fleet/issues/2212), [#3266](https://github.com/k-k1/agent-fleet/issues/3266), [#3267](https://github.com/k-k1/agent-fleet/issues/3267), [#3309](https://github.com/k-k1/agent-fleet/issues/3309))
+- **[sessions]** The session row's PR chip marks requested changes and merge conflicts (GitHub, Bitbucket) ([#3129](https://github.com/k-k1/agent-fleet/issues/3129))
+- **[mirror]** Claude's background commands listed above the input box with run time and a "may be stuck" warning; **Stop** ends one ([#3279](https://github.com/k-k1/agent-fleet/issues/3279))
+- **[launch]** **Save to memo** sets a Start working draft and its attachments aside; **Start with this** on the memo brings it back ([#3289](https://github.com/k-k1/agent-fleet/issues/3289))
+- **[claude]** **Idle compaction** switch in Settings › Agents › Claude ([#3303](https://github.com/k-k1/agent-fleet/issues/3303))
+- **[settings › machine]** Leftover files: work folders of archived sessions still inside their 7 days, deleted now after a confirm ([#3299](https://github.com/k-k1/agent-fleet/issues/3299))
+- **[settings]** Time zone and region format also reach the Console's remaining dates and charts, a schedule's next run, and Agent-written text (with "follow browser", the last-used browser's zone) ([#3217](https://github.com/k-k1/agent-fleet/issues/3217))
+- **[console]** An unattended visible Console pauses live updates after 10 minutes while nothing is working; lighter session-list reads in the Control Plane and the Agent ([#3235](https://github.com/k-k1/agent-fleet/issues/3235), [#3236](https://github.com/k-k1/agent-fleet/issues/3236), [#3231](https://github.com/k-k1/agent-fleet/issues/3231), [#3239](https://github.com/k-k1/agent-fleet/issues/3239), [#3255](https://github.com/k-k1/agent-fleet/issues/3255))
+- **[archive]** A working copy's archive shelf includes its archived child sessions ([#3295](https://github.com/k-k1/agent-fleet/issues/3295))
+- **[console]** Work items **Show less** stays in view; the last browser confirm boxes use the Console dialog ([#3296](https://github.com/k-k1/agent-fleet/issues/3296), [#3307](https://github.com/k-k1/agent-fleet/issues/3307))
+- **[agent]** More Agent errors in the display language, including the OpenCode 1.x refusal ([#3227](https://github.com/k-k1/agent-fleet/issues/3227), [#3241](https://github.com/k-k1/agent-fleet/issues/3241), [#3246](https://github.com/k-k1/agent-fleet/issues/3246))
+
+**Fixed**
+
+- **[mirror]** Stopping a Terminal (CLI) Claude session before its reply glued the stopped prompt to the next message, which stayed Pending ([#3290](https://github.com/k-k1/agent-fleet/issues/3290))
+- **[mirror]** A queued Claude prompt with a pasted image showed its thumbnail twice ([#3284](https://github.com/k-k1/agent-fleet/issues/3284))
+- **[llama.cpp]** The chat pill stayed as "Not reachable" after llama.cpp was switched off ([#3291](https://github.com/k-k1/agent-fleet/issues/3291))
+- **[sessions]** The stalled-tree notice counted a session launched from a handoff proposal as the proposer's child ([#3243](https://github.com/k-k1/agent-fleet/issues/3243))
+- **[jira]** The Jira card's Site picker could list a site twice ([#3265](https://github.com/k-k1/agent-fleet/issues/3265))
+
 ## [0.39.0](0.39.0.md) — 2026-11-02
 
 **New / Improved**

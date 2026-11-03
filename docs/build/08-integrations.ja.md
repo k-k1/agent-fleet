@@ -399,6 +399,12 @@ Jira は git でなく作業項目インボックス
   ない認可は `confluenceScopes: "outdated"`（設定画面は再接続を案内、`confluence-cred` は引き続き渡すので
   検索とコメントは動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
   v1 のままで 410 が見込まれるもの: move・delete・children・find・spaces・copy-tree・versions・properties。フォルダは別: shim は `create --type folder` を拒否し、CLI のフォルダ子一覧は v2 `/pages/{id}/direct-children`（`read:hierarchical-content:confluence`、未要求）。
+- **読み取りのリトライ**: ラッパーの `readonly_cmd` に挙げたサブコマンド（`attachments` は
+  `-d`/`--download`/`--dest` なしのときだけ）は、CLI 自身のエラー行から読んだ通信エラー（ECONNRESET・
+  ETIMEDOUT など。HTTP ステータスは対象外）のあと最大 2 回やり直し、最後の実行だけを出す。stdout と
+  stderr が端末でないときに限る。1 回の上限は `AF_CONFLUENCE_TIMEOUT`（既定 60 秒、0 = 無制限）で、
+  `timeout(1)` でなくシェルの監視で切るので、トークンを受け継ぐ補助プロセスが無い。知らない語は書き込みと
+  みなして 1 回だけ走らせる。v2 shim は GET を再送し、POST/PUT は再送しない。
 - **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
   `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ
   `$XDG_CONFIG_HOME/confluence-cli` と `~/.confluence-cli`）の `config.json` のどれかがあれば、CLI は
@@ -406,7 +412,7 @@ Jira は git でなく作業項目インボックス
   Toolchains のプローブがストアロックに触れることもない。
 - **フェイルクローズ**: ヘルパーのエラーは認証を注入せずに CLI を走らせる（設定画面と
   `confluence init` を示す 1 行のヒントつき）。止めるのは `unusable=` の返答だけ。トークンは
-  ラッパーの変数と、最後に exec される CLI の環境にだけ存在し、argv にも、ファイルにも、出力にも出ない
+  ラッパーの変数と、最後に CLI を走らせる 1 コマンドへの前置代入としてだけ渡され、argv にも、ファイルにも、出力にも出ない
   （`workspace/confluence-auth-wrapper-test.sh` が CI で、スタブ相手にそれぞれを確かめる）。
   `CONFLUENCE_CLI_ANALYTICS=false` で、CLI が設定ディレクトリに利用回数ファイルを書くのを止める。
 - **版の固定**: Dockerfile の `CONFLUENCE_CLI_VERSION`。パッケージは `npm-shrinkwrap.json` を

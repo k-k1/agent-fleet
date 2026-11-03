@@ -120,7 +120,7 @@ Once Jira is connected with OAuth or an API token (Settings, **Issue tracker**),
 Confluence CLI, works in a session for every agent, with no `confluence init` and no login. It uses
 the same Atlassian connection as `jira` and renews it when it is about to expire, so you never
 restart a session for it: `confluence search "release notes"`, `confluence read PAGE_ID`,
-`confluence spaces`, `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`.
+`confluence space-lookup KEY`, `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`.
 `confluence --help` lists the rest.
 
 - **OAuth needs the Confluence scopes**, which the tenant administrator turns on (the *Confluence*
@@ -137,12 +137,19 @@ restart a session for it: `confluence search "release notes"`, `confluence read 
   If your connection predates them, the command prints one line saying so and Settings › Issue
   tracker shows a "Confluence: search and comments work, but …" note; the tenant administrator adds the scopes
   to the Atlassian app, then you **reconnect Jira**. Search, comments and attachments are unaffected.
+- **Reads survive a flaky network.** Read-only commands (`search`, `read`, `info`, `spaces`, `find`,
+  `children`, `comments`, versions, properties, and `attachments` without a download) are re-run up
+  to twice after a connection reset or timeout, and only the last attempt's output is shown. When the
+  output is not a terminal, one attempt is bounded by `AF_CONFLUENCE_TIMEOUT` seconds (default 60,
+  `0` = none).
 - **Writes are sent once.** If the network drops after a create or update was sent, the command says
   the result is unknown instead of retrying; check the page before repeating it. An update that
   collides with someone else's edit is refused as a version conflict and overwrites nothing.
 - **Still on the old endpoints:** `move`, `delete`, `children`, `find`, `spaces`, `copy-tree`,
-  page versions and properties / front matter. Folders are separate: (the shim refuses `create --type folder`; listing a folder's children uses the CLI's own v2 call, which needs `read:hierarchical-content:confluence`, not requested). They can answer "410 … removed" until
-  the Confluence CLI moves them to the new API.
+  page versions and properties / front matter. These can answer "410 … removed" until
+  the Confluence CLI moves them to the new API. Folders are separate: the workspace refuses
+  `create --type folder`, and listing a folder's children uses the CLI's own v2 call, which needs
+  `read:hierarchical-content:confluence` (not requested).
 - **What it can change** is what your connection can: the CLI writes as you.
 - **Your own setup is never overridden.** If you set `CONFLUENCE_DOMAIN`, `CONFLUENCE_API_TOKEN` (or
   any other `CONFLUENCE_*` variable that names a host or a credential), pass `--profile`, or have run
