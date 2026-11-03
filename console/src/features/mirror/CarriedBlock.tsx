@@ -11,7 +11,7 @@
 // The card is kept separate so that invariant is enforced structurally: the key-firing code
 // (questionKeys) is not imported here, so no carried-interaction button can reach a live
 // pane with Down/Enter.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
@@ -65,6 +65,18 @@ export function CarriedBlock({
   // Returns whether the answer actually left: the question card puts its draft back on a
   // false, since the card it belongs to stays on screen.
   const askConfirm = useConfirm();
+  // The confirm dialog lives in the app-level provider and outlives this card; polling may drop
+  // the plan or swap in another one while it is open. The approve call names only the session,
+  // so it would run whatever plan is current — re-check the card is still the one confirmed.
+  const live = useRef({ session, plan: carried.plan, mounted: true });
+  live.current.session = session;
+  live.current.plan = carried.plan;
+  useEffect(() => {
+    live.current.mounted = true;
+    return () => {
+      live.current.mounted = false;
+    };
+  }, []);
   const send = async (body: Parameters<typeof sessionCarriedAnswer>[1]): Promise<boolean> => {
     if (sending) return false;
     setSending(true);
@@ -172,13 +184,16 @@ export function CarriedBlock({
                 disabled={sending || !!busy}
                 onClick={() =>
                   void (async () => {
+                    const asked = { session, plan: carried.plan };
                     const ok = await askConfirm({
                       title: tr("mirror.carried_plan_approve_confirm_title"),
                       body: tr("mirror.carried_plan_approve_confirm_body"),
                       confirmLabel: tr("mirror.carried_plan_approve"),
                       danger: false,
                     });
-                    if (ok) void send({ decision: "approve", feedback });
+                    const now = live.current;
+                    if (!ok || !now.mounted || now.session !== asked.session || now.plan !== asked.plan) return;
+                    void send({ decision: "approve", feedback });
                   })()
                 }
               >

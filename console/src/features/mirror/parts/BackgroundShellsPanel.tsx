@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -67,6 +67,16 @@ export function BackgroundShellsPanel({
   now?: number;
 }) {
   const askConfirm = useConfirm();
+  // The dialog outlives this panel's rows: the shell may exit (or the panel unmount) while it is
+  // open, and stopping by pid afterwards could hit nothing or a reused pid.
+  const liveShells = useRef({ shells, mounted: true });
+  liveShells.current.shells = shells;
+  useEffect(() => {
+    liveShells.current.mounted = true;
+    return () => {
+      liveShells.current.mounted = false;
+    };
+  }, []);
   const [tick, setTick] = useState(() => Date.now());
   const has = shells.length > 0;
   useEffect(() => {
@@ -118,7 +128,8 @@ export function BackgroundShellsPanel({
                       confirmLabel: tr("mirror.bg_shell_stop"),
                       danger: true,
                     });
-                    if (ok) onStop(s);
+                    const now = liveShells.current;
+                    if (ok && now.mounted && now.shells.some((x) => x.pid === s.pid && x.start === s.start)) onStop(s);
                   })()
                 }
               >

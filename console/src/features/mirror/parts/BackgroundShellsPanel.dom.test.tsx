@@ -83,6 +83,20 @@ describe("BackgroundShellsPanel", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
+  it("does not stop a shell that ended while the dialog was open", async () => {
+    const onStop = render([hung]);
+    await act(async () => document.querySelector<HTMLButtonElement>(".mbs-stop")!.click());
+    act(() =>
+      root!.render(
+        <ConfirmProvider>
+          <BackgroundShellsPanel shells={[build]} stopping={new Set()} onStop={onStop} now={now} />
+        </ConfirmProvider>,
+      ),
+    );
+    await answerConfirm(true);
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
   it("disables the button while that shell is being stopped", () => {
     render([hung], new Set([200]));
     expect(document.querySelector<HTMLButtonElement>(".mbs-stop")!.disabled).toBe(true);

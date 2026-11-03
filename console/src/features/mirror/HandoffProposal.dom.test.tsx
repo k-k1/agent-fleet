@@ -111,6 +111,24 @@ describe("the sender's handoff card while the recipient holds the offer", () => 
   });
 });
 
+describe("a withdraw confirmation outlives its card", () => {
+  it("does nothing when the proposal changed while the dialog was open", async () => {
+    await render(base);
+    await act(async () => launchButton().click());
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <HandoffProposal session="src" proposal={{ ...proposal, id: "p-2" }} onChange={() => undefined} />
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await answerConfirm(true);
+    expect(apiJSON).not.toHaveBeenCalled();
+  });
+});
+
 // The picker named the recipient by e-mail, so the card must too; the internal key is the
 // fallback for a recipient with no address (#2075).
 describe("the sender's handoff card names the recipient as the picker did", () => {
