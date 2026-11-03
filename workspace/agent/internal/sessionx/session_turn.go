@@ -132,7 +132,36 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Op == "interrupt" {
 		// The chat stop button. Which key stops a turn depends on the kind (docs/log/133 §1).
-		plan := tuiInterruptFor(meta.Kind, func() bool { return opencodeInSubagentView(tn) })
+		planFor := func() tuiInterrupt {
+			return tuiInterruptFor(meta.Kind, func() bool { return opencodeInSubagentView(tn) })
+		}
+		// A multi-key stop sleeps between keys while holding only the shared lease, so a
+		// second click would interleave its keys and the later ones would stop the NEXT
+		// queued turn. A stop already under way absorbs it.
+		if _, busy := interruptsInFlight.LoadOrStore(name, struct{}{}); busy {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{
+				"sent": name, "op": req.Op, "interrupt_measured": planFor().measured, "coalesced": true,
+			})
+			return
+		}
+		// The absorbing covers the keys only. A stop pressed while this one watches the input box
+		// for a restored prompt is meant for the turn that started since (claude runs a queued
+		// prompt on Esc, docs/log/133 §1): it waits for the terminal lock and goes out.
+		keysDone := sync.OnceFunc(func() { interruptsInFlight.Delete(name) })
+		defer keysDone()
+		// The stop keys never go out while a send types into the pane: an Esc between its text
+		// and its Enter would land in the draft and the Enter would still submit it.
+		unlock, locked := lockTerminal(name, stopLockWait)
+		if !locked {
+			httpx.WriteErr(w, http.StatusConflict, "terminal_busy",
+				"このセッションへの送信がまだ終わっていません。少し待ってから停止し直してください / "+
+					"a message is still being typed into this session; stop again in a moment")
+			return
+		}
+		defer unlock()
+		// The plan and the state are read once the pane is ours: the wait may have outlasted the
+		// turn, and a screen-dependent plan may have changed with it.
+		plan := planFor()
 		// Ctrl+C is not a stop on an idle CLI: it can exit the CLI or signal the pane's
 		// process, and docs/log/133 measured it only on a running turn. Send it only when
 		// the kind's own transcript says "working"; anything else is refused, not guessed.
@@ -143,28 +172,8 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		// A multi-key stop sleeps between keys while holding only the shared lease, so a
-		// second click would interleave its keys and the later ones would stop the NEXT
-		// queued turn. A stop already under way absorbs it.
-		if _, busy := interruptsInFlight.LoadOrStore(name, struct{}{}); busy {
-			httpx.WriteJSON(w, http.StatusOK, map[string]any{
-				"sent": name, "op": req.Op, "interrupt_measured": plan.measured, "coalesced": true,
-			})
-			return
-		}
-		// The absorbing covers the keys only. A stop pressed while this one watches the input box
-		// for a restored prompt is meant for the turn that started since (claude runs a queued
-		// prompt on Esc, docs/log/133 §1): it waits for the terminal lock and goes out.
-		keysDone := sync.OnceFunc(func() { interruptsInFlight.Delete(name) })
-		defer keysDone()
-		// A stop is never refused for the lock: past the wait it goes out unlocked and only the
-		// reclaim, which needs the pane to itself, is skipped.
-		unlock, locked := lockTerminal(name)
-		if locked {
-			defer unlock()
-		}
 		// Read before the keys: only a box that was empty can be told to hold a restored prompt.
-		emptyBefore := locked && restoresInterruptedPrompt(meta.Kind) && composerEmpty(reclaimCapture(pane))
+		emptyBefore := restoresInterruptedPrompt(meta.Kind) && composerEmpty(reclaimCapture(pane))
 		if err := sendNamedKeysGap(pane, plan.keys, plan.gap); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return

@@ -3,6 +3,7 @@ package sessionx
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,14 @@ func stubReclaim(t *testing.T, logPath, prompt string, pane func(escapes int) st
 	interruptedPrompt = func(session.Meta) string { return prompt }
 	reclaimSleep = func(time.Duration) {}
 	t.Cleanup(func() { reclaimCapture, interruptedPrompt, reclaimSleep = oldCap, oldPrompt, oldSleep })
+	t.Cleanup(clearStrandedPrompts)
+}
+
+func clearStrandedPrompts() {
+	strandedPrompts.Range(func(k, _ any) bool {
+		strandedPrompts.Delete(k)
+		return true
+	})
 }
 
 func runClaudeInterrupt(t *testing.T, prompt string, pane func(int) string) (keys []string, restored string, has bool) {
@@ -193,7 +202,7 @@ func TestInterruptDuringReclaimWaitsAndIsSent(t *testing.T) {
 	stubReclaim(t, logPath, "SLOW 再レビュー", func(int) string { return paneEmpty })
 	name := "turn_reclaim_second"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-	unlock, ok := lockTerminal(name) // the first stop, mid-reclaim
+	unlock, ok := lockTerminal(name, stopLockWait) // the first stop, mid-reclaim
 	if !ok {
 		t.Fatal("lock")
 	}
@@ -224,7 +233,7 @@ func TestSendRefusedWhileAStopHoldsThePane(t *testing.T) {
 	reclaimSleep = func(time.Duration) {}
 	name := "turn_send_blocked"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-	unlock, ok := lockTerminal(name)
+	unlock, ok := lockTerminal(name, stopLockWait)
 	if !ok {
 		t.Fatal("lock")
 	}
@@ -245,7 +254,7 @@ func TestSendWaitsForAStopToFinish(t *testing.T) {
 	t.Cleanup(func() { reclaimSleep = old })
 	name := "turn_send_waits"
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
-	unlock, _ := lockTerminal(name)
+	unlock, _ := lockTerminal(name, stopLockWait)
 	polls := 0
 	reclaimSleep = func(time.Duration) {
 		if polls++; polls == 3 {
@@ -284,5 +293,127 @@ func TestInterruptStopsAbsorbingBeforeTheReclaim(t *testing.T) {
 	}
 	if absorbing {
 		t.Fatal("a second stop would still be absorbed while the box is watched")
+	}
+}
+
+// A box captured from claude 2.1.316 (120 columns, a two-line draft, "❯" followed by NBSP, a
+// blank row before the bottom rule) after one Esc.
+var paneCaptured = strings.Repeat(" ", 100) + "Esc again to clear\n" + strings.Repeat("─", 120) +
+	"\n❯\u00a0SLOW 一行目\n  二行目\n\n" + strings.Repeat("─", 120) + "\n  ⏵⏵ auto mode on (shift+tab to cycle)\n"
+
+func TestClaudeBox(t *testing.T) {
+	draft, above, ok := claudeBox(paneCaptured)
+	if !ok || squashSpace(draft) != "SLOW一行目二行目" || above != clearHint {
+		t.Fatalf("draft = %q, above = %q, ok = %v", draft, above, ok)
+	}
+	for name, pane := range map[string]string{
+		// A row of the draft that starts at column 0 is not claude's layout.
+		"unindented row": rule + "\n❯ a\nb\n" + rule + "\n",
+		"no top rule":    "❯ a\n" + rule + "\n",
+		"rules differ":   rule + "\n❯ a\n" + rule + "──\n",
+		"no prompt mark": rule + "\n  a\n" + rule + "\n",
+	} {
+		if _, _, ok := claudeBox(pane); ok {
+			t.Errorf("%s: read as a box", name)
+		}
+	}
+}
+
+// Rules and "❯" a member typed into the box are text inside the frame, not the frame: a draft
+// that holds the stopped prompt plus more is not the stopped prompt, and nothing is erased.
+func TestInterruptLeavesADraftThatOnlyLooksLikeTheBox(t *testing.T) {
+	cases := map[string]string{
+		"typed rule":       "❯ SLOW 再レビュー\n  ────────────────────────\n  消してはいけない追記",
+		"typed hint and ❯": "❯ an example of the keys\n  Esc again to clear\n  ❯ SLOW 再レビュー",
+	}
+	for name, box := range cases {
+		t.Run(name, func(t *testing.T) {
+			restored := rule + "\n" + box + "\n" + rule + "\n  ⏵⏵ auto mode on\n"
+			keys, _, has := runClaudeInterrupt(t, "SLOW 再レビュー", func(esc int) string {
+				switch esc {
+				case 0:
+					return paneWorking
+				case 1:
+					return restored
+				}
+				return clearHint + "\n" + restored
+			})
+			if has || strings.Join(keys, ",") != "Escape" {
+				t.Fatalf("keys = %v, restored present = %v", keys, has)
+			}
+		})
+	}
+}
+
+// A stopped prompt the stop could not take out (here a paste placeholder) stays in the box, and
+// the next send is refused rather than typed after it; once the box is empty again it goes out.
+func TestSendRefusedWhileAStoppedPromptIsLeftInTheBox(t *testing.T) {
+	placeholder := rule + "\n❯ [Pasted text #1 +50 lines]\n" + rule + "\n"
+	pane := placeholder
+	keys, _, has := runClaudeInterrupt(t, "Please review project alpha", func(esc int) string {
+		if esc == 0 {
+			return paneWorking
+		}
+		return pane
+	})
+	if has || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("keys = %v, restored present = %v", keys, has)
+	}
+	rec := postTurn(t, "turn_reclaim", `{"op":"start","prompt":"next prompt"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "stopped_prompt_in_box") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.Join(sendKeysLines(t, os.Getenv("TMUX_TEST_LOG")), ","); got != "Escape" {
+		t.Fatalf("typed after the stranded prompt: %v", got)
+	}
+	pane = paneEmpty
+	if rec := postTurn(t, "turn_reclaim", `{"op":"start","prompt":"next prompt"}`); rec.Code != http.StatusOK {
+		t.Fatalf("after the box was cleared: status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The state that allows Ctrl+C is read once the pane is ours: a turn that ended while the stop
+// waited for a send leaves an idle CLI, which Ctrl+C can exit.
+func TestInterruptRereadsTheStateAfterWaitingForTheLock(t *testing.T) {
+	logPath := fakeTmux(t)
+	name := "turn_ctrlc_wait"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCursor})
+	unlock, _ := lockTerminal(name, stopLockWait) // a send typing
+	st := "working"
+	old, oldSleep := interruptLiveState, reclaimSleep
+	t.Cleanup(func() { interruptLiveState, reclaimSleep = old, oldSleep })
+	interruptLiveState = func(string, session.Meta) string { return st }
+	polls := 0
+	reclaimSleep = func(time.Duration) {
+		if polls++; polls == 3 {
+			st = "idle" // the turn ended meanwhile
+			unlock()
+		}
+	}
+	rec := postTurn(t, name, `{"op":"interrupt"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "not_working") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := sendKeysLines(t, logPath); len(got) != 0 {
+		t.Fatalf("keys = %v", got)
+	}
+}
+
+// A send that holds the pane past the stop's wait gets no stop key in the middle of its typing:
+// the stop is refused instead.
+func TestInterruptRefusedWhileASendHoldsThePane(t *testing.T) {
+	logPath := fakeTmux(t)
+	stubInterruptState(t, "working")
+	stubReclaim(t, logPath, "SLOW 再レビュー", func(int) string { return paneEmpty })
+	name := "turn_stop_blocked"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	unlock, _ := lockTerminal(name, stopLockWait)
+	defer unlock()
+	rec := postTurn(t, name, `{"op":"interrupt"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "terminal_busy") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := sendKeysLines(t, logPath); len(got) != 0 {
+		t.Fatalf("keys = %v", got)
 	}
 }

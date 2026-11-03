@@ -94,6 +94,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.driver_unsupported": "This agent kind doesn't support that execution method.",
   "err.busy_switch": "A turn is running. Wait for it to finish or stop it before switching.",
   "err.stop_in_progress": "A stop is still being delivered to this session. Send again in a moment.",
+  "err.stopped_prompt_in_box": "The stopped message is still in the terminal's input box. Clear it there and send again.",
+  "err.terminal_busy": "A message is still being typed into this session. Stop again in a moment.",
   "err.member_origin_required": "Only the Console can do this. It was not sent from your signed-in session.",
   "err.member_origin_invalid": "The request could not be verified as yours (it may have expired). Try again.",
   "err.member_origin_unavailable": "The workspace's agent just started or needs a restart. Try again in a minute.",
