@@ -1,21 +1,22 @@
+import { quoteImagePaths } from "../../../lib/pastedImages.ts";
 import { echoLanded } from "../pendingEcho.ts";
 import { actionable, injectionSource, inQueueOrder, restorable, type queueEntries } from "../stopQueue.ts";
 import { coalesceUserActions, groupTurns, isNoise, stripStudioSignal } from "../transcript/model.ts";
 import type { Turn } from "../transcript/types.ts";
 import type { SendEcho } from "./sendEcho.ts";
 
-// sameQueuedPrompt says whether a queue entry is the prompt an echo stands for. The two are
-// different spellings of one prompt: the Agent backticks the attachment paths before typing
-// them into claude (QuoteImagePaths in image_paste.go) and the queue holds the typed text,
-// signal line included, while the echo keeps the bare paths. An exact compare misses, and the
+// sameQueuedPrompt says whether a queue entry is the prompt an echo stands for. On the claude
+// TUI route the queue holds the text the Agent typed, which is not the text the Console sent:
+// the attachment line's image paths are backticked (QuoteImagePaths) and the studio signal
+// line rides along, while the echo keeps the bare paths. An exact compare misses, and the
 // unpaired echo and queue row then fold into one bubble showing every thumbnail twice.
-// Only that quoting and the signal are undone; the rest is compared whole. samePastedPrompt
-// would be too loose here: it cuts at the first instruction wording anywhere in the text, so
-// two prompts that merely quote that wording would pair and one would take the other's entry.
-const QUOTED_ATTACHMENT_RE = /`(\/\S*\/agent-fleet\/(?:pasted\/[^\s/`]+|memo-images)\/[^\s/`]+)`/g;
-const unquoted = (text: string) => stripStudioSignal(text).replace(QUOTED_ATTACHMENT_RE, "$1").trim();
+// So the echo is put through the same rewrite and compared whole. Undoing backticks on the
+// queue side instead, or comparing with samePastedPrompt, also pairs prompts the member wrote
+// differently (a backticked path of their own, words after a quoted instruction wording).
 function sameQueuedPrompt(queued: string, echo: string): boolean {
-  return unquoted(queued) === unquoted(echo);
+  const q = stripStudioSignal(queued).trim();
+  const e = stripStudioSignal(echo).trim();
+  return q === e || q === quoteImagePaths(e);
 }
 
 // claude writes one logical response as several assistant events (text split by

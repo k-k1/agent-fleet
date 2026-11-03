@@ -96,3 +96,25 @@ export function buildImagePrompt(text: string, paths: string[], kind = "claude")
   const instr = (kind === "claude" ? FILE_PROMPT : FILE_PROMPT_GENERIC) + " " + paths.join(" ");
   return text ? text + " " + instr : instr;
 }
+
+// quoteImagePaths is the twin of claude.QuoteImagePaths (workspace/agent/internal/agents/claude/
+// image_paste.go): the spelling the Agent types into claude, so a text read back from claude's
+// queue can be compared with the prompt the Console sent. Only the attachment line at the end is
+// rewritten — a tail of absolute paths alone after the last Read-tool wording, with at least one
+// image in our upload directories — and only those image paths are wrapped in backticks. Keep
+// the two in step: a rule the Go side drops or adds here makes a queued prompt look different.
+const CLAUDE_READ_PROMPTS = [FILE_PROMPT, IMG_PROMPT];
+const AGENT_ATTACHMENT_RE = /\/agent-fleet\/(?:pasted\/[^/]+|memo-images)\/[^/]+$/;
+const quotableImage = (tok: string) => /\.(?:png|jpe?g|gif|webp)$/i.test(tok) && AGENT_ATTACHMENT_RE.test(tok);
+export function quoteImagePaths(body: string): string {
+  let at = -1;
+  for (const p of CLAUDE_READ_PROMPTS) {
+    const j = body.lastIndexOf(p);
+    if (j >= 0 && j + p.length > at) at = j + p.length;
+  }
+  if (at < 0) return body;
+  const tail = body.slice(at);
+  const fields = tail.split(/[ \t\r\n]+/).filter(Boolean);
+  if (!fields.every((f) => f.startsWith("/")) || !fields.some(quotableImage)) return body;
+  return body.slice(0, at) + tail.replace(/[^ \t\r\n]+/g, (tok) => (quotableImage(tok) ? "`" + tok + "`" : tok));
+}

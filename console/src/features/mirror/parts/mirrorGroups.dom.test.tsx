@@ -43,4 +43,14 @@ describe("groupWithQueue pairs an echo with its queue entry", () => {
     // The French echo took the French entry: one French text, not the echo plus a leftover row.
     expect(texts.join("\n").split("French").length - 1).toBe(1);
   });
+
+  it("keeps a path the member backticked in their own words apart from the bare one", () => {
+    const script = "/home/dev/.cache/agent-fleet/pasted/k/paste-2-check.sh";
+    const bare = `Run this shell command:\necho ${script}`;
+    const quoted = `Run this shell command:\necho \`${script}\``;
+    const g = groupWithQueue([], [{ id: 1, text: bare, sinceIdx: 0 }], queueEntries(null, [quoted, bare]));
+    const all = g.map((b) => b.text).join("\n");
+    expect(all).toContain(quoted);
+    expect(all.split(script).length - 1).toBe(2);
+  });
 });
