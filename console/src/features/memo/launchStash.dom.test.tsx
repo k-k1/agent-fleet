@@ -16,7 +16,15 @@ vi.mock("../../core/api/client.ts", () => ({
   memoCreate: (input: unknown) => createMock(input),
   memoPasteImage: (f: File) => pasteMock(f),
   memoList: async () => listed,
+  memoImageURL: (name: string) => `api/memos/images/${name}`,
+  // A plain object, not a Response: undici's Response cannot read jsdom's Blob.
+  raw: async (url: string) => {
+    const b = served[url.split("/").pop() || ""];
+    return b === undefined ? { ok: false } : { ok: true, blob: async () => new Blob([b]) };
+  },
 }));
+// GET api/memos/images/<name>: the stored memo files (absent = 404).
+let served: Record<string, string> = {};
 // GET api/memos: what the queue holds on the server.
 let listed: unknown[] = [];
 
@@ -53,6 +61,7 @@ beforeEach(() => {
   createMock.mockClear();
   pasteMock.mockClear();
   listed = [];
+  served = {};
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
   useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app" }] });
@@ -157,6 +166,7 @@ describe("races and failures", () => {
     await writeAttachDraft(launchAttachKey("app"), [
       { name: "paste-1.png", type: "image/png", image: true, path: "", file: new File(["I"], "paste-1.png", { type: "image/png" }) },
     ]);
+    served = { "paste-1.png": "I" };
     expect(await startFromMemo(memo())).toEqual({ ok: true });
     expect(createMock).not.toHaveBeenCalled();
     expect(readLaunchPrompt("app")).toBe("");
@@ -173,6 +183,41 @@ describe("races and failures", () => {
     expect(await startFromMemo(memo())).toEqual({ ok: true });
     expect(createMock).not.toHaveBeenCalled();
     expect(readLaunchPrompt("app")).toBe("");
+  });
+
+  // Review round 3: a name is not the content. A newer log under the same name, or a memo
+  // whose stored file is gone, leaves the draft as the only copy of those bytes.
+  it("keeps a same-named file with different bytes as a memo", async () => {
+    served = { "paste-1.png": "OLD" };
+    localStorage.setItem("af.launch-prompt.app", "本文");
+    await writeAttachDraft(launchAttachKey("app"), [
+      { name: "paste-1.png", type: "image/png", image: true, path: "", file: new File(["NEW"], "paste-1.png", { type: "image/png" }) },
+    ]);
+    expect(await startFromMemo(memo())).toEqual({ ok: true, saved: true });
+    expect(await pasteMock.mock.calls[0][0].text()).toBe("NEW");
+  });
+
+  it("keeps the draft's file as a memo when the memo's stored copy is gone", async () => {
+    localStorage.setItem("af.launch-prompt.app", "本文");
+    await writeAttachDraft(launchAttachKey("app"), [
+      { name: "paste-1.png", type: "image/png", image: true, path: "", file: new File(["I"], "paste-1.png", { type: "image/png" }) },
+    ]);
+    expect(await startFromMemo(memo())).toEqual({ ok: true, saved: true });
+  });
+
+  // Review round 3: the person rewrote the draft while the save was on the wire (hub
+  // cancelled, dialog reopened). The newer draft must survive the old save finishing.
+  it("leaves a draft that changed during the save, and opens nothing over it", async () => {
+    localStorage.setItem("af.launch-prompt.app", "古い下書き");
+    let finish!: () => void;
+    createMock.mockImplementationOnce(() => new Promise((r) => (finish = () => r({ id: "old" }))));
+    const p = startFromMemo(memo());
+    await vi.waitFor(() => expect(createMock).toHaveBeenCalled());
+    localStorage.setItem("af.launch-prompt.app", "新しい下書き B");
+    finish();
+    expect(await p).toEqual({ ok: false, reason: "changed" });
+    expect(readLaunchPrompt("app")).toBe("新しい下書き B");
+    expect(useLaunchTarget.getState().target).toBeNull();
   });
 
   it("keeps an edited copy as a memo", async () => {

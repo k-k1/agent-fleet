@@ -53,6 +53,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.edit": "Edit",
   "memo.send_one": "Send this memo",
   "memo.start_from": "Start with this",
+  "memo.start_draft_changed": "This repository's draft changed while it was being saved, so nothing was opened over it",
   "memo.start_delete_failed": "The session started, but the memo it came from could not be deleted. Delete it from the memo queue",
   "memo.start_draft_saved": "The draft already in this repository's dialog was saved to a memo first",
   "memo.start_draft_failed": "Could not save the draft already in this repository's dialog to a memo, so nothing was opened",

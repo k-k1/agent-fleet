@@ -95,7 +95,7 @@ export function StartHost() {
             // The hub was closed (or another memo seeded) while saving: do not reopen anything.
             if (gen !== hubGen.current || useLaunchSeed.getState().memoId !== memoId) return;
             if (!s.ok) {
-              toast(t("memo.start_draft_failed"));
+              toast(t(s.reason === "changed" ? "memo.start_draft_changed" : "memo.start_draft_failed"));
               return;
             }
             if (s.saved) toast(t("memo.start_draft_saved"), { kind: "success" });

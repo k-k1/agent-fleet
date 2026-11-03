@@ -963,7 +963,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       const m = memoMenu.m;
                       runMemoMenu(() =>
                         void startFromMemo(m).then((r) => {
-                          if (!r.ok) toast(t("memo.start_draft_failed"));
+                          if (!r.ok) toast(t(r.reason === "changed" ? "memo.start_draft_changed" : "memo.start_draft_failed"));
                           else if (r.saved) toast(t("memo.start_draft_saved"), { kind: "success" });
                         }),
                       );

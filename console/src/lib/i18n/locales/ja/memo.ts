@@ -51,6 +51,7 @@ export const memo = {
   "memo.edit": "編集",
   "memo.send_one": "このメモを送信",
   "memo.start_from": "この内容で始める",
+  "memo.start_draft_changed": "このリポジトリの下書きが保存中に書き換わったため、上書きせずに開くのをやめました",
   "memo.start_delete_failed": "セッションは起動しましたが、元のメモを削除できませんでした。メモキューから削除してください",
   "memo.start_draft_saved": "このリポジトリの書きかけの下書きを、先にメモへ一時保存しました",
   "memo.start_draft_failed": "このリポジトリの書きかけの下書きをメモに保存できなかったため、開くのをやめました",
