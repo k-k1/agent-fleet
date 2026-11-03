@@ -54,10 +54,16 @@ var (
 // still fail the run.
 var selfTestText = fmt.Sprintf("guard-self-test-%d", os.Getpid())
 
+// Runner is what Run runs under the guard: a *testing.M, or a package's own driver that runs
+// the tests in child processes of this binary. Those children inherit the guarded environment
+// and, as helpers (helperChild), do not apply the guard again, so the driver has to be passed
+// here rather than run before Run.
+type Runner interface{ Run() int }
+
 // Run applies the guard, then setup (may be nil: a package's own process-wide stubs and
 // environment, which therefore win over the guard's), runs the tests, tears the private tmux
 // servers down and returns the exit code for os.Exit.
-func Run(m *testing.M, setup func()) int {
+func Run(m Runner, setup func()) int {
 	if helperChild() {
 		if setup != nil {
 			setup()

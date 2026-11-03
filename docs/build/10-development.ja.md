@@ -251,12 +251,18 @@ red になる。contract が通った CLI は更新 issue を開かない（版�
 (cd workspace/agent && go test -timeout 20m ./...)
 ```
 
-- `workspace/agent/internal/memoryx` は exec 律速: 直列の約 384 テストが実 `git` プロセスを約 16,500 回
-  起こし、コストは均等に散る（重い上位 30 テストで 3 分の 1）。`t.Setenv`（HOME、`CLAUDE_CONFIG_DIR`）
-  と共有グローバル（`AgentMemoryEnabled` など）のため `t.Parallel` は使えない。単独実測（#3102）:
-  アイドル時（load 約 2）で約 107 秒、load 25–37 で 349 秒。Issue の報告は別ブランチ・load 約 14 で
-  269–509 秒。このばらつきのため上の `-timeout 20m` は外せない。フィクスチャへの
-  `core.fsync=none` / `gc.auto=0` は効果が測れなかった（107.5 秒 vs 109 秒）ので入れていない。
+- `workspace/agent/internal/memoryx` は exec 律速: 約 384 テストが実 `git` プロセスを約 16,500 回
+  起こし、その 88 % はテスト対象のコードから出る。`t.Setenv`（HOME、`CLAUDE_CONFIG_DIR`）と
+  共有グローバル（`AgentMemoryEnabled` など）のため `t.Parallel` は使えないので、パッケージの
+  `TestMain` がテストバイナリ自身の子プロセス最大 `min(4, GOMAXPROCS)` 個に分けて回す
+  （`internal/memoryx/shard_main_test.go`）。子ごとに環境とグローバルが別で、出力は子ごとに
+  まとめて流すので `go test -json` から見ると 1 度に 1 テストのまま。`AF_MEMORYX_SHARDS=N` で数を
+  指定でき、`1` は従来の直列実行。カバレッジ・プロファイル・`-test.list`・fuzz・ベンチマーク・
+  サブテストを指す `-run` / `-skip` は常に直列。子はテストが戻ったうえで exit 0 したときだけ合格で、
+  親が死ねば子も止まる。失敗する子が実行全体を失敗させることは `scripts/memoryx-shard-smoke.sh`（CI の
+  `workspace-agent` ジョブ）が外から確かめる。実測（#3102）: アイドル時 分割 26 秒 vs 直列 90 秒、
+  load 約 11 で 82 秒 vs 208 秒、`-race` は load 9–12 で 132 秒 vs 303 秒。混んだホストでは
+  なお数倍に伸びうるので、上の `-timeout 20m` は外さない。git 実行回数の本番コード側は #3255。
 - CP 側は `httptest` ベースのスモークを多数含む（監査・egress・内部 git の smart-HTTP と LFS
   など）。Postgres のテストは `AF_TEST_DATABASE_URL` が無ければ skip し、CI はこれを設定しない。
 - ⚠️ **マイグレーションを足したら、実 Postgres で 1 度回す** — 理由は

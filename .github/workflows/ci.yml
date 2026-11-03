@@ -251,7 +251,8 @@ jobs:
           cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: go test -race
         working-directory: ${{ matrix.module }}
-        # -timeout: memoryx alone is ~5 min without -race on a loaded host.
+        # -timeout: memoryx shards its tests over child processes, yet a loaded host still
+        # stretches it several-fold (docs/build/10-development.md).
         run: go test -race -p 2 -count=1 -timeout 20m ${{ matrix.packages }}
 
   workspace-agent:
@@ -287,8 +288,13 @@ jobs:
         env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
         run: go build ./...
       - name: go test
-        # internal/memoryx runs ~5 min alone (real git, regexp scans) and crosses the 10 min default under load.
+        # internal/memoryx is bound by real git processes; sharded over child processes it is
+        # minutes, not seconds, on a loaded host, close enough to the 10 min default to keep 20m.
         run: go test -timeout 20m ./...
+      - name: memoryx shard runner smoke
+        # The sharded runner's own tests cannot catch a runner that swallows failures; the
+        # script checks it from outside.
+        run: ../../scripts/memoryx-shard-smoke.sh
       # Build-tagged files are not part of the default build, and none of the gofmt / vet /
       # build / test steps above touch them (measured: an unused import in tagged code left
       # every gate green and only `go vet -tags contract` red). The reason and what the

@@ -1,6 +1,7 @@
 package memoryx
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"testing"
@@ -14,7 +15,20 @@ import (
 // It also points git at an empty template directory: the stock one copies ~14 sample hooks into
 // every `git init` (and the test's TempDir cleanup unlinks them again), and no test reads them.
 // A test that needs a hook writes it itself.
-func TestMain(m *testing.M) { os.Exit(testguard.Run(m, emptyGitTemplate)) }
+//
+// Unless shardable says otherwise, the tests run in child processes (shard_main_test.go); the
+// guard is applied here, around the parent, and the children inherit it.
+func TestMain(m *testing.M) {
+	flag.Parse()
+	shardChildStart()
+	var r testguard.Runner = m
+	if shardable() {
+		r = shardRunner{}
+	}
+	code := testguard.Run(r, emptyGitTemplate)
+	shardChildEnd()
+	os.Exit(code)
+}
 
 func emptyGitTemplate() {
 	// Inside the guard's scratch root (removed on exit) when there is one.
