@@ -130,6 +130,20 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
   あなたが一度 **Jira を接続し直して**ください。それまで `confluence` は、Atlassian の認可に
   Confluence のスコープがないという 1 行を表示して、実行しません。Jira はそのまま使え、設定 > 課題管理に
   「Confluence: 利用できません」と出ます。API トークンの接続には追加の作業は要りません。
+- **ページ操作には新しいページ用スコープが要ります。** Confluence CLI が `read`・`info`・`create`・
+  `create-child`・`update`・`edit`・`space-lookup` で使う旧ページ API は Atlassian で廃止されたため、
+  これらはワークスペース側が Confluence の現行（v2）API で処理します。コマンドの書き方と出力の形は
+  同じです（読み書きとも `--format markdown` が使え、日本語・絵文字・表・リスト、日本語に隣接する
+  `code` や **太字** もそのまま保たれます）。従来のスコープに加えて、細粒度スコープ `read:page`・
+  `write:page`・`read:space` が必要です。接続がそれより前のものだと、コマンドはその旨を 1 行表示し、
+  設定 > 課題管理には「Confluence: 検索とコメントは使えますが…」と出ます。テナント管理者が Atlassian アプリに
+  スコープを追加したあと、あなたが **Jira を接続し直して**ください。検索・コメント・添付は影響を受けません。
+- **書き込みは 1 回だけ送ります。** 作成や更新を送ったあとで通信が切れた場合、再送せず「結果が不明」と
+  表示します。繰り返す前にページを確認してください。他の人の編集とぶつかった更新はバージョン競合として
+  拒否され、何も上書きしません。
+- **旧エンドポイントのままのコマンド:** `move`・`delete`・`children`・`find`・`spaces`・`copy-tree`・
+  ページの版・プロパティ（front matter）・フォルダ。Confluence CLI が新 API に対応するまで「410 …
+  removed」で失敗することがあります。
 - **変更できる範囲**は、あなたの接続でできる範囲です。CLI はあなたとして書き込みます。
 - **あなた自身の設定は上書きしません。** `CONFLUENCE_DOMAIN`・`CONFLUENCE_API_TOKEN`（ほか、ホストや
   認証情報を決める `CONFLUENCE_*` 変数）を設定した、`--profile` を付けた、`confluence init` を実行した

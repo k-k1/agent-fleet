@@ -149,7 +149,7 @@ func TestConfluenceAndJiraCredShareOneRefreshExchange(t *testing.T) {
 // for both the Confluence and the Jira Software check.
 func TestScopeVerdictsUnionRowsOfTheSameSite(t *testing.T) {
 	jiraRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:jira-work"}}
-	confRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{"read:confluence-content.all"}}
+	confRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: append([]string{"read:confluence-content.all"}, confluencePageScopeList...)}
 	boardRow := secrets.JiraSite{CloudID: "c1", URL: "https://a.atlassian.net", Scopes: []string{jiraBoardScope}}
 	mk := func(rows ...secrets.JiraSite) *secrets.JiraCreds {
 		return &secrets.JiraCreds{AuthKind: "oauth", CloudID: "c1", Sites: rows}

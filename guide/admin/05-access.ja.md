@@ -122,15 +122,20 @@ device flow には secret が無く、トークンはメンバー自身のワー
 > 拒否されるので、先にチェックを入れると全メンバーが接続できなくなります（実測: この拒否は
 > Atlassian 側の行き止まりのページで af に戻るリダイレクトがないため、af が基本のスコープに
 > 切り替えることはできません）。Jira カードに「ボード・スプリント・エピック: 利用できません」と
-> 出ているメンバーは、これらのスコープなしで接続しています。接続済みのメンバーは、
+> 出ているメンバーは、これらのスコープなしで接続しています。クラシックスコープ 7 つだけで設定済みの
+> アプリは、細粒度の 3 つを追加するだけで済み、メンバーは Jira を一度接続し直します。それまで該当
+> メンバーのカードには「Confluence: 検索とコメントは使えますが…」と出て、ページ操作は 1 行の案内を表示します。接続済みのメンバーは、
 > Jira を接続し直すと新しいスコープを受け取れます。
 
 > **Jira: `confluence` CLI で Confluence を使うにはスコープの追加が要ります。** メンバーのセッションの
 > Confluence CLI は、Jira と同じ Atlassian 認可を使います。Developer Console でアプリの
-> **Permissions → Confluence API → Configure → Edit Scopes** を開き、次の 7 つのクラシックスコープを
-> 選んでください: `read:confluence-content.all`、`read:confluence-content.summary`、
+> **Permissions → Confluence API → Configure → Edit Scopes** を開き、次の 10 個のスコープを
+> 選んでください: クラシックスコープの `read:confluence-content.all`、`read:confluence-content.summary`、
 > `read:confluence-space.summary`、`search:confluence`、`write:confluence-content`、
-> `readonly:content.attachment:confluence`、`write:confluence-file`。**そのあとで** Jira のカードの
+> `readonly:content.attachment:confluence`、`write:confluence-file`、**および**細粒度スコープの
+> `read:page:confluence`、`write:page:confluence`、`read:space:confluence`。細粒度スコープは
+> ページの閲覧・作成・更新に必要です。Atlassian が旧ページ API を廃止したため、ワークスペースは現行の
+> v2 API を呼び、これらがないと 401「scope does not match」になります。**そのあとで** Jira のカードの
 > 「このアプリに Confluence のスコープ（confluence CLI 用）も許可済み」にチェックを入れて保存します。
 > 順番が大事な理由は上と同じで、先にチェックを入れると全メンバーが接続できなくなります。チェックを
 > 入れないテナントはこれまでどおり動き、メンバーが `confluence` CLI を使えないだけです。接続済みの

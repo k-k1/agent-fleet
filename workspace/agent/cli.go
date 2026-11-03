@@ -221,6 +221,14 @@ var subcommands = []subcommand{
 		run:     jirax.RunConfluenceCred,
 	},
 	{
+		// The page core of the PATH wrapper at /usr/local/bin/confluence (read, info, create,
+		// update, …) over Confluence's v2 REST API. See internal/jirax/confluence_page.go.
+		name:    "confluence-page",
+		summary: "Confluence page read/create/update over the v2 API for the confluence wrapper",
+		hidden:  true,
+		run:     jirax.RunConfluencePage,
+	},
+	{
 		// The project's issue types for `jira issue create`, which reads them from the config
 		// only. See internal/jirax/jira_issue_types.go.
 		name:    "jira-issue-types",

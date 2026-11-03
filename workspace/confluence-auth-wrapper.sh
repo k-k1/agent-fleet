@@ -16,6 +16,8 @@
 #   any directory the CLI may use is the user's own, and the CLI runs unchanged. A misdetection
 #   can only make a setup look like someone else's, which runs the CLI without the token: that
 #   is the direction to fail in.
+# - The page core (read, info, create, create-child, update, edit, space-lookup) is not the CLI's:
+#   its v1 endpoints are gone, so `workspace-agent confluence-page` answers it over the v2 API.
 # - `init`, `profile` and `stats` manage or read the user's configuration and never need the
 #   token; `--version` / `--help` do not either. Skipping the Agent for them keeps the Toolchains
 #   probe (which runs this wrapper) from taking the store lock or renewing a token over the network.
@@ -66,6 +68,23 @@ else
     [ ! -e "$d/config.json" ] || exec "$real" "$@"
   done
 fi
+
+# The page core goes to the Agent's v2 shim, not to the CLI: confluence-cli 2.x reads, creates and
+# updates pages through the v1 /content and /space endpoints, which Atlassian has removed (410).
+# The shim takes the connection from the store itself, so no token passes through this shell, and
+# it keeps the CLI's command line and output. Exit 64 means "no Atlassian connection": fall
+# through to the usual hint and the real CLI. Anything else is the shim's own answer. A stuck
+# shim is bounded like the credential helper (the same 30 s only when nobody can interrupt it).
+case "$sub" in
+  read | info | create | create-child | update | edit | space-lookup)
+    if [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ] && command -v timeout >/dev/null 2>&1; then
+      timeout -k 5 120 workspace-agent confluence-page "$@"
+    else
+      workspace-agent confluence-page "$@"
+    fi
+    rc=$?
+    [ "$rc" -eq 64 ] || exit "$rc" ;;
+esac
 
 # First value of a `key=value` line in the helper's answer on stdin.
 field() { sed -n "s/^$1=//;T;p;q"; }

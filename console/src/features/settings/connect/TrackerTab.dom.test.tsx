@@ -145,6 +145,7 @@ describe("TrackerTab", () => {
   it.each([
     ["an OAuth connection that lacks them", { ...swBase, authKind: "oauth", confluenceScopes: "missing" }, true],
     ["an OAuth connection that holds them", { ...swBase, authKind: "oauth", confluenceScopes: "granted" }, false],
+    ["an OAuth connection with classic scopes only", { ...swBase, authKind: "oauth", confluenceScopes: "outdated" }, false],
     ["an OAuth connection with unknown scopes", { ...swBase, authKind: "oauth" }, false],
     ["an API token connection", { ...swBase, authKind: "token", confluenceScopes: "missing" }, false],
   ])("Confluence scope notice for %s", async (_n, jira, shown) => {
@@ -153,6 +154,17 @@ describe("TrackerTab", () => {
     );
     await render();
     expect(text().includes(t("tracker.confluence_missing"))).toBe(shown);
+  });
+
+  it("asks for a reconnect when only the classic Confluence scopes were granted", async () => {
+    apiMock.mockImplementation((p: string) =>
+      Promise.resolve(
+        p === "api/git-oauth" ? { jira: { configured: true } } : conns({ ...swBase, authKind: "oauth", confluenceScopes: "outdated" }),
+      ),
+    );
+    await render();
+    expect(text().includes(t("tracker.confluence_outdated"))).toBe(true);
+    expect(text().includes(t("tracker.confluence_missing"))).toBe(false);
   });
 
   it("shows no picker when there is only one site", async () => {

@@ -1171,6 +1171,7 @@ export const tools = {
   "tracker.jira_site": "対象のサイト",
   "tracker.jira_software_missing": "ボード・スプリント・エピック: 利用できません。この接続には Jira Software のスコープがありません。テナント管理者に、Atlassian アプリへスコープを追加し、テナントの Jira カードで「Jira Software」にチェックを入れてもらってから、Jira をつなぎ直してください。",
   "tracker.confluence_missing": "Confluence: 利用できません。この接続には Confluence のスコープがないため、confluence CLI は使えません。テナント管理者に、Atlassian アプリへスコープを追加し、テナントの Jira カードで「Confluence」にチェックを入れてもらってから、Jira をつなぎ直してください。",
+  "tracker.confluence_outdated": "Confluence: 検索とコメントは使えますが、ページの閲覧・作成・更新には新しい Confluence ページ用スコープ（read:page、write:page、read:space）が必要です。テナント管理者に Atlassian アプリへ追加してもらってから、Jira をつなぎ直してください。",
   "tracker.intro": "左ペインの「課題管理」に課題を出すための接続です。GitHub の Issue / PR は設定 > Git の接続をそのまま使うので、ここに出るのは Jira だけです。資格情報はワークスペース内に暗号化保存され、Control Plane には渡りません。",
 
   // === プロジェクト設定モーダル（docs/log/56 P0 + docs/log/57、features/repos/ProjectModal.tsx）===

@@ -290,7 +290,8 @@ func TestJiraStatusConfluenceScopes(t *testing.T) {
 		s    *secrets.Data
 		want any
 	}{
-		{"granted", site("read:jira-work", "search:confluence"), "granted"},
+		{"granted", site("read:jira-work", "search:confluence", "read:page:confluence", "write:page:confluence", "read:space:confluence"), "granted"},
+		{"classic only: reconnect", site("read:jira-work", "search:confluence"), "outdated"},
 		{"missing", site("read:jira-work", "offline_access"), "missing"},
 		{"unrecorded", site(), nil},
 		{"api token", &secrets.Data{Jira: &secrets.JiraCreds{Site: "https://a.atlassian.net", Email: "e@x", Token: "t"}}, nil},

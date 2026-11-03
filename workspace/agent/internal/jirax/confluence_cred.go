@@ -22,21 +22,35 @@ import (
 // confluenceAPIPath is where the CLI's REST calls live below the API host.
 const confluenceAPIPath = "/wiki/rest/api"
 
-// ConfluenceScopes says whether the current site's OAuth authorization holds any Confluence
-// scope: "granted", "missing", or "" when unknown. An API-token connection and a site whose
-// scopes were never recorded are unknown, never "missing", so a connection stored before the
-// scopes were recorded is not refused on a guess.
+// ConfluenceScopes says what the current site's OAuth authorization can do with Confluence:
+// "granted" (holds the v2 page scopes the page shim needs), "outdated" (holds Confluence scopes,
+// but not the v2 page ones: search and comments work, page read/create/update need a reconnect
+// after the app gained the scopes), "missing" (no Confluence scope at all), or "" when unknown.
+// An API-token connection and a site whose scopes were never recorded are unknown, never
+// "missing" or "outdated", so a connection stored before the scopes were recorded is not refused
+// on a guess.
 func ConfluenceScopes(c *secrets.JiraCreds) string {
 	sc := siteScopes(c)
 	if len(sc) == 0 {
 		return ""
 	}
+	have := map[string]bool{}
+	any := false
 	for _, s := range sc {
+		have[s] = true
 		if strings.Contains(s, "confluence") {
-			return "granted"
+			any = true
 		}
 	}
-	return "missing"
+	if !any {
+		return "missing"
+	}
+	for _, need := range confluencePageScopeList {
+		if !have[need] {
+			return "outdated"
+		}
+	}
+	return "granted"
 }
 
 // RunConfluenceCred is `workspace-agent confluence-cred`: no arguments, no stdin.
