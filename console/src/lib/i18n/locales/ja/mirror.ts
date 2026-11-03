@@ -282,6 +282,7 @@ export const mirror = {
   "mirror.stop_discard_title":
     "実行中のターンを止め、キューに残っている入力を他のセッションからのメッセージも含めてすべて捨てます。捨てたあなたの入力は入力欄へ戻せます。",
   "mirror.stop_first_continues": "停止しました。キューの入力が続けて始まります。それも止めるには、もう一度停止を押してください。",
+  "mirror.stop_restored_busy": "止めたメッセージは、入力欄に文字があるので戻していません。↑ で呼び出せます。",
   "mirror.discarded_one": "停止しました。積まれていた {count} 件を捨てました。",
   "mirror.discarded_other": "停止しました。積まれていた {count} 件を捨てました。",
   "mirror.discarded_first_stop_one": "送る前に止めました。{count} 件を戻せます。",

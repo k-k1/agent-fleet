@@ -71,6 +71,12 @@
       "status": 200,
       "response": {"sent": "fixture-session", "op": "interrupt", "interrupt_measured": true}
     },
+    "interrupt_tui_restored": {
+      "_note": "Terminal claude: a prompt stopped before its first reply byte comes back into the CLI's input box. The Agent takes it out again and returns it as restored, for the Console's composer (issue #3290).",
+      "request": {"op": "interrupt"},
+      "status": 200,
+      "response": {"sent": "fixture-session", "op": "interrupt", "interrupt_measured": true, "restored": "SLOW 再レビュー"}
+    },
     "interrupt_discard_queue_tui": {
       "request": {"op": "interrupt", "discard_queue": true},
       "status": 409,

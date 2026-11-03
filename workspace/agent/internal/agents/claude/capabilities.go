@@ -62,19 +62,20 @@ func (agentImpl) SkillsLayout() agents.SkillsLayout {
 // delegating to this package or to tmuxx's claude pane probes.
 func (agentImpl) TerminalTraits() agents.TerminalTraits {
 	return agents.TerminalTraits{
-		AuthExpired:      AuthExpired,
-		UsageLimitMenu:   tmuxx.AtRateLimitModal,
-		AgentsViewActive: tmuxx.AgentsViewActive,
-		LeaveAgentsView:  tmuxx.LeaveAgentsView,
-		ModalActive:      tmuxx.ModalActive,
-		ShapePrompt:      QuoteImagePaths,
-		PasteLF:          true,
-		SubmitDelay:      20 * time.Millisecond,
-		RemoteControlURL: RemoteSessionURL,
-		HookPending:      true,
-		TranscriptLines:  true,
-		TerminalScreen:   func(pane string) string { st, _ := ClassifyPane(pane); return st },
-		HealIdle:         HealIdle,
+		AuthExpired:       AuthExpired,
+		UsageLimitMenu:    tmuxx.AtRateLimitModal,
+		AgentsViewActive:  tmuxx.AgentsViewActive,
+		LeaveAgentsView:   tmuxx.LeaveAgentsView,
+		ModalActive:       tmuxx.ModalActive,
+		ShapePrompt:       QuoteImagePaths,
+		PasteLF:           true,
+		SubmitDelay:       20 * time.Millisecond,
+		RemoteControlURL:  RemoteSessionURL,
+		HookPending:       true,
+		TranscriptLines:   true,
+		TerminalScreen:    func(pane string) string { st, _ := ClassifyPane(pane); return st },
+		HealIdle:          HealIdle,
+		InterruptedPrompt: LastUserPrompt,
 	}
 }
 

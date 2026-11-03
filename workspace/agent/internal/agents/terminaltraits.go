@@ -65,4 +65,9 @@ type TerminalTraits struct {
 	// TerminalQuestion is a question dialog the hooks never report (they say working/idle at
 	// most), so a "working" live state reads "question".
 	TerminalQuestion func(m session.Meta) string
+	// InterruptedPrompt is the exact text of the prompt a stop just interrupted. Set for a kind
+	// that puts a prompt stopped before its first streamed byte back into its input box (claude
+	// 2.1.316, issue #3290): the chat's stop takes it back out and hands it to the Console, or
+	// the next send is typed after it and both run as one prompt.
+	InterruptedPrompt func(m session.Meta) string
 }

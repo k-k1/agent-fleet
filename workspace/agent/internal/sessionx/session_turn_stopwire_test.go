@@ -155,6 +155,7 @@ func decodeInto[T any](t *testing.T, raw json.RawMessage, key string) T {
 // driver at all cannot pass.
 var stopWireTurnCases = map[string]struct {
 	tui      bool
+	claude   bool // a claude pane whose input box gives the stopped prompt back (issue #3290)
 	stage    func(t *testing.T, h *stopWireHandle, resp json.RawMessage)
 	wantCall string // "interrupt" | "remove" | "dismiss" | "" (the driver is never asked)
 }{
@@ -164,6 +165,7 @@ var stopWireTurnCases = map[string]struct {
 	"interrupt_discard_queue_nothing_queued": {stage: stageInterrupt, wantCall: "interrupt"},
 	"interrupt_first_stops_unsent_start":     {stage: stageInterrupt, wantCall: "interrupt"},
 	"interrupt_tui":                          {tui: true},
+	"interrupt_tui_restored":                 {tui: true, claude: true},
 	"interrupt_discard_queue_tui":            {tui: true},
 	"remove": {wantCall: "remove", stage: func(t *testing.T, h *stopWireHandle, resp json.RawMessage) {
 		h.removed = decodeInto[agents.QueueItem](t, resp, "removed")
@@ -209,6 +211,20 @@ func TestTurnStopQueueWireFixture(t *testing.T) {
 			if sc.tui {
 				tmuxLog = fakeTmux(t)
 				meta.Kind, meta.Driver = session.KindCodex, ""
+			}
+			if sc.claude {
+				meta.Kind = session.KindClaude
+				stubReclaim(t, tmuxLog, decodeInto[string](t, c.Response, "restored"), func(esc int) string {
+					switch esc {
+					case 0:
+						return paneWorking
+					case 1:
+						return paneRestored
+					case 2:
+						return paneClearArmed
+					}
+					return paneEmpty
+				})
 			}
 			session.WriteMeta(meta)
 			if sc.stage != nil {
@@ -262,7 +278,7 @@ func TestTurnStopQueueWireFixture(t *testing.T) {
 			if sc.tui {
 				log, _ := os.ReadFile(tmuxLog)
 				sentEscape := strings.Contains(string(log), "send-keys -t %7 Escape")
-				if wantEscape := name == "interrupt_tui"; sentEscape != wantEscape {
+				if wantEscape := name == "interrupt_tui" || name == "interrupt_tui_restored"; sentEscape != wantEscape {
 					t.Errorf("Escape sent = %v, want %v (tmux log %q)", sentEscape, wantEscape, log)
 				}
 			}

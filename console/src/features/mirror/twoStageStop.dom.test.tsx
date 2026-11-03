@@ -42,7 +42,8 @@ function stubFetch() {
     const url = String(input);
     const json = (status: number, body: Json) =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-    if (url.includes(`/sessions/${SESSION}/messages`)) {
+    // Any session's poll: a test may switch the pane to a second one.
+    if (url.includes(`/messages`)) {
       polls++;
       return json(200, { cursor: 1, alive: true, ...messages });
     }
@@ -253,6 +254,79 @@ describe("stop and discard the queue", () => {
     expect($(".mirror-stop-more")).toBeNull();
     await click($(".mirror-stop"));
     expect(turnBodies).toEqual([{ op: "interrupt" }]);
+  });
+
+  // claude puts a prompt stopped before its first reply byte back into its own input box; the
+  // Agent takes it out (or the next send is glued to it) and hands it here (issue #3290).
+  it("puts the prompt a Terminal stop took back into the empty input box", async () => {
+    turn = () => answer(T.interrupt_tui_restored);
+    await mount("tui");
+    await clearComposer();
+    await click($(".mirror-stop"));
+    expect(turnBodies).toEqual([T.interrupt_tui_restored.request]);
+    expect(composer()!.value).toBe(T.interrupt_tui_restored.response.restored);
+    expect(toasts()).toEqual([]);
+  });
+
+  // The composer is judged when the answer arrives, not when Stop was pressed.
+  const typeInto = async (text: string) => {
+    await act(async () => {
+      const el = composer()!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, text);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle(2);
+  };
+  const holdStop = () => {
+    let release!: () => void;
+    turn = () =>
+      new Promise((res) => {
+        release = () => res({ status: T.interrupt_tui_restored.status, body: T.interrupt_tui_restored.response });
+      });
+    return () => release();
+  };
+
+  it("keeps what was typed while the stop was in flight, and says where the stopped prompt went", async () => {
+    const release = holdStop();
+    await mount("tui");
+    await clearComposer();
+    await click($(".mirror-stop"));
+    await typeInto("my next message");
+    release();
+    await settle();
+    expect(composer()!.value).toBe("my next message");
+    expect(toasts().length).toBe(1);
+  });
+
+  it("restores into a composer emptied while the stop was in flight", async () => {
+    const release = holdStop();
+    await mount("tui");
+    await typeInto("a draft");
+    await click($(".mirror-stop"));
+    await clearComposer();
+    release();
+    await settle();
+    expect(composer()!.value).toBe(T.interrupt_tui_restored.response.restored);
+    expect(toasts()).toEqual([]);
+  });
+
+  it("does not put a stopped prompt into another session the pane switched to meanwhile", async () => {
+    const release = holdStop();
+    await mount("tui");
+    await clearComposer();
+    await click($(".mirror-stop"));
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <MirrorView paneId="p1" session="other-session" sessionMeta={{ ...meta("tui"), name: "other-session" } as Session} active mirror onToggleMirror={() => {}} />
+        </ToastProvider>,
+      );
+    });
+    await settle();
+    await clearComposer();
+    release();
+    await settle();
+    expect(composer()!.value).toBe("");
   });
 
   it("keeps Terminal (CLI)'s stop out from under a question, whose Cancel owns the Esc", async () => {

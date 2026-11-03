@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { echoLanded, echoNeedsResync, ECHO_RESYNC_MS } from "./pendingEcho.ts";
+import { echoLanded, echoNeedsResync, ECHO_RESYNC_MS, withoutStoppedEcho } from "./pendingEcho.ts";
 
 const notNoise = () => false;
 
@@ -191,5 +191,25 @@ describe("the first instruction at launch (launchSeed's display echo)", () => {
     const e = { text: "検討して", sinceIdx: -1, launch: true };
     expect(echoLanded(e, [{ role: "user", text: "<command-name>/model</command-name>", idx: 1 }], () => true)).toBe(false);
     expect(echoLanded(e, [{ role: "assistant", text: "…", idx: 1 }], notNoise)).toBe(false);
+  });
+});
+
+describe("withoutStoppedEcho (issue #3290)", () => {
+  const e = (id: number, text: string, launch = false) => ({ id, text, sinceIdx: 0, launch });
+  it("drops the stopped prompt's echo that existed at the stop", () => {
+    const out = withoutStoppedEcho([e(1, "a"), e(2, "P")], "P", new Set([1, 2]));
+    expect(out.map((x) => x.id)).toEqual([1]);
+  });
+  it("keeps an echo of the same text sent while the stop was in flight", () => {
+    const echoes = [e(5, "P")];
+    expect(withoutStoppedEcho(echoes, "P", new Set([1, 2]))).toBe(echoes);
+  });
+  it("drops only the newest matching echo from before the stop", () => {
+    const out = withoutStoppedEcho([e(1, "P"), e(2, "P"), e(3, "P")], "P", new Set([1, 2]));
+    expect(out.map((x) => x.id)).toEqual([1, 3]);
+  });
+  it("leaves the launch echo alone", () => {
+    const echoes = [e(1, "P", true)];
+    expect(withoutStoppedEcho(echoes, "P", new Set([1]))).toBe(echoes);
   });
 });
