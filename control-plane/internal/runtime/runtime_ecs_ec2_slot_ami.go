@@ -273,3 +273,17 @@ func launchTemplateSig(d ec2types.ResponseLaunchTemplateData) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
+
+// slotJudgeable reports whether both halves of the staleness judgement are known for inst:
+// the template version compared with $Latest, and the AMI compared with the current one. A
+// pool without an AMI resolver (nil) judges the template only.
+func (p ec2PoolConfig) slotJudgeable(inst ec2types.Instance, lt ec2LaunchTemplate) bool {
+	if _, _, ok := slotTemplateOutdated(inst.Tags, lt); !ok {
+		return false
+	}
+	if p.amis == nil {
+		return true
+	}
+	_, ok := p.slotAMIBehind(inst, lt)
+	return ok
+}

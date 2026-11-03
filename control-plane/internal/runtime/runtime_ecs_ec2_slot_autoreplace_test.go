@@ -274,6 +274,36 @@ func TestECSEC2PendingReplacementStaysProtectedWhenTheVersionsCannotBeRead(t *te
 	}
 }
 
+// Ownership contract (separate from the launch fallback): with the SSM AMI unknown, e.g. a CP
+// restarted while SSM is unreadable, a replacement bought for another home stays pending.
+func TestECSEC2PendingReplacementStaysProtectedWhenTheAMIIsUnknown(t *testing.T) {
+	for _, ssmOK := range []bool{true, false} {
+		h, sp, _ := amiHarness(t)
+		sameData(h)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.addStamped("i-old", "m7i.large", "ami-x86-1", "3")
+		h.ec2.attach("vol-1", "i-old", time.Now())
+		h.addStamped("i-new", "m7i.large", "ami-x86-1", "3")
+		h.ec2.setInstanceTag("i-new", ec2TagReplacesHome, "vol-1")
+		if !ssmOK {
+			sp.err = errors.New("AccessDenied")
+		}
+		out, err := h.ec2.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{InstanceIds: []string{"i-new"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := *h.rt
+		b := *h.rt.base
+		b.name = "af-ws-other"
+		other.base = &b
+		got := other.pendingReplacementsForOthers(context.Background(), out)["i-new"]
+		// SSM known and the old slot current: not retiring, so not pending (positive control).
+		if ssmOK == got {
+			t.Fatalf("ssmOK=%v: pending=%v", ssmOK, got)
+		}
+	}
+}
+
 // A replacement whose AMI looks current but whose template version cannot be compared is
 // neither adopted nor destroyed.
 func TestECSEC2AdoptableReplacementNeedsBothHalvesJudged(t *testing.T) {

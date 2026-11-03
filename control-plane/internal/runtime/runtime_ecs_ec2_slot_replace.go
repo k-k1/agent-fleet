@@ -507,7 +507,10 @@ func (e *ecsEC2Runtime) pendingReplacementsForOthers(ctx context.Context, out *e
 	reserved := map[string]bool{}
 	for _, r := range insts.Reservations {
 		for _, inst := range r.Instances {
-			if ltUnknown || e.pool.slotRetiring(inst, lt) {
+			// Ownership is kept whenever the old slot cannot be fully judged (its template
+			// version or its AMI is unknown, e.g. SSM unreadable after a CP restart): a
+			// replacement already bought for this home is not released on a guess.
+			if ltUnknown || e.pool.slotRetiring(inst, lt) || (!e.pool.noAutoReplace && !e.pool.slotJudgeable(inst, lt)) {
 				reserved[aws.ToString(inst.InstanceId)] = true
 			}
 		}
