@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
@@ -471,5 +472,35 @@ func TestJiraScopeGroupsAreOptInAndReachTheAuthorizeURL(t *testing.T) {
 			!strings.Contains(w.Body.String(), "bad_scope_group") {
 			t.Errorf("%s %s: %d %s", tc.provider, tc.body, w.Code, w.Body.String())
 		}
+	}
+}
+
+// The scope names the Console shows an administrator are the ones the authorize URL asks
+// for: a scope in one and not the other is the drift behind issue #3309.
+func TestGitOAuthScopeListsMatchAuthorizeScopes(t *testing.T) {
+	var got []string
+	counts := map[string][2]int{}
+	for _, l := range gitOAuthScopeLists(gitOAuthJira) {
+		got = append(got, l.Classic...)
+		got = append(got, l.Granular...)
+		counts[l.Group] = [2]int{len(l.Classic), len(l.Granular)}
+	}
+	want := strings.Fields(jiraScopesFor([]string{scopeGroupJiraSoftware, scopeGroupConfluence}))
+	var wantNoOffline []string
+	for _, s := range want {
+		if s != "offline_access" {
+			wantNoOffline = append(wantNoOffline, s)
+		}
+	}
+	sort.Strings(got)
+	sort.Strings(wantNoOffline)
+	if strings.Join(got, " ") != strings.Join(wantNoOffline, " ") {
+		t.Fatalf("lists = %v, authorize asks for %v", got, wantNoOffline)
+	}
+	if counts["confluence"] != [2]int{7, 3} || counts["jira_software"] != [2]int{0, 8} || counts["base"] != [2]int{3, 0} {
+		t.Fatalf("split = %v", counts)
+	}
+	if gitOAuthScopeLists("bitbucket") != nil {
+		t.Fatal("only jira has scope lists")
 	}
 }
