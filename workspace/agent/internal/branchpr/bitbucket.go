@@ -614,7 +614,8 @@ func bitbucketRollupPages(pages [][]byte, head string, more bool) (state string,
 	switch {
 	case failed:
 		return "failure", failing, pending || more
-	case pending:
+	case pending || more:
+		// Every status read passed, but some were left unread: not known to be green.
 		return "pending", nil, true
 	case passed:
 		return "success", nil, false

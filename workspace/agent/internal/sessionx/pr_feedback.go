@@ -723,7 +723,9 @@ func recordWatchedLinkStates(watched []*prWatched) {
 			// change of the recorded state: recorded here first (the branch lookup not answered
 			// yet), the list would never see the change. So it is told here, under the list's own
 			// once key, and recorded only once it is in the outbox.
-			if kind, extra := prNotice(w.pr, l.Role, l.State); kind == prMergedNotice || kind == prClosedNotice {
+			// Asked as working whatever the link's own role: the list tells the session on a PR's
+			// branch as working too, and every holder here owns the PR.
+			if kind, extra := prNotice(w.pr, session.LinkWorking, l.State); kind == prMergedNotice || kind == prClosedNotice {
 				s := session.Session{Name: m.Name, Kind: m.Kind, Display: session.Display(m)}
 				if !sendPRNotice(&s, kind, w.provider, w.linkKey, extra, w.pr) {
 					continue

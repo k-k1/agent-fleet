@@ -499,12 +499,25 @@ func TestPRFeedbackReleasesAClaimWhoseSendFailed(t *testing.T) {
 }
 
 func TestPRFeedbackTellsTheMergeItRecordsBeforeTheList(t *testing.T) {
+	for _, role := range []string{session.LinkWorking, session.LinkCreated, session.LinkStarted} {
+		t.Run(role, func(t *testing.T) { testMergeToldBeforeTheList(t, role) })
+	}
+}
+
+func testMergeToldBeforeTheList(t *testing.T, role string) {
 	f := newFeedbackFixture(t)
 	var told []string
 	old := putPRNotice
 	putPRNotice = func(key string, e notice.Event) error { told = append(told, e.Kind+"|"+key); return nil }
 	t.Cleanup(func() { putPRNotice = old; prNoticesSent.Clear() })
-	f.session("a", prLink(9, session.LinkWorking, ""))
+	l := prLink(9, role, "")
+	if role == session.LinkStarted {
+		f.session("a")
+		session.WriteMeta(session.Meta{Name: "a", Kind: session.KindClaude, Dir: t.TempDir(),
+			WorkItem: &session.WorkItemRef{Provider: "github", Key: "o/r#9"}, WorkItemState: "open"})
+	} else {
+		f.session("a", l)
+	}
 	// Back on the PR's branch: the list asked, its branch answer has not arrived yet, and the
 	// number answer says merged.
 	rememberBranchAsk("a", "github", branchpr.Key{Repo: "o/r", Branch: "feature/x"})

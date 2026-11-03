@@ -709,3 +709,24 @@ func TestBitbucketFollowsTheStatusPagesToTheEnd(t *testing.T) {
 		t.Fatal("pages past the bound are unknown")
 	}
 }
+
+func TestBitbucketUnreadStatusPagesAreNotGreen(t *testing.T) {
+	b := &bbServer{statuses: map[string]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(b.handler))
+	t.Cleanup(srv.Close)
+	c := NewBitbucket(func() (string, error) { return "Bearer bb", nil })
+	c.Endpoint = srv.URL
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	commit := "/2.0/repositories/w/r/commit/c0ffee4/statuses"
+	// Page 2 fails (the stub answers 500 for a page it does not hold).
+	b.statuses[commit] = `{"next":"` + srv.URL + commit + `?page=2","values":[{"state":"SUCCESSFUL","name":"unit"}]}`
+	if state, _, pending := bb.checks("Bearer bb", "w/r", 4, "c0ffee4"); state != "pending" || !pending {
+		t.Fatalf("checks = %q pending %v: a page that could not be read is not green", state, pending)
+	}
+	// Every page read passed, but the bound left more unread.
+	b.statuses[commit] = `{"next":"` + srv.URL + commit + `?page=1","values":[{"state":"SUCCESSFUL","name":"unit"}]}`
+	b.statuses[commit+"?page=1"] = b.statuses[commit]
+	if state, _, pending := bb.checks("Bearer bb", "w/r", 4, "c0ffee4"); state != "pending" || !pending {
+		t.Fatalf("checks = %q pending %v: pages past the bound are not green", state, pending)
+	}
+}
