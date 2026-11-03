@@ -93,6 +93,7 @@ others, where the message can take a first step before it stops (see the
 [Agents reference](../ref/agents.md#stopping-a-turn-and-messages-sent-while-one-runs)).
 
 **Terminal (CLI)** sessions keep the CLI's own behaviour: Stop sends the key that CLI stops a turn with and the CLI decides. A second Stop click while one is being sent is ignored.
+On claude, Stop pressed before the reply starts takes the stopped prompt back out of claude's input box and puts it into the chat's input box; when that box already holds text, the text is kept and a note says to press ↑ to recall the prompt. When the prompt cannot be taken out, the next send is refused until it is cleared in the terminal.
 The discard action and the notice are not offered there, because the queue lives inside the CLI.
 Which key each CLI gets, what each did with a prompt typed while its turn was running, and how
 messages from other sessions to a Terminal session are reported to the sender are in the

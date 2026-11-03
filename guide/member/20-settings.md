@@ -61,7 +61,9 @@ Everything about appearance.
   you open it or come back to it, so the text the Agent writes itself (the usage-limit resume notice,
   the note on a reopened report, the Markdown export) uses that zone instead of the workspace clock.
   If you use several devices, the one you used last decides; a pinned zone always wins. Text the
-  Control Plane writes, such as a schedule's "next run" in local time, stays in the schedule's own zone.
+  Control Plane writes keeps the schedule's own zone; the Schedules list shows a schedule's next run in
+  your zone once you pick a time zone or region format, and its details add the schedule's own time when
+  the two differ.
 - **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
@@ -604,7 +606,7 @@ administrator's to set.
   same major replaced, and Kiro versions other than the installed and the pinned one. The Agent removes
   them each time it starts and once a day after that; this section is for a workspace that runs for weeks without a restart.
   **"Measure"** counts what would go now, and **"Delete"** removes one kind right away, without a
-  confirmation, because unlike a tool cache nothing gets slower afterwards. Anything in use by a
+  confirmation (except the archived-sessions row below), because unlike a tool cache nothing gets slower afterwards. Anything in use by a
   process or changed within the last hour is kept. The Agent log names every folder it removes.
   **`~/.af-work` is a throwaway area, not a place for files you want to keep.** At startup the Agent
   removes only the session folders it created itself (they carry a hidden `.af-session-workdir` marker).

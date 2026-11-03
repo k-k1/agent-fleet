@@ -196,7 +196,7 @@ message travels over the channel of the next section, so it arrives only while *
 between sessions"** is on as well. With it off, the parent checks its children's state and
 output itself.
 
-One automated check does reach the parent: when a running parent and all its live children have
+One automated check does reach the parent: when a running parent and all its live children (sessions it started with `create_session`; one a person launched from its handoff proposal is not its child) have
 been idle for 15 minutes, with no background work and no message between sessions queued or in
 flight, the parent gets **one notice** naming the idle children, so it can see whether one of
 them is waiting on another. The chat view badges it **"Stalled-tree notice"**. A question, a plan

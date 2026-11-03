@@ -21,9 +21,9 @@ source_of_truth: "画面欄は Console の文字列、実装欄はコード"
 | ターミナル（CLI）| tmux pane / PTY | エージェント自身の対話画面を端末で直接操作する |
 | エージェント | kind | CLI のコーディング AI（claude / codex / opencode ほか）。[agents.md](agents.ja.md) |
 | ハーネス | kind | エージェントのループを動かすプログラム（Claude Code・opencode・codex・`lcpp`）。セッションの kind そのもので、今の画面では「エージェント」と書く。画面に「ハーネス」はまだ出ない（ADR 0128） |
-| ルート | route（`usagex.Record.Route`） | モデル呼び出しの行き先と、使った認証情報。OpenCode Zen、OpenCode Go のサブスク、配備のエンジン（`af-engine-llm`）、メンバー自身の llama.cpp（`member-llamacpp`）など。使用量台帳に、呼び出しごとの証拠から記録する（セッションの現在の設定からは決して導かない）。空は「記録なし」 |
-| メーカー | maker / `model_provider.go` の「provider」 | モデルを作った側（Anthropic・OpenAI・Zhipu）。ルートとは別物で、同じメーカーのモデルに複数のルートで届くことがある。コードの「provider」はここではメーカーを指す |
-| 課金区分 | billing（`usagex.Record.Billing`） | 1 回の呼び出しがどう課金されたか。`subscription-included`（サブスクに含まれる）・`subscription-extra`（枠を超えた分の追加利用）・`metered`（従量）・`self-hosted`（自前ホスト）・`free`・`unknown`。証拠から判別できなければ `unknown`（空値も unknown として読む）で、「含まれる」とは決して読まない |
+| ルート | route（`usagex.Record.Route`） | モデル呼び出しの行き先と、使った認証情報。OpenCode Zen、OpenCode Go のサブスク、配備のエンジン（`af-engine-llm`）、メンバー自身の llama.cpp（`member-llamacpp`）など。使用量台帳に、呼び出しごとの証拠から記録する（セッションの現在の設定からは決して導かない）。空は「記録なし」。画面にはまだ出ない（ADR 0128） |
+| メーカー | maker / `model_provider.go` の「provider」 | モデルを作った側（Anthropic・OpenAI・Zhipu）。ルートとは別物で、同じメーカーのモデルに複数のルートで届くことがある。コードの「provider」はここではメーカーを指す。画面にはまだ出ない（ADR 0128） |
+| 課金区分 | billing（`usagex.Record.Billing`） | 1 回の呼び出しがどう課金されたか。`subscription-included`（サブスクに含まれる）・`subscription-extra`（枠を超えた分の追加利用）・`metered`（従量）・`self-hosted`（自前ホスト）・`free`・`unknown`。証拠から判別できなければ `unknown`（空値も unknown として読む）で、「含まれる」とは決して読まない。画面にはまだ出ない（ADR 0128）。opencode カードの「opencode.ai への課金」とは別物で、あちらはルートを選ぶ設定 |
 | アシスタント | assistant chat | リポジトリを使わない目的別のチャット。セッションではない |
 | ミラー | transcript / mirror | 実行中・停止中の会話を描画した画面 |
 | 作業コピー | working copy / dir | ワークスペースの中の、実際に編集するリポジトリのフォルダ |

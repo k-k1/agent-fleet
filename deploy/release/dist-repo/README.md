@@ -57,8 +57,10 @@ Main features:
 - **Work items**: Jira issues, GitHub issues and pull requests, and Bitbucket
   pull requests listed beside your sessions; start a session from one, see
   which sessions are linked to it (through the branch, its PR, Jira keys or
-  the issues the PR closes), and get notified when a PR is ready, merged or
-  closed.
+  the issues the PR closes), see on the session row when a reviewer requested
+  changes or the PR has a conflict, and get notified when a PR is ready,
+  merged or closed. Sessions get signed-in `gh`, `bkt`, `jira` and
+  `confluence` CLIs from the same connections.
 - **Live app preview**: web apps started inside a workspace (Vite HMR,
   WebSocket, Spring Boot, …) render in an embedded browser pane; ports are
   reachable through lightweight previews.

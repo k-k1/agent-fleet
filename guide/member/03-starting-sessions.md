@@ -149,7 +149,7 @@ synced in bulk.
   the list was last fetched**. While the workspace is stopped it says so as well: the list stays
   readable, but nothing here starts your workspace just to draw a list.
 - A long list **folds at 10 rows**, with "Show more (N left)" underneath; the count keeps counting
-  all of them. Past ten rows you also get a **one-line filter**, which searches the rows already on
+  all of them. Once expanded, **Show less** stays pinned to the bottom of the left pane while the list is on screen. Past ten rows you also get a **one-line filter**, which searches the rows already on
   screen (key, title, assignee, labels, repository); **×** or Escape clears it. When it finds
   nothing, or a query fetched only part of its matches, **Search the tracker** asks the tracker
   with the words you typed.
@@ -294,6 +294,11 @@ notified with **"A reply is ready"**; when a question arrives, with **"A questio
 The session name is included in the body. This suits use cases like waiting for a reply on your
 phone during a commute (shell / ssm don't notify). Which kinds of notification pop up, speak, or
 leave an unread dot is chosen per kind in [Settings › Notifications](20-settings.md#notifications).
+
+A Console window left on screen with no mouse, key or touch input for 10 minutes while no session is
+working pauses its live updates and shows **"Live updates paused — click to resume"**. Until then it
+shows no state changes and raises no notifications; any input, focusing the window or clicking the note
+resumes it and re-reads everything. A session waiting on a question does not prevent the pause.
 
 When a program running in a session **asks its terminal for a notification** (the OSC 9 / 99 /
 777 escape sequences; you can emit one yourself, e.g. `printf '\e]9;Build done\a'`), it
