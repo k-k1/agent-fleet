@@ -532,7 +532,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             <button
               ref={lessBtn}
               type="button"
-              className="wi-more"
+              className="wi-more wi-less"
               onClick={(e) => {
                 foldFocus.current = e.detail === 0;
                 // Captured here because the button unmounts with the collapse: after the

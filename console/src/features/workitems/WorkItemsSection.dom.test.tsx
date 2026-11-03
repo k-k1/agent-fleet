@@ -543,6 +543,23 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(10);
   });
 
+  // jsdom computes no layout, so the pin is checked at its source: only Collapse carries the
+  // sticky class (#3296), and that class sticks to the scroller's bottom.
+  it("pins only the Collapse button to the bottom of the rail", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    expect(host.querySelector<HTMLButtonElement>(".wi-more")!.classList.contains("wi-less")).toBe(false);
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    const less = host.querySelectorAll<HTMLButtonElement>(".wi-less");
+    expect(less).toHaveLength(1);
+    expect(less[0].textContent).toBe(t("wi.show_less"));
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/features/workitems/workitems.css", "utf8");
+    expect(css).toMatch(/\.wi-less \{[^}]*position: sticky;[^}]*bottom: 0;/);
+    // Rows keep clear of the pinned button when focus scrolls them into view.
+    expect(css).toMatch(/:has\(> \.wi-less\) :is\(a, button, input, \[tabindex\]\):not\(\.wi-less\) \{[^}]*scroll-margin-bottom: \d+px;/);
+  });
+
   it("pins the section top to the scroller when collapsing the expanded list (#1348)", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await act(async () => {
