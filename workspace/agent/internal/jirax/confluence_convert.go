@@ -59,6 +59,7 @@ func (storageRenderer) RegisterFuncs(r renderer.NodeRendererFuncRegisterer) {
 	r.Register(ast.KindFencedCodeBlock, renderCodeMacro)
 	r.Register(ast.KindCodeBlock, renderCodeMacro)
 	r.Register(ast.KindImage, renderStorageImage)
+	r.Register(ast.KindRawHTML, renderRawHTML)
 }
 
 // cdata wraps s in a CDATA section; a literal "]]>" is split across two sections.
@@ -85,6 +86,27 @@ func renderCodeMacro(w util.BufWriter, src []byte, n ast.Node, entering bool) (a
 		_, _ = w.WriteString(`<ac:parameter ac:name="language">` + html.EscapeString(lang) + `</ac:parameter>`)
 	}
 	_, _ = w.WriteString(`<ac:plain-text-body>` + cdata(code) + `</ac:plain-text-body></ac:structured-macro>` + "\n")
+	return ast.WalkSkipChildren, nil
+}
+
+// renderRawHTML lets a literal <br> through (how a table cell holds a line break) and omits the
+// rest, as goldmark's safe mode does: storage must stay well-formed XML.
+func renderRawHTML(w util.BufWriter, src []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	r := n.(*ast.RawHTML)
+	var b bytes.Buffer
+	for i := 0; i < r.Segments.Len(); i++ {
+		seg := r.Segments.At(i)
+		b.Write(seg.Value(src))
+	}
+	switch strings.ToLower(strings.ReplaceAll(b.String(), " ", "")) {
+	case "<br>", "<br/>":
+		_, _ = w.WriteString("<br />")
+	default:
+		_, _ = w.WriteString("<!-- raw HTML omitted -->")
+	}
 	return ast.WalkSkipChildren, nil
 }
 
@@ -173,7 +195,45 @@ func StorageToText(storage string) string {
 	return r.finish(r.blocks(parseStorage(storage).children))
 }
 
-type storageWriter struct{ md bool }
+type storageWriter struct {
+	md      bool
+	inTable bool // inside a table cell: a literal pipe must be written as \|
+}
+
+// Code content is literal: finish normalises prose (NBSP, trailing blanks, runs of empty lines),
+// which would silently rewrite whitespace-significant code. protect swaps what finish touches for
+// private-use runes (a code line that is empty becomes one holding only protEmpty, so the
+// block-quote / list prefixes still apply to it), and finish swaps them back at the very end.
+const (
+	protNBSP  = '\ue001'
+	protSpace = '\ue002'
+	protTab   = '\ue003'
+	protEmpty = '\ue004'
+)
+
+func protect(code string) string {
+	lines := strings.Split(strings.ReplaceAll(code, "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		l = strings.ReplaceAll(l, "\u00a0", string(protNBSP))
+		t := strings.TrimRight(l, " \t")
+		var tail strings.Builder
+		for _, r := range l[len(t):] {
+			if r == ' ' {
+				tail.WriteRune(protSpace)
+			} else {
+				tail.WriteRune(protTab)
+			}
+		}
+		l = t + tail.String()
+		if l == "" {
+			l = string(protEmpty)
+		}
+		lines[i] = l
+	}
+	return strings.Join(lines, "\n")
+}
+
+var unprotect = strings.NewReplacer(string(protNBSP), "\u00a0", string(protSpace), " ", string(protTab), "\t", string(protEmpty), "")
 
 func (w *storageWriter) finish(s string) string {
 	s = strings.ReplaceAll(s, "\u00a0", " ")
@@ -191,13 +251,14 @@ func (w *storageWriter) finish(s string) string {
 		}
 		out = append(out, l)
 	}
-	return strings.Trim(strings.Join(out, "\n"), "\n")
+	return unprotect.Replace(strings.Trim(strings.Join(out, "\n"), "\n"))
 }
 
 var blockNames = map[string]bool{
 	"p": true, "h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
 	"ul": true, "ol": true, "table": true, "pre": true, "blockquote": true, "hr": true,
 	"ac:structured-macro": true, "ac:task-list": true, "div": true,
+	"ac:layout": true, "ac:layout-section": true, "ac:layout-cell": true,
 }
 
 // blocks renders a run of children as blocks separated by blank lines; loose inline content
@@ -229,23 +290,25 @@ func (w *storageWriter) blocks(ns []*sNode) string {
 
 func (w *storageWriter) block(n *sNode) string {
 	switch n.name {
-	case "p", "div":
-		return strings.TrimSpace(w.inlines(n.children))
+	case "p":
+		return trimBreaks(w.inlines(n.children))
+	case "div", "ac:layout", "ac:layout-section", "ac:layout-cell":
+		return w.blocks(n.children)
 	case "h1", "h2", "h3", "h4", "h5", "h6":
-		t := strings.TrimSpace(w.inlines(n.children))
+		t := trimBreaks(w.inlines(n.children))
 		if w.md {
 			return strings.Repeat("#", int(n.name[1]-'0')) + " " + t
 		}
 		return t
 	case "ul", "ol":
-		return w.list(n, 0)
+		return w.list(n, "")
 	case "hr":
 		if w.md {
 			return "---"
 		}
 		return "----"
 	case "pre":
-		code := plainText(n)
+		code := protect(plainText(n))
 		if w.md {
 			return fence(code, "")
 		}
@@ -305,8 +368,9 @@ func (w *storageWriter) macro(n *sNode) string {
 	case "code", "noformat":
 		code := ""
 		if body != nil {
-			code = strings.Trim(plainText(body), "\n")
+			code = plainText(body)
 		}
+		code = protect(code)
 		if w.md {
 			return fence(code, lang)
 		}
@@ -330,10 +394,30 @@ func (w *storageWriter) macro(n *sNode) string {
 	if body != nil {
 		return w.blocks(body.children)
 	}
+	// Body-less macros keep what they show: a status lozenge is its title parameter.
+	var titles []string
+	for _, c := range n.children {
+		if c.name == "ac:parameter" && c.a("ac:name") == "title" {
+			if t := strings.TrimSpace(plainText(c)); t != "" {
+				titles = append(titles, t)
+			}
+		}
+	}
+	if name == "status" && len(titles) > 0 {
+		if w.md {
+			return escapeMD(titles[0])
+		}
+		return titles[0]
+	}
+	if len(titles) > 0 {
+		return "[" + name + " macro: " + strings.Join(titles, ", ") + "]"
+	}
 	return "[" + name + " macro]"
 }
 
-func (w *storageWriter) list(n *sNode, depth int) string {
+// list renders one list; indent is the width of every ancestor marker, so a child list sits
+// under its parent item's text (an ordered parent needs 3+ columns, a bullet 2).
+func (w *storageWriter) list(n *sNode, indent string) string {
 	var lines []string
 	i := 0
 	for _, li := range n.children {
@@ -347,7 +431,6 @@ func (w *storageWriter) list(n *sNode, depth int) string {
 		} else if !w.md {
 			marker = "* "
 		}
-		indent := strings.Repeat("  ", depth)
 		pad := strings.Repeat(" ", len(marker))
 		var head []*sNode
 		var subs []*sNode
@@ -369,7 +452,7 @@ func (w *storageWriter) list(n *sNode, depth int) string {
 			}
 		}
 		for _, s := range subs {
-			lines = append(lines, w.list(s, depth+1))
+			lines = append(lines, w.list(s, indent+pad))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -396,10 +479,14 @@ func (w *storageWriter) table(n *sNode) string {
 						header = true
 					}
 					_ = i
+					w.inTable = true
 					s := strings.TrimSpace(w.blocks(td.children))
+					w.inTable = false
 					if w.md {
+						// Pipes are already escaped where they were written (text and code);
+						// a cell cannot hold a newline, so it becomes <br>, which
+						// MarkdownToStorage reads back as a line break.
 						s = strings.ReplaceAll(strings.ReplaceAll(s, "\n\n", "<br>"), "\n", "<br>")
-						s = strings.ReplaceAll(s, "|", `\|`)
 					} else {
 						s = strings.ReplaceAll(s, "\n", " ")
 					}
@@ -477,6 +564,12 @@ func (w *storageWriter) inline(n *sNode) string {
 	}
 	switch n.name {
 	case "br":
+		if w.md {
+			if w.inTable {
+				return "<br>"
+			}
+			return "\\\n" // a hard break; trailing blanks would be trimmed
+		}
 		return "\n"
 	case "strong", "b":
 		if w.md {
@@ -493,16 +586,20 @@ func (w *storageWriter) inline(n *sNode) string {
 	case "code":
 		c := plainText(n)
 		if !w.md {
-			return c
+			return protect(c)
+		}
+		if w.inTable {
+			c = strings.ReplaceAll(c, "|", `\|`)
 		}
 		tick := "`"
 		for strings.Contains(c, tick) {
 			tick += "`"
 		}
-		if strings.HasPrefix(c, "`") || strings.HasSuffix(c, "`") {
+		if strings.HasPrefix(c, "`") || strings.HasSuffix(c, "`") ||
+			(strings.HasPrefix(c, " ") && strings.HasSuffix(c, " ") && strings.Trim(c, " ") != "") {
 			c = " " + c + " "
 		}
-		return tick + c + tick
+		return tick + protect(c) + tick
 	case "a":
 		inner := w.inlines(n.children)
 		href := n.a("href")
@@ -662,7 +759,29 @@ func fence(code, lang string) string {
 	for strings.Contains(code, f) {
 		f += "`"
 	}
+	if code == "" {
+		return f + lang + "\n" + f
+	}
 	return f + lang + "\n" + code + "\n" + f
+}
+
+// trimBreaks trims a paragraph and drops a hard break at either end, which Markdown cannot
+// express (a trailing backslash would be a literal one).
+func trimBreaks(s string) string {
+	s = strings.TrimSpace(s)
+	for strings.HasPrefix(s, "\\\n") {
+		s = strings.TrimSpace(s[2:])
+	}
+	for {
+		n := 0
+		for n < len(s) && s[len(s)-1-n] == '\\' {
+			n++
+		}
+		if n%2 == 0 {
+			return s
+		}
+		s = strings.TrimSpace(s[:len(s)-1])
+	}
 }
 
 func prefixLines(s, p string) string {

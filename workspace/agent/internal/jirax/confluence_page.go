@@ -12,7 +12,8 @@ package jirax
 //
 // Handled: read, info, create, create-child, update, edit, space-lookup. Not handled, and still
 // the CLI's v1 calls (expected to answer 410 until upstream moves them): move, delete, children,
-// copy-tree, find, spaces, versions, properties/front matter, folders.
+// copy-tree, find, spaces, versions, properties/front matter. Folders: create --type folder is refused here; the CLI lists folder
+// children over v2 itself (read:hierarchical-content:confluence, not requested).
 //
 // Rules this file keeps:
 //   - the token is read from the store in this process and only ever goes into an Authorization
@@ -229,6 +230,15 @@ func parseConfluencePage(sub string, args []string) (*confluencePageCmd, error) 
 		return nil, fmt.Errorf("--type %s is not supported by the v2 page shim (pages only)", p.typ)
 	}
 	switch sub {
+	case "info":
+		// `--format json` is the CLI's deprecated spelling of --json and still honoured there.
+		switch p.format {
+		case "", "text":
+		case "json":
+			p.json = true
+		default:
+			return nil, fmt.Errorf("unknown info format %q (text; json is deprecated, use --json)", p.format)
+		}
 	case "read":
 		if p.format == "" {
 			p.format = "text"
@@ -603,13 +613,13 @@ func (a *confluenceV2) create(p *confluencePageCmd, w io.Writer) error {
 	req := map[string]any{"status": "current", "title": title,
 		"body": map[string]any{"representation": "storage", "value": p.body}}
 	var sp *v2Space
+	var parent *v2Page
 	if p.sub == "create-child" {
 		pid, err := pageID(p.pos[1])
 		if err != nil {
 			return err
 		}
-		parent, err := a.page(pid, false)
-		if err != nil {
+		if parent, err = a.page(pid, false); err != nil {
 			return err
 		}
 		if sp, err = a.spaceByID(parent.SpaceID); err != nil {
@@ -642,7 +652,15 @@ func (a *confluenceV2) create(p *confluencePageCmd, w io.Writer) error {
 	}
 	u := a.webURL(pg.Links.WebUI)
 	if p.json {
-		emitJSON(w, map[string]any{"id": pg.ID, "title": pg.Title, "type": "page", "spaceKey": sp.Key, "url": u})
+		out := map[string]any{"id": pg.ID, "title": pg.Title, "type": "page", "spaceKey": sp.Key, "url": u}
+		if parent != nil {
+			out = map[string]any{"id": pg.ID, "title": pg.Title, "type": "page", "parentId": p.pos[1], "spaceKey": sp.Key, "url": u}
+		}
+		emitJSON(w, out)
+		return nil
+	}
+	if parent != nil {
+		fmt.Fprintf(w, "✅ Child page created successfully!\nTitle: %s\nID: %s\nParent: %s (%s)\nSpace: %s (%s)\nURL: %s\n", pg.Title, pg.ID, parent.Title, p.pos[1], sp.Name, sp.Key, u)
 		return nil
 	}
 	fmt.Fprintf(w, "✅ Page created successfully!\nTitle: %s\nID: %s\nSpace: %s (%s)\nURL: %s\n", pg.Title, pg.ID, sp.Name, sp.Key, u)

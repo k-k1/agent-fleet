@@ -110,3 +110,126 @@ func TestConfluenceMarkdownToStorageIsWellFormed(t *testing.T) {
 		}
 	}
 }
+
+// Code is literal: leading/trailing empty lines, runs of empty lines, trailing blanks and NBSP
+// survive a read, in the code macro, <pre> and inline code, inside a quote or list as well.
+func TestConfluenceReadKeepsCodeWhitespaceLiteral(t *testing.T) {
+	code := "\n first  \n\n\nlast\t \n"
+	macro := `<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[` + code + `]]></ac:plain-text-body></ac:structured-macro>`
+	for name, in := range map[string]string{
+		"macro": macro,
+		"pre":   "<pre>" + code + "</pre>",
+		"quote": "<blockquote>" + macro + "</blockquote>",
+		"list":  "<ul><li>x" + macro + "</li></ul>",
+	} {
+		md := StorageToMarkdown(in)
+		st, err := MarkdownToStorage(md)
+		if err != nil {
+			t.Fatal(err)
+		}
+		back := parseStorage(st)
+		var got string
+		var find func(n *sNode)
+		find = func(n *sNode) {
+			if n.name == "ac:plain-text-body" {
+				got = plainText(n)
+			}
+			for _, c := range n.children {
+				find(c)
+			}
+		}
+		find(back)
+		if got != code {
+			t.Errorf("%s: code changed: %q, want %q\nmarkdown:\n%s", name, got, code, md)
+		}
+		if strings.ContainsAny(md, "") {
+			t.Errorf("%s: private marker leaked: %q", name, md)
+		}
+	}
+	txt := StorageToText(macro)
+	if txt != strings.ReplaceAll(code, " ", " ") {
+		t.Errorf("text code = %q, want %q", txt, code)
+	}
+	in := "<p>a <code>x y  </code> b</p>"
+	if got := StorageToMarkdown(in); got != "a `x y  ` b" {
+		t.Errorf("inline code = %q", got)
+	}
+}
+
+// A pipe is escaped once, in text and in inline code, and survives a round trip unchanged.
+func TestConfluenceTablePipesAndBackslashesRoundTrip(t *testing.T) {
+	in := `<table><tbody><tr><th>日本|語</th><th>c</th></tr><tr><td>a\b <code>x|y\z</code></td><td>2</td></tr></tbody></table>`
+	md := StorageToMarkdown(in)
+	if strings.Contains(md, `\\|`) {
+		t.Fatalf("pipe escaped twice: %s", md)
+	}
+	st, _ := MarkdownToStorage(md)
+	for _, w := range []string{"<th>日本|語</th>", `<td>a\b <code>x|y\z</code></td>`} {
+		if !strings.Contains(st, w) {
+			t.Errorf("missing %q in %s", w, st)
+		}
+	}
+}
+
+func TestConfluenceLayoutKeepsBlockBoundaries(t *testing.T) {
+	in := `<ac:layout><ac:layout-section ac:type="two_equal"><ac:layout-cell><p>段落一</p><p>段落二</p></ac:layout-cell><ac:layout-cell><h2>別列</h2><ul><li>x</li></ul></ac:layout-cell></ac:layout-section></ac:layout>` +
+		`<div><p>a</p><p>b</p></div>`
+	want := "段落一\n\n段落二\n\n## 別列\n\n- x\n\na\n\nb"
+	if got := StorageToMarkdown(in); got != want {
+		t.Errorf("markdown = %q", got)
+	}
+	if got := StorageToText(in); got != "段落一\n\n段落二\n\n別列\n\n* x\n\na\n\nb" {
+		t.Errorf("text = %q", got)
+	}
+}
+
+func TestConfluenceStatusMacroKeepsItsTitle(t *testing.T) {
+	in := `<p>進捗：<ac:structured-macro ac:name="status"><ac:parameter ac:name="colour">Green</ac:parameter><ac:parameter ac:name="title">完了😀</ac:parameter></ac:structured-macro></p>`
+	if got := StorageToMarkdown(in); got != "進捗：完了😀" {
+		t.Errorf("markdown = %q", got)
+	}
+	if got := StorageToText(in); got != "進捗：完了😀" {
+		t.Errorf("text = %q", got)
+	}
+	other := `<p><ac:structured-macro ac:name="jira"><ac:parameter ac:name="title">PROJ-1</ac:parameter></ac:structured-macro></p>`
+	if got := StorageToText(other); got != "[jira macro: PROJ-1]" {
+		t.Errorf("other macro = %q", got)
+	}
+}
+
+// A <br> in a paragraph and in a table cell reads as a hard break and writes back as <br />.
+func TestConfluenceLineBreaksRoundTrip(t *testing.T) {
+	in := `<p>日本<br />語</p><table><tbody><tr><th>h</th></tr><tr><td>一<br />二</td></tr></tbody></table><p>end<br /></p>`
+	md := StorageToMarkdown(in)
+	st, _ := MarkdownToStorage(md)
+	for _, w := range []string{"<p>日本<br />\n語</p>", "<td>一<br />二</td>", "<p>end</p>"} {
+		if !strings.Contains(st, w) {
+			t.Errorf("missing %q in %s\nmarkdown: %q", w, st, md)
+		}
+	}
+	if strings.Contains(st, "omitted") || strings.HasSuffix(strings.TrimSpace(md), `\`) {
+		t.Errorf("markdown %q / storage %s", md, st)
+	}
+	if got := StorageToText(in); got != "日本\n語\n\nh\n一\n二\n\nend" {
+		// table cells flatten newlines to spaces in text
+		if !strings.Contains(got, "日本\n語") {
+			t.Errorf("text = %q", got)
+		}
+	}
+}
+
+// A child list is indented by the real width of its ancestors' markers, so it stays a child.
+func TestConfluenceNestedListsKeepStructure(t *testing.T) {
+	in := `<ol><li>親<ul><li>子<ol><li>孫</li></ol></li></ul></li><li>二</li></ol><p>x</p>` +
+		`<ol><li>1</li><li>2</li><li>3</li><li>4</li><li>5</li><li>6</li><li>7</li><li>8</li><li>9</li><li>十<ul><li>子</li></ul></li></ol>`
+	md := StorageToMarkdown(in)
+	st, _ := MarkdownToStorage(md)
+	for _, w := range []string{"<li>親\n<ul>\n<li>子\n<ol>\n<li>孫</li>", "<li>十\n<ul>\n<li>子</li>"} {
+		if !strings.Contains(st, w) {
+			t.Errorf("structure lost: missing %q in %s\nmarkdown:\n%s", w, st, md)
+		}
+	}
+	if strings.Count(st, "<ol>") != 3 {
+		t.Errorf("want 3 <ol>, got %s", st)
+	}
+}

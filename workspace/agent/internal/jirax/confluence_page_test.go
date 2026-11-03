@@ -324,3 +324,48 @@ func TestConfluenceScopesStatus(t *testing.T) {
 		}
 	}
 }
+
+// `info -f json` is the CLI's deprecated spelling of --json: a pipeline into jq must keep working.
+func TestConfluencePageInfoLegacyJSONFormat(t *testing.T) {
+	seedConfluenceV2(t, v2Scopes, standardV2("<p>x</p>", 3))
+	for _, args := range [][]string{{"info", "101", "-f", "json"}, {"info", "101", "--format=json"}, {"info", "101", "--json"}} {
+		rc, out, errs := runPage(args...)
+		var got struct {
+			ID    string
+			Title string
+			Space v2Space
+		}
+		if rc != 0 || json.Unmarshal([]byte(out), &got) != nil || got.ID != "101" || got.Space.Key != "ENG" {
+			t.Errorf("%v: rc=%d out=%q err=%q", args, rc, out, errs)
+		}
+	}
+	if rc, _, errs := runPage("info", "101", "-f", "yaml"); rc != 2 || !strings.Contains(errs, "yaml") {
+		t.Errorf("bad format: rc=%d err=%q", rc, errs)
+	}
+}
+
+// create-child takes the space from the parent, posts parentId, and prints the CLI's shape.
+func TestConfluencePageCreateChild(t *testing.T) {
+	f := seedConfluenceV2(t, v2Scopes, standardV2("", 1))
+	rc, out, errs := runPage("create-child", "子ページ", "101", "-c", "**本文**です", "--format", "markdown")
+	want := "✅ Child page created successfully!\nTitle: 旧題\nID: 101\nParent: 旧題 (101)\nSpace: 開発 Space (ENG)\nURL: https://acme.atlassian.net/wiki/spaces/ENG/pages/101/x\n"
+	if rc != 0 || out != want {
+		t.Fatalf("rc=%d out=%q err=%q", rc, out, errs)
+	}
+	var got struct {
+		SpaceID, ParentID, Title string
+		Body                     struct{ Value string }
+	}
+	if f.count("POST") != 1 {
+		t.Fatalf("POST count %d", f.count("POST"))
+	}
+	_ = json.Unmarshal([]byte(f.last().body), &got)
+	if got.SpaceID != "7" || got.ParentID != "101" || got.Title != "子ページ" || got.Body.Value != "<p><strong>本文</strong>です</p>" {
+		t.Errorf("payload = %+v", got)
+	}
+	rc, out, _ = runPage("create-child", "T", "101", "-c", "x", "--format", "markdown", "--json")
+	var j map[string]any
+	if rc != 0 || json.Unmarshal([]byte(out), &j) != nil || j["parentId"] != "101" || j["spaceKey"] != "ENG" {
+		t.Errorf("json: rc=%d out=%q", rc, out)
+	}
+}

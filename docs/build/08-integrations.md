@@ -431,7 +431,7 @@ them in for one `exec`:
   with Confluence scopes but not those (Settings shows a reconnect hint; `confluence-cred` still
   serves it, search and comments work). Writes are sent once; update sends `version+1` so a
   concurrent edit is a 409. Still on v1 and expected to 410: move, delete, children, find, spaces,
-  copy-tree, versions, properties, folders.
+  copy-tree, versions, properties. Folders: the shim refuses `create --type folder`; the CLI lists folder children over v2 `/pages/{id}/direct-children` (`read:hierarchical-content:confluence`, not requested).
 - **The user's own setup wins, decided by what is there, never by reading a config**: any
   `CONFLUENCE_*` variable that selects a host, identity or credential, a `--profile` flag, or a
   `config.json` in `CONFLUENCE_CONFIG_DIR` (else `$XDG_CONFIG_HOME/confluence-cli` and

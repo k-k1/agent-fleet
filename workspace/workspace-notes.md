@@ -194,7 +194,7 @@ directory belongs to someone else.
   that is not UTF-8 is refused. Writes are sent once and never retried: after a "may or may not
   have been applied" message, search or `read` before repeating. An update that hits a version
   conflict (409) overwrote nothing: `read` again and redo it. `move`, `delete`, `children`, `find`,
-  `spaces`, `copy-tree`, versions, properties/front matter and folders still use the CLI's v1 calls
+  `spaces`, `copy-tree`, versions, properties/front matter still use the CLI's v1 calls
   and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
   (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
   reconnects Jira); report it. Never run

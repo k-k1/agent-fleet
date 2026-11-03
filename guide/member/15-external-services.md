@@ -141,7 +141,7 @@ restart a session for it: `confluence search "release notes"`, `confluence read 
   the result is unknown instead of retrying; check the page before repeating it. An update that
   collides with someone else's edit is refused as a version conflict and overwrites nothing.
 - **Still on the old endpoints:** `move`, `delete`, `children`, `find`, `spaces`, `copy-tree`,
-  page versions, properties / front matter and folders. They can answer "410 … removed" until
+  page versions and properties / front matter. Folders are separate: (the shim refuses `create --type folder`; listing a folder's children uses the CLI's own v2 call, which needs `read:hierarchical-content:confluence`, not requested). They can answer "410 … removed" until
   the Confluence CLI moves them to the new API.
 - **What it can change** is what your connection can: the CLI writes as you.
 - **Your own setup is never overridden.** If you set `CONFLUENCE_DOMAIN`, `CONFLUENCE_API_TOKEN` (or

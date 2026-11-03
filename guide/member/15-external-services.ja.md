@@ -142,7 +142,7 @@ Jira を OAuth または API トークンでつなぐ（設定 > **課題管理*
   表示します。繰り返す前にページを確認してください。他の人の編集とぶつかった更新はバージョン競合として
   拒否され、何も上書きしません。
 - **旧エンドポイントのままのコマンド:** `move`・`delete`・`children`・`find`・`spaces`・`copy-tree`・
-  ページの版・プロパティ（front matter）・フォルダ。Confluence CLI が新 API に対応するまで「410 …
+  ページの版・プロパティ（front matter）。フォルダは別扱いで、`create --type folder` はこの経路が拒否し、フォルダの子の一覧は CLI 自身の v2 呼び出しで `read:hierarchical-content:confluence`（af は求めない）が要ります。Confluence CLI が新 API に対応するまで「410 …
   removed」で失敗することがあります。
 - **変更できる範囲**は、あなたの接続でできる範囲です。CLI はあなたとして書き込みます。
 - **あなた自身の設定は上書きしません。** `CONFLUENCE_DOMAIN`・`CONFLUENCE_API_TOKEN`（ほか、ホストや

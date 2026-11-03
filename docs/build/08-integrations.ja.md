@@ -398,7 +398,7 @@ Jira は git でなく作業項目インボックス
   グループに細粒度の `read:page`・`write:page`・`read:space` を追加し、Confluence のスコープはあるがこれらが
   ない認可は `confluenceScopes: "outdated"`（設定画面は再接続を案内、`confluence-cred` は引き続き渡すので
   検索とコメントは動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
-  v1 のままで 410 が見込まれるもの: move・delete・children・find・spaces・copy-tree・versions・properties・フォルダ。
+  v1 のままで 410 が見込まれるもの: move・delete・children・find・spaces・copy-tree・versions・properties。フォルダは別: shim は `create --type folder` を拒否し、CLI のフォルダ子一覧は v2 `/pages/{id}/direct-children`（`read:hierarchical-content:confluence`、未要求）。
 - **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
   `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ
   `$XDG_CONFIG_HOME/confluence-cli` と `~/.confluence-cli`）の `config.json` のどれかがあれば、CLI は
