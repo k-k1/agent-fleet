@@ -267,7 +267,22 @@ describe("pull request notifications", () => {
     expect(notificationWording({ kind: "pr-ready", displayName: "a", payload: { key: "o/r#1" } }).title).toBe("A pull request is ready to merge");
     expect(notificationWording({ kind: "pr-closed", displayName: "a", payload: {} }).speech).toBe("a's pull request was closed without merging.");
     expect(notificationRowSubtitle({ kind: "pr-closed", displayName: "a", payload: {} })).toBe("a");
-    for (const k of ["pr-ready", "pr-merged", "pr-closed"]) expect(NOTIFICATION_KIND_LABELS[k]).toBeTruthy();
+    for (const k of ["pr-ready", "pr-merged", "pr-closed", "pr-feedback", "pr-conflict"]) expect(NOTIFICATION_KIND_LABELS[k]).toBeTruthy();
     setLocale("ja");
+  });
+
+  // Feedback the owning session could not be told, and a merge conflict (#3129).
+  it("words PR feedback by what it is, and a conflict", () => {
+    setLocale("en");
+    const p = { provider: "github", key: "o/r#7", number: 7 };
+    expect(notificationWording({ kind: "pr-feedback", displayName: "a", payload: { ...p, what: "ci" } }).title).toBe("A pull request's CI failed");
+    expect(notificationWording({ kind: "pr-feedback", displayName: "a", payload: { ...p, what: "review" } }).speech).toBe("a's pull request got review feedback.");
+    expect(notificationWording({ kind: "pr-feedback", displayName: "a", payload: { ...p, what: "<b>x</b>" } }).title).toBe("A pull request's CI failed");
+    const c = { kind: "pr-conflict", displayName: "a", payload: p };
+    expect(notificationWording(c)).toEqual({ title: "A pull request has a merge conflict", body: "a — o/r#7", speech: "a's pull request has a merge conflict." });
+    expect(notificationRowSubtitle(c)).toBe("a — o/r#7");
+    setLocale("ja");
+    expect(notificationKindLabel("pr-conflict")).toBe("マージのコンフリクト");
+    expect(notificationWording({ kind: "pr-feedback", displayName: "a", payload: { ...p, what: "review" } }).title).toBe("プルリクエストにレビューが付きました");
   });
 });

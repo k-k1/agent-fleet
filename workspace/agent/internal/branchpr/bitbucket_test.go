@@ -30,6 +30,10 @@ type bbServer struct {
 	badBranch string
 	byBranch  map[string]string
 	notFound  string // a path that answers 404
+	// one answers ".../pullrequests/<id>", a PR asked by number; missing → 404. oneFields is the
+	// fields it was last asked for.
+	one       map[string]string
+	oneFields string
 }
 
 func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +83,13 @@ func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_, _ = w.Write([]byte(b.pulls[strings.TrimSuffix(p, "/pullrequests")]))
+	case strings.Contains(p, "/pullrequests/"):
+		b.oneFields = r.URL.Query().Get("fields")
+		if body, ok := b.one[p]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	default:
 		m, ok := b.main[p]
 		if !ok {
@@ -129,8 +140,8 @@ func TestBitbucketAsksOncePerRepositoryAndPicksEachBranchsOwnPR(t *testing.T) {
 	}
 	c := newBBCache(t, b)
 	keys := []Key{
-		{"w/r", "feature/a"}, {"w/r", "fix/b"}, {"w/r", "old"}, {"w/r", "main"}, {"w/r", "none"},
-		{"w/other", "x"}, {"w/gone", "y"},
+		{Repo: "w/r", Branch: "feature/a"}, {Repo: "w/r", Branch: "fix/b"}, {Repo: "w/r", Branch: "old"}, {Repo: "w/r", Branch: "main"}, {Repo: "w/r", Branch: "none"},
+		{Repo: "w/other", Branch: "x"}, {Repo: "w/gone", Branch: "y"},
 	}
 	c.Lookup(keys, time.Now())
 	got := c.Lookup(keys, time.Now())
@@ -186,7 +197,7 @@ func TestBitbucketMainBranchIsAskedOncePerHour(t *testing.T) {
 		pulls: map[string]string{"/2.0/repositories/w/r": `{"values":[]}`},
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "a"}}
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
 	now := time.Now()
 	c.Lookup(keys, now)
 	c.Lookup(keys, now.Add(settledTTL+time.Second))
@@ -202,7 +213,7 @@ func TestBitbucketMainBranchIsAskedOncePerHour(t *testing.T) {
 }
 
 func TestBitbucketFilterQuotesTheBranchName(t *testing.T) {
-	f := bitbucketFilter([]Key{{"w/r", `a"b\c`}})
+	f := bitbucketFilter([]Key{{Repo: "w/r", Branch: `a"b\c`}})
 	if !strings.Contains(f, `source.branch.name = "a\"b\\c"`) {
 		t.Fatalf("filter = %q, want the quote and backslash escaped", f)
 	}
@@ -216,7 +227,7 @@ func TestBitbucketSplitsManyBranchesIntoBoundedFilters(t *testing.T) {
 	c := newBBCache(t, b)
 	var keys []Key
 	for i := 0; i < bitbucketBranchesPerCall+1; i++ {
-		keys = append(keys, Key{"w/r", "b" + itoa(i)})
+		keys = append(keys, Key{Repo: "w/r", Branch: "b" + itoa(i)})
 	}
 	c.Lookup(keys, time.Now())
 	if len(b.filters) != 2 {
@@ -231,7 +242,7 @@ func TestBitbucketRefusalHoldsOffAndKeepsTheHeldAnswers(t *testing.T) {
 		statuses: map[string]string{"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[]}`},
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "a"}}
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
 	now := time.Now()
 	c.Lookup(keys, now)
 	// The connection loses the pull request scope: the row keeps what it showed, and the
@@ -261,7 +272,7 @@ func TestBitbucket401RenewsOnce(t *testing.T) {
 		}
 		return "Bearer fresh", nil
 	}
-	c.Lookup([]Key{{"w/r", "a"}}, time.Now())
+	c.Lookup([]Key{{Repo: "w/r", Branch: "a"}}, time.Now())
 	if renewed != 1 || len(b.auth) != 2 || b.auth[1] != "Bearer fresh" {
 		t.Fatalf("renewed=%d auth=%v, want one renewal and one retry with the new value", renewed, b.auth)
 	}
@@ -276,7 +287,7 @@ func TestBitbucketRollup(t *testing.T) {
 		`{"values":[{"state":"FAILED"}]}`:                            "failure",
 		`not json`:                                                   "",
 	} {
-		if got, _ := bitbucketRollup([]byte(body), ""); got != want {
+		if got, _, _ := bitbucketRollup([]byte(body), ""); got != want {
 			t.Errorf("rollup(%s) = %q, want %q", body, got, want)
 		}
 	}
@@ -299,7 +310,7 @@ func TestBitbucketReadsChecksOfTheHeadCommitOnly(t *testing.T) {
 		},
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "a"}}
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
 	c.Lookup(keys, time.Now())
 	if pr := c.Lookup(keys, time.Now())[keys[0]]; pr == nil || pr.Checks != "success" {
 		t.Fatalf("pr = %+v, want the head commit's success", pr)
@@ -313,7 +324,7 @@ func TestBitbucketAsksAnOpenPRLessOftenThanGitHub(t *testing.T) {
 		statuses: map[string]string{"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[]}`},
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "a"}}
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
 	now := time.Now()
 	c.Lookup(keys, now)
 	c.Lookup(keys, now.Add(openTTL+time.Second))
@@ -334,7 +345,7 @@ func TestBitbucketBadFilterFailsOnlyItsOwnBranch(t *testing.T) {
 		badBranch: "odd",
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "good"}, {"w/r", "odd"}}
+	keys := []Key{{Repo: "w/r", Branch: "good"}, {Repo: "w/r", Branch: "odd"}}
 	c.Lookup(keys, time.Now())
 	got := c.Lookup(keys, time.Now())
 	if pr := got[keys[0]]; pr == nil || pr.Number != 5 {
@@ -360,7 +371,7 @@ func TestBitbucketAsksAgainForABranchAFullPageLeftOut(t *testing.T) {
 		byBranch: map[string]string{"quiet": `{"values":[` + bbPR(7, "MERGED", false, "quiet", "w/r") + `]}`},
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "busy"}, {"w/r", "quiet"}}
+	keys := []Key{{Repo: "w/r", Branch: "busy"}, {Repo: "w/r", Branch: "quiet"}}
 	c.Lookup(keys, time.Now())
 	got := c.Lookup(keys, time.Now())
 	if pr := got[keys[1]]; pr == nil || pr.Number != 7 {
@@ -390,7 +401,7 @@ func TestBitbucketFallsBackToThePRsStatusesOfItsHeadWhenTheCommitIsNotResolved(t
 	}
 	c := newBBCache(t, b)
 	b.notFound = "/2.0/repositories/w/r/commit/c0ffee4/statuses"
-	keys := []Key{{"w/r", "a"}}
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
 	c.Lookup(keys, time.Now())
 	if pr := c.Lookup(keys, time.Now())[keys[0]]; pr == nil || pr.Checks != "success" {
 		t.Fatalf("pr = %+v, want success from the head's statuses only (the old commit's failure ignored)", pr)
@@ -400,8 +411,8 @@ func TestBitbucketFallsBackToThePRsStatusesOfItsHeadWhenTheCommitIsNotResolved(t
 func TestBitbucketReadsThePRTitleForLinksOnly(t *testing.T) {
 	body := `{"values":[{"id":3,"title":"PROJ-12 tidy","state":"MERGED","links":{"html":{"href":"https://bitbucket.org/w/r/pull-requests/3"}},` +
 		`"source":{"branch":{"name":"a"},"repository":{"full_name":"w/r"}}}]}`
-	got, _, err := parseBitbucketPulls([]byte(body), "w/r", []Key{{"w/r", "a"}})
-	if err != nil || got[Key{"w/r", "a"}].pr.Title != "PROJ-12 tidy" {
+	got, _, err := parseBitbucketPulls([]byte(body), "w/r", []Key{{Repo: "w/r", Branch: "a"}})
+	if err != nil || got[Key{Repo: "w/r", Branch: "a"}].pr.Title != "PROJ-12 tidy" {
 		t.Fatalf("got %+v err %v, want the title read", got, err)
 	}
 }
@@ -417,7 +428,7 @@ func TestBitbucketReadsReviewConflictAndFailingBuilds(t *testing.T) {
 		conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"pagelen":500,"size":1,"values":[{"path":"a.go","scenario":"content"}]}`},
 	}
 	c := newBBCache(t, b)
-	keys := []Key{{"w/r", "a"}}
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
 	c.Lookup(keys, time.Now())
 	got := c.Lookup(keys, time.Now())[keys[0]]
 	if got == nil || got.NodeID != "{u-1}#4" || !got.ChangesRequested || !got.Conflict || got.Checks != "failure" {
@@ -472,9 +483,9 @@ func TestBitbucketReadsTheConflictOncePerTTLAndAgainForANewHead(t *testing.T) {
 
 func TestBitbucketApprovalsAloneRequestNoChanges(t *testing.T) {
 	pr := strings.TrimSuffix(bbPR(4, "OPEN", false, "a", "w/r"), "}") + `,"participants":[{"state":"approved"},{"state":null}]}`
-	got, _, err := parseBitbucketPulls([]byte(`{"values":[`+pr+`]}`), "w/r", []Key{{"w/r", "a"}})
-	if err != nil || got[Key{"w/r", "a"}].pr.ChangesRequested || got[Key{"w/r", "a"}].pr.NodeID != "" {
-		t.Fatalf("got %+v err %v: approvals request no changes, and no uuid gives no node id", got[Key{"w/r", "a"}].pr, err)
+	got, _, err := parseBitbucketPulls([]byte(`{"values":[`+pr+`]}`), "w/r", []Key{{Repo: "w/r", Branch: "a"}})
+	if err != nil || got[Key{Repo: "w/r", Branch: "a"}].pr.ChangesRequested || got[Key{Repo: "w/r", Branch: "a"}].pr.NodeID != "" {
+		t.Fatalf("got %+v err %v: approvals request no changes, and no uuid gives no node id", got[Key{Repo: "w/r", Branch: "a"}].pr, err)
 	}
 }
 
@@ -542,7 +553,92 @@ func TestBitbucketConflictTakesAnUnreadableAnswerAsAFailedRead(t *testing.T) {
 	b.mu.Lock()
 	b.conflicts["/2.0/repositories/w/r/file-conflicts/c0ffee4..main"] = `{"pagelen":10}`
 	b.mu.Unlock()
+	bb.conflicts["w/r#4"] = conflictEntry{head: "h", conflict: true, at: past}
 	if !bb.conflict("Bearer bb", "w/r", 4, "h") {
 		t.Fatal("an answer with neither values nor size says nothing; keep the known state")
+	}
+}
+
+func TestBitbucketReadsAPRByNumberWithoutTheMainBranch(t *testing.T) {
+	b := &bbServer{
+		one: map[string]string{
+			"/2.0/repositories/w/r/pullrequests/4": bbPR(4, "OPEN", false, "main", "w/fork"),
+			"/2.0/repositories/w/r/pullrequests/6": bbPR(6, "WEIRD", false, "x", "w/r"),
+			"/2.0/repositories/w/r/pullrequests/8": bbPR(3, "OPEN", false, "x", "w/r"),
+		},
+		statuses: map[string]string{
+			"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[{"state":"FAILED","name":"unit"},{"state":"INPROGRESS","name":"e2e"}]}`,
+		},
+		conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"size":1,"values":[{"path":"a.go"}]}`},
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{Repo: "w/r", Number: 4}, {Repo: "w/r", Number: 5}, {Repo: "w/r", Number: 6}, {Repo: "w/r", Number: 8}}
+	c.Lookup(keys, time.Now())
+	got := c.Lookup(keys, time.Now())
+	pr := got[keys[0]]
+	if pr == nil || pr.Number != 4 || pr.State != "open" || pr.Checks != "failure" || !pr.ChecksPending || !pr.Conflict {
+		t.Fatalf("pr #4 = %+v: a PR held by number is read whatever its branch, with its builds and conflict", pr)
+	}
+	if len(pr.FailingChecks) != 1 || pr.FailingChecks[0].Name != "unit" {
+		t.Errorf("failing = %v", pr.FailingChecks)
+	}
+	if got[keys[1]] != nil || got[keys[2]] != nil || got[keys[3]] != nil {
+		t.Errorf("a PR not found, in a state the row does not know, or answered for another number answers none: %v %v %v",
+			got[keys[1]], got[keys[2]], got[keys[3]])
+	}
+	for _, p := range b.paths {
+		if p == "/2.0/repositories/w/r" {
+			t.Errorf("asked the main branch for number keys only: %v", b.paths)
+		}
+	}
+	for _, f := range []string{"id", "source.commit.hash", "participants.state", "destination.repository.uuid"} {
+		if !strings.Contains(b.oneFields, f) || strings.Contains(b.oneFields, "values.") {
+			t.Errorf("fields %q: want %s, without the list's values. prefix", b.oneFields, f)
+		}
+	}
+}
+
+func TestBitbucketRollupTellsAFailureWithBuildsStillRunning(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"values":[{"state":"FAILED"},{"state":"INPROGRESS"}]}`: true,
+		`{"values":[{"state":"FAILED"},{"state":"SUCCESSFUL"}]}`: false,
+		`{"values":[{"state":"INPROGRESS"}]}`:                    true,
+	} {
+		if _, _, pending := bitbucketRollup([]byte(body), ""); pending != want {
+			t.Errorf("rollup(%s) pending = %v, want %v", body, pending, want)
+		}
+	}
+}
+
+func TestBitbucketConflictWaitsOutTheTTLAfterAFailedRead(t *testing.T) {
+	b := &bbServer{} // every conflicts read answers 404
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	past := time.Now().Add(-bitbucketConflictTTL - time.Minute)
+	bb.conflicts["w/r#4"] = conflictEntry{head: "h", conflict: true, at: past, asked: time.Now()}
+	for range 3 {
+		if !bb.conflict("Bearer bb", "w/r", 4, "h") {
+			t.Fatal("a failed read keeps this head's known conflict")
+		}
+	}
+	reads := 0
+	for _, p := range b.paths {
+		if strings.HasSuffix(p, "/conflicts") {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("read the conflicts %d times (%v): a failed read waits out the TTL", reads, b.paths)
+	}
+	if e := bb.conflicts["w/r#4"]; !e.at.Equal(past) {
+		t.Fatalf("entry %+v: a failed read is not a fresh one", e)
+	}
+	// The wait ends with the TTL.
+	e := bb.conflicts["w/r#4"]
+	e.tried = past
+	bb.conflicts["w/r#4"] = e
+	_ = bb.conflict("Bearer bb", "w/r", 4, "h")
+	if n := strings.Count(strings.Join(b.paths, " "), "/conflicts"); n != 2 {
+		t.Fatalf("read %d times, want a second read once the TTL ran out", n)
 	}
 }

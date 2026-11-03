@@ -150,7 +150,7 @@ Reads out replies from sessions and assistants.
   | Needs your answer | a question, a plan approval, a permission request |
   | Usage limit reset | a Claude / Codex 5-hour or weekly limit you had hit has reset |
   | Session report | a session reported to an assistant conversation |
-  | Pull requests | the pull request of a session's branch became ready to merge (open, checks passed, no conflict, approved or needing no review; GitHub only, once per pushed commit), or was merged or closed |
+  | Pull requests | the pull request of a session's branch became ready to merge (open, checks passed, no conflict, approved or needing no review; GitHub only, once per pushed commit), or was merged or closed; with [PR feedback](11-many-sessions.md#telling-a-session-about-its-pull-requests-feedback) on, also a session's pull request has a merge conflict, or got CI or review feedback its session could not be told (archived) |
   | Rate limit | a session hit a rate limit, or resumed after one |
   | Scheduled runs | a scheduled run finished, failed or was skipped |
   | Handoffs | a handoff offered to you, accepted or expired, or a session that started from one you gave back |

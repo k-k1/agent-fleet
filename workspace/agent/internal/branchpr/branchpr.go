@@ -62,6 +62,10 @@ type PR struct {
 	// (GitHub; Bitbucket reports 0). Both feed the PR feedback notice and never leave the Agent.
 	FailingChecks     []Check `json:"-"`
 	UnresolvedThreads int     `json:"-"`
+	// ChecksPending reports a check of the head commit still running or not yet reported. The
+	// rollup says "failure" as soon as one check fails, and a notice sent then would name the
+	// first failure of several. Never on the wire.
+	ChecksPending bool `json:"-"`
 }
 
 // Check is one failed check of a PR's head commit. URL is the provider's, unchecked: whoever
@@ -108,11 +112,13 @@ func (p *PR) Ready() bool {
 		(p.ReviewDecision == "" || p.ReviewDecision == "APPROVED")
 }
 
-// Key names one branch of one repository on the cache's provider. Repo is "owner/name"
-// ("workspace/slug" on Bitbucket).
+// Key names one branch of one repository on the cache's provider, or with Number set one PR of
+// it by number (Branch is then ignored). Repo is "owner/name" ("workspace/slug" on Bitbucket). A
+// PR asked by number is answered whoever's branch it comes from: the caller already holds it.
 type Key struct {
 	Repo   string
 	Branch string
+	Number int
 }
 
 const (
@@ -304,6 +310,14 @@ func (c *Cache) refresh(due []Key) {
 	}
 }
 
+// prFields is what one PR node answers, for a branch's list and for a PR asked by number alike.
+var prFields = fmt.Sprintf("id number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+
+	"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
+	"reviewThreads(last:%d){nodes{isResolved}} "+
+	"commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:%d){nodes{__typename "+
+	"... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}",
+	maxReviewThreads, maxCheckContexts)
+
 // query builds one aliased repository lookup per key. Values travel as variables, never
 // spliced into the query text: a branch name is whatever the member typed.
 func query(keys []Key) (string, map[string]any) {
@@ -312,18 +326,21 @@ func query(keys []Key) (string, map[string]any) {
 	for i, k := range keys {
 		owner, name, _ := strings.Cut(k.Repo, "/")
 		o, n, b := fmt.Sprintf("o%d", i), fmt.Sprintf("n%d", i), fmt.Sprintf("b%d", i)
-		vars[o], vars[n], vars[b] = owner, name, k.Branch
+		vars[o], vars[n] = owner, name
+		if k.Number > 0 {
+			vars[b] = k.Number
+			fmt.Fprintf(&decl, "$%s:String!,$%s:String!,$%s:Int!,", o, n, b)
+			fmt.Fprintf(&body, "r%d:repository(owner:$%s,name:$%s){owner{login} pullRequest(number:$%s){%s}} ",
+				i, o, n, b, prFields)
+			continue
+		}
+		vars[b] = k.Branch
 		fmt.Fprintf(&decl, "$%s:String!,$%s:String!,$%s:String!,", o, n, b)
 		// first:5 rather than 1: a branch name reused by a fork's PR into this repository
 		// also matches headRefName, and parse skips those.
 		fmt.Fprintf(&body, "r%d:repository(owner:$%s,name:$%s){owner{login} defaultBranchRef{name} "+
-			"pullRequests(headRefName:$%s,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"+
-			"id number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+
-			"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
-			"reviewThreads(last:%d){nodes{isResolved}} "+
-			"commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:%d){nodes{__typename "+
-			"... on CheckRun{name conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}}}} ",
-			i, o, n, b, maxReviewThreads, maxCheckContexts)
+			"pullRequests(headRefName:$%s,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{%s}}} ",
+			i, o, n, b, prFields)
 	}
 	return "query(" + strings.TrimSuffix(decl.String(), ",") + "){" + body.String() + "}", vars
 }
@@ -394,48 +411,6 @@ func rateWait(h http.Header, now time.Time) time.Duration {
 // that names no alias, a body that does not decode, or no data at all fails the batch. limited
 // reports a rate-limit answer, which GraphQL delivers as 200 with an error of type RATE_LIMITED.
 func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limited bool, err error) {
-	type node struct {
-		ID      string `json:"id"`
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		State   string `json:"state"`
-		IsDraft bool   `json:"isDraft"`
-		URL     string `json:"url"`
-		// Mergeable and ReviewDecision are GitHub's enums; reviewDecision is null when the
-		// repository requires no review.
-		Mergeable      string  `json:"mergeable"`
-		ReviewDecision *string `json:"reviewDecision"`
-		ClosedAt       *string `json:"closedAt"`
-		Closing        struct {
-			Nodes []struct {
-				Number int `json:"number"`
-				Repo   struct {
-					Name string `json:"nameWithOwner"`
-				} `json:"repository"`
-			} `json:"nodes"`
-		} `json:"closingIssuesReferences"`
-		HeadOwner *struct {
-			Login string `json:"login"`
-		} `json:"headRepositoryOwner"`
-		Threads struct {
-			Nodes []struct {
-				IsResolved bool `json:"isResolved"`
-			} `json:"nodes"`
-		} `json:"reviewThreads"`
-		Commits struct {
-			Nodes []struct {
-				Commit struct {
-					OID    string `json:"oid"`
-					Rollup *struct {
-						State    string `json:"state"`
-						Contexts struct {
-							Nodes []checkContext `json:"nodes"`
-						} `json:"contexts"`
-					} `json:"statusCheckRollup"`
-				} `json:"commit"`
-			} `json:"nodes"`
-		} `json:"commits"`
-	}
 	type repo struct {
 		Owner struct {
 			Login string `json:"login"`
@@ -444,8 +419,9 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 			Name string `json:"name"`
 		} `json:"defaultBranchRef"`
 		PullRequests struct {
-			Nodes []node `json:"nodes"`
+			Nodes []ghPRNode `json:"nodes"`
 		} `json:"pullRequests"`
+		PullRequest *ghPRNode `json:"pullRequest"`
 	}
 	var gr struct {
 		Data   map[string]*repo `json:"data"`
@@ -489,6 +465,12 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 		if r == nil || failed[k] {
 			continue
 		}
+		if k.Number > 0 {
+			if n := r.PullRequest; n != nil && n.Number == k.Number {
+				out[k] = n.pr()
+			}
+			continue
+		}
 		// The default branch is the base of everyone's PRs, not a feature branch: a session on
 		// develop would otherwise show the develop → main release PR as its own.
 		if r.DefaultBranch != nil && r.DefaultBranch.Name == k.Branch {
@@ -498,47 +480,101 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 			if n.HeadOwner == nil || !strings.EqualFold(n.HeadOwner.Login, r.Owner.Login) {
 				continue // a fork's branch that happens to share the name
 			}
-			pr := &PR{Number: n.Number, State: strings.ToLower(n.State), Draft: n.IsDraft, URL: n.URL, Title: n.Title,
-				Mergeable: n.Mergeable, NodeID: n.ID, Conflict: n.Mergeable == "CONFLICTING"}
-			if n.ReviewDecision != nil {
-				pr.ReviewDecision = *n.ReviewDecision
-				pr.ChangesRequested = pr.ReviewDecision == "CHANGES_REQUESTED"
-			}
-			for _, t := range n.Threads.Nodes {
-				if !t.IsResolved {
-					pr.UnresolvedThreads++
-				}
-			}
-			if n.ClosedAt != nil {
-				pr.ClosedAt = *n.ClosedAt
-			}
-			for _, c := range n.Closing.Nodes {
-				if c.Number > 0 && c.Repo.Name != "" {
-					pr.Closes = append(pr.Closes, c.Repo.Name+"#"+strconv.Itoa(c.Number))
-				}
-			}
-			if len(n.Commits.Nodes) > 0 {
-				pr.Head = n.Commits.Nodes[0].Commit.OID
-				if r := n.Commits.Nodes[0].Commit.Rollup; r != nil {
-					pr.Checks = rollupState(r.State)
-					for _, c := range r.Contexts.Nodes {
-						if f, ok := c.failed(); ok {
-							pr.FailingChecks = addFailing(pr.FailingChecks, f)
-						}
-					}
-				}
-			}
-			out[k] = pr
+			out[k] = n.pr()
 			break
 		}
 	}
 	return out, failed, false, nil
 }
 
+// ghPRNode is one PR as GitHub answers prFields.
+type ghPRNode struct {
+	ID      string `json:"id"`
+	Number  int    `json:"number"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	IsDraft bool   `json:"isDraft"`
+	URL     string `json:"url"`
+	// Mergeable and ReviewDecision are GitHub's enums; reviewDecision is null when the
+	// repository requires no review.
+	Mergeable      string  `json:"mergeable"`
+	ReviewDecision *string `json:"reviewDecision"`
+	ClosedAt       *string `json:"closedAt"`
+	Closing        struct {
+		Nodes []struct {
+			Number int `json:"number"`
+			Repo   struct {
+				Name string `json:"nameWithOwner"`
+			} `json:"repository"`
+		} `json:"nodes"`
+	} `json:"closingIssuesReferences"`
+	HeadOwner *struct {
+		Login string `json:"login"`
+	} `json:"headRepositoryOwner"`
+	Threads struct {
+		Nodes []struct {
+			IsResolved bool `json:"isResolved"`
+		} `json:"nodes"`
+	} `json:"reviewThreads"`
+	Commits struct {
+		Nodes []struct {
+			Commit struct {
+				OID    string `json:"oid"`
+				Rollup *struct {
+					State    string `json:"state"`
+					Contexts struct {
+						Nodes []checkContext `json:"nodes"`
+					} `json:"contexts"`
+				} `json:"statusCheckRollup"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
+}
+
+// pr converts n to the row's PR.
+func (n *ghPRNode) pr() *PR {
+	pr := &PR{Number: n.Number, State: strings.ToLower(n.State), Draft: n.IsDraft, URL: n.URL, Title: n.Title,
+		Mergeable: n.Mergeable, NodeID: n.ID, Conflict: n.Mergeable == "CONFLICTING"}
+	if n.ReviewDecision != nil {
+		pr.ReviewDecision = *n.ReviewDecision
+		pr.ChangesRequested = pr.ReviewDecision == "CHANGES_REQUESTED"
+	}
+	for _, t := range n.Threads.Nodes {
+		if !t.IsResolved {
+			pr.UnresolvedThreads++
+		}
+	}
+	if n.ClosedAt != nil {
+		pr.ClosedAt = *n.ClosedAt
+	}
+	for _, c := range n.Closing.Nodes {
+		if c.Number > 0 && c.Repo.Name != "" {
+			pr.Closes = append(pr.Closes, c.Repo.Name+"#"+strconv.Itoa(c.Number))
+		}
+	}
+	if len(n.Commits.Nodes) > 0 {
+		pr.Head = n.Commits.Nodes[0].Commit.OID
+		if r := n.Commits.Nodes[0].Commit.Rollup; r != nil {
+			pr.Checks = rollupState(r.State)
+			for _, c := range r.Contexts.Nodes {
+				if f, ok := c.failed(); ok {
+					pr.FailingChecks = addFailing(pr.FailingChecks, f)
+				}
+				pr.ChecksPending = pr.ChecksPending || c.pending()
+			}
+			// Past the contexts read, an unread one may still run; the rollup's own pending
+			// state is the only word on it.
+			pr.ChecksPending = pr.ChecksPending || pr.Checks == "pending"
+		}
+	}
+	return pr
+}
+
 // checkContext is one entry of a rollup: a check run (Actions and other apps) or a commit status.
 type checkContext struct {
 	Type       string `json:"__typename"`
 	Name       string `json:"name"`
+	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	DetailsURL string `json:"detailsUrl"`
 	Context    string `json:"context"`
@@ -562,6 +598,21 @@ func (c checkContext) failed() (Check, bool) {
 		}
 	}
 	return Check{}, false
+}
+
+// pending reports a context that has not finished: a check run not yet completed (queued,
+// in progress, waiting), or a commit status still pending or only expected.
+func (c checkContext) pending() bool {
+	switch c.Type {
+	case "CheckRun":
+		return c.Status != "" && !strings.EqualFold(c.Status, "COMPLETED")
+	case "StatusContext":
+		switch strings.ToUpper(c.State) {
+		case "PENDING", "EXPECTED":
+			return true
+		}
+	}
+	return false
 }
 
 // rollupState maps GitHub's StatusState onto the row's three words. EXPECTED is a required

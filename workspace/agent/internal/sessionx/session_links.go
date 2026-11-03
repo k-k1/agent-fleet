@@ -172,6 +172,9 @@ func annotateLinks(sessions []session.Session, dirBranch map[string]string, now 
 		keys[i], provider[i] = branchpr.Key{Repo: o.repo, Branch: branch}, o.provider
 		ask[o.provider] = append(ask[o.provider], keys[i])
 	}
+	for i := range sessions {
+		rememberBranchAsk(sessions[i].Name, provider[i], keys[i])
+	}
 	prs := map[string]map[branchpr.Key]*branchpr.PR{}
 	if k := ask["github"]; len(k) > 0 {
 		prs["github"] = lookupPRs(k, now)

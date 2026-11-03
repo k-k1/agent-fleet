@@ -199,6 +199,10 @@ const PREFS = {
   // than a text turn — from sessions that are not Codex sessions and would otherwise never
   // touch it, so it is chosen rather than inherited on upgrade.
   imageGeneration: synced(false), // opt-in (ADR 0069) — it spends the ChatGPT plan quota
+  // The PR feedback watch (#3129): a failed CI run or new review feedback on a session's PR is
+  // injected into that session, starting it when it is stopped. Default FALSE, matching the
+  // Agent's missing-key answer: it spends turns and starts sessions without anyone asking.
+  prFeedback: synced(false), // opt-in (#3129) — spends turns and wakes stopped sessions unattended
   // NOTE: sessionFleetObserve was here (docs/log/86 stage 1) and is gone. Fleet observation —
   // reading another session's state and usage, reading and writing your user's memo queue — is
   // part of every session now, with no switch, so a stored value would only be misleading.

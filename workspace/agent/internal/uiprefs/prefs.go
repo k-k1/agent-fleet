@@ -219,6 +219,15 @@ func PeerMessaging() bool {
 	return v
 }
 
+// PRFeedback is the ON/OFF for the PR feedback watch (#3129, ui-prefs prFeedback): a failed CI
+// run or new review feedback on a session's PR is injected into that session, which may start it
+// when it is stopped. Missing/invalid ⇒ **false**: it spends turns, and starts sessions, without
+// anyone asking, so a fleet turns it on knowingly rather than finding it on after an upgrade.
+func PRFeedback() bool {
+	v, _ := Read()["prFeedback"].(bool)
+	return v
+}
+
 // ImageGeneration is the ON/OFF for the image generation tool (ADR 0069, ui-prefs
 // imageGeneration). Missing/invalid ⇒ **false**, like PeerMessaging and for a comparable
 // reason: every generated image spends the user's ChatGPT plan quota (3-5x faster than a text
