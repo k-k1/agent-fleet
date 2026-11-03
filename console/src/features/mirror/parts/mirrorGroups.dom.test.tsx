@@ -32,4 +32,15 @@ describe("groupWithQueue pairs an echo with its queue entry", () => {
     const images = g.flatMap((b) => splitPastedImages(b.text).images);
     expect(images.sort()).toEqual(["paste-1.png", "paste-2.png"]);
   });
+
+  it("does not pair prompts whose words differ after an instruction wording they quote", () => {
+    const att = (lang: string) =>
+      `Translate "Look at the following file(s):" into ${lang}. Open the following file(s) with the Read tool: ${path(1)}`;
+    const quoted = (lang: string) => att(lang).replace(path(1), `\`${path(1)}\``);
+    const g = groupWithQueue([], [{ id: 1, text: att("French"), sinceIdx: 0 }], queueEntries(null, [quoted("Japanese"), quoted("French")]));
+    const texts = g.map((b) => b.text);
+    expect(texts.some((t) => t.includes("Japanese"))).toBe(true);
+    // The French echo took the French entry: one French text, not the echo plus a leftover row.
+    expect(texts.join("\n").split("French").length - 1).toBe(1);
+  });
 });

@@ -1,4 +1,3 @@
-import { samePastedPrompt, splitPastedImages } from "../../../lib/pastedImages.ts";
 import { echoLanded } from "../pendingEcho.ts";
 import { actionable, injectionSource, inQueueOrder, restorable, type queueEntries } from "../stopQueue.ts";
 import { coalesceUserActions, groupTurns, isNoise, stripStudioSignal } from "../transcript/model.ts";
@@ -10,14 +9,13 @@ import type { SendEcho } from "./sendEcho.ts";
 // them into claude (QuoteImagePaths in image_paste.go) and the queue holds the typed text,
 // signal line included, while the echo keeps the bare paths. An exact compare misses, and the
 // unpaired echo and queue row then fold into one bubble showing every thumbnail twice.
-// The attachments are compared too, so two prompts with the same words but different files
-// keep their own bubbles.
+// Only that quoting and the signal are undone; the rest is compared whole. samePastedPrompt
+// would be too loose here: it cuts at the first instruction wording anywhere in the text, so
+// two prompts that merely quote that wording would pair and one would take the other's entry.
+const QUOTED_ATTACHMENT_RE = /`(\/\S*\/agent-fleet\/(?:pasted\/[^\s/`]+|memo-images)\/[^\s/`]+)`/g;
+const unquoted = (text: string) => stripStudioSignal(text).replace(QUOTED_ATTACHMENT_RE, "$1").trim();
 function sameQueuedPrompt(queued: string, echo: string): boolean {
-  const q = stripStudioSignal(queued);
-  if (!samePastedPrompt(q, echo)) return false;
-  const a = splitPastedImages(q);
-  const b = splitPastedImages(echo);
-  return [...a.images, ...a.files].join("\n") === [...b.images, ...b.files].join("\n");
+  return unquoted(queued) === unquoted(echo);
 }
 
 // claude writes one logical response as several assistant events (text split by
