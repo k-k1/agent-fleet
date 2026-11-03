@@ -43,6 +43,14 @@ set +x
   done
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/cf.seen"
+echo x >>"$STUB_DIR/cf.count"
+n=$(wc -l <"$STUB_DIR/cf.count")
+if [ "$n" -le "${STUB_CF_FAILS:-0}" ]; then
+  echo PARTIAL
+  echo "${STUB_CF_ERR:-Error: read ECONNRESET}" >&2
+  exit 1
+fi
+echo GOOD
 exit "${STUB_CF_EXIT:-0}"
 STUB
 chmod +x "$T/bin/"*
@@ -55,8 +63,8 @@ run() {
   local envs=()
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  rm -f "$T/cf.seen" "$T/agent.calls" "$T/agent.leak"
-  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_CONFLUENCE_REAL="$T/bin/confluence-real" \
+  rm -f "$T/cf.seen" "$T/agent.calls" "$T/agent.leak" "$T/cf.count"
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_CONFLUENCE_REAL="$T/bin/confluence-real" AF_CONFLUENCE_RETRY_WAIT=0 \
     "${envs[@]}" bash "$WRAPPER" "$@" >"$T/out" 2>"$T/err" </dev/null
   rc=$?
 }
@@ -225,7 +233,7 @@ run -- search 1
 reset; oauth_answer
 cat >"$T/bin/timeout" <<'STUB'
 #!/bin/sh
-echo "$*" >"$STUB_DIR/timeout.args"
+echo "$*" >>"$STUB_DIR/timeout.args"
 shift 3
 exec "$@"
 STUB
@@ -284,6 +292,40 @@ reset; oauth_answer; rm -f "$T/page.seen"
 run CONFLUENCE_API_TOKEN=mine -- read 1
 [ ! -f "$T/page.seen" ] || fail "own setup: the shim was used"
 [ -f "$T/cf.seen" ] || fail "own setup: the CLI did not run"
+
+# 18. Read-only commands are re-run after a transport failure (up to twice); only the last attempt
+# is shown. Writes, answered errors and unknown words run once.
+attempts() { [ -f "$T/cf.count" ] && wc -l <"$T/cf.count" || echo 0; }
+for cmdline in "search q" "spaces" "find T" "children 1" "comments 1" "attachments 1" "versions 1" "property-list 1"; do
+  reset; oauth_answer
+  # shellcheck disable=SC2086
+  run STUB_CF_FAILS=2 -- $cmdline
+  [ "$rc" = 0 ] && [ "$(attempts)" = 3 ] || fail "retry [$cmdline]: rc=$rc attempts=$(attempts), want 0 and 3"
+  [ "$(cat "$T/out")" = GOOD ] || fail "retry [$cmdline]: output '$(cat "$T/out")'"
+  [ ! -s "$T/err" ] || fail "retry [$cmdline]: a failed attempt's stderr reached the caller: $(cat "$T/err")"
+  expect "retry [$cmdline]" API_TOKEN fake-oauth-tok
+  no_leak "retry [$cmdline]" fake-oauth-tok
+done
+reset; oauth_answer
+run STUB_CF_FAILS=9 -- search q
+[ "$rc" = 1 ] && [ "$(attempts)" = 3 ] || fail "give up: rc=$rc attempts=$(attempts), want 1 and 3"
+grep -q "giving up after 3 attempts" "$T/err" && grep -q ECONNRESET "$T/err" || fail "give up: no explanation / last error"
+for cmdline in "delete 1" "comment 1 -m x" "attachment-upload 1 -f x" "attachment-delete 1 2" \
+  "attachments 1 -d" "attachments 1 --download" "attachments 1 -ld" "comment-delete 1" "move 1 2" "api x" "bogus-word"; do
+  reset; oauth_answer
+  # shellcheck disable=SC2086
+  run STUB_CF_FAILS=9 -- $cmdline
+  [ "$rc" = 1 ] && [ "$(attempts)" = 1 ] || fail "no retry [$cmdline]: rc=$rc attempts=$(attempts), want 1 and 1"
+  grep -q ECONNRESET "$T/err" || fail "no retry [$cmdline]: stderr lost"
+done
+for msg in "Error: Request failed with status code 404" "Error: Request failed with status code 503"; do
+  reset; oauth_answer
+  run STUB_CF_FAILS=9 "STUB_CF_ERR=$msg" -- search q
+  [ "$(attempts)" = 1 ] || fail "answered error [$msg]: attempts=$(attempts), want 1"
+done
+reset; oauth_answer
+run STUB_CF_FAILS=1 "STUB_CF_ERR=Error: timeout of 10000ms exceeded" -- search q
+[ "$(attempts)" = 2 ] || fail "axios timeout: attempts=$(attempts), want 2"
 
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2

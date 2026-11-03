@@ -369,3 +369,71 @@ func TestConfluencePageCreateChild(t *testing.T) {
 		t.Errorf("json: rc=%d out=%q", rc, out)
 	}
 }
+
+// seedConfluenceV2Resets drops the connection (what ECONNRESET looks like to the client) for the first n
+// requests of method m and answers normally after that.
+func seedConfluenceV2Resets(t *testing.T, m string, n int) (*fakeConfluence, func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	resets := 0
+	inner := standardV2("<p>x</p>", 3)
+	f := seedConfluenceV2(t, v2Scopes, inner)
+	// Wrap the fake's server: re-point CloudAPIBase at a proxy that resets first.
+	target := CloudAPIBase
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		drop := r.Method == m && resets < n && strings.Contains(r.URL.Path, "/wiki/api/v2/")
+		if drop {
+			resets++
+		}
+		mu.Unlock()
+		if drop {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+			return
+		}
+		req, _ := http.NewRequest(r.Method, target+r.URL.RequestURI(), r.Body)
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			w.WriteHeader(502)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(proxy.Close)
+	CloudAPIBase = proxy.URL
+	return f, func() int { mu.Lock(); defer mu.Unlock(); return resets }
+}
+
+// Reads survive a connection reset (the Agent's GETs are re-sent); writes are not.
+func TestConfluencePageReadRetriesAfterConnectionReset(t *testing.T) {
+	old := jiraRetryBase
+	jiraRetryBase = time.Millisecond
+	t.Cleanup(func() { jiraRetryBase = old })
+	for _, args := range [][]string{{"read", "101"}, {"info", "101"}, {"edit", "101"}, {"space-lookup", "ENG"}} {
+		_, resets := seedConfluenceV2Resets(t, "GET", 2)
+		rc, out, errs := runPage(args...)
+		if rc != 0 || out == "" || resets() != 2 {
+			t.Errorf("%v: rc=%d out=%q err=%q resets=%d", args, rc, out, errs, resets())
+		}
+	}
+}
+
+func TestConfluencePageWritesAreNotRetriedAfterConnectionReset(t *testing.T) {
+	old := jiraRetryBase
+	jiraRetryBase = time.Millisecond
+	t.Cleanup(func() { jiraRetryBase = old })
+	for name, args := range map[string][]string{
+		"POST": {"create", "T", "ENG", "-c", "x", "--format", "markdown"},
+		"PUT":  {"update", "101", "-c", "x", "--format", "markdown"},
+	} {
+		_, resets := seedConfluenceV2Resets(t, name, 1)
+		rc, _, errs := runPage(args...)
+		if rc != 1 || resets() != 1 || !strings.Contains(errs, "may or may not") {
+			t.Errorf("%s: rc=%d resets=%d err=%q", name, rc, resets(), errs)
+		}
+	}
+}

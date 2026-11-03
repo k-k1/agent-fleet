@@ -138,4 +138,70 @@ unset CONFLUENCE_ALLOW_INSECURE_HTTP CONFLUENCE_SITE_URL CONFLUENCE_EMAIL
 [ -z "$site" ] || export CONFLUENCE_SITE_URL="$site"
 [ "$auth" != basic ] || [ -z "$login" ] || export CONFLUENCE_EMAIL="$login"
 export CONFLUENCE_API_TOKEN="$tok"
+
+# Read-only commands are re-run after a transport failure, as the jira wrapper does (up to twice,
+# only the last attempt is shown). A word this does not know is a write: the direction to fail in
+# is "run once", because a lost answer to a create/update/delete/comment/upload may have been
+# applied. `attachments` reads unless it was asked to download (a file write); the page core
+# (read, info, edit, space-lookup) is answered by the Agent, whose HTTP client retries its GETs
+# and never its POST/PUT, so these words only reach here when there was no connection.
+readonly_cmd() {
+  case "$sub" in
+    search | read | info | spaces | space-lookup | find | children | comments | comment-lookup | \
+      attachment-lookup | versions | property-list | property-get) true ;;
+    attachments)
+      for arg in "$@"; do
+        case "$arg" in
+          --download | --download=* | --dest | --dest=* | -d | -[!-]*d*) return 1 ;;
+        esac
+      done ;;
+    *) false ;;
+  esac
+}
+# True when an attempt's stderr says no proper answer came back (node's socket errors and axios's
+# timeout). HTTP statuses are not in it: those were answered and a retry would not change them.
+transport_failure() {
+  grep -Eiq 'ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|EAI_AGAIN|socket hang up|Client network socket disconnected|timeout of [0-9]+ms exceeded' "$1" 2>/dev/null
+}
+# Runs the CLI into a private directory, re-running on a transport failure, then replays the last
+# attempt with the CLI's exit status. AF_CONFLUENCE_TIMEOUT bounds one attempt (seconds, default
+# 60, 0 = none); a timeout counts as a transport failure. AF_CONFLUENCE_RETRY_WAIT (ms) is for
+# the tests.
+run_read_only() {
+  local d n=0 rc wait lim="${AF_CONFLUENCE_TIMEOUT:-60}" tcmd=() late pid="" sig=""
+  d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
+  case "$lim" in "" | *[!0-9]*) lim=60 ;; esac
+  if [ "$lim" -gt 0 ] && command -v timeout >/dev/null 2>&1; then tcmd=(timeout -k 5 "$lim"); else lim=0; fi
+  trap 'rm -rf "$d"' EXIT
+  trap 'sig=1; [ -z "$pid" ] || kill -TERM "$pid" 2>/dev/null' INT TERM HUP
+  while :; do
+    late=""
+    "${tcmd[@]}" "$real" "$@" >"$d/out" 2>"$d/err" </dev/null &
+    pid=$!
+    wait "$pid"; rc=$?
+    while kill -0 "$pid" 2>/dev/null; do wait "$pid"; rc=$?; done
+    pid=""
+    [ -z "$sig" ] || exit 130
+    if [ "$lim" -gt 0 ] && { [ "$rc" = 124 ] || [ "$rc" = 137 ]; }; then
+      late=1
+      echo "confluence: no answer within $lim s (AF_CONFLUENCE_TIMEOUT sets the limit, 0 = none)" >>"$d/err"
+    fi
+    if [ "$rc" -eq 0 ] || { [ -z "$late" ] && ! transport_failure "$d/err"; }; then break; fi
+    if [ "$n" -ge 2 ]; then
+      echo "confluence: giving up after $((n + 1)) attempts: Confluence did not answer" >&2
+      break
+    fi
+    n=$((n + 1))
+    wait="${AF_CONFLUENCE_RETRY_WAIT:-$((n * 500 + RANDOM % (n * 500 + 1)))}"
+    case "$wait" in *[!0-9]*) wait=0 ;; esac
+    sleep "$((wait / 1000)).$(printf '%03d' "$((wait % 1000))")"
+    [ -z "$sig" ] || exit 130
+  done
+  cat "$d/out"
+  cat "$d/err" >&2
+  exit "$rc"
+}
+if readonly_cmd "$@" && [ ! -t 1 ] && [ ! -t 2 ]; then
+  run_read_only "$@"
+fi
 exec "$real" "$@"
