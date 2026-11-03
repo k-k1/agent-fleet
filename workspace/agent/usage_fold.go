@@ -310,6 +310,58 @@ type usageTurnRow struct {
 	Route, Billing string
 	routeSet       bool // a call has been noted
 	routeMixed     bool // the noted calls disagreed
+	// segs are the row's contributions in order, adjacent ones with the same evidence merged. A
+	// mixed row keeps them (settleRoute) only when every contribution proves its billing, which
+	// is what makes the boundary between two of them provable; usageRecordsOf then writes one
+	// ledger row per segment.
+	segs []usageSeg
+}
+
+// usageSeg is a run of consecutive calls of one logical turn with the same route and billing.
+// Out and CostUSD are additive. The turn's input and cache figures replace on each call (see
+// foldTurnRows), so they sit on the segment of the call that last reported any, and the segments
+// add up to exactly the row's totals.
+type usageSeg struct {
+	Route, Billing string
+	Tokens         usagex.Tokens
+	CostUSD        float64
+	TS, Model      string
+}
+
+// pushSeg appends a contribution, merging it into the last segment when the evidence is the same.
+func (r *usageTurnRow) pushSeg(s usageSeg) {
+	if n := len(r.segs); n > 0 && r.segs[n-1].Route == s.Route && r.segs[n-1].Billing == s.Billing {
+		l := &r.segs[n-1]
+		l.Tokens.Out += s.Tokens.Out
+		l.CostUSD += s.CostUSD
+		if s.TS != "" {
+			l.TS = s.TS
+		}
+		if s.Model != "" {
+			l.Model = s.Model
+		}
+		if s.Tokens.In+s.Tokens.CacheRead+s.Tokens.CacheCreate > 0 {
+			l.Tokens.In, l.Tokens.CacheRead, l.Tokens.CacheCreate = s.Tokens.In, s.Tokens.CacheRead, s.Tokens.CacheCreate
+		}
+		return
+	}
+	r.segs = append(r.segs, s)
+}
+
+// pushCall records one call (or cost-only step) of the turn as a contribution. A call that
+// reports input takes the input and cache figures off every earlier segment: they replace.
+func (r *usageTurnRow) pushCall(t transcript.Turn, withTokens bool) {
+	s := usageSeg{Route: t.Route, Billing: t.Billing, CostUSD: t.CostUSD, TS: t.TS, Model: t.Model}
+	if withTokens {
+		s.Tokens.Out = t.OutTok
+		if t.InTok+t.CacheRead+t.CacheCreate > 0 {
+			s.Tokens.In, s.Tokens.CacheRead, s.Tokens.CacheCreate = t.InTok, t.CacheRead, t.CacheCreate
+			for i := range r.segs {
+				r.segs[i].Tokens.In, r.segs[i].Tokens.CacheRead, r.segs[i].Tokens.CacheCreate = 0, 0, 0
+			}
+		}
+	}
+	r.pushSeg(s)
 }
 
 // noteRoute folds one call's route and billing evidence into the row. The first call sets
@@ -337,9 +389,22 @@ func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
 }
 
 // settleRoute clears a mixed row's route and billing before it leaves the fold.
+//
+// A mixed row whose every contribution proves its billing keeps its segments instead (see
+// usageSeg): the boundary between two proven calls is itself proven. One contribution without
+// billing evidence makes the whole row unresolved, because where the unproven call's charge
+// began cannot be told.
 func (r *usageTurnRow) settleRoute() {
-	if r.routeMixed {
-		r.Route, r.Billing = "", ""
+	if !r.routeMixed {
+		r.segs = nil
+		return
+	}
+	r.Route, r.Billing = "", ""
+	for _, s := range r.segs {
+		if s.Billing == "" {
+			r.segs = nil
+			return
+		}
 	}
 }
 
@@ -384,6 +449,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			if p := pending[i]; p.CostUSD > 0 {
 				p.Orphan = true
 				p.settleRoute()
+				p.segs = nil           // an orphan is one keyed row
 				if p.OrphanKey == "" { // no message id: the best stable stand-in there is
 					p.OrphanKey = fmt.Sprintf("ts:%s#%d", p.TS, p.LastIdx)
 				}
@@ -397,6 +463,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			if inGroup && cur.Sidechain == t.Sidechain {
 				cur.CostUSD += t.CostUSD
 				cur.noteRoute(t.Route, t.Billing)
+				cur.pushCall(t, false)
 				continue
 			}
 			p := &pending[side(t.Sidechain)]
@@ -405,6 +472,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			}
 			p.CostUSD += t.CostUSD
 			p.noteRoute(t.Route, t.Billing)
+			p.pushCall(t, false)
 			if t.TS != "" {
 				p.TS = t.TS
 			}
@@ -435,10 +503,14 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			if p := &pending[side(sidechain)]; p.CostUSD > 0 {
 				cur.CostUSD = p.CostUSD
 				cur.absorbRoute(*p)
+				for _, sg := range p.segs {
+					cur.pushSeg(sg)
+				}
 				*p = usageTurnRow{}
 			}
 		}
 		cur.noteRoute(t.Route, t.Billing)
+		cur.pushCall(t, true)
 		cur.Tokens.Out += t.OutTok
 		cur.CostUSD += t.CostUSD
 		if t.InTok+t.CacheRead+t.CacheCreate > 0 {
@@ -820,7 +892,7 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	}
 	out := make([]usagex.Record, 0, len(fresh))
 	for _, r := range fresh {
-		out = append(out, usageRecordOf(m, r, ""))
+		out = append(out, usageRecordsOf(m, r)...)
 	}
 	// If the rows could not be written, do not advance the watermark. The same turns come
 	// back as a delta on the next pass, so what was missed is always recovered once the
@@ -870,6 +942,39 @@ func rebaseCappedMark(m session.Meta, mark usageFoldMark, rows []usageTurnRow) u
 	}
 	mark.Groups = max(mark.Groups, behind)
 	return mark
+}
+
+// usageRecordsOf is the ledger rows of one folded logical turn of the session's own transcript:
+// one row, or one per billing segment when the turn crossed a proven billing boundary. The
+// segments share Idx and Call, so the turn is still one call in the aggregation (the representative
+// rule of aggregateUsageRows). The first keeps the turn's place in the (ref, idx) sequence; the
+// others carry a key of their own, because that sequence would drop a second row at the same idx
+// as a replay. The key includes the turn's time so a recycled session name does not collide.
+func usageRecordsOf(m session.Meta, r usageTurnRow) []usagex.Record {
+	if len(r.segs) < 2 {
+		return []usagex.Record{usageRecordOf(m, r, "")}
+	}
+	out := make([]usagex.Record, 0, len(r.segs))
+	for k, sg := range r.segs {
+		seg := r
+		seg.segs = nil
+		seg.Route, seg.Billing, seg.Tokens, seg.CostUSD = sg.Route, sg.Billing, sg.Tokens, sg.CostUSD
+		if sg.TS != "" {
+			seg.TS = sg.TS
+		}
+		if sg.Model != "" {
+			seg.Model = sg.Model
+		}
+		rec := usageRecordOf(m, seg, "")
+		if k > 0 {
+			rec.Call = out[0].Call
+			rec.Key = fmt.Sprintf("%s:%s:seg:%s#%d.%d", m.Kind, m.Name, r.TS, r.Idx, k)
+		} else {
+			rec.Call = chatx.RandUUID()
+		}
+		out = append(out, rec)
+	}
+	return out
 }
 
 // usageRecordOf is the ledger record of one folded row. agent is "" for the session's own
