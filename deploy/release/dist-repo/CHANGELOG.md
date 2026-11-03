@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.40.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.40.0) — 2026-11-03
+
+Sessions can use Confluence through a bundled `confluence` CLI on the existing Jira connection, and
+session rows now show when a pull request has requested changes or a merge conflict.
+Background shells can be stopped one by one, a Start working draft can be set aside as a memo, and
+Claude's idle compaction can be switched off.
+
 ## [0.39.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.39.0) — 2026-11-02
 
 Sessions now link themselves to the issues, tickets and pull requests they work on, and tell you

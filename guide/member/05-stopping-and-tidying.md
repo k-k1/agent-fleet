@@ -102,7 +102,7 @@ Archived sessions are a "shelf" that cleanup does not touch (restore them from t
 browser). The conversation stays on the shelf, but the session's scratch folder (`~/.af-work/<session name>`,
 what agents use as `$AF_WORK_DIR`) is removed 7 days after archiving; restoring clears the date (restore within 7
 days and the folder is kept; one already removed is created afresh at the next launch). A locked session's
-folder is kept while it is locked; once unlocked, the next pass removes it if the 7 days are already up. "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
+folder is kept while it is locked; once unlocked, the next pass removes it if the 7 days are already up. To free the space sooner, delete them now from [Settings › Machine](20-settings.md#machine) › Leftover files. "Delete old ones" in the archive list deletes items older than 30 days in one go (they go to the trash too).
 
 You can also ask the Fleet Operator to do the same survey and tidy-up from chat
 ([11](11-many-sessions.md)).
@@ -187,7 +187,8 @@ before.
   recorded. Ignored files (`node_modules`, `.env`, …) never come back, and nothing can be
   recreated once the parent working copy is gone.
 - Right-click a working copy's row and choose **"Archived sessions of this working copy"** to open
-  the archive for that folder only.
+  the archive for that folder only, together with the archived child sessions started from sessions
+  in it (children run in worktrees of their own).
 
 When you open a stopped session, the history is first shown read-only, and **"Resume"** restarts
 the conversation. After resuming, it continues with the execution method that was saved.

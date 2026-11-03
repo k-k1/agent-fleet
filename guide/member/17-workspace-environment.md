@@ -14,7 +14,7 @@ In **⚙ Settings → the "Toolchains" tab** you can adjust the workspace enviro
 shells started afterwards** (running ones and existing processes pick them up after you stop and then start the
 workspace again).
 
-- **Time zone (TZ)**: the default is Japan time. Applying a change requires stopping and starting the workspace.
+- **Time zone (TZ)**: the default is Japan time. Applying a change requires stopping and starting the workspace. This is the clock of the shells and agents; dates the Console shows, and notices the Agent writes, follow Settings > Display > Time zone instead ([20](20-settings.md#display)).
 - **Node.js / Java (JAVA_HOME) / Go**: pick the versions to use. The Node.js and Java lists also offer
   versions that are **not in this workspace yet**; picking one shows a button naming the version it
   installs (for example **Install 17.0.21+9**) that fetches it right there (Java about 200MB; both go into

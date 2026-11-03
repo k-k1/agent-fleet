@@ -126,7 +126,7 @@ When you have set **your own llama.cpp connection** in ⚙ Settings → Agents
 ([09](09-agents.md#lcpp)), the **Chat** pill reports that connection instead of the deployment's
 engine: **Connected**, **Not reachable** or **Checking**, and its popover says **"Your own
 connection. Not this deployment's engine."** together with the model the last check found
-(**"Model: …"**).
+(**"Model: …"**). With your own connection set and **"Use llama.cpp"** Off, no Chat pill is shown.
 
 ## Other badges
 

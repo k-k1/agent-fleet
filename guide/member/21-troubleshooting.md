@@ -211,7 +211,8 @@ Check its row in the **Schedules** section of the left pane.
 
 They won't appear if the browser's notification permission is off (you're asked to allow it the first time). Also, notifications are
 **suppressed** while you have that session's screen open. shell / ssm are outside the scope of state notifications
-([03](03-starting-sessions.md#reading-state-badges-and-notifications)).
+([03](03-starting-sessions.md#reading-state-badges-and-notifications)). A window showing **"Live updates paused — click to resume"**
+paused after 10 idle minutes; click it.
 
 ### claude doesn't know `/list-agents`, or says it can't message another session
 
@@ -328,6 +329,12 @@ region setting) and send again ([09](09-agents.md#when-the-provider-returns-an-e
 
 The band appears in **Managed** sessions. A **Terminal (CLI)** session has no band; opencode's
 own retry output is in the terminal.
+
+### Starting opencode says "This opencode version is not supported"
+
+The opencode the workspace runs is older than 2, usually one you installed or pinned yourself.
+Agent Fleet runs only opencode 2 (`@opencode/cli`): remove the old one, or pin a 2.x release, and
+start the session again.
 
 ## Assistants
 

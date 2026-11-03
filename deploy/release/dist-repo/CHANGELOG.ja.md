@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.40.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.40.0) — 2026-11-03
+
+セッションは、同梱の `confluence` CLI で既存の Jira 接続のまま Confluence を使えるようになり、
+セッションの行にはプルリクエストの修正依頼とマージコンフリクトが出るようになりました。
+バックグラウンドのシェルを 1 件ずつ止められ、「作業を始める」の下書きをメモに退避でき、Claude の
+アイドル中の自動圧縮をオフにできます。
+
 ## [0.39.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.39.0) — 2026-11-02
 
 セッションが取り組んでいる Issue・チケット・プルリクエストに自分でリンクし、プルリクエストがマージ可能・
