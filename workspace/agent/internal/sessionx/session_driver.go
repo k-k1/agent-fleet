@@ -126,7 +126,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 
 	// The relaunch below starts the CLI: refuse it with the reason, before the old runtime is
 	// stopped, its held input dropped or its status cleared, when that CLI failed to install.
-	if ref := startRefusal(m.Kind); ref != nil {
+	if ref := startRefusalOf(m); ref != nil {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}

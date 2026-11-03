@@ -1,6 +1,7 @@
 package mcpsrv
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
@@ -97,4 +98,24 @@ func createRouteArg(kind, route, connection string) (map[string]any, error) {
 		out["connection"] = connection
 	}
 	return out, nil
+}
+
+// createRouteArgs reads route / route_connection from the raw tool arguments. The key check
+// does not look at types and argStr turns a non-string into "", which here would drop an
+// explicit selection and create on the default route, so a value that is present and is not a
+// string is refused. A JSON null counts as absent.
+func createRouteArgs(kind string, args map[string]any) (map[string]any, error) {
+	var vals [2]string
+	for i, k := range [2]string{"route", "route_connection"} {
+		v, present := args[k]
+		if !present || v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string (got %T); the route is chosen by its id, e.g. route=\"anthropic-api\"", k, v)
+		}
+		vals[i] = s
+	}
+	return createRouteArg(kind, vals[0], vals[1])
 }

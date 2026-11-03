@@ -3,6 +3,7 @@ package sessionx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -232,10 +233,60 @@ func TestIdempotencyFingerprintSeesRoute(t *testing.T) {
 	if a == b || b == c {
 		t.Errorf("fingerprints collide: %s %s %s", a, b, c)
 	}
-	// Pinned: the fingerprint of a create without a selection is the one it was before the field.
-	if a != createIdempotencyKey(&CreateReq{ReportTo: "conv", Kind: "claude", Dir: "/x"}) {
-		t.Error("fingerprint of a create with no selection is not stable")
+	// Pinned as a literal computed by the implementation before the field existed: a create
+	// without a selection must keep hashing to this, or retried creates stop de-duplicating.
+	const wantPlain = "fp_dc91be9e1d59f3482ad9fb5067a97cf1e12b422966007199b12f974c9e37d573"
+	if a != wantPlain {
+		t.Errorf("fingerprint with no selection = %s, want the pre-route value %s", a, wantPlain)
 	}
+}
+
+// A stored selection is checked again at every start of a stored session, not only at create:
+// the start endpoint, a Managed resume, and an execution-method switch. A selection nothing can
+// honour any more must stop the start with its own code, never launch on the default route.
+func TestStoredRouteIsRevalidatedOnStart(t *testing.T) {
+	sel := &routes.Selection{Route: "openai-api", Connection: "c1"}
+	t.Run("start endpoint", func(t *testing.T) {
+		home := writebackEnv(t)
+		session.WriteMeta(session.Meta{Name: "rstart1", Dir: home, Kind: session.KindCodex, Driver: session.DriverManaged,
+			StoppedAt: "2026-09-25T10:00:00+09:00", Route: sel})
+		launched := false
+		useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { launched = true }})
+		rec := callHandler(HandleStartSession, http.MethodPost, "rstart1", "")
+		if rec.Code == http.StatusOK || launched || routeCode(t, rec.Body.String()) != routes.CodeRouteUnsupported {
+			t.Errorf("start = %d launched=%v %s, want a route_unsupported refusal and no launch", rec.Code, launched, rec.Body.String())
+		}
+	})
+	t.Run("managed resume", func(t *testing.T) {
+		m := session.Meta{Name: "rres1", Kind: session.KindCodex, Driver: session.DriverManaged, Route: sel}
+		_, err := resumeManaged(nil, m) // a nil driver: the refusal must come first
+		var re *StartRefusalError
+		if !errors.As(err, &re) || re.Ref.Code != routes.CodeRouteUnsupported {
+			t.Errorf("resumeManaged err = %v, want a route_unsupported start refusal", err)
+		}
+	})
+	t.Run("driver switch", func(t *testing.T) {
+		home := writebackEnv(t)
+		session.WriteMeta(session.Meta{Name: "rdrv1", Dir: home, Kind: session.KindCodex, Route: sel})
+		launched := false
+		useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { launched = true }})
+		rec := callHandler(HandleSessionDriver, http.MethodPost, "rdrv1", `{"driver":"managed"}`)
+		cur, _ := session.ReadMeta("rdrv1")
+		if rec.Code == http.StatusOK || launched || cur.DriverKind() != session.DriverTUI ||
+			routeCode(t, rec.Body.String()) != routes.CodeRouteUnsupported {
+			t.Errorf("switch = %d launched=%v driver=%q %s, want a refusal before anything stops or starts",
+				rec.Code, launched, cur.Driver, rec.Body.String())
+		}
+	})
+	t.Run("no selection starts as before", func(t *testing.T) {
+		home := writebackEnv(t)
+		session.WriteMeta(session.Meta{Name: "rnone1", Dir: home, Kind: session.KindCodex, Driver: session.DriverManaged,
+			StoppedAt: "2026-09-25T10:00:00+09:00"})
+		useLockingDriver(t, session.KindCodex, &lockingDriver{})
+		if rec := callHandler(HandleStartSession, http.MethodPost, "rnone1", ""); rec.Code != http.StatusOK {
+			t.Errorf("start without a selection = %d %s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestMetaRouteWire(t *testing.T) {

@@ -35,13 +35,20 @@ func TestCreateSessionRouteThroughTheTool(t *testing.T) {
 		"with connection":  {"initial_prompt": "x", "route": "anthropic-api", "route_connection": "c1"},
 		"unknown route":    {"initial_prompt": "x", "route": "nope"},
 		"connection alone": {"initial_prompt": "x", "route_connection": "c1"},
+		// The REST body's shape used by mistake, and other wrong types: refused, never dropped.
+		"object route": {"initial_prompt": "x", "route": map[string]any{"route": "anthropic-api"}},
+		"number route": {"initial_prompt": "x", "route": 1},
+		"bool route":   {"initial_prompt": "x", "route": true},
+		"array route":  {"initial_prompt": "x", "route": []any{"anthropic-api"}},
+		"object conn":  {"initial_prompt": "x", "route": "anthropic-api", "route_connection": map[string]any{}},
+		"number conn":  {"initial_prompt": "x", "route_connection": 7},
 	} {
 		text, isErr := memCall(t, cp, scopeWrite, "create_session", args)
 		if !isErr || !strings.Contains(text, "route") || cp.calls != 0 {
 			t.Errorf("%s: %q isErr=%v calls=%d, want a route refusal before the Agent", name, text, isErr, cp.calls)
 		}
 	}
-	if _, isErr := memCall(t, cp, scopeWrite, "create_session", map[string]any{"initial_prompt": "x"}); isErr {
+	if _, isErr := memCall(t, cp, scopeWrite, "create_session", map[string]any{"initial_prompt": "x", "route": nil}); isErr {
 		t.Fatal("a create without a route was refused")
 	}
 	if cp.calls != 1 || strings.Contains(cp.gotBody, `"route`) {

@@ -127,7 +127,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 		}
 		// Only a start that would launch a process is refused; an already-alive session
 		// returned above and stays idempotent.
-		if ref := startRefusal(m.Kind); ref != nil {
+		if ref := startRefusalOf(m); ref != nil {
 			return &StartRefusalError{ref}
 		}
 		if _, err := mcpx.StartManagedSession(d, m); err != nil {
@@ -155,7 +155,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	if !ok {
 		return fmt.Errorf("no meta for session %s", name)
 	}
-	if ref := startRefusal(m.Kind); ref != nil {
+	if ref := startRefusalOf(m); ref != nil {
 		return &StartRefusalError{ref}
 	}
 	recallSettings(&m)

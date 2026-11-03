@@ -726,7 +726,7 @@ func memberTools() []mcpTool {
 				if err := agentkinds.CheckCreateKind(kind); err != nil {
 					return "", err
 				}
-				route, aerr := createRouteArg(kind, argStr(args, "route"), argStr(args, "route_connection"))
+				route, aerr := createRouteArgs(kind, args)
 				if aerr != nil {
 					return "", aerr
 				}

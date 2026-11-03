@@ -7,6 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Route selection (ADR 0128 decisions 3, 4, 12, 13). A session may carry an explicit selection
@@ -70,4 +71,21 @@ func (c *createRun) checkRoute() bool {
 		return false
 	}
 	return true
+}
+
+// startRefusalOf is startRefusal for a launch of a stored session: the kind's own refusal, then
+// the session's stored route selection checked again (static list and live checks). A selection
+// is persisted, so an adapter that has since stopped declaring the route, an Agent rolled back
+// to a version without it, or a connection that expired must stop the start with the reason,
+// never launch the session on its default route. A nil selection adds nothing. Used by every
+// start that relaunches a stored session: the start endpoints, a Managed input that resumes
+// the runtime, and an execution-method switch (before the old runtime is stopped).
+func startRefusalOf(m session.Meta) *SpawnRefusal {
+	if ref := startRefusal(m.Kind); ref != nil {
+		return ref
+	}
+	if ref := checkRouteLive(context.Background(), m.Kind, m.Route, m.Model); ref != nil {
+		return &SpawnRefusal{Status: ref.Status, Code: ref.Code, Message: ref.Message}
+	}
+	return nil
 }
