@@ -5,8 +5,9 @@
 //
 // "auto" (or "", or a tag outside the table) is not a layout of its own: the caller's layout
 // is used as it is, so an unset member sees exactly what the Agent wrote before the setting
-// existed. The zone follows the same rule: a name that is not a loadable IANA zone falls back
-// to time.Local, and nothing here returns an error.
+// existed. The zone is the explicit timeZone, else the browser's published zone, else time.Local
+// (uiprefs.ZoneName); a name that is not a loadable IANA zone is skipped, and nothing here
+// returns an error.
 package regionfmt
 
 import (
@@ -24,10 +25,10 @@ var layouts = map[string]string{
 	"fr-FR": "02/01/2006 15:04",
 }
 
-// Location is the zone for the member's explicit timeZone setting, time.Local when it is unset
-// ("auto": the Agent cannot see the browser) or not a loadable zone.
+// Location is the member's zone: their explicit timeZone setting, else the browser's zone the
+// Console published (uiprefs.ZoneName), else time.Local.
 func Location() *time.Location {
-	return zone(uiprefs.TimeZone())
+	return zone(uiprefs.EffectiveTimeZone())
 }
 
 func zone(name string) *time.Location {
@@ -48,14 +49,10 @@ func DateTime(t time.Time, fallbackLayout string) string {
 	// generations.
 	p := uiprefs.Read()
 	region, _ := p["regionFormat"].(string)
-	tz, _ := p["timeZone"].(string)
 	if region == "auto" {
 		region = ""
 	}
-	if tz == "auto" {
-		tz = ""
-	}
-	return format(t, fallbackLayout, region, tz)
+	return format(t, fallbackLayout, region, uiprefs.ZoneName(p))
 }
 
 func format(t time.Time, fallbackLayout, region, tz string) string {

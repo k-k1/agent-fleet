@@ -31,6 +31,14 @@ describe("exportablePrefs", () => {
     const out = exportablePrefs({ theme: "light", legacyThing: 1 }, DEFAULTS);
     expect(out).toEqual({ theme: "light" });
   });
+
+  it("never exports or imports the machine-written browserTimeZone", () => {
+    const defaults = { ...DEFAULTS, browserTimeZone: "" };
+    expect(exportablePrefs({ theme: "light", browserTimeZone: "Asia/Tokyo" }, defaults)).toEqual({ theme: "light" });
+    const { patch, skipped } = sanitizeImportedPrefs({ theme: "light", browserTimeZone: "Asia/Tokyo" }, defaults);
+    expect(patch).toEqual({ theme: "light" });
+    expect(skipped).toEqual(["browserTimeZone"]);
+  });
 });
 
 describe("toSsmSection", () => {

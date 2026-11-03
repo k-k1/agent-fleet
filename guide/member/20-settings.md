@@ -58,6 +58,10 @@ Everything about appearance.
   travel. Pick a zone to pin it instead. Dates and times across the Console, including the session
   mirror, and the times in files the Agent writes (the Markdown export) use it, and a change applies immediately, without restarting the workspace.
   Notifications, the assistant chat and schedules do not use these two settings yet.
+  With "follow browser", the Console also tells your workspace which zone this browser is in, whenever
+  you open it or come back to it, so the Agent's own text (the usage-limit resume notice, the Markdown
+  export) uses that zone instead of the workspace clock. If you use several devices, the one you used
+  last decides; a pinned zone always wins.
 - **Colour theme**: besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
