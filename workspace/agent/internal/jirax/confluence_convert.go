@@ -185,14 +185,16 @@ func parseStorage(s string) *sNode {
 
 // StorageToMarkdown renders storage format as Markdown.
 func StorageToMarkdown(storage string) string {
-	r := newStorageWriter(true, storage)
-	return r.finish(r.blocks(parseStorage(storage).children))
+	root := parseStorage(storage)
+	r := newStorageWriter(true, root)
+	return r.finish(r.blocks(root.children))
 }
 
 // StorageToText renders storage format as plain text.
 func StorageToText(storage string) string {
-	r := newStorageWriter(false, storage)
-	return r.finish(r.blocks(parseStorage(storage).children))
+	root := parseStorage(storage)
+	r := newStorageWriter(false, root)
+	return r.finish(r.blocks(root.children))
 }
 
 type storageWriter struct {
@@ -207,11 +209,33 @@ type storageWriter struct {
 	unprot *strings.Replacer
 }
 
-func newStorageWriter(md bool, doc string) *storageWriter {
+// newStorageWriter picks the markers from the parsed tree, not the raw text: a character written
+// as an entity (&#xE000;) is absent from the raw storage and present after decoding.
+func newStorageWriter(md bool, doc *sNode) *storageWriter {
 	w := &storageWriter{md: md}
+	used := map[rune]bool{}
+	var walk func(n *sNode)
+	walk = func(n *sNode) {
+		note := func(s string) {
+			for _, r := range s {
+				if r >= 0xE000 && r <= 0xF8FF {
+					used[r] = true
+				}
+			}
+		}
+		note(n.text)
+		for k, v := range n.attr {
+			note(k)
+			note(v)
+		}
+		for _, c := range n.children {
+			walk(c)
+		}
+	}
+	walk(doc)
 	n := 0
 	for r := rune(0xE000); r <= 0xF8FF && n < 4; r++ {
-		if !strings.ContainsRune(doc, r) {
+		if !used[r] {
 			w.mark[n] = r
 			n++
 		}

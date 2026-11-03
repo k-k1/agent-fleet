@@ -303,3 +303,20 @@ func TestConfluenceCodeInTableCellKeepsEveryLine(t *testing.T) {
 		}
 	}
 }
+
+// The same characters written as hex/decimal entities and as CDATA literals: markers are chosen
+// from the decoded tree, so none of them is mistaken for a whitespace marker.
+func TestConfluenceReadKeepsPrivateUseEntities(t *testing.T) {
+	in := "<p>外字&#xE000;&#xE001;&#xE002;&#xE003;&#57344;&#57345;終</p>" +
+		`<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[` + " \n\n" + `]]></ac:plain-text-body></ac:structured-macro>`
+	pua := "\ue000\ue001\ue002\ue003\ue000\ue001"
+	md, txt := StorageToMarkdown(in), StorageToText(in)
+	for name, got := range map[string]string{"markdown": md, "text": txt} {
+		if !strings.Contains(got, "外字"+pua+"終") {
+			t.Errorf("%s lost the entity characters: %q", name, got)
+		}
+		if !strings.Contains(got, " \n") {
+			t.Errorf("%s lost the CDATA characters: %q", name, got)
+		}
+	}
+}
