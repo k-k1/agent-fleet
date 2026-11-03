@@ -246,5 +246,5 @@ func cloneSessions(l []sessionWire) []sessionWire {
 // the isolation boundary: snap is read by every subscriber of the workspace, and
 // applyInboxOrigins writes into the slice it is given.
 func (a eventsAPI) memberSessions(ctx context.Context, res *resolved, snap *hubSnapshot) map[string]any {
-	return map[string]any{"sessions": a.ws.applyInboxOrigins(ctx, res.mv, snap.sessions)}
+	return map[string]any{"sessions": a.ws.applyInboxOrigins(ctx, res.mv, cloneSessions(snap.sessions))}
 }
