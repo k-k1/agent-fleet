@@ -136,8 +136,15 @@ func oldMoveTargetReason(source, target string) string {
 	return "not_an_agent"
 }
 
+// moveFrozenKinds are the kinds that existed when the old lists were pinned. A kind registered
+// later is checked by declaration (TestMoveTargetDeclaredKindsAreConsistent), never against the
+// old literals, so adding a kind needs no edit here.
+var moveFrozenKinds = []string{
+	"claude", "codex", "opencode", "lcpp", "copilot", "muse", "kiro", "cursor", "agy", "shell", "ssm",
+}
+
 func TestMoveTargetDeclarationsMatchOldLists(t *testing.T) {
-	kinds := append(RegisteredKinds(), "", "Claude", "claude-code", "codex-cli", "antigravity",
+	kinds := append(slices.Clone(moveFrozenKinds), "", "Claude", "claude-code", "codex-cli", "antigravity",
 		"kiro-cli", "cursor-agent", "github-copilot", "llamacpp", "llama.cpp", "unknown", " cursor")
 	for _, src := range kinds {
 		for _, tgt := range kinds {
@@ -146,11 +153,56 @@ func TestMoveTargetDeclarationsMatchOldLists(t *testing.T) {
 			}
 		}
 	}
-	if got := slices.Sorted(slices.Values(moveTargetKinds())); !slices.Equal(got, slices.Sorted(slices.Values(oldMoveTargetKinds))) {
-		t.Errorf("moveTargetKinds() = %v", got)
+	// The frozen set is itself pinned: dropping an old kind from it would silently turn that
+	// kind into a "new" one and lift its pin.
+	if got := slices.Sorted(slices.Values(moveFrozenKinds)); !slices.Equal(got,
+		[]string{"agy", "claude", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode", "shell", "ssm"}) {
+		t.Errorf("moveFrozenKinds changed: %v", got)
 	}
-	if got := moveUnmeasuredTargets(); !slices.Equal(got, oldMoveUnmeasuredTargets) {
-		t.Errorf("moveUnmeasuredTargets() = %v", got)
+	// Restricted to the frozen kinds, the derived lists equal the old literals.
+	inFrozen := func(ks []string) []string {
+		var out []string
+		for _, k := range ks {
+			if slices.Contains(moveFrozenKinds, k) {
+				out = append(out, k)
+			}
+		}
+		return out
+	}
+	if got := slices.Sorted(slices.Values(inFrozen(moveTargetKinds()))); !slices.Equal(got, slices.Sorted(slices.Values(oldMoveTargetKinds))) {
+		t.Errorf("moveTargetKinds() over the frozen kinds = %v", got)
+	}
+	if got := inFrozen(moveUnmeasuredTargets()); !slices.Equal(got, oldMoveUnmeasuredTargets) {
+		t.Errorf("moveUnmeasuredTargets() over the frozen kinds = %v", got)
+	}
+}
+
+// For any registered kind outside the frozen set, what it declares decides its answer: a kind with
+// no MoveTarget is not a target, a measured one is, an unmeasured one reads not_measured. A new kind
+// that follows this needs no test edit.
+func TestMoveTargetDeclaredKindsAreConsistent(t *testing.T) {
+	measured, unmeasured := moveTargetKinds(), moveUnmeasuredTargets()
+	for _, k := range RegisteredKinds() {
+		if slices.Contains(moveFrozenKinds, k) {
+			continue
+		}
+		a, _ := RegisteredAgent(k)
+		m, declared := a.(agents.MoveTarget)
+		got := moveTargetReason("other", k)
+		switch {
+		case !declared:
+			if got == "" || slices.Contains(measured, k) || slices.Contains(unmeasured, k) {
+				t.Errorf("%s declares no MoveTarget but reports %q (measured=%v unmeasured=%v)", k, got, slices.Contains(measured, k), slices.Contains(unmeasured, k))
+			}
+		case m.MoveTarget() == agents.MoveTargetMeasured:
+			if got != "" || !slices.Contains(measured, k) || slices.Contains(unmeasured, k) {
+				t.Errorf("%s declares a measured target but reports %q", k, got)
+			}
+		case m.MoveTarget() == agents.MoveTargetUnmeasured:
+			if got != moveTargetNotMeasured || !slices.Contains(unmeasured, k) || slices.Contains(measured, k) {
+				t.Errorf("%s declares an unmeasured target but reports %q, want %q", k, got, moveTargetNotMeasured)
+			}
+		}
 	}
 }
 

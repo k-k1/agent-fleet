@@ -255,9 +255,16 @@ func TestInstructionsPreviewOpencode2ShowsOnlyTheUserBlock(t *testing.T) {
 
 // oldInstrUnsupported is the hand-kept list instrUnsupported held before the declaration moved
 // into each kind's package. It is deliberately a literal copy: the derived answer must equal it
-// for every registered kind, and for a spelling or kind the old exact-match loop never matched.
+// for every kind in instrFrozenKinds, and for a spelling the old exact-match loop never matched.
 var oldInstrUnsupported = []struct{ kind, reason string }{
 	{"cursor", "no_user_scope"},
+}
+
+// instrFrozenKinds are the kinds that existed when the pin was taken. A kind registered later is
+// checked by declaration (below), never against oldInstrUnsupported, so adding a kind needs no
+// edit here.
+var instrFrozenKinds = []string{
+	"claude", "codex", "opencode", "lcpp", "copilot", "muse", "kiro", "cursor", "agy", "shell", "ssm",
 }
 
 func TestInstrUnsupportedMatchesOldList(t *testing.T) {
@@ -269,7 +276,13 @@ func TestInstrUnsupportedMatchesOldList(t *testing.T) {
 		}
 		return ""
 	}
-	probes := append([]string{"Cursor", "CURSOR", " cursor", "", "unknown-kind", "cursor-agent"}, sessionx.RegisteredKinds()...)
+	// The frozen set is itself pinned: dropping an old kind from it would silently turn that
+	// kind into a "new" one and lift its pin.
+	if got := slices.Sorted(slices.Values(instrFrozenKinds)); !slices.Equal(got,
+		[]string{"agy", "claude", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode", "shell", "ssm"}) {
+		t.Errorf("instrFrozenKinds changed: %v", got)
+	}
+	probes := append([]string{"Cursor", "CURSOR", " cursor", "", "unknown-kind", "cursor-agent"}, instrFrozenKinds...)
 	for _, kind := range probes {
 		if got, want := instrUnsupportedOf(kind), old(kind); got != want {
 			t.Errorf("instrUnsupportedOf(%q) = %q, old list says %q", kind, got, want)
@@ -285,34 +298,89 @@ func TestInstrUnsupportedMatchesOldList(t *testing.T) {
 			t.Errorf("instrSupport(%q) = %v, want %v", kind, got, wantSupport)
 		}
 	}
+
+	// Within the frozen set the derived list is exactly the old one; a later kind may add to it
+	// only by declaring itself unsupported (checked next).
+	frozen := func(k string) bool { return slices.Contains(instrFrozenKinds, k) }
+	var gotFrozen []string
+	for _, k := range instrUnsupportedKinds() {
+		if frozen(k) {
+			gotFrozen = append(gotFrozen, k)
+		}
+	}
 	var wantKinds []string
-	for _, k := range sessionx.RegisteredKinds() {
+	for _, k := range instrFrozenKinds {
 		if old(k) != "" {
 			wantKinds = append(wantKinds, k)
 		}
 	}
-	if got := instrUnsupportedKinds(); !slices.Equal(got, wantKinds) {
-		t.Errorf("instrUnsupportedKinds() = %v, want %v", got, wantKinds)
+	slices.Sort(gotFrozen)
+	slices.Sort(wantKinds)
+	if !slices.Equal(gotFrozen, wantKinds) {
+		t.Errorf("instrUnsupportedKinds() restricted to the frozen kinds = %v, want %v", gotFrozen, wantKinds)
 	}
+
+	// A kind outside the frozen set: whatever it declares must hold together, for any kind.
+	listed := instrUnsupportedKinds()
+	for _, kind := range sessionx.RegisteredKinds() {
+		if frozen(kind) {
+			continue
+		}
+		a, _ := sessionx.RegisteredAgent(kind)
+		_, takes := a.(agents.Instructions)
+		reason := instrUnsupportedOf(kind)
+		switch {
+		case takes:
+			if reason != "" || slices.Contains(listed, kind) {
+				t.Errorf("%s takes instructions but reports unsupported %q (listed=%v)", kind, reason, slices.Contains(listed, kind))
+			}
+		case slices.Contains(noInstructionTargets, kind):
+		default:
+			if reason == "" {
+				t.Errorf("%s has no agents.Instructions and reports no unsupported reason", kind)
+			}
+			if !slices.Contains(listed, kind) {
+				t.Errorf("%s reports unsupported %q but is missing from instrUnsupportedKinds() = %v", kind, reason, listed)
+			}
+		}
+	}
+
 	// The catalog and the screen rows carry the same reason, byte for byte.
 	for _, e := range buildKindCatalog(false).Kinds {
-		if e.InstructionsReason != old(e.Kind) {
-			t.Errorf("catalog %s: instructionsReason = %q, want %q", e.Kind, e.InstructionsReason, old(e.Kind))
+		want := instrUnsupportedOf(e.Kind)
+		if frozen(e.Kind) {
+			want = old(e.Kind)
+		}
+		if e.InstructionsReason != want {
+			t.Errorf("catalog %s: instructionsReason = %q, want %q", e.Kind, e.InstructionsReason, want)
 		}
 	}
-	var rows []instrTarget
+	rows := map[string]instrTarget{}
 	for _, tg := range instrState().Targets {
 		if !tg.Supported {
-			rows = append(rows, tg)
+			rows[tg.Kind] = tg
 		}
 	}
-	if len(rows) != len(oldInstrUnsupported) {
-		t.Fatalf("unsupported rows = %v, want %d", rows, len(oldInstrUnsupported))
-	}
-	for i, u := range oldInstrUnsupported {
-		if rows[i] != (instrTarget{Kind: u.kind, Reason: u.reason}) {
-			t.Errorf("row %d = %+v, want %s/%s", i, rows[i], u.kind, u.reason)
+	for _, u := range oldInstrUnsupported {
+		if rows[u.kind] != (instrTarget{Kind: u.kind, Reason: u.reason}) {
+			t.Errorf("row %s = %+v, want reason %s", u.kind, rows[u.kind], u.reason)
 		}
+	}
+	// Every registered kind that declares itself unsupported must have its row, with the reason.
+	for _, kind := range sessionx.RegisteredKinds() {
+		if reason := instrUnsupportedOf(kind); reason != "" {
+			if row, ok := rows[kind]; !ok || row.Reason != reason {
+				t.Errorf("unsupported kind %s: row = %+v (present=%v), want reason %q", kind, row, ok, reason)
+			}
+		}
+	}
+	for kind, row := range rows {
+		if !frozen(kind) && (row.Reason == "" || row.Reason != instrUnsupportedOf(kind)) {
+			t.Errorf("row %s = %+v, want the declared reason %q", kind, row, instrUnsupportedOf(kind))
+		}
+	}
+	if len(rows) < len(oldInstrUnsupported) {
+		t.Errorf("unsupported rows = %v, want at least %d", rows, len(oldInstrUnsupported))
 	}
 }
 
