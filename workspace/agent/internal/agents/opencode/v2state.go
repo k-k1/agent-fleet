@@ -660,10 +660,10 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 		t.Sidechain = sidechain
 		out = append(out, v2Stamped{created, t})
 	}
-	costOnly := func(created int64, id, model, route string, cost float64) {
+	costOnly := func(created int64, id, model, route, billing string, cost float64) {
 		if usage && cost > 0 {
 			add(created, transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost,
-				TS: msTS(created), Model: model, Route: route, AnchorID: id})
+				TS: msTS(created), Model: model, Route: route, Billing: billing, AnchorID: id})
 		}
 	}
 	shownErr := "" // the failure the last assistant run already rendered, so its idle message does not repeat it
@@ -693,7 +693,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 			t, ok := parseMessage(run[0].ID, data, parts, 0, win)
 			if !ok {
 				if !copied {
-					costOnly(created, run[0].ID, last.Model.ID, v2RunRoute(run), v2RunCost(run))
+					costOnly(created, run[0].ID, last.Model.ID, v2RunRoute(run), v2RunBilling(run), v2RunCost(run))
 				}
 				continue
 			}
@@ -701,6 +701,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 				t.CostUSD = 0
 			}
 			t.Route = v2RunRoute(run)
+			t.Billing = v2RunBilling(run)
 			add(created, t)
 		case "idle":
 			// A failure with no assistant message to carry it (the model was never reached) would
@@ -717,7 +718,8 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 				add(m.Time.Created, v2ErrorTurn(m.ID, m.Time.Created, cwd, m.Error, win))
 			}
 			if !copied {
-				costOnly(m.Time.Created, m.ID, m.Model.ID, usagex.RouteOfOpencodeProvider(m.Model.ProviderID), m.Cost)
+				route := usagex.RouteOfOpencodeProvider(m.Model.ProviderID)
+				costOnly(m.Time.Created, m.ID, m.Model.ID, route, usagex.BillingOfOpencodeCall(route, m.Cost), m.Cost)
 			}
 		}
 	}
@@ -744,6 +746,21 @@ func v2RunRoute(run []v2Msg) string {
 		}
 	}
 	return route
+}
+
+// v2RunBilling is the billing every message of the run proves, "" when any of them proves none or
+// they differ: the run's cost is summed, so one unpriced step would hide inside a metered total.
+func v2RunBilling(run []v2Msg) string {
+	route := v2RunRoute(run)
+	billing := ""
+	for i, m := range run {
+		b := usagex.BillingOfOpencodeCall(route, m.Cost)
+		if i > 0 && b != billing {
+			return ""
+		}
+		billing = b
+	}
+	return billing
 }
 
 func v2RunCost(run []v2Msg) float64 {

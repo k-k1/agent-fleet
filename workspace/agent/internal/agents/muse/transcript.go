@@ -559,6 +559,12 @@ func failureText(it msp.Item) string {
 // counted once per completion, so the latest wins. What is missing here is not missing by
 // accident: subagent and observer model calls never reach the wire at all, which is why this
 // kind's accounting is declared partial rather than exact (ADR 0095 decision 10).
+//
+// Route and Billing are left empty (ADR 0128 decision 8). The item carries no credential, and
+// the only evidence of subscription versus API key is auth.json's `mechanism` (auth.go), the
+// current file: `muse auth set` rewrites it while a host process is running, and whether a
+// running host re-reads it is unmeasured. Reading it here would file a call under the login
+// the member has now, not the one that served it.
 func applyUsage(t *transcript.Turn, it msp.Item) {
 	u := it.Usage
 	if u == nil {

@@ -68,3 +68,25 @@ export function layoutFamilies(ordered: Session[], groupable: (s: Session) => bo
   for (const s of ordered) if (!groupable(s)) placed.push({ b: [{ session: s, depth: 0 }], at: pos.get(s.name)! });
   return placed.sort((x, y) => x.at - y.at).flatMap((x) => x.b);
 }
+
+/** Names of every session in `pool` that descends (through originSession, any depth) from
+ *  one of `roots`. The roots themselves are not included unless one is also a descendant.
+ *  A parent missing from both still breaks the chain: a grandchild whose middle generation
+ *  was deleted is not reachable, because nothing links it to the root any more. */
+export function descendantNames(roots: Iterable<string>, pool: Session[]): Set<string> {
+  const kids = new Map<string, string[]>();
+  for (const s of pool) {
+    if (!s.originSession || s.originSession === s.name) continue;
+    kids.set(s.originSession, [...(kids.get(s.originSession) || []), s.name]);
+  }
+  const out = new Set<string>();
+  const stack = [...roots];
+  while (stack.length) {
+    for (const k of kids.get(stack.pop()!) || []) {
+      if (out.has(k)) continue; // also stops an originSession cycle
+      out.add(k);
+      stack.push(k);
+    }
+  }
+  return out;
+}

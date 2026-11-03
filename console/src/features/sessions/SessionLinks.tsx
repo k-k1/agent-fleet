@@ -16,11 +16,13 @@ import { resolveWorkItemRef } from "../workitems/refs.ts";
 import {
   CHECK_ICON,
   LINK_ROLE_ICON,
+  PR_FLAG_ICON,
   PR_ICON,
   knownRole,
   linkDone,
   linkPRState,
   prChecks,
+  prFlags,
   prStateKey,
   rowPorts,
   rowWorkLinks,
@@ -60,6 +62,7 @@ export function SessionLinks({ s, running, onTidy }: { s: Session; running: bool
       {pr && href && (() => {
         const key = prStateKey(pr);
         const ci = prChecks(pr);
+        const flags = prFlags(pr);
         return (
           <a
             className={"sess-pr pr-" + key}
@@ -69,11 +72,14 @@ export function SessionLinks({ s, running, onTidy }: { s: Session; running: bool
             title={tr("srow.pr_title", {
               n: pr.number,
               state: tr(`srow.pr_state.${key}`),
-              checks: ci ? tr(`srow.pr_checks.${ci}`) : "",
+              checks: (ci ? tr(`srow.pr_checks.${ci}`) : "") + flags.map((f) => tr(`srow.pr_flag.${f}`)).join(""),
             })}
           >
             <Icon name={PR_ICON[key]} />#{pr.number}
             {ci && <Icon name={CHECK_ICON[ci]} className={"sess-pr-ci ci-" + ci} />}
+            {flags.map((f) => (
+              <Icon key={f} name={PR_FLAG_ICON[f]} className={"sess-pr-flag flag-" + f} />
+            ))}
           </a>
         );
       })()}

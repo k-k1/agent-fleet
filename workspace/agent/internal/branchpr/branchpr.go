@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,55 @@ type PR struct {
 	// ClosedAt is when a merged or closed PR was closed (GitHub; "" on Bitbucket), so a PR
 	// reopened and closed again tells apart from its first close. Never on the wire.
 	ClosedAt string `json:"-"`
+	// ChangesRequested and Conflict are what the row's chip adds to the CI mark: a reviewer asked
+	// for changes (GitHub's review decision, any Bitbucket participant), and the PR no longer
+	// merges cleanly. Both are read off the cache on each list, never stored.
+	ChangesRequested bool `json:"changesRequested,omitempty"`
+	Conflict         bool `json:"conflict,omitempty"`
+	// NodeID names the PR across a repository rename: GitHub's GraphQL node ID, and on Bitbucket
+	// the destination repository's UUID with the PR's number. "" when the provider gave none.
+	NodeID string `json:"-"`
+	// FailingChecks are the failed checks of the head commit, by name, at most maxFailingChecks.
+	// UnresolvedThreads counts review threads nobody resolved, of the newest maxReviewThreads
+	// (GitHub; Bitbucket reports 0). Both feed the PR feedback notice and never leave the Agent.
+	FailingChecks     []Check `json:"-"`
+	UnresolvedThreads int     `json:"-"`
+}
+
+// Check is one failed check of a PR's head commit. URL is the provider's, unchecked: whoever
+// shows it vets it.
+type Check struct {
+	Name string
+	URL  string
+}
+
+const (
+	// maxFailingChecks bounds the names a notice quotes: past ten, the list is noise and the PR
+	// page says the rest.
+	maxFailingChecks = 10
+	// maxCheckContexts and maxReviewThreads bound what one PR asks for in the batched call. A head
+	// with more check runs than this reports the failures among the first ones only; the rollup
+	// state still covers them all.
+	maxCheckContexts = 50
+	maxReviewThreads = 50
+)
+
+// addFailing appends one failed check, keeping the list sorted by name, unique and bounded.
+func addFailing(list []Check, c Check) []Check {
+	if c.Name == "" {
+		return list
+	}
+	for _, have := range list {
+		if have.Name == c.Name {
+			return list
+		}
+	}
+	list = append(list, c)
+	sort.SliceStable(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	if len(list) > maxFailingChecks {
+		list = list[:maxFailingChecks]
+	}
+	return list
 }
 
 // Ready reports a PR anyone could merge now: open, not a draft, its checks green, no conflict,
@@ -79,8 +129,9 @@ const (
 	// forgetAfter drops a branch no list has asked about for this long.
 	forgetAfter = time.Hour
 	// batchSize caps the branches one call asks about. Each is one aliased repository lookup with
-	// up to 5 PRs, each with its last commit and up to 3 closing issues: about 440 connections a
-	// full batch, which GitHub's GraphQL cost rounds to a handful of points.
+	// up to 5 PRs, each with its last commit's check contexts (maxCheckContexts), its newest review
+	// threads (maxReviewThreads) and up to 3 closing issues: about 20,000 nodes a full batch, far
+	// below GraphQL's 500,000, and a cost of a few points.
 	batchSize = 40
 )
 
@@ -267,9 +318,12 @@ func query(keys []Key) (string, map[string]any) {
 		// also matches headRefName, and parse skips those.
 		fmt.Fprintf(&body, "r%d:repository(owner:$%s,name:$%s){owner{login} defaultBranchRef{name} "+
 			"pullRequests(headRefName:$%s,first:5,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"+
-			"number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+
+			"id number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+
 			"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
-			"commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}}} ", i, o, n, b)
+			"reviewThreads(last:%d){nodes{isResolved}} "+
+			"commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:%d){nodes{__typename "+
+			"... on CheckRun{name conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}}}} ",
+			i, o, n, b, maxReviewThreads, maxCheckContexts)
 	}
 	return "query(" + strings.TrimSuffix(decl.String(), ",") + "){" + body.String() + "}", vars
 }
@@ -341,6 +395,7 @@ func rateWait(h http.Header, now time.Time) time.Duration {
 // reports a rate-limit answer, which GraphQL delivers as 200 with an error of type RATE_LIMITED.
 func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limited bool, err error) {
 	type node struct {
+		ID      string `json:"id"`
 		Number  int    `json:"number"`
 		Title   string `json:"title"`
 		State   string `json:"state"`
@@ -362,12 +417,20 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 		HeadOwner *struct {
 			Login string `json:"login"`
 		} `json:"headRepositoryOwner"`
+		Threads struct {
+			Nodes []struct {
+				IsResolved bool `json:"isResolved"`
+			} `json:"nodes"`
+		} `json:"reviewThreads"`
 		Commits struct {
 			Nodes []struct {
 				Commit struct {
 					OID    string `json:"oid"`
 					Rollup *struct {
-						State string `json:"state"`
+						State    string `json:"state"`
+						Contexts struct {
+							Nodes []checkContext `json:"nodes"`
+						} `json:"contexts"`
 					} `json:"statusCheckRollup"`
 				} `json:"commit"`
 			} `json:"nodes"`
@@ -436,9 +499,15 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 				continue // a fork's branch that happens to share the name
 			}
 			pr := &PR{Number: n.Number, State: strings.ToLower(n.State), Draft: n.IsDraft, URL: n.URL, Title: n.Title,
-				Mergeable: n.Mergeable}
+				Mergeable: n.Mergeable, NodeID: n.ID, Conflict: n.Mergeable == "CONFLICTING"}
 			if n.ReviewDecision != nil {
 				pr.ReviewDecision = *n.ReviewDecision
+				pr.ChangesRequested = pr.ReviewDecision == "CHANGES_REQUESTED"
+			}
+			for _, t := range n.Threads.Nodes {
+				if !t.IsResolved {
+					pr.UnresolvedThreads++
+				}
 			}
 			if n.ClosedAt != nil {
 				pr.ClosedAt = *n.ClosedAt
@@ -450,8 +519,13 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 			}
 			if len(n.Commits.Nodes) > 0 {
 				pr.Head = n.Commits.Nodes[0].Commit.OID
-				if n.Commits.Nodes[0].Commit.Rollup != nil {
-					pr.Checks = rollupState(n.Commits.Nodes[0].Commit.Rollup.State)
+				if r := n.Commits.Nodes[0].Commit.Rollup; r != nil {
+					pr.Checks = rollupState(r.State)
+					for _, c := range r.Contexts.Nodes {
+						if f, ok := c.failed(); ok {
+							pr.FailingChecks = addFailing(pr.FailingChecks, f)
+						}
+					}
 				}
 			}
 			out[k] = pr
@@ -459,6 +533,35 @@ func parse(body []byte, keys []Key) (out map[Key]*PR, failed map[Key]bool, limit
 		}
 	}
 	return out, failed, false, nil
+}
+
+// checkContext is one entry of a rollup: a check run (Actions and other apps) or a commit status.
+type checkContext struct {
+	Type       string `json:"__typename"`
+	Name       string `json:"name"`
+	Conclusion string `json:"conclusion"`
+	DetailsURL string `json:"detailsUrl"`
+	Context    string `json:"context"`
+	State      string `json:"state"`
+	TargetURL  string `json:"targetUrl"`
+}
+
+// failed reports a context that counts against the rollup, as GitHub's rollup counts it: a
+// cancelled or timed-out run did not pass either. A run still going has no conclusion yet.
+func (c checkContext) failed() (Check, bool) {
+	switch c.Type {
+	case "CheckRun":
+		switch strings.ToUpper(c.Conclusion) {
+		case "FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE":
+			return Check{Name: c.Name, URL: c.DetailsURL}, true
+		}
+	case "StatusContext":
+		switch strings.ToUpper(c.State) {
+		case "FAILURE", "ERROR":
+			return Check{Name: c.Context, URL: c.TargetURL}, true
+		}
+	}
+	return Check{}, false
 }
 
 // rollupState maps GitHub's StatusState onto the row's three words. EXPECTED is a required

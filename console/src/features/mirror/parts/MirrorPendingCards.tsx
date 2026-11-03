@@ -43,7 +43,7 @@ export function MirrorPendingCards({
   questionInline?: boolean;
 }) {
   const {
-    busy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingApproval,
+    turnBusy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingApproval,
     carried, setCarried, markRejected, sending,
   } = st;
   const pendingText = questionInline ? "" : st.pendingText;
@@ -183,10 +183,10 @@ export function MirrorPendingCards({
           mode={liveMode === "typewriter" ? "typewriter" : "lines"}
         />
       )}
-      {stopRowVisible({ managed, busy, queued: queuedCount > 0, question: !!pending, approval: !!pendingApproval }) && (
+      {stopRowVisible({ managed, busy: turnBusy, queued: queuedCount > 0, question: !!pending, approval: !!pendingApproval }) && (
         <TypingRow
           agentName={agentName}
-          typing={busy && !pending}
+          typing={turnBusy && !pending}
           managed={managed}
           queuedCount={queuedCount}
           onStop={() => void sendInterrupt()}

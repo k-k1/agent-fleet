@@ -288,6 +288,11 @@ func (p *rolloutParser) feed(ln []byte) {
 				if win > 0 {
 					p.turns[p.lastAssistant].CtxWindow = win
 				}
+				// Route and Billing stay empty on purpose (ADR 0128 decision 8). The event's
+				// rate_limits block is the session's latest snapshot, re-sent with every token_count
+				// (upstream core/src/state/session.rs keeps it and token_info_and_rate_limits clones
+				// it), so a stale plus/3% snapshot rides on a call made after an API-key switch or on
+				// credits. Nothing in the event says the snapshot is fresh or belongs to this call.
 			}
 		case "context_compacted":
 			// context_compacted marks a compaction when no "compacted" line was written

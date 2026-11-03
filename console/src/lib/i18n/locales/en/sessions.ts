@@ -289,7 +289,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "arch.folder_missing_suffix": " · folder missing",
   "arch.recreate": "Recreate working copy",
   "arch.recreate_title": "Recreate the deleted worktree at its original path so these sessions can resume",
-  "arch.scope": "Showing only the archive of {folder}",
+  "arch.scope": "Showing only the archive of {folder} and its child sessions",
   "arch.scope_clear": "Show all",
   // === Recreating a deleted worktree (features/sessions/RecreateWorktreeModal.tsx) ===
   "rwt.title": "Recreate working copy",
@@ -485,6 +485,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.pr_checks.success": " · CI passed",
   "srow.pr_checks.failure": " · CI failing",
   "srow.pr_checks.pending": " · CI running",
+  "srow.pr_flag.changes": " · changes requested",
+  "srow.pr_flag.conflict": " · merge conflict",
   // === PortOpen: the one control for opening a port (features/preview/PortOpen.tsx) ===
   "portopen.title_subdomain": "Open in a new tab — {url}",
   "portopen.title_pane": "Open :{port} in a browser pane (Ctrl / middle-click for a new pane)",

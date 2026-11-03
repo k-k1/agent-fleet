@@ -7,16 +7,17 @@ import {
   sessionInterrupt,
   sessionRemoveQueued,
   sessionDropPendingPeer,
+  sessionStopBackgroundShell,
   sessionDismissDiscard,
   sessionCancelInteraction,
   isMemberOrigin,
   sessionRespond,
   sessionApprove,
 } from "../../../core/api/client.ts";
-import type { Discard, InteractionAnswer, QueueItem, TurnResult } from "../../../core/api/client.ts";
+import type { BackgroundShell, Discard, InteractionAnswer, QueueItem, TurnResult } from "../../../core/api/client.ts";
 import type { Attachment } from "../../../lib/attachDraft.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
-import { t as tr } from "../../../lib/i18n/index.ts";
+import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import { takeLaunchSeed } from "../../../lib/launchSeed.ts";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
 import { withoutDiscarded, withoutStoppedEcho } from "../pendingEcho.ts";
@@ -52,7 +53,7 @@ export function useMirrorActions({
 }) {
   const {
     turns, stateSession, applyEchoes, setStatus, setFinalizing, finalizingRef, wasWorkingRef, discards,
-    discardNotices, setDiscardNotices, setPendingPeers, queueOpsRef, queuedCount, draft, setDraft, sending,
+    discardNotices, setDiscardNotices, setPendingPeers, setBgShells, setBgStopping, queueOpsRef, queuedCount, draft, setDraft, sending,
     setSending, sendingRef, attach, attachments, setHistIdx, statusRef, tickRef, inputRef, pendingSendsRef,
   } = st;
 
@@ -382,6 +383,25 @@ export function useMirrorActions({
     setTimeout(() => tickRef.current?.(), 250);
   };
 
+  // Stops one background shell (#3279). The row stays, marked stopping, until the next poll
+  // stops listing it: the Agent answers after SIGTERM (or the SIGKILL that follows its grace).
+  const stopBackgroundShell = async (sh: BackgroundShell) => {
+    if (wsDown()) return;
+    setBgStopping((p) => new Set(p).add(sh.pid));
+    const res = await sessionStopBackgroundShell(session, sh);
+    setBgStopping((p) => {
+      const n = new Set(p);
+      n.delete(sh.pid);
+      return n;
+    });
+    if (res.ok || res.code === "gone") {
+      setBgShells((list) => list.filter((x) => x.pid !== sh.pid || x.start !== sh.start));
+      if (!res.ok) toast(tr("mirror.bg_shell_gone"));
+      else if (res.leftover) toast(tCount("mirror.bg_shell_leftover", res.leftover));
+    } else toast(res.message || tr("mirror.send_failed"));
+    setTimeout(() => tickRef.current?.(), 250);
+  };
+
   // The discard notice's two actions (decision 4). Restoring the last member entry and a close
   // both tell the driver to drop the discard, so other tabs stop offering it; a failure there only
   // leaves it offered elsewhere, and nothing is ever sent twice, so it is not reported.
@@ -450,7 +470,7 @@ export function useMirrorActions({
 
   return {
     postInput, wsDown, postKeys, newestIdx, sendPrompt, driveInput, sendKeys, sendSeq, sendInterrupt,
-    cancelQuestion, draftBusy, intoDraft, takeQueued, dropPendingPeer, restoreDiscard, closeDiscard,
+    cancelQuestion, draftBusy, intoDraft, takeQueued, dropPendingPeer, stopBackgroundShell, restoreDiscard, closeDiscard,
     sendApproval, sendRespond,
   };
 }

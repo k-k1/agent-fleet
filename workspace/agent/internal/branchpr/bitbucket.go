@@ -22,7 +22,9 @@ import (
 // PR, and the main branch once an hour. An open PR is re-read every bitbucketOpenTTL (12 refreshes
 // an hour), settled ones every settledTTL (6), so 10 repositories with 20 open PRs cost about
 // (10+20)×12 = 360 calls an hour. Where the commit endpoint does not resolve a short hash, the
-// status fallback makes that two calls per open PR: (10+40)×12 = 600.
+// status fallback makes that two calls per open PR: (10+40)×12 = 600. The conflict state is one
+// conflicts call per open PR every bitbucketConflictTTL (4 an hour), which Bitbucket answers with a
+// redirect, so two requests: 20×4×2 = 160 more.
 
 const (
 	// bitbucketOpenTTL is GitHub's openTTL stretched for that budget: an open PR costs a status
@@ -36,6 +38,10 @@ const (
 	bitbucketBranchesPerCall = 10
 	// bitbucketPageLen is that page.
 	bitbucketPageLen = 50
+	// bitbucketConflictTTL is how long an open PR's conflict state is trusted. Bitbucket answers it
+	// only from a call of its own, and a conflict comes from the destination moving as often as
+	// from a push; a new head re-reads it at once.
+	bitbucketConflictTTL = 15 * time.Minute
 )
 
 var (
@@ -63,7 +69,7 @@ func NewBitbucket(auth func() (string, error)) *Cache {
 		batch:    batchSize,
 		openTTL:  bitbucketOpenTTL,
 	}
-	b := &bitbucket{c: c, main: map[string]mainEntry{}}
+	b := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
 	c.fetch = b.fetch
 	return c
 }
@@ -73,10 +79,21 @@ type mainEntry struct {
 	at   time.Time
 }
 
+// conflictEntry is an open PR's conflict state as read at head. at is the last successful read,
+// which the TTL runs from; asked is the last time anyone wanted it, which pruning runs from, so a
+// PR whose reads keep failing still keeps the state they fall back to.
+type conflictEntry struct {
+	head     string
+	conflict bool
+	at       time.Time
+	asked    time.Time
+}
+
 type bitbucket struct {
-	c    *Cache
-	mu   sync.Mutex
-	main map[string]mainEntry
+	c         *Cache
+	mu        sync.Mutex
+	main      map[string]mainEntry
+	conflicts map[string]conflictEntry // "workspace/slug#N"
 }
 
 // bbHit is a branch's PR with the commit its build statuses are read for.
@@ -126,7 +143,8 @@ func (b *bitbucket) fetch(auth string, keys []Key) (map[Key]*PR, map[Key]bool, t
 			markFailed(failed, bad)
 			for k, h := range got {
 				if h.pr.State == "open" && h.head != "" {
-					h.pr.Checks = b.checks(auth, repo, h.pr.Number, h.head)
+					h.pr.Checks, h.pr.FailingChecks = b.checks(auth, repo, h.pr.Number, h.head)
+					h.pr.Conflict = b.conflict(auth, repo, h.pr.Number, h.head)
 				}
 				out[k] = h.pr
 			}
@@ -193,7 +211,8 @@ func (b *bitbucket) pulls(auth, repo string, keys []Key) (map[Key]bbHit, []Key, 
 		"pagelen": {strconv.Itoa(bitbucketPageLen)},
 		// A PR object carries its whole description; only the row's columns are asked for.
 		"fields": {"values.id,values.title,values.state,values.draft,values.links.html.href," +
-			"values.source.branch.name,values.source.repository.full_name,values.source.commit.hash"},
+			"values.source.branch.name,values.source.repository.full_name,values.source.commit.hash," +
+			"values.destination.repository.uuid,values.participants.state"},
 	}
 	body, wait, err := b.get(auth, repoPath(repo)+"/pullrequests?"+params.Encode())
 	switch {
@@ -254,24 +273,70 @@ func (b *bitbucket) oneByOne(auth, repo string, keys []Key) (map[Key]bbHit, []Ke
 // The PR list gives the head as a short hash. Should the commit endpoint not resolve one (404),
 // the PR's list is read instead and only the statuses whose commit link starts with that hash are
 // folded: one more call, never a stale verdict.
-func (b *bitbucket) checks(auth, repo string, pr int, head string) string {
+func (b *bitbucket) checks(auth, repo string, pr int, head string) (string, []Check) {
 	if !isHex(head) {
-		return ""
+		return "", nil
 	}
-	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=values.state",
+	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=values.state,values.name,values.key,values.url",
 		repoPath(repo), head, bitbucketPageLen))
 	if err == nil {
 		return bitbucketRollup(body, "")
 	}
 	if !errors.Is(err, errNotVisible) {
-		return ""
+		return "", nil
 	}
-	body, _, err = b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=values.state,values.links.commit.href",
+	body, _, err = b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=values.state,values.name,values.key,values.url,values.links.commit.href",
 		repoPath(repo), pr, bitbucketPageLen))
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	return bitbucketRollup(body, head)
+}
+
+// conflict reports whether an open PR has files in conflict, from a cache held for
+// bitbucketConflictTTL or until the head moves. A failed read answers the last state known for
+// this head, else no conflict: a chip must not claim one it has not seen.
+//
+// Asked of /pullrequests/{id}/conflicts, which redirects to the file conflicts of the PR's
+// revspec; any file listed is a conflict. Not the diffstat: since Bitbucket removed its merge
+// preview (2026-09-04) a diffstat is the topic diff and never reports "merge conflict".
+func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
+	id := repo + "#" + strconv.Itoa(pr)
+	now := time.Now()
+	b.mu.Lock()
+	e, ok := b.conflicts[id]
+	if ok {
+		e.asked = now
+		b.conflicts[id] = e
+	}
+	b.mu.Unlock()
+	if ok && e.head == head && now.Sub(e.at) < bitbucketConflictTTL {
+		return e.conflict
+	}
+	held := ok && e.head == head && e.conflict
+	body, _, err := b.get(auth, fmt.Sprintf("%s/pullrequests/%d/conflicts", repoPath(repo), pr))
+	if err != nil {
+		return held
+	}
+	var fc struct {
+		Size   *int              `json:"size"`
+		Values []json.RawMessage `json:"values"`
+	}
+	if json.Unmarshal(body, &fc) != nil || (fc.Values == nil && fc.Size == nil) {
+		return held // an answer that does not read is a failed read, not "no conflict"
+	}
+	conflict := len(fc.Values) > 0 || (fc.Size != nil && *fc.Size > 0)
+	b.mu.Lock()
+	// PRs no session has asked about for forgetAfter go with the next answer. Not on the last
+	// read: a PR still asked about whose reads fail would lose the state they fall back to.
+	for k, old := range b.conflicts {
+		if now.Sub(old.asked) >= forgetAfter {
+			delete(b.conflicts, k)
+		}
+	}
+	b.conflicts[id] = conflictEntry{head: head, conflict: conflict, at: now, asked: now}
+	b.mu.Unlock()
+	return conflict
 }
 
 func isHex(s string) bool {
@@ -326,6 +391,14 @@ func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]bbHit, b
 					Hash string `json:"hash"`
 				} `json:"commit"`
 			} `json:"source"`
+			Destination struct {
+				Repository *struct {
+					UUID string `json:"uuid"`
+				} `json:"repository"`
+			} `json:"destination"`
+			Participants []struct {
+				State *string `json:"state"`
+			} `json:"participants"`
 		} `json:"values"`
 	}
 	if err := json.Unmarshal(body, &br); err != nil {
@@ -349,6 +422,14 @@ func parseBitbucketPulls(body []byte, repo string, keys []Key) (map[Key]bbHit, b
 			continue
 		}
 		h := bbHit{pr: &PR{Number: v.ID, State: state, Draft: state == "open" && v.Draft, URL: v.Links.HTML.Href, Title: v.Title}}
+		if r := v.Destination.Repository; r != nil && r.UUID != "" {
+			h.pr.NodeID = r.UUID + "#" + strconv.Itoa(v.ID)
+		}
+		for _, p := range v.Participants {
+			if p.State != nil && *p.State == "changes_requested" {
+				h.pr.ChangesRequested = true
+			}
+		}
 		if v.Source.Commit != nil {
 			h.head = v.Source.Commit.Hash
 		}
@@ -371,13 +452,17 @@ func bitbucketState(s string) (string, bool) {
 	return "", false
 }
 
-// bitbucketRollup folds build statuses into the row's three words. A stopped build did not pass,
-// so it counts as a failure; no status at all is "", which must not read as green. With head set,
-// only the statuses of the commit whose hash starts with it count.
-func bitbucketRollup(body []byte, head string) string {
+// bitbucketRollup folds build statuses into the row's three words, with the failed ones by name
+// (the key when a status has no name). A stopped build did not pass, so it counts as a failure;
+// no status at all is "", which must not read as green. With head set, only the statuses of the
+// commit whose hash starts with it count.
+func bitbucketRollup(body []byte, head string) (string, []Check) {
 	var sr struct {
 		Values []struct {
 			State string `json:"state"`
+			Name  string `json:"name"`
+			Key   string `json:"key"`
+			URL   string `json:"url"`
 			Links struct {
 				Commit struct {
 					Href string `json:"href"`
@@ -386,8 +471,9 @@ func bitbucketRollup(body []byte, head string) string {
 		} `json:"values"`
 	}
 	if json.Unmarshal(body, &sr) != nil {
-		return ""
+		return "", nil
 	}
+	var failing []Check
 	var failed, pending, passed bool
 	for _, v := range sr.Values {
 		if head != "" {
@@ -399,6 +485,11 @@ func bitbucketRollup(body []byte, head string) string {
 		switch strings.ToUpper(v.State) {
 		case "FAILED", "STOPPED":
 			failed = true
+			name := v.Name
+			if name == "" {
+				name = v.Key
+			}
+			failing = addFailing(failing, Check{Name: name, URL: v.URL})
 		case "INPROGRESS":
 			pending = true
 		case "SUCCESSFUL":
@@ -407,13 +498,13 @@ func bitbucketRollup(body []byte, head string) string {
 	}
 	switch {
 	case failed:
-		return "failure"
+		return "failure", failing
 	case pending:
-		return "pending"
+		return "pending", nil
 	case passed:
-		return "success"
+		return "success", nil
 	}
-	return ""
+	return "", nil
 }
 
 func repoPath(repo string) string {

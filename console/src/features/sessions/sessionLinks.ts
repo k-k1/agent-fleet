@@ -26,6 +26,24 @@ export function prChecks(pr: SessionPR): "success" | "failure" | "pending" | nul
   return pr.checks;
 }
 
+export type PRFlag = "changes" | "conflict";
+
+/** What the chip adds after the CI mark (#3129), open PRs only, like the CI mark. They are
+ * marks on the chip and never the row's state: a session waiting on a question or a permission
+ * still reads as that, whatever its PR says. */
+export function prFlags(pr: SessionPR): PRFlag[] {
+  if (pr.state !== "open") return [];
+  const out: PRFlag[] = [];
+  if (pr.changesRequested) out.push("changes");
+  if (pr.conflict) out.push("conflict");
+  return out;
+}
+
+export const PR_FLAG_ICON: Record<PRFlag, string> = {
+  changes: "request-changes",
+  conflict: "warning",
+};
+
 export const CHECK_ICON: Record<"success" | "failure" | "pending", string> = {
   success: "pass",
   failure: "error",

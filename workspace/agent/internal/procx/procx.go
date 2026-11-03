@@ -21,6 +21,10 @@ type Info struct {
 	Comm  string
 	Pgrp  int
 	Sid   int // session id; equals the pid of the session leader
+	// CPUTicks is utime+stime and StartTicks the start time since boot, both in clock ticks
+	// (USER_HZ). StartTicks is what tells a pid apart from a later process that reused it.
+	CPUTicks   uint64
+	StartTicks uint64
 }
 
 // snapshot caches a full /proc scan briefly so one session-list poll (which wires every
@@ -44,6 +48,10 @@ func Snapshot() map[int]Info {
 	at = time.Now()
 	return tab
 }
+
+// Fresh scans /proc now, bypassing the cache. For a decision that signals a process, where a
+// table up to ttl old could name a pid that has since exited and been reused.
+func Fresh() map[int]Info { return scan() }
 
 func scan() map[int]Info {
 	t := map[int]Info{}
@@ -69,7 +77,7 @@ func scan() map[int]Info {
 
 // Parse pulls the fields out of /proc/<pid>/stat. comm sits inside the FIRST '(' … LAST ')'
 // (it may itself contain spaces and parens), so the fixed fields we want are read from after
-// the closing paren: state ppid pgrp session.
+// the closing paren: state ppid pgrp session, and the CPU and start-time counters.
 func Parse(pid int, s string) (Info, bool) {
 	l := strings.IndexByte(s, '(')
 	r := strings.LastIndexByte(s, ')')
@@ -85,6 +93,13 @@ func Parse(pid int, s string) (Info, bool) {
 	if len(rest) >= 4 {
 		pi.Pgrp, _ = strconv.Atoi(rest[2])
 		pi.Sid, _ = strconv.Atoi(rest[3])
+	}
+	// After the paren: utime is field 11, stime 12, starttime 19 (0-based; proc(5) 14, 15, 22).
+	if len(rest) >= 20 {
+		ut, _ := strconv.ParseUint(rest[11], 10, 64)
+		st, _ := strconv.ParseUint(rest[12], 10, 64)
+		pi.CPUTicks = ut + st
+		pi.StartTicks, _ = strconv.ParseUint(rest[19], 10, 64)
 	}
 	return pi, true
 }

@@ -411,3 +411,85 @@ func TestParseReadsWhenAPRWasClosed(t *testing.T) {
 		t.Fatalf("query lacks closedAt: %s", q)
 	}
 }
+
+func TestParseReadsWhatFeedbackNeeds(t *testing.T) {
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
+	var contexts []string
+	// Twelve failures, given out of order and one name twice: the notice quotes ten, by name.
+	for i := 12; i >= 1; i-- {
+		contexts = append(contexts, `{"__typename":"CheckRun","name":"job-`+fmt2(i)+`","conclusion":"FAILURE","detailsUrl":"https://ci/`+itoa(i)+`"}`)
+	}
+	contexts = append(contexts,
+		`{"__typename":"CheckRun","name":"job-01","conclusion":"FAILURE","detailsUrl":"https://ci/dup"}`,
+		`{"__typename":"CheckRun","name":"lint","conclusion":"SUCCESS"}`,
+		`{"__typename":"CheckRun","name":"running","conclusion":null}`,
+		`{"__typename":"StatusContext","context":"ext/deploy","state":"ERROR","targetUrl":"https://ext/1"}`,
+		`{"__typename":"StatusContext","context":"ext/ok","state":"SUCCESS"}`)
+	node := `{"id":"PR_node1","number":4,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/4",` +
+		`"mergeable":"CONFLICTING","reviewDecision":"CHANGES_REQUESTED","headRepositoryOwner":{"login":"o"},` +
+		`"reviewThreads":{"nodes":[{"isResolved":false},{"isResolved":true},{"isResolved":false}]},` +
+		`"commits":{"nodes":[{"commit":{"oid":"h1","statusCheckRollup":{"state":"FAILURE","contexts":{"nodes":[` +
+		strings.Join(contexts, ",") + `]}}}}]}}`
+	got, _, _, err := parse([]byte(`{"data":{`+answer("r0", "o", "main", node)+`}}`), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := got[keys[0]]
+	if pr.NodeID != "PR_node1" || !pr.Conflict || !pr.ChangesRequested || pr.UnresolvedThreads != 2 {
+		t.Fatalf("pr = %+v, want node id, conflict, changes requested and 2 unresolved threads", pr)
+	}
+	if len(pr.FailingChecks) != maxFailingChecks {
+		t.Fatalf("failing = %v, want %d", pr.FailingChecks, maxFailingChecks)
+	}
+	if f := pr.FailingChecks[0]; f.Name != "ext/deploy" || f.URL != "https://ext/1" {
+		t.Errorf("first failing = %+v, want the status context, sorted first", f)
+	}
+	if f := pr.FailingChecks[1]; f.Name != "job-01" || f.URL != "https://ci/1" {
+		t.Errorf("second failing = %+v, want job-01 once, with its first link", f)
+	}
+	seen := map[string]bool{}
+	for _, f := range pr.FailingChecks {
+		if seen[f.Name] {
+			t.Errorf("%q listed twice", f.Name)
+		}
+		seen[f.Name] = true
+		if f.Name == "lint" || f.Name == "running" || f.Name == "ext/ok" {
+			t.Errorf("%q is not a failure", f.Name)
+		}
+	}
+	// The chip's two fields are on the wire; the notice's are not.
+	b, _ := json.Marshal(pr)
+	for _, want := range []string{`"changesRequested":true`, `"conflict":true`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("wire %s lacks %s", b, want)
+		}
+	}
+	for _, never := range []string{"PR_node1", "job-01", "Unresolved"} {
+		if strings.Contains(string(b), never) {
+			t.Errorf("wire %s carries %s", b, never)
+		}
+	}
+	q, _ := query(keys)
+	for _, f := range []string{"{id number ", "reviewThreads(last:50){nodes{isResolved}}", "contexts(first:50)", "... on CheckRun{name conclusion detailsUrl}", "... on StatusContext{context state targetUrl}"} {
+		if !strings.Contains(q, f) {
+			t.Errorf("query lacks %q", f)
+		}
+	}
+}
+
+func TestAMergeablePRWithoutReviewIsNeitherConflictingNorChangesRequested(t *testing.T) {
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
+	node := `{"number":4,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/4","mergeable":"UNKNOWN",` +
+		`"reviewDecision":"APPROVED","headRepositoryOwner":{"login":"o"},"commits":{"nodes":[]}}`
+	got, _, _, _ := parse([]byte(`{"data":{`+answer("r0", "o", "main", node)+`}}`), keys)
+	if pr := got[keys[0]]; pr == nil || pr.Conflict || pr.ChangesRequested || pr.FailingChecks != nil {
+		t.Fatalf("pr = %+v: UNKNOWN is no conflict and APPROVED asks for nothing", pr)
+	}
+}
+
+func fmt2(n int) string {
+	if n < 10 {
+		return "0" + itoa(n)
+	}
+	return itoa(n)
+}

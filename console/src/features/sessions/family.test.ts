@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layoutFamilies } from "./family.ts";
+import { descendantNames, layoutFamilies } from "./family.ts";
 import type { Session } from "../../types/session.ts";
 
 const s = (name: string, extra: Partial<Session> = {}): Session => ({
@@ -46,5 +46,21 @@ describe("layoutFamilies", () => {
   it("leaves sessions the predicate rejects as roots at their own position", () => {
     const list = [s("p"), s("late", { originSession: "p" }), s("c", { originSession: "p", createdAt: "2026-09-02T00:00:00Z" })];
     expect(flat(layoutFamilies(list, (x) => x.name !== "late"))).toEqual(["p:0", "c:1", "late:0"]);
+  });
+});
+
+describe("descendantNames", () => {
+  it("follows originSession to any depth and survives a cycle", () => {
+    const pool = [
+      s("p"),
+      s("c", { originSession: "p" }),
+      s("g", { originSession: "c" }),
+      s("x", { originSession: "y" }),
+      s("y", { originSession: "x" }),
+      s("other"),
+    ];
+    expect([...descendantNames(["p"], pool)].sort()).toEqual(["c", "g"]);
+    expect([...descendantNames(["x"], pool)].sort()).toEqual(["x", "y"]);
+    expect(descendantNames(["other"], pool).size).toBe(0);
   });
 });

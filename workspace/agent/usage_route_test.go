@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -219,5 +220,90 @@ func TestPriceLookupRouteFirstThenKind(t *testing.T) {
 	}
 	if got, _, _ := usageEstCostUSD(session.KindOpencode, "glm-5.2", a); got != 1 {
 		t.Errorf("estimate with no route = %v, want 1", got)
+	}
+}
+
+func billedTurn(billing string, in, out int) transcript.Turn {
+	return transcript.Turn{Role: "assistant", InTok: in, OutTok: out, Model: "gpt-5.6", TS: "2026-11-03T01:00:00Z",
+		Route: usagex.RouteOpencodeGo, Billing: billing}
+}
+
+// A turn whose calls are all proven but billed differently becomes one ledger row per billing
+// segment. Together they carry exactly the totals of the unsplit turn, share the call id (one
+// call in the aggregation) and the turn's idx, and replaying them adds nothing.
+func TestFoldSplitsTurnAtProvenBillingBoundary(t *testing.T) {
+	turns := []transcript.Turn{
+		{Role: "user", Text: "q"},
+		billedTurn(usagex.BillingSubscriptionIncluded, 100, 5),
+		billedTurn(usagex.BillingSubscriptionIncluded, 120, 6),
+		billedTurn(usagex.BillingSubscriptionExtra, 150, 7),
+	}
+	rows := foldTurnRows(turns, true)
+	if len(rows) != 1 || rows[0].Tokens.In != 150 || rows[0].Tokens.Out != 18 || rows[0].Billing != "" {
+		t.Fatalf("rows = %+v, want one unsplit row with In 150 / Out 18 and no billing", rows)
+	}
+	m := session.Meta{Name: "s", Kind: session.KindCodex}
+	recs := usageRecordsOf(m, rows[0])
+	if len(recs) != 2 {
+		t.Fatalf("records = %+v, want 2 segments", recs)
+	}
+	if recs[0].Billing != usagex.BillingSubscriptionIncluded || recs[1].Billing != usagex.BillingSubscriptionExtra {
+		t.Errorf("billings = %q, %q", recs[0].Billing, recs[1].Billing)
+	}
+	var in, out int
+	for _, r := range recs {
+		in, out = in+r.In, out+r.Out
+		if r.Idx != rows[0].Idx || r.Route != usagex.RouteOpencodeGo {
+			t.Errorf("record %+v: want idx %d and route opencode-go", r, rows[0].Idx)
+		}
+	}
+	if in != 150 || out != 18 {
+		t.Errorf("segments sum to in=%d out=%d, want 150/18 (the unsplit totals)", in, out)
+	}
+	if recs[0].Out != 11 || recs[1].Out != 7 || recs[1].In != 150 || recs[0].In != 0 {
+		t.Errorf("segment tokens = %+v / %+v", recs[0], recs[1])
+	}
+	if recs[0].Call == "" || recs[0].Call != recs[1].Call {
+		t.Errorf("calls %q / %q, want one shared id", recs[0].Call, recs[1].Call)
+	}
+	if recs[0].Key != "" || recs[1].Key == "" {
+		t.Errorf("keys %q / %q: the first keeps the idx sequence, the rest are keyed", recs[0].Key, recs[1].Key)
+	}
+	agg := aggregateUsageRows(recs, map[string]bool{})
+	calls := 0
+	for _, a := range agg {
+		calls += a.Calls
+	}
+	if calls != 1 {
+		t.Errorf("aggregation counts %d calls, want 1", calls)
+	}
+	seen := usageDedupIndex{}
+	again := append(append([]usagex.Record{}, recs...), usageRecordsOf(m, rows[0])...)
+	accepted := 0
+	for _, r := range again {
+		if seen.accept(r, time.Now()) {
+			accepted++
+		}
+	}
+	if accepted != 2 {
+		t.Errorf("a replay of the same turn was accepted %d times in total, want 2 (each segment once)", accepted)
+	}
+}
+
+// An unproven call anywhere in the turn leaves the whole turn unresolved: where its charge began
+// is not known. A turn whose calls agree is not split.
+func TestFoldDoesNotSplitWithoutProof(t *testing.T) {
+	for name, calls := range map[string][]transcript.Turn{
+		"unproven between": {billedTurn(usagex.BillingSubscriptionIncluded, 1, 1), billedTurn("", 1, 1), billedTurn(usagex.BillingSubscriptionExtra, 1, 1)},
+		"unproven last":    {billedTurn(usagex.BillingSubscriptionIncluded, 1, 1), billedTurn("", 1, 1)},
+		"all agree":        {billedTurn(usagex.BillingSubscriptionIncluded, 1, 1), billedTurn(usagex.BillingSubscriptionIncluded, 2, 1)},
+	} {
+		rows := foldTurnRows(append([]transcript.Turn{{Role: "user"}}, calls...), true)
+		if len(rows) != 1 {
+			t.Fatalf("%s: rows = %+v", name, rows)
+		}
+		if recs := usageRecordsOf(session.Meta{Name: "s", Kind: session.KindCodex}, rows[0]); len(recs) != 1 {
+			t.Errorf("%s: %d records, want 1", name, len(recs))
+		}
 	}
 }

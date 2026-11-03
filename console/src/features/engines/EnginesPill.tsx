@@ -14,6 +14,8 @@ import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { zonedMdHm } from "../../lib/intl.ts";
 import { useEnginesStore, startEnginesPolling } from "./store.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
+import { useSettings } from "../../lib/settings.ts";
+import type { ProviderConn } from "../../types/session.ts";
 import {
   ROLE_ORDER,
   groupByRole,
@@ -110,6 +112,23 @@ export interface MemberChatConn {
   modelCount?: number;
 }
 
+/** What the `chat` pill should draw for the member's own connection: the connection, `"hidden"`
+ *  for no chat pill at all, or undefined when no connection is saved (the CP's own rows decide).
+ *
+ *  `"hidden"` is llama.cpp switched off with a connection saved. The switch only refuses new
+ *  launches; harnessEngineToken (workspace/agent/engines.go) still routes `llm` to the saved
+ *  connection for sessions already running, so falling back to the CP's chat row would name an
+ *  engine nothing uses — and drawing the connection put a "not reachable" warning in the top bar
+ *  for a feature the member turned off (#3291).
+ *
+ *  `enabled` is the local ui-pref rather than the cached `conns.lcpp.enabled` mirror: the
+ *  connections cache is only refreshed by the repo rail, so the mirror lags the switch. */
+export function memberChatFromConn(lcpp: ProviderConn | undefined, enabled: boolean): MemberChatConn | "hidden" | undefined {
+  if (!lcpp?.connected) return undefined;
+  if (!enabled) return "hidden";
+  return { url: lcpp.url, reachable: lcpp.reachable, model: lcpp.model, modelCount: lcpp.model_count };
+}
+
 /** Store-connected pill group — what TopBar renders. Starts the REST-fallback poll once per
  *  mount (TopBar mounts exactly once for the app's lifetime, same as the account menu).
  *
@@ -123,24 +142,23 @@ export function EnginesPill() {
   const rows = useEnginesStore((s) => s.rows);
   useEffect(() => startEnginesPolling(), []);
   const conns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
-  const lcpp = conns?.lcpp;
-  const memberChat: MemberChatConn | undefined = lcpp?.connected
-    ? { url: lcpp.url, reachable: lcpp.reachable, model: lcpp.model, modelCount: lcpp.model_count }
-    : undefined;
+  const lcppEnabled = useSettings().lcppEnabled;
+  const memberChat = memberChatFromConn(conns?.lcpp, lcppEnabled);
   return <EnginesPillView rows={rows || []} memberChat={memberChat} />;
 }
 
 /** Pure presentational half — no store, no fetch. `memberChat` present means a member
  *  connection is configured: the `chat` role's pill is drawn from IT instead of from `rows`
  *  entirely (decision 1's "member's setting always wins", read onto the display), whatever the
- *  CP's `engines` stream says about a deployment `llm` row. Absent (the common case, and the
- *  ENTIRE case before this feature) reproduces today's behavior exactly. */
-export function EnginesPillView({ rows, memberChat }: { rows: EngineMemberRow[]; memberChat?: MemberChatConn }) {
+ *  CP's `engines` stream says about a deployment `llm` row. `"hidden"` drops the `chat` role
+ *  altogether (see memberChatFromConn). Absent (the common case, and the ENTIRE case before
+ *  this feature) reproduces today's behavior exactly. */
+export function EnginesPillView({ rows, memberChat }: { rows: EngineMemberRow[]; memberChat?: MemberChatConn | "hidden" }) {
   const groups = groupByRole(rows);
   return (
     <>
-      {ROLE_ORDER.filter((role) => (role === "chat" && memberChat) || groups.has(role)).map((role) =>
-        role === "chat" && memberChat ? (
+      {ROLE_ORDER.filter((role) => (role === "chat" && memberChat ? memberChat !== "hidden" : groups.has(role))).map((role) =>
+        role === "chat" && memberChat && memberChat !== "hidden" ? (
           <MemberChatPill key={role} conn={memberChat} />
         ) : (
           <EngineRolePill key={role} role={role} rows={groups.get(role)!} />

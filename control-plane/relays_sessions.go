@@ -73,6 +73,9 @@ var sessionRelays = []agentRelay{
 	// Stop-after-turn arm (docs/log/85) — fold this session away once the turn it is
 	// running ends. The pin's mirror image, and proxied the same way.
 	{route: "POST /api/sessions/{name}/stop-after-turn"},
+	// Stop one background shell the session left running (#3279), from the mirror's
+	// background panel. Steering, like halt: out of the audit scope by decision (#2883).
+	{route: "POST /api/sessions/{name}/background-stop"},
 	// Spend budget (#1054) — set the cap, and read the spend against it (with the
 	// session's create_session children beside it). The Agent enforces it; proxied verbatim.
 	{route: "POST /api/sessions/{name}/spend-cap", audit: auditByName("session.spend_cap")},
