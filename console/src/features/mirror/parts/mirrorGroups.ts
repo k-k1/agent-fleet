@@ -1,8 +1,24 @@
+import { samePastedPrompt, splitPastedImages } from "../../../lib/pastedImages.ts";
 import { echoLanded } from "../pendingEcho.ts";
 import { actionable, injectionSource, inQueueOrder, restorable, type queueEntries } from "../stopQueue.ts";
-import { coalesceUserActions, groupTurns, isNoise } from "../transcript/model.ts";
+import { coalesceUserActions, groupTurns, isNoise, stripStudioSignal } from "../transcript/model.ts";
 import type { Turn } from "../transcript/types.ts";
 import type { SendEcho } from "./sendEcho.ts";
+
+// sameQueuedPrompt says whether a queue entry is the prompt an echo stands for. The two are
+// different spellings of one prompt: the Agent backticks the attachment paths before typing
+// them into claude (QuoteImagePaths in image_paste.go) and the queue holds the typed text,
+// signal line included, while the echo keeps the bare paths. An exact compare misses, and the
+// unpaired echo and queue row then fold into one bubble showing every thumbnail twice.
+// The attachments are compared too, so two prompts with the same words but different files
+// keep their own bubbles.
+function sameQueuedPrompt(queued: string, echo: string): boolean {
+  const q = stripStudioSignal(queued);
+  if (!samePastedPrompt(q, echo)) return false;
+  const a = splitPastedImages(q);
+  const b = splitPastedImages(echo);
+  return [...a.images, ...a.files].join("\n") === [...b.images, ...b.files].join("\n");
+}
 
 // claude writes one logical response as several assistant events (text split by
 // tool calls), so merge consecutive same-role turns into one block and drop the
@@ -25,7 +41,7 @@ export function groupWithQueue(
 ) {
   const queuedLeft = [...queueShown];
   const takeQueued = (text: string) => {
-    const i = queuedLeft.findIndex((q) => q.text.trim() === text);
+    const i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text));
     if (i < 0) return null;
     return queuedLeft.splice(i, 1)[0];
   };
