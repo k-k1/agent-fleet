@@ -8,6 +8,7 @@ import {
   FILE_PROMPT_GENERIC,
   IMG_PROMPT,
   IMG_PROMPT_LEGACY,
+  quoteImagePaths,
 } from "./pastedImages.ts";
 
 const P1 = "/home/u/.cache/agent-fleet/pasted/abc/paste-1.png";
@@ -118,5 +119,77 @@ describe("splitCommandArgs", () => {
       `${FILE_PROMPT} ${P1} を開いて`,
     ])
       expect(splitCommandArgs(args)).toEqual(none(args));
+  });
+});
+
+// The cases of TestQuoteImagePaths (workspace/agent/internal/agents/claude/image_paste_test.go),
+// so the twin cannot drift from the Go rewrite. The studio-signal case is left out: the caller
+// strips that line first.
+describe("quoteImagePaths", () => {
+  const p1 = "/home/dev/.cache/agent-fleet/pasted/sid/paste-1.png";
+  const p2 = "/home/dev/.cache/agent-fleet/pasted/sid/paste-2.JPG";
+  const cases: [string, string, string][] = [
+    ["no attachment line", "curl -o /dev/null /tmp/x.png", "curl -o /dev/null /tmp/x.png"],
+    [
+      "paths after the instruction",
+      "確認して Open the following file(s) with the Read tool: " + p1 + " " + p2,
+      "確認して Open the following file(s) with the Read tool: `" + p1 + "` `" + p2 + "`",
+    ],
+    [
+      "words before the instruction untouched",
+      "see /tmp/a.png Open the following file(s) with the Read tool: " + p1,
+      "see /tmp/a.png Open the following file(s) with the Read tool: `" + p1 + "`",
+    ],
+    [
+      "memo flush shape",
+      "memo\n\nOpen the following file(s) with the Read tool: " + p1 + "\n",
+      "memo\n\nOpen the following file(s) with the Read tool: `" + p1 + "`\n",
+    ],
+    [
+      "non-image attachment left alone",
+      "Open the following file(s) with the Read tool: /x/pasted/s/paste-3-report.pdf",
+      "Open the following file(s) with the Read tool: /x/pasted/s/paste-3-report.pdf",
+    ],
+    [
+      "legacy image wording",
+      "Open the following image(s) with the Read tool: " + p1,
+      "Open the following image(s) with the Read tool: `" + p1 + "`",
+    ],
+    ["partial instruction left alone", "Inspect with the Read tool: /tmp/a.png", "Inspect with the Read tool: /tmp/a.png"],
+    [
+      "text after the paths means it is not the attachment line",
+      "Open the following file(s) with the Read tool: " + p1 + " and compare",
+      "Open the following file(s) with the Read tool: " + p1 + " and compare",
+    ],
+    [
+      "full instruction with a path that is not an upload",
+      "Open the following file(s) with the Read tool: /tmp/a.png",
+      "Open the following file(s) with the Read tool: /tmp/a.png",
+    ],
+    [
+      "memo images",
+      "Open the following file(s) with the Read tool: /home/dev/.cache/agent-fleet/memo-images/paste-9.png\n",
+      "Open the following file(s) with the Read tool: `/home/dev/.cache/agent-fleet/memo-images/paste-9.png`\n",
+    ],
+    [
+      "CRLF and tabs kept",
+      "x\r\nOpen the following file(s) with the Read tool:\t" + p1 + "\r\n",
+      "x\r\nOpen the following file(s) with the Read tool:\t`" + p1 + "`\r\n",
+    ],
+    [
+      // strings.Fields splits on any Unicode space, the rewrite only on ASCII ones.
+      "NBSP before the path",
+      "Open the following file(s) with the Read tool:\u00a0" + p1,
+      "Open the following file(s) with the Read tool:`\u00a0" + p1 + "`",
+    ],
+    [
+      "vertical tab before the path",
+      "Open the following file(s) with the Read tool:\v" + p1,
+      "Open the following file(s) with the Read tool:`\v" + p1 + "`",
+    ],
+  ];
+  it.each(cases)("%s", (_name, input, want) => {
+    expect(quoteImagePaths(input)).toBe(want);
+    expect(quoteImagePaths(want)).toBe(want);
   });
 });

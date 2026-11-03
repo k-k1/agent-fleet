@@ -1,8 +1,23 @@
+import { quoteImagePaths } from "../../../lib/pastedImages.ts";
 import { echoLanded } from "../pendingEcho.ts";
 import { actionable, injectionSource, inQueueOrder, restorable, type queueEntries } from "../stopQueue.ts";
-import { coalesceUserActions, groupTurns, isNoise } from "../transcript/model.ts";
+import { coalesceUserActions, groupTurns, isNoise, stripStudioSignal } from "../transcript/model.ts";
 import type { Turn } from "../transcript/types.ts";
 import type { SendEcho } from "./sendEcho.ts";
+
+// sameQueuedPrompt says whether a queue entry is the prompt an echo stands for. On the claude
+// TUI route the queue holds the text the Agent typed, which is not the text the Console sent:
+// the attachment line's image paths are backticked (QuoteImagePaths) and the studio signal
+// line rides along, while the echo keeps the bare paths. An exact compare misses, and the
+// unpaired echo and queue row then fold into one bubble showing every thumbnail twice.
+// So the echo is put through the same rewrite and compared whole. Undoing backticks on the
+// queue side instead, or comparing with samePastedPrompt, also pairs prompts the member wrote
+// differently (a backticked path of their own, words after a quoted instruction wording).
+function sameQueuedPrompt(queued: string, echo: string): boolean {
+  const q = stripStudioSignal(queued).trim();
+  const e = stripStudioSignal(echo).trim();
+  return q === e || q === quoteImagePaths(e);
+}
 
 // claude writes one logical response as several assistant events (text split by
 // tool calls), so merge consecutive same-role turns into one block and drop the
@@ -25,7 +40,7 @@ export function groupWithQueue(
 ) {
   const queuedLeft = [...queueShown];
   const takeQueued = (text: string) => {
-    const i = queuedLeft.findIndex((q) => q.text.trim() === text);
+    const i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text));
     if (i < 0) return null;
     return queuedLeft.splice(i, 1)[0];
   };
