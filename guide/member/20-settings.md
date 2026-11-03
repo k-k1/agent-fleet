@@ -57,7 +57,6 @@ Everything about appearance.
   "Follow browser" is a setting of its own, not a copy of today's zone, so it moves with you when you
   travel. Pick a zone to pin it instead. Dates and times across the Console, including the session
   mirror, and the times in files the Agent writes (the Markdown export) use it, and a change applies immediately, without restarting the workspace.
-  Notifications and the assistant chat do not use these two settings yet.
   With "follow browser", the Console also tells your workspace which zone this browser is in, whenever
   you open it or come back to it, so the text the Agent writes itself (the usage-limit resume notice,
   the note on a reopened report, the Markdown export) uses that zone instead of the workspace clock.
