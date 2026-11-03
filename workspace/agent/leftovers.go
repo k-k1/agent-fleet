@@ -172,6 +172,20 @@ func leftoverSize(l leftover, budget *int) (bytes int64, files int) {
 // removeLeftover is removeTree; a var so a test can make one removal fail.
 var removeLeftover = removeTree
 
+// detachedPrefix names a directory a prune has renamed out of the way. One a failed removal
+// leaves behind is no session's name, so the af-work kind takes it as an orphan next time.
+const detachedPrefix = ".removing-"
+
+// detachLeftover renames l out of its path within the same root (one filesystem, so the rename
+// is atomic) and returns where it went. Nothing is removed in place when the rename fails.
+func detachLeftover(l leftover) (string, error) {
+	to := filepath.Join(l.root, detachedPrefix+l.name+"-"+strconv.FormatInt(time.Now().UnixNano(), 36))
+	if err := os.Rename(l.path(), to); err != nil {
+		return "", err
+	}
+	return to, nil
+}
+
 type leftoverRemoved struct {
 	Kind  string `json:"kind"`
 	Count int    `json:"count"`
@@ -201,10 +215,31 @@ func (k leftoverKind) prune(home string, pins map[string]string, boot bool) (lef
 		bytes, _ := leftoverSize(l, &budget)
 		// After the size walk, right before the removal: the walk is the long part, and a
 		// restore landing during it must still keep the folder.
-		if l.stillDue != nil && !l.stillDue() {
-			continue
+		target := l.path()
+		if l.stillDue != nil {
+			var due bool
+			var err error
+			// The verdict and the rename share the lock restore and lock write the meta under,
+			// so neither can land between them; the long removal then runs on a path nothing
+			// else uses. Checked and removed in place instead, a session restored mid-removal
+			// would relaunch into the same folder and lose what it wrote there.
+			sessionx.WithSessionMetaLock(func() {
+				if due = l.stillDue(); due {
+					target, err = detachLeftover(l)
+				}
+			})
+			if !due {
+				continue
+			}
+			if err != nil {
+				log.Printf("leftovers: detach %s: %v", l.path(), err)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
 		}
-		if err := removeLeftover(l.path()); err != nil {
+		if err := removeLeftover(target); err != nil {
 			log.Printf("leftovers: remove %s: %v", l.path(), err)
 			if firstErr == nil {
 				firstErr = err

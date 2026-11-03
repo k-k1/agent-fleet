@@ -191,3 +191,58 @@ func TestArchivedEarlyBrokenMetaDeletesNothing(t *testing.T) {
 	pruneKind(t, "af-work-archived")
 	assertEntries(t, f.work(), "snew001")
 }
+
+// A restore that lands once the removal has begun cannot lose what the relaunched session
+// writes: the folder is renamed away under the meta lock first, so the session gets a fresh
+// one at the old path and only the detached copy is removed.
+func TestArchivedEarlyRestoreDuringTheRemovalKeepsNewFiles(t *testing.T) {
+	for _, kind := range []string{"af-work-archived", "af-work"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newArchivedFixture(t)
+			at := f.ago(day)
+			if kind == "af-work" {
+				at = f.ago(30 * day)
+			}
+			f.session("srace01", true, at, false)
+			f.folder("srace01", true)
+			old := removeLeftover
+			t.Cleanup(func() { removeLeftover = old })
+			removeLeftover = func(p string) error {
+				if p == filepath.Join(f.work(), "srace01") {
+					t.Fatalf("removed in place: %s", p)
+				}
+				if _, ok := sessionx.RestoreSession("srace01"); !ok {
+					t.Fatal("restore failed")
+				}
+				writeSized(t, filepath.Join(f.work(), "srace01", "new"), 1)
+				return removeTree(p)
+			}
+			if r := pruneKind(t, kind); r.Count != 1 {
+				t.Fatalf("prune = %+v", r)
+			}
+			assertEntries(t, f.work(), "srace01")
+			assertEntries(t, filepath.Join(f.work(), "srace01"), "new")
+		})
+	}
+}
+
+// A detached copy a failed removal left behind goes with the next af-work press.
+func TestArchivedEarlyDetachedLeftoverIsAnOrphanNextTime(t *testing.T) {
+	f := newArchivedFixture(t)
+	f.session("snew001", true, f.ago(day), false)
+	f.folder("snew001", true)
+	old := removeLeftover
+	t.Cleanup(func() { removeLeftover = old })
+	removeLeftover = func(string) error { return os.ErrPermission }
+	k, _ := findLeftoverKind("af-work-archived")
+	pins, _ := workspacePins()
+	if r, err := k.prune(homeDir(), pins, false); err == nil || r.Count != 0 {
+		t.Fatalf("prune = %+v, %v", r, err)
+	}
+	if got := entries(t, f.work()); len(got) != 1 || got[0] == "snew001" {
+		t.Fatalf("after a failed removal: %v", got)
+	}
+	removeLeftover = old
+	pruneKind(t, "af-work")
+	assertEntries(t, f.work())
+}
