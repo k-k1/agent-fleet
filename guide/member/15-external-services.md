@@ -128,6 +128,21 @@ restart a session for it: `confluence search "release notes"`, `confluence read 
   **reconnect Jira** once. Until then `confluence` prints one line saying the Atlassian
   authorization has no Confluence scopes and does not run; Jira keeps working, and Settings › Issue
   tracker shows "Confluence: not available". An API-token connection needs nothing extra.
+- **Page commands need the newer page scopes.** Atlassian has removed the old page endpoints that
+  the Confluence CLI uses for `read`, `info`, `create`, `create-child`, `update`, `edit` and
+  `space-lookup`, so the workspace answers these itself over Confluence's current (v2) API, with the
+  same command line and the same kind of output (`--format markdown` works for reading and
+  writing; Japanese text, emoji, tables, lists and `code` / **bold** next to Japanese are kept).
+  They need the granular scopes `read:page`, `write:page` and `read:space` on top of the old ones.
+  If your connection predates them, the command prints one line saying so and Settings › Issue
+  tracker shows a "Confluence: search and comments work, but …" note; the tenant administrator adds the scopes
+  to the Atlassian app, then you **reconnect Jira**. Search, comments and attachments are unaffected.
+- **Writes are sent once.** If the network drops after a create or update was sent, the command says
+  the result is unknown instead of retrying; check the page before repeating it. An update that
+  collides with someone else's edit is refused as a version conflict and overwrites nothing.
+- **Still on the old endpoints:** `move`, `delete`, `children`, `find`, `spaces`, `copy-tree`,
+  page versions and properties / front matter. Folders are separate: (the shim refuses `create --type folder`; listing a folder's children uses the CLI's own v2 call, which needs `read:hierarchical-content:confluence`, not requested). They can answer "410 … removed" until
+  the Confluence CLI moves them to the new API.
 - **What it can change** is what your connection can: the CLI writes as you.
 - **Your own setup is never overridden.** If you set `CONFLUENCE_DOMAIN`, `CONFLUENCE_API_TOKEN` (or
   any other `CONFLUENCE_*` variable that names a host or a credential), pass `--profile`, or have run

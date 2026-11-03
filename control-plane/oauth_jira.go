@@ -53,13 +53,21 @@ const (
 		"read:issue-details:jira read:jql:jira"
 	// confluenceScopes are added when the tenant's app grants scope group confluence: the
 	// Confluence CLI in members' sessions rides this same authorization (one 3LO grant covers
-	// both products). Classic scopes, as the CLI's README lists them for its commands: read and
-	// search pages, list spaces, write pages, download and upload attachments. Not requested:
-	// space administration, and read:hierarchical-content:confluence (folder listing) which is
-	// granular and has to be added by hand if wanted.
+	// both products). Two families, both needed:
+	//   - classic scopes for what confluence-cli still reaches on v1: search, comments,
+	//     attachments (read and search pages, list spaces, write pages, upload/download files);
+	//   - granular v2 scopes for the page core (read, info, create, update, space lookup), which
+	//     the workspace agent's own shim sends to /wiki/api/v2 because Atlassian has removed
+	//     the v1 /content and /space endpoints those commands used. Per operation in Atlassian's
+	//     openapi-v2.v3.json: GET /pages/{id} read:page, POST /pages and PUT /pages/{id}
+	//     write:page, GET /spaces and /spaces/{id} read:space.
+	// Not requested: space administration, and read:hierarchical-content:confluence (folder
+	// listing) which is granular and has to be added by hand if wanted. The workspace agent
+	// reads the three v2 names back (jirax.confluencePageScopeList); keep the two in step.
 	confluenceScopes = "read:confluence-content.all read:confluence-content.summary " +
 		"read:confluence-space.summary search:confluence write:confluence-content " +
-		"readonly:content.attachment:confluence write:confluence-file"
+		"readonly:content.attachment:confluence write:confluence-file " +
+		"read:page:confluence write:page:confluence read:space:confluence"
 )
 
 // jiraScopesFor is the scope parameter of the authorize URL for an app granting groups.

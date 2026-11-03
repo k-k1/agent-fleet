@@ -19,6 +19,12 @@ cat >"$T/bin/workspace-agent" <<'STUB'
 #!/bin/sh
 set +x
 echo "$*" >>"$STUB_DIR/agent.calls"
+if [ "$1" = confluence-page ]; then
+  [ -z "${CONFLUENCE_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
+  shift
+  for a in "$@"; do echo "PAGEARG=$a"; done >"$STUB_DIR/page.seen"
+  exit "${STUB_PAGE_EXIT:-0}"
+fi
 [ "$1" = confluence-cred ] || exit 2
 # A helper must never see the token in its environment (it is exported only for the final exec).
 [ -z "${CONFLUENCE_API_TOKEN-}" ] || echo leaked >"$STUB_DIR/agent.leak"
@@ -77,7 +83,7 @@ untouched() { # untouched <label>: the CLI ran with none of our variables and th
 
 # 1. OAuth connection → bearer on the api.atlassian.com route, no email, links on the site.
 reset; oauth_answer
-run -- read 12345 --format "two words"
+run -- search 12345 --format "two words"
 expect oauth DOMAIN api.atlassian.com
 expect oauth API_PATH /ex/confluence/cid-1/wiki/rest/api
 expect oauth AUTH_TYPE bearer
@@ -105,14 +111,14 @@ no_leak api fake-api-tok
 
 # 3. Inherited insecure-http / site / email settings cannot weaken or leak into the injected run.
 reset; oauth_answer
-run CONFLUENCE_ALLOW_INSECURE_HTTP=true -- read 1
+run CONFLUENCE_ALLOW_INSECURE_HTTP=true -- search 1
 expect http ALLOW_INSECURE_HTTP '<unset>'
 expect http PROTOCOL https
 
 # 4. The helper fails / answers nothing → the CLI still runs, nothing injected, exit status kept,
 #    and the hint names the real next step.
 reset
-run STUB_CF_EXIT=7 -- read 1
+run STUB_CF_EXIT=7 -- search 1
 [ "$rc" = 7 ] || fail "helper failure: exit status $rc, want 7 from the CLI"
 expect nohelper API_TOKEN '<unset>'
 expect nohelper DOMAIN '<unset>'
@@ -121,7 +127,7 @@ grep -q "Connect Jira" "$T/err" || fail "nohelper: no hint on stderr"
 # 5. A partial answer (no token) injects nothing.
 reset
 printf 'domain=api.atlassian.com\napipath=/x\nauth=bearer\n' >"$T/agent.out"
-run -- read 1
+run -- search 1
 expect partial API_TOKEN '<unset>'
 expect partial DOMAIN '<unset>'
 
@@ -129,7 +135,7 @@ expect partial DOMAIN '<unset>'
 #    on stderr says what to do, exit 1, and a reason that embeds a lookalike secret is not echoed raw.
 reset
 printf 'unusable=this Atlassian authorization has no Confluence scopes\n' >"$T/agent.why"
-run -- read 1
+run -- search 1
 [ "$rc" = 1 ] || fail "unusable: exit status $rc, want 1"
 [ ! -f "$T/cf.seen" ] || fail "unusable: the CLI was run"
 grep -q "has no Confluence scopes" "$T/err" || fail "unusable: reason not shown"
@@ -141,52 +147,52 @@ for v in CONFLUENCE_DOMAIN CONFLUENCE_HOST CONFLUENCE_API_TOKEN CONFLUENCE_PASSW
   CONFLUENCE_USERNAME CONFLUENCE_AUTH_TYPE CONFLUENCE_API_PATH CONFLUENCE_COOKIE CONFLUENCE_PROFILE \
   CONFLUENCE_TLS_CLIENT_CERT CONFLUENCE_TLS_CLIENT_KEY; do
   reset; oauth_answer
-  run "$v=mine" -- read 1
+  run "$v=mine" -- search 1
   [ -f "$T/cf.seen" ] || fail "own $v: the CLI did not run"
   expect "own $v" API_TOKEN "$([ "$v" = CONFLUENCE_API_TOKEN ] && echo mine || echo '<unset>')"
   [ ! -f "$T/agent.calls" ] || fail "own $v: the Agent was consulted"
 done
 reset; oauth_answer
-run CONFLUENCE_API_TOKEN=mine CONFLUENCE_DOMAIN=wiki.example.test -- read 1
+run CONFLUENCE_API_TOKEN=mine CONFLUENCE_DOMAIN=wiki.example.test -- search 1
 expect own-env DOMAIN wiki.example.test
 expect own-env API_TOKEN mine
 expect own-env AUTH_TYPE '<unset>'
 
 # 8. --profile (either spelling) is the user's own setup.
 reset; oauth_answer
-run -- --profile work read 1
+run -- --profile work search 1
 untouched profile-flag
 reset; oauth_answer
-run -- read 1 --profile=work
+run -- search 1 --profile=work
 untouched profile-eq
 
 # 9. A config.json in any directory the CLI may use wins over injection.
 reset; oauth_answer
 mkdir -p "$T/home/.config/confluence-cli"; : >"$T/home/.config/confluence-cli/config.json"
-run -- read 1
+run -- search 1
 untouched xdg-config
 reset; oauth_answer
 mkdir -p "$T/home/.confluence-cli"; : >"$T/home/.confluence-cli/config.json"
-run -- read 1
+run -- search 1
 untouched legacy-config
 reset; oauth_answer
 mkdir -p "$T/cfg"; : >"$T/cfg/config.json"
-run CONFLUENCE_CONFIG_DIR="$T/cfg" -- read 1
+run CONFLUENCE_CONFIG_DIR="$T/cfg" -- search 1
 untouched config-dir
 reset; oauth_answer
 mkdir -p "$T/xdg/confluence-cli"; : >"$T/xdg/confluence-cli/config.json"
-run XDG_CONFIG_HOME="$T/xdg" -- read 1
+run XDG_CONFIG_HOME="$T/xdg" -- search 1
 untouched xdg-home
 rm -rf "$T/xdg"
 # …but an empty config directory does not (the CLI's analytics file creates it by merely running),
 # and with CONFLUENCE_CONFIG_DIR set the default places are not looked at.
 reset; oauth_answer
 mkdir -p "$T/home/.config/confluence-cli"; : >"$T/home/.config/confluence-cli/stats.json"
-run -- read 1
+run -- search 1
 expect empty-dir API_TOKEN fake-oauth-tok
 reset; oauth_answer
 mkdir -p "$T/home/.config/confluence-cli" "$T/cfg"; : >"$T/home/.config/confluence-cli/config.json"
-run CONFLUENCE_CONFIG_DIR="$T/cfg" -- read 1
+run CONFLUENCE_CONFIG_DIR="$T/cfg" -- search 1
 expect config-dir-only API_TOKEN fake-oauth-tok
 
 # 10. Subcommands and flags that need no credential skip the Agent (the Toolchains probe).
@@ -200,18 +206,18 @@ done
 
 # 11. An inherited xtrace / allexport must not echo or export the token.
 reset; oauth_answer
-run SHELLOPTS=xtrace -- read 1
+run SHELLOPTS=xtrace -- search 1
 expect xtrace API_TOKEN fake-oauth-tok
 no_leak xtrace fake-oauth-tok
 reset; oauth_answer
-run SHELLOPTS=allexport -- read 1
+run SHELLOPTS=allexport -- search 1
 [ ! -f "$T/agent.leak" ] || fail "allexport: token visible to the helper"
 
 # 12. A token that arrives under a name the CLI reads (a stale export from the caller) is replaced
 #     only when we inject, and a lookalike field in the reason cannot become the credential.
 reset
 printf 'unusable=x\ntoken=sneaky\n' >"$T/agent.why"
-run -- read 1
+run -- search 1
 [ ! -f "$T/cf.seen" ] || fail "reason with a token= line: the CLI ran"
 
 # 13. The Agent hanging is bounded when no terminal is attached (30 s in production; shortened by
@@ -225,7 +231,7 @@ exec "$@"
 STUB
 chmod +x "$T/bin/timeout"
 rm -f "$T/timeout.args"
-run -- read 1
+run -- search 1
 grep -q '^-k 5 30 workspace-agent confluence-cred' "$T/timeout.args" 2>/dev/null || fail "helper call was not bounded"
 expect bounded API_TOKEN fake-oauth-tok
 rm -f "$T/bin/timeout"
@@ -244,8 +250,40 @@ run -- api content
 expect jq-control API_TOKEN fake-oauth-tok
 run CONFLUENCE_API_TOKEN=mine -- api content --jq .
 [ -f "$T/cf.seen" ] || fail "jq own setup: the CLI did not run"
-run -- read 1 --jq .
+run -- search 1 --jq .
 [ -f "$T/cf.seen" ] || fail "jq on another subcommand: the CLI did not run"
+
+# 15. The page core (read, info, create, create-child, update, edit, space-lookup) goes to the
+# Agent's v2 shim with the argv untouched; the credential helper and the real CLI are not
+# involved, so no token exists in this shell for those. Search and the rest stay with the CLI.
+for sub in read info create create-child update edit space-lookup; do
+  reset; oauth_answer; rm -f "$T/page.seen"
+  run STUB_PAGE_EXIT=0 -- "$sub" 12345 -c "日本語 **太字**" --format markdown
+  [ "$rc" = 0 ] || fail "page $sub: exit status $rc, want 0"
+  [ ! -f "$T/cf.seen" ] || fail "page $sub: the real CLI ran"
+  grep -q '^confluence-cred' "$T/agent.calls" 2>/dev/null && fail "page $sub: the credential helper was asked"
+  [ "$(sed -n 1p "$T/page.seen")" = "PAGEARG=$sub" ] || fail "page $sub: argv not passed on: $(cat "$T/page.seen")"
+  grep -qxF 'PAGEARG=日本語 **太字**' "$T/page.seen" || fail "page $sub: argument altered"
+done
+reset; oauth_answer
+run STUB_PAGE_EXIT=1 -- read 1
+[ "$rc" = 1 ] || fail "page failure: exit status $rc, want 1"
+[ ! -f "$T/cf.seen" ] || fail "page failure: fell through to the real CLI"
+run -- search x
+[ -f "$T/cf.seen" ] && expect search-control API_TOKEN fake-oauth-tok
+[ ! -f "$T/page.seen" ] || [ "$(cat "$T/page.seen")" != "PAGEARG=search" ] || fail "search went to the shim"
+
+# 16. Exit 64 from the shim ("no Atlassian connection") falls through to the usual hint and the CLI.
+reset
+run STUB_PAGE_EXIT=64 -- read 1
+[ -f "$T/cf.seen" ] || fail "no connection: the CLI did not run"
+grep -q "no Atlassian connection" "$T/err" || fail "no connection: no hint"
+
+# 17. A user's own setup never goes through the shim.
+reset; oauth_answer; rm -f "$T/page.seen"
+run CONFLUENCE_API_TOKEN=mine -- read 1
+[ ! -f "$T/page.seen" ] || fail "own setup: the shim was used"
+[ -f "$T/cf.seen" ] || fail "own setup: the CLI did not run"
 
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2

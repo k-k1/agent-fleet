@@ -186,7 +186,18 @@ directory belongs to someone else.
   `jira issue edit KEY --no-input -b "…"`.
 - **Confluence: the `confluence` CLI** (pchuri/confluence-cli) rides the same Atlassian connection and is
   pre-authenticated and token-renewing like `jira`: `confluence search "…"`, `confluence read PAGE_ID`,
-  `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. Never run
+  `confluence create "Title" SPACE --content "…"`, `confluence update PAGE_ID …`. Page
+  `read`/`info`/`create`/`create-child`/`update`/`edit` and `space-lookup` are answered by the Agent's
+  own Confluence v2 shim (`workspace-agent confluence-page`, same command line): confluence-cli 2.x
+  uses the v1 `/content` and `/space` endpoints, which Atlassian removed (410). `--format markdown`
+  (read and write) is UTF-8-safe for Japanese, emoji and `code`/**bold** next to Japanese; a file
+  that is not UTF-8 is refused. Writes are sent once and never retried: after a "may or may not
+  have been applied" message, search or `read` before repeating. An update that hits a version
+  conflict (409) overwrote nothing: `read` again and redo it. `move`, `delete`, `children`, `find`,
+  `spaces`, `copy-tree`, versions, properties/front matter still use the CLI's v1 calls
+  and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
+  (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
+  reconnects Jira); report it. Never run
   `confluence init`, never set `CONFLUENCE_*` variables or `--profile` (a config of the user's own is
   theirs and turns the injection off). Its "authorization has no Confluence scopes" / "cannot be
   used" line is the answer: report it (reconnect Jira; the tenant administrator enables the scopes

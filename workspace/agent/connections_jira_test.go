@@ -290,7 +290,8 @@ func TestJiraStatusConfluenceScopes(t *testing.T) {
 		s    *secrets.Data
 		want any
 	}{
-		{"granted", site("read:jira-work", "search:confluence"), "granted"},
+		{"granted", site("read:jira-work", "search:confluence", "read:page:confluence", "write:page:confluence", "read:space:confluence"), "granted"},
+		{"classic only: reconnect", site("read:jira-work", "search:confluence"), "outdated"},
 		{"missing", site("read:jira-work", "offline_access"), "missing"},
 		{"unrecorded", site(), nil},
 		{"api token", &secrets.Data{Jira: &secrets.JiraCreds{Site: "https://a.atlassian.net", Email: "e@x", Token: "t"}}, nil},
@@ -311,8 +312,8 @@ func sitesOf(t *testing.T, st map[string]any) []map[string]any {
 // (no picker) while the stored rows stay per product for the scope union.
 func TestJiraStatusDedupesSitesByCloudID(t *testing.T) {
 	rows := []secrets.JiraSite{
-		{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One", Scopes: []string{"read:jira-work"}},
-		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One (Confluence)", Scopes: []string{"read:page:confluence"}},
+		{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One", Scopes: []string{"read:jira-work", "write:page:confluence"}},
+		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One (Confluence)", Scopes: []string{"read:page:confluence", "read:space:confluence"}},
 	}
 	s := &secrets.Data{Jira: &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Unix() + 3600, CloudID: "cid-1", Site: "https://one.atlassian.net", Sites: rows}}
 	got := sitesOf(t, jiraStatus(s))

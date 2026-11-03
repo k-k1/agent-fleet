@@ -516,3 +516,21 @@ func TestJiraScopesForGroups(t *testing.T) {
 		seen[sc] = true
 	}
 }
+
+// The page shim in the workspace (jirax.RunConfluencePage) calls /wiki/api/v2, which answers 401
+// "scope does not match" without these three granular scopes; classic ones do not stand in.
+func TestJiraConfluenceGroupRequestsTheV2PageScopes(t *testing.T) {
+	have := map[string]bool{}
+	for _, sc := range strings.Fields(jiraScopesFor([]string{scopeGroupConfluence})) {
+		have[sc] = true
+	}
+	for _, want := range []string{"read:page:confluence", "write:page:confluence", "read:space:confluence",
+		"search:confluence", "write:confluence-content"} {
+		if !have[want] {
+			t.Errorf("confluence group lacks %s", want)
+		}
+	}
+	if jiraScopesFor(nil) != jiraScopes {
+		t.Error("no group must stay Jira-only")
+	}
+}

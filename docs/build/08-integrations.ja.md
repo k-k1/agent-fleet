@@ -388,6 +388,17 @@ Jira は git でなく作業項目インボックス
   （記録済みのスコープに `confluence` を含むものがない）を返し、ラッパーは素の 401 に当たらせる代わりに
   Jira を接続し直すよう 1 行で伝える。スコープが不明（古いストア、取得失敗）の場合は拒否しない。判定は、サイトの id を持つ accessible-resources の全行（Jira と Confluence の行は同じ id）のスコープの和集合で行う。
   設定画面も同じ判定を出す（接続状態の `confluenceScopes: "missing"`）。
+- **ページ操作は v2 で処理する（2026-11-03、#3266）。** confluence-cli 2.31 はページの閲覧・作成・更新に
+  v1 の `/content`・`/space` を使うが、現行の Cloud サイトは 410 を返す。`workspace-agent confluence-page`
+  （`internal/jirax/confluence_page.go`）が `read`・`info`・`create`・`create-child`・`update`・`edit`・
+  `space-lookup` をラッパーから受け取り、CLI と同じコマンドラインと出力で `/wiki/api/v2` を呼ぶ。変換は
+  Markdown→storage が goldmark（CJK 対応の強調、Jira の ADF で使用済み）、storage→Markdown/テキストが
+  `encoding/xml`。confluence-cli の非公開 `lib/` を node 経由で使わないのは、固定した CLI の内部に依存しない
+  ため。日本語・絵文字・日本語に隣接する `code`/**太字**・リスト・表をゴールデンの往復テストで固定している。
+  グループに細粒度の `read:page`・`write:page`・`read:space` を追加し、Confluence のスコープはあるがこれらが
+  ない認可は `confluenceScopes: "outdated"`（設定画面は再接続を案内、`confluence-cred` は引き続き渡すので
+  検索とコメントは動く）。書き込みは 1 回だけ送り、更新は `version+1` を送るので同時編集は 409 になる。
+  v1 のままで 410 が見込まれるもの: move・delete・children・find・spaces・copy-tree・versions・properties。フォルダは別: shim は `create --type folder` を拒否し、CLI のフォルダ子一覧は v2 `/pages/{id}/direct-children`（`read:hierarchical-content:confluence`、未要求）。
 - **利用者自身の設定が勝つ。中身は読まず、何があるかで決める**: ホスト・身元・認証情報を選ぶ
   `CONFLUENCE_*` 変数、`--profile` フラグ、`CONFLUENCE_CONFIG_DIR`（なければ
   `$XDG_CONFIG_HOME/confluence-cli` と `~/.confluence-cli`）の `config.json` のどれかがあれば、CLI は

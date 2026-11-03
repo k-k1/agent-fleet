@@ -133,15 +133,20 @@ To register one:
 
 > **Jira: Confluence for the `confluence` CLI needs more scopes.** The Confluence CLI in
 > members' sessions uses the same Atlassian authorization as Jira. In the Developer Console, open
-> the app's **Permissions → Confluence API → Configure → Edit Scopes** and select these seven
-> classic scopes: `read:confluence-content.all`, `read:confluence-content.summary`,
+> the app's **Permissions → Confluence API → Configure → Edit Scopes** and select these ten
+> scopes: the classic `read:confluence-content.all`, `read:confluence-content.summary`,
 > `read:confluence-space.summary`, `search:confluence`, `write:confluence-content`,
-> `readonly:content.attachment:confluence` and `write:confluence-file`. **Then** tick *The app
+> `readonly:content.attachment:confluence` and `write:confluence-file`, **and** the granular
+> `read:page:confluence`, `write:page:confluence` and `read:space:confluence`. The granular ones
+> are what page read / create / update need: Atlassian removed the old page endpoints, and the
+> workspace calls the current v2 API, which answers 401 "scope does not match" without them. **Then** tick *The app
 > also grants the Confluence scopes* on the Jira card and save, in that order, for the same reason
 > as above: ticking first stops every member from connecting. A tenant that never ticks it keeps
 > working as before; its members just have no `confluence` CLI. Members who are already connected
 > get the scopes when they reconnect Jira, and a member whose Jira card says "Confluence: not
-> available" is connected without them.
+> available" is connected without them. Apps that were set up with the seven classic scopes only
+> need the three granular ones added; members then reconnect Jira once. Until they do, their card
+> says "Confluence: search and comments work, but …" and the page commands print a one-line pointer.
 
 The secret is **encrypted on save and never shown again**. When you edit the
 registration later, leaving the secret field empty keeps the stored one; fill it in
