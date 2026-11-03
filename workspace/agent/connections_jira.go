@@ -47,8 +47,16 @@ func jiraStatus(s *secrets.Data) map[string]any {
 	// Report the sites even when there is only one: "you may choose" and "there is one
 	// choice" are different, and without the former the user never learns they can switch.
 	if len(c.Sites) > 0 {
+		// Stored rows are per product (Jira, Confluence) and may share a cloud id; the
+		// member picks a site, so report each id once (first row wins). The stored rows stay
+		// as they are: siteScopes unions their scopes.
 		sites := make([]map[string]any, 0, len(c.Sites))
+		seen := make(map[string]bool, len(c.Sites))
 		for _, st := range c.Sites {
+			if seen[st.CloudID] {
+				continue
+			}
+			seen[st.CloudID] = true
 			sites = append(sites, map[string]any{"cloudId": st.CloudID, "url": st.URL, "name": st.Name})
 		}
 		m["sites"] = sites
