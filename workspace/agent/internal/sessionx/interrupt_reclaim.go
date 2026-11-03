@@ -145,20 +145,20 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 	if !emptyBefore || !restoresInterruptedPrompt(m.Kind) {
 		return ""
 	}
-	if prompt := interruptedPrompt(m); strings.TrimSpace(prompt) != "" {
-		for waited := time.Duration(0); waited < reclaimWindow; waited += reclaimPoll {
-			reclaimSleep(reclaimPoll)
-			if !restoredDraft(reclaimCapture(pane), prompt) {
-				continue
-			}
-			if clearComposer(pane, prompt) {
-				return prompt
-			}
-			log.Printf("interrupt: %s: the stopped prompt came back into the input box and could not be cleared", m.Name)
-			break
+	// The prompt is read on every poll, not once: claude logs the stopped prompt's user line
+	// about 200-250 ms after the Enter (measured 2.1.317), and a stop sent right after a send
+	// reads the transcript before that, finding the previous prompt or none.
+	for waited := time.Duration(0); waited < reclaimWindow; waited += reclaimPoll {
+		reclaimSleep(reclaimPoll)
+		prompt := interruptedPrompt(m)
+		if strings.TrimSpace(prompt) == "" || !restoredDraft(reclaimCapture(pane), prompt) {
+			continue
 		}
-	} else {
-		reclaimSleep(reclaimWindow)
+		if clearComposer(pane, prompt) {
+			return prompt
+		}
+		log.Printf("interrupt: %s: the stopped prompt came back into the input box and could not be cleared", m.Name)
+		break
 	}
 	if !composerEmpty(reclaimCapture(pane)) {
 		strandedPrompts.Store(m.Name, struct{}{})
