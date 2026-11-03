@@ -23,7 +23,9 @@ func withAPIKey(t *testing.T, key string, err error) {
 	t.Cleanup(func() { loadAPIKey = prev })
 }
 
-func sel(route, conn string) *routes.Selection { return &routes.Selection{Route: route, Connection: conn} }
+func sel(route, conn string) *routes.Selection {
+	return &routes.Selection{Route: route, Connection: conn}
+}
 
 func TestClaudeDeclaresBothRoutesAndIsAnAdapter(t *testing.T) {
 	var a agents.Agent = agentImpl{}
