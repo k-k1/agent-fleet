@@ -272,3 +272,25 @@ func TestSweepRouteGuardsStopsAConflictedSession(t *testing.T) {
 		t.Errorf("restart: %+v, want %s", ref, routes.CodeRouteSettings)
 	}
 }
+
+// A resumed Terminal session keeps a stale StoppedAt until the next session list; the guard
+// judges the live process, so such a session is still watched (and a really stopped one is not
+// touched).
+func TestSweepRouteGuardsIgnoresAStaleStoppedAt(t *testing.T) {
+	isolateAgentState(t)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	running := session.Meta{Name: "rg-stale", Kind: "claude", Dir: t.TempDir(), Route: &routes.Selection{Route: "anthropic-api"},
+		StoppedAt: "2026-11-04T01:00:00Z", CreatedAt: "2026-10-29T10:00:00+09:00"}
+	session.WriteMeta(running)
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", session.TmuxName(running.Name), "sleep 120").CombinedOutput(); err != nil {
+		t.Fatalf("tmux: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://gateway.invalid"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	SweepRouteGuards(time.Now())
+	if tmuxx.HasSession(session.TmuxName(running.Name)) {
+		t.Error("a running session with a stale StoppedAt escaped the guard")
+	}
+}

@@ -114,7 +114,10 @@ func startRefusalOf(m session.Meta) *SpawnRefusal {
 // a session that could be spending on another account is not left running.
 func SweepRouteGuards(now time.Time) {
 	for _, m := range session.ListMetas() {
-		if m.Route == nil || m.Archived || m.StoppedAt != "" || !session.ValidName(m.Name) {
+		// Liveness is judged on the process, never on StoppedAt: a Terminal resume (/start) leaves
+		// the old mark in place until the next session list clears it, and a session that is
+		// running must not escape the guard until somebody reads the list.
+		if m.Route == nil || m.Archived || !session.ValidName(m.Name) {
 			continue
 		}
 		a, _ := RegisteredAgent(NormalizeKind(m.Kind))
