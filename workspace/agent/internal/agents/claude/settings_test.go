@@ -157,12 +157,21 @@ func TestIdleCompactionSetting(t *testing.T) {
 		}
 		return body
 	}
-	put := func(body string) {
+	// put checks the PUT answer too: the Console replaces its state with it, so a reply without
+	// idleCompaction would hide the row right after a save.
+	put := func(body string, want bool) {
 		t.Helper()
 		rec := httptest.NewRecorder()
 		HandleSettingsPut(rec, httptest.NewRequest(http.MethodPut, "/claude/settings", strings.NewReader(body)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("PUT %s = %d %s", body, rec.Code, rec.Body)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("PUT body: %v", err)
+		}
+		if got[idleCompactionKey] != want {
+			t.Fatalf("PUT %s answered idleCompaction = %v, want %v", body, got[idleCompactionKey], want)
 		}
 	}
 	onDisk := func() map[string]any {
@@ -188,7 +197,7 @@ func TestIdleCompactionSetting(t *testing.T) {
 		t.Fatalf("key absent: idleCompaction = %v, want true", got)
 	}
 
-	put(`{"idleCompaction":false}`)
+	put(`{"idleCompaction":false}`, false)
 	if got := get()[idleCompactionKey]; got != false {
 		t.Fatalf("after PUT false: idleCompaction = %v", got)
 	}
@@ -198,12 +207,12 @@ func TestIdleCompactionSetting(t *testing.T) {
 	}
 
 	// A PUT of another switch must not touch the user's choice.
-	put(`{"agentPushNotifEnabled":false}`)
+	put(`{"agentPushNotifEnabled":false}`, false)
 	if m := onDisk(); m[idleCompactionKey] != false {
 		t.Fatalf("unrelated PUT changed idleCompaction: %v", m)
 	}
 
-	put(`{"idleCompaction":true}`)
+	put(`{"idleCompaction":true}`, true)
 	if m := onDisk(); m[idleCompactionKey] != true {
 		t.Fatalf("after PUT true: %v", m)
 	}
