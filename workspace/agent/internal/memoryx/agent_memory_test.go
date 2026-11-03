@@ -29,20 +29,7 @@ func agentMemTestEnv(t *testing.T) (home, clone, wt string) {
 	t.Cleanup(func() { AgentMemoryEnabled = oldHook })
 	clone = filepath.Join(home, "repos", "demo")
 	wt = filepath.Join(home, "repos", "demo@feature-x")
-	memoryMkdirAll(t, clone)
-	git := func(dir string, args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	git(clone, "init", "--quiet", "-b", "main")
-	git(clone, "commit", "--quiet", "--allow-empty", "-m", "init")
-	git(clone, "worktree", "add", "--quiet", "-b", "feature-x", wt)
+	agentMemCloneFixture(t, clone, wt)
 
 	session.WriteMeta(session.Meta{Name: "claude-main", Dir: clone, Kind: "claude"})
 	session.WriteMeta(session.Meta{Name: "codex-wt", Dir: wt, Kind: "codex"})
