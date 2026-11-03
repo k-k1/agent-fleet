@@ -79,7 +79,9 @@ const isScopeGroup = (g: string): g is ScopeGroup => Object.hasOwn(SCOPE_GROUP_T
 function ScopeList({ app, group }: { app: GitOAuthApp; group: string }) {
   const tr = useT();
   const entry = (app.scope_group_scopes || []).find((e) => e.group === group);
-  if (!entry) return null;
+  // A control plane older than this Console sends no list although the prose points at one;
+  // say where the names are instead of leaving "listed below" pointing at nothing.
+  if (!entry) return <p className="admin-hint">{tr("tenant.git_oauth_scopes_missing")}</p>;
   const classic = entry.classic || [];
   const granular = entry.granular || [];
   const both = classic.length > 0 && granular.length > 0;

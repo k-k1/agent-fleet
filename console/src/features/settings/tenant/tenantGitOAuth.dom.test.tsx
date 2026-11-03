@@ -355,4 +355,26 @@ describe("GitHub app source", () => {
       }
     });
   }
+
+  for (const loc of ["en", "ja"] as const) {
+    it(`an older control plane without scope_group_scopes still gets the checkbox and a pointer to the guide, ${loc}`, async () => {
+      setLocale(loc);
+      api.mockResolvedValue({
+        providers: [
+          {
+            provider: "jira",
+            client_id: "cid-1",
+            has_secret: true,
+            needs_secret: true,
+            scope_groups_available: ["jira_software", "confluence"],
+          },
+        ],
+      });
+      await mount();
+      expect(document.querySelectorAll('input[type="checkbox"]').length).toBe(2);
+      expect(document.querySelectorAll("details.admin-scopes").length).toBe(0);
+      const text = document.body.textContent || "";
+      expect(text).toContain("guide/admin/05-access");
+    });
+  }
 });

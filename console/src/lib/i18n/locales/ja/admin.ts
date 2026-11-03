@@ -669,6 +669,7 @@ export const admin = {
   "tenant.git_oauth_scope_group_jira_software_hint": "OAuth 接続で jira CLI のボード・スプリント・エピック系コマンドと jira init を使うのに必要です。先にアプリの Permissions → Jira API → Configure → Granular scopes → Edit Scopes で、下の一覧のスコープ（board-scope のスコープは画面では「View boards, backlogs, and related items」。「View board configuration」とは別物です）を許可してから、ここにチェックを入れてください。アプリにないスコープを求める認可は Atlassian に拒否されるので、先にチェックを入れると全メンバーが接続できなくなります。接続済みのメンバーは、Jira を接続し直すと新しいスコープを受け取れます。",
   "tenant.git_oauth_scope_group_confluence": "このアプリに Confluence のスコープ（confluence CLI 用）も許可済み",
   "tenant.git_oauth_scope_group_confluence_hint": "OAuth 接続で confluence CLI を使うのに必要です（Jira と同じ Atlassian 認可を使います）。先にアプリの Permissions → Confluence API → Configure → Edit Scopes で、下の一覧のスコープ（classic はそのまま、細粒度（granular）は同じ画面の granular タブで）を許可してから、ここにチェックを入れてください。アプリにないスコープを求める認可は Atlassian に拒否されるので、先にチェックを入れると全メンバーが接続できなくなります。classic だけで設定済みのアプリは、細粒度のスコープを追加するだけで済みます。接続済みのメンバーは、Jira を接続し直すと新しいスコープを受け取れます。",
+  "tenant.git_oauth_scopes_missing": "この Control Plane は（Console より古いため）スコープの一覧を送ってこないので、ここには表示できません。追加するスコープは管理者ガイドの「アクセス」の章（guide/admin/05-access.ja.md）を参照してください。",
   "tenant.git_oauth_scopes_summary": "必要なスコープ（{n} 個）",
   "tenant.git_oauth_scopes_classic": "Classic（クラシック）",
   "tenant.git_oauth_scopes_granular": "Granular（細粒度）",
