@@ -23,7 +23,8 @@ import (
 // an hour), settled ones every settledTTL (6), so 10 repositories with 20 open PRs cost about
 // (10+20)×12 = 360 calls an hour. Where the commit endpoint does not resolve a short hash, the
 // status fallback makes that two calls per open PR: (10+40)×12 = 600. The conflict state is one
-// diffstat call per open PR every bitbucketConflictTTL (4 an hour): 20×4 = 80 more.
+// conflicts call per open PR every bitbucketConflictTTL (4 an hour), which Bitbucket answers with a
+// redirect, so two requests: 20×4×2 = 160 more.
 
 const (
 	// bitbucketOpenTTL is GitHub's openTTL stretched for that budget: an open PR costs a status
@@ -37,13 +38,10 @@ const (
 	bitbucketBranchesPerCall = 10
 	// bitbucketPageLen is that page.
 	bitbucketPageLen = 50
-	// bitbucketConflictTTL is how long an open PR's conflict state is trusted. Bitbucket lists it
-	// only per file in the diffstat, a call of its own, and a conflict comes from the destination
-	// moving as often as from a push; a new head re-reads it at once.
+	// bitbucketConflictTTL is how long an open PR's conflict state is trusted. Bitbucket answers it
+	// only from a call of its own, and a conflict comes from the destination moving as often as
+	// from a push; a new head re-reads it at once.
 	bitbucketConflictTTL = 15 * time.Minute
-	// bitbucketDiffstatLen is the one diffstat page read. A conflict past the first 500 files is
-	// missed: a PR that size has bigger problems than a late chip.
-	bitbucketDiffstatLen = 500
 )
 
 var (
@@ -292,9 +290,13 @@ func (b *bitbucket) checks(auth, repo string, pr int, head string) (string, []Ch
 	return bitbucketRollup(body, head)
 }
 
-// conflict reports whether an open PR's diffstat names a file in conflict, from a cache held for
+// conflict reports whether an open PR has files in conflict, from a cache held for
 // bitbucketConflictTTL or until the head moves. A failed read answers the last state known for
 // this head, else no conflict: a chip must not claim one it has not seen.
+//
+// Asked of /pullrequests/{id}/conflicts, which redirects to the file conflicts of the PR's
+// revspec; any file listed is a conflict. Not the diffstat: since Bitbucket removed its merge
+// preview (2026-09-04) a diffstat is the topic diff and never reports "merge conflict".
 func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	id := repo + "#" + strconv.Itoa(pr)
 	now := time.Now()
@@ -304,29 +306,24 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	if ok && e.head == head && now.Sub(e.at) < bitbucketConflictTTL {
 		return e.conflict
 	}
-	body, _, err := b.get(auth, fmt.Sprintf("%s/pullrequests/%d/diffstat?pagelen=%d&fields=values.status",
-		repoPath(repo), pr, bitbucketDiffstatLen))
+	held := ok && e.head == head && e.conflict
+	body, _, err := b.get(auth, fmt.Sprintf("%s/pullrequests/%d/conflicts", repoPath(repo), pr))
 	if err != nil {
-		return ok && e.head == head && e.conflict
+		return held
 	}
-	var ds struct {
-		Values []struct {
-			Status string `json:"status"`
-		} `json:"values"`
+	var fc struct {
+		Size   *int              `json:"size"`
+		Values []json.RawMessage `json:"values"`
 	}
-	conflict := false
-	if json.Unmarshal(body, &ds) == nil {
-		for _, v := range ds.Values {
-			if strings.EqualFold(v.Status, "merge conflict") {
-				conflict = true
-				break
-			}
-		}
+	if json.Unmarshal(body, &fc) != nil || (fc.Values == nil && fc.Size == nil) {
+		return held // an answer that does not read is a failed read, not "no conflict"
 	}
+	conflict := len(fc.Values) > 0 || (fc.Size != nil && *fc.Size > 0)
 	b.mu.Lock()
-	// PRs no session asks about any more go with the next answer.
+	// PRs no session has asked about for forgetAfter go with the next answer. Not on the TTL: a PR
+	// past it but still asked about would lose the state a failed read falls back to.
 	for k, old := range b.conflicts {
-		if now.Sub(old.at) >= bitbucketConflictTTL {
+		if now.Sub(old.at) >= forgetAfter {
 			delete(b.conflicts, k)
 		}
 	}
