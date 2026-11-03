@@ -14,6 +14,8 @@ const pasteMock = vi.fn<(f: File) => Promise<Upload>>();
 const createMock = vi.fn<(input: unknown) => Promise<unknown>>();
 // Stored memo files served by GET api/memos/images/<name>; a missing name answers 404.
 let stored: Record<string, { body: string; type: string }> = {};
+// When set, every stored-file GET waits for it (a slow fetch of the memo's files).
+let blockFetch: Promise<void> | null = null;
 
 vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
@@ -28,6 +30,7 @@ vi.mock("../../core/api/client.ts", () => ({
   memoDelete: async () => new Response(null, { status: 204 }),
   memoImageURL: (name: string) => `api/memos/images/${name}`,
   raw: async (url: string) => {
+    if (blockFetch) await blockFetch;
     const s = stored[url.split("/").pop() || ""];
     // A plain object, not a Response: undici's Response cannot read jsdom's Blob.
     return s ? { ok: true, blob: async () => new Blob([s.body], { type: s.type }) } : { ok: false };
@@ -105,6 +108,7 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   stored = {};
+  blockFetch = null;
   let n = 0;
   pasteMock.mockReset().mockImplementation(async (f) => {
     n++;
@@ -187,6 +191,26 @@ describe("Save to memo", () => {
   });
 });
 
+describe("Save to memo while it runs", () => {
+  // What was saved is what gets cleared, so nothing may change meanwhile (review of #3293).
+  it("locks typing, attaching and launching until the save is done", async () => {
+    let release!: () => void;
+    createMock.mockImplementationOnce(() => new Promise((r) => (release = () => r({ id: "m1" }))));
+    await render();
+    await type("保存する本文");
+    await click(stashBtn());
+    expect(promptBox().readOnly).toBe(true);
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    await paste(new File(["X"], "late.png", { type: "image/png" }));
+    expect(chips()).toHaveLength(0);
+    await act(async () => release());
+    await settle();
+    expect(promptBox().readOnly).toBe(false);
+    expect(promptBox().value).toBe("");
+    expect(onLaunch).not.toHaveBeenCalled();
+  });
+});
+
 describe("Start from a memo", () => {
   it("stages the memo's files as chips and hands them to the launch", async () => {
     stored = {
@@ -209,6 +233,23 @@ describe("Start from a memo", () => {
     const files = (onLaunch.mock.calls[0][0] as LaunchOpts).images;
     expect(files.map((f) => f.name)).toEqual(["paste-1.png", "run.log"]);
     expect(await files[1].text()).toBe("LOG");
+  });
+
+  // A launch before the files arrived would go out without them, and then delete the memo
+  // that still had them (review of #3293).
+  it("cannot launch or save until the memo's files are staged", async () => {
+    stored = { "paste-1.png": { body: "IMG", type: "image/png" } };
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    blockFetch = gate;
+    await render({ initialPrompt: "本文", initialAttachments: [{ path: "/x/paste-1.png", name: "paste-1.png" }] });
+    expect(chips()).toHaveLength(0);
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    expect(stashBtn().disabled).toBe(true);
+    await act(async () => release());
+    await settle();
+    expect(chips()).toHaveLength(1);
+    expect(byText("Start in a worktree").disabled).toBe(false);
   });
 
   it("says how many files could not be loaded", async () => {

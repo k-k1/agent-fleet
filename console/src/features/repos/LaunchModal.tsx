@@ -30,7 +30,7 @@ import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from ".
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
-import { launchAttachKey, useLaunchPrompt } from "./launchDraft.ts";
+import { launchAttachKey, setLaunchDraftMemo, useLaunchPrompt } from "./launchDraft.ts";
 import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { AttachChips } from "../mirror/parts/AttachChips.tsx";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
@@ -52,7 +52,7 @@ import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePic
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
-import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
+import { fetchMemoAttachments, markLaunchDraftMemo, stashLaunchDraft } from "../memo/launchStash.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
@@ -137,6 +137,9 @@ interface LaunchModalProps {
   /** Stored memo attachments to stage as chips (#3289: start from a memo). Their bytes are
    *  fetched on open and they launch exactly like files pasted here. */
   initialAttachments?: MemoAttachment[];
+  /** The memo this dialog restores (#3289), "" / omitted = none. Once its files are staged
+   *  the stored draft is marked as that memo's, so restoring it again resumes the draft. */
+  seedMemoId?: string;
 	/** Optional initial session title, e.g. proposed by a predecessor session. */
   initialTitle?: string;
   /** Open straight into existing-branch mode with this branch picked — the SCM view's
@@ -212,7 +215,7 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialAttachments, seedMemoId, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -417,7 +420,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // Stage File(s) as pending attachments (raw File + a preview URL for images). Actual upload
   // waits for the session (onStartWork). Shared by clipboard paste, drop and the + picker.
   const addFiles = (files: File[]) => {
-    if (!canPasteImage || !files.length) return;
+    if (!canPasteImage || !files.length || busy) return;
     attach.add(files.map((f) => makeAttachment(f)));
   };
 
@@ -454,18 +457,29 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     addFiles(Array.from(e.dataTransfer.files || []));
   };
 
-  const removeFile = (i: number) => attach.remove(i);
+  const removeFile = (i: number) => {
+    if (!busy) attach.remove(i);
+  };
 
   // Seeded from a memo: bring its files back as chips. No once-only ref: under StrictMode the
   // first run is cancelled by its cleanup, and a ref would stop the second from adding them.
+  // Launch and save wait for it (seedLoading): either one before the files arrived would go
+  // out without them, and a launch would then delete the memo that still had them.
   const [seedMissing, setSeedMissing] = useState(0);
+  const [seedLoading, setSeedLoading] = useState(() => !!initialAttachments?.length && canPasteImage);
   useEffect(() => {
-    if (!initialAttachments?.length || !canPasteImage) return;
+    if (!initialAttachments?.length || !canPasteImage) {
+      if (seedMemoId) markLaunchDraftMemo(repo, seedMemoId);
+      return;
+    }
     let alive = true;
+    setSeedLoading(true);
     void fetchMemoAttachments(initialAttachments).then((files) => {
       if (!alive) return;
       attach.add(files.map((f) => makeAttachment(f)));
       setSeedMissing(initialAttachments.length - files.length);
+      setSeedLoading(false);
+      if (seedMemoId) markLaunchDraftMemo(repo, seedMemoId);
     });
     return () => {
       alive = false;
@@ -477,12 +491,16 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // next task. The dialog stays open, and the outcome is said right above the box it emptied,
   // where the person is looking.
   const [stash, setStash] = useState<"" | "busy" | "done" | "failed" | "too_large">("");
-  const canStash = !busy && stash !== "busy" && (!!prompt.trim() || images.length > 0);
+  // While it saves, the whole form is busy (no typing, attaching, launching or closing):
+  // what was saved is what gets cleared, so an edit made meanwhile would be lost with it.
+  const canStash = !busy && !seedLoading && (!!prompt.trim() || images.length > 0);
   const stashDraft = async () => {
     if (!canStash) return;
+    setBusy(true);
     setStash("busy");
     const files = canPasteImage ? images.flatMap((x) => (x.file ? [x.file] : [])) : [];
     const r = await stashLaunchDraft(repo, prompt.trim(), files);
+    setBusy(false);
     if (!r.ok) {
       setStash(r.reason);
       return;
@@ -491,9 +509,14 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     // next prompt typed here has to be kept as a draft like any other.
     setPrompt("");
     attach.clear();
+    setLaunchDraftMemo(repo, ""); // whatever is typed next is not the restored memo's
     setSeedMissing(0);
     setStash("done");
-    if (!coarsePointer()) textRef.current?.focus();
+    // After the re-render that ends the busy state (measured in headless Chromium: focusing in
+    // the same tick left the focus off the box).
+    requestAnimationFrame(() => {
+      if (!coarsePointer()) textRef.current?.focus();
+    });
   };
   // The staged image shown enlarged, if any. Esc and Back peel it before the dialog: both
   // are layered stacks, and this layer joins after the Modal's.
@@ -575,7 +598,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // typed name turned out to exist, so check THAT branch out instead of creating it.
   // Existing-branch mode arrives here already resolved, with a branch picked from the list.
   const start = async (resolveCollision: boolean) => {
-    if (busy) return;
+    if (busy || seedLoading) return;
     setBusy(true);
     setConflict(null);
     const useExisting = existingMode || resolveCollision;
@@ -621,7 +644,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -791,7 +814,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
               {tr("launch.memo_attach_missing", { count: seedMissing })}
             </div>
           )}
-          <AttachChips attachments={images} pasting={false} onRemove={removeFile} onOpen={setZoom} />
+          <AttachChips attachments={images} pasting={seedLoading} onRemove={removeFile} onOpen={setZoom} />
           {/* Rendered inside the Modal's panel (the portal keeps the React tree), so a click on
               the lightbox's backdrop stops at the panel instead of also closing the dialog. */}
           {zoom &&
@@ -799,6 +822,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
           <textarea
             ref={textRef}
             value={prompt}
+            readOnly={busy}
             onChange={(e) => {
               setPrompt(e.target.value);
               skillPicker.trackTyping(e.target.value, e.target.selectionStart ?? e.target.value.length);
@@ -1141,7 +1165,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
           {tr("common.cancel")}
         </Button>
         <Button variant="primary" onClick={submit} disabled={busy || !canLaunch}>
-          {busy ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
+          {busy && stash !== "busy" ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
         </Button>
       </footer>
       {gitflowOpen && <GitflowInitModal repo={repo} onClose={() => setGitflowOpen(false)} onSaved={naming.resolveAgain} />}

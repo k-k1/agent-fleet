@@ -24,6 +24,8 @@ const { useSessionsStore } = await import("../sessions/store.ts");
 const { useMemoStore } = await import("./store.ts");
 const { readLaunchPrompt, launchAttachKey } = await import("../repos/launchDraft.ts");
 const { readAttachDraft, writeAttachDraft, resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
+const { pendingMemoUploads, stashLaunchDraft } = await import("./launchStash.ts");
+const { registerToastSink } = await import("../../ui/toast.ts");
 import type { Memo } from "../../types/memo.ts";
 
 const memo = (over: Partial<Memo> = {}): Memo => ({
@@ -115,6 +117,63 @@ describe("startFromMemo", () => {
     expect(useLaunchSeed.getState().onLaunched).toBeNull();
     expect(useLaunchSeed.getState().attachments).toEqual([]);
     expect(useLaunchSeed.getState().memoId).toBe("");
+  });
+});
+
+// Findings from the review of #3293.
+describe("races and failures", () => {
+  // Reading while the closed dialog's write is still reading bytes would miss the file, and
+  // the clear after it would cancel that write too: the file would be in neither draft.
+  it("waits for an in-flight attachment write before taking the draft over", async () => {
+    let give!: () => void;
+    const slow = new File(["SLOW"], "slow.log", { type: "text/plain" });
+    const gate = new Promise<void>((r) => (give = r));
+    slow.arrayBuffer = async () => {
+      await gate;
+      return new TextEncoder().encode("SLOW").buffer as ArrayBuffer;
+    };
+    void writeAttachDraft(launchAttachKey("app"), [{ name: "slow.log", type: "text/plain", image: false, path: "", file: slow }]);
+    const p = startFromMemo(memo());
+    await new Promise((r) => setTimeout(r, 10));
+    give();
+    expect(await p).toEqual({ ok: true, saved: true });
+    expect(pasteMock.mock.calls.map(([f]) => f.name)).toEqual(["slow.log"]);
+  });
+
+  it("keeps a stash's uploads out of the image GC until its memo can be listed", async () => {
+    expect(await stashLaunchDraft("app", "x", [new File(["A"], "b.log")])).toEqual({ ok: true });
+    expect(pendingMemoUploads()).toContain("paste-1-b.log");
+  });
+
+  // Backing out to the hub and picking the same repo again, or cancelling and restoring the
+  // same memo, must resume the draft instead of saving the memo's own text as another memo.
+  it("resumes a draft that is already this memo's instead of saving a copy", async () => {
+    localStorage.setItem("af.launch-prompt.app", "メモの本文（編集済み）");
+    localStorage.setItem("af.launch-memo.app", "m1");
+    expect(await startFromMemo(memo())).toEqual({ ok: true });
+    expect(createMock).not.toHaveBeenCalled();
+    const seed = useLaunchSeed.getState();
+    expect(seed.prompt).toBe(""); // the dialog opens on the stored draft
+    expect(seed.attachments).toEqual([]);
+    expect(seed.memoId).toBe("m1");
+
+    // Another memo still sets the draft aside.
+    await startFromMemo(memo({ id: "m2" }));
+    expect(createMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so when the restored memo cannot be deleted after the launch", async () => {
+    const shown: unknown[] = [];
+    registerToastSink((m) => void shown.push(m));
+    try {
+      deleteMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
+      await startFromMemo(memo());
+      useLaunchSeed.getState().onLaunched?.("s1");
+      await vi.waitFor(() => expect(shown).toHaveLength(1));
+      expect(String(shown[0])).toMatch(/could not be deleted|削除できませんでした/);
+    } finally {
+      registerToastSink(null);
+    }
   });
 });
 

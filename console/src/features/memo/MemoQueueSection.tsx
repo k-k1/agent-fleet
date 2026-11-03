@@ -45,7 +45,7 @@ import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { consumeShare } from "./share.ts";
 import { setMemoDragData } from "./dnd.ts";
-import { canStartFromMemo, startFromMemo } from "./launchStash.ts";
+import { canStartFromMemo, pendingMemoUploads, startFromMemo } from "./launchStash.ts";
 
 const POLL_MS = 10000;
 const SECTION_KEY = "af-section-memos"; // shared with the Section component's own key
@@ -288,6 +288,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const keep = new Set<string>();
     for (const m of memoList) for (const a of m.attachments || []) keep.add(a.name);
     for (const a of pending) keep.add(a.name);
+    for (const n of pendingMemoUploads()) keep.add(n);
     void memoImageGC([...keep]).catch(() => {});
   };
 
@@ -379,7 +380,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         return n;
       });
       // Prune the deleted memo's images (keep every other memo's + composer's in-flight).
-      runImageGC(memos.filter((m) => m.id !== id), newImages);
+      // From a fresh list: the one on screen can predate a memo another surface just created
+      // (a Start working stash, another device), whose files it would not know to keep. No
+      // list, no sweep — the sweep is only hygiene.
+      const fresh = await memoList().catch(() => null);
+      if (Array.isArray(fresh)) runImageGC(fresh, newImages);
       bumpMemos();
     } catch {
       toast(t("common.delete_failed"));

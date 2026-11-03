@@ -199,7 +199,28 @@ function fileBytes(file: File): Promise<ArrayBuffer | null> {
 // An empty list deletes the record; a failed write deletes it too, because a half-written
 // draft that restores as something the user never staged is worse than one that doesn't
 // restore at all.
-export async function writeAttachDraft(key: string | null, items: AttachDraftInput[]): Promise<void> {
+export function writeAttachDraft(key: string | null, items: AttachDraftInput[]): Promise<void> {
+  const p = doWriteAttachDraft(key, items);
+  if (key) {
+    pendingWrite.set(key, p);
+    void p.finally(() => {
+      if (pendingWrite.get(key) === p) pendingWrite.delete(key);
+    });
+  }
+  return p;
+}
+
+// The latest write per key, so a reader that is about to take the draft over (the memo stash,
+// #3289) can wait for the bytes a just-closed composer was still reading. Reading before it
+// lands sees an older record, and the clear that follows would also cancel the late write.
+const pendingWrite = new Map<string, Promise<void>>();
+
+/** settleAttachDraft resolves once the key's latest write (if any) has landed. */
+export async function settleAttachDraft(key: string | null): Promise<void> {
+  if (key) await pendingWrite.get(key);
+}
+
+async function doWriteAttachDraft(key: string | null, items: AttachDraftInput[]): Promise<void> {
   if (!key) return;
   if (!items.length) return clearAttachDraft(key);
   const ticket = takeTicket(key);
