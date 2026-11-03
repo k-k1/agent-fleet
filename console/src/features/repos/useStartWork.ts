@@ -42,7 +42,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts, take?: H
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd }, take) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, route, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd }, take) => {
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
@@ -52,6 +52,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts, take?: H
     if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
     if (effort) body.effort = effort;
+    // An explicit model route (ADR 0128), only when one was chosen: the default sends no field,
+    // so a launch that never touched the picker is byte-identical to what it always was. The
+    // connection is left out: each route today has exactly one of the member's own.
+    if (route) body.route = { route };
     if (startMode) body.mode = startMode;
     // Permission confirmation (docs/log/76). Do not send the value when it matches the
     // default: left unspecified, the Agent resolves the per-kind default (ui-prefs), so a

@@ -63,6 +63,7 @@ func (agentImpl) SkillsLayout() agents.SkillsLayout {
 func (agentImpl) TerminalTraits() agents.TerminalTraits {
 	return agents.TerminalTraits{
 		AuthExpired:       AuthExpired,
+		AuthExpiredFor:    AuthExpiredFor,
 		UsageLimitMenu:    tmuxx.AtRateLimitModal,
 		AgentsViewActive:  tmuxx.AgentsViewActive,
 		LeaveAgentsView:   tmuxx.LeaveAgentsView,

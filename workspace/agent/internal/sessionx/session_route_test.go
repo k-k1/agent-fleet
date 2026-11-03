@@ -58,6 +58,9 @@ func routeCode(t *testing.T, body string) string {
 func TestCreateWithRouteIsRefusedForKindsWithoutAdapter(t *testing.T) {
 	p := newCreateProbe(t)
 	for _, kind := range RegisteredKinds() {
+		if len(routesOf(kind)) > 0 {
+			continue // claude declares routes; session_route_claude_test.go covers it
+		}
 		before := p.sideEffects()
 		body := map[string]any{"kind": kind, "dir": p.repo, "route": map[string]any{"route": "anthropic-api"},
 			"idempotency_key": "route-" + kind}
@@ -186,7 +189,7 @@ func TestForkInheritsAndRevalidatesSelection(t *testing.T) {
 
 	// Re-validated: with no adapter an inherited selection is refused, with an adapter that now
 	// reports the connection gone it is refused, and with neither it passes.
-	if ref := checkRouteLive(context.Background(), "claude", src.Route, ""); ref == nil || ref.Code != routes.CodeRouteUnsupported {
+	if ref := checkRouteLive(context.Background(), "codex", &routes.Selection{Route: "openai-api"}, ""); ref == nil || ref.Code != routes.CodeRouteUnsupported {
 		t.Errorf("no adapter: %+v", ref)
 	}
 	swapClaude(t, func(base agents.Agent) agents.Agent {

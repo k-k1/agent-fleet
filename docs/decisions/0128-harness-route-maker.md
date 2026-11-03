@@ -366,3 +366,24 @@ table from becoming a menu of models that fail on the first message, which is wh
   selection: the request names the target's own. The allow-list is per kind, not per driver, for now: decision 5's
   Terminal-only claude rows are the adapter's to enforce when one exists. The idempotency fingerprint now includes the
   route, only when present. Not built: any adapter, the Console picker and the per-route auth guard (P1b).
+- 2026-11-04, P1b (#3281): claude implements `RouteAdapter` and `RouteChecker` for `anthropic-subscription` and
+  `anthropic-api`, Terminal only (a managed create naming a route is refused by the create's own driver check). The
+  credential rides this pane only: `anthropic-api` puts the member's Anthropic API key connection (the provider-key
+  entry `ANTHROPIC_API_KEY`, read from the member's own store, so permission to use it is ownership; any other
+  connection reference is `route_connection_forbidden`, a missing key `route_connection_unavailable`) into
+  `LaunchPlan.Env`, and both routes put `env -u` in front of the CLI for what would override them: the other route's
+  credential (`CLAUDE_CODE_OAUTH_TOKEN` for the API route; `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` for the
+  subscription route) and `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`. The key is never in the command string and never in the Agent's environment. The guard
+  (decision 9) is `AuthExpiredFor(meta)`: no selection answers exactly `AuthExpired()`; `anthropic-api` is never
+  expired by the OAuth file; `anthropic-subscription` judges the file as if no token were in the environment, since
+  the launch removes them. It is asked by the live state, the send gate, the initial-prompt delivery, the peek check
+  and the mirror chip. A stored selection is re-checked at every start (`startRefusalOf`). The ledger: claude's usage
+  turns of an explicit selection carry its route, and `anthropic-api` turns are `metered`; `subscription` turns stay
+  billing-unresolved, as usage credits can bill the same login. The selection cannot change while the session
+  exists, which is what makes it per-call evidence until P4's switch persists its boundaries. Subagent transcripts are
+  not stamped. The live kind catalog (`GET /agents/kinds`) lists a kind's `routes`, and the Console launch dialog
+  shows a picker only for such a kind, in a Terminal launch. Open question 1 is answered for now as "model route"
+  (en) / "モデルのルート" (ja), which keeps the glossary's "route" / ルート. Not measured, and the reason this is a
+  candidate until decision 14: whether the TUI asks to approve a custom API key on first use, whether the OAuth file
+  stays unused when `ANTHROPIC_API_KEY` is set, and what the transcript or headers say about the route that answered.

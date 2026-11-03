@@ -347,3 +347,22 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   移動の要求で行う。移動は元の選択を持ち越さず、要求が移動先自身の選択を指定する。許可リストは当面ドライバ別でなく
   種別別で、決定 5 の claude の Terminal 限定は、アダプタができたときにアダプタ側が守る。冪等キーの指紋にはルートを
   含めた（あるときだけ）。未実装: アダプタ全般、Console のピッカー、ルート別の認証ガード（P1b）。
+- 2026-11-04, P1b (#3281): claude が `anthropic-subscription` と `anthropic-api` について `RouteAdapter` と
+  `RouteChecker` を実装した。Terminal のみ（managed の create でルートを指定すると、create 自身のドライバ検査が断る）。
+  認証情報はこのペインにだけ届く。`anthropic-api` はメンバーの Anthropic API キー接続（メンバー自身のストアにある
+  プロバイダキー `ANTHROPIC_API_KEY`。使う権限は所有と同じで、他の接続参照は `route_connection_forbidden`、キーが無ければ
+  `route_connection_unavailable`）を `LaunchPlan.Env` に入れる。どちらのルートも CLI の前に `env -u` を付け、上書きしうる
+  ものを外す: もう一方のルートの認証情報（API ルートでは `CLAUDE_CODE_OAUTH_TOKEN`、サブスクルートでは
+  `ANTHROPIC_API_KEY` と `CLAUDE_CODE_OAUTH_TOKEN`）と、`ANTHROPIC_AUTH_TOKEN`・`ANTHROPIC_BASE_URL`・
+  `CLAUDE_CODE_USE_BEDROCK`・`CLAUDE_CODE_USE_VERTEX`。キーはコマンド文字列にも Agent の環境にも載らない。ガード
+  （決定 9）は `AuthExpiredFor(meta)`: 選択なしは `AuthExpired()` とまったく同じ答え、`anthropic-api` は OAuth
+  ファイルでは期限切れにならない、`anthropic-subscription` は起動時に環境の token を外すので、環境に token が
+  無いものとしてファイルを判定する。ライブ状態・送信ゲート・初回プロンプトの配送・peek の検査・ミラーのチップが
+  これを聞く。保存済みの選択は起動のたびに再検査する（`startRefusalOf`）。台帳: 明示的な選択を持つセッションの claude
+  の使用量ターンにそのルートを載せ、`anthropic-api` のターンは `metered`。サブスクのターンは、同じログインで追加クレジット
+  課金になりうるので課金区分は未解決のまま。選択はセッションの存続中に変わらないので、P4 の切り替えが境界を
+  永続化するまでは呼び出しごとの証拠になる。サブエージェントの transcript は印を付けない。ライブの種別カタログ
+  （`GET /agents/kinds`）が種別の `routes` を返し、Console の起動ダイアログはそれを持つ種別の Terminal 起動でだけ
+  選択欄を出す。未解決の問い 1 は当面「モデルのルート」（en は "Model route"）とし、用語集の「ルート」に揃えた。
+  未計測で、決定 14 までは候補のままである理由: カスタム API キーの初回承認を TUI が求めるか、`ANTHROPIC_API_KEY` が
+  あるとき OAuth ファイルが使われないままか、応えたルートについて transcript やヘッダが何を語るか。

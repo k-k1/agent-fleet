@@ -573,3 +573,66 @@ describe("LaunchModal lcpp model requirement (docs/log/109)", () => {
     expect(byText("Start in a worktree").disabled).toBe(false);
   });
 });
+
+// ADR 0128: the model-route picker appears only for a kind the live catalog says declares
+// routes, defaults to "as before" (no route sent), and goes out as the chosen route id. A
+// kind without routes, and a catalog that never arrived (an older Agent), show nothing.
+describe("LaunchModal model route picker (ADR 0128)", () => {
+  const catalog = (routes?: string[]) =>
+    parseKindCatalog({
+      kinds: [
+        { kind: "claude", managedOnly: false, managedDefault: false, mcpClient: "yes", ...(routes ? { routes } : {}) },
+        { kind: "codex", managedOnly: false, managedDefault: false, mcpClient: "yes" },
+      ],
+    });
+  const routeSelect = () =>
+    [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "anthropic-api"));
+  afterEach(() => act(() => setKindCatalog(null)));
+
+  it("shows no picker without a catalog, or for a kind that declares none", async () => {
+    await render(["claude", "codex"]);
+    await expand("More");
+    expect(routeSelect()).toBeUndefined();
+    await act(async () => setKindCatalog(catalog()));
+    expect(routeSelect()).toBeUndefined();
+  });
+
+  it("offers the declared routes, sends nothing by default and the id once chosen", async () => {
+    await act(async () => setKindCatalog(catalog(["anthropic-api", "anthropic-subscription"])));
+    await render(["claude", "codex"]);
+    await expand("More");
+    const sel = must(routeSelect(), "the route picker");
+    expect(sel.value).toBe("");
+    expect([...sel.options].map((o) => o.value)).toEqual(["", "anthropic-api", "anthropic-subscription"]);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBeUndefined();
+  });
+
+  it("sends the chosen route id", async () => {
+    await act(async () => setKindCatalog(catalog(["anthropic-api", "anthropic-subscription"])));
+    await render(["claude", "codex"]);
+    await expand("More");
+    const sel = must(routeSelect(), "the route picker");
+    await act(async () => {
+      sel.value = "anthropic-api";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBe("anthropic-api");
+  });
+
+  it("drops the choice when the kind changes", async () => {
+    await act(async () => setKindCatalog(catalog(["anthropic-api"])));
+    await render(["claude", "codex"]);
+    await expand("More");
+    const sel = must(routeSelect(), "the route picker");
+    await act(async () => {
+      sel.value = "anthropic-api";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(byText("Codex"));
+    expect(routeSelect()).toBeUndefined();
+    await click(byText("Claude"));
+    expect(must(routeSelect(), "the route picker").value).toBe("");
+  });
+});

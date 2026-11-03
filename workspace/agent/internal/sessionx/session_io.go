@@ -1167,7 +1167,7 @@ func promptBlocker(name string) string {
 	// prompt stuck as pending (user report, 2026-08-14). Refusing is the only way to say
 	// "the login has expired". Key input ({keys}/{seq}) is NOT blocked: running /login in
 	// the pane is a legitimate recovery.
-	if callTrue0(normalizedTerminalTraits(meta.Kind).AuthExpired) {
+	if traitsAuthExpired(normalizedTerminalTraits(meta.Kind), meta) {
 		return agents.StateAuth
 	}
 	sid := session.UUID(meta.Dir, name)

@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 198
+# count: 199
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -46,6 +46,7 @@ kindCatalog.kinds[].kind string
 kindCatalog.kinds[].managedDefault bool
 kindCatalog.kinds[].managedOnly bool
 kindCatalog.kinds[].mcpClient string
+kindCatalog.kinds[].routes [string],omitempty
 notice.Event.createdAt string
 notice.Event.displayName string
 notice.Event.id string

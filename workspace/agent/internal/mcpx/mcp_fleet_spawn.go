@@ -110,6 +110,11 @@ type createSessionArgs struct {
 	Branch                 string `json:"branch"`
 	NewBranch              string `json:"new_branch"`
 	Subdir                 string `json:"subdir"`
+	// Route / RouteConnection are the explicit model route (ADR 0128): a route id and a stable
+	// reference to its connection. Empty keeps the kind's own default. Plain strings, so a value
+	// of another type fails the decode instead of being read as "no route".
+	Route           string `json:"route"`
+	RouteConnection string `json:"route_connection"`
 	// ReportBack asks a spawned child to send one intent=answer peer message home when it
 	// finishes (ADR 0073 decision 9). A pointer: omitted means on, and a plain bool would
 	// silently turn the report off for every caller that did not think about it.
@@ -216,16 +221,18 @@ func fleetSpawnTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"dir":            map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
-							"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
-							"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。" + joinKinds(operatorCreateKinds(), " | ", "（既定）") + "。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（ログイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。muse は Meta の Muse Code（オンデマンド導入＋ログイン済みのときのみ起動可・常に managed・Terminal (CLI) 経路は無い）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
-							"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
-							"effort":         map[string]any{"type": "string", "description": "推論 effort（任意）。model と一緒に指定し、list_models が返すそのモデルの efforts から選ぶ（それ以外や model 省略は拒否される）。省略時はモデルの defaultEffort。opencode と kiro は一覧に efforts が無く、ここでは値を確かめない（誤った値は子の最初のターンで失敗する）。agy と cursor は effort がモデル id に含まれるので指定しない。"},
-							"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
-							"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
-							"branch":         map[string]any{"type": "string", "description": "worktree の基点ブランチ（任意、省略時は現在の HEAD）。"},
-							"new_branch":     map[string]any{"type": "string", "description": "worktree に作る新規ブランチ名（任意、省略時は仮ブランチを自動生成）。"},
-							"subdir":         map[string]any{"type": "string", "description": "作業ディレクトリ内の相対パス（任意）。エージェントをその配下で起動する（例: console／apps/web）。worktree=true のときは新しく作られた worktree 内の相対パスとして解釈される。存在しないパスは拒否される。"},
+							"dir":              map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
+							"title":            map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
+							"kind":             map[string]any{"type": "string", "description": "エージェント種別（任意）。" + joinKinds(operatorCreateKinds(), " | ", "（既定）") + "。agy は Antigravity CLI（接続済みのときのみ起動可）。copilot は GitHub Copilot CLI（GitHub 連携＋Copilot サブスクが前提）。cursor は Cursor CLI（接続済みのときのみ起動可）。kiro は Kiro CLI（接続済みのときのみ起動可・既定は managed ドライバ）。lcpp は自前の llama.cpp ハーネス（ログイン不要・常に managed・Terminal (CLI) 経路は無い）で、model は list_models(kind=\"lcpp\") が返す自前エンジンの目録から選ぶ。muse は Meta の Muse Code（オンデマンド導入＋ログイン済みのときのみ起動可・常に managed・Terminal (CLI) 経路は無い）。shell は生のシェルで initial_prompt/送信文字列がそのままコマンド実行される（エージェントのガードレール無し）ため、起動前に実行内容を利用者へ確認すること。"},
+							"model":            map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
+							"effort":           map[string]any{"type": "string", "description": "推論 effort（任意）。model と一緒に指定し、list_models が返すそのモデルの efforts から選ぶ（それ以外や model 省略は拒否される）。省略時はモデルの defaultEffort。opencode と kiro は一覧に efforts が無く、ここでは値を確かめない（誤った値は子の最初のターンで失敗する）。agy と cursor は effort がモデル id に含まれるので指定しない。"},
+							"initial_prompt":   map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
+							"worktree":         map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
+							"branch":           map[string]any{"type": "string", "description": "worktree の基点ブランチ（任意、省略時は現在の HEAD）。"},
+							"new_branch":       map[string]any{"type": "string", "description": "worktree に作る新規ブランチ名（任意、省略時は仮ブランチを自動生成）。"},
+							"subdir":           map[string]any{"type": "string", "description": "作業ディレクトリ内の相対パス（任意）。エージェントをその配下で起動する（例: console／apps/web）。worktree=true のときは新しく作られた worktree 内の相対パスとして解釈される。存在しないパスは拒否される。"},
+							"route":            map[string]any{"type": "string", "description": "モデルの経路 id（任意。省略時はその種別の既定の解決のまま）。経路を受け付ける種別は claude（anthropic-subscription | anthropic-api）だけで、それ以外の種別や宣言していない経路は理由つきで拒否される。既定の経路へ黙って戻ることはない。"},
+							"route_connection": map[string]any{"type": "string", "description": "経路が使う接続の安定した参照（任意・route と一緒に指定）。anthropic-api は空か ANTHROPIC_API_KEY（自分の Anthropic API キー接続）だけ。"},
 						},
 					},
 				}
@@ -272,6 +279,8 @@ func fleetSpawnTools() []toolSpec {
 							"branch":                    map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
 							"new_branch":                map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
 							"subdir":                    map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
+							"route":                     map[string]any{"type": "string", "description": "Model route id (optional; omit to keep the kind's own default). Only claude accepts one today: anthropic-subscription or anthropic-api (Terminal sessions). Any other kind, or a route the kind does not declare, is refused with the reason - never run on the default route instead"},
+							"route_connection":          map[string]any{"type": "string", "description": "Stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, your own Anthropic API key connection"},
 							"report_back":               map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
 							"spend_cap_usd":             map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
 							"work_item": map[string]any{
@@ -380,6 +389,15 @@ func fleetSpawnTools() []toolSpec {
 					// The same launch for another ticket is another child, not a retry of this one.
 					idemKey = CreateSessionKey(idemKey, "work_item", wi.Provider, wi.Key, "", "", "", false, "", "", false)
 				}
+				route := strings.TrimSpace(a.Route)
+				conn := strings.TrimSpace(a.RouteConnection)
+				if route == "" && conn != "" {
+					return mcpToolErr(req.ID, "route_connection needs a route")
+				}
+				if route != "" {
+					// The same launch on another route is another child, not a retry.
+					idemKey = CreateSessionKey(idemKey, "route", route, conn, "", "", "", false, "", "", false)
+				}
 				body := map[string]any{
 					"dir":             a.Dir,
 					"subdir":          a.Subdir,
@@ -411,6 +429,13 @@ func fleetSpawnTools() []toolSpec {
 				}
 				if wi != nil {
 					body["work_item"] = map[string]any{"provider": wi.Provider, "key": wi.Key, "title": wi.Title, "type": wi.Type}
+				}
+				if route != "" {
+					sel := map[string]any{"route": route}
+					if conn != "" {
+						sel["connection"] = conn
+					}
+					body["route"] = sel
 				}
 				reqBody, _ := json.Marshal(body)
 				// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The

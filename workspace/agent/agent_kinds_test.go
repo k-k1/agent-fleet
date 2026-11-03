@@ -154,3 +154,19 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 		}
 	}
 }
+
+// The live catalog (and only it) names the routes a harness accepts, so the Console offers a
+// route picker for claude and for no other kind; the checked-in snapshot stays free of them.
+func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
+	for _, e := range buildKindCatalog(true).Kinds {
+		want := e.Kind == "claude"
+		if got := len(e.Routes) > 0; got != want {
+			t.Errorf("%s: routes %v, want some = %v", e.Kind, e.Routes, want)
+		}
+	}
+	for _, e := range buildKindCatalog(false).Kinds {
+		if len(e.Routes) != 0 {
+			t.Errorf("%s: the snapshot form carries routes %v", e.Kind, e.Routes)
+		}
+	}
+}

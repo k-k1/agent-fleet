@@ -38,12 +38,25 @@ func TestSnapshotShape(t *testing.T) {
 }
 
 func TestCheckCreateRoute(t *testing.T) {
-	// No harness declares a route in P1a, so a well-formed selection is refused for every kind.
+	// Only claude declares routes so far (anthropic-api, anthropic-subscription); every other
+	// kind refuses any well-formed selection, and claude refuses one it does not declare.
 	for _, k := range agentkinds.All() {
 		code, err := CheckCreateRoute(k.Kind, &Selection{Route: "anthropic-api"})
+		if k.Kind == "claude" {
+			if code != "" || err != nil {
+				t.Errorf("claude on anthropic-api: %q %v, want it accepted", code, err)
+			}
+			continue
+		}
 		if code != CodeRouteUnsupported || err == nil {
 			t.Errorf("%s: %q %v, want %s", k.Kind, code, err, CodeRouteUnsupported)
 		}
+	}
+	if code, _ := CheckCreateRoute("claude", &Selection{Route: "bedrock"}); code != CodeRouteUnsupported {
+		t.Errorf("claude on bedrock: %q, want %s", code, CodeRouteUnsupported)
+	}
+	if code, err := CheckCreateRoute("", &Selection{Route: "anthropic-subscription"}); code != "" || err != nil {
+		t.Errorf("empty kind (claude) on anthropic-subscription: %q %v", code, err)
 	}
 	for name, sel := range map[string]*Selection{
 		"empty":   {},

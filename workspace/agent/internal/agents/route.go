@@ -35,6 +35,11 @@ type RouteAdapter interface {
 type RoutePlan struct {
 	// Env is KEY=VALUE pairs for this session's process only (LaunchPlan.Env).
 	Env []string
+	// Unset names environment variables the launch removes from the process before the CLI
+	// starts (`env -u`). A route that must not be overridden by something the Agent's own
+	// environment or the tmux server carries lists them here: the credential of the OTHER route
+	// is the case that matters.
+	Unset []string
 	// Args are extra program arguments.
 	Args []string
 	// Daemon names the shared runtime the session must run on when the route needs a daemon of
@@ -77,3 +82,6 @@ type RouteRefusal struct {
 	Code    string
 	Message string
 }
+
+// Error makes a refusal usable as the error ApplyRoute returns.
+func (r *RouteRefusal) Error() string { return r.Message }
