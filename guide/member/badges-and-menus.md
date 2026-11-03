@@ -49,7 +49,10 @@ automatic tidying; see [05](05-stopping-and-tidying.md#tidying-up-in-bulk-cleanu
 
 A row can grow a **second line** with links. The first is the GitHub or Bitbucket pull request
 of the branch the session works on. The icon says open, draft, merged or closed, and an open one
-carries its CI result (passed / failing / running; nothing when no check ran). Click it to open
+carries its CI result (passed / failing / running; nothing when no check ran), then a mark
+when a reviewer requested changes and one when the PR has a merge conflict (on Bitbucket the
+conflict is re-read about every 15 minutes). These marks never replace what the row says about
+the session itself: a session waiting on a question or a permission still shows that first. Click it to open
 the PR on its provider. It appears only for a working copy whose origin is on github.com or
 bitbucket.org while that provider is connected (Settings > Connections), never for the
 repository's default branch, and it is refreshed every couple of minutes, so a merge can take

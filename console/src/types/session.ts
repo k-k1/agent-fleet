@@ -353,6 +353,10 @@ export interface SessionPR {
   url: string;
   /** CI rollup of the head commit; absent when nothing ran — which is not green. */
   checks?: "success" | "failure" | "pending";
+  /** A reviewer asked for changes (#3129). */
+  changesRequested?: boolean;
+  /** The PR no longer merges cleanly into its base (#3129). */
+  conflict?: boolean;
 }
 
 /** The automatic re-review loop of one plan-review link (the Agent's session.PlanAuto, relayed by

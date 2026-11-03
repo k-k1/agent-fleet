@@ -493,6 +493,8 @@ export const sessions = {
   "srow.pr_checks.success": "・CI 成功",
   "srow.pr_checks.failure": "・CI 失敗",
   "srow.pr_checks.pending": "・CI 実行中",
+  "srow.pr_flag.changes": "・変更依頼あり",
+  "srow.pr_flag.conflict": "・コンフリクト",
   // === PortOpen: the one control for opening a port (features/preview/PortOpen.tsx) ===
   "portopen.title_subdomain": "新しいタブで開く — {url}",
   "portopen.title_pane": ":{port} をブラウザペインで開く（Ctrl / 中クリックで新しいペイン）",

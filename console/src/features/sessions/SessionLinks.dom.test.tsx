@@ -72,6 +72,23 @@ describe("SessionRow link line", () => {
     expect(host.querySelector("li")?.className).toContain("sess-has-links");
   });
 
+  it("marks changes requested and a conflict after the CI state, open PRs only (#3129)", async () => {
+    const pr = { number: 7, url: "https://github.com/o/r/pull/7", checks: "success" as const, changesRequested: true, conflict: true };
+    await render({ pr: { ...pr, state: "open" } });
+    const a = prLink()!;
+    expect(a.querySelector(".sess-pr-flag.flag-changes")).not.toBeNull();
+    expect(a.querySelector(".sess-pr-flag.flag-conflict")).not.toBeNull();
+    expect(a.title).toBe(
+      t("srow.pr_title", {
+        n: 7,
+        state: t("srow.pr_state.open"),
+        checks: t("srow.pr_checks.success") + t("srow.pr_flag.changes") + t("srow.pr_flag.conflict"),
+      }),
+    );
+    await render({ pr: { ...pr, state: "merged" } });
+    expect(prLink()!.querySelector(".sess-pr-flag")).toBeNull();
+  });
+
   it("names a draft and a merged PR, and drops CI once merged", async () => {
     await render({ pr: { number: 7, state: "open", draft: true, url: "https://github.com/o/r/pull/7" } });
     expect(prLink()?.className).toContain("pr-draft");

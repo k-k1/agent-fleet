@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { knownRole, linkDone, linkPRState, offersMergedTidy, prChecks, prStateKey, prsAllMerged, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
+import { knownRole, linkDone, linkPRState, offersMergedTidy, prChecks, prFlags, prStateKey, prsAllMerged, rowPorts, rowWorkLinks, safePRURL } from "./sessionLinks.ts";
 
 describe("sessionLinks", () => {
   it("names a draft apart from an open PR", () => {
@@ -13,6 +13,10 @@ describe("sessionLinks", () => {
     expect(prChecks({ number: 1, state: "open", url: "", checks: "pending" })).toBe("pending");
     expect(prChecks({ number: 1, state: "open", url: "" })).toBeNull();
     expect(prChecks({ number: 1, state: "closed", url: "", checks: "failure" })).toBeNull();
+    expect(prFlags({ number: 1, state: "open", url: "", changesRequested: true, conflict: true })).toEqual(["changes", "conflict"]);
+    expect(prFlags({ number: 1, state: "open", url: "", conflict: true })).toEqual(["conflict"]);
+    expect(prFlags({ number: 1, state: "open", url: "" })).toEqual([]);
+    expect(prFlags({ number: 1, state: "closed", url: "", changesRequested: true, conflict: true })).toEqual([]);
   });
 
   it("accepts bitbucket.org pull request pages and rebuilds them", () => {

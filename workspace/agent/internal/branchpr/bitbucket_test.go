@@ -20,7 +20,11 @@ type bbServer struct {
 	main     map[string]string // repo path → main branch; missing → 404
 	pulls    map[string]string // repo path → body
 	statuses map[string]string // ".../commit/<hash>/statuses" → body
-	status   int               // non-zero: every call answers this
+	// conflicts answers ".../file-conflicts/<spec>"; ".../pullrequests/<id>/conflicts" redirects
+	// there with the spec "c0ffee<id>..main", as Bitbucket does. Missing → 404.
+	conflicts map[string]string
+	fields    string // the last PR list's fields
+	status    int    // non-zero: every call answers this
 	// badBranch makes any filter naming it answer 400; byBranch answers a filter naming exactly
 	// that one branch.
 	badBranch string
@@ -43,6 +47,15 @@ func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.URL.Path
 	switch {
+	case strings.HasSuffix(p, "/conflicts") && strings.Contains(p, "/pullrequests/"):
+		repo, id, _ := strings.Cut(strings.TrimSuffix(p, "/conflicts"), "/pullrequests/")
+		http.Redirect(w, r, repo+"/file-conflicts/c0ffee"+id+"..main", http.StatusFound)
+	case strings.Contains(p, "/file-conflicts/"):
+		if body, ok := b.conflicts[p]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	case strings.HasSuffix(p, "/statuses"):
 		if body, ok := b.statuses[p]; ok {
 			_, _ = w.Write([]byte(body))
@@ -52,6 +65,7 @@ func (b *bbServer) handler(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(p, "/pullrequests"):
 		q := r.URL.Query().Get("q")
 		b.filters = append(b.filters, q)
+		b.fields = r.URL.Query().Get("fields")
 		if b.badBranch != "" && strings.Contains(q, `"`+b.badBranch+`"`) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -262,7 +276,7 @@ func TestBitbucketRollup(t *testing.T) {
 		`{"values":[{"state":"FAILED"}]}`:                            "failure",
 		`not json`:                                                   "",
 	} {
-		if got := bitbucketRollup([]byte(body), ""); got != want {
+		if got, _ := bitbucketRollup([]byte(body), ""); got != want {
 			t.Errorf("rollup(%s) = %q, want %q", body, got, want)
 		}
 	}
@@ -389,5 +403,146 @@ func TestBitbucketReadsThePRTitleForLinksOnly(t *testing.T) {
 	got, _, err := parseBitbucketPulls([]byte(body), "w/r", []Key{{"w/r", "a"}})
 	if err != nil || got[Key{"w/r", "a"}].pr.Title != "PROJ-12 tidy" {
 		t.Fatalf("got %+v err %v, want the title read", got, err)
+	}
+}
+
+func TestBitbucketReadsReviewConflictAndFailingBuilds(t *testing.T) {
+	pr := strings.TrimSuffix(bbPR(4, "OPEN", false, "a", "w/r"), "}") +
+		`,"destination":{"repository":{"uuid":"{u-1}"}},"participants":[{"state":null},{"state":"approved"},{"state":"changes_requested"}]}`
+	b := &bbServer{
+		main:  map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls: map[string]string{"/2.0/repositories/w/r": `{"values":[` + pr + `]}`},
+		statuses: map[string]string{"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[` +
+			`{"state":"FAILED","name":"build","url":"https://ci/b"},{"state":"STOPPED","key":"deploy-key"},{"state":"SUCCESSFUL","name":"lint"}]}`},
+		conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"pagelen":500,"size":1,"values":[{"path":"a.go","scenario":"content"}]}`},
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{"w/r", "a"}}
+	c.Lookup(keys, time.Now())
+	got := c.Lookup(keys, time.Now())[keys[0]]
+	if got == nil || got.NodeID != "{u-1}#4" || !got.ChangesRequested || !got.Conflict || got.Checks != "failure" {
+		t.Fatalf("pr = %+v, want node id, changes requested, conflict and failure", got)
+	}
+	if len(got.FailingChecks) != 2 || got.FailingChecks[0] != (Check{"build", "https://ci/b"}) || got.FailingChecks[1].Name != "deploy-key" {
+		t.Fatalf("failing = %+v, want build and the stopped status by its key", got.FailingChecks)
+	}
+	if !strings.Contains(b.fields, "values.participants.state") || !strings.Contains(b.fields, "values.destination.repository.uuid") {
+		t.Fatalf("fields = %q, want participants and the destination uuid", b.fields)
+	}
+}
+
+func TestBitbucketReadsTheConflictOncePerTTLAndAgainForANewHead(t *testing.T) {
+	b := &bbServer{
+		main:      map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls:     map[string]string{"/2.0/repositories/w/r": `{"values":[` + bbPR(4, "OPEN", false, "a", "w/r") + `]}`},
+		statuses:  map[string]string{"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"values":[]}`, "/2.0/repositories/w/r/commit/beef/statuses": `{"values":[]}`},
+		conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"size":1,"values":[{"path":"a.go"}]}`},
+	}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	count := func() int {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		n := 0
+		for _, p := range b.paths {
+			if strings.HasSuffix(p, "/pullrequests/4/conflicts") {
+				n++
+			}
+		}
+		return n
+	}
+	if !bb.conflict("Bearer bb", "w/r", 4, "c0ffee4") || !bb.conflict("Bearer bb", "w/r", 4, "c0ffee4") || count() != 1 {
+		t.Fatalf("conflicts calls = %d, want 1 within the TTL", count())
+	}
+	b.mu.Lock()
+	b.conflicts["/2.0/repositories/w/r/file-conflicts/c0ffee4..main"] = `{"size":0,"values":[]}`
+	b.mu.Unlock()
+	if bb.conflict("Bearer bb", "w/r", 4, "beef") || count() != 2 {
+		t.Fatalf("a new head must be read again (calls %d)", count())
+	}
+	// A failed read keeps what this head showed rather than inventing a conflict.
+	b.mu.Lock()
+	b.conflicts = nil
+	bb.conflicts["w/r#4"] = conflictEntry{head: "beef", conflict: true, at: time.Now().Add(-time.Hour)}
+	b.mu.Unlock()
+	if !bb.conflict("Bearer bb", "w/r", 4, "beef") || bb.conflict("Bearer bb", "w/r", 4, "other") {
+		t.Fatal("a failed read must keep this head's last state, and claim nothing for another head")
+	}
+}
+
+func TestBitbucketApprovalsAloneRequestNoChanges(t *testing.T) {
+	pr := strings.TrimSuffix(bbPR(4, "OPEN", false, "a", "w/r"), "}") + `,"participants":[{"state":"approved"},{"state":null}]}`
+	got, _, err := parseBitbucketPulls([]byte(`{"values":[`+pr+`]}`), "w/r", []Key{{"w/r", "a"}})
+	if err != nil || got[Key{"w/r", "a"}].pr.ChangesRequested || got[Key{"w/r", "a"}].pr.NodeID != "" {
+		t.Fatalf("got %+v err %v: approvals request no changes, and no uuid gives no node id", got[Key{"w/r", "a"}].pr, err)
+	}
+}
+
+func TestBitbucketConflictFollowsTheRedirectWithTheConnection(t *testing.T) {
+	b := &bbServer{conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `{"values":[{"path":"a.go"}]}`}}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	if !bb.conflict("Bearer bb", "w/r", 4, "c0ffee4") {
+		t.Fatal("a listed file conflict must read as a conflict")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.paths) != 2 || b.paths[1] != "/2.0/repositories/w/r/file-conflicts/c0ffee4..main" || b.auth[1] != "Bearer bb" {
+		t.Fatalf("paths %v auth %v: want the redirect followed with the same Authorization", b.paths, b.auth)
+	}
+}
+
+func TestBitbucketConflictKeepsAnActivePRsStateAcrossAnotherPRsAnswer(t *testing.T) {
+	b := &bbServer{conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee1..main": `{"values":[]}`}}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	stale := time.Now().Add(-bitbucketConflictTTL - time.Minute)
+	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", conflict: false, at: stale, asked: time.Now()}
+	bb.conflicts["w/r#2"] = conflictEntry{head: "h2", conflict: true, at: stale, asked: time.Now()}
+	_ = bb.conflict("Bearer bb", "w/r", 1, "h1") // answers; must not prune #2, which is merely past its TTL
+	if !bb.conflict("Bearer bb", "w/r", 2, "h2") {
+		t.Fatal("#2's read failed (404) and must fall back to the conflict it last showed for this head")
+	}
+	// #2's reads have failed for longer than forgetAfter, but it is still asked about: its last
+	// good read must outlive #1's next answer.
+	long := time.Now().Add(-forgetAfter - time.Minute)
+	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", at: stale, asked: time.Now()}
+	bb.conflicts["w/r#2"] = conflictEntry{head: "h2", conflict: true, at: long, asked: long}
+	if !bb.conflict("Bearer bb", "w/r", 2, "h2") { // fails again, and is asked now
+		t.Fatal("#2 must fall back to its known conflict")
+	}
+	_ = bb.conflict("Bearer bb", "w/r", 1, "h1")
+	if !bb.conflict("Bearer bb", "w/r", 2, "h2") {
+		t.Fatal("#1's answer pruned #2, which was asked a moment ago")
+	}
+	// A PR nobody asked about for forgetAfter does go.
+	bb.conflicts["w/r#3"] = conflictEntry{head: "h3", conflict: true, at: long, asked: long}
+	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", at: stale, asked: time.Now()}
+	_ = bb.conflict("Bearer bb", "w/r", 1, "h1")
+	if _, kept := bb.conflicts["w/r#3"]; kept {
+		t.Fatal("an entry unasked for forgetAfter must be pruned")
+	}
+}
+
+func TestBitbucketConflictTakesAnUnreadableAnswerAsAFailedRead(t *testing.T) {
+	b := &bbServer{conflicts: map[string]string{"/2.0/repositories/w/r/file-conflicts/c0ffee4..main": `not json`}}
+	c := newBBCache(t, b)
+	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
+	past := time.Now().Add(-bitbucketConflictTTL - time.Minute)
+	bb.conflicts["w/r#4"] = conflictEntry{head: "h", conflict: true, at: past}
+	if !bb.conflict("Bearer bb", "w/r", 4, "h") {
+		t.Fatal("an unreadable answer must keep this head's known conflict")
+	}
+	if e := bb.conflicts["w/r#4"]; !e.at.Equal(past) {
+		t.Fatalf("entry %+v: an unreadable answer must not count as a fresh read", e)
+	}
+	if bb.conflict("Bearer bb", "w/r", 4, "other") {
+		t.Fatal("another head has no known state, so no conflict")
+	}
+	b.mu.Lock()
+	b.conflicts["/2.0/repositories/w/r/file-conflicts/c0ffee4..main"] = `{"pagelen":10}`
+	b.mu.Unlock()
+	if !bb.conflict("Bearer bb", "w/r", 4, "h") {
+		t.Fatal("an answer with neither values nor size says nothing; keep the known state")
 	}
 }

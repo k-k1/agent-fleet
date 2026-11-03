@@ -485,6 +485,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "srow.pr_checks.success": " · CI passed",
   "srow.pr_checks.failure": " · CI failing",
   "srow.pr_checks.pending": " · CI running",
+  "srow.pr_flag.changes": " · changes requested",
+  "srow.pr_flag.conflict": " · merge conflict",
   // === PortOpen: the one control for opening a port (features/preview/PortOpen.tsx) ===
   "portopen.title_subdomain": "Open in a new tab — {url}",
   "portopen.title_pane": "Open :{port} in a browser pane (Ctrl / middle-click for a new pane)",
