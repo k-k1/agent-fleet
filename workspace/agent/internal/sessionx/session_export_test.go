@@ -154,3 +154,25 @@ func TestUIPrefsTimeZone(t *testing.T) {
 		}
 	}
 }
+
+// The export's zone follows the published browser zone when the setting is "auto", and an
+// explicit zone wins over it.
+func TestUIPrefsEffectiveTimeZone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	p := uiprefs.Path()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for body, want := range map[string]string{
+		`{"timeZone":"auto","browserTimeZone":"Asia/Tokyo"}`:             "Asia/Tokyo",
+		`{"timeZone":"America/New_York","browserTimeZone":"Asia/Tokyo"}`: "America/New_York",
+		`{"timeZone":"auto","browserTimeZone":"Not/AZone"}`:              "",
+	} {
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := pickExportZone("", uiprefs.EffectiveTimeZone()); got != want {
+			t.Errorf("%s: got %q want %q", body, got, want)
+		}
+	}
+}

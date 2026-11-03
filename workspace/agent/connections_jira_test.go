@@ -301,3 +301,85 @@ func TestJiraStatusConfluenceScopes(t *testing.T) {
 		}
 	}
 }
+
+func sitesOf(t *testing.T, st map[string]any) []map[string]any {
+	t.Helper()
+	got, _ := st["sites"].([]map[string]any)
+	return got
+}
+
+// Atlassian lists a site once per product under one cloud id; the status must report it once
+// (no picker) while the stored rows stay per product for the scope union.
+func TestJiraStatusDedupesSitesByCloudID(t *testing.T) {
+	rows := []secrets.JiraSite{
+		{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One", Scopes: []string{"read:jira-work"}},
+		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One (Confluence)", Scopes: []string{"read:page:confluence"}},
+	}
+	s := &secrets.Data{Jira: &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Unix() + 3600, CloudID: "cid-1", Site: "https://one.atlassian.net", Sites: rows}}
+	got := sitesOf(t, jiraStatus(s))
+	if len(got) != 1 || got[0]["cloudId"] != "cid-1" || got[0]["name"] != "One" || got[0]["url"] != "https://one.atlassian.net" {
+		t.Fatalf("sites = %+v, want one entry from the first row", got)
+	}
+	if len(s.Jira.Sites) != 2 {
+		t.Errorf("stored rows were modified: %+v", s.Jira.Sites)
+	}
+	if v := jiraStatus(s)["confluenceScopes"]; v != "granted" {
+		t.Errorf("confluenceScopes = %v, want granted (scope union across rows)", v)
+	}
+
+	rows = append(rows, secrets.JiraSite{CloudID: "cid-2", URL: "https://two.atlassian.net", Name: "Two"},
+		secrets.JiraSite{CloudID: "cid-2", URL: "https://two.atlassian.net", Name: "Two"})
+	s.Jira.Sites = rows
+	got = sitesOf(t, jiraStatus(s))
+	if len(got) != 2 || got[0]["cloudId"] != "cid-1" || got[1]["cloudId"] != "cid-2" {
+		t.Fatalf("two distinct sites must both be reported, in order: %+v", got)
+	}
+}
+
+// Choosing a site works when its id is stored on several rows.
+func TestJiraPutSiteWithDuplicateRows(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"displayName":"Taro"}`))
+	}))
+	defer srv.Close()
+	old := jirax.CloudAPIBase
+	jirax.CloudAPIBase = srv.URL
+	defer func() { jirax.CloudAPIBase = old }()
+	if err := (&secrets.Data{Jira: &secrets.JiraCreds{
+		AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Unix() + 3600, CloudID: "cid-1", Site: "https://one.atlassian.net",
+		Sites: []secrets.JiraSite{
+			{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One"},
+			{CloudID: "cid-2", URL: "https://two.atlassian.net", Name: "Two", Scopes: []string{"read:jira-work"}},
+			{CloudID: "cid-2", URL: "https://two.atlassian.net", Name: "Two", Scopes: []string{"read:page:confluence"}},
+		},
+	}}).Save(); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handlePutJiraSite(w, httptest.NewRequest("PUT", "/connections/jira/site", strings.NewReader(`{"cloudId":"cid-2"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("site switch = %d (%s)", w.Code, w.Body.String())
+	}
+	s, _ := secrets.Load()
+	if s.Jira.CloudID != "cid-2" || s.Jira.Site != "https://two.atlassian.net" {
+		t.Errorf("after switch = %q / %q", s.Jira.CloudID, s.Jira.Site)
+	}
+	if got := sitesOf(t, jiraStatus(s)); len(got) != 2 {
+		t.Errorf("sites = %+v, want 2", got)
+	}
+}
+
+// A Confluence row listed first must not make its "/wiki" URL the site: the Jira base URL wins,
+// both in the report and in what selecting the site stores.
+func TestJiraSitesPreferBaseURLOverProductPath(t *testing.T) {
+	rows := []secrets.JiraSite{
+		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One", Scopes: []string{"read:page:confluence"}},
+		{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One", Scopes: []string{"read:jira-work"}},
+	}
+	s := &secrets.Data{Jira: &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Unix() + 3600, CloudID: "cid-1", Site: "x", Sites: rows}}
+	got := sitesOf(t, jiraStatus(s))
+	if len(got) != 1 || got[0]["url"] != "https://one.atlassian.net" {
+		t.Fatalf("sites = %+v, want the base URL", got)
+	}
+}

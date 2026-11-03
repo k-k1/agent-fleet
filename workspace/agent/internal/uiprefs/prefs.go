@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
@@ -600,6 +601,42 @@ func TimeZone() string {
 	}
 	return v
 }
+
+// maxZoneNameLen bounds a zone name before it reaches time.LoadLocation. IANA names are well
+// under this; the cap keeps a garbage value in the prefs blob from becoming a file lookup.
+const maxZoneNameLen = 64
+
+// loadableZone reports whether name is a bounded, loadable IANA zone. "Local" is refused: it
+// would load the container's zone and pass it off as the member's.
+func loadableZone(name string) bool {
+	if name == "" || name == "Local" || len(name) > maxZoneNameLen {
+		return false
+	}
+	_, err := time.LoadLocation(name)
+	return err == nil
+}
+
+// ZoneName picks the member's time zone out of one read of the prefs, as an IANA name that
+// loads, or "" when the caller should fall back to time.Local. The order: the explicit
+// timeZone setting (not "auto"), then browserTimeZone, the zone the Console publishes from the
+// browser (console/src/lib/browserTimeZone.ts) because the Agent cannot see the browser. An
+// explicit zone always wins over the published one. A name that does not load (a zone this
+// image's tzdata lacks, an empty or oversized string, a non-string) is skipped, never an error;
+// the Console treats an unknown explicit zone as "auto" at use time, and this matches it.
+// browserTimeZone is shared by every device of the member and the last writer wins, so it can
+// briefly be another device's zone.
+func ZoneName(p map[string]any) string {
+	for _, key := range []string{"timeZone", "browserTimeZone"} {
+		v, _ := p[key].(string)
+		if v != "auto" && loadableZone(v) {
+			return v
+		}
+	}
+	return ""
+}
+
+// EffectiveTimeZone is ZoneName over the current prefs.
+func EffectiveTimeZone() string { return ZoneName(Read()) }
 
 // WriteAtomic replaces the prefs file with body so that a concurrent Read sees either the old
 // or the new complete JSON. os.WriteFile truncates first, and a launch-time gate (AgentMemory

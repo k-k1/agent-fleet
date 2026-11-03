@@ -45,6 +45,7 @@ import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.t
 import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
+import { publishBrowserTimeZone } from "../lib/browserTimeZone.ts";
 import { applyTenantAppearance, getSettings, hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource, useSettings } from "../lib/settings.ts";
 import { getTenant, getUser } from "../core/api/client.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
@@ -294,7 +295,10 @@ export function App() {
     const refreshPrefs = () => {
       if (!alive || !prefsReady || prefsRefreshing) return;
       prefsRefreshing = true;
-      void refreshUIPrefs().finally(() => { prefsRefreshing = false; });
+      void refreshUIPrefs().finally(() => {
+        prefsRefreshing = false;
+        if (alive) publishBrowserTimeZone(); // after the pull, so it compares with the freshest copy
+      });
     };
     const onPrefsVisible = () => {
       if (document.visibilityState === "visible") refreshPrefs();
@@ -343,6 +347,7 @@ export function App() {
       await hydrateUIPrefs();
       if (!alive) return;
       prefsReady = true;
+      publishBrowserTimeZone();
       // The owner may have resolved while the hydrate above was waiting.
       applyTenantAppearance();
       setBooted(true);

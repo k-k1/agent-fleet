@@ -167,7 +167,9 @@ func agentMemResolveCaller(name string) (agentMemCaller, error) {
 // agentMemProjectFor maps a session's working copy to its project. A worktree shares its main
 // clone's memory; anything outside ~/repos (a shell in the home directory) has no project.
 func agentMemProjectFor(dir string) *agentMemProject {
-	return agentMemProjectWith(dir, dir, func(args ...string) (string, error) { return gitx.Run(dir, args...) })
+	return agentMemProjectCached(dir, func() (*agentMemProject, bool) {
+		return agentMemProjectIdent(dir, dir, func(args ...string) (string, error) { return gitx.Run(dir, args...) })
+	})
 }
 
 // agentMemGitRunner runs git in one fixed directory.
@@ -1391,7 +1393,7 @@ func agentMemApplyLocked(changes []agentMemChange, op, memRel string, c agentMem
 			return "", err
 		}
 	}
-	_, _ = memoryGitRun("gc", "--auto", "--quiet")
+	memoryRunGCAuto()
 	return rev, nil
 }
 

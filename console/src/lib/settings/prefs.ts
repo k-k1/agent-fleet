@@ -18,6 +18,7 @@ import {
   normalizeExternalMemory,
   normalizeMemoryReview,
   normalizeRegionFormat,
+  normalizeBrowserTimeZone,
   normalizeTimeZone,
   type AgentLaunchDefaults,
   type ExternalMemoryMode,
@@ -124,6 +125,12 @@ const PREFS = {
   // use time (lib/intl.ts), so a zone this browser's ICU lacks is not erased from the server copy.
   // The Agent reads the same key from ui-prefs for text it renders.
   timeZone: synced("auto", { normalize: normalizeTimeZone }),
+  // Machine-written, not a setting: the IANA zone this browser resolves (lib/browserTimeZone.ts
+  // publishes it on load and when the page returns to the foreground). It exists so the Agent can
+  // follow the browser for text it renders when `timeZone` is "auto"; the Agent reads it only
+  // after an explicit `timeZone`. No control edits it, and settings export / import skip it
+  // (MACHINE_WRITTEN). Several devices share one value, so the last writer wins.
+  browserTimeZone: synced("", { normalize: normalizeBrowserTimeZone }),
   // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
@@ -739,6 +746,11 @@ const ACCUMULATED = keysIn("accumulated");
 /** Exported as a policy seam so persistence tests can pin which preferences
  * must never cross the device boundary. */
 export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOCAL.has(key);
+
+/** Keys a program writes and nobody edits. They sync like any other key but are not part of a
+ *  settings export, and an import never applies them. */
+const MACHINE_WRITTEN: ReadonlySet<string> = new Set<Key>(["browserTimeZone"]);
+export const isMachineWrittenSetting = (key: string): boolean => MACHINE_WRITTEN.has(key);
 
 export const isAgentDefaultedSetting = (key: keyof Settings): boolean => AGENT_DEFAULTED.has(key);
 
