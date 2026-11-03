@@ -185,7 +185,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Pausing an idle deployment | deployment admin | a shell | [operator 03](../operate/03-run.md#pausing-an-idle-deployment) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 15](../member/15-external-services.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
-| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-slots-after-a-launch-template-change) |
+| Replacing slots after a launch template change | deployment admin (super_admin) | Admin → Slots | [operator 11](../operate/11-slot-pool.md#ecs-ec2-replacing-outdated-slots-new-ami-or-launch-template-change) |
 | Force-stopping a wedged slot | deployment admin (super_admin) | Admin → Slots → Stop (force) | [operator 11](../operate/11-slot-pool.md#ecs-ec2-stopping-a-wedged-slot) |
 | The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [operator 07](../operate/07-engines.md#the-gpu-instance-class) |
 | Taking a model in — search, plan card, one press | deployment admin (super_admin), or a tenant admin who was allowed | Admin → Inference engines → Model catalogue | [operator 07](../operate/07-engines.md#taking-models-in-and-what-that-has-to-do-with-tenants) |
