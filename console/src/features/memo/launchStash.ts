@@ -16,7 +16,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import type { Memo, MemoAttachment } from "../../types/memo.ts";
 import { memoAttachmentLabel } from "./attachName.ts";
 import { clearLaunchPrompt, launchAttachKey, readLaunchPrompt } from "../repos/launchDraft.ts";
-import { clearAttachDraft, readAttachDraft, settleAttachDraft } from "../../lib/attachDraft.ts";
+import { attachDraftSeq, clearAttachDraft, readAttachDraft, settleAttachDraft } from "../../lib/attachDraft.ts";
 import type { AttachDraftRec } from "../../lib/attachDraft.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
@@ -80,6 +80,7 @@ export async function stashStoredDraft(
   restoring?: { body: string; attachments: MemoAttachment[] },
 ): Promise<DraftStashResult> {
   const before = await readStoredDraft(repo);
+  if (!before) return { ok: false, reason: "changed" };
   if (!before.text && !before.recs.length) return { ok: true };
   const candidates = [
     ...(restoring ? [restoring] : []),
@@ -102,9 +103,14 @@ export async function stashStoredDraft(
   // Compare and clear: a draft that changed meanwhile is the person's newer work. It stays,
   // and the caller opens nothing over it (a restore would overwrite its text).
   const now = await readStoredDraft(repo);
-  if (!sameStored(before, now)) return { ok: false, reason: "changed" };
+  // Re-checked in the same synchronous step as the clear: readStoredDraft's caller resumes a
+  // tick after it returned, and a write may have started in that tick.
+  const key = launchAttachKey(repo);
+  if (!now || !sameStored(before, now) || attachDraftSeq(key) !== now.seq || readLaunchPrompt(repo).trim() !== now.text) {
+    return { ok: false, reason: "changed" };
+  }
   clearLaunchPrompt(repo);
-  await clearAttachDraft(launchAttachKey(repo));
+  await clearAttachDraft(key);
   return { ok: true, ...(saved ? { saved: true } : {}) };
 }
 
@@ -115,13 +121,26 @@ export type DraftStashResult = { ok: true; saved?: boolean } | { ok: false; reas
 interface StoredDraft {
   text: string;
   recs: AttachDraftRec[];
+  /** The attachment write generation the records were read at (attachDraftSeq). */
+  seq: number;
 }
 
-async function readStoredDraft(repo: string): Promise<StoredDraft> {
+// One consistent snapshot of the stored draft: the records read while no attachment write
+// started, and the text read after them, in the same step that saw the generation unchanged
+// (text read before the IndexedDB get could be rewritten during it and still be cleared).
+// Launch drafts are never uploaded (no session yet), so every record carries its bytes. Null
+// when the draft kept changing under every attempt.
+async function readStoredDraft(repo: string): Promise<StoredDraft | null> {
   const key = launchAttachKey(repo);
-  await settleAttachDraft(key);
-  // Launch drafts are never uploaded (no session yet), so every record carries its bytes.
-  return { text: readLaunchPrompt(repo).trim(), recs: await readAttachDraft(key) };
+  for (let i = 0; i < 5; i++) {
+    await settleAttachDraft(key);
+    const seq = attachDraftSeq(key);
+    if (seq === null) continue;
+    const recs = await readAttachDraft(key);
+    if (attachDraftSeq(key) !== seq) continue;
+    return { text: readLaunchPrompt(repo).trim(), recs, seq };
+  }
+  return null;
 }
 
 // The queue as the server has it now; [] when it cannot be read (the draft is then saved).

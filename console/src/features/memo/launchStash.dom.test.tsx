@@ -53,6 +53,19 @@ const memo = (over: Partial<Memo> = {}): Memo => ({
   ...over,
 });
 
+// Runs fn while the n-th attachment-draft get is in flight (after it was issued, before its
+// result is delivered), as a person typing during that wait would.
+function onGet(n: number, fn: () => void): () => void {
+  const orig = IDBObjectStore.prototype.get;
+  let calls = 0;
+  IDBObjectStore.prototype.get = function (this: IDBObjectStore, q: IDBValidKey | IDBKeyRange) {
+    const req = orig.call(this, q);
+    if (++calls === n) fn();
+    return req;
+  };
+  return () => void (IDBObjectStore.prototype.get = orig);
+}
+
 beforeEach(() => {
   localStorage.clear();
   globalThis.indexedDB = new IDBFactory();
@@ -217,6 +230,44 @@ describe("races and failures", () => {
     finish();
     expect(await p).toEqual({ ok: false, reason: "changed" });
     expect(readLaunchPrompt("app")).toBe("新しい下書き B");
+    expect(useLaunchTarget.getState().target).toBeNull();
+  });
+
+  // The last read is an IndexedDB get, a real wait: text read before it and kept would let a
+  // draft rewritten during it pass the compare and be cleared (review of #3293).
+  it("leaves a text rewritten while the final snapshot is read", async () => {
+    localStorage.setItem("af.launch-prompt.app", "古い下書き");
+    const undo = onGet(2, () => localStorage.setItem("af.launch-prompt.app", "新しい下書き B"));
+    try {
+      expect(await startFromMemo(memo())).toEqual({ ok: false, reason: "changed" });
+    } finally {
+      undo();
+    }
+    expect(readLaunchPrompt("app")).toBe("新しい下書き B");
+    expect(useLaunchTarget.getState().target).toBeNull();
+  });
+
+  it("leaves a file attached while the final snapshot is read", async () => {
+    localStorage.setItem("af.launch-prompt.app", "古い下書き");
+    let give!: () => void;
+    const gate = new Promise<void>((r) => (give = r));
+    const late = new File(["LATE"], "late.log", { type: "text/plain" });
+    late.arrayBuffer = async () => {
+      await gate;
+      return new TextEncoder().encode("LATE").buffer as ArrayBuffer;
+    };
+    const undo = onGet(2, () => {
+      void writeAttachDraft(launchAttachKey("app"), [{ name: "late.log", type: "text/plain", image: false, path: "", file: late }]);
+      setTimeout(give, 10);
+    });
+    try {
+      expect(await startFromMemo(memo())).toEqual({ ok: false, reason: "changed" });
+    } finally {
+      undo();
+    }
+    expect(readLaunchPrompt("app")).toBe("古い下書き");
+    const left = await readAttachDraft(launchAttachKey("app"));
+    expect(left.map((r) => [r.name, new TextDecoder().decode(r.bytes)])).toEqual([["late.log", "LATE"]]);
     expect(useLaunchTarget.getState().target).toBeNull();
   });
 
