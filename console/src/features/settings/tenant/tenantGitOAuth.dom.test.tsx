@@ -22,6 +22,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 
+import { setLocale } from "../../../lib/i18n/index.ts";
 import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
 
 let root: Root | null = null;
@@ -39,6 +40,14 @@ const LISTED = {
     },
   ],
 };
+
+const CONFLUENCE_CLASSIC = ["read:confluence-content.all", "search:confluence", "write:confluence-file"];
+const CONFLUENCE_GRANULAR = ["read:page:confluence", "write:page:confluence", "read:space:confluence"];
+const SCOPE_LISTS = [
+  { group: "base", classic: ["read:jira-work", "write:jira-work"] },
+  { group: "jira_software", granular: ["read:board-scope:jira-software", "read:jql:jira"] },
+  { group: "confluence", classic: CONFLUENCE_CLASSIC, granular: CONFLUENCE_GRANULAR },
+];
 
 async function mount() {
   host = document.createElement("div");
@@ -66,6 +75,7 @@ async function typeInto(el: HTMLInputElement, value: string) {
 }
 
 beforeEach(() => {
+  setLocale("ja");
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   api.mockReset();
   apiJSON.mockReset();
@@ -118,6 +128,7 @@ describe("git provider OAuth", () => {
           needs_secret: true,
           redirect_uri: "https://af.example/api/oauth/jira/callback",
           scope_groups_available: ["jira_software", "from_a_newer_server"],
+          scope_group_scopes: SCOPE_LISTS,
         },
       ],
     });
@@ -129,7 +140,7 @@ describe("git provider OAuth", () => {
     expect(boxes.length).toBe(1);
     expect(boxes[0].checked).toBe(false);
     expect(jira.textContent).toContain("Jira Software");
-    expect(jira.textContent).toContain("read:sprint:jira-software");
+    expect(jira.textContent).toContain("read:board-scope:jira-software");
     await act(async () => boxes[0].click());
     await act(async () => buttonIn(jira, "保存").click());
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/jira", "PUT", {
@@ -148,6 +159,7 @@ describe("git provider OAuth", () => {
           has_secret: true,
           needs_secret: true,
           scope_groups_available: ["jira_software", "confluence"],
+          scope_group_scopes: SCOPE_LISTS,
         },
       ],
     });
@@ -308,4 +320,39 @@ describe("GitHub app source", () => {
     expect(radioLabel("組み込みの OAuth App").querySelector("input")!.checked).toBe(true);
     expect(radioLabel("使わない").querySelector("input")!.checked).toBe(false);
   });
+
+  // The names come from the control plane; the prose around them carries none, in either
+  // locale, so the two cannot disagree about what the app needs.
+  for (const loc of ["en", "ja"] as const) {
+    it(`lists each group's scopes in a closed <details>, ${loc}, and keeps names out of the prose`, async () => {
+      setLocale(loc);
+      api.mockResolvedValue({
+        providers: [
+          {
+            provider: "jira",
+            client_id: "cid-1",
+            has_secret: true,
+            needs_secret: true,
+            scope_groups_available: ["jira_software", "confluence"],
+            scope_group_scopes: SCOPE_LISTS,
+          },
+        ],
+      });
+      await mount();
+      const lists = Array.from(document.querySelectorAll<HTMLDetailsElement>("details.admin-scopes"));
+      expect(lists.length).toBe(3);
+      expect(lists.every((d) => !d.open)).toBe(true);
+      const conf = lists[2];
+      expect(conf.querySelector("summary")!.textContent).toContain("6");
+      expect(Array.from(conf.querySelectorAll("li code")).map((c) => c.textContent)).toEqual([
+        ...CONFLUENCE_CLASSIC,
+        ...CONFLUENCE_GRANULAR,
+      ]);
+      expect(conf.querySelectorAll("h5").length).toBe(2);
+      expect(lists[1].querySelectorAll("h5").length).toBe(0);
+      for (const p of document.querySelectorAll(".admin-hint")) {
+        expect(p.textContent).not.toMatch(/[a-z]+:[a-z-]+:(confluence|jira)|read:jira-work|search:confluence/);
+      }
+    });
+  }
 });

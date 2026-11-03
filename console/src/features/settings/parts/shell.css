@@ -1085,3 +1085,25 @@ label.idp-flag {
 .golden-head .state-dot {
   margin-right: 6px;
 }
+
+/* Scope names under a tenant Git OAuth hint: collapsed, because the prose says where to add
+   them and the list is only consulted while ticking them off in the Developer Console. */
+.admin-scopes {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.admin-scopes > summary {
+  cursor: pointer;
+}
+.admin-scopes h5 {
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+.admin-scopes ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+.admin-scopes code {
+  font-family: var(--mono);
+}

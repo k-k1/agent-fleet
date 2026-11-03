@@ -30,6 +30,10 @@ interface GitOAuthApp {
   // Optional scope groups the admin confirms the app grants, and the ones this provider offers.
   scope_groups?: string[];
   scope_groups_available?: string[];
+  // Scope names to add to the app, per group ("base" is the always-requested set), straight
+  // from the control plane's own constants. Names are not translated, so they live here and
+  // not in the i18n strings.
+  scope_group_scopes?: { group: string; classic?: string[]; granular?: string[] }[];
   // GitHub only (issue #1667).
   source?: GitHubSource;
   is_default?: boolean;
@@ -69,6 +73,43 @@ const SCOPE_GROUP_TEXT = {
 } as const;
 type ScopeGroup = keyof typeof SCOPE_GROUP_TEXT;
 const isScopeGroup = (g: string): g is ScopeGroup => Object.hasOwn(SCOPE_GROUP_TEXT, g);
+
+// A closed <details> with the scope names of one group; classic and granular are headed apart
+// only when both exist.
+function ScopeList({ app, group }: { app: GitOAuthApp; group: string }) {
+  const tr = useT();
+  const entry = (app.scope_group_scopes || []).find((e) => e.group === group);
+  if (!entry) return null;
+  const classic = entry.classic || [];
+  const granular = entry.granular || [];
+  const both = classic.length > 0 && granular.length > 0;
+  const list = (names: string[]) => (
+    <ul>
+      {names.map((n) => (
+        <li key={n}>
+          <code>{n}</code>
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <details className="admin-scopes">
+      <summary>{tr("tenant.git_oauth_scopes_summary", { n: classic.length + granular.length })}</summary>
+      {classic.length > 0 && (
+        <>
+          {both && <h5>{tr("tenant.git_oauth_scopes_classic")}</h5>}
+          {list(classic)}
+        </>
+      )}
+      {granular.length > 0 && (
+        <>
+          {both && <h5>{tr("tenant.git_oauth_scopes_granular")}</h5>}
+          {list(granular)}
+        </>
+      )}
+    </details>
+  );
+}
 
 export function TenantGitOAuthView({ slug }: { slug: string }) {
   const tr = useT();
@@ -205,6 +246,7 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
         <>
           <p className="admin-hint">{tr("tenant.git_oauth_jira_access")}</p>
           <p className="admin-hint">{tr("tenant.git_oauth_jira_scopes")}</p>
+          <ScopeList app={app} group="base" />
           <p className="admin-hint">{tr("tenant.git_oauth_jira_sharing")}</p>
         </>
       )}
@@ -221,6 +263,7 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
             <span>{tr(SCOPE_GROUP_TEXT[g].label)}</span>
           </label>
           <p className="admin-hint">{tr(SCOPE_GROUP_TEXT[g].hint)}</p>
+          <ScopeList app={app} group={g} />
         </div>
       ))}
       <p className="admin-hint">
