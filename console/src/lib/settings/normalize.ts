@@ -176,6 +176,13 @@ export function normalizeTimeZone(value: unknown): string {
   return typeof value === "string" && value !== "" ? value : "auto";
 }
 
+/** The browser's zone as published for the Agent: a string up to 64 characters, else "". Only the
+ *  shape is checked here; the Agent validates the name itself before loading it. */
+export const BROWSER_TIME_ZONE_MAX = 64;
+export function normalizeBrowserTimeZone(value: unknown): string {
+  return typeof value === "string" && value.length <= BROWSER_TIME_ZONE_MAX ? value : "";
+}
+
 export function normalizeClaudeCustomModels(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const out: string[] = [];
