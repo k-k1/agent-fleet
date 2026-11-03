@@ -5,16 +5,19 @@
 // Every "no X" assertion here is paired with a positive control that goes through the same
 // render path and DOES show X, per AGENTS.md "Verifying your own work": an empty result and a
 // check that never ran read identically otherwise.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { EnginesPillView, type MemberChatConn } from "./EnginesPill.tsx";
+import { EnginesPill, EnginesPillView, memberChatFromConn, type MemberChatConn } from "./EnginesPill.tsx";
+import { clearCachedConns, setCachedConns } from "../repos/connsCache.ts";
+import { getSettings, setSetting } from "../../lib/settings.ts";
+import type { ConnectionsStatus } from "../../types/session.ts";
 import type { EngineMemberRow } from "./wire.ts";
 
 let host: HTMLDivElement;
 let root: Root;
 
-async function render(rows: EngineMemberRow[], memberChat?: MemberChatConn) {
+async function render(rows: EngineMemberRow[], memberChat?: MemberChatConn | "hidden") {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -22,6 +25,13 @@ async function render(rows: EngineMemberRow[], memberChat?: MemberChatConn) {
     root.render(<EnginesPillView rows={rows} memberChat={memberChat} />);
   });
 }
+
+// The store-connected EnginesPill polls engine status on mount; a stub keeps it off the network.
+vi.mock("./api.ts", () => ({ engineStatus: () => Promise.resolve({}) }));
+
+// EnginesPill.tsx imports lib/settings.ts, which applies the jsdom navigator's locale (en) on
+// load; the assertions below read the ja catalog.
+beforeAll(() => setSetting("locale", "ja"));
 
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -358,3 +368,62 @@ describe("engine pill — the control", () => {
   });
 });
 
+
+// #3291: with llama.cpp switched off, a saved connection must not draw the member pill — its
+// last failed dial read as "not reachable" in the top bar for a feature the member turned off.
+// The CP's chat row must not take its place either: running sessions still route `llm` to the
+// saved connection (harnessEngineToken), so that row would name an engine nothing uses.
+describe("engine pill — member connection while llama.cpp is switched off", () => {
+  const saved = { connected: true, url: "http://box:9931", reachable: false };
+  const cpChat: EngineMemberRow = { key: "llm", api: "chat", state: "running", warm: true };
+
+  it("draws the member pill when llama.cpp is on (positive control)", async () => {
+    await render([cpChat], memberChatFromConn(saved, true));
+    expect(pills().length).toBe(1);
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("届いていません");
+  });
+
+  it("draws no chat pill at all when llama.cpp is off, not even the CP's chat row", async () => {
+    await render([cpChat], memberChatFromConn(saved, false));
+    expect(pills().length).toBe(0);
+  });
+
+  it("keeps the images pill when llama.cpp is off", async () => {
+    await render([cpChat, { key: "image", api: "images", state: "running" }], memberChatFromConn(saved, false));
+    expect(pills().length).toBe(1);
+    expect(host.querySelector(".engine-pill[title*='画像']")).not.toBeNull();
+  });
+
+  it("leaves the CP's rows in charge when no connection is saved, whatever the switch", async () => {
+    expect(memberChatFromConn({ connected: false }, false)).toBeUndefined();
+    expect(memberChatFromConn(undefined, true)).toBeUndefined();
+    await render([cpChat], memberChatFromConn(undefined, false));
+    expect(host.querySelector(".engine-pill-state")!.textContent).toContain("準備済み");
+  });
+});
+
+// The store-connected wrapper TopBar renders: it must read the live lcppEnabled setting, so
+// flipping the switch shows and hides the pill without waiting for a connections refresh.
+describe("EnginesPill (store-connected) follows the lcppEnabled setting", () => {
+  afterEach(() => clearCachedConns());
+
+  async function mountPill() {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(<EnginesPill />);
+    });
+  }
+
+  it("defaults to on, then hides and reshows the pill as the switch flips", async () => {
+    expect(getSettings().lcppEnabled).toBe(true); // opt-out default, before anything set it
+    setCachedConns({ lcpp: { connected: true, url: "http://box:9931", reachable: false } } as ConnectionsStatus);
+    await mountPill();
+    expect(pills().length).toBe(1);
+    await act(async () => setSetting("lcppEnabled", false));
+    expect(pills().length).toBe(0);
+    await act(async () => setSetting("lcppEnabled", true));
+    expect(pills().length).toBe(1);
+  });
+});
