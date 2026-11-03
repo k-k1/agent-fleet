@@ -389,6 +389,17 @@ pid="$(cat "$T/cf.pid" 2>/dev/null)"
 [ "$(attempts)" = 1 ] || fail "signal: attempts=$(attempts), want 1"
 [ -z "$(ls -A "$T/tmp2")" ] || fail "signal: left files behind: $(ls -A "$T/tmp2")"
 
+# 23. A coloured error label (FORCE_COLOR makes chalk colour even off a terminal) is still read;
+# the last attempt's stderr is replayed as the CLI wrote it.
+esc="$(printf '\033')"
+reset; oauth_answer
+run STUB_CF_FAILS=9 "STUB_CF_ERR=${esc}[31mError:${esc}[39m read ECONNRESET" -- search q
+[ "$(attempts)" = 3 ] || fail "coloured ECONNRESET: attempts=$(attempts), want 3"
+grep -q "${esc}\[31mError:${esc}\[39m read ECONNRESET" "$T/err" || fail "coloured ECONNRESET: stderr not replayed verbatim"
+reset; oauth_answer
+run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf '%s[31mError:%s[39m Request failed with status code 400\nAPI response: invalid ECONNRESET' "$esc" "$esc")" -- search q
+[ "$(attempts)" = 1 ] || fail "coloured 400 with ECONNRESET body: attempts=$(attempts), want 1"
+
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2
   exit 1

@@ -170,8 +170,11 @@ readonly_cmd() {
 # is the server's text, and an answered 400 whose body happens to say ECONNRESET was answered.
 # "stream has been aborted" is axios's message for a response cut off after its headers.
 transport_failure() {
-  local msg
-  msg="$(sed -n 's/^Error: //p;t;s/^[[:space:]]*"error": "\(.*\)",\{0,1\}$/\1/p' "$1" 2>/dev/null | head -n 1)"
+  local msg esc
+  # chalk colours the label when FORCE_COLOR is set even off a terminal: strip SGR codes first.
+  esc="$(printf '\033')"
+  msg="$(sed "s/${esc}\\[[0-9;]*m//g" "$1" 2>/dev/null |
+    sed -n 's/^Error: //p;t;s/^[[:space:]]*"error": "\(.*\)",\{0,1\}$/\1/p' | head -n 1)"
   case "$msg" in "" | *"Request failed with status code"*) return 1 ;; esac
   printf '%s\n' "$msg" | grep -Eiq 'ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE|EAI_AGAIN|socket hang up|Client network socket disconnected|timeout of [0-9]+ms exceeded|stream has been aborted'
 }
