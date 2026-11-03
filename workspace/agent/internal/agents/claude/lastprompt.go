@@ -26,21 +26,31 @@ type promptRecord struct {
 // width and may be scrolled, so the transcript is the only exact copy to hand back.
 func LastUserPrompt(m session.Meta) string {
 	for _, p := range jsonlByMtime(session.UUID(m.Dir, m.Name)) {
-		var text string
-		_, found := lastLineWhere(p, func(l []byte) bool {
-			t, ok := userPromptText(l)
-			text = t
-			return ok
-		})
-		if found {
+		if text, found := lastUserPromptIn(p); found {
 			return text
 		}
 	}
 	return ""
 }
 
+// lastUserPromptIn is LastUserPrompt for one transcript file.
+func lastUserPromptIn(p string) (string, bool) {
+	var text string
+	_, found := lastLineWhere(p, func(l []byte) bool {
+		t, ok := userPromptText(l)
+		text = t
+		return ok
+	})
+	return text, found
+}
+
 // userPromptText returns the prompt a transcript line carries; ok is false for every other line.
 func userPromptText(line []byte) (string, bool) {
+	// A compaction summary and a background-task notification are user lines claude writes
+	// itself; one logged after the member's prompt must not stand in for it.
+	if claudeOwnLine(line) {
+		return "", false
+	}
 	var r promptRecord
 	if json.Unmarshal(line, &r) != nil || r.Type != "user" || r.IsSidechain || r.IsMeta {
 		return "", false

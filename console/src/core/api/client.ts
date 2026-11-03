@@ -172,6 +172,7 @@ const BILINGUAL_MESSAGE_CODES = new Set([
   "driver_unavailable",
   "driver_unsupported",
   "busy_switch",
+  "stop_in_progress",
 ]);
 
 // errDetail appends the server's raw message to errText's wording. A generic code such as

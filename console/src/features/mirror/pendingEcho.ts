@@ -129,3 +129,21 @@ export function withoutDiscarded<E extends PendingEcho>(echoes: E[], texts: stri
   }
   return out.length === echoes.length ? echoes : out;
 }
+
+// withoutStoppedEcho drops the echo of a prompt a stop took back out of the CLI's input box
+// (issue #3290): the newest echo of that text among those that existed when the stop was
+// pressed. An echo created while the stop was in flight belongs to a new send, even with the
+// same text, and stays; so does everything when the stopped one has already landed.
+export function withoutStoppedEcho<E extends PendingEcho & { id: number }>(
+  echoes: E[],
+  text: string,
+  idsAtStop: ReadonlySet<number>,
+): E[] {
+  for (let i = echoes.length - 1; i >= 0; i--) {
+    const e = echoes[i];
+    if (idsAtStop.has(e.id) && !e.launch && samePastedPrompt(text, e.text)) {
+      return [...echoes.slice(0, i), ...echoes.slice(i + 1)];
+    }
+  }
+  return echoes;
+}

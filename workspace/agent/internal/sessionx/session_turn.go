@@ -152,13 +152,24 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		defer interruptsInFlight.Delete(name)
+		// The absorbing covers the keys only. A stop pressed while this one watches the input box
+		// for a restored prompt is meant for the turn that started since (claude runs a queued
+		// prompt on Esc, docs/log/133 §1): it waits for the terminal lock and goes out.
+		keysDone := sync.OnceFunc(func() { interruptsInFlight.Delete(name) })
+		defer keysDone()
+		// A stop is never refused for the lock: past the wait it goes out unlocked and only the
+		// reclaim, which needs the pane to itself, is skipped.
+		unlock, locked := lockTerminal(name)
+		if locked {
+			defer unlock()
+		}
 		// Read before the keys: only a box that was empty can be told to hold a restored prompt.
-		emptyBefore := restoresInterruptedPrompt(meta.Kind) && composerEmpty(reclaimCapture(pane))
+		emptyBefore := locked && restoresInterruptedPrompt(meta.Kind) && composerEmpty(reclaimCapture(pane))
 		if err := sendNamedKeysGap(pane, plan.keys, plan.gap); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
 		}
+		keysDone()
 		// An interrupt starts no turn, so do not mark working (same reason as /input: no Stop
 		// hook fires and the session would stick at "working"). "interrupt_measured" is false
 		// for a kind whose stop key was never measured: the keys went out, the effect is unknown.

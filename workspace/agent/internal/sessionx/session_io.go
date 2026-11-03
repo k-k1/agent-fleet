@@ -724,8 +724,16 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		return "", false
 	}
 	// A stop still taking a restored prompt back out of the input box (reclaimInterruptedPrompt)
-	// would get this text typed in after it: the two would run as one prompt (issue #3290).
-	waitInterruptSettled(name)
+	// would get this text typed in after it: the two would run as one prompt (issue #3290). Held
+	// through the typing, so a stop cannot start between the guards and the Enter either.
+	unlock, locked := lockTerminal(name)
+	if !locked {
+		httpx.WriteErr(w, http.StatusConflict, "stop_in_progress",
+			"停止をまだ送っている途中です。少し待ってから送り直してください / "+
+				"a stop is still being delivered to this session; send again in a moment")
+		return "", false
+	}
+	defer unlock()
 	// While ANY interaction is pending (question / plan approval / permission), the TUI
 	// is showing a modal that swallows typed text and lets the trailing Enter confirm
 	// its highlighted row — a wrong answer, a silent plan approval, or a silent allow.

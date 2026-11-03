@@ -3,6 +3,7 @@ package sessionx
 import (
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -56,10 +57,21 @@ func composerEmpty(captured string) bool {
 	return ok && squashSpace(draft) == ""
 }
 
+// restoredDraft reports that the pane's input box holds exactly prompt (whitespace aside: the
+// box wraps at the pane width and indents continuation rows). Deliberately stricter than
+// promptDraftVisible, which confirms a send and may err towards true: here a false positive
+// erases text someone typed in the terminal, so a box scrolled off screen, a paste placeholder
+// or a partial match is never taken for the prompt. Such a prompt is left where claude put it.
+func restoredDraft(captured, prompt string) bool {
+	draft, _, ok := claudeComposer(captured)
+	d := squashSpace(draft)
+	return ok && d != "" && d == squashSpace(prompt)
+}
+
 // reclaimInterruptedPrompt takes a stopped prompt that claude put back into its input box out
 // again and returns its text, or "" when nothing was taken. emptyBefore is composerEmpty of
 // the pane read before the stop keys: text already in the box then was typed by someone, and
-// it is left alone.
+// it is left alone. The caller holds the session's terminal lock (lockTerminal).
 func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) string {
 	if !emptyBefore || !restoresInterruptedPrompt(m.Kind) {
 		return ""
@@ -70,10 +82,10 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 	}
 	for waited := time.Duration(0); waited < reclaimWindow; waited += reclaimPoll {
 		reclaimSleep(reclaimPoll)
-		if !promptDraftVisible(reclaimCapture(pane), prompt) {
+		if !restoredDraft(reclaimCapture(pane), prompt) {
 			continue
 		}
-		if clearComposer(pane) {
+		if clearComposer(pane, prompt) {
 			return prompt
 		}
 		log.Printf("interrupt: %s: the stopped prompt came back into the input box and could not be cleared", m.Name)
@@ -84,13 +96,16 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 
 // clearComposer empties claude's input box with its own "Esc, Esc to clear" and reports
 // whether the box reads empty afterwards. Line-wise deletion (C-u) works per wrapped row and
-// would leave a long draft half-deleted.
-func clearComposer(pane string) bool {
+// would leave a long draft half-deleted. Before the second Esc the box must still hold the
+// prompt and the hint must be the line right above it, not a match anywhere in the history.
+func clearComposer(pane, prompt string) bool {
 	if err := sendNamedKeys(pane, []string{"Escape"}); err != nil {
 		return false
 	}
 	reclaimSleep(reclaimPoll)
-	if !strings.Contains(reclaimCapture(pane), clearHint) {
+	captured := reclaimCapture(pane)
+	_, above, _ := claudeComposer(captured)
+	if !restoredDraft(captured, prompt) || !strings.Contains(above, clearHint) {
 		return false
 	}
 	if err := sendNamedKeys(pane, []string{"Escape"}); err != nil {
@@ -105,16 +120,27 @@ func clearComposer(pane string) bool {
 	return false
 }
 
-// interruptSettleLimit bounds how long a send waits for a stop in flight: the stop keys, the
-// reclaim window and the clear fit well inside it.
-const interruptSettleLimit = 3 * time.Second
+// terminalLockWait bounds how long a stop or a send waits for the other to finish with the
+// pane: a stop's keys, reclaim window and clear take under 2 s.
+const terminalLockWait = 3 * time.Second
 
-// waitInterruptSettled waits until no stop is being sent to the session, at most
-// interruptSettleLimit.
-func waitInterruptSettled(name string) {
-	for waited := time.Duration(0); waited < interruptSettleLimit; waited += reclaimPoll {
-		if _, busy := interruptsInFlight.Load(name); !busy {
-			return
+// terminalLocks holds one mutex per session name (lockTerminal).
+var terminalLocks sync.Map
+
+// lockTerminal serialises what types into a Terminal pane's input box: a send's guards and
+// typing, and a stop's keys and reclaim. Interleaved, a send typed between the stop and the
+// clear lands after the restored prompt, or the clearing Esc lands in the middle of the send.
+// It returns the unlock, or ok=false when the other party held the pane past
+// terminalLockWait; the caller then must not type.
+func lockTerminal(name string) (unlock func(), ok bool) {
+	v, _ := terminalLocks.LoadOrStore(name, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	for waited := time.Duration(0); ; waited += reclaimPoll {
+		if mu.TryLock() {
+			return mu.Unlock, true
+		}
+		if waited >= terminalLockWait {
+			return nil, false
 		}
 		reclaimSleep(reclaimPoll)
 	}

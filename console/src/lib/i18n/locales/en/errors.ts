@@ -93,6 +93,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.driver_unsupported": "This agent kind doesn't support that execution method.",
   "err.busy_switch": "A turn is running. Wait for it to finish or stop it before switching.",
+  "err.stop_in_progress": "A stop is still being delivered to this session. Send again in a moment.",
   "err.member_origin_required": "Only the Console can do this. It was not sent from your signed-in session.",
   "err.member_origin_invalid": "The request could not be verified as yours (it may have expired). Try again.",
   "err.member_origin_unavailable": "The workspace's agent just started or needs a restart. Try again in a minute.",

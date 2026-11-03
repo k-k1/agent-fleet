@@ -19,7 +19,7 @@ import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import { takeLaunchSeed } from "../../../lib/launchSeed.ts";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
-import { withoutDiscarded } from "../pendingEcho.ts";
+import { withoutDiscarded, withoutStoppedEcho } from "../pendingEcho.ts";
 import { closeStep, restoreStep } from "../stopQueue.ts";
 import { nextEchoId, sweptDiscards } from "./sendEcho.ts";
 import type { MirrorState } from "./useMirrorState.ts";
@@ -53,8 +53,13 @@ export function useMirrorActions({
   const {
     turns, stateSession, applyEchoes, setStatus, setFinalizing, finalizingRef, wasWorkingRef, discards,
     discardNotices, setDiscardNotices, setPendingPeers, queueOpsRef, queuedCount, draft, setDraft, sending,
-    setSending, sendingRef, attach, attachments, setHistIdx, statusRef, tickRef, inputRef,
+    setSending, sendingRef, attach, attachments, setHistIdx, statusRef, tickRef, inputRef, pendingSendsRef,
   } = st;
+
+  // What the view shows NOW, for code that resumes after an await: the closure it resumes in
+  // holds the session, draft and attachments of the render that started it.
+  const liveRef = useRef({ session, draft, attachCount: attachments.length });
+  liveRef.current = { session, draft, attachCount: attachments.length };
 
   // Low-level: submit one prompt as a semantic turn op — start when idle, steer when a
   // turn is already running (docs/log/27 §4). The Agent adapts it per driver: tui = the same
@@ -243,11 +248,14 @@ export function useMirrorActions({
 
   // takeBackStopped puts a prompt the stop took back out of claude's input box into this
   // composer, the place the member would look for it. Its echo goes too: the run it was sent for
-  // is over. A busy composer is not overwritten; the prompt is still one ↑ away in the history,
-  // because the transcript keeps its user line.
-  const takeBackStopped = (text: string) => {
-    applyEchoes((p) => withoutDiscarded(p, [text]));
-    if (draftBusy) {
+  // is over. The composer is judged as it is when the answer arrives (liveRef): text typed or a
+  // file attached while the stop was in flight makes it busy, and a busy composer is not
+  // overwritten. The prompt is still one ↑ away in the history, because the transcript keeps its
+  // user line.
+  const takeBackStopped = (text: string, echoIdsAtStop: ReadonlySet<number>) => {
+    applyEchoes((p) => withoutStoppedEcho(p, text, echoIdsAtStop));
+    const now = liveRef.current;
+    if (now.draft.trim() || now.attachCount > 0) {
       toast(tr("mirror.stop_restored_busy"));
       return;
     }
@@ -275,8 +283,12 @@ export function useMirrorActions({
     wasWorkingRef.current = false;
     finalizingRef.current = false;
     setFinalizing(false);
+    const stopSession = session;
+    const echoIdsAtStop = new Set(pendingSendsRef.current.map((e) => e.id));
     const res = await sessionInterrupt(session, discardQueue && managed);
-    if (res.ok && res.restored) takeBackStopped(res.restored);
+    // The pane may show another session by now; the stopped prompt is A's, not B's draft. It
+    // stays one ↑ away in A's history.
+    if (res.ok && res.restored && liveRef.current.session === stopSession) takeBackStopped(res.restored, echoIdsAtStop);
     if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
     // A first stop lets the queue go on, which looks like the stop did nothing unless said.
     else if (managed && res.stop === "first" && queuedCount > 0) toast(tr("mirror.stop_first_continues"));

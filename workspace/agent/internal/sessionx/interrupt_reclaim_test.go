@@ -140,29 +140,149 @@ func TestInterruptClearNeedsTheClearHint(t *testing.T) {
 	}
 }
 
-// A send waits while a stop to the same session is still in flight.
-func TestWaitInterruptSettledWaitsForTheStop(t *testing.T) {
+// The clear is for the stopped prompt only. Each pane below is what follows the stop when
+// the prompt did NOT come back as such; none may be cleared and none may get a second Esc
+// (on an empty box, a double Esc opens claude's rewind menu).
+func TestInterruptLeavesWhatIsNotExactlyThePrompt(t *testing.T) {
+	cases := map[string]string{
+		// Same first 12 characters: a partial match is not the prompt.
+		"similar text":      rule + "\n❯ Please review project beta\n" + rule + "\n",
+		"paste placeholder": rule + "\n❯ [Pasted text #2 +100 lines]\n" + rule + "\n",
+		// No box on screen; the prompt shows only in the history.
+		"history only": "❯ Please review project alpha\n✽ Zigzagging…\n",
+	}
+	for name, after := range cases {
+		t.Run(name, func(t *testing.T) {
+			keys, _, has := runClaudeInterrupt(t, "Please review project alpha", func(esc int) string {
+				if esc == 0 {
+					return paneWorking
+				}
+				return after
+			})
+			if has || strings.Join(keys, ",") != "Escape" {
+				t.Fatalf("keys = %v, restored present = %v", keys, has)
+			}
+		})
+	}
+}
+
+// The hint has to be the line right above the box: the same words in the history (a
+// conversation about claude's keys, say) do not make a second Esc safe.
+func TestInterruptClearHintMustSitAboveTheBox(t *testing.T) {
+	hintInHistory := "the hint reads Esc again to clear\n✽ done\n\n" + rule + "\n❯ SLOW 再レビュー\n" + rule + "\n"
+	keys, _, has := runClaudeInterrupt(t, "SLOW 再レビュー", func(esc int) string {
+		switch esc {
+		case 0:
+			return paneWorking
+		case 1:
+			return paneRestored
+		}
+		return hintInHistory
+	})
+	if has || strings.Join(keys, ",") != "Escape,Escape" {
+		t.Fatalf("keys = %v, restored present = %v", keys, has)
+	}
+}
+
+// A stop pressed while an earlier one still watches the box is not absorbed: claude may
+// already be running the queued prompt the first Esc released. It waits for the pane and
+// goes out.
+func TestInterruptDuringReclaimWaitsAndIsSent(t *testing.T) {
+	logPath := fakeTmux(t)
+	stubInterruptState(t, "working")
+	stubReclaim(t, logPath, "SLOW 再レビュー", func(int) string { return paneEmpty })
+	name := "turn_reclaim_second"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	unlock, ok := lockTerminal(name) // the first stop, mid-reclaim
+	if !ok {
+		t.Fatal("lock")
+	}
+	polls, early := 0, false
+	reclaimSleep = func(time.Duration) {
+		if polls++; polls == 3 {
+			early = len(sendKeysLines(t, logPath)) != 0
+			unlock()
+		}
+	}
+	rec := postTurn(t, name, `{"op":"interrupt"}`)
+	if early {
+		t.Fatal("the stop key went out while the first stop still held the pane")
+	}
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "coalesced") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := sendKeysLines(t, logPath); strings.Join(got, ",") != "Escape" {
+		t.Fatalf("keys = %v", got)
+	}
+}
+
+// A send never types while a stop holds the pane: past the wait it is refused, untyped.
+func TestSendRefusedWhileAStopHoldsThePane(t *testing.T) {
+	logPath := fakeTmux(t)
 	old := reclaimSleep
 	t.Cleanup(func() { reclaimSleep = old })
-	name := "settle_wait"
-	interruptsInFlight.Store(name, struct{}{})
+	reclaimSleep = func(time.Duration) {}
+	name := "turn_send_blocked"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	unlock, ok := lockTerminal(name)
+	if !ok {
+		t.Fatal("lock")
+	}
+	defer unlock()
+	rec := postTurn(t, name, `{"op":"start","prompt":"ごめん、先に1詰めよう"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "stop_in_progress") {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := sendKeysLines(t, logPath); len(got) != 0 {
+		t.Fatalf("typed while a stop held the pane: %v", got)
+	}
+}
+
+// Once the stop lets go, the send goes through.
+func TestSendWaitsForAStopToFinish(t *testing.T) {
+	logPath := fakeTmux(t)
+	old := reclaimSleep
+	t.Cleanup(func() { reclaimSleep = old })
+	name := "turn_send_waits"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	unlock, _ := lockTerminal(name)
 	polls := 0
 	reclaimSleep = func(time.Duration) {
 		if polls++; polls == 3 {
-			interruptsInFlight.Delete(name)
+			unlock()
 		}
 	}
-	waitInterruptSettled(name)
-	if polls != 3 {
-		t.Fatalf("polls = %d, want the wait to end when the stop finished (3)", polls)
+	rec := postTurn(t, name, `{"op":"start","prompt":"next"}`)
+	if rec.Code != http.StatusOK || polls < 3 {
+		t.Fatalf("status = %d after %d polls, body = %s", rec.Code, polls, rec.Body.String())
 	}
-	// Bounded: a stop that never finishes does not hold a send forever.
-	interruptsInFlight.Store(name, struct{}{})
-	t.Cleanup(func() { interruptsInFlight.Delete(name) })
-	polls = 0
-	reclaimSleep = func(time.Duration) { polls++ }
-	waitInterruptSettled(name)
-	if want := int(interruptSettleLimit / reclaimPoll); polls != want {
-		t.Fatalf("polls = %d, want %d", polls, want)
+	if got := sendKeysLines(t, logPath); len(got) == 0 {
+		t.Fatal("nothing typed")
+	}
+}
+
+// Absorbing a second click covers the stop keys only: by the time the box is watched, a new
+// stop must no longer be taken for this one.
+func TestInterruptStopsAbsorbingBeforeTheReclaim(t *testing.T) {
+	logPath := fakeTmux(t)
+	stubInterruptState(t, "working")
+	stubReclaim(t, logPath, "", func(esc int) string {
+		if esc == 0 {
+			return paneWorking
+		}
+		return paneEmpty
+	})
+	name := "turn_reclaim_absorb"
+	absorbing := true
+	interruptedPrompt = func(session.Meta) string {
+		_, absorbing = interruptsInFlight.Load(name)
+		return ""
+	}
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	if rec := postTurn(t, name, `{"op":"interrupt"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if absorbing {
+		t.Fatal("a second stop would still be absorbed while the box is watched")
 	}
 }
