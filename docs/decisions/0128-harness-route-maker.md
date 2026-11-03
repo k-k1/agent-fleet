@@ -337,10 +337,10 @@ table from becoming a menu of models that fail on the first message, which is wh
   route or billing is written unresolved instead of split (the split of decision 8 is left to P0b, where a kind
   can prove a segment boundary). Price lookup tries the route's models.dev provider first, then the kind's table.
 - 2026-11-03, P0b (#3285): billing is recorded where a call's own record proves it, and left unresolved otherwise.
-  **codex**: the `rate_limits` block of that call's `token_count` event. A `plan_type` with a window below 100% and no
-  `rate_limit_reached_type` gives route `chatgpt-subscription`, billing `subscription-included`; no block (which is also
-  what an API-key login leaves), a usage-based plan, or an exhausted window gives nothing, never `metered`. The event is
-  read after the call, so a call that crosses into the limit reads as unproven. **opencode**: a priced `opencode` (Zen)
+  **codex** stays unresolved: the `rate_limits` block of a `token_count` event is the session's latest snapshot re-sent
+  with every event (upstream keeps it in session state and clones it into each event), so a stale plan snapshot rides on
+  a call made after an API-key switch or on credits; nothing in the event says it is fresh or belongs to that call. It
+  needs a per-call signal from codex. **opencode**: a priced `opencode` (Zen)
   call is `metered`; a zero cost, Go, and direct providers stay unresolved (Go can spill onto the balance without the
   message saying so). **claude** and **muse** stay unresolved: the claude transcript line carries no login or
   usage-credit signal, and for both the only other evidence is the current credential file or environment, which a

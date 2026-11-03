@@ -225,7 +225,7 @@ func TestPriceLookupRouteFirstThenKind(t *testing.T) {
 
 func billedTurn(billing string, in, out int) transcript.Turn {
 	return transcript.Turn{Role: "assistant", InTok: in, OutTok: out, Model: "gpt-5.6", TS: "2026-11-03T01:00:00Z",
-		Route: usagex.RouteChatGPT, Billing: billing}
+		Route: usagex.RouteOpencodeGo, Billing: billing}
 }
 
 // A turn whose calls are all proven but billed differently becomes one ledger row per billing
@@ -253,8 +253,8 @@ func TestFoldSplitsTurnAtProvenBillingBoundary(t *testing.T) {
 	var in, out int
 	for _, r := range recs {
 		in, out = in+r.In, out+r.Out
-		if r.Idx != rows[0].Idx || r.Route != usagex.RouteChatGPT {
-			t.Errorf("record %+v: want idx %d and route chatgpt-subscription", r, rows[0].Idx)
+		if r.Idx != rows[0].Idx || r.Route != usagex.RouteOpencodeGo {
+			t.Errorf("record %+v: want idx %d and route opencode-go", r, rows[0].Idx)
 		}
 	}
 	if in != 150 || out != 18 {

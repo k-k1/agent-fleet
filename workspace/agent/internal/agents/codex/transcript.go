@@ -19,7 +19,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // Codex chat transcript. Unlike claude (a single <sid>.jsonl we read directly),
@@ -289,9 +288,11 @@ func (p *rolloutParser) feed(ln []byte) {
 				if win > 0 {
 					p.turns[p.lastAssistant].CtxWindow = win
 				}
-				// Overwritten, not kept: a later event without the evidence must not leave an
-				// earlier call's claim standing for the whole turn.
-				p.turns[p.lastAssistant].Route, p.turns[p.lastAssistant].Billing = callBilling(ev.Payload)
+				// Route and Billing stay empty on purpose (ADR 0128 decision 8). The event's
+				// rate_limits block is the session's latest snapshot, re-sent with every token_count
+				// (upstream core/src/state/session.rs keeps it and token_info_and_rate_limits clones
+				// it), so a stale plus/3% snapshot rides on a call made after an API-key switch or on
+				// credits. Nothing in the event says the snapshot is fresh or belongs to this call.
 			}
 		case "context_compacted":
 			// context_compacted marks a compaction when no "compacted" line was written
@@ -1558,44 +1559,6 @@ func tokenUsage(payload json.RawMessage) (in, out, read, window int, ok bool) {
 		fresh = 0
 	}
 	return fresh, p.Info.Last.OutputTokens, p.Info.Last.CachedInput, p.Info.ModelContextWindow, true
-}
-
-// callBilling is the route and billing one call proves, read off the rate_limits block of that
-// call's own token_count event. The block comes from the ChatGPT backend's response, so a plan_type
-// there says the call ran on a ChatGPT login — read at the call, not from auth.json, which the
-// member may have switched since. It is "included" only while no window is exhausted and no limit
-// was reached: past that, codex can keep going on purchased credits, and the event does not say
-// which side of the line a call fell on. The event is read after the call, so a call that crosses
-// into the limit reads as not proven. Anything else (no rate_limits, which is also what an API-key
-// login leaves, or no plan) proves nothing and returns "", never "metered".
-func callBilling(payload json.RawMessage) (route, billing string) {
-	var p struct {
-		RateLimits *struct {
-			Primary   *recordedWindow `json:"primary"`
-			Secondary *recordedWindow `json:"secondary"`
-			PlanType  string          `json:"plan_type"`
-			Reached   *string         `json:"rate_limit_reached_type"`
-		} `json:"rate_limits"`
-	}
-	if json.Unmarshal(payload, &p) != nil || p.RateLimits == nil || p.RateLimits.PlanType == "" {
-		return "", ""
-	}
-	rl := p.RateLimits
-	if strings.Contains(strings.ToLower(rl.PlanType), "usage") {
-		return "", "" // a usage-based workspace plan bills per use, not against an allowance
-	}
-	if rl.Reached != nil && *rl.Reached != "" {
-		return "", ""
-	}
-	if rl.Primary == nil && rl.Secondary == nil {
-		return "", "" // no window to say the call was inside the allowance
-	}
-	for _, w := range []*recordedWindow{rl.Primary, rl.Secondary} {
-		if w != nil && w.UsedPercent >= 100 {
-			return "", ""
-		}
-	}
-	return usagex.RouteChatGPT, usagex.BillingSubscriptionIncluded
 }
 
 // HasPendingQuestion reports whether the slot's rollout currently ends in an

@@ -84,9 +84,8 @@ const (
 // call's route is not recorded (a row written before the field existed, or a kind whose route
 // is not provable yet) and reads like unknown, never like a default route.
 const (
-	RouteOpencodeZen = "opencode-zen"         // opencode's provider "opencode" (pay-per-request Zen)
-	RouteOpencodeGo  = "opencode-go"          // opencode's provider "opencode-go" (the Go subscription)
-	RouteChatGPT     = "chatgpt-subscription" // codex signed in with a ChatGPT account
+	RouteOpencodeZen = "opencode-zen" // opencode's provider "opencode" (pay-per-request Zen)
+	RouteOpencodeGo  = "opencode-go"  // opencode's provider "opencode-go" (the Go subscription)
 	RouteAFEngineLLM = "af-engine-llm"
 	RouteMemberLcpp  = "member-llamacpp"
 )
