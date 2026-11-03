@@ -103,7 +103,13 @@ func writeLaunchRefusal(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, codex.ErrThreadReleasing):
 		httpx.WriteErr(w, http.StatusConflict, errCodeCodexReleasing, err.Error())
 	default:
-		return false
+		// A launch refused by its route (a settings conflict found where the working copy is
+		// known) keeps the route's own code instead of a generic launch failure.
+		var rr *agents.RouteRefusal
+		if !errors.As(err, &rr) {
+			return false
+		}
+		httpx.WriteErr(w, rr.Status, rr.Code, rr.Message)
 	}
 	return true
 }
@@ -112,7 +118,12 @@ func writeLaunchRefusal(w http.ResponseWriter, err error) bool {
 func writeStartRefusal(w http.ResponseWriter, err error) bool {
 	var refusal *StartRefusalError
 	if !errors.As(err, &refusal) {
-		return false
+		var rr *agents.RouteRefusal
+		if !errors.As(err, &rr) {
+			return false
+		}
+		httpx.WriteErr(w, rr.Status, rr.Code, rr.Message)
+		return true
 	}
 	httpx.WriteErr(w, refusal.Ref.Status, refusal.Ref.Code, refusal.Ref.Message)
 	return true

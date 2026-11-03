@@ -85,3 +85,13 @@ type RouteRefusal struct {
 
 // Error makes a refusal usable as the error ApplyRoute returns.
 func (r *RouteRefusal) Error() string { return r.Message }
+
+// RouteBinder is an optional capability of a RouteAdapter: it turns a selection that has just
+// been accepted into the form that is STORED, binding it to the connection instance it was
+// chosen on (ADR 0128 decision 3). A connection reference that names a slot ("the API key
+// connection") would otherwise follow whatever is in the slot later, so replacing the key would
+// move a stored session to another account's bill; a bound reference no longer matches the
+// replacement and CheckRoute refuses it. The bound form must carry no secret.
+type RouteBinder interface {
+	BindRoute(sel RouteSelection) (RouteSelection, *RouteRefusal)
+}

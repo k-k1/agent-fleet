@@ -26,6 +26,10 @@ type TerminalTraits struct {
 	// Workspace's login has expired. When set it is asked instead of AuthExpired; an empty
 	// selection must answer exactly what AuthExpired does.
 	AuthExpiredFor func(m session.Meta) bool
+	// OwnCredential reports that this session runs on a credential of its own (an explicit
+	// route's key), so the Workspace login's renewal and moment say nothing about it: it gets no
+	// automatic resume on that login and no login moment on the wire.
+	OwnCredential func(m session.Meta) bool
 	// UsageLimitMenu reports that the pane is parked on the CLI's usage-limit menu, where typed
 	// text becomes a menu selection. A kind with it also reads the menu off the pane in its live
 	// state, and a turn cut off by a limit reads as waiting for the reset.

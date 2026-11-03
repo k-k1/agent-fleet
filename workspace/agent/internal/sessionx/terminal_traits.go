@@ -71,3 +71,9 @@ func healIdle(t agents.TerminalTraits, sid string) {
 	}
 	status.Remove(sid)
 }
+
+// ownCredential is the kind's "this session runs on a credential of its own" verdict.
+func ownCredential(m session.Meta) bool {
+	t := normalizedTerminalTraits(m.Kind)
+	return t.OwnCredential != nil && t.OwnCredential(m)
+}

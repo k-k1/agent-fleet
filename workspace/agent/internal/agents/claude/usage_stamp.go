@@ -46,7 +46,7 @@ func (agentImpl) UsageSource(m session.Meta) (agents.UsageSource, bool) {
 		Stamp: sb.String(),
 		Turns: func() ([]transcript.Turn, bool) {
 			lines, _, ok := readConversation(ordered)
-			return CollectUsageTurns(lines), ok
+			return stampRoute(m, CollectUsageTurns(lines)), ok
 		},
 	}, true
 }

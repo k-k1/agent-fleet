@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -292,5 +293,39 @@ func TestFoldSkipManyArchivedSessions(t *testing.T) {
 	t.Logf("parses over 5 passes of 40 sessions: %d", f.parses)
 	if f.parses != 40 {
 		t.Fatalf("parses = %d, want 40 (one per session)", f.parses)
+	}
+}
+
+// ADR 0128 P1b through the real ledger path (UsageSource, not UsageTurns): a claude session with
+// an explicit anthropic-api selection folds rows carrying its route and metered billing, a
+// subscription selection carries the route and no billing, and a session with none writes
+// neither, exactly as before.
+func TestFoldStampsAnExplicitRoute(t *testing.T) {
+	for name, tc := range map[string]struct {
+		route       *routes.Selection
+		wantRoute   string
+		wantBilling string
+	}{
+		"api":          {&routes.Selection{Route: "anthropic-api"}, "anthropic-api", usagex.BillingMetered},
+		"subscription": {&routes.Selection{Route: "anthropic-subscription"}, "anthropic-subscription", ""},
+		"none":         {nil, "", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newSkipFixture(t)
+			f.m.Route = tc.route
+			f.write(f.main, claudeUserLine(f.at(0))+claudeUsageLine(f.at(time.Minute), "r1", 1000, 10)+claudeUserLine(f.at(2*time.Minute)))
+			if n := f.fold(); n != 1 {
+				t.Fatalf("fold wrote %d rows", n)
+			}
+			var got []usagex.Record
+			for _, r := range usagex.ReadRows() {
+				if r.Ref == f.m.Name {
+					got = append(got, r)
+				}
+			}
+			if len(got) != 1 || got[0].Route != tc.wantRoute || got[0].Billing != tc.wantBilling {
+				t.Fatalf("rows = %+v, want route %q billing %q", got, tc.wantRoute, tc.wantBilling)
+			}
+		})
 	}
 }

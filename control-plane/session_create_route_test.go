@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -153,5 +154,40 @@ func TestScheduleRouteStoreRoundTrip(t *testing.T) {
 	got, _, _ := st.GetSchedule(t.Context(), dto.ID)
 	if got.Route != "anthropic-api" || got.RouteConnection != "c1" {
 		t.Errorf("stored selection = %q/%q", got.Route, got.RouteConnection)
+	}
+}
+
+// A schedule that names a route never sends its prompt to an existing session that is not
+// demonstrably on it: not one with no selection (the reviewer's case: subscription by default),
+// not one on another route, and not one whose Agent does not report a route at all. A schedule
+// without a route sends exactly as before, whatever the target's selection.
+func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
+	sel := &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY@0123456789abcdef"}
+	for name, tc := range map[string]struct {
+		target  sessionWire
+		route   string
+		conn    string
+		wantErr bool
+	}{
+		"target has no selection":    {sessionWire{Name: "t", Alive: true, State: "idle"}, "anthropic-api", "", true},
+		"target on another route":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: &agentroutes.Selection{Route: "anthropic-subscription"}}, "anthropic-api", "", true},
+		"another connection":         {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "OTHER_KEY", true},
+		"same route, any connection": {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "", false},
+		"same route and slot":        {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY", false},
+		"no route on the schedule":   {sessionWire{Name: "t", Alive: true, State: "idle"}, "", "", false},
+	} {
+		a := &fakeAgent{sessions: []sessionWire{tc.target}}
+		sch := store.Schedule{ID: "sch_rt", SessionMode: "reuse", ReuseTarget: "t", Prompt: "go", Route: tc.route, RouteConnection: tc.conn}
+		f, res, _, ctx := newReuseFixture(t, a, sch)
+		status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC())
+		if tc.wantErr {
+			if err == nil || len(a.inputs) != 0 {
+				t.Errorf("%s: status=%q err=%v inputs=%v, want a refusal before anything is sent", name, status, err, a.inputs)
+			}
+			continue
+		}
+		if err != nil || len(a.inputs) != 1 {
+			t.Errorf("%s: status=%q err=%v inputs=%v, want it sent", name, status, err, a.inputs)
+		}
 	}
 }

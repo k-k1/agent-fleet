@@ -2,7 +2,12 @@ package claude
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,13 +38,30 @@ const (
 	RouteAPI          = "anthropic-api"
 )
 
-// apiKeyConnection is the connection reference of anthropic-api: the member's Anthropic API key
-// as Settings > Connections stores it (the provider-key map, under its environment variable
-// name, secrets.Data.Opencode). It is the only possible connection, so an empty reference means
-// it; a reference naming anything else is refused. The store is the member's own, so permission
-// to USE the connection is the same as owning it, and another member's connection can never be
-// named from here.
+// apiKeyConnection is the slot of anthropic-api: the member's Anthropic API key as Settings >
+// Connections stores it (the provider-key map, under its environment variable name,
+// secrets.Data.Opencode). It is the only possible connection, so an empty reference means it.
+// The store is the member's own, so permission to USE the connection is the same as owning it,
+// and another member's connection can never be named from here.
+//
+// The reference a session STORES is bound to the key instance chosen: "ANTHROPIC_API_KEY@<fp>",
+// fp being a short sha256 of the key (no secret can be recovered from it). A bare slot name
+// would follow whatever key is in the slot at the next start, so replacing the key would move the
+// session to another account's bill; the bound form stops it instead (decision 3).
 const apiKeyConnection = "ANTHROPIC_API_KEY"
+
+// keyFingerprint identifies one key instance without revealing it.
+func keyFingerprint(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// splitConnection reads a connection reference into its slot and the bound fingerprint ("" for
+// an unbound reference).
+func splitConnection(conn string) (slot, fp string) {
+	slot, fp, _ = strings.Cut(strings.TrimSpace(conn), "@")
+	return slot, fp
+}
 
 // loadAPIKey reads the member's Anthropic API key; replaceable in tests.
 var loadAPIKey = func() (string, error) {
@@ -73,6 +95,9 @@ func (agentImpl) ApplyRoute(_ session.Meta, sel agents.RouteSelection) (agents.R
 		if key = strings.TrimSpace(key); key == "" {
 			return agents.RoutePlan{}, noAPIKey()
 		}
+		if _, fp := splitConnection(sel.Connection); fp != "" && fp != keyFingerprint(key) {
+			return agents.RoutePlan{}, keyReplaced()
+		}
 		// The login of the other route must not shadow the key.
 		unset = append(unset, "CLAUDE_CODE_OAUTH_TOKEN")
 		return agents.RoutePlan{Env: []string{"ANTHROPIC_API_KEY=" + key}, Unset: unset}, nil
@@ -99,19 +124,39 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, _ stri
 		return ref
 	}
 	if sel.Route == RouteAPI {
-		if key, err := loadAPIKey(); err != nil || strings.TrimSpace(key) == "" {
+		key, err := loadAPIKey()
+		if err != nil || strings.TrimSpace(key) == "" {
 			return noAPIKey()
 		}
+		if _, fp := splitConnection(sel.Connection); fp != "" && fp != keyFingerprint(strings.TrimSpace(key)) {
+			return keyReplaced()
+		}
 	}
-	return nil
+	// What the CLI's own settings would override is judged where the working copy is known
+	// (BuildLaunch); the user's own settings do not depend on it, so they are refused here, early.
+	return settingsConflict(userSettingFiles())
+}
+
+// BindRoute implements agents.RouteBinder: the stored form of an accepted selection.
+func (agentImpl) BindRoute(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
+	if sel.Route != RouteAPI {
+		return sel, nil
+	}
+	key, _ := loadAPIKey()
+	if key = strings.TrimSpace(key); key == "" {
+		return sel, noAPIKey()
+	}
+	sel.Connection = apiKeyConnection + "@" + keyFingerprint(key)
+	return sel, nil
 }
 
 // checkRouteSelection is the connection reference check: whose connection it is.
 func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 	conn := strings.TrimSpace(sel.Connection)
+	slot, _ := splitConnection(conn)
 	switch sel.Route {
 	case RouteAPI:
-		if conn != "" && conn != apiKeyConnection {
+		if conn != "" && slot != apiKeyConnection {
 			return &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodeRouteForbidden,
 				Message: "connection " + conn + " is not your Anthropic API key connection; a route runs only on a connection of your own"}
 		}
@@ -119,6 +164,83 @@ func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 		if conn != "" {
 			return &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodeRouteForbidden,
 				Message: "anthropic-subscription runs on this workspace's own Claude login and takes no connection reference"}
+		}
+	}
+	return nil
+}
+
+func keyReplaced() *agents.RouteRefusal {
+	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
+		Message: "the Anthropic API key this session was started on has been replaced or removed; a session never moves to another key (and another bill). Start a new session on the current key"}
+}
+
+// The CLI re-applies the env block and apiKeyHelper of its settings files after it starts (user,
+// project, local, managed), over the process environment, and `env -u` cannot remove them. A
+// route whose credential or endpoint they would override cannot be honoured, so the launch is
+// refused with the file named instead of running on whatever they say.
+var settingsConflictEnv = []string{
+	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+}
+
+// managedSettingsDir is where the organisation's managed settings live; a var for tests.
+var managedSettingsDir = "/etc/claude-code"
+
+// userSettingFiles are the settings files that do not depend on the working copy.
+func userSettingFiles() []string {
+	files := []string{
+		filepath.Join(ConfigDir(), "settings.json"),
+		filepath.Join(ConfigDir(), "settings.local.json"),
+		filepath.Join(managedSettingsDir, "managed-settings.json"),
+	}
+	if more, _ := filepath.Glob(filepath.Join(managedSettingsDir, "managed-settings.d", "*.json")); len(more) > 0 {
+		files = append(files, more...)
+	}
+	return files
+}
+
+// projectSettingFiles are the working copy's own settings files.
+func projectSettingFiles(m session.Meta) []string {
+	var files []string
+	seen := map[string]bool{}
+	for _, d := range []string{m.Dir, m.CWD()} {
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		files = append(files, filepath.Join(d, ".claude", "settings.json"), filepath.Join(d, ".claude", "settings.local.json"))
+	}
+	return files
+}
+
+// settingsConflict reads each file's env block and apiKeyHelper. A file that is absent or not
+// valid JSON overrides nothing the Agent can see, so it is skipped.
+func settingsConflict(files []string) *agents.RouteRefusal {
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var doc struct {
+			Env          map[string]json.RawMessage `json:"env"`
+			APIKeyHelper json.RawMessage            `json:"apiKeyHelper"`
+		}
+		if json.Unmarshal(b, &doc) != nil {
+			continue
+		}
+		var hit string
+		for _, k := range settingsConflictEnv {
+			if _, ok := doc.Env[k]; ok {
+				hit = "env." + k
+				break
+			}
+		}
+		if hit == "" && len(doc.APIKeyHelper) > 0 && string(doc.APIKeyHelper) != "null" && string(doc.APIKeyHelper) != `""` {
+			hit = "apiKeyHelper"
+		}
+		if hit != "" {
+			return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteSettings,
+				Message: f + " sets " + hit + ", which the CLI re-applies over the session's route credential; remove it, or start the session without an explicit route"}
 		}
 	}
 	return nil
@@ -180,3 +302,7 @@ func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
 	}
 	return turns
 }
+
+// UsesAPIKey reports that the session runs on an explicit anthropic-api selection, so its
+// credential is the API key and not the OAuth login.
+func UsesAPIKey(m session.Meta) bool { return m.Route != nil && m.Route.Route == RouteAPI }

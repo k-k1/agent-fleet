@@ -148,6 +148,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		if err != nil {
 			return agents.LaunchPlan{}, err
 		}
+		// The CLI's own settings files can override the route after it starts (route.go).
+		if ref := settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
+			return agents.LaunchPlan{}, ref
+		}
 		env = rp.Env
 		program = routeLaunchProgram(program, rp.Unset)
 	}

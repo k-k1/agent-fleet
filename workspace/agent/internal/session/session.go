@@ -216,6 +216,10 @@ type Session struct {
 	// pane, so the Console reads this, skips the terminal view and renders the mirror
 	// (chat) as the primary UI (docs/log/27 §10).
 	Driver string `json:"driver,omitempty"`
+	// Route mirrors Meta.Route (ADR 0128): the explicit route selection, absent for a session
+	// that has none. The Control Plane reads it to refuse a scheduled fire whose route does not
+	// match the session it would send to.
+	Route *routes.Selection `json:"route,omitempty"`
 	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
 	// sessions by copy and only shows this as extra "where inside it" detail.

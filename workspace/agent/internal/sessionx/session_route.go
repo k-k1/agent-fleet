@@ -70,6 +70,19 @@ func (c *createRun) checkRoute() bool {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
 	}
+	// Stored in the form the adapter binds to the connection instance it was just checked on.
+	if c.req.Route != nil {
+		if a, _ := RegisteredAgent(NormalizeKind(c.req.Kind)); a != nil {
+			if b, ok := a.(agents.RouteBinder); ok {
+				bound, ref := b.BindRoute(*c.req.Route.Normalize())
+				if ref != nil {
+					httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+					return false
+				}
+				c.req.Route = &bound
+			}
+		}
+	}
 	return true
 }
 

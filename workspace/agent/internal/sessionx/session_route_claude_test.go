@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,97 @@ func TestSendGateJudgesTheSessionsRoute(t *testing.T) {
 		if got := authExpiredFor(m); got != (tc.want != "") {
 			t.Errorf("%s: authExpiredFor = %v", name, got)
 		}
+	}
+}
+
+// Finding: an API-key failure must not be "recovered" by signing in to the subscription. The
+// OAuth login moment advances, and a session on an explicit anthropic-api route is still not
+// resumed; an empty selection on the same failure is (the unchanged control).
+func TestAPIRouteIsNotResumedOnAnOAuthRenewal(t *testing.T) {
+	f := newAbortFixture(t)
+	cut := time.Now()
+	a := authAbort(cut)
+	setLoginAt(t, cut.Add(10*time.Minute)) // the subscription login is renewed AFTER the failure
+	late := cut.Add(10*time.Minute + authResumeSettle + time.Second)
+
+	api := session.Meta{Name: "ar-api", Dir: "/tmp/ar-api", Kind: session.KindClaude, Route: &routes.Selection{Route: "anthropic-api"}}
+	authResumeAttempt(api, arState(t, api.Name), a, cut.Add(time.Minute))
+	authResumeAttempt(api, arState(t, api.Name), a, late)
+	authResumeStep(api, a, true, late)
+	if len(f.sent) != 0 {
+		t.Fatalf("an API-key session was resumed on the OAuth login's renewal: %v", f.sent)
+	}
+	if _, open := authResumeStates.Read(api.Name); open {
+		t.Error("an episode was opened for an API-key session")
+	}
+
+	plain := session.Meta{Name: "ar-plain", Dir: "/tmp/ar-plain", Kind: session.KindClaude}
+	authResumeAttempt(plain, arState(t, plain.Name), a, cut.Add(time.Minute))
+	authResumeAttempt(plain, arState(t, plain.Name), a, late)
+	if len(f.sent) != 1 {
+		t.Fatalf("control: an empty selection should still resume once renewed, sent %d", len(f.sent))
+	}
+}
+
+// A stored anthropic-api selection is bound to the key it was chosen on: replacing the key in
+// Settings moves nothing, the next start is refused (no silent change of bill). The stored form
+// carries a fingerprint and never the key.
+func TestAPIRouteIsBoundToTheKeyInstance(t *testing.T) {
+	p := newCreateProbe(t)
+	var launched []session.Meta
+	launchTmuxFn = func(m session.Meta, _ bool) error { launched = append(launched, m); return nil }
+	setAnthropicKey(t, "sk-ant-api03-account-a")
+	rec := p.post(map[string]any{"kind": "claude", "dir": p.repo, "route": map[string]any{"route": "anthropic-api"}}, "")
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	m := launched[0]
+	if m.Route == nil || !strings.HasPrefix(m.Route.Connection, "ANTHROPIC_API_KEY@") || strings.Contains(m.Route.Connection, "account-a") {
+		t.Fatalf("stored selection = %+v, want a fingerprint-bound reference without the key", m.Route)
+	}
+	if ref := startRefusalOf(m); ref != nil {
+		t.Errorf("start on the same key: %+v", ref)
+	}
+	setAnthropicKey(t, "sk-ant-api03-account-b")
+	if ref := startRefusalOf(m); ref == nil || ref.Code != routes.CodeRouteUnavailable {
+		t.Errorf("start after the key was replaced: %+v, want %s", ref, routes.CodeRouteUnavailable)
+	}
+	setAnthropicKey(t, "")
+	if ref := startRefusalOf(m); ref == nil || ref.Code != routes.CodeRouteUnavailable {
+		t.Errorf("start after the key was removed: %+v", ref)
+	}
+	// The wire reports the selection, so the Control Plane can compare it.
+	if w := wireSession(m, false); w.Route == nil || w.Route.Route != "anthropic-api" {
+		t.Errorf("wire route = %+v", w.Route)
+	}
+	if w := wireSession(session.Meta{Name: "x", Kind: "claude", Dir: t.TempDir()}, false); w.Route != nil {
+		t.Errorf("wire route of a session with none = %+v", w.Route)
+	}
+}
+
+// A settings file that sets the route's credential or endpoint is refused at create, with the
+// route's own code, before anything is made; no selection is unaffected.
+func TestClaudeRouteRefusedOnSettingsConflict(t *testing.T) {
+	p := newCreateProbe(t)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	setAnthropicKey(t, "sk-ant-api03-test")
+	if err := os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"env":{"ANTHROPIC_API_KEY":"sk-other"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := p.sideEffects()
+	for _, route := range []string{"anthropic-api", "anthropic-subscription"} {
+		rec := p.post(map[string]any{"kind": "claude", "dir": p.repo, "route": map[string]any{"route": route}}, "")
+		if rec.Code != http.StatusConflict || routeCode(t, rec.Body.String()) != routes.CodeRouteSettings {
+			t.Errorf("%s: %d %s, want 409 %s", route, rec.Code, rec.Body.String(), routes.CodeRouteSettings)
+		}
+	}
+	if d := before.diff(p.sideEffects()); d != "" {
+		t.Errorf("left side effects: %s", d)
+	}
+	var launched int
+	launchTmuxFn = func(session.Meta, bool) error { launched++; return nil }
+	if rec := p.post(map[string]any{"kind": "claude", "dir": p.repo}, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated || launched != 1 {
+		t.Errorf("no selection with the same settings: %d launched=%d, want unchanged", rec.Code, launched)
 	}
 }

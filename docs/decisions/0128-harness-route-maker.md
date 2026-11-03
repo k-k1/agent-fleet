@@ -387,3 +387,15 @@ table from becoming a menu of models that fail on the first message, which is wh
   (en) / "モデルのルート" (ja), which keeps the glossary's "route" / ルート. Not measured, and the reason this is a
   candidate until decision 14: whether the TUI asks to approve a custom API key on first use, whether the OAuth file
   stays unused when `ANTHROPIC_API_KEY` is set, and what the transcript or headers say about the route that answered.
+- 2026-11-04, P1b review round 1 (#3316): five corrections to the note above. (1) `env -u` does not reach the settings
+  files' `env` blocks and `apiKeyHelper`, which the CLI re-applies after start, so an explicit claude route is refused
+  (`route_settings_conflict`, naming the file) when a user, project, local or managed settings file sets the route's
+  credential or endpoint variables; checked at create, at every start and at the launch, where the working copy is
+  known. A file edited while the pane runs is not covered (#3317). (2) The ledger's real source is
+  `UsageSource`, not `UsageTurns`; both stamp the route now. (3) A scheduled fire naming a route is refused before
+  anything is sent when the existing target is not on it: the Agent's session wire carries `route`, and a target with
+  none, another one, or an Agent that does not report it all refuse. (4) An API-key session is never auto-resumed on
+  the OAuth login's renewal and gets no login moment on the wire; recovering from a bad key is a new session. (5) The
+  stored connection reference is bound to the key instance (`ANTHROPIC_API_KEY@<sha256 prefix>`, no secret), so
+  replacing or removing the key in Settings refuses the next start instead of moving the session to another bill. A
+  running pane keeps the key it started with until it stops.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -220,5 +222,107 @@ func TestStampRoute(t *testing.T) {
 	r := agentImpl{}.ResolveRoute(session.Meta{Route: sel(RouteAPI, "c")}, agents.TurnInfo{})
 	if r.Route != RouteAPI || r.Connection != "c" || (agentImpl{}.ResolveRoute(session.Meta{}, agents.TurnInfo{}) != agents.ResolvedRoute{}) {
 		t.Errorf("ResolveRoute = %+v", r)
+	}
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The CLI re-applies the env block and apiKeyHelper of its settings files over the process
+// environment, which `env -u` cannot reach: an explicit route whose credential or endpoint they
+// would override is refused with the file named, in every layer, for both routes; an empty
+// selection launches as it always did whatever the files say.
+func TestRouteLaunchRefusedOnSettingsConflict(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-test", nil)
+	isolateSlot(t)
+	cfg := isolateClaudeConfig(t)
+	managed := t.TempDir()
+	prev := managedSettingsDir
+	managedSettingsDir = managed
+	t.Cleanup(func() { managedSettingsDir = prev })
+
+	dir := t.TempDir()
+	layers := map[string]string{
+		"user":          filepath.Join(cfg, "settings.json"),
+		"user local":    filepath.Join(cfg, "settings.local.json"),
+		"project":       filepath.Join(dir, ".claude", "settings.json"),
+		"project local": filepath.Join(dir, ".claude", "settings.local.json"),
+		"managed":       filepath.Join(managed, "managed-settings.json"),
+		"managed.d":     filepath.Join(managed, "managed-settings.d", "10-x.json"),
+	}
+	for layer, path := range layers {
+		for _, body := range []string{
+			`{"env":{"ANTHROPIC_API_KEY":"sk-other"}}`,                 // the reverse route's key
+			`{"env":{"CLAUDE_CODE_OAUTH_TOKEN":"sk-ant-oat01-x"}}`,     // a subscription token
+			`{"env":{"ANTHROPIC_BASE_URL":"https://gateway.invalid"}}`, // a gateway for the injected key
+			`{"env":{"ANTHROPIC_AUTH_TOKEN":"t"}}`,
+			`{"apiKeyHelper":"/bin/get-key"}`,
+		} {
+			writeFile(t, path, body)
+			for _, route := range []string{RouteAPI, RouteSubscription} {
+				m := session.Meta{Kind: session.KindClaude, Name: "sc-" + strings.ReplaceAll(layer, " ", "-"), Dir: dir, Route: sel(route, "")}
+				_, err := launchOf(t, m)
+				var ref *agents.RouteRefusal
+				if !errors.As(err, &ref) || ref.Code != routes.CodeRouteSettings || !strings.Contains(ref.Message, path) {
+					t.Errorf("%s %s %s: err=%v, want a %s refusal naming the file", layer, body, route, err, routes.CodeRouteSettings)
+				}
+			}
+			// Control: no selection, same file, the launch is exactly what it was.
+			plain := session.Meta{Kind: session.KindClaude, Name: "sc-plain", Dir: dir}
+			if plan, err := launchOf(t, plain); err != nil || len(plan.Env) != 0 || strings.HasPrefix(plan.Program, "env -u ") {
+				t.Errorf("%s %s: an empty selection was affected: %v %+v", layer, body, err, plan)
+			}
+			_ = os.Remove(path)
+		}
+	}
+	// Settings that do not touch the route are fine, and a file that is not JSON overrides nothing.
+	writeFile(t, layers["project"], `{"env":{"FOO":"1"},"apiKeyHelper":""}`)
+	writeFile(t, layers["user"], `not json`)
+	m := session.Meta{Kind: session.KindClaude, Name: "sc-ok", Dir: dir, Route: sel(RouteAPI, "")}
+	if _, err := launchOf(t, m); err != nil {
+		t.Errorf("unrelated settings refused the launch: %v", err)
+	}
+}
+
+// A stored connection reference is bound to the key instance: the fingerprint is not the key,
+// a replaced key is refused at start, and an unbound reference (a fresh selection) is accepted.
+func TestAPIKeyBinding(t *testing.T) {
+	ctx := context.Background()
+	withAPIKey(t, "sk-ant-api03-account-a", nil)
+	bound, ref := agentImpl{}.BindRoute(*sel(RouteAPI, ""))
+	if ref != nil || !strings.HasPrefix(bound.Connection, "ANTHROPIC_API_KEY@") || strings.Contains(bound.Connection, "account-a") {
+		t.Fatalf("BindRoute = %+v %v", bound, ref)
+	}
+	if ref := (agentImpl{}).CheckRoute(ctx, bound, ""); ref != nil {
+		t.Errorf("the same key: %+v", ref)
+	}
+	plan, err := agentImpl{}.ApplyRoute(session.Meta{}, bound)
+	if err != nil || plan.Env[0] != "ANTHROPIC_API_KEY=sk-ant-api03-account-a" {
+		t.Fatalf("ApplyRoute on the same key: %+v %v", plan, err)
+	}
+	withAPIKey(t, "sk-ant-api03-account-b", nil)
+	if ref := (agentImpl{}).CheckRoute(ctx, bound, ""); ref == nil || ref.Code != routes.CodeRouteUnavailable {
+		t.Errorf("replaced key: %+v, want unavailable", ref)
+	}
+	if _, err := (agentImpl{}).ApplyRoute(session.Meta{}, bound); err == nil {
+		t.Error("ApplyRoute launched on a replaced key")
+	}
+	// A new selection on the new key binds to it; the subscription route binds to nothing.
+	if b2, _ := (agentImpl{}).BindRoute(*sel(RouteAPI, "")); b2.Connection == bound.Connection {
+		t.Error("two keys share a fingerprint")
+	}
+	if b, _ := (agentImpl{}).BindRoute(*sel(RouteSubscription, "")); b.Connection != "" {
+		t.Errorf("subscription bound to %q", b.Connection)
+	}
+	withAPIKey(t, "", nil)
+	if _, ref := (agentImpl{}).BindRoute(*sel(RouteAPI, "")); ref == nil {
+		t.Error("bound a selection with no key")
 	}
 }
