@@ -50,6 +50,7 @@ import { HandoffProposal } from "./HandoffProposal.tsx";
 import { restoreNoteCards } from "./parts/RestoreNote.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
 import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
+import { BackgroundShellsPanel } from "./parts/BackgroundShellsPanel.tsx";
 import { cloudRunCards } from "../cloudruns/cloudRuns.tsx";
 import { MirrorConfirmCards } from "../awsconfirm/AwsConfirmCard.tsx";
 import { useAwsConfirmStore } from "../awsconfirm/store.ts";
@@ -303,7 +304,7 @@ function MirrorViewBody({
   }, [readOnly, alive, termState]);
 
   const actions = useMirrorActions({ session, kind: sessionMeta?.kind, running, managed, toast, st, scroll });
-  const { wsDown, postKeys, draftBusy, dropPendingPeer, restoreDiscard, closeDiscard } = actions;
+  const { wsDown, postKeys, draftBusy, dropPendingPeer, stopBackgroundShell, restoreDiscard, closeDiscard } = actions;
 
   const input = composerInput({ session, settings, signal, agent, managed, readOnly, toast, st, sendPrompt: actions.sendPrompt });
   const { composerLocked, onDragEnter, onDragOver, onDragLeave, onDrop, send } = input;
@@ -718,6 +719,9 @@ function MirrorViewBody({
 
       {aboveComposer}
       <PendingPeersNotice items={pendingPeers} onDrop={(id) => void dropPendingPeer(id)} />
+      {!readOnly && (
+        <BackgroundShellsPanel shells={st.bgShells} stopping={st.bgStopping} onStop={(sh) => void stopBackgroundShell(sh)} />
+      )}
       {!readOnly && <MirrorConfirmCards session={session} />}
       {managed && !readOnly && running && !composerBlock && (
         <DiscardNotice notices={discardView} draftBusy={draftBusy} onRestore={restoreDiscard} onClose={closeDiscard} />

@@ -540,6 +540,37 @@ export async function sessionDropPendingPeer(
   return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
 }
 
+/** A background shell a claude session left running after its turn (#3279): a
+ *  run_in_background Bash or a Monitor loop. `start` pins the process (clock ticks since
+ *  boot) so a stop can never reach a later process that reused the pid. */
+export interface BackgroundShell {
+  pid: number;
+  start: number;
+  command: string;
+  startedAt?: string;
+  running: boolean;
+  cpuSec: number;
+}
+
+/** sessionStopBackgroundShell ends one background shell and what belongs to it. code
+ *  "gone" means it had already exited (or the pid now names another process). `leftover`
+ *  counts processes of its session that may still run: the Agent could not prove they belong
+ *  to the shell, so it left them alone. */
+export async function sessionStopBackgroundShell(
+  session: string,
+  shell: Pick<BackgroundShell, "pid" | "start">,
+): Promise<{ ok: boolean; leftover?: number; code?: string; message?: string }> {
+  const r = await apiJSON(
+    `api/sessions/${encodeURIComponent(session)}/background-stop`,
+    "POST",
+    { pid: shell.pid, start: shell.start },
+  ).catch(() => ({ error: { message: t("err.network") } }));
+  const err = r?.error as ApiError | undefined;
+  if (!err) return { ok: true, leftover: typeof r?.leftover === "number" ? r.leftover : 0 };
+  const code = typeof err.code === "string" ? err.code : "";
+  return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
+}
+
 /** What one second stop (or stop-and-discard) threw away, kept by the driver until a tab
  *  restores or dismisses it (decision 4). `items` carry no state: all were still queued. */
 export interface Discard {

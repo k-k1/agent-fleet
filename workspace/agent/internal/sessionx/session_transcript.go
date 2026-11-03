@@ -302,6 +302,12 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			busy, reason := claude.BackgroundWork(name, sid)
 			resp["backgroundBusy"] = busy
 			resp["backgroundBusyReason"] = reason
+			// Which shells, so the mirror can show their age and stop one (#3279).
+			if busy {
+				if shells := claude.BackgroundShells(name); len(shells) > 0 {
+					resp["backgroundShells"] = shells
+				}
+			}
 		}
 	}
 	// Peer messages queued behind the user's answer (#1031): the mirror says they will follow

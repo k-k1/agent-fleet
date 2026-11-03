@@ -379,3 +379,60 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   font-size: 12px;
   padding: 1px 8px;
 }
+
+/* Background shells a claude session left running after its turn (#3279), above the composer
+   like the peer notice. A row that looks stuck takes the warning colour so it stands out from a
+   healthy long build. */
+.mirror-bg-shells {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.mirror-bg-shells .mbs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-bg-shells .mbs-msg {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-bg-shells .mbs-items {
+  margin: 2px 0 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+.mirror-bg-shells .mbs-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mirror-bg-shells .mbs-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.mirror-bg-shells .mbs-meta {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  color: var(--muted);
+}
+.mirror-bg-shells .mbs-item.stuck .mbs-state {
+  color: var(--warn);
+}
+.mirror-bg-shells .mbs-stop {
+  flex: none;
+  font-size: 12px;
+  padding: 1px 8px;
+}

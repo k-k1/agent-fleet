@@ -164,16 +164,11 @@ func backgroundShellBusyIn(root int, tab map[int]procInfo) bool {
 			continue
 		}
 		queue = append(queue, kids[pid]...)
-		if !shellComm[pi.Comm] {
-			continue // only a shell carries the background-loop signature
+		// A shell spawned by claude, and not a wrapper launching another claude (bash →
+		// claude). BackgroundShells lists by the same test, so the badge and the list agree.
+		if isBackgroundShell(pid, pi, kids, tab) {
+			return true
 		}
-		if !procIsClaude(pi.PPID, tab[pi.PPID]) {
-			continue // not spawned by claude → not a claude-backgrounded shell
-		}
-		if subtreeHasClaude(pid, kids, tab) {
-			continue // a wrapper launching another claude (bash → claude), not real work
-		}
-		return true
 	}
 	return false
 }

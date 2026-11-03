@@ -5,6 +5,7 @@ import type {
   ManagedThreadSettings,
   QueueItem,
   PendingPeer,
+  BackgroundShell,
 } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
 import { streamReplies, type Settings } from "../../../lib/settings.ts";
@@ -76,6 +77,9 @@ export function useMirrorState({
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
   const [bgBusyReason, setBgBusyReason] = useState(""); // WHAT lingers: process | subagent | shell
+  // The background shells themselves (claude only, #3279), and the pids a stop is in flight for.
+  const [bgShells, setBgShells] = useState<BackgroundShell[]>([]);
+  const [bgStopping, setBgStopping] = useState<ReadonlySet<number>>(new Set());
   // "Finalizing" bridges the gap between claude finishing (status flips to idle — its
   // Stop hook, or the TUI heal firing once the spinner clears during answer streaming)
   // and the reply actually landing in the transcript jsonl a poll later. In that window
@@ -91,6 +95,10 @@ export function useMirrorState({
   // follow and the work-steps fold all read it, so they can't disagree — a fold that flips
   // while the spinner is still up is exactly what shifts the text under a reader.
   const busy = status === "working" || bgBusy || finalizing;
+  // A turn is running (or its reply is still landing) — `busy` without background work. The
+  // typing row and its stop button read this: Esc stops a turn, never a background shell, and
+  // background work has its own panel with a stop per shell (#3279).
+  const turnBusy = status === "working" || finalizing;
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   // Files this session's agent edited (docs/log/68). Aggregated server-side over the WHOLE
   // transcript and delivered on this same poll — deriving it from `turns` would count
@@ -243,7 +251,8 @@ export function useMirrorState({
     turns, setTurns, stateSession, setStateSession, pendingSends, setPendingSends, pendingSendsRef,
     applyEchoes, loaded, setLoaded, handoffs, setHandoffs, updateHandoff, termState, setTermState,
     compactProg, setCompactProg, retry, setRetry, status, setStatus, bgBusy, setBgBusy, bgBusyReason, setBgBusyReason,
-    finalizing, setFinalizing, finalizingRef, wasWorkingRef, busy, tasks, setTasks, files, setFiles,
+    bgShells, setBgShells, bgStopping, setBgStopping,
+    finalizing, setFinalizing, finalizingRef, wasWorkingRef, busy, turnBusy, tasks, setTasks, files, setFiles,
     queuedPrompts, setQueuedPrompts, queuedItems, setQueuedItems, discards, setDiscards, discardNotices,
     setDiscardNotices, pendingPeers, setPendingPeers, cloudRuns, setCloudRuns, queueOpsRef, queueShown, queuedCount, discardView,
     alive, setAlive, dirGone, pending, setPending, pendingText, setPendingText, liveMode, liveOn, liveOnRef,
