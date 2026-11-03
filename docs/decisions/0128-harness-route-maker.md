@@ -30,7 +30,8 @@ which one a turn used:
 - **muse** has a subscription login and an API-key login, told apart by `mechanism`, not by the presence of a key
   (`workspace/agent/internal/agents/muse/auth.go:16`).
 - **`lcpp`** runs on the deployment's engine or on the member's own llama.cpp connection
-  (`secrets.Data.Lcpp`, `harnessEngineToken`, `workspace/agent/engines.go:1312`).
+  (`secrets.Data.Lcpp`, `harnessEngineToken`, `workspace/agent/engines.go:1312-1315`). The choice is Workspace-wide:
+  the member connection, when set, wins for every `lcpp` session.
 - **claude** runs on the subscription login, and even there a turn can be billed: past a window, usage credits
   continue at API rates (`claude/abort.go:140-148` already recognises the `/usage-credits` text).
 
@@ -56,8 +57,8 @@ Traps that make the change unsafe to do ad hoc:
   (`claude/authexpiry.go:138-142`). A key in the Workspace's own environment would move every `claude` session onto
   the metered bill.
 - The Claude auth guard is Workspace-wide: `AuthExpired()` reads the shared OAuth file and the Agent's own environment
-  (`claude/authexpiry.go:187`), and both the send gate (`sessionx/session_io.go:1153`) and launch (`claude/claude.go:195`)
-  consult it. A session given an API key would still be refused while the OAuth login is expired.
+  (`claude/authexpiry.go:187`), and both the send gate (`sessionx/session_io.go:1153`) and the live-state display
+  (`WireLive`, `claude/claude.go:195`) consult it. A session given an API key would still be refused while the OAuth login is expired.
 - Shared daemons read credentials once, at start: opencode `serve` takes provider keys from its environment
   (`opencode/serve.go:159`, `:338`), and Managed codex runs on one app-server (`codex/serve.go:157`,
   `codex/driver.go:173`). A per-session environment does not reach them.
@@ -127,15 +128,16 @@ or pi.
 ### 5. How each harness isolates a route
 
 A per-session route only holds if the credential reaches **that session and no other**. Each harness row names its
-mechanism, and both Terminal and Managed must pass the live gate:
+mechanism, and every execution method the harness has today must pass the live gate (adding one, such as a managed
+claude, is its own scope and gate):
 
 | Harness | Candidate routes (none measured) | Isolation |
 |---|---|---|
-| claude | `anthropic-subscription`, `anthropic-api`, `bedrock`, `vertex`, a gateway | per-session environment for a Terminal pane (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`, `ANTHROPIC_BASE_URL` / `ANTHROPIC_BEDROCK_BASE_URL`, vendor docs); a Managed claude is one process per session, so the same |
+| claude | `anthropic-subscription`, `anthropic-api`, `bedrock`, `vertex`, a gateway | Terminal only: claude has no managed driver (`managedDrivers`, `sessionx/session_turn.go:36`). Per-session environment for the pane (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK=1`, `CLAUDE_CODE_USE_VERTEX=1`, `ANTHROPIC_BASE_URL` / `ANTHROPIC_BEDROCK_BASE_URL`, vendor docs) |
 | codex | `chatgpt-subscription`, `openai-api` | Terminal: a per-session `CODEX_HOME` or `model_providers` entry. Managed: one app-server per credential, or the gateway; a session-side `CODEX_HOME` does not reach the shared app-server |
 | opencode | its own providers, `af-engine-llm` | the provider is per request, but the **key** is per `serve` process: one `serve` per credential, or the gateway. Two sessions on the same provider with different AWS profiles cannot share a `serve` |
 | muse | subscription, API key | one host process per session already; per-session login state needs measuring |
-| `lcpp` | `af-engine-llm`, `member-llamacpp` | already per session (`harnessEngineToken`) |
+| `lcpp` | `af-engine-llm`, `member-llamacpp` | in-process, so a per-session connection can be passed; today the resolver reads the Workspace-wide member connection on every turn (`lcpp/driver.go:634`), so an explicit selection has to be handed to it. An empty selection keeps today's rule |
 | pi | `chatgpt-subscription`, `openai-api`, `bedrock`, `af-engine-llm` | pi's own provider setting (not built; #1585) |
 | agy, kiro, cursor, copilot | one each today | no change |
 
@@ -145,9 +147,10 @@ the reference (`docs/CONVENTIONS.md` §6).
 ### 6. A route that can change mid-session
 
 opencode can change its model, and with it the provider, during a session. With an **explicit** selection, a model
-change is limited to models of the same route; a change that would cross routes is a route switch (decision 10) and
-goes through the same checks. With an **empty** selection the route is resolved per turn, as today, and recorded per
-turn.
+change is limited to models of the same route, and a change that would cross routes is **refused** for now. The only
+route change this record allows on a session with an explicit selection is decision 10's switch; whether a member may
+change routes at other times is open question 4, and allowing it later reuses decision 10's validation and state
+transition. With an **empty** selection the route is resolved per turn, as today, and recorded per turn.
 
 ### 7. Credential delivery — Decision A
 
@@ -169,10 +172,15 @@ turn.
 
 ### 8. The ledger records route and billing per turn
 
-- **Route and billing are separate fields.** `Route` is what the turn ran on. `Billing` is how that turn was charged:
+- **Route and billing are separate fields.** `Route` is what the call ran on. `Billing` is how it was charged:
   `subscription-included`, `subscription-extra` (usage credits past a window, still on the OAuth login), `metered`,
-  `self-hosted`, `free`, or `unknown`. A turn whose billing cannot be told from evidence is `unknown`, never
+  `self-hosted`, `free`, or `unknown`. A call whose billing cannot be told from evidence is `unknown`, never
   "included".
+- **Billing can change inside one logical turn.** The fold merges several assistant responses into one logical turn
+  (`usage_fold.go:309`, `:398-407`), and a tool loop can cross a window: its first model calls included, its later
+  ones on usage credits. Billing is therefore recorded per model call, and a logical turn whose calls differ is
+  written as one ledger row per billing segment, sharing the logical turn's id and keeping the call count and dedup
+  keys. When the segment boundary cannot be proven, the whole turn is `unknown`.
 - **Recorded when the turn runs, not when it is folded.** Today the fold builds a ledger row from the `session.Meta`
   it reads later (`usage_fold.go:777`, `usageRecordOf` at `:833`), so a turn folded after a switch would be filed under
   the new route. The resolved route and billing are captured at turn start (or when the runtime reports them), switch
@@ -202,11 +210,16 @@ throttling (for example Bedrock's) is handled apart from window limits.
 
 - **B1, manual switch.** The Console offers "continue on <metered route>" when the harness declares one and the member
   holds its credential. Accepting relaunches the session on that route.
-- **B2, usage credits on the same login.** For claude, continuing on the subscription login with usage credits
-  (billed as `subscription-extra`) is a third choice beside waiting and switching.
+- **B2, usage credits, as an account setting.** Usage credits are enabled, funded and capped on the Claude account,
+  not per session: once enabled, every request past the window on that login is billed, which includes the member's
+  other sessions and the assistant chat. AF does not toggle them. B2 is two separate things: a link to the account
+  setting, stating that it affects every session on the login; and, when credits are already enabled, resuming this
+  session on them (billed as `subscription-extra`). A session-only credit control would need its own measurement and
+  live gate first, and none is known to exist.
 - **B3, opt-in automatic.** As B1 without asking, behind a per-member daily spend cap that cannot be empty.
 - **B4, none.**
-- **Recommended: B1 and B2 now; B3 only in a later ADR, after B1 has been used.**
+- **Recommended: B1, and B2 as described (link plus resume on credits already enabled); B3 only in a later ADR,
+  after B1 has been used.**
 
 A switch is an exclusive state transition, and the gate covers every step: take the session's lock; cancel the
 rate-limit resume booking (`sessionx/rate_limit_resume.go`), failing visibly as a move already does
@@ -236,11 +249,16 @@ availability instead of `AF_OPENCODE_SHOW_BEDROCK`.
 
 The catalogue snapshot and the Console picker are presentation; the checks are enforced on both sides.
 
-- **Control Plane**, on every create path (Console, REST, MCP `create_session`, schedules): an unknown route; a route
-  the harness or driver does not declare; a model outside the route; a connection reference the caller does not own;
-  a tenant gate that is closed. It refuses before waking a Workspace, as `CheckCreateKind` does.
-- **Agent**, at launch and at every switch: the same list again (the snapshot may be older than the Agent), plus the
-  connection's live availability and expiry.
+- **Control Plane**, on every create path (Console, REST, MCP `create_session`, schedules), before waking a
+  Workspace: what the snapshot can prove statically, as `CheckCreateKind` does (`agentkinds/agentkinds.go:88`) — an
+  unknown route, a route the harness or driver does not declare, a tenant gate that is closed.
+- **Agent**, after the wake and before anything runs, and again at every switch: everything that needs live state —
+  the model against the route (live model lists are the Agent's, `liveCatalogs`, `sessionx/session_create.go:373`),
+  whether the caller may use the referenced connection, and the connection's availability and expiry. The static list
+  is checked again too, since the snapshot may be older than the Agent.
+- **Permission is use, not ownership.** A member connection may be used by its owner only; another member's private
+  connection is refused. A tenant connection (ADR 0069's tenant key, configured once by an administrator) may be used
+  by members the tenant allows. A deployment-provided route (the engine) follows its own gates.
 - **Existing gates are inherited, not reopened.** A route on the deployment's engine keeps all four of ADR 0084's gates,
   `allow_engine_llm` included (`0084…md:312`). Whether a tenant administrator may allow or deny the new routes is the
   open part (ADR 0084 keeps the engine switch with super_admin, `:297`).
@@ -276,9 +294,9 @@ table from becoming a menu of models that fail on the first message, which is wh
 |---|---|---|
 | P0 | Route and billing captured per turn; rollup key, migration and aggregates; price lookup by route; terms in `guide/ref/glossary.md` | No behaviour change; history left `unknown` where unproven; a subscription and a metered turn of one model stay apart in the rollup |
 | P1 | `RouteAdapter`; selection stored and validated (decision 12); claude `anthropic-subscription` / `anthropic-api` in Terminal through A1; per-route auth guard (decision 9) | Decision 14 for both rows; an API session runs while the OAuth login is expired |
-| P2 | The A2 gateway and its token contract; claude `bedrock`; opencode Bedrock through the route; per-credential daemons | Decision 14 in both execution methods; C2's profile check; token revoked at session end |
+| P2 | The A2 gateway and its token contract; claude `bedrock`; opencode Bedrock through the route; per-credential daemons | Decision 14 in every execution method each harness has; C2's profile check; token revoked at session end |
 | P3 | pi as a kind, if #1585 adopts it | #1585's Stage 0b, then decision 14 per route |
-| P4 | Decision 10's offer and its state transition | A live window stop, switched, resumed; the old resume booking cancelled; a forced failure rolled back |
+| P4 | Decision 10's B1 offer and its state transition; B2's account-setting link and resume on enabled credits | A live window stop, switched, resumed; the old resume booking cancelled; a forced failure rolled back |
 
 ## Rejected options
 
