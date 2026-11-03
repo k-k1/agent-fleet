@@ -660,10 +660,10 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 		t.Sidechain = sidechain
 		out = append(out, v2Stamped{created, t})
 	}
-	costOnly := func(created int64, id string, ref v2ModelRef, cost float64) {
+	costOnly := func(created int64, id, model, route string, cost float64) {
 		if usage && cost > 0 {
 			add(created, transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost,
-				TS: msTS(created), Model: ref.ID, Route: usagex.RouteOfOpencodeProvider(ref.ProviderID), AnchorID: id})
+				TS: msTS(created), Model: model, Route: route, AnchorID: id})
 		}
 	}
 	shownErr := "" // the failure the last assistant run already rendered, so its idle message does not repeat it
@@ -693,13 +693,14 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 			t, ok := parseMessage(run[0].ID, data, parts, 0, win)
 			if !ok {
 				if !copied {
-					costOnly(created, run[0].ID, last.Model, v2RunCost(run))
+					costOnly(created, run[0].ID, last.Model.ID, v2RunRoute(run), v2RunCost(run))
 				}
 				continue
 			}
 			if copied {
 				t.CostUSD = 0
 			}
+			t.Route = v2RunRoute(run)
 			add(created, t)
 		case "idle":
 			// A failure with no assistant message to carry it (the model was never reached) would
@@ -716,7 +717,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 				add(m.Time.Created, v2ErrorTurn(m.ID, m.Time.Created, cwd, m.Error, win))
 			}
 			if !copied {
-				costOnly(m.Time.Created, m.ID, m.Model, m.Cost)
+				costOnly(m.Time.Created, m.ID, m.Model.ID, usagex.RouteOfOpencodeProvider(m.Model.ProviderID), m.Cost)
 			}
 		}
 	}
@@ -729,6 +730,20 @@ func v2ErrorTurn(id string, created int64, cwd string, e *v2Err, win windowFn) t
 		"error": e.messageError()})
 	t, _ := parseMessage(id, data, nil, 0, win)
 	return t
+}
+
+// v2RunRoute is the route of a run of assistant messages folded into one turn: the route all of
+// its messages share, "" when any of them differs or has none. The run is read as one message
+// (last model, summed cost), so taking the last message's provider alone would file the cost of
+// an earlier step under a route that did not serve it.
+func v2RunRoute(run []v2Msg) string {
+	route := usagex.RouteOfOpencodeProvider(run[0].Model.ProviderID)
+	for _, m := range run[1:] {
+		if usagex.RouteOfOpencodeProvider(m.Model.ProviderID) != route {
+			return ""
+		}
+	}
+	return route
 }
 
 func v2RunCost(run []v2Msg) float64 {
