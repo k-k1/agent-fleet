@@ -189,7 +189,7 @@ func memoryImportPrepare(src, name string, now time.Time) (memoryImportPreview, 
 		pv.Secrets = []memorySecretFinding{}
 	}
 	memoryPruneImportRefs(memoryImportKeepRefs)
-	_, _ = memoryGitRun("gc", "--auto", "--quiet") // ★8
+	memoryRunGCAuto()
 	return pv, nil
 }
 
