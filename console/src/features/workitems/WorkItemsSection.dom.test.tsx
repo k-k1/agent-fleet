@@ -556,6 +556,8 @@ describe("WorkItemsSection", () => {
     const { readFileSync } = await import("node:fs");
     const css = readFileSync("src/features/workitems/workitems.css", "utf8");
     expect(css).toMatch(/\.wi-less \{[^}]*position: sticky;[^}]*bottom: 0;/);
+    // Rows keep clear of the pinned button when focus scrolls them into view.
+    expect(css).toMatch(/:has\(> \.wi-less\) \.wi-row,[^{]*\{[^}]*scroll-margin-bottom: \d+px;/);
   });
 
   it("pins the section top to the scroller when collapsing the expanded list (#1348)", async () => {

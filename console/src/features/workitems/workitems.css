@@ -93,6 +93,13 @@
   background: var(--leftpane-bg);
   border-top: 1px solid var(--border2);
 }
+/* Focus scrolls a row only as far as the scroller's bottom edge, which is now under the pinned
+   button: Tab onto a half-visible row left it covered (measured in Chromium; the button is 25px).
+   Direct-child :has only — the descendant form is slow in Chrome (see panes.css). */
+.ui-section-body:has(> .wi-less) .wi-row,
+.ui-section-body:has(> .wi-less) .wi-row button {
+  scroll-margin-bottom: 32px;
+}
 
 .wi-search:disabled {
   cursor: default;
