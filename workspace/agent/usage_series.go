@@ -36,6 +36,8 @@ const (
 	usageDimVerb       = "verb"
 	usageDimModelSrc   = "model_src"
 	usageDimMeasured   = "measured"
+	usageDimRoute      = "route"
+	usageDimBilling    = "billing"
 )
 
 // usageDimValue takes one dimension's value out of the dimension tuple. Reject unknown
@@ -60,6 +62,11 @@ func usageDimValue(k usageKey, dim string) string {
 		return k.ModelSrc
 	case usageDimMeasured:
 		return k.Measured
+	case usageDimRoute:
+		return k.Route
+	case usageDimBilling:
+		// A row with no billing recorded reads as unknown, never as included.
+		return usagex.BillingOrUnknown(k.Billing)
 	}
 	return ""
 }
@@ -67,7 +74,8 @@ func usageDimValue(k usageKey, dim string) string {
 func validUsageDim(dim string) bool {
 	switch dim {
 	case usageDimFeature, usageDimKind, usageDimModel, usageDimTrigger, usageDimOrigin,
-		usageDimOriginConv, usageDimVerb, usageDimModelSrc, usageDimMeasured:
+		usageDimOriginConv, usageDimVerb, usageDimModelSrc, usageDimMeasured,
+		usageDimRoute, usageDimBilling:
 		return true
 	}
 	return false
@@ -272,7 +280,7 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		// may have gone through a different provider), so look it up here, before kind is
 		// dropped.
 		agg := s.Agg
-		if est, src, priced := usageEstCostUSD(s.Key.Kind, s.Key.Model, agg); priced {
+		if est, src, priced := usageEstCostUSDOn(s.Key.Kind, s.Key.Route, s.Key.Model, agg); priced {
 			agg.CostEstUSD = est
 			resp.PricedSpend += agg.Spend
 			resp.notePrice(s.Key, src, agg.Spend)
@@ -338,7 +346,7 @@ func (r *usageSeriesResp) notePrice(k usageKey, src string, spend int) {
 		r.Prices[k.Model] = cur
 		return
 	}
-	p, _, ok := usagePriceOf(k.Kind, k.Model)
+	p, _, ok := usagePriceOfOn(k.Kind, k.Route, k.Model)
 	if !ok {
 		return
 	}

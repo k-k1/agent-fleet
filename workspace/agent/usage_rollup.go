@@ -49,9 +49,14 @@ type usageKey struct {
 	Model      string `json:"model,omitempty"`
 	ModelSrc   string `json:"model_src,omitempty"`
 	Verb       string `json:"verb,omitempty"`
-	Sidechain  bool   `json:"sidechain,omitempty"`
-	Measured   string `json:"measured,omitempty"`
-	OK         bool   `json:"ok,omitempty"`
+	// Route and Billing keep a subscription call and a metered call of one model apart once
+	// rolled up; a key without them cannot be split again after raw ages out. Empty = not
+	// recorded (rows and rollup files written before they existed), read as unknown.
+	Route     string `json:"route,omitempty"`
+	Billing   string `json:"billing,omitempty"`
+	Sidechain bool   `json:"sidechain,omitempty"`
+	Measured  string `json:"measured,omitempty"`
+	OK        bool   `json:"ok,omitempty"`
 }
 
 // usageAgg is the aggregated value. The JSON tags are the series element of /usage/series
@@ -193,6 +198,7 @@ func keyOf(r usagex.Record) usageKey {
 	return usageKey{
 		Feature: r.Feature, Trigger: r.Trigger, Origin: r.Origin, OriginConv: r.OriginConv,
 		Kind: r.Kind, Model: r.Model, ModelSrc: r.ModelSrc, Verb: r.Verb,
+		Route: r.Route, Billing: r.Billing,
 		Sidechain: r.Sidechain, Measured: r.Measured, OK: r.OK,
 	}
 }
@@ -335,6 +341,7 @@ func usageKeyLess(a, b usageKey) bool {
 		{a.Feature, b.Feature}, {a.Kind, b.Kind}, {a.Model, b.Model},
 		{a.Trigger, b.Trigger}, {a.Origin, b.Origin}, {a.OriginConv, b.OriginConv},
 		{a.ModelSrc, b.ModelSrc}, {a.Verb, b.Verb}, {a.Measured, b.Measured},
+		{a.Route, b.Route}, {a.Billing, b.Billing},
 	} {
 		if p[0] != p[1] {
 			return p[0] < p[1]

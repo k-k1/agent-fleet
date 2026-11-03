@@ -61,6 +61,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
 // apiTarget is a v2 daemon the state readers talk to: its address and a client that already
@@ -659,10 +660,10 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 		t.Sidechain = sidechain
 		out = append(out, v2Stamped{created, t})
 	}
-	costOnly := func(created int64, id, model string, cost float64) {
+	costOnly := func(created int64, id string, ref v2ModelRef, cost float64) {
 		if usage && cost > 0 {
 			add(created, transcript.Turn{Role: "assistant", CostOnly: true, CostUSD: cost,
-				TS: msTS(created), Model: model, AnchorID: id})
+				TS: msTS(created), Model: ref.ID, Route: usagex.RouteOfOpencodeProvider(ref.ProviderID), AnchorID: id})
 		}
 	}
 	shownErr := "" // the failure the last assistant run already rendered, so its idle message does not repeat it
@@ -692,7 +693,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 			t, ok := parseMessage(run[0].ID, data, parts, 0, win)
 			if !ok {
 				if !copied {
-					costOnly(created, run[0].ID, last.Model.ID, v2RunCost(run))
+					costOnly(created, run[0].ID, last.Model, v2RunCost(run))
 				}
 				continue
 			}
@@ -715,7 +716,7 @@ func v2SessionTurns(msgs []v2Msg, cwd string, born int64, sidechain, usage bool,
 				add(m.Time.Created, v2ErrorTurn(m.ID, m.Time.Created, cwd, m.Error, win))
 			}
 			if !copied {
-				costOnly(m.Time.Created, m.ID, m.Model.ID, m.Cost)
+				costOnly(m.Time.Created, m.ID, m.Model, m.Cost)
 			}
 		}
 	}

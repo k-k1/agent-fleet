@@ -304,6 +304,43 @@ type usageTurnRow struct {
 	// drops a re-append.
 	Orphan    bool
 	OrphanKey string
+	// Route and Billing are the per-call evidence of the calls this row folds
+	// (transcript.Turn.Route/Billing), merged by noteRoute: a row whose calls disagree reads as
+	// unresolved.
+	Route, Billing string
+	routeSet       bool // a call has been noted
+	routeMixed     bool // the noted calls disagreed
+}
+
+// noteRoute folds one call's route and billing evidence into the row. The first call sets
+// them; a later call that differs makes the whole row unresolved (empty), because one ledger
+// row cannot be split across routes without renumbering the logical turns past the watermark,
+// and a guess would file consumption under a route that did not serve it.
+func (r *usageTurnRow) noteRoute(route, billing string) {
+	if !r.routeSet {
+		r.Route, r.Billing, r.routeSet = route, billing, true
+		return
+	}
+	if r.Route != route || r.Billing != billing {
+		r.routeMixed = true
+	}
+}
+
+// absorbRoute folds another row's already-merged evidence (cost waiting for a logical turn)
+// into this one.
+func (r *usageTurnRow) absorbRoute(p usageTurnRow) {
+	if !p.routeSet {
+		return
+	}
+	r.noteRoute(p.Route, p.Billing)
+	r.routeMixed = r.routeMixed || p.routeMixed
+}
+
+// settleRoute clears a mixed row's route and billing before it leaves the fold.
+func (r *usageTurnRow) settleRoute() {
+	if r.routeMixed {
+		r.Route, r.Billing = "", ""
+	}
 }
 
 // foldTurnRows folds a transcript's event sequence into logical turns. The aggregation
@@ -338,6 +375,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 		}
 		groups++
 		cur.Idx = groups
+		cur.settleRoute()
 		rows = append(rows, cur)
 		cur, inGroup = usageTurnRow{}, false
 	}
@@ -345,6 +383,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 		for i := range pending {
 			if p := pending[i]; p.CostUSD > 0 {
 				p.Orphan = true
+				p.settleRoute()
 				if p.OrphanKey == "" { // no message id: the best stable stand-in there is
 					p.OrphanKey = fmt.Sprintf("ts:%s#%d", p.TS, p.LastIdx)
 				}
@@ -357,6 +396,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 		if t.CostOnly {
 			if inGroup && cur.Sidechain == t.Sidechain {
 				cur.CostUSD += t.CostUSD
+				cur.noteRoute(t.Route, t.Billing)
 				continue
 			}
 			p := &pending[side(t.Sidechain)]
@@ -364,6 +404,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 				*p = usageTurnRow{Trigger: trigger, Sidechain: t.Sidechain}
 			}
 			p.CostUSD += t.CostUSD
+			p.noteRoute(t.Route, t.Billing)
 			if t.TS != "" {
 				p.TS = t.TS
 			}
@@ -392,9 +433,12 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			cur = usageTurnRow{Trigger: trigger, Sidechain: sidechain}
 			inGroup = true
 			if p := &pending[side(sidechain)]; p.CostUSD > 0 {
-				cur.CostUSD, *p = p.CostUSD, usageTurnRow{}
+				cur.CostUSD = p.CostUSD
+				cur.absorbRoute(*p)
+				*p = usageTurnRow{}
 			}
 		}
+		cur.noteRoute(t.Route, t.Billing)
 		cur.Tokens.Out += t.OutTok
 		cur.CostUSD += t.CostUSD
 		if t.InTok+t.CacheRead+t.CacheCreate > 0 {
@@ -835,6 +879,7 @@ func usageRecordOf(m session.Meta, r usageTurnRow, agent string) usagex.Record {
 	rec := usagex.Record{
 		TS: r.TS, Call: chatx.RandUUID(), Feature: usagex.FeatureSession, Trigger: r.Trigger,
 		Origin: origin, OriginConv: originConv, Kind: m.Kind,
+		Route: r.Route, Billing: r.Billing,
 		Ref: m.Name, Sidechain: r.Sidechain, Idx: r.Idx, Agent: agent,
 		Key: orphanLedgerKey(m, r),
 		In:  r.Tokens.In, Out: r.Tokens.Out,

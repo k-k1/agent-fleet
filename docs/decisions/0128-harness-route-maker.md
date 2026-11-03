@@ -326,3 +326,13 @@ table from becoming a menu of models that fail on the first message, which is wh
 - Bedrock and Vertex become possible for claude without a new kind, and opencode's Bedrock models come back through
   the same mechanism.
 - Each new route on each harness costs one adapter row, an isolation mechanism and one live gate, not a new kind.
+
+## Notes
+
+- 2026-11-03, P0a (#3280): `Route` and `Billing` are on `usagex.Record` and in the rollup key, read from per-call
+  evidence only. opencode's route is the `providerID` opencode wrote on that call's message (`opencode` →
+  `opencode-zen`, `opencode-go` → `opencode-go`; any other provider stays empty). `lcpp` writes the serving
+  connection (`af-engine-llm` or `member-llamacpp`, billing `self-hosted`) on each assistant record when the call
+  runs; older log lines stay empty. Empty `Billing` reads as `unknown`. A logical turn whose calls disagree on
+  route or billing is written unresolved instead of split (the split of decision 8 is left to P0b, where a kind
+  can prove a segment boundary). Price lookup tries the route's models.dev provider first, then the kind's table.

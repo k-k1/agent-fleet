@@ -60,6 +60,15 @@ var usageCatalogProviders = map[string][]string{
 	// charged. Adding a row is right the day one of those two sources carries a price.
 }
 
+// usageRouteProviders maps a ledger route to the models.dev provider that prices it. It is
+// consulted before usageCatalogProviders, which stays the fallback for a route that is empty
+// or not listed. Only routes whose price list is a provider of its own appear here: the
+// deployment's engine and a member's llama.cpp are never priced per token.
+var usageRouteProviders = map[string][]string{
+	usagex.RouteOpencodeZen: {"opencode"},
+	usagex.RouteOpencodeGo:  {"opencode-go"},
+}
+
 // usageCatalogFallback is the order of primary providers to consult when the kind does not
 // decide one. Resellers and routers (openrouter / nano-gpt / …) are kept out: their prices
 // differ from the primary source.
@@ -76,6 +85,11 @@ func usageCatalogIndexed() map[string]bool {
 		m[p] = true
 	}
 	for _, ps := range usageCatalogProviders {
+		for _, p := range ps {
+			m[p] = true
+		}
+	}
+	for _, ps := range usageRouteProviders {
 		for _, p := range ps {
 			m[p] = true
 		}
@@ -299,8 +313,11 @@ func derefPrice(v *float64) float64 {
 
 // usageCatalogOrder is the provider order to consult for a kind: the kind's own providers,
 // then the primary ones.
-func usageCatalogOrder(kind string) []string {
-	head := usageCatalogProviders[kind]
+func usageCatalogOrder(kind string) []string { return usageCatalogOrderOn(kind, "") }
+
+// usageCatalogOrderOn puts the route's own providers ahead of the kind's.
+func usageCatalogOrderOn(kind, route string) []string {
+	head := append(append([]string{}, usageRouteProviders[route]...), usageCatalogProviders[kind]...)
 	out := make([]string, 0, len(head)+len(usageCatalogFallback))
 	seen := map[string]bool{}
 	for _, p := range append(append([]string{}, head...), usageCatalogFallback...) {
@@ -315,13 +332,21 @@ func usageCatalogOrder(kind string) []string {
 // usageCatalogLookup looks a price up in the catalog. ref says whose provider's value was
 // taken and is shown on screen: an amount whose price source is unknown cannot be checked.
 func usageCatalogLookup(kind, model string) (usagePrice, string, bool) {
-	p, ref, _, ok := usageCatalogLookupStatus(kind, model)
+	return usageCatalogLookupOn(kind, "", model)
+}
+
+func usageCatalogLookupOn(kind, route, model string) (usagePrice, string, bool) {
+	p, ref, _, ok := usageCatalogLookupStatusOn(kind, route, model)
 	return p, ref, ok
 }
 
 // usageCatalogLookupStatus is usageCatalogLookup plus whether upstream marks the matched row
 // deprecated — which a ledger does not care about and a recommendation does.
 func usageCatalogLookupStatus(kind, model string) (p usagePrice, ref string, deprecated, ok bool) {
+	return usageCatalogLookupStatusOn(kind, "", model)
+}
+
+func usageCatalogLookupStatusOn(kind, route, model string) (p usagePrice, ref string, deprecated, ok bool) {
 	cat := loadUsageCatalog()
 	if cat == nil {
 		return usagePrice{}, "", false, false
@@ -330,7 +355,7 @@ func usageCatalogLookupStatus(kind, model string) (p usagePrice, ref string, dep
 	if base == "" {
 		return usagePrice{}, "", false, false
 	}
-	for _, pid := range usageCatalogOrder(kind) {
+	for _, pid := range usageCatalogOrderOn(kind, route) {
 		key := pid + "/" + base
 		if p, ok := cat.price[key]; ok {
 			return p, key, cat.deprecated[key], true
