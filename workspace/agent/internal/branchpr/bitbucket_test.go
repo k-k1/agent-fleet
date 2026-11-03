@@ -642,3 +642,26 @@ func TestBitbucketConflictWaitsOutTheTTLAfterAFailedRead(t *testing.T) {
 		t.Fatalf("read %d times, want a second read once the TTL ran out", n)
 	}
 }
+
+func TestBitbucketGivesThePRItsHeadAndHoldsAFailureWithMorePages(t *testing.T) {
+	b := &bbServer{
+		main:  map[string]string{"/2.0/repositories/w/r": "main"},
+		pulls: map[string]string{"/2.0/repositories/w/r": `{"values":[` + bbPR(4, "OPEN", false, "a", "w/r") + `]}`},
+		statuses: map[string]string{
+			"/2.0/repositories/w/r/commit/c0ffee4/statuses": `{"next":"https://api.bitbucket.org/page2","values":[{"state":"FAILED","name":"unit"}]}`,
+		},
+	}
+	c := newBBCache(t, b)
+	keys := []Key{{Repo: "w/r", Branch: "a"}}
+	c.Lookup(keys, time.Now())
+	pr := c.Lookup(keys, time.Now())[keys[0]]
+	if pr == nil || pr.Head != "c0ffee4" {
+		t.Fatalf("pr = %+v: the PR carries its head commit, which the CI notice is keyed on", pr)
+	}
+	if pr.Checks != "failure" || !pr.ChecksPending {
+		t.Fatalf("pr = %+v: a failure with another page of statuses may still have builds running", pr)
+	}
+	if got, _, pending := bitbucketRollup([]byte(`{"next":"x","values":[{"state":"SUCCESSFUL"}]}`), ""); got != "success" || pending {
+		t.Errorf("rollup = %q pending %v: another page does not turn a green page pending", got, pending)
+	}
+}

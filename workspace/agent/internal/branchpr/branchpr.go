@@ -314,7 +314,8 @@ func (c *Cache) refresh(due []Key) {
 var prFields = fmt.Sprintf("id number title state isDraft url mergeable reviewDecision closedAt headRepositoryOwner{login} "+
 	"closingIssuesReferences(first:3){nodes{number repository{nameWithOwner}}} "+
 	"reviewThreads(last:%d){nodes{isResolved}} "+
-	"commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:%d){nodes{__typename "+
+	"commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:%d){"+
+	"checkRunCountsByState{state count} statusContextCountsByState{state count} nodes{__typename "+
 	"... on CheckRun{name status conclusion detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}",
 	maxReviewThreads, maxCheckContexts)
 
@@ -523,7 +524,10 @@ type ghPRNode struct {
 				Rollup *struct {
 					State    string `json:"state"`
 					Contexts struct {
-						Nodes []checkContext `json:"nodes"`
+						// The counts cover every context, past the first maxCheckContexts read.
+						RunCounts    []stateCount   `json:"checkRunCountsByState"`
+						StatusCounts []stateCount   `json:"statusContextCountsByState"`
+						Nodes        []checkContext `json:"nodes"`
 					} `json:"contexts"`
 				} `json:"statusCheckRollup"`
 			} `json:"commit"`
@@ -562,12 +566,30 @@ func (n *ghPRNode) pr() *PR {
 				}
 				pr.ChecksPending = pr.ChecksPending || c.pending()
 			}
-			// Past the contexts read, an unread one may still run; the rollup's own pending
-			// state is the only word on it.
+			// The counts span every context, so one still running past the first ones read
+			// holds the notice too: the rollup says FAILURE as soon as any one has failed.
+			for _, c := range r.Contexts.RunCounts {
+				switch strings.ToUpper(c.State) {
+				case "QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED":
+					pr.ChecksPending = pr.ChecksPending || c.Count > 0
+				}
+			}
+			for _, c := range r.Contexts.StatusCounts {
+				switch strings.ToUpper(c.State) {
+				case "PENDING", "EXPECTED":
+					pr.ChecksPending = pr.ChecksPending || c.Count > 0
+				}
+			}
 			pr.ChecksPending = pr.ChecksPending || pr.Checks == "pending"
 		}
 	}
 	return pr
+}
+
+// stateCount is one line of a rollup's count of contexts by state.
+type stateCount struct {
+	State string `json:"state"`
+	Count int    `json:"count"`
 }
 
 // checkContext is one entry of a rollup: a check run (Actions and other apps) or a commit status.

@@ -322,7 +322,7 @@ func (b *bitbucket) checks(auth, repo string, pr int, head string) (string, []Ch
 	if !isHex(head) {
 		return "", nil, false
 	}
-	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=values.state,values.name,values.key,values.url",
+	body, _, err := b.get(auth, fmt.Sprintf("%s/commit/%s/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url",
 		repoPath(repo), head, bitbucketPageLen))
 	if err == nil {
 		return bitbucketRollup(body, "")
@@ -330,7 +330,7 @@ func (b *bitbucket) checks(auth, repo string, pr int, head string) (string, []Ch
 	if !errors.Is(err, errNotVisible) {
 		return "", nil, false
 	}
-	body, _, err = b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=values.state,values.name,values.key,values.url,values.links.commit.href",
+	body, _, err = b.get(auth, fmt.Sprintf("%s/pullrequests/%d/statuses?pagelen=%d&fields=next,values.state,values.name,values.key,values.url,values.links.commit.href",
 		repoPath(repo), pr, bitbucketPageLen))
 	if err != nil {
 		return "", nil, false
@@ -490,6 +490,7 @@ func (v bbPull) hit() bbHit {
 	}
 	if v.Source.Commit != nil {
 		h.head = v.Source.Commit.Hash
+		h.pr.Head = h.head
 	}
 	return h
 }
@@ -531,6 +532,8 @@ func (b *bitbucket) readConflict(auth, repo string, pr int) (bool, error) {
 // commit whose hash starts with it count.
 func bitbucketRollup(body []byte, head string) (state string, failing []Check, pending bool) {
 	var sr struct {
+		// Next is set when more statuses lie past this page; any of them may still run.
+		Next   string `json:"next"`
 		Values []struct {
 			State string `json:"state"`
 			Name  string `json:"name"`
@@ -570,7 +573,9 @@ func bitbucketRollup(body []byte, head string) (state string, failing []Check, p
 	}
 	switch {
 	case failed:
-		return "failure", failing, pending
+		// Statuses past this page may still run. Read only for the commit's own list: the PR's
+		// list spans its old commits, whose pages say nothing about this one.
+		return "failure", failing, pending || (sr.Next != "" && head == "")
 	case pending:
 		return "pending", nil, true
 	case passed:

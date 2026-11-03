@@ -3,6 +3,7 @@ package branchpr
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -546,5 +547,28 @@ func TestChecksStillRunningArePending(t *testing.T) {
 		if pr := got[keys[0]]; err != nil || pr == nil || pr.ChecksPending != tc.pending || pr.Checks != "failure" {
 			t.Errorf("%s: pr %+v err %v, want pending=%v", tc.other, pr, err, tc.pending)
 		}
+	}
+}
+
+func TestChecksPastTheContextsReadStillHoldTheFailure(t *testing.T) {
+	node := `{"number":4,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/4","headRepositoryOwner":{"login":"o"},` +
+		`"commits":{"nodes":[{"commit":{"oid":"c1","statusCheckRollup":{"state":"FAILURE","contexts":{` +
+		`"checkRunCountsByState":[{"state":"FAILURE","count":1},{"state":"IN_PROGRESS","count":%d}],` +
+		`"statusContextCountsByState":[{"state":"EXPECTED","count":%d}],` +
+		`"nodes":[{"__typename":"CheckRun","name":"a","status":"COMPLETED","conclusion":"FAILURE"}]}}}}]}}`
+	for _, tc := range []struct {
+		runs, statuses int
+		pending        bool
+	}{{0, 0, false}, {3, 0, true}, {0, 1, true}} {
+		keys := []Key{{Repo: "o/r", Branch: "a"}}
+		body := `{"data":{` + answer("r0", "o", "main", fmt.Sprintf(node, tc.runs, tc.statuses)) + `}}`
+		got, _, _, err := parse([]byte(body), keys)
+		if pr := got[keys[0]]; err != nil || pr == nil || pr.ChecksPending != tc.pending {
+			t.Errorf("%+v: pr %+v err %v", tc, pr, err)
+		}
+	}
+	q, _ := query([]Key{{Repo: "o/r", Branch: "a"}})
+	if !strings.Contains(q, "checkRunCountsByState{state count} statusContextCountsByState{state count}") {
+		t.Errorf("query %s lacks the counts", q)
 	}
 }
