@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
 import type { BackgroundShell } from "../../../core/api/client.ts";
@@ -19,6 +20,10 @@ export function parseBackgroundShells(v: unknown): BackgroundShell[] {
 // something that will never come (measured in #3279: a bare `cat` blocked on stdin for 2 h).
 // "Probably": a `sleep 3600` looks the same, so the panel only flags it and never acts on it.
 const STUCK_AFTER_MS = 30 * 60 * 1000;
+// The panel's own clock. A hung shell answers every poll with identical bytes, and the poll
+// does not re-apply an unchanged payload, so without it the age and the stuck flag would stop
+// where they were first drawn.
+const CLOCK_MS = 30 * 1000;
 const STUCK_CPU_SEC = 1;
 
 /** ageMs is how long the shell has run, or null without a usable start time. */
@@ -52,14 +57,24 @@ export function BackgroundShellsPanel({
   shells,
   stopping,
   onStop,
-  now = Date.now(),
+  now: fixedNow,
 }: {
   shells: BackgroundShell[];
   stopping: ReadonlySet<number>;
   onStop: (s: BackgroundShell) => void;
+  /** Pins the clock (tests). */
   now?: number;
 }) {
-  if (!shells.length) return null;
+  const [tick, setTick] = useState(() => Date.now());
+  const has = shells.length > 0;
+  useEffect(() => {
+    if (!has || fixedNow !== undefined) return;
+    setTick(Date.now());
+    const id = setInterval(() => setTick(Date.now()), CLOCK_MS);
+    return () => clearInterval(id);
+  }, [has, fixedNow]);
+  if (!has) return null;
+  const now = fixedNow ?? tick;
   return (
     <div className="mirror-bg-shells" role="status">
       <div className="mbs-head">

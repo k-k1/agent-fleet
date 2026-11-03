@@ -9,6 +9,7 @@ let host: HTMLDivElement | null = null;
 
 afterEach(() => {
   act(() => root?.unmount());
+  vi.useRealTimers();
   host?.remove();
   root = null;
   host = null;
@@ -26,12 +27,14 @@ const hung: BackgroundShell = {
 };
 const build: BackgroundShell = { pid: 210, start: 6000, command: "go test ./...", startedAt: "2026-11-03T14:55:00+09:00", running: true, cpuSec: 120 };
 
-function render(shells: BackgroundShell[], stopping: ReadonlySet<number> = new Set()) {
+// liveClock: leave the panel on its own clock instead of pinning `now`.
+function render(shells: BackgroundShell[], stopping: ReadonlySet<number> = new Set(), liveClock = false) {
+  const clock = liveClock ? undefined : now;
   const onStop = vi.fn();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<BackgroundShellsPanel shells={shells} stopping={stopping} onStop={onStop} now={now} />));
+  act(() => root!.render(<BackgroundShellsPanel shells={shells} stopping={stopping} onStop={onStop} now={clock} />));
   return onStop;
 }
 
@@ -67,5 +70,19 @@ describe("BackgroundShellsPanel", () => {
   it("disables the button while that shell is being stopped", () => {
     render([hung], new Set([200]));
     expect(document.querySelector<HTMLButtonElement>(".mbs-stop")!.disabled).toBe(true);
+  });
+});
+
+describe("BackgroundShellsPanel clock", () => {
+  it("crosses the 30-minute line with no new data from the poll", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.parse("2026-11-03T13:29:00+09:00"));
+    const young = { ...hung, startedAt: "2026-11-03T13:00:00+09:00" };
+    render([young], new Set(), true);
+    expect(rows()[0].classList.contains("stuck")).toBe(false);
+    expect(rows()[0].textContent).toContain("29m");
+    act(() => vi.advanceTimersByTime(90_000));
+    expect(rows()[0].classList.contains("stuck")).toBe(true);
+    expect(rows()[0].textContent).toContain("30m");
   });
 });

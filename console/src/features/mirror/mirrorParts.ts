@@ -70,16 +70,19 @@ export function liveExchangeFrom(groups: PromptBoundaryLike[]): number {
 // transcript (the reply is the first non-user group after the last user group). Returns
 // false when there's no prompt at all (a fresh or history-only view has nothing pending).
 //
-// A compaction summary is recorded as a user row but asks for nothing. After an idle
-// compaction it is the newest group, and counting it would hold the indicator for a reply that
-// never comes, so it is skipped — and it does not hide the prompt before it either.
+// A compaction summary is recorded as a user row but is neither a prompt nor a reply, so it
+// is skipped on both sides: after an idle compaction it is the newest group and must not hold
+// the indicator for a reply that never comes, and a compaction that lands between a prompt and
+// its answer must not hide that answer.
 export function awaitingReply(groups: PromptBoundaryLike[]): boolean {
   let u = -1;
   for (let i = groups.length - 1; i >= 0; i--) {
     if (groups[i].role === "user" && !groups[i].compact) { u = i; break; }
   }
   if (u < 0) return false;
-  const reply = groups[u + 1];
+  let r = u + 1;
+  while (r < groups.length && groups[r].compact) r++;
+  const reply = groups[r];
   return !(reply && reply.role !== "user");
 }
 

@@ -115,6 +115,14 @@ describe("awaitingReply", () => {
     expect(awaitingReply([{ role: "assistant" }, { role: "user" }, { role: "user", compact: true }])).toBe(true);
   });
 
+  it("sees an answer that came after a compaction landing between it and its prompt", () => {
+    expect(awaitingReply([{ role: "user" }, { role: "user", compact: true }, { role: "assistant" }])).toBe(false);
+    expect(
+      awaitingReply([{ role: "user" }, { role: "user", compact: true }, { role: "user", compact: true }, { role: "assistant" }]),
+    ).toBe(false);
+    expect(awaitingReply([{ role: "user" }, { role: "user", compact: true }, { role: "user", compact: true }])).toBe(true);
+  });
+
   it("does not wait when there is no prompt at all (new session or history only)", () => {
     expect(awaitingReply([])).toBe(false);
     expect(awaitingReply([{ role: "assistant" }])).toBe(false);
