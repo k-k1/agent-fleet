@@ -454,3 +454,34 @@ func TestInterruptReclaimsFromATitledBox(t *testing.T) {
 		t.Fatalf("restored = %q, keys = %v", restored, keys)
 	}
 }
+
+// claude logs the stopped prompt some 200 ms after the Enter, so a stop right after a send
+// first reads the previous prompt (or none) from the transcript; the reclaim keeps reading.
+func TestInterruptReclaimsAPromptLoggedLate(t *testing.T) {
+	logPath := fakeTmux(t)
+	stubInterruptState(t, "working")
+	stubReclaim(t, logPath, "", func(esc int) string {
+		switch esc {
+		case 0:
+			return paneWorking
+		case 1:
+			return paneRestored
+		case 2:
+			return paneClearArmed
+		}
+		return paneEmpty
+	})
+	reads := 0
+	interruptedPrompt = func(session.Meta) string {
+		if reads++; reads < 3 {
+			return []string{"", "the previous prompt"}[reads-1]
+		}
+		return "SLOW 再レビュー"
+	}
+	name := "turn_reclaim_late"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	rec := postTurn(t, name, `{"op":"interrupt"}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"restored":"SLOW 再レビュー"`) {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}

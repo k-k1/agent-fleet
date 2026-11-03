@@ -23,6 +23,33 @@ type tenantGitOAuthAPI struct{ memberAuth }
 
 func newTenantGitOAuthAPI(m *manager) tenantGitOAuthAPI { return tenantGitOAuthAPI{memberAuth{m}} }
 
+// gitOAuthScopeList is one group's scope names, split by Atlassian's two scope families
+// (classic and granular are picked on different tabs of the Edit Scopes screen).
+type gitOAuthScopeList struct {
+	Group    string   `json:"group"`
+	Classic  []string `json:"classic,omitempty"`
+	Granular []string `json:"granular,omitempty"`
+}
+
+// gitOAuthScopeLists is what the app has to be given for provider: the always-requested base
+// scopes (offline_access is left out, it is not configurable) and each optional group.
+func gitOAuthScopeLists(provider string) []gitOAuthScopeList {
+	if provider != gitOAuthJira {
+		return nil
+	}
+	var base []string
+	for _, sc := range strings.Fields(jiraScopes) {
+		if sc != "offline_access" {
+			base = append(base, sc)
+		}
+	}
+	return []gitOAuthScopeList{
+		{Group: "base", Classic: base},
+		{Group: scopeGroupJiraSoftware, Granular: strings.Fields(jiraSoftwareScopes)},
+		{Group: scopeGroupConfluence, Classic: strings.Fields(confluenceClassicScopes), Granular: strings.Fields(confluenceGranularScopes)},
+	}
+}
+
 // gitOAuthBody is the wire shape. ClientSecret is write-only: it is never returned, and
 // a save that leaves it empty keeps the stored value — the same contract tenant_idp and
 // mcp_server use for their secrets.
@@ -45,6 +72,10 @@ type gitOAuthBody struct {
 	// every box would. ScopeGroupsAvailable is read-only: what this provider offers.
 	ScopeGroups          []string `json:"scope_groups,omitempty"`
 	ScopeGroupsAvailable []string `json:"scope_groups_available,omitempty"`
+	// ScopeGroupScopes is read-only: the scope names an administrator has to add to the app,
+	// from the same constants the authorize URL is built from, so the Console never carries
+	// a copy that can drift. Group is "base" or one of ScopeGroupsAvailable.
+	ScopeGroupScopes []gitOAuthScopeList `json:"scope_group_scopes,omitempty"`
 
 	// GitHub only (issue #1667). Source is writable: none / builtin_oauth / builtin_app /
 	// custom, and a save without it means custom so a client written against the old
@@ -113,7 +144,7 @@ func (a tenantGitOAuthAPI) list(w http.ResponseWriter, r *http.Request) {
 			HasSecret: row.SecretEnc != "", NeedsSecret: gitOAuthNeedsSecret(p),
 			UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt,
 			RedirectURI: a.mgr.gitOAuthRedirectURI(p),
-			ScopeGroups: parseScopeGroups(p, row.ScopeGroups), ScopeGroupsAvailable: gitOAuthScopeGroupsFor[p],
+			ScopeGroups: parseScopeGroups(p, row.ScopeGroups), ScopeGroupsAvailable: gitOAuthScopeGroupsFor[p], ScopeGroupScopes: gitOAuthScopeLists(p),
 		}
 		if p == gitOAuthGitHub {
 			if err := a.mgr.githubCard(r.Context(), t.ID, &card); err != nil {
@@ -213,7 +244,7 @@ func (a tenantGitOAuthAPI) save(w http.ResponseWriter, r *http.Request) {
 		Provider: provider, ClientID: row.ClientID, HasSecret: secretEnc != "",
 		NeedsSecret: gitOAuthNeedsSecret(provider), UpdatedBy: ident.ID, UpdatedAt: now,
 		RedirectURI: a.mgr.gitOAuthRedirectURI(provider),
-		ScopeGroups: parseScopeGroups(provider, groups), ScopeGroupsAvailable: gitOAuthScopeGroupsFor[provider],
+		ScopeGroups: parseScopeGroups(provider, groups), ScopeGroupsAvailable: gitOAuthScopeGroupsFor[provider], ScopeGroupScopes: gitOAuthScopeLists(provider),
 	}
 	if provider == gitOAuthGitHub {
 		if err := a.mgr.githubCard(r.Context(), t.ID, &out); err != nil {

@@ -64,10 +64,11 @@ const (
 	// Not requested: space administration, and read:hierarchical-content:confluence (folder
 	// listing) which is granular and has to be added by hand if wanted. The workspace agent
 	// reads the three v2 names back (jirax.confluencePageScopeList); keep the two in step.
-	confluenceScopes = "read:confluence-content.all read:confluence-content.summary " +
+	confluenceClassicScopes = "read:confluence-content.all read:confluence-content.summary " +
 		"read:confluence-space.summary search:confluence write:confluence-content " +
-		"readonly:content.attachment:confluence write:confluence-file " +
-		"read:page:confluence write:page:confluence read:space:confluence"
+		"readonly:content.attachment:confluence write:confluence-file"
+	confluenceGranularScopes = "read:page:confluence write:page:confluence read:space:confluence"
+	confluenceScopes         = confluenceClassicScopes + " " + confluenceGranularScopes
 )
 
 // jiraScopesFor is the scope parameter of the authorize URL for an app granting groups.
