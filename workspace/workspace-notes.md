@@ -193,7 +193,13 @@ directory belongs to someone else.
   (read and write) is UTF-8-safe for Japanese, emoji and `code`/**bold** next to Japanese; a file
   that is not UTF-8 is refused. Writes are sent once and never retried: after a "may or may not
   have been applied" message, search or `read` before repeating. An update that hits a version
-  conflict (409) overwrote nothing: `read` again and redo it. `move`, `delete`, `children`, `find`,
+  conflict (409) overwrote nothing: `read` again and redo it.
+  Read-only commands (`search`, `read`, `info`, `edit`, `spaces`, `space-lookup`, `find`, `children`,
+  `comments`, `attachments` without `-d`, `versions`, `property-list/get`) are re-run on a connection
+  reset or timeout (CLI: up to twice, only the last attempt shown, the way the jira wrapper does; Agent shim: its GETs, within about 20 s;
+  `AF_CONFLUENCE_TIMEOUT` seconds bounds one attempt, 0 = none); writes (`create`, `update`,
+  `delete`, `comment`, uploads, anything unknown) are never re-run, so after a failed or timed-out
+  write check Confluence before repeating it. `move`, `delete`, `children`, `find`,
   `spaces`, `copy-tree`, versions, properties/front matter still use the CLI's v1 calls
   and may answer 410. A grant from before the v2 page scopes gets one line naming the fix
   (administrator adds `read:page` / `write:page` / `read:space` to the Atlassian app, member
