@@ -79,11 +79,14 @@ type mainEntry struct {
 	at   time.Time
 }
 
-// conflictEntry is an open PR's conflict state as read at head.
+// conflictEntry is an open PR's conflict state as read at head. at is the last successful read,
+// which the TTL runs from; asked is the last time anyone wanted it, which pruning runs from, so a
+// PR whose reads keep failing still keeps the state they fall back to.
 type conflictEntry struct {
 	head     string
 	conflict bool
 	at       time.Time
+	asked    time.Time
 }
 
 type bitbucket struct {
@@ -302,6 +305,10 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	now := time.Now()
 	b.mu.Lock()
 	e, ok := b.conflicts[id]
+	if ok {
+		e.asked = now
+		b.conflicts[id] = e
+	}
 	b.mu.Unlock()
 	if ok && e.head == head && now.Sub(e.at) < bitbucketConflictTTL {
 		return e.conflict
@@ -320,14 +327,14 @@ func (b *bitbucket) conflict(auth, repo string, pr int, head string) bool {
 	}
 	conflict := len(fc.Values) > 0 || (fc.Size != nil && *fc.Size > 0)
 	b.mu.Lock()
-	// PRs no session has asked about for forgetAfter go with the next answer. Not on the TTL: a PR
-	// past it but still asked about would lose the state a failed read falls back to.
+	// PRs no session has asked about for forgetAfter go with the next answer. Not on the last
+	// read: a PR still asked about whose reads fail would lose the state they fall back to.
 	for k, old := range b.conflicts {
-		if now.Sub(old.at) >= forgetAfter {
+		if now.Sub(old.asked) >= forgetAfter {
 			delete(b.conflicts, k)
 		}
 	}
-	b.conflicts[id] = conflictEntry{head: head, conflict: conflict, at: now}
+	b.conflicts[id] = conflictEntry{head: head, conflict: conflict, at: now, asked: now}
 	b.mu.Unlock()
 	return conflict
 }

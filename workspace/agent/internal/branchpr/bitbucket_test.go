@@ -497,11 +497,30 @@ func TestBitbucketConflictKeepsAnActivePRsStateAcrossAnotherPRsAnswer(t *testing
 	c := newBBCache(t, b)
 	bb := &bitbucket{c: c, main: map[string]mainEntry{}, conflicts: map[string]conflictEntry{}}
 	stale := time.Now().Add(-bitbucketConflictTTL - time.Minute)
-	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", conflict: false, at: stale}
-	bb.conflicts["w/r#2"] = conflictEntry{head: "h2", conflict: true, at: stale}
+	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", conflict: false, at: stale, asked: time.Now()}
+	bb.conflicts["w/r#2"] = conflictEntry{head: "h2", conflict: true, at: stale, asked: time.Now()}
 	_ = bb.conflict("Bearer bb", "w/r", 1, "h1") // answers; must not prune #2, which is merely past its TTL
 	if !bb.conflict("Bearer bb", "w/r", 2, "h2") {
 		t.Fatal("#2's read failed (404) and must fall back to the conflict it last showed for this head")
+	}
+	// #2's reads have failed for longer than forgetAfter, but it is still asked about: its last
+	// good read must outlive #1's next answer.
+	long := time.Now().Add(-forgetAfter - time.Minute)
+	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", at: stale, asked: time.Now()}
+	bb.conflicts["w/r#2"] = conflictEntry{head: "h2", conflict: true, at: long, asked: long}
+	if !bb.conflict("Bearer bb", "w/r", 2, "h2") { // fails again, and is asked now
+		t.Fatal("#2 must fall back to its known conflict")
+	}
+	_ = bb.conflict("Bearer bb", "w/r", 1, "h1")
+	if !bb.conflict("Bearer bb", "w/r", 2, "h2") {
+		t.Fatal("#1's answer pruned #2, which was asked a moment ago")
+	}
+	// A PR nobody asked about for forgetAfter does go.
+	bb.conflicts["w/r#3"] = conflictEntry{head: "h3", conflict: true, at: long, asked: long}
+	bb.conflicts["w/r#1"] = conflictEntry{head: "h1", at: stale, asked: time.Now()}
+	_ = bb.conflict("Bearer bb", "w/r", 1, "h1")
+	if _, kept := bb.conflicts["w/r#3"]; kept {
+		t.Fatal("an entry unasked for forgetAfter must be pruned")
 	}
 }
 
