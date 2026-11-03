@@ -26,27 +26,6 @@ export function readLaunchPrompt(repo: string): string {
 
 export function clearLaunchPrompt(repo: string): void {
   clearDraft(KEY(repo));
-  clearDraft(MEMO_KEY(repo));
-}
-
-// Which memo the stored draft was restored from (#3289), so restoring that memo again
-// (hub back, cancel and retry) picks the draft up where it was instead of saving it as
-// yet another memo. Cleared with the draft.
-const MEMO_KEY = (repo: string): string | null => (repo ? "af.launch-memo." + repo : null);
-
-export function readLaunchDraftMemo(repo: string): string {
-  return readDraft(MEMO_KEY(repo));
-}
-
-export function setLaunchDraftMemo(repo: string, memoId: string): void {
-  const key = MEMO_KEY(repo);
-  if (!key) return;
-  try {
-    if (memoId) localStorage.setItem(key, memoId);
-    else localStorage.removeItem(key);
-  } catch {
-    /* private mode / quota — a later restore just saves the draft as a memo again */
-  }
 }
 
 // useLaunchPrompt is a useState<string> backed by localStorage (the same shape as lib/draft's

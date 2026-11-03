@@ -8,14 +8,14 @@
 // like a fresh paste: they are uploaded into the new session's own dir at launch, and a
 // memo-image GC that runs after the memo is gone cannot break a chip that is already on
 // screen.
-import { memoCreate, memoDelete, memoImageURL, memoPasteImage } from "./api.ts";
+import { memoCreate, memoDelete, memoImageURL, memoList, memoPasteImage } from "./api.ts";
 import { raw } from "../../core/api/client.ts";
 import { useMemoStore } from "./store.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Memo, MemoAttachment } from "../../types/memo.ts";
 import { memoAttachmentLabel } from "./attachName.ts";
-import { clearLaunchPrompt, launchAttachKey, readLaunchDraftMemo, readLaunchPrompt, setLaunchDraftMemo } from "../repos/launchDraft.ts";
+import { clearLaunchPrompt, launchAttachKey, readLaunchPrompt } from "../repos/launchDraft.ts";
 import { clearAttachDraft, readAttachDraft, settleAttachDraft } from "../../lib/attachDraft.ts";
 import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
@@ -64,19 +64,54 @@ export async function stashLaunchDraft(repo: string, prompt: string, files: File
 
 /** stashStoredDraft saves the repo's stored Start working draft (text and files) to a memo
  *  and clears it, so a memo restored into that dialog does not overwrite it. A repo with no
- *  draft is a no-op; a failure leaves the draft untouched. */
-export async function stashStoredDraft(repo: string): Promise<StashResult & { saved?: boolean }> {
+ *  draft is a no-op; a failure leaves the draft untouched. A draft that is an untouched copy
+ *  of a memo still in the queue (an earlier restore, cancelled or backed out of) is only
+ *  cleared: saving it would duplicate that memo. `restoring` is the memo about to fill the
+ *  box, checked first so the common case needs no list. Copy means the same text and the
+ *  same file names; anything else is the person's work and is kept as a memo. */
+export async function stashStoredDraft(
+  repo: string,
+  restoring?: { body: string; attachments: MemoAttachment[] },
+): Promise<StashResult & { saved?: boolean }> {
   const text = readLaunchPrompt(repo).trim();
   const key = launchAttachKey(repo);
   await settleAttachDraft(key);
   // Launch drafts are never uploaded (no session yet), so every record carries its bytes.
-  const files = (await readAttachDraft(key)).flatMap((r) => (r.bytes ? [new File([r.bytes], r.name, { type: r.type })] : []));
+  const recs = await readAttachDraft(key);
+  const files = recs.flatMap((r) => (r.bytes ? [new File([r.bytes], r.name, { type: r.type })] : []));
   if (!text && !files.length) return { ok: true };
+  const names = recs.map((r) => r.name);
+  const copy =
+    (restoring && sameDraft(text, names, restoring)) ||
+    (await listedMemos()).some((m) => m.kind === "text" && sameDraft(text, names, { body: m.body, attachments: m.attachments || [] }));
+  if (copy) {
+    clearLaunchPrompt(repo);
+    await clearAttachDraft(key);
+    return { ok: true };
+  }
   const r = await stashLaunchDraft(repo, text, files);
   if (!r.ok) return r;
   clearLaunchPrompt(repo);
   await clearAttachDraft(key);
   return { ok: true, saved: true };
+}
+
+// The queue as the server has it now; [] when it cannot be read (the draft is then saved).
+async function listedMemos(): Promise<Memo[]> {
+  try {
+    const list = await memoList();
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+// A restored memo's files are staged under their display labels (fetchMemoAttachments), so
+// that is what a copy of it holds in the attachment draft.
+function sameDraft(text: string, names: string[], m: { body: string; attachments: MemoAttachment[] }): boolean {
+  const want = m.attachments.map((a) => memoAttachmentLabel(a.name)).sort();
+  const have = [...names].sort();
+  return text === m.body.trim() && want.length === have.length && want.every((n, i) => n === have[i]);
 }
 
 /** fetchMemoAttachments loads stored attachments back as Files, in order. One that cannot be
@@ -101,45 +136,20 @@ export async function fetchMemoAttachments(atts: MemoAttachment[]): Promise<File
  *  provenance the send modal stamps on the launch; a file memo is a reference, not a prompt. */
 export const canStartFromMemo = (m: Memo): boolean => m.kind === "text" && !m.origin && (!!m.body.trim() || !!m.attachments?.length);
 
-/** prepareMemoRepo readies `repo`'s dialog for restoring memo `memoId`. When the stored
- *  draft already is that memo's (restored before, then cancelled or backed out of — the
- *  dialog marks it once every file is staged, markLaunchDraftMemo), it is the memo's
- *  continuation: `resume` says to open it as it is rather than seed over it. Any other
- *  draft is saved to a memo first. */
-export async function prepareMemoRepo(repo: string, memoId: string): Promise<StashResult & { saved?: boolean; resume?: boolean }> {
-  if (readLaunchDraftMemo(repo) === memoId) {
-    await settleAttachDraft(launchAttachKey(repo)); // the dialog about to open reads it back
-    return { ok: true, resume: true };
-  }
-  return stashStoredDraft(repo);
-}
-
-/** markLaunchDraftMemo records that `repo`'s draft now holds memo `memoId` in full. Called by
- *  the dialog only after the memo's files are staged: marked earlier, a dialog closed while
- *  they were loading would resume later without them. */
-export const markLaunchDraftMemo = (repo: string, memoId: string): void => setLaunchDraftMemo(repo, memoId);
-
-/** dropSeedContent keeps the memo's identity on the seed but lets the dialog open on the
- *  stored draft (prepareMemoRepo's resume case). */
-export function dropSeedContent(): void {
-  useLaunchSeed.setState({ prompt: "", attachments: [] });
-}
-
 /** startFromMemo opens the Start working dialog seeded with the memo: straight into the
  *  memo's repository when this workspace has that working copy, else the hub to pick one
- *  (StartHost then runs prepareMemoRepo for the pick). When the repo's stored draft cannot
+ *  (StartHost then runs stashStoredDraft for the pick). When the repo's stored draft cannot
  *  be set aside nothing opens. The memo is deleted only once a session was launched. */
 export async function startFromMemo(m: Memo): Promise<StashResult & { saved?: boolean }> {
   // memo.repo is the launch dialog's repo name, which is the working copy's own name.
   const repo = m.repo ? useReposStore.getState().repos.find((r) => r.name === m.repo) : undefined;
-  const pre = repo ? await prepareMemoRepo(repo.name, m.id) : { ok: true as const };
+  const pre = repo ? await stashStoredDraft(repo.name, { body: m.body, attachments: m.attachments || [] }) : { ok: true as const };
   if (!pre.ok) return pre;
   const seed = useLaunchSeed.getState();
   seed.set(m.body);
   seed.setAttachments(m.attachments || []);
   seed.setMemoId(m.id);
   seed.setOnLaunched(() => void deleteRestoredMemo(m.id));
-  if ("resume" in pre && pre.resume) dropSeedContent();
   if (repo) useLaunchTarget.getState().open(repo);
   else useSessionsStore.getState().openStart();
   return { ok: true, ...("saved" in pre && pre.saved ? { saved: true } : {}) };

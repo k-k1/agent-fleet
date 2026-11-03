@@ -24,7 +24,7 @@ vi.mock("./StartModal.tsx", () => ({
 vi.mock("./LaunchModal.tsx", () => ({ LaunchModal: () => <div data-testid="launch-modal" /> }));
 let release!: (v: { ok: true; saved?: boolean }) => void;
 const prepare = vi.fn(() => new Promise((r) => (release = r)));
-vi.mock("../memo/launchStash.ts", () => ({ prepareMemoRepo: () => prepare(), dropSeedContent: vi.fn() }));
+vi.mock("../memo/launchStash.ts", () => ({ stashStoredDraft: () => prepare() }));
 
 const { StartHost } = await import("./StartHost.tsx");
 const { useLaunchSeed, useLaunchTarget } = await import("./store.ts");

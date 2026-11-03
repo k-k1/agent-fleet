@@ -15,7 +15,10 @@ vi.mock("../../core/api/client.ts", () => ({
   memoDelete: (id: string) => deleteMock(id),
   memoCreate: (input: unknown) => createMock(input),
   memoPasteImage: (f: File) => pasteMock(f),
+  memoList: async () => listed,
 }));
+// GET api/memos: what the queue holds on the server.
+let listed: unknown[] = [];
 
 const { startFromMemo, canStartFromMemo } = await import("./launchStash.ts");
 const { isMemoImageName, memoAttachmentLabel } = await import("./attachName.ts");
@@ -49,6 +52,7 @@ beforeEach(() => {
   deleteMock.mockClear();
   createMock.mockClear();
   pasteMock.mockClear();
+  listed = [];
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
   useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app" }] });
@@ -146,20 +150,48 @@ describe("races and failures", () => {
   });
 
   // Backing out to the hub and picking the same repo again, or cancelling and restoring the
-  // same memo, must resume the draft instead of saving the memo's own text as another memo.
-  it("resumes a draft that is already this memo's instead of saving a copy", async () => {
-    localStorage.setItem("af.launch-prompt.app", "メモの本文（編集済み）");
-    localStorage.setItem("af.launch-memo.app", "m1");
+  // same memo, leaves an untouched copy of the memo as the draft: clear it, do not save it as
+  // another memo. Edited, it is the person's work and is kept (review of #3293).
+  it("clears an untouched copy of the memo instead of saving a duplicate", async () => {
+    localStorage.setItem("af.launch-prompt.app", "本文");
+    await writeAttachDraft(launchAttachKey("app"), [
+      { name: "paste-1.png", type: "image/png", image: true, path: "", file: new File(["I"], "paste-1.png", { type: "image/png" }) },
+    ]);
     expect(await startFromMemo(memo())).toEqual({ ok: true });
     expect(createMock).not.toHaveBeenCalled();
-    const seed = useLaunchSeed.getState();
-    expect(seed.prompt).toBe(""); // the dialog opens on the stored draft
-    expect(seed.attachments).toEqual([]);
-    expect(seed.memoId).toBe("m1");
+    expect(readLaunchPrompt("app")).toBe("");
+    expect(await readAttachDraft(launchAttachKey("app"))).toEqual([]);
+    // The seed carries the memo in full: the dialog refills from it, not from a draft.
+    expect(useLaunchSeed.getState().prompt).toBe("本文");
+    expect(useLaunchSeed.getState().attachments).toHaveLength(1);
+  });
 
-    // Another memo still sets the draft aside.
-    await startFromMemo(memo({ id: "m2" }));
-    expect(createMock).toHaveBeenCalledTimes(1);
+  // Restoring memo C over an untouched copy of memo A (restored earlier, then cancelled).
+  it("clears an untouched copy of another memo still in the queue", async () => {
+    listed = [memo({ id: "mA", body: "Aの本文", attachments: [] })];
+    localStorage.setItem("af.launch-prompt.app", "Aの本文");
+    expect(await startFromMemo(memo())).toEqual({ ok: true });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(readLaunchPrompt("app")).toBe("");
+  });
+
+  it("keeps an edited copy as a memo", async () => {
+    localStorage.setItem("af.launch-prompt.app", "本文（追記）");
+    expect(await startFromMemo(memo())).toEqual({ ok: true, saved: true });
+    expect(createMock).toHaveBeenCalledWith({ kind: "text", repo: "app", body: "本文（追記）" });
+  });
+
+  it("keeps a copy whose files changed as a memo", async () => {
+    localStorage.setItem("af.launch-prompt.app", "本文");
+    expect(await startFromMemo(memo())).toEqual({ ok: true, saved: true }); // the image was removed
+  });
+
+  it("keeps a copy whose file was swapped for another as a memo", async () => {
+    localStorage.setItem("af.launch-prompt.app", "本文");
+    await writeAttachDraft(launchAttachKey("app"), [
+      { name: "other.png", type: "image/png", image: true, path: "", file: new File(["O"], "other.png", { type: "image/png" }) },
+    ]);
+    expect(await startFromMemo(memo())).toEqual({ ok: true, saved: true });
   });
 
   it("says so when the restored memo cannot be deleted after the launch", async () => {

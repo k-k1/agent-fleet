@@ -18,7 +18,7 @@ import { launchFromHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { recordWorkItemLaunch } from "../workitems/launch.ts";
 import { workItemLaunchBranch } from "../workitems/read.ts";
-import { dropSeedContent, prepareMemoRepo } from "../memo/launchStash.ts";
+import { stashStoredDraft } from "../memo/launchStash.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 export function StartHost() {
@@ -34,7 +34,6 @@ export function StartHost() {
   const seedPrompt = useLaunchSeed((s) => s.prompt);
   const seedTitle = useLaunchSeed((s) => s.title);
   const seedAttachments = useLaunchSeed((s) => s.attachments);
-  const seedMemoId = useLaunchSeed((s) => s.memoId);
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
@@ -85,12 +84,12 @@ export function StartHost() {
           onPickRepo={async (r) => {
             // A memo being restored (#3289) outranks the picked repo's stored draft: set that
             // draft aside first, and open nothing when it could not be saved.
-            const memoId = useLaunchSeed.getState().memoId;
+            const { memoId, prompt, attachments } = useLaunchSeed.getState();
             if (!memoId) return openLaunch(r);
             if (picking.current) return; // one save at a time; a second click would save it twice
             picking.current = true;
             const gen = hubGen.current;
-            const s = await prepareMemoRepo(r.name, memoId).finally(() => {
+            const s = await stashStoredDraft(r.name, { body: prompt, attachments }).finally(() => {
               picking.current = false;
             });
             // The hub was closed (or another memo seeded) while saving: do not reopen anything.
@@ -100,7 +99,6 @@ export function StartHost() {
               return;
             }
             if (s.saved) toast(t("memo.start_draft_saved"), { kind: "success" });
-            if (s.resume) dropSeedContent();
             openLaunch(r);
           }}
         />
@@ -118,7 +116,6 @@ export function StartHost() {
           isUnborn={!!launch.unborn}
           initialPrompt={seedPrompt || undefined}
           initialAttachments={seedAttachments.length ? seedAttachments : undefined}
-          seedMemoId={seedMemoId || undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}
           workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}

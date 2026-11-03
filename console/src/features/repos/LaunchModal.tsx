@@ -30,7 +30,7 @@ import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from ".
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
-import { launchAttachKey, setLaunchDraftMemo, useLaunchPrompt } from "./launchDraft.ts";
+import { launchAttachKey, useLaunchPrompt } from "./launchDraft.ts";
 import { makeAttachment, useAttachDraft } from "../../lib/attachDraft.ts";
 import { AttachChips } from "../mirror/parts/AttachChips.tsx";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
@@ -52,7 +52,7 @@ import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePic
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
-import { fetchMemoAttachments, markLaunchDraftMemo, stashLaunchDraft } from "../memo/launchStash.ts";
+import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
@@ -137,9 +137,6 @@ interface LaunchModalProps {
   /** Stored memo attachments to stage as chips (#3289: start from a memo). Their bytes are
    *  fetched on open and they launch exactly like files pasted here. */
   initialAttachments?: MemoAttachment[];
-  /** The memo this dialog restores (#3289), "" / omitted = none. Once its files are staged
-   *  the stored draft is marked as that memo's, so restoring it again resumes the draft. */
-  seedMemoId?: string;
 	/** Optional initial session title, e.g. proposed by a predecessor session. */
   initialTitle?: string;
   /** Open straight into existing-branch mode with this branch picked — the SCM view's
@@ -215,7 +212,7 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialAttachments, seedMemoId, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -468,10 +465,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const [seedMissing, setSeedMissing] = useState(0);
   const [seedLoading, setSeedLoading] = useState(() => !!initialAttachments?.length && canPasteImage);
   useEffect(() => {
-    if (!initialAttachments?.length || !canPasteImage) {
-      if (seedMemoId) markLaunchDraftMemo(repo, seedMemoId);
-      return;
-    }
+    if (!initialAttachments?.length || !canPasteImage) return;
     let alive = true;
     setSeedLoading(true);
     void fetchMemoAttachments(initialAttachments).then((files) => {
@@ -479,7 +473,6 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       attach.add(files.map((f) => makeAttachment(f)));
       setSeedMissing(initialAttachments.length - files.length);
       setSeedLoading(false);
-      if (seedMemoId) markLaunchDraftMemo(repo, seedMemoId);
     });
     return () => {
       alive = false;
@@ -509,7 +502,6 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
     // next prompt typed here has to be kept as a draft like any other.
     setPrompt("");
     attach.clear();
-    setLaunchDraftMemo(repo, ""); // whatever is typed next is not the restored memo's
     setSeedMissing(0);
     setStash("done");
     // After the re-render that ends the busy state (measured in headless Chromium: focusing in
