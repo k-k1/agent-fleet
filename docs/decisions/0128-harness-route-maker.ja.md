@@ -4,45 +4,62 @@
 
 - 状態: **提案**（2026-11-03）。まだ何も作っていない。本記録は設計のみで、下の決定 A〜C はユーザーの判断待ち。
   `file:line` はすべて `c08c6a4b5` で読んだ。Claude Code の Bedrock / Vertex / ゲートウェイ用として挙げる環境変数と
-  設定はベンダーのドキュメントによるもので、AF の起動フラグの下では**測っていない**。決定 4 のハーネス × ルートの行は、
-  ライブゲート（決定 11）を通るまでどれも候補である。
+  設定はベンダーのドキュメントによるもので、AF の起動フラグの下では**測っていない**。決定 5 のハーネス × ルートの行は、
+  ライブゲート（決定 14）を通るまでどれも候補である。2026-11-03 に別セッション（codex `gpt-6.1-sol`）がレビューした。
+  その 17 件の指摘はツリーと照合し、本文に取り込んだ。
+- Follow-ups: 決定が下りた時点で、段階ごとに 1 件ずつ Issue にする（`docs/CONVENTIONS.md` §10）。
 - 関連: [0069](0069-image-generation-providers.ja.md)（資格情報の層・`AWSProfileRef`）/
-  [0071](0071-self-hosted-inference-engines.ja.md)（エンジンのゲートウェイとセッション単位のトークン）/
-  [0093](0093-lcpp-agent-kind.ja.md)（`lcpp` — ルート 1 本に溶接されたハーネス）/
+  [0071](0071-self-hosted-inference-engines.ja.md)（エンジンのゲートウェイとそのトークン）/
+  [0084](0084-engine-indicator-and-tenant-gate.ja.md)（エンジンの 4 つの関門）/
+  [0093](0093-lcpp-agent-kind.ja.md)（`lcpp`）/
   [0126](0126-aws-runs-in-the-mirror-and-confirm-before-use.ja.md)（使う前に確認を求める AWS プロファイル）/
   [docs/log/129](../log/129-pi-agent-kind.md)（pi の Stage 0）/ #1585（pi を種別にする件）
 
 ## 背景
 
-セッション種別（`claude`・`opencode`・`codex` …）は、セッションを回す CLI か自前のループを指す。今はこれに別の事実が
-2 つ畳み込まれていて、コードにはもう無理が出ている。
+セッション種別（`claude`・`opencode`・`codex` …）は、セッションを回す CLI か自前のループを指す。いくつかの種別は
+すでに複数の接続先や請求に届くが、それぞれが自分のやり方で行っており、種別より上の層は、あるターンがどれを使ったかを
+知らない。
 
-- **どの接続先で、どの請求か。** `usageCatalogProviders`（`workspace/agent/usage_catalog.go:45`）は種別だけで単価表を
-  選ぶので、Bedrock 上の `claude` セッションは Anthropic API の単価で計算される。`usagex.Record`
-  （`workspace/agent/internal/usagex/ledger.go:83`）が持つのは `Kind` と `Model` だけなので、サブスクリプションに含まれる
-  ターンとトークン従量で請求されるターンが同じ形で記録される。
-- **誰がモデルを作ったか。** `model_provider.go` はモデル選択欄のブランドマークのためにメーカーをすでに解決していて、
-  その冒頭で「id の接頭辞はメーカーではなく課金ルートを示す」とはっきり書いている。それでも `modelKindVendor`
-  （`model_provider.go:122`）は `kiro` を `amazon-bedrock` に対応させていて、ルートがメーカーの代わりをしている。
-- **Bedrock の応急処置。** `keepInMenu`（`workspace/agent/internal/agents/opencode/catalog.go:146-165`）は、セッションに
-  届く資格情報が無いために `amazon-bedrock/…` の 121 モデルを隠しており、足りない部品を「Bedrock に自分の接続と資格情報を
-  与える」プロバイダ層だと名指ししている。
-- **`lcpp`**（ADR 0093）は自前のループと自前エンジンを 1 つの種別にしたもの。同じエンジンはすでにプロバイダとして
-  opencode にも届いている（`syncEngineProviders`、`workspace/agent/engines.go:323`）。つまりルートはもうハーネスをまたげる。
-  名前が無いだけである。
-- **サブスクリプションと従量の制限はすでに区別されている**: `LimitWindow` / `LimitSpend`
-  （`workspace/agent/internal/agents/usagelimit.go`）。足りないのは、その違いに応じて動く手段である。
-- **pi**（docs/log/129）は多くのプロバイダと話すハーネスである。第 2 の軸が無いと、プロバイダごとに 1 種別として
-  加わるしかない。
+- **opencode** は、Zen・Go サブスクリプション・直接のプロバイダを、モデル id の接頭辞で選ぶ
+  （`workspace/agent/internal/agents/opencode/catalog.go:5`）。モデルはセッションの途中でも変えられる
+  （`opencode/driver.go:990`、`opencode/serveapi.go:393`）。
+- **codex** は ChatGPT サブスクリプションか API キーでサインインする。`CODEX_HOME` ごとに 1 つ
+  （`workspace/agent/internal/agents/codex/auth.go:19-27`）。
+- **muse** はサブスクリプションのログインと API キーのログインを持ち、両者はキーの有無ではなく `mechanism` で区別する
+  （`workspace/agent/internal/agents/muse/auth.go:16`）。
+- **`lcpp`** は配備のエンジンか、メンバー自身の llama.cpp 接続で動く
+  （`secrets.Data.Lcpp`、`harnessEngineToken`、`workspace/agent/engines.go:1312`）。
+- **claude** はサブスクリプションのログインで動くが、それでもターンが課金されることがある: 枠を越えると、利用クレジットが
+  API 単価で続く（`claude/abort.go:140-148` はすでに `/usage-credits` の文面を認識している）。
 
-場当たりに変えると危ない罠が 2 つある。
+足りないのは、ルートを**選ぶ**こと、セッションがそれを使ってよいか**確かめる**こと、それを**会計する**ことの共通の契約で
+ある。その欠けはコードに出ている。
 
-- Claude Code は、自分の OAuth ファイルより環境の `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` を優先する
-  （`workspace/agent/internal/agents/claude/authexpiry.go:138-142`）。Workspace 自身の環境に API キーがあると、
-  すべての `claude` セッションが黙って従量請求に移る。
-- codex は環境変数で渡した `OPENAI_API_KEY` を無視し、`CODEX_HOME` ごとに `auth.json` を 1 つ持つ
-  （`workspace/agent/internal/agents/codex/auth.go:25`）。だから codex では「このセッションはサブスク、あれは API」を
-  環境変数では表せない。
+- `usageCatalogProviders`（`workspace/agent/usage_catalog.go:45`）は種別だけで単価表を選ぶ。`usagex.Record`
+  （`workspace/agent/internal/usagex/ledger.go:83`）は `Kind` と `Model` を持ち、集計キー（`usage_rollup.go:43`、
+  `keyOf` は `:192`）はそれらで集約し、見積もりは集約の後に単価を付ける（`usage_series.go:275`）。同じモデルの
+  サブスクリプションのターンと従量のターンは、集約されると区別できない。
+- `modelKindVendor`（`model_provider.go:122`）は `kiro` を `amazon-bedrock` に対応させており、ルートがメーカーの
+  代わりをしている。
+- `keepInMenu`（`opencode/catalog.go:146-165`）は、セッションに届く資格情報が無いために `amazon-bedrock/…` の 121 モデルを
+  隠しており、足りない部品を「Bedrock に自分の接続と資格情報を与える」プロバイダ層だと名指ししている。
+- `LimitWindow` / `LimitSpend`（`workspace/agent/internal/agents/usagelimit.go:15`）は、待てば制限が解けるかどうかを
+  表す。契約の種類ではない。codex はすべての制限を時間枠として報告し、リセットはアカウント共通である
+  （`codex/capabilities.go:91`）。
+
+場当たりに変えると危ない罠:
+
+- Claude Code は、OAuth ファイルより環境の `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` を優先する
+  （`claude/authexpiry.go:138-142`）。Workspace 自身の環境にキーがあると、すべての `claude` セッションが従量請求に移る。
+- Claude の認証ガードは Workspace 全体のものである: `AuthExpired()` は共有の OAuth ファイルと Agent 自身の環境を読み
+  （`claude/authexpiry.go:187`）、送信ガード（`sessionx/session_io.go:1153`）と起動（`claude/claude.go:195`）の両方が
+  それを見る。API キーを与えたセッションでも、OAuth のログインが切れていれば拒否される。
+- 共有デーモンは資格情報を起動時に 1 度だけ読む: opencode `serve` はプロバイダキーを自分の環境から取り
+  （`opencode/serve.go:159`、`:338`）、Managed の codex は 1 つの app-server で動く（`codex/serve.go:157`、
+  `codex/driver.go:173`）。セッションごとの環境変数はそこに届かない。
+- エンジンのトークンは、実際にはセッションに縛られていない: 有効期間は 30 日で（`control-plane/engine_token.go:85`）、
+  セッションが終わっても何も失効させず、Managed の opencode はワークスペース単位のものを使う（`engines.go:663`）。
 
 ## 決定
 
@@ -51,153 +68,228 @@
 | 言葉 | 意味 | 例 |
 |---|---|---|
 | **ハーネス** | エージェントのループを回すプログラム。今のセッション種別そのもので、変えない。 | Claude Code、opencode、codex、pi、`lcpp` |
-| **ルート** | モデル呼び出しがどこへ行き、どの資格情報で、どう請求されるか。 | Anthropic サブスクリプション、Anthropic API、Amazon Bedrock、Google Vertex、OpenCode Zen、ChatGPT サブスクリプション、配備のエンジン |
+| **ルート** | モデル呼び出しがどこへ行き、どの資格情報を使うか。 | Anthropic サブスクリプション、Anthropic API、Amazon Bedrock、Google Vertex、OpenCode Zen、ChatGPT サブスクリプション、配備のエンジン、メンバーの llama.cpp |
 | **メーカー** | 誰がモデルを作ったか。`model_provider.go` がすでに解決しており、変えない。 | Anthropic、OpenAI、Zhipu |
 
 新しい軸には「プロバイダ」を使わない。`model_provider.go` とモデル選択欄がすでにメーカーの意味で使っている。
+ターンが**どう請求されたか**は 4 つ目の事実で、ターンごとに記録する（決定 8）。1 つのルートが複数の請求のされ方を持ちうる
+からである。
 
-### 2. `kind` はそのまま。ルートは新しい任意フィールド
+### 2. `kind` はそのまま。ルートは新しい任意の選択
 
-`session.Meta` に `Route string` を足す。空は種別の既定ルートを意味し、それが今のすべての種別の動きなので、既存の
-セッション・API の呼び出し元・スケジュールはどれも挙動が変わらない。種別の文字列は分割せず、`claude-bedrock` のような
-種別も足さない。ツリーは約 60 か所の `case` / `==` で種別により分岐し、約 525 か所で種別を参照している。組み合わせの
-種別を 1 つ足すたびに、それら全部の写しが 1 つ増える。
+種別の文字列は分割せず、`claude-bedrock` のような種別も足さない。ツリーは 61 か所で種別により分岐しており
+（`c08c6a4b5` で `grep -rn "case session.Kind\|== session.Kind" --include=*.go workspace/agent control-plane | grep -v _test`）、
+それらの分岐はハーネスについてのもので、接続先についてのものではない。
 
-### 3. ルートはカタログの 1 項目
+`session.Meta` に任意のルート選択（決定 3）を足す。**空は「今の解決規則を保つ」を意味する**: opencode ならモデル id の
+接頭辞、codex と muse ならサインインしている方式、`lcpp` ならメンバー接続かエンジン、claude なら OAuth ファイルか環境。
+空は固定の既定ルートではない。規則が何に解決したかは、ターンごとに記録する（決定 8）。
 
-ルートが記録するもの:
+### 3. 選択はルートと資格情報を名指しし、黙ってフォールバックしない
 
-- `id`（`anthropic-subscription`・`anthropic-api`・`bedrock`・`vertex`・`opencode-zen`・`chatgpt-subscription`・
-  `openai-api`・`af-engine-llm` …）
+ルートのカタログ項目が記録するもの:
+
+- `id`（`anthropic-subscription`・`anthropic-api`・`bedrock`・`vertex`・`opencode-zen`・`opencode-go`・
+  `chatgpt-subscription`・`openai-api`・`af-engine-llm`・`member-llamacpp` …）
 - 通信方式（Anthropic Messages、OpenAI Responses、OpenAI Chat Completions、Bedrock、Vertex）
-- 請求の種類: `subscription`・`metered`・`self-hosted`・`free`
-- 資格情報の層。ADR 0069 の層を使う: 既存の接続、メンバーのキー、`AWSProfileRef`、テナントのキー
+- 資格情報の層。ADR 0069 の層を使う（既存の接続、メンバーのキー、`AWSProfileRef`、テナントのキー）。層は資格情報の
+  持ち主を表すもので、どの資格情報かは表さない。
+
+セッションの**選択**は、ルート id と、選んだ接続への安定した参照の組である（Bedrock ならプロファイルとリージョン。
+`AWSProfileRef` がすでに持っている形、ADR 0069 決定 3）。選択はセッションに保存する。参照先の接続が削除された・失効した・
+別のものを指すようになったときは、理由を見える形で示してセッションを止める。別の接続や Workspace の既定に移すことは
+決してしない。それは請求を別のアカウントに移すことになるからである。
 
 カタログは Agent が持つ。Control Plane は生成したスナップショットを埋め込む。`agentkinds/catalog.json` を生成し、
 テストで等しく保っているのと同じやり方である。
 
 ### 4. ハーネス × ルートは、ハーネスが宣言する許可リスト
 
-複数のルートを提供するハーネスは、任意のインターフェースを実装する。
+明示の選択を受け付けるハーネスは、任意のインターフェースを実装する。
 
 ```go
 type RouteAdapter interface {
-	Routes() []string                                        // routes this harness may run on
-	ApplyRoute(m session.Meta, route string) (RoutePlan, error) // env, args, config patch
+	Routes() []string                                              // routes this harness may run on
+	ApplyRoute(m session.Meta, sel RouteSelection) (RoutePlan, error) // env, args, config, daemon choice
+	ResolveRoute(m session.Meta, turn TurnInfo) ResolvedRoute         // what a turn actually ran on
 }
 ```
 
-このインターフェースを持たない種別は暗黙のルートをちょうど 1 つ持ち、Console はその種別にルート選択欄を出さない。
+このインターフェースを持たない種別は明示の選択を受け付けない。それでもそのターンは、規則が解決したルートで記録される。
 許可リストは直積ではない。技術だけでなく規約の理由もある: Claude のサブスクリプションのログインは Claude Code 専用
 （docs/log/129 §0）なので、`anthropic-subscription` を opencode や pi に提供することはない。
 
-候補の行（どれも未測定）:
+### 5. 各ハーネスがルートをどう隔離するか
 
-| ハーネス | 候補のルート | 適用のしかた |
+セッションごとのルートは、資格情報が**そのセッションにだけ**届くときにしか成り立たない。ハーネスの各行はその仕組みを
+名指しし、Terminal と Managed の両方がライブゲートを通らなければならない。
+
+| ハーネス | 候補のルート（どれも未測定） | 隔離 |
 |---|---|---|
-| claude | `anthropic-subscription`（既定）、`anthropic-api`、`bedrock`、`vertex`、ゲートウェイ | OAuth ファイル、`ANTHROPIC_API_KEY`、`CLAUDE_CODE_USE_BEDROCK=1`、`CLAUDE_CODE_USE_VERTEX=1`、`ANTHROPIC_BASE_URL` / `ANTHROPIC_BEDROCK_BASE_URL`（ベンダーのドキュメント） |
-| codex | `chatgpt-subscription`（既定）、`openai-api` | セッションごとの `CODEX_HOME` か `model_providers` の項目。要測定 |
-| opencode | opencode 自身のプロバイダ、`af-engine-llm` | すでにモデル id に入っている。リクエスト単位なので、共有の `serve` デーモンは障害にならない |
+| claude | `anthropic-subscription`、`anthropic-api`、`bedrock`、`vertex`、ゲートウェイ | Terminal のペインはセッションごとの環境変数（`ANTHROPIC_API_KEY`、`CLAUDE_CODE_USE_BEDROCK=1`、`CLAUDE_CODE_USE_VERTEX=1`、`ANTHROPIC_BASE_URL` / `ANTHROPIC_BEDROCK_BASE_URL`、ベンダーのドキュメント）。Managed の claude もセッションごとに 1 プロセスなので同じ |
+| codex | `chatgpt-subscription`、`openai-api` | Terminal: セッションごとの `CODEX_HOME` か `model_providers` の項目。Managed: 資格情報ごとに 1 つの app-server か、ゲートウェイ。セッション側の `CODEX_HOME` は共有の app-server に届かない |
+| opencode | opencode 自身のプロバイダ、`af-engine-llm` | プロバイダはリクエスト単位だが、**キー**は `serve` プロセス単位: 資格情報ごとに 1 つの `serve` か、ゲートウェイ。同じプロバイダを別々の AWS プロファイルで使う 2 つのセッションは、1 つの `serve` を共有できない |
+| muse | サブスクリプション、API キー | すでにセッションごとに 1 つのホストプロセス。セッションごとのログイン状態は要測定 |
+| `lcpp` | `af-engine-llm`、`member-llamacpp` | すでにセッション単位（`harnessEngineToken`） |
 | pi | `chatgpt-subscription`、`openai-api`、`bedrock`、`af-engine-llm` | pi 自身のプロバイダ設定（未構築、#1585） |
-| agy、kiro、cursor、copilot、muse | 各 1 本 | 変更なし |
+| agy、kiro、cursor、copilot | 今は各 1 本 | 変更なし |
 
-各ハーネスのルート一覧は、行が測られた時点で `guide/ref/agents.ja.md` に置く。この表は計画であって、参照先ではない。
+各ハーネスのルート一覧は、行が測られた時点で `guide/ref/agents.ja.md` に置く。この表は計画であって、参照先ではない
+（`docs/CONVENTIONS.md` §6）。
 
-### 5. 資格情報の渡し方 — 決定 A
+### 6. セッションの途中で変わりうるルート
 
-資格情報をどうやってセッションに届けるか。
+opencode はセッション中にモデルを、それとともにプロバイダを変えられる。**明示の**選択があるとき、モデルの変更は同じルートの
+モデルに限る。ルートをまたぐ変更はルートの切替（決定 10）であり、同じ確認を通る。選択が**空**のときは、今と同じように
+ルートをターンごとに解決し、ターンごとに記録する。
 
-- **A1: セッションごとの環境変数。** ルートのキーを起動時の環境に入れる。opencode のプロバイダキーがすでに
-  `LaunchPlan.Env` に乗っているのと同じやり方（`opencode/opencode.go:127-131`）。単純だが、エージェントのシェルから
-  キーが読める。AWS プロファイルの場合は、AF がセッションに AWS の資格情報を渡さないという規則
-  （`catalog.go:156-158`）を破る。
+### 7. 資格情報の渡し方 — 決定 A
+
+- **A1: セッションごとの環境変数。** ルートのキーを起動時の環境に入れる。Terminal のペインでは、opencode のプロバイダキーが
+  すでに `LaunchPlan.Env` に乗っているのと同じやり方（`opencode/opencode.go:127-131`）。エージェントのシェルからキーが
+  読める。AWS プロファイルの場合は、AF がセッションに AWS の資格情報を渡さないという規則（`opencode/catalog.go:156-158`）を
+  破る。共有デーモンには届かない（決定 5）。
 - **A2: AF のゲートウェイ。** Agent（または Control Plane）が資格情報を持ち、セッションには AF のエンドポイント向けの
-  短命でセッション単位のトークンを渡す。エンジンのトークンはすでにこの方式で動いている（`engineSessionEnv`、
-  `engines.go:669`）。代償は、ストリーミングの通り道にプロキシが入ること。
-- **推奨: 層によって両方。** メンバーが自分のセッション用に貼ったメンバーのキーには A1 を許す。今日の opencode のキーと
-  同じ露出である。モデルを呼ぶ以上のことができる資格情報、つまり `AWSProfileRef` とテナントのキーには A2 を必須とする。
-  グローバルな環境にはルートの資格情報を一切置かない（`authexpiry.go` の罠）。
+  トークンを渡す。エンジンのトークンが一番近い先例だが、そのまま写す手本**ではない**: 有効期間は 30 日、セッションが
+  終わっても失効せず、Managed の opencode ではワークスペース単位である（背景を参照）。ルートのトークンは、接続・ルート・
+  セッションの世代に縛る。セッションが終わったとき、選択が変わったとき、接続が変わったか取り消されたときに失効させる。
+  トークンが行う上流呼び出しは、その都度、依存する承認を確かめ直す（ADR 0126 の承認はセッションとプロファイルごとで、
+  最長 8 時間かセッションの終了まで、`0126…md:123`）。代償は、ストリーミングの通り道にプロキシが入ること。
+- **推奨: 層によって両方。** メンバーが自分の Terminal セッション用に貼ったメンバーのキーには A1 を許す。今日の opencode の
+  キーと同じ露出である。モデルを呼ぶ以上のことができる資格情報（`AWSProfileRef`、テナントのキー）と、デーモンの資格情報と
+  異なる資格情報を共有デーモン上で使うルートには、A2 を必須とする。グローバルな環境にはルートの資格情報を一切置かない
+  （`authexpiry.go` の罠）。
 
-### 6. 使用量の台帳がルートを記録する
+### 8. 台帳はターンごとにルートと請求を記録する
 
-`usagex.Record` に `Route` と `Billing` を足す。単価の検索はまずルートで引き、ルートが空のときの予備として
-`usageCatalogProviders` を残す。`subscription` の行はトークン数を保ち、費用は「含まれる」と表示する。測った $0 として
-表示することはしない。これは最初に、単独で入れる（P0）。動くものを変えずに、今の表示を正すからである。
+- **ルートと請求は別のフィールド。** `Route` はターンが何で動いたか。`Billing` はそのターンがどう課金されたか:
+  `subscription-included`、`subscription-extra`（枠を越えた利用クレジット。OAuth のログインのまま）、`metered`、
+  `self-hosted`、`free`、`unknown`。証拠から請求のされ方を言えないターンは `unknown` とし、「含まれる」とは決してしない。
+- **ターンが動いたときに記録し、取り込むときには記録しない。** 今の取り込みは、後で読んだ `session.Meta` から台帳の行を
+  作る（`usage_fold.go:777`、`usageRecordOf` は `:833`）。そのため切替の後に取り込まれたターンは、新しいルートで記録されて
+  しまう。解決したルートと請求はターンの開始時に（またはランタイムが報告したときに）捕まえ、切替の境界を永続化し、
+  補助の呼び出し（タイトル、アシスタントチャット）も同じように捕まえる。
+- **集計でも保つ。** `usageKey` に `Route` と `Billing` を足す。rollup の形式とその移行、API / Console の集計、単価の検索
+  （まずルート、解決できなかったルートの予備として `usageCatalogProviders`）は一緒に変える。raw の行が期限で消えたあとは、
+  これらを持たないキーを再び分けることはできない。
+- **履歴。** 既存の行は、証拠があるものだけ分類する。残りは `unknown` のまま。
+- **予算。** セッションの予算は別の経路で計算している（`usage_spend.go:85`）。本記録は、既存の予算が何を数えるかを変えない。
+  予算が実際の請求を数えるのか API 換算の見積もりを数えるのかは UI に明示し、それを変えるのは別の判断とする。
 
-### 7. サブスクリプションと従量の切替 — 決定 B
+### 9. Claude の認証ガードはルートごとになる
 
-想定する場面: セッションが 5 時間枠に当たり、メンバーは API で続けたい。
+`AuthExpired()`、送信ガード、起動は、Workspace の OAuth ファイルではなく、セッションの解決済みルートで判定する。
+`anthropic-api` や `bedrock` のセッションは、サブスクリプションのログインが切れたことを理由に拒否されない。再認証後の
+復旧もルートごとに行う。これは P1 の一部であって、後回しにはしない。これが無いと、最初の API セッションが関係のない
+ログインに止められる。
 
-- **B1: 手動。** `LimitWindow` で止まったとき、ハーネスが従量のルートを宣言していて、メンバーがその資格情報を持っていれば、
-  Console が「<従量ルート> で続ける」を提案する。受け入れると、別のルートで `--resume` してセッションを起動し直す。
-  `LimitSpend` では提案しない。別の請求に移ることは、そこでメンバーが求めたことではない。
-- **B2: オプトインの自動。** B1 と同じだが確認なしで行う。メンバーごとの日次の支出上限を必須とし、空にはできない。
-- **B3: しない。**
-- **推奨: 今は B1。B2 は B1 が使われたあと、別の ADR でのみ。** B1 で守る規則:
-  - ルートは起動時に固定されるので、切替は起動し直しであり、台帳に記録する
-  - プロンプトキャッシュは引き継がれないので、最初の従量ターンは文脈全体を定価で読む。提案の文面でそれを伝える
-  - アシスタントチャット（`ClaudeChat`、`workspace/agent/internal/chatx/chat_providers.go:341`）は、明示的にルートを
-    与えない限り既定のルートのままにする
+### 10. 止まったサブスクリプションからの切替 — 決定 B
 
-### 8. Bedrock と Vertex — 決定 C
+想定する場面: セッションがサブスクリプションの枠で止まり、メンバーは続けたい。
 
-Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決定 5）を使う。
+提案は、セッションの解決済みルートがサブスクリプションで、停止の証拠が**そのルート上に**あり、制限が待てば解けるものである
+ときだけ出す。制限の状態とリセット時刻は接続とルートごとに持ち、一時的なスロットリング（Bedrock のものなど）は時間枠の
+制限とは別に扱う。
+
+- **B1: 手動の切替。** ハーネスが従量のルートを宣言していて、メンバーがその資格情報を持っていれば、Console が
+  「<従量ルート> で続ける」を提案する。受け入れると、そのルートでセッションを起動し直す。
+- **B2: 同じログインで利用クレジット。** claude では、サブスクリプションのログインのまま利用クレジットで続ける
+  （`subscription-extra` として請求される）ことを、待つ・切り替えるに並ぶ 3 つ目の選択肢とする。
+- **B3: オプトインの自動。** B1 を確認なしで行う。メンバーごとの日次の支出上限を必須とし、空にはできない。
+- **B4: しない。**
+- **推奨: 今は B1 と B2。B3 は B1 が使われたあと、別の ADR でのみ。**
+
+切替は排他的な状態遷移であり、関門はすべての手順を対象にする: セッションのロックを取る。レート制限の再開予約
+（`sessionx/rate_limit_resume.go`）を取り消す。取り消しの失敗は、移動がすでにしているように見える形で示す
+（`rate_limit_cleanup.go`）。古い「続けて」が従量のルートに届くことが決してないようにするためである。保留中の入力を
+預かる。古いランタイムを止める。新しい選択を保存する。再開する。どこかで失敗したら選択を元に戻し、そう伝える。途中での
+クラッシュは、永続化した手順から復旧する。
+
+切替をまたいだプロンプトキャッシュの共有は保証されない（キャッシュはアカウントと同一の接頭辞に縛られる）。そのため切替後の
+最初のターンは、文脈全体のキャッシュ作成を払う可能性があり、Anthropic の 5 分キャッシュでは通常の入力より高い。提案の文面は
+「高くなる可能性がある」と言い、台帳はそのターンの実際のキャッシュ読み出し・作成を記録する。数字として述べるのは、ルートの
+組ごとに測ってからにする。
+
+### 11. Bedrock と Vertex — 決定 C
+
+Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決定 7）を使う。
 
 - **C1:** メンバーがサインインしている任意のプロファイル。
 - **C2:** メンバーがモデルのルート用として印を付けたプロファイル。`bedrock:InvokeModel*` だけを持つことを文書で求め、
-  プロファイルが求めるなら ADR 0126 の使用前確認の対象にする。
+  プロファイルが求めるなら ADR 0126 の使用前確認の対象にし、上流呼び出しごとに確かめ直す（決定 7）。
 - **推奨: C2。** ルートは毎ターン使われるので、そこに広いプロファイルを置くと、Workspace で最も広い常設の権限になる。
 
 ルートが資格情報を供給するようになったら、opencode の `amazon-bedrock` の応急処置（`keepInMenu`）は
 `AF_OPENCODE_SHOW_BEDROCK` ではなくルートの可用性で置き換える。
 
-### 9. pi は 1 つのハーネスとして加わる
+### 12. 誰が何を拒否するか
 
-この軸が一番効くのが pi である: 種別は 1 つで、ルートは決定 4 を通して宣言する。pi をそもそも採るかどうかは #1585
-（Stage 0b）に残す。本記録は、採るとしてもプロバイダごとに 1 種別にならないことだけを保証する。
+カタログのスナップショットと Console の選択欄は表示であって、確認は両側で強制する。
 
-### 10. `lcpp` は当面変えない
+- **Control Plane** は、すべての作成経路（Console、REST、MCP `create_session`、スケジュール）で拒否する: 未知のルート、
+  ハーネスやドライバが宣言していないルート、ルートの外のモデル、呼び出し元が持ち主でない接続への参照、閉じている
+  テナントの関門。`CheckCreateKind` と同じく、Workspace を起こす前に拒否する。
+- **Agent** は、起動時とすべての切替で、同じ一覧をもう一度確かめる（スナップショットは Agent より古いことがある）。
+  加えて、接続が今使えるかと期限を確かめる。
+- **既存の関門は引き継ぎ、開け直さない。** 配備のエンジン上のルートは、`allow_engine_llm` を含む ADR 0084 の 4 つの関門を
+  すべて保つ（`0084…md:312`）。テナント管理者が新しいルートを許可・拒否できるかが未決の部分である（ADR 0084 はエンジンの
+  スイッチを super_admin に置いている、`:297`）。
 
-`lcpp` は種別のまま。配備のエンジンは `af-engine-llm` というルートになり、opencode は事実上すでにそれを使っている。
-`lcpp` のループが将来ほかのルート（OpenAI 互換の任意のエンドポイント）を受け入れるべきかは、後の記録に残す。
+### 13. 入口と引き継ぎ
 
-### 11. どの行もライブのターンで関門を通す
+選択は、種別とモデルを受け付けるところすべてで受け付ける: Console の起動モーダル、REST の作成ボディ、MCP
+`create_session`（そのスキーマは種別とモデルを個別に列挙している、`control-plane/internal/mcpsrv/mcp.go:707`）、
+新規・再利用・ローテーションのスケジュール（`control-plane/schedule.go:34`、`scheduler_reuse.go:441`）。
 
-ハーネス × ルートの行は、そのルートでのライブのターン 1 回が次を記録してから出す: 実際に応答したルート（トランスクリプト
-かレスポンスヘッダから）、台帳が書いた使用量、そして陰性対照（資格情報を外した同じ起動が失敗し、それが目に見えること）。
-これが決定 4 の候補表を「最初のメッセージで失敗するモデルの一覧」にしないための仕組みで、それこそ `keepInMenu` が防ぐために
-存在しているものである。
+| 操作 | 選択 |
+|---|---|
+| 再開、実行方式の変更 | 保つ |
+| 同じ種別内の fork（`forkMeta`、`sessionx/session_handlers.go:1616`） | 引き継ぎ、確かめ直す |
+| 別の種別への handoff や移動（`moveCreateReq`、`sessionx/session_move.go:605`） | 選び直し、新しいハーネスに対して確かめる |
+
+### 14. どの行もライブのターンで関門を通す
+
+ハーネス × ルートの行は、ライブのターン（ハーネスが両方を持つなら Terminal と Managed の両方）が次を記録してから出す:
+実際に応答したルート（トランスクリプトかレスポンスヘッダから）、台帳が書いた請求、そしてルートに合った陰性対照。
+
+- 資格情報があるルート: 資格情報を外した同じ起動が失敗し、それが目に見えること。
+- 資格情報が無いルート（opencode の無料モデル、キーの無いメンバーの llama-server）: 接続先に届かなくした同じ起動が失敗し、
+  それが目に見えること。
+
+どちらの場合も、対照は、何も黙って別のルートにフォールバックしなかったことも示す。これが決定 5 の表を「最初のメッセージで
+失敗するモデルの一覧」にしないための仕組みで、それこそ `keepInMenu` が防ぐために存在しているものである。
 
 ## 段階
 
 | 段階 | 内容 | 関門 |
 |---|---|---|
-| P0 | 台帳の `Route` / `Billing`、ルートによる単価検索、`guide/ref/glossary.ja.md` の用語 | 挙動の変化なし。台帳のテストが空のルートを扱う |
-| P1 | `RouteAdapter`、claude の `anthropic-subscription` / `anthropic-api` をセッションごとの環境変数（A1）で | 両方の行で決定 11 |
-| P2 | A2 のゲートウェイ、claude の `bedrock`、opencode の Bedrock を応急処置ではなくルートで | 決定 11、C2 のプロファイル確認 |
-| P3 | #1585 が採るなら、pi を種別として | #1585 の Stage 0b、その後ルートごとに決定 11 |
-| P4 | B1 の「従量ルートで続ける」提案 | 実際に枠で止まり、起動し直して再開できること |
+| P0 | ターンごとのルートと請求の捕捉、集計キー・移行・集計、ルートによる単価検索、`guide/ref/glossary.ja.md` の用語 | 挙動の変化なし。証拠の無い履歴は `unknown` のまま。同じモデルのサブスクリプションと従量のターンが集計で分かれたまま |
+| P1 | `RouteAdapter`、選択の保存と検証（決定 12）、Terminal での claude の `anthropic-subscription` / `anthropic-api`（A1）、ルートごとの認証ガード（決定 9） | 両方の行で決定 14。OAuth のログインが切れていても API セッションが動く |
+| P2 | A2 のゲートウェイとトークンの契約、claude の `bedrock`、opencode の Bedrock をルートで、資格情報ごとのデーモン | 両方の実行方式で決定 14、C2 のプロファイル確認、セッション終了時のトークン失効 |
+| P3 | #1585 が採るなら、pi を種別として | #1585 の Stage 0b、その後ルートごとに決定 14 |
+| P4 | 決定 10 の提案とその状態遷移 | 実際に枠で止まり、切り替えて再開できること。古い再開予約が取り消されること。わざと起こした失敗が元に戻ること |
 
 ## 退けた案
 
-- **ハーネス × ルートごとに 1 種別**（`claude-bedrock`、`pi-openai`）。組み合わせが掛け算で増え、どれもが `kind` の
-  分岐すべての写しになる。
+- **ハーネス × ルートごとに 1 種別**（`claude-bedrock`、`pi-openai`）。組み合わせが掛け算で増え、新しい種別はどれも登録・
+  関門・価格・表示が要る。一方で種別の分岐はハーネスについてのものなので、何も得をしない。
 - **種別の文字列を分割する**（`claude/bedrock`）。Control Plane・スケジュール・MCP ツール・保存済みセッションのすべてが
-  読むフィールドの意味を変えることになる。任意フィールドなら何も壊さずに同じ利点が得られる。
+  読むフィールドの意味を変えることになる。任意の選択なら何も壊さずに同じ利点が得られる。
 - **Workspace ごとに 1 つのグローバルなルート設定。** 「対話はサブスク、スケジュールのバッチは API」を表せず、claude では
   環境変数の優先順位の罠をそのまま再現する。
+- **取り込み時にセッションのメタデータからルートを記録する。** 切替前のターンを切替後のルートで記録してしまう（決定 8）。
 
 ## 未決の問い
 
 1. 「ルート」の Console での文言（`console/src/lib/i18n/locales/` の i18n 用語。P1 で決める）。
-2. テナント管理者がテナントごとにルートを許可・拒否できるようにするか。`allow_engine_llm` がエンジンを制限するのと
-   同じやり方で（ADR 0084）。
-3. Bedrock のスロットリングのエラーを `LimitWindow` / `LimitSpend` のどちらに対応させるか、それとも 3 つ目の種類が要るか。
-4. B1 の提案以外の場面（たとえば明示的な再開）でルートを変えてよいか。
+2. テナント管理者がテナントごとにルートを許可・拒否できるようにするか（決定 12）。
+3. 時間枠でも支出上限でもない Bedrock のスロットリングをどう見せるか（決定 10）。
+4. 決定 10 の提案以外の場面（たとえば明示的な再開）でルートを変えてよいか。
+5. 予算は実際の請求を数えるべきか、API 換算の見積もりを数えるべきか（決定 8）。
 
 ## 結果
 
-- セッションに任意のフィールドが 1 つ増える。空のままのセッションでは何も変わらない。
-- P0 が入った時点で、費用の報告がサブスクリプションと従量の違いについて正確になる。
+- セッションに任意の選択が 1 つ増える。空のままなら今の解決規則がそのまま動き、ターンの解決済みルートが記録される。
+- P0 が入ったあとに記録されたターンについては、費用の報告がサブスクリプション・利用クレジット・従量を区別できる。
 - 新しい種別なしで claude の Bedrock / Vertex が可能になり、opencode の Bedrock モデルも同じ仕組みで戻ってくる。
-- 新しいルートを 1 つのハーネスに足す費用は、アダプタの 1 行とライブの関門 1 つであって、新しい種別ではない。
+- 新しいルートを 1 つのハーネスに足す費用は、アダプタの 1 行と隔離の仕組みとライブの関門 1 つであって、新しい種別ではない。
