@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 )
 
 // Canonical kind list. These are the persisted Meta.Kind / wire Session.Kind
@@ -603,7 +604,13 @@ type Meta struct {
 	// inside tmux, "managed" = a shared runtime plus structured RPC (no pane). The default
 	// tui persists as "", keeping existing metas byte-identical on disk.
 	Driver string `json:"driver,omitempty"`
-	Title  string `json:"title"` // user-supplied display title (optional); "" = auto
+	// Route is the explicit route selection (ADR 0128 decision 3): the route id and a stable
+	// reference to the connection it runs on. nil is "keep the kind's own resolution rules" and
+	// is what every session written before the field existed reads as, so a meta without it is
+	// byte-identical on disk and behaves exactly as before. Never a fallback: a session whose
+	// connection is gone stops with a reason instead of moving to another.
+	Route *routes.Selection `json:"route,omitempty"`
+	Title string            `json:"title"` // user-supplied display title (optional); "" = auto
 	// SuggestedTitle is a headless-LLM-generated candidate the Console offers via a
 	// dismissible banner once the session has had a couple of exchanges and has no
 	// user title yet. "" = none pending (not generated yet, already accepted into

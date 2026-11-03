@@ -232,6 +232,14 @@ because it validates tenant definitions with no workspace to ask. Never edit it 
 cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog .
 ```
 
+The route catalog has its own snapshot, `control-plane/internal/agentroutes/catalog.json`
+(ADR 0128): the route ids plus, per registry key, the routes the agent's `RouteAdapter` declares
+(none for a kind without one). A new kind adds a row to it, so regenerate it the same way:
+
+```
+cd workspace/agent && go test -run TestRouteCatalogSnapshot -update-route-catalog .
+```
+
 **Rolling out a new kind: Agent first.** `TestKindCatalogSnapshot` fails in CI when the
 snapshot was not regenerated, but it cannot see a rollout in which the Control Plane is
 older than the Workspace image. The CP refuses a create whose kind is not in its snapshot

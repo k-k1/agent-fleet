@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -1148,6 +1149,12 @@ func (a workspaceAPI) sessionCreateThen(w http.ResponseWriter, r *http.Request, 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_kind", err.Error()})
 		return
 	}
+	// A route selection (ADR 0128 decision 12) is checked against the snapshot at the same point,
+	// for the same reason. Absent is the unchanged case and passes untouched.
+	if aerr := checkCreateRoute(peekSessionKind(r), peekSessionRoute(r)); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	// SSM sessions (docs/log/p3-ssm-session.md): resolve the host bookmark
 	// server-side and rewrite the body with the (non-secret) instance/document/SSO
 	// coordinates before proxying — the client only sends ssm_host_id.
@@ -1332,6 +1339,48 @@ func peekSessionKind(r *http.Request) string {
 		return ""
 	}
 	return peek.Kind
+}
+
+// routeSelectionPeek is a create body's route selection as the CP reads it: nothing, a
+// selection, or a field that is not one (bad), which is refused here instead of being passed on
+// to look like no selection.
+type routeSelectionPeek struct {
+	sel *agentroutes.Selection
+	bad bool
+}
+
+// peekSessionRoute reads a create-session request body's route selection and restores the body.
+// A body that cannot be read or parsed yields no selection: the Agent decodes the same body and
+// surfaces the real error, and a selection can never be dropped on the way, since the body is
+// forwarded unchanged.
+func peekSessionRoute(r *http.Request) routeSelectionPeek {
+	body, err := readAllBody(r)
+	if err != nil {
+		return routeSelectionPeek{}
+	}
+	restoreBody(r, body)
+	var peek struct {
+		Route json.RawMessage `json:"route"`
+	}
+	if err := json.Unmarshal(body, &peek); err != nil || len(peek.Route) == 0 || string(peek.Route) == "null" {
+		return routeSelectionPeek{}
+	}
+	var sel agentroutes.Selection
+	if err := json.Unmarshal(peek.Route, &sel); err != nil {
+		return routeSelectionPeek{bad: true}
+	}
+	return routeSelectionPeek{sel: &sel}
+}
+
+// checkCreateRoute is the REST create's static route gate (agentroutes.CheckCreateRoute).
+func checkCreateRoute(kind string, p routeSelectionPeek) *apiError {
+	if p.bad {
+		return &apiError{http.StatusBadRequest, agentroutes.CodeBadRoute, `route must be an object {"route": <id>, "connection": <ref>}`}
+	}
+	if code, err := agentroutes.CheckCreateRoute(kind, p.sel); err != nil {
+		return &apiError{http.StatusBadRequest, code, err.Error()}
+	}
+	return nil
 }
 
 func (a workspaceAPI) sessionQuotaExceeded(ctx context.Context, res *resolved, createKind string) *apiError {

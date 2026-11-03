@@ -13,12 +13,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -32,21 +34,26 @@ func newScheduleAPI(m *manager) scheduleAPI { return scheduleAPI{memberAuth{m}, 
 // scheduleDTO is the wire shape for a schedule (create input + list/get output). Snake
 // case matches the MCP tool args, forwarded verbatim as the request body.
 type scheduleDTO struct {
-	ID            string `json:"id,omitempty"`
-	SpecKind      string `json:"spec_kind"`
-	Spec          string `json:"spec"`
-	SpecLabel     string `json:"spec_label,omitempty"`
-	TZ            string `json:"tz,omitempty"`
-	WakePolicy    string `json:"wake_policy,omitempty"`
-	SessionMode   string `json:"session_mode,omitempty"`
-	ReuseTarget   string `json:"reuse_target,omitempty"`
-	AgentKind     string `json:"agent_kind,omitempty"`
-	Model         string `json:"model,omitempty"`
-	Repo          string `json:"repo,omitempty"`
-	Worktree      string `json:"worktree,omitempty"`
-	NewBranch     bool   `json:"new_branch,omitempty"`
-	Prompt        string `json:"prompt,omitempty"`
-	OverlapPolicy string `json:"overlap_policy,omitempty"`
+	ID          string `json:"id,omitempty"`
+	SpecKind    string `json:"spec_kind"`
+	Spec        string `json:"spec"`
+	SpecLabel   string `json:"spec_label,omitempty"`
+	TZ          string `json:"tz,omitempty"`
+	WakePolicy  string `json:"wake_policy,omitempty"`
+	SessionMode string `json:"session_mode,omitempty"`
+	ReuseTarget string `json:"reuse_target,omitempty"`
+	AgentKind   string `json:"agent_kind,omitempty"`
+	Model       string `json:"model,omitempty"`
+	// Route / RouteConnection are the explicit model route the fire's created session runs on
+	// (ADR 0128): a route id and a stable reference to its connection. Omitted = no selection,
+	// the kind's own resolution rules, as every schedule written before them.
+	Route           string `json:"route,omitempty"`
+	RouteConnection string `json:"route_connection,omitempty"`
+	Repo            string `json:"repo,omitempty"`
+	Worktree        string `json:"worktree,omitempty"`
+	NewBranch       bool   `json:"new_branch,omitempty"`
+	Prompt          string `json:"prompt,omitempty"`
+	OverlapPolicy   string `json:"overlap_policy,omitempty"`
 	// Reuse (P6): Rotation is the JSON rotation policy blob, MissingTargetPolicy governs a
 	// pinned reuse whose target is gone. The reuse ledger (ReuseSession/ReuseRunCount) is
 	// read-only output so the operator/Console can show which session is current.
@@ -95,7 +102,8 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 	d := scheduleDTO{
 		ID: s.ID, SpecKind: s.SpecKind, Spec: s.Spec, SpecLabel: s.SpecLabel, TZ: s.TZ,
 		WakePolicy: s.WakePolicy, SessionMode: s.SessionMode, ReuseTarget: s.ReuseTarget,
-		AgentKind: s.AgentKind, Model: s.Model, Repo: s.Repo, Worktree: s.Worktree,
+		AgentKind: s.AgentKind, Model: s.Model, Route: s.Route, RouteConnection: s.RouteConnection,
+		Repo: s.Repo, Worktree: s.Worktree,
 		NewBranch: s.NewBranch, Prompt: s.Prompt, OverlapPolicy: s.OverlapPolicy,
 		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
 		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
@@ -150,6 +158,7 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 		WakePolicy: strings.TrimSpace(in.WakePolicy), SessionMode: strings.TrimSpace(in.SessionMode),
 		ReuseTarget: strings.TrimSpace(in.ReuseTarget), AgentKind: strings.TrimSpace(in.AgentKind),
 		Model: strings.TrimSpace(in.Model), Repo: strings.TrimSpace(in.Repo),
+		Route: strings.TrimSpace(in.Route), RouteConnection: strings.TrimSpace(in.RouteConnection),
 		Worktree: strings.TrimSpace(in.Worktree), NewBranch: in.NewBranch,
 		Prompt: in.Prompt, OverlapPolicy: strings.TrimSpace(in.OverlapPolicy),
 		Rotation: strings.TrimSpace(in.Rotation), MissingTargetPolicy: strings.TrimSpace(in.MissingTargetPolicy),
@@ -166,6 +175,10 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 	}
 	s.DeliverTo = targets
 	applyScheduleDefaults(&s)
+	// After the defaults: a blank agent_kind is claude, and the route is judged against that.
+	if aerr := checkScheduleRoute(s.AgentKind, s.Route, s.RouteConnection, s.SessionMode); aerr != nil {
+		return store.Schedule{}, aerr
+	}
 	if strings.TrimSpace(s.Prompt) == "" {
 		return store.Schedule{}, &apiError{http.StatusBadRequest, "bad_prompt", "prompt is required"}
 	}
@@ -186,6 +199,43 @@ func checkScheduleKind(kind, sessionMode string) *apiError {
 		return &apiError{http.StatusBadRequest, "bad_kind", err.Error()}
 	}
 	return nil
+}
+
+// scheduleRouteError is the static route gate for the sessions a schedule creates, shared by
+// create, update and the fire itself (ADR 0128 decision 12). An empty route with an empty
+// connection is the unchanged case. An assistant fire drives no session, so a route on it could
+// only be ignored, and ignoring a selection is never allowed: it is refused instead.
+func scheduleRouteError(kind, route, connection, sessionMode string) (code string, err error) {
+	route, connection = strings.TrimSpace(route), strings.TrimSpace(connection)
+	if route == "" && connection == "" {
+		return "", nil
+	}
+	if strings.TrimSpace(sessionMode) == "assistant" {
+		return agentroutes.CodeBadRoute, fmt.Errorf("route does not apply to an assistant schedule, which creates no session")
+	}
+	return agentroutes.CheckCreateRoute(scheduleInjectKind(kind), &agentroutes.Selection{Route: route, Connection: connection})
+}
+
+// checkScheduleRoute is scheduleRouteError as an API answer.
+func checkScheduleRoute(kind, route, connection, sessionMode string) *apiError {
+	if code, err := scheduleRouteError(kind, route, connection, sessionMode); err != nil {
+		return &apiError{http.StatusBadRequest, code, err.Error()}
+	}
+	return nil
+}
+
+// scheduleRouteBody is a schedule's selection as the create body's route field: nil when the
+// schedule names none, so a create without a selection carries no route key at all.
+func scheduleRouteBody(sch store.Schedule) map[string]any {
+	route := strings.TrimSpace(sch.Route)
+	if route == "" && strings.TrimSpace(sch.RouteConnection) == "" {
+		return nil
+	}
+	out := map[string]any{"route": route}
+	if c := strings.TrimSpace(sch.RouteConnection); c != "" {
+		out["connection"] = c
+	}
+	return out
 }
 
 // validateScheduleFields checks the enums + spec/tz shared by create and update.
@@ -648,6 +698,8 @@ type schedulePatch struct {
 	ReuseTarget         *string   `json:"reuse_target"`
 	AgentKind           *string   `json:"agent_kind"`
 	Model               *string   `json:"model"`
+	Route               *string   `json:"route"`
+	RouteConnection     *string   `json:"route_connection"`
 	Repo                *string   `json:"repo"`
 	Worktree            *string   `json:"worktree"`
 	NewBranch           *bool     `json:"new_branch"`
@@ -684,6 +736,27 @@ func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool, aerr *apiEr
 			return false, aerr
 		}
 	}
+	// The selection is judged as it will be stored: the patched route or connection over the
+	// stored one, against the kind and mode as they will be. Re-checked when any of the four
+	// changes, so a kind change cannot leave behind a route its new kind does not accept.
+	if p.AgentKind != nil || p.SessionMode != nil || p.Route != nil || p.RouteConnection != nil {
+		kind, mode, route, conn := sch.AgentKind, sch.SessionMode, sch.Route, sch.RouteConnection
+		if p.AgentKind != nil {
+			kind = strings.TrimSpace(*p.AgentKind)
+		}
+		if p.SessionMode != nil {
+			mode = strings.TrimSpace(*p.SessionMode)
+		}
+		if p.Route != nil {
+			route = *p.Route
+		}
+		if p.RouteConnection != nil {
+			conn = *p.RouteConnection
+		}
+		if aerr := checkScheduleRoute(kind, route, conn, mode); aerr != nil {
+			return false, aerr
+		}
+	}
 	set := func(dst *string, v *string) {
 		if v != nil {
 			*dst = strings.TrimSpace(*v)
@@ -710,6 +783,8 @@ func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool, aerr *apiEr
 	set(&sch.MissingTargetPolicy, p.MissingTargetPolicy)
 	set(&sch.AgentKind, p.AgentKind)
 	set(&sch.Model, p.Model)
+	set(&sch.Route, p.Route)
+	set(&sch.RouteConnection, p.RouteConnection)
 	set(&sch.Repo, p.Repo)
 	set(&sch.Worktree, p.Worktree)
 	if p.Prompt != nil {

@@ -351,3 +351,18 @@ table from becoming a menu of models that fail on the first message, which is wh
   first keeps its place in the `(ref, idx)` sequence and the others carry a key of their own. The turn's input and
   cache figures replace per call, so they sit on the segment of the call that last reported them and the rows sum to
   the unsplit totals. Subagent transcripts are not split. Not run against a live workspace.
+- 2026-11-04, P1a (#3281): the contract, with no harness behaviour change. `workspace/agent/internal/routes` holds the
+  route catalogue (id, wire protocol, credential tier; the ids are the ones the ledger already records) and the
+  `Selection` type (route id and an opaque connection reference); `agents.RouteAdapter` (decision 4) and an optional
+  `RouteChecker` for the live half of decision 12 sit in `agents`. `session.Meta.Route` is a pointer with `omitempty`,
+  so a stored session and a create without a selection read, write and behave as before. No harness implements
+  `RouteAdapter`, so an explicit selection is refused everywhere (`route_unsupported`, or `bad_route` for an empty or
+  unknown id), never ignored. The CP embeds `control-plane/internal/agentroutes/catalog.json`, generated from the
+  catalogue and the harness allow-lists by `TestRouteCatalogSnapshot` (`-update-route-catalog`), and checks it before
+  waking a Workspace on the Console/REST create, MCP `create_session` (`route`, `route_connection`) and schedules (new,
+  reused and rotated alike: the one check at the top of the fire, plus create and update; an assistant schedule refuses
+  a route because it would be ignored). The Agent repeats the static list and runs the live checks after the wake, on
+  create, fork and recreate (inherited and re-validated) and at a move's request. A move never carries the source's
+  selection: the request names the target's own. The allow-list is per kind, not per driver, for now: decision 5's
+  Terminal-only claude rows are the adapter's to enforce when one exists. The idempotency fingerprint now includes the
+  route, only when present. Not built: any adapter, the Console picker and the per-route auth guard (P1b).

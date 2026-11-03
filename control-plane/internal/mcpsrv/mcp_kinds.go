@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 )
 
 // toolKinds is the kind catalog in the order the tool texts list it: claude, the default kind,
@@ -76,4 +77,24 @@ func managedKindsSentence() string {
 	only := kindNames(func(e agentkinds.Entry) bool { return e.ManagedOnly })
 	return listKinds(byDefault, "and") + " sessions default to the managed driver, not TUI; " +
 		listKinds(only, "and") + " are always managed."
+}
+
+// createRouteArg reads create_session's route / route_connection arguments into the selection
+// body field, and refuses with the Workspace untouched what the route snapshot proves invalid
+// (ADR 0128 decision 12). Neither argument set is the unchanged case: it returns nil and the
+// create carries no selection at all.
+func createRouteArg(kind, route, connection string) (map[string]any, error) {
+	route, connection = strings.TrimSpace(route), strings.TrimSpace(connection)
+	if route == "" && connection == "" {
+		return nil, nil
+	}
+	sel := &agentroutes.Selection{Route: route, Connection: connection}
+	if _, err := agentroutes.CheckCreateRoute(kind, sel); err != nil {
+		return nil, err
+	}
+	out := map[string]any{"route": route}
+	if connection != "" {
+		out["connection"] = connection
+	}
+	return out, nil
 }

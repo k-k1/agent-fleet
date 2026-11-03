@@ -42,7 +42,7 @@
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
 ## read create_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
-## read create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","subdir":"v","title":"v","worktree":true}
+## read create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","route":"v","route_connection":"v","subdir":"v","title":"v","worktree":true}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
 ## read create_session kind= {"kind":""}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: create_session"}}
@@ -351,7 +351,7 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write create_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for create_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## write create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","subdir":"v","title":"v","worktree":true}
+## write create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","route":"v","route_connection":"v","subdir":"v","title":"v","worktree":true}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"v\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
 ## write create_session kind= {"kind":""}
 -> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]
@@ -702,7 +702,7 @@
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous create_session unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for create_session","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","subdir":"v","title":"v","worktree":true}
+## admin:dangerous create_session full {"branch":"v","dir":"v","initial_prompt":"v","kind":"v","model":"v","new_branch":"v","route":"v","route_connection":"v","subdir":"v","title":"v","worktree":true}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown kind \"v\"; accepted kinds: agy, claude, codex, copilot, cursor, kiro, lcpp, muse, opencode, shell, ssm (empty means claude)","type":"text"}],"isError":true,"resultType":"complete"}}
 ## admin:dangerous create_session kind= {"kind":""}
 -> AGENT ["POST","/sessions-mcp","{\"branch\":\"\",\"connection\":\"pat1\",\"dir\":\"\",\"driver\":\"\",\"impl\":\"golden\",\"initial_prompt\":\"\",\"kind\":\"\",\"model\":\"\",\"new_branch\":\"\",\"subdir\":\"\",\"title\":\"\",\"via\":\"Claude\",\"worktree\":false}"]

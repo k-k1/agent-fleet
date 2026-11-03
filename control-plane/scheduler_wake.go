@@ -79,6 +79,13 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 			return "", "", fmt.Errorf("schedule agent_kind: %w", err)
 		}
 	}
+	// The route is judged again for the same reason: a row saved before create/update checked
+	// it, or one the snapshot has since stopped accepting, must not wake a Workspace to run on
+	// the default route instead. This is the one entry every fire passes through: a new session,
+	// a reused one's recreate and a rotation all create from here on.
+	if code, err := scheduleRouteError(sch.AgentKind, sch.Route, sch.RouteConnection, sch.SessionMode); err != nil {
+		return "", "", fmt.Errorf("schedule route (%s): %w", code, err)
+	}
 	// 1. membership -> resolved (no gateway headers; the MCP/memo-bridge path).
 	identityID, ok, err := f.mgr.store.IdentityIDForMembership(ctx, sch.MembershipID)
 	if err != nil {
@@ -399,6 +406,9 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 	}
 	if d := scheduleDelivery(sch); d != nil {
 		body["schedule_delivery"] = d
+	}
+	if r := scheduleRouteBody(sch); r != nil {
+		body["route"] = r
 	}
 	b, _ := json.Marshal(body)
 	return b

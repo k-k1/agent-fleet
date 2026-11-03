@@ -20,10 +20,14 @@ type Schedule struct {
 	WakePolicy                 string // wake (default) | skip | catch_up
 	SessionMode, ReuseTarget   string // new (default) | reuse; ReuseTarget = pinned session name for reuse (P6)
 	AgentKind, Model           string
-	Repo, Worktree             string
-	NewBranch                  bool
-	Prompt                     string
-	OverlapPolicy              string // skip (default) | queue | restart (reuse only, P6)
+	// Route / RouteConnection are the explicit model route the schedule's created sessions run
+	// on (ADR 0128): a route id and a stable reference to the connection. Empty = no selection,
+	// the kind's own resolution rules, which every row written before the columns reads as.
+	Route, RouteConnection string
+	Repo, Worktree         string
+	NewBranch              bool
+	Prompt                 string
+	OverlapPolicy          string // skip (default) | queue | restart (reuse only, P6)
 	// Report opts a fire into the docs/log/30 completion report: true passes OwnerConv as the
 	// session's report_to so the result comes back to the operator/assistant conversation.
 	// Default false = fire silently (run history / failure notifications still surface).
@@ -145,7 +149,8 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 	overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
-	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent FROM schedule`
+	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent,
+	route, route_connection FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
@@ -154,7 +159,7 @@ func scanSchedule(row scanner) (Schedule, error) {
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
-		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent)
+		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent, &s.Route, &s.RouteConnection)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
@@ -171,13 +176,13 @@ func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 		   reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy, report,
-		   stop_after_run, deliver_to, silent)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   stop_after_run, deliver_to, silent, route, route_connection)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
 		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt,
 		sc.ReuseSession, sc.ReuseStartedAt, sc.ReuseRunCount, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent))
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection)
 	return err
 }
 
@@ -233,12 +238,12 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, deliver_to=?, silent=?, held_by_removal=0
+		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, held_by_removal=0
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.ID, sc.MembershipID)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.ID, sc.MembershipID)
 	return err
 }
 

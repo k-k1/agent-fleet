@@ -344,5 +344,13 @@ func createIdempotencyKey(r *CreateReq) string {
 			h.Write([]byte{0})
 		}
 	}
+	// Likewise for the route: the same launch on another route is another session, and a
+	// create without a selection keeps the fingerprint it always had.
+	if sel := r.Route.Normalize(); sel != nil {
+		for _, f := range []string{"route", sel.Route, sel.Connection} {
+			h.Write([]byte(f))
+			h.Write([]byte{0})
+		}
+	}
 	return "fp_" + hex.EncodeToString(h.Sum(nil))
 }

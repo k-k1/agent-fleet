@@ -707,15 +707,17 @@ func memberTools() []mcpTool {
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
-					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
-					"kind":           map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — a shell session takes no initial_prompt over MCP (it would run as a command), and send_to_session does not reach it either."},
-					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
-					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
-					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
-					"branch":         map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
-					"new_branch":     map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
-					"subdir":         map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
+					"dir":              map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
+					"title":            map[string]any{"type": "string", "description": "display name (optional)"},
+					"kind":             map[string]any{"type": "string", "description": "agent kind: " + joinKinds(createKinds(), " | ", " (default)") + ". agy is the Antigravity CLI (launchable only when connected). copilot is the GitHub Copilot CLI (needs the GitHub connection + a Copilot subscription). cursor is the Cursor CLI (launchable only when connected). kiro is the Kiro CLI (launchable only when connected; defaults to the managed driver). lcpp is the built-in llama.cpp harness (no sign-in; always managed, no TUI route); pick its model from list_models(kind=\"lcpp\"). muse is Meta's Muse Code (launchable only once installed on demand and signed in; always managed, no TUI route). shell is a raw shell with no agent guardrails — a shell session takes no initial_prompt over MCP (it would run as a command), and send_to_session does not reach it either."},
+					"model":            map[string]any{"type": "string", "description": "model override (optional)"},
+					"initial_prompt":   map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
+					"worktree":         map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
+					"branch":           map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
+					"new_branch":       map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
+					"subdir":           map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
+					"route":            map[string]any{"type": "string", "description": "explicit model route id (optional; omit to keep the kind's own default resolution). No kind accepts an explicit route yet, so a create naming one is refused with the reason, never run on the default route instead."},
+					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route)"},
 				},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
@@ -724,6 +726,10 @@ func memberTools() []mcpTool {
 				if err := agentkinds.CheckCreateKind(kind); err != nil {
 					return "", err
 				}
+				route, aerr := createRouteArg(kind, argStr(args, "route"), argStr(args, "route_connection"))
+				if aerr != nil {
+					return "", aerr
+				}
 				driver := ""
 				// An MCP caller cannot drive a pane, so it asks for managed wherever the Agent's
 				// registry says that is the default (the kind catalog snapshot). The match is
@@ -731,7 +737,7 @@ func memberTools() []mcpTool {
 				if mcpManagedDefaultKinds[kind] {
 					driver = "managed"
 				}
-				body, err := createSessionBody(ctx, map[string]any{
+				fields := map[string]any{
 					"dir":            argStr(args, "dir"),
 					"subdir":         argStr(args, "subdir"),
 					"title":          argStr(args, "title"),
@@ -742,7 +748,11 @@ func memberTools() []mcpTool {
 					"branch":         argStr(args, "branch"),
 					"new_branch":     argStr(args, "new_branch"),
 					"driver":         driver,
-				})
+				}
+				if route != nil {
+					fields["route"] = route
+				}
+				body, err := createSessionBody(ctx, fields)
 				if err != nil {
 					return "", err
 				}

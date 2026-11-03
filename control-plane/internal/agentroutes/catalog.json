@@ -1,0 +1,100 @@
+{
+  "routes": [
+    {
+      "id": "af-engine-llm",
+      "wire": "openai-chat",
+      "credential": "deployment"
+    },
+    {
+      "id": "anthropic-api",
+      "wire": "anthropic-messages",
+      "credential": "member-key"
+    },
+    {
+      "id": "anthropic-subscription",
+      "wire": "anthropic-messages",
+      "credential": "existing-connection"
+    },
+    {
+      "id": "bedrock",
+      "wire": "bedrock",
+      "credential": "aws-profile-ref"
+    },
+    {
+      "id": "chatgpt-subscription",
+      "wire": "openai-responses",
+      "credential": "existing-connection"
+    },
+    {
+      "id": "member-llamacpp",
+      "wire": "openai-chat",
+      "credential": "member-key"
+    },
+    {
+      "id": "openai-api",
+      "wire": "openai-responses",
+      "credential": "member-key"
+    },
+    {
+      "id": "opencode-go",
+      "wire": "per-model",
+      "credential": "existing-connection"
+    },
+    {
+      "id": "opencode-zen",
+      "wire": "per-model",
+      "credential": "existing-connection"
+    },
+    {
+      "id": "vertex",
+      "wire": "vertex",
+      "credential": "tenant-key"
+    }
+  ],
+  "kinds": [
+    {
+      "kind": "agy",
+      "routes": []
+    },
+    {
+      "kind": "claude",
+      "routes": []
+    },
+    {
+      "kind": "codex",
+      "routes": []
+    },
+    {
+      "kind": "copilot",
+      "routes": []
+    },
+    {
+      "kind": "cursor",
+      "routes": []
+    },
+    {
+      "kind": "kiro",
+      "routes": []
+    },
+    {
+      "kind": "lcpp",
+      "routes": []
+    },
+    {
+      "kind": "muse",
+      "routes": []
+    },
+    {
+      "kind": "opencode",
+      "routes": []
+    },
+    {
+      "kind": "shell",
+      "routes": []
+    },
+    {
+      "kind": "ssm",
+      "routes": []
+    }
+  ]
+}

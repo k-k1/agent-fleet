@@ -457,6 +457,9 @@ func buildReuseCreateBody(sch store.Schedule, slot time.Time, title string) []by
 	if d := scheduleDelivery(sch); d != nil {
 		body["schedule_delivery"] = d
 	}
+	if r := scheduleRouteBody(sch); r != nil {
+		body["route"] = r
+	}
 	b, _ := json.Marshal(body)
 	return b
 }
