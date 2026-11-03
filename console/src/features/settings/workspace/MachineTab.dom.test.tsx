@@ -426,6 +426,44 @@ describe("MachineView", () => {
     expect(section().textContent).toContain("Chromium の使い捨てプロファイル を 1551 個削除しました");
   });
 
+  it("asks before removing archived sessions' folders early, and cancel removes nothing", async () => {
+    answers.byPath["api/cleanup/leftovers"] = {
+      kinds: [{ kind: "af-work-archived", count: 12, bytes: 3 * 2 ** 30, path: "~/.af-work", confirm: true }],
+    };
+    answers.byPath["api/cleanup/leftovers/af-work-archived?confirm=1"] = { kind: "af-work-archived", count: 12, bytes: 3 * 2 ** 30 };
+    await mount(shared);
+    const section = () =>
+      [...document.body.querySelectorAll("section")].find((s) =>
+        s.querySelector("h4")?.textContent?.includes("使われなくなったファイル"),
+      )!;
+    const click = async (root: ParentNode, label: string) =>
+      act(async () => {
+        [...root.querySelectorAll("button")].find((b) => b.textContent === label)!.click();
+      });
+    await click(section(), "測る");
+    expect(section().textContent).toContain("アーカイブしたセッションの作業用フォルダ");
+
+    await click(section(), "削除");
+    const dialog = () => document.body.querySelector(".confirm-title")?.closest("[role=dialog]") ?? document.body;
+    expect(document.body.querySelector(".confirm-title")?.textContent).toContain("今すぐ削除しますか");
+    expect(dialog().textContent).toContain("12 個の ~/.af-work（3.0 GB）");
+    expect(dialog().textContent).toContain("復元したセッションの作業用フォルダ（$AF_WORK_DIR）は空から始まります");
+    expect(answers.calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+
+    await click(dialog(), "キャンセル");
+    expect(document.body.querySelector(".confirm-title")).toBeNull();
+    expect(answers.calls.some((c) => c.startsWith("DELETE"))).toBe(false);
+
+    await click(section(), "削除");
+    const confirmBtn = [...dialog().querySelectorAll("button")].filter((b) => b.textContent === "削除").pop()!;
+    await act(async () => {
+      confirmBtn.click();
+    });
+    expect(answers.calls).toContain("DELETE api/cleanup/leftovers/af-work-archived?confirm=1");
+    expect(document.body.querySelector(".confirm-title")).toBeNull();
+    expect(section().textContent).toContain("を 12 個削除しました");
+  });
+
   it("hides the leftovers outside a Workspace image", async () => {
     answers.byPath["api/cleanup/leftovers"] = { kinds: [], unsupported: true };
     await mount(shared);

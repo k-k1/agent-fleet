@@ -610,6 +610,11 @@ administrator's to set.
   elsewhere, for example under `~/repos` or a folder of your own in your home directory. An archived
   session's folder is removed 7 days after you archive it (sessions that were archived before this existed
   get their 7 days from the first pass that sees them); a locked session's folder stays while it is locked.
+  When you need the space before then, the row **"Work folders of archived sessions"** counts the folders
+  still inside their 7 days, and its **"Delete"** removes them now, after a confirmation. It is never run
+  at startup. The removal cannot be undone and nothing goes to the trash; the sessions stay on the shelf
+  and can be restored, but a restored session starts with an empty `$AF_WORK_DIR`. Locked sessions,
+  folders in use and folders changed within the last hour are kept.
 - The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchains
