@@ -18,6 +18,8 @@ import { t, useLocale, useT } from "../../lib/i18n/index.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Session } from "../../types/session.ts";
 import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
+import { descendantNames } from "./family.ts";
+import { useSessionsStore } from "./store.ts";
 
 type ArchivedSession = Session & { started?: string };
 
@@ -72,6 +74,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
   const toast = useToast();
   const tr = useT();
   const locale = useLocale(); // keeps groupHeading's t() in step with a locale switch
+  const live = useSessionsStore((st) => st.sessions);
 
   const load = () =>
     api("api/sessions/archived")
@@ -81,14 +84,27 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir }: ArchivedMo
     void load();
   }, []);
 
+  // A folder scope also takes in the archived children of that folder's sessions: a child
+  // spawned with create_session usually gets its own worktree, so matching on dir alone
+  // hides it from the very folder whose row the user opened this from. The parent may be
+  // live or archived, so both lists feed the lineage.
+  const scoped = useMemo(() => {
+    const all = items || [];
+    if (!scope) return all;
+    const pool = [...live, ...all];
+    const roots = pool.filter((s) => s.dir === scope).map((s) => s.name);
+    const kin = descendantNames(roots, pool);
+    return all.filter((s) => s.dir === scope || kin.has(s.name));
+  }, [items, live, scope]);
+
   const filtered = useMemo(() => {
-    const list = (items || []).filter((s) => !scope || s.dir === scope);
+    const list = scoped;
     const needle = q.trim().toLowerCase();
     if (!needle) return list;
     return list.filter((s) =>
       [displayName(s), s.name, s.dir || "", kindLabel(s.kind)].join(" ").toLowerCase().includes(needle),
     );
-  }, [items, q, scope]);
+  }, [scoped, q]);
 
   // Group by dir. Groups sorted by repo name (asc), rows by createdAt desc.
   const groups = useMemo(() => {
