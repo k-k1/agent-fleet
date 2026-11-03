@@ -90,9 +90,7 @@ Parameters:
     Default: ""
     Description: >-
       SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
-      declares an arm64 class - the CP refuses to boot otherwise. Initial and fallback
-      value only: the CP resolves the current arm64 AMI from Amazon's public SSM
-      parameter itself (#3318), so a stale value here no longer leaves slots behind.
+      declares an arm64 class - the CP refuses to boot otherwise. Initial/fallback only (PARAMETERS.md).
   Ec2DefaultSlotClass:
     Type: String
     Default: ""

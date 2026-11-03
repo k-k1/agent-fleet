@@ -410,8 +410,11 @@ func (e *ecsEC2Runtime) adoptableReplacement(ctx context.Context, id, az, volID 
 				return false, replacementSkip
 			}
 			_, reasons, known := e.pool.slotStale(inst, lt)
+			// Both halves must be judgeable before a slot is reused: an AMI that looks
+			// current says nothing about a template whose version data was unreadable.
+			_, _, tplKnown := slotTemplateOutdated(inst.Tags, lt)
 			switch {
-			case !known:
+			case !known || !tplKnown:
 				return false, replacementSkip
 			case len(reasons) > 0:
 				return false, replacementRetire
@@ -497,6 +500,8 @@ func (e *ecsEC2Runtime) pendingReplacementsForOthers(ctx context.Context, out *e
 		var ltErr error
 		if lt, ltErr = e.pool.readLaunchTemplate(ctx, e.ec2); ltErr != nil {
 			lt, ltUnknown = ec2LaunchTemplate{}, true
+		} else if lt.partial {
+			ltUnknown = true
 		}
 	}
 	reserved := map[string]bool{}
@@ -674,6 +679,9 @@ type ec2LaunchTemplate struct {
 	latest int64
 	amis   map[string]string
 	sigs   map[int64]string
+	// partial: the version data needed to compare older versions with $Latest could not be
+	// read. Callers that must be conservative (replacement ownership) treat that as unknown.
+	partial bool
 }
 
 func (f *ecsEC2Factory) launchTemplateLatest(ctx context.Context) (ec2LaunchTemplate, error) {
@@ -689,6 +697,7 @@ func (p ec2PoolConfig) readLaunchTemplate(ctx context.Context, api ec2API) (ec2L
 	}
 	lt.amis = p.amis.snapshot(ctx)
 	lt.sigs = p.ltSigs.versions(ctx, api, lt)
+	lt.partial = p.ltSigs != nil && lt.sigs[lt.latest] == ""
 	return lt, nil
 }
 

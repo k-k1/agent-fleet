@@ -11,7 +11,7 @@ On `ecs-ec2` a workspace runs as a task on an EC2 slot taken from a pool, and it
 volume that stays with its slot between starts. A super_admin manages the slots under
 **Admin → Slots**.
 
-## ecs-ec2: replacing slots after a launch template change
+## ecs-ec2: replacing outdated slots (new AMI or launch template change)
 
 A slot reads its user data only when it is launched, and a stopped workspace goes back to the
 same slot on its next Start, so a change to the slot launch template (a release's security
@@ -29,24 +29,24 @@ the Control Plane does not know. There is no grace period: a slot behind the cur
 next start, and a free one is terminated by the sweeper, so the first new AMI makes every slot outdated at once.
 Running workspaces are never touched outside a start.
 
-**Slots below `$Latest` are replaced automatically.** When a workspace starts and its home is on
+**Outdated slots are replaced automatically.** When a workspace starts and its home is on
 such a slot, that start moves it to a new slot exactly as a reservation does, but without the WS
-bar notice, and a free slot below `$Latest` is terminated by the sweeper. If no new slot can be
+bar notice, and a free outdated slot is terminated by the sweeper. If no new slot can be
 launched (capacity, quota) the start still succeeds on the old slot, and starts within the next
 10 minutes stay on it without trying again. Each automatic move is in the audit log (`pool.slot_replace_auto`). The Slots tab shows
-**older than $Latest · replaced at next start** on these slots. Set
+**outdated · replaced at next start** on these slots. Set
 `AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS=false` on the Control Plane to turn this off. Reserve slots
 yourself when a workspace must never be put back on its old slot (then a start that cannot launch
 a new slot fails instead):
 
 1. **Admin → Slots** (super_admin). The **Template** column shows the launch template
-   version each slot was launched from, marked **older than $Latest** when it is.
-2. **Reserve all N for replacement…** lists the slots below `$Latest` and the workspace on each,
+   version each slot was launched from, marked **outdated** (with the reason in its tooltip) when it is.
+2. **Reserve all N for replacement…** lists the outdated slots and the workspace on each,
    and reserves exactly those once you confirm. **Replace at next start** on a row reserves one
    slot (a reserved row then shows the label "replaced at next start"); **Cancel replacement** takes it back. Every reservation is in the audit log
    (`pool.slot_replace_reserve` / `pool.slot_replace_cancel`, with the workspace it moves).
 3. Nothing happens to a running workspace. Its member sees **Moves to a new slot** in the WS bar,
-   and their next stop → start launches a new slot from `$Latest`, moves the home onto it and
+   and their next stop → start launches a new slot with the current AMI and `$Latest`, moves the home onto it and
    terminates the old one. That start is about 25 seconds longer than usual. Files, repos and
    logins come along: the home is never deleted.
 4. If no new slot can be launched (capacity, quota), the start fails with the reason and the

@@ -394,8 +394,8 @@ describe("replacement reservations", () => {
     api.mockResolvedValue(TEMPLATES);
     await mount();
     expect(rowOf("i-hot")?.textContent).toContain("v9");
-    expect(rowOf("i-hot")?.textContent).toContain("$Latest より古い");
-    expect(rowOf("i-zzz")?.textContent).not.toContain("$Latest より古い");
+    expect(rowOf("i-hot")?.textContent).toContain("古い");
+    expect(rowOf("i-zzz")?.textContent).not.toContain("古い");
     expect(rowOf("i-done")?.textContent).toContain("次回起動で入れ替え予定");
     expect(rowOf("i-done")?.querySelector("button")?.textContent).toBe("予約の取消");
   });
