@@ -153,20 +153,31 @@ func waitWorkItemFetchIdle(t *testing.T, membershipID string) {
 // hang; it must never be what decides the assertion.
 func runStream(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls int64) (map[string][]json.RawMessage, string) {
 	t.Helper()
+	return runStreamWith(t, a, res, stub, polls, &syncRecorder{})
+}
+
+// runStreamWith is runStream writing into rec, so a test can wait for the subscriber's own first
+// frame before it changes anything: the hub polls ahead of the subscriber, so a poll count says
+// nothing about what the subscriber has sent.
+func runStreamWith(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls int64, rec *syncRecorder) (map[string][]json.RawMessage, string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	go func() {
 		stub.waitPolls(polls, time.Now().Add(25*time.Second))
+		// The hub's tick runs ahead of the subscriber, which still owes the per-member parts
+		// of the snapshot that poll belongs to. Closing at once would cancel it half-way.
+		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
 	r := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
-	w := httptest.NewRecorder()
-	a.stream(w, r, res)
-	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+	a.stream(rec, r, res)
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
 		t.Fatalf("Content-Type = %q", ct)
 	}
+	body := rec.body()
 	frames := map[string][]json.RawMessage{}
-	for _, part := range strings.Split(w.Body.String(), "\n\n") {
+	for _, part := range strings.Split(body, "\n\n") {
 		part = strings.TrimSpace(part)
 		if !strings.HasPrefix(part, "data: ") {
 			continue
@@ -180,7 +191,7 @@ func runStream(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls
 		}
 		frames[f.Stream] = append(frames[f.Stream], f.Data)
 	}
-	return frames, w.Body.String()
+	return frames, body
 }
 
 // TestEventsStreamSnapshotThenSilence: the first tick emits one snapshot for each of the
@@ -224,11 +235,12 @@ func TestEventsStreamPushesChange(t *testing.T) {
 
 	// Apply the change only after the snapshot has gone out — counted in polls, not
 	// milliseconds.
+	rec := &syncRecorder{}
 	go func() {
-		stub.waitPolls(2, time.Now().Add(25*time.Second))
+		rec.waitFrames("sessions", 1)
 		stub.setBody(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
 	}()
-	frames, _ := runStream(t, a, res, stub, 6)
+	frames, _ := runStreamWith(t, a, res, stub, 6, rec)
 
 	if got := len(frames["sessions"]); got != 2 {
 		t.Fatalf("sessions frames = %d, want 2 (snapshot + change)", got)

@@ -1,11 +1,12 @@
 // agent_sessions_share.go — one Agent GET /sessions per workspace per tick, however many
 // Console windows are subscribed (#3236).
 //
-// Every /api/events subscriber ticks on its own and used to call the Agent's GET /sessions
+// Every /api/events subscriber used to tick on its own and call the Agent's GET /sessions
 // itself, so N visible windows for one workspace cost N Agent reads per tick (each one a git
 // spawn per working copy on the Agent side). agentSessionsShared collapses concurrent callers
 // into one in-flight read and reuses a successful result for sharedSessionsTTL, which is below
-// the 4 s tick, so the subscribers of one workspace end up sharing one read per tick.
+// the 4 s tick. The events push hub (events.go) now builds the list once per tick per workspace;
+// this share still serves the REST fallback and a joining subscriber.
 //
 // Only the raw Agent envelope is shared. Everything that differs per member (inbox origins,
 // notifications, the engine gate) is applied by the caller on its own copy of the list; the

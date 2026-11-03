@@ -24,6 +24,8 @@ import (
 type manager struct {
 	// sessionsShare coalesces the per-tick Agent sessions read of /api/events subscribers.
 	sessionsShare sessionsShare
+	// eventsHub runs one /api/events ticker per workspace with subscribers (events_hub.go).
+	eventsHub eventsHub
 	// memberConns has its own lock: in-flight requests per membership, closed on removal.
 	memberConns memberConnRegistry
 	// removalStops: workspace ids with a removed-member sweep stop in flight.
