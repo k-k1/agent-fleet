@@ -493,6 +493,8 @@ interface LeftoverRow extends Place {
   kind: string;
   count: number;
   bytes: number;
+  /** The Agent removes this kind only with confirm=1 (af-work-archived, #3299). */
+  confirm?: boolean;
 }
 
 // A kind this Console has no label for (a newer Agent) shows by its name.
@@ -505,7 +507,9 @@ const leftoverLabel = (kind: string) => tMaybe("machine.left_kind_" + kind.repla
 // these costs nothing, and one warning over both would blur the two. The Agent already
 // removes them at boot; this is for a workspace that runs for weeks without a restart, and
 // it shows what a removal took. The delete runs the boot pass for one kind, so there is no
-// confirmation — what it would keep (in use, changed within the hour) is judged there.
+// confirmation — what it would keep (in use, changed within the hour) is judged there. The
+// exception is a row marked `confirm` (archived sessions' folders inside their week): the
+// Agent keeps those on its own, so removing them is a trade the member makes, and asks first.
 function LeftoverSection() {
   const tr = useT();
   const [msg, setMsg] = useState("");
@@ -515,6 +519,7 @@ function LeftoverSection() {
   const [measuring, setMeasuring] = useState(false);
   const [err, setErr] = useState(false);
   const [busy, setBusy] = useState("");
+  const [confirm, setConfirm] = useState<LeftoverRow | null>(null);
 
   const measure = async () => {
     setMeasuring(true);
@@ -536,7 +541,9 @@ function LeftoverSection() {
     const label = leftoverLabel(row.kind);
     setBusy(row.kind);
     try {
-      const res = await api("api/cleanup/leftovers/" + encodeURIComponent(row.kind), { method: "DELETE" });
+      const res = await api("api/cleanup/leftovers/" + encodeURIComponent(row.kind) + (row.confirm ? "?confirm=1" : ""), {
+        method: "DELETE",
+      });
       if (res?.error) setMsg(tr("machine.left_failed_delete", { name: label }) + (res.error.message ?? res.error.code));
       else {
         const done = tr("machine.left_deleted", { name: label, count: res?.count ?? 0, size: humanSize(res?.bytes ?? 0) });
@@ -547,6 +554,7 @@ function LeftoverSection() {
       setMsg(tr("machine.left_failed_delete", { name: label }));
     } finally {
       setBusy("");
+      setConfirm(null);
     }
     // Whatever happened, the counts above are stale now.
     await measure();
@@ -565,7 +573,7 @@ function LeftoverSection() {
           </span>
           <PlaceLine place={r} />
           {r.count > 0 && (
-            <Button small icon="trash" onClick={() => remove(r)} disabled={!!busy}>
+            <Button small icon="trash" onClick={() => (r.confirm ? setConfirm(r) : remove(r))} disabled={!!busy}>
               {busy === r.kind ? tr("machine.left_deleting") : tr("machine.left_delete")}
             </Button>
           )}
@@ -579,6 +587,22 @@ function LeftoverSection() {
       {msg && <p className="ds-note">{msg}</p>}
       {truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
       <p className="muted ds-note">{tr("machine.left_note")}</p>
+      {confirm && (
+        <ConfirmDialog
+          title={tr("machine.left_confirm_title", { name: leftoverLabel(confirm.kind) })}
+          confirmLabel={tr("machine.left_delete")}
+          busy={busy === confirm.kind}
+          onConfirm={() => remove(confirm)}
+          onCancel={() => setConfirm(null)}
+        >
+          <p>
+            {tMaybe("machine.left_confirm_body_" + confirm.kind.replace(/-/g, "_"), {
+              count: confirm.count,
+              size: humanSize(confirm.bytes),
+            }) ?? tr("machine.left_confirm_body", { count: confirm.count, size: humanSize(confirm.bytes) })}
+          </p>
+        </ConfirmDialog>
+      )}
     </section>
   );
 }

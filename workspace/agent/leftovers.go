@@ -4,7 +4,7 @@ package main
 // from the Settings "Machine" tab.
 //
 //   GET    /cleanup/leftovers        → per kind, what a prune would remove right now
-//   DELETE /cleanup/leftovers/{kind} → remove it
+//   DELETE /cleanup/leftovers/{kind} → remove it (confirm=1 for a manualOnly kind)
 //
 // The boot pass and the button run the same functions, so the keep rules live only here:
 //
@@ -13,6 +13,8 @@ package main
 //   - af-work: ~/.af-work/<name> whose name is no session (live or in the trash) and no
 //     working copy's directory name (Managed sessions key it by working copy). Boot removes
 //     only the ones the Agent marked as its own; the rest wait for the button.
+//   - af-work-archived: the folders of archived sessions still inside archivedScratchTTL, for
+//     a member who needs the space before the week is up. Button only, behind confirm=1.
 //   - node: patches the entrypoint's per-boot install superseded; nodeBinFor always takes
 //     the highest patch of a major, so the older ones are never run again.
 //   - kiro: kas/<version>-<hash> of kiro versions other than the installed one and the pin.
@@ -63,6 +65,11 @@ type leftoverKind struct {
 	// prepare, when set, runs at the start of every prune (not of a survey) for what the
 	// judgement needs written first (af-work stamps archived sessions that have no date).
 	prepare func()
+	// manualOnly kinds are never run by the unattended pass, and their DELETE must carry
+	// confirm=1: what they remove is still wanted by the keep rules, and only a member who
+	// asked may trade it for space. An older Console shows such a row with a plain delete
+	// button, so the server is where the confirmation is enforced.
+	manualOnly bool
 }
 
 // leftover is one directory to remove, plus files beside it that go with it.
@@ -84,6 +91,8 @@ var leftoverKinds = []leftoverKind{
 	{Name: "chromium", mention: "chrom", roots: chromiumProfileRoots, candidates: chromiumLeftovers,
 		place: func(h string) string { return filepath.Join(h, ".config", "chromium-headless") }},
 	{Name: "af-work", mention: ".af-work", roots: afWorkRoots, candidates: afWorkLeftovers, prepare: stampArchivedSessions,
+		place: func(h string) string { return filepath.Join(h, ".af-work") }},
+	{Name: "af-work-archived", mention: ".af-work", roots: afWorkRoots, candidates: afWorkArchivedLeftovers, manualOnly: true,
 		place: func(h string) string { return filepath.Join(h, ".af-work") }},
 	{Name: "node", mention: "node", roots: func(string) []string { return []string{nvmNodeRoot()} }, candidates: nodeLeftovers,
 		place: func(string) string { return nvmNodeRoot() }},
@@ -177,6 +186,9 @@ type leftoverRemoved struct {
 // logged by path, so a loss can be explained per directory. The caller holds leftoverMu.
 func (k leftoverKind) prune(home string, pins map[string]string, boot bool) (leftoverRemoved, error) {
 	res := leftoverRemoved{Kind: k.Name}
+	if boot && k.manualOnly {
+		return res, nil
+	}
 	var firstErr error
 	if k.prepare != nil {
 		k.prepare()
@@ -361,7 +373,7 @@ func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
 	if !ok {
 		return nil
 	}
-	known := scan.known
+	known := scan.keeps()
 	repos, err := os.ReadDir(gitx.ReposRoot())
 	if err != nil && !os.IsNotExist(err) {
 		return nil
@@ -390,15 +402,67 @@ func afWorkLeftovers(_ string, roots []string, _ map[string]string) []leftover {
 
 // afWorkScan is what one read of the session store says about ~/.af-work.
 type afWorkScan struct {
-	// known holds every name whose folder stays: sessions that are live, locked, in the trash
-	// or archived less than archivedScratchTTL ago (or with no usable date yet), and each live
-	// session's working-copy name.
+	// known holds every name whose folder stays: sessions that are live, locked or in the
+	// trash, and each session's working-copy name. Archived sessions are in pending or expired.
 	known map[string]bool
+	// pending holds archived, unlocked sessions not yet archivedScratchTTL old (or with no
+	// usable date yet): kept by the unattended pass, removable only by af-work-archived.
+	pending map[string]bool
 	// expired holds archived, unlocked sessions whose date is archivedScratchTTL old. Their
 	// own name is left out of known; their working-copy name is not.
 	expired map[string]bool
 	// unstamped names the archived sessions with no usable archivedAt.
 	unstamped []string
+}
+
+// keeps is every name whose folder the af-work kind leaves: known plus pending. A fresh map,
+// so a caller may add to it.
+func (s afWorkScan) keeps() map[string]bool {
+	out := make(map[string]bool, len(s.known)+len(s.pending))
+	for n := range s.known {
+		out[n] = true
+	}
+	for n := range s.pending {
+		out[n] = true
+	}
+	return out
+}
+
+// afWorkArchivedLeftovers takes the folders of archived, unlocked sessions that the week has
+// not reached yet. A name that is also kept for another reason (a working copy, another
+// session's working directory, a session in the trash) stays, as it would for af-work.
+func afWorkArchivedLeftovers(_ string, roots []string, _ map[string]string) []leftover {
+	scan, ok := scanAfWorkSessions()
+	if !ok {
+		return nil
+	}
+	known := scan.known
+	repos, err := os.ReadDir(gitx.ReposRoot())
+	if err != nil && !os.IsNotExist(err) {
+		return nil
+	}
+	for _, e := range repos {
+		known[e.Name()] = true
+	}
+	var out []leftover
+	for _, root := range roots {
+		ents, _ := os.ReadDir(root)
+		for _, e := range ents {
+			name := e.Name()
+			if !e.IsDir() || !scan.pending[name] || known[name] {
+				continue
+			}
+			out = append(out, leftover{root: root, name: name, stillDue: func() bool { return archivedScratchShelved(name) }})
+		}
+	}
+	return out
+}
+
+// archivedScratchShelved reads name's meta as it is now: still archived and unlocked. A
+// restore or a lock that raced the listing makes it false.
+func archivedScratchShelved(name string) bool {
+	m, ok := session.ReadMeta(name)
+	return ok && m.Archived && !m.Locked
 }
 
 // archivedScratchDue reads name's meta as it is now: still archived, unlocked and dated a
@@ -457,7 +521,7 @@ func afWorkKnownNames() (map[string]bool, bool) {
 	if !ok {
 		return nil, false
 	}
-	return scan.known, true
+	return scan.keeps(), true
 }
 
 // scanAfWorkSessions collects every session name (live and in the trash) and each live
@@ -466,7 +530,7 @@ func afWorkKnownNames() (map[string]bool, bool) {
 // atomic, so a meta caught mid-write would make that session's directory look orphaned.
 // Without a readable session store every name looks orphaned, so that is false too.
 func scanAfWorkSessions() (afWorkScan, bool) {
-	scan := afWorkScan{known: map[string]bool{}, expired: map[string]bool{}}
+	scan := afWorkScan{known: map[string]bool{}, pending: map[string]bool{}, expired: map[string]bool{}}
 	known := scan.known
 	read := func(dir string, into func([]byte) bool) bool {
 		ents, err := os.ReadDir(dir)
@@ -495,11 +559,13 @@ func scanAfWorkSessions() (afWorkScan, bool) {
 		switch {
 		case m.Archived && !m.Locked && archivedAtDue(m.ArchivedAt):
 			scan.expired[m.Name] = true
+		case m.Archived && !m.Locked:
+			scan.pending[m.Name] = true
 		default:
 			known[m.Name] = true
-			if m.Archived && (m.ArchivedAt == "" || archivedStampUnusable(m.ArchivedAt)) {
-				scan.unstamped = append(scan.unstamped, m.Name)
-			}
+		}
+		if m.Archived && (m.ArchivedAt == "" || archivedStampUnusable(m.ArchivedAt)) {
+			scan.unstamped = append(scan.unstamped, m.Name)
 		}
 		if m.Dir != "" {
 			known[filepath.Base(m.Dir)] = true
@@ -683,6 +749,8 @@ type leftoverRow struct {
 	Kind  string `json:"kind"`
 	Count int    `json:"count"`
 	Bytes int64  `json:"bytes"`
+	// Confirm = a manualOnly kind: the Console asks first and sends confirm=1.
+	Confirm bool `json:"confirm,omitempty"`
 	usagePlace
 }
 
@@ -709,7 +777,7 @@ func handleLeftoverUsage(w http.ResponseWriter, r *http.Request) {
 	defer leftoverMu.Unlock()
 	home := homeDir()
 	for _, k := range leftoverKinds {
-		row := leftoverRow{Kind: k.Name, usagePlace: placeOf(k.place(home))}
+		row := leftoverRow{Kind: k.Name, Confirm: k.manualOnly, usagePlace: placeOf(k.place(home))}
 		budget := toolCacheMaxEntries
 		for _, l := range k.pruneable(home, pins) {
 			b, _ := leftoverSize(l, &budget)
@@ -728,6 +796,10 @@ func handleDeleteLeftovers(w http.ResponseWriter, r *http.Request) {
 	k, ok := findLeftoverKind(r.PathValue("kind"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_kind", "unknown kind: "+r.PathValue("kind"))
+		return
+	}
+	if k.manualOnly && r.URL.Query().Get("confirm") != "1" {
+		httpx.WriteErr(w, http.StatusBadRequest, "confirm_required", k.Name+" removes only with confirm=1")
 		return
 	}
 	pins, ok := workspacePins()

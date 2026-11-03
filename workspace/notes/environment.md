@@ -75,7 +75,9 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   and caches grow without bound (`~/.npm`, `~/.cache` reach tens of GB).
 - **Where throwaway work goes**: `$AF_WORK_DIR` — `~/.af-work/<session>/`, which the Agent
   creates when a session launches and removes when the session is deleted, or 7 days after it is archived
-  (restoring clears the date; launch recreates an emptied folder). A locked session's folder, an
+  (restoring clears the date; launch recreates an emptied folder). A member short of space can
+  remove archived sessions' folders before the 7 days from Settings > Machine, so a restored
+  session must not assume its folder survived. A locked session's folder, an
   unmarked one and one in use or changed within the hour stay. Terminal (CLI) sessions get it from the launch environment; Managed sessions get it
   per kind: the child process's environment for copilot, cursor, kiro and muse, and the thread
   config (`shell_environment_policy.set`) for codex, whose one shared app-server cannot carry a
