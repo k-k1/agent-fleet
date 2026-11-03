@@ -4,6 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 import type { HandoffOffer } from "../sharing/handoffStore.ts";
 
 const apiJSON = vi.fn();
@@ -36,7 +38,9 @@ async function render(offer: HandoffOffer) {
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <HandoffProposal session="src" proposal={proposal} onChange={() => undefined} />
+        <ConfirmProvider>
+          <HandoffProposal session="src" proposal={proposal} onChange={() => undefined} />
+        </ConfirmProvider>
       </ToastProvider>,
     );
   });
@@ -81,27 +85,28 @@ describe("the sender's handoff card while the recipient holds the offer", () => 
   });
 
   it("words a withdraw refused under a confirmed launch as being confirmed", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     apiJSON.mockResolvedValue({
       error: { code: "handoff_being_taken", offerStatus: "pending", takeState: "unknown", status: 409 },
     });
     await render({ ...base, takeState: "unknown" });
     await act(async () => launchButton().click());
+    await answerConfirm(true);
     expect(apiJSON).toHaveBeenCalledWith("api/session-handoff-offers/offer-1", "DELETE");
     expect(document.body.textContent).toContain(t("handoff.withdraw_confirming", { who: "bob" }));
     expect(document.body.textContent).not.toContain(t("handoff.withdraw_lost"));
   });
 
   it("words a withdraw refused while the recipient is starting it, and a decided one as before", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     apiJSON.mockResolvedValueOnce({ error: { code: "handoff_being_taken", takeState: "starting", status: 409 } });
     await render({ ...base, takeState: "starting" });
     await act(async () => launchButton().click());
+    await answerConfirm(true);
     expect(document.body.textContent).toContain(t("handoff.withdraw_starting", { who: "bob" }));
 
     apiJSON.mockResolvedValueOnce({ error: { code: "handoff_already_decided", offerStatus: "accepted", status: 409 } });
     await render(base);
     await act(async () => launchButton().click());
+    await answerConfirm(true);
     expect(document.body.textContent).toContain(t("handoff.withdraw_lost"));
   });
 });
@@ -118,18 +123,22 @@ describe("the sender's handoff card names the recipient as the picker did", () =
   });
 
   it("asks the withdraw question with the e-mail", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     await render(withEmail);
     await act(async () => launchButton().click());
-    expect(confirm).toHaveBeenCalledWith(t("handoff.withdraw_confirm", { who: "bob@example.com" }));
+    const dlg = confirmDialog()!;
+    expect(dlg.querySelector(".ui-confirm-title")?.textContent).toBe(t("handoff.withdraw_confirm_title"));
+    expect(dlg.textContent).toContain(t("handoff.withdraw_confirm_body", { who: "bob@example.com" }));
+    expect(dlg.querySelector(".ui-btn-danger, .btn-danger")?.textContent).toBe(t("handoff.withdraw_confirm_action"));
+    await answerConfirm(false);
+    expect(confirmDialog()).toBeNull();
     expect(apiJSON).not.toHaveBeenCalled();
   });
 
   it("words a refused withdraw with the e-mail", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     apiJSON.mockResolvedValue({ error: { code: "handoff_being_taken", takeState: "starting", status: 409 } });
     await render({ ...withEmail, takeState: "starting" });
     await act(async () => launchButton().click());
+    await answerConfirm(true);
     expect(document.body.textContent).toContain(t("handoff.withdraw_starting", { who: "bob@example.com" }));
   });
 });

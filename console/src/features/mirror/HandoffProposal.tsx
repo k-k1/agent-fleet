@@ -11,6 +11,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -112,6 +113,7 @@ export function HandoffProposal({
 }) {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const [draft, setDraft] = useState(proposal.prompt);
   // Clamp to the create API's rule as the title enters the edit field: an old proposal
   // (saved before the 80-character check existed) can neither be saved nor launched as-is,
@@ -177,7 +179,13 @@ export function HandoffProposal({
     // conditionally *before* launching and abandon the launch if that race is lost (the
     // recipient already accepted) — ADR 0057 decision 6.
     if (offer?.status === "pending") {
-      if (!window.confirm(tr("handoff.withdraw_confirm", { who: recipientLabel(offer) }))) return;
+      const ok = await askConfirm({
+        title: tr("handoff.withdraw_confirm_title"),
+        body: tr("handoff.withdraw_confirm_body", { who: recipientLabel(offer) }),
+        confirmLabel: tr("handoff.withdraw_confirm_action"),
+        danger: true,
+      });
+      if (!ok) return;
       const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}`, "DELETE");
       void useHandoffStore.getState().refresh();
       if (d?.error) {

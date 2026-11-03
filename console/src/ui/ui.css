@@ -206,6 +206,25 @@
   font-size: 13px;
   white-space: pre-wrap;
 }
+/* A command (or other long literal) quoted in a confirm: wrap and scroll inside the dialog
+   instead of widening it. */
+.ui-confirm-code {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  max-height: 30vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: inherit;
+}
+.ui-confirm-body p {
+  margin: 0;
+}
 .ui-confirm .ui-btn-ghost,
 .confirm .ui-btn-ghost {
   color: var(--dialog-muted);

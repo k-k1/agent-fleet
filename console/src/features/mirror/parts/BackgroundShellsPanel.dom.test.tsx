@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
+import { answerConfirm, confirmDialog } from "../../../test/confirmDialog.ts";
 import { BackgroundShellsPanel } from "./BackgroundShellsPanel.tsx";
+import { t } from "../../../lib/i18n/index.ts";
 import type { BackgroundShell } from "../../../core/api/client.ts";
 
 let root: Root | null = null;
@@ -34,7 +37,13 @@ function render(shells: BackgroundShell[], stopping: ReadonlySet<number> = new S
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<BackgroundShellsPanel shells={shells} stopping={stopping} onStop={onStop} now={clock} />));
+  act(() =>
+    root!.render(
+      <ConfirmProvider>
+        <BackgroundShellsPanel shells={shells} stopping={stopping} onStop={onStop} now={clock} />
+      </ConfirmProvider>,
+    ),
+  );
   return onStop;
 }
 
@@ -57,14 +66,21 @@ describe("BackgroundShellsPanel", () => {
   });
 
   it("stops only after the member confirms", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     const onStop = render([hung]);
     const btn = document.querySelector<HTMLButtonElement>(".mbs-stop")!;
     await act(async () => btn.click());
+    const dlg = confirmDialog()!;
+    expect(dlg.querySelector(".ui-confirm-title")?.textContent).toBe(t("mirror.bg_shell_stop_confirm_title"));
+    expect(dlg.querySelector("pre.ui-confirm-code")?.textContent).toBe(hung.command);
+    expect(dlg.textContent).toContain(t("mirror.bg_shell_stop_confirm_body"));
+    expect(dlg.querySelector(".ui-btn-danger, .btn-danger")?.textContent).toBe(t("mirror.bg_shell_stop"));
+    await answerConfirm(false);
+    expect(confirmDialog()).toBeNull();
     expect(onStop).not.toHaveBeenCalled();
     await act(async () => btn.click());
+    await answerConfirm(true);
     expect(onStop).toHaveBeenCalledWith(hung);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(onStop).toHaveBeenCalledTimes(1);
   });
 
   it("disables the button while that shell is being stopped", () => {

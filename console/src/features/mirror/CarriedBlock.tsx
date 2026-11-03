@@ -13,6 +13,7 @@
 // pane with Down/Enter.
 import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
 import { sessionCarriedAnswer } from "../../core/api/client.ts";
 import type { CarriedInteraction, CarriedAnswerInput } from "../../core/api/client.ts";
@@ -63,6 +64,7 @@ export function CarriedBlock({
 
   // Returns whether the answer actually left: the question card puts its draft back on a
   // false, since the card it belongs to stays on screen.
+  const askConfirm = useConfirm();
   const send = async (body: Parameters<typeof sessionCarriedAnswer>[1]): Promise<boolean> => {
     if (sending) return false;
     setSending(true);
@@ -168,10 +170,17 @@ export function CarriedBlock({
                 type="button"
                 className="btn primary"
                 disabled={sending || !!busy}
-                onClick={() => {
-                  if (!window.confirm(tr("mirror.carried_plan_approve_confirm"))) return;
-                  void send({ decision: "approve", feedback });
-                }}
+                onClick={() =>
+                  void (async () => {
+                    const ok = await askConfirm({
+                      title: tr("mirror.carried_plan_approve_confirm_title"),
+                      body: tr("mirror.carried_plan_approve_confirm_body"),
+                      confirmLabel: tr("mirror.carried_plan_approve"),
+                      danger: false,
+                    });
+                    if (ok) void send({ decision: "approve", feedback });
+                  })()
+                }
               >
                 {tr("mirror.carried_plan_approve")}
               </button>

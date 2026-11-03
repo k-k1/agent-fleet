@@ -10,6 +10,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 
 const sessionCarriedAnswer = vi.fn(async () => ({ ok: true }));
 const apiJSON = vi.fn(async () => ({}));
@@ -37,14 +39,16 @@ function mount(
   root = createRoot(host);
   act(() =>
     root!.render(
-      <CarriedBlock
-        carried={carried}
-        session="s1"
-        agentName="claude"
-        onDone={() => done++}
-        onError={(m) => errors.push(m)}
-        onReviewPlan={onReviewPlan}
-      />,
+      <ConfirmProvider>
+        <CarriedBlock
+          carried={carried}
+          session="s1"
+          agentName="claude"
+          onDone={() => done++}
+          onError={(m) => errors.push(m)}
+          onReviewPlan={onReviewPlan}
+        />
+      </ConfirmProvider>,
     ),
   );
 }
@@ -104,14 +108,17 @@ describe("CarriedBlock", () => {
 
   it("plan approval goes through a confirm and sends nothing when it is declined", async () => {
     mount({ kind: "plan", plan: "# 計画" });
-    vi.stubGlobal("confirm", vi.fn(() => false));
     click(byText(/承認して実行|Approve and run/));
     await act(async () => {});
+    expect(confirmDialog()).not.toBeNull();
+    expect(sessionCarriedAnswer).not.toHaveBeenCalled();
+    await answerConfirm(false);
+    expect(confirmDialog()).toBeNull();
     expect(sessionCarriedAnswer).not.toHaveBeenCalled();
 
-    vi.stubGlobal("confirm", vi.fn(() => true));
     click(byText(/承認して実行|Approve and run/));
     await act(async () => {});
+    await answerConfirm(true);
     expect(sessionCarriedAnswer).toHaveBeenCalledTimes(1);
     const [, body] = sessionCarriedAnswer.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(body.decision).toBe("approve");

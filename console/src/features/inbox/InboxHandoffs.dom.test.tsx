@@ -32,6 +32,7 @@ const { useTenantStore } = await import("../../core/store/tenant.ts");
 const { useHandoffStore } = await import("../sharing/handoffStore.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 
 const OFFER: HandoffOffer = {
@@ -63,8 +64,10 @@ async function renderModal(onClose = () => undefined) {
   await act(async () => {
     root!.render(
       <ToastProvider>
+<ConfirmProvider>
         <InboxModal onClose={onClose} />
-      </ToastProvider>,
+      </ConfirmProvider>
+</ToastProvider>,
     );
   });
   await flush();
@@ -164,8 +167,10 @@ describe("the inbox badge", () => {
     await act(async () => {
       root!.render(
         <ToastProvider>
+<ConfirmProvider>
           <InboxButton />
-        </ToastProvider>,
+        </ConfirmProvider>
+</ToastProvider>,
       );
     });
     await flush();
@@ -205,8 +210,10 @@ describe("a tenant switch", () => {
     await act(async () => {
       root!.render(
         <ToastProvider>
+<ConfirmProvider>
           <InboxButton />
-        </ToastProvider>,
+        </ConfirmProvider>
+</ToastProvider>,
       );
     });
     await flush();

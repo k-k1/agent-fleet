@@ -17,6 +17,7 @@
 import { useMemo, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -37,6 +38,7 @@ export function repoNameFromRemote(remote?: string): string {
 export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone: () => void }) {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const repos = useReposStore((s) => s.repos);
   const guess = useMemo(() => repoNameFromRemote(offer.repoRemote), [offer.repoRemote]);
   const [repoName, setRepoName] = useState(() => (repos.some((r) => r.name === guess) ? guess : repos[0]?.name || ""));
@@ -74,7 +76,13 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
   // confirmation to the launch this row shows, so a stale row never gives back a later one.
   const giveBack = async () => {
     if (busy) return;
-    if (!window.confirm(tr("handoff.give_back_confirm", { who: senderLabel(offer) }))) return;
+    const ok = await askConfirm({
+      title: tr("handoff.give_back_confirm_title", { who: senderLabel(offer) }),
+      body: tr("handoff.give_back_confirm_body", { who: senderLabel(offer) }),
+      confirmLabel: tr("handoff.give_back_confirm_action"),
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
     const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}/give-back`, "POST", {
       confirmed: true,

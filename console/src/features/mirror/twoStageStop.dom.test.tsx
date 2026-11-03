@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { MirrorView } from "./MirrorView.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
 import { echoStore, sweptDiscards } from "./parts/sendEcho.ts";
@@ -74,8 +75,10 @@ async function mount(driver: "managed" | "tui" = "managed") {
   await act(async () => {
     root!.render(
       <ToastProvider>
+<ConfirmProvider>
         <MirrorView paneId="p1" session={SESSION} sessionMeta={meta(driver)} active mirror onToggleMirror={() => {}} />
-      </ToastProvider>,
+      </ConfirmProvider>
+</ToastProvider>,
     );
   });
   await settle();
@@ -318,8 +321,10 @@ describe("stop and discard the queue", () => {
     await act(async () => {
       root!.render(
         <ToastProvider>
+<ConfirmProvider>
           <MirrorView paneId="p1" session="other-session" sessionMeta={{ ...meta("tui"), name: "other-session" } as Session} active mirror onToggleMirror={() => {}} />
-        </ToastProvider>,
+        </ConfirmProvider>
+</ToastProvider>,
       );
     });
     await settle();

@@ -32,6 +32,7 @@ vi.mock("../../core/api/client.ts", () => ({
 import { SharedSessionView } from "./SharedSessionView.tsx";
 import { useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -73,7 +74,11 @@ async function render() {
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<SharedSessionView sharedSessionId="catalog-1" />);
+    root!.render(
+      <ConfirmProvider>
+        <SharedSessionView sharedSessionId="catalog-1" />
+      </ConfirmProvider>,
+    );
   });
   // The transcript and the proposals arrive on separate polls.
   await act(async () => {
@@ -144,8 +149,10 @@ describe("SharedSessionView received handoffs", () => {
       // same context as the inbox.
       root!.render(
         <ToastProvider>
+<ConfirmProvider>
           <SharedSessionView sharedSessionId="catalog-1" />
-        </ToastProvider>,
+        </ConfirmProvider>
+</ToastProvider>,
       );
     });
     // Transcript, proposals and inbox all arrive on separate polls (the inbox does two in a

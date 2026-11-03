@@ -9,6 +9,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { answerConfirm, confirmDialog } from "../../test/confirmDialog.ts";
 import type { HandoffOffer } from "./handoffStore.ts";
 
 const apiJSON = vi.fn();
@@ -47,10 +49,12 @@ async function render(repos: { name: string; path?: string }[], withStartHost = 
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <ul>
-          <HandoffOfferRow offer={row} onDone={() => undefined} />
-        </ul>
-        {withStartHost && <StartHost />}
+        <ConfirmProvider>
+          <ul>
+            <HandoffOfferRow offer={row} onDone={() => undefined} />
+          </ul>
+          {withStartHost && <StartHost />}
+        </ConfirmProvider>
       </ToastProvider>,
     );
   });
@@ -128,44 +132,44 @@ describe("the received handoff row", () => {
     });
 
     it("asks first, naming the risk, and sends nothing when cancelled", async () => {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
       await render(repos, false, unknown);
       await act(async () => giveBackButton()!.click());
-      expect(confirm).toHaveBeenCalledWith(t("handoff.give_back_confirm", { who: "alice" }));
+      const dlg = confirmDialog()!;
+      expect(dlg.querySelector(".ui-confirm-title")?.textContent).toBe(t("handoff.give_back_confirm_title", { who: "alice" }));
       // It must say both: the session may exist, and a launch still in progress is not cancelled.
-      expect(confirm.mock.calls[0][0]).toMatch(/twice/);
-      expect(confirm.mock.calls[0][0]).toMatch(/does not cancel/);
-      expect(confirm.mock.calls[0][0]).toMatch(/still being processed/);
+      expect(dlg.textContent).toMatch(/twice/);
+      expect(dlg.textContent).toMatch(/does not cancel/);
+      expect(dlg.textContent).toMatch(/still being processed/);
+      expect(dlg.querySelector(".btn-danger, .ui-btn-danger")?.textContent).toBe(t("handoff.give_back_confirm_action"));
+      await answerConfirm(false);
+      expect(confirmDialog()).toBeNull();
       expect(apiJSON).not.toHaveBeenCalled();
-      confirm.mockRestore();
     });
 
     it("gives it back once confirmed and says so", async () => {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
       apiJSON.mockResolvedValue({ status: "pending" });
       await render(repos, false, unknown);
       await act(async () => giveBackButton()!.click());
+      expect(apiJSON).not.toHaveBeenCalled();
+      await answerConfirm(true);
       expect(apiJSON).toHaveBeenCalledWith("api/session-handoff-offers/offer-1/give-back", "POST", { confirmed: true, takeRev: "rev-a" });
       expect(document.body.textContent).toContain(t("handoff.give_back_done", { who: "alice" }));
-      confirm.mockRestore();
     });
 
     it("says the launch may still be running when the CP refuses", async () => {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
       apiJSON.mockResolvedValue({ error: { code: "handoff_not_unknown", takeState: "confirming", status: 409 } });
       await render(repos, false, unknown);
       await act(async () => giveBackButton()!.click());
+      await answerConfirm(true);
       expect(document.body.textContent).toContain(t("handoff.give_back_too_soon"));
-      confirm.mockRestore();
     });
 
     it("asks to check again when the row's launch was replaced meanwhile", async () => {
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
       apiJSON.mockResolvedValue({ error: { code: "handoff_give_back_stale", takeState: "unknown", status: 409 } });
       await render(repos, false, unknown);
       await act(async () => giveBackButton()!.click());
+      await answerConfirm(true);
       expect(document.body.textContent).toContain(t("handoff.give_back_stale"));
-      confirm.mockRestore();
     });
 
     it("shows an unshared or archived offer held by the launch as a give-back-only row", async () => {
@@ -199,13 +203,12 @@ describe("HandoffOfferRow names the sender", () => {
   });
 
   it("by e-mail in the give-back question and answer", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     apiJSON.mockResolvedValue({ status: "pending" });
     await render(repos, false, { ...fromAlice, takeState: "unknown", takeRev: "rev-a" });
     await act(async () => giveBackButton()!.click());
-    expect(confirm).toHaveBeenCalledWith(t("handoff.give_back_confirm", { who: "alice@example.com" }));
+    expect(confirmDialog()!.querySelector(".ui-confirm-title")?.textContent).toBe(t("handoff.give_back_confirm_title", { who: "alice@example.com" }));
+    await answerConfirm(true);
     expect(document.body.textContent).toContain(t("handoff.give_back_done", { who: "alice@example.com" }));
-    confirm.mockRestore();
   });
 
   it("by the key when there is no e-mail", async () => {
