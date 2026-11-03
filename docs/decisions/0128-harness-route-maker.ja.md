@@ -334,3 +334,16 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   （集計では 1 呼び出し）、先頭は `(ref, idx)` 列の位置を保ち、残りは独自のキーを持つ。入力・キャッシュは呼び出しごとに
   置き換わるので、最後に報告した呼び出しの区間に載り、行の合計は分割前と一致する。サブエージェントの transcript は
   分割しない。実機では未確認。
+- 2026-11-04, P1a (#3281): ハーネスの挙動を変えない契約部分。`workspace/agent/internal/routes` にルートカタログ（id・ワイヤ
+  プロトコル・認証情報の階層。id は台帳が既に記録しているもの）と `Selection` 型（ルート id と不透明な接続参照）を置き、
+  `agents` に `agents.RouteAdapter`（決定 4）と、決定 12 の動的な検査のための任意の `RouteChecker` を置いた。
+  `session.Meta.Route` は `omitempty` のポインタなので、保存済みセッションと選択なしの作成はこれまでどおり読み書きされ、
+  動く。`RouteAdapter` を実装するハーネスはまだ無いので、明示的な選択はどこでも拒否する（`route_unsupported`。空や未知の
+  id は `bad_route`）。無視はしない。CP は `control-plane/internal/agentroutes/catalog.json` を埋め込む。カタログと
+  ハーネスの許可リストから `TestRouteCatalogSnapshot`（`-update-route-catalog`）が生成し、Workspace を起こす前に、
+  Console/REST の作成、MCP `create_session`（`route`・`route_connection`）、スケジュール（新規・再利用・ローテーション
+  のどれも。発火の入口の 1 か所と、作成・更新での検査。assistant スケジュールは無視されることになるので route を拒否）
+  で検査する。Agent は起こした後に静的な一覧を再検査し、動的な検査を作成・フォーク・再作成（継承して再検証）と
+  移動の要求で行う。移動は元の選択を持ち越さず、要求が移動先自身の選択を指定する。許可リストは当面ドライバ別でなく
+  種別別で、決定 5 の claude の Terminal 限定は、アダプタができたときにアダプタ側が守る。冪等キーの指紋にはルートを
+  含めた（あるときだけ）。未実装: アダプタ全般、Console のピッカー、ルート別の認証ガード（P1b）。

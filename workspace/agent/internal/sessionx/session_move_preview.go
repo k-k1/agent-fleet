@@ -5,6 +5,7 @@ package sessionx
 // time the move runs; the move checks everything again under it.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -141,7 +142,7 @@ func buildMovePreview(m session.Meta, now time.Time) movePreviewWire {
 	if m.Kind == session.KindCursor && m.DriverKind() == session.DriverManaged {
 		p.Warnings = append(p.Warnings, moveWarnCursorMirror)
 	}
-	if err := checkMoveRequest(m, moveRequest{Kind: anyEligibleTarget(m.Kind)}); err != nil {
+	if err := checkMoveRequest(context.Background(), m, moveRequest{Kind: anyEligibleTarget(m.Kind)}); err != nil {
 		var me *moveError
 		if errors.As(err, &me) && me.Code != "move_same_kind" {
 			refuse(err)

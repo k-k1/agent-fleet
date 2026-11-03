@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -99,12 +100,13 @@ func moveCanFork(kind string) bool {
 // moveRecord is a move between begin and its end, on disk: what retry needs to create the
 // target again from the same file, and what cancel needs to remove.
 type moveRecord struct {
-	Target  string   `json:"target"`
-	Kind    string   `json:"kind"`
-	Model   string   `json:"model,omitempty"`
-	Driver  string   `json:"driver,omitempty"`
-	File    string   `json:"file,omitempty"`
-	Earlier []string `json:"earlier,omitempty"`
+	Target  string            `json:"target"`
+	Kind    string            `json:"kind"`
+	Model   string            `json:"model,omitempty"`
+	Driver  string            `json:"driver,omitempty"`
+	Route   *routes.Selection `json:"route,omitempty"` // the target's own selection, from the request
+	File    string            `json:"file,omitempty"`
+	Earlier []string          `json:"earlier,omitempty"`
 	// PeerIDs are the spooled peer messages the file carries, taken out of the spool at commit.
 	PeerIDs []string `json:"peerIds,omitempty"`
 	// State is moveRunning while a request drives it, moveUncertain once the create may have
@@ -213,6 +215,10 @@ type moveRequest struct {
 	Kind   string `json:"kind"`
 	Model  string `json:"model,omitempty"`
 	Driver string `json:"driver,omitempty"`
+	// Route is the target's own selection (ADR 0128 decision 13). The source's is never carried
+	// over: it was valid for another harness, so the target is chosen again and validated for
+	// its own kind. Empty keeps the target's default resolution.
+	Route *routes.Selection `json:"route,omitempty"`
 }
 
 // sessionMoveWire answers a move (or a retry) that created its target.
@@ -272,7 +278,7 @@ func HandleSessionMove(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if err := checkMoveRequest(src, req); err != nil {
+	if err := checkMoveRequest(r.Context(), src, req); err != nil {
 		writeMoveErr(w, err)
 		return
 	}
@@ -291,7 +297,7 @@ func HandleSessionMove(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkMoveRequest refuses what no state of the source could make possible.
-func checkMoveRequest(src session.Meta, req moveRequest) error {
+func checkMoveRequest(ctx context.Context, src session.Meta, req moveRequest) error {
 	if !AgentOf(src.Kind).Caps().CanTranscript {
 		return &moveError{Status: http.StatusBadRequest, Code: "move_unsupported_source",
 			Message: "only a session with a readable conversation can be moved"}
@@ -314,6 +320,10 @@ func checkMoveRequest(src session.Meta, req moveRequest) error {
 	if !session.DirExists(src.Dir) {
 		return &moveError{Status: http.StatusBadRequest, Code: "move_missing_dir", Message: "the working folder does not exist"}
 	}
+	// Before the source is closed: a target that would refuse its selection must not cost a move.
+	if ref := checkRouteLive(ctx, req.Kind, req.Route, req.Model); ref != nil {
+		return &moveError{Status: ref.Status, Code: ref.Code, Message: ref.Message}
+	}
 	return nil
 }
 
@@ -328,7 +338,7 @@ func runMove(ctx context.Context, src session.Meta, req moveRequest, now time.Ti
 	// Input is closed from here on. Nothing below may be cut short by the caller going away:
 	// a half-done move is what the rollback and the retry exist for, not something to add to.
 	ctx = context.WithoutCancel(ctx)
-	rec := moveRecord{Target: target, Kind: req.Kind, Model: req.Model, Driver: req.Driver,
+	rec := moveRecord{Target: target, Kind: req.Kind, Model: req.Model, Driver: req.Driver, Route: req.Route.Normalize(),
 		State: moveRunning, StartedAt: now.Format(time.RFC3339)}
 	if err := moveRecords.Write(src.Name, rec); err != nil {
 		return nil, abortMove(mv, rec, now, fmt.Errorf("recording the move: %w", err))
@@ -604,7 +614,8 @@ func createErrorOf(status int, body []byte) *moveError {
 // kind, and the first prompt that points at the file.
 func moveCreateReq(src session.Meta, rec moveRecord) CreateReq {
 	return CreateReq{
-		name: rec.Target, Kind: rec.Kind, Model: rec.Model, Driver: rec.Driver,
+		// Route is the one the request chose for the target, never the source's (decision 13).
+		name: rec.Target, Kind: rec.Kind, Model: rec.Model, Driver: rec.Driver, Route: rec.Route,
 		Dir: src.Dir, Subdir: src.Subdir, Title: src.Title, Color: src.Color,
 		InitialPrompt: moveInitialPrompt(src, rec.File),
 		// The target continues the same work, so it keeps the tickets and PRs the source was

@@ -1,9 +1,11 @@
 package mcpsrv
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
+	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 )
 
 // toolKinds is the kind catalog in the order the tool texts list it: claude, the default kind,
@@ -76,4 +78,44 @@ func managedKindsSentence() string {
 	only := kindNames(func(e agentkinds.Entry) bool { return e.ManagedOnly })
 	return listKinds(byDefault, "and") + " sessions default to the managed driver, not TUI; " +
 		listKinds(only, "and") + " are always managed."
+}
+
+// createRouteArg reads create_session's route / route_connection arguments into the selection
+// body field, and refuses with the Workspace untouched what the route snapshot proves invalid
+// (ADR 0128 decision 12). Neither argument set is the unchanged case: it returns nil and the
+// create carries no selection at all.
+func createRouteArg(kind, route, connection string) (map[string]any, error) {
+	route, connection = strings.TrimSpace(route), strings.TrimSpace(connection)
+	if route == "" && connection == "" {
+		return nil, nil
+	}
+	sel := &agentroutes.Selection{Route: route, Connection: connection}
+	if _, err := agentroutes.CheckCreateRoute(kind, sel); err != nil {
+		return nil, err
+	}
+	out := map[string]any{"route": route}
+	if connection != "" {
+		out["connection"] = connection
+	}
+	return out, nil
+}
+
+// createRouteArgs reads route / route_connection from the raw tool arguments. The key check
+// does not look at types and argStr turns a non-string into "", which here would drop an
+// explicit selection and create on the default route, so a value that is present and is not a
+// string is refused. A JSON null counts as absent.
+func createRouteArgs(kind string, args map[string]any) (map[string]any, error) {
+	var vals [2]string
+	for i, k := range [2]string{"route", "route_connection"} {
+		v, present := args[k]
+		if !present || v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string (got %T); the route is chosen by its id, e.g. route=\"anthropic-api\"", k, v)
+		}
+		vals[i] = s
+	}
+	return createRouteArg(kind, vals[0], vals[1])
 }

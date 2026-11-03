@@ -28,6 +28,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/limitsnap"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -362,6 +363,10 @@ type CreateReq struct {
 	// even the kinds enabled in settings with approvals on.
 	SkipPermissions *bool  `json:"skip_permissions"`
 	Kind            string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
+	// Route is the explicit route selection (ADR 0128 decision 3). Absent keeps the kind's own
+	// resolution rules. A selection is never ignored: it is refused wherever it cannot be
+	// honoured, which today is every kind (no harness implements agents.RouteAdapter yet).
+	Route *routes.Selection `json:"route,omitempty"`
 	// Driver selects the control route (docs/log/27 §9.2): "" | "tui" (the default, a TUI
 	// inside tmux) | "managed" (shared runtime + structured RPC, no pane). Managed launches
 	// were opened up in P2 (opencode serve) and P3 (codex app-server); an unsupported kind
@@ -744,7 +749,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // in-process with the name it booked (CreateReq.name).
 func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	c := &createRun{w: w, r: r, req: &req}
-	if !c.validateKind() || !c.claim() {
+	if !c.validateKind() || !c.validateRoute() || !c.claim() {
 		return
 	}
 	defer c.settleClaim()
@@ -754,7 +759,7 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
 	// create that is not a spawn.
 	defer c.slot.release()
-	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.resolveWorkingCopy() || !c.identify() {
+	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.checkRoute() || !c.resolveWorkingCopy() || !c.identify() {
 		return
 	}
 	meta, ok := c.armMeta()
@@ -1005,6 +1010,12 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// The fork launches a new process of this kind: refuse it, with the reason, while its CLI is
 	// missing, before anything is created.
 	if ref := startRefusal(src.Kind); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
+	// A fork inherits the selection (ADR 0128 decision 13) and is checked again like a create:
+	// the connection may have expired or been revoked since the source was made.
+	if ref := checkRouteLive(r.Context(), src.Kind, src.Route, src.Model); ref != nil {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
@@ -1494,6 +1505,12 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// The slot keeps its explicit selection, and a selection that no longer holds is found here,
+	// not after the old identity is archived and killed.
+	if ref := checkRouteLive(r.Context(), m.Kind, m.Route, m.Model); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
 	// Captured BEFORE the kill below, same reason as HandleArchiveSession: once Archived is
@@ -1534,7 +1551,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// recreated managed (docs/log/27 P2).
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
-		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
+		Kind: m.Kind, Driver: m.Driver, Route: m.Route.Clone(), SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
 		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
@@ -1619,6 +1636,9 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
 		MuseContributorMode: src.MuseContributorMode,
+		// Same kind, so the selection is inherited (ADR 0128 decision 13); HandleForkSession has
+		// re-validated it before this meta is built.
+		Route: src.Route.Clone(),
 		// The budget value carries over, the hit does not: the fork's spend starts from the
 		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
 		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),

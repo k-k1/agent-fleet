@@ -212,6 +212,14 @@ dispatch するなら `RED_KINDS` も）に種別を足し、`cli-drift.yml` の
 cd workspace/agent && go test -run TestKindCatalogSnapshot -update-kind-catalog .
 ```
 
+ルートのカタログにも専用のスナップショット `control-plane/internal/agentroutes/catalog.json`
+（ADR 0128）があります。ルート id と、レジストリのキーごとに、その Agent の `RouteAdapter` が宣言する
+ルート（アダプタが無い種別は無し）を持ちます。新しい種別はここにも 1 行増えるので、同じ要領で作り直します。
+
+```
+cd workspace/agent && go test -run TestRouteCatalogSnapshot -update-route-catalog .
+```
+
 **新しい種別の配備は Agent が先。** スナップショットの作り直し忘れは `TestKindCatalogSnapshot` が
 CI で止めますが、Control Plane が Workspace イメージより古い配備の途中までは見えません。CP は
 スナップショットに無い種別の作成を `bad_kind` で断る（`agentkinds.CheckCreateKind`）ので、

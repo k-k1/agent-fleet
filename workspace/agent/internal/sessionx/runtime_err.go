@@ -73,7 +73,7 @@ func runtimeErrMessage(err error) string {
 // carried) goes through it, so the refusal is not only on the explicit start endpoints.
 func resumeManaged(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
 	if !ManagedAlive(m) {
-		if ref := startRefusal(m.Kind); ref != nil {
+		if ref := startRefusalOf(m); ref != nil {
 			return nil, &StartRefusalError{ref}
 		}
 	}
