@@ -44,6 +44,10 @@ set +x
   for a in "$@"; do echo "ARG=$a"; done
 } >"$STUB_DIR/cf.seen"
 echo x >>"$STUB_DIR/cf.count"
+if [ -n "${STUB_CF_HANG-}" ]; then
+  echo $$ >"$STUB_DIR/cf.pid"
+  exec sleep 30
+fi
 n=$(wc -l <"$STUB_DIR/cf.count")
 if [ "$n" -le "${STUB_CF_FAILS:-0}" ]; then
   echo PARTIAL
@@ -311,7 +315,7 @@ run STUB_CF_FAILS=9 -- search q
 [ "$rc" = 1 ] && [ "$(attempts)" = 3 ] || fail "give up: rc=$rc attempts=$(attempts), want 1 and 3"
 grep -q "giving up after 3 attempts" "$T/err" && grep -q ECONNRESET "$T/err" || fail "give up: no explanation / last error"
 for cmdline in "delete 1" "comment 1 -m x" "attachment-upload 1 -f x" "attachment-delete 1 2" \
-  "attachments 1 -d" "attachments 1 --download" "attachments 1 -ld" "comment-delete 1" "move 1 2" "api x" "bogus-word"; do
+  "attachments 1 -d" "attachments 1 --download" "attachments 1 -ld" "attachments 1 -dl2" "attachments 1 -dp*.txt" "attachments 1 -l2d" "attachments 1 --dest=/tmp" "comment-delete 1" "move 1 2" "api x" "bogus-word"; do
   reset; oauth_answer
   # shellcheck disable=SC2086
   run STUB_CF_FAILS=9 -- $cmdline
@@ -326,6 +330,64 @@ done
 reset; oauth_answer
 run STUB_CF_FAILS=1 "STUB_CF_ERR=Error: timeout of 10000ms exceeded" -- search q
 [ "$(attempts)" = 2 ] || fail "axios timeout: attempts=$(attempts), want 2"
+
+# 19. Only the CLI's own error message decides (never the API response after it); axios's
+# "stream has been aborted" (headers sent, body cut) is a transport failure.
+reset; oauth_answer
+run STUB_CF_FAILS=1 "STUB_CF_ERR=Error: stream has been aborted" -- search q
+[ "$(attempts)" = 2 ] || fail "stream aborted: attempts=$(attempts), want 2"
+reset; oauth_answer
+run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf 'Error: Request failed with status code 400\nAPI response: invalid query ECONNRESET')" -- search q
+[ "$(attempts)" = 1 ] || fail "answered 400 mentioning ECONNRESET: attempts=$(attempts), want 1"
+reset; oauth_answer
+run STUB_CF_FAILS=9 "STUB_CF_ERR=$(printf '{\n  "error": "Request failed with status code 400",\n  "code": "ERR_BAD_REQUEST",\n  "status": 400,\n  "details": "ECONNRESET"\n}')" -- --json search q
+[ "$(attempts)" = 1 ] || fail "json 400 mentioning ECONNRESET: attempts=$(attempts), want 1"
+reset; oauth_answer
+run STUB_CF_FAILS=1 "STUB_CF_ERR=$(printf '{\n  "error": "read ECONNRESET",\n  "code": "ECONNRESET",\n  "status": null,\n  "details": null\n}')" -- --json search q
+[ "$(attempts)" = 2 ] || fail "json transport failure: attempts=$(attempts), want 2"
+
+# 20. The token reaches the CLI alone: mktemp, sleep, grep, sed, cat, rm and the watchdog must not
+# inherit it (the stubs only record that the variable existed, never its value).
+mkdir -p "$T/hbin"
+for h in mktemp sleep grep sed cat rm head kill; do
+  cat >"$T/hbin/$h" <<STUB
+#!/bin/sh
+[ -z "\${CONFLUENCE_API_TOKEN+x}" ] || echo $h >>"\$STUB_DIR/helper.leak"
+exec /usr/bin/$h "\$@"
+STUB
+  chmod +x "$T/hbin/$h"
+done
+reset; oauth_answer; rm -f "$T/helper.leak"
+run "PATH=$T/hbin:$T/bin:/usr/bin:/bin" AF_CONFLUENCE_RETRY_WAIT=5 AF_CONFLUENCE_TIMEOUT=20 STUB_CF_FAILS=1 -- search q
+[ "$(attempts)" = 2 ] || fail "helper leak run: attempts=$(attempts)"
+expect helper-leak API_TOKEN fake-oauth-tok
+[ ! -f "$T/helper.leak" ] || fail "token inherited by: $(sort -u "$T/helper.leak" | tr '\n' ' ')"
+rm -f "$T/helper.leak"
+run "PATH=$T/hbin:$T/bin:/usr/bin:/bin" -- create T S -c x
+[ ! -f "$T/helper.leak" ] || fail "token inherited on the single-run path by: $(sort -u "$T/helper.leak" | tr '\n' ' ')"
+
+# 21. A hung attempt is cut at AF_CONFLUENCE_TIMEOUT, counted as a transport failure, and the
+# wrapper gives up after three.
+reset; oauth_answer
+run AF_CONFLUENCE_TIMEOUT=1 STUB_CF_HANG=1 -- search q
+[ "$rc" = 124 ] && [ "$(attempts)" = 3 ] || fail "hang: rc=$rc attempts=$(attempts), want 124 and 3"
+grep -q "no answer within 1 s" "$T/err" && grep -q "giving up after 3" "$T/err" || fail "hang: messages: $(cat "$T/err")"
+pid="$(cat "$T/cf.pid" 2>/dev/null)"
+[ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null || fail "hang: the CLI was left running"
+
+# 22. A signal ends the wrapper (130) and takes the attempt with it; nothing is left in TMPDIR.
+reset; oauth_answer; mkdir -p "$T/tmp2"; rm -f "$T/cf.pid" "$T/cf.count"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_CONFLUENCE_REAL="$T/bin/confluence-real" \
+  AF_CONFLUENCE_RETRY_WAIT=0 STUB_CF_HANG=1 TMPDIR="$T/tmp2" bash "$WRAPPER" search q >"$T/out" 2>"$T/err" </dev/null &
+wpid=$!
+for _ in $(seq 1 50); do [ -s "$T/cf.pid" ] && break; sleep 0.1; done
+kill -TERM "$wpid"
+wait "$wpid"; rc=$?
+[ "$rc" = 130 ] || fail "signal: exit status $rc, want 130"
+pid="$(cat "$T/cf.pid" 2>/dev/null)"
+[ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null || fail "signal: the CLI was left running"
+[ "$(attempts)" = 1 ] || fail "signal: attempts=$(attempts), want 1"
+[ -z "$(ls -A "$T/tmp2")" ] || fail "signal: left files behind: $(ls -A "$T/tmp2")"
 
 if [ "$fails" != 0 ]; then
   echo "confluence-auth-wrapper-test: $fails failure(s)" >&2
