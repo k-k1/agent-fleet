@@ -139,6 +139,8 @@ func buildMux() *http.ServeMux {
 	// away at the end of the turn it is running. control-plane/routes.go needs the same path
 	// registered (the CP proxies by allowlist).
 	mux.HandleFunc("POST /sessions/{name}/stop-after-turn", sessionx.HandleSessionStopAfterTurn)
+	// Stop one background shell claude left running (#3279), from the mirror's background panel.
+	mux.HandleFunc("POST /sessions/{name}/background-stop", sessionx.HandleSessionBackgroundStop)
 	// Work items and PRs a session is linked to (#3134): the link_work_item tool and branch_name.
 	mux.HandleFunc("POST /sessions/{name}/links", sessionx.HandleSessionLink)
 	mux.HandleFunc("POST /sessions/{name}/spend-cap", sessionx.HandleSessionSpendCap)

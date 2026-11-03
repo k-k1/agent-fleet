@@ -109,6 +109,12 @@ describe("awaitingReply", () => {
     expect(awaitingReply([{ role: "user" }, { role: "assistant" }, { role: "user" }, { role: "assistant" }])).toBe(false);
   });
 
+  it("does not wait on a compaction summary: an idle compaction leaves it newest (#3279)", () => {
+    expect(awaitingReply([{ role: "user" }, { role: "assistant" }, { role: "user", compact: true }])).toBe(false);
+    // …but it does not hide a real prompt that is still unanswered either.
+    expect(awaitingReply([{ role: "assistant" }, { role: "user" }, { role: "user", compact: true }])).toBe(true);
+  });
+
   it("does not wait when there is no prompt at all (new session or history only)", () => {
     expect(awaitingReply([])).toBe(false);
     expect(awaitingReply([{ role: "assistant" }])).toBe(false);

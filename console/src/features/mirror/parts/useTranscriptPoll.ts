@@ -15,6 +15,7 @@ import { emptyDiscardNotices } from "../stopQueue.ts";
 import type { Turn } from "../transcript/types.ts";
 import { isPendingApproval } from "../transcript/types.ts";
 import { parsePendingPeers } from "./PendingPeersNotice.tsx";
+import { parseBackgroundShells } from "./BackgroundShellsPanel.tsx";
 import { parseCloudRuns, type CloudRun } from "../../cloudruns/cloudRunsModel.ts";
 
 // sameRuns keeps the previous array when the rows did not change: it feeds the block memo in
@@ -57,7 +58,7 @@ export function useTranscriptPoll({
 }) {
   const {
     setTurns, setStateSession, setPendingSends, pendingSendsRef, applyEchoes, setLoaded, setTermState,
-    setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setFinalizing, finalizingRef, wasWorkingRef,
+    setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setBgShells, setFinalizing, finalizingRef, wasWorkingRef,
     setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers, setCloudRuns,
     queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm,
     setPendingApproval, setCarried, setRestoredAt, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
@@ -94,6 +95,7 @@ export function useTranscriptPoll({
     setRetry(null); // the band belongs to the session being left
     setStatus("");
     setBgBusy(false);
+    setBgShells([]);
     setFinalizing(false); // the idle→reply bridge belongs to the old session
     finalizingRef.current = false;
     wasWorkingRef.current = false;
@@ -267,6 +269,7 @@ export function useTranscriptPoll({
             bgBusyRef.current = !!d.backgroundBusy;
             setBgBusy(!!d.backgroundBusy);
             setBgBusyReason(typeof d.backgroundBusyReason === "string" ? d.backgroundBusyReason : "");
+            setBgShells(parseBackgroundShells(d.backgroundShells));
             // aggSame: the Agent confirmed the aggregates we hold are current and sent none of
             // them, so leaving the state alone IS applying the response. Overwriting with the
             // absent fields would clear the file strip and the ToDo list on every poll.

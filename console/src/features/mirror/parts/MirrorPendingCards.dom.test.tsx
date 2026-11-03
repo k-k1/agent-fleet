@@ -18,7 +18,11 @@ const noop = () => {};
 // Every plan action is unused by a question card; a Proxy stands in for the whole set.
 const plan = new Proxy({}, { get: () => noop }) as Props["plan"];
 
-function render(kind: string, pending: Question[], opts: { pendingText?: string; questionInline?: boolean } = {}) {
+function render(
+  kind: string,
+  pending: Question[],
+  opts: { pendingText?: string; questionInline?: boolean; busy?: boolean; turnBusy?: boolean } = {},
+) {
   const actions = {
     sendKeys: vi.fn(() => Promise.resolve(true)),
     sendSeq: vi.fn(() => Promise.resolve(true)),
@@ -28,7 +32,8 @@ function render(kind: string, pending: Question[], opts: { pendingText?: string;
     sendRespond: vi.fn(() => Promise.resolve(true)),
   };
   const st = {
-    busy: false,
+    busy: opts.busy ?? false,
+    turnBusy: opts.turnBusy ?? false,
     queuedCount: 0,
     pending,
     pendingText: opts.pendingText ?? "",
@@ -122,5 +127,19 @@ describe("MirrorPendingCards question routes", () => {
     expect(a.sendSeq).toHaveBeenCalledWith([{ k: "Down" }, { k: "Enter" }]);
     await click(cancel());
     expect(a.sendInterrupt).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Background work alone is not a turn: the typing row's stop is an Esc, which never ends a
+// background shell, so it must not be offered for one (#3279).
+describe("MirrorPendingCards typing row", () => {
+  it("shows for a running turn", () => {
+    render("claude", null as unknown as Question[], { busy: true, turnBusy: true });
+    expect(document.querySelector(".mirror-typing")).not.toBeNull();
+  });
+
+  it("stays hidden while only background work runs", () => {
+    render("claude", null as unknown as Question[], { busy: true, turnBusy: false });
+    expect(document.querySelector(".mirror-typing")).toBeNull();
   });
 });

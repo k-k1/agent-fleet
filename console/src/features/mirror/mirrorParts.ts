@@ -16,6 +16,7 @@ export interface PromptBoundaryLike {
   role: string;
   queued?: boolean;
   pending?: boolean;
+  compact?: boolean;
 }
 
 // The user turn just before the work to explore begins. A just-sent optimistic echo (pending)
@@ -68,10 +69,14 @@ export function liveExchangeFrom(groups: PromptBoundaryLike[]): number {
 // across the gap between a session reading idle and its reply actually landing in the
 // transcript (the reply is the first non-user group after the last user group). Returns
 // false when there's no prompt at all (a fresh or history-only view has nothing pending).
+//
+// A compaction summary is recorded as a user row but asks for nothing. After an idle
+// compaction it is the newest group, and counting it would hold the indicator for a reply that
+// never comes, so it is skipped — and it does not hide the prompt before it either.
 export function awaitingReply(groups: PromptBoundaryLike[]): boolean {
   let u = -1;
   for (let i = groups.length - 1; i >= 0; i--) {
-    if (groups[i].role === "user") { u = i; break; }
+    if (groups[i].role === "user" && !groups[i].compact) { u = i; break; }
   }
   if (u < 0) return false;
   const reply = groups[u + 1];

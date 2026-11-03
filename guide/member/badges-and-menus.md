@@ -25,7 +25,7 @@ shown as text as well, not just an icon.
 | Stopped · auto-resume 19:50 | Stopped, but an automatic resume after a usage limit is still booked for that time |
 | Spend limit — needs a raise | The spend / credit limit was reached. Waiting will not clear it; the limit has to be raised or credit added |
 | Ready | Ready to take the next instruction |
-| Ready · running in background | Accepts input, but background processing is still running |
+| Ready · running in background | Accepts input, but background processing is still running. For Claude, the conversation lists each background command above the input box: how long it has run, whether it is running or waiting, and **may be stuck** when it has waited 30 minutes or more with almost no CPU. **Stop** ends that command and everything it started. The agent is told the command ended and may start a turn to react to it |
 | Ready · handoff to launch | The **last** next-session prompt this session proposed has not been launched. Open the conversation and start it (or discard it) from the handoff card ([05](05-stopping-and-tidying.md)). An older proposal that a newer, launched one replaced does not raise it |
 | Running | A shell / ssm with no detailed progress state is running |
 | Stopped | The process is stopped |

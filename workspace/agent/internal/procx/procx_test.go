@@ -118,3 +118,18 @@ func withSleep(tab map[int]Info) map[int]Info {
 	tab[103] = Info{PPID: 101, State: 'S', Comm: "sleep", Pgrp: 100, Sid: 50}
 	return tab
 }
+
+func TestParseCounters(t *testing.T) {
+	// A real /proc/<pid>/stat line (bash, comm with a space to keep the paren split honest).
+	line := "1635979 (my cat) S 1635978 1635978 1635978 0 -1 4194304 97 0 0 0 7 3 0 0 20 0 1 0 98765432 2347008 128 18446744073709551615"
+	pi, ok := Parse(1635979, line)
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	if pi.CPUTicks != 10 || pi.StartTicks != 98765432 {
+		t.Fatalf("CPUTicks=%d StartTicks=%d, want 10 and 98765432", pi.CPUTicks, pi.StartTicks)
+	}
+	if pi.Pgrp != 1635978 || pi.Sid != 1635978 {
+		t.Fatalf("Pgrp=%d Sid=%d", pi.Pgrp, pi.Sid)
+	}
+}
