@@ -661,6 +661,12 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.first_prompt_note": "Once the session is up, this is auto-sent exactly once (⌘/Ctrl+Enter to launch).",
   "launch.attach_note": "Paste or drop files here, or attach with the ＋ button (on a phone, use ＋).",
   "launch.attach_file": "Attach a file (paste or drop too)",
+  "launch.stash_to_memo": "Save to memo",
+  "launch.stash_to_memo_hint": "Move this prompt and its attachments into the memo queue and empty the box. \"Start with this\" on the memo brings them back.",
+  "launch.stash_done": "Saved to the memo queue. Use \"Start with this\" on the memo to pick it up again.",
+  "launch.stash_failed": "Could not save to a memo. Your prompt is still here.",
+  "launch.stash_too_large": "An attachment is too large to save to a memo. Your prompt is still here.",
+  "launch.memo_attach_missing": "{count} of the memo's attachments could not be loaded.",
   "launch.start_worktree": "Start in a worktree",
   // Collapsed sections (Location / More) and the summary shown while folded. The
   // summary exists so the launch is readable without expanding: Location always

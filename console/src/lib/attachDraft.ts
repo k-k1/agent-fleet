@@ -170,10 +170,10 @@ const takeTicket = (key: string): number => {
 };
 
 /** clearAttachDraft forgets a key's staged attachments (sent / launched / abandoned). */
-export async function clearAttachDraft(key: string | null): Promise<void> {
-  if (!key) return;
+export function clearAttachDraft(key: string | null): Promise<void> {
+  if (!key) return Promise.resolve();
   takeTicket(key); // a write still in flight must not resurrect what was just cleared
-  await run("readwrite", (s) => s.delete(key));
+  return track(key, run("readwrite", (s) => s.delete(key)).then(() => {}));
 }
 
 // Read-back cache: a composer rewrites the whole list on every edit, and without this the
@@ -199,7 +199,41 @@ function fileBytes(file: File): Promise<ArrayBuffer | null> {
 // An empty list deletes the record; a failed write deletes it too, because a half-written
 // draft that restores as something the user never staged is worse than one that doesn't
 // restore at all.
-export async function writeAttachDraft(key: string | null, items: AttachDraftInput[]): Promise<void> {
+export function writeAttachDraft(key: string | null, items: AttachDraftInput[]): Promise<void> {
+  const p = doWriteAttachDraft(key, items);
+  return key ? track(key, p) : p;
+}
+
+// The latest write or clear per key, so a reader that is about to take the draft over (the
+// memo stash, #3289) can wait for the bytes a just-closed composer was still reading. Reading
+// before it lands sees an older record, and the clear that follows would also cancel the late
+// write.
+const pendingWrite = new Map<string, Promise<void>>();
+
+function track(key: string, p: Promise<void>): Promise<void> {
+  pendingWrite.set(key, p);
+  void p.finally(() => {
+    if (pendingWrite.get(key) === p) pendingWrite.delete(key);
+  });
+  return p;
+}
+
+/** settleAttachDraft resolves once no write or clear of the key is landing. */
+export async function settleAttachDraft(key: string | null): Promise<void> {
+  if (!key) return;
+  for (let p = pendingWrite.get(key); p; p = pendingWrite.get(key)) await p;
+}
+
+/** attachDraftSeq is the key's write generation, or null while a write or clear is still
+ *  landing. A reader that takes the draft over reads it between two equal non-null values:
+ *  every write and clear takes its ticket synchronously, so an unchanged value proves none
+ *  started in between. */
+export function attachDraftSeq(key: string | null): number | null {
+  if (!key) return 0;
+  return pendingWrite.has(key) ? null : (writeSeq.get(key) ?? 0);
+}
+
+async function doWriteAttachDraft(key: string | null, items: AttachDraftInput[]): Promise<void> {
   if (!key) return;
   if (!items.length) return clearAttachDraft(key);
   const ticket = takeTicket(key);

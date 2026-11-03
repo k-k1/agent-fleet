@@ -18,6 +18,8 @@ import { launchFromHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { recordWorkItemLaunch } from "../workitems/launch.ts";
 import { workItemLaunchBranch } from "../workitems/read.ts";
+import { stashStoredDraft } from "../memo/launchStash.ts";
+import { t } from "../../lib/i18n/index.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -31,6 +33,7 @@ export function StartHost() {
   // LaunchModal below; cleared when the whole launch stack closes.
   const seedPrompt = useLaunchSeed((s) => s.prompt);
   const seedTitle = useLaunchSeed((s) => s.title);
+  const seedAttachments = useLaunchSeed((s) => s.attachments);
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
@@ -49,6 +52,11 @@ export function StartHost() {
   }, [startTick, clearLaunch]);
 
   const toast = useToast();
+  // Hub picks that restore a memo await a draft save before opening (onPickRepo below).
+  // picking stops a second click from saving twice; hubGen tells a save that finished
+  // after the hub closed not to reopen it.
+  const picking = useRef(false);
+  const hubGen = useRef(0);
   const ctx = useRepoRailContext(); // connection-gated kinds, like the repo rows
   const startWork = useStartWork();
   // Coding agents only (runsInDir) — shell/ssm have their own rows in the hub.
@@ -69,10 +77,30 @@ export function StartHost() {
           kinds={agentKinds}
           claudeExpired={ctx.claudeExpired}
           onClose={() => {
+            hubGen.current++;
             setShow(false);
             clearSeed();
           }}
-          onPickRepo={openLaunch}
+          onPickRepo={async (r) => {
+            // A memo being restored (#3289) outranks the picked repo's stored draft: set that
+            // draft aside first, and open nothing when it could not be saved.
+            const { memoId, prompt, attachments } = useLaunchSeed.getState();
+            if (!memoId) return openLaunch(r);
+            if (picking.current) return; // one save at a time; a second click would save it twice
+            picking.current = true;
+            const gen = hubGen.current;
+            const s = await stashStoredDraft(r.name, { body: prompt, attachments }).finally(() => {
+              picking.current = false;
+            });
+            // The hub was closed (or another memo seeded) while saving: do not reopen anything.
+            if (gen !== hubGen.current || useLaunchSeed.getState().memoId !== memoId) return;
+            if (!s.ok) {
+              toast(t(s.reason === "changed" ? "memo.start_draft_changed" : "memo.start_draft_failed"));
+              return;
+            }
+            if (s.saved) toast(t("memo.start_draft_saved"), { kind: "success" });
+            openLaunch(r);
+          }}
         />
       )}
       {launch && (
@@ -87,6 +115,7 @@ export function StartHost() {
           isSvn={launch.vcs === "svn"}
           isUnborn={!!launch.unborn}
           initialPrompt={seedPrompt || undefined}
+          initialAttachments={seedAttachments.length ? seedAttachments : undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}
           workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}

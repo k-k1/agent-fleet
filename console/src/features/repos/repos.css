@@ -788,6 +788,31 @@
   border-radius: 4px;
   font-size: 12px;
 }
+/* Same tile as the template button. On a phone the label goes and the icon stays, so the
+   toolbar keeps to one row beside the field label. */
+.launch-stash-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+@media (max-width: 520px) {
+  .launch-stash-label {
+    display: none;
+  }
+}
+.launch-stash-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.launch-stash-note.warn {
+  color: var(--warn);
+}
 .launch-tmpl-btn.on {
   border-color: var(--accent);
   color: var(--accent);

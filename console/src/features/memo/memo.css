@@ -756,6 +756,20 @@
   object-fit: cover;
   display: block;
 }
+/* A non-image attachment: an icon over its file name, in the same tile. */
+.memo-thumb.file {
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+  cursor: default;
+}
+.memo-thumb-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
 .memo-thumb.loading,
 .memo-thumb.failed {
   cursor: default;

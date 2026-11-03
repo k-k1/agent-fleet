@@ -671,6 +671,12 @@ export const sessions = {
   "launch.first_prompt_note": "セッション起動後、準備でき次第この内容を 1 回だけ自動送信します（⌘/Ctrl+Enter で起動）。",
   "launch.attach_note": "ファイルはここに貼り付け・ドロップ、または＋ボタンで添付できます（スマホは＋から）。",
   "launch.attach_file": "ファイルを添付（貼り付け・ドロップも可）",
+  "launch.stash_to_memo": "メモに一時保存",
+  "launch.stash_to_memo_hint": "入力中のプロンプトと添付をメモキューに退避して、入力欄を空にします。メモの「この内容で始める」で戻せます。",
+  "launch.stash_done": "メモキューに一時保存しました。メモの「この内容で始める」で再開できます。",
+  "launch.stash_failed": "メモに保存できませんでした。入力内容はそのまま残っています。",
+  "launch.stash_too_large": "添付ファイルが大きすぎてメモに保存できませんでした。入力内容はそのまま残っています。",
+  "launch.memo_attach_missing": "メモの添付のうち {count} 件を読み込めませんでした。",
   "launch.start_worktree": "worktree で始める",
   // 折りたたみセクション（場所 / 詳細）の見出しと、畳んでいる間に出す要約。要約は
   // 「開かなくても実際に何が起きるか読み取れる」ことが役目なので、既定のままでも

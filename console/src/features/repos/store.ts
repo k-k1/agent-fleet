@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { api, getTenant, isTransientErr } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
+import type { MemoAttachment } from "../../types/memo.ts";
 
 // A working copy from GET /api/repos.
 export interface Repo {
@@ -204,6 +205,14 @@ interface LaunchSeedStore {
 	/** The memo taken in from the inbox this launch was seeded from (ADR 0111); "" = none. The
 	 *  Control Plane looks it up and stamps the session's provenance from the memo's origin. */
 	inboxMemoId: string;
+	/** Stored memo attachments to stage as chips in the dialog (#3289: start from a memo);
+	 *  [] = none. The dialog fetches their bytes, so they upload like a fresh paste. */
+	attachments: MemoAttachment[];
+	setAttachments(a: MemoAttachment[]): void;
+	/** The memo this launch restores (#3289); "" = none. Its text outranks the repo's stored
+	 *  draft, so StartHost saves that draft to a memo before the dialog opens over it. */
+	memoId: string;
+	setMemoId(id: string): void;
 	set(p: string, title?: string, handoffSession?: string, handoffId?: string, handoffOfferId?: string, workItem?: LaunchWorkItem | null): void;
 	/** Runs once, after a launch seeded from this store has created its session (never on
 	 *  cancel). Gets the new session's name ("" when the launch did not report one). Dropped by set()/clear(), so a cancelled dialog leaves nothing behind. */
@@ -223,15 +232,19 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	workItem: null,
 	inboxItemId: "",
 	inboxMemoId: "",
+	attachments: [],
+	memoId: "",
 	onLaunched: null,
+	setAttachments: (attachments) => set({ attachments }),
+	setMemoId: (memoId) => set({ memoId }),
 	setOnLaunched: (onLaunched) => set({ onLaunched }),
 	// set() drops inboxItemId: a seed left over from a cancelled inbox launch must not send an
 	// unrelated launch through the request route. The inbox calls setInboxItem after set().
 	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "", workItem = null) =>
-		set({ prompt, title, handoffSession, handoffId, handoffOfferId, workItem, inboxItemId: "", inboxMemoId: "", onLaunched: null }),
+		set({ prompt, title, handoffSession, handoffId, handoffOfferId, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
 	setInboxItem: (inboxItemId) => set({ inboxItemId }),
 	setInboxMemo: (inboxMemoId) => set({ inboxMemoId }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", workItem: null, inboxItemId: "", inboxMemoId: "", onLaunched: null }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
