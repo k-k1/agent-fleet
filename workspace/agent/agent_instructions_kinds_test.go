@@ -276,6 +276,12 @@ func TestInstrUnsupportedMatchesOldList(t *testing.T) {
 		}
 		return ""
 	}
+	// The frozen set is itself pinned: dropping an old kind from it would silently turn that
+	// kind into a "new" one and lift its pin.
+	if got := slices.Sorted(slices.Values(instrFrozenKinds)); !slices.Equal(got,
+		[]string{"agy", "claude", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode", "shell", "ssm"}) {
+		t.Errorf("instrFrozenKinds changed: %v", got)
+	}
 	probes := append([]string{"Cursor", "CURSOR", " cursor", "", "unknown-kind", "cursor-agent"}, instrFrozenKinds...)
 	for _, kind := range probes {
 		if got, want := instrUnsupportedOf(kind), old(kind); got != want {
@@ -358,6 +364,14 @@ func TestInstrUnsupportedMatchesOldList(t *testing.T) {
 	for _, u := range oldInstrUnsupported {
 		if rows[u.kind] != (instrTarget{Kind: u.kind, Reason: u.reason}) {
 			t.Errorf("row %s = %+v, want reason %s", u.kind, rows[u.kind], u.reason)
+		}
+	}
+	// Every registered kind that declares itself unsupported must have its row, with the reason.
+	for _, kind := range sessionx.RegisteredKinds() {
+		if reason := instrUnsupportedOf(kind); reason != "" {
+			if row, ok := rows[kind]; !ok || row.Reason != reason {
+				t.Errorf("unsupported kind %s: row = %+v (present=%v), want reason %q", kind, row, ok, reason)
+			}
 		}
 	}
 	for kind, row := range rows {

@@ -153,6 +153,12 @@ func TestMoveTargetDeclarationsMatchOldLists(t *testing.T) {
 			}
 		}
 	}
+	// The frozen set is itself pinned: dropping an old kind from it would silently turn that
+	// kind into a "new" one and lift its pin.
+	if got := slices.Sorted(slices.Values(moveFrozenKinds)); !slices.Equal(got,
+		[]string{"agy", "claude", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode", "shell", "ssm"}) {
+		t.Errorf("moveFrozenKinds changed: %v", got)
+	}
 	// Restricted to the frozen kinds, the derived lists equal the old literals.
 	inFrozen := func(ks []string) []string {
 		var out []string
