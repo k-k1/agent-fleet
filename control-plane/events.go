@@ -163,7 +163,7 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		wrote := emit("workspace", snap.workspace)
 		wrote = emit("stats", snap.stats) || wrote
 		// The list is the hub's; the inbox origins are this member's, written into a copy.
-		wrote = emit("sessions", map[string]any{"sessions": a.ws.applyInboxOrigins(ctx, res.mv, cloneSessions(snap.sessions))}) || wrote
+		wrote = emit("sessions", a.memberSessions(ctx, res, snap)) || wrote
 		// A transient failure draining notifications (a DB error, say) drops this
 		// tick only and leaves the stream up; the next tick recovers.
 		if p, aerr := a.notif.listPayload(ctx, res); aerr == nil {
@@ -240,4 +240,11 @@ func cloneSessions(l []sessionWire) []sessionWire {
 		return nil
 	}
 	return append(make([]sessionWire, 0, len(l)), l...)
+}
+
+// memberSessions applies this member's inbox origins to a copy of the shared list. The copy is
+// the isolation boundary: snap is read by every subscriber of the workspace, and
+// applyInboxOrigins writes into the slice it is given.
+func (a eventsAPI) memberSessions(ctx context.Context, res *resolved, snap *hubSnapshot) map[string]any {
+	return map[string]any{"sessions": a.ws.applyInboxOrigins(ctx, res.mv, snap.sessions)}
 }

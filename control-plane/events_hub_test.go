@@ -253,3 +253,43 @@ func TestEventsHubCancelledSubscriberDoesNotHurtOthers(t *testing.T) {
 		}
 	}
 }
+
+// The shared snapshot is never written by a subscriber: applying member A's and then B's origins
+// leaves the raw list untouched, and each result carries only its own member's origin. Removing
+// the copy in memberSessions fails this deterministically.
+func TestEventsHubMemberCompositionLeavesSnapshotUntouched(t *testing.T) {
+	a, res, _ := hubEnv(t)
+	ctx := context.Background()
+	st := a.mgr.store
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	id2, _ := st.UpsertIdentity(ctx, "second@example.com", "second", "")
+	m2, err := st.EnsureMembership(ctx, id2.ID, tenant.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordInboxSessionOrigin(ctx, res.mv.MembershipID, "s", "item-A", "sender-A"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordInboxSessionOrigin(ctx, m2.ID, "s", "item-B", "sender-B"); err != nil {
+		t.Fatal(err)
+	}
+	res2 := *res
+	res2.mv = store.MembershipView{MembershipID: m2.ID}
+	snap := &hubSnapshot{sessions: []sessionWire{{Name: "s", Kind: "claude", Alive: true}}}
+	raw, _ := json.Marshal(snap.sessions)
+
+	ja, _ := json.Marshal(a.memberSessions(ctx, res, snap))
+	if after, _ := json.Marshal(snap.sessions); string(after) != string(raw) {
+		t.Fatalf("shared snapshot changed after member A: %s", after)
+	}
+	jb, _ := json.Marshal(a.memberSessions(ctx, &res2, snap))
+	if after, _ := json.Marshal(snap.sessions); string(after) != string(raw) {
+		t.Fatalf("shared snapshot changed after member B: %s", after)
+	}
+	if !strings.Contains(string(ja), "item-A") || strings.Contains(string(ja), "item-B") {
+		t.Fatalf("member A result wrong: %s", ja)
+	}
+	if !strings.Contains(string(jb), "item-B") || strings.Contains(string(jb), "item-A") {
+		t.Fatalf("member B result wrong: %s", jb)
+	}
+}
