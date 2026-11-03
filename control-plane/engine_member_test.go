@@ -544,11 +544,12 @@ func TestEventsStreamEnginesPushesChange(t *testing.T) {
 	e.ctrl.noteMemberSnapshot("running", 1, time.Now())
 	a.engines = &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 
+	rec := &syncRecorder{}
 	go func() {
-		stub.waitPolls(2, time.Now().Add(25*time.Second))
+		rec.waitFrames("engines", 1)
 		e.ctrl.noteMemberSnapshot("stopped", 0, time.Now())
 	}()
-	frames, _ := runStream(t, a, res, stub, 6)
+	frames, _ := runStreamWith(t, a, res, stub, 6, rec)
 	if got := len(frames["engines"]); got != 2 {
 		t.Fatalf("engines frames = %d, want 2 (snapshot + the state change)", got)
 	}

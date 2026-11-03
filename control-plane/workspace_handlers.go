@@ -1046,11 +1046,18 @@ func fmtStarted(createdAt string) string {
 // from the DB — as stopped — so the user still sees, and can resume, their
 // sessions. Shared by the REST handler and the /api/events push channel.
 func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[string]any {
+	return map[string]any{"sessions": a.applyInboxOrigins(ctx, res.mv, a.sessionsShared(ctx, res))}
+}
+
+// sessionsShared is sessionsPayload before the per-member part: the list every member of the
+// workspace sees, from the Agent (mirrored into the DB) or, failing that, from the DB mirror. It
+// reads nothing of res.mv, so the events hub builds it once per tick for all subscribers.
+func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessionWire {
 	if res.rt.State(ctx) == "running" {
 		if env, readStart, err := a.mgr.agentSessionsShared(ctx, res.rt); err == nil {
 			list := env.Sessions
 			_ = a.mgr.mirrorSessions(ctx, res.ws.ID, readStart, list)
-			return map[string]any{"sessions": a.applyInboxOrigins(ctx, res.mv, list)}
+			return list
 		}
 		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.
 	}
@@ -1080,7 +1087,7 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 			Resumable: true,
 		})
 	}
-	return map[string]any{"sessions": a.applyInboxOrigins(ctx, res.mv, out)}
+	return out
 }
 
 func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *resolved) {

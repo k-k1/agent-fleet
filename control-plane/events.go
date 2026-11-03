@@ -3,9 +3,11 @@
 // GET /api/events is SSE (text/event-stream) and folds the four permanent polls the Console
 // used to run separately every 4-5s (workspace / sessions / stats / notifications) into one
 // connection. The server drives the same payload builders (workspacePayload /
-// sessionsPayload / workspaceStats / listPayload) on a per-connection tick and frames only
+// sessionsPayload / workspaceStats / listPayload) and frames only
 // the streams whose JSON changed since the last send, so an unchanged tick costs zero bytes
-// between browser and CP. That beats even 304 polling, because on a mobile link the request
+// between browser and CP. The workspace, stats and session-list payloads are built once per
+// tick per workspace by a push hub (internal/pushhub) and shared by its subscribers; the
+// per-member parts stay per connection. That beats even 304 polling, because on a mobile link the request
 // headers and cookie round trip are the bulk of the cost.
 //
 // A frame is `data: {"stream":"<name>","data":<same shape as the REST reply>}\n\n`. Keeping
@@ -27,6 +29,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/pushhub"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
@@ -155,11 +158,12 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", frame)
 		return true
 	}
-	tickAll := func() {
-		state := res.rt.State(ctx)
-		wrote := emit("workspace", a.ws.workspacePayload(ctx, res, state))
-		wrote = emit("stats", statsPayload(ctx, a.mgr, res.rt, state)) || wrote
-		wrote = emit("sessions", a.ws.sessionsPayload(ctx, res)) || wrote
+	tickAll := func(snap *hubSnapshot) {
+		state := snap.state
+		wrote := emit("workspace", snap.workspace)
+		wrote = emit("stats", snap.stats) || wrote
+		// The list is the hub's; the inbox origins are this member's, written into a copy.
+		wrote = emit("sessions", map[string]any{"sessions": a.ws.applyInboxOrigins(ctx, res.mv, cloneSessions(snap.sessions))}) || wrote
 		// A transient failure draining notifications (a DB error, say) drops this
 		// tick only and leaves the stream up; the next tick recovers.
 		if p, aerr := a.notif.listPayload(ctx, res); aerr == nil {
@@ -191,15 +195,49 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 			fl.Flush()
 		}
 	}
-	tickAll()
-	t := time.NewTicker(a.tick)
-	defer t.Stop()
+	sub, leave := a.mgr.eventsHub.Join(res.ws.ID, res, a.tick, a.buildSnapshot)
+	defer leave()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
-			tickAll()
+		case snap := <-sub.C:
+			tickAll(snap)
 		}
 	}
+}
+
+// buildSnapshot is the per-workspace part of a tick, run once by the hub for all subscribers.
+// ctx is the hub's, so no subscriber's cancellation reaches the Agent read.
+func (a eventsAPI) buildSnapshot(ctx context.Context, res *resolved) *hubSnapshot {
+	state := res.rt.State(ctx)
+	return &hubSnapshot{
+		state:     state,
+		workspace: a.ws.workspacePayload(ctx, res, state),
+		stats:     statsPayload(ctx, a.mgr, res.rt, state),
+		sessions:  a.ws.sessionsShared(ctx, res),
+	}
+}
+
+// hubSnapshot is what every subscriber of one workspace receives for a tick. Read-only: several
+// connections marshal the same maps concurrently. sessions is the list before the per-member
+// part (inbox origins); a subscriber copies it before applying its own.
+type hubSnapshot struct {
+	state     string
+	workspace map[string]any
+	stats     map[string]any
+	sessions  []sessionWire
+}
+
+// eventsHub is keyed by workspace id. Only rt and ws of the resolved value are read to build a
+// snapshot; anything per member (mv) is applied by the subscriber.
+type eventsHub = pushhub.Hub[*resolved, *hubSnapshot]
+
+// cloneSessions returns a list the caller may write into (applyInboxOrigins does). An empty
+// list stays empty rather than null.
+func cloneSessions(l []sessionWire) []sessionWire {
+	if l == nil {
+		return nil
+	}
+	return append(make([]sessionWire, 0, len(l)), l...)
 }
