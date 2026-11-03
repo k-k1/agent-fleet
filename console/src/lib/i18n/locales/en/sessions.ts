@@ -289,7 +289,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "arch.folder_missing_suffix": " · folder missing",
   "arch.recreate": "Recreate working copy",
   "arch.recreate_title": "Recreate the deleted worktree at its original path so these sessions can resume",
-  "arch.scope": "Showing only the archive of {folder}",
+  "arch.scope": "Showing only the archive of {folder} and its child sessions",
   "arch.scope_clear": "Show all",
   // === Recreating a deleted worktree (features/sessions/RecreateWorktreeModal.tsx) ===
   "rwt.title": "Recreate working copy",

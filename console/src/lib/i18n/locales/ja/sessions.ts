@@ -297,7 +297,7 @@ export const sessions = {
   "arch.folder_missing_suffix": " · フォルダ無し",
   "arch.recreate": "作業コピーを作り直す",
   "arch.recreate_title": "削除された worktree を元のパスに作り直し、ここのセッションを再開できるようにします",
-  "arch.scope": "{folder} のアーカイブだけを表示中",
+  "arch.scope": "{folder} とその子セッションのアーカイブだけを表示中",
   "arch.scope_clear": "すべて表示",
   // === 削除された worktree の作り直し（features/sessions/RecreateWorktreeModal.tsx）===
   "rwt.title": "作業コピーを作り直す",
