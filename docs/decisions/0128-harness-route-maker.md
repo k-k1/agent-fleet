@@ -399,3 +399,10 @@ table from becoming a menu of models that fail on the first message, which is wh
   stored connection reference is bound to the key instance (`ANTHROPIC_API_KEY@<sha256 prefix>`, no secret), so
   replacing or removing the key in Settings refuses the next start instead of moving the session to another bill. A
   running pane keeps the key it started with until it stops.
+- 2026-11-04, P1b review round 2 (#3316): a settings file edited while the pane runs is now covered by stopping, not
+  by pinning: `agents.RouteWatcher` (claude: the same settings check) is swept on the reconciler tick
+  (`SweepRouteGuards`), and a running session whose route no longer holds is halted like the stop button (resumable)
+  and a `route-stopped` notification names the file; starting it again is refused while the cause remains. The
+  window is one tick. `CLAUDE_CODE_USE_FOUNDRY` joins the unset list and the settings check. A scheduled reuse
+  fire compares a bound connection reference exactly (a bare slot compares by slot), and `BindRoute` re-checks a
+  fingerprint against the single key read it binds. #3317 now only tracks the optional flag-layer pin.

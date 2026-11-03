@@ -95,3 +95,12 @@ func (r *RouteRefusal) Error() string { return r.Message }
 type RouteBinder interface {
 	BindRoute(sel RouteSelection) (RouteSelection, *RouteRefusal)
 }
+
+// RouteWatcher is an optional capability of a RouteAdapter: a check that an explicit selection
+// STILL holds on a session that is running. A route's credential is fixed when the process
+// starts, but the CLI re-reads its own settings while it runs, so something other than the
+// route can take over afterwards; the Agent stops such a session rather than let it spend on
+// another account. nil means the route still holds.
+type RouteWatcher interface {
+	RouteHeld(m session.Meta) *RouteRefusal
+}

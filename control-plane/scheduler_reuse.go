@@ -599,9 +599,17 @@ func reuseRouteMismatch(sch store.Schedule, cur *sessionWire) error {
 		return fmt.Errorf("schedule route %q: the session %s runs on %q", want["route"], cur.Name, cur.Route.Route)
 	}
 	if conn, _ := want["connection"].(string); conn != "" {
-		slot := func(c string) string { s, _, _ := strings.Cut(c, "@"); return s }
-		if slot(conn) != slot(cur.Route.Connection) {
-			return fmt.Errorf("schedule route %q: the session %s runs on connection %q, not %q", want["route"], cur.Name, cur.Route.Connection, conn)
+		// A bound reference ("SLOT@<key fingerprint>") names one key instance and has to match
+		// exactly: the slot alone would let a schedule bound to one account's key run on
+		// another's. A bare slot name means "the member's connection in that slot" and is
+		// compared by slot.
+		have := cur.Route.Connection
+		if strings.Contains(conn, "@") {
+			if conn != have {
+				return fmt.Errorf("schedule route %q: the session %s runs on connection %q, not %q", want["route"], cur.Name, have, conn)
+			}
+		} else if slot, _, _ := strings.Cut(have, "@"); slot != conn {
+			return fmt.Errorf("schedule route %q: the session %s runs on connection %q, not %q", want["route"], cur.Name, have, conn)
 		}
 	}
 	return nil

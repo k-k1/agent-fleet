@@ -174,6 +174,9 @@ func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
 		"another connection":         {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "OTHER_KEY", true},
 		"same route, any connection": {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "", false},
 		"same route and slot":        {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY", false},
+		"bound, same instance":       {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY@0123456789abcdef", false},
+		"bound, another instance":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY@fedcba9876543210", true},
+		"bound, target bare":         {sessionWire{Name: "t", Alive: true, State: "idle", Route: &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY"}}, "anthropic-api", "ANTHROPIC_API_KEY@0123456789abcdef", true},
 		"no route on the schedule":   {sessionWire{Name: "t", Alive: true, State: "idle"}, "", "", false},
 	} {
 		a := &fakeAgent{sessions: []sessionWire{tc.target}}

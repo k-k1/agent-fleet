@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"fmt"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -229,5 +230,45 @@ func TestClaudeRouteRefusedOnSettingsConflict(t *testing.T) {
 	launchTmuxFn = func(session.Meta, bool) error { launched++; return nil }
 	if rec := p.post(map[string]any{"kind": "claude", "dir": p.repo}, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated || launched != 1 {
 		t.Errorf("no selection with the same settings: %d launched=%d, want unchanged", rec.Code, launched)
+	}
+}
+
+// A settings edit after launch stops the running session and says why; a session whose route
+// still holds, and one with no selection, keep running.
+func TestSweepRouteGuardsStopsAConflictedSession(t *testing.T) {
+	isolateAgentState(t)
+	setAnthropicKey(t, "sk-ant-api03-test")
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	mk := func(name string, r *routes.Selection) session.Meta {
+		m := session.Meta{Name: name, Kind: "claude", Dir: t.TempDir(), Route: r, CreatedAt: "2026-10-29T10:00:00+09:00"}
+		session.WriteMeta(m)
+		if out, err := tmuxx.Cmd("new-session", "-d", "-s", session.TmuxName(name), "sleep 120").CombinedOutput(); err != nil {
+			t.Fatalf("tmux: %v %s", err, out)
+		}
+		return m
+	}
+	api := mk("rg-api", &routes.Selection{Route: "anthropic-api"})
+	plain := mk("rg-none", nil)
+	alive := func(m session.Meta) bool { return tmuxx.HasSession(session.TmuxName(m.Name)) }
+
+	SweepRouteGuards(time.Now())
+	if !alive(api) || !alive(plain) {
+		t.Fatal("a session whose route holds was stopped")
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "settings.json"), []byte(`{"env":{"ANTHROPIC_API_KEY":"sk-other"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	SweepRouteGuards(time.Now())
+	if alive(api) {
+		t.Error("the conflicted session is still running")
+	}
+	if !alive(plain) {
+		t.Error("a session with no selection was stopped")
+	}
+	// Starting it again is refused with the cause, not run on the default.
+	m, _ := session.ReadMeta(api.Name)
+	if ref := startRefusalOf(m); ref == nil || ref.Code != routes.CodeRouteSettings {
+		t.Errorf("restart: %+v, want %s", ref, routes.CodeRouteSettings)
 	}
 }

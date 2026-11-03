@@ -326,3 +326,62 @@ func TestAPIKeyBinding(t *testing.T) {
 		t.Error("bound a selection with no key")
 	}
 }
+
+// BindRoute reads the key once and checks a fingerprint already on the selection against that
+// read: a key replaced between CheckRoute and BindRoute is refused, never re-bound silently.
+func TestBindRouteDoesNotRebindAReplacedKey(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-account-a", nil)
+	boundA, _ := agentImpl{}.BindRoute(*sel(RouteAPI, ""))
+	if ref := (agentImpl{}).CheckRoute(context.Background(), boundA, ""); ref != nil {
+		t.Fatalf("check on A: %+v", ref)
+	}
+	withAPIKey(t, "sk-ant-api03-account-b", nil) // replaced after the check
+	if got, ref := (agentImpl{}).BindRoute(boundA); ref == nil || ref.Code != routes.CodeRouteUnavailable {
+		t.Errorf("BindRoute of A over key B = %+v %v, want a refusal", got, ref)
+	}
+	withAPIKey(t, "", errors.New("sealed"))
+	if _, ref := (agentImpl{}).BindRoute(boundA); ref == nil || ref.Code != routes.CodeRouteUnavailable {
+		t.Errorf("an unreadable store bound anyway: %+v", ref)
+	}
+}
+
+// Foundry is another selector the CLI honours: removed for both routes, and refused in settings.
+func TestFoundryIsIsolated(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-test", nil)
+	for _, route := range []string{RouteAPI, RouteSubscription} {
+		plan, err := agentImpl{}.ApplyRoute(session.Meta{}, *sel(route, ""))
+		if err != nil || !slices.Contains(plan.Unset, "CLAUDE_CODE_USE_FOUNDRY") {
+			t.Errorf("%s: unset %v err %v, want CLAUDE_CODE_USE_FOUNDRY", route, plan.Unset, err)
+		}
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".claude", "settings.json"), `{"env":{"CLAUDE_CODE_USE_FOUNDRY":"1"}}`)
+	isolateClaudeConfig(t)
+	m := session.Meta{Kind: session.KindClaude, Name: "f1", Dir: dir, Route: sel(RouteAPI, "")}
+	if ref := (agentImpl{}).RouteHeld(m); ref == nil || ref.Code != routes.CodeRouteSettings {
+		t.Errorf("RouteHeld = %+v", ref)
+	}
+}
+
+// A running session's route is watched: a settings file that starts overriding it after launch is
+// reported, an untouched one is not, and a session with no selection is never judged.
+func TestRouteHeldWatchesRunningSessions(t *testing.T) {
+	cfg := isolateClaudeConfig(t)
+	dir := t.TempDir()
+	managed := t.TempDir()
+	prev := managedSettingsDir
+	managedSettingsDir = managed
+	t.Cleanup(func() { managedSettingsDir = prev })
+	api := session.Meta{Kind: session.KindClaude, Name: "w1", Dir: dir, Route: sel(RouteAPI, "")}
+	none := session.Meta{Kind: session.KindClaude, Name: "w2", Dir: dir}
+	if ref := (agentImpl{}).RouteHeld(api); ref != nil {
+		t.Fatalf("held route reported: %+v", ref)
+	}
+	writeFile(t, filepath.Join(cfg, "settings.json"), `{"env":{"ANTHROPIC_BASE_URL":"https://gateway.invalid"}}`)
+	if ref := (agentImpl{}).RouteHeld(api); ref == nil || ref.Code != routes.CodeRouteSettings {
+		t.Errorf("a later settings edit went unnoticed: %+v", ref)
+	}
+	if ref := (agentImpl{}).RouteHeld(none); ref != nil {
+		t.Errorf("a session with no selection was judged: %+v", ref)
+	}
+}

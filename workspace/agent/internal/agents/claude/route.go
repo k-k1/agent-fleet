@@ -77,7 +77,7 @@ var loadAPIKey = func() (string, error) {
 // route are added per route below.
 var routeUnset = []string{
 	"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
 }
 
 // Routes implements agents.RouteAdapter.
@@ -137,17 +137,33 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, _ stri
 	return settingsConflict(userSettingFiles())
 }
 
-// BindRoute implements agents.RouteBinder: the stored form of an accepted selection.
+// BindRoute implements agents.RouteBinder: the stored form of an accepted selection. The key is
+// read once, here, and a fingerprint already on the selection is checked against THAT read, so a
+// key replaced between the check and the binding is refused instead of being bound silently.
 func (agentImpl) BindRoute(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
 	if sel.Route != RouteAPI {
 		return sel, nil
 	}
-	key, _ := loadAPIKey()
-	if key = strings.TrimSpace(key); key == "" {
+	key, err := loadAPIKey()
+	if key = strings.TrimSpace(key); err != nil || key == "" {
 		return sel, noAPIKey()
 	}
-	sel.Connection = apiKeyConnection + "@" + keyFingerprint(key)
+	fp := keyFingerprint(key)
+	if _, want := splitConnection(sel.Connection); want != "" && want != fp {
+		return sel, keyReplaced()
+	}
+	sel.Connection = apiKeyConnection + "@" + fp
 	return sel, nil
+}
+
+// RouteHeld implements agents.RouteWatcher: the CLI re-applies the env block and apiKeyHelper of
+// its settings files while it runs, so a file edited after launch (by the member, another session
+// in this Workspace, or the CLI) can take the credential or endpoint over from the route.
+func (agentImpl) RouteHeld(m session.Meta) *agents.RouteRefusal {
+	if m.Route == nil {
+		return nil
+	}
+	return settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...))
 }
 
 // checkRouteSelection is the connection reference check: whose connection it is.
@@ -180,7 +196,7 @@ func keyReplaced() *agents.RouteRefusal {
 // refused with the file named instead of running on whatever they say.
 var settingsConflictEnv = []string{
 	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
-	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
 }
 
 // managedSettingsDir is where the organisation's managed settings live; a var for tests.
