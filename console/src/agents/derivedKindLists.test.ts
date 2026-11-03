@@ -12,6 +12,21 @@ import { SESSION_KINDS, type SessionKind } from "../types/session.ts";
 // projectMcpWire.ts imports the API client, which reads localStorage at load.
 vi.mock("../core/api/client.ts", () => ({ api: vi.fn(), apiJSON: vi.fn(), getTenant: () => "" }));
 
+// The kinds that existed when the literals below were pinned. Each derived list is compared with
+// its literal only over these kinds; a kind added later is held by its declaration (the derivation
+// rule), so it needs no edit here. The set itself is pinned so it cannot shrink unnoticed.
+const FROZEN_KINDS: readonly string[] = [
+  "claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse", "shell", "ssm",
+];
+const onFrozen = (ks: readonly string[]) => ks.filter((k) => FROZEN_KINDS.includes(k));
+
+it("the frozen kind set is not shrunk", () => {
+  expect([...FROZEN_KINDS].sort()).toEqual(
+    ["agy", "claude", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode", "shell", "ssm"],
+  );
+  for (const k of FROZEN_KINDS) expect(SESSION_KINDS as readonly string[], k).toContain(k);
+});
+
 describe("derived kind lists equal the literals they replaced", () => {
   it("repoLaunchKinds", () => {
     // One declaration per existing kind (launchableFromRepo), instead of a second copy of the
@@ -29,29 +44,35 @@ describe("derived kind lists equal the literals they replaced", () => {
   });
 
   it("ASSISTANT_AGENT_KINDS, the default backend priority", () => {
-    expect(ASSISTANT_AGENT_KINDS).toEqual(["claude", "codex", "opencode", "cursor", "agy", "muse"]);
+    expect(onFrozen(ASSISTANT_AGENT_KINDS)).toEqual(["claude", "codex", "opencode", "cursor", "agy", "muse"]);
+    // Any kind: exactly the headless-chat kinds are offered.
+    expect([...ASSISTANT_AGENT_KINDS].sort()).toEqual(SESSION_KINDS.filter((k) => AGENTS[k].caps.headlessChat).sort());
   });
 
   it("MCP_KINDS, and mcpKinds() before a catalog arrives, in SESSION_KINDS order", () => {
     // was: claude codex opencode cursor kiro copilot agy muse lcpp
     const want = ["claude", "codex", "cursor", "copilot", "kiro", "agy", "opencode", "lcpp", "muse"];
-    expect(MCP_KINDS).toEqual(want);
-    expect(mcpKinds()).toEqual(want);
+    expect(onFrozen(MCP_KINDS)).toEqual(want);
+    expect(onFrozen(mcpKinds())).toEqual(want);
+    // Any kind: SESSION_KINDS order, and the fallback and the pre-catalog list agree.
+    expect(mcpKinds().filter((k) => (SESSION_KINDS as readonly string[]).includes(k))).toEqual([...MCP_KINDS]);
   });
 
   it("MEMBER_DEFAULT_AGENTS, in SESSION_KINDS order", () => {
     // was: claude codex opencode cursor copilot kiro muse
-    expect(MEMBER_DEFAULT_AGENTS).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "opencode", "muse"]);
+    expect(onFrozen(MEMBER_DEFAULT_AGENTS)).toEqual(["claude", "codex", "cursor", "copilot", "kiro", "opencode", "muse"]);
+    expect(MEMBER_DEFAULT_AGENTS).toEqual(SESSION_KINDS.filter((k) => AGENTS[k].caps.memberDefault));
   });
 
   it("the Skills tab's kinds", () => {
-    expect(skillsCatalogKinds).toEqual(["claude", "codex", "opencode", "muse"]);
+    expect(onFrozen(skillsCatalogKinds)).toEqual(["claude", "codex", "opencode", "muse"]);
+    expect(skillsCatalogKinds).toEqual(SESSION_KINDS.filter((k) => AGENTS[k].caps.skillsCatalog));
   });
 
   it("the model pickers' live-list and concrete-model kinds (agentModels.ts)", () => {
     const has = (cap: "liveModels" | "concreteModel") => SESSION_KINDS.filter((k) => AGENTS[k].caps[cap]).sort();
-    expect(has("liveModels")).toEqual(["agy", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode"]);
-    expect(has("concreteModel")).toEqual(["lcpp"]);
+    expect(onFrozen(has("liveModels"))).toEqual(["agy", "codex", "copilot", "cursor", "kiro", "lcpp", "muse", "opencode"]);
+    expect(onFrozen(has("concreteModel"))).toEqual(["lcpp"]);
   });
 
   it("the project copy panel's targets, from the Agent's per-kind table", () => {
