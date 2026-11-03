@@ -260,6 +260,8 @@ Agent のイメージを先に、または同時に配備し、その間は断�
       `providerResumeKinds` は `providerResumeHandles` から作る（この表は各 kind のメッセージカーソル欄も持つ。
       `TestEveryMessageCursorFieldIsListed`）。`TestShippedMoveClassificationHolds` は
       出荷済みの分類をリテラルで固定する。新しい種別はここに行を足さなくてよい
+      旧リストとの突き合わせ（`TestInstrUnsupportedMatchesOldList`、`TestMoveTargetDeclarationsMatchOldLists`）は
+      固定した時点で存在した種別だけを比べる。新しい種別は宣言の整合で守られるので、どちらも編集不要
 - [ ] `wantRuntime`（`internal/sessionx/managed_runtime_test.go`）にどの種別も 1 行。マネージドの
       ランタイムを持たない種別は `nil`（`TestManagedRuntimeDispatchPinned`）
 - [ ] スキル: どのエージェント種別も `capabilities.go` に `agents.SkillsLayouter`。固有の仕組みが

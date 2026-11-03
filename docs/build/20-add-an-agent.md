@@ -285,6 +285,9 @@ Deploy the Agent image first, or both together, and expect the refusal in betwee
       kind's message cursor field (`TestEveryMessageCursorFieldIsListed`).
       `TestShippedMoveClassificationHolds` pins the shipped classification as literals; a new kind
       needs no row there
+      The old-vs-new pins (`TestInstrUnsupportedMatchesOldList`, `TestMoveTargetDeclarationsMatchOldLists`)
+      compare only the frozen kinds that existed when they were taken; a new kind is held by its
+      declaration instead, so neither needs an edit
 - [ ] a row in `wantRuntime` (`internal/sessionx/managed_runtime_test.go`) for every kind, `nil`
       for one with no Managed runtime (`TestManagedRuntimeDispatchPinned`)
 - [ ] skills: `agents.SkillsLayouter` in `capabilities.go` for every agent kind,
