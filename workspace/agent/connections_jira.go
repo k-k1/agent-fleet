@@ -47,16 +47,8 @@ func jiraStatus(s *secrets.Data) map[string]any {
 	// Report the sites even when there is only one: "you may choose" and "there is one
 	// choice" are different, and without the former the user never learns they can switch.
 	if len(c.Sites) > 0 {
-		// Stored rows are per product (Jira, Confluence) and may share a cloud id; the
-		// member picks a site, so report each id once (first row wins). The stored rows stay
-		// as they are: siteScopes unions their scopes.
 		sites := make([]map[string]any, 0, len(c.Sites))
-		seen := make(map[string]bool, len(c.Sites))
-		for _, st := range c.Sites {
-			if seen[st.CloudID] {
-				continue
-			}
-			seen[st.CloudID] = true
+		for _, st := range uniqueJiraSites(c.Sites) {
 			sites = append(sites, map[string]any{"cloudId": st.CloudID, "url": st.URL, "name": st.Name})
 		}
 		m["sites"] = sites
@@ -69,6 +61,31 @@ func jiraStatus(s *secrets.Data) map[string]any {
 		m["confluenceScopes"] = v
 	}
 	return m
+}
+
+// uniqueJiraSites collapses the stored per-product rows (Jira, Confluence) to one per cloud id,
+// in first-seen order. Atlassian documents neither row order nor that every product's row carries
+// the site's base URL, and the chosen row's URL becomes JiraCreds.Site (browse links), so a row
+// whose URL has a path (a Confluence "/wiki" address) never beats a base-URL row. The stored rows
+// stay as they are: siteScopes unions their scopes.
+func uniqueJiraSites(rows []secrets.JiraSite) []secrets.JiraSite {
+	var out []secrets.JiraSite
+	at := map[string]int{}
+	for _, st := range rows {
+		i, ok := at[st.CloudID]
+		if !ok {
+			at[st.CloudID] = len(out)
+			out = append(out, st)
+		} else if hasURLPath(out[i].URL) && !hasURLPath(st.URL) {
+			out[i] = st
+		}
+	}
+	return out
+}
+
+func hasURLPath(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && strings.Trim(u.Path, "/") != ""
 }
 
 type jiraConnReq struct {
@@ -185,8 +202,9 @@ func handleJiraOAuthStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.Sites = sites
-	c.CloudID = sites[0].CloudID
-	c.Site = sites[0].URL
+	first := uniqueJiraSites(sites)[0]
+	c.CloudID = first.CloudID
+	c.Site = first.URL
 	if me, err := jiraMyself(c); err == nil {
 		c.Account, c.Login = me.DisplayName, me.EmailAddress
 	}
@@ -223,7 +241,7 @@ func handlePutJiraSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	want := strings.TrimSpace(req.CloudID)
-	for _, st := range s.Jira.Sites {
+	for _, st := range uniqueJiraSites(s.Jira.Sites) {
 		if st.CloudID == want {
 			s.Jira.CloudID = st.CloudID
 			s.Jira.Site = st.URL

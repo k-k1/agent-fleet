@@ -322,8 +322,8 @@ func TestJiraStatusDedupesSitesByCloudID(t *testing.T) {
 	if len(s.Jira.Sites) != 2 {
 		t.Errorf("stored rows were modified: %+v", s.Jira.Sites)
 	}
-	if v := jiraStatus(s)["confluenceScopes"]; v == nil {
-		t.Errorf("scope union lost: %v", jiraStatus(s))
+	if v := jiraStatus(s)["confluenceScopes"]; v != "granted" {
+		t.Errorf("confluenceScopes = %v, want granted (scope union across rows)", v)
 	}
 
 	rows = append(rows, secrets.JiraSite{CloudID: "cid-2", URL: "https://two.atlassian.net", Name: "Two"},
@@ -366,5 +366,19 @@ func TestJiraPutSiteWithDuplicateRows(t *testing.T) {
 	}
 	if got := sitesOf(t, jiraStatus(s)); len(got) != 2 {
 		t.Errorf("sites = %+v, want 2", got)
+	}
+}
+
+// A Confluence row listed first must not make its "/wiki" URL the site: the Jira base URL wins,
+// both in the report and in what selecting the site stores.
+func TestJiraSitesPreferBaseURLOverProductPath(t *testing.T) {
+	rows := []secrets.JiraSite{
+		{CloudID: "cid-1", URL: "https://one.atlassian.net/wiki", Name: "One", Scopes: []string{"read:page:confluence"}},
+		{CloudID: "cid-1", URL: "https://one.atlassian.net", Name: "One", Scopes: []string{"read:jira-work"}},
+	}
+	s := &secrets.Data{Jira: &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Unix() + 3600, CloudID: "cid-1", Site: "x", Sites: rows}}
+	got := sitesOf(t, jiraStatus(s))
+	if len(got) != 1 || got[0]["url"] != "https://one.atlassian.net" {
+		t.Fatalf("sites = %+v, want the base URL", got)
 	}
 }
