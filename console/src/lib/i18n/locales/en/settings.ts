@@ -389,6 +389,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.note_claude_remote_control":
     "Applies to Claude sessions started after you change it. Remote Control will not start while the workspace's CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC is set. While this is on, Claude sessions started afterwards are launched without it, so that variable no longer suppresses release notes, PR/MR status and availability checks. Telemetry, error reports and auto-update stay off. A copy of the variable in a Claude settings.json env block, or an organization that requires Trusted Devices, still prevents connecting. See the guide (Agents) for details.",
   "agents.notifications": "Notifications",
+  "agents.idle_compaction": "Idle compaction",
+  "agents.note_claude_idle_compaction":
+    "Claude Code compacts a long conversation (200k tokens or more) on its own while the session is idle, about 54 minutes after the last activity, just before the 1-hour prompt cache expires. That makes the next turn cheaper, since the whole conversation no longer has to be written to the cache again, but you come back to a summarized conversation. Default ON (Claude Code's default). Writes idleCompaction in the workspace's user-level Claude settings.json; a project or local Claude settings file can still override it. Sessions started or resumed afterwards are certain to follow it.",
   "agents.codex_auth_failed": "Failed to start Codex auth: {msg}",
   "agents.codex_device_disabled": "device-code login may be disabled",
   "agents.codex_apikey_label": "API key",

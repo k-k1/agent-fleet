@@ -10,7 +10,7 @@ import { ProviderCard, StatusPill, Hint, DisconnectButton, ReauthButton } from "
 import { SettingRow, CardSettings, ThinkingRow, StreamRepliesRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
 // Claude: OAuth connect (start → approve in a new tab → paste code → complete), plus
-// its behavior settings (Remote Control / notifications / RTK) once connected.
+// its behavior settings (Remote Control / notifications / idle compaction / RTK) once connected.
 export function ClaudeCard({
   running,
   st,
@@ -192,7 +192,7 @@ export function ClaudeCard({
           <OnOff value={s.rateLimitAutoResume} onChange={(v) => setSetting("rateLimitAutoResume", v)} />
         </SettingRow>
         <p className="ps-note">{tr("agents.note_claude_rate_limit_resume")}</p>
-        {/* Remote Control / notifications / RTK are workspace-level files (independent of Claude
+        {/* Remote Control / notifications / idle compaction / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
         {claude && (
           <>
@@ -209,6 +209,19 @@ export function ClaudeCard({
                 onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
               />
             </SettingRow>
+            {/* An Agent that predates the field omits it; showing OnOff with undefined would
+                read as "off" while the CLI is in fact compacting. */}
+            {typeof claude.idleCompaction === "boolean" && (
+              <>
+                <SettingRow label={tr("agents.idle_compaction")}>
+                  <OnOff
+                    value={claude.idleCompaction}
+                    onChange={(v) => updateClaude({ idleCompaction: v })}
+                  />
+                </SettingRow>
+                <p className="ps-note">{tr("agents.note_claude_idle_compaction")}</p>
+              </>
+            )}
             <RtkRow
               available={claude.rtk_available}
               value={claude.rtk_enabled}
