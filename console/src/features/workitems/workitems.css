@@ -79,6 +79,21 @@
   color: var(--accent);
 }
 
+/* Collapse sits after up to a hundred rows; sticking it to the scroller's bottom keeps it one
+   press away from anywhere in the expanded list (#3296). Its containing block is the section
+   body, so it only sticks while the work items section is on screen and never covers a later
+   section. Opaque so rows scrolling under it do not show through; below the header's z-index 3. */
+.wi-less {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  background: var(--leftpane-bg);
+  border-top: 1px solid var(--border2);
+}
+
 .wi-search:disabled {
   cursor: default;
   opacity: 0.6;
