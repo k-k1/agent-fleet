@@ -2,13 +2,13 @@
 
 English | [日本語](0128-harness-route-maker.ja.md)
 
-- Status: **proposed** (2026-11-03). Nothing is built yet. This record is the design only, and decisions A–C below
-  wait for the user. Every `file:line` was read on `c08c6a4b5`. The environment variables and settings named for
+- Status: **accepted** (2026-11-03). The user took decisions A–C below, the recommended option in each. Nothing is
+  built yet. Every `file:line` was read on `c08c6a4b5`. The environment variables and settings named for
   Claude Code's Bedrock, Vertex and gateway routes come from the vendor's documentation and are **not measured**
   under AF's launch flags; every harness × route row in decision 5 is a candidate until its live gate (decision 14)
-  passes. Reviewed 2026-11-03 by a separate session (codex `gpt-6.1-sol`); its 17 findings were checked against the
-  tree and are folded into this text.
-- Follow-ups: filed as issues when the decisions are taken (`docs/CONVENTIONS.md` §10), one per phase.
+  passes. Reviewed 2026-11-03 by a separate session (codex `gpt-6.1-sol`) in three rounds (17, 7 and 0 findings); every
+  finding was checked against the tree and is folded into this text.
+- Follow-ups: #3280, #3281, #3282, #3283 (P0, P1, P2, P4; P3 is #1585)
 - Related: [0069](0069-image-generation-providers.md) (credential tiers, `AWSProfileRef`) /
   [0071](0071-self-hosted-inference-engines.md) (the engine gateway and its tokens) /
   [0084](0084-engine-indicator-and-tenant-gate.md) (the engine's four gates) /
@@ -165,7 +165,7 @@ transition. With an **empty** selection the route is resolved per turn, as today
   the connection is changed or revoked; and every upstream call it makes re-checks the approval it depends on (ADR
   0126's approval is per session and profile, at most 8 hours or until the session ends, `0126…md:123`). The cost is a
   proxy on the streaming hot path.
-- **Recommended: both, by tier.** A1 for a member key the member pasted for their own Terminal sessions, which is
+- **Taken (recommended): both, by tier.** A1 for a member key the member pasted for their own Terminal sessions, which is
   the same exposure the opencode keys have today. A2 is required for any credential that can do more than call a
   model (an `AWSProfileRef`, a tenant key) and for any route on a shared daemon whose credential differs from the
   daemon's. The global environment never carries a route credential (the `authexpiry.go` trap).
@@ -218,7 +218,7 @@ throttling (for example Bedrock's) is handled apart from window limits.
   live gate first, and none is known to exist.
 - **B3, opt-in automatic.** As B1 without asking, behind a per-member daily spend cap that cannot be empty.
 - **B4, none.**
-- **Recommended: B1, and B2 as described (link plus resume on credits already enabled); B3 only in a later ADR,
+- **Taken (recommended): B1, and B2 as described (link plus resume on credits already enabled); B3 only in a later ADR,
   after B1 has been used.**
 
 A switch is an exclusive state transition, and the gate covers every step: take the session's lock; cancel the
@@ -239,7 +239,7 @@ A Bedrock route runs on an `AWSProfileRef` (ADR 0069) and therefore on A2 (decis
 - **C1:** any profile the member has signed in to.
 - **C2:** a profile the member marks as a model route, documented to carry only `bedrock:InvokeModel*`, and subject
   to ADR 0126's confirm-before-use when the profile asks for it, re-checked per upstream call (decision 7).
-- **Recommended: C2.** A route is used on every turn, so a broad profile there would be the widest standing grant in
+- **Taken (recommended): C2.** A route is used on every turn, so a broad profile there would be the widest standing grant in
   the Workspace.
 
 Once a route supplies the credential, opencode's `amazon-bedrock` stopgap (`keepInMenu`) is replaced by the route's
