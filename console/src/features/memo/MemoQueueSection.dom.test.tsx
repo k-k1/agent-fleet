@@ -245,3 +245,35 @@ describe("category + button", () => {
     expect(created).toEqual([{ kind: "text", body: "unfiled note", repo: "", category: "" }]);
   });
 });
+
+// "Start with this" (#3289) is how a draft set aside from the Start working dialog comes back,
+// so it lives on the row menu of the member's own text memos and seeds the launch.
+describe("starting a session from a memo", () => {
+  const openMenu = async () => click(must(document.querySelector(".memo-menu-btn"), "row menu button"));
+  const item = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>(".ui-menu-item")].find((b) => b.textContent?.includes(label));
+
+  it("seeds the launch with the memo's text and files", async () => {
+    const { useLaunchSeed } = await import("../repos/store.ts");
+    useLaunchSeed.getState().clear();
+    const file = { path: "/x/paste-3-run.log", name: "paste-3-run.log" };
+    servedMemos = [aMemo({ id: "m1", body: "下書き", attachments: [file] })];
+    await render();
+    // A non-image file shows as a named tile, not a broken thumbnail.
+    expect(document.querySelector(".memo-thumb.file")?.textContent).toContain("run.log");
+
+    await openMenu();
+    await click(must(item("Start with this"), "Start with this"));
+    expect(useLaunchSeed.getState().prompt).toBe("下書き");
+    expect(useLaunchSeed.getState().attachments).toEqual([file]);
+    useLaunchSeed.getState().clear();
+  });
+
+  it("is not offered on a file memo", async () => {
+    servedMemos = [aMemo({ id: "m1", kind: "file", refPath: "~/repos/app/a.ts" })];
+    await render();
+    await openMenu();
+    expect(item("Send this memo")).toBeTruthy();
+    expect(item("Start with this")).toBeUndefined();
+  });
+});

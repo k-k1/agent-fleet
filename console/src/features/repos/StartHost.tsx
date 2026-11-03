@@ -18,6 +18,8 @@ import { launchFromHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { recordWorkItemLaunch } from "../workitems/launch.ts";
 import { workItemLaunchBranch } from "../workitems/read.ts";
+import { stashStoredDraft } from "../memo/launchStash.ts";
+import { t } from "../../lib/i18n/index.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -31,6 +33,7 @@ export function StartHost() {
   // LaunchModal below; cleared when the whole launch stack closes.
   const seedPrompt = useLaunchSeed((s) => s.prompt);
   const seedTitle = useLaunchSeed((s) => s.title);
+  const seedAttachments = useLaunchSeed((s) => s.attachments);
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
@@ -72,7 +75,19 @@ export function StartHost() {
             setShow(false);
             clearSeed();
           }}
-          onPickRepo={openLaunch}
+          onPickRepo={async (r) => {
+            // A memo being restored (#3289) outranks the picked repo's stored draft: set that
+            // draft aside first, and open nothing when it could not be saved.
+            if (useLaunchSeed.getState().memoId) {
+              const s = await stashStoredDraft(r.name);
+              if (!s.ok) {
+                toast(t("memo.start_draft_failed"));
+                return;
+              }
+              if (s.saved) toast(t("memo.start_draft_saved"), { kind: "success" });
+            }
+            openLaunch(r);
+          }}
         />
       )}
       {launch && (
@@ -87,6 +102,7 @@ export function StartHost() {
           isSvn={launch.vcs === "svn"}
           isUnborn={!!launch.unborn}
           initialPrompt={seedPrompt || undefined}
+          initialAttachments={seedAttachments.length ? seedAttachments : undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}
           workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}

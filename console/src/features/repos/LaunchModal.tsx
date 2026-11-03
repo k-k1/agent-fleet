@@ -52,6 +52,8 @@ import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePic
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
 import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
+import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
+import type { MemoAttachment } from "../../types/memo.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -132,6 +134,9 @@ interface LaunchModalProps {
   /** Seed for the first-prompt field (docs/log/21 UI overhaul): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
   initialPrompt?: string;
+  /** Stored memo attachments to stage as chips (#3289: start from a memo). Their bytes are
+   *  fetched on open and they launch exactly like files pasted here. */
+  initialAttachments?: MemoAttachment[];
 	/** Optional initial session title, e.g. proposed by a predecessor session. */
   initialTitle?: string;
   /** Open straight into existing-branch mode with this branch picked — the SCM view's
@@ -207,7 +212,7 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -450,6 +455,46 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   };
 
   const removeFile = (i: number) => attach.remove(i);
+
+  // Seeded from a memo: bring its files back as chips. No once-only ref: under StrictMode the
+  // first run is cancelled by its cleanup, and a ref would stop the second from adding them.
+  const [seedMissing, setSeedMissing] = useState(0);
+  useEffect(() => {
+    if (!initialAttachments?.length || !canPasteImage) return;
+    let alive = true;
+    void fetchMemoAttachments(initialAttachments).then((files) => {
+      if (!alive) return;
+      attach.add(files.map((f) => makeAttachment(f)));
+      setSeedMissing(initialAttachments.length - files.length);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount: the form is keyed per target
+  }, []);
+
+  // "Save to memo" (#3289): set this draft aside in the memo queue and empty the box for the
+  // next task. The dialog stays open, and the outcome is said right above the box it emptied,
+  // where the person is looking.
+  const [stash, setStash] = useState<"" | "busy" | "done" | "failed" | "too_large">("");
+  const canStash = !busy && stash !== "busy" && (!!prompt.trim() || images.length > 0);
+  const stashDraft = async () => {
+    if (!canStash) return;
+    setStash("busy");
+    const files = canPasteImage ? images.flatMap((x) => (x.file ? [x.file] : [])) : [];
+    const r = await stashLaunchDraft(repo, prompt.trim(), files);
+    if (!r.ok) {
+      setStash(r.reason);
+      return;
+    }
+    // setPrompt(""), not clearPromptDraft(): the latter stops the write-back for good, and the
+    // next prompt typed here has to be kept as a draft like any other.
+    setPrompt("");
+    attach.clear();
+    setSeedMissing(0);
+    setStash("done");
+    if (!coarsePointer()) textRef.current?.focus();
+  };
   // The staged image shown enlarged, if any. Esc and Back peel it before the dialog: both
   // are layered stacks, and this layer joins after the Modal's.
   const [zoom, setZoom] = useState<string | null>(null);
@@ -700,6 +745,17 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                   </button>
                 </>
               )}
+              <button
+                type="button"
+                className="ghost launch-stash-btn"
+                title={tr("launch.stash_to_memo_hint")}
+                aria-label={tr("launch.stash_to_memo")}
+                disabled={!canStash}
+                onClick={() => void stashDraft()}
+              >
+                <Icon name={stash === "busy" ? "loading" : "save"} spin={stash === "busy"} />
+                <span className="launch-stash-label">{tr("launch.stash_to_memo")}</span>
+              </button>
               <PromptTemplateButton btnRef={tmplBtnRef} open={tmplOpen} disabled={busy} onToggle={() => setTmplOpen((o) => !o)} />
               {skillPicker.canSkills && (
                 <SkillButton
@@ -724,6 +780,16 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
               onInsert={insertTemplate}
               onClose={() => setTmplOpen(false)}
             />
+          )}
+          {(stash === "done" || stash === "failed" || stash === "too_large") && (
+            <div className={"launch-stash-note" + (stash === "done" ? "" : " warn")} role="status">
+              {tr(stash === "done" ? "launch.stash_done" : stash === "too_large" ? "launch.stash_too_large" : "launch.stash_failed")}
+            </div>
+          )}
+          {seedMissing > 0 && (
+            <div className="launch-stash-note warn" role="status">
+              {tr("launch.memo_attach_missing", { count: seedMissing })}
+            </div>
           )}
           <AttachChips attachments={images} pasting={false} onRemove={removeFile} onOpen={setZoom} />
           {/* Rendered inside the Modal's panel (the portal keeps the React tree), so a click on

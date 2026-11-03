@@ -45,6 +45,7 @@ import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { consumeShare } from "./share.ts";
 import { setMemoDragData } from "./dnd.ts";
+import { canStartFromMemo, startFromMemo } from "./launchStash.ts";
 
 const POLL_MS = 10000;
 const SECTION_KEY = "af-section-memos"; // shared with the Section component's own key
@@ -951,6 +952,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <Icon name="send" /> {tr("memo.send_one")}
                 </button>
               </li>
+              {canStartFromMemo(memoMenu.m) && (
+                <li>
+                  <button type="button" className="ui-menu-item" onClick={() => {
+                      const m = memoMenu.m;
+                      runMemoMenu(() =>
+                        void startFromMemo(m).then((r) => {
+                          if (!r.ok) toast(t("memo.start_draft_failed"));
+                          else if (r.saved) toast(t("memo.start_draft_saved"), { kind: "success" });
+                        }),
+                      );
+                    }}>
+                    <Icon name="rocket" /> {tr("memo.start_from")}
+                  </button>
+                </li>
+              )}
               <li>
                 <button
                   type="button"

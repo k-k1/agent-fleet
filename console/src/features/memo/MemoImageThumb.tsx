@@ -8,14 +8,19 @@ import { useEffect, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { raw, memoImageURL } from "../../core/api/client.ts";
+import { isMemoImageName, memoAttachmentLabel } from "./attachName.ts";
 
 export function MemoImageThumb({ name, onRemove }: { name: string; onRemove?: () => void }) {
   const tr = useT();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [zoom, setZoom] = useState(false);
+  // A non-image file (stashed from the Start working dialog, #3289) has no picture to fetch:
+  // it shows as a file tile with its original name.
+  const image = isMemoImageName(name);
 
   useEffect(() => {
+    if (!image) return;
     let alive = true;
     let obj = "";
     raw(memoImageURL(name))
@@ -36,11 +41,16 @@ export function MemoImageThumb({ name, onRemove }: { name: string; onRemove?: ()
       alive = false;
       if (obj) URL.revokeObjectURL(obj);
     };
-  }, [name]);
+  }, [name, image]);
 
   return (
     <span className="memo-thumb-wrap">
-      {failed ? (
+      {!image ? (
+        <span className="memo-thumb file" title={memoAttachmentLabel(name)}>
+          <Icon name="file" />
+          <span className="memo-thumb-name">{memoAttachmentLabel(name)}</span>
+        </span>
+      ) : failed ? (
         <span className="memo-thumb failed" title={tr("memo.image_failed")}>
           <Icon name="file-media" />
         </span>
