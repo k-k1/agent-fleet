@@ -301,10 +301,21 @@ func TestInterruptStopsAbsorbingBeforeTheReclaim(t *testing.T) {
 var paneCaptured = strings.Repeat(" ", 100) + "Esc again to clear\n" + strings.Repeat("─", 120) +
 	"\n❯\u00a0SLOW 一行目\n  二行目\n\n" + strings.Repeat("─", 120) + "\n  ⏵⏵ auto mode on (shift+tab to cycle)\n"
 
+// The same after one Esc in a Fleet session (claude 2.1.316 started with --name, 80 columns):
+// the title is drawn into the top rule.
+var paneTitled = strings.Repeat(" ", 60) + "Esc again to clear\n" + titledRule +
+	"\n❯ 1から20までの素数を全部挙げて理由も説明して\n" + strings.Repeat("─", 80) + "\n\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+
+var titledRule = strings.Repeat("─", 25) + " [AF:solkwlt] Live check #3290 (stop restores prompt) ─"
+
 func TestClaudeBox(t *testing.T) {
 	draft, above, ok := claudeBox(paneCaptured)
 	if !ok || squashSpace(draft) != "SLOW一行目二行目" || above != clearHint {
 		t.Fatalf("draft = %q, above = %q, ok = %v", draft, above, ok)
+	}
+	draft, above, ok = claudeBox(paneTitled)
+	if !ok || squashSpace(draft) != "1から20までの素数を全部挙げて理由も説明して" || above != clearHint {
+		t.Fatalf("titled: draft = %q, above = %q, ok = %v", draft, above, ok)
 	}
 	for name, pane := range map[string]string{
 		// A row of the draft that starts at column 0 is not claude's layout.
@@ -312,6 +323,9 @@ func TestClaudeBox(t *testing.T) {
 		"no top rule":    "❯ a\n" + rule + "\n",
 		"rules differ":   rule + "\n❯ a\n" + rule + "──\n",
 		"no prompt mark": rule + "\n  a\n" + rule + "\n",
+		// A title only ever sits in the top rule, and both rules have one width.
+		"titled bottom":    titledRule + "\n❯ a\n" + titledRule + "\n",
+		"titled, narrower": titledRule + "\n❯ a\n" + strings.Repeat("─", 79) + "\n",
 	} {
 		if _, _, ok := claudeBox(pane); ok {
 			t.Errorf("%s: read as a box", name)
@@ -415,5 +429,28 @@ func TestInterruptRefusedWhileASendHoldsThePane(t *testing.T) {
 	}
 	if got := sendKeysLines(t, logPath); len(got) != 0 {
 		t.Fatalf("keys = %v", got)
+	}
+}
+
+// A Fleet session's box has its title in the top rule; the reclaim works there too.
+func TestInterruptReclaimsFromATitledBox(t *testing.T) {
+	prompt := "1から20までの素数を全部挙げて理由も説明して"
+	bottom := strings.Repeat("─", 80)
+	box := func(draft string) string {
+		return "◐ medium · /effort\n" + titledRule + "\n❯ " + draft + "\n" + bottom + "\n\n  ⏵⏵ bypass permissions on\n"
+	}
+	keys, restored, _ := runClaudeInterrupt(t, prompt, func(esc int) string {
+		switch esc {
+		case 0:
+			return box("")
+		case 1:
+			return box(prompt)
+		case 2:
+			return paneTitled
+		}
+		return box("")
+	})
+	if restored != prompt || strings.Join(keys, ",") != "Escape,Escape,Escape" {
+		t.Fatalf("restored = %q, keys = %v", restored, keys)
 	}
 }

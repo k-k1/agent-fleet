@@ -52,7 +52,9 @@ var reclaimSleep = time.Sleep
 
 // claudeBox reads claude's input box for a decision that erases text, so unlike claudeComposer
 // (which serves send confirmation and splits at any "❯" or "─") it trusts only the frame claude
-// draws: two full-width rules at column 0, the first row inside starting with "❯" at column 0,
+// draws: two full-width rules of one width at column 0 (the top one may carry the session's
+// title, which claude draws into it for --name: "──── [AF:x] title ─"), the first row inside
+// starting with "❯" at column 0,
 // every further row indented or blank (measured 2.1.316: continuation and wrapped rows are
 // indented two columns). Text a member typed, rules and "❯" included, can only appear inside that
 // indentation, so it is never taken for the frame. Anything else is ok=false. above is the first
@@ -68,12 +70,12 @@ func claudeBox(captured string) (draft, above string, ok bool) {
 	}
 	top := -1
 	for i := bottom - 1; i >= 0; i-- {
-		if boxRule(lines[i]) {
+		if topRule(lines[i]) {
 			top = i
 			break
 		}
 	}
-	if top < 0 || bottom-top < 2 || utf8.RuneCountInString(lines[top]) != utf8.RuneCountInString(lines[bottom]) {
+	if top < 0 || bottom-top < 2 || ruleWidth(lines[top]) != ruleWidth(lines[bottom]) {
 		return "", "", false
 	}
 	rows := lines[top+1 : bottom]
@@ -98,8 +100,19 @@ func claudeBox(captured string) (draft, above string, ok bool) {
 // boxRule reports a line that is one of claude's input box rules: "─" from column 0 to the end,
 // at least minBoxRule wide (claude draws them the pane's full width).
 func boxRule(line string) bool {
-	line = strings.TrimRight(line, " ")
-	return utf8.RuneCountInString(line) >= minBoxRule && strings.Trim(line, "─") == ""
+	return ruleWidth(line) >= minBoxRule && strings.Trim(strings.TrimRight(line, " "), "─") == ""
+}
+
+// topRule reports a line that can be the box's top rule: a boxRule, or one with a title drawn
+// into it, which still starts and ends with "─" (measured on claude in a Fleet session, which is
+// always started with --name: "───────────────────────── [AF:solkwlt] Live check … ─").
+func topRule(line string) bool {
+	t := strings.TrimRight(line, " ")
+	return ruleWidth(line) >= minBoxRule && strings.HasPrefix(t, "─") && strings.HasSuffix(t, "─")
+}
+
+func ruleWidth(line string) int {
+	return utf8.RuneCountInString(strings.TrimRight(line, " "))
 }
 
 const minBoxRule = 20
