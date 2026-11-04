@@ -21,6 +21,7 @@ import { zoom } from "../app/viewport.ts";
 import { toast } from "../ui/toast.ts";
 import { clipAction } from "./clipKeys.ts";
 import { fontFamilies, rebuildAtlasesFor, resetGlyphModel } from "./atlas.ts";
+import { fenceReplies, installReplyGate, newReplyGate, type ReplyGate } from "./staleReplies.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -46,6 +47,7 @@ interface Inst {
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
   canvas?: CanvasAddon | null; // 2D fallback renderer, when WebGL is unavailable/lost/over budget (see loadCanvas)
+  replies?: ReplyGate; // mutes query answers for a replaced socket's output (see attach)
 }
 const insts = new Map<string, Inst>();
 function inst(paneId: string): Inst | null {
@@ -506,6 +508,8 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   });
   it.term = term;
   it.ws = null;
+  it.replies = newReplyGate();
+  installReplyGate(term, it.replies);
   // Apply terminal font/size from settings, live, when the user changes them.
   if (!settingsSubscribed) {
     settingsSubscribed = true;
@@ -1280,6 +1284,9 @@ export function attach(paneId: string, session: string) {
   clearHeartbeat(it); // stop the old socket's heartbeat before opening the new one
   clearConnWd(it); // and the old socket's connect-stall watchdog
   it.term.reset();
+  // reset() leaves the old socket's queued bytes in xterm's write buffer; their query
+  // answers must not reach the new socket's PTY as typed input.
+  if (it.replies) fenceReplies(it.term, it.replies);
   setSession(it, session);
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
   it.rx = false; // fresh socket: no PTY bytes yet (ensureAttached watches this)
