@@ -45,8 +45,9 @@ func TestShardProbeB(t *testing.T) {
 	case "hang":
 		time.Sleep(shardProbeHold)
 	case "stop":
-		// Stopped, the child cannot even run its own -test.timeout; only the parent's kill ends it.
-		_ = syscall.Kill(os.Getpid(), syscall.SIGSTOP)
+		shardProbeStopSelf(0)
+	case "stop-late":
+		shardProbeStopSelf(200 * time.Millisecond)
 	case "pipehold":
 		// A process left behind that keeps the child's output pipe open after the child exits.
 		cmd := exec.Command("sleep", strconv.Itoa(int(shardProbeHold/time.Second)))
@@ -58,6 +59,19 @@ func TestShardProbeB(t *testing.T) {
 			}
 		}
 	}
+}
+
+// shardProbeStopSelf stops this process and never returns. Stopped, the child cannot even run
+// its own -test.timeout; only the parent's kill ends it. kill(2) on one's own pid may return
+// before the stop takes effect when another thread dequeues the signal, so returning from here
+// would let the probe run on to PASS (seen once in CI: exit 0 after 0.07 s). Blocking makes the
+// outcome independent of when the stop lands; delay forces the late landing in a test.
+func shardProbeStopSelf(delay time.Duration) {
+	go func() {
+		time.Sleep(delay)
+		_ = syscall.Kill(os.Getpid(), syscall.SIGSTOP)
+	}()
+	time.Sleep(shardProbeHold)
 }
 
 func TestShardProbeC(t *testing.T) {}
@@ -153,6 +167,7 @@ func TestShardedRunReportsAFailingChild(t *testing.T) {
 		{"exit0", []string{"-test.v=false"}, "-test.run ^(TestShardProbeB)$: exited 0 before its tests returned"},
 		{"hang", []string{"-test.timeout=3s"}, "test timed out after"},
 		{"stop", []string{"-test.timeout=2s"}, "-test.run ^(TestShardProbeB)$: signal: killed"},
+		{"stop-late", []string{"-test.timeout=2s"}, "-test.run ^(TestShardProbeB)$: signal: killed"},
 		{"pipehold", nil, "-test.run ^(TestShardProbeB)$: exec: WaitDelay expired"},
 	} {
 		t.Run(c.mode+strings.Join(c.extra, ""), func(t *testing.T) {
