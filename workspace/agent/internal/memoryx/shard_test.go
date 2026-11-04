@@ -62,10 +62,10 @@ func TestShardProbeB(t *testing.T) {
 }
 
 // shardProbeStopSelf stops this process and never returns. Stopped, the child cannot even run
-// its own -test.timeout; only the parent's kill ends it. kill(2) on one's own pid may return
-// before the stop takes effect when another thread dequeues the signal, so returning from here
-// would let the probe run on to PASS (seen once in CI: exit 0 after 0.07 s). Blocking makes the
-// outcome independent of when the stop lands; delay forces the late landing in a test.
+// its own -test.timeout; only the parent's kill ends it. It blocks after raising the signal
+// because a stop is process-wide and need not have landed when kill(2) returns: returning would
+// let the probe run on to PASS. delay postpones the signal itself, so the probe is still running
+// when the parent would otherwise see it finish.
 func shardProbeStopSelf(delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
