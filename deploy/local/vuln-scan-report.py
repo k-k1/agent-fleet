@@ -4,6 +4,10 @@
     vuln-scan-report.py --release 0.40.0 --out body.md \
         --trivy 'control-plane image=cp.json' --govulncheck 'af-cp=cp-bin.json' ...
 
+A LABEL may end in `@<arch>` (`'control-plane image@arm64=cp.json'`): the same target scanned
+on several architectures becomes one section, a finding on more than one is one row, and the
+Arch column names them.
+
 Prints `fixable=<n>` on stdout (the workflow appends it to $GITHUB_OUTPUT). The body goes
 to --out and is a pure function of the inputs: no timestamp, no run URL, so a re-scan that
 finds the same things produces the same bytes and the issue is not rewritten.
@@ -166,8 +170,8 @@ def fixed_cell(s):
 
 
 def render(release, targets):
-    total = sum(len(rows) for _, rows in targets)
-    rebuild = sum(1 for _, rows in targets for r in rows if r[5] == "rebuild")
+    total = sum(len(rows) for _, _, rows in targets)
+    rebuild = sum(1 for _, _, rows in targets for r in rows if r[5] == "rebuild")
     out = [MARKER, "",
            f"The latest published release is **{release}**. Its images and native rootfs "
            f"contain **{total}** fixable finding(s) "
@@ -178,16 +182,16 @@ def render(release, targets):
                 f"- **{total - rebuild}** need a pin or dependency bump (remedy `bump`: a Go module, an npm "
                 "package, a baked tool): fix those through a normal PR first; a rebuild alone does not move them.",
                 f"- How to cut the patch release: [{DOC_URL.rsplit('/', 1)[1]}]({DOC_URL}).", ""]
-    for label, rows in targets:
-        out.append(f"### {label}")
+    for label, arches, rows in targets:
+        out.append(f"### {label} ({', '.join(arches)})" if arches else f"### {label}")
         out.append("")
         if not rows:
             out += ["No fixable HIGH/CRITICAL findings.", ""]
             continue
         order = {"CRITICAL": 0, "HIGH": 1}
         rows = sorted(rows, key=lambda r: (order.get(r[1], 2), r[0], r[2]))
-        out += ["| ID | Severity | Package | Installed | Fixed in | Remedy | Where |",
-                "|---|---|---|---|---|---|---|"]
+        out += ["| ID | Severity | Package | Installed | Fixed in | Remedy | Where | Arch |",
+                "|---|---|---|---|---|---|---|---|"]
         shown = 0
         for r in rows[:MAX_ROWS_PER_TARGET]:
             line = "| " + " | ".join(cell(c) for c in r[:4] + (fixed_cell(r[4]),) + r[5:]) + " |"
@@ -206,6 +210,29 @@ def render(release, targets):
     return "\n".join(out), total
 
 
+def merge_arches(parsed):
+    """[(label[@arch], rows)] -> [(label, [arch...], rows)], one entry per label in first-seen order.
+
+    The same target is scanned once per architecture. A finding that appears on several
+    is ONE row (counted once) whose last column names them; a finding of one architecture
+    names just that one. A label without `@arch` is its own target with no architecture.
+    """
+    order, arches, rows = [], {}, {}
+    for label, r in parsed:
+        base, sep, arch = label.rpartition("@")
+        if not sep or not base:
+            base, arch = label, ""
+        if base not in rows:
+            order.append(base)
+            arches[base], rows[base] = [], {}
+        if arch and arch not in arches[base]:
+            arches[base].append(arch)
+        for row in r:
+            rows[base].setdefault(row, []).append(arch)
+    return [(b, arches[b], [row + (", ".join(a for a in arches[b] if a in seen) or "-",)
+                            for row, seen in rows[b].items()]) for b in order]
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", required=True)
@@ -218,18 +245,18 @@ def main(argv):
     if not specs:
         print("no inputs", file=sys.stderr)
         return 2
-    targets = []
+    parsed = []
     try:
         pinned = pinned_packages(a.pinned_dockerfile) if a.pinned_dockerfile else frozenset()
         for spec, parser in specs:
             label, sep, path = spec.rpartition("=")
             if not sep or not label:
                 raise InputError(f"bad spec {spec!r}, want LABEL=FILE")
-            targets.append((label, parser(path, pinned) if parser is parse_trivy else parser(path)))
+            parsed.append((label, parser(path, pinned) if parser is parse_trivy else parser(path)))
     except InputError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
-    body, total = render(a.release, targets)
+    body, total = render(a.release, merge_arches(parsed))
     with open(a.out, "w", encoding="utf-8") as f:
         f.write(body)
     print(f"fixable={total}")

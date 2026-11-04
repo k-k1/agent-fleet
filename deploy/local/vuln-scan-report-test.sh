@@ -95,6 +95,45 @@ report --trivy "image=$FX/trivy-findings.json"; cp "$WORK/body.md" "$WORK/body1.
 report --trivy "image=$FX/trivy-findings.json"
 cmp -s "$WORK/body.md" "$WORK/body1.md" || fail "7: body differs between runs"
 
+# 7b. Two architectures of one target merge into ONE section: a finding present in both is
+# one row (counted once) naming both, a finding of one architecture names only it, and a
+# label without @arch keeps working. The same file twice must not double the count.
+sed 's/CVE-2099-0002/CVE-2099-0102/' "$FX/trivy-findings.json" > "$WORK/trivy-arm.json"
+report --trivy "image@amd64=$FX/trivy-findings.json" --trivy "image@arm64=$WORK/trivy-arm.json"
+[ "$rc" = 0 ] || fail "7b: rc=$rc"
+[ "$(cat "$WORK/out")" = "fixable=6" ] || fail "7b: expected fixable=6 (5 shared + 1 per-arch twin of 0002), got $(cat "$WORK/out")"
+[ "$(grep -c '^### ' "$WORK/body.md")" = 1 ] || fail "7b: one section per target, not per architecture"
+has "### image (amd64, arm64)"
+grep -F "CVE-2099-0001" "$WORK/body.md" | grep -qF "| amd64, arm64 |" || fail "7b: shared finding should name both architectures"
+grep -F "CVE-2099-0002" "$WORK/body.md" | grep -qF "| amd64 |" || fail "7b: amd64-only finding"
+grep -F "CVE-2099-0102" "$WORK/body.md" | grep -qF "| arm64 |" || fail "7b: arm64-only finding"
+report --trivy "image@amd64=$FX/trivy-findings.json" --trivy "image@arm64=$FX/trivy-findings.json"
+[ "$(cat "$WORK/out")" = "fixable=5" ] || fail "7b: identical findings on both architectures count once"
+# An unreadable arm64 file still fails the whole report.
+report --trivy "image@amd64=$FX/trivy-findings.json" --trivy "image@arm64=$WORK/empty.json"
+[ "$rc" = 2 ] || fail "7c: bad arm64 input must be an error, rc=$rc"
+# govulncheck merges the same way (the binary is the same code; findings repeat per arch).
+report --govulncheck "bin@amd64=$FX/govuln-findings.json" --govulncheck "bin@arm64=$FX/govuln-findings.json"
+[ "$(cat "$WORK/out")" = "fixable=2" ] || fail "7d: govulncheck findings merge across architectures"
+
+# 7e. The rootfs a native package points at may live in an EARLIER release (publish-dist.sh
+# --rootfs-json reuse); the package's reference decides, and only this repo's asset is accepted.
+REF="$HERE/vuln-scan-rootfs-ref.py"
+SHA=$(printf 'a%.0s' $(seq 64))
+mkref() { printf '{"version":"x1","url":"%s","sha256":"%s"}' "$1" "$2" > "$WORK/rootfs.json"; }
+ref() { rc=0; python3 -I "$REF" k-k1/agent-fleet-dist "$1" < "$WORK/rootfs.json" > "$WORK/out" 2> "$WORK/err" || rc=$?; }
+B=https://github.com/k-k1/agent-fleet-dist/releases/download
+mkref "$B/v0.39.0/agent-fleet-rootfs-db7b97f5951a-linux-arm64.tar.zst" "$SHA"
+ref arm64; [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "v0.39.0 agent-fleet-rootfs-db7b97f5951a-linux-arm64.tar.zst $SHA" ] || fail "7e: reused rootfs from an earlier release, rc=$rc"
+ref amd64; [ "$rc" = 1 ] || fail "7e: wrong architecture accepted"
+mkref "https://evil.example/k-k1/agent-fleet-dist/releases/download/v0.39.0/agent-fleet-rootfs-x-linux-arm64.tar.zst" "$SHA"
+ref arm64; [ "$rc" = 1 ] || fail "7e: foreign host accepted"
+mkref "$B/v0.39.0/../../x/agent-fleet-rootfs-x-linux-arm64.tar.zst" "$SHA"
+ref arm64; [ "$rc" = 1 ] || fail "7e: path trick accepted"
+mkref "$B/v0.39.0/agent-fleet-rootfs-x-linux-arm64.tar.zst" "nothex"
+ref arm64; [ "$rc" = 1 ] || fail "7e: bad sha accepted"
+echo '{}' > "$WORK/rootfs.json"; ref arm64; [ "$rc" = 1 ] || fail "7e: missing keys accepted"
+
 # 8-11. Issue sync against a fake gh backed by files: $FAKE/issue (body; present = open issue),
 # $FAKE/log (one line per mutating call).
 FAKE="$WORK/fake"; mkdir -p "$FAKE/bin"

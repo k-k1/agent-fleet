@@ -24,12 +24,19 @@ Weekly (Monday), after every successful `publish-dist` run, and on dispatch
 |---|---|---|
 | `control-plane` image | `ghcr.io/k-k1/agent-fleet/control-plane:<version>` (the tag `deploy/compose/release.sh` pushes; no `v`) | Trivy |
 | `workspace` image | `ghcr.io/k-k1/agent-fleet/workspace:<version>` | Trivy |
-| native rootfs | the `agent-fleet-rootfs-*-linux-amd64.tar.zst` asset of dist release `v<version>`, extracted | Trivy |
-| CP binary | `bin/af-cp` of the `agent-fleet-native-<version>-linux-amd64.tar.gz` asset | `govulncheck -mode=binary` |
+| native rootfs | the `agent-fleet-rootfs-*-linux-<arch>.tar.zst` asset of dist release `v<version>`, extracted | Trivy |
+| CP binary | `bin/af-cp` of the `agent-fleet-native-<version>-linux-<arch>.tar.gz` asset | `govulncheck -mode=binary` |
 | Agent binary | `usr/local/bin/workspace-agent` inside that rootfs | `govulncheck -mode=binary` |
 
 `<version>` is the highest `vX.Y.Z` non-draft, non-prerelease release of the dist repo. The
-amd64 halves are scanned; both architectures build from the same Dockerfile and Go version.
+Every target is scanned for amd64 and, when that version published it, for arm64
+(`publish-dist` builds the arm64 halves only on request, so each is looked up: an index entry for
+the images, the `linux-arm64` native package, whose own `rootfs.json` names the rootfs: that may be one an earlier release published, so it is resolved from there and its sha256 checked). Nothing is executed, so
+both run on the same runner: Trivy reads the arm64 layers and `govulncheck` reads the arm64 binary's
+build info. A half that was not published is skipped; a lookup that fails is a red run, not a skip.
+The architectures are matrix legs of one `scan` job; a single `report` job merges them, so exactly
+one job writes the issue. A finding present on both architectures is one row, and its **Arch**
+column says which architectures have it.
 
 **What counts:** a Trivy finding is HIGH or CRITICAL *and* has a fixed version. The Go
 vulnerability database has no severity, so every `govulncheck` finding with a fixed version
@@ -56,7 +63,8 @@ Each row has a **Remedy**:
 
 Tests: `deploy/local/vuln-scan-report-test.sh` (fixtures and a fake `gh`; run in `ci.yml`). The
 schedule itself has not been observed on GitHub at the time of writing; the scanner commands were
-run by hand against the published 0.40.0.
+run by hand against the published 0.40.0, including `govulncheck` on an arm64 `af-cp` and Trivy on
+the arm64 control-plane image.
 
 ## 94.2 Patch release on demand
 
