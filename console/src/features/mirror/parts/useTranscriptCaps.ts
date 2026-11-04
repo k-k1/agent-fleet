@@ -33,6 +33,7 @@ export function useTranscriptCaps({
   marks,
   translate,
   toolCard,
+  toolNote,
   maxSpend,
 }: {
   session: string;
@@ -50,6 +51,7 @@ export function useTranscriptCaps({
   marks: ReturnType<typeof useMarksController>;
   translate: ReturnType<typeof useTranslate>;
   toolCard?: TranscriptCaps["toolCard"];
+  toolNote?: TranscriptCaps["toolNote"];
   maxSpend: number;
 }) {
   const { setLightbox, rejectedPlansRef, rejectedGen } = st;
@@ -127,6 +129,8 @@ export function useTranscriptCaps({
       translate,
       // Read while a turn renders; the host hands a new one exactly when what it draws changed.
       toolCard,
+      // Likewise: a new one exactly when a run lands or a call it could belong to does.
+      toolNote,
       // Only the owner of a Managed session can edit its queue; a Terminal (CLI) session's
       // queue lives in the CLI (ADR 0105 decision 6).
       queue:
@@ -148,6 +152,7 @@ export function useTranscriptCaps({
       marks,
       translate,
       toolCard,
+      toolNote,
       managed,
       readOnly,
     ],

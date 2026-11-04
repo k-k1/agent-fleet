@@ -382,6 +382,7 @@ export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
     ) {
       last.parts.push(...parts);
       last.origins.push(...originsOf(t, parts));
+      last.partTs?.push(...parts.map(() => t.ts));
       last.folded++;
       if (typeof t.idx === "number") last.endIdx = t.idx; // the block's last row (useStableBlockIds)
       // Once two or more rows are folded, the block's text is a string that depends on how
@@ -428,6 +429,7 @@ export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
         firstIdx: t.idx,
         anchorId: t.anchorId,
         origins: originsOf(t, parts),
+        partTs: parts.map(() => t.ts),
         bodyRoot: turnKey(t) ? markRootKey(turnKey(t), BODY_PART) : "",
         folded: 1,
         pending: !!t.pending,

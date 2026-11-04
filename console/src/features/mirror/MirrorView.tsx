@@ -51,7 +51,7 @@ import { restoreNoteCards } from "./parts/RestoreNote.tsx";
 import { DiscardNotice } from "./parts/DiscardNotice.tsx";
 import { PendingPeersNotice } from "./parts/PendingPeersNotice.tsx";
 import { BackgroundShellsPanel } from "./parts/BackgroundShellsPanel.tsx";
-import { cloudRunCards } from "../cloudruns/cloudRuns.tsx";
+import { CloudRunGroup, cloudRunCards, placeRuns, toolKey } from "../cloudruns/cloudRuns.tsx";
 import { MirrorConfirmCards } from "../awsconfirm/AwsConfirmCard.tsx";
 import { useAwsConfirmStore } from "../awsconfirm/store.ts";
 import { useDisplayed } from "../awsconfirm/useDisplayed.ts";
@@ -465,6 +465,19 @@ function MirrorViewBody({
   const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
   const maxSpend = spends.length ? Math.max(...spends) : 0;
 
+  // af-aws-exec / af-gcloud-exec runs go on the tool call that started them, inside the work
+  // fold; only the runs no call can take stand between the turns (cloudRunCards). Placed on the
+  // turns of the whole window, so a run whose call has not been paged in yet waits loose.
+  const placedRuns = useMemo(() => placeRuns(groups, cloudRuns), [groups, cloudRuns]);
+  const toolNote = useMemo(() => {
+    const { onTool } = placedRuns;
+    if (!onTool.size) return undefined;
+    return (turn: Group, i: number) => {
+      const runs = typeof turn.idx === "number" ? onTool.get(toolKey(turn.idx, i)) : undefined;
+      return runs ? <CloudRunGroup runs={runs} attached /> : null;
+    };
+  }, [placedRuns]);
+
   const caps = useTranscriptCaps({
     session,
     sessionMeta,
@@ -481,6 +494,7 @@ function MirrorViewBody({
     marks,
     translate,
     toolCard,
+    toolNote,
     maxSpend,
   });
 
@@ -682,7 +696,7 @@ function MirrorViewBody({
             caps={caps}
             working={busy}
             autoCollapseWork={atBottomRef.current}
-            inlineCards={[...restoreNoteCards(restoredAt), ...cloudRunCards(cloudRuns, groups.map((g) => g.ts)), ...handoffs.map((h) => ({
+            inlineCards={[...restoreNoteCards(restoredAt), ...cloudRunCards(placedRuns.loose, groups.map((g) => g.ts)), ...handoffs.map((h) => ({
               at: h.created_at,
               node: (
                 <HandoffProposal

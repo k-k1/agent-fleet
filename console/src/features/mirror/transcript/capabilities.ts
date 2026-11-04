@@ -138,6 +138,13 @@ export interface TranscriptCaps {
    * every tool is a trace.
    */
   toolCard?: (p: Part, turn: Group, nth: number) => ReactNode | null;
+  /**
+   * A note of the host's own drawn under one tool call's trace, INSIDE the work fold (the
+   * af-aws-exec / af-gcloud-exec runs the call started). `i` is the part's position in
+   * turn.parts. Unlike toolCard it is detail, not a result: it folds away with the trace. Absent
+   * or null → the bare trace.
+   */
+  toolNote?: (turn: Group, i: number) => ReactNode | null;
 
   // ── Display preferences ───────────────────────────────────────────────────────
   /** Show the agent's chain-of-thought expanded (per-kind behaviour setting, default off). */

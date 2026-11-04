@@ -65,6 +65,9 @@ export interface Part {
   files?: string[]; // kind=userfile: SendUserFile paths (browse-root-relative)
   caption?: string; // kind=userfile: optional caption
   stderr?: string; // kind=bash: the ! command's stderr (output field holds stdout)
+  // kind=tool: a shell tool's whole command, sent only when `info` (its first line, cut) is not
+  // all of it.
+  command?: string;
 }
 
 export interface Turn {
@@ -153,6 +156,11 @@ export interface Group {
   // because partsOf() hands back `t.parts` BY REFERENCE — writing to a part here would corrupt
   // the held turn state. "" = this part cannot carry a mark (pending echo, no anchor, no text).
   origins: string[];
+  // partTs[i] is the timestamp of the row parts[i] came from, parallel for the same reason as
+  // origins. A block's own ts is its first row's, so this is the only way to tell WHEN inside a
+  // long turn a tool call happened (the mirror places af-aws-exec runs on their calls by it).
+  // Optional: groups built elsewhere (tests, the shared view) may leave it out.
+  partTs?: Array<string | undefined>;
   // bodyRoot is the mark root for a user block's own text (the bubble renders `text`, not
   // its parts). Empty when the block folded MORE THAN ONE turn: `text` is then a
   // concatenation whose composition depends on the tail window, so an occurrence count

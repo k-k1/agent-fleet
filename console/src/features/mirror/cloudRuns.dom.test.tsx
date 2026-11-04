@@ -22,6 +22,7 @@ const TURNS = [
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let runs: unknown[] | undefined;
+let turns: unknown[] = TURNS;
 
 async function settle(rounds = 5) {
   for (let i = 0; i < rounds; i++) {
@@ -40,6 +41,7 @@ async function until(cond: () => boolean, what: string) {
 }
 
 beforeEach(() => {
+  turns = TURNS;
   localStorage.clear();
   setLocale("en");
   useWorkspaceStore.setState({ state: "running" });
@@ -64,7 +66,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.includes(`/sessions/${SESSION}/messages`)
-      ? { cursor: 3, alive: true, status: "idle", messages: TURNS, ...(runs ? { cloudRuns: runs } : {}) }
+      ? { cursor: 3, alive: true, status: "idle", messages: turns, ...(runs ? { cloudRuns: runs } : {}) }
       : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -112,5 +114,25 @@ describe("af-aws-exec runs in the mirror", () => {
     await mount();
     await until(() => document.body.textContent!.includes("thanks"), "the transcript");
     expect(document.querySelector(".cloud-run")).toBeNull();
+  });
+
+  it("puts the runs of a call on that call, inside the work fold, not under the reply", async () => {
+    const cmd = "af-aws-exec --profile prod-admin --account 123456789012 -- bash -c 'aws s3 ls'";
+    turns = [
+      { role: "user", idx: 0, ts: "2026-10-30T12:00:00Z", text: "list the buckets" },
+      { role: "assistant", idx: 1, ts: "2026-10-30T12:04:00Z", parts: [{ kind: "tool", tool: "Bash", info: cmd }] },
+      { role: "assistant", idx: 2, ts: "2026-10-30T12:06:00Z", parts: [{ kind: "text", text: "Listing them now." }] },
+      { role: "user", idx: 3, ts: "2026-10-30T12:10:00Z", text: "thanks" },
+    ];
+    const one = (runs as Array<Record<string, unknown>>)[0];
+    runs = [one, { ...one, id: "1793366109333295725-c19c781d", startedAt: "2026-10-30T12:05:30Z" }];
+    await mount();
+    await until(() => document.body.textContent!.includes("thanks"), "the transcript");
+    // Nothing between the turns: both runs belong to the Bash call.
+    expect([...document.querySelectorAll(".cloud-run")].filter((e) => !e.closest(".mt-tool-noted"))).toEqual([]);
+    const tool = [...document.querySelectorAll(".mt-tool")].find((e) => e.textContent!.includes("af-aws-exec"));
+    expect(tool).toBeTruthy();
+    await until(() => !!document.querySelector(".mt-tool-noted .cloud-run-head"), "the runs under the call");
+    expect(document.querySelector(".mt-tool-noted .cloud-run-head")!.textContent).toContain("2 runs");
   });
 });

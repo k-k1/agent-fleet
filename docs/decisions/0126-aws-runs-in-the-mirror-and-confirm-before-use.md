@@ -65,6 +65,11 @@ What exists, and what does not (measured by reading the code):
 
 ### 2. The mirror shows the rows; Settings shows every session's
 
+> Amended (#3329): a row is drawn under the shell call it is matched to, inside the turn's work, and the rows of one
+> call or one place collapse into one line with a count; only unmatched rows stand between the turns. `af-gcloud-exec`
+> writes rows too (provider `gcp`, with the project, the account, the impersonated service account and, since it
+> supervises the command, the exit status). The rule on arguments is unchanged.
+
 - `GET /sessions/{name}/messages` gains `cloudRuns`, the session's rows. The mirror draws each one as a one-line
   row between the turns, by time: "AWS · `prod-admin` · 123456789012 / AdministratorAccess · ap-northeast-1 ·
   `aws s3 ls` · exit 0 · 3 s". A row is shown in the same place by every kind, and a kind whose transcript has

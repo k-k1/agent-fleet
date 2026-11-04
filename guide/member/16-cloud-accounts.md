@@ -328,8 +328,12 @@ and the "running as" line shows who uploads. If the build script names a profile
 say), see "could not be found" below.
 
 **Every run shows in the session's conversation.** Each `af-aws-exec` run leaves one line in the conversation of
-the session that ran it, at the time it started: the profile, the account and role it ran as, the region, the
-command (`aws s3 ls`, or just the program's name), or why af-aws-exec refused to run it. The line does not say how
+the session that ran it: the profile, the account and role it ran as, the region, the
+command (`aws s3 ls`, or just the program's name), or why af-aws-exec refused to run it. The line sits under the
+shell call that ran it, inside the turn's work, so a turn with many runs keeps its reply in view; several runs of one
+call are one line with a count that opens to each run, and a refused one is counted in red. Runs that no call can
+be matched to (a kind whose conversation records no times, a background process) are collapsed the same way between
+the turns, at the time they started. A shell call whose label is cut opens to the whole command it ran. The line does not say how
 the command ended: af-aws-exec becomes the command, so its exit status is the one your shell sees. Settings > AWS profiles/SSM lists the latest
 runs of every session under "Recent runs". The line never holds the command's arguments, which can carry secrets.
 It is there so you can see what ran, and it is not an audit: the session is the one the run reported, which the
@@ -582,6 +586,9 @@ af-gcloud-exec --profile <name> --project <project-id> -- kubectl get pods
 - Stopping `af-gcloud-exec` sends SIGTERM to the command it started (the command may ignore it), and the same happens
   when `af-gcloud-exec` is killed. Programs the command itself started are not reached. When `af-gcloud-exec` is
   killed, the token file stays until its token has expired and a later run removes it.
+- Every run leaves a line in the session's conversation, as `af-aws-exec`'s do: the profile, the project, the
+  account (and the service account it impersonates), the program's name and the command's exit status, or why it was
+  refused. Never the arguments. Settings > Google Cloud lists the latest runs of every session under "Recent runs".
 - The first run installs the Google Cloud SDK (one pinned version, with the GKE auth plugin) into your home: about
   85 MB to download and about 510 MB on disk, kept across stops and a Recreate. The first run of each gcloud
   command after that is a few seconds slower once. The **Toolchain** tab's table of tool versions then shows

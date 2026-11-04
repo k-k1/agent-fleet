@@ -1,5 +1,5 @@
-/* One af-aws-exec run (ADR 0126): an Agent Fleet line, not the model's, so it takes the same
-   quiet frame as the restore note, on one line. */
+/* One af-aws-exec / af-gcloud-exec run (ADR 0126): an Agent Fleet line, not the model's, so it
+   takes the same quiet frame as the restore note, on one line. */
 .cloud-run {
   display: flex;
   align-items: center;
@@ -22,6 +22,49 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono, monospace);
+}
+.cloud-run-provider {
+  display: inline-flex;
+  flex: none;
+}
+.cloud-run-time {
+  flex: none;
+  opacity: 0.8;
+}
+.cloud-run-count {
+  flex: none;
+}
+.cloud-run-failed {
+  flex: none;
+  color: var(--err);
+}
+/* A group's head is a button that reads like the line it summarises. */
+button.cloud-run-head {
+  width: calc(100% - 32px);
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button.cloud-run-head:hover {
+  color: var(--fg);
+}
+.cloud-run-list {
+  margin: 0 16px 4px 28px;
+}
+.cloud-run-list .cloud-run {
+  margin: 2px 0;
+}
+/* Under the tool call that started the runs: inside the work trace, so it is indented with the
+   trace and drops the outer margin the free-standing line keeps from the pane's edge. */
+.cloud-run-group.attached .cloud-run {
+  margin: 2px 0 2px 18px;
+}
+.cloud-run-group.attached button.cloud-run-head {
+  width: calc(100% - 18px);
+}
+.cloud-run-group.attached .cloud-run-list {
+  margin: 0 0 4px 36px;
 }
 .cloud-run-session {
   font-weight: 600;

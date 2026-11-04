@@ -232,11 +232,12 @@ function TranscriptTurnImpl({
   // A run of tool traces with the carded calls taken out: each card stands on its own, and the
   // traces between two cards stay one foldable run.
   const renderToolRun = (tools: { p: Part; i: number }[], base: number, liftCards: boolean) => {
-    if (!toolCards.size) return <ToolRun key={"tr" + (base + tools[0].i)} tools={tools} onOpenDiff={caps.openDiff} />;
+    const noteOf = caps.toolNote ? (i: number) => caps.toolNote!(turn, base + i) : undefined;
+    if (!toolCards.size) return <ToolRun key={"tr" + (base + tools[0].i)} tools={tools} onOpenDiff={caps.openDiff} noteOf={noteOf} />;
     const out: ReactNode[] = [];
     let run: { p: Part; i: number }[] = [];
     const flush = () => {
-      if (run.length) out.push(<ToolRun key={"tr" + (base + run[0].i)} tools={run} onOpenDiff={caps.openDiff} />);
+      if (run.length) out.push(<ToolRun key={"tr" + (base + run[0].i)} tools={run} onOpenDiff={caps.openDiff} noteOf={noteOf} />);
       run = [];
     };
     for (const t of tools) {
