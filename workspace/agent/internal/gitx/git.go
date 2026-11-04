@@ -336,9 +336,12 @@ type RepoStatus struct {
 // GitStatus parses `git status --porcelain=v2 --branch` into a RepoStatus.
 // porcelain=v2 is stable across git versions and unambiguous to parse, unlike
 // the human-readable output.
-func GitStatus(dir string) (RepoStatus, error) {
+func GitStatus(dir string) (RepoStatus, error) { return gitStatusEnv(dir, nil) }
+
+// gitStatusEnv is GitStatus with env added to git's environment.
+func gitStatusEnv(dir string, env []string) (RepoStatus, error) {
 	var s RepoStatus
-	out, err := Run(dir, "status", "--porcelain=v2", "--branch")
+	out, err := runEnv(dir, env, "status", "--porcelain=v2", "--branch")
 	if err != nil {
 		return s, err
 	}
@@ -471,6 +474,7 @@ func HandleListRepos(w http.ResponseWriter, r *http.Request) {
 func listRepos() ([]Repo, error) {
 	repos := []Repo{}
 	global := globalConfigPaths()
+	defer global.done()
 	live := map[string]bool{}
 	entries, err := os.ReadDir(ReposRoot())
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

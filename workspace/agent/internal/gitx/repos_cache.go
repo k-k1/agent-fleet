@@ -107,9 +107,41 @@ func (a fingerprint) equal(b fingerprint) bool {
 type gitGlobals struct {
 	paths  []string
 	simple bool
+	// statusEnv points the poll's `git status` at a local snapshot of the global config
+	// (global_snapshot.go); nil means git reads the real files.
+	statusEnv []string
+	// releaseSnapshot gives the snapshot back; call it through done once every git that
+	// used statusEnv has exited.
+	releaseSnapshot func()
+	// readSigs are the signatures of paths taken just before they were read for the
+	// snapshot. A status run through the snapshot is cached only while they still hold.
+	readSigs []fileSig
 }
 
-// globalConfigPaths reads the global git configs once per request. url.<base>.insteadOf
+// done releases what globalConfigPaths took. Safe to call on any gitGlobals.
+func (g gitGlobals) done() {
+	if g.releaseSnapshot != nil {
+		g.releaseSnapshot()
+	}
+}
+
+// snapshotCurrent reports whether the global config still is what statusEnv's snapshot was
+// made from. Without it, an edit landing between this request's read and its status run
+// would cache the old config's answer under the new config's fingerprint.
+func (g gitGlobals) snapshotCurrent() bool {
+	if g.statusEnv == nil {
+		return true
+	}
+	for i, p := range g.paths {
+		if !sigOf(p).equal(g.readSigs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// globalConfigPaths reads the global git configs once per request. The caller must call done
+// on the result after its last git has run. url.<base>.insteadOf
 // there rewrites `remote get-url`, so their signatures are part of every fingerprint.
 func globalConfigPaths() gitGlobals {
 	g := gitGlobals{simple: os.Getenv("GIT_CONFIG_COUNT") == "" && os.Getenv("GIT_CONFIG_PARAMETERS") == "" &&
@@ -124,9 +156,24 @@ func globalConfigPaths() gitGlobals {
 		}
 		g.paths = []string{"/etc/gitconfig", filepath.Join(home, ".gitconfig"), filepath.Join(xdg, "git", "config")}
 	}
-	for _, p := range g.paths {
-		if b, err := os.ReadFile(p); err == nil && !configFollowable(string(b), true) {
+	read := map[string][]byte{}
+	g.readSigs = make([]fileSig, len(g.paths))
+	for i, p := range g.paths {
+		g.readSigs[i] = sigOf(p) // taken before the read: an edit in between reads as a change
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		read[p] = b
+		if !configFollowable(string(b), true) {
 			g.simple = false
+		}
+	}
+	// Set at all, even to "", means the user chose the global config: leave it to git.
+	if _, set := os.LookupEnv("GIT_CONFIG_GLOBAL"); !set {
+		xdg, home := read[g.paths[2]], read[g.paths[1]]
+		if snapshotAllowed(xdg, home) {
+			g.statusEnv, g.releaseSnapshot = listGlobalSnapshot.env(xdg, home)
 		}
 	}
 	return g
@@ -407,9 +454,9 @@ func (c *repoCache) inspect(dir string, global gitGlobals) (RepoStatus, repoIden
 	statusFP, statusOK := refsFingerprint(dir, global)
 	if !statusOK || !e.status.fresh(statusFP, maxStatusAge) {
 		release := c.gitSlot()
-		st, err := GitStatus(dir)
+		st, err := gitStatusEnv(dir, global.statusEnv)
 		release()
-		if statusOK && err == nil {
+		if statusOK && err == nil && global.snapshotCurrent() {
 			e.status.set(statusFP, st)
 		} else {
 			e.status = slot[RepoStatus]{val: st}
