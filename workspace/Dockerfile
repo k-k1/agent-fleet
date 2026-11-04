@@ -70,6 +70,9 @@ RUN pip install --no-cache-dir uv \
 # and the base tag floats, so only an explicit pin keeps the scan result stable. The self-
 # upgrade replaces /usr/local/lib/node_modules/npm wholesale. Keep it on a release whose
 # engines range still admits the node 22 line (npm 12 needs >=22.22.2, so stay on 11.x).
+# Not covered by cli-drift / cli-pin-bump (those rows are agent CLIs with contract gates); the
+# tracked update path is the image-vuln-scan issue, which reports any fixable npm-bundled
+# finding as remedy "bump". Take the new pin from `npm view npm@next-11 version`.
 ARG NPM_VERSION=11.21.1
 RUN npm install -g "npm@${NPM_VERSION}" \
     && test "$(npm --version)" = "${NPM_VERSION}" \
