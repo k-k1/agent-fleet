@@ -11,6 +11,13 @@
 #   - the CP binary (native package bin/af-cp) and the Agent binary (rootfs
 #     usr/local/bin/workspace-agent) with `govulncheck -mode=binary`
 #
+# Each of those is scanned for amd64 and, when that version published it, for arm64
+# (publish-dist can skip every arm64 half). Nothing is executed, so both run on the same
+# amd64 runner: Trivy reads the arm64 layers, govulncheck reads the binary's build info.
+# Three jobs: `resolve` decides the version and which arm64 halves exist, `scan` is a
+# matrix over the architectures that only reads and uploads JSON, and `report` is the ONE
+# job that merges the findings and touches the issue (so no two writers race).
+#
 # "Latest published" is the highest vX.Y.Z non-draft, non-prerelease release of the dist
 # repo, which is where publish-dist.sh puts every version; the images carry the same
 # version as their tag. A patch release 0.x.y+1 cut from an older line is therefore not
@@ -42,8 +49,7 @@ on:
         required: false
 
 permissions:
-  contents: read
-  issues: write # open / update / close the one tracking issue
+  contents: read # per-job `issues: write` is granted to `report` alone
 
 concurrency:
   group: image-vuln-scan
@@ -59,13 +65,16 @@ env:
   GOVULNCHECK_VERSION: v1.9.0
 
 jobs:
-  scan:
+  resolve:
     # A failed publish ships nothing new to scan.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    # No job-level token: only the steps that talk to GitHub get one, so the steps that
-    # unpack and scan downloaded artifacts never hold it.
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.rel.outputs.version }}
+      cp_arm64: ${{ steps.arm.outputs.cp_arm64 }}
+      ws_arm64: ${{ steps.arm.outputs.ws_arm64 }}
+      native_arm64: ${{ steps.arm.outputs.native_arm64 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,6 +95,56 @@ jobs:
           echo "scanning $version (latest published: $latest)"
           # An older version can be scanned on request, but only the latest one owns the issue.
           [ "$version" = "$latest" ] || echo "::notice::$version is not the latest ($latest): the issue will not be touched"
+
+      # publish-dist builds the arm64 halves only when asked (control_plane_arm64,
+      # workspace_arm64, native_arm64), so which exist is read from what was published.
+      # Only "not there" skips an arm64 scan; a lookup that fails is red, never a skip.
+      - name: which arm64 halves were published
+        id: arm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "v$VERSION" -R "$DIST_REPO" --json assets -q '.assets[].name')"
+          if grep -qxF "agent-fleet-native-$VERSION-linux-arm64.tar.gz" <<<"$assets" \
+             && grep -qE '^agent-fleet-rootfs-.*-linux-arm64\.tar\.zst$' <<<"$assets"; then
+            echo "native_arm64=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "native_arm64=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The tag is an index with a linux/arm64 entry, or it is not published for arm64.
+          for pair in cp_arm64:control-plane ws_arm64:workspace; do
+            raw="$(docker buildx imagetools inspect --raw "$IMAGE_REPO/${pair#*:}:$VERSION")"
+            if jq -e '.manifests? // [] | any(.platform.architecture == "arm64")' <<<"$raw" >/dev/null; then
+              echo "${pair%%:*}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${pair%%:*}=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          cat "$GITHUB_OUTPUT"
+
+  scan:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false # the other architecture's JSON is still worth having; `report` is skipped on any failure
+      matrix:
+        arch: [amd64, arm64]
+    # No token on this job: it unpacks and scans downloaded artifacts, and the steps that
+    # talk to GitHub pass the job token explicitly.
+    env:
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      # amd64 is always published; arm64 only when `resolve` found it.
+      DO_CP: ${{ matrix.arch == 'amd64' || needs.resolve.outputs.cp_arm64 == 'true' }}
+      DO_WS: ${{ matrix.arch == 'amd64' || needs.resolve.outputs.ws_arm64 == 'true' }}
+      DO_NATIVE: ${{ matrix.arch == 'amd64' || needs.resolve.outputs.native_arm64 == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: install Trivy (pinned, checksum-verified)
         run: |
@@ -110,65 +169,111 @@ jobs:
           test -x "$RUNNER_TEMP/bin/govulncheck"
 
       - name: download the native package and rootfs of the release
+        if: ${{ env.DO_NATIVE == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.rel.outputs.version }}
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/native"; mkdir -p "$d"
           gh release download "v$VERSION" -R "$DIST_REPO" -D "$d" \
-            -p "agent-fleet-native-$VERSION-linux-amd64.tar.gz" \
-            -p 'agent-fleet-rootfs-*-linux-amd64.tar.zst'
+            -p "agent-fleet-native-$VERSION-linux-$ARCH.tar.gz" \
+            -p "agent-fleet-rootfs-*-linux-$ARCH.tar.zst"
 
       # What was downloaded is data. Nothing from it is executed here (not even the zstd the
       # package ships: the runner's own is used), and the rootfs is unpacked by a filter that
-      # refuses paths and links leaving the directory.
+      # refuses paths and links leaving the directory. The arm64 binaries are only read.
       - name: unpack the downloads as data
-        env:
-          VERSION: ${{ steps.rel.outputs.version }}
+        if: ${{ env.DO_NATIVE == 'true' }}
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/native"; mkdir -p "$d/rootfs" "$d/pkg"
           command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
-          tar -xzf "$d/agent-fleet-native-$VERSION-linux-amd64.tar.gz" -C "$d/pkg" --strip-components=1 \
-            "agent-fleet-native-$VERSION-linux-amd64/bin/af-cp"
-          zstd -dc "$d"/agent-fleet-rootfs-*-linux-amd64.tar.zst \
+          tar -xzf "$d/agent-fleet-native-$VERSION-linux-$ARCH.tar.gz" -C "$d/pkg" --strip-components=1 \
+            "agent-fleet-native-$VERSION-linux-$ARCH/bin/af-cp"
+          zstd -dc "$d"/agent-fleet-rootfs-*-linux-"$ARCH".tar.zst \
             | python3 -I deploy/local/vuln-scan-extract.py "$d/rootfs"
-          test -x "$d/rootfs/usr/local/bin/workspace-agent"
+          test -f "$d/rootfs/usr/local/bin/workspace-agent"
 
+      # File names carry the architecture; `report` pairs them with the targets. A target
+      # that was not published for this architecture simply has no file.
       - name: scan
-        env:
-          VERSION: ${{ steps.rel.outputs.version }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/scan"; mkdir -p "$out"
           d="$RUNNER_TEMP/native"
           trivy() { "$RUNNER_TEMP/bin/trivy" "$@" --scanners vuln --severity HIGH,CRITICAL \
             --ignore-unfixed --exit-code 0 --timeout 20m --format json; }
-          trivy image --platform linux/amd64 --output "$out/control-plane.json" "$IMAGE_REPO/control-plane:$VERSION"
-          trivy image --platform linux/amd64 --output "$out/workspace.json" "$IMAGE_REPO/workspace:$VERSION"
-          trivy rootfs --output "$out/rootfs.json" "$d/rootfs"
-          # govulncheck exits 3 when it finds something; 0 and 3 are both a completed scan.
-          gv() { rc=0; "$RUNNER_TEMP/bin/govulncheck" -mode=binary -format json "$2" > "$1" || rc=$?
-                 [ "$rc" = 0 ] || [ "$rc" = 3 ] || { echo "::error::govulncheck failed on $2 (exit $rc)"; exit 1; }; }
-          gv "$out/af-cp.json" "$d/pkg/bin/af-cp"
-          gv "$out/workspace-agent.json" "$d/rootfs/usr/local/bin/workspace-agent"
+          if [ "$DO_CP" = true ]; then
+            trivy image --platform "linux/$ARCH" --output "$out/control-plane.$ARCH.json" "$IMAGE_REPO/control-plane:$VERSION"
+          fi
+          if [ "$DO_WS" = true ]; then
+            trivy image --platform "linux/$ARCH" --output "$out/workspace.$ARCH.json" "$IMAGE_REPO/workspace:$VERSION"
+          fi
+          if [ "$DO_NATIVE" = true ]; then
+            trivy rootfs --output "$out/rootfs.$ARCH.json" "$d/rootfs"
+            # govulncheck exits 3 when it finds something; 0 and 3 are both a completed scan.
+            gv() { rc=0; "$RUNNER_TEMP/bin/govulncheck" -mode=binary -format json "$2" > "$1" || rc=$?
+                   [ "$rc" = 0 ] || [ "$rc" = 3 ] || { echo "::error::govulncheck failed on $2 (exit $rc)"; exit 1; }; }
+            gv "$out/af-cp.$ARCH.json" "$d/pkg/bin/af-cp"
+            gv "$out/workspace-agent.$ARCH.json" "$d/rootfs/usr/local/bin/workspace-agent"
+          fi
+          ls -l "$out"
 
+      # Scanner JSON only (public advisories); the issue shows the first rows, this the rest.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: vuln-scan-${{ needs.resolve.outputs.version }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/scan/*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The only job that writes the issue. It needs every scan to have succeeded: a scan that
+  # did not run is a red run, never a clean verdict.
+  report:
+    needs: [resolve, scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write # open / update / close the one tracking issue
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vuln-scan-${{ needs.resolve.outputs.version }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/scan
+
+      # amd64 is required; an arm64 file is expected exactly when `resolve` found that half.
       - name: build the report
         id: report
         env:
-          VERSION: ${{ steps.rel.outputs.version }}
+          CP_ARM64: ${{ needs.resolve.outputs.cp_arm64 }}
+          WS_ARM64: ${{ needs.resolve.outputs.ws_arm64 }}
+          NATIVE_ARM64: ${{ needs.resolve.outputs.native_arm64 }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/scan"
+          args=()
+          add() { args+=("$1" "$2@$3=$out/$4.$3.json"); }   # flag label arch file-stem
+          for arch in amd64 arm64; do
+            if [ "$arch" = amd64 ]; then cp=true ws=true nat=true; else cp=$CP_ARM64 ws=$WS_ARM64 nat=$NATIVE_ARM64; fi
+            if [ "$cp" = true ]; then add --trivy "control-plane image" "$arch" control-plane; fi
+            if [ "$ws" = true ]; then add --trivy "workspace image" "$arch" workspace; fi
+            if [ "$nat" = true ]; then
+              add --trivy "native rootfs" "$arch" rootfs
+              add --govulncheck "af-cp (control plane binary)" "$arch" af-cp
+              add --govulncheck "workspace-agent (agent binary)" "$arch" workspace-agent
+            fi
+          done
           python3 -I deploy/local/vuln-scan-report.py --release "$VERSION" --out "$out/body.md" \
-            --pinned-dockerfile workspace/Dockerfile \
-            --trivy "control-plane image=$out/control-plane.json" \
-            --trivy "workspace image=$out/workspace.json" \
-            --trivy "native rootfs=$out/rootfs.json" \
-            --govulncheck "af-cp (control plane binary)=$out/af-cp.json" \
-            --govulncheck "workspace-agent (agent binary)=$out/workspace-agent.json" \
-            | tee -a "$GITHUB_OUTPUT"
+            --pinned-dockerfile workspace/Dockerfile "${args[@]}" | tee -a "$GITHUB_OUTPUT"
           { echo "## image-vuln-scan $VERSION"; echo; cat "$out/body.md"; } >> "$GITHUB_STEP_SUMMARY"
 
       # The latest is asked again here: a release published while the scan ran makes this
@@ -177,18 +282,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FIXABLE: ${{ steps.report.outputs.fixable }}
-          SCANNED: ${{ steps.rel.outputs.version }}
+          SCANNED: ${{ needs.resolve.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           latest="$(deploy/local/vuln-scan-latest.sh)"
           deploy/local/vuln-scan-issue.sh sync "$RUNNER_TEMP/scan/body.md" "$FIXABLE" "$RUN_URL" "$SCANNED" "$latest"
-
-      # Scanner JSON only (public advisories); the issue shows the first rows, this the rest.
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
-        with:
-          name: vuln-scan-${{ steps.rel.outputs.version }}
-          path: ${{ runner.temp }}/scan/*.json
-          if-no-files-found: ignore
-          retention-days: 14

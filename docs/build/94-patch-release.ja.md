@@ -23,12 +23,17 @@ issue を見てメンテナが決める。決定の記録: [#3320](https://githu
 |---|---|---|
 | `control-plane` イメージ | `ghcr.io/k-k1/agent-fleet/control-plane:<version>`（`deploy/compose/release.sh` が push するタグ。`v` は付かない） | Trivy |
 | `workspace` イメージ | `ghcr.io/k-k1/agent-fleet/workspace:<version>` | Trivy |
-| native rootfs | dist リリース `v<version>` の `agent-fleet-rootfs-*-linux-amd64.tar.zst` を展開 | Trivy |
-| CP バイナリ | `agent-fleet-native-<version>-linux-amd64.tar.gz` の `bin/af-cp` | `govulncheck -mode=binary` |
+| native rootfs | dist リリース `v<version>` の `agent-fleet-rootfs-*-linux-<arch>.tar.zst` を展開 | Trivy |
+| CP バイナリ | `agent-fleet-native-<version>-linux-<arch>.tar.gz` の `bin/af-cp` | `govulncheck -mode=binary` |
 | Agent バイナリ | 上記 rootfs の `usr/local/bin/workspace-agent` | `govulncheck -mode=binary` |
 
-`<version>` は dist repo の draft / prerelease でない `vX.Y.Z` のうち最大のもの。スキャンするのは amd64 側
-（両アーキテクチャとも同じ Dockerfile・同じ Go 版からビルドされる）。
+`<version>` は dist repo の draft / prerelease でない `vX.Y.Z` のうち最大のもの。各対象は amd64 と、そのバージョンが
+公開していれば arm64 もスキャンする（`publish-dist` は arm64 を依頼されたときだけビルドするので、イメージは
+index の arm64 エントリ、native パッケージと rootfs は `linux-arm64` アセットの有無で確かめる）。何も実行しない
+ので両方とも同じランナーで走る: Trivy は arm64 のレイヤを読み、`govulncheck` は arm64 バイナリのビルド情報を読む。
+公開されていない側は飛ばし、確認自体が失敗したら飛ばさず赤にする。アーキテクチャは 1 つの `scan` ジョブの
+matrix で、Issue を書くのは両者をまとめる `report` ジョブ 1 つだけ。両方にある finding は 1 行で、**Arch** 列に
+どのアーキテクチャにあるかを出す。
 
 **対象になるもの:** Trivy は HIGH か CRITICAL で、かつ修正版があるもの。Go の脆弱性 DB には深刻度が
 ないので、`govulncheck` は修正版のある finding をすべて数える（binary モードはバイナリに実在する
@@ -53,7 +58,7 @@ issue をそのままにする。
   その bump を載せる（下記）。
 
 テスト: `deploy/local/vuln-scan-report-test.sh`（fixture と偽 `gh`。`ci.yml` で実行）。スケジュール実行は
-執筆時点で GitHub 上では未観測で、スキャナのコマンドは公開済みの 0.40.0 に対して手元で実行した。
+執筆時点で GitHub 上では未観測で、スキャナのコマンドは公開済みの 0.40.0 に対して手元で実行した（arm64 の `af-cp` への `govulncheck` と、arm64 の control-plane イメージへの Trivy を含む）。
 
 ## 94.2 必要なときのパッチリリース
 
