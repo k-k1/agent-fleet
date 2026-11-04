@@ -444,8 +444,11 @@ const sharedPaneEnv = "AF_OPENCODE_SHARED"
 
 // --- stop -----------------------------------------------------------------------
 
-// interruptTerminal stops the turn a Terminal slot has running on the shared serve. Closing the
-// pane does not: the server runs the turn, not the TUI.
+// interruptTerminal ends the work a Terminal slot has on the shared serve: closing the pane does
+// not, because the server runs the turn and the input queued behind it. The queue is cancelled
+// first, since a running turn that ends hands the next queued input to the server to run, and
+// once more after the interrupt for anything that was enqueued in between. The serve itself is
+// shared with every other session and stays up.
 func interruptTerminal(m session.Meta) {
 	if !sharedSlot(m) || !Serve().Running() {
 		return
@@ -454,8 +457,34 @@ func interruptTerminal(m session.Meta) {
 	if ses == "" {
 		return
 	}
-	if err := apiJSON("POST", sessionPathURL(serveAddr(), ses)+"/interrupt", map[string]string{}, nil); err != nil {
+	addr := serveAddr()
+	cancelQueuedInput(addr, ses, m.Name)
+	if err := apiJSON("POST", sessionPathURL(addr, ses)+"/interrupt", map[string]string{}, nil); err != nil {
 		log.Printf("opencode: interrupt %s: %v", m.Name, err)
+	}
+	cancelQueuedInput(addr, ses, m.Name)
+}
+
+// cancelQueuedInput deletes the session's undelivered user and synthetic inbox entries (typed
+// prompts and injected messages). A queued compaction or move is not a prompt and is left.
+func cancelQueuedInput(addr, ses, name string) {
+	var w struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"data"`
+	}
+	if err := apiJSON("GET", sessionPathURL(addr, ses)+"/inbox", nil, &w); err != nil {
+		log.Printf("opencode: list queued input of %s: %v", name, err)
+		return
+	}
+	for _, it := range w.Data {
+		if it.ID == "" || (it.Type != "user" && it.Type != "synthetic") {
+			continue
+		}
+		if err := apiJSON("DELETE", sessionPathURL(addr, ses)+"/inbox/"+url.PathEscape(it.ID), nil, nil); err != nil {
+			log.Printf("opencode: cancel queued input %s of %s: %v", it.ID, name, err)
+		}
 	}
 }
 

@@ -31,12 +31,13 @@ type sharedDaemon struct {
 	next       int
 	pid        int
 	version    string
-	failGet    map[string]bool     // GET of these session ids answers 503
-	deleteGate func(id string)     // runs on a DELETE before it is applied (the lock is released)
-	failSwitch bool                // model/agent switches answer 500
-	messageIDs map[string][]string // session id → message ids GET .../message answers with
-	failEnv    int                 // fail this many environment PUTs with 503 before accepting
-	failPatch  int                 // fail this many metadata PATCHes with 503 before accepting
+	failGet    map[string]bool             // GET of these session ids answers 503
+	deleteGate func(id string)             // runs on a DELETE before it is applied (the lock is released)
+	failSwitch bool                        // model/agent switches answer 500
+	messageIDs map[string][]string         // session id → message ids GET .../message answers with
+	failEnv    int                         // fail this many environment PUTs with 503 before accepting
+	failPatch  int                         // fail this many metadata PATCHes with 503 before accepting
+	inbox      map[string][]map[string]any // session id → undelivered inbox entries (id, type)
 }
 
 func newSharedDaemon(t *testing.T) *sharedDaemon {
@@ -149,6 +150,17 @@ func (d *sharedDaemon) handle(w http.ResponseWriter, r *http.Request) {
 			}
 			vars, _ := body["variables"].(map[string]any)
 			d.envs[id] = md(vars)
+			w.WriteHeader(http.StatusNoContent)
+		case len(parts) == 4 && parts[3] == "inbox" && r.Method == "GET":
+			reply(map[string]any{"data": d.inbox[id]})
+		case len(parts) == 5 && parts[3] == "inbox" && r.Method == "DELETE":
+			var keep []map[string]any
+			for _, it := range d.inbox[id] {
+				if it["id"] != parts[4] {
+					keep = append(keep, it)
+				}
+			}
+			d.inbox[id] = keep
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNoContent) // model, agent, interrupt
@@ -521,6 +533,54 @@ func TestPutEnvironmentForChecksTheSessionIsTheSlots(t *testing.T) {
 	paneEnv = func(string) (map[string]string, bool) { return nil, false }
 	if err := putEnvironmentFor(d.srv.URL, "owner", "ses_child"); err == nil {
 		t.Error("no pane environment must be an error, not an empty PUT")
+	}
+}
+
+// Stop cancels the prompts queued behind the running turn (before and after the interrupt, which
+// leaves the inbox alone and lets the server run the next entry), keeps a queued compaction, and
+// never touches another session's inbox.
+func TestStopCancelsTheQueuedInputOfTheTerminalSlot(t *testing.T) {
+	d := newSharedDaemon(t)
+	d.sessions["ses_q"] = map[string]string{}
+	d.sessions["ses_other"] = map[string]string{}
+	d.inbox = map[string][]map[string]any{
+		"ses_q": {
+			{"id": "inb_1", "type": "user"},
+			{"id": "inb_2", "type": "compaction"},
+			{"id": "inb_3", "type": "synthetic"},
+		},
+		"ses_other": {{"id": "inb_9", "type": "user"}},
+	}
+	m := terminalMeta(t, "queued")
+	sids.Write(session.UUID(m.Dir, m.Name), "ses_q")
+	markSlotMode(session.UUID(m.Dir, m.Name), modeShared)
+	t.Cleanup(func() { sids.Remove(session.UUID(m.Dir, m.Name)); slotModes.Remove(session.UUID(m.Dir, m.Name)) })
+	supervisor.mu.Lock()
+	supervisor.up = true
+	supervisor.mu.Unlock()
+	t.Cleanup(func() { supervisor.mu.Lock(); supervisor.up = false; supervisor.mu.Unlock() })
+
+	(agentImpl{}).GracefulStop(m)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if got := d.inbox["ses_q"]; len(got) != 1 || got[0]["id"] != "inb_2" {
+		t.Errorf("inbox left = %v, want only the compaction", got)
+	}
+	if got := d.inbox["ses_other"]; len(got) != 1 {
+		t.Errorf("another session's inbox was touched: %v", got)
+	}
+	firstDelete, interrupt := -1, -1
+	for i, c := range d.calls {
+		switch {
+		case firstDelete < 0 && strings.HasPrefix(c, "DELETE /api/session/ses_q/inbox/"):
+			firstDelete = i
+		case strings.HasPrefix(c, "POST /api/session/ses_q/interrupt"):
+			interrupt = i
+		}
+	}
+	if firstDelete < 0 || interrupt < 0 || firstDelete > interrupt {
+		t.Errorf("the queue must be cancelled before the interrupt: %v", d.calls)
 	}
 }
 

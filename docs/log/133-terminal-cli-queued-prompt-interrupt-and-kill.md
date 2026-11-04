@@ -307,3 +307,13 @@ class H(BaseHTTPRequestHandler):
         self.close_connection = True
 ThreadingHTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()
 ```
+
+## Update 2026-11-04 (#2607)
+
+Stop and stop-and-archive now end the daemon-held work of a Terminal slot without terminating any daemon.
+Both daemons are shared (codex's `app-server-daemon` is per `CODEX_HOME`, `opencode serve` is Agent
+Fleet's single serve), so only the slot's own work is ended through their APIs: codex `turn/interrupt` on the
+slot's captured thread over `CODEX_HOME/app-server-control/app-server-control.sock`; opencode cancels the
+slot's inbox entries (`DELETE /api/session/{id}/inbox/{inboxID}`) around `POST /interrupt`. A `--standalone`
+opencode pane runs a private server and is not touched. Not measured: that codex's `turn/interrupt` drops a
+steer queued behind a tool call (the code re-checks up to three times), and a Stop followed at once by a resume.
