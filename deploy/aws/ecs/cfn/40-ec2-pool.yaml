@@ -19,12 +19,13 @@ Parameters:
   SlotAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
-    Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
-      stack is how slots get patched (the one operational cost the EC2 launch type
-      really does add - ADR 0045 decision 7). Keep it an Amazon-published image. The
-      CP role may launch only Amazon's public images and the two named here, and an image
-      this account owns may still be refused on its snapshot (#1522, 20-platform
-      Ec2RunForeignOwnedSnapshot).
+    Description: Initial and fallback ECS-optimized AMI (x86_64). The Control Plane
+      resolves the current AMI itself from this same public SSM parameter and passes it
+      to every slot launch, so slots follow Amazon's updates without a deploy of this
+      stack; this value is used only until the CP has read the parameter once, or while
+      it cannot (#3318). Keep it an Amazon-published image. The CP role may launch only
+      Amazon's public images and the two named here, and an image this account owns may
+      still be refused on its snapshot (#1522, 20-platform Ec2RunForeignOwnedSnapshot).
   SlotAmiIdArm64:
     Type: String
     Default: ""
@@ -34,6 +35,10 @@ Parameters:
       class - the Control Plane refuses to start when one is declared and this is
       not set, which is deliberate: a class that appears in the admin UI and cannot
       launch is worse than a deployment that says so at boot.
+
+      Initial and fallback value only: the Control Plane reads the current arm64 AMI
+      from Amazon's public SSM parameter itself (#3318), so this does not need to be
+      updated to patch slots.
 
       To turn it on, set this to the SSM value
       /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id

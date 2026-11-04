@@ -145,15 +145,17 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.stopping_task_title":
     "ECS still shows a task of this slot's workspace as {status}, because its agent cannot report the stop, and the member's next Start waits on it. Once the instance runs again its agent reports it: the member's next Start wakes this slot, or start the instance from the EC2 console. The Control Plane does not do it for you. See the pool section of the admin guide.",
   "pool.col_template": "Template",
-  "pool.outdated": "older than $Latest",
-  "pool.outdated_title": "Launched from an older launch template version than $Latest (v{latest}). A slot reads its user data only when it is launched, so it keeps the old one until it is replaced.",
+  "pool.outdated": "outdated",
+  "pool.reason_ami_behind": "Reason: its AMI ({ami}) is not Amazon's current ECS-optimized AMI for its architecture.",
+  "pool.reason_template_changed": "Reason: the launch template changed in more than its AMI.",
+  "pool.outdated_title": "Outdated: its AMI is behind Amazon's current one, or the launch template ($Latest is v{latest}) changed in more than its AMI. A slot reads its user data and AMI only when it is launched, so it keeps the old ones until it is replaced.",
   "pool.outdated_hint":
-    "{n} slot(s) run an older launch template version than $Latest (v{latest}). Reserving them makes each workspace's next start move to a new slot; nobody's running session is touched.",
-  "pool.outdated_auto": "older than $Latest · replaced at next start",
+    "{n} slot(s) are outdated (AMI behind, or the launch template changed; $Latest is v{latest}). Reserving them makes each workspace's next start move to a new slot; nobody's running session is touched.",
+  "pool.outdated_auto": "outdated · replaced at next start",
   "pool.outdated_auto_title":
-    "Launched from an older launch template version than $Latest (v{latest}). Its workspace moves to a new slot at its next start on its own; a free slot is retired by the sweeper. If no new slot can be launched, the start keeps this one and tries again later.",
+    "Outdated: its AMI is behind Amazon's current one, or the launch template ($Latest is v{latest}) changed in more than its AMI. Its workspace moves to a new slot at its next start on its own; a free slot is retired by the sweeper. If no new slot can be launched, the start keeps this one and tries again later.",
   "pool.outdated_auto_hint":
-    "{n} slot(s) run an older launch template version than $Latest (v{latest}). Each moves to a new slot at its workspace's next start without a reservation (the member sees nothing extra); reserve a slot only when its workspace must never fall back to it: then, if no new slot can be launched, that start fails instead of using the old one.",
+    "{n} slot(s) are outdated (AMI behind, or the launch template changed; $Latest is v{latest}). Each moves to a new slot at its workspace's next start without a reservation (the member sees nothing extra); reserve a slot only when its workspace must never fall back to it: then, if no new slot can be launched, that start fails instead of using the old one.",
   "pool.reserved": "replaced at next start",
   "pool.reserve": "Replace at next start",
   "pool.reserve_title": "Reserve this slot: its workspace's next start moves to a new slot launched from $Latest (the home comes along). A free slot is retired by the sweeper.",
@@ -163,7 +165,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.reserve_bulk": "Reserve all {n} for replacement…",
   "pool.reserve_bulk_title": "Reserve {n} slot(s) for replacement?",
   "pool.reserve_bulk_body":
-    "Each listed slot is replaced at its workspace's next start: a new slot is launched from $Latest (v{latest}) and the home moves onto it, which takes a little longer than a normal start. Running workspaces are not touched until their owners stop and start them. Free slots are retired by the sweeper. Homes are never deleted.",
+    "Each listed slot is replaced at its workspace's next start: a new slot is launched with the current AMI and $Latest (v{latest}) and the home moves onto it, which takes a little longer than a normal start. Running workspaces are not touched until their owners stop and start them. Free slots are retired by the sweeper. Homes are never deleted.",
   "pool.reserve_bulk_go": "Reserve {n}",
   "pool.reserve_bulk_skipped": "{n} slot(s) were not reserved: {list}",
   "pool.not_registered": "(not accepting tasks yet)",

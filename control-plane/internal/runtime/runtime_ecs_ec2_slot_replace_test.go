@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -216,7 +217,15 @@ func TestECSEC2SweeperLeavesAFreeReservedSlotWithATaskAlone(t *testing.T) {
 }
 
 func TestSlotTemplateOutdated(t *testing.T) {
-	lt := ec2LaunchTemplate{id: "lt-1", latest: 5}
+	// Every version's data differs, so a lower number is a changed template.
+	distinct := func(latest int64) map[int64]string {
+		m := map[int64]string{}
+		for v := int64(1); v <= latest; v++ {
+			m[v] = fmt.Sprintf("sig-%d", v)
+		}
+		return m
+	}
+	lt := ec2LaunchTemplate{id: "lt-1", latest: 5, sigs: distinct(5)}
 	tags := func(id, ver string) []ec2types.Tag {
 		var out []ec2types.Tag
 		if id != "" {
@@ -236,9 +245,14 @@ func TestSlotTemplateOutdated(t *testing.T) {
 		{"below $Latest", tags("lt-1", "4"), lt, true, true},
 		{"at $Latest", tags("lt-1", "5"), lt, false, true},
 		// Numeric, not lexical: "10" > "5" although "10" < "5" as strings.
-		{"two-digit at $Latest", tags("lt-1", "10"), ec2LaunchTemplate{id: "lt-1", latest: 10}, false, true},
-		{"single digit below two-digit $Latest", tags("lt-1", "9"), ec2LaunchTemplate{id: "lt-1", latest: 10}, true, true},
+		{"two-digit at $Latest", tags("lt-1", "10"), ec2LaunchTemplate{id: "lt-1", latest: 10, sigs: distinct(10)}, false, true},
+		{"single digit below two-digit $Latest", tags("lt-1", "9"), ec2LaunchTemplate{id: "lt-1", latest: 10, sigs: distinct(10)}, true, true},
 		{"another template", tags("lt-0", "7"), lt, true, true},
+		// Only the ImageId differed between the versions: the fingerprint ignores it, so the
+		// versions share one and the older slot is NOT outdated (#3318).
+		{"older version, same data", tags("lt-1", "4"), ec2LaunchTemplate{id: "lt-1", latest: 5, sigs: map[int64]string{4: "same", 5: "same"}}, false, true},
+		{"older version, data not read", tags("lt-1", "4"), ec2LaunchTemplate{id: "lt-1", latest: 5}, false, false},
+		{"older version, latest data not read", tags("lt-1", "4"), ec2LaunchTemplate{id: "lt-1", latest: 5, sigs: map[int64]string{4: "x"}}, false, false},
 		{"no stamp", tags("", ""), lt, false, false},
 		// Review #1526-4: half a stamp, or a version that is not a positive integer, is unknown.
 		{"version without template id", tags("", "1"), lt, false, false},

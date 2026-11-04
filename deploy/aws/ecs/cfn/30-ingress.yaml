@@ -90,7 +90,7 @@ Parameters:
     Default: ""
     Description: >-
       SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
-      declares an arm64 class - the CP refuses to boot otherwise.
+      declares an arm64 class - the CP refuses to boot otherwise. Initial/fallback only (PARAMETERS.md).
   Ec2DefaultSlotClass:
     Type: String
     Default: ""

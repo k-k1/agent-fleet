@@ -134,6 +134,11 @@ type Slot = {
    *  $Latest. User data is read only at launch, so an outdated slot runs the old one. */
   template_version?: string;
   template_outdated?: boolean;
+  /** Why it is outdated: "ami_behind" (its ImageId is not Amazon's current AMI for its
+   *  architecture) and/or "template_changed" (the launch template changed in more than its
+   *  ImageId). Absent from an older Control Plane; template_outdated says the same without why. */
+  outdated_reasons?: string[];
+  ami?: string;
   /** Reserved for replacement: its workspace's next start moves to a new slot (#1473). */
   replace_reserved?: boolean;
   replace_reserved_at?: string;
@@ -450,7 +455,10 @@ export function PoolView() {
                       {s.template_outdated && (
                         <span
                           className="pool-badge outdated"
-                          title={tr(st.auto_replace_outdated ? "pool.outdated_auto_title" : "pool.outdated_title", { latest: st.template_latest || "?" })}
+                          title={[
+                            tr(st.auto_replace_outdated ? "pool.outdated_auto_title" : "pool.outdated_title", { latest: st.template_latest || "?" }),
+                            ...(s.outdated_reasons ?? []).map((r) => tr(r === "ami_behind" ? "pool.reason_ami_behind" : "pool.reason_template_changed", { ami: s.ami || "?" })),
+                          ].join(" ")}
                         >
                           {tr(st.auto_replace_outdated && !s.replace_reserved ? "pool.outdated_auto" : "pool.outdated")}
                         </span>

@@ -141,8 +141,12 @@ func (a Admin) reserveOne(w http.ResponseWriter, r *http.Request, ident store.Id
 		return nil, aerr
 	}
 	// The occupant is the person whose next Start this moves; the versions are why.
-	in.Done(r.Context(), fmt.Sprintf("workspace=%s template=%s latest=%s",
-		orDash(res.Workspace), orDash(res.TemplateVersion), orDash(res.TemplateLatest)), http.StatusOK)
+	detail := fmt.Sprintf("workspace=%s template=%s latest=%s",
+		orDash(res.Workspace), orDash(res.TemplateVersion), orDash(res.TemplateLatest))
+	if len(res.Reasons) > 0 {
+		detail += " reasons=" + strings.Join(res.Reasons, ",")
+	}
+	in.Done(r.Context(), detail, http.StatusOK)
 	return &res, nil
 }
 

@@ -34,8 +34,13 @@ type ec2SlotView struct {
 	// TemplateVersion is the launch template version the slot was launched from, and
 	// TemplateOutdated whether that is older than $Latest (slotTemplateOutdated) — user data
 	// is read only at launch, so an outdated slot runs the old one until it is replaced.
-	TemplateVersion  string `json:"template_version,omitempty"`
-	TemplateOutdated bool   `json:"template_outdated,omitempty"`
+	TemplateVersion string `json:"template_version,omitempty"`
+	// TemplateOutdated is true when the slot is outdated for ANY reason (AMI behind or the
+	// template changed): an older Console only knows this flag and keys its "replace outdated"
+	// action on it. OutdatedReasons says which, and AMI is the slot's own ImageId.
+	TemplateOutdated bool     `json:"template_outdated,omitempty"`
+	OutdatedReasons  []string `json:"outdated_reasons,omitempty"`
+	AMI              string   `json:"ami,omitempty"`
 	// ReplaceReserved: its workspace's next Start moves to a new slot (#1473).
 	ReplaceReserved   bool   `json:"replace_reserved,omitempty"`
 	ReplaceReservedAt string `json:"replace_reserved_at,omitempty"`
@@ -114,6 +119,9 @@ type EC2PoolStatus struct {
 	// TemplateLatest is the slot launch template's $Latest version number, "" when it could
 	// not be read — in which case no slot is reported outdated.
 	TemplateLatest string `json:"template_latest,omitempty"`
+	// CurrentAMIs is the slot AMI per architecture the CP last read from Amazon's SSM
+	// parameters ("" = not read yet); a slot on any other ImageId is outdated.
+	CurrentAMIs map[string]string `json:"current_amis,omitempty"`
 	// AutoReplaceOutdated is whether a slot below TemplateLatest is replaced at its workspace's
 	// next Start without anyone reserving it (#1934; AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS).
 	AutoReplaceOutdated bool `json:"auto_replace_outdated,omitempty"`
@@ -286,6 +294,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 		log.Printf("ecs-ec2 pool status: slot launch template unreadable: %v", err)
 	} else {
 		st.TemplateLatest = strconv.FormatInt(lt.latest, 10)
+		st.CurrentAMIs = lt.amis
 	}
 	for _, r := range insts.Reservations {
 		for _, inst := range r.Instances {
@@ -309,7 +318,9 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 				s.Quarantined = true
 				s.QuarantineReason = ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 			}
-			s.TemplateVersion, s.TemplateOutdated, _ = slotTemplateOutdated(inst.Tags, lt)
+			var reasons []string
+			s.TemplateVersion, reasons, _ = f.pool.slotStale(inst, lt)
+			s.TemplateOutdated, s.OutdatedReasons, s.AMI = len(reasons) > 0, reasons, aws.ToString(inst.ImageId)
 			s.ReplaceReservedAt = ec2TagValue(inst.Tags, ec2TagSlotReplace)
 			s.ReplaceReserved = s.ReplaceReservedAt != ""
 			st.Slots = append(st.Slots, s)

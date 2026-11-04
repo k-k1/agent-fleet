@@ -240,7 +240,8 @@ expected, and it costs them one slow start.
 
 `SlotAmiIdArm64` output of the 40-ec2-pool stack. Required only when `Ec2SlotTypes` declares
 an arm64 class — the CP refuses to boot otherwise, rather than showing a class in the admin
-UI that cannot launch.
+UI that cannot launch. **Initial and fallback value only** (#3318): the CP reads the current
+arm64 AMI from Amazon's public SSM parameter itself, so this does not need updating to patch slots.
 
 ### `Ec2DefaultSlotClass`
 

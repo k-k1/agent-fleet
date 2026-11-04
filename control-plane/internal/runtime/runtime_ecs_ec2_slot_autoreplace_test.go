@@ -253,6 +253,76 @@ func TestECSEC2PendingReplacementStaysProtectedWhenTheTemplateCannotBeRead(t *te
 	}
 }
 
+// Same protection when only the version data is unreadable (the role lacks
+// ec2:DescribeLaunchTemplateVersions): the old slot's freshness cannot be judged.
+func TestECSEC2PendingReplacementStaysProtectedWhenTheVersionsCannotBeRead(t *testing.T) {
+	h, _ := outdatedSlotHarness(t)
+	h.ec2.addSlot("i-new", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.setInstanceTag("i-new", ec2TagReplacesHome, "vol-1")
+	h.ec2.ltLatest = 5
+	h.ec2.ltVersionsErr = errors.New("UnauthorizedOperation: ec2:DescribeLaunchTemplateVersions")
+	out, err := h.ec2.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{InstanceIds: []string{"i-new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := *h.rt
+	b := *h.rt.base
+	b.name = "af-ws-other"
+	other.base = &b
+	if !other.pendingReplacementsForOthers(context.Background(), out)["i-new"] {
+		t.Fatal("unreadable template versions released the pending replacement to another workspace")
+	}
+}
+
+// Ownership contract (separate from the launch fallback): with the SSM AMI unknown, e.g. a CP
+// restarted while SSM is unreadable, a replacement bought for another home stays pending.
+func TestECSEC2PendingReplacementStaysProtectedWhenTheAMIIsUnknown(t *testing.T) {
+	for _, ssmOK := range []bool{true, false} {
+		h, sp, _ := amiHarness(t)
+		sameData(h)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.addStamped("i-old", "m7i.large", "ami-x86-1", "3")
+		h.ec2.attach("vol-1", "i-old", time.Now())
+		h.addStamped("i-new", "m7i.large", "ami-x86-1", "3")
+		h.ec2.setInstanceTag("i-new", ec2TagReplacesHome, "vol-1")
+		if !ssmOK {
+			sp.err = errors.New("AccessDenied")
+		}
+		out, err := h.ec2.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{InstanceIds: []string{"i-new"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := *h.rt
+		b := *h.rt.base
+		b.name = "af-ws-other"
+		other.base = &b
+		got := other.pendingReplacementsForOthers(context.Background(), out)["i-new"]
+		// SSM known and the old slot current: not retiring, so not pending (positive control).
+		if ssmOK == got {
+			t.Fatalf("ssmOK=%v: pending=%v", ssmOK, got)
+		}
+	}
+}
+
+// A replacement whose AMI looks current but whose template version cannot be compared is
+// neither adopted nor destroyed.
+func TestECSEC2AdoptableReplacementNeedsBothHalvesJudged(t *testing.T) {
+	h, _, _ := amiHarness(t)
+	h.ec2.ltVersionsErr = errors.New("UnauthorizedOperation")
+	h.addStamped("i-new", "m7i.large", "ami-x86-1", "1")
+	h.ec2.instances["i-new"].Placement = &ec2types.Placement{AvailabilityZone: aws.String("ap-northeast-1a")}
+	h.ec2.setInstanceTag("i-new", EC2TagPool, "clu")
+	h.ec2.setInstanceTag("i-new", EC2TagRole, ec2RoleSlot)
+	h.ec2.instances["i-new"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	lt, err := h.rt.pool.readLaunchTemplate(context.Background(), h.ec2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, v := h.rt.adoptableReplacement(context.Background(), "i-new", "ap-northeast-1a", "vol-1", lt); v != replacementSkip {
+		t.Fatalf("verdict = %v, want skip", v)
+	}
+}
+
 func TestECSEC2ReservationDuringAFailingAutomaticLaunchDoesNotFallBack(t *testing.T) {
 	h, _ := outdatedSlotHarness(t)
 	h.rt.ec2 = runWrap{ec2API: h.ec2, run: func(context.Context, *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {

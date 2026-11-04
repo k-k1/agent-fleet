@@ -46,7 +46,12 @@ type ec2PoolConfig struct {
 	// for a value that changes only when the pool stack is redeployed, and it would
 	// break the rule that patching a slot's AMI IS redeploying that stack (ADR 0045
 	// decision 7). The 40-ec2-pool stack resolves the public parameter and passes the id.
-	amiArm64     string
+	amiArm64 string
+	// amis resolves the current slot AMI per architecture from Amazon's SSM parameters, and
+	// ltSigs caches the launch template versions' fingerprints. Both are nil-safe: a nil one
+	// knows nothing, which means "launch with the CloudFormation values, judge nothing".
+	amis         *slotAMIs
+	ltSigs       *ltSigCache
 	pool         string         // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
 	classes      []ec2SlotClass // AF_ECS_EC2_SLOT_TYPES, in declared order
 	defaultClass string         // AF_ECS_EC2_DEFAULT_SLOT_CLASS (defaults to the first)
@@ -298,6 +303,8 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 	pool := ec2PoolConfig{
 		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
 		amiArm64:       os.Getenv("AF_ECS_EC2_AMI_ARM64"),
+		amis:           newSlotAMIs(ssm.NewFromConfig(ac)),
+		ltSigs:         newLTSigCache(),
 		noAutoReplace:  !envBoolDefault("AF_ECS_EC2_AUTO_REPLACE_OUTDATED_SLOTS", true),
 		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
 		classes:        parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),

@@ -45,6 +45,8 @@ type ec2API interface {
 	// The slot launch template's $Latest, which the pool screen compares every slot's
 	// version against (slotTemplateOutdated).
 	DescribeLaunchTemplates(context.Context, *ec2.DescribeLaunchTemplatesInput, ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error)
+	// Every version's data, to tell a template change from an AMI-only one.
+	DescribeLaunchTemplateVersions(context.Context, *ec2.DescribeLaunchTemplateVersionsInput, ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplateVersionsOutput, error)
 }
 
 type ssmCommandAPI interface {

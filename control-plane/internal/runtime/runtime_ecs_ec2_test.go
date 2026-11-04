@@ -83,6 +83,12 @@ type fakeEC2 struct {
 	// ltLatest is the slot launch template's $Latest version number; 0 makes
 	// DescribeLaunchTemplates fail, the way it does for a role without the permission.
 	ltLatest int64
+	// ltData overrides the data DescribeLaunchTemplateVersions returns for a version; by
+	// default every version has user data of its own, i.e. every older version "changed".
+	ltData map[int64]*ec2types.ResponseLaunchTemplateData
+	// ltVersionsErr makes DescribeLaunchTemplateVersions fail; ltVersionCalls counts them.
+	ltVersionsErr  error
+	ltVersionCalls int
 	// afterDescribeVolumes / onAttach run after the call has answered and the fake's lock is
 	// released, so a test can change the world between two reads of a placement — the way
 	// an operator's reservation lands while a Start is under way.
@@ -637,6 +643,7 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		InstanceType: in.InstanceType,
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending},
 		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(f.subnetAZ[aws.ToString(in.SubnetId)])},
+		ImageId:      aws.String(map[bool]string{true: "ami-template", false: aws.ToString(in.ImageId)}[in.ImageId == nil]),
 	}
 	// EC2 stamps the RESOLVED version, never "$Latest" — which is what slotTemplateOutdated
 	// compares.
@@ -670,6 +677,26 @@ func (f *fakeEC2) DescribeLaunchTemplates(_ context.Context, in *ec2.DescribeLau
 	return &ec2.DescribeLaunchTemplatesOutput{LaunchTemplates: []ec2types.LaunchTemplate{{
 		LaunchTemplateId: aws.String("lt-1"), LatestVersionNumber: aws.Int64(f.ltLatest), DefaultVersionNumber: aws.Int64(1),
 	}}}, nil
+}
+
+func (f *fakeEC2) DescribeLaunchTemplateVersions(_ context.Context, in *ec2.DescribeLaunchTemplateVersionsInput, _ ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ltVersionCalls++
+	if f.ltVersionsErr != nil {
+		return nil, f.ltVersionsErr
+	}
+	out := &ec2.DescribeLaunchTemplateVersionsOutput{}
+	for v := int64(1); v <= f.ltLatest; v++ {
+		d := f.ltData[v]
+		if d == nil {
+			d = &ec2types.ResponseLaunchTemplateData{UserData: aws.String(fmt.Sprintf("user-data-v%d", v))}
+		}
+		out.LaunchTemplateVersions = append(out.LaunchTemplateVersions, ec2types.LaunchTemplateVersion{
+			LaunchTemplateId: in.LaunchTemplateId, VersionNumber: aws.Int64(v), LaunchTemplateData: d,
+		})
+	}
+	return out, nil
 }
 
 func (f *fakeEC2) StartInstances(_ context.Context, in *ec2.StartInstancesInput, _ ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error) {
@@ -1064,6 +1091,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 			// there. `sleep` is a no-op in this harness, so the 100 polls it works out to
 			// cost nothing; the lost-slot tests shorten it only to keep their logs small.
 			slotLostAfter: 5 * time.Minute,
+			ltSigs:        newLTSigCache(),
 		},
 		instanceType: "m7i.large",
 		homeGiB:      50,
