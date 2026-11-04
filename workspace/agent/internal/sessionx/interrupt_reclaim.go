@@ -189,7 +189,7 @@ const (
 	// lateEraseTTL is how long after the stop an exact copy of the stopped prompt in the box may
 	// still be erased; later, the member's own text is as likely.
 	lateEraseTTL = 2 * time.Minute
-	// lateWatchKeep is when an entry nobody consumed is swept.
+	// lateWatchKeep is when an entry nobody consumed is converted to a stranded mark.
 	lateWatchKeep = time.Hour
 )
 
@@ -197,7 +197,11 @@ func armLateWatch(name, pane string) {
 	now := time.Now()
 	lateWatch.Range(func(k, v any) bool {
 		if now.Sub(v.(lateWatchEntry).at) > lateWatchKeep {
-			lateWatch.Delete(k)
+			// Dropping the entry would drop the guard: the prompt may have reappeared since.
+			// Hand it to the stranded mark, which holds until the box reads empty. Delete only
+			// the value that was read, never a newer entry another goroutine stored.
+			strandedPrompts.Store(k, struct{}{})
+			lateWatch.CompareAndDelete(k, v)
 		}
 		return true
 	})

@@ -610,12 +610,18 @@ func TestLateWatchIsBoundToPaneAndStop(t *testing.T) {
 	}
 }
 
-// Unconsumed entries are swept when another stop arms.
-func TestLateWatchSweepsOldEntries(t *testing.T) {
-	lateWatch.Store("old_session", lateWatchEntry{pane: "p", at: time.Now().Add(-lateWatchKeep - time.Minute)})
-	armLateWatch("new_session", "p")
-	t.Cleanup(func() { lateWatch.Delete("new_session") })
-	if _, ok := lateWatch.Load("old_session"); ok {
-		t.Fatal("old entry was not swept")
+// Sweeping an old entry must keep the guard: the session's next send still sees a prompt that
+// reappeared meanwhile and is refused.
+func TestLateWatchSweepKeepsTheGuard(t *testing.T) {
+	code, body, keys := lateRun(t, "SLOW 再レビュー", func(int) string { return paneRestored }, func() {
+		v, _ := lateWatch.Load("turn_reclaim")
+		e := v.(lateWatchEntry)
+		e.at = e.at.Add(-lateWatchKeep - time.Minute)
+		lateWatch.Store("turn_reclaim", e)
+		armLateWatch("other_session", "p")
+		t.Cleanup(func() { lateWatch.Delete("other_session") })
+	})
+	if code != http.StatusConflict || !strings.Contains(body, "stopped_prompt_in_box") || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("status = %d, body = %s, keys = %v", code, body, keys)
 	}
 }
