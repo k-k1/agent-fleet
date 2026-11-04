@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -738,5 +739,46 @@ func TestTypeLineAndSubmitRemembersTheSubmission(t *testing.T) {
 	}
 	if got := takeSubmitted("remember_me", "%7"); got != "the first task" {
 		t.Fatalf("remembered %q, want the prompt, not the slash command", got)
+	}
+}
+
+// The submission is remembered before the Enter goes out, so a stop that runs right after the
+// Enter without the terminal lock always finds it; a failed Enter takes it back.
+func TestSubmissionIsRememberedBeforeTheEnter(t *testing.T) {
+	logPath := fakeTmux(t)
+	bin := filepath.Dir(logPath)
+	gate := filepath.Join(bin, "go")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  list-panes) printf '1 %%7\n' ;;
+  send-keys) case "$*" in *Enter) while [ ! -e "` + gate + `" ]; do sleep 0.01; done; [ -e "` + gate + `.fail" ] && exit 1 ;; esac ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "before_enter", Dir: t.TempDir(), Kind: session.KindClaude})
+	t.Cleanup(func() { submittedPrompts.Delete("before_enter") })
+	done := make(chan error, 1)
+	go func() { done <- typeLineAndSubmit("before_enter", "%7", "first task") }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := submittedPrompts.Load("before_enter"); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("not remembered while the Enter was still pending")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	os.WriteFile(gate+".fail", nil, 0o644)
+	os.WriteFile(gate, nil, 0o644)
+	if err := <-done; err == nil {
+		t.Fatal("expected the failing Enter to be reported")
+	}
+	if got := takeSubmitted("before_enter", "%7"); got != "" {
+		t.Fatalf("a prompt whose Enter failed stayed remembered: %q", got)
 	}
 }

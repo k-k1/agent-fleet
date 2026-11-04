@@ -208,6 +208,16 @@ func rememberSubmitted(name, pane, text string) {
 	submittedPrompts.Store(name, submittedPrompt{pane: pane, text: text, at: now})
 }
 
+// forgetSubmitted drops the entry rememberSubmitted stored for text when the Enter that would
+// have submitted it failed, so nothing claims a prompt that never ran.
+func forgetSubmitted(name, pane, text string) {
+	if v, ok := submittedPrompts.Load(name); ok {
+		if sp := v.(submittedPrompt); sp.pane == pane && sp.text == text {
+			submittedPrompts.CompareAndDelete(name, v)
+		}
+	}
+}
+
 // takeSubmitted consumes the session's remembered submission and returns its text when it was
 // made for this pane and is recent; otherwise "". Consuming it makes a submission serve the
 // first stop after it only: a later stop of text the member typed themselves, which happens to
