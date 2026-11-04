@@ -18,6 +18,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
+// terminalHistoryMaxBytes caps the history. The Console ignores a replay marker above
+// REPLAY_MAX_BYTES (console/src/terminal/staleReplies.ts), so raising this past it, plus
+// the compaction slack in recordTerminal, means raising that too.
 const terminalHistoryMaxBytes int64 = 4 << 20
 
 func terminalHistoryDir() string {

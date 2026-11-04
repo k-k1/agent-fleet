@@ -40,14 +40,15 @@ class FakeWS {
     this.readyState = 1;
     this.onopen?.();
   }
-  // Built from the global Uint8Array: a TextEncoder buffer comes from another realm under
-  // jsdom and fails term.ts's `instanceof ArrayBuffer`, so it would never be written.
   output(s: string) {
     this.onmessage?.({ data: bytes(s).buffer });
   }
   replay(history: string) {
     this.onmessage?.({
-      data: JSON.stringify({ type: "replay", bytes: history.length }),
+      data: JSON.stringify({
+        type: "replay",
+        bytes: bytes(history).byteLength,
+      }),
     });
     this.output(history);
   }
@@ -59,7 +60,9 @@ class FakeWS {
   }
 }
 
-const bytes = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0));
+// Real UTF-8, copied into the global Uint8Array: TextEncoder's own buffer comes from another
+// realm under jsdom and fails term.ts's `instanceof ArrayBuffer`, so it would never be written.
+const bytes = (s: string) => Uint8Array.from(new TextEncoder().encode(s));
 
 // Resolves once everything written to term so far has been parsed.
 const parsed = (term: Terminal) => new Promise<void>((r) => term.write("", r));
@@ -111,7 +114,10 @@ describe("terminal query answers on attach", () => {
     ws.open();
     const history = "one\x1b[>c two\x1b[6n";
     ws.onmessage?.({
-      data: JSON.stringify({ type: "replay", bytes: history.length }),
+      data: JSON.stringify({
+        type: "replay",
+        bytes: bytes(history).byteLength,
+      }),
     });
     ws.output(history.slice(0, 6));
     ws.output(history.slice(6));
@@ -151,8 +157,20 @@ describe("terminal query answers on attach", () => {
 });
 
 describe("reply gate", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = "";
+  });
+
+  // An opened terminal: an unopened one has no theme and never answers color queries, so a
+  // color-query check on it would pass with the gate switched off.
   function setup() {
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const el = document.createElement("div");
+    document.body.appendChild(el);
     const term = new Terminal({ allowProposedApi: true });
+    term.open(el);
     const gate = newReplyGate();
     installReplyGate(term, gate);
     const sent: string[] = [];
@@ -160,27 +178,42 @@ describe("reply gate", () => {
     return { term, gate, sent };
   }
 
-  it("answers queries when nothing is muted", async () => {
-    const { term, sent } = setup();
-    // OSC color queries are left out: an unopened terminal has no theme to answer them from.
-    term.write("\x1b[>c\x1b[c\x1b[6n");
-    await parsed(term);
-    expect(sent).toHaveLength(3);
-    expect(sent[0]).toBe(DA2_REPLY);
-  });
+  // Each query xterm.js answers, including the spellings a byte matcher misses.
+  const QUERIES: [string, string][] = [
+    ["DA2", "\x1b[>c"],
+    ["DA2 with 00", "\x1b[>00c"],
+    ["DA1", "\x1b[c"],
+    ["DSR", "\x1b[5n"],
+    ["CPR with 06", "\x1b[06n"],
+    ["CPR with LF inside", "\x1b[6\nn"],
+    ["DECDSR", "\x1b[?6n"],
+    ["DECRQM DEC", "\x1b[?2004$p"],
+    ["DECRQM ANSI", "\x1b[4$p"],
+    ["OSC 4 query", "\x1b]4;1;?\x07"],
+    ["OSC 011 query", "\x1b]011;?\x07"],
+    ["OSC 10 query, ST", "\x1b]10;?\x1b\\"],
+    ["DECRQSS", "\x1bP$qm\x1b\\"],
+    ["DECRQSS with 0", "\x1bP0$qm\x1b\\"],
+    ["C1 CSI DA2", "\u009b>c"],
+  ];
 
-  it("swallows every query in a replay and none after it", async () => {
-    const { term, gate, sent } = setup();
-    const history =
-      "\x1b[>c\x1b[>00c\x1b[c\x1b[5n\x1b[06n\x1b[?6n\x1b[?2004$p\x1b[4$p\x1b[18t\x1b]4;1;?\x07\x1b]011;?\x07" +
-      "\x1bP$qm\x1b\\\x1bP0$qm\x1b\\\u009b>c\x1b[6\nn";
-    startReplay(gate, bytes(history).byteLength);
-    writeOutput(term, gate, bytes(history));
-    writeOutput(term, gate, bytes("\x1b[>c"));
-    await parsed(term);
-    expect(sent).toEqual([DA2_REPLY]);
-    expect(gate.muted).toBe(false);
-  });
+  it.each(QUERIES)(
+    "%s is answered when not muted, and not in a replay",
+    async (_, q) => {
+      const { term, gate, sent } = setup();
+      writeOutput(term, gate, bytes(q));
+      await parsed(term);
+      expect(sent.length).toBeGreaterThan(0); // positive control: xterm does answer it
+
+      sent.length = 0;
+      startReplay(gate, bytes(q).byteLength);
+      writeOutput(term, gate, bytes(q));
+      writeOutput(term, gate, bytes("\x1b[>c"));
+      await parsed(term);
+      expect(sent).toEqual([DA2_REPLY]);
+      expect(gate.muted).toBe(false);
+    },
+  );
 
   it("stays muted until the latest fence when socket switches overlap", async () => {
     const { term, gate, sent } = setup();
@@ -192,10 +225,29 @@ describe("reply gate", () => {
     expect(sent).toEqual([DA2_REPLY]);
   });
 
-  it("ignores a replay marker without bytes", async () => {
+  it.each([
+    ["zero", 0],
+    ["NaN", NaN],
+    ["negative", -5],
+    ["fraction", 2.5],
+    ["infinite (JSON 1e400)", JSON.parse('{"n":1e400}').n],
+    ["beyond the history cap", 64 << 20],
+    ["a string", "12"],
+    ["missing", undefined],
+  ])("ignores a replay marker whose count is %s", async (_, n) => {
     const { term, gate, sent } = setup();
-    startReplay(gate, 0);
-    startReplay(gate, Number(undefined));
+    startReplay(gate, n);
+    expect(gate.muted).toBe(false);
+    writeOutput(term, gate, bytes("\x1b[>c"));
+    await parsed(term);
+    expect(sent).toEqual([DA2_REPLY]);
+  });
+
+  it("recovers on the next socket when a replay is cut off", async () => {
+    const { term, gate, sent } = setup();
+    startReplay(gate, 1000);
+    writeOutput(term, gate, bytes("partial\x1b[>c"));
+    startSocket(term, gate);
     writeOutput(term, gate, bytes("\x1b[>c"));
     await parsed(term);
     expect(sent).toEqual([DA2_REPLY]);

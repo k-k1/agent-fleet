@@ -1330,7 +1330,7 @@ export function attach(paneId: string, session: string) {
           it.lastPong = Date.now();
           noteRtt(it);
         } else if (m?.type === "replay" && it.replies) {
-          startReplay(it.replies, Number(m.bytes));
+          startReplay(it.replies, m.bytes);
         }
       } catch {}
       return;

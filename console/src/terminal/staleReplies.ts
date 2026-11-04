@@ -49,9 +49,21 @@ export function startSocket(term: Terminal, gate: ReplyGate): void {
   fenceReplies(term, gate);
 }
 
+// The Agent replays at most its history cap (4 MiB, plus the 256 KiB it may grow past it
+// before compacting). A marker beyond this is not trusted: an absurd count would keep
+// every live query unanswered for the rest of the connection.
+const REPLAY_MAX_BYTES = 8 << 20;
+
 // startReplay is called on the Agent's replay marker: the next `bytes` bytes are replay.
-export function startReplay(gate: ReplyGate, bytes: number): void {
-  if (!(bytes > 0)) return;
+// A count that is not a positive whole number within REPLAY_MAX_BYTES is ignored.
+export function startReplay(gate: ReplyGate, bytes: unknown): void {
+  if (
+    typeof bytes !== "number" ||
+    !Number.isSafeInteger(bytes) ||
+    bytes <= 0 ||
+    bytes > REPLAY_MAX_BYTES
+  )
+    return;
   gate.gen++;
   gate.muted = true;
   gate.replayLeft = bytes;
@@ -73,12 +85,10 @@ export function writeOutput(
   }
 }
 
-// XTWINOPS operations that ask for a report; the others change the window.
-const WINOPS_REPORTS = new Set([11, 13, 14, 15, 16, 18, 19, 20, 21]);
-
 // installReplyGate registers parser handlers that swallow the queries xterm.js answers
 // while the gate is muted, and otherwise defer to xterm's own handlers (returning false
-// passes the sequence on to the built-in handler).
+// passes the sequence on to the built-in handler). XTWINOPS reports are left out: the
+// terminal is created without windowOptions, so xterm.js does not answer them.
 export function installReplyGate(
   term: Terminal,
   gate: ReplyGate,
@@ -95,10 +105,6 @@ export function installReplyGate(
       { prefix: "?", intermediates: "$", final: "p" },
       whenMuted,
     ), // DECRQM, DEC modes
-    p.registerCsiHandler(
-      { final: "t" },
-      (params) => gate.muted && WINOPS_REPORTS.has(Number(params[0])),
-    ),
     p.registerDcsHandler({ intermediates: "$", final: "q" }, whenMuted), // DECRQSS
   ];
   // Color queries ("?" in place of a color). A sequence that only sets colors still applies;
