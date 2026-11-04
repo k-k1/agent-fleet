@@ -37,7 +37,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	gitInit(t, parent) // on "main", plus a "feature" branch
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
+	mux.HandleFunc("GET /sessions", listAndDrain)
 	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)
 	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
