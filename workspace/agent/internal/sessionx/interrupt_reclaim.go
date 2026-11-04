@@ -2,8 +2,6 @@ package sessionx
 
 import (
 	"log"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -131,38 +129,13 @@ func composerEmpty(captured string) bool {
 // box wraps at the pane width and indents continuation rows). A false positive erases text
 // someone typed in the terminal, so a box scrolled off screen or a partial match is never taken
 // for the prompt; such a prompt is left where claude put it and the next send is refused instead
-// (strandedPrompts). A paste placeholder counts only when placeholder is set, see
-// placeholderOf.
-func restoredDraft(captured, prompt string, placeholder bool) bool {
+// (strandedPrompts). A paste placeholder ("[Pasted text #N +M lines]") is deliberately not
+// recognised: its line count does not prove who pasted it, and a terminal paste in the watch
+// window (the terminal lock does not cover direct input) would be erased.
+func restoredDraft(captured, prompt string) bool {
 	draft, _, ok := claudeBox(captured)
 	d := squashSpace(draft)
-	if !ok || d == "" {
-		return false
-	}
-	return d == squashSpace(prompt) || (placeholder && placeholderOf(d, prompt))
-}
-
-// pastePlaceholder is what claude draws in place of a large paste: "[Pasted text #N +M lines]".
-var pastePlaceholder = regexp.MustCompile(`^\[Pastedtext#\d+\+(\d+)lines\]$`)
-
-// placeholderOf reports that d, the whole squashed box, is one paste placeholder standing for
-// prompt: a multi-line prompt whose newline count is M (claude counts newlines) or one more.
-// The off-by-one is tolerated because the count was not measured on a live claude; the line
-// count is the only thing tying the placeholder to the prompt, so a single-line prompt, which
-// claude never folds, never matches. Only the stop's own watch window may erase on this
-// evidence: there a member cannot have pasted in the meantime. After that a match only
-// refuses the next send (lateRestoredBlocks).
-func placeholderOf(d, prompt string) bool {
-	m := pastePlaceholder.FindStringSubmatch(d)
-	if m == nil {
-		return false
-	}
-	n, err := strconv.Atoi(m[1])
-	if err != nil {
-		return false
-	}
-	nl := strings.Count(strings.ReplaceAll(prompt, "\r\n", "\n"), "\n")
-	return nl >= 1 && (n == nl || n == nl+1)
+	return ok && d != "" && d == squashSpace(prompt)
 }
 
 // reclaimInterruptedPrompt takes a stopped prompt that claude put back into its input box out
@@ -171,6 +144,8 @@ func placeholderOf(d, prompt string) bool {
 // it is left alone. Text the stop left in the box that could not be taken out marks the session
 // in strandedPrompts. The caller holds the session's terminal lock (lockTerminal).
 func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) string {
+	// A new stop supersedes whatever an earlier one armed.
+	lateWatch.Delete(m.Name)
 	if !emptyBefore || !restoresInterruptedPrompt(m.Kind) {
 		return ""
 	}
@@ -180,7 +155,7 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 	for waited := time.Duration(0); waited < reclaimWindow; waited += reclaimPoll {
 		reclaimSleep(reclaimPoll)
 		prompt := interruptedPrompt(m)
-		if strings.TrimSpace(prompt) == "" || !restoredDraft(reclaimCapture(pane), prompt, true) {
+		if strings.TrimSpace(prompt) == "" || !restoredDraft(reclaimCapture(pane), prompt) {
 			continue
 		}
 		if clearComposer(pane, prompt) {
@@ -194,47 +169,65 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 	} else {
 		// The box reads empty now, but claude may restore the prompt after the window on a slow
 		// host: the next send looks again (lateRestoredBlocks).
-		lateWatch.Store(m.Name, time.Now())
+		armLateWatch(m.Name, pane)
 	}
 	return ""
 }
 
-// lateWatch holds, per session, when a stop ended its watch window with the box empty and no
-// prompt taken: the prompt may still reappear. The next send re-reads the box once.
+// lateWatchEntry is one armed late-restore check: the pane the stop was sent to and when.
+type lateWatchEntry struct {
+	pane string
+	at   time.Time
+}
+
+// lateWatch holds, per session, a stop that ended its watch window with the box empty and no
+// prompt taken: claude may still restore the prompt on a slow host. The next send re-reads the
+// box (lateRestoredBlocks).
 var lateWatch sync.Map
 
-// lateWatchTTL bounds how long after a stop the next send still treats a prompt in the box as
-// the stopped one; later, text in the box is more likely the member's own.
-const lateWatchTTL = 2 * time.Minute
+const (
+	// lateEraseTTL is how long after the stop an exact copy of the stopped prompt in the box may
+	// still be erased; later, the member's own text is as likely.
+	lateEraseTTL = 2 * time.Minute
+	// lateWatchKeep is when an entry nobody consumed is swept.
+	lateWatchKeep = time.Hour
+)
+
+func armLateWatch(name, pane string) {
+	now := time.Now()
+	lateWatch.Range(func(k, v any) bool {
+		if now.Sub(v.(lateWatchEntry).at) > lateWatchKeep {
+			lateWatch.Delete(k)
+		}
+		return true
+	})
+	lateWatch.Store(name, lateWatchEntry{pane: pane, at: now})
+}
 
 // lateRestoredBlocks is the send-time half of the reclaim, for a prompt that reappeared after
-// the watch window. It runs once per stop, under the terminal lock. A box holding exactly the
-// stopped prompt (the transcript's copy) is cleared and the send goes on; one that does not
-// clear, or that shows the prompt as a placeholder (not ours to erase this late), marks the
-// session stranded and the send is refused. Any other text is the member's own and is left
-// alone, as before.
+// the watch window. It runs under the terminal lock and consumes the armed entry. An empty box
+// lets the send go on. Text in the box is erased only when it is exactly the stopped prompt
+// (the transcript's copy) and the stop is under lateEraseTTL old; any other text — expired, a
+// placeholder, scrolled, unreadable, the prompt mixed with more text — marks the session
+// stranded and refuses, until the box reads empty (strandedPromptBlocks). An entry for another
+// pane is stale (the session was restarted) and is dropped.
 func lateRestoredBlocks(name, pane string) bool {
 	v, ok := lateWatch.LoadAndDelete(name)
-	if !ok || time.Since(v.(time.Time)) > lateWatchTTL {
+	if !ok || v.(lateWatchEntry).pane != pane {
 		return false
 	}
-	m, ok := session.ReadMeta(name)
-	if !ok || !restoresInterruptedPrompt(m.Kind) {
-		return false
-	}
-	prompt := interruptedPrompt(m)
 	captured := reclaimCapture(pane)
-	if strings.TrimSpace(prompt) == "" {
+	if composerEmpty(captured) {
 		return false
 	}
-	if restoredDraft(captured, prompt, false) {
-		if clearComposer(pane, prompt) {
+	if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) &&
+		time.Since(v.(lateWatchEntry).at) <= lateEraseTTL {
+		if prompt := interruptedPrompt(m); strings.TrimSpace(prompt) != "" &&
+			restoredDraft(captured, prompt) && clearComposer(pane, prompt) {
 			return false
 		}
-	} else if !restoredDraft(captured, prompt, true) {
-		return false
 	}
-	log.Printf("interrupt: %s: the stopped prompt reappeared in the input box after the stop", name)
+	log.Printf("interrupt: %s: the input box holds text after a stop; the send is refused", name)
 	strandedPrompts.Store(name, struct{}{})
 	return true
 }
@@ -269,7 +262,7 @@ func clearComposer(pane, prompt string) bool {
 	reclaimSleep(reclaimPoll)
 	captured := reclaimCapture(pane)
 	_, above, _ := claudeBox(captured)
-	if !restoredDraft(captured, prompt, true) || above != clearHint {
+	if !restoredDraft(captured, prompt) || above != clearHint {
 		return false
 	}
 	if err := sendNamedKeys(pane, []string{"Escape"}); err != nil {
