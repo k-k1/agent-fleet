@@ -26,6 +26,13 @@ delete it from the archive list. **Every session delete, whichever way you do it
 session in the trash first.** Deleting a session also never deletes its working copy (worktree):
 working copies are removed only by "Delete the working copy" below or by cleanup ②.
 
+**Stop also tries to end the turn in progress and the instructions queued behind it** for a Terminal
+(CLI) codex or opencode session. Their turn runs in a background server that outlives the
+terminal, so closing the terminal alone would let it finish, or run a queued instruction, with
+nothing on screen. Stop interrupts the turn and drops the queued instructions in that server (the
+server itself is shared with your other sessions and keeps running). This is best-effort and bounded to a few seconds: if the server is slow or cannot be reached, the
+terminal is closed anyway and the turn may still finish.
+
 **A session left stopped moves to the archive on its own after 7 days** (change the period, or turn it off, in [Settings → Agents](20-settings.md#agents); shortening it archives the sessions already past the new period on the next list refresh), so the everyday list
 does not fill up with work that is over. It is a move, not a deletion: the conversation is intact
 and you restore it from the archive list exactly as if you had archived it yourself. **Nothing
