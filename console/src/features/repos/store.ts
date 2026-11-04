@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { api, getTenant, isTransientErr } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
+import { onPushPause, pushPaused } from "../../core/push/events.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
 
 // A working copy from GET /api/repos.
@@ -250,13 +251,28 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
  * origin-ahead badge (kept fresh server-side by the Agent's auto-fetch) updates
  * without a manual refresh. Skipped while stopped/booting — the agent proxy only
- * 502s then (docs/log/35 §35.9-9). Returns cleanup (StrictMode-safe). */
+ * 502s then (docs/log/35 §35.9-9). Returns cleanup (StrictMode-safe).
+ *
+ * It also stands down while the push stream is paused for an unattended window, and reads
+ * once on resume. Each tick makes the Agent run `git status` in every working copy
+ * (measured: 176 git processes per tick on a box with 101 copies, each opening the EFS-backed
+ * ~/.gitconfig), so an unattended window would otherwise keep that cost for as long as it
+ * stays open. */
 export function startReposPolling(): () => void {
   const load = () => {
-    if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;
+    if (document.hidden || pushPaused() || !wsRunning(useWorkspaceStore.getState().state)) return;
     void useReposStore.getState().refresh();
   };
   load();
   const t = setInterval(load, 60000);
-  return () => clearInterval(t);
+  let wasPaused = pushPaused();
+  const unPause = onPushPause(() => {
+    const now = pushPaused();
+    if (wasPaused && !now) load();
+    wasPaused = now;
+  });
+  return () => {
+    clearInterval(t);
+    unPause();
+  };
 }
