@@ -49,8 +49,13 @@ func CmdContext(ctx context.Context, dir string, args ...string) *exec.Cmd {
 
 // Run runs git and returns trimmed stdout. On failure the error also carries
 // git's trimmed stderr (the useful part), so callers can %v it directly.
-func Run(dir string, args ...string) (string, error) {
-	out, err := Cmd(dir, args...).Output()
+func Run(dir string, args ...string) (string, error) { return runEnv(dir, nil, args...) }
+
+// runEnv is Run with env appended to git's environment (a later entry wins).
+func runEnv(dir string, env []string, args ...string) (string, error) {
+	cmd := Cmd(dir, args...)
+	cmd.Env = append(cmd.Env, env...)
+	out, err := cmd.Output()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
 		var ee *exec.ExitError

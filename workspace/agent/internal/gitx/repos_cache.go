@@ -107,6 +107,9 @@ func (a fingerprint) equal(b fingerprint) bool {
 type gitGlobals struct {
 	paths  []string
 	simple bool
+	// statusEnv points the poll's `git status` at a local snapshot of the global config
+	// (global_snapshot.go); nil means git reads the real files.
+	statusEnv []string
 }
 
 // globalConfigPaths reads the global git configs once per request. url.<base>.insteadOf
@@ -124,9 +127,20 @@ func globalConfigPaths() gitGlobals {
 		}
 		g.paths = []string{"/etc/gitconfig", filepath.Join(home, ".gitconfig"), filepath.Join(xdg, "git", "config")}
 	}
+	read := map[string][]byte{}
 	for _, p := range g.paths {
-		if b, err := os.ReadFile(p); err == nil && !configFollowable(string(b), true) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		read[p] = b
+		if !configFollowable(string(b), true) {
 			g.simple = false
+		}
+	}
+	if os.Getenv("GIT_CONFIG_GLOBAL") == "" {
+		if content, ok := snapshotContent(read[g.paths[2]], read[g.paths[1]]); ok {
+			g.statusEnv = listGlobalSnapshot.env(content)
 		}
 	}
 	return g
@@ -407,7 +421,7 @@ func (c *repoCache) inspect(dir string, global gitGlobals) (RepoStatus, repoIden
 	statusFP, statusOK := refsFingerprint(dir, global)
 	if !statusOK || !e.status.fresh(statusFP, maxStatusAge) {
 		release := c.gitSlot()
-		st, err := GitStatus(dir)
+		st, err := gitStatusEnv(dir, global.statusEnv)
 		release()
 		if statusOK && err == nil {
 			e.status.set(statusFP, st)
