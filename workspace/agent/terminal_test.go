@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -96,9 +97,13 @@ func TestHandlePTY_StoppedSessionClosesCleanlyWithReason(t *testing.T) {
 			defer conn.Close()
 
 			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			var frames []string
 			for {
 				mt, data, rerr := conn.ReadMessage()
 				if rerr != nil {
+					if want := map[bool]int{false: 0, true: 2}[tc.history != ""]; len(frames) != want {
+						t.Fatalf("frames before close = %q, want %d (marker + replay)", frames, want)
+					}
 					ce, ok := rerr.(*websocket.CloseError)
 					if !ok {
 						t.Fatalf("read = %v, want a close frame", rerr)
@@ -113,9 +118,17 @@ func TestHandlePTY_StoppedSessionClosesCleanlyWithReason(t *testing.T) {
 					}
 					return
 				}
-				// The only frame before the close is the replay, when there is one.
+				frames = append(frames, string(data))
+				// The only frames before the close are the replay marker and the replay,
+				// when there is one.
 				if mt == websocket.BinaryMessage && string(data) != tc.history {
 					t.Fatalf("replayed %q, want %q", data, tc.history)
+				}
+				if mt == websocket.TextMessage {
+					want := `{"type":"replay","bytes":` + strconv.Itoa(len(tc.history)) + `}`
+					if string(data) != want || len(frames) != 1 {
+						t.Fatalf("text frame #%d = %q, want %q first", len(frames), data, want)
+					}
 				}
 			}
 		})

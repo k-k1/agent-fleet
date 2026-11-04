@@ -21,6 +21,7 @@ import { zoom } from "../app/viewport.ts";
 import { toast } from "../ui/toast.ts";
 import { clipAction } from "./clipKeys.ts";
 import { fontFamilies, rebuildAtlasesFor, resetGlyphModel } from "./atlas.ts";
+import { installReplyGate, newReplyGate, startReplay, startSocket, writeOutput, type ReplyGate } from "./staleReplies.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -46,6 +47,7 @@ interface Inst {
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
   canvas?: CanvasAddon | null; // 2D fallback renderer, when WebGL is unavailable/lost/over budget (see loadCanvas)
+  replies?: ReplyGate; // mutes query answers in replayed / replaced-socket output (staleReplies.ts)
 }
 const insts = new Map<string, Inst>();
 function inst(paneId: string): Inst | null {
@@ -506,6 +508,8 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   });
   it.term = term;
   it.ws = null;
+  it.replies = newReplyGate();
+  installReplyGate(term, it.replies);
   // Apply terminal font/size from settings, live, when the user changes them.
   if (!settingsSubscribed) {
     settingsSubscribed = true;
@@ -1280,6 +1284,9 @@ export function attach(paneId: string, session: string) {
   clearHeartbeat(it); // stop the old socket's heartbeat before opening the new one
   clearConnWd(it); // and the old socket's connect-stall watchdog
   it.term.reset();
+  // reset() leaves the old socket's queued bytes in xterm's write buffer; their query
+  // answers must not reach the new socket's PTY as typed input.
+  if (it.replies) startSocket(it.term, it.replies);
   setSession(it, session);
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
   it.rx = false; // fresh socket: no PTY bytes yet (ensureAttached watches this)
@@ -1315,19 +1322,23 @@ export function attach(paneId: string, session: string) {
   ws.onmessage = (ev) => {
     const d = ev.data;
     if (typeof d === "string") {
-      // Text frames are out-of-band control (heartbeat), never terminal output — PTY
-      // output is always binary. Consume the pong without writing it to the grid.
+      // Text frames are out-of-band control (heartbeat, replay marker), never terminal
+      // output — PTY output is always binary. Consume them without writing to the grid.
       try {
-        if (JSON.parse(d)?.type === "pong") {
+        const m = JSON.parse(d);
+        if (m?.type === "pong") {
           it.lastPong = Date.now();
           noteRtt(it);
+        } else if (m?.type === "replay" && it.replies) {
+          startReplay(it.replies, m.bytes);
         }
       } catch {}
       return;
     }
     if (d instanceof ArrayBuffer) {
       it.rx = true; // real PTY output arrived — the attach painted, not a blank socket
-      it.term!.write(new Uint8Array(d));
+      if (it.replies) writeOutput(it.term!, it.replies, new Uint8Array(d));
+      else it.term!.write(new Uint8Array(d));
     }
   };
   // A socket error usually precedes an unclean drop — flag it so a refocus reconnects
