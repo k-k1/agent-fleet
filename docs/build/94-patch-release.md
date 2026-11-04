@@ -35,6 +35,8 @@ amd64 halves are scanned; both architectures build from the same Dockerfile and 
 vulnerability database has no severity, so every `govulncheck` finding with a fixed version
 counts (binary mode only reports symbols present in the binary).
 
+**Only the latest release owns the issue.** A dispatch with an older `version` still scans it (run summary and artifact), but leaves the issue alone, and the latest is asked again right before the issue is touched, so a release published mid-scan cannot close or overwrite the newer one's issue. The downloaded package and rootfs are treated as data: nothing from them is executed, and the rootfs is unpacked by `vuln-scan-extract.py`, which refuses paths and links that leave the directory.
+
 **One issue, idempotent.** Label `image-vuln-scan`, opened by the workflow. Findings and no
 issue: open it. Findings and an issue: rewrite the body only when the text differs (the body has
 no timestamp or run link on purpose) and comment. Clean and an issue: comment and close. Clean and

@@ -1,5 +1,6 @@
 {"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scan_mode":"binary"}}
 {"progress":{"message":"Scanning your binary for known vulnerabilities..."}}
+{"SBOM":{"go_version":"go1.26.8","modules":[{"path":"example.com/m","version":"(devel)"},{"path":"stdlib","version":"go1.26.8"}],"roots":["example.com/m"]}}
 {"osv":{"id":"GO-2099-0001","aliases":["CVE-2099-1001"],"summary":"x"}}
 {"osv":{"id":"GO-2099-0002","summary":"y"}}
 {"osv":{"id":"GO-2099-0003","summary":"unfixed"}}

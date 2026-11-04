@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Keep ONE tracking issue for fixable vulnerabilities in the published images.
 #
-#   vuln-scan-issue.sh sync <body-file> <fixable-count> <run-url>
+#   vuln-scan-issue.sh sync <body-file> <fixable-count> <run-url> <scanned-version> <latest-version>
 #
 # <body-file> is vuln-scan-report.py's output. The verdict is idempotent:
 #
@@ -11,6 +11,11 @@
 #   clean, issue is open       comment and close
 #   clean, no open issue       nothing
 #
+# The issue describes the LATEST published release only. When <scanned-version> is not
+# <latest-version> (a dispatch for an older version, or a release published while the scan
+# ran) nothing is touched: an old version's verdict must not close or overwrite the
+# newer one's issue.
+#
 # Only an issue this workflow opened counts: the repository is public, and anyone can open
 # an issue with the same label. Needs `issues: write`; GH_TOKEN is the job's token.
 set -euo pipefail
@@ -19,8 +24,13 @@ LABEL=image-vuln-scan
 TITLE="Security: fixable HIGH/CRITICAL findings in the published images"
 AUTHOR="app/github-actions"
 
-[ "${1:-}" = sync ] && [ "$#" -eq 4 ] || { echo "usage: $0 sync <body-file> <fixable-count> <run-url>" >&2; exit 2; }
-BODY="$2"; COUNT="$3"; RUN="$4"
+[ "${1:-}" = sync ] && [ "$#" -eq 6 ] || { echo "usage: $0 sync <body-file> <fixable-count> <run-url> <scanned-version> <latest-version>" >&2; exit 2; }
+BODY="$2"; COUNT="$3"; RUN="$4"; SCANNED="$5"; LATEST="$6"
+[ -n "$SCANNED" ] && [ -n "$LATEST" ] || { echo "ERROR: scanned and latest versions are required" >&2; exit 2; }
+if [ "$SCANNED" != "$LATEST" ]; then
+  echo "scanned $SCANNED but the latest published release is $LATEST: issue left alone"
+  exit 0
+fi
 [ -s "$BODY" ] || { echo "ERROR: $BODY is missing or empty" >&2; exit 2; }
 [[ "$COUNT" =~ ^[0-9]+$ ]] || { echo "ERROR: fixable count is not a number: $COUNT" >&2; exit 2; }
 

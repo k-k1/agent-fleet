@@ -28,8 +28,13 @@ MARKER = "<!-- af-image-vuln-scan -->"
 SEVERITIES = ("CRITICAL", "HIGH")
 # Our own Go binaries: their standard library comes from the build's Go toolchain.
 OWN_BINARIES = ("af-cp", "workspace-agent")
-# An issue body is limited to 65536 characters; stay well under it.
+# An issue body is limited to 65536 characters. Rows are added until BODY_BUDGET is reached,
+# each cell is capped, and the rest is left to the run's artifact; the total count in the
+# text above the tables is never reduced.
+BODY_BUDGET = 52000
 MAX_ROWS_PER_TARGET = 40
+MAX_CELL = 100
+MAX_FIXED_VERSIONS = 4
 DOC_URL = "https://github.com/k-k1/agent-fleet/blob/main/docs/build/94-patch-release.md"
 
 
@@ -58,6 +63,13 @@ def parse_trivy(path):
     # the file is a Trivy report at all.
     if not isinstance(doc, dict) or "SchemaVersion" not in doc:
         raise InputError(f"{path}: not a Trivy report (no SchemaVersion)")
+    # A report that never looked at the OS packages (no dpkg database found, an unsupported
+    # layout) has no findings for the wrong reason. Every target here is a Debian
+    # filesystem, so an os-pkgs result and the detected OS must be there to call it a scan.
+    if not (doc.get("Metadata") or {}).get("OS", {}).get("Family"):
+        raise InputError(f"{path}: Trivy detected no OS, so no packages were inspected")
+    if not any(r.get("Class") == "os-pkgs" for r in doc.get("Results") or []):
+        raise InputError(f"{path}: Trivy report has no os-pkgs result")
     rows = []
     for res in doc.get("Results") or []:
         # OS packages are cured by a base image refresh. A language package is cured by a
@@ -93,8 +105,14 @@ def parse_govulncheck(path):
             msgs.append(obj)
     except json.JSONDecodeError as e:
         raise InputError(f"{path}: not JSON ({e.msg})")
-    if not any(isinstance(m, dict) and "config" in m for m in msgs):
-        raise InputError(f"{path}: not govulncheck output (no config message)")
+    cfg = next((m["config"] for m in msgs if isinstance(m, dict) and "config" in m), None)
+    if cfg is None or cfg.get("scan_mode") != "binary":
+        raise InputError(f"{path}: not govulncheck -mode=binary output (no binary config message)")
+    # The SBOM message is emitted once the binary has been read; a stream that stops at
+    # config/progress inspected nothing. Every Go binary carries the stdlib module.
+    sbom = next((m["SBOM"] for m in msgs if isinstance(m, dict) and "SBOM" in m), None)
+    if not sbom or not any(mod.get("path") == "stdlib" for mod in sbom.get("modules") or []):
+        raise InputError(f"{path}: govulncheck output has no SBOM with the stdlib module (incomplete scan)")
     osv = {m["osv"]["id"]: m["osv"] for m in msgs if isinstance(m, dict) and "osv" in m}
     rows, seen = [], set()
     for m in msgs:
@@ -119,7 +137,15 @@ def parse_govulncheck(path):
 
 def cell(s):
     """Scanner text lands in a Markdown table on a public issue: no pipes, no newlines."""
-    return str(s).replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+    s = str(s).replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+    return s if len(s) <= MAX_CELL else s[:MAX_CELL - 1] + "…"
+
+
+def fixed_cell(s):
+    parts = [p.strip() for p in str(s).split(",")]
+    if len(parts) > MAX_FIXED_VERSIONS:
+        parts = parts[:MAX_FIXED_VERSIONS] + ["…"]
+    return ", ".join(parts)
 
 
 def render(release, targets):
@@ -145,11 +171,16 @@ def render(release, targets):
         rows = sorted(rows, key=lambda r: (order.get(r[1], 2), r[0], r[2]))
         out += ["| ID | Severity | Package | Installed | Fixed in | Remedy | Where |",
                 "|---|---|---|---|---|---|---|"]
+        shown = 0
         for r in rows[:MAX_ROWS_PER_TARGET]:
-            out.append("| " + " | ".join(cell(c) for c in r) + " |")
-        if len(rows) > MAX_ROWS_PER_TARGET:
+            line = "| " + " | ".join(cell(c) for c in r[:4] + (fixed_cell(r[4]),) + r[5:]) + " |"
+            if sum(len(x) + 1 for x in out) + len(line) > BODY_BUDGET:
+                break
+            out.append(line)
+            shown += 1
+        if len(rows) > shown:
             out.append("")
-            out.append(f"…and {len(rows) - MAX_ROWS_PER_TARGET} more (see the workflow run's artifact).")
+            out.append(f"…and {len(rows) - shown} more (see the workflow run's artifact).")
         out.append("")
     out += ["---",
             "Opened and updated by `image-vuln-scan.yml`. It closes when a scan of the latest "

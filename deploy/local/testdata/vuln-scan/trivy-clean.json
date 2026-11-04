@@ -1,1 +1,1 @@
-{"SchemaVersion":2,"ArtifactName":"example"}
+{"SchemaVersion":2,"ArtifactName":"example","Metadata":{"OS":{"Family":"debian","Name":"13.7"}},"Results":[{"Target":"debian 13.7","Class":"os-pkgs","Type":"debian"}]}

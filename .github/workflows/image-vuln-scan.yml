@@ -64,29 +64,28 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      GH_TOKEN: ${{ github.token }}
-      INPUT_VERSION: ${{ inputs.version }}
+    # No job-level token: only the steps that talk to GitHub get one, so the steps that
+    # unpack and scan downloaded artifacts never hold it.
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: resolve the latest published release
+      - name: resolve the release to scan
         id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [ -n "$INPUT_VERSION" ]; then
-            version="$INPUT_VERSION"
-          else
-            version="$(gh api --paginate "repos/$DIST_REPO/releases" \
-              --jq '.[] | select((.draft | not) and (.prerelease | not)) | .tag_name' \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)"
-          fi
+          latest="$(deploy/local/vuln-scan-latest.sh)"
+          version="${INPUT_VERSION:-$latest}"
           echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            || { echo "::error::could not resolve a release version (got '$version')"; exit 1; }
+            || { echo "::error::version is not X.Y.Z: $version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "scanning $version"
+          echo "scanning $version (latest published: $latest)"
+          # An older version can be scanned on request, but only the latest one owns the issue.
+          [ "$version" = "$latest" ] || echo "::notice::$version is not the latest ($latest): the issue will not be touched"
 
       - name: install Trivy (pinned, checksum-verified)
         run: |
@@ -110,21 +109,31 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           test -x "$RUNNER_TEMP/bin/govulncheck"
 
-      - name: fetch the native package and rootfs of the release
+      - name: download the native package and rootfs of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/native"; mkdir -p "$d"
+          gh release download "v$VERSION" -R "$DIST_REPO" -D "$d" \
+            -p "agent-fleet-native-$VERSION-linux-amd64.tar.gz" \
+            -p 'agent-fleet-rootfs-*-linux-amd64.tar.zst'
+
+      # What was downloaded is data. Nothing from it is executed here (not even the zstd the
+      # package ships: the runner's own is used), and the rootfs is unpacked by a filter that
+      # refuses paths and links leaving the directory.
+      - name: unpack the downloads as data
         env:
           VERSION: ${{ steps.rel.outputs.version }}
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/native"; mkdir -p "$d/rootfs" "$d/pkg"
-          gh release download "v$VERSION" -R "$DIST_REPO" -D "$d" \
-            -p "agent-fleet-native-$VERSION-linux-amd64.tar.gz" \
-            -p 'agent-fleet-rootfs-*-linux-amd64.tar.zst'
-          # The package ships its own static zstd; the runner may not have one.
+          command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
           tar -xzf "$d/agent-fleet-native-$VERSION-linux-amd64.tar.gz" -C "$d/pkg" --strip-components=1 \
-            "agent-fleet-native-$VERSION-linux-amd64/bin/af-cp" \
-            "agent-fleet-native-$VERSION-linux-amd64/bin/zstd"
-          "$d/pkg/bin/zstd" -dc "$d"/agent-fleet-rootfs-*-linux-amd64.tar.zst \
-            | tar -x --no-same-owner --no-same-permissions -C "$d/rootfs"
+            "agent-fleet-native-$VERSION-linux-amd64/bin/af-cp"
+          zstd -dc "$d"/agent-fleet-rootfs-*-linux-amd64.tar.zst \
+            | python3 -I deploy/local/vuln-scan-extract.py "$d/rootfs"
           test -x "$d/rootfs/usr/local/bin/workspace-agent"
 
       - name: scan
@@ -161,11 +170,18 @@ jobs:
             | tee -a "$GITHUB_OUTPUT"
           { echo "## image-vuln-scan $VERSION"; echo; cat "$out/body.md"; } >> "$GITHUB_STEP_SUMMARY"
 
+      # The latest is asked again here: a release published while the scan ran makes this
+      # verdict about an old version, and vuln-scan-issue.sh then leaves the issue alone.
       - name: open, update or close the tracking issue
         env:
+          GH_TOKEN: ${{ github.token }}
           FIXABLE: ${{ steps.report.outputs.fixable }}
+          SCANNED: ${{ steps.rel.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: deploy/local/vuln-scan-issue.sh sync "$RUNNER_TEMP/scan/body.md" "$FIXABLE" "$RUN_URL"
+        run: |
+          set -euo pipefail
+          latest="$(deploy/local/vuln-scan-latest.sh)"
+          deploy/local/vuln-scan-issue.sh sync "$RUNNER_TEMP/scan/body.md" "$FIXABLE" "$RUN_URL" "$SCANNED" "$latest"
 
       # Scanner JSON only (public advisories); the issue shows the first rows, this the rest.
       - uses: actions/upload-artifact@v7
