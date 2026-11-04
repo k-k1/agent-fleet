@@ -239,6 +239,9 @@ CP keeps only non-secret metadata (`work_item_cache`); nothing is a webhook.
 kind the Jira counterpart of `gh` / `bkt`: viewing, listing, creating, editing, commenting on
 and transitioning issues, plus boards, sprints and epics. The real binary is
 `/usr/local/libexec/jira`, and `/usr/local/bin/jira` is `workspace/jira-auth-wrapper.sh`.
+The binary is built from the pinned upstream tag in the Dockerfile's `jirabuild` stage with our Go and
+bumped `x/net` / `x/text` / `goldmark` (upstream's latest release, 1.7.0, is built with go1.24.1; #3339).
+`JIRA_CLI_COMMIT` pins the tag's commit.
 jira-cli takes its token from `JIRA_API_TOKEN`, and the environment overrides its config
 file key by key (`JIRA_SERVER`, `JIRA_LOGIN`, `JIRA_AUTH_TYPE`, `JIRA_INSTALLATION`). On each
 run the wrapper asks `workspace-agent jira-cred` (`workspace/agent/internal/jirax/jira_cred.go`) and fills
