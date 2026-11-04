@@ -776,6 +776,9 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return "", false
 	}
+	if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) {
+		rememberSubmitted(name, pane, prompt)
+	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
 	// session working, or codex sticks on "in progress" (no Stop hook fires to clear it).
 	// Real prompts still mark working so the chip reacts before the agent's own hook.
