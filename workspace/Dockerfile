@@ -65,6 +65,16 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
+# npm is pinned past the copy the node base image bundles: that one carries brace-expansion,
+# ip-address, pacote, picomatch and sigstore releases with fixable HIGH advisories (#3339),
+# and the base tag floats, so only an explicit pin keeps the scan result stable. The self-
+# upgrade replaces /usr/local/lib/node_modules/npm wholesale. Keep it on a release whose
+# engines range still admits the node 22 line (npm 12 needs >=22.22.2, so stay on 11.x).
+ARG NPM_VERSION=11.21.1
+RUN npm install -g "npm@${NPM_VERSION}" \
+    && test "$(npm --version)" = "${NPM_VERSION}" \
+    && npm cache clean --force
+
 # --- Distribution knobs (docs/log/35 §35.4.1, §35.7.1-5) ---------------------------
 # BAKE_AGENT_CLIS=0 … do not bake the agent CLIs (claude/opencode/codex/copilot/cursor/
 #   agy/rtk): the lean variant, because the proprietary CLIs are treated as not
