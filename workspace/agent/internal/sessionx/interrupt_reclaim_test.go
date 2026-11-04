@@ -485,3 +485,143 @@ func TestInterruptReclaimsAPromptLoggedLate(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A paste placeholder is never erased, even one whose line count fits the stopped prompt: a
+// member can paste into the terminal during the watch window. The send is refused instead.
+func TestInterruptKeepsAPlaceholderThatFitsThePrompt(t *testing.T) {
+	prompt := strings.Repeat("line\n", 50) + "end"
+	keys, _, has := runClaudeInterrupt(t, prompt, func(esc int) string {
+		if esc == 0 {
+			return paneWorking
+		}
+		return rule + "\n❯ [Pasted text #1 +50 lines]\n" + rule + "\n"
+	})
+	if has || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("keys = %v, restored present = %v", keys, has)
+	}
+	if rec := postTurn(t, "turn_reclaim", `{"op":"start","prompt":"next"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// lateRun stops with the box empty throughout the watch window, then lets late(esc) draw the
+// pane for the next send.
+func lateRun(t *testing.T, prompt string, late func(esc int) string, between ...func()) (code int, body string, keys []string) {
+	t.Helper()
+	windowOver := false
+	_, _, _ = runClaudeInterrupt(t, prompt, func(esc int) string {
+		if !windowOver {
+			if esc == 0 {
+				return paneWorking
+			}
+			return paneEmpty
+		}
+		return late(esc)
+	})
+	windowOver = true
+	for _, f := range between {
+		f()
+	}
+	rec := postTurn(t, "turn_reclaim", `{"op":"start","prompt":"next prompt"}`)
+	return rec.Code, rec.Body.String(), sendKeysLines(t, os.Getenv("TMUX_TEST_LOG"))
+}
+
+// A prompt that reappears after the watch window is cleared when the next send looks again
+// (issue #3302, case 2); the send then goes on and is not typed after it.
+func TestSendClearsAPromptThatReappearedAfterTheWindow(t *testing.T) {
+	code, body, keys := lateRun(t, "SLOW 再レビュー", func(esc int) string {
+		switch esc {
+		case 1:
+			return paneRestored
+		case 2:
+			return paneClearArmed
+		}
+		return paneEmpty
+	})
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", code, body)
+	}
+	if got := strings.Join(keys[:3], ","); got != "Escape,Escape,Escape" {
+		t.Fatalf("keys = %v, want the stop and the two clearing Escapes first", keys)
+	}
+}
+
+// Late, a placeholder is not ours to erase: the send is refused instead.
+func TestSendRefusedForALatePlaceholder(t *testing.T) {
+	prompt := strings.Repeat("line\n", 50) + "end"
+	code, body, keys := lateRun(t, prompt, func(int) string {
+		return rule + "\n❯ [Pasted text #1 +50 lines]\n" + rule + "\n"
+	})
+	if code != http.StatusConflict || !strings.Contains(body, "stopped_prompt_in_box") {
+		t.Fatalf("status = %d, body = %s", code, body)
+	}
+	if strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("keys = %v", keys)
+	}
+}
+
+// Text in the box after a stop that cannot be proven to be the stopped prompt refuses the send
+// and is not erased; the refusal holds until the box reads empty.
+func TestSendRefusedForOtherTextAfterTheWindow(t *testing.T) {
+	for name, pane := range map[string]string{
+		"member draft":     paneOwnDraft,
+		"prompt plus more": rule + "\n❯ SLOW 再レビュー and then some\n" + rule + "\n",
+		"unreadable":       "no box here\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, body, keys := lateRun(t, "SLOW 再レビュー", func(int) string { return pane })
+			if code != http.StatusConflict || !strings.Contains(body, "stopped_prompt_in_box") || strings.Join(keys, ",") != "Escape" {
+				t.Fatalf("status = %d, body = %s, keys = %v", code, body, keys)
+			}
+		})
+	}
+}
+
+// Past the erase TTL even the exact prompt is left alone and the send refused.
+func TestSendRefusedForAnExpiredLateRestore(t *testing.T) {
+	code, body, keys := lateRun(t, "SLOW 再レビュー", func(int) string { return paneRestored }, func() {
+		v, _ := lateWatch.Load("turn_reclaim")
+		e := v.(lateWatchEntry)
+		e.at = e.at.Add(-lateEraseTTL - time.Second)
+		lateWatch.Store("turn_reclaim", e)
+	})
+	if code != http.StatusConflict || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("status = %d, body = %s, keys = %v", code, body, keys)
+	}
+}
+
+// An entry armed for another pane (restarted session) or superseded by a newer stop does not
+// apply.
+func TestLateWatchIsBoundToPaneAndStop(t *testing.T) {
+	code, _, _ := lateRun(t, "SLOW 再レビュー", func(int) string { return paneRestored }, func() {
+		v, _ := lateWatch.Load("turn_reclaim")
+		e := v.(lateWatchEntry)
+		e.pane = "other-pane"
+		lateWatch.Store("turn_reclaim", e)
+	})
+	if code != http.StatusOK {
+		t.Fatalf("stale pane: status = %d", code)
+	}
+	// A newer stop that takes the prompt out (or has an unmeasured box) drops the armed entry.
+	lateWatch.Store("turn_reclaim", lateWatchEntry{pane: "x", at: time.Now()})
+	runClaudeInterrupt(t, "p", func(int) string { return paneOwnDraft })
+	if _, ok := lateWatch.Load("turn_reclaim"); ok {
+		t.Fatal("a newer stop left the older armed entry in place")
+	}
+}
+
+// Sweeping an old entry must keep the guard: the session's next send still sees a prompt that
+// reappeared meanwhile and is refused.
+func TestLateWatchSweepKeepsTheGuard(t *testing.T) {
+	code, body, keys := lateRun(t, "SLOW 再レビュー", func(int) string { return paneRestored }, func() {
+		v, _ := lateWatch.Load("turn_reclaim")
+		e := v.(lateWatchEntry)
+		e.at = e.at.Add(-lateWatchKeep - time.Minute)
+		lateWatch.Store("turn_reclaim", e)
+		armLateWatch("other_session", "p")
+		t.Cleanup(func() { lateWatch.Delete("other_session") })
+	})
+	if code != http.StatusConflict || !strings.Contains(body, "stopped_prompt_in_box") || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("status = %d, body = %s, keys = %v", code, body, keys)
+	}
+}
