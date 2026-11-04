@@ -12,6 +12,7 @@ package codex
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"path/filepath"
 	"time"
@@ -20,12 +21,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// stopInterruptRounds bounds how often the thread is re-checked after an interrupt: a prompt
-// the daemon had queued can start as the next turn the moment the first one is aborted.
-const stopInterruptRounds = 3
-
-// stopSettle is the pause between an interrupt and the re-check.
-var stopSettle = 400 * time.Millisecond
+// stopBudget is the total time Stop may spend on the daemon (dial, reads and interrupts
+// together); past it the caller kills the pane regardless. stopSettle is the pause between an
+// interrupt (or a quiet read) and the next read: a queued prompt can start as the next turn
+// shortly after the first is aborted, so the thread must read quiet twice before we stop.
+var (
+	stopBudget = 8 * time.Second
+	stopSettle = 400 * time.Millisecond
+)
 
 // terminalControlAddr is the socket the Terminal TUI's daemon listens on.
 func terminalControlAddr() string {
@@ -46,17 +49,20 @@ func (agentImpl) GracefulStop(m session.Meta) bool {
 }
 
 // interruptThread aborts the in-progress turn of threadID on the app-server at addr, and keeps
-// aborting while a new one starts (up to stopInterruptRounds). No daemon, or a thread it does
-// not know, has nothing running and is not an error worth more than a log line.
+// aborting while new ones start, until the thread reads idle twice in a row or stopBudget runs
+// out. Running out is an error: the guarantee is best-effort and the caller logs it.
 func interruptThread(addr, threadID string) error {
+	deadline := time.Now().Add(stopBudget)
+	left := func() time.Duration { return time.Until(deadline) }
 	cl, err := newAppClient(addr)
 	if err != nil {
 		return err
 	}
 	go cl.readLoop()
 	defer cl.close()
-	for i := 0; i < stopInterruptRounds; i++ {
-		raw, err := cl.call("thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "sortDirection": "desc"}, 5*time.Second)
+	quiet := 0
+	for left() > 0 {
+		raw, err := cl.call("thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "sortDirection": "desc"}, left())
 		if err != nil {
 			return err
 		}
@@ -67,12 +73,19 @@ func interruptThread(addr, threadID string) error {
 			} `json:"data"`
 		}
 		if json.Unmarshal(raw, &res) != nil || len(res.Data) == 0 || res.Data[0].Status != "inProgress" {
-			return nil
+			if quiet++; quiet >= 2 {
+				return nil
+			}
+		} else {
+			quiet = 0
+			if left() <= 0 {
+				break
+			}
+			if _, err := cl.call("turn/interrupt", map[string]any{"threadId": threadID, "turnId": res.Data[0].ID}, left()); err != nil {
+				return err
+			}
 		}
-		if _, err := cl.call("turn/interrupt", map[string]any{"threadId": threadID, "turnId": res.Data[0].ID}, 10*time.Second); err != nil {
-			return err
-		}
-		time.Sleep(stopSettle)
+		time.Sleep(min(stopSettle, max(left(), 0)))
 	}
-	return nil
+	return errors.New("thread still running when the stop budget ended")
 }

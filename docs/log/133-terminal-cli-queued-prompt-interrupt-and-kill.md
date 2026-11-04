@@ -316,4 +316,4 @@ Fleet's single serve), so only the slot's own work is ended through their APIs: 
 slot's captured thread over `CODEX_HOME/app-server-control/app-server-control.sock`; opencode cancels the
 slot's inbox entries (`DELETE /api/session/{id}/inbox/{inboxID}`) around `POST /interrupt`. A `--standalone`
 opencode pane runs a private server and is not touched. Not measured: that codex's `turn/interrupt` drops a
-steer queued behind a tool call (the code re-checks up to three times), and a Stop followed at once by a resume.
+steer queued behind a tool call (the code re-checks until the thread reads idle twice, within a budget), and a Stop followed at once by a resume.

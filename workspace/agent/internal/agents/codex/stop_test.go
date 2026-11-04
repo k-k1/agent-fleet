@@ -134,3 +134,33 @@ func TestGracefulStopInterruptsOnlyTheSlotsThreadOnTheControlSocket(t *testing.T
 		t.Fatalf("interrupts = %v, want the slot's own thread", got)
 	}
 }
+
+// More queued turns than any fixed retry count are all interrupted: the loop ends on a quiet
+// thread, not on a number of attempts.
+func TestInterruptThreadFollowsALongChainOfQueuedTurns(t *testing.T) {
+	stopSettle = time.Millisecond
+	addr, interrupts := stopServer(t, 6)
+	if err := interruptThread(addr, "cx-own"); err != nil {
+		t.Fatal(err)
+	}
+	if got := interrupts(); len(got) != 6 {
+		t.Fatalf("interrupts = %v, want 6", got)
+	}
+}
+
+// A thread that keeps running past the budget is an error (best-effort), and the call returns
+// within the budget instead of waiting out every round.
+func TestInterruptThreadReportsAndBoundsAnUnstoppableThread(t *testing.T) {
+	stopSettle = time.Millisecond
+	old := stopBudget
+	stopBudget = 150 * time.Millisecond
+	t.Cleanup(func() { stopBudget = old })
+	addr, _ := stopServer(t, 1<<30)
+	start := time.Now()
+	if err := interruptThread(addr, "cx-own"); err == nil {
+		t.Fatal("want an error when the thread is still running at the budget")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %v, budget was 150ms", d)
+	}
+}

@@ -23,6 +23,7 @@ package opencode
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,6 +113,11 @@ func apiJSON(method, u string, body, out any) error {
 
 // apiJSONWith is apiJSON through client c (the attach wrapper brings its own credentials).
 func apiJSONWith(c *http.Client, method, u string, body, out any) error {
+	return apiJSONCtx(context.Background(), c, method, u, body, out)
+}
+
+// apiJSONCtx is apiJSONWith bounded by ctx.
+func apiJSONCtx(ctx context.Context, c *http.Client, method, u string, body, out any) error {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -120,7 +126,7 @@ func apiJSONWith(c *http.Client, method, u string, body, out any) error {
 		}
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, u, rd)
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
 	if err != nil {
 		return err
 	}
@@ -449,6 +455,12 @@ const sharedPaneEnv = "AF_OPENCODE_SHARED"
 // first, since a running turn that ends hands the next queued input to the server to run, and
 // once more after the interrupt for anything that was enqueued in between. The serve itself is
 // shared with every other session and stays up.
+// stopBudget bounds the queue cancellation of one stop; stopInterruptBudget the interrupt.
+var (
+	stopBudget          = 6 * time.Second
+	stopInterruptBudget = 5 * time.Second
+)
+
 func interruptTerminal(m session.Meta) {
 	if !sharedSlot(m) || !Serve().Running() {
 		return
@@ -458,23 +470,29 @@ func interruptTerminal(m session.Meta) {
 		return
 	}
 	addr := serveAddr()
-	cancelQueuedInput(addr, ses, m.Name)
-	if err := apiJSON("POST", sessionPathURL(addr, ses)+"/interrupt", map[string]string{}, nil); err != nil {
+	// One budget for the whole stop; past it the caller kills the pane regardless. The interrupt
+	// is never skipped for want of time spent on the queue: it gets its own slice.
+	ctx, cancel := context.WithTimeout(context.Background(), stopBudget)
+	defer cancel()
+	cancelQueuedInput(ctx, addr, ses, m.Name)
+	ictx, icancel := context.WithTimeout(context.Background(), stopInterruptBudget)
+	defer icancel()
+	if err := apiJSONCtx(ictx, serveClient, "POST", sessionPathURL(addr, ses)+"/interrupt", map[string]string{}, nil); err != nil {
 		log.Printf("opencode: interrupt %s: %v", m.Name, err)
 	}
-	cancelQueuedInput(addr, ses, m.Name)
+	cancelQueuedInput(ctx, addr, ses, m.Name)
 }
 
 // cancelQueuedInput deletes the session's undelivered user and synthetic inbox entries (typed
 // prompts and injected messages). A queued compaction or move is not a prompt and is left.
-func cancelQueuedInput(addr, ses, name string) {
+func cancelQueuedInput(ctx context.Context, addr, ses, name string) {
 	var w struct {
 		Data []struct {
 			ID   string `json:"id"`
 			Type string `json:"type"`
 		} `json:"data"`
 	}
-	if err := apiJSON("GET", sessionPathURL(addr, ses)+"/inbox", nil, &w); err != nil {
+	if err := apiJSONCtx(ctx, serveClient, "GET", sessionPathURL(addr, ses)+"/inbox", nil, &w); err != nil {
 		log.Printf("opencode: list queued input of %s: %v", name, err)
 		return
 	}
@@ -482,7 +500,7 @@ func cancelQueuedInput(addr, ses, name string) {
 		if it.ID == "" || (it.Type != "user" && it.Type != "synthetic") {
 			continue
 		}
-		if err := apiJSON("DELETE", sessionPathURL(addr, ses)+"/inbox/"+url.PathEscape(it.ID), nil, nil); err != nil {
+		if err := apiJSONCtx(ctx, serveClient, "DELETE", sessionPathURL(addr, ses)+"/inbox/"+url.PathEscape(it.ID), nil, nil); err != nil {
 			log.Printf("opencode: cancel queued input %s of %s: %v", it.ID, name, err)
 		}
 	}
