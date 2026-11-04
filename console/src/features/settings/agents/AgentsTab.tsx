@@ -200,6 +200,13 @@ export function AgentsTab() {
         <OnOff value={s.sessionFleetSpawn} onChange={(v) => setSetting("sessionFleetSpawn", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_fleet_spawn")}</p>
+      {/* PR feedback (#3129) is the Agent typing into a session on the PR's behalf, the same
+          question as the two above — what reaches a session without the member — so it sits
+          with them rather than in any agent's card. */}
+      <Row label={tr("agents.pr_feedback")}>
+        <OnOff value={s.prFeedback} onChange={(v) => setSetting("prFeedback", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_pr_feedback")}</p>
       {/* The budget (ADR 0073 decision 6). Only with the switch on, for the reason the image
           provider order is: with steering off nothing ever consults it. A fixed set of choices
           rather than a number field — the Agent answers anything outside its range with the

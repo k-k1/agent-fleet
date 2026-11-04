@@ -240,6 +240,9 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.fleet_spawn": "Starting sessions from sessions",
   "agents.note_fleet_spawn":
     "Lets a session start another session, hand it a task, and look after the ones it started: listing them, reading their output, stopping, resuming and renaming them. It cannot add instructions to any session, answer a session's questions for it, or delete or archive one. How many children it may have is set below (a child you delete or archive no longer counts toward it). No grandchildren and no shell sessions. Each child takes a whole agent's worth of memory and quota, and the usage is billed to you. Applies to sessions started from now on. Default OFF.",
+  "agents.pr_feedback": "Tell sessions about their PR's feedback",
+  "agents.note_pr_feedback":
+    "When CI fails on a session's pull request (once every check of that commit has finished), or a reviewer requests changes or leaves new unresolved threads, Agent Fleet tells the session that owns the PR, so it can fix and push. It waits until the session is idle, and starts a stopped session to tell it, one at a time. CI is told once per pushed commit, review at most 3 times per PR. A merge conflict, and feedback for an archived session, goes to your notifications instead. Watches each session's branch PR and up to 5 PR links it holds. Default OFF.",
   "agents.spawn_child_limit": "Children per session",
   "agents.note_spawn_child_limit":
     "How many children one session may have at a time. It is per parent, not per workspace, so more parents mean more sessions. Each child uses a whole agent's memory. 1–10, default 3.",

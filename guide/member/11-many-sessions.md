@@ -308,6 +308,40 @@ no longer closed it). If something does arrive over Claude's own channel anyway,
 the chat view as an incoming message**, with the sending session's name. It is closed, and a leak is
 made visible.
 
+## Telling a session about its pull request's feedback
+
+When CI fails on a pull request, or a reviewer asks for changes, the session that opened it
+usually sits idle until you notice. With **Settings > Agents > Session > "Tell sessions about
+their PR's feedback"** on, Agent Fleet tells that session itself, so it can fix the problem
+and push. **It is off by default**, because it spends turns, and starts sessions, without you
+asking.
+
+- **What is told.**
+  - CI that failed on the PR's newest commit, with the failed checks by name. It is sent only
+    once every check of that commit has finished, so the message lists every failure, not just
+    the first. Each pushed commit is told at most once.
+  - A reviewer requesting changes, or new unresolved review threads. This is told at most 3
+    times per pull request.
+- **Which pull requests.**
+  - The pull request of the branch each session is on.
+  - Up to 5 pull request links a session holds as the one it was started for, one it
+    created, or one it works on. Both GitHub and Bitbucket are covered.
+  - A session that only reviews or watches a pull request is never told.
+  - When several sessions hold the same pull request, the one whose link is strongest is
+    told: started, then created, then working. Between equal links, the newest wins.
+- **When.**
+  - Only once the session is idle and able to take input. A session that is working, or
+    waiting on you (a question, a plan or a permission), keeps the message until it is free.
+  - **A stopped session is started and then told, including one you stopped yourself.**
+    Sessions are started one at a time.
+  - Feedback for an archived session, and **a merge conflict**, go to your notification
+    center instead (the **Pull requests** row). A conflict usually needs a decision about the
+    base rather than an edit.
+- **In the session** it arrives as a line starting with `[agent-fleet:notice kind=pr-feedback
+  reply=none]`. The chat view badges it as a notice from Agent Fleet, not as your
+  instruction.
+- What was told is remembered across Agent restarts, so nothing is told twice.
+
 ## Letting a session see the fleet
 
 You can let a session see **the fleet it is part of**. If the messaging above is for telling,

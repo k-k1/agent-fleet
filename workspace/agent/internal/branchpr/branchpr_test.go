@@ -3,6 +3,7 @@ package branchpr
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -75,7 +76,7 @@ func TestParsePicksTheRepositoryOwnBranchPR(t *testing.T) {
 }
 
 func TestParseReportsTheGraphQLRateLimit(t *testing.T) {
-	if _, _, limited, _ := parse([]byte(`{"data":null,"errors":[{"type":"RATE_LIMITED"}]}`), []Key{{"o/r", "b"}}); !limited {
+	if _, _, limited, _ := parse([]byte(`{"data":null,"errors":[{"type":"RATE_LIMITED"}]}`), []Key{{Repo: "o/r", Branch: "b"}}); !limited {
 		t.Fatal("limited = false for RATE_LIMITED")
 	}
 }
@@ -138,7 +139,7 @@ func TestLookupNeverWaitsAndBatchesOneCall(t *testing.T) {
 	var calls atomic.Int32
 	srv := server(t, &calls, http.StatusOK, nil)
 	c := newTestCache(srv.URL, "tok")
-	keys := []Key{{"o/r", "a"}, {"o/r", "b"}, {"o/r", "a"}}
+	keys := []Key{{Repo: "o/r", Branch: "a"}, {Repo: "o/r", Branch: "b"}, {Repo: "o/r", Branch: "a"}}
 	now := time.Now()
 	// The first lookup has nothing to answer yet; it starts the refresh.
 	if got := c.Lookup(keys, now); len(got) != 0 {
@@ -165,7 +166,7 @@ func TestLookupHoldsOffAfterTheRateLimit(t *testing.T) {
 	var calls atomic.Int32
 	srv := server(t, &calls, http.StatusForbidden, map[string]string{"Retry-After": "600"})
 	c := newTestCache(srv.URL, "tok")
-	keys := []Key{{"o/r", "a"}}
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
 	c.Lookup(keys, time.Now())
 	c.Lookup(keys, time.Now())
 	if n := calls.Load(); n != 1 {
@@ -177,7 +178,7 @@ func TestLookupWithoutATokenAsksNothing(t *testing.T) {
 	var calls atomic.Int32
 	srv := server(t, &calls, http.StatusOK, nil)
 	c := newTestCache(srv.URL, "")
-	if got := c.Lookup([]Key{{"o/r", "a"}}, time.Now()); len(got) != 0 {
+	if got := c.Lookup([]Key{{Repo: "o/r", Branch: "a"}}, time.Now()); len(got) != 0 {
 		t.Fatalf("Lookup = %v", got)
 	}
 	if n := calls.Load(); n != 0 {
@@ -199,7 +200,7 @@ func TestRateWait(t *testing.T) {
 }
 
 func TestParseFailsAliasesWithAnErrorOtherThanNotFound(t *testing.T) {
-	keys := []Key{{"o/r", "a"}, {"o/r", "b"}}
+	keys := []Key{{Repo: "o/r", Branch: "a"}, {Repo: "o/r", Branch: "b"}}
 	body := `{"data":{` + answer("r0", "o", "main", prNode(3, "OPEN", false, "o", "SUCCESS")) +
 		`,"r1":null},"errors":[{"type":"INTERNAL","path":["r1","pullRequests"]}]}`
 	got, failed, _, err := parse([]byte(body), keys)
@@ -232,7 +233,7 @@ func seeded(t *testing.T, keys []Key) (*Cache, *atomic.Int32) {
 }
 
 func TestATransientGraphQLFailureKeepsTheLastAnswer(t *testing.T) {
-	keys := []Key{{"o/r", "a"}}
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
 	for _, body := range []string{
 		`{"data":null,"errors":[{"type":"INTERNAL","message":"service unavailable"}]}`,
 		`{"data":{"r0":{"owner":`,
@@ -255,7 +256,7 @@ func TestATransientGraphQLFailureKeepsTheLastAnswer(t *testing.T) {
 }
 
 func TestDisconnectingGitHubDropsTheHeldAnswers(t *testing.T) {
-	keys := []Key{{"o/r", "a"}}
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
 	c, _ := seeded(t, keys)
 	c.Token = func() (string, error) { return "", nil }
 	later := time.Now().Add(openTTL + time.Second)
@@ -266,7 +267,7 @@ func TestDisconnectingGitHubDropsTheHeldAnswers(t *testing.T) {
 }
 
 func TestAStoreReadErrorKeepsTheHeldAnswers(t *testing.T) {
-	keys := []Key{{"o/r", "a"}}
+	keys := []Key{{Repo: "o/r", Branch: "a"}}
 	c, _ := seeded(t, keys)
 	c.Token = func() (string, error) { return "", errors.New("locked") }
 	later := time.Now().Add(openTTL + time.Second)
@@ -293,7 +294,7 @@ func TestLookupAsksOnceForAKeyManySessionsShare(t *testing.T) {
 	c := newTestCache(srv.URL, "tok")
 	keys := make([]Key, batchSize+1)
 	for i := range keys {
-		keys[i] = Key{"o/r", "shared"}
+		keys[i] = Key{Repo: "o/r", Branch: "shared"}
 	}
 	c.Lookup(keys, time.Now())
 	if calls.Load() != 1 || aliases.Load() != 1 {
@@ -328,7 +329,7 @@ func TestA401RenewsTheTokenAndRetriesTheBatchOnce(t *testing.T) {
 		}
 		return "new", nil
 	}
-	c.Lookup([]Key{{"o/r", "a"}}, time.Now())
+	c.Lookup([]Key{{Repo: "o/r", Branch: "a"}}, time.Now())
 	if renewals != 1 || calls.Load() != 2 || strings.Join(seen, ",") != "Bearer old,Bearer new" {
 		t.Fatalf("renewals=%d calls=%d seen=%v", renewals, calls.Load(), seen)
 	}
@@ -338,7 +339,7 @@ func TestA401WithoutRenewAsksOnce(t *testing.T) {
 	var calls atomic.Int32
 	srv := server(t, &calls, http.StatusUnauthorized, nil)
 	c := newTestCache(srv.URL, "tok")
-	c.Lookup([]Key{{"o/r", "a"}}, time.Now())
+	c.Lookup([]Key{{Repo: "o/r", Branch: "a"}}, time.Now())
 	if calls.Load() != 1 {
 		t.Fatalf("calls = %d", calls.Load())
 	}
@@ -366,7 +367,7 @@ func TestParseReadsTheTitleAndTheIssuesAPRCloses(t *testing.T) {
 }
 
 func TestQueryAsksForTheTitleAndClosingIssues(t *testing.T) {
-	q, _ := query([]Key{{"o/r", "b"}})
+	q, _ := query([]Key{{Repo: "o/r", Branch: "b"}})
 	if !strings.Contains(q, " title ") || !strings.Contains(q, "closingIssuesReferences(first:3)") {
 		t.Fatalf("query = %s", q)
 	}
@@ -470,7 +471,7 @@ func TestParseReadsWhatFeedbackNeeds(t *testing.T) {
 		}
 	}
 	q, _ := query(keys)
-	for _, f := range []string{"{id number ", "reviewThreads(last:50){nodes{isResolved}}", "contexts(first:50)", "... on CheckRun{name conclusion detailsUrl}", "... on StatusContext{context state targetUrl}"} {
+	for _, f := range []string{"{id number ", "reviewThreads(last:50){nodes{isResolved}}", "contexts(first:50)", "... on CheckRun{name status conclusion detailsUrl}", "... on StatusContext{context state targetUrl}"} {
 		if !strings.Contains(q, f) {
 			t.Errorf("query lacks %q", f)
 		}
@@ -492,4 +493,82 @@ func fmt2(n int) string {
 		return "0" + itoa(n)
 	}
 	return itoa(n)
+}
+
+func TestAPRAskedByNumberIsAnsweredWhateverItsBranch(t *testing.T) {
+	keys := []Key{{Repo: "o/r", Number: 7}, {Repo: "o/r", Branch: "b"}, {Repo: "o/gone", Number: 9}, {Repo: "o/r", Number: 8}}
+	q, vars := query(keys)
+	if !strings.Contains(q, "$b0:Int!") || !strings.Contains(q, "pullRequest(number:$b0){id number ") || vars["b0"] != 7 {
+		t.Fatalf("query %s vars %v: a number key asks pullRequest(number:) with an Int variable", q, vars)
+	}
+	if !strings.Contains(q, "$b1:String!") || !strings.Contains(q, "pullRequests(headRefName:$b1") {
+		t.Fatalf("query %s: a branch key still asks by head", q)
+	}
+	// From a fork, on the default branch: neither matters for a PR the caller holds by number.
+	fork := `{"number":7,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/7","mergeable":"MERGEABLE",` +
+		`"headRepositoryOwner":{"login":"someone"},"commits":{"nodes":[]}}`
+	other := `{"number":3,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/3","headRepositoryOwner":{"login":"o"},"commits":{"nodes":[]}}`
+	body := `{"data":{"r0":{"owner":{"login":"o"},"pullRequest":` + fork + `},` + answer("r1", "o", "main", "") +
+		`,"r2":null,"r3":{"owner":{"login":"o"},"pullRequest":` + other + `}},"errors":[{"type":"NOT_FOUND","path":["r2"]}]}`
+	got, failed, _, err := parse([]byte(body), keys)
+	if err != nil || len(failed) != 0 {
+		t.Fatalf("err %v failed %v", err, failed)
+	}
+	if pr := got[keys[0]]; pr == nil || pr.Number != 7 || pr.State != "open" {
+		t.Fatalf("pr #7 = %+v, want it answered", pr)
+	}
+	if got[keys[2]] != nil {
+		t.Errorf("a repository not found answers no PR")
+	}
+	if got[keys[3]] != nil {
+		t.Errorf("an answer for another number is not PR #8")
+	}
+}
+
+func TestChecksStillRunningArePending(t *testing.T) {
+	ctx := func(nodes string) string {
+		return `{"number":4,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/4","headRepositoryOwner":{"login":"o"},` +
+			`"commits":{"nodes":[{"commit":{"oid":"c1","statusCheckRollup":{"state":"FAILURE","contexts":{"nodes":[` + nodes + `]}}}}]}}`
+	}
+	failed := `{"__typename":"CheckRun","name":"a","status":"COMPLETED","conclusion":"FAILURE"}`
+	for _, tc := range []struct {
+		other   string
+		pending bool
+	}{
+		{`{"__typename":"CheckRun","name":"b","status":"COMPLETED","conclusion":"SUCCESS"}`, false},
+		{`{"__typename":"CheckRun","name":"b","status":"IN_PROGRESS","conclusion":null}`, true},
+		{`{"__typename":"CheckRun","name":"b","status":"QUEUED","conclusion":null}`, true},
+		{`{"__typename":"StatusContext","context":"b","state":"PENDING"}`, true},
+		{`{"__typename":"StatusContext","context":"b","state":"EXPECTED"}`, true},
+		{`{"__typename":"StatusContext","context":"b","state":"SUCCESS"}`, false},
+	} {
+		keys := []Key{{Repo: "o/r", Branch: "a"}}
+		got, _, _, err := parse([]byte(`{"data":{`+answer("r0", "o", "main", ctx(failed+","+tc.other))+`}}`), keys)
+		if pr := got[keys[0]]; err != nil || pr == nil || pr.ChecksPending != tc.pending || pr.Checks != "failure" {
+			t.Errorf("%s: pr %+v err %v, want pending=%v", tc.other, pr, err, tc.pending)
+		}
+	}
+}
+
+func TestChecksPastTheContextsReadStillHoldTheFailure(t *testing.T) {
+	node := `{"number":4,"state":"OPEN","isDraft":false,"url":"https://github.com/o/r/pull/4","headRepositoryOwner":{"login":"o"},` +
+		`"commits":{"nodes":[{"commit":{"oid":"c1","statusCheckRollup":{"state":"FAILURE","contexts":{` +
+		`"checkRunCountsByState":[{"state":"FAILURE","count":1},{"state":"IN_PROGRESS","count":%d}],` +
+		`"statusContextCountsByState":[{"state":"EXPECTED","count":%d}],` +
+		`"nodes":[{"__typename":"CheckRun","name":"a","status":"COMPLETED","conclusion":"FAILURE"}]}}}}]}}`
+	for _, tc := range []struct {
+		runs, statuses int
+		pending        bool
+	}{{0, 0, false}, {3, 0, true}, {0, 1, true}} {
+		keys := []Key{{Repo: "o/r", Branch: "a"}}
+		body := `{"data":{` + answer("r0", "o", "main", fmt.Sprintf(node, tc.runs, tc.statuses)) + `}}`
+		got, _, _, err := parse([]byte(body), keys)
+		if pr := got[keys[0]]; err != nil || pr == nil || pr.ChecksPending != tc.pending {
+			t.Errorf("%+v: pr %+v err %v", tc, pr, err)
+		}
+	}
+	q, _ := query([]Key{{Repo: "o/r", Branch: "a"}})
+	if !strings.Contains(q, "checkRunCountsByState{state count} statusContextCountsByState{state count}") {
+		t.Errorf("query %s lacks the counts", q)
+	}
 }

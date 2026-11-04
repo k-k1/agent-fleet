@@ -70,6 +70,9 @@ var Entries = []string{
 	// A move target's first prompt until it is known to have arrived (session_move_deliver.go).
 	// Introduced directly under AgentStateDir.
 	"session-move-delivery",
+	// What the PR feedback watch told about each PR (sessionx pr_feedback.go). Introduced
+	// directly under AgentStateDir.
+	"pr-feedback",
 	// Per-session kiro ACP recorder files (agents/kiro recorder.go). Recreated at every
 	// launch, so nothing is lost by leaving it behind; listed because the drift test
 	// requires every store under AgentStateDir to be named. Introduced directly under

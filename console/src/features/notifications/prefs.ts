@@ -64,6 +64,8 @@ const KIND_ROW: Record<string, NotifyRow> = {
   "pr-ready": "pull-request",
   "pr-merged": "pull-request",
   "pr-closed": "pull-request",
+  "pr-feedback": "pull-request",
+  "pr-conflict": "pull-request",
   "rate-limit-reached": "rate-limit",
   "rate-limit-resumed": "rate-limit",
   "schedule-failed": "schedule",
