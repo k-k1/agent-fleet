@@ -197,7 +197,7 @@ const submittedTTL = lateEraseTTL
 // rememberSubmitted is called after a send was typed and submitted. Entries expire after
 // submittedTTL and are swept on the next store, so a deleted session's entry does not outlive it
 // by more than that.
-func rememberSubmitted(name, pane, text string) {
+func rememberSubmitted(name, pane, text string) submittedPrompt {
 	now := time.Now()
 	submittedPrompts.Range(func(k, v any) bool {
 		if now.Sub(v.(submittedPrompt).at) > submittedTTL {
@@ -205,17 +205,16 @@ func rememberSubmitted(name, pane, text string) {
 		}
 		return true
 	})
-	submittedPrompts.Store(name, submittedPrompt{pane: pane, text: text, at: now})
+	sp := submittedPrompt{pane: pane, text: text, at: now}
+	submittedPrompts.Store(name, sp)
+	return sp
 }
 
-// forgetSubmitted drops the entry rememberSubmitted stored for text when the Enter that would
-// have submitted it failed, so nothing claims a prompt that never ran.
-func forgetSubmitted(name, pane, text string) {
-	if v, ok := submittedPrompts.Load(name); ok {
-		if sp := v.(submittedPrompt); sp.pane == pane && sp.text == text {
-			submittedPrompts.CompareAndDelete(name, v)
-		}
-	}
+// forgetSubmitted drops exactly the entry rememberSubmitted returned when the Enter that would
+// have submitted it failed. It compares the whole stored value (time included), so an equal-text
+// entry a concurrent send stored meanwhile is never removed.
+func forgetSubmitted(name string, sp submittedPrompt) {
+	submittedPrompts.CompareAndDelete(name, sp)
 }
 
 // takeSubmitted consumes the session's remembered submission and returns its text when it was

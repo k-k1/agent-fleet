@@ -782,3 +782,20 @@ exit 0
 		t.Fatalf("a prompt whose Enter failed stayed remembered: %q", got)
 	}
 }
+
+// A failed Enter takes back only its own entry: an equal-text entry a later send stored stays.
+func TestForgetSubmittedKeepsALaterEqualEntry(t *testing.T) {
+	t.Cleanup(func() { submittedPrompts.Delete("forget_own") })
+	a := rememberSubmitted("forget_own", "%7", "X")
+	time.Sleep(2 * time.Millisecond)
+	rememberSubmitted("forget_own", "%7", "X")
+	forgetSubmitted("forget_own", a)
+	if got := takeSubmitted("forget_own", "%7"); got != "X" {
+		t.Fatalf("the later send's entry was removed: %q", got)
+	}
+	b := rememberSubmitted("forget_own", "%7", "X")
+	forgetSubmitted("forget_own", b)
+	if got := takeSubmitted("forget_own", "%7"); got != "" {
+		t.Fatalf("own entry stayed: %q", got)
+	}
+}
