@@ -844,7 +844,22 @@ func typeLineAndSubmit(name, pane, text string) error {
 		delay = 200 * time.Millisecond
 	}
 	time.Sleep(delay)
+	// Remembered before the Enter, not after: a stop that lands right after the Enter (the
+	// initial prompt and retries do not hold the terminal lock) must find the entry to consume,
+	// or it reclaims nothing and the entry stored afterwards would outlive the stop. A stop that
+	// lands before the Enter sees a draft in the box and takes nothing. A slash command starts no
+	// turn and must not replace the prompt a stop could interrupt (issue #3345).
+	var mine *submittedPrompt
+	if !slashCmdRe.MatchString(strings.TrimSpace(text)) {
+		if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) {
+			sp := rememberSubmitted(name, pane, text)
+			mine = &sp
+		}
+	}
 	if out, err := tmuxx.Cmd("send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
+		if mine != nil {
+			forgetSubmitted(name, *mine)
+		}
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	return nil

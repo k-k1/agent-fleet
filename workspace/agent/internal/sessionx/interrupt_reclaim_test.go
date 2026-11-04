@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -618,10 +619,183 @@ func TestLateWatchSweepKeepsTheGuard(t *testing.T) {
 		e := v.(lateWatchEntry)
 		e.at = e.at.Add(-lateWatchKeep - time.Minute)
 		lateWatch.Store("turn_reclaim", e)
-		armLateWatch("other_session", "p")
+		armLateWatch("other_session", "p", "")
 		t.Cleanup(func() { lateWatch.Delete("other_session") })
 	})
 	if code != http.StatusConflict || !strings.Contains(body, "stopped_prompt_in_box") || strings.Join(keys, ",") != "Escape" {
 		t.Fatalf("status = %d, body = %s, keys = %v", code, body, keys)
+	}
+}
+
+// firstPromptRun stops a session whose transcript yields no prompt (the first prompt, issue
+// #3345) after the Agent submitted submitted into pane "%7"; the box then shows the paneAt(esc).
+func firstPromptRun(t *testing.T, submitted string, age time.Duration, pane func(int) string) string {
+	t.Helper()
+	logPath := fakeTmux(t)
+	stubReclaim(t, logPath, "", pane)
+	t.Cleanup(func() { submittedPrompts.Delete("first_prompt"); lateWatch.Delete("first_prompt") })
+	if submitted != "" {
+		rememberSubmitted("first_prompt", "%7", submitted)
+		v, _ := submittedPrompts.Load("first_prompt")
+		sp := v.(submittedPrompt)
+		sp.at = sp.at.Add(-age)
+		submittedPrompts.Store("first_prompt", sp)
+	}
+	m := session.Meta{Name: "first_prompt", Dir: t.TempDir(), Kind: session.KindClaude}
+	// The stop key itself, which also creates the fake tmux log the pane stub counts from.
+	if err := sendNamedKeys("%7", []string{"Escape"}); err != nil {
+		t.Fatal(err)
+	}
+	return reclaimInterruptedPrompt(m, "%7", true)
+}
+
+func restoredPaneSteps(esc int) string {
+	switch esc {
+	case 0, 1:
+		return paneRestored
+	case 2:
+		return paneClearArmed
+	}
+	return paneEmpty
+}
+
+// With no transcript prompt, the Agent's own fresh submission is reclaimed.
+func TestReclaimFirstPromptFromOwnSubmission(t *testing.T) {
+	if got := firstPromptRun(t, "SLOW 再レビュー", time.Second, restoredPaneSteps); got != "SLOW 再レビュー" {
+		t.Fatalf("restored = %q", got)
+	}
+}
+
+// A submission that is too old, or that the box does not hold exactly, is never erased.
+func TestReclaimFirstPromptRefusesStaleOrDifferent(t *testing.T) {
+	if got := firstPromptRun(t, "SLOW 再レビュー", submittedTTL+time.Minute, restoredPaneSteps); got != "" {
+		t.Fatalf("stale submission reclaimed: %q", got)
+	}
+	if got := firstPromptRun(t, "another prompt", time.Second, restoredPaneSteps); got != "" {
+		t.Fatalf("different text reclaimed: %q", got)
+	}
+}
+
+// A submission serves one stop only, and only its own pane.
+func TestSubmittedPromptIsConsumedAndPaneBound(t *testing.T) {
+	rememberSubmitted("s_consume", "%7", "x")
+	t.Cleanup(func() { submittedPrompts.Delete("s_consume") })
+	if takeSubmitted("s_consume", "%1") != "" {
+		t.Fatal("taken for another pane")
+	}
+	rememberSubmitted("s_consume", "%7", "x")
+	if takeSubmitted("s_consume", "%7") != "x" || takeSubmitted("s_consume", "%7") != "" {
+		t.Fatal("must be taken exactly once")
+	}
+}
+
+// The transcript's copy wins when the box matches it.
+func TestMatchingPromptPrefersTheTranscript(t *testing.T) {
+	if got := matchingPrompt(paneRestored, "SLOW 再レビュー", "SLOW  再レビュー"); got != "SLOW 再レビュー" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// The late re-check at the next send uses the same fallback (issue #3345).
+func TestLateRestoreClearsOwnSubmission(t *testing.T) {
+	logPath := fakeTmux(t)
+	stubReclaim(t, logPath, "", func(esc int) string {
+		switch esc {
+		case 1:
+			return paneRestored
+		case 2:
+			return paneClearArmed
+		}
+		return paneEmpty
+	})
+	if err := sendNamedKeys("%7", []string{"Escape"}); err != nil { // the stop; creates the log
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "late_first", Dir: t.TempDir(), Kind: session.KindClaude})
+	t.Cleanup(func() { lateWatch.Delete("late_first") })
+	armLateWatch("late_first", "%7", "SLOW 再レビュー")
+	if lateRestoredBlocks("late_first", "%7") {
+		t.Fatal("send refused; the own submission should have been cleared")
+	}
+	reclaimCapture = func(string) string { return paneRestored } // restored by stubReclaim's cleanup
+	armLateWatch("late_first", "%7", "")
+	if !lateRestoredBlocks("late_first", "%7") {
+		t.Fatal("without a known prompt the send must stay refused")
+	}
+}
+
+// Every Agent-side submission path ends in typeLineAndSubmit (initial_prompt, sends, delivery
+// retries), and that is what must remember the text; a slash command must not replace it.
+func TestTypeLineAndSubmitRemembersTheSubmission(t *testing.T) {
+	fakeTmux(t)
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	session.WriteMeta(session.Meta{Name: "remember_me", Dir: t.TempDir(), Kind: session.KindClaude})
+	t.Cleanup(func() { submittedPrompts.Delete("remember_me") })
+	if err := typeLineAndSubmit("remember_me", "%7", "the first task"); err != nil {
+		t.Fatal(err)
+	}
+	if err := typeLineAndSubmit("remember_me", "%7", "/remote-control"); err != nil {
+		t.Fatal(err)
+	}
+	if got := takeSubmitted("remember_me", "%7"); got != "the first task" {
+		t.Fatalf("remembered %q, want the prompt, not the slash command", got)
+	}
+}
+
+// The submission is remembered before the Enter goes out, so a stop that runs right after the
+// Enter without the terminal lock always finds it; a failed Enter takes it back.
+func TestSubmissionIsRememberedBeforeTheEnter(t *testing.T) {
+	logPath := fakeTmux(t)
+	bin := filepath.Dir(logPath)
+	gate := filepath.Join(bin, "go")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  list-panes) printf '1 %%7\n' ;;
+  send-keys) case "$*" in *Enter) while [ ! -e "` + gate + `" ]; do sleep 0.01; done; [ -e "` + gate + `.fail" ] && exit 1 ;; esac ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "before_enter", Dir: t.TempDir(), Kind: session.KindClaude})
+	t.Cleanup(func() { submittedPrompts.Delete("before_enter") })
+	done := make(chan error, 1)
+	go func() { done <- typeLineAndSubmit("before_enter", "%7", "first task") }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := submittedPrompts.Load("before_enter"); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("not remembered while the Enter was still pending")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	os.WriteFile(gate+".fail", nil, 0o644)
+	os.WriteFile(gate, nil, 0o644)
+	if err := <-done; err == nil {
+		t.Fatal("expected the failing Enter to be reported")
+	}
+	if got := takeSubmitted("before_enter", "%7"); got != "" {
+		t.Fatalf("a prompt whose Enter failed stayed remembered: %q", got)
+	}
+}
+
+// A failed Enter takes back only its own entry: an equal-text entry a later send stored stays.
+func TestForgetSubmittedKeepsALaterEqualEntry(t *testing.T) {
+	t.Cleanup(func() { submittedPrompts.Delete("forget_own") })
+	a := rememberSubmitted("forget_own", "%7", "X")
+	time.Sleep(2 * time.Millisecond)
+	rememberSubmitted("forget_own", "%7", "X")
+	forgetSubmitted("forget_own", a)
+	if got := takeSubmitted("forget_own", "%7"); got != "X" {
+		t.Fatalf("the later send's entry was removed: %q", got)
+	}
+	b := rememberSubmitted("forget_own", "%7", "X")
+	forgetSubmitted("forget_own", b)
+	if got := takeSubmitted("forget_own", "%7"); got != "" {
+		t.Fatalf("own entry stayed: %q", got)
 	}
 }

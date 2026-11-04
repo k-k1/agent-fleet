@@ -144,8 +144,10 @@ func restoredDraft(captured, prompt string) bool {
 // it is left alone. Text the stop left in the box that could not be taken out marks the session
 // in strandedPrompts. The caller holds the session's terminal lock (lockTerminal).
 func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) string {
-	// A new stop supersedes whatever an earlier one armed.
+	// A new stop supersedes whatever an earlier one armed. The remembered submission belongs to
+	// this stop alone, whatever the stop finds.
 	lateWatch.Delete(m.Name)
+	own := takeSubmitted(m.Name, pane)
 	if !emptyBefore || !restoresInterruptedPrompt(m.Kind) {
 		return ""
 	}
@@ -154,8 +156,9 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 	// reads the transcript before that, finding the previous prompt or none.
 	for waited := time.Duration(0); waited < reclaimWindow; waited += reclaimPoll {
 		reclaimSleep(reclaimPoll)
-		prompt := interruptedPrompt(m)
-		if strings.TrimSpace(prompt) == "" || !restoredDraft(reclaimCapture(pane), prompt) {
+		captured := reclaimCapture(pane)
+		prompt := matchingPrompt(captured, interruptedPrompt(m), own)
+		if prompt == "" {
 			continue
 		}
 		if clearComposer(pane, prompt) {
@@ -169,7 +172,75 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 	} else {
 		// The box reads empty now, but claude may restore the prompt after the window on a slow
 		// host: the next send looks again (lateRestoredBlocks).
-		armLateWatch(m.Name, pane)
+		armLateWatch(m.Name, pane, own)
+	}
+	return ""
+}
+
+// submittedPrompt is the text the Agent last typed and submitted into a session's pane.
+type submittedPrompt struct {
+	pane, text string
+	at         time.Time
+}
+
+// submittedPrompts holds, per session, the Agent's latest submission (rememberSubmitted). It is
+// the fallback source of a stopped prompt for the one case the transcript cannot serve: the
+// session's first prompt, which claude has not logged (no transcript file or no user line yet)
+// when the stop reads it (issue #3345).
+var submittedPrompts sync.Map
+
+// submittedTTL bounds how old a submission may be and still be taken for the prompt a stop
+// interrupted; the stop of a turn the member has been watching for longer is not "before the
+// first streamed byte".
+const submittedTTL = lateEraseTTL
+
+// rememberSubmitted is called after a send was typed and submitted. Entries expire after
+// submittedTTL and are swept on the next store, so a deleted session's entry does not outlive it
+// by more than that.
+func rememberSubmitted(name, pane, text string) submittedPrompt {
+	now := time.Now()
+	submittedPrompts.Range(func(k, v any) bool {
+		if now.Sub(v.(submittedPrompt).at) > submittedTTL {
+			submittedPrompts.CompareAndDelete(k, v)
+		}
+		return true
+	})
+	sp := submittedPrompt{pane: pane, text: text, at: now}
+	submittedPrompts.Store(name, sp)
+	return sp
+}
+
+// forgetSubmitted drops exactly the entry rememberSubmitted returned when the Enter that would
+// have submitted it failed. It compares the whole stored value (time included), so an equal-text
+// entry a concurrent send stored meanwhile is never removed.
+func forgetSubmitted(name string, sp submittedPrompt) {
+	submittedPrompts.CompareAndDelete(name, sp)
+}
+
+// takeSubmitted consumes the session's remembered submission and returns its text when it was
+// made for this pane and is recent; otherwise "". Consuming it makes a submission serve the
+// first stop after it only: a later stop of text the member typed themselves, which happens to
+// equal it, never matches.
+func takeSubmitted(name, pane string) string {
+	v, ok := submittedPrompts.LoadAndDelete(name)
+	if !ok {
+		return ""
+	}
+	sp := v.(submittedPrompt)
+	if sp.pane != pane || time.Since(sp.at) > submittedTTL {
+		return ""
+	}
+	return sp.text
+}
+
+// matchingPrompt picks which known prompt the box holds exactly. The transcript's copy wins when
+// it matches (after a completed turn it is the truth); the Agent's own submission only stands in
+// when it does not. "" means the box holds neither.
+func matchingPrompt(captured string, candidates ...string) string {
+	for _, c := range candidates {
+		if strings.TrimSpace(c) != "" && restoredDraft(captured, c) {
+			return c
+		}
 	}
 	return ""
 }
@@ -178,6 +249,8 @@ func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) str
 type lateWatchEntry struct {
 	pane string
 	at   time.Time
+	// own is the Agent's submission this stop consumed (takeSubmitted), "" when none.
+	own string
 }
 
 // lateWatch holds, per session, a stop that ended its watch window with the box empty and no
@@ -193,7 +266,7 @@ const (
 	lateWatchKeep = time.Hour
 )
 
-func armLateWatch(name, pane string) {
+func armLateWatch(name, pane, own string) {
 	now := time.Now()
 	lateWatch.Range(func(k, v any) bool {
 		if now.Sub(v.(lateWatchEntry).at) > lateWatchKeep {
@@ -205,7 +278,7 @@ func armLateWatch(name, pane string) {
 		}
 		return true
 	})
-	lateWatch.Store(name, lateWatchEntry{pane: pane, at: now})
+	lateWatch.Store(name, lateWatchEntry{pane: pane, at: now, own: own})
 }
 
 // lateRestoredBlocks is the send-time half of the reclaim, for a prompt that reappeared after
@@ -226,8 +299,8 @@ func lateRestoredBlocks(name, pane string) bool {
 	}
 	if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) &&
 		time.Since(v.(lateWatchEntry).at) <= lateEraseTTL {
-		if prompt := interruptedPrompt(m); strings.TrimSpace(prompt) != "" &&
-			restoredDraft(captured, prompt) && clearComposer(pane, prompt) {
+		if prompt := matchingPrompt(captured, interruptedPrompt(m), v.(lateWatchEntry).own); prompt != "" &&
+			clearComposer(pane, prompt) {
 			return false
 		}
 	}
