@@ -382,8 +382,10 @@ those variables in for one `exec`:
   `board`, `sprint`, `epic` and `init` and then runs jira unchanged.
 - **Links on OAuth**: jira-cli builds browse URLs from its server, so with OAuth they point at
   `api.atlassian.com/ex/jira/...` rather than the site.
-- **Pin**: `JIRA_CLI_VERSION` in the Dockerfile (v1.7.0, the latest release). The tarball must
-  match the release's `checksums.txt`. Measured against a stub: v1.7.0 garbles multi-byte text
+- **Pin**: `JIRA_CLI_VERSION` and `JIRA_CLI_COMMIT` in the Dockerfile (v1.7.0, the latest release).
+  The `jirabuild` stage clones that tag, fails unless HEAD equals `JIRA_CLI_COMMIT`, bumps
+  `x/net` / `x/text` / `goldmark`, and builds with the pinned `GO_VERSION` (the release tarball is
+  go1.24.1 and carries the #3339 findings). Measured against a stub: v1.7.0 garbles multi-byte text
   only on the Data Center path (`/rest/api/2`, wiki markup). The Cloud path (`/rest/api/3`,
   ADF) renders Japanese correctly, so there is no reason to build `main` from source while the
   connection is Cloud-only. The image smoke checks the pinned version.

@@ -221,7 +221,10 @@ Jira は git でなく作業項目インボックス
 `jira`（[ankitpokhrel/jira-cli](https://github.com/ankitpokhrel/jira-cli)）は、どのエージェント
 種別にも `gh` / `bkt` と同じ形で Jira 操作を渡すためのもの。課題の表示・一覧・作成・編集・
 コメント・遷移に加えて、ボード・スプリント・エピックも扱える。実体は `/usr/local/libexec/jira`、
-`/usr/local/bin/jira` は `workspace/jira-auth-wrapper.sh`。jira-cli はトークンを
+`/usr/local/bin/jira` は `workspace/jira-auth-wrapper.sh`。
+バイナリは Dockerfile の `jirabuild` ステージで、固定したタグを固定の Go と更新した
+`x/net` / `x/text` / `goldmark` でビルドしたもの（上流の最新リリース 1.7.0 は go1.24.1 製で、
+#3339 の指摘を抱えている）。`JIRA_CLI_COMMIT` でタグのコミットを固定する。jira-cli はトークンを
 `JIRA_API_TOKEN` から読み、設定ファイルの値は環境変数（`JIRA_SERVER` / `JIRA_LOGIN` /
 `JIRA_AUTH_TYPE` / `JIRA_INSTALLATION`）がキーごとに上書きする。ラッパーは実行のたびに
 `workspace-agent jira-cred`（`workspace/agent/internal/jirax/jira_cred.go`）に尋ね、実 jira を exec する
@@ -353,8 +356,10 @@ Jira は git でなく作業項目インボックス
   jira を実行する。
 - **OAuth のリンク**: jira-cli はブラウザ用 URL をサーバーから組み立てるので、OAuth では
   サイトではなく `api.atlassian.com/ex/jira/...` を指す。
-- **版の固定**: Dockerfile の `JIRA_CLI_VERSION`（v1.7.0、最新リリース）。tarball はリリースの
-  `checksums.txt` と一致しなければならない。スタブで実測したところ、v1.7.0 がマルチバイト文字を
+- **版の固定**: Dockerfile の `JIRA_CLI_VERSION` と `JIRA_CLI_COMMIT`（v1.7.0、最新リリース）。
+  `jirabuild` ステージがそのタグを clone し、HEAD が `JIRA_CLI_COMMIT` と一致しなければ失敗し、
+  `x/net` / `x/text` / `goldmark` を更新して固定した `GO_VERSION` でビルドする（リリース tarball は
+  go1.24.1 製で #3339 の指摘を抱える）。スタブで実測したところ、v1.7.0 がマルチバイト文字を
   化かすのは Data Center の経路（`/rest/api/2`、wiki 記法）だけで、Cloud の経路
   （`/rest/api/3`、ADF）は日本語を正しく表示した。接続が Cloud 専用である限り、`main` を
   ソースからビルドする理由はない。イメージのスモークが固定した版を確認する。

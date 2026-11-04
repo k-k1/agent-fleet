@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -75,6 +76,24 @@ func runPagerDutyMCP(extra []string) {
 	}
 }
 
+// withEnv returns base with every KEY=value in kv set exactly once. Appending to
+// os.Environ() would leave a duplicate name, and a Go child's os.Getenv takes the
+// FIRST one, so an inherited value would silently beat the injected one.
+func withEnv(base []string, kv ...string) []string {
+	drop := make(map[string]bool, len(kv))
+	for _, e := range kv {
+		k, _, _ := strings.Cut(e, "=")
+		drop[k] = true
+	}
+	out := make([]string, 0, len(base)+len(kv))
+	for _, e := range base {
+		if k, _, _ := strings.Cut(e, "="); !drop[k] {
+			out = append(out, e)
+		}
+	}
+	return append(out, kv...)
+}
+
 // runGrafanaMCP execs the mcp-grafana binary (baked into the image) with the
 // stored URL + service-account token injected as env. Read-only is enforced
 // here, not in the MCP config: -disable-write -disable-admin are always
@@ -91,7 +110,7 @@ func runGrafanaMCP(extra []string) {
 		fmt.Fprintln(os.Stderr, "mcp-run grafana: no Grafana connection configured")
 		os.Exit(1)
 	}
-	env := append(os.Environ(),
+	env := withEnv(os.Environ(),
 		"GRAFANA_URL="+s.Grafana.URL,
 		"GRAFANA_SERVICE_ACCOUNT_TOKEN="+s.Grafana.Token,
 		// mcp-grafana 2.x reports anonymous usage statistics unless told not to;
