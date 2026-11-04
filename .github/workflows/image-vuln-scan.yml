@@ -1,0 +1,177 @@
+# Detect security fixes the published images are missing (#3320).
+#
+# The images build from floating base tags with no `apt-get upgrade`, and the Go binaries
+# only pick up a new standard library when rebuilt, so a release carries whatever was
+# current at build time and nothing moves afterwards. This workflow scans what was actually
+# PUBLISHED and keeps one tracking issue open while a fix exists that the release lacks:
+#
+#   - the control-plane and workspace images (ghcr.io/k-k1/agent-fleet/<name>:<version>,
+#     the tags deploy/compose/release.sh pushes) with Trivy
+#   - the native rootfs (dist repo release v<version>) with Trivy
+#   - the CP binary (native package bin/af-cp) and the Agent binary (rootfs
+#     usr/local/bin/workspace-agent) with `govulncheck -mode=binary`
+#
+# "Latest published" is the highest vX.Y.Z non-draft, non-prerelease release of the dist
+# repo, which is where publish-dist.sh puts every version; the images carry the same
+# version as their tag. A patch release 0.x.y+1 cut from an older line is therefore not
+# the one scanned once a newer minor exists, which is intended: the newest line is what
+# deployments run.
+#
+# The verdict and issue text come from deploy/local/vuln-scan-report.py and
+# vuln-scan-issue.sh (tested by vuln-scan-report-test.sh). A scanner that cannot run, a
+# download that fails or an output that is not the scanner's makes the run RED; it never
+# counts as clean and never closes the issue.
+#
+# How to turn the issue into a patch release: docs/build/94-patch-release.md.
+#
+# Note: schedule and workflow_run use the workflow definition of the default branch (main).
+name: image-vuln-scan
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # weekly, Monday
+  # Right after each publish, so a release that shipped with a known fix pending is flagged
+  # at once, and a patch release closes the issue without waiting for Monday.
+  workflow_run:
+    workflows: [publish-dist]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to scan (default: the latest published release)'
+        required: false
+
+permissions:
+  contents: read
+  issues: write # open / update / close the one tracking issue
+
+concurrency:
+  group: image-vuln-scan
+  cancel-in-progress: false
+
+env:
+  DIST_REPO: k-k1/agent-fleet-dist
+  IMAGE_REPO: ghcr.io/k-k1/agent-fleet
+  # Pinned by version AND hash: a tool that cannot be fetched or does not match fails the
+  # run instead of scanning with something else. Bump the two together.
+  TRIVY_VERSION: "0.76.1"
+  TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+  GOVULNCHECK_VERSION: v1.9.0
+
+jobs:
+  scan:
+    # A failed publish ships nothing new to scan.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: resolve the latest published release
+        id: rel
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          else
+            version="$(gh api --paginate "repos/$DIST_REPO/releases" \
+              --jq '.[] | select((.draft | not) and (.prerelease | not)) | .tag_name' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)"
+          fi
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::could not resolve a release version (got '$version')"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "scanning $version"
+
+      - name: install Trivy (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/dl"
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/dl/$f" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "$TRIVY_SHA256  $RUNNER_TEMP/dl/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/dl/$f" -C "$RUNNER_TEMP/bin" trivy
+          "$RUNNER_TEMP/bin/trivy" --version
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false # no go.sum in play: govulncheck is installed from a pinned module version
+
+      - name: install govulncheck (pinned)
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          test -x "$RUNNER_TEMP/bin/govulncheck"
+
+      - name: fetch the native package and rootfs of the release
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/native"; mkdir -p "$d/rootfs" "$d/pkg"
+          gh release download "v$VERSION" -R "$DIST_REPO" -D "$d" \
+            -p "agent-fleet-native-$VERSION-linux-amd64.tar.gz" \
+            -p 'agent-fleet-rootfs-*-linux-amd64.tar.zst'
+          # The package ships its own static zstd; the runner may not have one.
+          tar -xzf "$d/agent-fleet-native-$VERSION-linux-amd64.tar.gz" -C "$d/pkg" --strip-components=1 \
+            "agent-fleet-native-$VERSION-linux-amd64/bin/af-cp" \
+            "agent-fleet-native-$VERSION-linux-amd64/bin/zstd"
+          "$d/pkg/bin/zstd" -dc "$d"/agent-fleet-rootfs-*-linux-amd64.tar.zst \
+            | tar -x --no-same-owner --no-same-permissions -C "$d/rootfs"
+          test -x "$d/rootfs/usr/local/bin/workspace-agent"
+
+      - name: scan
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/scan"; mkdir -p "$out"
+          d="$RUNNER_TEMP/native"
+          trivy() { "$RUNNER_TEMP/bin/trivy" "$@" --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 0 --timeout 20m --format json; }
+          trivy image --platform linux/amd64 --output "$out/control-plane.json" "$IMAGE_REPO/control-plane:$VERSION"
+          trivy image --platform linux/amd64 --output "$out/workspace.json" "$IMAGE_REPO/workspace:$VERSION"
+          trivy rootfs --output "$out/rootfs.json" "$d/rootfs"
+          # govulncheck exits 3 when it finds something; 0 and 3 are both a completed scan.
+          gv() { rc=0; "$RUNNER_TEMP/bin/govulncheck" -mode=binary -format json "$2" > "$1" || rc=$?
+                 [ "$rc" = 0 ] || [ "$rc" = 3 ] || { echo "::error::govulncheck failed on $2 (exit $rc)"; exit 1; }; }
+          gv "$out/af-cp.json" "$d/pkg/bin/af-cp"
+          gv "$out/workspace-agent.json" "$d/rootfs/usr/local/bin/workspace-agent"
+
+      - name: build the report
+        id: report
+        env:
+          VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/scan"
+          python3 -I deploy/local/vuln-scan-report.py --release "$VERSION" --out "$out/body.md" \
+            --trivy "control-plane image=$out/control-plane.json" \
+            --trivy "workspace image=$out/workspace.json" \
+            --trivy "native rootfs=$out/rootfs.json" \
+            --govulncheck "af-cp (control plane binary)=$out/af-cp.json" \
+            --govulncheck "workspace-agent (agent binary)=$out/workspace-agent.json" \
+            | tee -a "$GITHUB_OUTPUT"
+          { echo "## image-vuln-scan $VERSION"; echo; cat "$out/body.md"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: open, update or close the tracking issue
+        env:
+          FIXABLE: ${{ steps.report.outputs.fixable }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: deploy/local/vuln-scan-issue.sh sync "$RUNNER_TEMP/scan/body.md" "$FIXABLE" "$RUN_URL"
+
+      # Scanner JSON only (public advisories); the issue shows the first rows, this the rest.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: vuln-scan-${{ steps.rel.outputs.version }}
+          path: ${{ runner.temp }}/scan/*.json
+          if-no-files-found: ignore
+          retention-days: 14

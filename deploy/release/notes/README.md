@@ -147,3 +147,7 @@ Steps 3-5 exist because the version→commit mapping used to be recoverable only
 the `publish-dist` workflow runs' `head_sha`. Releases 0.1.0-0.2.3 were reconstructed
 that way and tagged retroactively; keep the ledger and the tags current so that never
 has to be repeated.
+
+A patch release built from the last tag (`0.x.y+1`, a refreshed base image and Go toolchain
+only) uses the same steps on a release branch: see
+[docs/build/94](../../../docs/build/94-patch-release.md).

@@ -383,6 +383,10 @@ npm --prefix console run build
   it on the packaging branch (see
   [deploy/release/notes](../../deploy/release/notes/README.md)).
 
+  `image-vuln-scan.yml` (weekly, and after each `publish-dist`) scans the latest published images
+  and keeps one tracking issue; how that issue becomes a patch release is
+  [94](94-patch-release.md).
+
   Both `release-gate.yml` and `publish-dist.yml` also list the open `cli-drift` issues as
   warnings and in the job summary (`deploy/release/cli-drift-warn.sh`). It only warns: drift is
   the steady state, so it never fails a release, and a failed listing is itself a warning.

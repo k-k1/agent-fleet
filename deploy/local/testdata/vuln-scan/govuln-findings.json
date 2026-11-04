@@ -1,0 +1,9 @@
+{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scan_mode":"binary"}}
+{"progress":{"message":"Scanning your binary for known vulnerabilities..."}}
+{"osv":{"id":"GO-2099-0001","aliases":["CVE-2099-1001"],"summary":"x"}}
+{"osv":{"id":"GO-2099-0002","summary":"y"}}
+{"osv":{"id":"GO-2099-0003","summary":"unfixed"}}
+{"finding":{"osv":"GO-2099-0001","fixed_version":"v0.62.0","trace":[{"module":"golang.org/x/net","version":"v0.61.0"}]}}
+{"finding":{"osv":"GO-2099-0001","fixed_version":"v0.62.0","trace":[{"module":"golang.org/x/net","version":"v0.61.0"}]}}
+{"finding":{"osv":"GO-2099-0002","fixed_version":"go1.26.9","trace":[{"module":"stdlib","version":"go1.26.0"}]}}
+{"finding":{"osv":"GO-2099-0003","trace":[{"module":"example.com/m","version":"v1.0.0"}]}}

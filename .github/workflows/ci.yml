@@ -469,6 +469,10 @@ jobs:
       # (missing for one architecture, unreadable index) are pinned here on fixtures.
       - name: Debian package pin check (real script, fixture indexes)
         run: ./deploy/local/apt-pin-check-test.sh
+      # image-vuln-scan.yml's verdict and its one tracking issue (unreadable scanner output is an
+      # error, never clean; a re-scan with the same findings changes nothing) — docs/build/94.
+      - name: image vulnerability scan report + issue sync (real scripts, fixtures, fake gh)
+        run: ./deploy/local/vuln-scan-report-test.sh
       # The pin-bump PR is opened unattended; what it proposes (never a downgrade, nothing on
       # an unreadable index) is decided here, so it is tested here.
       - name: Debian package pin bump (real scripts, fixture indexes)
