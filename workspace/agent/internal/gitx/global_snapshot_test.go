@@ -230,3 +230,31 @@ func TestSnapshotStatusNotCachedAcrossAnEdit(t *testing.T) {
 		t.Errorf("after the edit the list says untracked = %d, want 1", st.Untracked)
 	}
 }
+
+// A held generation's release after its root was replaced (cleaned away, then recreated as a
+// symlink by someone else) must not delete through the old path.
+func TestReleaseNeverDeletesThroughAReplacedRoot(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	s := &globalSnapshot{}
+	envA, relA := s.env(nil, []byte("[a]\n"))
+	gen := filepath.Dir(snapshotPath(t, envA, relA))
+	root := filepath.Dir(gen)
+	victim := t.TempDir()
+	sentinel := filepath.Join(victim, filepath.Base(gen), "keep")
+	writeFile(t, sentinel, "x")
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, root); err != nil {
+		t.Fatal(err)
+	}
+	envB, relB := s.env(nil, []byte("[b]\n"))
+	if strings.HasPrefix(snapshotPath(t, envB, relB), root+string(filepath.Separator)) {
+		t.Fatal("the replaced root was reused")
+	}
+	relA()
+	if !exists(sentinel) {
+		t.Fatal("the old release deleted through the replaced root")
+	}
+	relB()
+}

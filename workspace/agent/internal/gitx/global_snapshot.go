@@ -72,8 +72,8 @@ func (s *globalSnapshot) env(xdg, home []byte) (env []string, release func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.dir != "" && !privateDir(s.dir) {
-		// Never reuse a path we no longer own. Generations still held there are left to
-		// their holders' releases, which only delete inside the directory they came from.
+		// Never reuse a path we no longer own. Generations still held there are left
+		// alone: their releases only drop the count, and never touch that path again.
 		s.dir, s.cur = "", ""
 	}
 	if s.dir == "" {
@@ -96,7 +96,7 @@ func (s *globalSnapshot) env(xdg, home []byte) (env []string, release func()) {
 			return nil, func() {}
 		}
 	}
-	refs := s.refs
+	refs, root := s.refs, s.dir
 	refs[gen]++
 	if gen != s.cur {
 		old := s.cur
@@ -116,7 +116,12 @@ func (s *globalSnapshot) env(xdg, home []byte) (env []string, release func()) {
 				return
 			}
 			delete(refs, gen)
-			_ = os.RemoveAll(gen)
+			// Touch the disk only inside the root we still use and still own. An abandoned
+			// root's path may now lead elsewhere (replaced by a symlink), and RemoveAll
+			// through it would delete whatever is there.
+			if root == s.dir && privateDir(root) {
+				_ = os.RemoveAll(gen)
+			}
 		})
 	}
 }
