@@ -31,7 +31,7 @@ Weekly (Monday), after every successful `publish-dist` run, and on dispatch
 `<version>` is the highest `vX.Y.Z` non-draft, non-prerelease release of the dist repo. The
 Every target is scanned for amd64 and, when that version published it, for arm64
 (`publish-dist` builds the arm64 halves only on request, so each is looked up: an index entry for
-the images, the `linux-arm64` assets for the native package and rootfs). Nothing is executed, so
+the images, the `linux-arm64` native package, whose own `rootfs.json` names the rootfs: that may be one an earlier release published, so it is resolved from there and its sha256 checked). Nothing is executed, so
 both run on the same runner: Trivy reads the arm64 layers and `govulncheck` reads the arm64 binary's
 build info. A half that was not published is skipped; a lookup that fails is a red run, not a skip.
 The architectures are matrix legs of one `scan` job; a single `report` job merges them, so exactly

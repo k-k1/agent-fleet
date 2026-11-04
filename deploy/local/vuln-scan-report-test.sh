@@ -116,6 +116,24 @@ report --trivy "image@amd64=$FX/trivy-findings.json" --trivy "image@arm64=$WORK/
 report --govulncheck "bin@amd64=$FX/govuln-findings.json" --govulncheck "bin@arm64=$FX/govuln-findings.json"
 [ "$(cat "$WORK/out")" = "fixable=2" ] || fail "7d: govulncheck findings merge across architectures"
 
+# 7e. The rootfs a native package points at may live in an EARLIER release (publish-dist.sh
+# --rootfs-json reuse); the package's reference decides, and only this repo's asset is accepted.
+REF="$HERE/vuln-scan-rootfs-ref.py"
+SHA=$(printf 'a%.0s' $(seq 64))
+mkref() { printf '{"version":"x1","url":"%s","sha256":"%s"}' "$1" "$2" > "$WORK/rootfs.json"; }
+ref() { rc=0; python3 -I "$REF" k-k1/agent-fleet-dist "$1" < "$WORK/rootfs.json" > "$WORK/out" 2> "$WORK/err" || rc=$?; }
+B=https://github.com/k-k1/agent-fleet-dist/releases/download
+mkref "$B/v0.39.0/agent-fleet-rootfs-db7b97f5951a-linux-arm64.tar.zst" "$SHA"
+ref arm64; [ "$rc" = 0 ] && [ "$(cat "$WORK/out")" = "v0.39.0 agent-fleet-rootfs-db7b97f5951a-linux-arm64.tar.zst $SHA" ] || fail "7e: reused rootfs from an earlier release, rc=$rc"
+ref amd64; [ "$rc" = 1 ] || fail "7e: wrong architecture accepted"
+mkref "https://evil.example/k-k1/agent-fleet-dist/releases/download/v0.39.0/agent-fleet-rootfs-x-linux-arm64.tar.zst" "$SHA"
+ref arm64; [ "$rc" = 1 ] || fail "7e: foreign host accepted"
+mkref "$B/v0.39.0/../../x/agent-fleet-rootfs-x-linux-arm64.tar.zst" "$SHA"
+ref arm64; [ "$rc" = 1 ] || fail "7e: path trick accepted"
+mkref "$B/v0.39.0/agent-fleet-rootfs-x-linux-arm64.tar.zst" "nothex"
+ref arm64; [ "$rc" = 1 ] || fail "7e: bad sha accepted"
+echo '{}' > "$WORK/rootfs.json"; ref arm64; [ "$rc" = 1 ] || fail "7e: missing keys accepted"
+
 # 8-11. Issue sync against a fake gh backed by files: $FAKE/issue (body; present = open issue),
 # $FAKE/log (one line per mutating call).
 FAKE="$WORK/fake"; mkdir -p "$FAKE/bin"

@@ -29,7 +29,7 @@ issue を見てメンテナが決める。決定の記録: [#3320](https://githu
 
 `<version>` は dist repo の draft / prerelease でない `vX.Y.Z` のうち最大のもの。各対象は amd64 と、そのバージョンが
 公開していれば arm64 もスキャンする（`publish-dist` は arm64 を依頼されたときだけビルドするので、イメージは
-index の arm64 エントリ、native パッケージと rootfs は `linux-arm64` アセットの有無で確かめる）。何も実行しない
+index の arm64 エントリ、native パッケージは `linux-arm64` アセットの有無で確かめ、rootfs はパッケージ自身の `rootfs.json` が指す先（過去のリリースが公開したものの場合がある）を解決して sha256 を検証する）。何も実行しない
 ので両方とも同じランナーで走る: Trivy は arm64 のレイヤを読み、`govulncheck` は arm64 バイナリのビルド情報を読む。
 公開されていない側は飛ばし、確認自体が失敗したら飛ばさず赤にする。アーキテクチャは 1 つの `scan` ジョブの
 matrix で、Issue を書くのは両者をまとめる `report` ジョブ 1 つだけ。両方にある finding は 1 行で、**Arch** 列に

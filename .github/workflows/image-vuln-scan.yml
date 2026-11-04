@@ -99,6 +99,9 @@ jobs:
       # publish-dist builds the arm64 halves only when asked (control_plane_arm64,
       # workspace_arm64, native_arm64), so which exist is read from what was published.
       # Only "not there" skips an arm64 scan; a lookup that fails is red, never a skip.
+      # The native package alone decides the native half: its rootfs may be one an earlier
+      # release published (publish-dist.sh --rootfs-json), which `scan` resolves from the
+      # package's own rootfs.json and fails on if it cannot be had.
       - name: which arm64 halves were published
         id: arm
         env:
@@ -107,13 +110,11 @@ jobs:
         run: |
           set -euo pipefail
           assets="$(gh release view "v$VERSION" -R "$DIST_REPO" --json assets -q '.assets[].name')"
-          if grep -qxF "agent-fleet-native-$VERSION-linux-arm64.tar.gz" <<<"$assets" \
-             && grep -qE '^agent-fleet-rootfs-.*-linux-arm64\.tar\.zst$' <<<"$assets"; then
+          if grep -qxF "agent-fleet-native-$VERSION-linux-arm64.tar.gz" <<<"$assets"; then
             echo "native_arm64=true" >> "$GITHUB_OUTPUT"
           else
             echo "native_arm64=false" >> "$GITHUB_OUTPUT"
           fi
-          # The tag is an index with a linux/arm64 entry, or it is not published for arm64.
           for pair in cp_arm64:control-plane ws_arm64:workspace; do
             raw="$(docker buildx imagetools inspect --raw "$IMAGE_REPO/${pair#*:}:$VERSION")"
             if jq -e '.manifests? // [] | any(.platform.architecture == "arm64")' <<<"$raw" >/dev/null; then
@@ -168,16 +169,22 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           test -x "$RUNNER_TEMP/bin/govulncheck"
 
-      - name: download the native package and rootfs of the release
+      - name: download the native package and its rootfs
         if: ${{ env.DO_NATIVE == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           d="$RUNNER_TEMP/native"; mkdir -p "$d"
-          gh release download "v$VERSION" -R "$DIST_REPO" -D "$d" \
-            -p "agent-fleet-native-$VERSION-linux-$ARCH.tar.gz" \
-            -p "agent-fleet-rootfs-*-linux-$ARCH.tar.zst"
+          pkg="agent-fleet-native-$VERSION-linux-$ARCH"
+          gh release download "v$VERSION" -R "$DIST_REPO" -D "$d" -p "$pkg.tar.gz"
+          # The package names its rootfs, which may belong to an earlier release.
+          ref="$(tar -xzf "$d/$pkg.tar.gz" -O "$pkg/rootfs.json" \
+            | python3 -I deploy/local/vuln-scan-rootfs-ref.py "$DIST_REPO" "$ARCH")"
+          read -r tag name sha <<<"$ref"
+          gh release download "$tag" -R "$DIST_REPO" -D "$d" -p "$name"
+          echo "$sha  $d/$name" | sha256sum -c -
+          echo "$name" > "$d/rootfs.name"
 
       # What was downloaded is data. Nothing from it is executed here (not even the zstd the
       # package ships: the runner's own is used), and the rootfs is unpacked by a filter that
@@ -190,7 +197,7 @@ jobs:
           command -v zstd >/dev/null || sudo apt-get install -y --no-install-recommends zstd
           tar -xzf "$d/agent-fleet-native-$VERSION-linux-$ARCH.tar.gz" -C "$d/pkg" --strip-components=1 \
             "agent-fleet-native-$VERSION-linux-$ARCH/bin/af-cp"
-          zstd -dc "$d"/agent-fleet-rootfs-*-linux-"$ARCH".tar.zst \
+          zstd -dc "$d/$(cat "$d/rootfs.name")" \
             | python3 -I deploy/local/vuln-scan-extract.py "$d/rootfs"
           test -f "$d/rootfs/usr/local/bin/workspace-agent"
 
