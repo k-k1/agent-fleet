@@ -485,3 +485,107 @@ func TestInterruptReclaimsAPromptLoggedLate(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A multi-line prompt that claude restores as a paste placeholder is recognised by its line
+// count and cleared like any other (issue #3302, case 1).
+func TestInterruptReclaimsARestoredPastePlaceholder(t *testing.T) {
+	prompt := strings.Repeat("line\n", 50) + "end"
+	ph := func(hint string) string {
+		return hint + rule + "\n❯ [Pasted text #1 +50 lines]\n" + rule + "\n"
+	}
+	keys, restored, _ := runClaudeInterrupt(t, prompt, func(esc int) string {
+		switch esc {
+		case 0:
+			return paneWorking
+		case 1:
+			return ph("")
+		case 2:
+			return ph("                    Esc again to clear\n")
+		}
+		return paneEmpty
+	})
+	if restored != prompt || strings.Join(keys, ",") != "Escape,Escape,Escape" {
+		t.Fatalf("restored = %q, keys = %v", restored, keys)
+	}
+}
+
+// A placeholder whose line count does not fit the prompt is somebody else's paste.
+func TestPlaceholderNeedsAMatchingLineCount(t *testing.T) {
+	multi := strings.Repeat("x\n", 10) + "x"
+	for _, c := range []struct {
+		d, prompt string
+		want      bool
+	}{
+		{squashSpace("[Pasted text #1 +10 lines]"), multi, true},
+		{squashSpace("[Pasted text #1 +11 lines]"), multi, true},
+		{squashSpace("[Pasted text #1 +12 lines]"), multi, false},
+		{squashSpace("[Pasted text #1 +10 lines] more"), multi, false},
+		{squashSpace("[Pasted text #1 +0 lines]"), "one line", false},
+		{squashSpace("[Pasted text #1 +1 lines]"), "one line", false},
+	} {
+		if got := placeholderOf(c.d, c.prompt); got != c.want {
+			t.Errorf("placeholderOf(%q) = %v, want %v", c.d, got, c.want)
+		}
+	}
+}
+
+// lateRun stops with the box empty throughout the watch window, then lets late(esc) draw the
+// pane for the next send.
+func lateRun(t *testing.T, prompt string, late func(esc int) string) (code int, body string, keys []string) {
+	t.Helper()
+	windowOver := false
+	_, _, _ = runClaudeInterrupt(t, prompt, func(esc int) string {
+		if !windowOver {
+			if esc == 0 {
+				return paneWorking
+			}
+			return paneEmpty
+		}
+		return late(esc)
+	})
+	windowOver = true
+	rec := postTurn(t, "turn_reclaim", `{"op":"start","prompt":"next prompt"}`)
+	return rec.Code, rec.Body.String(), sendKeysLines(t, os.Getenv("TMUX_TEST_LOG"))
+}
+
+// A prompt that reappears after the watch window is cleared when the next send looks again
+// (issue #3302, case 2); the send then goes on and is not typed after it.
+func TestSendClearsAPromptThatReappearedAfterTheWindow(t *testing.T) {
+	code, body, keys := lateRun(t, "SLOW 再レビュー", func(esc int) string {
+		switch esc {
+		case 1:
+			return paneRestored
+		case 2:
+			return paneClearArmed
+		}
+		return paneEmpty
+	})
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", code, body)
+	}
+	if got := strings.Join(keys[:3], ","); got != "Escape,Escape,Escape" {
+		t.Fatalf("keys = %v, want the stop and the two clearing Escapes first", keys)
+	}
+}
+
+// Late, a placeholder is not ours to erase: the send is refused instead.
+func TestSendRefusedForALatePlaceholder(t *testing.T) {
+	prompt := strings.Repeat("line\n", 50) + "end"
+	code, body, keys := lateRun(t, prompt, func(int) string {
+		return rule + "\n❯ [Pasted text #1 +50 lines]\n" + rule + "\n"
+	})
+	if code != http.StatusConflict || !strings.Contains(body, "stopped_prompt_in_box") {
+		t.Fatalf("status = %d, body = %s", code, body)
+	}
+	if strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("keys = %v", keys)
+	}
+}
+
+// Text the member typed is neither erased nor a reason to refuse.
+func TestSendLeavesAMembersDraftAfterTheWindow(t *testing.T) {
+	code, body, keys := lateRun(t, "SLOW 再レビュー", func(int) string { return paneOwnDraft })
+	if code != http.StatusOK || keys[0] != "Escape" || len(keys) > 1 && keys[1] == "Escape" {
+		t.Fatalf("status = %d, body = %s, keys = %v", code, body, keys)
+	}
+}
