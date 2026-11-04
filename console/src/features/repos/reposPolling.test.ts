@@ -24,6 +24,19 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { startReposPolling, useReposStore } = await import("./store.ts");
 
+const visHandlers = new Set<() => void>();
+function stubDocument(hidden: boolean) {
+  vi.stubGlobal("document", {
+    hidden,
+    addEventListener: (_: string, h: () => void) => visHandlers.add(h),
+    removeEventListener: (_: string, h: () => void) => visHandlers.delete(h),
+  });
+}
+function setHidden(hidden: boolean) {
+  (document as { hidden: boolean }).hidden = hidden;
+  for (const h of visHandlers) h();
+}
+
 function setPaused(v: boolean) {
   paused = v;
   for (const h of pauseHandlers) h();
@@ -38,7 +51,8 @@ describe("startReposPolling and the idle pause", () => {
     paused = false;
     pauseHandlers.clear();
     refresh.mockClear();
-    vi.stubGlobal("document", { hidden: false });
+    visHandlers.clear();
+    stubDocument(false);
     useReposStore.setState({ refresh } as never);
   });
   afterEach(() => {
@@ -64,13 +78,20 @@ describe("startReposPolling and the idle pause", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("does not read on resume while the window is hidden", () => {
+  it("owes the resume read to the next show when the pause ends by hiding", () => {
     stop = startReposPolling();
     setPaused(true);
     refresh.mockClear();
-    vi.stubGlobal("document", { hidden: true });
+    // events.ts clears the pause on the way to hidden, before the window is shown again.
+    (document as { hidden: boolean }).hidden = true;
     setPaused(false);
+    setHidden(true);
     expect(refresh).not.toHaveBeenCalled();
+    setHidden(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    setHidden(true);
+    setHidden(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("stops listening for pause edges after cleanup", () => {
@@ -83,5 +104,6 @@ describe("startReposPolling and the idle pause", () => {
     vi.advanceTimersByTime(120_000);
     expect(refresh).not.toHaveBeenCalled();
     expect(pauseHandlers.size).toBe(0);
+    expect(visHandlers.size).toBe(0);
   });
 });

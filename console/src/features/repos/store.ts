@@ -265,14 +265,27 @@ export function startReposPolling(): () => void {
   };
   load();
   const t = setInterval(load, 60000);
+  // A pause can also end by the window going hidden (events.ts hands the hidden path back),
+  // when load() skips; the read is then owed to the next time the window is shown.
   let wasPaused = pushPaused();
+  let owed = false;
   const unPause = onPushPause(() => {
     const now = pushPaused();
-    if (wasPaused && !now) load();
+    if (wasPaused && !now) {
+      if (document.hidden) owed = true;
+      else load();
+    }
     wasPaused = now;
   });
+  const onVis = () => {
+    if (document.hidden || !owed) return;
+    owed = false;
+    load();
+  };
+  document.addEventListener("visibilitychange", onVis);
   return () => {
     clearInterval(t);
     unPause();
+    document.removeEventListener("visibilitychange", onVis);
   };
 }
