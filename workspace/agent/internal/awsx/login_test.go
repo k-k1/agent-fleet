@@ -226,19 +226,22 @@ func TestConsoleLoginDoesNotTakeARejectedTokenForALogin(t *testing.T) {
 }
 
 // The snapshot is read before the check: a login that lands during the check is tried
-// again, not recorded as the cache that failed.
+// again, not recorded as the cache that failed. The retry is driven by the cache change, not
+// by time: the budget is generous and the retried check is slowed (checkDelay), so a slow
+// runner cannot turn the run into a timeout or a killed check.
 func TestConsoleLoginRetriesWhenALoginLandsDuringTheCheck(t *testing.T) {
+	const budget, checkDelay = time.Minute, "0.3"
 	bin, state := fakeAWS(t, ssoProfile)
 	fastPoll(t)
 	cache := ssoCachePath("af-prod")
 	os.MkdirAll(filepath.Dir(cache), 0o700)
 	hook := `if [ ! -f "$S/landed" ]; then touch "$S/landed"; ` +
 		`printf '{"accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z","startUrl":"https://example.awsapps.com/start","region":"ap-northeast-1"}' > '` + cache + `'; ` +
-		`echo "Error loading SSO Token: expired" >&2; exit 255; fi; touch "$S/loggedIn"
+		`echo "Error loading SSO Token: expired" >&2; exit 255; fi; sleep ` + checkDelay + `; touch "$S/loggedIn"
 `
 	os.WriteFile(filepath.Join(state, "onExport"), []byte(hook), 0o600)
 	var stderr bytes.Buffer
-	if _, _, _, err := PlanExec(bin, workloadEnv, consoleOpts(&stderr, 2*time.Second)); err != nil {
+	if _, _, _, err := PlanExec(bin, workloadEnv, consoleOpts(&stderr, budget)); err != nil {
 		t.Fatalf("err = %v", err)
 	}
 	if _, ok := logins.Read("af-prod"); ok {
