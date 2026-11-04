@@ -21,8 +21,12 @@ type Part struct {
 	// The label above is the provider's own name and changes between versions, so the
 	// Console must not pattern-match it; this field is the stable axis. Optional —
 	// an agent that cannot classify its failures simply omits it.
-	Cause     string     `json:"cause,omitempty"`
-	Output    string     `json:"output,omitempty"`    // kind=tool/delegation: output/final result, truncated
+	Cause  string `json:"cause,omitempty"`
+	Output string `json:"output,omitempty"` // kind=tool/delegation: output/final result, truncated
+	// Command is kind=tool only: a shell tool's whole command (CapOutput-bounded), sent when
+	// Info, its first line cut to 80 runes, does not hold all of it. Without it the mirror
+	// cannot say what a `bash -c '…'` or a heredoc actually ran.
+	Command   string     `json:"command,omitempty"`
 	Prompt    string     `json:"prompt,omitempty"`    // kind=delegation: full instruction sent to the child
 	AgentType string     `json:"agentType,omitempty"` // kind=delegation: Explore/general-purpose/task name
 	Status    string     `json:"status,omitempty"`    // kind=delegation: requested/running/completed/failed

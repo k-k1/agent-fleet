@@ -108,6 +108,9 @@ type Plan struct {
 	Prog      string
 	Argv, Env []string
 	Refresher *Refresher
+	// Account is the account the token was minted for (the impersonating one, when the
+	// profile impersonates a service account).
+	Account string
 }
 
 // PlanExec is PlanRun without the refresher: the program, argv and environment to exec.
@@ -208,7 +211,7 @@ func PlanRun(gcloudBin string, environ []string, o ExecOptions) (Plan, error) {
 		_ = os.RemoveAll(run)
 		return Plan{}, err
 	}
-	pl := Plan{Prog: prog, Argv: o.Argv, Env: env}
+	pl := Plan{Prog: prog, Argv: o.Argv, Env: env, Account: account}
 	pl.Refresher = newRefresher(gcloudBin, agentEnv, p, o, tok, account, filepath.Join(run, tokenFileName), hint, stderr)
 	return pl, nil
 }

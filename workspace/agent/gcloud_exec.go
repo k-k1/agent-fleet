@@ -12,6 +12,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudexec"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudlogin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 )
 
@@ -85,11 +86,16 @@ func runGCloudExec(args []string) {
 		listGCPProfiles(settings, conflicts, res.Invalid)
 		os.Exit(0)
 	}
+	// Every run that names a command leaves a row in its session's mirror, as af-aws-exec's do
+	// (ADR 0126 decision 1); --list and --help leave none.
+	run := cloudruns.Begin("gcp", os.Getenv("AF_SESSION_NAME"), o.Profile, o.Argv)
 	if o.Profile == "" || o.Project == "" || len(o.Argv) == 0 {
+		run.Refuse(cloudruns.RefusedUsage)
 		gcloudExec.FailUsage()
 	}
 	gcloudBin, err := ensureGCloud()
 	if err != nil {
+		run.Refuse(cloudruns.RefusedOther)
 		gcloudExec.Fail(cloudexec.ExitRefused, err.Error())
 	}
 	o.Interactive = cloudexec.IsTerminal(os.Stdin) && cloudexec.IsTerminal(os.Stderr)
@@ -103,15 +109,26 @@ func runGCloudExec(args []string) {
 	}
 	plan, err := gcpx.PlanRun(gcloudBin, os.Environ(), o)
 	if err != nil {
+		if errors.Is(err, gcpx.ErrLoginRequired) {
+			run.Refuse(cloudruns.RefusedLogin)
+		} else {
+			run.Refuse(cloudruns.RefusedOther)
+		}
 		gcloudExec.FailPlan(err, gcpx.ErrLoginRequired)
 	}
+	// PlanRun succeeded, so the profile is in Settings and its project is o.Project.
+	sp := o.Settings[o.Profile]
+	run.ResolvedGCP(cloudruns.GCPIdentity{Project: sp.Project, Principal: plan.Account,
+		Impersonates: sp.ImpersonateServiceAccount, Region: sp.Region})
 	// The command runs as this process's child, not in its place, so the token file can be
 	// renewed while it lives; the token file goes when it ends.
 	out, err := cloudexec.Supervise(cloudexec.Supervision{Prog: plan.Prog, Argv: plan.Argv, Env: plan.Env, Side: plan.Refresher.Run})
 	plan.Refresher.RemoveToken()
 	if err != nil {
+		run.Refuse(cloudruns.RefusedOther)
 		gcloudExec.Fail(cloudexec.ExitRefused, "run "+plan.Prog+": "+err.Error())
 	}
+	run.Ended(out.Code)
 	out.Exit()
 }
 

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/cloudruns"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gcpx"
 )
 
@@ -153,6 +154,26 @@ func TestGCloudExecProcess(t *testing.T) {
 	if code != 0 || out != "ran\n" || !strings.Contains(msg, "runs as dev@example.com") {
 		t.Errorf("run: exit %d out %q err %q", code, out, msg)
 	}
+	// Each run left a row (no AF_SESSION_NAME: the workspace's spool), the command's exit
+	// status included, since the wrapper supervises the command.
+	if code, _, _ := run("--profile", "prod", "--project", "prod-project", "--", "sh", "-c", "exit 5"); code != 5 {
+		t.Errorf("failing command: exit %d, want 5", code)
+	}
+	rows := gcpRows(t, home)
+	if len(rows) < 3 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if r := rows[0]; r.Provider != "gcp" || r.Refused != cloudruns.RefusedUsage {
+		t.Errorf("usage row = %+v", r)
+	}
+	ok, failed := rows[len(rows)-2], rows[len(rows)-1]
+	if ok.Provider != "gcp" || ok.Profile != "prod" || ok.Project != "prod-project" || ok.Principal != "dev@example.com" ||
+		ok.Program != "sh" || ok.Exit == nil || *ok.Exit != 0 || ok.Refused != "" {
+		t.Errorf("run row = %+v", ok)
+	}
+	if failed.Exit == nil || *failed.Exit != 5 {
+		t.Errorf("failing run row = %+v", failed)
+	}
 	// A login that ran and still left no usable credential is exit 1, not 3.
 	_ = os.WriteFile(filepath.Join(fake, "fail"), []byte("ERROR: (gcloud.config.config-helper) There was a problem refreshing "+
 		"your current auth tokens: ('invalid_grant: Bad Request', {'error': 'invalid_grant'})\n"), 0o600)
@@ -282,4 +303,27 @@ func TestEnsureGCloudChecksTheWholePin(t *testing.T) {
 	if bin, err := ensureGCloud(); err != nil || bin != filepath.Join(sdk, "bin", "gcloud") {
 		t.Fatalf("pinned tree: %s %v", bin, err)
 	}
+}
+
+// gcpRows reads the workspace spool's rows, oldest first.
+func gcpRows(t *testing.T, home string) []cloudruns.Row {
+	t.Helper()
+	dir := filepath.Join(home, ".local", "state", "agent-fleet", "cloud-runs", ".workspace")
+	ents, _ := os.ReadDir(dir)
+	var rows []cloudruns.Row
+	for _, e := range ents {
+		if !strings.HasSuffix(e.Name(), ".json") || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r cloudruns.Row
+		if err := json.Unmarshal(b, &r); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, r)
+	}
+	return rows
 }

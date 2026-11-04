@@ -711,3 +711,30 @@ func TestCollectUsageTurnsKeepsEveryTurn(t *testing.T) {
 		t.Errorf("summed output tokens = %d, want %d", out, 7*n)
 	}
 }
+
+// TestAssistantPartsBashCommand: a Bash call's label is its first line cut to 80 runes, which
+// hides what a `bash -c` script or a long af-aws-exec line ran; the whole command rides along
+// only when the label is not all of it.
+func TestAssistantPartsBashCommand(t *testing.T) {
+	long := "af-aws-exec --profile prod-deploy --account 123456789012 --region ap-northeast-1 -- bash -c 'aws s3 ls'"
+	content := `[{"type":"tool_use","name":"Bash","id":"t1","input":{"command":"ls"}},` +
+		`{"type":"tool_use","name":"Bash","id":"t2","input":{"command":"` + long + `"}},` +
+		`{"type":"tool_use","name":"Bash","id":"t3","input":{"command":"cd x &&\ncat <<EOF\nhi\nEOF"}},` +
+		`{"type":"tool_use","name":"Read","id":"t4","input":{"file_path":"/a/very/long/path/that/goes/on/and/on/and/on/and/on/and/on/and/on/and/on/file.txt"}}]`
+	parts, _ := assistantParts(json.RawMessage(content))
+	if len(parts) != 4 {
+		t.Fatalf("parts = %+v", parts)
+	}
+	if parts[0].Command != "" {
+		t.Errorf("short command repeated: %q", parts[0].Command)
+	}
+	if parts[1].Command != long || parts[1].Info == long {
+		t.Errorf("long command: info %q command %q", parts[1].Info, parts[1].Command)
+	}
+	if parts[2].Command != "cd x &&\ncat <<EOF\nhi\nEOF" || parts[2].Info != "cd x &&" {
+		t.Errorf("multi-line command: info %q command %q", parts[2].Info, parts[2].Command)
+	}
+	if parts[3].Command != "" {
+		t.Errorf("a non-shell tool got a command: %q", parts[3].Command)
+	}
+}
