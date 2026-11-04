@@ -289,3 +289,50 @@ describe("useTranslate — splitting a too-long answer", () => {
     expect(latest()!.get(longText)).toBe(expectedChunks.map((c) => "訳:" + c).join(""));
   });
 });
+
+describe("useTranslate — more parts than one request may carry (#3332)", () => {
+  const many = Array.from({ length: 13 }, (_, i) => `Narration ${i}: running the next check.`);
+  const postedParts = (): string[][] =>
+    calls
+      .filter((c) => c.opts?.method === "POST")
+      .map((c) => (JSON.parse(String(c.opts!.body)) as { parts: { text: string }[] }).parts.map((p) => p.text));
+
+  it("sends a 13-part turn as requests of at most 8 parts and shows every part translated", async () => {
+    mount("batch-a");
+    await flush();
+    const key = translateHash(many.join("\n\n"));
+    act(() => latest()!.toggle(key, many));
+    await flush();
+    await flush();
+
+    expect(postedParts()).toEqual([many.slice(0, 8), many.slice(8)]);
+    expect(latest()!.shown(key)).toBe(true);
+    for (const t of many) expect(latest()!.get(t)).toBe("訳:" + t);
+  });
+
+  it("keeps the batches that succeeded when a later one fails, and re-asks only for the rest", async () => {
+    mount("batch-b");
+    await flush();
+    const real = apiMock.getMockImplementation()!;
+    apiMock.mockImplementationOnce(real).mockImplementationOnce((path: string, opts?: RequestInit) => {
+      calls.push({ path, opts });
+      return Promise.resolve({ error: { code: "translate_failed", message: "boom" } });
+    });
+    const key = translateHash(many.join("\n\n"));
+    act(() => latest()!.toggle(key, many));
+    await flush();
+    await flush();
+
+    expect(postedParts()).toHaveLength(2);
+    expect(latest()!.shown(key)).toBe(false);
+    expect(latest()!.busy(key)).toBe(false);
+    expect(latest()!.error(key)).toBe("boom");
+    expect(latest()!.get(many[0])).toBe("訳:" + many[0]); // first batch kept
+
+    calls.length = 0;
+    act(() => latest()!.toggle(key, many));
+    await flush();
+    expect(postedParts()).toEqual([many.slice(8)]);
+    expect(latest()!.shown(key)).toBe(true);
+  });
+});

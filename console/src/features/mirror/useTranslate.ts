@@ -20,6 +20,7 @@ import { api, errText, type ApiError } from "../../core/api/client.ts";
 import {
   splitForTranslate,
   translateHash,
+  TRANSLATE_MAX_PARTS,
   TRANSLATE_TIMEOUT_MS,
   type TranslateLang,
   type TranslateReply,
@@ -184,60 +185,73 @@ export function useTranslate({ session, lang, enabled, auto = false }: Translate
       // text's hash too, so every other reader of it (a re-render, a later press) never has to
       // know a text was ever split.
       const groups = texts.map((t) => splitForTranslate(t));
-      const requestTexts = groups.flat();
-      // A ceiling of our own: without it a wedged round trip leaves the button spinning for the
-      // life of the pane, with no way to ask again. The abort surfaces as a failed press.
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), TRANSLATE_TIMEOUT_MS);
-      void api(`api/sessions/${q(session)}/translate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // `trigger` is sent only for the automatic press, so that the ledger can tell the two
-        // apart (session_translate.go) — and so that a Console newer than the Agent it talks to
-        // cannot break the reader's own button: that Agent's strict decoder rejects a field it
-        // does not know, and the manual press must keep working across a rolling deployment.
-        body: JSON.stringify({
-          to: lang,
-          ...(trigger === "auto" ? { trigger } : {}),
-          parts: requestTexts.map((text) => ({ text })),
-        }),
-        signal: ctl.signal,
-      })
-        .then((j: TranslateReply & { error?: ApiError }) => {
-          apply((prev) => {
-            const busy = new Set(prev.busy);
-            busy.delete(key);
-            if (j?.error || !Array.isArray(j?.parts) || j.parts.length !== requestTexts.length) {
-              // A press nobody made fails quietly: the answer is readable as it stands, and an
-              // error message next to a button the reader never touched is noise they cannot
-              // act on. The turn keeps its button, so asking again is one click away.
-              return { ...prev, busy, errors: failed(prev.errors, key, trigger, j?.error) };
+      // Only what is not held yet is asked for: a chunk translated by an earlier press (or by
+      // a batch that succeeded before a later one failed) costs nothing to show again.
+      const need = [...new Set(groups.flat())].filter((t) => !held.entries.has(translateHash(t)));
+      const batches: string[][] = [];
+      for (let i = 0; i < need.length; i += TRANSLATE_MAX_PARTS) batches.push(need.slice(i, i + TRANSLATE_MAX_PARTS));
+      void (async () => {
+        const got = new Map<string, string>();
+        let ok = true;
+        let err: ApiError | null | undefined = null;
+        // One batch at a time: the Agent runs a request's parts serially anyway, and parallel
+        // batches would only multiply the model runs one press starts at once.
+        for (const batch of batches) {
+          // A ceiling of our own: without it a wedged round trip leaves the button spinning for
+          // the life of the pane, with no way to ask again. The abort surfaces as a failed press.
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), TRANSLATE_TIMEOUT_MS);
+          try {
+            const j: TranslateReply & { error?: ApiError } = await api(`api/sessions/${q(session)}/translate`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              // `trigger` is sent only for the automatic press, so that the ledger can tell the
+              // two apart (session_translate.go) — and so that a Console newer than the Agent it
+              // talks to cannot break the reader's own button: that Agent's strict decoder
+              // rejects a field it does not know, and the manual press must keep working across
+              // a rolling deployment.
+              body: JSON.stringify({
+                to: lang,
+                ...(trigger === "auto" ? { trigger } : {}),
+                parts: batch.map((text) => ({ text })),
+              }),
+              signal: ctl.signal,
+            });
+            if (j?.error || !Array.isArray(j?.parts) || j.parts.length !== batch.length) {
+              ok = false;
+              err = j?.error;
+            } else {
+              for (const p of j.parts) if (p?.hash && typeof p.text === "string") got.set(p.hash, p.text);
             }
-            const entries = new Map(prev.entries);
-            for (const p of j.parts) if (p?.hash && typeof p.text === "string") entries.set(p.hash, p.text);
-            let i = 0;
-            for (let g = 0; g < groups.length; g++) {
-              const n = groups[g].length;
-              entries.set(
-                translateHash(texts[g]),
-                j.parts
-                  .slice(i, i + n)
-                  .map((p) => p.text ?? "")
-                  .join(""),
-              );
-              i += n;
-            }
-            return { entries, busy, shown: new Set(prev.shown).add(key), errors: withoutKey(prev.errors, key) };
-          });
-        })
-        .catch(() => {
-          apply((prev) => {
-            const busy = new Set(prev.busy);
-            busy.delete(key);
-            return { ...prev, busy, errors: failed(prev.errors, key, trigger, null) };
-          });
-        })
-        .finally(() => clearTimeout(timer));
+          } catch {
+            ok = false;
+          } finally {
+            clearTimeout(timer);
+          }
+          if (!ok) break;
+        }
+        apply((prev) => {
+          const busy = new Set(prev.busy);
+          busy.delete(key);
+          // Kept even when a later batch failed, so asking again only sends what is still missing.
+          const entries = new Map(prev.entries);
+          for (const [h, t] of got) entries.set(h, t);
+          const wholes: Array<[string, string]> = [];
+          for (let g = 0; ok && g < groups.length; g++) {
+            const pieces = groups[g].map((c) => entries.get(translateHash(c)));
+            if (pieces.some((p) => p === undefined)) ok = false;
+            else wholes.push([translateHash(texts[g]), pieces.join("")]);
+          }
+          if (!ok) {
+            // A press nobody made fails quietly: the answer is readable as it stands, and an
+            // error message next to a button the reader never touched is noise they cannot
+            // act on. The turn keeps its button, so asking again is one click away.
+            return { ...prev, entries, busy, errors: failed(prev.errors, key, trigger, err) };
+          }
+          for (const [h, t] of wholes) entries.set(h, t);
+          return { entries, busy, shown: new Set(prev.shown).add(key), errors: withoutKey(prev.errors, key) };
+        });
+      })();
     },
     [session, lang, apply],
   );

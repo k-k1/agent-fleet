@@ -109,28 +109,43 @@ const textLen = (p: MirrorPartLike): number => (isText(p) ? p.text!.trim().lengt
 // agent gives its real answer, then writes a memory note (a Write/Edit tool) and adds a short
 // sign-off — pushes the boundary past the real answer, folding it away and leaving only the
 // sign-off as the "final answer" (both on screen and for TTS). So: take the last-tool
-// boundary, then, if the longest text BEFORE it is longer than the whole tail after it, that
-// earlier text is the dominant/real answer and the trailing tool(s) are housekeeping — move
-// the boundary onto that answer, keeping the housekeeping tool and sign-off in the visible/read
-// final answer. A tail at least as long as anything before it is the genuine answer, so the
-// boundary stays put and a normal "narrate → tool → answer" turn folds exactly as before.
+// boundary, then move it onto the LEFTMOST text before it that is longer than ALL the text that
+// follows it — that text is the dominant/real answer and what trails it is housekeeping, which
+// stays in the visible/read final answer. A tail at least as long as anything before it is the
+// genuine answer, so the boundary stays put and a normal "narrate → tool → answer" turn folds
+// exactly as before.
+//
+// "All the text that follows", not just the tail after the last tool: a long autonomous turn
+// (narrate → tool → narrate → … → one short closing line) has an early narration line longer
+// than that closing line, and comparing against the tail alone unfolded every narration after
+// it — a dozen visible parts, which then overflowed the translate request's part cap.
+// Every candidate is tested, not only the longest one: a long opening narration that fails the
+// test must not hide a later real answer that passes it ([narration, tool, answer, wrap-up tool,
+// note] would otherwise fold the answer and leave only the note).
 export function workSplit(parts: MirrorPartLike[]): WorkSplit | null {
   let at = confirmedWorkEnd(parts);
   if (at === 0) return null;
   const tailLen = textOfParts(parts.slice(at)).length;
   if (tailLen === 0) return null; // no final answer yet (turn still working / tools only)
 
-  // Dominant answer before the boundary = the longest text part (leftmost on ties, so the
-  // whole final-answer region stays visible). Move the boundary there when it beats the tail.
-  let bestLen = 0;
-  let bestIdx = -1;
-  for (let i = 0; i < at; i++) {
-    if (textLen(parts[i]) > bestLen) {
-      bestLen = textLen(parts[i]);
-      bestIdx = i;
+  // after[i] = textOfParts(parts.slice(i + 1)).length, built right to left so a turn with
+  // hundreds of tool calls does not re-join its text once per candidate on every render.
+  const after = new Array<number>(at).fill(0);
+  let sum = 0;
+  let count = 0;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (i < at) after[i] = count ? sum + 2 * (count - 1) : 0;
+    if (isText(parts[i])) {
+      sum += textLen(parts[i]);
+      count++;
     }
   }
-  if (bestIdx >= 0 && bestLen > tailLen) at = bestIdx;
+  for (let i = 0; i < at; i++) {
+    if (isText(parts[i]) && textLen(parts[i]) > after[i]) {
+      at = i;
+      break;
+    }
+  }
   if (at === 0) return null; // the real answer is the whole turn — nothing to fold
 
   const work = parts.slice(0, at);
