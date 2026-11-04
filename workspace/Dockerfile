@@ -86,7 +86,7 @@ ARG BAKE_OPTIONAL_TOOLS=1
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
-ARG MCP_GRAFANA_VERSION=1.4.2
+ARG MCP_GRAFANA_VERSION=2.2.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -203,7 +203,7 @@ RUN apt-get update \
 # Python wheels use the C toolchain (build-essential) installed above. `go install`
 # binaries and the module cache land under ~/go (home volume → persist). Keep
 # GO_VERSION in step with agent/go.mod's `go` directive; bump here to upgrade.
-ARG GO_VERSION=1.26.8
+ARG GO_VERSION=1.26.10
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) goarch=amd64 ;; arm64) goarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -245,7 +245,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
 # （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
-ARG GH_VERSION=2.101.0
+ARG GH_VERSION=2.103.3
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -259,7 +259,7 @@ RUN set -eux; \
 # The real binary goes to /usr/local/libexec/bkt and /usr/local/bin/bkt is the transparent-auth
 # wrapper (bkt-auth-wrapper.sh, COPY'd with the other wrappers below). The tarball must match the
 # release's own checksums.txt, or the build fails. Bump BKT_VERSION to upgrade (docs/build/08 §8.3).
-ARG BKT_VERSION=0.33.1
+ARG BKT_VERSION=0.37.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) bktarch=x86_64 ;; arm64) bktarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \

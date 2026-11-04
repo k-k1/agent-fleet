@@ -94,6 +94,10 @@ func runGrafanaMCP(extra []string) {
 	env := append(os.Environ(),
 		"GRAFANA_URL="+s.Grafana.URL,
 		"GRAFANA_SERVICE_ACCOUNT_TOKEN="+s.Grafana.Token,
+		// mcp-grafana 2.x reports anonymous usage statistics unless told not to;
+		// a workspace must not phone home on the user's behalf.
+		"GRAFANA_USAGE_STATS=disabled",
+		"DO_NOT_TRACK=1",
 	)
 	bin, err := grafanaMCPPath()
 	if err != nil {
