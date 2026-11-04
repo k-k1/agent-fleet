@@ -153,6 +153,9 @@ type jiraProjectCache struct {
 	async func(func())
 	now   func() time.Time
 
+	// bg counts refreshes started and not yet finished; see WaitListBackground.
+	bg sync.WaitGroup
+
 	mu       sync.Mutex
 	keys     map[string]bool
 	at       time.Time // last refresh, successful or not
@@ -181,6 +184,7 @@ func (c *jiraProjectCache) known(now time.Time) map[string]bool {
 	}
 	c.mu.Unlock()
 	if start {
+		c.bg.Add(1)
 		c.async(c.refresh)
 	}
 	c.mu.Lock()
@@ -189,6 +193,7 @@ func (c *jiraProjectCache) known(now time.Time) map[string]bool {
 }
 
 func (c *jiraProjectCache) refresh() {
+	defer c.bg.Done()
 	keys, connected, err := c.read()
 	c.mu.Lock()
 	defer c.mu.Unlock()

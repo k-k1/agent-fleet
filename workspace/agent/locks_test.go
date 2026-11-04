@@ -19,9 +19,18 @@ import (
 
 // lockMux wires the routes the delete lock (docs/log/45) governs, so each test drives
 // the real handlers over HTTP rather than calling internals.
+// listAndDrain serves the session list and then waits for the background work it started, which
+// would otherwise keep writing under the test's HOME after the test returns and fail the
+// t.TempDir RemoveAll cleanup with "directory not empty" (#3261). Any test mux that serves
+// GET /sessions from a TempDir HOME routes it through here.
+func listAndDrain(w http.ResponseWriter, r *http.Request) {
+	sessionx.HandleListSessions(w, r)
+	sessionx.WaitListBackground()
+}
+
 func lockMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
+	mux.HandleFunc("GET /sessions", listAndDrain)
 	mux.HandleFunc("GET /sessions/archived", sessionx.HandleListArchived)
 	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
 	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)

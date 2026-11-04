@@ -52,6 +52,7 @@ type overviewFactsEntry struct {
 
 var (
 	overviewFactsMu    sync.Mutex
+	overviewFactsBG    sync.WaitGroup // refreshes in flight; see WaitListBackground
 	overviewFactsCache = map[string]*overviewFactsEntry{}
 	// overviewFactsSem bounds the refreshes running at once. A list poll asks for every
 	// session at the same instant, and a host with a dozen long conversations would otherwise
@@ -84,7 +85,11 @@ func overviewFactsFor(m session.Meta, alive bool) overviewFacts {
 	fresh := !e.at.IsZero() && e.alive == alive && ((!alive && e.ok) || now.Sub(e.at) < overviewFactsRefresh)
 	if !fresh && !e.busy {
 		e.busy = true
-		go refreshOverviewFacts(e, m, alive)
+		overviewFactsBG.Add(1)
+		go func() {
+			defer overviewFactsBG.Done()
+			refreshOverviewFacts(e, m, alive)
+		}()
 	}
 	f := e.facts
 	overviewFactsMu.Unlock()
