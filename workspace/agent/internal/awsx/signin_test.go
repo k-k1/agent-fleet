@@ -314,16 +314,21 @@ func TestExportLockIsExclusiveNearARefresh(t *testing.T) {
 	exportLockHook = func(shared bool) { took <- shared }
 	t.Cleanup(func() { exportLockHook = old })
 
-	// export runs one export in the background under a generous deadline; it only ends early
-	// when the test fails, so the deadline is a safety net and never part of the proof.
+	// export runs one export in the background. Its context is owned here and a cleanup
+	// (registered after the hook and HOME restores, so it runs before them) cancels it and
+	// joins the worker, so a failing test never leaves an export running into the restores.
 	export := func() <-chan error {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		done := make(chan error, 1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
 			_, err := exportLocked(awsRunner{bin: "/bin/false", ctx: ctx}, "a", "af-team")
 			done <- err
+			close(done)
 		}()
+		t.Cleanup(func() {
+			cancel()
+			<-done
+		})
 		return done
 	}
 	const generous = 30 * time.Second
