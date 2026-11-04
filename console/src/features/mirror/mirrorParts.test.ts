@@ -71,6 +71,17 @@ describe("workSplit", () => {
     expect(workSplit(parts)).toEqual({ at: 1, tools: 1, responses: 0 });
   });
 
+  it("still finds the real answer behind a longer opening narration that does not qualify", () => {
+    const parts = [
+      { kind: "text", text: "N".repeat(473) }, // opening narration, the longest single part
+      { kind: "tool" },
+      { kind: "text", text: "A".repeat(423) }, // the real answer
+      { kind: "tool" }, // wrap-up
+      { kind: "text", text: "S".repeat(91) },
+    ];
+    expect(workSplit(parts)).toEqual({ at: 2, tools: 1, responses: 1 });
+  });
+
   it("does not move the boundary onto an early narration that the rest of the turn outweighs", () => {
     // A long autonomous turn: the first narration is the longest single part and longer than the
     // closing line, but the narrations after it add up to far more. They are work, not wrap-up.
@@ -83,7 +94,7 @@ describe("workSplit", () => {
       { kind: "tool" },
       { kind: "text", text: "Java passed. Next the e2e." },
       { kind: "tool" },
-      { kind: "text", text: "All checks pass. Committing." },
+      { kind: "text", text: "Committed." },
       { kind: "tool" },
       { kind: "text", text: "Resumed the reviewer." },
     ];
