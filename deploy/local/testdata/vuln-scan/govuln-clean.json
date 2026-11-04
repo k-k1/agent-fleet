@@ -1,0 +1,3 @@
+{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scan_mode":"binary"}}
+{"progress":{"message":"Scanning your binary for known vulnerabilities..."}}
+{"SBOM":{"go_version":"go1.26.8","modules":[{"path":"example.com/m","version":"(devel)"},{"path":"stdlib","version":"go1.26.8"}],"roots":["example.com/m"]}}

@@ -340,6 +340,10 @@ npm --prefix console run build
   `publish-dist.yml` は dispatch 専用。`release-gate.yml` は dispatch と、packaging ブランチで
   自身を変更する push で走る（[deploy/release/notes](../../deploy/release/notes/README.md) を参照）。
 
+  `image-vuln-scan.yml`（毎週と、`publish-dist` のたび）は公開済みの最新イメージをスキャンして
+  トラッキング issue を 1 件保つ。その issue からパッチリリースを出す手順は
+  [94](94-patch-release.ja.md)。
+
   `release-gate.yml` と `publish-dist.yml` は、開いている `cli-drift` Issue も警告とジョブサマリに
   並べる（`deploy/release/cli-drift-warn.sh`）。警告だけで、ドリフトは常態なのでリリースは止めない。
   一覧の取得に失敗した場合もそれ自体が警告になる。

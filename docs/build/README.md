@@ -67,3 +67,4 @@ This table is kept by hand; the numbered files in this directory are the complet
 | [91 Internal git](91-internal-git.md) | the tenant's own git hosting: why this shape, storage, the token model, integration points |
 | [92 Driving a TUI](92-driving-a-tui.md) | verifying a modal screen you drive by keystrokes, and the checklist for every CLI update |
 | [93 Worktree dependencies](93-worktree-deps.md) | what a worktree shares and what it duplicates, per ecosystem |
+| [94 Image vulnerability scan and patch release](94-patch-release.md) | how a fix missing from the published images is detected, and the path to a `0.x.y+1` patch release |
