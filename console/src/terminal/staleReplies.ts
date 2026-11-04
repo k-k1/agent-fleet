@@ -1,35 +1,76 @@
-// Keeps xterm.js from answering terminal queries in output that belongs to a socket the
-// pane has already replaced.
+// Keeps xterm.js from answering terminal queries that no live program asked.
 //
 // xterm.js answers a query (device attributes, cursor/status reports, color and setting
-// queries) by firing onData, which the pane sends to the PTY as input. term.reset() does
-// not drop bytes still queued in xterm's write buffer, so output from the previous socket
-// can be parsed after the new one is open, and its answers then reach the new tmux client.
-// tmux swallows only the reply it asked for and hands any other to the pane, where a shell
-// prints it as typed text ("0;276;0c" for DA2, #3337).
+// queries) by firing onData, which the pane sends to the PTY as input. tmux keeps only the
+// reply it asked for itself and hands any other to the pane, where a shell prints it as
+// typed text ("0;276;0c" for DA2, #3337). Two kinds of output carry queries nobody is
+// waiting for:
+//   - the recorded history the Agent replays ahead of the live attach (announced by a
+//     {"type":"replay","bytes":N} text frame, workspace/agent/terminal.go writeReplay);
+//   - bytes from a replaced socket, which term.reset() leaves queued in xterm's write
+//     buffer, so they are parsed after the new socket is open.
+// While either is being parsed the gate is muted, and parser handlers swallow the queries
+// instead of letting xterm answer them.
 
 import type { IDisposable, Terminal } from "@xterm/xterm";
 
 export interface ReplyGate {
-  /** True while bytes written before the latest fence are still being parsed. */
+  /** True while output nobody is waiting on is being parsed. */
   muted: boolean;
   gen: number;
+  /** Replay bytes announced by the Agent and not yet received. */
+  replayLeft: number;
 }
 
 export function newReplyGate(): ReplyGate {
-  return { muted: false, gen: 0 };
+  return { muted: false, gen: 0, replayLeft: 0 };
 }
 
+// CAN aborts any sequence the parser is still inside (CSI, OSC, DCS) without executing it,
+// and does nothing in the ground state. Ending each muted stretch with it means a sequence
+// left open there cannot be completed by the next live bytes and answered after unmuting.
+const CANCEL = "\x18";
+
 // fenceReplies mutes replies until everything already written to the terminal has been
-// parsed. Call it when the pane switches to a new socket, before that socket's first
-// write: xterm parses writes in order, so the empty write's callback marks the point
-// where the new socket's output begins. A later fence supersedes an earlier one.
+// parsed. xterm parses writes in order, so the fence's callback marks where the next
+// output begins. A later mute or fence supersedes an earlier one.
 export function fenceReplies(term: Terminal, gate: ReplyGate): void {
   const gen = ++gate.gen;
   gate.muted = true;
-  term.write("", () => {
+  term.write(CANCEL, () => {
     if (gate.gen === gen) gate.muted = false;
   });
+}
+
+// startSocket is called for a new socket, after term.reset(): the old socket's queued
+// output stays muted.
+export function startSocket(term: Terminal, gate: ReplyGate): void {
+  gate.replayLeft = 0;
+  fenceReplies(term, gate);
+}
+
+// startReplay is called on the Agent's replay marker: the next `bytes` bytes are replay.
+export function startReplay(gate: ReplyGate, bytes: number): void {
+  if (!(bytes > 0)) return;
+  gate.gen++;
+  gate.muted = true;
+  gate.replayLeft = bytes;
+}
+
+// writeOutput writes socket output, and fences the replay once its last byte is written.
+export function writeOutput(
+  term: Terminal,
+  gate: ReplyGate,
+  data: Uint8Array,
+): void {
+  term.write(data);
+  if (gate.replayLeft > 0) {
+    gate.replayLeft -= data.byteLength;
+    if (gate.replayLeft <= 0) {
+      gate.replayLeft = 0;
+      fenceReplies(term, gate);
+    }
+  }
 }
 
 // XTWINOPS operations that ask for a report; the others change the window.
@@ -60,7 +101,8 @@ export function installReplyGate(
     ),
     p.registerDcsHandler({ intermediates: "$", final: "q" }, whenMuted), // DECRQSS
   ];
-  // Color queries ("?" in place of a color). Setting a color is not a query and still applies.
+  // Color queries ("?" in place of a color). A sequence that only sets colors still applies;
+  // one that both sets and queries is swallowed whole, as xterm cannot apply half of it.
   for (const id of [4, 10, 11, 12]) {
     disposables.push(
       p.registerOscHandler(

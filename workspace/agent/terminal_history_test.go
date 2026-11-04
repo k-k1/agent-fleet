@@ -157,29 +157,3 @@ func TestRecordTerminalDoesNotWaitForAStuckNotify(t *testing.T) {
 		t.Fatalf("history has %d bytes, want %d", len(h), src.Len())
 	}
 }
-
-func TestReadTerminalHistoryStripsQueries(t *testing.T) {
-	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
-	if err := recordTerminal("demo", bytes.NewReader([]byte("$ vim\x1b[>c\x1b[?1049h")), nil); err != nil {
-		t.Fatal(err)
-	}
-	got, ok := readTerminalHistory("demo")
-	if !ok || string(got) != "$ vim\x1b[?1049h" {
-		t.Fatalf("history = %q, %v; want the query removed", got, ok)
-	}
-	// The file keeps the raw bytes; only the replay is filtered.
-	raw, err := os.ReadFile(terminalHistoryPath("demo"))
-	if err != nil || !bytes.Contains(raw, []byte("\x1b[>c")) {
-		t.Fatalf("recorded file = %q, %v; want the raw output", raw, err)
-	}
-}
-
-func TestReadTerminalHistoryOnlyQueries(t *testing.T) {
-	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
-	if err := recordTerminal("demo", bytes.NewReader([]byte("\x1b[>c")), nil); err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := readTerminalHistory("demo"); ok {
-		t.Fatalf("history = %q, true; want nothing to replay", got)
-	}
-}

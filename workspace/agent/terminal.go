@@ -26,8 +26,9 @@ var upgrader = websocket.Upgrader{
 }
 
 // ctrlMsg is the client->server text protocol. Server->client is raw binary
-// (PTY bytes) to avoid UTF-8 framing issues on terminal output — except pongMsg, the
-// one server->client text frame, sent in reply to a "ping" heartbeat.
+// (PTY bytes) to avoid UTF-8 framing issues on terminal output — except two text
+// frames: pongMsg, in reply to a "ping" heartbeat, and the replay marker sent ahead
+// of the recorded history (writeReplay).
 type ctrlMsg struct {
 	Type string `json:"type"`           // "input" | "resize" | "ping"
 	Data string `json:"data,omitempty"` // for input
@@ -38,6 +39,25 @@ type ctrlMsg struct {
 // pongMsg is the heartbeat reply. A text frame so the client's onmessage can tell it
 // apart from binary PTY output and consume it without writing to the terminal grid.
 var pongMsg = []byte(`{"type":"pong"}`)
+
+// writeReplay sends the recorded history, announced by a {"type":"replay","bytes":N}
+// text frame. The history is raw pane output and still holds the terminal queries
+// (DA, DSR, color queries, …) the pane program once sent. Their askers are gone, but
+// xterm.js answers them anyway, and the answer would reach the live PTY as typed input:
+// tmux keeps only the reply it asked for itself and hands any other to the pane, where
+// a shell prints "0;276;0c" (#3337). The marker tells the Console which bytes are
+// replay, so it can parse them without answering. WIRE CONTRACT with
+// console/src/terminal/term.ts; a Console that does not know the marker ignores it.
+func writeReplay(write func(mt int, data []byte) error, history []byte) error {
+	marker, _ := json.Marshal(struct {
+		Type  string `json:"type"`
+		Bytes int    `json:"bytes"`
+	}{"replay", len(history)})
+	if err := write(websocket.TextMessage, marker); err != nil {
+		return err
+	}
+	return write(websocket.BinaryMessage, history)
+}
 
 // ptyCloseSessionStopped is the close-frame reason for "this session is not running"
 // — the one thing that distinguishes an ended session from a dropped connection on
@@ -84,7 +104,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 			}
 			defer conn.Close()
 			if hasHistory {
-				_ = conn.WriteMessage(websocket.BinaryMessage, history)
+				_ = writeReplay(conn.WriteMessage, history)
 			}
 			_ = conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ptyCloseSessionStopped))
@@ -121,7 +141,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 	// everything above that screen even though the session kept running.
 	if name != "" {
 		if history, ok := readTerminalHistory(name); ok {
-			if err := conn.WriteMessage(websocket.BinaryMessage, history); err != nil {
+			if err := writeReplay(conn.WriteMessage, history); err != nil {
 				return
 			}
 		}

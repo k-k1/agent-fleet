@@ -16,7 +16,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/termquery"
 )
 
 const terminalHistoryMaxBytes int64 = 4 << 20
@@ -86,18 +85,12 @@ func terminalHistoryPath(name string) string {
 	return filepath.Join(terminalHistoryDir(), name+".ansi")
 }
 
-// readTerminalHistory returns the history to replay into a browser terminal, with the
-// terminal queries removed (see termquery.Strip): every caller replays it.
 func readTerminalHistory(name string) ([]byte, bool) {
 	if !session.ValidName(name) {
 		return nil, false
 	}
 	b, err := os.ReadFile(terminalHistoryPath(name))
-	if err != nil {
-		return nil, false
-	}
-	b = termquery.Strip(b)
-	return b, len(b) > 0
+	return b, err == nil && len(b) > 0
 }
 
 func removeTerminalHistory(name string) { _ = os.Remove(terminalHistoryPath(name)) }

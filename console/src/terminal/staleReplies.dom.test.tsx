@@ -1,12 +1,15 @@
-// Regression guard for #3337: answers to terminal queries in a replaced socket's output must
-// not reach the new socket's PTY, where tmux hands them to the shell as typed text.
+// Regression guard for #3337: answers to terminal queries in replayed history, or in a
+// replaced socket's output, must not reach the live PTY, where tmux hands them to the shell
+// as typed text. Only the live output's own queries get answers.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { ensureTerm, attach, disposeTerm } from "./term.ts";
 import {
-  fenceReplies,
   installReplyGate,
   newReplyGate,
+  startReplay,
+  startSocket,
+  writeOutput,
 } from "./staleReplies.ts";
 
 const DA2_REPLY = "\x1b[>0;276;0c";
@@ -40,9 +43,13 @@ class FakeWS {
   // Built from the global Uint8Array: a TextEncoder buffer comes from another realm under
   // jsdom and fails term.ts's `instanceof ArrayBuffer`, so it would never be written.
   output(s: string) {
+    this.onmessage?.({ data: bytes(s).buffer });
+  }
+  replay(history: string) {
     this.onmessage?.({
-      data: Uint8Array.from(s, (c) => c.charCodeAt(0)).buffer,
+      data: JSON.stringify({ type: "replay", bytes: history.length }),
     });
+    this.output(history);
   }
   inputs() {
     return this.sent
@@ -52,10 +59,12 @@ class FakeWS {
   }
 }
 
+const bytes = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0));
+
 // Resolves once everything written to term so far has been parsed.
 const parsed = (term: Terminal) => new Promise<void>((r) => term.write("", r));
 
-describe("replies to a replaced socket's output", () => {
+describe("terminal query answers on attach", () => {
   afterEach(() => {
     disposeTerm("q1");
     FakeWS.all = [];
@@ -63,30 +72,81 @@ describe("replies to a replaced socket's output", () => {
     document.body.innerHTML = "";
   });
 
-  it("are not sent to the new socket, while its own queries still are", async () => {
+  function mount() {
     // jsdom has no layout; the rAF work in term.ts only repaints.
     vi.stubGlobal("requestAnimationFrame", () => 0);
     vi.stubGlobal("cancelAnimationFrame", () => {});
     vi.stubGlobal("WebSocket", FakeWS);
     const el = document.createElement("div");
     document.body.appendChild(el);
-    const term = ensureTerm("q1", el);
+    return ensureTerm("q1", el);
+  }
 
+  it("are not given for the replayed history, only for live output", async () => {
+    const term = mount();
+    attach("q1", "sfake");
+    const ws = FakeWS.all[0];
+    ws.open();
+    ws.replay("$ vim\x1b[>c\x1b[6n\x1b[c\x1b[?2004$p");
+    ws.output("\x1b[>c"); // tmux's own query on attach
+    await parsed(term);
+    expect(ws.inputs()).toEqual([DA2_REPLY]);
+  });
+
+  it("are not given for a sequence the history leaves open", async () => {
+    const term = mount();
+    attach("q1", "sfake");
+    const ws = FakeWS.all[0];
+    ws.open();
+    ws.replay("$ \x1bP$qm"); // cut off: the next ESC would end the DECRQSS and answer it
+    ws.output("\x1b[>c");
+    await parsed(term);
+    expect(ws.inputs()).toEqual([DA2_REPLY]);
+  });
+
+  it("count the replay across several frames", async () => {
+    const term = mount();
+    attach("q1", "sfake");
+    const ws = FakeWS.all[0];
+    ws.open();
+    const history = "one\x1b[>c two\x1b[6n";
+    ws.onmessage?.({
+      data: JSON.stringify({ type: "replay", bytes: history.length }),
+    });
+    ws.output(history.slice(0, 6));
+    ws.output(history.slice(6));
+    ws.output("\x1b[6n");
+    await parsed(term);
+    expect(ws.inputs()).toHaveLength(1);
+    expect(ws.inputs()[0]).toMatch(/^\x1b\[\d+;\d+R$/);
+  });
+
+  it("are not given for a replaced socket's queued output", async () => {
+    const term = mount();
     attach("q1", "sfake");
     const old = FakeWS.all[0];
     old.open();
-    // Queued, not yet parsed: xterm parses writes on a later tick.
-    old.output("history\x1b[>c\x1b[6n");
+    // Queued, not yet parsed: xterm parses writes on a later tick. It ends inside a DCS
+    // that the new socket's first ESC would otherwise complete.
+    old.output("history\x1b[>c\x1b[6n\x1bP$qm");
     attach("q1", "sfake");
     const cur = FakeWS.all[1];
     cur.open();
-    await parsed(term);
-    expect(cur.inputs()).toEqual([]);
-    expect(old.inputs()).toEqual([]);
-
     cur.output("\x1b[>c");
     await parsed(term);
+    expect(old.inputs()).toEqual([]);
     expect(cur.inputs()).toEqual([DA2_REPLY]);
+  });
+
+  it("are given as before when the Agent sends no replay marker", async () => {
+    const term = mount();
+    attach("q1", "sfake");
+    const ws = FakeWS.all[0];
+    ws.open();
+    await parsed(term);
+    ws.output("\x1b[>c");
+    await parsed(term);
+    expect(ws.inputs()).toEqual([DA2_REPLY]);
   });
 });
 
@@ -100,7 +160,7 @@ describe("reply gate", () => {
     return { term, gate, sent };
   }
 
-  it("answers queries when no fence is pending", async () => {
+  it("answers queries when nothing is muted", async () => {
     const { term, sent } = setup();
     // OSC color queries are left out: an unopened terminal has no theme to answer them from.
     term.write("\x1b[>c\x1b[c\x1b[6n");
@@ -109,24 +169,34 @@ describe("reply gate", () => {
     expect(sent[0]).toBe(DA2_REPLY);
   });
 
-  it("swallows every query written before the fence and none after it", async () => {
+  it("swallows every query in a replay and none after it", async () => {
     const { term, gate, sent } = setup();
-    term.write(
-      "\x1b[>c\x1b[c\x1b[5n\x1b[6n\x1b[?6n\x1b[?2004$p\x1b[4$p\x1b[18t\x1b]4;1;?\x07\x1b]11;?\x07\x1bP$qm\x1b\\",
-    );
-    fenceReplies(term, gate);
-    term.write("\x1b[>c");
+    const history =
+      "\x1b[>c\x1b[>00c\x1b[c\x1b[5n\x1b[06n\x1b[?6n\x1b[?2004$p\x1b[4$p\x1b[18t\x1b]4;1;?\x07\x1b]011;?\x07" +
+      "\x1bP$qm\x1b\\\x1bP0$qm\x1b\\\u009b>c\x1b[6\nn";
+    startReplay(gate, bytes(history).byteLength);
+    writeOutput(term, gate, bytes(history));
+    writeOutput(term, gate, bytes("\x1b[>c"));
     await parsed(term);
     expect(sent).toEqual([DA2_REPLY]);
     expect(gate.muted).toBe(false);
   });
 
-  it("stays muted until the latest fence when fences overlap", async () => {
+  it("stays muted until the latest fence when socket switches overlap", async () => {
     const { term, gate, sent } = setup();
-    fenceReplies(term, gate);
+    startSocket(term, gate);
     term.write("\x1b[>c");
-    fenceReplies(term, gate);
+    startSocket(term, gate);
     term.write("\x1b[>c");
+    await parsed(term);
+    expect(sent).toEqual([DA2_REPLY]);
+  });
+
+  it("ignores a replay marker without bytes", async () => {
+    const { term, gate, sent } = setup();
+    startReplay(gate, 0);
+    startReplay(gate, Number(undefined));
+    writeOutput(term, gate, bytes("\x1b[>c"));
     await parsed(term);
     expect(sent).toEqual([DA2_REPLY]);
   });
