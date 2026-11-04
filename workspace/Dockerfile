@@ -4,6 +4,11 @@
 # フォールバック / 新規 home の既定）。ツール本体は /usr/local、ユーザーデータは home(volume)。
 # docs/11-phase1-plan.md / docs/09-portability.md 参照。
 
+# Pins shared by the build stages below; the runtime stage redeclares them (no value) to inherit.
+ARG GO_VERSION=1.26.10
+ARG JIRA_CLI_VERSION=1.7.0
+ARG JIRA_CLI_COMMIT=79067e2422df10e59f310bd6fd4979f43a1df0e7
+
 # --- build the agent (Go) ---
 # Native on the builder, cross-compiling to the target — the same trick, and for the
 # same reason, as control-plane/Dockerfile's `build` stage. CGO is off, so Go needs no
@@ -27,6 +32,35 @@ ARG VERSION=dev
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
     go build -trimpath -ldflags="-X main.buildVersion=${VERSION}" -o /out/workspace-agent .
+
+# --- build jira-cli from source ---
+# Upstream's latest release (ankitpokhrel/jira-cli v1.7.0, 2025-08-31) is built with go1.24.1,
+# golang.org/x/net 0.38.0 and x/text 0.23.0, which carries a CRITICAL and ~30 HIGH Go findings
+# in the image scan (#3339), and no newer release exists. So the same tag is rebuilt here with
+# our pinned Go and bumped modules; the version/commit stamping matches upstream's .goreleaser.yaml
+# so `jira version` still reports the release. JIRA_CLI_COMMIT pins the tag's commit: a moved
+# tag fails the build instead of shipping different source. Drop this stage and go back to the
+# release tarball once upstream ships a release built with a fixed Go.
+# Native on the builder, cross-compiled like agentbuild (CGO off, so no cross toolchain).
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-trixie AS jirabuild
+ARG JIRA_CLI_VERSION
+ARG JIRA_CLI_COMMIT
+ARG TARGETARCH
+# GOTOOLCHAIN=local: the bumped x/net raises the go directive; never let go download another toolchain.
+ENV GOTOOLCHAIN=local GOFLAGS=-mod=mod
+WORKDIR /src
+RUN set -eux; \
+    git clone --quiet --depth 1 --branch "v${JIRA_CLI_VERSION}" https://github.com/ankitpokhrel/jira-cli.git .; \
+    test "$(git rev-parse HEAD)" = "${JIRA_CLI_COMMIT}"; \
+    go get golang.org/x/net@v0.62.0 golang.org/x/text@v0.43.0 github.com/yuin/goldmark@v1.7.17; \
+    go mod tidy; \
+    ts="$(git log -1 --format=%ct)"; \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
+    go build -trimpath -ldflags="-s -w \
+      -X github.com/ankitpokhrel/jira-cli/internal/version.Version=${JIRA_CLI_VERSION} \
+      -X github.com/ankitpokhrel/jira-cli/internal/version.GitCommit=${JIRA_CLI_COMMIT} \
+      -X github.com/ankitpokhrel/jira-cli/internal/version.SourceDateEpoch=${ts}" \
+      -o /out/jira ./cmd/jira
 
 # --- runtime ---
 FROM node:22-trixie-slim
@@ -99,7 +133,7 @@ ARG BAKE_OPTIONAL_TOOLS=1
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
-ARG MCP_GRAFANA_VERSION=1.4.2
+ARG MCP_GRAFANA_VERSION=2.2.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -216,7 +250,7 @@ RUN apt-get update \
 # Python wheels use the C toolchain (build-essential) installed above. `go install`
 # binaries and the module cache land under ~/go (home volume → persist). Keep
 # GO_VERSION in step with agent/go.mod's `go` directive; bump here to upgrade.
-ARG GO_VERSION=1.26.8
+ARG GO_VERSION
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) goarch=amd64 ;; arm64) goarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -258,7 +292,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
 # （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
-ARG GH_VERSION=2.101.0
+ARG GH_VERSION=2.103.3
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -272,7 +306,7 @@ RUN set -eux; \
 # The real binary goes to /usr/local/libexec/bkt and /usr/local/bin/bkt is the transparent-auth
 # wrapper (bkt-auth-wrapper.sh, COPY'd with the other wrappers below). The tarball must match the
 # release's own checksums.txt, or the build fails. Bump BKT_VERSION to upgrade (docs/build/08 §8.3).
-ARG BKT_VERSION=0.33.1
+ARG BKT_VERSION=0.37.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) bktarch=x86_64 ;; arm64) bktarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -287,25 +321,13 @@ RUN set -eux; \
     rm -rf /tmp/bkt; \
     /usr/local/libexec/bkt --version
 
-# Jira CLI (jira, ankitpokhrel/jira-cli): same shape as bkt. The real binary goes to
-# /usr/local/libexec/jira and /usr/local/bin/jira is the transparent-auth wrapper
-# (jira-auth-wrapper.sh). The tarball must match the release's own checksums.txt. Bump
-# JIRA_CLI_VERSION to upgrade (docs/build/08 §8.4.2).
-ARG JIRA_CLI_VERSION=1.7.0
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in amd64) jiraarch=x86_64 ;; arm64) jiraarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
-    base="https://github.com/ankitpokhrel/jira-cli/releases/download/v${JIRA_CLI_VERSION}"; \
-    dir="jira_${JIRA_CLI_VERSION}_linux_${jiraarch}"; \
-    asset="${dir}.tar.gz"; \
-    mkdir /tmp/jira; \
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${base}/${asset}" -o "/tmp/jira/${asset}"; \
-    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${base}/checksums.txt" -o /tmp/jira/checksums.txt; \
-    (cd /tmp/jira && awk -v a="${asset}" '$2 == a { print; n++ } END { exit n != 1 }' checksums.txt >sum && sha256sum -c sum); \
-    tar -C /tmp/jira -xzf "/tmp/jira/${asset}" "${dir}/bin/jira"; \
-    install -D -m 0755 "/tmp/jira/${dir}/bin/jira" /usr/local/libexec/jira; \
-    rm -rf /tmp/jira; \
-    /usr/local/libexec/jira version
+# Jira CLI (jira, ankitpokhrel/jira-cli): same shape as bkt, but built from source in the
+# jirabuild stage (see there for why). The real binary goes to /usr/local/libexec/jira and
+# /usr/local/bin/jira is the transparent-auth wrapper (jira-auth-wrapper.sh). Bump
+# JIRA_CLI_VERSION and JIRA_CLI_COMMIT (top of file) to upgrade (docs/build/08 §8.4.2).
+ARG JIRA_CLI_VERSION
+COPY --from=jirabuild /out/jira /usr/local/libexec/jira
+RUN /usr/local/libexec/jira version
 
 # Confluence CLI (confluence-cli, pchuri/confluence-cli): the Confluence counterpart of jira,
 # over the same Atlassian connection. It is an npm package (Node >= 20, the base image's node),
