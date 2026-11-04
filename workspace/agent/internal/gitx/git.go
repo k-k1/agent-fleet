@@ -474,6 +474,7 @@ func HandleListRepos(w http.ResponseWriter, r *http.Request) {
 func listRepos() ([]Repo, error) {
 	repos := []Repo{}
 	global := globalConfigPaths()
+	defer global.done()
 	live := map[string]bool{}
 	entries, err := os.ReadDir(ReposRoot())
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

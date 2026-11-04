@@ -110,9 +110,19 @@ type gitGlobals struct {
 	// statusEnv points the poll's `git status` at a local snapshot of the global config
 	// (global_snapshot.go); nil means git reads the real files.
 	statusEnv []string
+	// releaseSnapshot gives the snapshot back; call it through done once every git that
+	// used statusEnv has exited.
+	releaseSnapshot func()
 	// readSigs are the signatures of paths taken just before they were read for the
 	// snapshot. A status run through the snapshot is cached only while they still hold.
 	readSigs []fileSig
+}
+
+// done releases what globalConfigPaths took. Safe to call on any gitGlobals.
+func (g gitGlobals) done() {
+	if g.releaseSnapshot != nil {
+		g.releaseSnapshot()
+	}
 }
 
 // snapshotCurrent reports whether the global config still is what statusEnv's snapshot was
@@ -130,7 +140,8 @@ func (g gitGlobals) snapshotCurrent() bool {
 	return true
 }
 
-// globalConfigPaths reads the global git configs once per request. url.<base>.insteadOf
+// globalConfigPaths reads the global git configs once per request. The caller must call done
+// on the result after its last git has run. url.<base>.insteadOf
 // there rewrites `remote get-url`, so their signatures are part of every fingerprint.
 func globalConfigPaths() gitGlobals {
 	g := gitGlobals{simple: os.Getenv("GIT_CONFIG_COUNT") == "" && os.Getenv("GIT_CONFIG_PARAMETERS") == "" &&
@@ -162,7 +173,7 @@ func globalConfigPaths() gitGlobals {
 	if _, set := os.LookupEnv("GIT_CONFIG_GLOBAL"); !set {
 		xdg, home := read[g.paths[2]], read[g.paths[1]]
 		if snapshotAllowed(xdg, home) {
-			g.statusEnv = listGlobalSnapshot.env(xdg, home)
+			g.statusEnv, g.releaseSnapshot = listGlobalSnapshot.env(xdg, home)
 		}
 	}
 	return g

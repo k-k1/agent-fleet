@@ -25,18 +25,20 @@ import (
 // not equivalent: a BOM at the start of ~/.gitconfig becomes a fatal mid-file byte, and a
 // trailing backslash in the XDG file continues into the next file's first line.
 //
-// A generation is named by its content hash and never rewritten, so a git still reading an
-// older one, or a slower request writing an older one, cannot change what a newer request
-// hands out.
+// A generation is named by its content hash and never rewritten, so a slower request
+// writing an older config cannot change what a newer request hands out. A generation stays
+// on disk while any request still holds it (env's release): git treats a missing
+// GIT_CONFIG_GLOBAL file as "no global config" without an error, so deleting one under a
+// running status would silently change its answer.
 //
 // Only read-only callers may use it: a `git config --global` write through it would land in
 // the snapshot and be lost. A config with an include is never snapshotted, because a
 // relative include.path resolves against the including file's directory.
 type globalSnapshot struct {
 	mu   sync.Mutex
-	dir  string // private 0700 directory under the temp dir, made on first use
-	cur  string // directory of the generation handed out last
-	prev string // the one before it, kept for gits that may still be reading it
+	dir  string         // private 0700 directory under the temp dir, made on first use
+	cur  string         // directory of the generation handed out last
+	refs map[string]int // generation directory -> requests still holding it
 }
 
 var listGlobalSnapshot = &globalSnapshot{}
@@ -63,20 +65,23 @@ func privateDir(dir string) bool {
 	return ok && int(st.Uid) == os.Getuid()
 }
 
-// env returns the environment that points git at a snapshot of xdg and home, or nil when
-// one cannot be made (git then reads the real files, as before).
-func (s *globalSnapshot) env(xdg, home []byte) []string {
+// env returns the environment that points git at a snapshot of xdg and home, and the
+// release the caller must call once every git using it has exited. env is nil when no
+// snapshot can be made (git then reads the real files, as before); release is never nil.
+func (s *globalSnapshot) env(xdg, home []byte) (env []string, release func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.dir != "" && !privateDir(s.dir) {
-		s.dir, s.cur, s.prev = "", "", "" // never reuse a path we no longer own
+		// Never reuse a path we no longer own. Generations still held there are left to
+		// their holders' releases, which only delete inside the directory they came from.
+		s.dir, s.cur = "", ""
 	}
 	if s.dir == "" {
 		d, err := os.MkdirTemp("", "af-git-global-")
 		if err != nil {
-			return nil
+			return nil, func() {}
 		}
-		s.dir = d
+		s.dir, s.refs = d, map[string]int{}
 	}
 	sum := sha256.New()
 	fmt.Fprintf(sum, "%d\x00", len(xdg))
@@ -84,20 +89,36 @@ func (s *globalSnapshot) env(xdg, home []byte) []string {
 	sum.Write(home)
 	gen := filepath.Join(s.dir, hex.EncodeToString(sum.Sum(nil))[:32])
 	if strings.ContainsAny(gen, "\"\\\n") {
-		return nil // not expressible as a quoted include.path
+		return nil, func() {} // not expressible as a quoted include.path
 	}
 	if _, err := os.Lstat(filepath.Join(gen, "config")); err != nil {
 		if err := writeGeneration(s.dir, gen, xdg, home); err != nil {
-			return nil
+			return nil, func() {}
 		}
 	}
+	refs := s.refs
+	refs[gen]++
 	if gen != s.cur {
-		if s.prev != "" && s.prev != gen {
-			_ = os.RemoveAll(s.prev)
+		old := s.cur
+		s.cur = gen
+		if old != "" && refs[old] == 0 {
+			delete(refs, old)
+			_ = os.RemoveAll(old)
 		}
-		s.prev, s.cur = s.cur, gen
 	}
-	return []string{"GIT_CONFIG_GLOBAL=" + filepath.Join(gen, "config")}
+	var once sync.Once
+	return []string{"GIT_CONFIG_GLOBAL=" + filepath.Join(gen, "config")}, func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			refs[gen]--
+			if refs[gen] > 0 || gen == s.cur {
+				return
+			}
+			delete(refs, gen)
+			_ = os.RemoveAll(gen)
+		})
+	}
 }
 
 // writeGeneration builds a generation in a fresh temp directory inside root and renames it

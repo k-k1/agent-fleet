@@ -21,7 +21,7 @@ func TestSnapshotAllowedRefusesIncludes(t *testing.T) {
 	}
 }
 
-func snapshotPath(t *testing.T, env []string) string {
+func snapshotPath(t *testing.T, env []string, _ func()) string {
 	t.Helper()
 	if len(env) != 1 || !strings.HasPrefix(env[0], "GIT_CONFIG_GLOBAL=") {
 		t.Fatalf("env = %v", env)
@@ -29,31 +29,66 @@ func snapshotPath(t *testing.T, env []string) string {
 	return strings.TrimPrefix(env[0], "GIT_CONFIG_GLOBAL=")
 }
 
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
 func TestGlobalSnapshotGenerations(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	s := &globalSnapshot{}
-	one := snapshotPath(t, s.env([]byte("[a]\n"), []byte("[b]\n")))
-	root := filepath.Dir(filepath.Dir(one))
+	envA, relA := s.env([]byte("[a]\n"), []byte("[b]\n"))
+	a := snapshotPath(t, envA, relA)
+	root := filepath.Dir(filepath.Dir(a))
 	if fi, err := os.Stat(root); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Fatalf("snapshot dir must be private: %v %v", fi, err)
 	}
-	if again := snapshotPath(t, s.env([]byte("[a]\n"), []byte("[b]\n"))); again != one {
-		t.Errorf("same content got a new generation: %s, want %s", again, one)
+	envA2, relA2 := s.env([]byte("[a]\n"), []byte("[b]\n"))
+	if again := snapshotPath(t, envA2, relA2); again != a {
+		t.Errorf("same content got a new generation: %s, want %s", again, a)
 	}
-	two := snapshotPath(t, s.env([]byte("[a]\n"), []byte("[c]\n")))
-	if two == one {
+	relA2()
+	envB, relB := s.env([]byte("[a]\n"), []byte("[c]\n"))
+	b := snapshotPath(t, envB, relB)
+	if b == a {
 		t.Fatal("changed content must get a new generation")
 	}
-	if b, _ := os.ReadFile(filepath.Join(filepath.Dir(two), "home")); string(b) != "[c]\n" {
-		t.Errorf("new generation's home copy = %q", b)
+	if got, _ := os.ReadFile(filepath.Join(filepath.Dir(b), "home")); string(got) != "[c]\n" {
+		t.Errorf("new generation's home copy = %q", got)
 	}
-	if _, err := os.Stat(one); err != nil {
-		t.Error("the previous generation must survive one change (a git may still read it)")
+	relB()
+	envC, relC := s.env([]byte("[a]\n"), []byte("[d]\n"))
+	c := snapshotPath(t, envC, relC)
+	// A is still held by its first request: two newer generations must not take it away.
+	if !exists(a) {
+		t.Fatal("a generation still held by a request was removed")
 	}
-	snapshotPath(t, s.env([]byte("[a]\n"), []byte("[d]\n")))
-	if _, err := os.Stat(one); !os.IsNotExist(err) {
-		t.Errorf("a generation two changes old must be removed: %v", err)
+	if exists(b) {
+		t.Error("a generation nobody holds and no longer current must be removed")
 	}
+	relA()
+	relA() // release is idempotent
+	if exists(a) {
+		t.Error("the last release of a superseded generation must remove it")
+	}
+	relC()
+	if !exists(c) {
+		t.Error("the current generation must stay for the next request")
+	}
+}
+
+// A request that took its snapshot before two later edits keeps reading the same config.
+func TestHeldSnapshotSurvivesLaterEdits(t *testing.T) {
+	home := isolateGlobalConfig(t)
+	dir := untrackedRepo(t)
+	cfg := filepath.Join(home, ".gitconfig")
+	writeFile(t, cfg, "[status]\n\tshowUntrackedFiles = no # A\n")
+	held := globalConfigPaths()
+	for _, v := range []string{"all # B", "no # C"} {
+		writeFile(t, cfg, "[status]\n\tshowUntrackedFiles = "+v+"\n")
+		globalConfigPaths().done()
+	}
+	if st, err := gitStatusEnv(dir, held.statusEnv); err != nil || st.Untracked != 0 {
+		t.Errorf("held snapshot after two edits: untracked=%d err=%v, want 0 (generation A)", st.Untracked, err)
+	}
+	held.done()
 }
 
 // A snapshot directory that is no longer ours (cleaned away and recreated by someone else,
@@ -61,7 +96,8 @@ func TestGlobalSnapshotGenerations(t *testing.T) {
 func TestGlobalSnapshotNeverReusesAForeignDir(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	s := &globalSnapshot{}
-	first := snapshotPath(t, s.env(nil, []byte("[a]\n")))
+	e1, r1 := s.env(nil, []byte("[a]\n"))
+	first := snapshotPath(t, e1, r1)
 	root := filepath.Dir(filepath.Dir(first))
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
@@ -74,7 +110,8 @@ func TestGlobalSnapshotNeverReusesAForeignDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, first, "[core]\n\tfsmonitor = /planted\n")
-	got := snapshotPath(t, s.env(nil, []byte("[a]\n")))
+	e2, r2 := s.env(nil, []byte("[a]\n"))
+	got := snapshotPath(t, e2, r2)
 	if strings.HasPrefix(got, root+string(filepath.Separator)) {
 		t.Fatalf("reused the replaced directory: %s", got)
 	}
