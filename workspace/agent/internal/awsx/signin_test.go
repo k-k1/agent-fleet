@@ -3,6 +3,7 @@ package awsx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -290,6 +291,8 @@ func TestSignInRoutesNeverCarryAToken(t *testing.T) {
 }
 
 // Decision 5: an export takes the key's lock exclusively near a refresh, shared otherwise.
+// No wall-clock bound decides the outcome: the hook reports which hold the export ended up
+// with, and "it waited" is that the hook stays silent until the holder is released.
 func TestExportLockIsExclusiveNearARefresh(t *testing.T) {
 	s := teamSettings(t)
 	sp := s["a"]
@@ -297,23 +300,99 @@ func TestExportLockIsExclusiveNearARefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held()
-	wait := func() error {
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-		defer cancel()
-		_, err := exportLocked(awsRunner{bin: "/bin/false", ctx: ctx}, "a", "af-team")
-		return err
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			held()
+		}
 	}
+	defer release()
+
+	took := make(chan bool, 1)
+	old := exportLockHook
+	exportLockHook = func(shared bool) { took <- shared }
+	t.Cleanup(func() { exportLockHook = old })
+
+	// export runs one export in the background. Its context is owned here and a cleanup
+	// (registered after the hook and HOME restores, so it runs before them) cancels it and
+	// joins the worker, so a failing test never leaves an export running into the restores.
+	export := func() <-chan error {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		done := make(chan error, 1)
+		go func() {
+			_, err := exportLocked(awsRunner{bin: "/bin/false", ctx: ctx}, "a", "af-team")
+			done <- err
+			close(done)
+		}()
+		t.Cleanup(func() {
+			cancel()
+			<-done
+		})
+		return done
+	}
+	const generous = 30 * time.Second
+
 	token(t, "af-team", sp.StartURL, sp.SSORegion, "tok") // an hour left: no refresh
-	if err := wait(); err != nil && strings.Contains(err.Error(), "stopped") {
-		t.Fatalf("an export far from a refresh waited for a shared holder: %v", err)
+	far := export()
+	select {
+	case shared := <-took:
+		if !shared {
+			t.Fatal("an export far from a refresh took the lock exclusively")
+		}
+	case <-time.After(generous):
+		t.Fatal("an export far from a refresh waited for a shared holder")
 	}
+	<-far
+
 	path := ssoCachePath("af-team")
 	b, _ := json.Marshal(map[string]string{"accessToken": "t", "expiresAt": time.Now().Add(5 * time.Minute).UTC().Format(time.RFC3339),
 		"startUrl": sp.StartURL, "region": sp.SSORegion})
 	os.WriteFile(path, b, 0o600)
-	if err := wait(); err == nil || !strings.Contains(err.Error(), "stopped") {
-		t.Fatalf("an export near a refresh did not wait for the shared holder: %v", err)
+	near := export()
+	// The export polls the lock every 20 ms; give it several rounds to prove it is blocked.
+	// A slow runner only makes this window less informative, never makes the test fail.
+	select {
+	case <-took:
+		t.Fatal("an export near a refresh did not wait for the shared holder")
+	case <-time.After(150 * time.Millisecond):
+	}
+	release()
+	select {
+	case shared := <-took:
+		if shared {
+			t.Fatal("an export near a refresh held the lock shared")
+		}
+	case <-time.After(generous):
+		t.Fatal("the export did not take the lock after the holder released it")
+	}
+	<-near
+}
+
+// stuckContext reaches its deadline by the clock before Done closes or Err reports it, as a
+// context.WithTimeout does for the instant between its deadline and its timer firing.
+type stuckContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c stuckContext) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c stuckContext) Done() <-chan struct{}       { return nil }
+func (c stuckContext) Err() error                  { return nil }
+
+// A wait for the lock that ends at the context's deadline is a stopped run, not a lock
+// failure, even when the lock wait notices the deadline before the context does.
+func TestExportLockWaitEndingAtTheDeadlineIsStopped(t *testing.T) {
+	teamSettings(t)
+	held, err := logins.LockKey("af-team", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held()
+	ctx := stuckContext{Context: context.Background(), deadline: time.Now().Add(60 * time.Millisecond)}
+	_, err = exportLocked(awsRunner{bin: "/bin/false", ctx: ctx}, "a", "af-team")
+	if err == nil || !strings.Contains(err.Error(), "stopped") || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a lock wait ended by the deadline = %v, want a stopped run", err)
 	}
 }
 

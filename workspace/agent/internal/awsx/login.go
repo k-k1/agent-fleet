@@ -1,10 +1,12 @@
 package awsx
 
 import (
+	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -155,10 +157,18 @@ func exportLocked(aws awsRunner, profile, ssoSession string) (processCreds, erro
 		for {
 			var err error
 			unlock, err = logins.LockKeyCancel(ssoSession, shared, cancel, deadline)
-			if err != nil && aws.ctx != nil && aws.ctx.Err() != nil {
+			if err != nil && aws.ctx != nil {
 				// A Console wait's Ctrl-C or budget ended the wait for the lock (a logout holds
 				// it across its network call); the wait classifies it like a killed child.
-				return processCreds{}, fmt.Errorf("stopped: %w", aws.ctx.Err())
+				// The lock wait compares the deadline with the clock itself, so it can give up
+				// an instant before the context's timer closes Done: ctx.Err() is still nil
+				// then, and ErrLockTimeout is the context's own deadline.
+				if cerr := aws.ctx.Err(); cerr != nil {
+					return processCreds{}, fmt.Errorf("stopped: %w", cerr)
+				}
+				if errors.Is(err, cloudlogin.ErrLockTimeout) {
+					return processCreds{}, fmt.Errorf("stopped: %w", context.DeadlineExceeded)
+				}
 			}
 			if err != nil {
 				return processCreds{}, fmt.Errorf("could not lock the cached login of sso-session %s: %w", ssoSession, err)
