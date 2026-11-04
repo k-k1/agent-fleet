@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -151,6 +152,18 @@ const (
 var spendMarkers = []string{
 	"spend limit",
 	"credit balance", // "Your credit balance is too low …" (measured, via blockedMarkers)
+}
+
+// apiAccountCredit reports that msg is the API account running out of credit for a session on
+// the anthropic-api route. Unlike a spend limit of the claude.ai organisation (a decision of an
+// administrator, which must keep the session stopped), this one is cleared by funding the key's
+// account, and nothing in the session shows when that happened: only sending again tells. So it
+// is not a limit episode: no spend_limit chip, and a queued message is delivered instead of
+// waiting forever on a transcript tail that only a new turn can replace. The failure itself still
+// reaches the member as the turn's error, verbatim. Only the "credit balance" text counts; a
+// "spend limit" text stays a spend limit on every route.
+func apiAccountCredit(m session.Meta, msg string) bool {
+	return UsesAPIKey(m) && strings.Contains(strings.ToLower(msg), "credit balance")
 }
 
 // retryableMarkers are error texts that clear by themselves: the turn was cut off by a

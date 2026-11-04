@@ -222,6 +222,23 @@ cursor と copilot の Ctrl+C はターンが実行中のときだけ送り、�
 | muse | 新しいホストは Muse Code のネイティブメモリをオフにして起動する | **muse から取り込む** で 1 回 | — |
 | ほかの種類 | 何も変えない | — | — |
 
+## claude: 「API キー」経路
+
+claude のセッションは、経路を明示して開始できます（ターミナル（CLI）のみ）。**anthropic-api** は、
+設定 > 接続 > エージェント > OpenCode カード > API キー（Anthropic プリセット）に保存した Anthropic
+API キーで従量課金として動きます。**anthropic-subscription** はこのワークスペースの claude.ai ログインで動きます。
+経路を指定しないセッションは従来どおりです。
+
+- CLI は環境の API キーについて、キーごとに一度「Detected a custom API key in your environment ·
+  use this API key?」と尋ねます。anthropic-api のセッションは CLI を起動する前にこれへ答えを書き込む
+  （CLI が Yes のときに自分で記録するのと同じく、キーの末尾 20 文字を `.claude.json` に記録する）ので、
+  この問いで止まることも、claude.ai ログインへ黙って切り替わることもありません。
+- claude.ai のログインは CLI から読めるままなので、バナーに「Both claude.ai and ANTHROPIC_API_KEY set」と
+  出て、そのセッションでは claude.ai のコネクタが無効になります。想定どおりで害はありません。
+  セッションが使う資格情報は API キーです（ヘッダーは「API Usage Billing」）。
+- キーのアカウントの残高が尽きると（「Credit balance is too low」）、ターンはその文面で失敗します。
+  セッションは「残高上限」状態にはなりません。アカウントに入金してメッセージを送れば届きます。
+  claude.ai 組織の利用額上限は従来どおりセッションを止めたままにします。
 ## どれを選ぶか
 
 **すでに払っている契約で選ぶ**のが確実です。Anthropic のアカウントなら **claude**、

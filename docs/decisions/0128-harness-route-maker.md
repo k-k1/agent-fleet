@@ -406,3 +406,11 @@ table from becoming a menu of models that fail on the first message, which is wh
   window is one tick. `CLAUDE_CODE_USE_FOUNDRY` joins the unset list and the settings check. A scheduled reuse
   fire compares a bound connection reference exactly (a bare slot compares by slot), and `BindRoute` re-checks a
   fingerprint against the single key read it binds. #3317 now only tracks the optional flag-layer pin.
+- 2026-11-05, #3344 (live check of P1b): (1) the CLI's "custom API key" prompt (No preselected = the claude.ai login)
+  is answered before launch: the anthropic-api launch records the bound key's last 20 characters in
+  `customApiKeyResponses.approved` of the CLI's own `.claude.json` (and withdraws it from `.rejected`), through the
+  same file the folder-trust step already writes; a write that fails refuses the launch. (2) The "both logins" banner
+  is accepted, documented in guide/ref/agents. (3) The no-key refusal and the `route_connection` descriptions name
+  Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset). (4) A "credit balance" abort on an
+  anthropic-api session is no longer a limit episode (no `spend_limit`, queued messages deliver); a "spend limit" text
+  and every other route keep today's behaviour.

@@ -238,6 +238,24 @@ What the switch **"Let sessions use Agent Fleet memory"**
 | muse | New hosts start with Muse Code's native memory off | Once, with **Import from muse** | — |
 | other kinds | Nothing is changed | — | — |
 
+## claude: the "API key" route
+
+A claude session can be started on an explicit route (Terminal only). **anthropic-api** runs on the
+Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys
+(Anthropic preset), billed per use; **anthropic-subscription** runs on this workspace's claude.ai
+login. A session with no route behaves as before.
+
+- The CLI asks "Detected a custom API key in your environment · use this API key?" once per key. An
+  anthropic-api session answers it for you before the CLI starts (it records the key's last 20
+  characters in the CLI's own `.claude.json`, as the CLI does for a Yes), so it never waits on that
+  prompt and never falls back to the claude.ai login.
+- The claude.ai login stays readable by the CLI, so the banner says "Both claude.ai and
+  ANTHROPIC_API_KEY set" and claude.ai connectors are disabled in that session. This is expected
+  and harmless: the API key is the credential the session uses (the header reads "API Usage Billing").
+- When the key's account runs out of credit ("Credit balance is too low") the turn fails with that
+  text. The session does not show the *Spend limit* state: fund the account and send a message, and it
+  is delivered. A claude.ai organisation spend limit still stops the session as before.
+
 ## Choosing one
 
 Choose by the subscription you already pay for. An Anthropic account → **claude**;

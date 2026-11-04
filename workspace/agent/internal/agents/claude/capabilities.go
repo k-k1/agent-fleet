@@ -90,7 +90,10 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 	return agents.UsageLimitTraits{
 		PaneMenu: func(name string) bool { return tmuxx.ReadPane(name).RateLimitMenu },
 		AtLimit: func(m session.Meta) (agents.LimitKind, bool) {
-			_, kind, atLimit := UsageLimitAbort(session.UUID(m.Dir, m.Name))
+			a, kind, atLimit := UsageLimitAbort(session.UUID(m.Dir, m.Name))
+			if atLimit && apiAccountCredit(m, a.Msg) {
+				return "", false
+			}
 			return kind, atLimit
 		},
 		ResetAt: func(m session.Meta, menu bool, now time.Time) (time.Time, string, bool) {

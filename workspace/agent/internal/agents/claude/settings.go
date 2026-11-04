@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -104,6 +105,77 @@ func ensureFolderTrusted(dir string) {
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, p)
 	}
+}
+
+// approvalSuffixLen is how many trailing characters of a key the CLI stores in
+// customApiKeyResponses (it never stores the key itself).
+const approvalSuffixLen = 20
+
+// approveAPIKey pre-answers the CLI's "Detected a custom API key in your environment - use
+// this API key?" prompt for key, the way the CLI records a Yes: the key's last 20 characters in
+// customApiKeyResponses.approved. The prompt preselects No, which would run the session on the
+// claude.ai login, so an explicit anthropic-api session must never reach it (ADR 0128
+// decision 3). The key is also removed from .rejected, where an earlier No would otherwise win.
+// Only the suffix the CLI itself would store is written; the file is the member's own 0600 state.
+// The approval takes effect only in a process whose environment carries that key, which is only
+// ever an anthropic-api session's. An error means the approval is not on disk: the caller must
+// refuse the launch rather than start a pane that waits on the prompt.
+func approveAPIKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	suffix := key
+	if len(suffix) > approvalSuffixLen {
+		suffix = suffix[len(suffix)-approvalSuffixLen:]
+	}
+	p := claudeJSONPath()
+	root := map[string]any{}
+	if b, err := os.ReadFile(p); err == nil {
+		if err := json.Unmarshal(b, &root); err != nil {
+			return fmt.Errorf("cannot pre-approve the API key: %s is not valid JSON", p)
+		}
+	}
+	resp, _ := root["customApiKeyResponses"].(map[string]any)
+	if resp == nil {
+		resp = map[string]any{}
+	}
+	approved, _ := resp["approved"].([]any)
+	rejected, _ := resp["rejected"].([]any)
+	has := func(l []any) bool {
+		for _, v := range l {
+			if s, _ := v.(string); s == suffix {
+				return true
+			}
+		}
+		return false
+	}
+	if has(approved) && !has(rejected) {
+		return nil
+	}
+	if !has(approved) {
+		approved = append(approved, suffix)
+	}
+	kept := make([]any, 0, len(rejected))
+	for _, v := range rejected {
+		if s, _ := v.(string); s != suffix {
+			kept = append(kept, v)
+		}
+	}
+	resp["approved"], resp["rejected"] = approved, kept
+	root["customApiKeyResponses"] = resp
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	tmp := p + ".af-tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
 
 // mainCheckoutOf returns the main checkout's root when dir is a linked git worktree

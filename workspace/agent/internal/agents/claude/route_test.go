@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -383,5 +384,103 @@ func TestRouteHeldWatchesRunningSessions(t *testing.T) {
 	}
 	if ref := (agentImpl{}).RouteHeld(none); ref != nil {
 		t.Errorf("a session with no selection was judged: %+v", ref)
+	}
+}
+
+func approvalsIn(t *testing.T) (approved, rejected []string, root map[string]any) {
+	t.Helper()
+	b, err := os.ReadFile(claudeJSONPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &root); err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := root["customApiKeyResponses"].(map[string]any)
+	for _, v := range resp["approved"].([]any) {
+		approved = append(approved, v.(string))
+	}
+	for _, v := range resp["rejected"].([]any) {
+		rejected = append(rejected, v.(string))
+	}
+	return
+}
+
+// The CLI's "use this API key?" prompt preselects No (= the claude.ai login), so an anthropic-api
+// launch records the Yes beforehand: only the key's last 20 characters, and an earlier No for the
+// same key is withdrawn.
+func TestBuildLaunchPreApprovesTheBoundKey(t *testing.T) {
+	const key = "sk-ant-api03-SECRETSECRETSECRETSECRETSECRET-tailtailtailtail"
+	withAPIKey(t, key, nil)
+	isolateSlot(t)
+	suffix := key[len(key)-20:]
+	pre := `{"keep":{"a":1},"customApiKeyResponses":{"approved":["other"],"rejected":["` + suffix + `","x"]}}`
+	if err := os.WriteFile(claudeJSONPath(), []byte(pre), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Kind: session.KindClaude, Name: "r-appr", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
+	if _, err := launchOf(t, m); err != nil {
+		t.Fatal(err)
+	}
+	approved, rejected, root := approvalsIn(t)
+	if !slices.Equal(approved, []string{"other", suffix}) || !slices.Equal(rejected, []string{"x"}) {
+		t.Errorf("approved=%v rejected=%v", approved, rejected)
+	}
+	if root["keep"] == nil {
+		t.Error("an unrelated key of .claude.json was lost")
+	}
+	b, _ := os.ReadFile(claudeJSONPath())
+	if strings.Contains(string(b), key) {
+		t.Error("the whole key was written to .claude.json")
+	}
+	// A second launch changes nothing.
+	if _, err := launchOf(t, m); err != nil {
+		t.Fatal(err)
+	}
+	if a2, _, _ := approvalsIn(t); !slices.Equal(a2, approved) {
+		t.Errorf("approval duplicated: %v", a2)
+	}
+}
+
+// No selection and the subscription route record no approval: nothing about them changes.
+func TestBuildLaunchWithoutAPIRouteRecordsNoApproval(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-whatever-whatever-whatever", nil)
+	isolateSlot(t)
+	for _, r := range []*routes.Selection{nil, sel(RouteSubscription, "")} {
+		m := session.Meta{Kind: session.KindClaude, Name: "r-noappr", Dir: t.TempDir(), Route: r}
+		if _, err := launchOf(t, m); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(claudeJSONPath())
+		if strings.Contains(string(b), "customApiKeyResponses") {
+			t.Errorf("route %v wrote an approval: %s", r, b)
+		}
+	}
+}
+
+// An unreadable .claude.json stops the launch: a pane that waits on the prompt is not an option.
+func TestBuildLaunchRefusesWhenApprovalCannotBeStored(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-whatever-whatever-whatever", nil)
+	isolateSlot(t)
+	m := session.Meta{Kind: session.KindClaude, Name: "r-bad", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
+	// ensureFolderTrusted tolerates a broken file (it rewrites it); the approval step then sees a
+	// valid one, so make the config dir read-only for the rename instead.
+	if err := os.Chmod(ConfigDir(), 0o500); err != nil {
+		t.Skip("cannot make the dir read-only")
+	}
+	t.Cleanup(func() { _ = os.Chmod(ConfigDir(), 0o700) })
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes")
+	}
+	if _, err := launchOf(t, m); err == nil {
+		t.Error("launch went ahead without the approval on disk")
+	}
+}
+
+// The refusal names the place the key is really entered.
+func TestNoAPIKeyRefusalNamesTheRealSettingsPath(t *testing.T) {
+	msg := noAPIKey().Message
+	if !strings.Contains(msg, "Settings > Connections > Agents > the OpenCode card > API keys") || strings.Contains(msg, "provider keys") {
+		t.Errorf("refusal = %q", msg)
 	}
 }

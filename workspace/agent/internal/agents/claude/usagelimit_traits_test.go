@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -83,6 +84,45 @@ func TestUsageLimitTraitsThroughRealTranscript(t *testing.T) {
 				if wantOK := menu || !tc.trustedOff; gOK != wantOK {
 					t.Errorf("menu=%v: ok = %v, want %v", menu, gOK, wantOK)
 				}
+			}
+		})
+	}
+}
+
+// The API account's credit running out is not a limit episode for an anthropic-api session (the
+// member funds the account and sends again), while the same text on any other session, and a
+// spend-limit text on every session, stay what they were.
+func TestAtLimitAPICreditIsNotAnEpisodeOnTheAPIRoute(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	tr := agentImpl{}.UsageLimitTraits()
+	credit := apiErr("Credit balance is too low", 400)
+	spend := apiErr("You've hit your org's monthly spend limit · run /usage-credits to raise it", 429)
+	for i, tc := range []struct {
+		name      string
+		tail      string
+		route     *routes.Selection
+		wantLimit bool
+	}{
+		{"credit, api route", credit, sel(RouteAPI, ""), false},
+		{"credit, no route", credit, nil, true},
+		{"credit, subscription route", credit, sel(RouteSubscription, ""), true},
+		{"spend limit, api route", spend, sel(RouteAPI, ""), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := session.Meta{Name: fmt.Sprintf("cred%d", i), Dir: filepath.Join(home, fmt.Sprintf("w%d", i)), Kind: session.KindClaude, Route: tc.route}
+			dir := filepath.Join(ConfigDir(), "projects", "-proj")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			body := userLine("go") + "\n" + tc.tail + "\n"
+			if err := os.WriteFile(filepath.Join(dir, session.UUID(m.Dir, m.Name)+".jsonl"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			kind, at := tr.AtLimit(m)
+			if at != tc.wantLimit || (at && kind != LimitSpend) {
+				t.Fatalf("AtLimit = %q/%v, want limit=%v (spend)", kind, at, tc.wantLimit)
 			}
 		})
 	}

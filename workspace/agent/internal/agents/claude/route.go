@@ -264,7 +264,7 @@ func settingsConflict(files []string) *agents.RouteRefusal {
 
 func noAPIKey() *agents.RouteRefusal {
 	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
-		Message: "no Anthropic API key is connected; add one under Settings > Connections (provider keys), or use the subscription route"}
+		Message: "no Anthropic API key is connected; add one under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset), or use the subscription route"}
 }
 
 // AuthExpiredFor is AuthExpired judged for one session (ADR 0128 decision 9).

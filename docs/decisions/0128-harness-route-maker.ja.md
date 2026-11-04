@@ -383,3 +383,10 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   再起動は拒否する。空白は 1 tick 分。`CLAUDE_CODE_USE_FOUNDRY` を unset 一覧と設定検査に加えた。ルート指定のスケジュール
   reuse は、束縛済みの接続参照を完全一致で比べる（裸のスロット名はスロットで比べる）。`BindRoute` は、束縛する 1 回の
   キー読み取りに対して指紋を再確認する。#3317 は、任意のフラグ層での固定だけを追う。
+- 2026-11-05, #3344（P1b の実機確認）: (1) CLI の「custom API key」確認（既定が No ＝ claude.ai ログイン）は起動前に答える。
+  anthropic-api の起動時に、束縛したキーの末尾 20 文字を CLI 自身の `.claude.json` の `customApiKeyResponses.approved`
+  へ記録し（`.rejected` からは外す）、書き込みはフォルダ信頼の既存経路と同じファイルへ行う。書き込みに失敗した起動は拒否する。
+  (2) 「両方のログイン」バナーは許容し、guide/ref/agents に記載。(3) キー無しの拒否文と `route_connection` の説明を
+  設定 > 接続 > エージェント > OpenCode カード > API キー（Anthropic プリセット）に直した。(4) anthropic-api セッションの
+  「credit balance」打ち切りは上限エピソードにしない（`spend_limit` にならず、待機中のメッセージは配信される）。
+  「spend limit」の文面と他の経路は従来どおり。

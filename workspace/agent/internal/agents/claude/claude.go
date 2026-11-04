@@ -8,6 +8,7 @@ package claude
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -151,6 +152,17 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		// The CLI's own settings files can override the route after it starts (route.go).
 		if ref := settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
 			return agents.LaunchPlan{}, ref
+		}
+		// The CLI asks before it uses an ANTHROPIC_API_KEY from the environment, with No
+		// preselected; answer it for this session's own key (settings.go).
+		if m.Route.Route == RouteAPI {
+			for _, kv := range rp.Env {
+				if key, ok := strings.CutPrefix(kv, "ANTHROPIC_API_KEY="); ok {
+					if err := approveAPIKey(key); err != nil {
+						return agents.LaunchPlan{}, err
+					}
+				}
+			}
 		}
 		env = rp.Env
 		program = routeLaunchProgram(program, rp.Unset)

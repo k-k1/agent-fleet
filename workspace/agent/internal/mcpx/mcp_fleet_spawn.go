@@ -232,7 +232,7 @@ func fleetSpawnTools() []toolSpec {
 							"new_branch":       map[string]any{"type": "string", "description": "worktree に作る新規ブランチ名（任意、省略時は仮ブランチを自動生成）。"},
 							"subdir":           map[string]any{"type": "string", "description": "作業ディレクトリ内の相対パス（任意）。エージェントをその配下で起動する（例: console／apps/web）。worktree=true のときは新しく作られた worktree 内の相対パスとして解釈される。存在しないパスは拒否される。"},
 							"route":            map[string]any{"type": "string", "description": "モデルの経路 id（任意。省略時はその種別の既定の解決のまま）。経路を受け付ける種別は claude（anthropic-subscription | anthropic-api）だけで、それ以外の種別や宣言していない経路は理由つきで拒否される。既定の経路へ黙って戻ることはない。"},
-							"route_connection": map[string]any{"type": "string", "description": "経路が使う接続の安定した参照（任意・route と一緒に指定）。anthropic-api は空か ANTHROPIC_API_KEY（自分の Anthropic API キー接続）だけ。"},
+							"route_connection": map[string]any{"type": "string", "description": "経路が使う接続の安定した参照（任意・route と一緒に指定）。anthropic-api は空か ANTHROPIC_API_KEY（設定 > 接続 > エージェント > OpenCode カード > API キー の Anthropic プリセットに保存した自分のキー）だけ。"},
 						},
 					},
 				}
@@ -280,7 +280,7 @@ func fleetSpawnTools() []toolSpec {
 							"new_branch":                map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
 							"subdir":                    map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
 							"route":                     map[string]any{"type": "string", "description": "Model route id (optional; omit to keep the kind's own default). Only claude accepts one today: anthropic-subscription or anthropic-api (Terminal sessions). Any other kind, or a route the kind does not declare, is refused with the reason - never run on the default route instead"},
-							"route_connection":          map[string]any{"type": "string", "description": "Stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, your own Anthropic API key connection"},
+							"route_connection":          map[string]any{"type": "string", "description": "Stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset)"},
 							"report_back":               map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
 							"spend_cap_usd":             map[string]any{"type": "number", "description": "The child's own spend budget in USD, an estimate at list price (optional; default: the user's default budget; 0 = none). Past it the child stops after its turn. It is not charged to yours"},
 							"work_item": map[string]any{
