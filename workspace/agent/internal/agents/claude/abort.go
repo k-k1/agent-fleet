@@ -163,7 +163,9 @@ var spendMarkers = []string{
 // reaches the member as the turn's error, verbatim. Only the "credit balance" text counts; a
 // "spend limit" text stays a spend limit on every route.
 func apiAccountCredit(m session.Meta, msg string) bool {
-	return UsesAPIKey(m) && strings.Contains(strings.ToLower(msg), "credit balance")
+	low := strings.ToLower(msg)
+	// A text that also names a spend limit stays a limit.
+	return UsesAPIKey(m) && strings.Contains(low, "credit balance") && !strings.Contains(low, "spend limit")
 }
 
 // retryableMarkers are error texts that clear by themselves: the turn was cut off by a

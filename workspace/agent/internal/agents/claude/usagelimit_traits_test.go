@@ -108,6 +108,7 @@ func TestAtLimitAPICreditIsNotAnEpisodeOnTheAPIRoute(t *testing.T) {
 		{"credit, api route", credit, sel(RouteAPI, ""), false},
 		{"credit, no route", credit, nil, true},
 		{"credit, subscription route", credit, sel(RouteSubscription, ""), true},
+		{"credit and spend limit together, api route", apiErr("Credit balance is too low; monthly spend limit reached", 400), sel(RouteAPI, ""), true},
 		{"spend limit, api route", spend, sel(RouteAPI, ""), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

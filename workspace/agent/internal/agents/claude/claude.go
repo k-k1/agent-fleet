@@ -7,10 +7,12 @@ package claude
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -159,8 +161,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			for _, kv := range rp.Env {
 				if key, ok := strings.CutPrefix(kv, "ANTHROPIC_API_KEY="); ok {
 					if err := approveAPIKey(key); err != nil {
-						return agents.LaunchPlan{}, err
+						return agents.LaunchPlan{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
+							Message: "could not pre-approve the Anthropic API key for the CLI (" + err.Error() + "); the session is not started rather than left on the CLI's key prompt, which could run it on the claude.ai login"}
 					}
+					break
 				}
 			}
 		}
