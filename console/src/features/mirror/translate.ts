@@ -10,8 +10,9 @@
 
 import type { Group, Part } from "./transcript/types.ts";
 
-/** Client-side ceiling for one press. Wider than the Agent's 90 s per part (session_translate.go)
- *  because a turn can hold more than one, and the request is serial on that side. */
+/** Client-side ceiling for one translate request (at most TRANSLATE_MAX_PARTS parts). Wider than
+ *  the Agent's 90 s per part (session_translate.go) because a request can hold more than one,
+ *  and the request is serial on that side. */
 export const TRANSLATE_TIMEOUT_MS = 240_000;
 
 /** The languages a translation can be asked for — the Console's own display locales. */
@@ -138,6 +139,12 @@ export function looksForeign(text: string, lang: TranslateLang): boolean {
 // bearing for correctness (a stale copy only shifts where splitting kicks in, never breaks it),
 // so unlike translateHash this does not need a pinned cross-language vector.
 export const TRANSLATE_MAX_PART_BYTES = 32 * 1024;
+
+// Server-side cap on parts per request (session_translate.go's translateMaxParts). A press with
+// more parts than this — a turn with many short narrations, or one long answer that
+// splitForTranslate cut into many chunks — is sent as several requests of at most this many,
+// because the Agent refuses the whole request (translate_too_long) rather than truncating it.
+export const TRANSLATE_MAX_PARTS = 8;
 
 function byteLen(s: string): number {
   return encoder.encode(s).length;

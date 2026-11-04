@@ -109,11 +109,16 @@ const textLen = (p: MirrorPartLike): number => (isText(p) ? p.text!.trim().lengt
 // agent gives its real answer, then writes a memory note (a Write/Edit tool) and adds a short
 // sign-off — pushes the boundary past the real answer, folding it away and leaving only the
 // sign-off as the "final answer" (both on screen and for TTS). So: take the last-tool
-// boundary, then, if the longest text BEFORE it is longer than the whole tail after it, that
-// earlier text is the dominant/real answer and the trailing tool(s) are housekeeping — move
+// boundary, then, if the longest text BEFORE it is longer than ALL the text that follows it,
+// that earlier text is the dominant/real answer and the trailing tool(s) are housekeeping — move
 // the boundary onto that answer, keeping the housekeeping tool and sign-off in the visible/read
 // final answer. A tail at least as long as anything before it is the genuine answer, so the
 // boundary stays put and a normal "narrate → tool → answer" turn folds exactly as before.
+//
+// "All the text that follows", not just the tail after the last tool: a long autonomous turn
+// (narrate → tool → narrate → … → one short closing line) has an early narration line longer
+// than that closing line, and comparing against the tail alone unfolded every narration after
+// it — a dozen visible parts, which then overflowed the translate request's part cap.
 export function workSplit(parts: MirrorPartLike[]): WorkSplit | null {
   let at = confirmedWorkEnd(parts);
   if (at === 0) return null;
@@ -130,7 +135,7 @@ export function workSplit(parts: MirrorPartLike[]): WorkSplit | null {
       bestIdx = i;
     }
   }
-  if (bestIdx >= 0 && bestLen > tailLen) at = bestIdx;
+  if (bestIdx >= 0 && bestLen > textOfParts(parts.slice(bestIdx + 1)).length) at = bestIdx;
   if (at === 0) return null; // the real answer is the whole turn — nothing to fold
 
   const work = parts.slice(0, at);

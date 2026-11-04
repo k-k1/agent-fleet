@@ -71,6 +71,26 @@ describe("workSplit", () => {
     expect(workSplit(parts)).toEqual({ at: 1, tools: 1, responses: 0 });
   });
 
+  it("does not move the boundary onto an early narration that the rest of the turn outweighs", () => {
+    // A long autonomous turn: the first narration is the longest single part and longer than the
+    // closing line, but the narrations after it add up to far more. They are work, not wrap-up.
+    const parts = [
+      { kind: "text", text: "I added three regression tests and am fixing the import placement now." },
+      { kind: "tool" },
+      { kind: "text", text: "Now the UI side." },
+      { kind: "tool" },
+      { kind: "text", text: "Running the affected tests." },
+      { kind: "tool" },
+      { kind: "text", text: "Java passed. Next the e2e." },
+      { kind: "tool" },
+      { kind: "text", text: "All checks pass. Committing." },
+      { kind: "tool" },
+      { kind: "text", text: "Resumed the reviewer." },
+    ];
+    expect(workSplit(parts)).toEqual({ at: 10, tools: 5, responses: 5 });
+    expect(textOfParts(parts.slice(10))).toBe("Resumed the reviewer.");
+  });
+
   it("returns the work confirmed up to the last tool without waiting for the final answer", () => {
     expect(confirmedWorkEnd([{ kind: "text" }, { kind: "tool" }, { kind: "text" }])).toBe(2);
     expect(confirmedWorkEnd([{ kind: "text" }])).toBe(0);
