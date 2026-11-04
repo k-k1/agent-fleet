@@ -776,9 +776,6 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return "", false
 	}
-	if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) {
-		rememberSubmitted(name, pane, prompt)
-	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
 	// session working, or codex sticks on "in progress" (no Stop hook fires to clear it).
 	// Real prompts still mark working so the chip reacts before the agent's own hook.
@@ -849,6 +846,14 @@ func typeLineAndSubmit(name, pane, text string) error {
 	time.Sleep(delay)
 	if out, err := tmuxx.Cmd("send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
+	}
+	// Every Agent-side submission (a send, create_session's initial prompt, a delivery retry)
+	// is remembered here, so a stop of the session's first prompt can reclaim it (issue #3345).
+	// A slash command starts no turn and must not replace the prompt a stop could interrupt.
+	if !slashCmdRe.MatchString(strings.TrimSpace(text)) {
+		if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) {
+			rememberSubmitted(name, pane, text)
+		}
 	}
 	return nil
 }

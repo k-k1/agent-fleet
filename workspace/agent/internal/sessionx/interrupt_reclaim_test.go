@@ -722,3 +722,21 @@ func TestLateRestoreClearsOwnSubmission(t *testing.T) {
 		t.Fatal("without a known prompt the send must stay refused")
 	}
 }
+
+// Every Agent-side submission path ends in typeLineAndSubmit (initial_prompt, sends, delivery
+// retries), and that is what must remember the text; a slash command must not replace it.
+func TestTypeLineAndSubmitRemembersTheSubmission(t *testing.T) {
+	fakeTmux(t)
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	session.WriteMeta(session.Meta{Name: "remember_me", Dir: t.TempDir(), Kind: session.KindClaude})
+	t.Cleanup(func() { submittedPrompts.Delete("remember_me") })
+	if err := typeLineAndSubmit("remember_me", "%7", "the first task"); err != nil {
+		t.Fatal(err)
+	}
+	if err := typeLineAndSubmit("remember_me", "%7", "/remote-control"); err != nil {
+		t.Fatal(err)
+	}
+	if got := takeSubmitted("remember_me", "%7"); got != "the first task" {
+		t.Fatalf("remembered %q, want the prompt, not the slash command", got)
+	}
+}
