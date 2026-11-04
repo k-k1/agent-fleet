@@ -46,9 +46,9 @@ issue をそのままにする。
 
 各行の **Remedy**:
 
-- `rebuild`: OS パッケージ、または `af-cp` / `workspace-agent` 内の Go 標準ライブラリ。ベースイメージと
+- `rebuild`: Dockerfile でピンしていない OS パッケージ、または `af-cp` / `workspace-agent` 内の Go 標準ライブラリ。ベースイメージと
   Go toolchain を新しくして再ビルドすれば直るので、パッチリリースの対象。
-- `bump`: Go モジュール、npm パッケージ、焼き込んだツール（古い toolchain でビルドされたツール自身のピン）。
+- `bump`: Dockerfile が版を固定している Debian パッケージ（`CHROMIUM_VERSION` の `chromium`・`chromium-common`・`chromium-sandbox`。新しいベースでも同じビルドが入り直る）、Go モジュール、npm パッケージ、焼き込んだツール（古い toolchain でビルドされたツール自身のピン）。
   再ビルドでは動かない。通常の PR で `main` に入れ、次のリリースに載せる。待てない場合はパッチリリースにも
   その bump を載せる（下記）。
 
@@ -80,8 +80,11 @@ git switch -c release/0.40.1 v0.40.0
 
 # 2) Debian パッケージのピン。publish の preflight は trixie-security がもう配らないピンで落ちる。
 #    古いタグではまさにそれが起きる。
-deploy/local/apt-pin-check.sh        # exit 0 = 何もしなくてよい
-#    そうでなければ main の apt-pin-bump の ARG 値を持ち込むか deploy/local/apt-pin-bump.sh を実行し、commit する。
+deploy/local/apt-pin-check.sh        # exit 0 は「ピンがまだ配られている」だけを意味する
+#    exit 0 でも足りない: 古いビルドが trixie/main に残り、修正版が security にだけある場合がある。
+#    issue に出ているピン済みパッケージ（remedy `bump`）ごとに、workspace/Dockerfile のピンと
+#    issue の "Fixed in" を比べ、ピンが古ければ main の apt-pin-bump の ARG 値を持ち込むか
+#    deploy/local/apt-pin-bump.sh を実行し、commit する（"build(workspace): ..."）。
 
 # 3) リリースノートは通常どおり（deploy/release/notes/README.md）: 0.40.1.md と 0.40.1.ja.md、
 #    SUMMARY.md / SUMMARY.ja.md の節、index.tsv 末尾に `pending` 行、deploy/release/gen-changelog.sh。

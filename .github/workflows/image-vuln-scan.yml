@@ -162,6 +162,7 @@ jobs:
           set -euo pipefail
           out="$RUNNER_TEMP/scan"
           python3 -I deploy/local/vuln-scan-report.py --release "$VERSION" --out "$out/body.md" \
+            --pinned-dockerfile workspace/Dockerfile \
             --trivy "control-plane image=$out/control-plane.json" \
             --trivy "workspace image=$out/workspace.json" \
             --trivy "native rootfs=$out/rootfs.json" \

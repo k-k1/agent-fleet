@@ -22,9 +22,12 @@ has() { grep -qF -- "$1" "$WORK/body.md" || fail "body lacks: $1"; }
 hasnt() { ! grep -qF -- "$1" "$WORK/body.md" || fail "body must not contain: $1"; }
 
 # 1. Trivy: only HIGH/CRITICAL with a fixed version; OS and own-Go stdlib rebuild, a baked tool's bumps.
-report --trivy "image=$FX/trivy-findings.json"
+report --trivy "image=$FX/trivy-findings.json" --pinned-dockerfile "$FX/Dockerfile.pins"
 [ "$rc" = 0 ] || fail "1: rc=$rc"
-[ "$(cat "$WORK/out")" = "fixable=4" ] || fail "1: expected fixable=4"
+[ "$(cat "$WORK/out")" = "fixable=5" ] || fail "1: expected fixable=5"
+# A package the Dockerfile pins is not cured by a fresh base: bump, not rebuild.
+grep -F "CVE-2099-0007" "$WORK/body.md" | grep -qF "| bump |" || fail "1: pinned chromium should be bump"
+grep -F "CVE-2099-0002" "$WORK/body.md" | grep -qF "| rebuild |" || fail "1: unpinned OS package should be rebuild"
 has "CVE-2099-0001"; has "CVE-2099-0002"
 hasnt "CVE-2099-0003"   # no fix available
 hasnt "CVE-2099-0004"   # MEDIUM
@@ -146,6 +149,11 @@ rm -f "$FAKE/issue"
 rc=0; "$ISSUE" sync "$WORK/with.md" many http://run/6 9.9.9 9.9.9 > "$WORK/out" 2> "$WORK/err" || rc=$?
 [ "$rc" = 2 ] || fail "13: non-numeric count, rc=$rc"
 
+# 13b. A Dockerfile with no pins is an error (a stale pattern must not silently turn pins into rebuild).
+printf 'FROM debian\n' > "$WORK/Dockerfile.none"
+report --trivy "image=$FX/trivy-clean.json" --pinned-dockerfile "$WORK/Dockerfile.none"
+[ "$rc" = 2 ] || fail "13b: no pins found, rc=$rc"
+
 # 14. The rootfs is extracted as data: escapes are refused, plain trees and absolute symlinks are kept.
 EXTRACT="$HERE/vuln-scan-extract.py"
 python3 -I - "$WORK" <<'P'
@@ -157,10 +165,15 @@ def mk(name, members):
             t.addfile(*m)
 def f(path, data=b"x"):
     i = tarfile.TarInfo(path); i.size = len(data); i.mode = 0o4755; return (i, io.BytesIO(data))
+def l_h(path, target):
+    i = tarfile.TarInfo(path); i.type = tarfile.LNKTYPE; i.linkname = target; return (i,)
 def l(path, target):
     i = tarfile.TarInfo(path); i.type = tarfile.SYMTYPE; i.linkname = target; return (i,)
 mk("good", [f("usr/bin/tool"), l("etc/abs", "/usr/bin/tool")])
 mk("dotdot", [f("../escape")])
+mk("hl-rel", [l_h("h", "../outside"), f("h", b"CHANGED")])
+mk("hl-abs", [l_h("h", "/etc/hostname")])
+mk("hl-chain", [l("lnk", "/tmp"), l_h("h", "lnk/x")])
 mk("viasym", [l("lnk", "/tmp"), f("lnk/pwned")])
 P
 rc=0; python3 -I "$EXTRACT" "$WORK/x-good" < "$WORK/good.tar" > "$WORK/out" 2> "$WORK/err" || rc=$?
@@ -170,5 +183,11 @@ rc=0; python3 -I "$EXTRACT" "$WORK/x-dd" < "$WORK/dotdot.tar" > "$WORK/out" 2> "
 [ "$rc" = 1 ] && [ ! -e "$WORK/escape" ] || fail "14b: .. member, rc=$rc"
 rc=0; python3 -I "$EXTRACT" "$WORK/x-vs" < "$WORK/viasym.tar" > "$WORK/out" 2> "$WORK/err" || rc=$?
 [ "$rc" = 1 ] && [ ! -e /tmp/pwned ] || fail "14c: write through a symlink, rc=$rc"
+for c in hl-rel hl-abs hl-chain; do
+  mkdir -p "$WORK/iso-$c/dest"; echo sentinel > "$WORK/iso-$c/outside"
+  rc=0; python3 -I "$EXTRACT" "$WORK/iso-$c/dest" < "$WORK/$c.tar" > "$WORK/out" 2> "$WORK/err" || rc=$?
+  [ "$rc" = 1 ] || fail "14d: $c should be refused, rc=$rc"
+  [ "$(cat "$WORK/iso-$c/outside")" = sentinel ] || fail "14d: $c changed the file outside"
+done
 
 echo "OK: vuln-scan report + issue sync (all cases)"

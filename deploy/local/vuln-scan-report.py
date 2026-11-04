@@ -22,6 +22,7 @@ failed to run must not close the tracking issue.
 """
 import argparse
 import json
+import re
 import sys
 
 MARKER = "<!-- af-image-vuln-scan -->"
@@ -53,7 +54,20 @@ def load_json(path):
     return text
 
 
-def parse_trivy(path):
+def pinned_packages(dockerfile):
+    """Debian packages the workspace Dockerfile pins (`pkg=${ARG}` lines of an apt install)."""
+    try:
+        with open(dockerfile, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        raise InputError(f"{dockerfile}: {e.strerror}")
+    pins = set(re.findall(r'^\s*"?([a-z][a-z0-9.+-]*)=\$\{?[A-Z][A-Z0-9_]*\}?"?\s*\\?\s*$', text, re.M))
+    if not pins:
+        raise InputError(f"{dockerfile}: no pinned packages found (the pattern is stale?)")
+    return pins
+
+
+def parse_trivy(path, pinned=frozenset()):
     """Rows (id, severity, package, installed, fixed, remedy, where) from a `trivy -f json` file."""
     try:
         doc = json.loads(load_json(path))
@@ -82,10 +96,13 @@ def parse_trivy(path):
             fixed = (v.get("FixedVersion") or "").strip()
             if sev not in SEVERITIES or not fixed:
                 continue
+            # An OS package the Dockerfile pins to an exact version is not moved by a
+            # fresh base: the rebuild installs the same pinned (vulnerable) build.
+            pinned_os = is_os and v.get("PkgName") in pinned
             own_stdlib = v.get("PkgName") == "stdlib" and target.rsplit("/", 1)[-1] in OWN_BINARIES
             rows.append((v.get("VulnerabilityID", "?"), sev, v.get("PkgName", "?"),
                          v.get("InstalledVersion", "?"), fixed,
-                         "rebuild" if is_os or own_stdlib else "bump",
+                         "rebuild" if (is_os and not pinned_os) or own_stdlib else "bump",
                          "" if is_os else target))
     return rows
 
@@ -193,6 +210,7 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--pinned-dockerfile", help="Dockerfile whose pkg=${ARG} pins are never `rebuild`")
     ap.add_argument("--trivy", action="append", default=[], metavar="LABEL=FILE")
     ap.add_argument("--govulncheck", action="append", default=[], metavar="LABEL=FILE")
     a = ap.parse_args(argv)
@@ -202,11 +220,12 @@ def main(argv):
         return 2
     targets = []
     try:
+        pinned = pinned_packages(a.pinned_dockerfile) if a.pinned_dockerfile else frozenset()
         for spec, parser in specs:
             label, sep, path = spec.rpartition("=")
             if not sep or not label:
                 raise InputError(f"bad spec {spec!r}, want LABEL=FILE")
-            targets.append((label, parser(path)))
+            targets.append((label, parser(path, pinned) if parser is parse_trivy else parser(path)))
     except InputError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2

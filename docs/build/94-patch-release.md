@@ -48,9 +48,9 @@ missing, empty or non-scanner file. A red run leaves the issue as it was.
 
 Each row has a **Remedy**:
 
-- `rebuild`: an OS package, or the Go standard library in `af-cp` / `workspace-agent`. A rebuild
+- `rebuild`: an OS package that the Dockerfile does not pin, or the Go standard library in `af-cp` / `workspace-agent`. A rebuild
   with a refreshed base image and Go toolchain cures it, so it is a patch-release case.
-- `bump`: a Go module, an npm package, or a tool we bake in (its own pin, e.g. a Go tool built with
+- `bump`: a Debian package the Dockerfile pins to an exact version (`chromium`, `chromium-common`, `chromium-sandbox` via `CHROMIUM_VERSION`: a fresh base reinstalls the same build), a Go module, an npm package, or a tool we bake in (its own pin, e.g. a Go tool built with
   an old toolchain). A rebuild does not move it. Fix it with a normal PR to `main`, which the next
   release carries; if it cannot wait, the patch release has to carry that bump too (see below).
 
@@ -85,9 +85,12 @@ git switch -c release/0.40.1 v0.40.0
 
 # 2) the Debian package pins. The publish preflight fails on a pin that trixie-security
 #    no longer serves, and an old tag is exactly where that happens.
-deploy/local/apt-pin-check.sh        # exit 0 = nothing to do
-#    else: bring the new ARG values over from main (the apt-pin-bump PR), or run
-#    deploy/local/apt-pin-bump.sh, and commit ("build(workspace): ...").
+deploy/local/apt-pin-check.sh        # exit 0 only says the pin is still SERVED
+#    Exit 0 is not enough: an old build can stay in trixie/main while the fix is in
+#    security. For every pinned package in the issue (remedy `bump`), compare the pin in
+#    workspace/Dockerfile with the issue's "Fixed in"; if the pin is older, bring the new
+#    ARG value over from main (the apt-pin-bump PR) or run deploy/local/apt-pin-bump.sh,
+#    and commit ("build(workspace): ...").
 
 # 3) the release notes, as for any release (deploy/release/notes/README.md): 0.40.1.md and
 #    0.40.1.ja.md, a SUMMARY.md / SUMMARY.ja.md section, a `pending` row at the end of
