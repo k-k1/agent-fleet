@@ -1227,3 +1227,9 @@
   font-size: 11px;
   text-align: right;
 }
+
+/* Preset chooser at the head of a from/to range bar (RangePresets.tsx). */
+.range-presets-note {
+  font-size: 11px;
+  align-self: center;
+}
