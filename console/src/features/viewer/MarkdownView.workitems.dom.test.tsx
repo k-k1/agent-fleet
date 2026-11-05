@@ -444,3 +444,109 @@ describe("ticket references", () => {
     expect(jiraProjectsCalls).not.toHaveBeenCalled();
   });
 });
+
+describe("issue and pull request URLs", () => {
+  const md = "- Issue: https://github.com/octo/fleet/issues/956\n- PR: [the PR](https://github.com/octo/fleet/pull/3363)\n- files: https://github.com/octo/fleet/pull/3363/files";
+
+  it("opens the modal for a ticket's own page and leaves a sub-page external", async () => {
+    await render(md);
+    expect(links().map((a) => a.textContent)).toEqual(["https://github.com/octo/fleet/issues/956", "the PR"]);
+    // The href stays for "copy link address"; the new-tab marker goes.
+    expect(links()[1].getAttribute("href")).toBe("https://github.com/octo/fleet/pull/3363");
+    expect(links()[1].classList.contains("ext-link")).toBe(false);
+    expect(links()[1].target).toBe("");
+    expect([...host.querySelectorAll("a.ext-link")].map((a) => a.textContent)).toEqual(["https://github.com/octo/fleet/pull/3363/files"]);
+
+    await click(links()[0]);
+    let d = useWorkItemModal.getState().detail;
+    expect(d).toMatchObject({ reference: false, repoHint: "fleet" });
+    expect(d?.item.key).toBe("octo/fleet#956");
+
+    await click(links()[1]);
+    d = useWorkItemModal.getState().detail;
+    expect(d?.reference).toBe(true);
+    expect(d?.item.key).toBe("octo/fleet#3363");
+    // The page the author linked, not the stand-in's constructed /issues/ URL.
+    expect(d?.item.url).toBe("https://github.com/octo/fleet/pull/3363");
+  });
+
+  it("goes to the linked page on a Ctrl-click or a middle click", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    await render(md);
+    await click(links()[0], { ctrlKey: true });
+    expect(open).toHaveBeenLastCalledWith("https://github.com/octo/fleet/issues/956", "_blank", "noopener,noreferrer");
+    await act(async () => {
+      links()[1].dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+    });
+    expect(open).toHaveBeenLastCalledWith("https://github.com/octo/fleet/pull/3363", "_blank", "noopener,noreferrer");
+    expect(useWorkItemModal.getState().detail).toBeNull();
+    open.mockRestore();
+  });
+
+  it("needs no context repository, and survives a relink", async () => {
+    await render(md, null);
+    expect(links()).toHaveLength(2);
+    await act(async () => useWorkItemStore.setState({ payload: payload([row("github", "octo/fleet#3363", { kind: "pr" })]) }));
+    expect(links()).toHaveLength(2);
+    await click(links()[1]);
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false, repoHint: "" });
+  });
+
+  it("opens the cached row and launches from the clone whatever the URL's case", async () => {
+    useWorkItemStore.setState({ payload: payload([row("github", "Octo/Fleet#3363", { kind: "pr" })]) });
+    await render("PR: https://github.com/OCTO/fleet/pull/3363");
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d).toMatchObject({ reference: false, repoHint: "fleet" });
+    expect(d?.item.title).toBe("title of Octo/Fleet#3363");
+  });
+
+  it("opens the URL's own Jira site's row, not the same key on another site", async () => {
+    useWorkItemStore.setState({
+      payload: payload([
+        row("jira", "OPS-12", { url: "https://a.example.test/browse/OPS-12" }),
+        row("jira", "WEB-1", { url: "https://b.example.test/browse/WEB-1" }),
+      ]),
+    });
+    await render("see https://b.example.test/browse/OPS-12", null);
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d?.reference).toBe(true);
+    expect(d?.item.url).toBe("https://b.example.test/browse/OPS-12");
+  });
+
+  it("links a Jira URL once the connection's site moves to it, even under the same keys", async () => {
+    const at = (site: string) => payload([row("jira", "OPS-12", { url: `https://${site}/browse/OPS-12` })]);
+    useWorkItemStore.setState({ payload: at("a.example.test") });
+    await render("see https://b.example.test/browse/OPS-12", null);
+    expect(links()).toHaveLength(0);
+    await act(async () => useWorkItemStore.setState({ payload: at("b.example.test") }));
+    expect(links()).toHaveLength(1);
+    await click(links()[0]);
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false });
+  });
+
+  it("loads the inbox for a message that cites tickets by URL alone", async () => {
+    useWorkItemStore.getState().reset();
+    // ensureWorkItems retries at most once a minute, and an earlier case in this file may have
+    // spent that minute.
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10 * 60_000);
+    workItemList.mockResolvedValue(payload([row("jira", "G3M-12", { url: "https://jira.example.test/browse/G3M-12" })]));
+    await render("blocked: https://jira.example.test/browse/G3M-12", null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(workItemList).toHaveBeenCalledTimes(1);
+    expect(links().map((a) => a.textContent)).toEqual(["https://jira.example.test/browse/G3M-12"]);
+    await click(links()[0]);
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false });
+    now.mockRestore();
+  });
+
+  it("stays an external link on a surface with ticket links off", async () => {
+    await render(md, "fleet", false);
+    expect(links()).toHaveLength(0);
+    expect(host.querySelectorAll("a.ext-link")).toHaveLength(3);
+  });
+});
+

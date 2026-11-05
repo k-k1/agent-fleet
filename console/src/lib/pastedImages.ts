@@ -82,11 +82,30 @@ export function splitCommandArgs(args: string): { text: string; images: string[]
   return { text: args.slice(0, at).trim(), images, files };
 }
 
+// The characters claude removes from typed and pasted input before submitting it ("Removed N
+// invisible characters"): every C0/C1 control but tab and line feed (so CR goes, which also covers
+// the CRLF the Agent already turns into LF), soft hyphen, zero-width and bidi controls, variation
+// selectors, BOM, tag characters and the blank fillers. Read from claude 2.1.318's own hidden-character
+// test; it keeps some of them in context (a joiner inside an emoji), which this drops anyway, so two
+// prompts differing only there compare equal. Tabs, spaces and line breaks are left alone: they can
+// change what a prompt means. Without this an echo of a paste copied from a chat app or a document
+// never matches claude's copy and stays "Pending".
+const CLAUDE_INVISIBLE_RE =
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb\u{1107f}\u{13430}-\u{1343f}\u{16fe4}\u{1bca0}-\u{1bca3}\u{1d173}-\u{1d17a}\u{e0000}-\u{e0fff}]/gu;
+
 // samePastedPrompt compares the user-authored portion of two prompt renderings.
 // Codex's rollout adds <image …> transport markers that the optimistic Console
 // echo does not contain; ignoring those markers lets the real turn replace the echo.
 export function samePastedPrompt(a: string, b: string): boolean {
   return splitPastedImages(a).text.trim() === splitPastedImages(b).text.trim();
+}
+
+// samePromptIgnoringInvisible is samePastedPrompt that also ignores CLAUDE_INVISIBLE_RE, for a
+// prompt claude logged. Other CLIs keep those characters, so for them it would call two different
+// prompts the same.
+export function samePromptIgnoringInvisible(a: string, b: string): boolean {
+  const key = (s: string) => splitPastedImages(s).text.replace(CLAUDE_INVISIBLE_RE, "").trim();
+  return key(a) === key(b);
 }
 
 // buildImagePrompt composes the sent prompt: the user's words + the kind's instruction +
