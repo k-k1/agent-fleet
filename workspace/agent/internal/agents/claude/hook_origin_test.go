@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -80,6 +81,34 @@ func TestClassifyHookChain(t *testing.T) {
 			want: hookOriginNested,
 		},
 		{
+			// Native claude.exe nesting a claude whose comm reads differently: still claude.
+			name: "claude.exe nested under claude",
+			procs: paneTree(map[int][2]string{
+				300: {"101", "bash"}, 301: {"300", "claude.exe"}, 302: {"301", "sh"}, 303: {"302", "workspace-agent"},
+			}),
+			hook: 303,
+			want: hookOriginNested,
+		},
+		{
+			// An npm claude (comm node) started from the native one, recognised by its script.
+			name: "node claude nested under native claude",
+			procs: paneTree(map[int][2]string{
+				300: {"101", "bash"}, 301: {"300", "node"}, 302: {"301", "sh"}, 303: {"302", "workspace-agent"},
+			}),
+			hook: 303,
+			want: hookOriginNested,
+		},
+		{
+			// A plain node process (an MCP server, a build) between the hook and claude is not
+			// a claude.
+			name: "unrelated node under the pane claude",
+			procs: paneTree(map[int][2]string{
+				300: {"101", "node"}, 302: {"300", "sh"}, 303: {"302", "workspace-agent"},
+			}),
+			hook: 303,
+			want: hookOriginPane,
+		},
+		{
 			// A process vanished mid-walk: not enough evidence to overrule AF_SESSION_NAME.
 			name:  "broken chain",
 			procs: paneTree(map[int][2]string{201: {"999", "workspace-agent"}}),
@@ -98,6 +127,14 @@ func TestClassifyHookChain(t *testing.T) {
 			want: hookOriginUnknown,
 		},
 	}
+	prevArgv := procArgv
+	procArgv = func(pid int) []string {
+		if pid == 301 {
+			return []string{"node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"}
+		}
+		return []string{"node", "/srv/build.js"}
+	}
+	t.Cleanup(func() { procArgv = prevArgv })
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			root := fakeProc(t, c.procs)
@@ -150,6 +187,32 @@ func TestNormalizeHookSIDRecordsDriftWhenOriginUnknown(t *testing.T) {
 			}
 			if got := sids.Read(slot); got != testLiveSID {
 				t.Fatalf("ledger = %q, want %q", got, testLiveSID)
+			}
+		})
+	}
+}
+
+// The launch pane is found by the exit recorder in its start command, across windows, not by
+// which pane is active: a split must not make the real claude's hooks look nested.
+func TestLaunchPaneIn(t *testing.T) {
+	launch := `"export PATH=x; claude --resume abc; __af_ec=$?; ` + session.ExitRecorder("s1") + ` \"$__af_ec\""`
+	cases := []struct {
+		name string
+		out  string
+		want int
+		ok   bool
+	}{
+		{"single pane", "100 " + launch + "\n", 100, true},
+		{"split off and active", "200 bash\n100 " + launch + "\n300 claude\n", 100, true},
+		{"another session's recorder", "100 " + strings.Replace(launch, "'s1'", "'s12'", 1) + "\n", 0, false},
+		{"two launch panes", "100 " + launch + "\n101 " + launch + "\n", 0, false},
+		{"no launch pane", "200 bash\n", 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := launchPaneIn(c.out, "s1")
+			if got != c.want || ok != c.ok {
+				t.Fatalf("launchPaneIn = (%d, %v), want (%d, %v)", got, ok, c.want, c.ok)
 			}
 		})
 	}

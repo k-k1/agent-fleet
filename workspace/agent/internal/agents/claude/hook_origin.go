@@ -39,48 +39,57 @@ const (
 // hookOriginOf classifies the current hook process for session name. A var so tests need
 // neither tmux nor a real process tree.
 var hookOriginOf = func(name string) hookOrigin {
-	pane, ok := sessionPanePID(name)
+	pane, ok := launchPanePID(name)
 	if !ok {
 		return hookOriginUnknown
 	}
 	return classifyHookChain("/proc", os.Getpid(), pane)
 }
 
-// sessionPanePID returns the pid of the process tmux runs in session name's active pane.
+// launchPanePID returns the pid of the process in the pane the session was launched in.
+//
+// Not the active pane: a user who splits the session's window and selects the new pane would
+// make every hook of the real claude look nested. The launch pane is the one whose start
+// command carries session.ExitRecorder, searched across every window (-s).
 //
 // TMUX is dropped from the command's environment: inside a nested tmux it names that other
 // server, and plain tmux follows it (measured: a bogus TMUX makes `tmux list-sessions` fail),
 // so the lookup would miss the session and fall back to trusting the nested hook.
-func sessionPanePID(name string) (int, bool) {
-	cmd := tmuxx.Cmd("list-panes", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_active} #{pane_pid}")
+func launchPanePID(name string) (int, bool) {
+	cmd := tmuxx.Cmd("list-panes", "-s", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_pid} #{pane_start_command}")
 	cmd.Env = withoutEnv(os.Environ(), "TMUX", "TMUX_PANE")
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, false
 	}
+	return launchPaneIn(string(out), name)
+}
+
+// launchPaneIn picks the launch pane's pid out of list-panes output. Exactly one match or no
+// answer: a second pane started with the same command is not something to guess between.
+func launchPaneIn(out, name string) (int, bool) {
+	marker := session.ExitRecorder(name)
 	pid := 0
-	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Fields(ln)
-		if len(f) != 2 {
+	for _, ln := range strings.Split(out, "\n") {
+		f, cmdline, ok := strings.Cut(ln, " ")
+		if !ok || !strings.Contains(cmdline, marker) {
 			continue
 		}
-		p, err := strconv.Atoi(f[1])
+		p, err := strconv.Atoi(f)
 		if err != nil || p <= 1 {
 			continue
 		}
-		if pid == 0 || f[0] == "1" {
-			pid = p
+		if pid != 0 {
+			return 0, false
 		}
-		if f[0] == "1" {
-			break
-		}
+		pid = p
 	}
 	return pid, pid > 1
 }
 
-// classifyHookChain walks from pid up to pane. The process directly under pane is the
-// session's CLI; another process with its command between the hook and it means the hook
-// belongs to a nested claude, and so does a chain that never reaches pane.
+// classifyHookChain walks from pid up to pane. The process directly under pane must be the
+// claude CLI; another claude between the hook and it means the hook belongs to a nested
+// claude, and so does a chain that never reaches pane.
 func classifyHookChain(procRoot string, pid, pane int) hookOrigin {
 	var chain []int
 	for steps := 0; pid != pane; steps++ {
@@ -97,30 +106,24 @@ func classifyHookChain(procRoot string, pid, pane int) hookOrigin {
 		}
 		pid = ppid
 	}
-	if len(chain) < 2 {
-		// The hook is the pane process or its direct child: not a hook claude ran.
-		return hookOriginUnknown
-	}
-	top := procComm(procRoot, chain[len(chain)-1])
-	if top == "" || isShellComm(top) {
-		// The pane runs something other than the CLI directly; the command comparison below
-		// would match the shells claude itself spawns hooks through.
+	if len(chain) < 2 || !chainIsClaude(procRoot, chain[len(chain)-1]) {
+		// Not a hook the pane's claude ran, or the pane runs the CLI through a wrapper:
+		// nothing here to compare against.
 		return hookOriginUnknown
 	}
 	for _, p := range chain[:len(chain)-1] {
-		if procComm(procRoot, p) == top {
+		if chainIsClaude(procRoot, p) {
 			return hookOriginNested
 		}
 	}
 	return hookOriginPane
 }
 
-func isShellComm(c string) bool {
-	switch c {
-	case "sh", "bash", "dash", "zsh", "ash", "busybox":
-		return true
-	}
-	return false
+// chainIsClaude recognises the claude CLI the way background-work detection does
+// (procIsClaude): comm claude or claude.exe, or a JS runtime running the claude script, so a
+// native claude starting an npm one (or the reverse) still counts as nested.
+func chainIsClaude(procRoot string, pid int) bool {
+	return procIsClaude(pid, procInfo{Comm: procComm(procRoot, pid)})
 }
 
 // procParent reads field 4 of /proc/<pid>/stat, counting from the closing parenthesis of the

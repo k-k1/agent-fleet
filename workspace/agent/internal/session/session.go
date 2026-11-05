@@ -509,6 +509,11 @@ type ContextUsage struct {
 
 func TmuxName(name string) string { return TmuxPrefix + name }
 
+// ExitRecorder is the command the launch appends to a session's pane program, so it also
+// marks the pane the session was launched in: claude's hook-origin check finds that pane by
+// this string among any the user split off.
+func ExitRecorder(name string) string { return "workspace-agent record-exit '" + name + "'" }
+
 // ExactTarget returns a tmux target that matches NAME exactly. Without the leading
 // '=', tmux's -t resolution prefix-matches, so a target like "claude_agent-fleet"
 // would match an unrelated "claude_agent-fleet-sh" — wrongly reporting "already
