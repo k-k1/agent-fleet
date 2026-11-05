@@ -59,3 +59,21 @@ func TestSelectionCloneAndNormalize(t *testing.T) {
 		t.Error("Clone aliases")
 	}
 }
+
+func TestAWSConnectionRoundTripAndRefusals(t *testing.T) {
+	c := AWSConnection("0123abcd", "us-east-1")
+	if c != "0123abcd@us-east-1" {
+		t.Fatalf("AWSConnection = %q", c)
+	}
+	if id, region, ok := ParseAWSConnection(c); !ok || id != "0123abcd" || region != "us-east-1" {
+		t.Fatalf("ParseAWSConnection = %q %q %v", id, region, ok)
+	}
+	if id, region, ok := ParseAWSConnection("0123abcd@"); !ok || id != "0123abcd" || region != "" {
+		t.Fatalf("an empty region means the profile's own: %q %q %v", id, region, ok)
+	}
+	for _, bad := range []string{"", "@us-east-1", "no-at-sign", "a@b@c", "a b@us-east-1", "a@us east", "a@us-east-1.evil.example", "../x@us-east-1"} {
+		if _, _, ok := ParseAWSConnection(bad); ok {
+			t.Fatalf("%q was accepted", bad)
+		}
+	}
+}

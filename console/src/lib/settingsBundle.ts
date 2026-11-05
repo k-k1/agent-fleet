@@ -59,6 +59,10 @@ export interface SsmProfileEntry {
   /** The profile asks for confirmation before use (ADR 0126). Carried so a gate never drops
    *  out through an export and import; absent when off, so other entries' bytes are unchanged. */
   confirmBeforeUse?: boolean;
+  /** The profile is marked as a model route (ADR 0128): usable by the AF route gateway for
+   *  Bedrock model calls. Carried so the mark never drops out through an export and import;
+   *  absent when off. */
+  modelRoute?: boolean;
   /** The shared sign-in an SSO profile is in (ADR 0125), by name: the import joins it or creates
    *  it from the entry's portal. Absent for a sign-in of its own. */
   signIn?: string;
@@ -162,6 +166,7 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
             sessionName: str(p?.sessionName),
             ...(Number(p?.durationSeconds) > 0 ? { durationSeconds: Number(p.durationSeconds) } : {}),
             ...(p?.confirmBeforeUse === true ? { confirmBeforeUse: true } : {}),
+            ...(p?.modelRoute === true ? { modelRoute: true } : {}),
           }
         : {
             label: str(p?.label),
@@ -171,6 +176,7 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
             roleName: str(p?.roleName),
             region: str(p?.region),
             ...(p?.confirmBeforeUse === true ? { confirmBeforeUse: true } : {}),
+            ...(p?.modelRoute === true ? { modelRoute: true } : {}),
             ...(str(p?.signIn) ? { signIn: str(p.signIn) } : {}),
           },
     ),
@@ -404,6 +410,7 @@ export function planSsmImport(
       region: str(raw?.region),
     };
     if (raw?.confirmBeforeUse === true) p.confirmBeforeUse = true;
+    if (raw?.modelRoute === true) p.modelRoute = true;
     if (!chained && str(raw?.signIn)) p.signIn = str(raw.signIn);
     if (chained) {
       p.kind = "assume_role";

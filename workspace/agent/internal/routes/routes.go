@@ -159,3 +159,31 @@ func CheckStatic(kind string, sel *Selection, allowed []string) (code string, er
 	}
 	return CodeRouteUnsupported, fmt.Errorf("kind %q cannot run on route %q; it accepts: %s", kind, sel.Route, strings.Join(allowed, ", "))
 }
+
+// AWSConnection is the Connection of a selection on an AWS-profile route (tier TierAWSProfile):
+// the Settings profile's row id and the region the calls go to, "<profile id>@<region>". It is
+// the stable reference decision 3 asks for: the id survives a rename, and replacing the profile
+// with another row of the same name is another connection. It holds no secret. An empty region
+// means "the profile's own region".
+func AWSConnection(profileID, region string) string {
+	return strings.TrimSpace(profileID) + "@" + strings.TrimSpace(region)
+}
+
+// ParseAWSConnection splits an AWSConnection. ok is false for anything that is not one: a
+// missing id, a second separator, or characters outside what a row id and a region use.
+func ParseAWSConnection(conn string) (profileID, region string, ok bool) {
+	id, region, found := strings.Cut(conn, "@")
+	if !found || id == "" || !awsConnPart(id) || !awsConnPart(region) {
+		return "", "", false
+	}
+	return id, region, true
+}
+
+func awsConnPart(s string) bool {
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}

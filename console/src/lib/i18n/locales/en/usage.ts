@@ -121,6 +121,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   // The fleet's own inference engine (ADR 0071). Real measured tokens with no price: what
   // that answer cost is a share of a GPU instance's hour, shown as a component cost instead.
   "usage.val.feature.engine.llm": "Self-hosted LLM",
+  "usage.val.feature.route.gateway": "Model route (gateway)",
   "usage.val.feature.unknown": "Untagged",
   "usage.val.trigger.user": "User",
   "usage.val.trigger.auto": "Automatic",
