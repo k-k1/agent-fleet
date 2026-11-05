@@ -18,7 +18,7 @@ drawio_stencils.go drawioStencils.index x1 {cached,sets,version}
 egress.go egressAPI.allowlistAdd x1 {entry,id,state}
 egress.go egressAPI.allowlistList x1 {allowlist,builtin,defaults}
 egress.go egressAPI.mode x2 {enforce,mode}
-egress.go egressAPI.policy x1 {allowlist,enforce}
+egress.go egressAPI.policy x1 {allowlist,enforce,tcp} cond{tcp}
 egress.go egressAPI.stats x1 {days,egress,enforce,mode}
 egress_member.go egressAPI.propose x1 {already,entry,id,state}
 egress_member.go egressAPI.propose x1 {already,entry,state}

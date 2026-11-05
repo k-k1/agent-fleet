@@ -94,6 +94,15 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
    `terraform output -raw egress_archive_env` で出します（追記ではなく既存の行を置き換え、アーカイブを止めるときは行を削除します）。viewer が無いと、先に書いた日を Control Plane が
    検証できず、purge がその日で止まります。`egress_archive_retention_days` を指定しない限り、バケットの中身は
    期限切れになりません。AWS ではデータスタックの `EgressArchive` パラメータです。
+   **HTTP 以外の宛先（AWS の egress ゲートウェイのみ）。** SSH の git やデータベースは HTTP ではないので、
+   ホストのエントリでは通りません。**`tcp:<host>:<port>`** のエントリ（`tcp:git.example.com:22`、
+   `tcp:db.example.com:1433`、範囲なら `tcp:db.example.com:11000-11999`。範囲は最大 2048 ポート、完全なホストか
+   IPv4 アドレスで、53・80・443・853・3128 は不可）を足さない限り、enforce では遮断されます（log-only では通って記録されます）。申請と承認は同じ流れで、
+   承認するとそのホストへの HTTP 以外のアクセスが開きます。ゲートウェイはそのホストが解決されるアドレスへ、
+   そのポートだけを通し、接続ごとにアドレスとポートを記録します。log-only では名前の無い宛先は通して
+   遮断候補として表示し、enforce では落として記録します。切り替える前に、宛先側のファイアウォールが
+   ゲートウェイの egress アドレスを通す必要があります。詳細は `deploy/aws/ecs/README.md` の
+   「Egress gateway」。
 3. **enforce へ切替**：許可リストが十分に固まってから、モードを enforce に切り替えます。以降は
    許可リスト外の通信を**遮断**します。いきなり enforce にするとエージェントの更新取得や MCP の接続先など必要な通信まで落ちるので、log-only のうちに
    「観測された宛先」の遮断候補を解消しておくと切替えが穏やかに済みます。Admin の UI も「先に log-only で実態を

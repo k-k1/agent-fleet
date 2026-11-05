@@ -29,6 +29,8 @@ type Event struct {
 	Host    string `json:"host"`
 	Allowed bool   `json:"allowed"`
 	Count   int    `json:"count"`
+	// Port is the destination port of a TCP passthrough connection; 0 on the HTTP path.
+	Port int `json:"port,omitempty"`
 }
 
 // logLine is a parsed line before a verdict is attached.
@@ -125,4 +127,57 @@ func decodeField(v string) string {
 		v = d
 	}
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(v)), ".")
+}
+
+// TCPLogFormat is the version token and field order of the TCP relay's log (tcprelay.go),
+// one line per connection, written when the relay decided it:
+//
+//	af2 <seconds.millis> <workspace address> <destination address> <port> <verdict> <entry>
+//
+// verdict is one of the Verdict* constants. entry is the allowlist host that admitted the
+// connection, or "-". The time is the one attribution joins on, as in af1.
+const TCPLogFormat = "af2 <time> <src> <dst> <port> <verdict> <entry>"
+
+const tcpFormatVersion = "af2"
+
+// What the relay decided about one connection.
+const (
+	// VerdictAdmit: a named destination, passed through.
+	VerdictAdmit = "admit"
+	// VerdictDeny: not named in enforce, or fenced (VPC, link-local, loopback, this host,
+	// DNS ports) in either mode; nothing was dialled.
+	VerdictDeny = "deny"
+	// VerdictWouldDeny: not named, in log-only; passed through, and recorded as the
+	// refusal it would be in enforce.
+	VerdictWouldDeny = "would-deny"
+	// VerdictDenyCap: refused because the relay was at its connection cap.
+	VerdictDenyCap = "deny-cap"
+)
+
+// tcpConv reads an af2 line. The host of an unnamed connection is its "address:port", so
+// the daily aggregate and the would-block audit have something to key on; the destination
+// address and the port are carried separately either way.
+func tcpConv(line string) (Event, bool) {
+	f := strings.Fields(line)
+	if len(f) != 7 || f[0] != tcpFormatVersion {
+		return Event{}, false
+	}
+	at, ok := parseSquidTime(f[1])
+	if !ok {
+		return Event{}, false
+	}
+	src, err1 := netip.ParseAddr(f[2])
+	dst, err2 := netip.ParseAddr(f[3])
+	port, err3 := strconv.Atoi(f[4])
+	if err1 != nil || err2 != nil || err3 != nil || port < 1 || port > 65535 {
+		return Event{}, false
+	}
+	host := strings.ToLower(f[6])
+	if host == "-" || len(host) > maxHost {
+		host = netip.AddrPortFrom(dst.Unmap(), uint16(port)).String()
+	}
+	return Event{
+		At: at, Source: src.Unmap().String(), Dest: dst.Unmap().String(), Port: port,
+		Host: host, Allowed: f[5] == VerdictAdmit, Count: 1,
+	}, true
 }

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -46,6 +47,10 @@ type egressEvent struct {
 	At     int64  `json:"at,omitempty"`
 	Source string `json:"source,omitempty"`
 	Dest   string `json:"dest,omitempty"`
+	// Port is the destination port of a TCP passthrough connection (ADR 0122, addendum
+	// 2026-11-05); 0 for the HTTP path. It is stored inside Dest as "address:port", so the
+	// event table and the archive keep their shape.
+	Port int `json:"port,omitempty"`
 }
 
 // egressAuditDedup collapses would-block audit rows to one per (day, host) so a
@@ -151,7 +156,14 @@ func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries, enforce := a.effectivePolicy(r.Context())
-	writeJSON(w, http.StatusOK, map[string]any{"allowlist": entries, "enforce": enforce})
+	// TCP passthrough entries ride in their own field, so an agent that predates them
+	// ignores them instead of reading them as dstdomain entries.
+	httpEntries, tcp := egressallow.SplitTCP(entries)
+	body := map[string]any{"allowlist": httpEntries, "enforce": enforce}
+	if len(tcp) > 0 {
+		body["tcp"] = tcp
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // ingest (POST /internal/egress) receives a batch of observations from the
@@ -275,8 +287,12 @@ func rawEgressEvent(e egressEvent, host string) (store.EgressEvent, bool) {
 	if count <= 0 {
 		count = 1
 	}
+	dest := strings.TrimSpace(e.Dest)
+	if a, err := netip.ParseAddr(dest); err == nil && e.Port > 0 && e.Port <= 65535 {
+		dest = netip.AddrPortFrom(a.Unmap(), uint16(e.Port)).String()
+	}
 	return store.EgressEvent{
-		ID: e.ID, At: e.At, Source: src.Unmap().String(), Dest: strings.TrimSpace(e.Dest),
+		ID: e.ID, At: e.At, Source: src.Unmap().String(), Dest: dest,
 		Host: host, Allowed: e.Allowed, Count: count,
 	}, true
 }

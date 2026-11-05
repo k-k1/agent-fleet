@@ -464,3 +464,51 @@ func TestShipIPv6LiteralHostIsAllowedOnlyWhenListed(t *testing.T) {
 		}
 	}
 }
+
+// The relay's af2 log is shipped beside Squid's af1 log, each file with its own identity,
+// so the ids never collide and the port travels with the event.
+func TestShipTCPRelayLog(t *testing.T) {
+	f := newShipFixture(t)
+	f.sh.cfg.TCPLogPath = filepath.Join(filepath.Dir(f.log), "af-tcp.log")
+	appendFile(t, f.log, line(1, "10.0.1.5", "api.github.com"))
+	appendFile(t, f.sh.cfg.TCPLogPath,
+		"af2 1761300002.250 10.0.1.5 203.0.113.9 22 admit git.example.com\n"+
+			"af2 1761300003.000 10.0.1.5 203.0.113.77 1433 deny -\n"+
+			"af2 1761300004.000 10.0.1.5 203.0.113.77 1433 would-deny -\n"+
+			"af2 1761300005.000 10.0.1.5 203.0.113.77 notaport deny -\n"+
+			"af2 not-a-time 10.0.1.5 203.0.113.77 22 deny -\n")
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ids, n := f.cp.ids()
+	if n != 4 || len(ids) != 4 {
+		t.Fatalf("got %d events, %d distinct ids; want 4 (the two bad lines are skipped)", n, len(ids))
+	}
+	var tcp []Event
+	for _, e := range f.cp.got {
+		if e.Port != 0 {
+			tcp = append(tcp, e)
+		}
+	}
+	if len(tcp) != 3 {
+		t.Fatalf("tcp events: %+v", tcp)
+	}
+	if e := tcp[0]; e.At != 1761300002250 || e.Source != "10.0.1.5" || e.Dest != "203.0.113.9" || e.Port != 22 || e.Host != "git.example.com" || !e.Allowed {
+		t.Errorf("admit: %+v", e)
+	}
+	if e := tcp[1]; e.Dest != "203.0.113.77" || e.Port != 1433 || e.Host != "203.0.113.77:1433" || e.Allowed {
+		t.Errorf("deny: %+v", e)
+	}
+	if e := tcp[2]; e.Allowed {
+		t.Errorf("would-deny read as allowed: %+v", e)
+	}
+
+	// A second pass sends nothing new: the offsets of both files were committed.
+	before := len(f.cp.got)
+	if err := f.sh.pass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.cp.got) != before {
+		t.Fatalf("resent after commit: %d -> %d", before, len(f.cp.got))
+	}
+}

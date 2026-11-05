@@ -444,16 +444,11 @@ Resources:
     Properties:
       GroupDescription: !Sub "af-${AWS::StackName} egress gateway (workspace subnets only)"
       VpcId: !Ref Vpc
-      # Only the workspace subnets, only the ports Squid serves: 80/443 arrive by the route
-      # (intercepted), 3128 is the explicit proxy (AF_EGRESS_PROXY_ADDR). Anything else a
-      # workspace sends to the internet is dropped here, unrecorded.
+      # Workspace subnets only, any TCP port: nftables decides and records (ADR 0122 addendum
+      # 2026-11-05, PARAMETERS.md "Egress gateway"). UDP and ICMP stay dropped here.
       SecurityGroupIngress:
-        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref WorkspaceSubnet0Cidr, Description: intercepted HTTP }
-        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref WorkspaceSubnet1Cidr, Description: intercepted HTTP }
-        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref WorkspaceSubnet0Cidr, Description: intercepted TLS }
-        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref WorkspaceSubnet1Cidr, Description: intercepted TLS }
-        - { IpProtocol: tcp, FromPort: 3128, ToPort: 3128, CidrIp: !Ref WorkspaceSubnet0Cidr, Description: explicit proxy }
-        - { IpProtocol: tcp, FromPort: 3128, ToPort: 3128, CidrIp: !Ref WorkspaceSubnet1Cidr, Description: explicit proxy }
+        - { IpProtocol: tcp, FromPort: 0, ToPort: 65535, CidrIp: !Ref WorkspaceSubnet0Cidr }
+        - { IpProtocol: tcp, FromPort: 0, ToPort: 65535, CidrIp: !Ref WorkspaceSubnet1Cidr }
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-egress-gateway-sg" } ]
   # The instance's own first interface: outbound only (package install, the AWS APIs before
   # GatewayEni is attached, SSM).
@@ -747,8 +742,8 @@ Resources:
               [Install]
               WantedBy=timers.target
               EOF
-              # 80 from the workspace subnets goes to Squid, 443 to egress-relay. Nothing is
-              # forwarded (ip_forward=0); the forward chain only logs what would have been.
+              # 80 goes to Squid, 443 to egress-relay, other TCP to egress-relay --mode tcp.
+              # Nothing is forwarded (ip_forward=0); the forward chain only logs what would have been.
               mkdir -p /etc/af-egress
               cat > /etc/af-egress/nft.conf <<EOF
               table inet af_egress
@@ -758,6 +753,16 @@ Resources:
                   type nat hook prerouting priority dstnat; policy accept;
                   iifname "$DEV" ip saddr { $WS_NFT } tcp dport 80 redirect to :3129
                   iifname "$DEV" ip saddr { $WS_NFT } tcp dport 443 redirect to :3130
+                  iifname "$DEV" ip saddr { $WS_NFT } fib daddr type != local tcp dport != { 80, 443, 3128 } redirect to :3132
+                }
+                # GatewaySg admits all TCP: only 3128 and the redirected flows get in.
+                chain input {
+                  type filter hook input priority filter; policy accept;
+                  iifname "$DEV" ip saddr { $WS_NFT } ct state established,related accept
+                  iifname "$DEV" ip saddr { $WS_NFT } ct status dnat accept
+                  iifname "$DEV" ip saddr { $WS_NFT } tcp dport 3128 accept
+                  iifname "$DEV" ip saddr { $WS_NFT } limit rate 10/second log prefix "af-egress-input-drop "
+                  iifname "$DEV" ip saddr { $WS_NFT } drop
                 }
                 chain forward {
                   type filter hook forward priority filter; policy drop;
@@ -816,7 +821,7 @@ Resources:
                 docker logout "$REGISTRY"
                 systemctl stop docker docker.socket
                 install -m 0755 /usr/local/bin/af-cp.new /usr/local/bin/af-cp
-                systemctl try-restart af-egress-relay
+                systemctl try-restart af-egress-relay af-egress-relay-tcp
                 rm -f /usr/local/bin/af-cp.new
                 echo "$IMAGE" > /var/lib/af-egress-agent/image
                 changed=1
@@ -838,6 +843,7 @@ Resources:
               rm -f "$new"
               if [ "$changed" = 1 ]; then systemctl restart af-egress-agent; else systemctl start af-egress-agent; fi
               systemctl start af-egress-relay
+              systemctl start af-egress-relay-tcp
               for _ in $(seq 15); do grep -q '^# mode: ' /var/lib/af-egress-agent/af-mode.conf && exit 0; sleep 2; done
               exit 1
               EOF
@@ -858,6 +864,15 @@ Resources:
               [Service]
               User=squid
               ExecStart=/usr/local/bin/af-cp egress-relay
+              Restart=always
+              RestartSec=5
+              EOF
+              # Own process: a fault leaves 443 alone.
+              cat > /etc/systemd/system/af-egress-relay-tcp.service <<EOF
+              [Service]
+              User=squid
+              Environment=AF_EGRESS_TCP_FENCE=${VpcCidr}
+              ExecStart=/usr/local/bin/af-cp egress-relay --mode tcp
               Restart=always
               RestartSec=5
               EOF

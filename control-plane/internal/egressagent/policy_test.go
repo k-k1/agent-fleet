@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
 )
 
 func TestRenderAllowIsMinimalSortedAndSafe(t *testing.T) {
@@ -47,6 +49,7 @@ type fakeCP struct {
 	allowlist []string
 	enforce   bool
 	status    int
+	tcp       []egressallow.TCPEntry
 }
 
 func (f *fakeCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +63,11 @@ func (f *fakeCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(f.status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"allowlist": f.allowlist, "enforce": f.enforce})
+	body := map[string]any{"allowlist": f.allowlist, "enforce": f.enforce}
+	if f.tcp != nil {
+		body["tcp"] = f.tcp
+	}
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func (f *fakeCP) set(fn func(*fakeCP)) {
@@ -359,5 +366,27 @@ func TestPolicyDiskReloadPublishesWhatSquidLoaded(t *testing.T) {
 	}
 	if reloads() != 2 || !s.cur.Load().match.Allows("x.example") || !s.cur.Load().enforce {
 		t.Fatalf("%d reloads, snapshot allows x.example: %v", reloads(), s.cur.Load().match.Allows("x.example"))
+	}
+}
+
+// The policy's tcp entries reach the relay's table and never Squid's allow file; an old CP
+// that sends none leaves the table untouched.
+func TestPolicySyncWritesTheTCPTable(t *testing.T) {
+	cp := &fakeCP{allowlist: []string{"github.com"}, enforce: true,
+		tcp: []egressallow.TCPEntry{{Host: "192.0.2.77", From: 22, To: 22}, {Host: "db.example.com", From: 1, To: 0}}}
+	s, _ := newPolicyFixture(t, cp)
+	s.cfg.TCPFile = filepath.Join(filepath.Dir(s.cfg.AllowFile), "af-tcp.json")
+	s.tcp = newTCPResolver(s.cfg.TCPFile)
+	if err := s.sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.tcp.refresh(context.Background())
+	tb := readTable(t, s.cfg.TCPFile)
+	// The second entry is malformed (a reversed range) and is dropped, not interpreted.
+	if !tb.Enforce || len(tb.Entries) != 1 || tb.Entries[0].Host != "192.0.2.77" || tb.Entries[0].Addrs[0] != "192.0.2.77" {
+		t.Fatalf("table: %+v", tb)
+	}
+	if b, _ := os.ReadFile(s.cfg.AllowFile); strings.Contains(string(b), "192.0.2.77") || strings.Contains(string(b), "tcp") {
+		t.Fatalf("a tcp entry reached Squid's allow file:\n%s", b)
 	}
 }

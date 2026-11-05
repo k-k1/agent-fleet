@@ -110,10 +110,12 @@ type policySync struct {
 	// run may have written the files and died, or failed to reload, before Squid read
 	// them, and only a reload proves Squid has what the files say.
 	reloadOwed bool
+	// tcp resolves the policy's TCP passthrough hosts for the relay (tcptable.go).
+	tcp *tcpResolver
 }
 
 func newPolicySync(cfg *Config) *policySync {
-	return &policySync{cfg: cfg, reloadOwed: true}
+	return &policySync{cfg: cfg, reloadOwed: true, tcp: newTCPResolver(cfg.TCPFile)}
 }
 
 // loadFromDisk seeds the snapshot from the files a previous run wrote, so the shipper can
@@ -158,7 +160,7 @@ var errEmptyPolicy = errors.New("policy has no allowlist entries")
 // sync fetches the policy once and applies it. On any error before the files are written,
 // the files and the snapshot stay as they were.
 func (s *policySync) sync(ctx context.Context) error {
-	entries, enforce, err := s.fetch(ctx)
+	entries, tcp, enforce, err := s.fetch(ctx)
 	if err != nil {
 		// The files on disk are the last policy that worked. A reload they are owed (the
 		// one at start included) does not wait for the CP to come back.
@@ -167,6 +169,9 @@ func (s *policySync) sync(ctx context.Context) error {
 		}
 		return err
 	}
+	// The relay's table is independent of Squid's files: it is installed first, so a
+	// failure writing or reloading Squid's side does not leave the relay on an old mode.
+	s.tcp.setPolicy(tcp, enforce)
 	allow := renderAllow(entries)
 	mode := renderMode(enforce)
 	// A file is owed a reload from the moment it changes, not from when both are written:
@@ -204,32 +209,44 @@ func modeName(enforce bool) string {
 	return "log-only"
 }
 
-func (s *policySync) fetch(ctx context.Context) ([]string, bool, error) {
+func (s *policySync) fetch(ctx context.Context) ([]string, []egressallow.TCPEntry, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.PolicyURL, nil)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.Token)
 	resp, err := s.cfg.Client.Do(req)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-		return nil, false, fmt.Errorf("CP answered %s", resp.Status)
+		return nil, nil, false, fmt.Errorf("CP answered %s", resp.Status)
 	}
 	var b struct {
-		Allowlist []string `json:"allowlist"`
-		Enforce   bool     `json:"enforce"`
+		Allowlist []string               `json:"allowlist"`
+		TCP       []egressallow.TCPEntry `json:"tcp"`
+		Enforce   bool                   `json:"enforce"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&b); err != nil {
-		return nil, false, fmt.Errorf("decode policy: %w", err)
+		return nil, nil, false, fmt.Errorf("decode policy: %w", err)
 	}
 	if len(b.Allowlist) == 0 {
-		return nil, false, errEmptyPolicy
+		return nil, nil, false, errEmptyPolicy
 	}
-	return b.Allowlist, b.Enforce, nil
+	// Each entry is checked again: the relay admits by this list, so a malformed one
+	// from a confused CP is dropped here rather than interpreted.
+	var tcp []egressallow.TCPEntry
+	for _, t := range b.TCP {
+		e, err := egressallow.ParseTCPEntry(t.String())
+		if err != nil || e != t {
+			log.Printf("egress-agent: dropping tcp passthrough entry %+v: not valid", t)
+			continue
+		}
+		tcp = append(tcp, e)
+	}
+	return b.Allowlist, tcp, b.Enforce, nil
 }
 
 func (s *policySync) reload(ctx context.Context) error {

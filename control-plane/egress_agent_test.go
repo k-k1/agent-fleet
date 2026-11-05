@@ -48,3 +48,29 @@ func TestEgressAgentEventDecodesIntoIngest(t *testing.T) {
 		t.Fatal("ingest refuses an event with no host")
 	}
 }
+
+// A passthrough event keeps its port: the CP stores it in the destination, so the event
+// table and the archive keep their shape.
+func TestEgressAgentTCPEventPortReachesTheDestination(t *testing.T) {
+	sent := egressagent.Event{
+		ID: "ee63f33d0236ef38@10", At: 1761300001000, Source: "10.0.1.5", Dest: "203.0.113.9", Port: 22,
+		Host: "git.example.com", Allowed: true, Count: 1,
+	}
+	b, _ := json.Marshal(sent)
+	var got egressEvent
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	ev, ok := rawEgressEvent(got, got.Host)
+	if !ok || ev.Dest != "203.0.113.9:22" || ev.Source != "10.0.1.5" || ev.Host != "git.example.com" || !ev.Allowed {
+		t.Fatalf("stored %+v ok=%v", ev, ok)
+	}
+	// An HTTP event has no port and its destination is the bare address, as before.
+	sent.Port = 0
+	b, _ = json.Marshal(sent)
+	got = egressEvent{}
+	_ = json.Unmarshal(b, &got)
+	if ev, _ := rawEgressEvent(got, got.Host); ev.Dest != "203.0.113.9" {
+		t.Fatalf("dest %q", ev.Dest)
+	}
+}

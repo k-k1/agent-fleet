@@ -60,6 +60,8 @@ CFN = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
 DOC = os.path.join(ROOT, "control-plane", "internal", "egressagent", "doc.go")
 POLICY = os.path.join(ROOT, "control-plane", "internal", "egressagent", "policy.go")
 RELAY = os.path.join(ROOT, "control-plane", "internal", "egressagent", "relay.go")
+TCP_RELAY = os.path.join(ROOT, "control-plane", "internal", "egressagent", "tcprelay.go")
+AGENT_CMD = os.path.join(ROOT, "control-plane", "egress_agent.go")
 MAIN_GO = os.path.join(ROOT, "control-plane", "main.go")
 SRC = {}  # relay.go and main.go, read once by main()
 ENV_SH = os.path.join(ROOT, "deploy", "aws", "ecs", "env.sh")
@@ -72,7 +74,6 @@ GATEWAY_RESOURCES = {"GatewaySg", "GatewayHostSg", "GatewayEni", "GatewayEipAsso
                      "EgressTokenSecret", "GatewayRole", "GatewayInstanceProfile",
                      "GatewayLaunchTemplate", "GatewayAsg"}
 WS_CIDRS = [{"!Ref": "WorkspaceSubnet0Cidr"}, {"!Ref": "WorkspaceSubnet1Cidr"}]
-PROXY_PORTS = {80, 443, 3128}
 STAR_OK = {"ec2:DescribeNetworkInterfaces", "ecr:GetAuthorizationToken"}
 ALLOW_FILE = "/var/lib/af-egress-agent/af-allow.txt"
 MODE_FILE = "/var/lib/af-egress-agent/af-mode.conf"
@@ -174,10 +175,13 @@ def check(net, ingress, platform, doc_lines):
     for rule in rules:
         if rule.get("CidrIp") not in WS_CIDRS or set(rule) & {"SourceSecurityGroupId", "CidrIpv6", "SourcePrefixListId"}:
             f.append("GatewaySg admits %r (only the workspace subnets may reach it)" % (rule.get("CidrIp"),))
-        if rule.get("IpProtocol") != "tcp" or rule.get("FromPort") != rule.get("ToPort") \
-                or rule.get("FromPort") not in PROXY_PORTS:
-            f.append("GatewaySg opens %s %s-%s (only tcp 80/443/3128)"
+        if rule.get("IpProtocol") != "tcp" or rule.get("FromPort") != 0 or rule.get("ToPort") != 65535:
+            f.append("GatewaySg opens %s %s-%s (only tcp, every port: nftables decides, ADR 0122 addendum 2026-11-05)"
                      % (rule.get("IpProtocol"), rule.get("FromPort"), rule.get("ToPort")))
+    if sorted(repr(r.get("CidrIp")) for r in rules) != sorted(repr(c) for c in WS_CIDRS):
+        f.append("GatewaySg does not admit exactly the two workspace subnets, once each")
+    if sg.get("SecurityGroupEgress"):
+        f.append("GatewaySg restricts egress: the passthrough relay dials any named port")
     if ((res.get("GatewayHostSg") or {}).get("Properties") or {}).get("SecurityGroupIngress"):
         f.append("GatewayHostSg admits inbound traffic")
     eni = (res.get("GatewayEni") or {}).get("Properties") or {}
@@ -296,6 +300,7 @@ def check(net, ingress, platform, doc_lines):
             f.append("user data lacks %r" % must)
     f += check_hardening(ud)
     f += check_relay(ud)
+    f += check_tcp_relay(ud)
     f += check_first_policy(ud)
     return f
 
@@ -332,6 +337,50 @@ def check_relay(ud):
         f.append("af-egress-install never starts the relay")
     if 'os.Args[1] == "egress-relay"' not in SRC["main"]:
         f.append("control-plane has no egress-relay subcommand")
+    return f
+
+
+def check_tcp_relay(ud):
+    """Every other TCP port goes to egress-relay --mode tcp; the host's own ports stay fenced."""
+    f = []
+    lines = [ln.strip() for ln in ud.splitlines()]
+    listen = re.search(r'TCPRelayListen\s*=\s*"(:\d+)"', SRC["tcprelay"])
+    if not listen:
+        return ["tcprelay.go: TCPRelayListen not found"]
+    want = 'iifname "$DEV" ip saddr { $WS_NFT } fib daddr type != local tcp dport != { 80, 443, 3128 } redirect to ' + listen.group(1)
+    if want not in lines:
+        f.append("nftables does not redirect the other TCP ports to the passthrough relay: %s" % want)
+    # The input chain: GatewaySg admits all TCP, so nftables drops what is not 3128 or redirected.
+    chain = re.search(r"chain input \{\n(.*?)\n\s*\}\n", ud, re.S)
+    body = [ln.strip() for ln in chain.group(1).splitlines()] if chain else []
+    ws = 'iifname "$DEV" ip saddr { $WS_NFT } '
+    if not chain or "type filter hook input priority filter; policy accept;" not in body \
+            or ws + "tcp dport 3128 accept" not in body or ws + "ct status dnat accept" not in body \
+            or ws + "drop" not in body or body[-1] != ws + "drop":
+        f.append("nftables input chain does not drop a workspace's direct connections to the host's own ports")
+    accepts = [ln for ln in body if ln.endswith(" accept") and "dport" in ln]
+    if accepts != [ws + "tcp dport 3128 accept"]:
+        f.append("nftables input chain accepts more than the explicit proxy port: %r" % accepts)
+    unit = re.search(r"af-egress-relay-tcp\.service <<EOF\n(.*?)\nEOF", ud, re.S)
+    ul = unit.group(1).split("\n") if unit else []
+    if "User=squid" not in ul or "ExecStart=/usr/local/bin/af-cp egress-relay --mode tcp" not in ul or "Restart=always" not in ul:
+        f.append("the passthrough relay unit is missing, not run as squid, or not restarted")
+    if any("AF_EGRESS_TCP_FILE" in ln or "AF_EGRESS_TCP_LOG" in ln for ln in ul):
+        f.append("the passthrough relay is given its own table / log path; it must use the agent's defaults")
+    if "Environment=AF_EGRESS_TCP_FENCE=${VpcCidr}" not in ul:
+        f.append("the passthrough relay is not told to refuse the VPC CIDR")
+    if "systemctl start af-egress-relay-tcp" not in lines:
+        f.append("af-egress-install never starts the passthrough relay")
+    if "systemctl try-restart af-egress-relay af-egress-relay-tcp" not in lines:
+        f.append("a new agent binary does not restart the passthrough relay")
+    if '"--mode"' not in SRC["agentcmd"]:
+        f.append("egress-relay has no --mode tcp")
+    # Neither side is told the paths: both use agent.go's defaults, so they cannot differ.
+    agent = open(os.path.join(os.path.dirname(POLICY), "agent.go")).read()
+    for key, default in (("AF_EGRESS_TCP_FILE", "/var/lib/af-egress-agent/af-tcp.json"),
+                         ("AF_EGRESS_TCP_LOG", "/var/log/squid/af-tcp.log")):
+        if 'envx.Or("%s", "%s")' % (key, default) not in agent:
+            f.append("agent.go's default for %s is not %s" % (key, default))
     return f
 
 
@@ -527,7 +576,7 @@ def main():
             env_src = fh.read()
         with open(POLICY) as fh:
             policy_src = fh.read()
-        for k, path in (("relay", RELAY), ("main", MAIN_GO)):
+        for k, path in (("relay", RELAY), ("main", MAIN_GO), ("tcprelay", TCP_RELAY), ("agentcmd", AGENT_CMD)):
             with open(path) as fh:
                 SRC[k] = fh.read()
         with open(os.path.join(os.path.dirname(POLICY), "agent.go")) as fh:
@@ -594,8 +643,12 @@ def main():
         ("gateway open to the VPC", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][0].update(CidrIp="10.20.0.0/16"))),
         ("gateway open to the internet", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"].append(
             {"IpProtocol": "tcp", "FromPort": 3128, "ToPort": 3128, "CidrIp": "0.0.0.0/0"}))),
-        ("gateway open on ssh", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][0].update(FromPort=22, ToPort=22))),
-        ("gateway open on a port range", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][0].update(FromPort=0, ToPort=65535))),
+        ("gateway open to UDP", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][0].update(IpProtocol="udp"))),
+        ("gateway admits only some ports again", m(lambda t: r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][0].update(FromPort=443, ToPort=443))),
+        ("gateway admits one workspace subnet", m(lambda t: r(t)["GatewaySg"]["Properties"].update(
+            SecurityGroupIngress=r(t)["GatewaySg"]["Properties"]["SecurityGroupIngress"][:1]))),
+        ("gateway egress restricted", m(lambda t: r(t)["GatewaySg"]["Properties"].update(
+            SecurityGroupEgress=[{"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0"}]))),
         ("host interface takes inbound", m(lambda t: r(t)["GatewayHostSg"]["Properties"].update(
             SecurityGroupIngress=[{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "0.0.0.0/0"}]))),
         ("source/dest check on", m(lambda t: r(t)["GatewayEni"]["Properties"].update(SourceDestCheck=True))),
@@ -646,6 +699,25 @@ def main():
             "proxy_protocol_access allow localhost", "proxy_protocol_access allow all")))),
         ("relay as root", m(lambda t: set_ud(t, lambda s: s.replace(
             "[Service]\nUser=squid\nExecStart=/usr/local/bin/af-cp egress-relay", "[Service]\nUser=root\nExecStart=/usr/local/bin/af-cp egress-relay")))),
+        ("other ports not redirected to the passthrough relay", m(lambda t: set_ud(t, lambda s: s.replace(
+            "tcp dport != { 80, 443, 3128 } redirect to :3132", "tcp dport != { 80, 443, 3128 } redirect to :3129")))),
+        ("host's own ports redirected too", m(lambda t: set_ud(t, lambda s: s.replace("fib daddr type != local ", "")))),
+        ("input chain drop gone", m(lambda t: set_ud(t, lambda s: s.replace(
+            '    iifname "$DEV" ip saddr { $WS_NFT } drop\n', "")))),
+        ("input chain admits the relay ports", m(lambda t: set_ud(t, lambda s: s.replace(
+            'tcp dport 3128 accept', 'tcp dport { 3128, 3131 } accept')))),
+        ("input chain admits ssh", m(lambda t: set_ud(t, lambda s: s.replace(
+            'tcp dport 3128 accept\n', 'tcp dport 3128 accept\n                  iifname "$DEV" ip saddr { $WS_NFT } tcp dport 22 accept\n')))),
+        ("passthrough relay as root", m(lambda t: set_ud(t, lambda s: s.replace(
+            "[Service]\nUser=squid\nEnvironment=AF_EGRESS_TCP_FENCE", "[Service]\nUser=root\nEnvironment=AF_EGRESS_TCP_FENCE")))),
+        ("passthrough relay may reach the VPC", m(lambda t: set_ud(t, lambda s: s.replace(
+            "Environment=AF_EGRESS_TCP_FENCE=${VpcCidr}\n", "")))),
+        ("passthrough relay never started", m(lambda t: set_ud(t, lambda s: s.replace("systemctl start af-egress-relay-tcp\n", "")))),
+        ("passthrough relay keeps the old binary", m(lambda t: set_ud(t, lambda s: s.replace(
+            "systemctl try-restart af-egress-relay af-egress-relay-tcp", "systemctl try-restart af-egress-relay")))),
+        ("a path overridden for the relay only", m(lambda t: set_ud(t, lambda s: s.replace(
+            "Restart=always\nRestartSec=5\nEOF\ncat > /etc/systemd/system/af-egress-install.service",
+            "Restart=always\nRestartSec=5\nEnvironment=AF_EGRESS_TCP_FILE=/tmp/x\nEOF\ncat > /etc/systemd/system/af-egress-install.service")))),
         ("relay never started", m(lambda t: set_ud(t, lambda s: s.replace("systemctl start af-egress-relay\n", "")))),
         ("install not retried", m(lambda t: set_ud(t, lambda s: s.replace("Restart=on-failure\nRestartSec=30\n", "")))),
         ("install retried only after 10 minutes", m(lambda t: set_ud(t, lambda s: s.replace("RestartSec=30\n", "RestartSec=600\n")))),

@@ -24,6 +24,11 @@ type Config struct {
 	ModeFile  string   // the include holding the log-only / enforce decisions
 	ReloadCmd []string // run after either file changed; empty = do not reload
 
+	// TCPFile is where the resolved TCP passthrough table is written for the relay; empty
+	// = no passthrough. TCPLogPath is the relay's own log (TCPLogFormat); empty = not shipped.
+	TCPFile    string
+	TCPLogPath string
+
 	LogPath   string // Squid's access_log in LogFormat
 	StatePath string // committed offsets, by log file identity
 
@@ -42,6 +47,8 @@ func FromEnv() Config {
 		AllowFile:   envx.Or("AF_EGRESS_SQUID_ALLOW_FILE", "/etc/squid/af-allow.txt"),
 		ModeFile:    envx.Or("AF_EGRESS_SQUID_MODE_FILE", "/etc/squid/af-mode.conf"),
 		ReloadCmd:   strings.Fields(envx.Or("AF_EGRESS_SQUID_RELOAD", "squid -k reconfigure")),
+		TCPFile:     envx.Or("AF_EGRESS_TCP_FILE", "/var/lib/af-egress-agent/af-tcp.json"),
+		TCPLogPath:  envx.Or("AF_EGRESS_TCP_LOG", "/var/log/squid/af-tcp.log"),
 		LogPath:     envx.Or("AF_EGRESS_SQUID_LOG", "/var/log/squid/af-egress.log"),
 		StatePath:   envx.Or("AF_EGRESS_AGENT_STATE", "/var/lib/af-egress-agent/state.json"),
 		PolicyEvery: 30 * time.Second,
@@ -80,6 +87,11 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if err := checkLogTaggable(cfg.LogPath); err != nil {
 		return err
+	}
+	if cfg.TCPLogPath != "" {
+		if err := checkLogTaggable(cfg.TCPLogPath); err != nil {
+			return err
+		}
 	}
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Timeout: requestTimeout}
@@ -123,6 +135,8 @@ func (s *policySync) loop(ctx context.Context) {
 		if err := s.sync(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("egress-agent: policy not updated, keeping the last one that worked: %v", err)
 		}
+		// Addresses keep being refreshed while the CP is unreachable, from the last policy.
+		s.tcp.refresh(ctx)
 		select {
 		case <-ctx.Done():
 			return
