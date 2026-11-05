@@ -46,40 +46,91 @@ describe("CodeView の読み取り専用ガード", () => {
     expect(beforeInput(grid, inputType)).toBe(true);
   });
 
-  const tamper = (grid: HTMLElement) => {
-    const code = grid.querySelector(".cl-code")!;
-    code.textContent = "hello亜 world";
-    return code;
+  const html = Array.from({ length: 30 }, (_, i) => `line ${i + 1} text`).join("\n");
+  const renderLong = async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(<CodeView html={html} lines={30} lineNumbers />);
+    });
+    return host.querySelector(".codegrid") as HTMLElement;
+  };
+  const cell = (ln: number) => host.querySelector(`.cl-code[data-ln="${ln}"]`)!;
+
+  // What a browser does on an IME commit: the composition's own (uncancellable) beforeinput,
+  // then the text lands at the caret, then compositionend.
+  const compose = async (grid: HTMLElement, ln: number, data: string) => {
+    const ev = new InputEvent("beforeinput", { inputType: "insertCompositionText", data, bubbles: true, cancelable: false });
+    cell(ln).dispatchEvent(ev);
+    const text = cell(ln).firstChild as Text;
+    text.insertData(text.length, data);
+    return () =>
+      act(async () => {
+        grid.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data }));
+      });
   };
 
-  it("IME 変換の確定後に DOM へ入った文字を元に戻し、フォーカスを保つ", async () => {
-    const grid = await render();
+  it("IME の確定後に行を元に戻し、途中行のキャレット・選択を編集前の位置へ戻す", async () => {
+    const grid = await renderLong();
     grid.focus();
-    tamper(grid);
-    await act(async () => {
-      grid.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "亜" }));
-    });
-    const fresh = host.querySelector(".codegrid") as HTMLElement;
-    expect(fresh.querySelector(".cl-code")!.textContent).toBe("hello world");
-    expect(document.activeElement).toBe(fresh);
+    const t = cell(17).firstChild as Text;
+    document.getSelection()!.setBaseAndExtent(t, 7, t, 2); // backwards selection on line 17
+    const end = await compose(grid, 17, "亜");
+    await end();
+    expect(host.querySelector(".codegrid")).toBe(grid);
+    expect(cell(17).textContent).toBe("line 17 text");
+    expect(document.activeElement).toBe(grid);
+    const sel = document.getSelection()!;
+    expect(sel.anchorNode).toBe(cell(17).firstChild);
+    expect([sel.anchorOffset, sel.focusOffset]).toEqual([7, 2]);
   });
 
-  it("変換中でない input で DOM が変わったら元に戻す", async () => {
-    const grid = await render();
-    tamper(grid);
+  it("変換中にフォーカスが他へ移っていたら、確定後もフォーカスと選択を奪わない", async () => {
+    const grid = await renderLong();
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    grid.focus();
+    const t = cell(3).firstChild as Text;
+    document.getSelection()!.collapse(t, 4);
+    const end = await compose(grid, 3, "あ");
+    other.focus();
+    document.getSelection()!.collapse(document.body, 0);
+    await end();
+    expect(cell(3).textContent).toBe("line 3 text");
+    expect(document.activeElement).toBe(other);
+    expect(grid.contains(document.getSelection()!.anchorNode)).toBe(false);
+  });
+
+  it("行の構造まで壊れたら作り直し、フォーカスは元々あった場合だけ戻す", async () => {
+    const grid = await renderLong();
+    grid.focus();
+    grid.appendChild(document.createTextNode("stray"));
     await act(async () => {
       grid.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", isComposing: false }));
     });
-    expect(host.querySelector(".cl-code")!.textContent).toBe("hello world");
+    const fresh = host.querySelector(".codegrid") as HTMLElement;
+    expect(fresh).not.toBe(grid);
+    expect(fresh.textContent).not.toContain("stray");
+    expect(document.activeElement).toBe(fresh);
+
+    const other = document.createElement("input");
+    document.body.appendChild(other);
+    other.focus();
+    fresh.appendChild(document.createTextNode("stray"));
+    await act(async () => {
+      fresh.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", isComposing: false }));
+    });
+    expect(document.activeElement).toBe(other);
   });
 
-  it("変換中の input では作り直さない（確定まで IME を壊さない）", async () => {
-    const grid = await render();
-    const code = tamper(grid);
+  it("変換中の input では戻さない（確定まで IME を壊さない）", async () => {
+    const grid = await renderLong();
+    await compose(grid, 5, "あ");
     await act(async () => {
       grid.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", isComposing: true }));
     });
-    expect(host.querySelector(".cl-code")).toBe(code);
+    expect(cell(5).textContent).toBe("line 5 textあ");
   });
 
   it("アンマウント後はリスナーを外す", async () => {

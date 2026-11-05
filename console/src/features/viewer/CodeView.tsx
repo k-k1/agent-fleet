@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
 import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
+import { applyGridSelection, captureGridSelection, restoreGridRows, type GridSelection } from "./parts/gridRestore.ts";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
 // VSCode-style minimap on the right edge: a scaled-down PLAIN-TEXT mirror of the file
@@ -294,13 +295,32 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   // went through it and edited the DOM.
   //
   // IME composition cannot be cancelled (insertCompositionText is not cancelable per the
-  // Input Events spec; measured: a composed "あ" lands in the grid and stays after commit),
-  // so any edit that still reaches the DOM is undone by remounting the grid: once the
-  // composition ends, or on an input event outside a composition.
+  // Input Events spec; measured: a composed "あ" lands in the grid and stays after commit).
+  // The first uncancellable beforeinput records where the caret was; once the composition
+  // ends (or on an input outside one) the rows are put back in place and that caret or
+  // selection is restored. Restoring in place keeps the focused element, so focus is never
+  // moved; only a structural edit falls back to remounting the grid.
   const [restoreEpoch, setRestoreEpoch] = useState(0);
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const editStartRef = useRef<GridSelection | null>(null);
+  const refocusRef = useRef(false);
+  const restoreInputs = useRef({ lineHtmls, n, cellsPerRow: showGutter ? 2 : 1 });
+  restoreInputs.current = { lineHtmls, n, cellsPerRow: showGutter ? 2 : 1 };
   const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
-  const restoreGrid = useCallback(() => setRestoreEpoch((n) => n + 1), []);
+  const restoreGrid = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const start = editStartRef.current;
+    editStartRef.current = null;
+    const hadFocus = grid.contains(document.activeElement);
+    const { lineHtmls, n, cellsPerRow } = restoreInputs.current;
+    if (!restoreGridRows(grid, lineHtmls, n, cellsPerRow)) {
+      refocusRef.current = hadFocus;
+      setRestoreEpoch((k) => k + 1);
+      return;
+    }
+    if (start && hadFocus) applyGridSelection(grid, start);
+  }, []);
   const onGridInput = useCallback(
     (e: SyntheticEvent) => {
       if (!(e.nativeEvent as InputEvent).isComposing) restoreGrid();
@@ -309,17 +329,21 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   );
   const attachGrid = useCallback((el: HTMLDivElement) => {
     gridRef.current = el;
-    const block = (e: Event) => e.preventDefault();
+    const block = (e: Event) => {
+      if (e.cancelable) e.preventDefault();
+      else if (!editStartRef.current) editStartRef.current = captureGridSelection(el);
+    };
     el.addEventListener("beforeinput", block);
     return () => {
       el.removeEventListener("beforeinput", block);
       if (gridRef.current === el) gridRef.current = null;
     };
   }, []);
-  // The remount replaces the focused element; hand focus to the new grid so keyboard
-  // reading continues instead of dropping to the page.
+  // A remount replaces the element that had focus; give it back only if it was there.
   useLayoutEffect(() => {
-    if (restoreEpoch > 0) gridRef.current?.focus({ preventScroll: true });
+    if (!refocusRef.current) return;
+    refocusRef.current = false;
+    gridRef.current?.focus({ preventScroll: true });
   }, [restoreEpoch]);
 
   // Merges the inner ref (used for the minimap maths) and the scroll memory passed from outside
