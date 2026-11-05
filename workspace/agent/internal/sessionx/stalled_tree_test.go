@@ -174,6 +174,30 @@ func TestStalledTree_ChildLeavingAfterTheNoticeDoesNotRearm(t *testing.T) {
 	}
 }
 
+func TestStalledTree_ChildReturningUnchangedAfterLeavingRearms(t *testing.T) {
+	f := newStalledFixture(t)
+	f.tree()
+	f.session("kid3", "parent", "idle")
+	f.tickAt(0)
+	f.tickAt(mins(15))
+	if len(f.sent) != 1 {
+		t.Fatalf("setup: want 1 notice, got %d", len(f.sent))
+	}
+	f.alive["kid3"] = false
+	f.tickAt(mins(16))
+	// Back with the very signature it fired on: it was gone, so its return is still movement.
+	f.alive["kid3"] = true
+	f.tickAt(mins(17))
+	f.tickAt(mins(31))
+	if len(f.sent) != 1 {
+		t.Fatalf("re-armed episode fired early: %d", len(f.sent))
+	}
+	f.tickAt(mins(32))
+	if len(f.sent) != 2 || !strings.Contains(f.sent[1], "kid3") {
+		t.Fatalf("a child that left and came back unchanged did not re-arm: %v", f.sent)
+	}
+}
+
 func TestStalledTree_TurnBetweenTicksResetsTheClock(t *testing.T) {
 	f := newStalledFixture(t)
 	f.tree()
