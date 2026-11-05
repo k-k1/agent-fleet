@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { echoLanded, echoNeedsResync, ECHO_RESYNC_MS, withoutStoppedEcho } from "./pendingEcho.ts";
+import { echoLanded, echoNeedsResync, ECHO_RESYNC_MS, withoutDiscarded, withoutStoppedEcho } from "./pendingEcho.ts";
 
 const notNoise = () => false;
 
@@ -12,6 +12,13 @@ describe("echoLanded", () => {
     const sent = "AAC と同じ規則にして\r\n\u00a0\r\n今の状態\t求められる\u200b確認";
     const logged = "AAC と同じ規則にして\n \n今の状態    求められる確認";
     expect(echoLanded({ text: sent, sinceIdx: 10 }, [{ role: "user", text: logged, idx: 11 }], notNoise)).toBe(true);
+  });
+
+  it("a turn does not land the echo of a prompt that differs from it only in spaces", () => {
+    // Two sends before the transcript moves share one sinceIdx; only "a b" has been logged.
+    const turns = [{ role: "user", text: "a b", idx: 11 }];
+    expect(echoLanded({ text: "a b", sinceIdx: 10 }, turns, notNoise)).toBe(true);
+    expect(echoLanded({ text: "ab", sinceIdx: 10 }, turns, notNoise)).toBe(false);
   });
 
   it("an image studio send resolves against its turn, which still carries the studio signal line", () => {
@@ -217,5 +224,23 @@ describe("withoutStoppedEcho (issue #3290)", () => {
   it("leaves the launch echo alone", () => {
     const echoes = [e(1, "P", true)];
     expect(withoutStoppedEcho(echoes, "P", new Set([1]))).toBe(echoes);
+  });
+});
+
+describe("picking the echo when two differ only in what claude strips", () => {
+  const e = (id: number, text: string) => ({ id, text, sinceIdx: 0 });
+  it("a discard sweeps the echo with exactly its text, not the first lenient match", () => {
+    const out = withoutDiscarded([e(1, "x\u200by"), e(2, "xy")], ["xy"]);
+    expect(out.map((x) => x.id)).toEqual([1]);
+  });
+  it("a discard still sweeps an echo it matches only leniently", () => {
+    expect(withoutDiscarded([e(1, "x\u200by")], ["xy"])).toEqual([]);
+  });
+  it("a stop drops the echo with exactly its text, not the newer lenient match", () => {
+    const out = withoutStoppedEcho([e(1, "xy"), e(2, "x\u200by")], "xy", new Set([1, 2]));
+    expect(out.map((x) => x.id)).toEqual([2]);
+  });
+  it("a stop takes back claude's cleaned copy of a pasted prompt", () => {
+    expect(withoutStoppedEcho([e(1, "x\u200by")], "xy", new Set([1]))).toEqual([]);
   });
 });

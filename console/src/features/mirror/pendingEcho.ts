@@ -1,4 +1,4 @@
-import { samePastedPrompt } from "../../lib/pastedImages.ts";
+import { samePastedPrompt, sameSentPrompt } from "../../lib/pastedImages.ts";
 import { stripStudioSignal } from "./transcript/model.ts";
 
 export interface PendingEcho {
@@ -114,6 +114,16 @@ export function echoLanded(e: PendingEcho, turns: TranscriptTurn[], isNoise: (t:
   });
 }
 
+// pickEcho returns the index (taken in the given order) of the eligible echo that text belongs to,
+// or -1. An exact match wins over one samePastedPrompt only accepts after dropping invisible
+// characters and reshaping whitespace, so of two pending prompts that differ only that way, the one
+// the text really is goes, not whichever comes first.
+function pickEcho<E extends PendingEcho>(order: number[], echoes: E[], text: string, eligible: (e: E) => boolean): number {
+  const exact = order.find((i) => eligible(echoes[i]) && sameSentPrompt(text, echoes[i].text));
+  if (exact !== undefined) return exact;
+  return order.find((i) => eligible(echoes[i]) && samePastedPrompt(text, echoes[i].text)) ?? -1;
+}
+
 // withoutDiscarded drops the echoes whose input a discard threw away (ADR 0105 decision 4, any
 // reason). Such an input never becomes a transcript turn, so its echo would sit at "Pending"
 // for good. One echo per discarded text: two identical sends discarded once leave one echo.
@@ -124,7 +134,7 @@ export function withoutDiscarded<E extends PendingEcho>(echoes: E[], texts: stri
   const out = [...echoes];
   for (const text of texts) {
     const bare = stripStudioSignal(text);
-    const i = out.findIndex((e) => !e.launch && samePastedPrompt(bare, e.text));
+    const i = pickEcho(out.map((_, j) => j), out, bare, (e) => !e.launch);
     if (i >= 0) out.splice(i, 1);
   }
   return out.length === echoes.length ? echoes : out;
@@ -139,11 +149,7 @@ export function withoutStoppedEcho<E extends PendingEcho & { id: number }>(
   text: string,
   idsAtStop: ReadonlySet<number>,
 ): E[] {
-  for (let i = echoes.length - 1; i >= 0; i--) {
-    const e = echoes[i];
-    if (idsAtStop.has(e.id) && !e.launch && samePastedPrompt(text, e.text)) {
-      return [...echoes.slice(0, i), ...echoes.slice(i + 1)];
-    }
-  }
-  return echoes;
+  const newestFirst = echoes.map((_, j) => echoes.length - 1 - j);
+  const i = pickEcho(newestFirst, echoes, text, (e) => idsAtStop.has(e.id) && !e.launch);
+  return i < 0 ? echoes : [...echoes.slice(0, i), ...echoes.slice(i + 1)];
 }

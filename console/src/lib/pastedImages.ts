@@ -86,18 +86,32 @@ export function splitCommandArgs(args: string): { text: string; images: string[]
 // having written anything different. claude (2.1.282 on) removes invisible characters from typed and
 // pasted input before submitting it: format characters (zero-width, bidi, BOM, tags), controls,
 // private use, variation selectors and the blank fillers below. The Agent turns CRLF into LF before
-// pasting, and whitespace in general is reshaped on the way, so all of it is dropped too. Without
-// this an echo of a paste copied from a chat app or a document never matches and stays "Pending".
-const PROMPT_IGNORABLE_RE =
-  /[\p{White_Space}\p{Cc}\p{Cf}\p{Co}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u2800\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/gu;
+// pasting, and tabs and blank lines are reshaped on the way, so a whitespace run counts as one space.
+// Whitespace is collapsed rather than dropped: "a b" and "ab" are different prompts. Without this an
+// echo of a paste copied from a chat app or a document never matches and stays "Pending".
+const PROMPT_INVISIBLE_RE =
+  /[\p{Cc}\p{Cf}\p{Co}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u2800\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/gu;
 
-const promptKey = (s: string) => splitPastedImages(s).text.replace(PROMPT_IGNORABLE_RE, "");
+// Whitespace becomes a space first so the invisible-character pass, whose \p{Cc} covers tab and
+// line feed, cannot glue two words together.
+const promptKey = (s: string) =>
+  splitPastedImages(s)
+    .text.replace(/\p{White_Space}+/gu, " ")
+    .replace(PROMPT_INVISIBLE_RE, "")
+    .replace(/ {2,}/g, " ")
+    .trim();
 
-// samePastedPrompt compares the user-authored portion of two prompt renderings, ignoring the
-// characters in PROMPT_IGNORABLE_RE. Codex's rollout adds <image …> transport markers that the
-// optimistic Console echo does not contain; ignoring those markers lets the real turn replace the echo.
+// samePastedPrompt compares the user-authored portion of two prompt renderings, ignoring what
+// promptKey ignores. Codex's rollout adds <image …> transport markers that the optimistic Console
+// echo does not contain; ignoring those markers lets the real turn replace the echo.
 export function samePastedPrompt(a: string, b: string): boolean {
   return promptKey(a) === promptKey(b);
+}
+
+// sameSentPrompt is samePastedPrompt without the invisible-character and whitespace leniency: for
+// picking, among echoes that samePastedPrompt cannot tell apart, the one whose text is exactly it.
+export function sameSentPrompt(a: string, b: string): boolean {
+  return splitPastedImages(a).text.trim() === splitPastedImages(b).text.trim();
 }
 
 // buildImagePrompt composes the sent prompt: the user's words + the kind's instruction +

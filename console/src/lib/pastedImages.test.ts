@@ -104,6 +104,9 @@ describe("samePastedPrompt", () => {
   it("still tells different visible text apart", () => {
     expect(samePastedPrompt("番号が登録済み", "番号が未登録")).toBe(false);
     expect(samePastedPrompt("a\u200bb", "a-b")).toBe(false);
+    // Whitespace is collapsed, not dropped: these are two different prompts.
+    expect(samePastedPrompt("a b", "ab")).toBe(false);
+    expect(samePastedPrompt("x = 1", "x=1")).toBe(false);
   });
 });
 
