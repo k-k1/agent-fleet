@@ -283,21 +283,44 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   }, [html, targetLine]);
 
   // The code area is contentEditable so it gets a real, keyboard-movable caret (arrow
-  // keys, Home/End, Shift-select, Ctrl+A, copy) for reading — but it must stay strictly
-  // read-only, so every mutation path is blocked: the native beforeinput covers typing,
-  // Enter, Backspace/Delete and IME, and paste/cut/drop are cancelled explicitly. Caret
-  // movement, selection and copy don't fire these, so they pass through. The line-number
-  // gutter is a contentEditable=false island so the caret never lands on a number.
+  // keys, Home/End, Shift-select, Ctrl+A, copy) for reading — but it must stay read-only.
+  // The native beforeinput is cancelled, which stops typing, Enter, Backspace/Delete and
+  // history edits; paste/cut/drop are cancelled explicitly. Caret movement, selection and
+  // copy don't fire these, so they pass through. The line-number gutter is a
+  // contentEditable=false island so the caret never lands on a number.
   //
   // beforeinput must be a native listener: React's onBeforeInput is synthesized from
   // textInput/keypress and only fires for inserted characters, so Backspace and Delete
   // went through it and edited the DOM.
+  //
+  // IME composition cannot be cancelled (insertCompositionText is not cancelable per the
+  // Input Events spec; measured: a composed "あ" lands in the grid and stays after commit),
+  // so any edit that still reaches the DOM is undone by remounting the grid: once the
+  // composition ends, or on an input event outside a composition.
+  const [restoreEpoch, setRestoreEpoch] = useState(0);
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
-  const blockNativeInput = useCallback((el: HTMLDivElement) => {
+  const restoreGrid = useCallback(() => setRestoreEpoch((n) => n + 1), []);
+  const onGridInput = useCallback(
+    (e: SyntheticEvent) => {
+      if (!(e.nativeEvent as InputEvent).isComposing) restoreGrid();
+    },
+    [restoreGrid],
+  );
+  const attachGrid = useCallback((el: HTMLDivElement) => {
+    gridRef.current = el;
     const block = (e: Event) => e.preventDefault();
     el.addEventListener("beforeinput", block);
-    return () => el.removeEventListener("beforeinput", block);
+    return () => {
+      el.removeEventListener("beforeinput", block);
+      if (gridRef.current === el) gridRef.current = null;
+    };
   }, []);
+  // The remount replaces the focused element; hand focus to the new grid so keyboard
+  // reading continues instead of dropping to the page.
+  useLayoutEffect(() => {
+    if (restoreEpoch > 0) gridRef.current?.focus({ preventScroll: true });
+  }, [restoreEpoch]);
 
   // Merges the inner ref (used for the minimap maths) and the scroll memory passed from outside
   // into one ref. The memory side returns a React 19 ref cleanup, so that is folded in too.
@@ -325,7 +348,10 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
           role="textbox"
           aria-readonly="true"
           aria-multiline="true"
-          ref={blockNativeInput}
+          ref={attachGrid}
+          key={restoreEpoch}
+          onInput={onGridInput}
+          onCompositionEnd={restoreGrid}
           onPaste={preventEdit}
           onCut={preventEdit}
           onDrop={preventEdit}
