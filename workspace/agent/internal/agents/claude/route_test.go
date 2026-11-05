@@ -518,3 +518,11 @@ func TestApprovalsAreSerialised(t *testing.T) {
 		t.Errorf("approved = %d entries, want 12", len(a))
 	}
 }
+
+// The refusal names the place the key is really entered.
+func TestNoAPIKeyRefusalNamesTheRealSettingsPath(t *testing.T) {
+	msg := noAPIKey().Message
+	if !strings.Contains(msg, "Settings > Connections > Agents > the OpenCode card > API keys") || strings.Contains(msg, "provider keys") {
+		t.Errorf("refusal = %q", msg)
+	}
+}
