@@ -296,32 +296,39 @@ func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
 		<-fl.done
 		return fl.c, fl.ref
 	}
-	cr, err := g.d.Credentials(c.conn.profile, c.conn.region, c.conn.settings)
-	var ref *refusal
-	if err != nil {
-		if errors.Is(err, awsx.ErrLoginRequired) {
-			ref = &refusal{http.StatusForbidden, "route_login_required", fmt.Sprintf(
-				"the SSO login for profile %q is required; sign in from the Console, or run `af-aws-exec --profile %s -- true` in a terminal", c.conn.profile.Name, c.conn.profile.Name)}
-		} else {
-			ref = &refusal{http.StatusBadGateway, "route_credentials_unavailable", fmt.Sprintf(
-				"could not get credentials for profile %q: %v", c.conn.profile.Name, err)}
+	// Publish in a defer: a panic in the resolution must not leave waiters blocked on fl.done.
+	var cr awsx.RouteCredentials
+	ref := &refusal{http.StatusBadGateway, "route_credentials_unavailable", "credential resolution failed"}
+	defer func() {
+		g.credMu.Lock()
+		if ref == nil {
+			usable := now.Add(credMaxAge)
+			if !cr.Expires.IsZero() {
+				usable = cr.Expires.Add(-credReserve)
+			}
+			if now.Before(usable) {
+				g.creds[key] = cachedCreds{c: cr, usable: usable}
+			}
 		}
+		delete(g.flight, key)
+		fl.c, fl.ref = cr, ref
+		g.credMu.Unlock()
+		close(fl.done)
+	}()
+	var err error
+	cr, err = g.d.Credentials(c.conn.profile, c.conn.region, c.conn.settings)
+	switch {
+	case err == nil:
+		ref = nil
+	case errors.Is(err, awsx.ErrLoginRequired):
 		cr = awsx.RouteCredentials{}
+		ref = &refusal{http.StatusForbidden, "route_login_required", fmt.Sprintf(
+			"the SSO login for profile %q is required; sign in from the Console, or run `af-aws-exec --profile %s -- true` in a terminal", c.conn.profile.Name, c.conn.profile.Name)}
+	default:
+		cr = awsx.RouteCredentials{}
+		ref = &refusal{http.StatusBadGateway, "route_credentials_unavailable", fmt.Sprintf(
+			"could not get credentials for profile %q: %v", c.conn.profile.Name, err)}
 	}
-	g.credMu.Lock()
-	if ref == nil {
-		usable := now.Add(credMaxAge)
-		if !cr.Expires.IsZero() {
-			usable = cr.Expires.Add(-credReserve)
-		}
-		if now.Before(usable) {
-			g.creds[key] = cachedCreds{c: cr, usable: usable}
-		}
-	}
-	delete(g.flight, key)
-	fl.c, fl.ref = cr, ref
-	g.credMu.Unlock()
-	close(fl.done)
 	return cr, ref
 }
 

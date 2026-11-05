@@ -28,7 +28,7 @@ import (
 var _ agents.RouteChecker = (*Gateway)(nil)
 
 const (
-	testSecret = "SECRETKEYsecretkeySECRETKEYsecretkey0000"
+	testSecret = "af-test-fixture-routegw0secret0key"
 	testModel  = "anthropic.claude-sonnet-4-5-20250929-v1%3A0"
 )
 
@@ -144,6 +144,15 @@ func (e *env) advance(d time.Duration) { e.mu.Lock(); e.now = e.now.Add(d); e.mu
 
 func (e *env) call(token, path string, body string) (*http.Response, string) {
 	e.t.Helper()
+	resp, b, err := e.callErr(token, path, body)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return resp, b
+}
+
+// callErr is call without t.Fatal, for goroutines.
+func (e *env) callErr(token, path string, body string) (*http.Response, string, error) {
 	req, _ := http.NewRequest("POST", e.gw.URL+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -151,11 +160,11 @@ func (e *env) call(token, path string, body string) (*http.Response, string) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		e.t.Fatal(err)
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
-	return resp, string(b)
+	return resp, string(b), nil
 }
 
 func (e *env) upstreamCalls() int { e.mu.Lock(); defer e.mu.Unlock(); return len(e.upReqs) }
@@ -753,9 +762,15 @@ func TestSlowCredentialResolutionDoesNotBlockOtherProfiles(t *testing.T) {
 		return awsx.RouteCredentials{AccessKeyID: "ASIA", SecretAccessKey: testSecret, SessionToken: "T", Region: region}, nil
 	}
 	var wg sync.WaitGroup
+	errs := make(chan error, 4)
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); e.call(a, invokePath(), `{}`) }()
+		go func() {
+			defer wg.Done()
+			if _, _, err := e.callErr(a, invokePath(), `{}`); err != nil {
+				errs <- err
+			}
+		}()
 	}
 	// Wait until p1's resolution is in progress.
 	for i := 0; i < 200; i++ {
@@ -768,7 +783,15 @@ func TestSlowCredentialResolutionDoesNotBlockOtherProfiles(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	done := make(chan int, 1)
-	go func() { resp, _ := e.call(b, invokePath(), `{}`); done <- resp.StatusCode }()
+	go func() {
+		resp, _, err := e.callErr(b, invokePath(), `{}`)
+		if err != nil {
+			errs <- err
+			done <- 0
+			return
+		}
+		done <- resp.StatusCode
+	}()
 	select {
 	case code := <-done:
 		if code != 200 {
@@ -779,6 +802,10 @@ func TestSlowCredentialResolutionDoesNotBlockOtherProfiles(t *testing.T) {
 	}
 	releaseAll()
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if resolved["p1"] != 1 {
