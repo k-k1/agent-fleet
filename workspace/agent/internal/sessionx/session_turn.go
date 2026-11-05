@@ -173,7 +173,10 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Read before the keys: only a box that was empty can be told to hold a restored prompt.
-		emptyBefore := restoresInterruptedPrompt(meta.Kind) && composerEmpty(reclaimCapture(pane))
+		before := ""
+		if restoresInterruptedPrompt(meta.Kind) {
+			before = reclaimCapture(pane)
+		}
 		if err := sendNamedKeysGap(pane, plan.keys, plan.gap); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 			return
@@ -185,7 +188,7 @@ func HandleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{"sent": name, "op": req.Op, "interrupt_measured": plan.measured}
 		// "restored" is the stopped prompt taken back out of the CLI's input box, for the
 		// Console to put into its own composer.
-		if p := reclaimInterruptedPrompt(meta, pane, emptyBefore); p != "" {
+		if p := reclaimInterruptedPrompt(meta, pane, before); p != "" {
 			resp["restored"] = p
 		}
 		httpx.WriteJSON(w, http.StatusOK, resp)

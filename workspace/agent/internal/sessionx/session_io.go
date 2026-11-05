@@ -741,7 +741,7 @@ func submitPromptTUIRev(lease *lifegate.Lease, w http.ResponseWriter, name, pane
 		return "", false
 	}
 	defer unlock()
-	if strandedPromptBlocks(name, pane) || lateRestoredBlocks(name, pane) {
+	if strandedPromptBlocks(name, pane) || lateRestoredBlocks(name, pane) || unprovenBoxBlocks(name, pane) {
 		httpx.WriteErr(w, http.StatusConflict, "stopped_prompt_in_box",
 			"止めたメッセージが端末の入力欄に残っています。端末で消してから送り直してください / "+
 				"the stopped message is still in the terminal's input box; clear it there and send again")

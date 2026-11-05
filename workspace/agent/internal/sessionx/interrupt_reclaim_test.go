@@ -46,6 +46,10 @@ func stubReclaim(t *testing.T, logPath, prompt string, pane func(escapes int) st
 }
 
 func clearStrandedPrompts() {
+	unprovenBoxes.Range(func(k, _ any) bool {
+		unprovenBoxes.Delete(k)
+		return true
+	})
 	strandedPrompts.Range(func(k, _ any) bool {
 		strandedPrompts.Delete(k)
 		return true
@@ -646,7 +650,7 @@ func firstPromptRun(t *testing.T, submitted string, age time.Duration, pane func
 	if err := sendNamedKeys("%7", []string{"Escape"}); err != nil {
 		t.Fatal(err)
 	}
-	return reclaimInterruptedPrompt(m, "%7", true)
+	return reclaimInterruptedPrompt(m, "%7", paneEmpty)
 }
 
 func restoredPaneSteps(esc int) string {
@@ -797,5 +801,89 @@ func TestForgetSubmittedKeepsALaterEqualEntry(t *testing.T) {
 	forgetSubmitted("forget_own", b)
 	if got := takeSubmitted("forget_own", "%7"); got != "" {
 		t.Fatalf("own entry stayed: %q", got)
+	}
+}
+
+// The stop of issue #3373 came during a UserPromptSubmit hook, with a tip and a recap block
+// around the box. The capture is rebuilt from the issue's description, not recorded: the
+// terminal recording attached to the issue is a diff stream that does not contain the box frame,
+// so whether claudeBox reads this exact pane could not be shown from it. What the tests below
+// pin is that whatever the pre-stop read, the next send is not glued to a restored prompt.
+const (
+	paneHookRunning = "※ recap: PR #3361 の許可カードの修正を、この環境で確かめる\n\n" +
+		"✻ Transmuting… (running UserPromptSubmit hook · 0s)\n  ⎿ Tip: Use /agents to launch specialized subagents\n\n" +
+		rule + "\n❯ \n" + rule + "\n  ⏵⏵ auto mode on\n"
+	// The same moment on a frame claudeBox cannot read (no bottom rule on screen).
+	paneHookUnreadable = "※ recap: PR #3361\n✻ Transmuting… (running UserPromptSubmit hook · 0s)\n  ⎿ Tip: x\n\n" +
+		rule + "\n❯ \n  ⏵⏵ auto mode on\n"
+	paneUnreadableRestored = "✻ Transmuting…\n\n" + rule + "\n❯ echo live-check-3361 を実行して\n  ⏵⏵ auto mode on\n"
+)
+
+func TestClaudeBoxReadsAHookRunningPane(t *testing.T) {
+	if !composerEmpty(paneHookRunning) {
+		t.Fatal("a hook-running pane with an empty box must read as empty")
+	}
+	if composerEmpty(paneHookUnreadable) {
+		t.Fatal("a pane without a readable frame must not read as empty")
+	}
+}
+
+func unprovenSend(t *testing.T) int {
+	return postTurn(t, "turn_reclaim", `{"op":"start","prompt":"next prompt"}`).Code
+}
+
+// A stop whose pre-stop box could not be read arms a guard: the restored prompt that shows up
+// refuses the next send, and nothing is erased.
+func TestSendRefusedAfterAStopThatCouldNotReadTheBoxBefore(t *testing.T) {
+	pane := paneUnreadableRestored
+	pre := true
+	keys, _, has := runClaudeInterrupt(t, "echo live-check-3361 を実行して", func(esc int) string {
+		if pre && esc == 0 {
+			return paneHookUnreadable
+		}
+		return pane
+	})
+	pre = false
+	if has || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("keys = %v, restored present = %v", keys, has)
+	}
+	if code := unprovenSend(t); code != http.StatusConflict {
+		t.Fatalf("send status = %d, want 409", code)
+	}
+	pane = paneEmpty
+	if code := unprovenSend(t); code != http.StatusOK {
+		t.Fatalf("after the box was cleared: status = %d", code)
+	}
+}
+
+// A draft the member typed before the stop and left there is not the stopped prompt's doing.
+func TestSendAllowedWhenTheBoxHoldsOnlyWhatItHeldBeforeTheStop(t *testing.T) {
+	keys, _, has := runClaudeInterrupt(t, "SLOW 再レビュー", func(int) string { return paneOwnDraft })
+	if has || strings.Join(keys, ",") != "Escape" {
+		t.Fatalf("keys = %v, restored present = %v", keys, has)
+	}
+	if code := unprovenSend(t); code != http.StatusOK {
+		t.Fatalf("send status = %d, want 200", code)
+	}
+}
+
+// A restored prompt next to a draft that was there before differs from the baseline: refused.
+func TestSendRefusedWhenARestoredPromptReplacesTheDraft(t *testing.T) {
+	_, _, _ = runClaudeInterrupt(t, "SLOW 再レビュー", func(esc int) string {
+		if esc == 0 {
+			return paneOwnDraft
+		}
+		return paneRestored
+	})
+	if code := unprovenSend(t); code != http.StatusConflict {
+		t.Fatalf("send status = %d, want 409", code)
+	}
+}
+
+// A frame nobody can read must not lock the session: no composer line at all lifts the guard.
+func TestUnprovenGuardLiftsWhenNoReaderFindsABox(t *testing.T) {
+	_, _, _ = runClaudeInterrupt(t, "x", func(int) string { return "starting…\n" })
+	if code := unprovenSend(t); code != http.StatusOK {
+		t.Fatalf("send status = %d, want 200", code)
 	}
 }
