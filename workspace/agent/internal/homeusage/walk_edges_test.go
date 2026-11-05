@@ -108,10 +108,19 @@ func TestMeasureFollowsNoLink(t *testing.T) {
 	if catSum(u) != u.Total {
 		t.Fatalf("categories sum to %d, total %d", catSum(u), u.Total)
 	}
+	wt := filepath.Join(home, "repos", "app@wip")
+	want := blocksOf(t, wt) + treeBelow(t, wt) // the link's own entry, not its target's tree
+	found := false
 	for _, r := range u.Repos {
-		if r.Name == "app@wip" && r.Bytes >= 40000 {
-			t.Fatalf("app@wip = %d bytes: its node_modules link was followed", r.Bytes)
+		if r.Name == "app@wip" {
+			found = true
+			if r.Bytes != want {
+				t.Fatalf("app@wip = %d bytes, want %d: its node_modules link was followed", r.Bytes, want)
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("no app@wip row in %+v", u.Repos)
 	}
 }
 
