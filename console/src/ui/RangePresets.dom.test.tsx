@@ -75,6 +75,20 @@ describe("RangePresets", () => {
   });
 });
 
+describe("clock", () => {
+  it.each([["utc"], ["local"]] as const)("reads the clock when a preset is chosen, not when the bar rendered (%s)", async (zone) => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-31T12:00:00Z") });
+    const onPick = vi.fn();
+    await mount(<RangePresets from="" to="" zone={zone} onPick={onPick} />);
+    // The screen stays open across the month end; nothing re-renders it.
+    vi.setSystemTime(new Date("2026-11-02T12:00:00Z"));
+    await choose("this_month");
+    expect(onPick).toHaveBeenLastCalledWith({ from: "2026-11-01", to: "2026-11-02" });
+    await choose("last_month");
+    expect(onPick).toHaveBeenLastCalledWith({ from: "2026-10-01", to: "2026-10-31" });
+  });
+});
+
 describe("views apply the preset's window", () => {
   it("Cloud cost fetches the chosen month at once", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-06T12:00:00Z") });

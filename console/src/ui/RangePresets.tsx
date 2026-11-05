@@ -12,18 +12,19 @@ export function RangePresets({
   zone,
   onPick,
   disabled,
-  now = new Date(),
+  now,
 }: {
   from: string;
   to: string;
   zone: RangeZone;
   onPick: (range: { from: string; to: string }) => void;
   disabled?: boolean;
-  /** Injected by tests; the clock is never read anywhere else. */
+  /** Injected by tests. Without it the clock is read at the moment of use, never captured at
+   *  render: a screen left open across midnight or a month end must pick the new day. */
   now?: Date;
 }) {
   const tr = useT();
-  const current = matchPreset(from, to, now, zone);
+  const current = matchPreset(from, to, now ?? new Date(), zone);
   return (
     <label className="range-presets">
       {tr("admin.preset_label")}
@@ -32,7 +33,7 @@ export function RangePresets({
         disabled={disabled}
         onChange={(e) => {
           const id = e.target.value as RangePresetId | "custom";
-          if (id !== "custom") onPick(presetRange(id, now, zone));
+          if (id !== "custom") onPick(presetRange(id, now ?? new Date(), zone));
         }}
       >
         {RANGE_PRESETS.map((id) => (
