@@ -2,8 +2,9 @@
 // Custom. One component so the panels keep the same control order. Choosing a preset hands the
 // range to the caller, which fills its fields and applies; "Custom" is just the state of typed
 // dates and picks nothing.
+import { useEffect, useState } from "react";
 import { useT } from "../lib/i18n/index.ts";
-import { matchPreset, presetRange, RANGE_PRESETS } from "../lib/rangePresets.ts";
+import { matchPreset, presetRange, RANGE_PRESETS, todayKey } from "../lib/rangePresets.ts";
 import type { RangePresetId, RangeZone } from "../lib/rangePresets.ts";
 
 export function RangePresets({
@@ -24,6 +25,23 @@ export function RangePresets({
   now?: Date;
 }) {
   const tr = useT();
+  // A screen left open across midnight keeps showing "This month" for last month's range, and
+  // choosing the shown item again fires no change. Watching the date key re-renders at the
+  // boundary, where the stale range stops matching and the chooser reads "Custom" so the preset
+  // can be chosen again. Skipped when a test injects the clock.
+  const [, setDay] = useState(() => todayKey(new Date(), zone));
+  useEffect(() => {
+    if (now) return;
+    const check = () => setDay(todayKey(new Date(), zone));
+    const id = setInterval(check, 30_000);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [now, zone]);
   const current = matchPreset(from, to, now ?? new Date(), zone);
   return (
     <label className="range-presets">

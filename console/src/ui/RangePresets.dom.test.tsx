@@ -89,6 +89,23 @@ describe("clock", () => {
   });
 });
 
+describe("a chosen preset going stale", () => {
+  it("falls back to Custom once the date passes, so the same preset can be chosen again", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"], now: new Date("2026-10-15T12:00:00Z") });
+    const onPick = vi.fn();
+    await mount(<RangePresets from="2026-10-01" to="2026-10-15" zone="utc" onPick={onPick} />);
+    const sel = () => host!.querySelector<HTMLSelectElement>(".range-presets select")!;
+    expect(sel().value).toBe("this_month");
+    vi.setSystemTime(new Date("2026-10-16T00:30:00Z"));
+    await act(async () => {
+      vi.advanceTimersByTime(31_000);
+    });
+    expect(sel().value).toBe("custom");
+    await choose("this_month");
+    expect(onPick).toHaveBeenLastCalledWith({ from: "2026-10-01", to: "2026-10-16" });
+  });
+});
+
 describe("views apply the preset's window", () => {
   it("Cloud cost fetches the chosen month at once", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-06T12:00:00Z") });
