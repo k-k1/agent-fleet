@@ -159,14 +159,18 @@ func TestGCloudExecProcess(t *testing.T) {
 	if code, _, _ := run("--profile", "prod", "--project", "prod-project", "--", "sh", "-c", "exit 5"); code != 5 {
 		t.Errorf("failing command: exit %d, want 5", code)
 	}
+	// Exactly one row per run that named a command, in order: no --project, the project
+	// mismatch, the two login-required runs, the run and the failing run. --list left none.
 	rows := gcpRows(t, home)
-	if len(rows) < 3 {
-		t.Fatalf("rows = %+v", rows)
+	if len(rows) != 6 {
+		t.Fatalf("rows = %d, want 6: %+v", len(rows), rows)
 	}
-	if r := rows[0]; r.Provider != "gcp" || r.Refused != cloudruns.RefusedUsage {
-		t.Errorf("usage row = %+v", r)
+	for i, want := range []string{cloudruns.RefusedUsage, cloudruns.RefusedOther, cloudruns.RefusedLogin, cloudruns.RefusedLogin, "", ""} {
+		if rows[i].Provider != "gcp" || rows[i].Refused != want {
+			t.Errorf("row %d = %+v, want refused %q", i, rows[i], want)
+		}
 	}
-	ok, failed := rows[len(rows)-2], rows[len(rows)-1]
+	ok, failed := rows[4], rows[5]
 	if ok.Provider != "gcp" || ok.Profile != "prod" || ok.Project != "prod-project" || ok.Principal != "dev@example.com" ||
 		ok.Program != "sh" || ok.Exit == nil || *ok.Exit != 0 || ok.Refused != "" {
 		t.Errorf("run row = %+v", ok)

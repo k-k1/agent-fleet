@@ -830,7 +830,13 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
         </button>
         {open && (
           <>
-            {p.command && <pre className="mt-tool-output mt-tool-command">{p.command}</pre>}
+            {p.command && (
+              <>
+                <div className="mt-tool-output-label">{tr("mirror.command_label")}</div>
+                <pre className="mt-tool-output mt-tool-command">{p.command}</pre>
+                <div className="mt-tool-output-label">{tr("mirror.output_label")}</div>
+              </>
+            )}
             <pre className="mt-tool-output">{p.output}</pre>
           </>
         )}

@@ -39,6 +39,14 @@ export interface CloudRun {
   impersonates?: string;
 }
 
+/** sameRuns keeps the previous array when the rows did not change: it feeds the block memo in
+ *  MirrorView, and a fresh array every poll would rebuild every block. The whole row is compared:
+ *  a run is written in steps (begin, the resolved identity, the end), and a key of a few fields
+ *  misses a step that sets only others (a Google Cloud run's project and account). */
+export function sameRuns(prev: CloudRun[], next: CloudRun[]): CloudRun[] {
+  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
 /** parseCloudRuns keeps the well-formed rows of a `cloudRuns` or `runs` payload. */
 export function parseCloudRuns(v: unknown): CloudRun[] {
   if (!Array.isArray(v)) return [];
@@ -85,7 +93,7 @@ function gcpWho(r: CloudRun): string {
 
 /** providerLabel is the provider's name as a reader knows it ("AWS", "Google Cloud"). */
 export function providerLabel(provider: string): string {
-  return provider === "gcp" ? "Google Cloud" : provider.toUpperCase();
+  return provider === "gcp" ? "Google Cloud" : provider ? provider.toUpperCase() : "Cloud";
 }
 
 /** The WS bar's brand icon of a provider, so a run reads as the same cloud as the bar's badge. */
@@ -125,7 +133,12 @@ export function cloudRunSummary(runs: CloudRun[]): { text: string; failed: numbe
 // shell call that ran the script, so only a shell call may take a run it does not name.
 const SHELL_TOOL = /^(bash|shell|exec_command|local_shell|run_shell_command|run_in_terminal|execute_command|terminal)$/i;
 
-const WRAPPER: Record<string, string> = { aws: "af-aws-exec", gcp: "af-gcloud-exec" };
+// The wrapper as a command word: at the start, or after a space, a path, a quote or a shell
+// operator, and followed by a space or the end. `my-af-aws-exec` is another program.
+const WRAPPER: Record<string, RegExp> = {
+  aws: /(?:^|[\s/'"`;&|(])af-aws-exec(?:\s|$)/,
+  gcp: /(?:^|[\s/'"`;&|(])af-gcloud-exec(?:\s|$)/,
+};
 
 const commandOf = (p: Part) => p.command || p.info || "";
 
@@ -137,7 +150,7 @@ function escapeRe(s: string): string {
  *  run's profile. Best effort: a label cut at 80 characters may hide the profile. */
 function namesRun(text: string, r: CloudRun): boolean {
   const w = WRAPPER[r.provider];
-  if (!w || !text.includes(w)) return false;
+  if (!w || !w.test(text)) return false;
   if (!r.profile) return true;
   return new RegExp("--profile(?:=|\\s+)['\"]?" + escapeRe(r.profile) + "(?:['\"\\s]|$)").test(text);
 }
@@ -166,11 +179,15 @@ export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
   const blocks = groups.map((g) => ({ g, start: g.ts ? Date.parse(g.ts) : NaN }));
   for (const r of runs) {
     const at = Date.parse(r.startedAt);
-    if (Number.isNaN(at)) {
+    // An SSM pane's start is the member's press, not a command any call ran (ADR 0126 decision 3).
+    if (r.identityFromSettings || Number.isNaN(at)) {
       loose.push(r);
       continue;
     }
-    // The newest block started at or before the run: the run happened in it, or after it.
+    // The newest block started at or before the run: the run happened in it, or after it. A block
+    // without a time (a just-sent echo, a queued bubble) is skipped: the run started before it was
+    // sent, so the block the run belongs to is the one before. chronoInsertIndex reads such a
+    // block as "newest" for the same reason.
     let b = -1;
     for (let i = 0; i < blocks.length; i++) {
       if (Number.isFinite(blocks[i].start) && blocks[i].start <= at) b = i;

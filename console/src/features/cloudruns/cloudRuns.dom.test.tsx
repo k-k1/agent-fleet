@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 let runsReply: unknown = { runs: [] };
 vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
-  api: vi.fn(async (path: string) => (path === "api/aws-runs" ? runsReply : {})),
+  api: vi.fn(async (path: string) => (path.startsWith("api/aws-runs") ? runsReply : {})),
 }));
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
@@ -59,6 +59,8 @@ describe("RecentCloudRuns", () => {
   it("keeps one cloud's rows for that cloud's tab", async () => {
     runsReply = { runs: [run("b", "2026-10-30T12:00:02Z", { provider: "gcp", profile: "gdev" }), run("a", "2026-10-30T12:00:01Z")] };
     await render(<RecentCloudRuns provider="gcp" />);
+    const { api } = await import("../../core/api/client.ts");
+    expect(api).toHaveBeenCalledWith("api/aws-runs?provider=gcp");
     const items = [...host.querySelectorAll(".cloud-runs-list li")];
     expect(items).toHaveLength(1);
     expect(items[0].textContent).toContain("gdev");
@@ -144,6 +146,12 @@ describe("CloudRunGroup", () => {
     expect(host.querySelector("button")).toBeNull();
     expect(host.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Google Cloud");
     expect(host.textContent).toContain("p1 / me@example.com");
+  });
+  it("names the group under a tool call for assistive technology", async () => {
+    await render(<CloudRunGroup runs={[run("a", "2026-10-30T12:00:01Z")] as never} attached />);
+    const g = host.querySelector(".cloud-run-group")!;
+    expect(g.getAttribute("role")).toBe("group");
+    expect(g.getAttribute("aria-label")).toBe(t("cloudruns.on_tool"));
   });
   it("collapses the loose runs of one place into one group", () => {
     const cards = cloudRunCards(

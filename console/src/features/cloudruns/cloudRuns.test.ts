@@ -1,6 +1,7 @@
 // The run line (ADR 0126): what a row shows, and what the parser keeps.
 import { describe, expect, it } from "vitest";
 import {
+  providerLabel,
   cloudRunParts,
   cloudRunSummary,
   parseCloudRuns,
@@ -92,6 +93,7 @@ describe("a Google Cloud run's line", () => {
     expect(providerIcon("aws")).toBe("brand:aws");
     expect(providerIcon("gcp")).toBe("brand:gcp");
     expect(providerIcon("other")).toBe("cloud");
+    expect(providerLabel("")).toBe("Cloud");
   });
 });
 
@@ -158,6 +160,28 @@ describe("placeRuns", () => {
     expect(placeRuns(groups, [at(1)]).loose).toHaveLength(1);
     expect(placeRuns(noTimes, [at(5)]).loose).toHaveLength(1);
     expect(placeRuns(groups, [at(5, { startedAt: "garbage" })]).loose).toHaveLength(1);
+  });
+  it("reads --profile=x, a quoted profile, and a profile with a dot literally", () => {
+    const one = (cmd: string, profile: string) =>
+      placeRuns([groups[0], block("assistant", 1, [bash(cmd), { kind: "tool", tool: "Read" }], [1, 2])], [at(3, { profile })]);
+    expect(one("af-aws-exec --profile=dev -- aws s3 ls", "dev").onTool.get(toolKey(1, 0))).toHaveLength(1);
+    expect(one('af-aws-exec --profile "dev" -- aws s3 ls', "dev").onTool.get(toolKey(1, 0))).toHaveLength(1);
+    expect(one("af-aws-exec --profile 'a.b' -- aws s3 ls", "a.b").onTool.get(toolKey(1, 0))).toHaveLength(1);
+    // "." is not a wildcard, and a longer profile is another profile; with no other shell call
+    // the shell fallback still takes the run, so look at whether the call was NAMED: the Read
+    // after it is no shell, so a named miss and the fallback land on the same call. Use a later
+    // shell call to tell them apart.
+    const miss = (cmd: string, profile: string) =>
+      placeRuns([groups[0], block("assistant", 1, [bash(cmd), bash("ls")], [1, 2])], [at(3, { profile })]);
+    expect(miss("af-aws-exec --profile axb -- aws s3 ls", "a.b").onTool.get(toolKey(1, 1))).toHaveLength(1);
+    expect(miss("af-aws-exec --profile dev2 -- aws s3 ls", "dev").onTool.get(toolKey(1, 1))).toHaveLength(1);
+  });
+  it("needs the wrapper as a command word, not inside another name", () => {
+    const g = [groups[0], block("assistant", 1, [bash("/opt/af-aws-exec --profile dev -- true"), bash("my-af-aws-exec --profile dev -- true")], [1, 2])];
+    expect(placeRuns(g, [at(3, { profile: "dev" })]).onTool.get(toolKey(1, 0))).toHaveLength(1);
+  });
+  it("never attaches an SSM pane's start to a call", () => {
+    expect(placeRuns(groups, [at(5, { identityFromSettings: true })]).loose).toHaveLength(1);
   });
   it("matches af-gcloud-exec for a Google Cloud run, never af-aws-exec", () => {
     const g = [

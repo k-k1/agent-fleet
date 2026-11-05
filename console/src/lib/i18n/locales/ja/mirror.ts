@@ -268,6 +268,8 @@ export const mirror = {
   // 開いた作業過程／思考の最下部に置く「閉じる」（DisclosureFoot）。読み終えた位置から
   // 見出しまで戻らずに畳めるようにするためのもので、見出しのトグルと同じ操作。
   "mirror.collapse_section": "閉じる",
+  "mirror.command_label": "コマンド",
+  "mirror.output_label": "出力",
   "mirror.show_command": "コマンド全文を表示",
   "mirror.collapse_command": "コマンドをたたむ",
   "mirror.show_output": "出力を表示",

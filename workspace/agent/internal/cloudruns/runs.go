@@ -437,7 +437,10 @@ func ForSession(sessionName string) []Row {
 // Recent returns the newest n rows across every session and the workspace's spool, newest
 // first. The workspace spool's age limit is applied first, so a row past it is never listed
 // even when nothing has been written since.
-func Recent(n int) []Row {
+func Recent(n int) []Row { return RecentOf("", n) }
+
+// RecentOf is Recent restricted to one provider's rows ("" = every provider).
+func RecentOf(provider string, n int) []Row {
 	t := now()
 	pruneWorkspace(t)
 	cut := t.Add(-workspaceKeep).UnixNano()
@@ -461,12 +464,16 @@ func Recent(n int) []Row {
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].name > all[j].name })
-	if len(all) > n {
-		all = all[:n]
-	}
-	out := make([]Row, 0, len(all))
+	out := make([]Row, 0, min(len(all), n))
 	for _, a := range all {
-		out = append(out, readRows(a.dir, []string{a.name})...)
+		if len(out) == n {
+			break
+		}
+		for _, row := range readRows(a.dir, []string{a.name}) {
+			if provider == "" || row.Provider == provider {
+				out = append(out, row)
+			}
+		}
 	}
 	return out
 }

@@ -54,16 +54,18 @@ export function CloudRunLine({ run, session, time }: { run: CloudRun; session?: 
 export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; attached?: boolean }) {
   const [open, setOpen] = useState(false);
   const cls = "cloud-run-group" + (attached ? " attached" : "");
+  // Under a tool call the group says what it is, for a reader who reaches it by keyboard or voice.
+  const label = attached ? { role: "group", "aria-label": tr("cloudruns.on_tool") } : {};
   if (runs.length === 1) {
     return (
-      <div className={cls}>
+      <div className={cls} {...label}>
         <CloudRunLine run={runs[0]} time={attached} />
       </div>
     );
   }
   const { text, failed, providers } = cloudRunSummary(runs);
   return (
-    <div className={cls + (open ? " open" : "")}>
+    <div className={cls + (open ? " open" : "")} {...label}>
       <button
         type="button"
         className={"cloud-run cloud-run-head" + (failed ? " failed" : "")}
@@ -119,9 +121,11 @@ export function RecentCloudRuns({ provider }: { provider?: string } = {}) {
   const [runs, setRuns] = useState<CloudRun[] | null>(null);
   const [err, setErr] = useState("");
   const load = useCallback(() => {
-    api("api/aws-runs")
+    // Filtered by the Agent, before its limit: a busy cloud would otherwise empty the other's list.
+    api("api/aws-runs" + (provider ? "?provider=" + encodeURIComponent(provider) : ""))
       .then((d) => {
         if (!d || !Array.isArray(d.runs)) throw new Error(d?.error?.message || "unexpected response");
+        // An Agent from before the filter sends every row: keep the asked cloud's here too.
         const all = parseCloudRuns(d.runs);
         setRuns(provider ? all.filter((r) => r.provider === provider) : all);
         setErr("");

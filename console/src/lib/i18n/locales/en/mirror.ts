@@ -246,6 +246,8 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.error_auth_done": "Re-authenticated. The {agent} sign-in was renewed after this failure.",
   "mirror.collapse_output": "Collapse output",
   "mirror.collapse_section": "Collapse",
+  "mirror.command_label": "Command",
+  "mirror.output_label": "Output",
   "mirror.show_command": "Show the whole command",
   "mirror.collapse_command": "Hide the command",
   "mirror.show_output": "Show output",

@@ -283,3 +283,29 @@ func TestAWSCommandsMatchPin(t *testing.T) {
 		t.Fatalf("command table looks wrong: %d services", len(cmds))
 	}
 }
+
+// Settings' tabs ask for one cloud's rows: the filter applies before the limit, so a busy cloud
+// never empties the other's list.
+func TestRecentOfFiltersBeforeTheLimit(t *testing.T) {
+	useRoot(t)
+	liveSession(t, "cr-prov")
+	Begin("aws", "cr-prov", "old-aws", []string{"aws"})
+	for i := 0; i < 5; i++ {
+		Begin("gcp", "cr-prov", "g", []string{"gcloud"})
+	}
+	if got := RecentOf("aws", 3); len(got) != 1 || got[0].Profile != "old-aws" {
+		t.Fatalf("aws rows = %+v", got)
+	}
+	if got := RecentOf("gcp", 3); len(got) != 3 {
+		t.Fatalf("gcp rows = %d, want 3", len(got))
+	}
+	if got := RecentOf("", 3); len(got) != 3 || got[0].Provider != "gcp" {
+		t.Fatalf("all rows = %+v", got)
+	}
+	rec := httptest.NewRecorder()
+	HandleRecent(rec, httptest.NewRequest("GET", "/aws-runs?provider=aws", nil))
+	var wire RecentWire
+	if err := json.Unmarshal(rec.Body.Bytes(), &wire); err != nil || len(wire.Runs) != 1 || wire.Runs[0].Provider != "aws" {
+		t.Fatalf("GET /aws-runs?provider=aws = %v %+v", err, wire.Runs)
+	}
+}

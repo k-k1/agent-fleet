@@ -16,14 +16,8 @@ import type { Turn } from "../transcript/types.ts";
 import { isPendingApproval } from "../transcript/types.ts";
 import { parsePendingPeers } from "./PendingPeersNotice.tsx";
 import { parseBackgroundShells } from "./BackgroundShellsPanel.tsx";
-import { parseCloudRuns, type CloudRun } from "../../cloudruns/cloudRunsModel.ts";
+import { parseCloudRuns, sameRuns } from "../../cloudruns/cloudRunsModel.ts";
 
-// sameRuns keeps the previous array when the rows did not change: it feeds the block memo in
-// MirrorView, and a fresh array every poll would rebuild every block.
-function sameRuns(prev: CloudRun[], next: CloudRun[]): CloudRun[] {
-  const key = (rs: CloudRun[]) => rs.map((r) => r.id + ":" + (r.endedAt ?? "") + ":" + (r.account ?? "")).join("|");
-  return key(prev) === key(next) ? prev : next;
-}
 import { echoStore } from "./sendEcho.ts";
 import { parseRetry } from "./retryNote.ts";
 import type { MirrorState } from "./useMirrorState.ts";
