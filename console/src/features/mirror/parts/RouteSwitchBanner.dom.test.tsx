@@ -23,7 +23,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
   },
 }));
 
-const { RouteSwitchBanner, isWindowStop, safeSettingUrl } = await import("./RouteSwitchBanner.tsx");
+const { RouteSwitchBanner, isWindowStop, safeSettingUrl, resetRouteSwitchOutcomes } = await import("./RouteSwitchBanner.tsx");
 const { t } = await import("../../../lib/i18n/index.ts");
 const { errText } = await import("../../../core/api/client.ts");
 type Session = import("../../../types/session.ts").Session;
@@ -54,6 +54,11 @@ const render = async (s: Session, state: string | undefined = s.state) => {
   await act(async () => root!.render(<RouteSwitchBanner session={s} state={state} />));
   await settle();
 };
+// Same tree, new props: the real app re-renders a mounted banner as the session's state moves.
+const rerender = async (s: Session, state: string | undefined = s.state) => {
+  await act(async () => root!.render(<RouteSwitchBanner session={s} state={state} />));
+  await settle();
+};
 const band = () => host.querySelector(".mirror-route-switch");
 const click = async (label: string) => {
   const b = [...host.querySelectorAll("button")].find((x) => x.textContent === label);
@@ -65,6 +70,7 @@ const click = async (label: string) => {
 beforeEach(() => {
   routes = { [PREVIEW]: allowed() };
   calls.length = 0;
+  resetRouteSwitchOutcomes();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -142,6 +148,45 @@ describe("RouteSwitchBanner offer", () => {
   });
 });
 
+describe("RouteSwitchBanner evidence is scoped", () => {
+  it("does not show an earlier episode's allowed preview when the limit returns", async () => {
+    await render(src());
+    expect(band()).not.toBeNull();
+    await rerender(src({ state: "working" }));
+    expect(band()).toBeNull();
+    let release!: (v: unknown) => void;
+    routes[PREVIEW] = () => new Promise((r) => (release = r)); // the new episode's read is still out
+    await rerender(src());
+    expect(band()).toBeNull();
+    await act(async () => release({ allowed: false, code: "route_switch_no_limit" }));
+    await settle();
+    expect(band()).toBeNull();
+  });
+
+  it("does not bring the offer back from the old preview after a switch is closed", async () => {
+    routes[SWITCH] = { session: {} };
+    routes[INPUT] = { queued: "s1" };
+    await render(src());
+    await click(t("mirror.route_switch_action"));
+    await click(t("mirror.route_switch_do"));
+    let release!: (v: unknown) => void;
+    routes[PREVIEW] = () => new Promise((r) => (release = r));
+    await click(t("mirror.route_switch_close"));
+    expect(band()).toBeNull(); // still limited, but nothing read since
+    await act(async () => release({ allowed: false, code: "route_switch_not_subscription" }));
+    await settle();
+    expect(band()).toBeNull();
+  });
+
+  it("drops the preview when the session's route changes", async () => {
+    await render(src({ route: { route: "anthropic-subscription" } }));
+    expect(band()).not.toBeNull();
+    routes[PREVIEW] = () => new Promise(() => {});
+    await rerender(src({ route: { route: "anthropic-api" } }));
+    expect(band()).toBeNull();
+  });
+});
+
 describe("RouteSwitchBanner confirmation", () => {
   it("states the cost, the prompt cache and that the account setting affects every session", async () => {
     await render(src());
@@ -150,6 +195,7 @@ describe("RouteSwitchBanner confirmation", () => {
     expect(text).toContain(t("mirror.route_switch_cost"));
     expect(text).toContain(t("mirror.route_switch_cache"));
     expect(text).toContain(t("mirror.route_switch_credits_all"));
+    expect(text).toContain(t("mirror.route_switch_credits")); // and it says that route costs extra too
     const a = host.querySelector("a");
     expect(a?.getAttribute("href")).toBe("https://claude.ai/settings/usage");
     expect(a?.getAttribute("rel")).toContain("noopener");
@@ -176,20 +222,22 @@ describe("RouteSwitchBanner confirmation", () => {
 describe("RouteSwitchBanner switching", () => {
   it("switches once, then sends the carry-on as an ordinary message", async () => {
     routes[SWITCH] = { session: { name: "s1" }, from: "anthropic-subscription", to: "anthropic-api" };
-    routes[INPUT] = { ok: true };
+    routes[INPUT] = { queued: "s1" };
     await render(src());
     await click(t("mirror.route_switch_action"));
     await click(t("mirror.route_switch_do"));
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([SWITCH, INPUT]);
     expect(calls[1].body).toEqual({ prompt: t("mirror.route_switch_carry_on"), when_ready: true });
     expect(band()?.textContent).toContain(t("mirror.route_switch_done"));
+    // The Agent's 202 {queued} is acceptance, not delivery: the wording says so.
+    expect(band()?.textContent).toContain(t("mirror.route_switch_carry_queued"));
     expect(band()?.textContent).not.toContain(t("mirror.route_switch_carry_failed"));
   });
 
   it("shows progress while the switch is running and offers no second click", async () => {
     let release!: (v: unknown) => void;
     routes[SWITCH] = () => new Promise((r) => (release = r));
-    routes[INPUT] = { ok: true };
+    routes[INPUT] = { queued: "s1" };
     await render(src());
     await click(t("mirror.route_switch_action"));
     await click(t("mirror.route_switch_do"));
@@ -214,7 +262,7 @@ describe("RouteSwitchBanner switching", () => {
 
   it("keeps the outcome after the session is no longer limited, until it is closed", async () => {
     routes[SWITCH] = { session: {}, bookingCancelPending: true };
-    routes[INPUT] = { ok: true };
+    routes[INPUT] = { queued: "s1" };
     await render(src());
     await click(t("mirror.route_switch_action"));
     await click(t("mirror.route_switch_do"));
@@ -224,13 +272,13 @@ describe("RouteSwitchBanner switching", () => {
     expect(band()).toBeNull();
   });
 
-  it("shows a rollback as rolled back, with the Agent's detail, and sends no carry-on", async () => {
+  it("shows route_switch_failed as incomplete, never promising a restored session, and sends no carry-on", async () => {
     routes[SWITCH] = { error: { code: "route_switch_failed", message: "the new route would not start; rolled back" } };
     await render(src());
     await click(t("mirror.route_switch_action"));
     await click(t("mirror.route_switch_do"));
     const text = band()?.textContent ?? "";
-    expect(text).toContain(t("mirror.route_switch_rolled_back", { detail: "" }).split(":")[0]);
+    expect(text).toContain(t("mirror.route_switch_incomplete", { detail: "" }).split(":")[0]);
     expect(text).toContain("the new route would not start");
     expect(text).not.toContain(t("mirror.route_switch_refused", { detail: "" }).split(":")[0]); // not "nothing changed"
     expect(calls.map((c) => c.method + " " + c.path)).toEqual([SWITCH]);
@@ -244,15 +292,48 @@ describe("RouteSwitchBanner switching", () => {
     const text = band()?.textContent ?? "";
     expect(text).toContain(t("mirror.route_switch_refused", { detail: "" }).split(":")[0]);
     expect(text).toContain(errText({ code: "route_switch_no_limit", message: "" }));
-    expect(text).not.toContain(t("mirror.route_switch_rolled_back", { detail: "" }).split(":")[0]);
+    expect(text).not.toContain(t("mirror.route_switch_incomplete", { detail: "" }).split(":")[0]);
   });
 
-  it("treats a network failure as nothing changed, not as a rollback", async () => {
-    routes[SWITCH] = () => Promise.reject(new Error("offline"));
+  it.each([
+    ["a lost response", () => Promise.reject(new Error("offline"))],
+    ["a gateway timeout", { error: { code: "gateway_timeout", message: "504" } }],
+    ["an unknown code", { error: { code: "something_new", message: "?" } }],
+  ])("treats %s as an unknown outcome, never as nothing changed", async (_n, answer) => {
+    routes[SWITCH] = answer;
     await render(src());
     await click(t("mirror.route_switch_action"));
     await click(t("mirror.route_switch_do"));
-    expect(band()?.textContent).toContain(t("mirror.route_switch_refused", { detail: "" }).split(":")[0]);
+    const text = band()?.textContent ?? "";
+    expect(text).toContain(t("mirror.route_switch_unknown", { detail: "" }).split(":")[0]);
+    expect(text).not.toContain(t("mirror.route_switch_refused", { detail: "" }).split(":")[0]);
+    expect(calls.map((c) => c.method + " " + c.path)).toEqual([SWITCH]);
+  });
+
+  it("finishes the carry-on when the mirror is closed while the switch is pending, and shows the outcome on return", async () => {
+    let release!: (v: unknown) => void;
+    routes[SWITCH] = () => new Promise((r) => (release = r));
+    routes[INPUT] = { queued: "s1" };
+    await render(src());
+    await click(t("mirror.route_switch_action"));
+    await click(t("mirror.route_switch_do"));
+    act(() => root!.unmount()); // the pane moved to another session
+    await act(async () => release({ session: {} }));
+    await settle();
+    expect(calls.map((c) => c.method + " " + c.path)).toEqual([SWITCH, INPUT]);
+    root = createRoot(host);
+    await act(async () => root!.render(<RouteSwitchBanner session={src({ state: "working" })} state="working" />));
+    await settle();
+    expect(band()?.textContent).toContain(t("mirror.route_switch_done"));
+  });
+
+  it("says so when the carry-on is refused", async () => {
+    routes[SWITCH] = { session: {} };
+    routes[INPUT] = { error: { code: "x" } };
+    await render(src());
+    await click(t("mirror.route_switch_action"));
+    await click(t("mirror.route_switch_do"));
+    expect(band()?.textContent).toContain(t("mirror.route_switch_carry_failed"));
   });
 });
 

@@ -271,10 +271,15 @@ login. A session with no route behaves as before.
   login, and Agent Fleet never changes it. On confirming, Agent Fleet cancels the booked automatic
   resume, stops the old process, stores the new route and starts the session again, then sends one
   "carry on" message as if you had typed it. Turns from then on are recorded as anthropic-api (metered);
-  earlier ones keep their route. If any step fails, everything is put back: the session is on the
-  subscription route again, the resume is booked again, and the band says so. If the booked resume
-  could not be cancelled at once, the band says that too: the cancellation is retried and a resume that
-  fires first is ignored. A switch is one-way: there is no switch back (start a new session, or move it).
+  earlier ones keep their route. If a step fails, Agent Fleet undoes the switch (back to the
+  subscription route, the resume booked again), but the band does not claim that it worked: it reports
+  that the switch did not complete and shows the Agent's detail, and the session stays closed to input
+  until the undo is settled. If the answer to the switch is lost (a timeout, a dropped connection), the
+  band says the outcome is unknown: reload and check which route the session is on. The "carry on"
+  message is handed to the session without confirmation that it was typed, and the band says so. If the
+  booked resume could not be cancelled at once, the band says that too: the cancellation is retried and a
+  resume that fires first is ignored. The usage-credit setting is the other way to carry on; past the
+  window it is also billed at API rates. A switch is one-way: there is no switch back (start a new session, or move it).
 
 ## Choosing one
 

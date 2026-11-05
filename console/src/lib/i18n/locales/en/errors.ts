@@ -457,6 +457,6 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.route_switch_spend_limit": "It stopped at a spend limit, which neither waiting nor the API route clears.",
   "err.route_switch_state": "This session cannot be switched right now. Wait for the turn to end, then try again.",
   "err.route_switch_busy": "A switch of this session is in progress or not yet settled. Wait a moment and check again.",
-  "err.route_switch_failed": "The switch did not complete and was rolled back. The session is still on the subscription route and its automatic resume was booked again. The detail says whether it is running.",
+  "err.route_switch_failed": "The switch did not complete. The Agent tried to undo it, but this cannot be confirmed from here: the detail says what state the session is in, and the session may be held until the undo is settled.",
   "err.route_switch_booking": "The automatic resume could not be cancelled, so nothing was changed. Try again.",
 };
