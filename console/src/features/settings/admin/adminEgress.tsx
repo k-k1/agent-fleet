@@ -1,8 +1,31 @@
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { MAX_TCP_RANGE, isTcpEntry, parseTcpParts, tcpEntryParts } from "./egressTcp.ts";
+
+const TCP_ERR_KEY = {
+  format: "admin.egress_tcp_err_format",
+  host: "admin.egress_tcp_err_host",
+  ipv4: "admin.egress_tcp_err_ipv4",
+  port: "admin.egress_tcp_err_port",
+  width: "admin.egress_tcp_err_width",
+  refused: "admin.egress_tcp_err_refused",
+} as const;
+
+// A stored entry as the list shows it: a TCP passthrough entry gets a tag and reads as
+// host:ports; the full entry stays in the title.
+function EntryName({ entry }: { entry: string }) {
+  const tr = useT();
+  const tcp = tcpEntryParts(entry);
+  return (
+    <span className="as-name mono" title={entry}>
+      {tcp && <span className="egress-tcp-tag">{tr("admin.egress_tcp_tag")}</span>}
+      {tcp ? tcp.host + ":" + tcp.ports : entry}
+    </span>
+  );
+}
 
 export function EgressView() {
   const tr = useT();
@@ -13,6 +36,11 @@ export function EgressView() {
   const [err, setErr] = useState("");
   const [days, setDays] = useState(7);
   const [entry, setEntry] = useState("");
+  // The add form takes either an HTTP(S) host entry or a TCP passthrough destination.
+  const [kind, setKind] = useState<"host" | "tcp">("host");
+  const [tcpHost, setTcpHost] = useState("");
+  const [tcpPorts, setTcpPorts] = useState("");
+  const [addErr, setAddErr] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -47,14 +75,32 @@ export function EgressView() {
       setBusy(false);
     }
   };
+  // The TCP form is checked with the CP's own rules before anything is sent.
+  const tcpParsed = parseTcpParts(tcpHost, tcpPorts);
+  const tcpTouched = tcpHost.trim() !== "" && tcpPorts.trim() !== "";
+  const tcpProblem =
+    kind === "tcp" && tcpTouched && !tcpParsed.ok
+      ? tr(TCP_ERR_KEY[tcpParsed.problem], { n: MAX_TCP_RANGE, port: tcpParsed.port ?? 0 })
+      : "";
   const addEntry = async (e: FormEvent) => {
     e.preventDefault();
-    const v = entry.trim();
+    let v = entry.trim();
+    if (kind === "tcp") {
+      if (!tcpParsed.ok) return;
+      v = tcpParsed.entry;
+    }
     if (!v) return;
     setBusy(true);
+    setAddErr("");
     try {
-      await apiJSON("api/admin/egress/allowlist", "POST", { entry: v, reason });
+      const d = await apiJSON("api/admin/egress/allowlist", "POST", { entry: v, reason });
+      if (d?.error) {
+        setAddErr(tr("admin.egress_add_failed", { msg: errText(d.error) }));
+        return;
+      }
       setEntry("");
+      setTcpHost("");
+      setTcpPorts("");
       setReason("");
       await load();
     } finally {
@@ -120,8 +166,9 @@ export function EgressView() {
         <section className="admin-panel">
           <h4>{tr("admin.egress_proposed")}</h4>
           {proposed.map((e: any) => (
-            <div key={e.id} className="adm-allow-row">
-              <span className="as-name mono" title={e.entry}>{e.entry}</span>
+            <Fragment key={e.id}>
+            <div className="adm-allow-row">
+              <EntryName entry={e.entry} />
               <span className="as-repo muted" title={e.reason}>{e.reason}</span>
               <span className="muted" title={e.added_by}>{e.added_by}</span>
               <span className="allow-acts">
@@ -129,6 +176,15 @@ export function EgressView() {
                 <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>{tr("admin.reject")}</button>
               </span>
             </div>
+            {isTcpEntry(e.entry) && (
+              <div className="ps-note ps-note-warn egress-tcp-flag">
+                {tr("admin.egress_tcp_flag", {
+                  host: tcpEntryParts(e.entry)?.host ?? e.entry,
+                  ports: tcpEntryParts(e.entry)?.ports ?? "",
+                })}
+              </div>
+            )}
+            </Fragment>
           ))}
         </section>
       )}
@@ -137,20 +193,57 @@ export function EgressView() {
       <section className="admin-panel">
         <h4>{tr("admin.egress_allowlist")}</h4>
         <form className="egress-add" onSubmit={addEntry}>
-          <input
-            type="text"
-            value={entry}
-            onChange={(e) => setEntry(e.target.value)}
-            placeholder={tr("admin.egress_entry_ph")}
-          />
+          <span className="seg sm">
+            <button type="button" className={"seg-btn" + (kind === "host" ? " active" : "")} onClick={() => setKind("host")}>
+              {tr("admin.egress_kind_host")}
+            </button>
+            <button type="button" className={"seg-btn" + (kind === "tcp" ? " active" : "")} onClick={() => setKind("tcp")}>
+              {tr("admin.egress_kind_tcp")}
+            </button>
+          </span>
+          {kind === "host" ? (
+            <input
+              type="text"
+              value={entry}
+              onChange={(e) => setEntry(e.target.value)}
+              placeholder={tr("admin.egress_entry_ph")}
+            />
+          ) : (
+            <>
+              <input
+                type="text"
+                value={tcpHost}
+                onChange={(e) => setTcpHost(e.target.value)}
+                placeholder={tr("admin.egress_tcp_host_ph")}
+                aria-label={tr("admin.egress_tcp_host_ph")}
+              />
+              <input
+                type="text"
+                className="egress-tcp-ports"
+                value={tcpPorts}
+                onChange={(e) => setTcpPorts(e.target.value)}
+                placeholder={tr("admin.egress_tcp_ports_ph")}
+                aria-label={tr("admin.egress_tcp_ports_ph")}
+              />
+            </>
+          )}
           <input
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder={tr("admin.egress_reason_ph")}
           />
-          <button type="submit" className="btn" disabled={busy || !entry.trim()}>{tr("admin.add")}</button>
+          <button
+            type="submit"
+            className="btn"
+            disabled={busy || (kind === "tcp" ? !tcpParsed.ok : !entry.trim())}
+          >
+            {tr("admin.add")}
+          </button>
         </form>
+        {kind === "tcp" && <p className="muted egress-tcp-help">{tr("admin.egress_tcp_help")}</p>}
+        {tcpProblem && <p className="form-err egress-tcp-err">{tcpProblem}</p>}
+        {addErr && <p className="form-err egress-add-err">{addErr}</p>}
         {builtin.map((h) => (
           <div key={"builtin:" + h} className="adm-allow-row">
             <span className="as-name mono" title={h}>{h}</span>
@@ -164,7 +257,7 @@ export function EgressView() {
         ) : (
           active.map((e: any) => (
             <div key={e.id} className="adm-allow-row">
-              <span className="as-name mono" title={e.entry}>{e.entry}</span>
+              <EntryName entry={e.entry} />
               <span className="as-repo muted" title={e.reason}>{e.reason}</span>
               <span className="muted" title={e.added_by}>{e.added_by}</span>
               <span className="allow-acts">

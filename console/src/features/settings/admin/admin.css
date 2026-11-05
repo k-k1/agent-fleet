@@ -126,6 +126,29 @@
   min-width: 120px;
 }
 
+.egress-add .egress-tcp-ports {
+  flex: 0 1 140px;
+  min-width: 90px;
+}
+
+/* A TCP passthrough entry in the lists: a tag in front of host:ports. */
+.egress-tcp-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 16px;
+  opacity: 0.8;
+}
+
+.egress-tcp-help,
+.egress-tcp-flag {
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
+
 /* What ECS is doing and what the engine would hold: a state badge, then the model names as
    chips. A sentence put all three at the same weight, and the state is what the rest of the
    panel is read against. */
