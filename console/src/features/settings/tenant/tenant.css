@@ -206,6 +206,46 @@
   font-size: 13px;
 }
 
+/* Per-member bar lists. Each row is a subgrid of the list, so the name, tenant, bar and amount
+   columns are sized once for all rows and every bar starts at the same x. Flex rows could not
+   do this: each row sized its own name cell, so a bar began wherever that row's name ended.
+   .ur-table is opt-in because the two-column .cc-svc breakdowns share .usage-rows and keep
+   their own flex layout. Name and tenant are capped with percentages so a ~400px pane never
+   scrolls sideways; the bar takes whatever is left (minimum 40px). */
+.usage-rows.ur-table {
+  display: grid;
+  grid-template-columns: fit-content(min(220px, 45%)) minmax(40px, 1fr) max-content;
+  column-gap: 10px;
+  row-gap: 7px;
+  align-items: center;
+}
+.usage-rows.ur-table.ur-with-tenant {
+  grid-template-columns: fit-content(min(220px, 40%)) fit-content(25%) minmax(40px, 1fr) max-content;
+}
+.ur-table > .usage-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  gap: 0 10px;
+}
+.ur-table .ur-key,
+.ur-table .ur-tenant {
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ur-table .ur-bar {
+  min-width: 0;
+}
+.ur-table .ur-hrs {
+  min-width: 62px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* all-sessions overview */
 .as-search {
   flex: 1 1 200px;

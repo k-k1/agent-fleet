@@ -142,6 +142,30 @@ describe("CloudCostAdminView", () => {
     expect(text()).toContain("割り振っていません");
   });
 
+  it("lays the member list out as a shared-column table, with a tenant column only for all tenants", async () => {
+    api.mockResolvedValue({
+      members: [{ membership_id: "M-1", user_key: "alice", email: "a@x.com", tenant: "acme", unblended_micro: 2_000_000 }],
+      attributed_micro: 2_000_000,
+      meta: meta(),
+    });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    const list = host!.querySelector(".usage-rows.ur-table")!;
+    expect(list.classList.contains("ur-with-tenant")).toBe(true);
+    expect(list.querySelectorAll(".usage-row > .ur-tenant").length).toBe(1);
+  });
+
+  it("drops the tenant column for a tenant admin", async () => {
+    api.mockResolvedValue({
+      members: [{ membership_id: "M-1", user_key: "alice", email: "a@x.com", tenant: "acme", unblended_micro: 2_000_000 }],
+      attributed_micro: 2_000_000,
+      meta: meta(),
+    });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={false} />);
+    const list = host!.querySelector(".usage-rows.ur-table")!;
+    expect(list.classList.contains("ur-with-tenant")).toBe(false);
+    expect(list.querySelector(".ur-tenant")).toBeNull();
+  });
+
   it("draws no shared card when the tenant admin's response carries no shared costs", async () => {
     // The screen never decides who sees what: it just does not draw what the server did not return.
     api.mockResolvedValue({

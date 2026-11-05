@@ -376,7 +376,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
         ) : totals.length === 0 ? (
           <p className="muted">{tr("admin.usage_no_records")}</p>
         ) : (
-          <div className="usage-rows">
+          <div className={"usage-rows ur-table" + (isSuper && !tenant ? " ur-with-tenant" : "")}>
             {totals.map((t: any) => (
               <div key={(t.tenant || "") + "|" + t.user_key} className="usage-row">
                 <span className="ur-key mono" title={t.email || ""}>{t.user_key || tr("admin.unknown")}</span>

@@ -477,7 +477,7 @@ export function CloudCostAdminView({
         ) : members.length === 0 ? (
           <p className="muted">{tr("cost.no_records")}</p>
         ) : (
-          <div className="usage-rows">
+          <div className={"usage-rows ur-table" + (isSuper && !tenant ? " ur-with-tenant" : "")}>
             {members.map((m) => (
               <div key={m.membership_id} className="usage-row">
                 <span className="ur-key mono" title={m.email || ""}>
