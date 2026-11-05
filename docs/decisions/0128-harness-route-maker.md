@@ -474,11 +474,10 @@ table from becoming a menu of models that fail on the first message, which is wh
   only for a Terminal session whose route is the subscription, with **limit evidence on that route** (the kind's
   `AtLimit`: a window; a spend limit is refused) and the session idle, stopped or at its limit; decision 12's checks
   (permission is use, key held and unreplaced, start accepted) run before anything is stopped. **Empty selection
-  (decisions 2, 6)**: offered only when claude can show the subscription is what it runs on, by the evidence an
-  explicit `anthropic-subscription` launch relies on (no token, key or endpoint override in the Agent's environment, an
-  OAuth record stored, no settings file of the user or the working copy that sets one); otherwise refused as
-  `route_switch_route_unproven`. The stored selection is explicit afterwards, and the turns before the boundary stay
-  unresolved in the ledger, as they always were. **The transition**: the session's lifecycle gate is taken exclusively
+  (decisions 2, 6)**: never switched, refused as `route_switch_route_unproven`. Nothing readable after launch shows which
+  credential an empty-selection pane inherited (an API key can survive an Agent restart in the tmux environment while the
+  Agent's own is clean; a settings key can be removed later), so only an explicit `anthropic-subscription` session, whose
+  launch removes and pins every override, counts as provably on the subscription. **The transition**: the session's lifecycle gate is taken exclusively
   for the whole switch, so a member message, a peer message or a scheduled prompt waits there and lands after it;
   the step record (`session-route-switch`) is persisted at begun, booking, stopped, stored and resumed; the booking id
   goes into the record, is recorded as cancelled and deleted at the CP (a delete the CP did not confirm is retried by
@@ -497,3 +496,9 @@ table from becoming a menu of models that fail on the first message, which is wh
   window error, never the account setting), and AF never toggles them. The resume after the switch is the relaunch
   only: no prompt is typed, so the Console's next message (or a one-click "carry on", P4b) lands on the new route.
   Not measured: everything decision 14 asks of a live window stop.
+  Review round 1 (#3367): the sweep re-reads the meta after taking the gate (a tick that straddled a switch booked a resume
+  against the old route's abort); the browser terminal's input is now under the lifecycle gate (it wrote to the PTY
+  directly) and drops input to a dead attachment; a switch record that outlives its run (incomplete rollback, or a crash
+  before boot recovery) keeps the session's input closed (`lifegate.HeldError`) until recovery settles it; the empty-selection
+  switch above was withdrawn; the claude usage source lays the on-disk route and boundaries over a listed meta after reading
+  the transcript and includes them in its source stamp.

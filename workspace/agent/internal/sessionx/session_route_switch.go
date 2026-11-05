@@ -95,6 +95,19 @@ var (
 	routeSwitchAfterStep func(step string) error
 )
 
+func init() {
+	// A switch record that outlives its run (an incomplete rollback, or a crash before boot
+	// recovery has settled it) keeps the session's input closed: the stored selection and the
+	// runtime may disagree until it is settled, and a turn run in between would be filed under
+	// the wrong route. The running switch holds the gate exclusively and never enters it.
+	lifegate.SetHeldCheck(func(name string) string {
+		if _, ok := routeSwitchRecords.ModTime(name); ok {
+			return "an unfinished route switch is being settled"
+		}
+		return ""
+	})
+}
+
 var errRouteSwitchCrash = errors.New("route switch: simulated crash")
 
 // routeSwitchError is a refusal or failure of the switch as the API answers it.

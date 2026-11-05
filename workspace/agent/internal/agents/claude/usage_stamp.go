@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -36,6 +37,12 @@ func (agentImpl) UsageSource(m session.Meta) (agents.UsageSource, bool) {
 		}
 		files = append(files, file{p, fi.ModTime()})
 		fmt.Fprintf(&sb, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
+	}
+	// Attribution is part of what the rows are made from: a switch changes it without touching
+	// the transcript, and a stamp that ignored it would keep rows filed under the old route.
+	cur := withCurrentRoute(m)
+	if b, err := json.Marshal([]any{cur.Route, cur.RouteSwitches}); err == nil {
+		sb.Write(b)
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
 	ordered := make([]string, len(files))

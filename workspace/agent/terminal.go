@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log"
@@ -8,10 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -156,8 +160,36 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		return conn.WriteMessage(mt, data)
 	}
 
+	// ptyDone is set when the attach client's PTY has ended (its session was stopped, or switched
+	// to another route). Input read from the socket after that belongs to a dead attachment and is
+	// dropped, never replayed to the session that replaced it.
+	var ptyDone atomic.Bool
+	// writeInput types into the PTY under the session's lifecycle gate, like every other input
+	// path (ADR 0115 decision 11.1, ADR 0128 decision 10): while a switch or a move holds the gate
+	// the bytes wait here, and a closed session takes none. A plain shell has no gate. false means
+	// the socket should be closed.
+	writeInput := func(b []byte) bool {
+		if name == "" {
+			_, _ = ptmx.Write(b)
+			return true
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		lease, err := lifegate.Enter(ctx, name)
+		if err != nil {
+			return ctx.Err() == nil // refused (moved, held): drop the bytes, keep the socket
+		}
+		defer lease.Release()
+		if ptyDone.Load() {
+			return false
+		}
+		_, _ = ptmx.Write(b)
+		return true
+	}
+
 	// PTY -> WS (binary). Closing ptmx on command exit ends this goroutine.
 	go func() {
+		defer ptyDone.Store(true)
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := ptmx.Read(buf)
@@ -178,6 +210,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// WS -> PTY (text control frames).
+loop:
 	for {
 		mt, data, err := conn.ReadMessage()
 		if err != nil {
@@ -191,7 +224,9 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 			}
 			switch m.Type {
 			case "input":
-				_, _ = ptmx.Write([]byte(m.Data))
+				if !writeInput([]byte(m.Data)) {
+					break loop
+				}
 			case "resize":
 				_ = pty.Setsize(ptmx, &pty.Winsize{Rows: m.Rows, Cols: m.Cols})
 			case "ping":
@@ -201,7 +236,9 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 				_ = writeMsg(websocket.TextMessage, pongMsg)
 			}
 		case websocket.BinaryMessage:
-			_, _ = ptmx.Write(data) // tolerate raw-byte clients too
+			if !writeInput(data) { // tolerate raw-byte clients too
+				break loop
+			}
 		}
 	}
 

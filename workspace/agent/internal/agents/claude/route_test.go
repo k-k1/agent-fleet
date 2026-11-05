@@ -681,18 +681,13 @@ func TestAtLimitIgnoresALimitFromBeforeTheSwitch(t *testing.T) {
 	}
 }
 
-// Decision 10 / 2 / 6: which sessions the harness offers the metered route to.
+// Decision 10 / 2 / 6: which sessions the harness offers the metered route to. An empty selection
+// is never one: nothing readable afterwards shows which credential its pane inherited.
 func TestSwitchTarget(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	for _, k := range routeUnset {
-		t.Setenv(k, "")
-	}
-	prev := managedSettingsDir
-	managedSettingsDir = filepath.Join(home, "managed")
-	t.Cleanup(func() { managedSettingsDir = prev })
 	a := agentImpl{}
 	code := func(r *agents.RouteRefusal) string {
 		if r == nil {
@@ -706,23 +701,57 @@ func TestSwitchTarget(t *testing.T) {
 	if _, ref := a.SwitchTarget(session.Meta{Route: sel(RouteAPI, "")}); code(ref) != routes.CodeSwitchNotSubscription {
 		t.Errorf("api route = %v", ref)
 	}
-	empty := session.Meta{Name: "e1", Dir: filepath.Join(home, "w")}
-	if _, ref := a.SwitchTarget(empty); code(ref) != routes.CodeSwitchUnproven {
-		t.Errorf("empty, no login stored = %v", ref)
-	}
+	// Even with a clean environment and a live OAuth login on disk: an API session that outlived
+	// an Agent restart (its key in the pane's environment) looks exactly like this.
 	creds := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","expiresAt":%d,"refreshTokenExpiresAt":%d}}`,
 		time.Now().Add(time.Hour).UnixMilli(), time.Now().Add(24*time.Hour).UnixMilli())
 	writeFile(t, filepath.Join(ConfigDir(), ".credentials.json"), creds)
-	if to, ref := a.SwitchTarget(empty); ref != nil || to.Route != RouteAPI {
-		t.Errorf("empty, login stored = %+v %v", to, ref)
+	if _, ref := a.SwitchTarget(session.Meta{Name: "e1", Dir: filepath.Join(home, "w")}); code(ref) != routes.CodeSwitchUnproven {
+		t.Errorf("empty selection = %v, want unproven", ref)
 	}
-	t.Setenv("ANTHROPIC_BASE_URL", "http://gateway.invalid")
-	if _, ref := a.SwitchTarget(empty); code(ref) != routes.CodeSwitchUnproven {
-		t.Errorf("empty, endpoint override = %v", ref)
+}
+
+// A collector holds a meta listed before a switch: the rows it makes after the switch still carry
+// the boundary on disk, and its source stamp changes with it.
+func TestUsageSourceUsesTheRouteOnDiskNow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	m := session.Meta{Name: "ust1", Dir: filepath.Join(home, "w"), Kind: session.KindClaude, Route: sel(RouteSubscription, "")}
+	at := time.Now().Add(-time.Hour)
+	line := fmt.Sprintf(`{"type":"assistant","timestamp":%q,"requestId":"r1","message":{"id":"m1","model":"claude-x","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":4}}}`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	_ = at
+	dir := filepath.Join(ConfigDir(), "projects", "-proj")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("ANTHROPIC_BASE_URL", "")
-	writeFile(t, filepath.Join(ConfigDir(), "settings.json"), `{"env":{"ANTHROPIC_API_KEY":"k"}}`)
-	if _, ref := a.SwitchTarget(empty); code(ref) != routes.CodeSwitchUnproven {
-		t.Errorf("empty, settings file sets a key = %v", ref)
+	if err := os.WriteFile(filepath.Join(dir, session.UUID(m.Dir, m.Name)+".jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale, ok := agentImpl{}.UsageSource(m)
+	if !ok {
+		t.Fatal("no source")
+	}
+	// The switch lands after the collector listed m, before it parses.
+	switched := m
+	switched.Route = sel(RouteAPI, "ANTHROPIC_API_KEY@abc")
+	switched.RouteSwitches = []session.RouteSwitch{{At: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano),
+		From: sel(RouteSubscription, ""), To: *switched.Route}}
+	session.WriteMeta(switched)
+	turns, _ := stale.Turns()
+	var got *transcript.Turn
+	for i := range turns {
+		if turns[i].Role == "assistant" {
+			got = &turns[i]
+		}
+	}
+	if got == nil || got.Route != RouteAPI || got.Billing != usagex.BillingMetered {
+		t.Fatalf("stale collector filed the turn as %+v, want anthropic-api metered", got)
+	}
+	fresh, _ := agentImpl{}.UsageSource(switched)
+	if fresh.Stamp == stale.Stamp {
+		t.Error("the source stamp ignores the route, so a row filed before the switch would be kept")
 	}
 }

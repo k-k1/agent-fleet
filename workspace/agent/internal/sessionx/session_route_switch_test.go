@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 type switchEnv struct {
@@ -225,21 +226,17 @@ func TestRouteSwitchRefusals(t *testing.T) {
 	}
 }
 
-// Decision 2/6: an empty selection is switched only when the subscription is proven.
-func TestRouteSwitchOfAnEmptySelectionNeedsTheSubscriptionProven(t *testing.T) {
+// Decision 2/6: an empty selection is never switched, not even with a clean environment and a
+// live login on disk: an API session that outlived an Agent restart looks exactly like that.
+func TestRouteSwitchRefusesAnEmptySelectionEvenWithALiveLogin(t *testing.T) {
 	e := newSwitchEnv(t, nil)
 	writeOAuthLogin(t)
-	res, err := e.run()
-	if err != nil {
-		t.Fatalf("proven subscription: %v", err)
+	_, err := e.run()
+	if e.code(err) != routes.CodeSwitchUnproven {
+		t.Fatalf("err = %v, want %s", err, routes.CodeSwitchUnproven)
 	}
-	m := e.meta()
-	if res.From != "" || m.Route == nil || m.Route.Route != "anthropic-api" {
-		t.Fatalf("from=%q route=%+v", res.From, m.Route)
-	}
-	// Its earlier turns stay unresolved: the boundary's From is "no explicit selection".
-	if len(m.RouteSwitches) != 1 || m.RouteSwitches[0].From != nil {
-		t.Errorf("boundary = %+v", m.RouteSwitches)
+	if len(e.events) != 0 {
+		t.Errorf("a refused switch did something: %v", e.events)
 	}
 }
 
@@ -561,5 +558,82 @@ func writeOAuthLogin(t *testing.T) {
 		now.Add(time.Hour).UnixMilli(), now.Add(24*time.Hour).UnixMilli())
 	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), []byte(creds), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A rate-limit sweep step that took its meta before the switch must judge the session as it is
+// once it holds the gate: the old route's abort, still the transcript's tail, is not a limit of
+// the new route, and no resume may be booked against it.
+func TestRateLimitTickThatStraddlesTheSwitchBooksNothing(t *testing.T) {
+	e := newSwitchEnv(t, subscriptionRoute)
+	stale := e.meta()
+	if _, err := e.run(); err != nil {
+		t.Fatal(err)
+	}
+	e.events = nil
+	// A live pane and the old route's abort at the transcript's tail, recorded before the boundary.
+	if o, err := tmuxx.Cmd("new-session", "-d", "-s", session.TmuxName(e.name), "sleep 120").CombinedOutput(); err != nil {
+		t.Skipf("no tmux: %v %s", err, o)
+	}
+	dir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "-proj")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	abort := fmt.Sprintf(`{"type":"assistant","isApiErrorMessage":true,"apiErrorStatus":429,"timestamp":%q,"message":{"content":[{"type":"text","text":"You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)"}]}}`,
+		time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano))
+	if err := os.WriteFile(filepath.Join(dir, session.UUID(stale.Dir, stale.Name)+".jsonl"),
+		[]byte(`{"type":"user","message":{"content":"go"}}`+"\n"+abort+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, atLimit := atUsageLimit(stale); !atLimit {
+		t.Fatal("fixture: the stale meta should read the old abort as a limit")
+	}
+	rateLimitTickSession(stale, time.Now())
+	if st, has := RateLimitStates.Read(e.name); has {
+		t.Errorf("the tick recreated an episode for the new route: %+v", st)
+	}
+	if indexOf(e.events, "put") >= 0 {
+		t.Errorf("a resume was booked against the old route's limit: %v", e.events)
+	}
+}
+
+// A switch that cannot finish its rollback keeps the session's input closed until recovery
+// settles it, so no turn runs between and none is filed under the wrong route.
+func TestRouteSwitchIncompleteRollbackKeepsInputClosed(t *testing.T) {
+	e := newSwitchEnv(t, subscriptionRoute)
+	routeSwitchAfterStep = func(step string) error {
+		if step == rsResumed {
+			e.haltErr = errors.New("cannot stop the new process") // the rollback's halt will fail
+			return errors.New("persisting the resumed step failed")
+		}
+		return nil
+	}
+	_, err := e.run()
+	if !strings.Contains(fmt.Sprint(err), "incomplete") {
+		t.Fatalf("err = %v, want an incomplete rollback", err)
+	}
+	if _, left := routeSwitchRecords.Read(e.name); !left {
+		t.Fatal("the record of an incomplete rollback was dropped")
+	}
+	var held *lifegate.HeldError
+	if _, err := lifegate.Enter(context.Background(), e.name); !errors.As(err, &held) {
+		t.Fatalf("input was admitted to a session whose switch is unsettled: %v", err)
+	}
+	if !lifegate.Closed(e.name) {
+		t.Error("Closed says open")
+	}
+	// Boot recovery that works settles it and opens the gate again.
+	routeSwitchAfterStep = nil
+	e.haltErr = nil
+	if n := RecoverRouteSwitches(); n != 1 {
+		t.Fatalf("recovered %d", n)
+	}
+	l, err := lifegate.Enter(context.Background(), e.name)
+	if err != nil {
+		t.Fatalf("input still closed after recovery: %v", err)
+	}
+	l.Release()
+	if m := e.meta(); routeNameOf(m.Route) != "anthropic-subscription" || len(m.RouteSwitches) != 0 {
+		t.Errorf("after recovery route=%+v switches=%d", m.Route, len(m.RouteSwitches))
 	}
 }

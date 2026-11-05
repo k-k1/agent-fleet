@@ -207,6 +207,15 @@ func rateLimitTickSession(m session.Meta, now time.Time) {
 		return
 	}
 	defer lease.Release()
+	// m is the sweep's snapshot, which a route switch (or a move) may have overtaken while this
+	// step waited for the gate. Every decision below rests on the session as it is now: a stale
+	// subscription meta would read the old route's transcript abort as a limit of the new route
+	// and book a resume against it.
+	cur, ok := session.ReadMeta(m.Name)
+	if !ok || !rateLimitWatched(cur) {
+		return
+	}
+	m = cur
 	episodeMu := rateLimitEpisodeLock(m.Name)
 	episodeMu.Lock()
 	defer episodeMu.Unlock()

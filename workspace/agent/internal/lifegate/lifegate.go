@@ -86,6 +86,25 @@ func (e *MovedError) Error() string {
 	return fmt.Sprintf("session %s is being moved to %s and accepts no input; send to %s once it exists", e.Session, e.Target, e.Target)
 }
 
+// HeldError is the refusal of a session whose input something other than a move keeps closed
+// until it is settled (an unfinished route switch). It is not a *MovedError: there is no target
+// to send to.
+type HeldError struct {
+	Session string
+	Reason  string
+}
+
+func (e *HeldError) Error() string {
+	return fmt.Sprintf("session %s accepts no input: %s", e.Session, e.Reason)
+}
+
+var heldCheck func(name string) string
+
+// SetHeldCheck installs the check Enter and Closed run after the move state: a non-empty answer
+// is the reason the session's input stays closed. The answer must rest on durable state, so a
+// restart does not open what was closed. Installed once at start-up.
+func SetHeldCheck(fn func(name string) string) { heldCheck = fn }
+
 // ErrNotHeld is what a step that requires a lease answers when it was handed none, or one
 // that is released or names another session. It is a programming error made visible: without
 // it a nil lease would silently run the step ungated.
@@ -191,6 +210,12 @@ func Enter(ctx context.Context, name string) (*Lease, error) {
 		e := *closed
 		return nil, &e
 	}
+	if heldCheck != nil {
+		if why := heldCheck(name); why != "" {
+			l.Release()
+			return nil, &HeldError{Session: name, Reason: why}
+		}
+	}
 	return l, nil
 }
 
@@ -247,7 +272,10 @@ func Closed(name string) bool {
 		return true
 	}
 	byMeta, err := closedByMeta(name)
-	return byMeta != nil || err != nil
+	if byMeta != nil || err != nil {
+		return true
+	}
+	return heldCheck != nil && heldCheck(name) != ""
 }
 
 // Exclusive is a move's hold on one session's gate: no lease is held while it is, and none is

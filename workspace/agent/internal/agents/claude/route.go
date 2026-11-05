@@ -338,49 +338,25 @@ func routeLaunchProgram(program string, unset []string) string {
 // session on the subscription may be moved to is anthropic-api, and only a session whose route
 // is provably the subscription is offered it.
 //
-// A session with no explicit selection (decision 2) resolves its route per turn, which claude's
-// transcript does not show. It counts as being on the subscription only when the same evidence
-// an explicit anthropic-subscription launch relies on holds today: the Agent's environment
-// carries no credential or endpoint that overrides the OAuth login, the OAuth record exists, and
-// no settings file of the user or the working copy sets one. Anything else is refused as
-// unproven, never guessed: a session that was in fact on an API key must not be "switched" to the
-// member's key on a wrong reading. The selection stored by the switch is explicit, so the
-// session is never in this position twice.
+// "Provably" means an explicit anthropic-subscription selection: its launch removes every
+// override from the process and pins the settings layer, so the window that stopped it is the
+// subscription's. A session with no explicit selection (decision 2) resolves its route per turn
+// from whatever its pane inherited, and nothing the Agent can read afterwards says which: the
+// current environment, settings files and OAuth record are not the process's (an API key can
+// survive an Agent restart in the tmux environment while the Agent's own is clean, and a settings
+// key can be removed after launch). So it is refused as unproven rather than guessed; starting a
+// new session on anthropic-subscription is the way to be able to switch.
 func (agentImpl) SwitchTarget(m session.Meta) (agents.RouteSelection, *agents.RouteRefusal) {
-	target := agents.RouteSelection{Route: RouteAPI}
-	if m.Route != nil {
-		if m.Route.Route == RouteSubscription {
-			return target, nil
-		}
+	if m.Route == nil {
+		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchUnproven,
+			Message: "this session has no explicit route, so it cannot be shown to run on the subscription; " +
+				"start a new session on the anthropic-subscription route to be able to switch"}
+	}
+	if m.Route.Route != RouteSubscription {
 		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchNotSubscription,
 			Message: "this session runs on " + m.Route.Route + ", not on the subscription; only a stopped subscription can be switched away from"}
 	}
-	if why := subscriptionUnproven(m); why != "" {
-		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchUnproven,
-			Message: "this session has no explicit route and it cannot be shown to run on the subscription (" + why +
-				"); start a new session on the anthropic-subscription route to be able to switch"}
-	}
-	return target, nil
-}
-
-// subscriptionUnproven names what stops an empty selection being read as the subscription, or
-// "" when nothing does.
-func subscriptionUnproven(m session.Meta) string {
-	if envToken() {
-		return "a token or API key is set in the Agent's environment"
-	}
-	for _, k := range routeUnset {
-		if os.Getenv(k) != "" {
-			return k + " is set in the Agent's environment"
-		}
-	}
-	if c, ok := readCreds(); !ok || c.ClaudeAiOauth.AccessToken == "" {
-		return "no claude.ai login is stored"
-	}
-	if ref := settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
-		return ref.Message
-	}
-	return ""
+	return agents.RouteSelection{Route: RouteAPI}, nil
 }
 
 // stampRoute records on each turn the route the session ran on and, where the route proves it,
@@ -394,6 +370,7 @@ func subscriptionUnproven(m session.Meta) string {
 // the turn's own timestamp (Meta.RouteAt), never under the one it holds now; a turn whose
 // timestamp cannot be read stays unresolved.
 func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
+	m = withCurrentRoute(m)
 	if m.Route == nil && len(m.RouteSwitches) == 0 {
 		return turns
 	}
@@ -419,3 +396,15 @@ func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
 // UsesAPIKey reports that the session runs on an explicit anthropic-api selection, so its
 // credential is the API key and not the OAuth login.
 func UsesAPIKey(m session.Meta) bool { return m.Route != nil && m.Route.Route == RouteAPI }
+
+// withCurrentRoute lays the route selection and its boundaries as they are on disk now over m.
+// A collector holds a meta listed before it parsed the transcript, and a switch in between would
+// file API turns under the subscription (and the source stamp would then keep the row). Called
+// AFTER the transcript is read: a meta newer than the lines is safe because each turn is placed
+// by its own timestamp, an older one is not.
+func withCurrentRoute(m session.Meta) session.Meta {
+	if cur, ok := session.ReadMeta(m.Name); ok {
+		m.Route, m.RouteSwitches = cur.Route, cur.RouteSwitches
+	}
+	return m
+}
