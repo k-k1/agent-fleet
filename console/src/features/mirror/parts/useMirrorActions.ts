@@ -454,8 +454,10 @@ export function useMirrorActions({
     if (wsDown()) return false;
     setSending(true);
     const prev = statusRef.current;
-    statusRef.current = "working";
-    setStatus("working");
+    // A deny interrupts the turn, so the session goes back to the prompt rather than to work.
+    const next = choice === "deny" ? "idle" : "working";
+    statusRef.current = next;
+    setStatus(next);
     const res = await sessionPermissionRespond(session, choice, expect).catch((): TurnResult => ({ ok: false }));
     if (!res.ok) {
       statusRef.current = prev;

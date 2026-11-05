@@ -295,6 +295,9 @@ func answerClaudePermission(meta session.Meta, choice string, en bool) (string, 
 	out, err := answerClaudeDecision(meta, "permission", keys, decisionFeedback(choice, en), en)
 	if err == nil {
 		permDecided.Store(meta.Name, token)
+		if choice == claude.PermDeny {
+			settleDeniedPermission(sid, token)
+		}
 	}
 	return out, err
 }

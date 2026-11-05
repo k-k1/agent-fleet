@@ -100,6 +100,19 @@ func surfacePermissionPrompt(pending map[string]any, sid, name, before string) {
 	delete(pending, "pendingPermissionChoices")
 }
 
+// settleDeniedPermission retires the prompt a deny just answered. A refused tool interrupts
+// claude's turn ("Interrupted · What should Claude do instead?") and no hook fires after it,
+// so the payload and the "permission" state would otherwise outlive the dialog: the card stays
+// up with live buttons, and the composer keeps refusing text. Measured on claude 2.1.318.
+// Only the answered prompt is retired: a newer payload (another call's prompt) is left alone.
+func settleDeniedPermission(sid, token string) {
+	if permissionToken(sid) != token {
+		return
+	}
+	status.RemovePendingPermission(sid)
+	status.Persist(sid, "idle")
+}
+
 // permissionRespondResult is /permission-respond's success body.
 type permissionRespondResult struct {
 	Responded string `json:"responded"`
@@ -198,7 +211,9 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	permDecided.Store(name, token)
-	if req.Choice != claude.PermDeny {
+	if req.Choice == claude.PermDeny {
+		settleDeniedPermission(sid, token)
+	} else {
 		markSessionWorking(name)
 	}
 	httpx.WriteJSON(w, http.StatusOK, permissionRespondResult{Responded: name, Choice: req.Choice})
