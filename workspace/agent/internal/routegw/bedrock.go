@@ -52,10 +52,19 @@ func upstreamClient() *http.Client {
 	}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
+// writeRefusal answers a call the gateway refuses itself (an upstream answer is forwarded as it
+// is). The wire status is chosen for how Claude Code reacts, not only for its HTTP meaning
+// (measured, claude 2.1.318 against a stand-in on the socket): it backs off and retries a 401 or
+// a 403 about seven times over 45 seconds and ignores `x-should-retry: false` on a 403; a 400
+// goes out eight times at once; a 404 is shown as "model not available"; a 429 is a rate limit.
+// A 401 or a 503 with `x-should-retry: false` is sent once and shown at once with this message
+// (the 401 under the CLI's "AWS authentication failed" line). So every refusal that waiting
+// does not clear goes out as 401, every one that it may clear as 503, both with the header.
 func writeRefusal(w http.ResponseWriter, r *refusal) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Amzn-Errortype", r.code)
-	w.WriteHeader(r.status)
+	w.Header().Set("X-Should-Retry", "false")
+	w.WriteHeader(wireStatus(r.status))
 	// "message" is the key AWS SDKs read from an error body.
 	b, _ := json.Marshal(map[string]string{"message": r.msg, "code": r.code})
 	_, _ = w.Write(b)
@@ -197,6 +206,18 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 	}
 	if err := g.d.Append([]usagex.Record{row}); err != nil {
 		log.Printf("route gateway: ledger: %v", err)
+	}
+}
+
+// wireStatus maps a refusal's status to what goes out (writeRefusal).
+func wireStatus(status int) int {
+	switch {
+	case status >= 500:
+		return http.StatusServiceUnavailable
+	case status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusConflict:
+		return http.StatusUnauthorized
+	default:
+		return status
 	}
 }
 

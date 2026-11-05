@@ -568,3 +568,32 @@ table from becoming a menu of models that fail on the first message, which is wh
   Review round 2 (#3389): only `ENOPROTOOPT` (a kernel that does not know `SO_PEERPIDFD`) takes the bare-pid path; every other
   failure refuses, above all `EINVAL`, which a kernel that has the option answers when the connector has already exited
   (`pidfd_prepare` finds no task), and resource or permission errors.
+- 2026-11-06, P2b part 2 (#3282): claude on `bedrock`, Terminal only, through the gateway. **Measured first** (claude 2.1.318,
+  the interactive TUI in a private tmux server and `claude -p`, a stand-in gateway on the socket that answers with a real
+  AWS event stream; no AWS): with `CLAUDE_CODE_USE_BEDROCK=1`, `ANTHROPIC_UNIX_SOCKET`, `ANTHROPIC_BEDROCK_BASE_URL`,
+  `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` in the process environment the TUI header reads "Opus 5.5 · Amazon Bedrock",
+  `--model opus` becomes `us.anthropic.claude-opus-5-5`, one call per turn reaches the socket with the bearer, and the answer
+  is shown; the transcript records the turn's `usage`. `ANTHROPIC_UNIX_SOCKET` is read from the process environment only:
+  named in the `--settings` layer alone it is ignored and the CLI dials the base URL's host (which never resolves, so it
+  fails visibly). Retries: a 401 or 403 is retried about seven times over 45 s, `x-should-retry: false` does not stop that on
+  a 403, a 400 goes out eight times at once, a 404 is read as "model not available", a 429 as a rate limit; a 401 or a 503
+  with `x-should-retry: false` goes out once and is shown at once with the gateway's message (the 401 under the CLI's "AWS
+  authentication failed" line). **Gateway**: every refusal of its own now goes out as 401 (waiting does not clear it) or
+  503 (it may), both with `x-should-retry: false`; an upstream answer is forwarded untouched. `Issue` files ADR 0126's
+  confirmation request at the launch when the profile asks before use, so the card is waiting before the first call (which
+  is still refused until it is allowed). The gateway registers itself on `agents.SetRouteGateway`, because it sits above
+  the adapters in the import graph. **Adapter**: `Routes()` adds `bedrock`; the connection reference is
+  `routes.AWSConnection` (`<profile id>@<region>`, the region optional); `CheckRoute` asks the gateway (the member's own
+  profile, marked, a usable region) and refuses without a running gateway; the launch gets a bearer from `Issue`, puts it
+  in the pane's environment only, puts the four non-secret values in the environment and pins them to themselves in the
+  `--settings` layer (`RoutePlan.Settings`), and pins empty and removes the API key, OAuth token, base URL, auth token,
+  Vertex and Foundry switches and `CLAUDE_CODE_SKIP_BEDROCK_AUTH`; #3350's empty pin of `CLAUDE_CODE_USE_BEDROCK` no
+  longer applies to this route. A settings file that sets `AWS_BEARER_TOKEN_BEDROCK`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH`,
+  `awsAuthRefresh` or `awsCredentialExport` refuses it (at create, start and launch, and the running-session sweep). The
+  OAuth guard and the auth auto-resume treat it as a credential of its own. **Ledger**: the gateway's `route.gateway` row
+  is the one record of each call (it sees calls the transcript does not show); the fold drops the claude transcript's rows
+  of bedrock turns, and a subagent transcript's rows by the session's selection at their time, while the watermark moves
+  past them. **Console**: the launch dialog offers Amazon Bedrock only when GET `api/ssm/profiles` lists a profile marked
+  as a model route, then the marked profiles and an optional region, and sends `route: {route, connection}`. Not measured:
+  real Bedrock (SigV4 acceptance, the real event stream and its usage fields), a real SSO login on this path, the
+  confirmation card end to end, and decision 14's live turns and negative controls.

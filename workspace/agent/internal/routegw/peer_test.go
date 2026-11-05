@@ -114,11 +114,11 @@ func TestAnotherSessionsProcessIsRefused(t *testing.T) {
 	e.roots["other"] = []int{other.pid()}
 	e.mu.Unlock()
 
-	if st, code := other.present(tok); st != http.StatusForbidden || code != "route_caller_forbidden" {
+	if st, code := other.present(tok); st != http.StatusUnauthorized || code != "route_caller_forbidden" {
 		t.Fatalf("another session's process = %d %s", st, code)
 	}
 	// The test process is the helpers' parent, outside the owner's tree.
-	if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != http.StatusForbidden || codeOf(t, body) != "route_caller_forbidden" {
+	if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != http.StatusUnauthorized || codeOf(t, body) != "route_caller_forbidden" {
 		t.Fatalf("a process outside the tree = %d %s", resp.StatusCode, body)
 	}
 	e.mu.Lock()
@@ -146,7 +146,7 @@ func TestAnotherSessionsProcessIsRefused(t *testing.T) {
 	e.mu.Lock()
 	e.roots["owner"] = nil
 	e.mu.Unlock()
-	if st, code := own.present(tok); st != http.StatusForbidden || code != "route_caller_forbidden" {
+	if st, code := own.present(tok); st != http.StatusUnauthorized || code != "route_caller_forbidden" {
 		t.Fatalf("with no running owner = %d %s", st, code)
 	}
 }
@@ -165,7 +165,7 @@ func TestACallerWithoutPeerCredentialsIsRefused(t *testing.T) {
 	}
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden || codeOf(t, string(b)) != "route_caller_forbidden" || e.upstreamCalls() != 0 {
+	if resp.StatusCode != http.StatusUnauthorized || codeOf(t, string(b)) != "route_caller_forbidden" || e.upstreamCalls() != 0 {
 		t.Fatalf("over TCP = %d %s", resp.StatusCode, b)
 	}
 }

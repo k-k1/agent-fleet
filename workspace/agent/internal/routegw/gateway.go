@@ -182,6 +182,11 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	if ref != nil {
 		return Issued{}, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
+	// A profile that asks before use (ADR 0126) is asked now, at the launch, so the card is
+	// waiting when the first model call comes; that call is still refused until it is allowed.
+	if !g.d.Held(c.settings, c.profile.Name, m, g.d.Now()) {
+		_ = g.approvalRefusal(c, m)
+	}
 	inc := awsx.Incarnation(m)
 	b := Binding{Session: m.Name, Incarnation: inc, Route: RouteBedrock, Connection: m.Route.Connection,
 		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile)}
@@ -197,7 +202,7 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	if err != nil {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
 	}
-	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Expires: exp}, nil
+	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Region: c.region, Expires: exp}, nil
 }
 
 // SocketBaseURL is the base URL a harness is given beside the socket. The connection goes to
@@ -206,14 +211,10 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 // a loopback port.
 const SocketBaseURL = "http://af-route-gateway.invalid"
 
-// Issued is what a launch gets: the socket to call, the base URL to put in front of the
-// operation paths, the bearer to call with, and when it ends unless the Agent renews it.
-type Issued struct {
-	Socket  string
-	BaseURL string
-	Token   string
-	Expires time.Time
-}
+// Issued is what a launch gets (agents.RouteGrant).
+type Issued = agents.RouteGrant
+
+var _ agents.RouteGateway = (*Gateway)(nil)
 
 // CheckRoute is agents.RouteChecker for the bedrock route: the live half of ADR 0128 decision 12
 // for a selection, before anything starts. The model is not checked here: Bedrock's model list

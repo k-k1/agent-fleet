@@ -517,3 +517,30 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   レビュー第 2 巡（#3389）: pid だけで読む経路に進むのは `ENOPROTOOPT`（`SO_PEERPIDFD` を知らないカーネル）のときだけ。
   それ以外の失敗はすべて拒否する。特に `EINVAL` は、オプションを持つカーネルが接続元の終了後に返すもの
   （`pidfd_prepare` がタスクを見つけない）で、資源や権限のエラーも同じく拒否する。
+- 2026-11-06、P2b 第 2 部（#3282）: claude の `bedrock`。ターミナル（CLI）のみ、ゲートウェイ経由。**先に測った**（claude 2.1.318、
+  非公開の tmux サーバでの対話 TUI と `claude -p`、本物の AWS イベントストリームで答えるソケット上の代役ゲートウェイ。AWS は
+  使っていない）: プロセス環境に `CLAUDE_CODE_USE_BEDROCK=1`、`ANTHROPIC_UNIX_SOCKET`、`ANTHROPIC_BEDROCK_BASE_URL`、
+  `AWS_REGION`、`AWS_BEARER_TOKEN_BEDROCK` があると、TUI のヘッダーは「Opus 5.5 · Amazon Bedrock」になり、`--model opus` は
+  `us.anthropic.claude-opus-5-5` になり、1 ターンにつき 1 回の呼び出しが bearer 付きでソケットに届き、答えが表示される。
+  transcript にはそのターンの `usage` が記録される。`ANTHROPIC_UNIX_SOCKET` はプロセス環境からしか読まれない。
+  `--settings` 層にだけ書くと無視され、CLI は base URL のホストに接続しにいく（名前解決できないので目に見えて失敗する）。
+  再試行: 401 と 403 は 45 秒の間に約 7 回再試行され、403 では `x-should-retry: false` でも止まらない。400 は一度に 8 回送られ、
+  404 は「モデルがない」、429 はレート制限と読まれる。`x-should-retry: false` 付きの 401 と 503 は 1 回だけ送られ、ゲートウェイの
+  文面がすぐに表示される（401 は CLI の「AWS authentication failed」の行の下）。**ゲートウェイ**: 自分で返す拒否は、待っても
+  解消しないものは 401、解消しうるものは 503 とし、どちらも `x-should-retry: false` を付ける。上流の応答はそのまま転送する。
+  プロファイルが使用前の確認を求める場合、`Issue` は起動時に ADR 0126 の確認要求を出す。最初の呼び出しの前にカードが待って
+  いるようにするため（その呼び出しは許可されるまで拒否される）。ゲートウェイはインポートの関係でアダプタより上にあるので、
+  `agents.SetRouteGateway` に自分を登録する。**アダプタ**: `Routes()` に `bedrock` を加える。接続の参照は `routes.AWSConnection`
+  （`<プロファイル id>@<リージョン>`、リージョンは省略可）。`CheckRoute` はゲートウェイに尋ね（メンバー自身のプロファイル、印、
+  使えるリージョン）、ゲートウェイが動いていなければ拒否する。起動は `Issue` から bearer を受け取り、それをペインの環境にだけ
+  置き、秘密でない 4 つの値を環境に置いたうえで `--settings` 層でも同じ値に固定し（`RoutePlan.Settings`）、API キー、OAuth
+  トークン、base URL、認証トークン、Vertex と Foundry の切替、`CLAUDE_CODE_SKIP_BEDROCK_AUTH` を取り除いて空に固定する。#3350 の
+  `CLAUDE_CODE_USE_BEDROCK` を空にする固定は、この経路にはもう掛からない。`AWS_BEARER_TOKEN_BEDROCK`、
+  `CLAUDE_CODE_SKIP_BEDROCK_AUTH`、`awsAuthRefresh`、`awsCredentialExport` を設定する設定ファイルがあると拒否する（作成、開始、
+  起動の時点と、実行中セッションの見回り）。OAuth のガードと認証の自動再開は、これを自前の資格情報として扱う。**台帳**:
+  ゲートウェイの `route.gateway` の行を各呼び出しの唯一の記録とする（transcript に出ない呼び出しも見えるため）。集約は claude
+  transcript の bedrock ターンの行を落とし、サブエージェントの transcript の行はその時点のセッションの選択で落とす。透かしは
+  それらを越えて進む。**Console**: 起動ダイアログは、GET `api/ssm/profiles` に「モデルのルート」の印が付いたプロファイルが
+  あるときだけ Amazon Bedrock を出し、続けて印の付いたプロファイルと任意のリージョンを選ばせ、`route: {route, connection}` を
+  送る。未測定: 本物の Bedrock（SigV4 の受理、実際のイベントストリームとその使用量の欄）、この経路での実際の SSO ログイン、
+  確認カードの端から端まで、決定 14 の実機のターンと対照実験。

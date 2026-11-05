@@ -241,6 +241,15 @@ API キーで従量課金として動きます。**anthropic-subscription** は�
   Agent Fleet が書き込める中で最優先の層（CLI の起動フラグ層）で空に固定します。次の 2 つは、固定できないのでセッションを止めて守ります:
   managed 設定ファイル（CLI の文書では起動フラグ層より上とされる。ここでは未測定）と、anthropic-api セッションで `ANTHROPIC_API_KEY` を設定する設定ファイル
   （キー自体はコマンドラインに載せません）。
+- **Amazon Bedrock。** 3 つ目の経路は、設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルで
+  claude を Amazon Bedrock 上で動かします（[クラウドアカウント](../member/16-cloud-accounts.ja.md)）。**モデルのルート** で
+  **Amazon Bedrock** を選び、プロファイルを選びます。リージョンは任意で、空ならプロファイル自身のものです。セッションには
+  AWS の資格情報が渡りません。ワークスペースのルートゲートウェイが各モデル呼び出しに署名し、セッションが持つのは、自分の
+  プロセスからだけ使え、セッションとともに終わる bearer だけです。CLI のヘッダーは「Amazon Bedrock」になります。拒否された
+  呼び出し（プロファイルの印がない・編集された・削除された、確認がまだ、SSO のサインインが必要）は、理由とともにすぐ失敗し
+  （「AWS authentication failed」または「API Error: 503」の下に出ます）、再試行されません。`AWS_BEARER_TOKEN_BEDROCK`、
+  `CLAUDE_CODE_SKIP_BEDROCK_AUTH`、`awsAuthRefresh`、`awsCredentialExport` を設定する設定ファイルがあると起動は拒否されます。
+  使用量はモデル呼び出しごとに 1 回、ゲートウェイが Amazon Bedrock・従量課金として記録します。
 - キーのアカウントの残高が尽きると（「Credit balance is too low」）、ターンはその文面で失敗します。
   セッションは「残高上限」状態にはなりません。アカウントに入金してメッセージを送れば届きます。
   claude.ai 組織の利用額上限は従来どおりセッションを止めたままにします。

@@ -36,6 +36,10 @@ import (
 const (
 	RouteSubscription = "anthropic-subscription"
 	RouteAPI          = "anthropic-api"
+	// RouteBedrock runs on a member's Settings AWS profile marked as a model route, through the
+	// AF route gateway (ADR 0128 decisions 7 A2 and 11 C2): the session holds a gateway bearer
+	// bound to its own processes, never an AWS credential.
+	RouteBedrock = "bedrock"
 )
 
 // apiKeyConnection is the slot of anthropic-api: the member's Anthropic API key as Settings >
@@ -81,15 +85,17 @@ var routeUnset = []string{
 }
 
 // Routes implements agents.RouteAdapter.
-func (agentImpl) Routes() []string { return []string{RouteAPI, RouteSubscription} }
+func (agentImpl) Routes() []string { return []string{RouteAPI, RouteBedrock, RouteSubscription} }
 
 // ApplyRoute implements agents.RouteAdapter.
-func (agentImpl) ApplyRoute(_ session.Meta, sel agents.RouteSelection) (agents.RoutePlan, error) {
+func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.RoutePlan, error) {
 	if ref := checkRouteSelection(sel); ref != nil {
 		return agents.RoutePlan{}, ref
 	}
 	unset := append([]string(nil), routeUnset...)
 	switch sel.Route {
+	case RouteBedrock:
+		return bedrockPlan(m)
 	case RouteAPI:
 		key, _ := loadAPIKey()
 		if key = strings.TrimSpace(key); key == "" {
@@ -121,11 +127,12 @@ func (agentImpl) ResolveRoute(m session.Meta, _ agents.TurnInfo) agents.Resolved
 
 // CheckRoute implements agents.RouteChecker: the live half of the validation. The model needs
 // no check (both routes serve every Claude model the CLI offers).
-func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, _ string) *agents.RouteRefusal {
+func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model string) *agents.RouteRefusal {
 	if ref := checkRouteSelection(sel); ref != nil {
 		return ref
 	}
-	if sel.Route == RouteAPI {
+	switch sel.Route {
+	case RouteAPI:
 		key, err := loadAPIKey()
 		if err != nil || strings.TrimSpace(key) == "" {
 			return noAPIKey()
@@ -133,10 +140,19 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, _ stri
 		if _, fp := splitConnection(sel.Connection); fp != "" && fp != keyFingerprint(strings.TrimSpace(key)) {
 			return keyReplaced()
 		}
+	case RouteBedrock:
+		gw := agents.CurrentRouteGateway()
+		if gw == nil {
+			return noGateway()
+		}
+		// The profile is one of the member's own, marked as a model route, in a usable region.
+		if ref := gw.CheckRoute(context.Background(), sel, model); ref != nil {
+			return ref
+		}
 	}
 	// What the CLI's own settings would override is judged where the working copy is known
 	// (BuildLaunch); the user's own settings do not depend on it, so they are refused here, early.
-	return settingsConflict(userSettingFiles())
+	return settingsConflict(sel.Route, userSettingFiles())
 }
 
 // BindRoute implements agents.RouteBinder: the stored form of an accepted selection. The key is
@@ -165,7 +181,7 @@ func (agentImpl) RouteHeld(m session.Meta) *agents.RouteRefusal {
 	if m.Route == nil {
 		return nil
 	}
-	return settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...))
+	return settingsConflict(m.Route.Route, append(userSettingFiles(), projectSettingFiles(m)...))
 }
 
 // checkRouteSelection is the connection reference check: whose connection it is.
@@ -178,6 +194,11 @@ func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 			return &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodeRouteForbidden,
 				Message: "connection " + conn + " is not your Anthropic API key connection; a route runs only on a connection of your own"}
 		}
+	case RouteBedrock:
+		if _, _, ok := routes.ParseAWSConnection(conn); !ok {
+			return &agents.RouteRefusal{Status: http.StatusBadRequest, Code: routes.CodeRouteUnavailable,
+				Message: "the bedrock route needs a connection naming one of your Settings AWS profiles marked as a model route, as <profile id>@<region> (the region may be empty for the profile's own)"}
+		}
 	case RouteSubscription:
 		if conn != "" {
 			return &agents.RouteRefusal{Status: http.StatusForbidden, Code: routes.CodeRouteForbidden,
@@ -185,6 +206,48 @@ func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 		}
 	}
 	return nil
+}
+
+// bedrockPlan is the bedrock route's launch: a gateway bearer for this session's own processes,
+// the gateway's socket, and nothing that would put the CLI on another provider or credential.
+//
+// Measured (claude 2.1.318, interactive TUI in a private tmux server, a stand-in gateway on the
+// socket): with these variables in the process environment the CLI shows "Amazon Bedrock",
+// sends every model call to the socket with the bearer, and maps --model opus to the Bedrock id.
+// ANTHROPIC_UNIX_SOCKET is read from the process environment only: named in the --settings
+// layer alone it is ignored and the CLI dials the base URL's host, which never resolves. So the
+// values ride the environment AND are pinned in the flag layer (Settings), where a settings file
+// edited later cannot change them. The bearer is environment only: it never goes on a command
+// line, and a settings file that sets it is refused (settingsConflict).
+func bedrockPlan(m session.Meta) (agents.RoutePlan, error) {
+	gw := agents.CurrentRouteGateway()
+	if gw == nil {
+		return agents.RoutePlan{}, noGateway()
+	}
+	g, ref := gw.Issue(m)
+	if ref != nil {
+		return agents.RoutePlan{}, ref
+	}
+	values := []string{
+		"CLAUDE_CODE_USE_BEDROCK=1",
+		"ANTHROPIC_BEDROCK_BASE_URL=" + g.BaseURL,
+		"ANTHROPIC_UNIX_SOCKET=" + g.Socket,
+		"AWS_REGION=" + g.Region,
+	}
+	unset := []string{
+		"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+		"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+	}
+	return agents.RoutePlan{
+		Env:      append([]string{"AWS_BEARER_TOKEN_BEDROCK=" + g.Token}, values...),
+		Unset:    unset,
+		Settings: values,
+	}, nil
+}
+
+func noGateway() *agents.RouteRefusal {
+	return &agents.RouteRefusal{Status: http.StatusServiceUnavailable, Code: routes.CodeRouteUnavailable,
+		Message: "the AF route gateway is not running in this workspace, so the bedrock route cannot be used; restart the workspace, or start the session on another route"}
 }
 
 func keyReplaced() *agents.RouteRefusal {
@@ -200,6 +263,13 @@ var settingsConflictEnv = []string{
 	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
 	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
 }
+
+// settingsConflictBedrock is what the bedrock route adds: the bearer, which cannot be pinned
+// because it never goes on a command line, and the two settings that make the CLI fetch AWS
+// credentials of its own (a command it runs), which would put it on another identity.
+var settingsConflictBedrock = []string{"AWS_BEARER_TOKEN_BEDROCK", "CLAUDE_CODE_SKIP_BEDROCK_AUTH"}
+
+var settingsConflictBedrockKeys = []string{"awsAuthRefresh", "awsCredentialExport"}
 
 // managedSettingsDir is where the organisation's managed settings live; a var for tests.
 var managedSettingsDir = "/etc/claude-code"
@@ -231,9 +301,16 @@ func projectSettingFiles(m session.Meta) []string {
 	return files
 }
 
-// settingsConflict reads each file's env block and apiKeyHelper. A file that is absent or not
-// valid JSON overrides nothing the Agent can see, so it is skipped.
-func settingsConflict(files []string) *agents.RouteRefusal {
+// settingsConflict reads each file's env block and apiKeyHelper (and, for bedrock, the keys that
+// fetch AWS credentials). A file that is absent or not valid JSON overrides nothing the Agent can
+// see, so it is skipped.
+func settingsConflict(route string, files []string) *agents.RouteRefusal {
+	names := settingsConflictEnv
+	var keys []string
+	if route == RouteBedrock {
+		names = append(append([]string(nil), names...), settingsConflictBedrock...)
+		keys = settingsConflictBedrockKeys
+	}
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
@@ -243,14 +320,20 @@ func settingsConflict(files []string) *agents.RouteRefusal {
 			Env          map[string]json.RawMessage `json:"env"`
 			APIKeyHelper json.RawMessage            `json:"apiKeyHelper"`
 		}
-		if json.Unmarshal(b, &doc) != nil {
+		var top map[string]json.RawMessage
+		if json.Unmarshal(b, &doc) != nil || json.Unmarshal(b, &top) != nil {
 			continue
 		}
 		var hit string
-		for _, k := range settingsConflictEnv {
+		for _, k := range names {
 			if _, ok := doc.Env[k]; ok {
 				hit = "env." + k
 				break
+			}
+		}
+		for _, k := range keys {
+			if v, ok := top[k]; hit == "" && ok && string(v) != "null" && string(v) != `""` {
+				hit = k
 			}
 		}
 		if hit == "" && len(doc.APIKeyHelper) > 0 && string(doc.APIKeyHelper) != "null" && string(doc.APIKeyHelper) != `""` {
@@ -282,7 +365,7 @@ func AuthExpiredFor(m session.Meta) bool {
 		return AuthExpired()
 	}
 	switch m.Route.Route {
-	case RouteAPI:
+	case RouteAPI, RouteBedrock:
 		return false
 	case RouteSubscription:
 		c, ok := readCreds()
@@ -292,8 +375,8 @@ func AuthExpiredFor(m session.Meta) bool {
 }
 
 // pinnedSettings merges a route's pin into the launch `--settings` JSON, in the same single
-// object (no second flag, so no flag-merging behaviour is relied on). Each name in pin becomes an
-// empty `env` entry and `apiKeyHelper` is emptied. The flag layer outranks the user, project and
+// object (no second flag, so no flag-merging behaviour is relied on). Each bare name in pin
+// becomes an empty `env` entry, each NAME=value that value, and `apiKeyHelper` is emptied. The flag layer outranks the user, project and
 // local settings files, so an edit to one of them after the pane started cannot put a value back
 // (measured, claude 2.1.318, against a local server and a temporary config dir: a user-settings
 // ANTHROPIC_BASE_URL beat the process environment, an empty flag-layer value beat that, and
@@ -315,7 +398,9 @@ func pinnedSettings(base string, pin []string) string {
 		env = map[string]any{}
 	}
 	for _, name := range pin {
-		env[name] = ""
+		// "NAME=value" pins a value (RoutePlan.Settings), a bare name pins it empty.
+		name, value, _ := strings.Cut(name, "=")
+		env[name] = value
 	}
 	doc["env"] = env
 	doc["apiKeyHelper"] = ""
@@ -396,7 +481,7 @@ func stampRouteChecked(m session.Meta, turns []transcript.Turn) ([]transcript.Tu
 			continue
 		}
 		turns[i].Route = sel.Route
-		if sel.Route == RouteAPI {
+		if sel.Route == RouteAPI || sel.Route == RouteBedrock {
 			turns[i].Billing = usagex.BillingMetered
 		}
 	}
@@ -406,6 +491,13 @@ func stampRouteChecked(m session.Meta, turns []transcript.Turn) ([]transcript.Tu
 // UsesAPIKey reports that the session runs on an explicit anthropic-api selection, so its
 // credential is the API key and not the OAuth login.
 func UsesAPIKey(m session.Meta) bool { return m.Route != nil && m.Route.Route == RouteAPI }
+
+// OwnsCredential reports that the session runs on a credential of its own and not on the OAuth
+// login (the API key, or the gateway bearer of the bedrock route): the login's renewal is not
+// its recovery.
+func OwnsCredential(m session.Meta) bool {
+	return m.Route != nil && (m.Route.Route == RouteAPI || m.Route.Route == RouteBedrock)
+}
 
 // withCurrentRoute lays the route selection and its boundaries as they are on disk now over m.
 // A collector holds a meta listed before it parsed the transcript, and a switch in between would

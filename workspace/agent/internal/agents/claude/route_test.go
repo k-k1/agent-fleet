@@ -32,7 +32,7 @@ func sel(route, conn string) *routes.Selection {
 	return &routes.Selection{Route: route, Connection: conn}
 }
 
-func TestClaudeDeclaresBothRoutesAndIsAnAdapter(t *testing.T) {
+func TestClaudeDeclaresItsRoutesAndIsAnAdapter(t *testing.T) {
 	var a agents.Agent = agentImpl{}
 	ra, ok := a.(agents.RouteAdapter)
 	if !ok {
@@ -43,7 +43,7 @@ func TestClaudeDeclaresBothRoutesAndIsAnAdapter(t *testing.T) {
 	}
 	got := ra.Routes()
 	slices.Sort(got)
-	if !slices.Equal(got, []string{RouteAPI, RouteSubscription}) {
+	if !slices.Equal(got, []string{RouteAPI, RouteSubscription, RouteBedrock}) {
 		t.Errorf("Routes = %v", got)
 	}
 }

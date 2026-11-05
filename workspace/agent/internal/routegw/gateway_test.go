@@ -530,8 +530,8 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 			p := e.settings["bedrock-invoke"]
 			p.ModelRoute = false
 			e.settings["bedrock-invoke"] = p
-		}, 403, routes.CodeRouteForbidden},
-		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 403, routes.CodeRouteForbidden},
+		}, 401, routes.CodeRouteForbidden},
+		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 401, routes.CodeRouteForbidden},
 		"repointed (role edited)": {func(e *env) {
 			p := e.settings["bedrock-invoke"]
 			p.RoleName = "Admin"
@@ -541,7 +541,7 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 			p := e.settings["bedrock-invoke"]
 			p.ID = "p2"
 			e.settings["bedrock-invoke"] = p
-		}, 403, routes.CodeRouteForbidden},
+		}, 401, routes.CodeRouteForbidden},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -666,7 +666,7 @@ func TestApprovalIsCheckedOnEveryCall(t *testing.T) {
 	e.held = false // the grant ended, or the member removed it
 	e.mu.Unlock()
 	resp, body := e.call(tok, invokePath(), `{}`)
-	if resp.StatusCode != 403 || codeOf(t, body) != "route_confirmation_required" {
+	if resp.StatusCode != 401 || codeOf(t, body) != "route_confirmation_required" {
 		t.Fatalf("without approval = %d %s", resp.StatusCode, body)
 	}
 	if e.upstreamCalls() != 1 {
@@ -787,7 +787,7 @@ func TestLoginRequiredIsRefusedVisibly(t *testing.T) {
 	e.credErr = fmt.Errorf("%w for profile: expired", awsx.ErrLoginRequired)
 	tok := e.issue(e.session("s1", "p1", ""))
 	resp, body := e.call(tok, invokePath(), `{}`)
-	if resp.StatusCode != 403 || codeOf(t, body) != "route_login_required" || !strings.Contains(body, "bedrock-invoke") {
+	if resp.StatusCode != 401 || codeOf(t, body) != "route_login_required" || !strings.Contains(body, "bedrock-invoke") {
 		t.Fatalf("login required = %d %s", resp.StatusCode, body)
 	}
 	if e.upstreamCalls() != 0 {
@@ -957,5 +957,65 @@ func TestClientDisconnectCancelsTheUpstreamRequest(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the upstream request was not cancelled when the caller disconnected")
+	}
+}
+
+// Every refusal of the gateway's own goes out once and fails visibly in Claude Code: 401 for what
+// waiting does not clear, 503 for what it may, both with x-should-retry: false (writeRefusal).
+func TestRefusalsAreSentAsNotRetried(t *testing.T) {
+	e := newEnv(t)
+	tok := e.issue(e.session("s1", "p1", ""))
+	check := func(name string, want int, resp *http.Response) {
+		t.Helper()
+		if resp.StatusCode != want || resp.Header.Get("X-Should-Retry") != "false" {
+			t.Errorf("%s: %d x-should-retry=%q, want %d and false", name, resp.StatusCode, resp.Header.Get("X-Should-Retry"), want)
+		}
+	}
+	resp, _ := e.call("afrt_unknown", invokePath(), `{}`)
+	check("unknown token", 401, resp)
+	e.mu.Lock()
+	e.held = false
+	e.mu.Unlock()
+	resp, _ = e.call(tok, invokePath(), `{}`)
+	check("confirmation required", 401, resp)
+	e.mu.Lock()
+	e.held, e.settingsOK = true, false
+	e.mu.Unlock()
+	resp, _ = e.call(tok, invokePath(), `{}`)
+	check("settings unreadable", 503, resp)
+	e.mu.Lock()
+	e.settingsOK, e.credErr = true, errors.New("sts unreachable")
+	e.mu.Unlock()
+	resp, _ = e.call(tok, invokePath(), `{}`)
+	check("credentials unavailable", 503, resp)
+	// An upstream answer is forwarded as Bedrock sent it.
+	e.mu.Lock()
+	e.credErr = nil
+	e.upFn = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(403) }
+	e.mu.Unlock()
+	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 403 || resp.Header.Get("X-Should-Retry") != "" {
+		t.Errorf("upstream 403 = %d %q, want it forwarded untouched", resp.StatusCode, resp.Header.Get("X-Should-Retry"))
+	}
+}
+
+// A profile that asks before use is asked at the launch, and the launch still gets its bearer:
+// the calls are what wait for the member's press.
+func TestIssueAsksForConfirmationEarly(t *testing.T) {
+	e := newEnv(t)
+	e.mu.Lock()
+	e.held = false
+	e.mu.Unlock()
+	tok := e.issue(e.session("s1", "p1", ""))
+	if asked, _ := e.counts(); asked != 1 {
+		t.Fatalf("asked %d times at issue, want 1", asked)
+	}
+	if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != 401 || codeOf(t, body) != "route_confirmation_required" {
+		t.Fatalf("a call before the press = %d %s", resp.StatusCode, body)
+	}
+	e.mu.Lock()
+	e.held = true
+	e.mu.Unlock()
+	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+		t.Fatalf("after the press = %d", resp.StatusCode)
 	}
 }

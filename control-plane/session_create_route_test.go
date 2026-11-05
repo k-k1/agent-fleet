@@ -12,8 +12,8 @@ import (
 )
 
 // POST /api/sessions refuses an explicit route selection the snapshot cannot prove valid before
-// the Agent is asked (ADR 0128 decision 12), and passes a create with no selection untouched. No
-// harness declares a route yet, so every well-formed selection is refused.
+// the Agent is asked (ADR 0128 decision 12), and passes a create with no selection untouched. The
+// cases are selections no harness declares for the kind they name.
 func TestSessionCreateRefusesRouteSelection(t *testing.T) {
 	f := newHandoffLife(t)
 	rc := f.recipientWorkspace()
@@ -22,8 +22,8 @@ func TestSessionCreateRefusesRouteSelection(t *testing.T) {
 		code string
 	}{
 		"known route, kind declares none": {map[string]any{"kind": "codex", "route": map[string]any{"route": "openai-api"}}, "route_unsupported"},
-		"claude, route not on its list":   {map[string]any{"kind": "claude", "route": map[string]any{"route": "bedrock"}}, "route_unsupported"},
-		"no kind means claude":            {map[string]any{"route": map[string]any{"route": "bedrock", "connection": "c1"}}, "route_unsupported"},
+		"claude, route not on its list":   {map[string]any{"kind": "claude", "route": map[string]any{"route": "vertex"}}, "route_unsupported"},
+		"no kind means claude":            {map[string]any{"route": map[string]any{"route": "vertex", "connection": "c1"}}, "route_unsupported"},
 		"claude route on another kind":    {map[string]any{"kind": "codex", "route": map[string]any{"route": "anthropic-api"}}, "route_unsupported"},
 		"unknown route":                   {map[string]any{"kind": "claude", "route": map[string]any{"route": "nope"}}, "bad_route"},
 		"empty selection":                 {map[string]any{"kind": "claude", "route": map[string]any{}}, "bad_route"},
@@ -59,12 +59,12 @@ func TestScheduleRouteSelection(t *testing.T) {
 	api, _, mv := newSchedAPITest(t)
 	const base = `"spec_kind":"cron","spec":"0 9 * * *","prompt":"x"`
 	for name, b := range map[string]string{
-		"known route, not on the kind's list": `{` + base + `,"route":"bedrock"}`,
+		"known route, not on the kind's list": `{` + base + `,"route":"vertex"}`,
 		"on another kind":                     `{` + base + `,"agent_kind":"codex","route":"openai-api"}`,
 		"unknown route":                       `{` + base + `,"route":"nope"}`,
 		"connection without route":            `{` + base + `,"route_connection":"c1"}`,
 		"on an assistant schedule":            `{` + base + `,"session_mode":"assistant","route":"anthropic-api"}`,
-		"reuse mode":                          `{` + base + `,"session_mode":"reuse","reuse_target":"s1","route":"bedrock"}`,
+		"reuse mode":                          `{` + base + `,"session_mode":"reuse","reuse_target":"s1","route":"vertex"}`,
 	} {
 		rec := doJSON(api.create, mv, "POST", b, "")
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "route") {
@@ -82,7 +82,7 @@ func TestScheduleRouteSelection(t *testing.T) {
 	var dto scheduleDTO
 	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
 	for name, patch := range map[string]string{
-		"route":      `{"route":"bedrock"}`,
+		"route":      `{"route":"vertex"}`,
 		"connection": `{"route_connection":"c1"}`,
 		"unknown":    `{"route":"nope"}`,
 	} {
@@ -103,7 +103,7 @@ func TestFireRefusesRouteSelection(t *testing.T) {
 		for _, kind := range []string{"", "claude", "codex"} {
 			// A zero wakeFirer would panic on the first store call: the refusal has to come first.
 			_, _, err := (&wakeFirer{}).fire(t.Context(), store.Schedule{ID: "s", SessionMode: mode, AgentKind: kind,
-				Route: "bedrock", RouteConnection: "c1"}, time.Now())
+				Route: "vertex", RouteConnection: "c1"}, time.Now())
 			if err == nil || !strings.Contains(err.Error(), "route_unsupported") {
 				t.Errorf("fire %s/%q = %v, want a route_unsupported refusal", mode, kind, err)
 			}

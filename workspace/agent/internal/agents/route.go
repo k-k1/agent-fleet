@@ -40,6 +40,11 @@ type RoutePlan struct {
 	// environment or the tmux server carries lists them here: the credential of the OTHER route
 	// is the case that matters.
 	Unset []string
+	// Settings are KEY=VALUE pairs, none of them secret, that the harness also pins in its own
+	// settings layer, so a settings file edited while the session runs cannot change them. A
+	// route whose variables the harness reads from its settings needs this beside Unset, which
+	// pins names to empty.
+	Settings []string
 	// Args are extra program arguments.
 	Args []string
 	// Daemon names the shared runtime the session must run on when the route needs a daemon of

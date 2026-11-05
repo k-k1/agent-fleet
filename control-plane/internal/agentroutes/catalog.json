@@ -60,7 +60,8 @@
       "kind": "claude",
       "routes": [
         "anthropic-api",
-        "anthropic-subscription"
+        "anthropic-subscription",
+        "bedrock"
       ]
     },
     {
