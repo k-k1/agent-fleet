@@ -843,6 +843,58 @@
   white-space: nowrap;
 }
 
+/* A long workspace name truncates instead of widening the table; the constant `af-ws-` prefix is
+   hidden (the full name stays in the title). */
+.pool-ws {
+  display: inline-block;
+  max-width: 12ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.pool-ws-prefix {
+  display: none;
+}
+
+/* AZ and volume size sit under their ID instead of widening the row. */
+.pool-az {
+  display: block;
+}
+
+/* Cells that carry badges may wrap them onto a second line rather than widen the row. */
+.pool-table th,
+.pool-table td {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.pool-table td.pool-wrap {
+  white-space: normal;
+}
+
+/* Template badges sit under the version, one per line. */
+.pool-table td.pool-wrap .pool-badge {
+  display: flex;
+  width: fit-content;
+  margin: 2px 0 0;
+}
+
+/* Stacked buttons keep the pinned column narrow. */
+.pool-table .pool-actions button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+}
+
+/* Row actions stay reachable while the table scrolls sideways: pinned to the right edge. */
+.pool-table .pool-actions {
+  position: sticky;
+  right: 0;
+  background: var(--bg);
+}
+
 .admin-table td {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border2);

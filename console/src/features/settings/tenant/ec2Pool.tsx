@@ -178,6 +178,18 @@ type Home = {
 // fixed unit would print unreadable figures like 43200.
 type TR = ReturnType<typeof useT>;
 
+/** A workspace name is `af-ws-<tenant>-<user>`: the constant prefix is hidden by CSS (it stays in
+ *  the DOM text) and the rest truncates with an ellipsis; the full name is in `title`. */
+function WsName({ name }: { name: string }) {
+  const pre = name.startsWith("af-ws-") ? "af-ws-" : "";
+  return (
+    <span className="pool-ws" title={name}>
+      {pre && <span className="pool-ws-prefix">{pre}</span>}
+      {name.slice(pre.length)}
+    </span>
+  );
+}
+
 function fmtIdle(min: number, tr: TR): string {
   if (min < 60) return tr("pool.idle_min", { n: String(min) });
   if (min < 60 * 48) return tr("pool.idle_hour", { n: (min / 60).toFixed(1) });
@@ -416,14 +428,14 @@ export function PoolView() {
                   {/* The action column: empty for every row but a quarantined one, and the
                       backup column this header used to carry belongs to the HOMES table —
                       slots have no spare copy, so it labelled a cell that was never rendered. */}
-                  <th />
+                  <th className="pool-actions" />
                 </tr>
               </thead>
               <tbody>
                 {slots.map((s) => (
                   <tr key={s.instance_id}>
                     <td className="mono">{s.instance_id}</td>
-                    <td className="mono">{s.instance_type}<span className="muted"> {s.az}</span></td>
+                    <td className="mono">{s.instance_type}<span className="pool-az muted" title={s.az}>{s.az}</span></td>
                     <td>
                       <span className={"state-dot " + (s.quarantined ? "off" : s.state === "running" ? "on" : "off")} />
                       {s.quarantined ? (
@@ -445,12 +457,12 @@ export function PoolView() {
                         </span>
                       )}
                     </td>
-                    <td className="mono">
-                      {s.workspace || <span className="muted">{tr("pool.free_slot")}</span>}
+                    <td className="mono pool-ws-cell">
+                      {s.workspace ? <WsName name={s.workspace} /> : <span className="muted">{tr("pool.free_slot")}</span>}
                       {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                     </td>
                     <td>{s.workspace ? fmtIdle(s.idle_minutes, tr) : "–"}</td>
-                    <td>
+                    <td className="pool-wrap">
                       {s.template_version ? <span className="mono">v{s.template_version}</span> : <span className="muted">–</span>}
                       {s.template_outdated && (
                         <span
@@ -474,7 +486,7 @@ export function PoolView() {
                     {/* Quarantine is the only state this screen can act on, and the button is
                         the only way the product has to stop paying for one (the sweeper's
                         terminate stage filters on af-role=slot and never collects it). */}
-                    <td>
+                    <td className="pool-actions">
                       {s.quarantined ? (
                         <Button small variant="danger" onClick={() => { setKillErr(""); setKilling(s); }}>
                           {tr("pool.terminate")}
@@ -526,12 +538,12 @@ export function PoolView() {
               <tbody>
                 {homes.map((h) => (
                   <tr key={h.volume_id || h.workspace}>
-                    <td className="mono">
-                      {h.workspace}
+                    <td className="mono pool-ws-cell">
+                      <WsName name={h.workspace} />
                       {bakeWS.has(h.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                     </td>
                     <td className="mono">
-                      {h.volume_id ? `${h.volume_id} (${h.size_gib} GiB)` : <span className="muted">{tr("pool.no_volume")}</span>}
+                      {h.volume_id ? <>{h.volume_id}<span className="pool-az muted">{h.size_gib} GiB</span></> : <span className="muted">{tr("pool.no_volume")}</span>}
                     </td>
                     <td>
                       {h.snapshot_id && !h.volume_id ? (
