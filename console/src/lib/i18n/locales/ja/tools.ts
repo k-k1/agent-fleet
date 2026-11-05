@@ -1444,4 +1444,8 @@ export const tools = {
   "ssm.f_confirm_use_hint": "af-aws-exec は、各セッションでこのプロファイルを初めて使う前に Console で確認を求めます。プロファイルは ~/.aws/config に書かれません（af-aws-exec を通して実行してください）。間違いや気付かれない使用を防ぐもので、わざと回り込もうとするエージェントは、たとえば同じサインインのほかのプロファイルが保っているログインを使って回り込めます。",
   "ssm.meta_confirm_use": "使用前に確認",
   "ssm.meta_confirm_use_on": "オン",
+  "ssm.f_model_route": "モデルのルート",
+  "ssm.f_model_route_hint": "Bedrock ルートを選んだセッションが、AF のルートゲートウェイ経由で Amazon Bedrock のモデルを呼ぶときに、このプロファイルを使えるようにします。ロールが bedrock:InvokeModel* だけを許可しているプロファイルにだけ付けてください。ルートは毎ターン使われるので、広い権限のプロファイルを付けると Workspace で最も広い常設の権限になります。セッションにはこのプロファイルの AWS 認証情報は渡りません。印のないプロファイルはルートとして拒否されます。",
+  "ssm.meta_model_route": "モデルのルート",
+  "ssm.meta_model_route_on": "オン",
 };

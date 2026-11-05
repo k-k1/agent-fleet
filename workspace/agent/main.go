@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memoryx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mempressure"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memreview"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/statemig"
@@ -213,6 +214,10 @@ func serve() {
 	// `aws --profile <name>`, an SDK or a build tool can select them (issue #998).
 	// Backgrounded and fail-open like the MCP pull.
 	awsx.StartSync()
+	// The AF route gateway (ADR 0128 P2a): a loopback listener of its own that forwards a
+	// session's Bedrock model calls with credentials the session never sees. Nothing selects it
+	// until a harness is wired to the route.
+	defer routegw.StartForAgent(ensureAWSCLI)()
 	// The member's Google Cloud profiles become configurations in the Agent's own gcloud
 	// root (ADR 0107 decision 1). Backgrounded and fail-open like the AWS pull.
 	gcpx.StartSync()

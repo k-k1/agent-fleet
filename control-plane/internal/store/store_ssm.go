@@ -32,6 +32,11 @@ type SSMProfile struct {
 	// UPDATE, ignoring ConfirmUse: a write that did not name the field must not put back a
 	// value read before another write changed it (ADR 0126 decision 8). Never stored.
 	KeepConfirmUse bool
+	// ModelRoute marks the profile as usable by the AF route gateway for Bedrock model calls (ADR
+	// 0128 decision 11, option C2). KeepModelRoute is KeepConfirmUse's twin: a write that did not
+	// name the mark leaves what the row has at the UPDATE. Never stored.
+	ModelRoute     bool
+	KeepModelRoute bool
 	// SignInID is the shared sign-in the profile is in, "" for a sign-in of its own (ADR
 	// 0125). SignInName is that sign-in's name, read with the row.
 	SignInID, SignInName string
@@ -116,17 +121,18 @@ type SSMStore interface {
 // --- SSM login config (docs/log/p3-ssm-session.md) --------------------------
 
 const ssmProfileCols = `SELECT id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
-	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, sign_in_id,
+	kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, model_route, sign_in_id,
 	COALESCE((SELECT si.name FROM ssm_sign_in si WHERE si.id = ssm_profile.sign_in_id), '') FROM ssm_profile`
 
 func scanSSMProfile(row scanner) (SSMProfile, error) {
 	var p SSMProfile
-	var confirm int
+	var confirm, modelRoute int
 	err := row.Scan(&p.ID, &p.MembershipID, &p.Label, &p.StartURL, &p.SSORegion,
 		&p.AccountID, &p.RoleName, &p.Region, &p.CreatedAt,
-		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds, &confirm,
+		&p.Kind, &p.SourceProfileID, &p.RoleARN, &p.ExternalID, &p.SessionName, &p.DurationSeconds, &confirm, &modelRoute,
 		&p.SignInID, &p.SignInName)
 	p.ConfirmUse = confirm != 0
+	p.ModelRoute = modelRoute != 0
 	return p, err
 }
 
@@ -205,11 +211,11 @@ func (s *SQL) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at,
-			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, sign_in_id)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			kind, source_profile_id, role_arn, external_id, session_name, duration_seconds, confirm_use, model_route, sign_in_id)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.MembershipID, p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region, p.CreatedAt,
 		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds, boolInt(p.ConfirmUse),
-		p.SignInID); err != nil {
+		boolInt(p.ModelRoute), p.SignInID); err != nil {
 		return err
 	}
 	if err := checkSignInNames(ctx, tx, p.MembershipID); err != nil {
@@ -281,18 +287,22 @@ func (s *SQL) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	// membership_id in the WHERE so a member can only update their own row. The CASE keeps
 	// confirm_use in the same statement when the write did not name it, so no value read
 	// earlier can overwrite one committed since.
-	keep := 0
+	keep, keepRoute := 0, 0
 	if p.KeepConfirmUse {
 		keep = 1
+	}
+	if p.KeepModelRoute {
+		keepRoute = 1
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?,
 			kind=?, source_profile_id=?, role_arn=?, external_id=?, session_name=?, duration_seconds=?,
-			confirm_use = CASE WHEN ? = 1 THEN confirm_use ELSE ? END, sign_in_id=?
+			confirm_use = CASE WHEN ? = 1 THEN confirm_use ELSE ? END,
+			model_route = CASE WHEN ? = 1 THEN model_route ELSE ? END, sign_in_id=?
 		   WHERE id=? AND membership_id=?`,
 		p.Label, p.StartURL, p.SSORegion, p.AccountID, p.RoleName, p.Region,
 		ssmKindOrDefault(p.Kind), p.SourceProfileID, p.RoleARN, p.ExternalID, p.SessionName, p.DurationSeconds,
-		keep, boolInt(p.ConfirmUse), p.SignInID,
+		keep, boolInt(p.ConfirmUse), keepRoute, boolInt(p.ModelRoute), p.SignInID,
 		p.ID, p.MembershipID); err != nil {
 		return err
 	}

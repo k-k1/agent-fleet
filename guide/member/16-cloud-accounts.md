@@ -350,6 +350,18 @@ An agent can answer the request through the workspace's own interface (the conve
 without the Console"), or reuse a login that another profile on the same sign-in keeps open. A profile that stays
 behind a sign-in of its own, logged out after use, still needs your device-code approval every time.
 
+**Model route.** A profile can be marked "Model route" in its form. The mark says that the profile's role carries only
+`bedrock:InvokeModel*` (the calls that run a model) and nothing broader, and it is what lets the AF route gateway use the
+profile for Amazon Bedrock model calls (ADR 0128). The gateway runs inside the workspace, signs each model call with the
+profile's short-lived credentials and forwards it, so the session that makes the calls never receives AWS credentials.
+It forwards only `invoke`, `invoke-with-response-stream`, `converse` and `converse-stream`; it cannot list models or call any
+other AWS operation. A profile that is not marked is refused as a route, with the reason in the answer to the call. A route
+token is tied to one session, to the profile as it is now and to the route the session selected: it ends with the session, when the
+selection changes, when the profile is edited, unmarked or deleted, and after 8 hours at most. A profile that is set to
+"Confirm before use" is asked about in the same way as above, on the first model call of a session, and is checked again on
+every call. The mark is only your statement: AF cannot read the role's permissions, so mark a profile only when you have
+checked them. Nothing in the Console or the harnesses selects the Bedrock route yet.
+
 **A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
 SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot
 read an SSO profile (older SDKs such as the AWS SDK for Java v1, common in Gradle/Maven plugins), asks you in the
