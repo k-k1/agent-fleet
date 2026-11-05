@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Permission choices the Console's permission card and the chat bridge offer. They name what
@@ -296,17 +297,22 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	})
 }
 
-// cols is the display width of s: East Asian wide runes take two columns.
-func cols(s string) int {
-	n := 0
+// cols is the display width of s, and whether it can be trusted. East Asian wide runes take
+// two columns; a zero-width or combining rune makes the width unknowable here (it would be
+// counted as a column and make a short line look pane-wide), so such a line reports ok=false
+// and is never treated as filling the pane.
+func cols(s string) (n int, ok bool) {
 	for _, r := range s {
+		if unicode.In(r, unicode.Mn, unicode.Me, unicode.Mc, unicode.Cf, unicode.Cc) {
+			return 0, false
+		}
 		n++
 		if r >= 0x1100 && (r <= 0x115F || (r >= 0x2E80 && r <= 0xA4CF) || (r >= 0xAC00 && r <= 0xD7A3) ||
 			(r >= 0xF900 && r <= 0xFAFF) || (r >= 0xFE30 && r <= 0xFE6F) || (r >= 0xFF00 && r <= 0xFF60) || (r >= 0xFFE0 && r <= 0xFFE6)) {
 			n++
 		}
 	}
-	return n
+	return n, true
 }
 
 // matchLogicalLine tries the first line of region as it stands, then rejoined with the lines the
@@ -328,6 +334,12 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 				shown += sep
 			}
 			shown += ln
+			// The logical line goes on while this physical line fills the pane. It is compared
+			// only once complete: an early physical line equal to P proves nothing about what
+			// the continuation adds.
+			if c, ok := cols(ln); ok && width > 0 && c+1 >= width-1 && k+1 < len(lines) {
+				continue
+			}
 			if truncated {
 				if strings.HasPrefix(shown, target) {
 					return TargetMatches
@@ -335,10 +347,7 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 			} else if eq(shown) {
 				return TargetMatches
 			}
-			// Another line joins only when this one filled the pane.
-			if width <= 0 || cols(ln)+1 < width-1 {
-				break
-			}
+			break
 		}
 	}
 	return TargetDiffers

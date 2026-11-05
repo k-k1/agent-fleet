@@ -440,3 +440,25 @@ func TestPermissionAnswerRefusesJoinedHardNewline(t *testing.T) {
 		t.Fatalf("keys sent:\n%s", b)
 	}
 }
+
+// Round 3 through the card and the bridge button: a wrapped Q whose first physical line equals P.
+func TestPermissionAnswerRefusesWrappedSuffix(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	first := "echo " + strings.Repeat("a", 73)
+	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n", 1)
+	stubPane(t, pane)
+	sid := permissionSession(t, "slot88")
+	status.WritePendingPermission(sid, "Bash · "+first)
+	tok := permissionToken(sid)
+	meta, _ := session.ReadMeta("slot88")
+	if rec := postPermission("slot88", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Fatalf("card: %d %s", rec.Code, rec.Body.String())
+	}
+	if out, err := answerClaudePermission(meta, claude.PermAllow, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+		t.Fatalf("button: %q %v", out, err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
+	}
+}

@@ -146,3 +146,28 @@ func TestCheckTargetDoesNotJoinHardNewlines(t *testing.T) {
 		t.Errorf("first line alone: %v", got)
 	}
 }
+
+// A line that fills the pane continues onto the next, and only the completed logical line is
+// compared: P's text as Q's first physical line proves nothing about the rest (review round 3).
+func TestCheckTargetComparesTheWholeWrappedLine(t *testing.T) {
+	first := "echo " + strings.Repeat("a", 73) // 78 columns: the pane edge with the indent
+	m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " "+first+"\n && rm -rf build\n")
+	if got := m.CheckTarget("Bash · "+first, ""); got != TargetDiffers {
+		t.Errorf("arbitrary suffix: %v", got)
+	}
+	// Control: the same wrap, completed as P says.
+	if got := m.CheckTarget("Bash · "+first+" && rm -rf build", ""); got != TargetMatches {
+		t.Errorf("complete wrapped command: %v", got)
+	}
+}
+
+// Zero-width marks make a line look wider than it is; such a line never counts as pane-wide.
+func TestCheckTargetDoesNotTrustCombiningWidth(t *testing.T) {
+	first := "echo " + strings.Repeat("a\u0301", 37) // 42 columns, 79 runes
+	m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " "+first+"\n rm -rf build\n")
+	for _, sep := range []string{" ", ""} {
+		if got := m.CheckTarget("Bash · "+first+sep+"rm -rf build", ""); got != TargetDiffers {
+			t.Errorf("sep %q: %v", sep, got)
+		}
+	}
+}
