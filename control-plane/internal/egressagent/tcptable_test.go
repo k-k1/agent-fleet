@@ -182,3 +182,36 @@ func TestTCPResolverSeedsFromDisk(t *testing.T) {
 		t.Fatalf("restart lost the earlier addresses: %v", got)
 	}
 }
+
+// A restart while the CP is unreachable keeps resolving from the policy on disk, and an
+// address keeps the last-seen time it had: the restart neither extends its life nor stops
+// it from expiring.
+func TestTCPResolverRestartWithoutCPKeepsRefreshingAndExpiring(t *testing.T) {
+	dns := &fakeDNS{answers: map[string][]string{"db.example.com": {"198.51.100.4"}}}
+	r, clock, path := newTestResolver(t, dns)
+	r.setPolicy(tcpEntries(t, "tcp:db.example.com:1433"), true)
+	r.refresh(context.Background())
+
+	// The agent restarts 10 minutes later; the host now answers with another address.
+	*clock = clock.Add(10 * time.Minute)
+	dns2 := &fakeDNS{answers: map[string][]string{"db.example.com": {"198.51.100.9"}}}
+	r2 := newTCPResolver(path)
+	r2.now = func() time.Time { return *clock }
+	r2.lookup = dns2.lookup
+	r2.refresh(context.Background()) // no setPolicy: the CP is down
+	if dns2.calls != 1 {
+		t.Fatalf("a restarted resolver did not look anything up: %d", dns2.calls)
+	}
+	tb := readTable(t, path)
+	if !tb.Enforce || len(tb.Entries) != 1 || !slices.Equal(tb.Entries[0].Addrs, []string{"198.51.100.4", "198.51.100.9"}) {
+		t.Fatalf("after 10 min: %+v", tb)
+	}
+
+	// 15 minutes after the old address was last answered, it leaves, though this process
+	// started only 6 minutes ago.
+	*clock = clock.Add(6 * time.Minute)
+	r2.refresh(context.Background())
+	if got := readTable(t, path).Entries[0].Addrs; !slices.Equal(got, []string{"198.51.100.9"}) {
+		t.Fatalf("the old address outlived its retention across a restart: %v", got)
+	}
+}

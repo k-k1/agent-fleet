@@ -75,8 +75,11 @@ type TCPRelay struct {
 	Logf  func(format string, args ...any)
 	// MaxConns caps open connections; 0 is defaultMaxConns. A connection past it is
 	// refused and recorded with the verdict deny-cap.
-	MaxConns   int
-	CloseGrace time.Duration
+	MaxConns int
+	// HalfClose is how long one direction may stay open after the other ended; 0 is
+	// defaultHalfClose. A peer that does not close after the client has gone would
+	// otherwise hold its connection slot for ever.
+	HalfClose  time.Duration
 	WriteStall time.Duration
 	Now        func() time.Time
 
@@ -295,14 +298,56 @@ func (r *TCPRelay) serve(ctx context.Context, c *net.TCPConn) {
 	if !ok {
 		return
 	}
-	grace, stall := r.CloseGrace, r.WriteStall
-	if grace <= 0 {
-		grace = defaultCloseGrace
+	half, stall := r.HalfClose, r.WriteStall
+	if half <= 0 {
+		half = defaultHalfClose
 	}
 	if stall <= 0 {
 		stall = defaultWriteStall
 	}
-	pipe(c, ut, ut, grace, stall)
+	pipeTCP(c, ut, half, stall)
+}
+
+// defaultHalfClose is long enough for a command's answer after the client sent its last
+// byte (SSH, a database query) and short enough that a peer which never closes cannot
+// keep a slot for ever.
+const defaultHalfClose = 5 * time.Minute
+
+// pipeTCP copies both ways. A direction that ended cleanly is passed on as a half-close
+// and the other keeps flowing, for at most halfClose; any error, or the deadline, closes
+// both. Unlike pipe (for the Squid side, whose own timeouts end a tunnel) a raw TCP peer
+// has no one else to end the connection.
+func pipeTCP(c, u *net.TCPConn, halfClose, stall time.Duration) {
+	done := make(chan error, 2)
+	go func() {
+		err := copyStall(u, c, stall)
+		if err == nil {
+			u.CloseWrite()
+		}
+		done <- err
+	}()
+	go func() {
+		err := copyStall(c, u, stall)
+		if err == nil {
+			c.CloseWrite()
+		}
+		done <- err
+	}()
+	if err := <-done; err != nil {
+		c.Close()
+		u.Close()
+		<-done
+		return
+	}
+	t := time.NewTimer(halfClose)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+		c.Close()
+		u.Close()
+		<-done
+	}
 }
 
 // TCPLog appends af2 lines to a file and rotates it by size, renaming to .0, .1, ... the

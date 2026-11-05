@@ -88,7 +88,7 @@ the AWS hosts stay on the NAT gateway either way.
 | Per-GB cost | NAT data processing on all workspace traffic, S3 included | none for workspace traffic, only normal data transfer |
 | Operations | managed by AWS | an instance to run; replacing it leaves workspaces without egress for a few minutes |
 | Availability | AWS-managed, one Availability Zone | one instance in one Availability Zone, replaced automatically |
-| Non-HTTP traffic (SSH git, databases) | works | blocked unless an administrator names the destination and port (`tcp:` entries), then recorded |
+| Non-HTTP traffic (SSH git, databases) | works | in enforce, blocked unless an administrator names the destination and port (`tcp:` entries); recorded either way |
 | Address to allow-list | the NAT gateway's | two: the NAT gateway's (Control Plane and hosts) and the gateway's (workspaces), which you can allocate and register before switching |
 
 The egress gateway is new and was verified on a test deployment only, **not yet in production**; `pause.sh` stops it and

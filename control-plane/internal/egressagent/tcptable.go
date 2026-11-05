@@ -42,6 +42,10 @@ type tcpTableEntry struct {
 	From  int      `json:"from"`
 	To    int      `json:"to"`
 	Addrs []string `json:"addrs"`
+	// Seen is when each address was last answered (unix ms). The relay ignores it; a
+	// restarted agent restores its retention clock from it, so a restart neither extends
+	// an address's life nor stops it from expiring.
+	Seen map[string]int64 `json:"seen,omitempty"`
 }
 
 // tcpResolver keeps the addresses each passthrough host has resolved to.
@@ -73,8 +77,9 @@ func newTCPResolver(path string) *tcpResolver {
 	return r
 }
 
-// seedFromDisk restores the addresses a previous run wrote, as seen now, so a restart
-// does not shrink the set to whatever the first lookup returns.
+// seedFromDisk restores what a previous run wrote: the policy (entries and mode), so that
+// DNS refresh and expiry go on while the CP is unreachable, and each address's last-seen
+// time. An address with no recorded time (a table from before Seen) counts as seen now.
 func (r *tcpResolver) seedFromDisk() {
 	if r.path == "" {
 		return
@@ -88,13 +93,24 @@ func (r *tcpResolver) seedFromDisk() {
 		return
 	}
 	now := r.now()
+	var entries []egressallow.TCPEntry
 	for _, e := range t.Entries {
+		te, err := egressallow.ParseTCPEntry(egressallow.TCPEntry{Host: e.Host, From: e.From, To: e.To}.String())
+		if err != nil {
+			continue
+		}
+		entries = append(entries, te)
 		for _, s := range e.Addrs {
 			if a, err := netip.ParseAddr(s); err == nil {
-				r.note(e.Host, a, now)
+				at := now
+				if ms, ok := e.Seen[s]; ok {
+					at = time.UnixMilli(ms)
+				}
+				r.note(e.Host, a, at)
 			}
 		}
 	}
+	r.set, r.enforce, r.entries = true, t.Enforce, entries
 }
 
 func (r *tcpResolver) note(host string, a netip.Addr, at time.Time) {
@@ -181,9 +197,10 @@ func (r *tcpResolver) refresh(ctx context.Context) {
 	}
 	t := tcpTable{Enforce: enforce, Entries: []tcpTableEntry{}}
 	for _, e := range entries {
-		te := tcpTableEntry{Host: e.Host, From: e.From, To: e.To, Addrs: []string{}}
-		for a := range r.seen[e.Host] {
+		te := tcpTableEntry{Host: e.Host, From: e.From, To: e.To, Addrs: []string{}, Seen: map[string]int64{}}
+		for a, at := range r.seen[e.Host] {
 			te.Addrs = append(te.Addrs, a.String())
+			te.Seen[a.String()] = at.UnixMilli()
 		}
 		sort.Strings(te.Addrs)
 		t.Entries = append(t.Entries, te)

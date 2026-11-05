@@ -936,7 +936,7 @@ either way: only workspaces go through the gateway.
 | Per-GB cost | NAT data processing ($0.045–0.062/GB) on all workspace traffic, S3 included | none for workspace traffic (normal data transfer only; same-region S3 transfer is free) |
 | Operations | managed by AWS | an instance to run: AMI updates replace it, a replacement leaves workspaces without egress for a few minutes |
 | Availability | AWS-managed, one AZ | one instance in one AZ (an Auto Scaling group of one replaces it) |
-| Non-HTTP egress (SSH git, other ports) | works | off by default; per named destination (`tcp:` entries, below), otherwise dropped and recorded |
+| Non-HTTP egress (SSH git, other ports) | works | enforce: only named destinations (`tcp:` entries, below), the rest dropped and recorded; log-only (the default mode): passed and recorded as would-deny |
 | Workspace egress address | `NatEip` | the gateway's own address, a second one to allow-list (#2728) |
 
 **How it works.** An Auto Scaling group of one AL2023 instance in `PublicSubnet0`. At boot it
@@ -957,9 +957,11 @@ variables, with the task-role credential endpoint (`169.254.170.2`), instance me
 (#2674) runs. The token itself never reaches a workspace: it is the agent's credential.
 
 **Non-HTTP TCP (SSH git, databases; #3369).** `GatewaySg` admits all TCP from the workspace subnets
-and the decision is nftables' and the passthrough relay's. Nothing leaves except HTTP(S) until an
-administrator adds a **`tcp:` allowlist entry** (Admin Egress tab, or a member's proposal that an
-administrator approves): `tcp:git.example.com:22`, `tcp:db.example.com:1433`, or a range
+and the decision is nftables' and the passthrough relay's. **In enforce**, nothing leaves except
+HTTP(S) until an administrator adds a **`tcp:` allowlist entry**; **in log-only (the default mode)**
+every TCP port still passes and is recorded as refused, so nothing is closed until you switch to
+enforce. Entries are added in the Admin Egress tab, or proposed by a member and approved by an
+administrator: `tcp:git.example.com:22`, `tcp:db.example.com:1433`, or a range
 `tcp:db.example.com:11000-11999` for a service that redirects clients (at most 2048 ports; an exact
 host or an IPv4 address; never 53, 80, 443, 853 or 3128). The agent resolves the host every 30 s and
 the relay admits connections to the addresses it has resolved to in the last 15 minutes, on those

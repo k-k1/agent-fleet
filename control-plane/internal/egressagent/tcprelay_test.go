@@ -304,3 +304,79 @@ func TestTCPLogRotatesLikeSquid(t *testing.T) {
 		}
 	}
 }
+
+// A peer that never closes after the client has gone must not hold its slot for ever.
+func TestTCPRelayReleasesTheSlotWhenThePeerNeverCloses(t *testing.T) {
+	r, table, logPath := newTestTCPRelay(t)
+	r.MaxConns = 1
+	r.HalfClose = 20 * time.Millisecond
+	writeTable(t, table, true, tcpTableEntry{Host: "git.example.com", From: 22, To: 22, Addrs: []string{"203.0.113.9"}})
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() { // reads until the client's EOF, then holds the connection open
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() { io.Copy(io.Discard, c); time.Sleep(time.Minute); c.Close() }()
+		}
+	}()
+	addr := startTCPRelay(t, r, ap("203.0.113.9:22"), ln.Addr().String())
+	c, err := net.Dial("tcp4", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprint(c, "hello\n")
+	c.Close()
+	time.Sleep(300 * time.Millisecond)
+	c2, err := net.Dial("tcp4", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	fmt.Fprint(c2, "again\n")
+	time.Sleep(100 * time.Millisecond)
+	for _, l := range readLog(t, logPath) {
+		if strings.Contains(l, "deny-cap") {
+			t.Fatalf("the slot was never released: %q", readLog(t, logPath))
+		}
+	}
+}
+
+// A client half-close is passed on and the answer still flows back (SSH, a query).
+func TestTCPRelayKeepsHalfClose(t *testing.T) {
+	r, table, _ := newTestTCPRelay(t)
+	writeTable(t, table, true, tcpTableEntry{Host: "git.example.com", From: 22, To: 22, Addrs: []string{"203.0.113.9"}})
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() { // answers only after the client's EOF
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		b, _ := io.ReadAll(c)
+		time.Sleep(50 * time.Millisecond)
+		fmt.Fprintf(c, "got %d bytes\n", len(b))
+	}()
+	addr := startTCPRelay(t, r, ap("203.0.113.9:22"), ln.Addr().String())
+	c, err := net.Dial("tcp4", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fmt.Fprint(c, "hello")
+	c.(*net.TCPConn).CloseWrite()
+	c.SetDeadline(time.Now().Add(2 * time.Second))
+	got, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil || got != "got 5 bytes\n" {
+		t.Fatalf("answer after a half-close: %q, %v", got, err)
+	}
+}

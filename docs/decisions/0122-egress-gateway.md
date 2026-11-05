@@ -785,7 +785,8 @@ DNS rule of open point 4 stands).
    name or an IPv4 literal; no suffix, no CIDR). The entry stays one string in the existing
    table, so there is no schema change. Ports 80, 443 and 3128 (the recorded HTTP path) and 53
    and 853 (DNS) are refused, and so is a range that contains one. A range covers at most 2048
-   ports. Off by default: with no `tcp:` entry nothing but HTTP(S) leaves the gateway.
+   ports. No entry means no named destination: in enforce (see 5) nothing but HTTP(S) leaves the
+   gateway; in log-only, the default mode, an unnamed destination still passes and is recorded.
 3. **Proposal.** Members propose `tcp:` entries and an administrator approves them, the flow every
    allowlist entry already has. The approval UI will flag that the entry opens non-HTTP access
    (Console, a later change).
@@ -795,7 +796,8 @@ DNS rule of open point 4 stands).
    exists because the workspace and the gateway resolve a name separately: with rotating answers,
    the address the workspace dialled may no longer be in the gateway's latest answer (the same
    problem the 443 relay documents for Squid's own lookup). The result is one file the relay
-   reads; the relay and the agent share nothing else.
+   reads, with each address's last-seen time, so a restarted agent resumes the same retention
+   clock and the same policy while the CP is unreachable; the relay and the agent share nothing else.
 5. **log-only.** A connection to an address no entry names is admitted and recorded as refused
    (`would-deny`), the way log-only treats HTTP: it records the verdict enforce would give. In
    enforce it is dropped and recorded (`deny`). A named destination is admitted in both modes.
@@ -821,7 +823,9 @@ ports an organisation will add and drops without a record; nftables' input chain
 own egress security group is the default (all outbound), which the relay needs to dial any named
 port; nothing narrows it. UDP and ICMP are still dropped by the security group, unrecorded. The
 relay caps open connections (4096, as the 443 relay does); a connection past it is closed, logged
-by the relay and recorded as `deny-cap`. `pause.sh`'s drain also waits for the relay's log to be
+by the relay and recorded as `deny-cap`. After one side of a connection ends, the other may
+keep flowing for 5 minutes (a half-close, as SSH and queries use), then both are closed, so a peer
+that never closes cannot hold a slot. `pause.sh`'s drain also waits for the relay's log to be
 accepted by the CP; the 443 relay, the pause and resume paths are otherwise unchanged.
 
 **Deviation from the design discussed on #3369.** The port is carried on the wire as `port` but

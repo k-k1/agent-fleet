@@ -115,7 +115,7 @@ in the Console.
    cannot verify a day it wrote earlier and the purge stops there. Nothing in the bucket expires unless
    `egress_archive_retention_days` is set. On AWS it is the `EgressArchive` parameter of the data stack.
    **Non-HTTP destinations (AWS egress gateway only).** SSH git and databases are not HTTP, so a host
-   entry does not cover them: they are dropped unless you add a **`tcp:<host>:<port>`** entry
+   entry does not cover them: in enforce they are dropped unless you add a **`tcp:<host>:<port>`** entry
    (`tcp:git.example.com:22`, `tcp:db.example.com:1433`, or a range `tcp:db.example.com:11000-11999`
    of at most 2048 ports; an exact host or IPv4 address; never ports 53, 80, 443, 853 or 3128). It goes
    through the same proposal and approval, and approving it opens non-HTTP access to that host. The
