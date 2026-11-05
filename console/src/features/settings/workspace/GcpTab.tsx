@@ -15,6 +15,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { GCP_REGION_CODES, gcpZonesOf } from "../../../lib/gcpRegions.ts";
 import { GcpConfigImport } from "./GcpConfigImport.tsx";
+import { RecentCloudRuns } from "../../cloudruns/cloudRuns.tsx";
 import { Field, Meta } from "../parts/mcpForm.tsx";
 import { RegionSelect } from "../parts/RegionSelect.tsx";
 import { FieldGroup, deleteRow, pick, postJSON } from "./SsmTab.tsx";
@@ -337,6 +338,7 @@ export function GcpTab() {
             )}
         {importOpen && <GcpConfigImport onClose={() => setImportOpen(false)} onImported={reload} />}
       </section>
+      <RecentCloudRuns provider="gcp" />
       {loginFor && (
         <GcpProfileLoginModal
           key={loginFor.profile.name}

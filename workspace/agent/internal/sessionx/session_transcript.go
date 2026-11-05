@@ -315,7 +315,8 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if pp := pendingPeersWire(name); len(pp) > 0 {
 		resp["pendingPeers"] = pp
 	}
-	// af-aws-exec runs that reported this session (ADR 0126): rows between the turns.
+	// af-aws-exec / af-gcloud-exec runs that reported this session (ADR 0126): the Console draws
+	// each under the tool call it matches, or between the turns when none does.
 	if runs := cloudruns.ForSession(name); len(runs) > 0 {
 		resp["cloudRuns"] = runs
 	}

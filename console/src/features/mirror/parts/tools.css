@@ -62,6 +62,17 @@ button.mt-tool-outhead {
   border-radius: 4px;
   opacity: 0.85;
 }
+/* Names the two blocks of a call that carries both its whole command and its output; two bare
+   <pre> in a row read as one. */
+.mt-tool-output-label {
+  margin: 4px 0 0 18px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+/* A shell call's whole command: the left rule sets it apart from its output. */
+.mt-tool-command {
+  border-left: 2px solid color-mix(in srgb, var(--fg) 25%, transparent);
+}
 /* An edit expanded in place, for views with no diff pane to open (the shared-session
    view — the DTO keeps the diff body but drops the path, docs/log/59 §3). Sits in the same
    slot as .mt-tool-output and borrows the diff pane's dv-* row styling (viewer.css). */

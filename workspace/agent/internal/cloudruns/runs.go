@@ -1,4 +1,4 @@
-// Package cloudruns keeps one row per cloud-wrapper run (af-aws-exec today) in a spool the
+// Package cloudruns keeps one row per cloud-wrapper run (af-aws-exec, af-gcloud-exec) in a spool the
 // Agent serves to the Console: the session's mirror shows its own rows, and Settings shows
 // the recent rows of every session (ADR 0126 decisions 1 and 2).
 //
@@ -58,9 +58,12 @@ type Row struct {
 	// Session is the session the run reported, when its name is a valid one.
 	Session   string `json:"session,omitempty"`
 	StartedAt string `json:"startedAt"`
-	// EndedAt is set for a refused run. A run that started has no end here: the wrapper
-	// becomes the command, so nothing is left to see how it ended.
+	// EndedAt is set for a refused run, and for a run whose wrapper supervised the command
+	// (af-gcloud-exec), together with Exit. An af-aws-exec run that started has no end here: the
+	// wrapper becomes the command, so nothing is left to see how it ended.
 	EndedAt string `json:"endedAt,omitempty"`
+	// Exit is the command's exit status, when a supervising wrapper saw it end.
+	Exit    *int   `json:"exit,omitempty"`
 	Profile string `json:"profile,omitempty"`
 	Account string `json:"account,omitempty"`
 	Role    string `json:"role,omitempty"`
@@ -78,6 +81,11 @@ type Row struct {
 	Refused string `json:"refused,omitempty"`
 	// SignIn is the shared sign-in (ADR 0125) the profile logs in through, by name.
 	SignIn string `json:"signIn,omitempty"`
+	// Project, Principal and Impersonates are a Google Cloud run's identity: the profile's
+	// project, the account the token was minted for, and the service account it impersonates.
+	Project      string `json:"project,omitempty"`
+	Principal    string `json:"principal,omitempty"`
+	Impersonates string `json:"impersonates,omitempty"`
 	// Target is the SSM target of a session start; the one argument a row may carry.
 	Target string `json:"target,omitempty"`
 	// IdentityFromSettings marks a row whose identity is what Settings says the pane will use,
@@ -94,6 +102,9 @@ var (
 	roleRe    = regexp.MustCompile(`^[A-Za-z0-9+=,.@_-]{1,64}$`)
 	regionRe  = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 	fileRe    = regexp.MustCompile(`^[0-9]{19}-[0-9a-f]{8}\.json$`)
+	// projectRe admits a project id, the domain-scoped form ("example.com:p") included.
+	projectRe = regexp.MustCompile(`^[a-z0-9.:-]{1,64}$`)
+	emailRe   = regexp.MustCompile(`^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}$`)
 )
 
 // keep returns v when it matches re, "" otherwise.
@@ -209,6 +220,33 @@ func (r *Run) Resolved(id Identity) {
 	r.row.Role = keep(id.Role, roleRe)
 	r.row.Region = keep(id.Region, regionRe)
 	r.row.Source = keep(id.Source, profileRe)
+	r.write()
+}
+
+// GCPIdentity is what af-gcloud-exec resolved the run to.
+type GCPIdentity struct {
+	Project, Principal, Impersonates, Region string
+}
+
+// ResolvedGCP records a Google Cloud run's identity, just before the command starts.
+func (r *Run) ResolvedGCP(id GCPIdentity) {
+	if r == nil {
+		return
+	}
+	r.row.Project = keep(id.Project, projectRe)
+	r.row.Principal = keep(id.Principal, emailRe)
+	r.row.Impersonates = keep(id.Impersonates, emailRe)
+	r.row.Region = keep(id.Region, regionRe)
+	r.write()
+}
+
+// Ended records the exit status of a command its wrapper supervised.
+func (r *Run) Ended(code int) {
+	if r == nil {
+		return
+	}
+	r.row.EndedAt = now().UTC().Format(time.RFC3339Nano)
+	r.row.Exit = &code
 	r.write()
 }
 
@@ -399,7 +437,10 @@ func ForSession(sessionName string) []Row {
 // Recent returns the newest n rows across every session and the workspace's spool, newest
 // first. The workspace spool's age limit is applied first, so a row past it is never listed
 // even when nothing has been written since.
-func Recent(n int) []Row {
+func Recent(n int) []Row { return RecentOf("", n) }
+
+// RecentOf is Recent restricted to one provider's rows ("" = every provider).
+func RecentOf(provider string, n int) []Row {
 	t := now()
 	pruneWorkspace(t)
 	cut := t.Add(-workspaceKeep).UnixNano()
@@ -423,12 +464,16 @@ func Recent(n int) []Row {
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].name > all[j].name })
-	if len(all) > n {
-		all = all[:n]
-	}
-	out := make([]Row, 0, len(all))
+	out := make([]Row, 0, min(len(all), n))
 	for _, a := range all {
-		out = append(out, readRows(a.dir, []string{a.name})...)
+		if len(out) == n {
+			break
+		}
+		for _, row := range readRows(a.dir, []string{a.name}) {
+			if provider == "" || row.Provider == provider {
+				out = append(out, row)
+			}
+		}
 	}
 	return out
 }

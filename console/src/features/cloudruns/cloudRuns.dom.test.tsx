@@ -7,11 +7,11 @@ import { createRoot, type Root } from "react-dom/client";
 let runsReply: unknown = { runs: [] };
 vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
-  api: vi.fn(async (path: string) => (path === "api/aws-runs" ? runsReply : {})),
+  api: vi.fn(async (path: string) => (path.startsWith("api/aws-runs") ? runsReply : {})),
 }));
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-const { RecentCloudRuns, cloudRunCards } = await import("./cloudRuns.tsx");
+const { RecentCloudRuns, cloudRunCards, CloudRunGroup } = await import("./cloudRuns.tsx");
 const { TranscriptView } = await import("../mirror/transcript/TranscriptView.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 
@@ -55,6 +55,15 @@ describe("RecentCloudRuns", () => {
     expect(items[0].textContent).toContain("deployer");
     expect(items[0].textContent).toContain("123456789012 / Dev");
     expect(items[1].textContent).toContain(t("cloudruns.no_session"));
+  });
+  it("keeps one cloud's rows for that cloud's tab", async () => {
+    runsReply = { runs: [run("b", "2026-10-30T12:00:02Z", { provider: "gcp", profile: "gdev" }), run("a", "2026-10-30T12:00:01Z")] };
+    await render(<RecentCloudRuns provider="gcp" />);
+    const { api } = await import("../../core/api/client.ts");
+    expect(api).toHaveBeenCalledWith("api/aws-runs?provider=gcp");
+    const items = [...host.querySelectorAll(".cloud-runs-list li")];
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toContain("gdev");
   });
   it("says so when there are none, and when the list cannot be read", async () => {
     runsReply = { runs: [] };
@@ -101,5 +110,54 @@ describe("cloudRunCards in the mirror", () => {
     const text = host.textContent ?? "";
     expect(text.indexOf("alpha")).toBeGreaterThan(text.indexOf("second"));
     expect(text.indexOf("beta")).toBeGreaterThan(text.indexOf("alpha"));
+  });
+});
+
+describe("CloudRunGroup", () => {
+  const click = async (el: Element) => {
+    await act(async () => {
+      (el as HTMLElement).click();
+    });
+  };
+  it("draws several runs as one line with a count, and opens to each run", async () => {
+    const runs = [run("a", "2026-10-30T12:00:01Z"), run("b", "2026-10-30T12:00:02Z"), run("c", "2026-10-30T12:00:03Z")];
+    await render(<CloudRunGroup runs={runs as never} />);
+    const head = host.querySelector("button.cloud-run-head")!;
+    expect(host.querySelectorAll(".cloud-run")).toHaveLength(1);
+    expect(head.textContent).toContain("prod · 123456789012 / Dev");
+    expect(head.textContent).toContain("3 runs");
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+    // The provider is the WS bar's brand icon, named for a screen reader.
+    expect(head.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("AWS");
+    expect(head.querySelector(".codicon")?.className).not.toContain("codicon-cloud");
+    await click(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelectorAll(".cloud-run-list .cloud-run")).toHaveLength(3);
+  });
+  it("shows a refused run without opening the group", async () => {
+    const runs = [run("a", "2026-10-30T12:00:01Z"), run("b", "2026-10-30T12:00:02Z", { refused: "login_required" })];
+    await render(<CloudRunGroup runs={runs as never} />);
+    const head = host.querySelector("button.cloud-run-head")!;
+    expect(head.className).toContain("failed");
+    expect(head.querySelector(".cloud-run-failed")?.textContent).toBe("1 failed");
+  });
+  it("draws one run as its own line, with nothing to open", async () => {
+    await render(<CloudRunGroup runs={[run("a", "2026-10-30T12:00:01Z", { provider: "gcp", project: "p1", principal: "me@example.com" })] as never} />);
+    expect(host.querySelector("button")).toBeNull();
+    expect(host.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe("Google Cloud");
+    expect(host.textContent).toContain("p1 / me@example.com");
+  });
+  it("names the group under a tool call for assistive technology", async () => {
+    await render(<CloudRunGroup runs={[run("a", "2026-10-30T12:00:01Z")] as never} attached />);
+    const g = host.querySelector(".cloud-run-group")!;
+    expect(g.getAttribute("role")).toBe("group");
+    expect(g.getAttribute("aria-label")).toBe(t("cloudruns.on_tool"));
+  });
+  it("collapses the loose runs of one place into one group", () => {
+    const cards = cloudRunCards(
+      [run("a", "2026-10-30T12:05:00Z"), run("b", "2026-10-30T12:06:00Z"), run("c", "2026-10-30T12:20:00Z")] as never,
+      ["2026-10-30T12:00:00Z", "2026-10-30T12:10:00Z"],
+    );
+    expect(cards).toHaveLength(2);
   });
 });

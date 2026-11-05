@@ -119,7 +119,7 @@ func agentContractFamilies() []contractFamily {
 			},
 		},
 
-		// One af-aws-exec run (ADR 0126): the mirror's `cloudRuns` and the rows of GET /aws-runs.
+		// One af-aws-exec or af-gcloud-exec run (ADR 0126): the mirror's `cloudRuns` and the rows of GET /aws-runs.
 		{
 			name:    "cloudruns.Row",
 			goType:  reflect.TypeOf(cloudruns.Row{}),
@@ -127,7 +127,8 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/cloudruns/cloudRunsModel.ts",
 			tsName:  "CloudRun",
 			tsKeys: keySet("id", "provider", "session", "startedAt", "endedAt", "profile", "account", "role", "region", "source",
-				"program", "service", "operation", "approvedOutsideConsole", "refused", "signIn", "target", "identityFromSettings"),
+				"program", "service", "operation", "approvedOutsideConsole", "refused", "signIn", "target", "identityFromSettings",
+				"exit", "project", "principal", "impersonates"),
 			tsOnly: map[string]string{},
 			goOnly: map[string]string{},
 		},
@@ -314,7 +315,7 @@ func agentContractFamilies() []contractFamily {
 			tsName:  "Part",
 			tsKeys: keySet("kind", "text", "tool", "info", "cause", "output", "prompt",
 				"agentType", "status", "model", "file", "edits", "verb", "questions",
-				"answer", "declined", "plan", "qid", "files", "caption", "stderr"),
+				"answer", "declined", "plan", "qid", "files", "caption", "stderr", "command"),
 			tsOnly: map[string]string{
 				"stderr": "[gap] the Console's Part declares it but transcript.Part never emits it. Whether the Console actually reads it has not been investigated.",
 			},
@@ -355,7 +356,7 @@ var transcriptPartBinding = map[string]string{
 	"Output": "output", "Prompt": "prompt", "AgentType": "agentType", "Status": "status",
 	"Model": "model", "Questions": "questions", "Answer": "answer", "Declined": "declined",
 	"Plan": "plan", "File": "file", "Edits": "edits", "Verb": "verb", "Files": "files",
-	"Caption": "caption", "QID": "qid",
+	"Caption": "caption", "QID": "qid", "Command": "command",
 }
 
 var transcriptTurnBinding = map[string]string{
@@ -435,6 +436,7 @@ var cloudRunRowBinding = map[string]string{
 	"Profile": "profile", "Account": "account", "Role": "role", "Region": "region", "Source": "source",
 	"Program": "program", "Service": "service", "Operation": "operation", "ApprovedOutsideConsole": "approvedOutsideConsole",
 	"Refused": "refused", "SignIn": "signIn", "Target": "target", "IdentityFromSettings": "identityFromSettings",
+	"Exit": "exit", "Project": "project", "Principal": "principal", "Impersonates": "impersonates",
 }
 
 var browserPageBinding = map[string]string{

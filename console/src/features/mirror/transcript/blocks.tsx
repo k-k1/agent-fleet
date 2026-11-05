@@ -828,7 +828,38 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
           <span className="mt-tool-name">{p.tool}</span>
           {p.info && <span className="mt-tool-info">{p.info}</span>}
         </button>
-        {open && <pre className="mt-tool-output">{p.output}</pre>}
+        {open && (
+          <>
+            {p.command && (
+              <>
+                <div className="mt-tool-output-label">{tr("mirror.command_label")}</div>
+                <pre className="mt-tool-output mt-tool-command">{p.command}</pre>
+                <div className="mt-tool-output-label">{tr("mirror.output_label")}</div>
+              </>
+            )}
+            <pre className="mt-tool-output">{p.output}</pre>
+          </>
+        )}
+      </div>
+    );
+  }
+  // A shell call whose label cut its command opens to the whole of it, so the reader can see
+  // what a `bash -c '…'` or a heredoc actually ran.
+  if (p.command) {
+    return (
+      <div className={"mt-tool-out" + (open ? " open" : "")}>
+        <button
+          type="button"
+          className="mt-tool mt-tool-outhead"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          title={open ? tr("mirror.collapse_command") : tr("mirror.show_command")}
+        >
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
+          <span className="mt-tool-name">{p.tool}</span>
+          {p.info && <span className="mt-tool-info">{p.info}</span>}
+        </button>
+        {open && <pre className="mt-tool-output mt-tool-command">{p.command}</pre>}
       </div>
     );
   }
@@ -841,13 +872,33 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
   );
 }
 
+// ToolTraceWithNote is a trace with the host's note under it (TranscriptCaps.toolNote).
+function ToolTraceWithNote({ p, note, onOpenDiff }: { p: Part; note?: ReactNode; onOpenDiff?: (p: Part) => void }) {
+  if (note == null) return <ToolTrace p={p} onOpenDiff={onOpenDiff} />;
+  return (
+    <div className="mt-tool-noted">
+      <ToolTrace p={p} onOpenDiff={onOpenDiff} />
+      {note}
+    </div>
+  );
+}
+
 // ToolRun renders a run of consecutive tool traces. A lone tool shows inline as
 // before; two or more collapse (default) into a summary row — "N tools" with a
 // per-tool tally (Edit×3 · Bash×2) — that expands on click to the individual traces,
 // keeping each edit's click-to-diff.
-export function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpenDiff?: (p: Part) => void }) {
+// `noteOf(i)` is the host's note for the tool at position i (TranscriptCaps.toolNote).
+export function ToolRun({
+  tools,
+  onOpenDiff,
+  noteOf,
+}: {
+  tools: { p: Part; i: number }[];
+  onOpenDiff?: (p: Part) => void;
+  noteOf?: (i: number) => ReactNode | null;
+}) {
   const [open, setOpen] = useState(false);
-  if (tools.length === 1) return <ToolTrace p={tools[0].p} onOpenDiff={onOpenDiff} />;
+  if (tools.length === 1) return <ToolTraceWithNote p={tools[0].p} note={noteOf?.(tools[0].i)} onOpenDiff={onOpenDiff} />;
   const tally: [string, number][] = [];
   const at: Record<string, number> = {};
   for (const { p } of tools) {
@@ -875,7 +926,7 @@ export function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]
       {open && (
         <div className="mt-toolrun-body">
           {tools.map(({ p, i }) => (
-            <ToolTrace key={i} p={p} onOpenDiff={onOpenDiff} />
+            <ToolTraceWithNote key={i} p={p} note={noteOf?.(i)} onOpenDiff={onOpenDiff} />
           ))}
         </div>
       )}

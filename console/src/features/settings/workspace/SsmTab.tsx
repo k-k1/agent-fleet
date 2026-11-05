@@ -167,7 +167,7 @@ export function SsmTab() {
         setOpen={setProfileOpen}
       />
       <HostSection hosts={hosts} loadErr={hostsErr} profiles={profiles} reload={reload} onNeedProfile={focusProfile} />
-      <RecentCloudRuns />
+      <RecentCloudRuns provider="aws" />
     </div>
   );
 }

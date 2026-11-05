@@ -123,6 +123,41 @@ func TestRowLifecycle(t *testing.T) {
 	}
 }
 
+func TestGCPRowLifecycle(t *testing.T) {
+	useRoot(t)
+	liveSession(t, "cr-gcp")
+	r := Begin("gcp", "cr-gcp", "dev", []string{"/opt/sdk/bin/gcloud", "compute", "instances", "list"})
+	r.ResolvedGCP(GCPIdentity{Project: "example.com:my-project", Principal: "dev@example.com",
+		Impersonates: "deployer@my-project.iam.gserviceaccount.com", Region: "asia-northeast1"})
+	g := ForSession("cr-gcp")[0]
+	if g.Provider != "gcp" || g.Project != "example.com:my-project" || g.Principal != "dev@example.com" ||
+		g.Impersonates != "deployer@my-project.iam.gserviceaccount.com" || g.Region != "asia-northeast1" ||
+		g.Program != "gcloud" || g.Service != "" || g.Operation != "" {
+		t.Fatalf("row = %+v", g)
+	}
+	if g.EndedAt != "" || g.Exit != nil {
+		t.Fatalf("a running command has an end: %+v", g)
+	}
+	r.Ended(7)
+	g = ForSession("cr-gcp")[0]
+	if g.EndedAt == "" || g.Exit == nil || *g.Exit != 7 || g.Refused != "" {
+		t.Fatalf("ended row = %+v", g)
+	}
+	// Exit 0 is still written: "exit 0" and "no exit seen" are different rows.
+	r0 := Begin("gcp", "cr-gcp", "dev", []string{"gcloud"})
+	r0.Ended(0)
+	if b, _ := json.Marshal(ForSession("cr-gcp")[1]); !bytes.Contains(b, []byte(`"exit":0`)) {
+		t.Fatalf("exit 0 was dropped: %s", b)
+	}
+
+	bad := Begin("gcp", "cr-gcp", "dev", []string{"gcloud"})
+	bad.ResolvedGCP(GCPIdentity{Project: "My Project", Principal: "not an email", Impersonates: "x@y\nz", Region: "Asia"})
+	g = ForSession("cr-gcp")[2]
+	if g.Project != "" || g.Principal != "" || g.Impersonates != "" || g.Region != "" {
+		t.Fatalf("values outside the allowlist were kept: %+v", g)
+	}
+}
+
 func TestIdentityOutsideTheAllowlistIsDropped(t *testing.T) {
 	useRoot(t)
 	liveSession(t, "cr-allow")
@@ -190,6 +225,15 @@ func TestSentinelNeverReachesARowOrTheWire(t *testing.T) {
 		r := Begin("aws", "cr-sentinel", "prod", argv)
 		r.Resolved(Identity{Account: "123456789012", Role: "Admin", Region: "us-east-1"})
 	}
+	for _, argv := range [][]string{
+		{"gcloud", "secrets", "versions", "access", s},
+		{"gcloud", "--project", s, "compute", "instances", "list"},
+		{"bq", "query", "SELECT '" + s + "'"},
+	} {
+		r := Begin("gcp", "cr-sentinel", "dev", argv)
+		r.ResolvedGCP(GCPIdentity{Project: "my-project", Principal: "dev@example.com", Region: "asia-northeast1"})
+		r.Ended(0)
+	}
 	err := filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 		if err != nil || fi.IsDir() {
 			return err
@@ -212,8 +256,8 @@ func TestSentinelNeverReachesARowOrTheWire(t *testing.T) {
 		t.Fatalf("GET /aws-runs holds the sentinel: %s", rec.Body.String())
 	}
 	var wire RecentWire
-	if err := json.Unmarshal(rec.Body.Bytes(), &wire); err != nil || len(wire.Runs) != 9 {
-		t.Fatalf("GET /aws-runs = %v, %d rows; want 9", err, len(wire.Runs))
+	if err := json.Unmarshal(rec.Body.Bytes(), &wire); err != nil || len(wire.Runs) != 12 {
+		t.Fatalf("GET /aws-runs = %v, %d rows; want 12", err, len(wire.Runs))
 	}
 	if b, _ := json.Marshal(ForSession("cr-sentinel")); bytes.Contains(b, []byte(s)) {
 		t.Fatalf("ForSession holds the sentinel: %s", b)
@@ -237,5 +281,31 @@ func TestAWSCommandsMatchPin(t *testing.T) {
 	}
 	if len(cmds) < 300 || !cmds["s3"]["ls"] || !cmds["sts"]["get-caller-identity"] {
 		t.Fatalf("command table looks wrong: %d services", len(cmds))
+	}
+}
+
+// Settings' tabs ask for one cloud's rows: the filter applies before the limit, so a busy cloud
+// never empties the other's list.
+func TestRecentOfFiltersBeforeTheLimit(t *testing.T) {
+	useRoot(t)
+	liveSession(t, "cr-prov")
+	Begin("aws", "cr-prov", "old-aws", []string{"aws"})
+	for i := 0; i < 5; i++ {
+		Begin("gcp", "cr-prov", "g", []string{"gcloud"})
+	}
+	if got := RecentOf("aws", 3); len(got) != 1 || got[0].Profile != "old-aws" {
+		t.Fatalf("aws rows = %+v", got)
+	}
+	if got := RecentOf("gcp", 3); len(got) != 3 {
+		t.Fatalf("gcp rows = %d, want 3", len(got))
+	}
+	if got := RecentOf("", 3); len(got) != 3 || got[0].Provider != "gcp" {
+		t.Fatalf("all rows = %+v", got)
+	}
+	rec := httptest.NewRecorder()
+	HandleRecent(rec, httptest.NewRequest("GET", "/aws-runs?provider=aws", nil))
+	var wire RecentWire
+	if err := json.Unmarshal(rec.Body.Bytes(), &wire); err != nil || len(wire.Runs) != 1 || wire.Runs[0].Provider != "aws" {
+		t.Fatalf("GET /aws-runs?provider=aws = %v %+v", err, wire.Runs)
 	}
 }

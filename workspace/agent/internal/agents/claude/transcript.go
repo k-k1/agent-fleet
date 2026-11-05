@@ -960,6 +960,7 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 				}
 			}
 			part := transcript.Part{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input), CallID: b.ID}
+			part.Command = bashCommand(b.Name, b.Input, part.Info)
 			if f, es := toolEdits(b.Name, b.Input); len(es) > 0 {
 				part.File, part.Edits = f, es
 			}
@@ -1443,6 +1444,25 @@ func parseQuestions(input json.RawMessage) []transcript.Question {
 		return nil
 	}
 	return in.Questions
+}
+
+// bashCommand is a Bash call's whole command when its one-line label (info) is not all of it,
+// and "" otherwise.
+func bashCommand(name string, input json.RawMessage, info string) string {
+	if name != "Bash" || len(input) == 0 {
+		return ""
+	}
+	var in struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return ""
+	}
+	cmd := transcript.CapOutput(in.Command)
+	if cmd == "" || cmd == info {
+		return ""
+	}
+	return cmd
 }
 
 // toolInfo renders a short, single-line summary of a tool_use's input — the piece a
