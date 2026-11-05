@@ -139,16 +139,22 @@ func restoredDraft(captured, prompt string) bool {
 }
 
 // reclaimInterruptedPrompt takes a stopped prompt that claude put back into its input box out
-// again and returns its text, or "" when nothing was taken. emptyBefore is composerEmpty of
-// the pane read before the stop keys: text already in the box then was typed by someone, and
-// it is left alone. Text the stop left in the box that could not be taken out marks the session
-// in strandedPrompts. The caller holds the session's terminal lock (lockTerminal).
-func reclaimInterruptedPrompt(m session.Meta, pane string, emptyBefore bool) string {
+// again and returns its text, or "" when nothing was taken. before is the pane read before the
+// stop keys: text already in the box then was typed by someone (or the box could not be read),
+// and it is left alone, but the next send is still guarded (armUnprovenBox). Text the stop left
+// in the box that could not be taken out marks the session in strandedPrompts. The caller holds
+// the session's terminal lock (lockTerminal).
+func reclaimInterruptedPrompt(m session.Meta, pane string, before string) string {
 	// A new stop supersedes whatever an earlier one armed. The remembered submission belongs to
 	// this stop alone, whatever the stop finds.
 	lateWatch.Delete(m.Name)
+	unprovenBoxes.Delete(m.Name)
 	own := takeSubmitted(m.Name, pane)
-	if !emptyBefore || !restoresInterruptedPrompt(m.Kind) {
+	if !restoresInterruptedPrompt(m.Kind) {
+		return ""
+	}
+	if !composerEmpty(before) {
+		armUnprovenBox(m.Name, pane, before)
 		return ""
 	}
 	// The prompt is read on every poll, not once: claude logs the stopped prompt's user line
@@ -306,6 +312,58 @@ func lateRestoredBlocks(name, pane string) bool {
 	}
 	log.Printf("interrupt: %s: the input box holds text after a stop; the send is refused", name)
 	strandedPrompts.Store(name, struct{}{})
+	return true
+}
+
+// unprovenEntry is a stop whose pre-stop box was not provably empty: the pane, and what the box
+// held before the keys (baselineOK false when the frame could not be read at all).
+type unprovenEntry struct {
+	pane, baseline string
+	baselineOK     bool
+}
+
+// unprovenBoxes holds, per session, a stop on a kind that restores prompts which could not prove
+// the box was empty before the keys: a draft someone typed, or a pane claudeBox does not read
+// (observed: a stop during a UserPromptSubmit hook, issue #3373). Nothing is erased, since
+// whose text it is cannot be told; but returning unguarded let claude's restored prompt sit in
+// the box and the next send was typed after it, so both ran as one prompt.
+var unprovenBoxes sync.Map
+
+func armUnprovenBox(name, pane, before string) {
+	e := unprovenEntry{pane: pane}
+	if draft, _, ok := claudeBox(before); ok {
+		e.baseline, e.baselineOK = squashSpace(draft), true
+	}
+	unprovenBoxes.Store(name, e)
+}
+
+// unprovenBoxBlocks reports that a send to name must be refused: after a stop that could not
+// prove the box empty, the box holds text it did not hold before the keys. The rule is
+// "different from before", not "non-empty", so a member's own draft that merely sat there is
+// not refused (the send was typed after it before this guard existed, and refusing it forever
+// would lock the session on a draft the member chose to keep). When the frame is unreadable
+// (the case that armed this) the guard stays: claudeComposer's lax read picks the last "❯" row
+// and trims indentation, so it cannot prove text absent (a multiline prompt ending in an
+// indented "❯" reads empty). The guard never expires; only the strict claudeBox reading an
+// empty box, or one equal to the baseline, lifts it. Trade-off: a pane that stays unreadable
+// refuses sends until the box reads empty or a new stop supersedes the mark.
+func unprovenBoxBlocks(name, pane string) bool {
+	v, ok := unprovenBoxes.Load(name)
+	if !ok {
+		return false
+	}
+	e := v.(unprovenEntry)
+	lift := func() bool { unprovenBoxes.CompareAndDelete(name, v); return false }
+	if e.pane != pane {
+		return lift()
+	}
+	if draft, _, ok := claudeBox(reclaimCapture(pane)); ok {
+		d := squashSpace(draft)
+		if d == "" || (e.baselineOK && d == e.baseline) {
+			return lift()
+		}
+	}
+	log.Printf("interrupt: %s: the input box holds text it did not hold before the stop; the send is refused", name)
 	return true
 }
 
