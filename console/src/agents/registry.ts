@@ -96,6 +96,11 @@ export interface AgentCaps {
   // serve carry a form id, and its TUI form is tabbed (not the one-page menu the Console's keys
   // drive) with no measured key sequence (questionKeys.ts).
   questionByIdOnly: boolean;
+  // The CLI removes invisible characters (zero-width, bidi, BOM, controls but tab and LF, ...) from
+  // a prompt before logging it, so the mirror's Pending echo has to match a copy without them
+  // (samePromptIgnoringInvisible). Only claude does; for the others two prompts that differ only
+  // there are two prompts.
+  cleansInvisibleInput: boolean;
 }
 
 // A status chip for a session: codicon + label + color class (+ optional spinner).
@@ -204,6 +209,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     skillsCatalog: false,
     memberDefault: false,
     questionByIdOnly: false,
+    cleansInvisibleInput: false,
     ...overrides,
   };
 }
@@ -229,6 +235,7 @@ const PRESENTATION: Record<SessionKind, Presentation> = {
       skillsCatalog: true,
       memberDefault: true,
       scheduledRuns: true,
+      cleansInvisibleInput: true,
       permissionChoice: true, // approvals are answerable: status-hook permission state + the mirror's permission card
       chat: true,
       headlessChat: true, // Phase A: claude -p backs assistant chat (docs/log/19)

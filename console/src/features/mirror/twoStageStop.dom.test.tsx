@@ -476,3 +476,28 @@ describe("discard notice", () => {
     expect($(".mirror-discard")).toBeNull();
   });
 });
+
+describe("a Pending echo of a prompt with invisible characters", () => {
+  const sendText = async (text: string) => {
+    await act(async () => {
+      const el = composer()!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, text);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click($(".mirror-send"));
+  };
+  // claude logs the prompt without the zero-width space; codex logs it as sent.
+  it.each([
+    ["tui", "claude", 0],
+    ["managed", "codex", 1],
+  ] as const)("on %s (%s) lands on the turn without them: %i left Pending", async (driver, _kind, left) => {
+    messages = { status: "working", messages: [] };
+    turn = () => Promise.resolve({ status: 200, body: { sent: SESSION, op: "steer" } });
+    await mount(driver);
+    await sendText("x\u200by");
+    expect($$(".mirror-turn.user .mt-pending")).toHaveLength(1);
+    messages = { status: "idle", messages: [{ role: "user", text: "xy", idx: 5 }] };
+    await repoll();
+    expect($$(".mirror-turn.user .mt-pending")).toHaveLength(left);
+  });
+});

@@ -11,15 +11,23 @@ describe("echoLanded", () => {
   it("a pasted send resolves against claude's copy with the invisible characters removed", () => {
     const sent = "AAC と同じ規則にして\r\n\u00a0\r\n今の状態\t求められる\u200b確認";
     const logged = "AAC と同じ規則にして\n\u00a0\n今の状態\t求められる確認";
-    expect(echoLanded({ text: sent, sinceIdx: 10 }, [{ role: "user", text: logged, idx: 11 }], notNoise)).toBe(true);
+    const turns = [{ role: "user", text: logged, idx: 11 }];
+    expect(echoLanded({ text: sent, sinceIdx: 10, cleansInvisible: true }, turns, notNoise)).toBe(true);
+  });
+
+  it("an echo of a CLI that keeps invisible characters needs them in the turn", () => {
+    // codex logs "a\u2028b" as sent: the second, still pending "ab" must not land on it.
+    const turns = [{ role: "user", text: "a\u2028b", idx: 11 }];
+    expect(echoLanded({ text: "a\u2028b", sinceIdx: 10 }, turns, notNoise)).toBe(true);
+    expect(echoLanded({ text: "ab", sinceIdx: 10 }, turns, notNoise)).toBe(false);
   });
 
   it("a turn does not land the echo of a prompt that differs from it only in whitespace", () => {
     // Sends made before the transcript moves share one sinceIdx; only "a b" has been logged.
     const turns = [{ role: "user", text: "a b", idx: 11 }];
-    expect(echoLanded({ text: "a b", sinceIdx: 10 }, turns, notNoise)).toBe(true);
+    expect(echoLanded({ text: "a b", sinceIdx: 10, cleansInvisible: true }, turns, notNoise)).toBe(true);
     for (const other of ["ab", "a\nb", "a  b", " a\tb"]) {
-      expect(echoLanded({ text: other, sinceIdx: 10 }, turns, notNoise)).toBe(false);
+      expect(echoLanded({ text: other, sinceIdx: 10, cleansInvisible: true }, turns, notNoise)).toBe(false);
     }
   });
 
@@ -230,7 +238,7 @@ describe("withoutStoppedEcho (issue #3290)", () => {
 });
 
 describe("picking the echo when two differ only in what claude strips", () => {
-  const e = (id: number, text: string) => ({ id, text, sinceIdx: 0 });
+  const e = (id: number, text: string, cleansInvisible = true) => ({ id, text, sinceIdx: 0, cleansInvisible });
   it("a discard sweeps the echo with exactly its text, not the first lenient match", () => {
     const out = withoutDiscarded([e(1, "x\u200by"), e(2, "xy")], ["xy"]);
     expect(out.map((x) => x.id)).toEqual([1]);
@@ -244,5 +252,9 @@ describe("picking the echo when two differ only in what claude strips", () => {
   });
   it("a stop takes back claude's cleaned copy of a pasted prompt", () => {
     expect(withoutStoppedEcho([e(1, "x\u200by")], "xy", new Set([1]))).toEqual([]);
+  });
+  it("a discard leaves an echo of another CLI that differs only in invisible characters", () => {
+    const echoes = [e(1, "x\u2028y", false)];
+    expect(withoutDiscarded(echoes, ["xy"])).toBe(echoes);
   });
 });
