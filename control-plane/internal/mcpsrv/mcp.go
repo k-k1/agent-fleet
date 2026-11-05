@@ -716,8 +716,8 @@ func memberTools() []mcpTool {
 					"branch":           map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
 					"new_branch":       map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
 					"subdir":           map[string]any{"type": "string", "description": "relative path INSIDE the working copy to start the agent in, e.g. \"console\" or \"apps/web\" (optional; default = the working copy root). With worktree=true it is resolved inside the newly created worktree. A path that does not exist is rejected."},
-					"route":            map[string]any{"type": "string", "description": "explicit model route id (optional; omit to keep the kind's own default resolution). No kind accepts an explicit route yet, so a create naming one is refused with the reason, never run on the default route instead."},
-					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route)"},
+					"route":            map[string]any{"type": "string", "description": "explicit model route id (optional; omit to keep the kind's own default resolution). Only claude accepts one today: anthropic-subscription or anthropic-api (Terminal sessions). Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead."},
+					"route_connection": map[string]any{"type": "string", "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset)"},
 				},
 			},
 			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {

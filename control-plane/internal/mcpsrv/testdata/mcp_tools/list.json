@@ -702,11 +702,11 @@
             "type": "string"
           },
           "route": {
-            "description": "explicit model route id (optional; omit to keep the kind's own default resolution). No kind accepts an explicit route yet, so a create naming one is refused with the reason, never run on the default route instead.",
+            "description": "explicit model route id (optional; omit to keep the kind's own default resolution). Only claude accepts one today: anthropic-subscription or anthropic-api (Terminal sessions). Any other kind, or a route the kind does not declare, is refused with the reason, never run on the default route instead.",
             "type": "string"
           },
           "route_connection": {
-            "description": "stable reference to the connection the route runs on (optional; only with route)",
+            "description": "stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset)",
             "type": "string"
           },
           "subdir": {

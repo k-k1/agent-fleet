@@ -812,7 +812,7 @@
             "type": "string"
           },
           "route_connection": {
-            "description": "経路が使う接続の安定した参照（任意・route と一緒に指定）。anthropic-api は空か ANTHROPIC_API_KEY（自分の Anthropic API キー接続）だけ。",
+            "description": "経路が使う接続の安定した参照（任意・route と一緒に指定）。anthropic-api は空か ANTHROPIC_API_KEY（設定 > 接続 > エージェント > OpenCode カード > API キー の Anthropic プリセットに保存した自分のキー）だけ。",
             "type": "string"
           },
           "subdir": {
@@ -878,7 +878,7 @@
             "type": "string"
           },
           "route_connection": {
-            "description": "Stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, your own Anthropic API key connection",
+            "description": "Stable reference to the connection the route runs on (optional; only with route). anthropic-api takes empty or ANTHROPIC_API_KEY, the Anthropic API key you saved under Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset)",
             "type": "string"
           },
           "spend_cap_usd": {

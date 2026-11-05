@@ -2,12 +2,15 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,12 +51,12 @@ func TestClaudeDeclaresBothRoutesAndIsAnAdapter(t *testing.T) {
 // The credential of one route reaches its own session and the other route's credentials are
 // removed from the process; nothing goes through the Agent's own environment.
 func TestApplyRouteIsolatesCredentials(t *testing.T) {
-	withAPIKey(t, "sk-ant-api03-test", nil)
+	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
 	api, err := agentImpl{}.ApplyRoute(session.Meta{}, *sel(RouteAPI, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(api.Env, []string{"ANTHROPIC_API_KEY=sk-ant-api03-test"}) {
+	if !slices.Equal(api.Env, []string{"ANTHROPIC_API_KEY=sk-ant-api03-test-0123456789abcdef"}) {
 		t.Errorf("api env = %v", api.Env)
 	}
 	if !slices.Contains(api.Unset, "CLAUDE_CODE_OAUTH_TOKEN") || slices.Contains(api.Unset, "ANTHROPIC_API_KEY") {
@@ -80,7 +83,7 @@ func TestApplyRouteIsolatesCredentials(t *testing.T) {
 
 func TestRouteChecksWhoseConnectionAndWhetherItIsThere(t *testing.T) {
 	ctx := context.Background()
-	withAPIKey(t, "sk-ant-api03-test", nil)
+	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
 	ok := func(s *routes.Selection) *agents.RouteRefusal { return agentImpl{}.CheckRoute(ctx, *s, "") }
 	if ref := ok(sel(RouteAPI, "")); ref != nil {
 		t.Errorf("own key, empty ref: %+v", ref)
@@ -117,7 +120,7 @@ func TestRouteChecksWhoseConnectionAndWhetherItIsThere(t *testing.T) {
 }
 
 func TestBuildLaunchRouteEnvAndProgram(t *testing.T) {
-	withAPIKey(t, "sk-ant-api03-secret", nil)
+	withAPIKey(t, "sk-ant-api03-secret-0123456789abcdef", nil)
 	isolateSlot(t)
 	base := session.Meta{Kind: session.KindClaude, Name: "r-none", Dir: t.TempDir()}
 	none, err := launchOf(t, base)
@@ -135,7 +138,7 @@ func TestBuildLaunchRouteEnvAndProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(plan.Env, []string{"ANTHROPIC_API_KEY=sk-ant-api03-secret"}) {
+	if !slices.Equal(plan.Env, []string{"ANTHROPIC_API_KEY=sk-ant-api03-secret-0123456789abcdef"}) {
 		t.Errorf("api plan env = %v", plan.Env)
 	}
 	if strings.Contains(plan.Program, "sk-ant") {
@@ -240,7 +243,7 @@ func writeFile(t *testing.T, path, body string) {
 // would override is refused with the file named, in every layer, for both routes; an empty
 // selection launches as it always did whatever the files say.
 func TestRouteLaunchRefusedOnSettingsConflict(t *testing.T) {
-	withAPIKey(t, "sk-ant-api03-test", nil)
+	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
 	isolateSlot(t)
 	cfg := isolateClaudeConfig(t)
 	managed := t.TempDir()
@@ -347,7 +350,7 @@ func TestBindRouteDoesNotRebindAReplacedKey(t *testing.T) {
 
 // Foundry is another selector the CLI honours: removed for both routes, and refused in settings.
 func TestFoundryIsIsolated(t *testing.T) {
-	withAPIKey(t, "sk-ant-api03-test", nil)
+	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
 	for _, route := range []string{RouteAPI, RouteSubscription} {
 		plan, err := agentImpl{}.ApplyRoute(session.Meta{}, *sel(route, ""))
 		if err != nil || !slices.Contains(plan.Unset, "CLAUDE_CODE_USE_FOUNDRY") {
@@ -383,5 +386,143 @@ func TestRouteHeldWatchesRunningSessions(t *testing.T) {
 	}
 	if ref := (agentImpl{}).RouteHeld(none); ref != nil {
 		t.Errorf("a session with no selection was judged: %+v", ref)
+	}
+}
+
+func approvalsIn(t *testing.T) (approved, rejected []string, root map[string]any) {
+	t.Helper()
+	b, err := os.ReadFile(claudeJSONPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &root); err != nil {
+		t.Fatal(err)
+	}
+	resp, _ := root["customApiKeyResponses"].(map[string]any)
+	for _, v := range resp["approved"].([]any) {
+		approved = append(approved, fmt.Sprint(v))
+	}
+	for _, v := range resp["rejected"].([]any) {
+		rejected = append(rejected, fmt.Sprint(v))
+	}
+	return
+}
+
+// The CLI's "use this API key?" prompt preselects No (= the claude.ai login), so an anthropic-api
+// launch records the Yes beforehand: only the key's last 20 characters, and an earlier No for the
+// same key is withdrawn.
+func TestBuildLaunchPreApprovesTheBoundKey(t *testing.T) {
+	const key = "sk-ant-api03-SECRETSECRETSECRETSECRETSECRET-tailtailtailtail"
+	withAPIKey(t, key, nil)
+	isolateSlot(t)
+	suffix := key[len(key)-20:]
+	pre := `{"keep":{"a":1},"customApiKeyResponses":{"approved":["other"],"rejected":["` + suffix + `","x"]}}`
+	if err := os.WriteFile(claudeJSONPath(), []byte(pre), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Kind: session.KindClaude, Name: "r-appr", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
+	if _, err := launchOf(t, m); err != nil {
+		t.Fatal(err)
+	}
+	approved, rejected, root := approvalsIn(t)
+	if !slices.Equal(approved, []string{"other", suffix}) || !slices.Equal(rejected, []string{"x"}) {
+		t.Errorf("approved=%v rejected=%v", approved, rejected)
+	}
+	if root["keep"] == nil {
+		t.Error("an unrelated key of .claude.json was lost")
+	}
+	b, _ := os.ReadFile(claudeJSONPath())
+	if strings.Contains(string(b), key) {
+		t.Error("the whole key was written to .claude.json")
+	}
+	// A second launch changes nothing.
+	if _, err := launchOf(t, m); err != nil {
+		t.Fatal(err)
+	}
+	if a2, _, _ := approvalsIn(t); !slices.Equal(a2, approved) {
+		t.Errorf("approval duplicated: %v", a2)
+	}
+}
+
+// No selection and the subscription route record no approval: nothing about them changes.
+func TestBuildLaunchWithoutAPIRouteRecordsNoApproval(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-whatever-whatever-whatever", nil)
+	isolateSlot(t)
+	for _, r := range []*routes.Selection{nil, sel(RouteSubscription, "")} {
+		m := session.Meta{Kind: session.KindClaude, Name: "r-noappr", Dir: t.TempDir(), Route: r}
+		if _, err := launchOf(t, m); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(claudeJSONPath())
+		if strings.Contains(string(b), "customApiKeyResponses") {
+			t.Errorf("route %v wrote an approval: %s", r, b)
+		}
+	}
+}
+
+// A config dir that cannot hold the file stops the launch: a pane that waits on the prompt is not
+// an option. A file in place of the directory fails for every uid, root included.
+func TestBuildLaunchRefusesWhenApprovalCannotBeStored(t *testing.T) {
+	withAPIKey(t, "sk-ant-api03-whatever-whatever-whatever", nil)
+	isolateSlot(t)
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", blocker)
+	m := session.Meta{Kind: session.KindClaude, Name: "r-bad", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
+	_, err := launchOf(t, m)
+	var ref *agents.RouteRefusal
+	if !errors.As(err, &ref) || ref.Code != routes.CodeRouteUnavailable {
+		t.Errorf("err = %v, want a route_unavailable refusal", err)
+	}
+}
+
+// A corrupt .claude.json is set aside and rebuilt for the trust step; the approval then lands.
+// A key too short to store without writing it whole is refused.
+func TestApprovalSelfHealsCorruptFileAndRefusesShortKey(t *testing.T) {
+	isolateSlot(t)
+	const key = "sk-ant-api03-whatever-whatever-whatever"
+	if err := os.WriteFile(claudeJSONPath(), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ensureFolderTrusted(t.TempDir())
+	if err := approveAPIKey(key); err != nil {
+		t.Fatal(err)
+	}
+	if a, _, _ := approvalsIn(t); len(a) != 1 {
+		t.Errorf("approved = %v", a)
+	}
+	if err := approveAPIKey("short-key"); err == nil {
+		t.Error("a short key was accepted")
+	}
+	if b, _ := os.ReadFile(claudeJSONPath()); strings.Contains(string(b), "short-key") {
+		t.Error("short key written")
+	}
+}
+
+// Concurrent launches lose no update and leave valid JSON.
+func TestApprovalsAreSerialised(t *testing.T) {
+	isolateSlot(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ensureFolderTrusted(t.TempDir())
+			_ = approveAPIKey(fmt.Sprintf("sk-ant-api03-xxxxxxxxxxxxxxxx-yyyyyyyyyy%04d", i))
+		}()
+	}
+	wg.Wait()
+	if a, _, _ := approvalsIn(t); len(a) != 12 {
+		t.Errorf("approved = %d entries, want 12", len(a))
+	}
+}
+
+// The refusal names the place the key is really entered.
+func TestNoAPIKeyRefusalNamesTheRealSettingsPath(t *testing.T) {
+	msg := noAPIKey().Message
+	if !strings.Contains(msg, "Settings > Connections > Agents > the OpenCode card > API keys") || strings.Contains(msg, "provider keys") {
+		t.Errorf("refusal = %q", msg)
 	}
 }

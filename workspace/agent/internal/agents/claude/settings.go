@@ -3,12 +3,15 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -60,50 +63,172 @@ func ensureFolderTrusted(dir string) {
 	if dir == "" {
 		return
 	}
-	p := claudeJSONPath()
-	root := map[string]any{}
-	if b, err := os.ReadFile(p); err == nil {
-		_ = json.Unmarshal(b, &root)
-	}
-	changed := false
-
-	if v, _ := root["hasCompletedOnboarding"].(bool); !v {
-		root["hasCompletedOnboarding"] = true
-		changed = true
-	}
-	if _, ok := root["theme"]; !ok {
-		root["theme"] = "dark"
-		changed = true
-	}
-
-	projects, _ := root["projects"].(map[string]any)
-	if projects == nil {
-		projects = map[string]any{}
-	}
-	for _, d := range append([]string{dir}, mainCheckoutOf(dir)...) {
-		entry, _ := projects[d].(map[string]any)
-		if entry == nil {
-			entry = map[string]any{}
-		}
-		if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
-			entry["hasTrustDialogAccepted"] = true
-			projects[d] = entry
-			root["projects"] = projects
+	// A file that cannot be updated leaves the CLI to ask its dialogs itself; the launch goes on.
+	_ = updateClaudeJSON(true, func(root map[string]any) bool {
+		changed := false
+		if v, _ := root["hasCompletedOnboarding"].(bool); !v {
+			root["hasCompletedOnboarding"] = true
 			changed = true
 		}
-	}
+		if _, ok := root["theme"]; !ok {
+			root["theme"] = "dark"
+			changed = true
+		}
+		projects, _ := root["projects"].(map[string]any)
+		if projects == nil {
+			projects = map[string]any{}
+		}
+		for _, d := range append([]string{dir}, mainCheckoutOf(dir)...) {
+			entry, _ := projects[d].(map[string]any)
+			if entry == nil {
+				entry = map[string]any{}
+			}
+			if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+				entry["hasTrustDialogAccepted"] = true
+				projects[d] = entry
+				root["projects"] = projects
+				changed = true
+			}
+		}
+		return changed
+	})
+}
 
-	if !changed {
-		return
+// claudeJSONMu serialises this process's read-modify-write cycles on .claude.json; the lock file
+// does the same across Agent processes. The CLI's own writes are not covered (nothing can).
+var claudeJSONMu sync.Mutex
+
+// updateClaudeJSON is the one read-modify-write of .claude.json: under both locks, mutate edits
+// the parsed root and reports whether it changed anything, the result goes out through a unique
+// temp file and a rename (onto the link's target when the file is a symlink), and is read back.
+// repair=true replaces an unparsable file (the old one is kept as .corrupt); false returns an
+// error instead, for callers that must know the write took.
+func updateClaudeJSON(repair bool, mutate func(root map[string]any) bool) error {
+	claudeJSONMu.Lock()
+	defer claudeJSONMu.Unlock()
+	p := claudeJSONPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(p+".af-lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) //nolint:errcheck
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		p = real
+	}
+	root := map[string]any{}
+	if b, err := os.ReadFile(p); err == nil {
+		if json.Unmarshal(b, &root) != nil {
+			if !repair {
+				return fmt.Errorf("%s is not valid JSON; move it aside (the CLI recreates it) and start the session again", p)
+			}
+			_ = os.WriteFile(p+".corrupt", b, 0o600)
+			root = map[string]any{}
+		}
+	}
+	if !mutate(root) {
+		return nil
 	}
 	b, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	tmp := p + ".af-tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, p)
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".claude.json.af-tmp-*")
+	if err != nil {
+		return err
 	}
+	_, werr := tmp.Write(b)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), p)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+		return werr
+	}
+	return nil
+}
+
+// approvalSuffixLen is how many trailing characters of a key the CLI stores in
+// customApiKeyResponses (it never stores the key itself).
+const approvalSuffixLen = 20
+
+// approveAPIKey pre-answers the CLI's "Detected a custom API key in your environment - use
+// this API key?" prompt for key, the way the CLI records a Yes: the key's last 20 characters in
+// customApiKeyResponses.approved. The prompt preselects No, which would run the session on the
+// claude.ai login, so an explicit anthropic-api session must never reach it (ADR 0128
+// decision 3). The key is also removed from .rejected, where an earlier No would otherwise win.
+// Only the suffix the CLI itself would store is written; the file is the member's own 0600 state.
+// The approval takes effect only in a process whose environment carries that key, which is only
+// ever an anthropic-api session's. An error means the approval is not on disk: the caller must
+// refuse the launch rather than start a pane that waits on the prompt.
+func approveAPIKey(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	// A key this short would be stored whole; Anthropic keys are far longer, so refuse rather
+	// than write a secret into the file.
+	if len(key) <= approvalSuffixLen {
+		return fmt.Errorf("the API key is too short to pre-approve without storing it whole")
+	}
+	suffix := key[len(key)-approvalSuffixLen:]
+	err := updateClaudeJSON(false, func(root map[string]any) bool {
+		resp, _ := root["customApiKeyResponses"].(map[string]any)
+		if resp == nil {
+			resp = map[string]any{}
+		}
+		approved, _ := resp["approved"].([]any)
+		rejected, _ := resp["rejected"].([]any)
+		has := func(l []any) bool {
+			for _, v := range l {
+				if s, _ := v.(string); s == suffix {
+					return true
+				}
+			}
+			return false
+		}
+		if has(approved) && !has(rejected) {
+			return false
+		}
+		if !has(approved) {
+			approved = append(approved, suffix)
+		}
+		kept := make([]any, 0, len(rejected))
+		for _, v := range rejected {
+			if s, _ := v.(string); s != suffix {
+				kept = append(kept, v)
+			}
+		}
+		resp["approved"], resp["rejected"] = approved, kept
+		root["customApiKeyResponses"] = resp
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	// Read back: an approval that is not on disk would leave the pane on the prompt.
+	b, err := os.ReadFile(claudeJSONPath())
+	if err != nil {
+		return err
+	}
+	var back struct {
+		R struct {
+			Approved []string `json:"approved"`
+		} `json:"customApiKeyResponses"`
+	}
+	if json.Unmarshal(b, &back) != nil || !slices.Contains(back.R.Approved, suffix) {
+		return fmt.Errorf("the API key approval did not reach %s", claudeJSONPath())
+	}
+	return nil
 }
 
 // mainCheckoutOf returns the main checkout's root when dir is a linked git worktree
