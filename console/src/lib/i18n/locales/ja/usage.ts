@@ -120,6 +120,7 @@ export const usage = {
   // The fleet's own inference engine (ADR 0071). Real measured tokens with no price: what
   // that answer cost is a share of a GPU instance's hour, shown as a component cost instead.
   "usage.val.feature.engine.llm": "自前 LLM",
+  "usage.val.feature.route.gateway": "モデルのルート（ゲートウェイ）",
   "usage.val.feature.unknown": "未分類",
   "usage.val.trigger.user": "ユーザー",
   "usage.val.trigger.auto": "自動",

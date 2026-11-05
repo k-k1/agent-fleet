@@ -1443,4 +1443,8 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "ssm.f_confirm_use_hint": "af-aws-exec asks you in the Console before this profile's first use in each session, and the profile is not written to ~/.aws/config (run it through af-aws-exec). This catches mistakes and unnoticed use; an agent that sets out to get around it can, for example with a login another profile on the same sign-in keeps open.",
   "ssm.meta_confirm_use": "Confirm before use",
   "ssm.meta_confirm_use_on": "on",
+  "ssm.f_model_route": "Model route",
+  "ssm.f_model_route_hint": "Lets the AF route gateway use this profile to call Amazon Bedrock models for a session that selects the Bedrock route. Mark only a profile whose role allows bedrock:InvokeModel* and nothing broader: the route is used on every turn, so a broad profile here would be the widest standing grant in the Workspace. The session never receives the profile's AWS credentials. A profile that is not marked is refused as a route.",
+  "ssm.meta_model_route": "Model route",
+  "ssm.meta_model_route_on": "on",
 };

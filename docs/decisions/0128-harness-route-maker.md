@@ -406,3 +406,46 @@ table from becoming a menu of models that fail on the first message, which is wh
   window is one tick. `CLAUDE_CODE_USE_FOUNDRY` joins the unset list and the settings check. A scheduled reuse
   fire compares a bound connection reference exactly (a bare slot compares by slot), and `BindRoute` re-checks a
   fingerprint against the single key read it binds. #3317 now only tracks the optional flag-layer pin.
+- 2026-11-05, P2a (#3282): the A2 gateway and its token contract, with one upstream (Amazon Bedrock) and no harness
+  wired to it. **Where it lives: the Agent**, in `workspace/agent/internal/routegw`, on a loopback listener of its own
+  (not the Agent's mux, whose bearer is in every session's shell). The credential, the SSO cache and ADR 0126's grants are
+  all in the Workspace, so a Control Plane gateway would have to be handed the credential or ask the Agent for it on every
+  call; the Agent holds it in its own memory and the session never sees it, and the hot path is a loopback hop. Revocation
+  is a local file or map read, with no push to a remote proxy. Fargate/ECS: the Agent is in the same container as the session,
+  so it works there as it does elsewhere, and the egress to `bedrock-runtime.<region>.amazonaws.com` is the Workspace's own.
+  **Token**: random, held as a hash in the Agent's memory only (an Agent restart ends every token), bound to the session's
+  incarnation (`awsx.Incarnation`, ADR 0126's key), the route, the connection (`<Settings profile id>@<region>`,
+  `routes.AWSConnection`) and the profile's identity; at most 8 hours; one live token per session. It is minted only by
+  the Agent's own launch code from the session's stored selection (`Gateway.Issue`); there is no HTTP route that mints. **Every
+  call** re-checks, in order: the token, that the session exists in the same incarnation, that its stored selection is still
+  this route and connection, that the Settings profile is still the member's own, marked, unchanged and in a usable
+  region, and that ADR 0126's approval is held (a grant file read; when it is missing the request is filed, at most once per
+  10 s per session and profile, and the call is refused). A failure other than "Settings unreadable" or "approval missing"
+  revokes the token on the spot. **Settings** are pulled at most every 30 s for this check and the gateway refuses once
+  none has succeeded for 15 minutes. **C2**: Settings > AWS profiles/SSM gains a "model route" mark (`modelRoute`, migration
+  0122, carried by the bridge and by settings export/import); an unmarked profile is refused visibly, at issue and at every
+  call. The mark is the member's statement that the role carries only `bedrock:InvokeModel*`; AF cannot read the role. The
+  gateway forwards only `invoke`, `invoke-with-response-stream`, `converse` and `converse-stream`, so the profile's other
+  permissions are unreachable through it. **Upstream**: the harness speaks Bedrock's wire with the route token as its
+  bearer; the gateway signs with SigV4 (hand-written, pinned to AWS's published vector and to the SDK signer's output), streams
+  the response with a flush per read, and never forwards the caller's `Authorization`. Credentials come from `PlanExec`
+  (what af-aws-exec runs, with the login forced off), are cached in memory until 5 minutes before they expire and are never
+  logged or handed to a session. **Ledger**: each forwarded call writes `feature=route.gateway`, `Route=bedrock`,
+  `Billing=metered`, with the counts read from Bedrock's response (headers for `invoke`, the invocation metrics or the
+  `metadata` event for streams; unknown stays `none`, never 0), priced from `amazon-bedrock`. Not measured (no live AWS
+  here): everything decision 14 asks, SigV4 acceptance by Bedrock itself, Claude Code's behaviour with
+  `AWS_BEARER_TOKEN_BEDROCK` and a base URL on loopback, the event-stream framing of a real response, and the behaviour of a
+  real SSO login and STS check on this path. Later slices (not built): claude `bedrock` RouteAdapter; opencode Bedrock
+  through the route in place of `keepInMenu`; per-credential `serve` / app-server; hooks that revoke at session stop; the
+  Console picker. When a harness is wired, its own transcript rows and the gateway's must not both be counted
+  (the gateway's carry `feature=route.gateway`).
+- 2026-11-05, P2a review round 1 (#3349): one limit stated against decision 5. The route token is a bearer on a
+  loopback port, and a Workspace runs every session as one user, so another session of the same member that can read this
+  session's process environment can present the token while this session lives; the call is then checked against the
+  token owner's session (and its approval), and its ledger row is filed under the owner. A token cannot outlive its
+  owner (the incarnation check revokes it), and it never reaches another member. P2a accepts this for the slice because no
+  harness holds a token yet; it is **not** accepted as the final design. Before a harness is wired the slice has to
+  narrow it: an eager `RevokeSession` on session stop (the registry has it, nothing calls it yet), a shorter TTL, and a
+  caller binding (a Unix socket with peer credentials mapped to the session's process tree). Also: the gateway sends
+  response headers as soon as Bedrock answers, drops the query string (no operation takes one), and resolves
+  credentials outside its lock, one resolution per profile at a time.

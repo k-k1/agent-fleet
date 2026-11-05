@@ -383,3 +383,42 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   再起動は拒否する。空白は 1 tick 分。`CLAUDE_CODE_USE_FOUNDRY` を unset 一覧と設定検査に加えた。ルート指定のスケジュール
   reuse は、束縛済みの接続参照を完全一致で比べる（裸のスロット名はスロットで比べる）。`BindRoute` は、束縛する 1 回の
   キー読み取りに対して指紋を再確認する。#3317 は、任意のフラグ層での固定だけを追う。
+- 2026-11-05, P2a（#3282）: A2 のゲートウェイとトークンの契約を、上流 1 つ（Amazon Bedrock）で作った。どのハーネスも
+  まだ繋いでいない。**置き場所は Agent**（`workspace/agent/internal/routegw`）で、Agent の mux ではなく専用の loopback
+  リスナーに置く（mux の bearer はどのセッションのシェルにもある）。資格情報、SSO キャッシュ、ADR 0126 の承認は Workspace
+  の中にあり、Control Plane に置くと資格情報を渡すか呼び出しのたびに Agent へ尋ねることになる。Agent なら資格情報は
+  Agent のメモリに留まりセッションには見えず、ホットパスは loopback 1 往復で、失効は手元のファイルかマップの読み取りで済む。
+  Fargate/ECS でも Agent はセッションと同じコンテナにいるので同じに動く。出口は Workspace 自身の
+  `bedrock-runtime.<region>.amazonaws.com`。**トークン**: ランダム、ハッシュだけを Agent のメモリに持つ（Agent を
+  再起動すると全部失効）。セッションの incarnation（`awsx.Incarnation`、ADR 0126 のキー）、ルート、接続
+  （`<Settings プロファイル id>@<region>`、`routes.AWSConnection`）、プロファイルの identity に結び付き、長くても 8 時間、
+  セッションにつき有効なのは 1 つ。発行は Agent 自身の起動コードが保存済みの選択から行う（`Gateway.Issue`）だけで、
+  発行する HTTP ルートはない。**呼び出しごと**に、トークン、同じ incarnation のセッションがあること、保存された選択が
+  今もこのルートと接続であること、Settings のプロファイルが本人のもので、印があり、変わっておらず、使えるリージョン
+  であること、ADR 0126 の承認があること（grant ファイルの読み取り。無ければ依頼を出し、セッションとプロファイルごとに
+  10 秒に 1 回まで、呼び出しは拒否）の順に確かめる。「Settings が読めない」「承認なし」以外の失敗は、その場でトークンを
+  失効させる。**Settings** はこの確認のために最短 30 秒ごとに取り直し、15 分成功しなければ拒否する。**C2**: 設定 > AWS
+  プロファイル/SSM に「モデルのルート」の印（`modelRoute`、migration 0122、bridge と設定の export/import が運ぶ）を足した。
+  印のないプロファイルは、発行時も呼び出しごとにも見える形で拒否する。印は「ロールは `bedrock:InvokeModel*` だけ」という
+  本人の申告で、AF はロールを読めない。転送するのは `invoke`、`invoke-with-response-stream`、`converse`、`converse-stream`
+  だけなので、プロファイルのほかの権限にはゲートウェイ経由では届かない。**上流**: ハーネスはルートトークンを bearer にして
+  Bedrock の wire を話し、ゲートウェイは SigV4 で署名して（自前実装。AWS 公開のテストベクタと SDK の署名器の出力に固定）
+  読むたびに flush して流し、呼び出し元の `Authorization` は転送しない。資格情報は `PlanExec`（af-aws-exec と同じ。ログインは
+  無効）から得て、期限の 5 分前までメモリに置き、ログにも出さずセッションにも渡さない。**台帳**: 転送した呼び出しごとに
+  `feature=route.gateway`、`Route=bedrock`、`Billing=metered` で書く。件数は Bedrock の応答から読む（`invoke` はヘッダ、
+  ストリームは invocation metrics か `metadata` イベント。分からなければ 0 ではなく `none`）。価格は `amazon-bedrock`。
+  未計測（ここに実 AWS はない）: 決定 14 が求めるすべて、Bedrock 自身が SigV4 を受け付けること、Claude Code が
+  `AWS_BEARER_TOKEN_BEDROCK` と loopback の base URL でどう動くか、実際の応答のイベントストリームの形、この経路での
+  実際の SSO ログインと STS の確認。後のスライス（未実装）: claude `bedrock` の RouteAdapter、opencode の Bedrock を
+  `keepInMenu` に代えてルート経由にすること、per-credential の `serve` / app-server、セッション停止での失効フック、
+  Console の選択 UI。ハーネスを繋ぐときは、そのハーネスの transcript の行とゲートウェイの行を二重に数えないこと
+  （ゲートウェイの行は `feature=route.gateway`）。
+- 2026-11-05, P2a レビュー第 1 巡（#3349）: 決定 5 に対する制限を 1 つ明記する。ルートトークンは loopback ポートの
+  bearer で、Workspace の全セッションは同じユーザーで動くため、このセッションのプロセス環境を読める同じメンバーの別セッション
+  は、このセッションが生きている間トークンを提示できる。その呼び出しはトークンの持ち主のセッション（とその承認）に対して
+  検査され、台帳の行も持ち主に付く。トークンは持ち主より長く生きられず（incarnation の検査で失効）、別のメンバーには
+  届かない。P2a ではまだどのハーネスもトークンを持たないので、このスライスでは受け入れるが、最終設計としては**受け入れない**。
+  ハーネスを繋ぐ前に狭める: セッション停止での即時 `RevokeSession`（レジストリにはあるが呼ぶ側がない）、短い TTL、
+  呼び出し元の束縛（ピア資格情報つき Unix ソケットで、セッションのプロセスツリーに対応付ける）。ほかに、ゲートウェイは
+  Bedrock が応答した時点でヘッダを送り、クエリ文字列は（どの操作も使わないので）落とし、資格情報の解決はロックの外で
+  プロファイルごとに 1 回ずつ行う。

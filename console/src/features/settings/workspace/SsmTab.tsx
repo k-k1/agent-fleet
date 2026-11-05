@@ -197,6 +197,8 @@ const emptyProfile: Record<string, string> = {
   durationSeconds: "",
   // "true" when the profile asks for confirmation before use (ADR 0126); pick() stringifies.
   confirmBeforeUse: "",
+  // "true" when the profile is marked as a model route (ADR 0128 decision 11); pick() stringifies.
+  modelRoute: "",
   // The shared sign-in (ADR 0125): signInMode "" is a sign-in of its own (today's portal
   // fields), "join" one of the member's sign-ins named by signIn, "new" a new one of that name.
   signIn: "",
@@ -414,6 +416,7 @@ function ProfileSection({
             region: f.region.trim(),
             ...(duration ? { durationSeconds: Number(duration) } : {}),
             confirmBeforeUse: f.confirmBeforeUse === "true",
+            modelRoute: f.modelRoute === "true",
           }
         : {
             label: f.label.trim(),
@@ -424,6 +427,7 @@ function ProfileSection({
             roleName: f.roleName.trim(),
             region: f.region.trim(),
             confirmBeforeUse: f.confirmBeforeUse === "true",
+            modelRoute: f.modelRoute === "true",
             // A name joins that sign-in or creates it; "" leaves the one the profile was in. Left
             // out when the choice was not touched, so the CP keeps what it holds.
             ...(!signInTouched ? {} : joining || newSignIn ? { signIn: f.signIn.trim() } : editing?.signIn ? { signIn: "" } : {}),
@@ -635,6 +639,17 @@ function ProfileSection({
           <span>
             <b>{tr("ssm.f_confirm_use")}</b>
             <span className="field-help">{tr("ssm.f_confirm_use_hint")}</span>
+          </span>
+        </label>
+        <label className="ssm-confirm-use">
+          <input
+            type="checkbox"
+            checked={f.modelRoute === "true"}
+            onChange={(e) => setF((p) => ({ ...p, modelRoute: e.target.checked ? "true" : "" }))}
+          />
+          <span>
+            <b>{tr("ssm.f_model_route")}</b>
+            <span className="field-help">{tr("ssm.f_model_route_hint")}</span>
           </span>
         </label>
       </fieldset>
@@ -930,6 +945,7 @@ function ProfileSection({
             {p.sessionName && <Meta k={tr("ssm.f_session_name")} v={p.sessionName} />}
             {p.durationSeconds ? <Meta k={tr("ssm.f_duration")} v={String(p.durationSeconds)} /> : null}
             {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
+            {p.modelRoute === true && <Meta k={tr("ssm.meta_model_route")} v={tr("ssm.meta_model_route_on")} />}
           </div>
         ) : (
         <div className="ssm-meta">
@@ -940,6 +956,7 @@ function ProfileSection({
           {!grouped && <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />}
           {!grouped && <Meta k="start URL" v={p.startUrl} wide />}
           {p.confirmBeforeUse === true && <Meta k={tr("ssm.meta_confirm_use")} v={tr("ssm.meta_confirm_use_on")} />}
+          {p.modelRoute === true && <Meta k={tr("ssm.meta_model_route")} v={tr("ssm.meta_model_route_on")} />}
         </div>
         )
       )}
