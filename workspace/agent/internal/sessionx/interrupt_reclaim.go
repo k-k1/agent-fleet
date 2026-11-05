@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -136,9 +137,9 @@ func composerEmpty(captured string) bool {
 func restoredDraft(captured, prompt string) bool {
 	draft, _, ok := claudeBox(captured)
 	// claude puts back the prompt it submitted, which lacks the invisible characters it strips
-	// on submit (a zero-width space in a paste); prompt is the typed text and still has them.
-	d := squashSpace(claude.WithoutInvisible(draft))
-	return ok && d != "" && d == squashSpace(claude.WithoutInvisible(prompt))
+	// on submit (a zero-width space in a paste), while prompt is the typed text and still has
+	// them. Only their removal is forgiven: the box may hold nothing prompt lacks.
+	return ok && squashSpace(draft) != "" && claude.StrippedCopy(prompt, draft, unicode.IsSpace)
 }
 
 // reclaimInterruptedPrompt takes a stopped prompt that claude put back into its input box out

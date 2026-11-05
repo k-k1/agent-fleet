@@ -778,6 +778,15 @@ func TestRestoredDraftIgnoresWhatClaudeStrips(t *testing.T) {
 	if restoredDraft(box("ab d"), typed) || restoredDraft(box("a b"), typed) {
 		t.Fatal("a box with other visible text was taken for the prompt")
 	}
+	// The box is erased on a match, so a joiner or variation selector the typed text lacks (the
+	// member edited the restored draft in the terminal) must not match, while one claude kept
+	// does.
+	if restoredDraft(box("👩\u200d💻"), "👩💻") || restoredDraft(box("❤\ufe0f"), "❤") {
+		t.Fatal("a box with an added joiner or selector was taken for the prompt")
+	}
+	if !restoredDraft(box("👩\u200d💻"), "👩\u200d💻\u200b") {
+		t.Fatal("a box keeping the emoji joiner was not taken for the prompt")
+	}
 }
 
 // The submission is remembered before the Enter goes out, so a stop that runs right after the

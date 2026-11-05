@@ -70,21 +70,49 @@ func rightToLeftScript(r rune) bool {
 	return inBlock && unicode.In(r, unicode.L, unicode.M)
 }
 
-// WithoutInvisible removes every character claude 2.1.318's input stripper may remove (the set
-// console/src/lib/pastedImages.ts CLAUDE_INVISIBLE_RE carries; keep the two in step): C0/C1
-// controls but tab and line feed, soft hyphen, zero-width and bidi controls, variation selectors,
-// BOM, tag characters and the blank fillers. It drops the ones claude keeps in context (a joiner
-// inside an emoji) as well, so it is for comparing a text with claude's copy of it, never for
-// rewriting what is sent.
-func WithoutInvisible(s string) string {
-	return strings.Map(func(r rune) rune {
-		if claudeInvisible(r) {
-			return -1
+// StrippedCopy reports whether shown is typed with nothing but some of claude's invisible
+// characters removed, whitespace aside (isSpace decides it, as the caller's own comparison does):
+// the copy claude puts back or shows for a prompt it stripped on submit.
+//
+// Which ones claude removes depends on their neighbours (a zero-width space goes in Latin text,
+// a joiner inside an emoji stays), so any of them may be missing from shown. Nothing may be added
+// or changed: a box holding a character the typed text lacks, an inserted joiner included, is
+// someone else's text, and the caller erases what this accepts.
+func StrippedCopy(typed, shown string, isSpace func(rune) bool) bool {
+	t, s := []rune(typed), []rune(shown)
+	i, j := 0, 0
+	for {
+		for i < len(t) && isSpace(t[i]) {
+			i++
 		}
-		return r
-	}, s)
+		for j < len(s) && isSpace(s[j]) {
+			j++
+		}
+		switch {
+		case j == len(s):
+			for ; i < len(t); i++ {
+				if !isSpace(t[i]) && !claudeInvisible(t[i]) {
+					return false
+				}
+			}
+			return true
+		case i == len(t):
+			return false
+		case t[i] == s[j]:
+			i++
+			j++
+		case claudeInvisible(t[i]):
+			i++
+		default:
+			return false
+		}
+	}
 }
 
+// claudeInvisible is the set claude 2.1.318's input stripper may remove (its hidden-character
+// test; console/src/lib/pastedImages.ts CLAUDE_INVISIBLE_RE carries the same set, keep the two in
+// step): C0/C1 controls but tab and line feed, soft hyphen, zero-width and bidi controls,
+// variation selectors, BOM, tag characters and the blank fillers.
 func claudeInvisible(r rune) bool {
 	switch {
 	case r <= 0x08, r >= 0x0b && r <= 0x1f, r >= 0x7f && r <= 0x9f:
