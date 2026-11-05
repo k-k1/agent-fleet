@@ -260,6 +260,21 @@ login. A session with no route behaves as before.
 - When the key's account runs out of credit ("Credit balance is too low") the turn fails with that
   text. The session does not show the *Spend limit* state: fund the account and send a message, and it
   is delivered. A claude.ai organisation spend limit still stops the session as before.
+- **Continue on the API route at a usage window.** A claude session on **anthropic-subscription** that
+  stopped at its usage window (**Waiting for limit reset**) shows a band offering **Continue on the API
+  route**, so you need not wait for the reset. It is offered only for a session that was started on the
+  anthropic-subscription route (a session with no route is never offered it), only for a window limit
+  (not a *Spend limit*, which neither waiting nor the API route clears), and only when an anthropic-api
+  key is saved and can start. The confirmation says what it costs: the API route is billed per token,
+  and the prompt cache may not carry over, so the first reply can be slower and dearer. It also links to
+  your claude.ai usage-credit setting as the alternative; that setting applies to every session on the
+  login, and Agent Fleet never changes it. On confirming, Agent Fleet cancels the booked automatic
+  resume, stops the old process, stores the new route and starts the session again, then sends one
+  "carry on" message as if you had typed it. Turns from then on are recorded as anthropic-api (metered);
+  earlier ones keep their route. If any step fails, everything is put back: the session is on the
+  subscription route again, the resume is booked again, and the band says so. If the booked resume
+  could not be cancelled at once, the band says that too: the cancellation is retried and a resume that
+  fires first is ignored. A switch is one-way: there is no switch back (start a new session, or move it).
 
 ## Choosing one
 

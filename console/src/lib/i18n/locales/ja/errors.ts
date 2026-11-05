@@ -445,4 +445,14 @@ export const errors = {
   "err.inbox_share_not_owner": "セッションを共有できるのは、その持ち主だけです。",
   "err.inbox_share_unconfirmed": "共有する前に、すべての宛先と共有の範囲を確認してください。",
   "err.memo_origin_alone": "受信箱から取り込んだメモは、ほかのメモと一緒には送れません。1 件ずつ送ってください。",
+  // --- 利用上限での API ルートへの切り替え（ADR 0128 決定 10）---
+  "err.route_switch_unsupported": "このエージェントには、切り替えられる従量課金のルートがありません。",
+  "err.route_switch_not_subscription": "このセッションはサブスクリプションのルートで動いていないため、切り替えられません。",
+  "err.route_switch_route_unproven": "このセッションがどの認証情報で動いているかを確認できないため、切り替えられません。",
+  "err.route_switch_no_limit": "サブスクリプションの上限で止まった記録がないため、切り替えません。",
+  "err.route_switch_spend_limit": "止まった原因は利用額の上限です。待っても、API ルートへ切り替えても解消しません。",
+  "err.route_switch_state": "このセッションはいま切り替えられない状態です。ターンの終了を待ってから、もう一度試してください。",
+  "err.route_switch_busy": "このセッションの切り替えが進行中か、まだ片付いていません。少し待ってからもう一度確認してください。",
+  "err.route_switch_failed": "切り替えが完了せず、元に戻しました。セッションはサブスクリプションのルートのままで、自動再開の予約も取り直してあります。詳細で実行中かどうかを確認できます。",
+  "err.route_switch_booking": "自動再開の予約を取り消せなかったため、何も変更していません。もう一度試してください。",
 };
