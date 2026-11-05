@@ -565,3 +565,6 @@ table from becoming a menu of models that fail on the first message, which is wh
   by a later process cannot have). (3) tmux keeps listing a pane whose process ended when remain-on-exit is on, with the
   old pid: the launch-pane lookup asks for `pane_dead` and a dead launch pane is no root, and renewal counts only roots
   that are live processes, so a missed exit still ends the token within `TokenTTL`.
+  Review round 2 (#3389): only `ENOPROTOOPT` (a kernel that does not know `SO_PEERPIDFD`) takes the bare-pid path; every other
+  failure refuses, above all `EINVAL`, which a kernel that has the option answers when the connector has already exited
+  (`pidfd_prepare` finds no task), and resource or permission errors.

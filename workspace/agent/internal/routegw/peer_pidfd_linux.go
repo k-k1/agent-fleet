@@ -3,6 +3,7 @@
 package routegw
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -15,16 +16,25 @@ import (
 // is the asm-generic value, which amd64 and arm64 (the Agent's only targets) use.
 const soPeerPIDFD = 77
 
+// peerPIDFD asks the kernel for the connector's pidfd. A var so a test can make it fail the
+// ways a kernel does.
+var peerPIDFD = func(sock int) (int, error) { return unix.GetsockoptInt(sock, unix.SOL_SOCKET, soPeerPIDFD) }
+
 // peerStart reads the start time of the connected process pid. With SO_PEERPIDFD the read is
 // proven to be of that process: its pidfd still names pid and the process is still alive after
-// the read, so the pid was not reused in between. Without it (an older kernel) the start time is
-// read from the pid directly, and the only window left is the connector exiting and its pid
-// being reused between connect and this read, on the accept path.
+// the read, so the pid was not reused in between. Only a kernel that does not know the option
+// (ENOPROTOOPT, before 6.5) falls back to reading the pid directly, where the window left is the
+// connector exiting and its pid being reused between connect and this read. Any other failure
+// refuses: a kernel that has the option answers EINVAL when the connector has already exited
+// (pidfd_prepare finds no task), and that is exactly when the pid may name someone else.
 func peerStart(sock, pid int) (uint64, bool) {
-	pidfd, err := unix.GetsockoptInt(sock, unix.SOL_SOCKET, soPeerPIDFD)
-	if err != nil {
+	pidfd, err := peerPIDFD(sock)
+	if errors.Is(err, unix.ENOPROTOOPT) {
 		info, ok := readProc("/proc", pid)
 		return info.StartTicks, ok
+	}
+	if err != nil {
+		return 0, false
 	}
 	defer unix.Close(pidfd)
 	if pidfdPID(pidfd) != pid {
