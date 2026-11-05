@@ -64,6 +64,30 @@ func TestPutCarriesBodyIntoBridgeQueue(t *testing.T) {
 	}
 }
 
+// The permission token rides the permission-request event into the bridge queue, where the
+// Allow/Deny buttons take it (#3358).
+func TestPutCarriesPermissionTokenIntoBridgeQueue(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	e := New("permission-request", "s1", "claude", "Project")
+	e.Payload["permissionToken"] = "1abc"
+	if err := Put(e); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".local", "state", "agent-fleet", "bridge-queue")
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("bridge queue entries=%d, want 1", len(entries))
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	var q struct {
+		PermissionToken string `json:"permissionToken"`
+	}
+	if err := json.Unmarshal(b, &q); err != nil || q.PermissionToken != "1abc" {
+		t.Fatalf("queued entry=%s err=%v, want the token carried", b, err)
+	}
+}
+
 // Two processes racing on one key (claude runs hooks in parallel) must deliver once:
 // a stat-then-write marker lets both through.
 func TestPutOnceConcurrentSameKeyDeliversOnce(t *testing.T) {
