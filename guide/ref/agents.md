@@ -260,6 +260,28 @@ login. A session with no route behaves as before.
 - When the key's account runs out of credit ("Credit balance is too low") the turn fails with that
   text. The session does not show the *Spend limit* state: fund the account and send a message, and it
   is delivered. A claude.ai organisation spend limit still stops the session as before.
+- **Continue on the API route at a usage window.** A claude session on **anthropic-subscription** that
+  stopped at its usage window (**Waiting for limit reset**) shows a band offering **Continue on the API
+  route**, so you need not wait for the reset. It is offered only for a session that was started on the
+  anthropic-subscription route (a session with no route is never offered it), only for a window limit
+  (not a *Spend limit*, which neither waiting nor the API route clears), and only when an anthropic-api
+  key is saved and can start. The confirmation says what it costs: the API route is billed per token,
+  and the prompt cache may not carry over, so the first reply can be slower and dearer. It also links to
+  your claude.ai usage-credit setting as the alternative; that setting applies to every session on the
+  login, and Agent Fleet never changes it. On confirming, Agent Fleet cancels the booked automatic
+  resume, stops the old process, stores the new route and starts the session again, then sends one
+  "carry on" message as if you had typed it. Turns from then on are recorded as anthropic-api (metered);
+  earlier ones keep their route. If a step fails, Agent Fleet undoes the switch (back to the
+  subscription route, the resume booked again), but the band does not claim that it worked: it reports
+  that the switch did not complete and shows the Agent's detail, and the session stays closed to input
+  until the undo is settled. If the answer to the switch is lost (a timeout, a dropped connection), the
+  band says the outcome is unknown: reload and check which route the session is on. The "carry on"
+  message is handed to the session without confirmation that it was typed, and the band says so; if the
+  answer to that hand-over is lost, the band says it may already be queued (look for it before sending
+  again), and if you switched workspace first it is not sent. If the
+  booked resume could not be cancelled at once, the band says that too: the cancellation is retried and a
+  resume that fires first is ignored. The usage-credit setting is the other way to carry on; past the
+  window it is also billed at API rates. A switch is one-way: there is no switch back (start a new session, or move it).
 
 ## Choosing one
 

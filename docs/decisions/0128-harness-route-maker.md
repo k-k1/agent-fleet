@@ -506,3 +506,16 @@ table from becoming a menu of models that fail on the first message, which is wh
   under a new id, and an in-flight fire of the old one is still refused); the usage source never attributes by a meta it cannot
   read (retries, then declines the source/stamp instead of using the listed copy).
   Review round 3 (#3367): the retention is part of the one checked write that records the cancellation, not a second unchecked write.
+  2026-11-05 P4b (Console offer, #3283): `RouteSwitchBanner` (mirror) offers "Continue on the API route" for a claude session at
+  `limited` only, and only while the Agent's preview says `allowed` (never at `spend_limit`, never for another kind or a moving
+  session). The confirmation states the metered billing and that the prompt cache may not carry over, and shows the B2 account-setting
+  link (https only) with "applies to every session on this login"; the link is shown only when the Agent sent one. The POST is awaited
+  with a progress band; a success then sends one "carry on" message through the ordinary input path (`when_ready`), so it lands on the
+  new route like any turn. Only the codes that refuse before anything is stopped are shown as "nothing changed"; `route_switch_failed` is shown as "did not complete" (the
+  rollback may itself be incomplete) and every other answer, a lost response included, as "outcome unknown", because the Agent carries on after
+  the request is gone. The switch and its carry-on run outside the mounted component (a closed mirror does not drop the carry-on) and the
+  outcome is kept per session; outcomes and requests are scoped to member + workspace + session (a workspace switch mid-action sends no carry-on into the other workspace; it says it was skipped); the carry-on is "handed over" (the Agent answers 202), never "sent", and a lost answer to it is "unconfirmed, may be queued", not "refused"; a preview is scoped to the limit episode,
+  route and member action that read it; credits are described as an alternative that is also billed at API rates. An
+  unconfirmed cancel of the resume booking (`bookingCancelPending`) and an unsent carry-on stay on screen until closed, because the
+  session is no longer `limited` by then. All nine `route_switch_*` codes have catalogue text (`err.route_switch_*`, en/ja). Not
+  measured: the band against a live window stop.

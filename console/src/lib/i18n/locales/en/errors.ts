@@ -449,4 +449,14 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.inbox_share_not_owner": "Only a session's owner can share it.",
   "err.inbox_share_unconfirmed": "Confirm every recipient and the scope before sharing.",
   "err.memo_origin_alone": "A memo taken in from the inbox cannot be sent together with other memos. Send it on its own.",
+  // --- switching to the API route at a usage limit (ADR 0128 decision 10) ---
+  "err.route_switch_unsupported": "This agent has no metered route to switch to.",
+  "err.route_switch_not_subscription": "This session is not running on the subscription route, so it cannot be switched.",
+  "err.route_switch_route_unproven": "Which credential this session runs on cannot be confirmed, so it cannot be switched.",
+  "err.route_switch_no_limit": "There is no record of this session stopping at its subscription limit, so it is not switched.",
+  "err.route_switch_spend_limit": "It stopped at a spend limit, which neither waiting nor the API route clears.",
+  "err.route_switch_state": "This session cannot be switched right now. Wait for the turn to end, then try again.",
+  "err.route_switch_busy": "A switch of this session is in progress or not yet settled. Wait a moment and check again.",
+  "err.route_switch_failed": "The switch did not complete. The Agent tried to undo it, but this cannot be confirmed from here: the detail says what state the session is in, and the session may be held until the undo is settled.",
+  "err.route_switch_booking": "The automatic resume could not be cancelled, so nothing was changed. Try again.",
 };

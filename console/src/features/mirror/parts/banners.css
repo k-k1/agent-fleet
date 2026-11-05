@@ -166,3 +166,12 @@ suggestions, and the collapsed compaction summary left in the transcript (.mirro
   font-variant-numeric: tabular-nums;
   color: var(--fg);
 }
+/* The route-switch confirmation: the cost caveats read as short paragraphs inside the band. */
+.mirror-route-switch.rs-confirm {
+  align-items: flex-start;
+}
+.mirror-route-switch .rs-cost,
+.mirror-route-switch .rs-cache,
+.mirror-route-switch .rs-credits {
+  margin: 4px 0 0;
+}
