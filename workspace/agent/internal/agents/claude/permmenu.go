@@ -36,54 +36,76 @@ type PermissionRow struct {
 var (
 	// permRowRe matches a numbered menu row, with or without the cursor glyph in front.
 	permRowRe = regexp.MustCompile(`^\s*(?:❯\s*)?(\d)\.\s+(\S.*?)\s*$`)
-	// permQuestionRe is the dialog's question line ("Do you want to proceed?", "Do you want
-	// to create note.txt?", "Do you want to make this edit to x.go?").
-	permQuestionRe = regexp.MustCompile(`^\s*Do you want to .*\?\s*$`)
+	// permFooterRe is the dialog's footer ("Esc to cancel · Tab to amend"). It must START the
+	// line: AskUserQuestion's footer also mentions Esc, after "Enter to select".
+	permFooterRe = regexp.MustCompile(`^\s*Esc to cancel\b`)
 )
 
 // ParsePermissionMenu reads the permission dialog at the bottom of a claude pane. It answers
-// false unless it finds the question line, rows numbered 1..n without a gap, and the
-// "Esc to cancel" footer after them: when in doubt it reports no menu, because a misread menu
-// is answered with the wrong digit.
+// false unless the last non-blank line is the "Esc to cancel" footer, the rows right above it
+// are numbered 1..n without a gap, and a "Do you want to" question sits above row 1: when in
+// doubt it reports no menu, because a misread menu is answered with the wrong digit.
 //
-// Only the LAST question line counts, so a transcript above the dialog that merely quotes one
-// (this repository's own tests and comments do) cannot be read as the live menu.
+// Anchoring on the bottom line is what keeps a dialog quoted in the transcript above (this
+// repository's own tests and comments quote them) from being read as the live one: the live
+// dialog replaces the composer, so nothing but blank lines follows its footer.
+//
+// A label too long for the pane wraps onto unnumbered lines, and so does a long question
+// ("Do you want to make this edit to <long path>?"). Continuation lines are joined onto the
+// row they follow before the row is classified, so "… for this session" still counts after a
+// wrap.
 func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 	lines := strings.Split(strings.ReplaceAll(pane, "\r", ""), "\n")
-	q := -1
-	for i := len(lines) - 1; i >= 0; i-- {
-		if permQuestionRe.MatchString(lines[i]) {
-			q = i
-			break
-		}
+	f := len(lines) - 1
+	for f >= 0 && strings.TrimSpace(lines[f]) == "" {
+		f--
 	}
-	if q < 0 {
+	if f < 0 || !permFooterRe.MatchString(lines[f]) {
 		return PermissionMenu{}, false
 	}
 	var m PermissionMenu
-	for _, ln := range lines[q+1:] {
-		if strings.Contains(ln, "Esc to cancel") {
-			if len(m.Rows) < 2 {
-				return PermissionMenu{}, false
+	var cont []string // unnumbered lines seen since the last row, bottom-up
+	question := false
+	for i := f - 1; i >= 0 && !question; i-- {
+		ln := strings.TrimSpace(lines[i])
+		r := permRowRe.FindStringSubmatch(lines[i])
+		switch {
+		case r != nil && (len(m.Rows) == 0 || m.Rows[0].Num > 1):
+			label := r[2]
+			for j := len(cont) - 1; j >= 0; j-- {
+				label += " " + cont[j]
 			}
-			return m, true
-		}
-		r := permRowRe.FindStringSubmatch(ln)
-		if r == nil {
-			// A label too long for the pane wraps onto an unnumbered line; it changes nothing
-			// about which digit selects the row.
-			if len(m.Rows) == 0 && strings.TrimSpace(ln) != "" {
+			cont = nil
+			n, _ := strconv.Atoi(r[1])
+			m.Rows = append([]PermissionRow{{Num: n, Label: label}}, m.Rows...)
+		case len(m.Rows) > 0 && m.Rows[0].Num == 1:
+			// Above row 1: the question, possibly wrapped over several lines. Its first line is
+			// the one that opens with "Do you want to".
+			if strings.HasPrefix(ln, "Do you want to ") {
+				question = true
+			} else if ln == "" || len(cont) >= 3 {
 				return PermissionMenu{}, false
+			} else {
+				cont = append(cont, ln)
 			}
-			continue
+		case ln == "" && len(m.Rows) == 0 && len(cont) == 0:
+			// The live dialog leaves a blank line between its last row and the footer.
+		case ln == "":
+			return PermissionMenu{}, false
+		default:
+			cont = append(cont, ln)
 		}
-		n, _ := strconv.Atoi(r[1])
-		if n != len(m.Rows)+1 {
+	}
+	if !question || len(m.Rows) < 2 {
+		return PermissionMenu{}, false
+	}
+	for i := range m.Rows {
+		if m.Rows[i].Num != i+1 {
 			return PermissionMenu{}, false
 		}
-		m.Rows = append(m.Rows, PermissionRow{Num: n, Label: r[2], Choice: classifyPermRow(r[2])})
+		m.Rows[i].Choice = classifyPermRow(m.Rows[i].Label)
 	}
-	return PermissionMenu{}, false
+	return m, true
 }
 
 // classifyPermRow maps a row label to the card's choice. "always" covers the rows that stop

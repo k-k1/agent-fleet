@@ -60,7 +60,7 @@ export function useTranscriptPoll({
     setTurns, setStateSession, setPendingSends, pendingSendsRef, applyEchoes, setLoaded, setTermState,
     setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setBgShells, setFinalizing, finalizingRef, wasWorkingRef,
     setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers, setCloudRuns,
-    queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm, setPendingPermChoices,
+    queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm, setPendingPermChoices, setPendingPermId,
     setPendingApproval, setCarried, setRestoredAt, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
     setSuggestedTitle, setTitleActing, setManagedSettingsOpen, setManagedSettings, setPasting, setLightbox,
     setHistIdx, cursorRef, firstLineRef, setHasMore, setLoadingOlder, loadingOlderRef, diagRef, statusRef,
@@ -114,6 +114,7 @@ export function useTranscriptPoll({
     setPendingPlan(null);
     setPendingPerm(null);
     setPendingPermChoices(null);
+    setPendingPermId("");
     setMode("");
     lastNonPlanMode.current = "";
     setSuggestedTitle("");
@@ -292,6 +293,7 @@ export function useTranscriptPoll({
             setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
             setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
             setPendingPermChoices((prev) => samePermChoices(prev, parsePermissionChoices(d.pendingPermissionChoices)));
+            setPendingPermId(typeof d.pendingPermissionId === "string" ? d.pendingPermissionId : "");
             setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
             setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
             // Keep the old array when nothing changed: it keys the block memo in MirrorView, and a fresh

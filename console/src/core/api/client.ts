@@ -903,19 +903,25 @@ export function samePermChoices(prev: PermissionChoice[] | null, next: Permissio
 }
 
 // sessionPermissionRespond answers a claude TUI permission dialog. The Agent reads the dialog's
-// rows off the pane and presses the digit of the row that carries `choice`.
+// rows off the pane and presses the digit of the row that carries `choice`. `expect` is the
+// poll's pendingPermissionId: the Agent refuses the answer (permission_changed) once another
+// prompt has replaced the one the card was drawn for.
 //
 // Against an Agent that predates the route it falls back to keys that need no layout: Enter
 // (the cursor starts on "Yes") for allow and Escape (cancel) for deny. "always" has no such key,
 // so it fails instead. Down-based sequences are never sent: on a two-row menu Down Down wraps
 // back onto "Yes", and a deny became an approval.
-export async function sessionPermissionRespond(session: string, choice: PermissionChoice): Promise<TurnResult> {
+export async function sessionPermissionRespond(
+  session: string,
+  choice: PermissionChoice,
+  expect: string,
+): Promise<TurnResult> {
   const fail = (e: unknown): TurnResult => {
     const err = e as ApiError;
     const code = typeof err?.code === "string" ? err.code : "";
     return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
   };
-  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/permission-respond`, "POST", { choice }).catch(
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/permission-respond`, "POST", { choice, expect }).catch(
     () => ({ error: { message: t("err.network") } }),
   );
   const err = r?.error as ApiError | undefined;

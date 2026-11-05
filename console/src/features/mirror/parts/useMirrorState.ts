@@ -154,6 +154,9 @@ export function useMirrorState({
   // The choices the permission dialog on screen really offers, read off the pane by the Agent
   // (#3354). null = not reported (an older Agent, or the menu not drawn yet).
   const [pendingPermChoices, setPendingPermChoices] = useState<PermissionChoice[] | null>(null);
+  // Which prompt the card is for (the poll's pendingPermissionId). The answer echoes it, so a
+  // card left on screen cannot answer the prompt that replaced it.
+  const [pendingPermId, setPendingPermId] = useState("");
   // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are
   // answered by different mechanisms — keystrokes into a pane versus /respond by id — and a
   // managed session has no pane for the first one.
@@ -260,7 +263,7 @@ export function useMirrorState({
     queuedPrompts, setQueuedPrompts, queuedItems, setQueuedItems, discards, setDiscards, discardNotices,
     setDiscardNotices, pendingPeers, setPendingPeers, cloudRuns, setCloudRuns, queueOpsRef, queueShown, queuedCount, discardView,
     alive, setAlive, dirGone, pending, setPending, pendingText, setPendingText, liveMode, liveOn, liveOnRef,
-    liveText, setLiveText, pendingPlan, setPendingPlan, pendingPerm, setPendingPerm, pendingPermChoices, setPendingPermChoices, pendingApproval,
+    liveText, setLiveText, pendingPlan, setPendingPlan, pendingPerm, setPendingPerm, pendingPermChoices, setPendingPermChoices, pendingPermId, setPendingPermId, pendingApproval,
     setPendingApproval, carried, setCarried, restoredAt, setRestoredAt, rejectedPlansRef, rejectedGen, setRejectedGen, markRejected,
     mode, setMode, lastNonPlanMode, agentCtx, setAgentCtx, suggestedTitle, setSuggestedTitle, titleActing,
     setTitleActing, managedSettingsOpen, setManagedSettingsOpen, managedSettings, setManagedSettings,

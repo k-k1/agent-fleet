@@ -30,32 +30,32 @@ const notFound = () => new Response("404 page not found\n", { status: 404 });
 
 describe("sessionPermissionRespond", () => {
   it("posts the choice to /permission-respond", async () => {
-    expect((await client.sessionPermissionRespond("s1", "always")).ok).toBe(true);
-    expect(sent()).toEqual(['POST api/sessions/s1/permission-respond {"choice":"always"}']);
+    expect((await client.sessionPermissionRespond("s1", "always", "tok1")).ok).toBe(true);
+    expect(sent()).toEqual(['POST api/sessions/s1/permission-respond {"choice":"always","expect":"tok1"}']);
   });
 
   it("an older Agent: deny falls back to Escape and allow to Enter, never Down", async () => {
     answers.push(notFound());
-    expect((await client.sessionPermissionRespond("s2", "deny")).ok).toBe(true);
+    expect((await client.sessionPermissionRespond("s2", "deny", "t")).ok).toBe(true);
     answers.push(notFound());
-    expect((await client.sessionPermissionRespond("s2", "allow")).ok).toBe(true);
+    expect((await client.sessionPermissionRespond("s2", "allow", "t")).ok).toBe(true);
     expect(sent()).toEqual([
-      'POST api/sessions/s2/permission-respond {"choice":"deny"}',
+      'POST api/sessions/s2/permission-respond {"choice":"deny","expect":"t"}',
       'POST api/sessions/s2/input {"keys":["Escape"]}',
-      'POST api/sessions/s2/permission-respond {"choice":"allow"}',
+      'POST api/sessions/s2/permission-respond {"choice":"allow","expect":"t"}',
       'POST api/sessions/s2/input {"keys":["Enter"]}',
     ]);
   });
 
   it("an older Agent: always fails rather than guess a row", async () => {
     answers.push(notFound());
-    expect((await client.sessionPermissionRespond("s3", "always")).ok).toBe(false);
+    expect((await client.sessionPermissionRespond("s3", "always", "t")).ok).toBe(false);
     expect(sent()).toHaveLength(1);
   });
 
   it("a refusal is reported with its code, and nothing else is sent", async () => {
     answers.push(new Response(JSON.stringify({ error: { code: "choice_unavailable", message: "no row" } }), { status: 409 }));
-    const res = await client.sessionPermissionRespond("s4", "always");
+    const res = await client.sessionPermissionRespond("s4", "always", "t");
     expect(res).toMatchObject({ ok: false, code: "choice_unavailable" });
     expect(sent()).toHaveLength(1);
   });

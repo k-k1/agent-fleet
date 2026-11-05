@@ -43,7 +43,7 @@ export function MirrorPendingCards({
   questionInline?: boolean;
 }) {
   const {
-    turnBusy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingPermChoices, pendingApproval,
+    turnBusy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingPermChoices, pendingPermId, pendingApproval,
     carried, setCarried, markRejected, sending,
   } = st;
   const pendingText = questionInline ? "" : st.pendingText;
@@ -130,9 +130,9 @@ export function MirrorPendingCards({
           // Each choice is resolved by the Agent from the rows on screen (#3354). "Always allow"
           // is offered only when the dialog has such a row: an ask rule or a safety check
           // leaves just Yes / No, where the old Down Enter pressed No.
-          onAllow={() => void sendPermission("allow")}
-          onAlwaysAllow={pendingPermChoices?.includes("always") ? () => void sendPermission("always") : undefined}
-          onDeny={() => void sendPermission("deny")}
+          onAllow={() => void sendPermission("allow", pendingPermId)}
+          onAlwaysAllow={pendingPermChoices?.includes("always") ? () => void sendPermission("always", pendingPermId) : undefined}
+          onDeny={() => void sendPermission("deny", pendingPermId)}
         />
       )}
       {pending && pending.length > 0 && (

@@ -180,6 +180,10 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		if ch := permissionChoices(name); ch != nil {
 			pending["pendingPermissionChoices"] = ch
 		}
+		// Which prompt the card is for; /permission-respond refuses an answer for any other.
+		if tok := permissionToken(sid); tok != "" {
+			pending["pendingPermissionId"] = tok
+		}
 	}
 	// What was on screen when the session was folded away (docs/log/75). Included only when
 	// nothing is pending.

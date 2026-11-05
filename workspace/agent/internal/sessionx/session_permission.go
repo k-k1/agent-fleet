@@ -3,6 +3,7 @@ package sessionx
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -26,23 +27,41 @@ var readPermissionMenu = func(name string) (claude.PermissionMenu, bool) {
 	return claude.ParsePermissionMenu(tmuxx.CapturePane(session.TmuxName(name)))
 }
 
+// permDecided remembers, per session, the prompt (permissionToken) that has been given its one
+// answer. Until the hook retires the payload the state still reads "permission", and a second
+// answer would land on whatever came next: a digit on the next prompt, or an Escape that
+// interrupts the turn the first answer resumed.
+var permDecided sync.Map // session name -> token
+
+// permissionToken identifies the prompt the pending payload describes: the payload file's
+// mtime, rewritten by the hook for every new prompt. "" when nothing is pending. The card
+// echoes it back, so an answer meant for one prompt can never be applied to the next (two
+// tabs, or a card left on screen while the terminal moved on).
+func permissionToken(sid string) string {
+	at, ok := status.PendingPermissionAt(sid)
+	if !ok {
+		return ""
+	}
+	return strconv.FormatInt(at.UnixNano(), 36)
+}
+
 // permissionKeys resolves the keystroke that answers the dialog with choice, from the rows
 // actually on screen (#3354). code is "" on success.
 //
-// Deny never needs the menu: Escape cancels the dialog whatever its rows are, which is why it
-// is the fallback when the menu cannot be read or has no "No" row. Allow and always have no
-// such key, so they are refused rather than guessed: a guessed position is exactly how
-// "Always allow" came to press "No" and "Deny" came to press "Yes".
+// Nothing is sent unless the dialog is on screen and readable. Allow and always are never
+// guessed (a guessed position is how "Always allow" came to press "No" and "Deny" "Yes"), and
+// neither is deny's Escape: with the dialog already closed it would interrupt the running turn.
+// Escape is used only for a readable dialog that has no "No" row.
 func permissionKeys(name, choice string) (keys []string, code string) {
 	m, ok := readPermissionMenu(name)
-	if k, found := m.Key(choice); ok && found {
+	if !ok {
+		return nil, "menu_unreadable"
+	}
+	if k, found := m.Key(choice); found {
 		return []string{k}, ""
 	}
 	if choice == claude.PermDeny {
 		return []string{"Escape"}, ""
-	}
-	if !ok {
-		return nil, "menu_unreadable"
 	}
 	return nil, "choice_unavailable"
 }
@@ -79,6 +98,9 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 	defer lease.Release()
 	var req struct {
 		Choice string `json:"choice"`
+		// Expect is the pendingPermissionId the card was drawn for. Required: the answer is
+		// refused unless that prompt is still the one pending.
+		Expect string `json:"expect"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -88,6 +110,10 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 	case claude.PermAllow, claude.PermAlways, claude.PermDeny:
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_choice", "choice must be allow, always or deny")
+		return
+	}
+	if req.Expect == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_expect", "expect (the pendingPermissionId) is required")
 		return
 	}
 	meta, ok := session.ReadMeta(name)
@@ -113,6 +139,15 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "no_permission", "no pending permission prompt (already handled?)")
 		return
 	}
+	token := permissionToken(sid)
+	if token != req.Expect {
+		httpx.WriteErr(w, http.StatusConflict, "permission_changed", "別の確認に変わりました。カードを確かめてからもう一度答えてください")
+		return
+	}
+	if done, ok := permDecided.Load(name); ok && done == token {
+		httpx.WriteErr(w, http.StatusConflict, "no_permission", "この確認にはもう回答済みです")
+		return
+	}
 	pane, err := claudePane(name)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", err.Error())
@@ -131,6 +166,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
+	permDecided.Store(name, token)
 	if req.Choice != claude.PermDeny {
 		markSessionWorking(name)
 	}

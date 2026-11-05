@@ -50,6 +50,7 @@ function render(
     pendingPlan: null,
     pendingPerm: opts.pendingPerm ?? null,
     pendingPermChoices: opts.pendingPermChoices ?? null,
+    pendingPermId: "tok-p",
     pendingApproval: null,
     carried: null,
     setCarried: noop,
@@ -162,7 +163,7 @@ describe("MirrorPendingCards permission card", () => {
     const a = render("claude", null as unknown as Question[], { pendingPerm: "Bash · jira issue create", pendingPermChoices: ["allow", "deny"] });
     expect(buttons()).toHaveLength(2);
     await click(buttons()[1]);
-    expect(a.sendPermission).toHaveBeenCalledWith("deny");
+    expect(a.sendPermission).toHaveBeenCalledWith("deny", "tok-p");
     expect(a.sendKeys).not.toHaveBeenCalled();
   });
 
@@ -178,7 +179,7 @@ describe("MirrorPendingCards permission card", () => {
     });
     expect(buttons()).toHaveLength(3);
     for (const b of buttons()) await click(b);
-    expect(a.sendPermission.mock.calls).toEqual([["allow"], ["always"], ["deny"]]);
+    expect(a.sendPermission.mock.calls).toEqual([["allow", "tok-p"], ["always", "tok-p"], ["deny", "tok-p"]]);
     expect(a.sendKeys).not.toHaveBeenCalled();
   });
 });

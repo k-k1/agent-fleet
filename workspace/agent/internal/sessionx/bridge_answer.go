@@ -281,11 +281,19 @@ func answerClaudePermission(meta session.Meta, choice string, en bool) (string, 
 	}
 	unlock := permRespondLock(meta.Name)
 	defer unlock()
+	token := permissionToken(sid)
+	if done, ok := permDecided.Load(meta.Name); ok && done == token {
+		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
+	}
 	keys, code := permissionKeys(meta.Name, choice)
 	if code != "" {
 		return Fb(en, "選択肢を読み取れませんでした。Console で回答してください", "Could not read the prompt's options — answer it from the Console"), nil
 	}
-	return answerClaudeDecision(meta, "permission", keys, decisionFeedback(choice, en), en)
+	out, err := answerClaudeDecision(meta, "permission", keys, decisionFeedback(choice, en), en)
+	if err == nil {
+		permDecided.Store(meta.Name, token)
+	}
+	return out, err
 }
 
 // planKeys mirrors the sequence the plan card drives: Approve = Enter, Reject = Down Down Down

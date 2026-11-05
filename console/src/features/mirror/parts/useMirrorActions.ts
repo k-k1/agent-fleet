@@ -447,14 +447,14 @@ export function useMirrorActions({
   // sendPermission answers a Terminal (CLI) claude permission dialog by meaning (#3354). Same
   // shape as sendApproval: a refusal (the row is not on screen, the menu could not be read)
   // rolls the status back and keeps the card, since the tool is still blocked.
-  const sendPermission = async (choice: PermissionChoice): Promise<boolean> => {
+  const sendPermission = async (choice: PermissionChoice, expect: string): Promise<boolean> => {
     if (sending) return false;
     if (wsDown()) return false;
     setSending(true);
     const prev = statusRef.current;
     statusRef.current = "working";
     setStatus("working");
-    const res = await sessionPermissionRespond(session, choice).catch((): TurnResult => ({ ok: false }));
+    const res = await sessionPermissionRespond(session, choice, expect).catch((): TurnResult => ({ ok: false }));
     if (!res.ok) {
       statusRef.current = prev;
       setStatus(prev);

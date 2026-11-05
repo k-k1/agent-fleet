@@ -70,7 +70,10 @@ func TestParsePermissionMenuRefusesWhatIsNotTheLiveDialog(t *testing.T) {
 		"quoted without footer": " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n────\n❯ \n",
 		"gap in numbering":      " Do you want to proceed?\n ❯ 1. Yes\n   3. No\n Esc to cancel\n",
 		"single row":            " Do you want to proceed?\n ❯ 1. Yes\n Esc to cancel\n",
-		"text before the rows":  " Do you want to proceed?\n some other screen\n ❯ 1. Yes\n   2. No\n Esc to cancel\n",
+		"no question line":      " some other screen\n ❯ 1. Yes\n   2. No\n Esc to cancel\n",
+		// AskUserQuestion's footer mentions Esc too, but not at the start of the line.
+		"question menu footer":  " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Enter to select · Esc to cancel\n",
+		"rows below the footer": " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel\n❯ \n",
 	}
 	for name, pane := range cases {
 		if m, ok := ParsePermissionMenu(pane); ok {
@@ -110,5 +113,48 @@ func TestClassifyPermRow(t *testing.T) {
 		if got := classifyPermRow(in); got != want {
 			t.Errorf("classifyPermRow(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A complete dialog quoted in the transcript (footer included) above a live one whose question
+// wraps: the parser must still read the live dialog, not stop at the quoted footer. Reading the
+// quote resolved deny to row 2, which on the live Write menu switches to accept edits (#3357 review).
+func TestParsePermissionMenuQuotedDialogAboveAWrappedQuestion(t *testing.T) {
+	pane := "● the test fixture reads:\n" +
+		" Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel · Tab to amend\n" +
+		"────\n Create file\n" +
+		" Do you want to create\n src/features/a/very/long/path/that/wraps/onto/the/next/line/component.tsx?\n" +
+		" ❯ 1. Yes\n   2. Yes, and switch to accept edits (auto-approve file edits and common file commands)\n" +
+		"   for this session (shift+tab)\n   3. No\n\n Esc to cancel · Tab to amend\n\n\n"
+	m, ok := ParsePermissionMenu(pane)
+	if !ok || len(m.Rows) != 3 {
+		t.Fatalf("ok=%v rows=%+v", ok, m.Rows)
+	}
+	for c, want := range map[string]string{PermAllow: "1", PermAlways: "2", PermDeny: "3"} {
+		if got, _ := m.Key(c); got != want {
+			t.Errorf("Key(%s) = %q, want %q", c, got, want)
+		}
+	}
+}
+
+// A label wrapped by a narrow pane is classified on its joined text (#3357 review): "for this
+// session" on the continuation line must still make the row "always".
+func TestParsePermissionMenuJoinsWrappedLabels(t *testing.T) {
+	pane := " Do you want to create note.txt?\n ❯ 1. Yes\n   2. Yes, and switch to accept edits\n" +
+		"   (auto-approve file edits) for this\n   session (shift+tab)\n   3. No\n\n Esc to cancel · Tab to amend\n"
+	m, ok := ParsePermissionMenu(pane)
+	if !ok {
+		t.Fatal("not parsed")
+	}
+	if got, _ := m.Key(PermAlways); got != "2" {
+		t.Fatalf("always = %q, rows %+v", got, m.Rows)
+	}
+	// The auto-mode exclusion applies to the joined text as well.
+	pane = " Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and switch to auto\n   mode for this session\n   3. No\n\n Esc to cancel\n"
+	if m, ok = ParsePermissionMenu(pane); !ok {
+		t.Fatal("not parsed")
+	}
+	if _, found := m.Key(PermAlways); found {
+		t.Fatalf("auto mode taken for always: %+v", m.Rows)
 	}
 }
