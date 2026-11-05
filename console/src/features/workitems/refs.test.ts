@@ -1,7 +1,7 @@
 // The gates that decide whether a ticket-shaped token in prose becomes a link (#1659). The false
 // positives listed here are the reason each gate exists.
 import { describe, expect, it } from "vitest";
-import { classifyWorkItemRef, cloneHosts, ISSUE_REF_SRC, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefOfUrl, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
+import { classifyWorkItemRef, cloneHosts, ISSUE_REF_SRC, itemsForTicketUrl, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefOfUrl, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
 import type { WorkItem } from "./read.ts";
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
@@ -144,7 +144,14 @@ describe("WORK_ITEM_HINT_RE", () => {
     for (const s of ["C# code", "&#123;", "page#12", "a/b/c#1"]) {
       expect(WORK_ITEM_HINT_RE.test(s), s).toBe(false);
     }
-    for (const s of ["| #1649 |", "（#956）", "see octo/fleet#3", "PROJ-9 done"]) {
+    for (const s of [
+      "| #1649 |",
+      "（#956）",
+      "see octo/fleet#3",
+      "PROJ-9 done",
+      "PR: https://github.com/octo/fleet/pull/3363",
+      "https://jira.example.test/browse/OPS-12",
+    ]) {
       expect(WORK_ITEM_HINT_RE.test(s), s).toBe(true);
     }
   });
@@ -237,6 +244,22 @@ describe("workItemRefOfUrl", () => {
     ]) {
       expect(workItemRefOfUrl(url, []), url).toBeNull();
     }
+  });
+
+  it("matches the cached row case-blind and carries its key", () => {
+    const items = [row("github", "Octo/Fleet#956")];
+    expect(workItemRefOfUrl("https://github.com/octo/fleet/issues/956", items)).toEqual({ provider: "github", key: "Octo/Fleet#956" });
+  });
+
+  it("keeps a Jira row of another site out of the URL's candidates", () => {
+    const a = row("jira", "OPS-12", { url: "https://a.example.test/browse/OPS-12" });
+    const b = row("jira", "WEB-1", { url: "https://b.example.test/browse/WEB-1" });
+    const g = gh("1");
+    expect(itemsForTicketUrl("https://b.example.test/browse/OPS-12", [a, b, g])).toEqual([b, g]);
+    // OPS-12 exists on site A only: on B it is a guess, and resolves to a stand-in, not A's row.
+    const ref = workItemRefOfUrl("https://b.example.test/browse/OPS-12", [a, b]);
+    expect(ref).toEqual({ provider: "jira", key: "OPS-12", guessed: true });
+    expect(resolveWorkItemRef(ref!, itemsForTicketUrl("https://b.example.test/browse/OPS-12", [a, b])).reference).toBe(true);
   });
 
   it("reads a Jira page only on a site a cached row lives on", () => {

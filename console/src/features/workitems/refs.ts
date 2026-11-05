@@ -51,9 +51,13 @@ export const ISSUE_REF_SRC = String.raw`(?:${ISSUE_REF_START}|(?<=${ISSUE_REF_ST
 // only a candidate: classifyWorkItemRef links it only for a project the cache holds.
 export const JIRA_REF_SRC = String.raw`(?<![\w/\-])[A-Z][A-Z0-9_]{1,9}-[1-9]\d{0,6}(?![\w\-])`;
 
+// A tracker URL that may be one ticket's page (workItemRefOfUrl decides). A Jira URL links only
+// against cached rows, so without this a message citing tickets by URL alone never loads the cache.
+const TICKET_URL_HINT_SRC = String.raw`\/(?:issues|pull|pull-requests)\/[1-9]|\/browse\/[A-Z][A-Z0-9_]+-[1-9]`;
+
 /** "Does this text mention anything ticket-shaped at all" — decides whether loading the cache is
  * worth a request. */
-export const WORK_ITEM_HINT_RE = new RegExp(`${ISSUE_REF_SRC}|${JIRA_REF_SRC}`);
+export const WORK_ITEM_HINT_RE = new RegExp(`${ISSUE_REF_SRC}|${JIRA_REF_SRC}|${TICKET_URL_HINT_SRC}`);
 
 /** A Jira-shaped candidate anywhere in a text — decides whether the project list is worth a request. */
 export const JIRA_HINT_RE = new RegExp(JIRA_REF_SRC);
@@ -173,6 +177,18 @@ const TICKET_URL_PATHS: Record<string, { provider: "github" | "bitbucket"; re: R
 };
 const JIRA_BROWSE = /^\/browse\/([A-Z][A-Z0-9_]+-[1-9]\d{0,6})\/?$/;
 
+/** The rows a ticket URL may resolve to: a Jira row of another site is a different ticket under the
+ * same key, so only the URL's own site's Jira rows stay. Pass the result to resolveWorkItemRef. */
+export function itemsForTicketUrl(href: string, items: WorkItem[]): WorkItem[] {
+  let site: string;
+  try {
+    site = `${new URL(href).origin}/browse/`;
+  } catch {
+    return items;
+  }
+  return items.filter((i) => i.provider !== "jira" || i.url.startsWith(site));
+}
+
 /** The ticket a full tracker URL names, or null for any other link. Unlike a bare `#N`, the URL
  * names its repository and host itself, so no context repository is needed. A Jira URL qualifies
  * only on a site a cached Jira row lives on: the Console knows the member's Jira site through
@@ -190,13 +206,15 @@ export function workItemRefOfUrl(href: string, items: WorkItem[]): WorkItemRef |
   if (known) {
     const m = u.pathname.match(known.re);
     if (!m) return null;
-    const key = `${m[1]}#${m[2]}`;
-    return cachedRow(items, known.provider, key) ? { provider: known.provider, key } : { provider: known.provider, key, guessed: true };
+    // Both hosts take owner/name in any case and the URL may not use the canonical one, so the
+    // cached row is matched case-blind and its own key is what the link carries.
+    const key = `${m[1]}#${m[2]}`.toLowerCase();
+    const hit = items.find((i) => i.provider === known.provider && i.key.toLowerCase() === key);
+    return hit ? { provider: known.provider, key: hit.key } : { provider: known.provider, key: `${m[1]}#${m[2]}`, guessed: true };
   }
   const jira = u.pathname.match(JIRA_BROWSE);
   if (!jira) return null;
-  const site = `${u.origin}/browse/`;
-  const onSite = items.filter((i) => i.provider === "jira" && i.url.startsWith(site));
+  const onSite = itemsForTicketUrl(href, items).filter((i) => i.provider === "jira");
   if (!onSite.length) return null;
   return onSite.some((i) => i.key === jira[1]) ? { provider: "jira", key: jira[1] } : { provider: "jira", key: jira[1], guessed: true };
 }

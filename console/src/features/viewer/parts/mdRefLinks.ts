@@ -23,6 +23,7 @@ import {
   JIRA_REF_SRC,
   originOf,
   resolveWorkItemRef,
+  itemsForTicketUrl,
   workItemRefOfUrl,
   type WorkItemRef,
   type WorkItemRefContext,
@@ -275,9 +276,13 @@ function wireWorkItemLink(a: HTMLAnchorElement, repo: string | null, refNow: (ct
     const ref = refNow(ctx);
     // Launch from the working copy this text is about only when the ticket belongs to it — same
     // path AND same host; read now, since the repository list may have arrived after the text.
+    // Case-blind: both hosts are, and a URL or a cached key need not spell owner/name as the clone does.
     const repoHint =
-      repo && ctx.origin && ref.provider === ctx.origin.provider && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
-    const resolved = resolveWorkItemRef(ref, ctx.items);
+      repo && ctx.origin && ref.provider === ctx.origin.provider && ref.key.toLowerCase().startsWith(`${ctx.origin.path}#`.toLowerCase())
+        ? repo
+        : "";
+    // A URL also names its Jira site: a row of the same key on another site is another ticket.
+    const resolved = resolveWorkItemRef(ref, url ? itemsForTicketUrl(url, ctx.items) : ctx.items);
     if (url && resolved.reference) resolved.item = { ...resolved.item, url };
     return { ...resolved, repoHint };
   };

@@ -492,6 +492,46 @@ describe("issue and pull request URLs", () => {
     expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false, repoHint: "" });
   });
 
+  it("opens the cached row and launches from the clone whatever the URL's case", async () => {
+    useWorkItemStore.setState({ payload: payload([row("github", "Octo/Fleet#3363", { kind: "pr" })]) });
+    await render("PR: https://github.com/OCTO/fleet/pull/3363");
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d).toMatchObject({ reference: false, repoHint: "fleet" });
+    expect(d?.item.title).toBe("title of Octo/Fleet#3363");
+  });
+
+  it("opens the URL's own Jira site's row, not the same key on another site", async () => {
+    useWorkItemStore.setState({
+      payload: payload([
+        row("jira", "OPS-12", { url: "https://a.example.test/browse/OPS-12" }),
+        row("jira", "WEB-1", { url: "https://b.example.test/browse/WEB-1" }),
+      ]),
+    });
+    await render("see https://b.example.test/browse/OPS-12", null);
+    await click(links()[0]);
+    const d = useWorkItemModal.getState().detail;
+    expect(d?.reference).toBe(true);
+    expect(d?.item.url).toBe("https://b.example.test/browse/OPS-12");
+  });
+
+  it("loads the inbox for a message that cites tickets by URL alone", async () => {
+    useWorkItemStore.getState().reset();
+    // ensureWorkItems retries at most once a minute, and an earlier case in this file may have
+    // spent that minute.
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10 * 60_000);
+    workItemList.mockResolvedValue(payload([row("jira", "G3M-12", { url: "https://jira.example.test/browse/G3M-12" })]));
+    await render("blocked: https://jira.example.test/browse/G3M-12", null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(workItemList).toHaveBeenCalledTimes(1);
+    expect(links().map((a) => a.textContent)).toEqual(["https://jira.example.test/browse/G3M-12"]);
+    await click(links()[0]);
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false });
+    now.mockRestore();
+  });
+
   it("stays an external link on a surface with ticket links off", async () => {
     await render(md, "fleet", false);
     expect(links()).toHaveLength(0);
