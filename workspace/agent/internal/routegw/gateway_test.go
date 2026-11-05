@@ -11,8 +11,11 @@ import (
 	"hash/crc32"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -54,12 +57,17 @@ type env struct {
 	upReqs []*http.Request
 	upBody [][]byte
 	upFn   func(w http.ResponseWriter, r *http.Request)
-	gw     *httptest.Server
+	// roots is each session's runtime roots; a session gets the test process itself, the
+	// caller of every e.call, unless a test says otherwise.
+	roots  map[string][]int
+	sock   string
+	client *http.Client
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{t: t, now: time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC), metas: map[string]session.Meta{}, settingsOK: true, held: true}
+	e := &env{t: t, now: time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC), metas: map[string]session.Meta{}, settingsOK: true, held: true,
+		roots: map[string][]int{}}
 	e.settings = map[string]awsx.Profile{"bedrock-invoke": {ID: "p1", Name: "bedrock-invoke", Label: "Bedrock invoke", AccountID: "123456789012",
 		RoleName: "BedrockInvoke", Region: "us-east-1", StartURL: "https://example.awsapps.com/start", SSORegion: "us-east-1", ModelRoute: true}}
 	e.up = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,11 +122,45 @@ func newEnv(t *testing.T) *env {
 		},
 		Append:   func(r []usagex.Record) error { e.mu.Lock(); e.rows = append(e.rows, r...); e.mu.Unlock(); return nil },
 		Endpoint: func(string) string { return e.up.URL },
-		BaseURL:  func() string { return "http://127.0.0.1:1" },
+		Roots: func(n string) []int {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			return e.roots[n]
+		},
 	})
-	e.gw = httptest.NewServer(e.g)
-	t.Cleanup(e.gw.Close)
+	e.sock = serveOnSocket(t, e.g)
+	e.g.d.Socket = func() string { return e.sock }
+	e.client = socketClient(e.sock)
 	return e
+}
+
+// serveOnSocket serves g the way Start does (a Unix socket, the peer on every request) on a
+// socket of its own and returns its path. The directory is short on purpose: t.TempDir under a
+// long test name can pass the 107 bytes a socket path may have.
+func serveOnSocket(t *testing.T, g *Gateway) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "rgw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "gw.sock")
+	ln, err := listenSocket(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := newServer(g)
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return path
+}
+
+// socketClient calls through the socket whatever the URL's host says, as a harness given
+// ANTHROPIC_UNIX_SOCKET does.
+func socketClient(path string) *http.Client {
+	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	}}}
 }
 
 // session registers a session on the bedrock route and returns its meta.
@@ -127,6 +169,9 @@ func (e *env) session(name, profileID, region string) session.Meta {
 		Route: &routes.Selection{Route: RouteBedrock, Connection: routes.AWSConnection(profileID, region)}}
 	e.mu.Lock()
 	e.metas[name] = m
+	if _, ok := e.roots[name]; !ok {
+		e.roots[name] = []int{os.Getpid()}
+	}
 	e.mu.Unlock()
 	return m
 }
@@ -142,6 +187,17 @@ func (e *env) issue(m session.Meta) string {
 
 func (e *env) advance(d time.Duration) { e.mu.Lock(); e.now = e.now.Add(d); e.mu.Unlock() }
 
+// run advances the clock the way a running Agent sees it: its minute sweep renews running
+// sessions' tokens along the way.
+func (e *env) run(d time.Duration) {
+	for d > 0 {
+		step := min(d, time.Minute)
+		e.advance(step)
+		e.g.Sweep()
+		d -= step
+	}
+}
+
 func (e *env) call(token, path string, body string) (*http.Response, string) {
 	e.t.Helper()
 	resp, b, err := e.callErr(token, path, body)
@@ -153,12 +209,12 @@ func (e *env) call(token, path string, body string) (*http.Response, string) {
 
 // callErr is call without t.Fatal, for goroutines.
 func (e *env) callErr(token, path string, body string) (*http.Response, string, error) {
-	req, _ := http.NewRequest("POST", e.gw.URL+path, strings.NewReader(body))
+	req, _ := http.NewRequest("POST", SocketBaseURL+path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -259,10 +315,21 @@ func TestNoCredentialOrTokenInAnswersOrLog(t *testing.T) {
 	e.mu.Lock()
 	e.credErr = errors.New("could not get credentials: sso expired")
 	e.mu.Unlock()
-	e.advance(10 * time.Minute) // past the cached credentials
-	_, bad := e.call(tok, invokePath(), `{}`)
+	e.run(10 * time.Minute) // past the cached credentials
+	resp, bad := e.call(tok, invokePath(), `{}`)
+	if codeOf(t, bad) != "route_credentials_unavailable" {
+		t.Fatalf("the credential failure was not reached: %d %s", resp.StatusCode, bad)
+	}
 	_, noTok := e.call("", invokePath(), `{}`)
-	for _, s := range []string{ok, bad, noTok, logs.String()} {
+	// Presented from a process outside the owner's tree.
+	e.mu.Lock()
+	e.roots["s1"] = []int{1 << 30}
+	e.mu.Unlock()
+	resp, foreign := e.call(tok, invokePath(), `{}`)
+	if codeOf(t, foreign) != "route_caller_forbidden" {
+		t.Fatalf("the caller check was not reached: %d %s", resp.StatusCode, foreign)
+	}
+	for _, s := range []string{ok, bad, noTok, foreign, logs.String()} {
 		if strings.Contains(s, testSecret) || strings.Contains(s, "SESSIONTOKEN") || strings.Contains(s, tok) {
 			t.Fatalf("a secret leaked into: %q", s)
 		}
@@ -290,9 +357,9 @@ func TestOnlyTheFourModelOperationsPass(t *testing.T) {
 	if resp, _ := e.call(tok, "/model/%2E%2E%2Fx/invoke", `{}`); resp.StatusCode != 400 {
 		t.Fatalf("a dot-dot model id = %d", resp.StatusCode)
 	}
-	req, _ := http.NewRequest("GET", e.gw.URL+invokePath(), nil)
+	req, _ := http.NewRequest("GET", SocketBaseURL+invokePath(), nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	if resp, _ := http.DefaultClient.Do(req); resp.StatusCode != 404 {
+	if resp, _ := e.client.Do(req); resp.StatusCode != 404 {
 		t.Fatalf("GET = %d", resp.StatusCode)
 	}
 	if e.upstreamCalls() != 4 {
@@ -352,9 +419,9 @@ func TestStreamingIsForwardedWhileItArrives(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stall := time.AfterFunc(3*time.Second, cancel)
-	req, _ := http.NewRequestWithContext(ctx, "POST", e.gw.URL+"/model/"+testModel+"/invoke-with-response-stream", strings.NewReader(`{}`))
+	req, _ := http.NewRequestWithContext(ctx, "POST", SocketBaseURL+"/model/"+testModel+"/invoke-with-response-stream", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		t.Fatalf("no response while the upstream was still open: the gateway buffers (%v)", err)
 	}
@@ -500,20 +567,44 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 	}
 }
 
-func TestTokenNeverOutlivesEightHours(t *testing.T) {
+// A token lives TokenTTL unless the Agent's sweep renews it, and the sweep renews it only while
+// its owner's runtime is running: a running session keeps its token, an ended one loses it
+// within TokenTTL even when no eager revoke reached it.
+func TestTokenExpiresUnlessItsRunningOwnerRenewsIt(t *testing.T) {
 	e := newEnv(t)
 	tok := e.issue(e.session("s1", "p1", ""))
-	e.advance(MaxTTL - time.Minute)
+	e.advance(TokenTTL - time.Minute)
 	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
-		t.Fatalf("just before the limit = %d", resp.StatusCode)
+		t.Fatalf("just before expiry = %d", resp.StatusCode)
 	}
 	e.advance(2 * time.Minute)
 	if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != 401 || codeOf(t, body) != "route_token_invalid" {
-		t.Fatalf("past the limit = %d %s", resp.StatusCode, body)
+		t.Fatalf("expired, never renewed = %d %s", resp.StatusCode, body)
 	}
+
+	tok = e.issue(e.session("s2", "p1", ""))
+	for i := 0; i < 6; i++ { // an hour, well past TokenTTL, renewed by the sweep
+		e.advance(TokenTTL - time.Minute)
+		if n := e.g.Sweep(); n != 0 {
+			t.Fatalf("sweep %d dropped %d", i, n)
+		}
+	}
+	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+		t.Fatalf("renewed while running = %d", resp.StatusCode)
+	}
+	// The pane is gone: the sweep keeps the token (the meta still selects the route) but no
+	// longer renews it.
+	e.mu.Lock()
+	e.roots["s2"] = nil
+	e.mu.Unlock()
+	e.run(TokenTTL + time.Minute)
+	if _, ok := e.g.Registry().Lookup(tok); ok {
+		t.Fatal("the token of a session that stopped running outlived TokenTTL")
+	}
+
 	r := NewRegistry(nil)
 	_, exp, err := r.Mint(Binding{Session: "s", Incarnation: "i", Route: "bedrock", ProfileID: "p"}, 1000*time.Hour)
-	if err != nil || time.Until(exp) > MaxTTL+time.Minute {
+	if err != nil || time.Until(exp) > TokenTTL+time.Minute {
 		t.Fatalf("a long ttl was not clamped: %v %v", exp, err)
 	}
 }
@@ -684,7 +775,7 @@ func TestCredentialsAreCachedUntilShortlyBeforeTheyExpire(t *testing.T) {
 	if _, n := e.counts(); n != 1 {
 		t.Fatalf("resolutions = %d, want 1", n)
 	}
-	e.advance(56 * time.Minute) // inside the reserve
+	e.run(56 * time.Minute) // inside the reserve
 	e.call(tok, invokePath(), `{}`)
 	if _, n := e.counts(); n != 2 {
 		t.Fatalf("resolutions after the reserve = %d, want 2", n)
@@ -726,9 +817,9 @@ func TestRequestTooLargeIsRefusedBeforeAnyCredential(t *testing.T) {
 	e := newEnv(t)
 	tok := e.issue(e.session("s1", "p1", ""))
 	big := strings.NewReader(strings.Repeat("a", maxRequestBody+1))
-	req, _ := http.NewRequest("POST", e.gw.URL+invokePath(), big)
+	req, _ := http.NewRequest("POST", SocketBaseURL+invokePath(), big)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -824,9 +915,9 @@ func TestStreamCutMidwayIsRecordedAsFailed(t *testing.T) {
 		w.Header().Set("Content-Length", "100000") // promise more than is sent, then cut
 		_, _ = w.Write(first)
 	}
-	req, _ := http.NewRequest("POST", e.gw.URL+"/model/"+testModel+"/invoke-with-response-stream", strings.NewReader(`{}`))
+	req, _ := http.NewRequest("POST", SocketBaseURL+"/model/"+testModel+"/invoke-with-response-stream", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err == nil {
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -853,9 +944,9 @@ func TestClientDisconnectCancelsTheUpstreamRequest(t *testing.T) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	req, _ := http.NewRequestWithContext(ctx, "POST", e.gw.URL+invokePath(), strings.NewReader(`{}`))
+	req, _ := http.NewRequestWithContext(ctx, "POST", SocketBaseURL+invokePath(), strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routegw"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
@@ -52,6 +53,8 @@ func sessionDeps() sessionx.Deps {
 		RemoveTerminalHistory: removeTerminalHistory,
 		TrashSession:          trashSession,
 
+		EndRouteTokens: endRouteTokens,
+
 		ToolchainShellPrefix: toolchainShellPrefix,
 
 		// mcpConvID is a var mcp_wiring.go rewrites at run time, so pass a reader
@@ -75,3 +78,6 @@ func sessionDeps() sessionx.Deps {
 		ErrCodeTitleNoContent:         errCodeTitleNoContent,
 	}
 }
+
+// endRouteTokens ends a session's route tokens on the running gateway.
+func endRouteTokens(name string) { routegw.EndSession(name) }

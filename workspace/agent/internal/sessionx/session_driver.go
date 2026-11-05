@@ -131,7 +131,9 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// stop: bring the old driver down (single-writer exclusion, §2 — never leave two
-	// writers on one thread).
+	// writers on one thread). The old runtime's route token goes with it; the relaunch mints
+	// its own.
+	endRouteTokens(name)
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		disconnectRemoteControl(name, m)
 		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {

@@ -1,5 +1,5 @@
 // Package routegw is the AF route gateway (ADR 0128 decision 7, option A2): an HTTP endpoint on
-// the Agent's loopback that holds a route's credential and forwards a session's model calls with
+// a Unix socket of the Agent's that holds a route's credential and forwards a session's model calls with
 // it, so the credential never reaches the session. This file is the token contract; gateway.go is
 // the check every call runs; bedrock.go is the first upstream.
 //
@@ -19,9 +19,20 @@ import (
 	"time"
 )
 
-// MaxTTL is the longest a token lives: ADR 0126's approval ceiling. A token never outlives the
-// approval it depends on, and nothing here is long-lived or workspace-scoped.
-const MaxTTL = 8 * time.Hour
+// TokenTTL is how long a token lives without renewal. The Agent renews every token whose owner
+// is still running on its one-minute sweep (Gateway.Sweep), so a running session never sees it
+// expire, while a token whose owner ended without passing an eager revoke (a crash, a pane the
+// member closed, an exit the Agent missed) dies within TokenTTL instead of hours later. Ten
+// minutes leaves the launch, which mints before the pane exists, and up to nine missed sweeps
+// of a loaded Agent inside the window. The token string never changes, so the harness, which
+// reads its bearer once at start, needs no renewal path of its own and nothing in the session
+// can mint.
+//
+// There is no absolute ceiling: one would end a long session's model calls mid-turn with no
+// way for the harness to take a new bearer. What bounds use instead is per call: the caller
+// must be in the owner's process tree, the owner's incarnation and selection must hold, and
+// ADR 0126's approval (at most 8 hours) is re-checked.
+const TokenTTL = 10 * time.Minute
 
 // tokenPrefix makes a leaked token recognisable by a secret scanner and refuses a stray string
 // before it reaches the map.
@@ -64,13 +75,14 @@ func NewRegistry(now func() time.Time) *Registry {
 }
 
 // Mint issues a token for b and ends every earlier token of the same session: a relaunch, which
-// is when a selection can have changed, leaves exactly one live token. ttl is clamped to MaxTTL.
+// is when a selection can have changed, leaves exactly one live token. ttl is clamped to
+// TokenTTL.
 func (r *Registry) Mint(b Binding, ttl time.Duration) (token string, expires time.Time, err error) {
 	if b.Session == "" || b.Incarnation == "" || b.Route == "" || b.ProfileID == "" {
 		return "", time.Time{}, errors.New("a route token needs a session, its incarnation, a route and a connection")
 	}
-	if ttl <= 0 || ttl > MaxTTL {
-		ttl = MaxTTL
+	if ttl <= 0 || ttl > TokenTTL {
+		ttl = TokenTTL
 	}
 	var raw [32]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -141,18 +153,45 @@ func (r *Registry) Len() int {
 	return len(r.byKey)
 }
 
-// Sweep drops expired tokens and those keep reports false for, and says how many it dropped. keep
-// is how a periodic sweep ends the tokens of sessions that are gone; the per-call check already
-// refuses them, so the sweep only frees memory.
-func (r *Registry) Sweep(keep func(Binding) bool) int {
+// Sweep drops expired tokens and those keep reports false for, renews (to TokenTTL from now)
+// those alive reports true for, and says how many it dropped and renewed. keep is how a periodic
+// sweep ends the tokens of sessions that are gone; alive is whether the owner is still running.
+// A token that is kept but not alive is left to expire.
+//
+// keep and alive read files and ask tmux, so they run outside the lock: a call's Lookup must
+// not wait on them. A token revoked or replaced meanwhile is not brought back, because only
+// entries still present are touched.
+func (r *Registry) Sweep(keep, alive func(Binding) bool) (dropped, renewed int) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	now, n := r.now(), 0
+	snap := make(map[[32]byte]Binding, len(r.byKey))
 	for k, e := range r.byKey {
-		if !now.Before(e.expires) || (keep != nil && !keep(e.b)) {
-			delete(r.byKey, k)
-			n++
+		snap[k] = e.b
+	}
+	r.mu.Unlock()
+	drop := map[[32]byte]bool{}
+	renew := map[[32]byte]bool{}
+	for k, b := range snap {
+		switch {
+		case keep != nil && !keep(b):
+			drop[k] = true
+		case alive != nil && alive(b):
+			renew[k] = true
 		}
 	}
-	return n
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	for k, e := range r.byKey {
+		if !now.Before(e.expires) || drop[k] {
+			delete(r.byKey, k)
+			dropped++
+			continue
+		}
+		if renew[k] {
+			e.expires = now.Add(TokenTTL)
+			r.byKey[k] = e
+			renewed++
+		}
+	}
+	return dropped, renewed
 }

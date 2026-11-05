@@ -193,6 +193,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 				continue // deleted or archived since ListMetas above
 			}
 			m = cur
+			endRouteTokens(name) // the pane ended on its own: its token goes with it
 			// The end of a run, AS OBSERVED (write site ②) — this poll is the first thing
 			// that noticed the pane is gone, which is not when it actually ended.
 			reason, code, signal := "", 0, 0
@@ -1132,6 +1133,7 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hadMeta {
 		// A pane with no meta (an orphan) has nothing to put in the trash: end it, that is all.
+		endRouteTokens(name)
 		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
@@ -1191,6 +1193,7 @@ func HaltSession(m session.Meta) (session.Meta, error) { return haltSession(m, f
 // question. Called by the trash after the session's archive is written.
 func ForgetRuntime(m session.Meta) {
 	sid := session.UUID(m.Dir, m.Name)
+	endRouteTokens(m.Name)
 	dropManagedRuntime(m)
 	agents.DropHeld(m.Name, agents.DropTrashed)
 	dropPendingPeers(m.Name, "moved to the trash")
@@ -1272,6 +1275,9 @@ func haltSessionMeta(m session.Meta) (session.Meta, error) { return haltSession(
 // halt that leaves a resumable row behind, false only for a delete (HaltSession).
 func haltSession(m session.Meta, promote bool) (session.Meta, error) {
 	name := m.Name
+	// First, and also for a session that is already stopped: a token of a pane that ended by
+	// itself may still be within its lifetime.
+	endRouteTokens(name)
 	if m.DriverKind() == session.DriverManaged {
 		// Promote the carry-over BEFORE DropHandle (docs/log/75 P5): a pending Interaction
 		// lives only inside the runtime handle and is gone the moment it is dropped —
@@ -1392,6 +1398,7 @@ func ArchiveSession(m session.Meta) {
 	// only inside the process: called after kill-session / DropHandle it gets nothing, and
 	// the question is lost silently.
 	PromoteCarriedFor(m)
+	endRouteTokens(name)
 	if tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
@@ -1522,6 +1529,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// Recreating also folds the old session away, and a pending question / approval request
 	// does not survive kill-session / DropHandle — calling later gets nothing.
 	PromoteCarriedFor(m)
+	endRouteTokens(m.Name)
 	if tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
