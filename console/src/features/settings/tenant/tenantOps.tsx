@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errText, rel } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
+import { RangePresets } from "../../../ui/RangePresets.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../../lib/intl.ts";
 import { useLocale, useT } from "../../../lib/i18n/index.ts";
@@ -273,19 +274,21 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const usageQuery = useCallback(() => {
+  const usageQuery = useCallback((win?: { from: string; to: string }) => {
     const qs = new URLSearchParams();
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
+    const f = win ? win.from : from;
+    const t = win ? win.to : to;
+    if (f) qs.set("from", f);
+    if (t) qs.set("to", t);
     if (tenant) qs.set("tenant", tenant);
     return qs.toString();
   }, [from, to, tenant]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (win?: { from: string; to: string }) => {
     setLoading(true);
     setErr("");
     try {
-      const q = usageQuery();
+      const q = usageQuery(win);
       const d = await api("api/admin/usage" + (q ? "?" + q : ""));
       if (d?.error) {
         setErr(errText(d.error));
@@ -327,6 +330,18 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
         <h4>{tr("admin.usage_title")}</h4>
         <p className="muted usage-intro">{tr("admin.usage_intro")}</p>
         <div className="usage-toolbar">
+          {/* The usage ledger buckets by UTC day, so its months are UTC months. */}
+          <RangePresets
+            from={from}
+            to={to}
+            zone="utc"
+            disabled={loading}
+            onPick={(r) => {
+              setFrom(r.from);
+              setTo(r.to);
+              load(r);
+            }}
+          />
           <label>
             {tr("admin.from")}
             <input type="date" lang={locale} value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -346,7 +361,7 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
               </select>
             </label>
           )}
-          <button className="primary" onClick={load} disabled={loading}>
+          <button className="primary" onClick={() => load()} disabled={loading}>
             {loading ? "…" : tr("admin.apply")}
           </button>
           <a className="ghost usage-csv" href={csvHref()} download>
