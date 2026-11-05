@@ -337,7 +337,13 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 			// The logical line goes on while this physical line fills the pane. It is compared
 			// only once complete: an early physical line equal to P proves nothing about what
 			// the continuation adds.
-			if c, ok := cols(ln); ok && width > 0 && c+1 >= width-1 && k+1 < len(lines) {
+			c, ok := cols(ln)
+			if !ok && k+1 < len(lines) {
+				// Unknown width and more lines below: whether this line was wrapped cannot be
+				// told, and stopping here would leave the continuation unchecked.
+				return TargetDiffers
+			}
+			if ok && width > 0 && c+1 >= width-1 && k+1 < len(lines) {
 				continue
 			}
 			if truncated {

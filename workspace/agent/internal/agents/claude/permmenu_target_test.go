@@ -171,3 +171,17 @@ func TestCheckTargetDoesNotTrustCombiningWidth(t *testing.T) {
 		}
 	}
 }
+
+// Unknown width plus a line below is refused outright: stopping at the first physical line
+// would leave the continuation unchecked (review round 4). Single-line combining commands match.
+func TestCheckTargetRefusesUnknownWidthWithContinuation(t *testing.T) {
+	first := "echo " + strings.Repeat("a", 73) + "\u0301"
+	m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " "+first+"\n && rm -rf build\n")
+	if got := m.CheckTarget("Bash · "+first, ""); got != TargetDiffers {
+		t.Errorf("combining wrapped suffix: %v", got)
+	}
+	m = paneWith(t, "bash_ask_rule_af_label.txt", "echo live-check-3357", first)
+	if got := m.CheckTarget("Bash · "+first, ""); got != TargetMatches {
+		t.Errorf("single-line combining command: %v", got)
+	}
+}
