@@ -390,6 +390,13 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   設定 > 接続 > エージェント > OpenCode カード > API キー（Anthropic プリセット）に直した。(4) anthropic-api セッションの
   「credit balance」打ち切りは上限エピソードにしない（`spend_limit` にならず、待機中のメッセージは配信される）。
   「spend limit」の文面と他の経路は従来どおり。
+- 2026-11-05, #3317: 実測（claude 2.1.318、ローカルサーバ、一時 config dir）: `--settings` のフラグ層は空値を受け付け、
+  user/project/local ファイルより優先される（user 設定の `ANTHROPIC_BASE_URL` はプロセス環境に勝ち、フラグ層の空値はそれに勝つ。
+  stream-json セッション実行中に user 設定を書き換えても、エンドポイントも認証ヘッダも変わらない。空の `ANTHROPIC_AUTH_TOKEN` は
+  Authorization ヘッダを送らない。ログイン無しで空固定のサブスクリプション起動は、user 設定のキーを使わず「Not logged in」になる）。
+  そこで起動時に、`env -u` が外すものと `apiKeyHelper` を、既存の 1 つの `--settings` オブジェクトの中で空に固定する。固定できないもの:
+  managed 設定（CLI の文書ではフラグ層より上とされる。ここでは未測定。/etc に書く root が無い）と anthropic-api のキー自体（コマンドラインに載せない）。これらは起動拒否と `RouteHeld` の
+  巡回に残し、そちらは変えない。測定は `claude -p --input-format stream-json --output-format stream-json` で行い、Fleet が起動する対話 TUI のペインでは測っていない（未測定。設定の層の扱いは同じコードだと CLI の文書にはあるが、証拠ではない）。数時間の監視も測っていない。「Not logged in」は Fleet では起きない（`settingsConflict` が先に起動を拒否する）。ピンの優先順位を示すだけ。
 - 2026-11-05, P2a（#3282）: A2 のゲートウェイとトークンの契約を、上流 1 つ（Amazon Bedrock）で作った。どのハーネスも
   まだ繋いでいない。**置き場所は Agent**（`workspace/agent/internal/routegw`）で、Agent の mux ではなく専用の loopback
   リスナーに置く（mux の bearer はどのセッションのシェルにもある）。資格情報、SSO キャッシュ、ADR 0126 の承認は Workspace

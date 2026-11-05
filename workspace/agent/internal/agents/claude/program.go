@@ -130,6 +130,12 @@ func ChatAutoMemorySettings() string {
 // bypass=false means the permission prompt is NOT skipped (the user's choice per docs/log/76,
 // or a plan launch).
 func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool) string {
+	return buildProgramPinned(nil, sid, model, effort, mode, label, forkFrom, bypass)
+}
+
+// buildProgramPinned is buildProgram with a route's pin (routeSettingsPin) merged into the one
+// `--settings` object; nil adds nothing, so a launch without a route is byte-for-byte unchanged.
+func buildProgramPinned(pin []string, sid, model, effort, mode, label, forkFrom string, bypass bool) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
 	}
@@ -148,7 +154,7 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 	}
 	// Appended after AGENT_CLAUDE_FLAGS so it cannot be overridden: closing the channel is
 	// the point, so no environment variable is left that would disable it.
-	flags += " --settings " + session.ShellQuote(launchSettings())
+	flags += " --settings " + session.ShellQuote(pinnedSettings(launchSettings(), pin))
 	if mode == "plan" {
 		flags += " --permission-mode plan"
 	}
