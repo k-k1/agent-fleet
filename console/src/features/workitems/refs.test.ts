@@ -199,6 +199,11 @@ describe("workItemRefInputs", () => {
     const twice = [...one, { ...row("github", "octo/fleet#1"), queryId: "q2" }];
     expect(workItemRefInputs(null, twice)).toBe(workItemRefInputs(null, one));
   });
+
+  it("changes when the same Jira key moves to another site", () => {
+    const at = (site: string) => [row("jira", "OPS-12", { url: `https://${site}/browse/OPS-12` })];
+    expect(workItemRefInputs(null, at("a.example.test"))).not.toBe(workItemRefInputs(null, at("b.example.test")));
+  });
 });
 
 describe("resolveWorkItemRef", () => {

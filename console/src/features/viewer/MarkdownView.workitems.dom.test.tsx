@@ -515,6 +515,17 @@ describe("issue and pull request URLs", () => {
     expect(d?.item.url).toBe("https://b.example.test/browse/OPS-12");
   });
 
+  it("links a Jira URL once the connection's site moves to it, even under the same keys", async () => {
+    const at = (site: string) => payload([row("jira", "OPS-12", { url: `https://${site}/browse/OPS-12` })]);
+    useWorkItemStore.setState({ payload: at("a.example.test") });
+    await render("see https://b.example.test/browse/OPS-12", null);
+    expect(links()).toHaveLength(0);
+    await act(async () => useWorkItemStore.setState({ payload: at("b.example.test") }));
+    expect(links()).toHaveLength(1);
+    await click(links()[0]);
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false });
+  });
+
   it("loads the inbox for a message that cites tickets by URL alone", async () => {
     useWorkItemStore.getState().reset();
     // ensureWorkItems retries at most once a minute, and an earlier case in this file may have

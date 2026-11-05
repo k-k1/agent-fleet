@@ -102,14 +102,21 @@ export function originOf(repo: { provider?: string; remote?: string; remotePath?
   return null;
 }
 
-/** What classifyWorkItemRef's answers depend on beyond the token, as one comparable string: the
- * context origin and the cached keys. A rendered message re-runs its linkifier when this changes —
- * the repository list or the inbox arriving after the text did. */
+/** What classifyWorkItemRef's and workItemRefOfUrl's answers depend on beyond the token, as one
+ * comparable string: the context origin, the cached keys and the Jira site each Jira row is on. A
+ * rendered message re-runs its linkifier when this changes — the repository list or the inbox
+ * arriving after the text did, or the Jira connection moving to another site with the same keys. */
 export function workItemRefInputs(origin: RefOrigin | null, items: WorkItem[], jiraProjects: readonly string[] = []): string {
   // A set: the same ticket matched by two saved queries is one key, not a change.
-  const keys = [...new Set(items.map((i) => `${i.provider}:${i.key}`))];
+  const keys = [...new Set(items.map((i) => `${i.provider}:${i.key}${i.provider === "jira" ? `@${jiraSiteOf(i.url)}` : ""}`))];
   return [origin ? `${origin.provider}:${origin.path}` : "", keys.sort().join(","), [...jiraProjects].sort().join(",")].join("|");
 }
+
+// The site part of a Jira row's URL ("https://x.example/browse/KEY" → "https://x.example").
+const jiraSiteOf = (url: string) => {
+  const at = url.indexOf("/browse/");
+  return at > 0 ? url.slice(0, at) : "";
+};
 
 const cachedRow = (items: WorkItem[], provider: string, key: string) =>
   items.find((i) => i.provider === provider && i.key === key);
