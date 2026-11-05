@@ -94,6 +94,14 @@ func (agentImpl) UsageLimitTraits() agents.UsageLimitTraits {
 			if atLimit && apiAccountCredit(m, a.Msg) {
 				return "", false
 			}
+			// A limit recorded before the session switched routes belongs to the route it left;
+			// until a turn on the new one ends, the transcript tail still shows it, and reading it
+			// as a limit of the new route would open an episode and book a resume against it.
+			if atLimit {
+				if since := m.RouteSince(); !since.IsZero() && (a.At.IsZero() || a.At.Before(since)) {
+					return "", false
+				}
+			}
 			return kind, atLimit
 		},
 		ResetAt: func(m session.Meta, menu bool, now time.Time) (time.Time, string, bool) {

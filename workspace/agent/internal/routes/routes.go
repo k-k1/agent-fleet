@@ -126,6 +126,32 @@ const (
 	CodeRouteSettings = "route_settings_conflict"
 )
 
+// Refusal codes of the switch away from a stopped subscription (decision 10).
+const (
+	// CodeSwitchUnsupported: the harness declares no route to switch to.
+	CodeSwitchUnsupported = "route_switch_unsupported"
+	// CodeSwitchNotSubscription: the session's route is not a subscription.
+	CodeSwitchNotSubscription = "route_switch_not_subscription"
+	// CodeSwitchUnproven: the session has no explicit selection and nothing proves it runs on the
+	// subscription.
+	CodeSwitchUnproven = "route_switch_route_unproven"
+	// CodeSwitchNoLimit: there is no limit evidence on the session's current route.
+	CodeSwitchNoLimit = "route_switch_no_limit"
+	// CodeSwitchSpendLimit: the limit is a spend cap; waiting never clears it, and a metered route
+	// is no answer to a billing decision.
+	CodeSwitchSpendLimit = "route_switch_spend_limit"
+	// CodeSwitchState: the session is working, has a question pending, or is moving.
+	CodeSwitchState = "route_switch_state"
+	// CodeSwitchBusy: a switch or a move of this session is already running or unfinished.
+	CodeSwitchBusy = "route_switch_busy"
+	// CodeSwitchFailed: the switch failed and was rolled back; the message says what state the
+	// session is in.
+	CodeSwitchFailed = "route_switch_failed"
+	// CodeSwitchBooking: the usage-limit resume booking could not be recorded as cancelled, so
+	// nothing was changed.
+	CodeSwitchBooking = "route_switch_booking"
+)
+
 // CheckStatic is the part of the validation that needs no state: the selection names a route in
 // the catalogue, and allowed (the harness's declared list, nil for a harness that declares none)
 // contains it. The Control Plane runs the same function over its snapshot before it wakes a

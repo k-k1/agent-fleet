@@ -70,6 +70,9 @@ var Entries = []string{
 	// A move target's first prompt until it is known to have arrived (session_move_deliver.go).
 	// Introduced directly under AgentStateDir.
 	"session-move-delivery",
+	// A route switch between begin and its end, for crash recovery (sessionx
+	// session_route_switch.go). Introduced directly under AgentStateDir.
+	"session-route-switch",
 	// What the PR feedback watch told about each PR (sessionx pr_feedback.go). Introduced
 	// directly under AgentStateDir.
 	"pr-feedback",

@@ -166,6 +166,8 @@ func frozenAuditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "session.create", "", true
 		case name != "" && strings.HasSuffix(p, "/fork"):
 			return "session.fork", name, true
+		case name != "" && p == "/api/sessions/"+name+"/route-switch":
+			return "session.route_switch", name, true
 		case name != "" && p == "/api/sessions/"+name+"/move":
 			return "session.move", name, true
 		case name != "" && strings.HasPrefix(p, "/api/sessions/"+name+"/move/"):
@@ -248,7 +250,7 @@ var frozenMemberOriginHashedRoutes = map[string]bool{
 // wildcard filled with one of them is where reading the path and reading the pattern could part.
 var auditSweepWords = []string{
 	"x1", "svn-update", "svn-cleanup", "svn-auth", "commit", "discard", "checkout", "fetch",
-	"ff", "parent-ff", "fork", "move", "retry", "cancel", "reopen", "deliver", "preview", "stop",
+	"ff", "parent-ff", "fork", "move", "route-switch", "retry", "cancel", "reopen", "deliver", "preview", "stop",
 	"start", "logout", "code", "profiles", "sessions", "repos", "export",
 }
 

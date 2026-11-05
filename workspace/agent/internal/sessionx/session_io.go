@@ -172,6 +172,13 @@ func HandleSessionInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer lease.Release()
+	// A usage-limit resume whose booking was cancelled (a route switch, an early move) is dead
+	// even if the scheduler fired it before the delete reached it.
+	if refuseCancelledResume(name, body.Source, body.Prompt, body.ScheduleID) {
+		httpx.WriteErr(w, http.StatusConflict, "rate_limit_booking_cancelled",
+			"this usage-limit resume was cancelled and is not delivered")
+		return
+	}
 	// Peer send (docs/log/58 / ADR 0041). Every invariant is satisfied here before the
 	// request joins the ordinary injection path. It sits BEFORE the managed/tui split for
 	// the same reason as the self-report hint line: otherwise one of the two paths slips

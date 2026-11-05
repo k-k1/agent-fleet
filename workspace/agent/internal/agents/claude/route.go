@@ -107,9 +107,11 @@ func (agentImpl) ApplyRoute(_ session.Meta, sel agents.RouteSelection) (agents.R
 	}
 }
 
-// ResolveRoute implements agents.RouteAdapter. A session with an explicit selection ran on it:
-// the credential is fixed at process start and the selection cannot change while the session
-// exists, so the selection is the evidence. A session with none reports nothing, as before.
+// ResolveRoute implements agents.RouteAdapter. A session with an explicit selection runs on it:
+// the credential is fixed at process start and the selection changes only through the switch of
+// decision 10 (which stops the process first), so the selection in force now is the evidence for
+// a turn run now. A turn of earlier is judged by Meta.RouteAt (stampRoute). A session with none
+// reports nothing, as before.
 func (agentImpl) ResolveRoute(m session.Meta, _ agents.TurnInfo) agents.ResolvedRoute {
 	if m.Route == nil {
 		return agents.ResolvedRoute{}
@@ -332,22 +334,82 @@ func routeLaunchProgram(program string, unset []string) string {
 	return "env -u " + strings.Join(unset, " -u ") + " " + program
 }
 
+// SwitchTarget implements agents.RouteSwitcher (ADR 0128 decision 10): the metered route a
+// session on the subscription may be moved to is anthropic-api, and only a session whose route
+// is provably the subscription is offered it.
+//
+// A session with no explicit selection (decision 2) resolves its route per turn, which claude's
+// transcript does not show. It counts as being on the subscription only when the same evidence
+// an explicit anthropic-subscription launch relies on holds today: the Agent's environment
+// carries no credential or endpoint that overrides the OAuth login, the OAuth record exists, and
+// no settings file of the user or the working copy sets one. Anything else is refused as
+// unproven, never guessed: a session that was in fact on an API key must not be "switched" to the
+// member's key on a wrong reading. The selection stored by the switch is explicit, so the
+// session is never in this position twice.
+func (agentImpl) SwitchTarget(m session.Meta) (agents.RouteSelection, *agents.RouteRefusal) {
+	target := agents.RouteSelection{Route: RouteAPI}
+	if m.Route != nil {
+		if m.Route.Route == RouteSubscription {
+			return target, nil
+		}
+		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchNotSubscription,
+			Message: "this session runs on " + m.Route.Route + ", not on the subscription; only a stopped subscription can be switched away from"}
+	}
+	if why := subscriptionUnproven(m); why != "" {
+		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchUnproven,
+			Message: "this session has no explicit route and it cannot be shown to run on the subscription (" + why +
+				"); start a new session on the anthropic-subscription route to be able to switch"}
+	}
+	return target, nil
+}
+
+// subscriptionUnproven names what stops an empty selection being read as the subscription, or
+// "" when nothing does.
+func subscriptionUnproven(m session.Meta) string {
+	if envToken() {
+		return "a token or API key is set in the Agent's environment"
+	}
+	for _, k := range routeUnset {
+		if os.Getenv(k) != "" {
+			return k + " is set in the Agent's environment"
+		}
+	}
+	if c, ok := readCreds(); !ok || c.ClaudeAiOauth.AccessToken == "" {
+		return "no claude.ai login is stored"
+	}
+	if ref := settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
+		return ref.Message
+	}
+	return ""
+}
+
 // stampRoute records on each turn the route the session ran on and, where the route proves it,
 // how the call was charged. Only an explicit selection is stamped: with none, the turns stay
 // unresolved exactly as before (claude's transcript carries no login or usage-credit signal).
 // anthropic-api is metered by construction: the key is the only credential in the process. The
 // subscription route stays unresolved, because past a window usage credits can bill the same
 // login (decision 8).
+//
+// A session that switched routes (decision 10) files each turn under the selection in force at
+// the turn's own timestamp (Meta.RouteAt), never under the one it holds now; a turn whose
+// timestamp cannot be read stays unresolved.
 func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
-	if m.Route == nil {
+	if m.Route == nil && len(m.RouteSwitches) == 0 {
 		return turns
 	}
-	r := agentImpl{}.ResolveRoute(m, agents.TurnInfo{})
 	// A copy: the turn list may be a memoized one shared with other readers.
 	turns = append([]transcript.Turn(nil), turns...)
 	for i := range turns {
-		turns[i].Route = r.Route
-		if r.Route == RouteAPI {
+		var at time.Time
+		if t, err := time.Parse(time.RFC3339Nano, turns[i].TS); err == nil {
+			at = t
+		}
+		sel, ok := m.RouteAt(at)
+		if !ok || sel == nil {
+			continue
+		}
+		turns[i].Route = sel.Route
+		if sel.Route == RouteAPI {
 			turns[i].Billing = usagex.BillingMetered
 		}
 	}

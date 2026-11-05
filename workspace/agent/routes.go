@@ -98,6 +98,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/move/cancel", sessionx.HandleSessionMoveCancel)
 	mux.HandleFunc("POST /sessions/{name}/move/reopen", sessionx.HandleSessionMoveReopen)
 	mux.HandleFunc("POST /sessions/{name}/move/deliver", sessionx.HandleSessionMoveDeliver)
+	mux.HandleFunc("GET /sessions/{name}/route-switch", sessionx.HandleSessionRouteSwitchPreview)
+	mux.HandleFunc("POST /sessions/{name}/route-switch", sessionx.HandleSessionRouteSwitch)
 	mux.HandleFunc("POST /sessions/{name}/stop", sessionx.HandleStopSession)
 	mux.HandleFunc("POST /sessions/{name}/halt", sessionx.HandleHaltSession)
 	mux.HandleFunc("POST /sessions/{name}/recreate", sessionx.HandleRecreateSession)

@@ -468,3 +468,32 @@ table from becoming a menu of models that fail on the first message, which is wh
   caller binding (a Unix socket with peer credentials mapped to the session's process tree). Also: the gateway sends
   response headers as soon as Bedrock answers, drops the query string (no operation takes one), and resolves
   credentials outside its lock, one resolution per profile at a time.
+- 2026-11-05, P4a (#3283): the backend of decision 10's B1. `GET /sessions/{name}/route-switch` answers whether a switch
+  would be accepted (`allowed`, the target, a refusal code, the two caveats of the offer, and B2's account-setting
+  link); `POST` does it. The harness declares the target through `agents.RouteSwitcher` (claude: `anthropic-api`). Allowed
+  only for a Terminal session whose route is the subscription, with **limit evidence on that route** (the kind's
+  `AtLimit`: a window; a spend limit is refused) and the session idle, stopped or at its limit; decision 12's checks
+  (permission is use, key held and unreplaced, start accepted) run before anything is stopped. **Empty selection
+  (decisions 2, 6)**: offered only when claude can show the subscription is what it runs on, by the evidence an
+  explicit `anthropic-subscription` launch relies on (no token, key or endpoint override in the Agent's environment, an
+  OAuth record stored, no settings file of the user or the working copy that sets one); otherwise refused as
+  `route_switch_route_unproven`. The stored selection is explicit afterwards, and the turns before the boundary stay
+  unresolved in the ledger, as they always were. **The transition**: the session's lifecycle gate is taken exclusively
+  for the whole switch, so a member message, a peer message or a scheduled prompt waits there and lands after it;
+  the step record (`session-route-switch`) is persisted at begun, booking, stopped, stored and resumed; the booking id
+  goes into the record, is recorded as cancelled and deleted at the CP (a delete the CP did not confirm is retried by
+  the sweep and reported as `bookingCancelPending`, and a fire that arrives first is refused by `refuseCancelledResume`
+  at the input gate, also for any resume booking the switched session's episode does not hold); the old pane is
+  stopped; the selection and the boundary (`Meta.RouteSwitches`) are stored in one write; the session starts on the
+  new route; the old episode closes. A failure rolls back: a pane the new route started is stopped, the old selection
+  is restored, the resume is booked again, and a session that was running is started again on the old route, else it
+  is left stopped on it, so the stored selection is always the route a start would use. A crash is recovered at boot from
+  the meta and the process, not the step alone (`RecoverRouteSwitches`); a runtime is never started at boot. **Ledger**:
+  claude's usage turns are filed under the selection in force at their own timestamp (`Meta.RouteAt`), a turn whose
+  timestamp cannot be read after a switch stays unresolved, and a limit recorded before the boundary is not evidence
+  on the new route (`AtLimit`), so the stale transcript tail opens no episode. **B2**: only the link
+  (`https://claude.ai/settings/usage`, unmeasured), with `accountSettingAffectsAll`; "resume on credits already
+  enabled" is not built because nothing the Agent reads says whether credits are enabled (the transcript carries the
+  window error, never the account setting), and AF never toggles them. The resume after the switch is the relaunch
+  only: no prompt is typed, so the Console's next message (or a one-click "carry on", P4b) lands on the new route.
+  Not measured: everything decision 14 asks of a live window stop.

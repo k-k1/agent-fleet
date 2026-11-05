@@ -595,3 +595,134 @@ func TestRouteLaunchPinsOverridableVariablesInTheFlagLayer(t *testing.T) {
 		t.Error("no route: apiKeyHelper appeared")
 	}
 }
+
+// timedErr is apiErr stamped with a transcript timestamp.
+func timedErr(text string, status int, at time.Time) string {
+	var rec map[string]any
+	_ = json.Unmarshal([]byte(apiErr(text, status)), &rec)
+	rec["timestamp"] = at.UTC().Format(time.RFC3339Nano)
+	b, _ := json.Marshal(rec)
+	return string(b)
+}
+
+// After a switch the ledger files each turn under the selection in force at its own timestamp
+// (decision 8): a turn from before the boundary is not refiled under the new route, and one the
+// clock cannot place stays unresolved.
+func TestStampRouteFollowsTheSwitchBoundary(t *testing.T) {
+	at := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	turn := func(ts string) transcript.Turn { return transcript.Turn{TS: ts} }
+	turns := []transcript.Turn{
+		turn(at.Add(-time.Hour).Format(time.RFC3339)), turn(at.Add(time.Hour).Format(time.RFC3339)), turn(""),
+	}
+	explicit := session.Meta{Route: sel(RouteAPI, "ANTHROPIC_API_KEY@abc"), RouteSwitches: []session.RouteSwitch{
+		{At: at.Format(time.RFC3339Nano), From: sel(RouteSubscription, ""), To: *sel(RouteAPI, "ANTHROPIC_API_KEY@abc")},
+	}}
+	got := stampRoute(explicit, turns)
+	if got[0].Route != RouteSubscription || got[0].Billing != "" {
+		t.Errorf("before the boundary = %+v, want subscription, billing unresolved", got[0])
+	}
+	if got[1].Route != RouteAPI || got[1].Billing != usagex.BillingMetered {
+		t.Errorf("after the boundary = %+v, want anthropic-api metered", got[1])
+	}
+	if got[2].Route != "" || got[2].Billing != "" {
+		t.Errorf("turn without a timestamp = %+v, want unresolved", got[2])
+	}
+	// A session that had NO explicit selection before: its earlier turns stay unresolved, as they
+	// always were.
+	empty := explicit
+	empty.RouteSwitches = []session.RouteSwitch{{At: at.Format(time.RFC3339Nano), To: *sel(RouteAPI, "ANTHROPIC_API_KEY@abc")}}
+	got = stampRoute(empty, turns)
+	if got[0].Route != "" || got[1].Route != RouteAPI {
+		t.Errorf("empty-before: %+v / %+v", got[0], got[1])
+	}
+}
+
+// A limit recorded on the route a session left is not evidence of a limit on the one it entered,
+// while the transcript tail still shows it; a limit written after the boundary is.
+func TestAtLimitIgnoresALimitFromBeforeTheSwitch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	tr := agentImpl{}.UsageLimitTraits()
+	boundary := time.Now()
+	msg := "You've hit your 5-hour limit · resets 1:50am (Asia/Tokyo)"
+	for i, tc := range []struct {
+		name  string
+		at    time.Time
+		since bool
+		want  bool
+	}{
+		{"never switched", boundary.Add(-time.Hour), false, true},
+		{"limit before the switch", boundary.Add(-time.Hour), true, false},
+		{"limit after the switch", boundary.Add(time.Hour), true, true},
+		{"limit with no timestamp, switched", time.Time{}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := session.Meta{Name: fmt.Sprintf("swl%d", i), Dir: filepath.Join(home, fmt.Sprintf("w%d", i)), Kind: session.KindClaude,
+				Route: sel(RouteAPI, "")}
+			if tc.since {
+				m.RouteSwitches = []session.RouteSwitch{{At: boundary.UTC().Format(time.RFC3339Nano), From: sel(RouteSubscription, ""), To: *sel(RouteAPI, "")}}
+			}
+			line := apiErr(msg, 429)
+			if !tc.at.IsZero() {
+				line = timedErr(msg, 429, tc.at)
+			}
+			dir := filepath.Join(ConfigDir(), "projects", "-proj")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, session.UUID(m.Dir, m.Name)+".jsonl"), []byte(userLine("go")+"\n"+line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, at := tr.AtLimit(m); at != tc.want {
+				t.Fatalf("AtLimit = %v, want %v", at, tc.want)
+			}
+		})
+	}
+}
+
+// Decision 10 / 2 / 6: which sessions the harness offers the metered route to.
+func TestSwitchTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	for _, k := range routeUnset {
+		t.Setenv(k, "")
+	}
+	prev := managedSettingsDir
+	managedSettingsDir = filepath.Join(home, "managed")
+	t.Cleanup(func() { managedSettingsDir = prev })
+	a := agentImpl{}
+	code := func(r *agents.RouteRefusal) string {
+		if r == nil {
+			return ""
+		}
+		return r.Code
+	}
+	if to, ref := a.SwitchTarget(session.Meta{Route: sel(RouteSubscription, "")}); ref != nil || to.Route != RouteAPI {
+		t.Errorf("explicit subscription = %+v %v", to, ref)
+	}
+	if _, ref := a.SwitchTarget(session.Meta{Route: sel(RouteAPI, "")}); code(ref) != routes.CodeSwitchNotSubscription {
+		t.Errorf("api route = %v", ref)
+	}
+	empty := session.Meta{Name: "e1", Dir: filepath.Join(home, "w")}
+	if _, ref := a.SwitchTarget(empty); code(ref) != routes.CodeSwitchUnproven {
+		t.Errorf("empty, no login stored = %v", ref)
+	}
+	creds := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok","expiresAt":%d,"refreshTokenExpiresAt":%d}}`,
+		time.Now().Add(time.Hour).UnixMilli(), time.Now().Add(24*time.Hour).UnixMilli())
+	writeFile(t, filepath.Join(ConfigDir(), ".credentials.json"), creds)
+	if to, ref := a.SwitchTarget(empty); ref != nil || to.Route != RouteAPI {
+		t.Errorf("empty, login stored = %+v %v", to, ref)
+	}
+	t.Setenv("ANTHROPIC_BASE_URL", "http://gateway.invalid")
+	if _, ref := a.SwitchTarget(empty); code(ref) != routes.CodeSwitchUnproven {
+		t.Errorf("empty, endpoint override = %v", ref)
+	}
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	writeFile(t, filepath.Join(ConfigDir(), "settings.json"), `{"env":{"ANTHROPIC_API_KEY":"k"}}`)
+	if _, ref := a.SwitchTarget(empty); code(ref) != routes.CodeSwitchUnproven {
+		t.Errorf("empty, settings file sets a key = %v", ref)
+	}
+}
