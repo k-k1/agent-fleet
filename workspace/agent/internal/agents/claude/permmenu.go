@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // Permission choices the Console's permission card and the chat bridge offer. They name what
@@ -31,6 +30,8 @@ type PermissionMenu struct {
 	// BodyOK is false when no such rule was found, so nothing can be said about the target.
 	Body   []string
 	BodyOK bool
+	// RuleWidth is the width of the dialog's top rule, i.e. of the pane.
+	RuleWidth int
 }
 
 // PermissionRow is one numbered row of the dialog.
@@ -131,7 +132,7 @@ func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 	// "╌" rules inside the body are not it).
 	for j := qIdx - 1; j >= 0; j-- {
 		if permTopRuleRe.MatchString(lines[j]) {
-			m.Body, m.BodyOK = lines[j+1:qIdx], true
+			m.Body, m.BodyOK, m.RuleWidth = lines[j+1:qIdx], true, len([]rune(strings.TrimSpace(lines[j])))
 			break
 		}
 	}
@@ -196,9 +197,16 @@ const (
 	TargetDiffers
 )
 
-// fileTools draw their target as a path that may be relative to the session's directory, while
-// the payload holds the absolute one.
-var fileTools = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "Read": true}
+// dialogTitles maps the tool in the payload to the title line the dialog opens with. A tool
+// not listed here cannot be matched to a dialog, so its answer is refused.
+var dialogTitles = map[string][]string{
+	"Bash":         {"Bash command"},
+	"Edit":         {"Edit file"},
+	"MultiEdit":    {"Edit file"},
+	"Write":        {"Create file", "Overwrite file"},
+	"NotebookEdit": {"Edit notebook"},
+	"Read":         {"Read file"},
+}
 
 // payloadTarget splits the permission payload "Tool · target" (permToolDetail) into the tool
 // and its target, with the 100-rune truncation mark removed. ok is false for anything else: a
@@ -213,20 +221,19 @@ func payloadTarget(detail string) (tool, target string, ok bool) {
 	return tool, target, true
 }
 
-// dense drops every whitespace rune: a terminal wraps a long command at the pane's width and
-// indents the continuation, so only the non-blank characters are comparable.
-func dense(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) {
-			return -1
-		}
-		return r
-	}, s)
-}
+// permDashRuleRe is the dashed rule that fences the dialog's target (command, path, diff).
+var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 
-// CheckTarget compares the payload's target with the dialog body (#3359). The body may show
-// more than the target (a description, a "Tip:", a rewritten command such as "rtk <command>"),
-// so the target must appear inside it, not equal it.
+// CheckTarget compares the payload's target with the dialog on screen (#3359). The dialog is
+// read by structure, never searched as free text: the title must be the payload tool's, and the
+// target is only the command between the two dashed rules (Bash) or the path lines under the
+// title (file tools). A description, a diff or a "Tip:" never counts as evidence.
+//
+// Whitespace is kept: only the dialog's one-space indent is removed, and a wrapped line is
+// rejoined when every line but the last is as wide as the pane (ruleWidth), the one case where
+// the terminal, not the tool, broke the line. cwd is the session directory, for a path drawn
+// relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
+// (measured: bash_four_options.txt); the payload holds the command as it was before.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	tool, target, ok := payloadTarget(detail)
 	if !ok {
@@ -235,26 +242,87 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	if !m.BodyOK {
 		return TargetDiffers
 	}
-	body := dense(strings.Join(m.Body, "\n"))
-	if want := dense(target); strings.Contains(body, want) {
-		return TargetMatches
+	truncated := strings.HasSuffix(strings.TrimSpace(detail), "…")
+	titles, known := dialogTitles[tool]
+	body := m.Body
+	for len(body) > 0 && strings.TrimSpace(body[0]) == "" {
+		body = body[1:]
 	}
-	if !fileTools[tool] || !strings.HasPrefix(target, "/") {
+	if !known || len(body) == 0 {
 		return TargetDiffers
 	}
-	// A path shown relative to the session's directory: it must be that exact relative path on a
-	// line of its own, so "y/note.txt" never passes for "note.txt" and another directory's file of
-	// the same name never passes for this one.
-	if cwd == "" {
+	title := strings.TrimSpace(body[0])
+	titled := false
+	for _, t := range titles {
+		titled = titled || t == title
+	}
+	if !titled {
 		return TargetDiffers
 	}
-	rel, err := filepath.Rel(cwd, target)
-	if err != nil {
-		return TargetDiffers
+	// The target region: lines up to the first dashed rule (file tools), or between the first
+	// and the second (Bash).
+	var before, between []string
+	i := 1
+	for ; i < len(body) && !permDashRuleRe.MatchString(body[i]); i++ {
+		before = append(before, body[i])
 	}
-	for _, ln := range m.Body {
-		if strings.TrimSpace(ln) == rel {
-			return TargetMatches
+	if i >= len(body) {
+		return TargetDiffers // no fenced region: the layout is not the one measured
+	}
+	for i++; i < len(body) && !permDashRuleRe.MatchString(body[i]); i++ {
+		between = append(between, body[i])
+	}
+	if tool == "Bash" {
+		// The description sits above the first rule and is not the command.
+		if i >= len(body) {
+			return TargetDiffers
+		}
+		return matchLogicalLine(between, target, truncated, m.RuleWidth, func(shown string) bool { return shown == target || shown == "rtk "+target })
+	}
+	cands := []string{target}
+	if rel, err := filepath.Rel(cwd, target); cwd != "" && err == nil {
+		cands = append(cands, rel)
+	}
+	return matchLogicalLine(before, target, truncated, m.RuleWidth, func(shown string) bool {
+		for _, c := range cands {
+			if shown == c {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// matchLogicalLine tries the first line of region as it stands, then rejoined with the lines the
+// terminal wrapped it over (with no separator, or with the space the wrap swallowed). A
+// truncated target (the payload cuts at 100 runes) only has to prefix the shown line.
+func matchLogicalLine(region []string, target string, truncated bool, width int, eq func(string) bool) TargetCheck {
+	var lines []string
+	for _, ln := range region {
+		ln = strings.TrimRight(strings.TrimPrefix(ln, " "), " \t")
+		lines = append(lines, ln)
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	for _, sep := range []string{"", " "} {
+		shown := ""
+		for k, ln := range lines {
+			if k > 0 {
+				shown += sep
+			}
+			shown += ln
+			if truncated {
+				if strings.HasPrefix(shown, target) {
+					return TargetMatches
+				}
+			} else if eq(shown) {
+				return TargetMatches
+			}
+			// Another line joins only when this one filled the pane.
+			if width <= 0 || len([]rune(ln)) < width/2 {
+				break
+			}
 		}
 	}
 	return TargetDiffers
