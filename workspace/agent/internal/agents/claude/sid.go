@@ -49,10 +49,11 @@ func LiveSID(slot string) string {
 //
 // The clue is AF_SESSION_NAME. It is handed over as the tmux session's env
 // (session_tmux.go), so it survives into hooks running as children even when claude
-// relaunches itself (measured: the post-drift process still had AF_SESSION_NAME). Unlike
-// guesswork such as matching cwd, this cannot mistake one session for another. A claude
+// relaunches itself (measured: the post-drift process still had AF_SESSION_NAME). A claude
 // outside AF's control (one the user started themselves) has no AF_SESSION_NAME, so its
-// hooks pass straight through.
+// hooks pass straight through. A claude started from inside the session does inherit it, so
+// before recording a drift the hook's process chain is checked against the session's pane
+// (hookOriginOf), and a nested claude's hooks pass through the same way.
 func NormalizeHookSID(live string) string {
 	slot, name := hookSlotSID()
 	if live == "" || slot == "" {
@@ -64,6 +65,12 @@ func NormalizeHookSID(live string) string {
 		if sids.Read(slot) != "" {
 			sids.Remove(slot)
 		}
+		return live
+	}
+	// A claude started from inside the session inherits AF_SESSION_NAME too; its id is its
+	// own conversation, not a drift of ours (hook_origin.go). Checked only here, past the
+	// equal-id return, so the ordinary hook pays no tmux call.
+	if hookOriginOf(name) == hookOriginNested {
 		return live
 	}
 	sids.Write(slot, live)
