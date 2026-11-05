@@ -43,11 +43,11 @@ export function MirrorPendingCards({
   questionInline?: boolean;
 }) {
   const {
-    turnBusy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingApproval,
+    turnBusy, queuedCount, pending, liveMode, liveText, pendingPlan, pendingPerm, pendingPermChoices, pendingPermId, pendingApproval,
     carried, setCarried, markRejected, sending,
   } = st;
   const pendingText = questionInline ? "" : st.pendingText;
-  const { sendKeys, sendSeq, sendInterrupt, cancelQuestion, sendApproval, sendRespond } = actions;
+  const { sendKeys, sendSeq, sendInterrupt, cancelQuestion, sendApproval, sendPermission, sendRespond } = actions;
   const { openPlan, openFile, planSendBlocked, sendPlanComments, reviewPlanElsewhere, reviewCarriedPlan, reviewPlanAgain, reviewCarriedPlanAgain, rereview, reviewAuto, rereviewing } = plan;
   const byId = answersByRespond(managed, pending);
   // A kind answered only by id (opencode) gets no Cancel on a card without one: the Terminal Cancel
@@ -127,9 +127,12 @@ export function MirrorPendingCards({
           agentName={agentName}
           message={pendingPerm}
           sending={sending}
-          onAllow={() => sendKeys(["Enter"])}
-          onAlwaysAllow={() => sendKeys(["Down", "Enter"])}
-          onDeny={() => sendKeys(["Down", "Down", "Enter"])}
+          // Each choice is resolved by the Agent from the rows on screen (#3354). "Always allow"
+          // is offered only when the dialog has such a row: an ask rule or a safety check
+          // leaves just Yes / No, where the old Down Enter pressed No.
+          onAllow={() => void sendPermission("allow", pendingPermId)}
+          onAlwaysAllow={pendingPermChoices?.includes("always") ? () => void sendPermission("always", pendingPermId) : undefined}
+          onDeny={() => void sendPermission("deny", pendingPermId)}
         />
       )}
       {pending && pending.length > 0 && (

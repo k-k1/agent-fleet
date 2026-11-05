@@ -80,15 +80,9 @@ func TestBuildClaudeSingleSelectKeys(t *testing.T) {
 	}
 }
 
-// TestDecisionKeys pins the permission/plan sequences to exactly what MirrorView
-// drives (option order is claude-version-verified there).
+// TestDecisionKeys pins the plan sequences to exactly what the plan card drives. Permission
+// prompts are answered by label instead (session_permission_test.go).
 func TestDecisionKeys(t *testing.T) {
-	if got := permKeys("allow"); !reflect.DeepEqual(got, []string{"Enter"}) {
-		t.Errorf("perm allow=%v", got)
-	}
-	if got := permKeys("deny"); !reflect.DeepEqual(got, []string{"Down", "Down", "Enter"}) {
-		t.Errorf("perm deny=%v", got)
-	}
 	if got := planKeys("approve"); !reflect.DeepEqual(got, []string{"Enter"}) {
 		t.Errorf("plan approve=%v", got)
 	}

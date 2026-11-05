@@ -137,7 +137,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.perm_pending": "Awaiting permission",
   "mirror.perm_asking": "Requesting permission (edits, commands, etc.)",
   "mirror.allow": "Allow",
-  "mirror.auto_allow": "Auto-allow for the rest of this session (the second option)",
+  "mirror.auto_allow": "Stop asking for this kind of call (the terminal's \"don't ask again\" option or similar)",
   "mirror.always_allow": "Always allow",
   "mirror.deny": "Deny",
   "mirror.perm_hint": "You can review the target (file / command) and the diff in the terminal",

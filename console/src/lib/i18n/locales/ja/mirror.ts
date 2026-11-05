@@ -142,7 +142,7 @@ export const mirror = {
   "mirror.perm_pending": "許可待ち",
   "mirror.perm_asking": "許可を求めています（編集・コマンド等）",
   "mirror.allow": "許可",
-  "mirror.auto_allow": "以降このセッションでは自動許可（2 番目の選択肢）",
+  "mirror.auto_allow": "同じ種類の操作を以降は確認しない（端末の「don't ask again」などの選択肢）",
   "mirror.always_allow": "常に許可",
   "mirror.deny": "拒否",
   "mirror.perm_hint": "対象（ファイル・コマンド）や差分はターミナルで確認できます",

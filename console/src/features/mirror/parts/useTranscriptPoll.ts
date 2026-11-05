@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSendQueueStore } from "../sendQueue/store.ts";
 import type { RefObject } from "react";
-import { api, parseDiscards, parseQueueItems } from "../../../core/api/client.ts";
+import { api, parseDiscards, parsePermissionChoices, parseQueueItems, samePermChoices } from "../../../core/api/client.ts";
 import { restoreNoteStamps } from "./RestoreNote.tsx";
 import type { CarriedInteraction } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
@@ -54,7 +54,7 @@ export function useTranscriptPoll({
     setTurns, setStateSession, setPendingSends, pendingSendsRef, applyEchoes, setLoaded, setTermState,
     setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setBgShells, setFinalizing, finalizingRef, wasWorkingRef,
     setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers, setCloudRuns,
-    queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm,
+    queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm, setPendingPermChoices, setPendingPermId,
     setPendingApproval, setCarried, setRestoredAt, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
     setSuggestedTitle, setTitleActing, setManagedSettingsOpen, setManagedSettings, setPasting, setLightbox,
     setHistIdx, cursorRef, firstLineRef, setHasMore, setLoadingOlder, loadingOlderRef, diagRef, statusRef,
@@ -107,6 +107,8 @@ export function useTranscriptPoll({
     setLiveText(""); // the reply being written belongs to the session being left
     setPendingPlan(null);
     setPendingPerm(null);
+    setPendingPermChoices(null);
+    setPendingPermId("");
     setMode("");
     lastNonPlanMode.current = "";
     setSuggestedTitle("");
@@ -284,6 +286,8 @@ export function useTranscriptPoll({
             setLiveText(liveOnRef.current && typeof d.liveText === "string" ? d.liveText : "");
             setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
             setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
+            setPendingPermChoices((prev) => samePermChoices(prev, parsePermissionChoices(d.pendingPermissionChoices)));
+            setPendingPermId(typeof d.pendingPermissionId === "string" ? d.pendingPermissionId : "");
             setPendingApproval(isPendingApproval(d.pendingApproval) ? d.pendingApproval : null);
             setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
             // Keep the old array when nothing changed: it keys the block memo in MirrorView, and a fresh

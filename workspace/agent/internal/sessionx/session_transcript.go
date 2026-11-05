@@ -173,7 +173,11 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// Pending question/plan/permission — built aside (not straight into resp) because the
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
+	permTok := permissionToken(sid) // taken before the payload is read (surfacePermissionPrompt)
 	surfacePendingPayloads(pending, sid, state, lines)
+	if alive {
+		surfacePermissionPrompt(pending, sid, name, permTok)
+	}
 	// What was on screen when the session was folded away (docs/log/75). Included only when
 	// nothing is pending.
 	surfaceCarried(pending, sid)
