@@ -162,19 +162,27 @@ describe("placeRuns", () => {
     expect(placeRuns(groups, [at(5, { startedAt: "garbage" })]).loose).toHaveLength(1);
   });
   it("reads --profile=x, a quoted profile, and a profile with a dot literally", () => {
+    // A later shell call: a named match lands on (1,0), the shell fallback would land on (1,1).
     const one = (cmd: string, profile: string) =>
-      placeRuns([groups[0], block("assistant", 1, [bash(cmd), { kind: "tool", tool: "Read" }], [1, 2])], [at(3, { profile })]);
+      placeRuns([groups[0], block("assistant", 1, [bash(cmd), bash("ls")], [1, 2])], [at(3, { profile })]);
     expect(one("af-aws-exec --profile=dev -- aws s3 ls", "dev").onTool.get(toolKey(1, 0))).toHaveLength(1);
     expect(one('af-aws-exec --profile "dev" -- aws s3 ls', "dev").onTool.get(toolKey(1, 0))).toHaveLength(1);
     expect(one("af-aws-exec --profile 'a.b' -- aws s3 ls", "a.b").onTool.get(toolKey(1, 0))).toHaveLength(1);
-    // "." is not a wildcard, and a longer profile is another profile; with no other shell call
-    // the shell fallback still takes the run, so look at whether the call was NAMED: the Read
-    // after it is no shell, so a named miss and the fallback land on the same call. Use a later
-    // shell call to tell them apart.
+    // "." is not a wildcard, and a longer profile is another profile: the run falls back to the
+    // later shell call.
     const miss = (cmd: string, profile: string) =>
       placeRuns([groups[0], block("assistant", 1, [bash(cmd), bash("ls")], [1, 2])], [at(3, { profile })]);
     expect(miss("af-aws-exec --profile axb -- aws s3 ls", "a.b").onTool.get(toolKey(1, 1))).toHaveLength(1);
     expect(miss("af-aws-exec --profile dev2 -- aws s3 ls", "dev").onTool.get(toolKey(1, 1))).toHaveLength(1);
+  });
+  it("reads the wrapper quoted, or followed by an operator, as the command word", () => {
+    for (const cmd of ['"af-aws-exec" --profile dev -- true', "x;af-aws-exec --profile dev -- true", "(af-aws-exec --profile dev -- true)"]) {
+      const p = placeRuns([groups[0], block("assistant", 1, [bash(cmd), bash("ls")], [1, 2])], [at(3, { profile: "dev" })]);
+      expect(p.onTool.get(toolKey(1, 0)), cmd).toHaveLength(1);
+    }
+    // A function definition runs nothing.
+    const def = placeRuns([groups[0], block("assistant", 1, [bash("af-aws-exec() { :; } --profile dev"), bash("ls")], [1, 2])], [at(3, { profile: "dev" })]);
+    expect(def.onTool.get(toolKey(1, 1))).toHaveLength(1);
   });
   it("needs the wrapper as a command word, not inside another name", () => {
     const g = [groups[0], block("assistant", 1, [bash("/opt/af-aws-exec --profile dev -- true"), bash("my-af-aws-exec --profile dev -- true")], [1, 2])];

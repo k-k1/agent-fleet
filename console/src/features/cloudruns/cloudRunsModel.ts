@@ -134,10 +134,11 @@ export function cloudRunSummary(runs: CloudRun[]): { text: string; failed: numbe
 const SHELL_TOOL = /^(bash|shell|exec_command|local_shell|run_shell_command|run_in_terminal|execute_command|terminal)$/i;
 
 // The wrapper as a command word: at the start, or after a space, a path, a quote or a shell
-// operator, and followed by a space or the end. `my-af-aws-exec` is another program.
+// operator, and followed by a space, a quote, an operator or the end. `my-af-aws-exec` is another
+// program, and `af-aws-exec()` defines a function rather than running one, so "(" never follows.
 const WRAPPER: Record<string, RegExp> = {
-  aws: /(?:^|[\s/'"`;&|(])af-aws-exec(?:\s|$)/,
-  gcp: /(?:^|[\s/'"`;&|(])af-gcloud-exec(?:\s|$)/,
+  aws: /(?:^|[\s/'"`;&|(])af-aws-exec(?:[\s'"`;&|)<>]|$)/,
+  gcp: /(?:^|[\s/'"`;&|(])af-gcloud-exec(?:[\s'"`;&|)<>]|$)/,
 };
 
 const commandOf = (p: Part) => p.command || p.info || "";
@@ -185,9 +186,8 @@ export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
       continue;
     }
     // The newest block started at or before the run: the run happened in it, or after it. A block
-    // without a time (a just-sent echo, a queued bubble) is skipped: the run started before it was
-    // sent, so the block the run belongs to is the one before. chronoInsertIndex reads such a
-    // block as "newest" for the same reason.
+    // without a time (a just-sent echo, a queued bubble) is skipped: it has not reached the
+    // transcript, so the agent has not run that prompt and no run can come from it.
     let b = -1;
     for (let i = 0; i < blocks.length; i++) {
       if (Number.isFinite(blocks[i].start) && blocks[i].start <= at) b = i;
