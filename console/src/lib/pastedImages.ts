@@ -83,15 +83,20 @@ export function splitCommandArgs(args: string): { text: string; images: string[]
 }
 
 // The characters claude removes from typed and pasted input before submitting it ("Removed N
-// invisible characters"): every C0/C1 control but tab and line feed (so CR goes, which also covers
-// the CRLF the Agent already turns into LF), soft hyphen, zero-width and bidi controls, variation
-// selectors, BOM, tag characters and the blank fillers. Read from claude 2.1.318's own hidden-character
-// test; it keeps some of them in context (a joiner inside an emoji), which this drops anyway, so two
-// prompts differing only there compare equal. Tabs, spaces and line breaks are left alone: they can
-// change what a prompt means. Without this an echo of a paste copied from a chat app or a document
-// never matches claude's copy and stays "Pending".
+// invisible characters"): every C0/C1 control but tab, line feed and the line breaks below, soft
+// hyphen, zero-width and bidi controls, variation selectors, BOM, tag characters and the blank
+// fillers. Read from claude 2.1.318's own hidden-character test; it keeps some of them in context
+// (a joiner inside an emoji), which this drops anyway, so two prompts differing only there compare
+// equal. Tabs, spaces and line breaks are left alone: they can change what a prompt means. Without
+// this an echo of a paste copied from a chat app or a document never matches claude's copy and
+// stays "Pending". workspace/agent/internal/agents/claude claudeInvisible is the same set (a Go
+// test compares the two).
 const CLAUDE_INVISIBLE_RE =
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb\u{1107f}\u{13430}-\u{1343f}\u{16fe4}\u{1bca0}-\u{1bca3}\u{1d173}-\u{1d17a}\u{e0000}-\u{e0fff}]/gu;
+  /[\u0000-\u0008\u000e-\u001f\u007f-\u0084\u0086-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb\u{1107f}\u{13430}-\u{1343f}\u{16fe4}\u{1bca0}-\u{1bca3}\u{1d173}-\u{1d17a}\u{e0000}-\u{e0fff}]/gu;
+
+// The line breaks claude turns into a line feed rather than removing (CRLF becoming one): CR, VT,
+// FF, NEL and the Unicode line and paragraph separators.
+const CLAUDE_LINE_BREAK_RE = /\r\n?|[\u000b\u000c\u0085\u2028\u2029]/g;
 
 // samePastedPrompt compares the user-authored portion of two prompt renderings.
 // Codex's rollout adds <image …> transport markers that the optimistic Console
@@ -100,14 +105,15 @@ export function samePastedPrompt(a: string, b: string): boolean {
   return splitPastedImages(a).text.trim() === splitPastedImages(b).text.trim();
 }
 
-// withoutClaudeInvisible removes CLAUDE_INVISIBLE_RE from a prompt: the text claude submits,
-// logs and queues for it. Only for claude's copies; other CLIs keep those characters.
+// withoutClaudeInvisible is a prompt as claude submits, logs and queues it: CLAUDE_INVISIBLE_RE
+// removed, its line breaks made line feeds. Only for claude's copies; other CLIs keep those
+// characters.
 export function withoutClaudeInvisible(s: string): string {
-  return s.replace(CLAUDE_INVISIBLE_RE, "");
+  return s.replace(CLAUDE_LINE_BREAK_RE, "\n").replace(CLAUDE_INVISIBLE_RE, "");
 }
 
-// samePromptIgnoringInvisible is samePastedPrompt that also ignores CLAUDE_INVISIBLE_RE, for a
-// prompt claude logged. Other CLIs keep those characters, so for them it would call two different
+// samePromptIgnoringInvisible is samePastedPrompt that also compares through withoutClaudeInvisible,
+// for a prompt claude logged. Other CLIs keep those characters, so for them it would call two different
 // prompts the same.
 export function samePromptIgnoringInvisible(a: string, b: string): boolean {
   const key = (s: string) => withoutClaudeInvisible(splitPastedImages(s).text).trim();
