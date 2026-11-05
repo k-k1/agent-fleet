@@ -69,7 +69,7 @@ func (agentImpl) TerminalTraits() agents.TerminalTraits {
 		AgentsViewActive:  tmuxx.AgentsViewActive,
 		LeaveAgentsView:   tmuxx.LeaveAgentsView,
 		ModalActive:       tmuxx.ModalActive,
-		ShapePrompt:       QuoteImagePaths,
+		ShapePrompt:       ShapePrompt,
 		PasteLF:           true,
 		SubmitDelay:       20 * time.Millisecond,
 		RemoteControlURL:  RemoteSessionURL,

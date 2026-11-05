@@ -102,6 +102,12 @@ describe("samePromptIgnoringInvisible", () => {
     expect(samePromptIgnoringInvisible(logged, sent)).toBe(true);
     expect(samePromptIgnoringInvisible("番号が\u2060未登録\u{e0041}", "番号が未登録")).toBe(true);
   });
+  it("takes the line breaks claude turns into line feeds for line feeds, not for nothing", () => {
+    for (const br of ["\r", "\r\n", "\u000b", "\u000c", "\u0085", "\u2028", "\u2029"]) {
+      expect(samePromptIgnoringInvisible("a" + br + "b", "a\nb")).toBe(true);
+      expect(samePromptIgnoringInvisible("a" + br + "b", "ab")).toBe(false);
+    }
+  });
   it("is a claude-only leniency: samePastedPrompt keeps them apart", () => {
     expect(samePastedPrompt("番号が\u200b登録済み", "番号が登録済み")).toBe(false);
     expect(samePastedPrompt("a\u2028b", "ab")).toBe(false);

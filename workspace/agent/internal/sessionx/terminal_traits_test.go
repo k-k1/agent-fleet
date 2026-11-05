@@ -45,7 +45,7 @@ func TestTerminalTraitsBelongToTheirKinds(t *testing.T) {
 		{"DriveState heal", func(k string) bool { return NormalizeKind(k) == session.KindClaude },
 			func(k string) any { return norm(k).HealIdle }, claude.HealIdle},
 		{"typePromptText quote", func(k string) bool { return k == session.KindClaude },
-			func(k string) any { return exact(k).ShapePrompt }, claude.QuoteImagePaths},
+			func(k string) any { return exact(k).ShapePrompt }, claude.ShapePrompt},
 		{"disconnectRemoteControl", func(k string) bool { return k == session.KindClaude },
 			func(k string) any { return exact(k).RemoteControlURL }, claude.RemoteSessionURL},
 		{"DriveState missed turn end", func(k string) bool { return k == session.KindCodex },

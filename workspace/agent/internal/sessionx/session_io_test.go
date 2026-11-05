@@ -580,14 +580,18 @@ func TestTypeLineAndSubmitClaudePastesMultilineAndLongPrompts(t *testing.T) {
 	envelope := "[agent-fleet:peer from=child intent=report reply=when-needed] "
 	cases := []struct {
 		name, text, want string // want = what must reach load-buffer; "" = literal keys
+		typed            string // the literal keys when they differ from text
 	}{
-		{"short single line", "こんにちは", ""},
-		{"multi line", envelope + "1行目\n2行目", envelope + "1行目\n2行目"},
-		{"crlf becomes one LF", "a\r\nb", "a\nb"},
-		{"just under the threshold", strings.Repeat("a", claude.PasteMinBytes-1), ""},
-		{"at the threshold", strings.Repeat("a", claude.PasteMinBytes), strings.Repeat("a", claude.PasteMinBytes)},
+		{"short single line", "こんにちは", "", ""},
+		{"multi line", envelope + "1行目\n2行目", envelope + "1行目\n2行目", ""},
+		{"crlf becomes one LF", "a\r\nb", "a\nb", ""},
+		{"just under the threshold", strings.Repeat("a", claude.PasteMinBytes-1), "", ""},
+		{"at the threshold", strings.Repeat("a", claude.PasteMinBytes), strings.Repeat("a", claude.PasteMinBytes), ""},
 		{"long multi line", envelope + strings.Repeat("レビュー結果: bundle には問題あり\n", 400),
-			envelope + strings.Repeat("レビュー結果: bundle には問題あり\n", 400)},
+			envelope + strings.Repeat("レビュー結果: bundle には問題あり\n", 400), ""},
+		// claude holds a prompt it removed a bidi control from until a second Enter (#3375).
+		{"held bidi control removed from a paste", "a\u200eb\r\n| x\u2066 |", "ab\n| x |", ""},
+		{"held bidi control removed from literal keys", "a\u200fb", "", "ab"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -619,7 +623,11 @@ esac
 			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 			if tc.want == "" {
 				// The text may itself hold no newline here, so the log is exactly two lines.
-				want := []string{"send-keys -t %7 -l -- " + tc.text, "send-keys -t %7 Enter"}
+				typed := tc.text
+				if tc.typed != "" {
+					typed = tc.typed
+				}
+				want := []string{"send-keys -t %7 -l -- " + typed, "send-keys -t %7 Enter"}
 				if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 					t.Fatalf("tmux = %q, want %q", lines, want)
 				}

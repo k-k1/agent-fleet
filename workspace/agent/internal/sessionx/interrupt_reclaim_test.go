@@ -746,6 +746,53 @@ func TestTypeLineAndSubmitRemembersTheSubmission(t *testing.T) {
 	}
 }
 
+// A stop puts the prompt back into the box as it was typed, so the remembered submission is the
+// typed (shaped) form: an LRM the Agent removed before typing, or an image path it quoted, would
+// otherwise keep restoredDraft from matching a first prompt claude had not logged yet (#3375).
+func TestTypeLineAndSubmitRemembersTheTypedForm(t *testing.T) {
+	fakeTmux(t)
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	session.WriteMeta(session.Meta{Name: "remember_shaped", Dir: t.TempDir(), Kind: session.KindClaude})
+	t.Cleanup(func() { submittedPrompts.Delete("remember_shaped") })
+	const p = "/home/dev/.cache/agent-fleet/pasted/sid/paste-1.png"
+	sent := "the first\u200e task Open the following file(s) with the Read tool: " + p
+	if err := typeLineAndSubmit("remember_shaped", "%7", sent); err != nil {
+		t.Fatal(err)
+	}
+	want := "the first task Open the following file(s) with the Read tool: `" + p + "`"
+	got := takeSubmitted("remember_shaped", "%7")
+	if got != want {
+		t.Fatalf("remembered %+q, want the typed form %+q", got, want)
+	}
+	if !restoredDraft(rule+"\n❯ "+want+"\n"+rule+"\n  ⏵⏵ auto mode on\n", got) {
+		t.Fatal("the restored draft does not match the remembered submission")
+	}
+}
+
+// claude restores the prompt it submitted, without the invisible characters it strips (a
+// zero-width space), and that is the text its transcript logs; the remembered submission still
+// has them. The box is compared strictly, so it is taken for the transcript's copy, never for an
+// edited one, and with no transcript copy yet it is left (and the next send refused) rather than
+// erased on a guess (#3375).
+func TestRestoredBoxIsMatchedByClaudesOwnCopy(t *testing.T) {
+	box := func(s string) string { return rule + "\n❯ " + s + "\n" + rule + "\n  ⏵⏵ auto mode on\n" }
+	own := "a\u200bb c"
+	if got := matchingPrompt(box("ab c"), "ab c", own); got != "ab c" {
+		t.Fatalf("matched %+q, want the transcript's copy", got)
+	}
+	if got := matchingPrompt(box("ab c"), "", own); got != "" {
+		t.Fatalf("matched %+q with no transcript copy, want none", got)
+	}
+	// A member's edit of the restored box (a joiner added or removed) is not the prompt.
+	for _, edited := range []string{"👩💻", "❤"} {
+		for _, logged := range []string{"👩\u200d💻", "❤\ufe0f"} {
+			if got := matchingPrompt(box(edited), logged, logged); got != "" {
+				t.Errorf("box %+q matched %+q", edited, got)
+			}
+		}
+	}
+}
+
 // The submission is remembered before the Enter goes out, so a stop that runs right after the
 // Enter without the terminal lock always finds it; a failed Enter takes it back.
 func TestSubmissionIsRememberedBeforeTheEnter(t *testing.T) {

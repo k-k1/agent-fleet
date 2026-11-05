@@ -859,7 +859,8 @@ func typeLineAndSubmit(name, pane, text string) error {
 	var mine *submittedPrompt
 	if !slashCmdRe.MatchString(strings.TrimSpace(text)) {
 		if m, ok := session.ReadMeta(name); ok && restoresInterruptedPrompt(m.Kind) {
-			sp := rememberSubmitted(name, pane, text)
+			// The stopped prompt comes back into the box as it was typed, so remember that form.
+			sp := rememberSubmitted(name, pane, shapedPrompt(name, text))
 			mine = &sp
 		}
 	}
@@ -881,22 +882,35 @@ func pasteNeeded(kind, text string) bool {
 	return ok && p.PasteNeeded(text)
 }
 
+// promptKind is the kind typePromptText types for: the session's, claude when its meta is
+// unreadable.
+func promptKind(name string) string {
+	if meta, ok := session.ReadMeta(name); ok {
+		return meta.Kind
+	}
+	return session.KindClaude
+}
+
+// shapedPrompt is the text typePromptText actually types into name's pane (the kind's
+// ShapePrompt: for claude, held bidi controls removed and image paths quoted, so its paste
+// handler neither holds the submit nor turns the paths into [Image #N]). Whatever is later
+// compared with the composer or the transcript has to be this form.
+func shapedPrompt(name, text string) string {
+	if shape := terminalTraits(promptKind(name)).ShapePrompt; shape != nil {
+		return shape(text)
+	}
+	return text
+}
+
 // typePromptText puts text in an agent's composer. Codex and OpenCode treat a fast
 // stream of literal key events as an in-progress paste and may consume a following
 // Enter as part of that paste. tmux paste-buffer -p uses the terminal's bracketed-paste
 // protocol, which gives the TUI an explicit end-of-paste marker before Enter arrives.
 // Which kinds paste, and for which texts, is agents.PromptPaste; the rest get literal keys.
 func typePromptText(name, pane, text string) error {
-	kind := session.KindClaude
-	if meta, ok := session.ReadMeta(name); ok {
-		kind = meta.Kind
-	}
+	kind := promptKind(name)
 	t := terminalTraits(kind)
-	if t.ShapePrompt != nil {
-		// A long prompt reaches claude as one paste-sized chunk, and its paste handler
-		// would turn the attached image paths into [Image #N] and split the text.
-		text = t.ShapePrompt(text)
-	}
+	text = shapedPrompt(name, text)
 	if !pasteNeeded(kind, text) {
 		if out, err := tmuxx.Cmd("send-keys", "-t", pane, "-l", "--", text).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)

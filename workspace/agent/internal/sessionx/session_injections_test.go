@@ -170,3 +170,15 @@ func TestInjectionTaggingQuotedImagePaths(t *testing.T) {
 		}
 	}
 }
+
+// claude is typed the prompt without its held bidi controls (claude.ShapePrompt), and records
+// it that way; a scheduled prompt pasted with an LRM must still carry its source badge.
+func TestInjectionTaggingHeldBidiRemoved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	recordInjection("slot06", "日報\u200e をまとめて", TurnSourceSchedule)
+	turns := []transcript.Turn{{Role: "user", Text: "日報 をまとめて"}}
+	tagInjectedTurns("slot06", turns)
+	if turns[0].Source != TurnSourceSchedule {
+		t.Errorf("Source = %q, want %q", turns[0].Source, TurnSourceSchedule)
+	}
+}

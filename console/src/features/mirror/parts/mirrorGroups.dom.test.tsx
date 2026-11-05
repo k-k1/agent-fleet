@@ -53,4 +53,38 @@ describe("groupWithQueue pairs an echo with its queue entry", () => {
     expect(all).toContain(quoted);
     expect(all.split(script).length - 1).toBe(2);
   });
+
+  // claude queues the prompt without the invisible characters it strips (and the Agent types it
+  // without the bidi controls claude would hold for), while the echo keeps what was sent.
+  it("matches a claude queue entry without the invisible characters, attachment line included", () => {
+    const sent = "look\u200e\u200b Open the following file(s) with the Read tool: " + path(1);
+    const echo = { id: 1, text: sent, sinceIdx: 0, cleansInvisible: true };
+    const g = groupWithQueue([], [echo], queueEntries(null, [typedText(1)]));
+    expect(g).toHaveLength(1);
+    expect(g[0].queued).toBe(true);
+    expect(splitPastedImages(g[0].text).images).toEqual(["paste-1.png"]);
+  });
+
+  it("keeps invisible-only differences apart for an echo of another kind", () => {
+    const g = groupWithQueue([], [{ id: 1, text: "a\u2028b", sinceIdx: 0 }], queueEntries(null, ["ab"]));
+    // Unpaired, the queue entry gets its own row: its text shows next to the echo's.
+    expect(g.map((b) => b.text).join("\n")).toContain("ab");
+  });
+
+  it("lets a later echo keep its exact entry from an earlier echo's lenient match", () => {
+    const first = { id: 1, text: "x\u200by", sinceIdx: 0, cleansInvisible: true };
+    const second = { id: 2, text: "xy", sinceIdx: 0, cleansInvisible: true };
+    const g = groupWithQueue([], [first, second], queueEntries(null, ["xy"]));
+    // "xy" pairs with the second echo, which is drawn at its queue place, ahead of the unpaired
+    // first one; the first taking it would draw "x\u200by" first.
+    expect(g.map((b) => b.text).join("\n")).toBe("xy\n\nx\u200by");
+  });
+
+  it("pairs a claude echo with the exact entry before one that differs only in invisible characters", () => {
+    const echo = { id: 1, text: "x\u200by", sinceIdx: 0, cleansInvisible: true };
+    const g = groupWithQueue([], [echo], queueEntries(null, ["xy", "x\u200by"]));
+    // The echo takes its exact copy (second in the queue), so "xy" keeps its own row ahead of
+    // it; taking "xy" instead would leave the exact copy as a second "x\u200by".
+    expect(g.map((b) => b.text).join("\n")).toBe("xy\n\nx\u200by");
+  });
 });

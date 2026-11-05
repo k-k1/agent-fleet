@@ -1,4 +1,4 @@
-import { quoteImagePaths } from "../../../lib/pastedImages.ts";
+import { quoteImagePaths, withoutClaudeInvisible } from "../../../lib/pastedImages.ts";
 import { echoLanded } from "../pendingEcho.ts";
 import { actionable, injectionSource, inQueueOrder, restorable, type queueEntries } from "../stopQueue.ts";
 import { coalesceUserActions, groupTurns, isNoise, stripStudioSignal } from "../transcript/model.ts";
@@ -13,10 +13,17 @@ import type { SendEcho } from "./sendEcho.ts";
 // So the echo is put through the same rewrite and compared whole. Undoing backticks on the
 // queue side instead, or comparing with samePastedPrompt, also pairs prompts the member wrote
 // differently (a backticked path of their own, words after a quoted instruction wording).
-function sameQueuedPrompt(queued: string, echo: string): boolean {
+// claude also queues the prompt without the invisible characters it strips, so for an echo of a
+// claude session (cleansInvisible) both sides are compared without them; for other kinds they
+// still tell two prompts apart.
+function sameQueuedPrompt(queued: string, echo: string, cleansInvisible = false): boolean {
   const q = stripStudioSignal(queued).trim();
   const e = stripStudioSignal(echo).trim();
-  return q === e || q === quoteImagePaths(e);
+  if (q === e || q === quoteImagePaths(e)) return true;
+  if (!cleansInvisible) return false;
+  const qc = withoutClaudeInvisible(q).trim();
+  const ec = withoutClaudeInvisible(e).trim();
+  return qc === ec || qc === quoteImagePaths(ec);
 }
 
 // claude writes one logical response as several assistant events (text split by
@@ -39,15 +46,18 @@ export function groupWithQueue(
   breaks: number[] = [],
 ) {
   const queuedLeft = [...queueShown];
-  const takeQueued = (text: string) => {
-    const i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text));
+  const takeQueued = (text: string, cleansInvisible = false) => {
+    const i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text, cleansInvisible));
     if (i < 0) return null;
     return queuedLeft.splice(i, 1)[0];
   };
-  const echoRows = pendingSends
-    .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
-    .map((e) => {
-      const q = takeQueued(e.text);
+  const shown = pendingSends.filter((e) => !echoLanded(e, turns, isNoise)); // hide at render the instant the real turn lands
+  // Every echo takes its exact copy before any takes one that differs only in invisible
+  // characters, so a lenient match never steals an entry another echo matches exactly.
+  const exact = shown.map((e) => takeQueued(e.text));
+  const echoRows = shown
+    .map((e, n) => {
+      const q = exact[n] ?? (e.cleansInvisible ? takeQueued(e.text, true) : null);
       const turn: Turn = {
         role: "user",
         text: e.text,

@@ -257,8 +257,8 @@ func tagInjectedTurns(name string, turns []transcript.Turn) {
 	bySource := make(map[string]string, len(list))
 	for _, e := range list {
 		bySource[e.Text] = e.Source
-		// claude is typed the image-path-quoted form, so that is what its turn records.
-		if q := claude.QuoteImagePaths(e.Text); q != e.Text {
+		// claude is typed the shaped form (claude.ShapePrompt), so that is what its turn records.
+		if q := claude.ShapePrompt(e.Text); q != e.Text {
 			bySource[q] = e.Source
 		}
 	}
