@@ -526,3 +526,72 @@ func TestNoAPIKeyRefusalNamesTheRealSettingsPath(t *testing.T) {
 		t.Errorf("refusal = %q", msg)
 	}
 }
+
+// The flag layer pins what `env -u` removes, in the one --settings object, so a settings edit made
+// while the pane runs cannot put it back; the route's own key is never in it.
+func TestRouteLaunchPinsOverridableVariablesInTheFlagLayer(t *testing.T) {
+	const key = "sk-ant-api03-pin-0123456789abcdefghij"
+	withAPIKey(t, key, nil)
+	isolateSlot(t)
+	base := session.Meta{Kind: session.KindClaude, Dir: t.TempDir()}
+
+	envOf := func(plan agents.LaunchPlan) (map[string]any, map[string]any) {
+		doc := launchSettingsOf(t, plan.Program)
+		env, _ := doc["env"].(map[string]any)
+		return doc, env
+	}
+
+	api := base
+	api.Name, api.Route = "pin-api", sel(RouteAPI, "")
+	plan, err := launchOf(t, api)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, env := envOf(plan)
+	for _, v := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK",
+		"CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if got, ok := env[v]; !ok || got != "" {
+			t.Errorf("api: %s not pinned empty (env=%v)", v, env)
+		}
+	}
+	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
+		t.Error("api: the route's own key variable must not be in the flag layer")
+	}
+	if h, ok := doc["apiKeyHelper"]; !ok || h != "" {
+		t.Errorf("api: apiKeyHelper = %v, want pinned empty", h)
+	}
+	if doc["permissions"] == nil {
+		t.Error("the launch's own settings were lost in the merge")
+	}
+	if strings.Contains(plan.Program, "sk-ant") {
+		t.Error("the key is in the command line")
+	}
+
+	sub := base
+	sub.Name, sub.Route = "pin-sub", sel(RouteSubscription, "")
+	plan, err = launchOf(t, sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, env = envOf(plan)
+	for _, v := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"} {
+		if got, ok := env[v]; !ok || got != "" {
+			t.Errorf("subscription: %s not pinned empty (env=%v)", v, env)
+		}
+	}
+
+	// No selection: the settings are exactly the launch's own, nothing pinned.
+	none := base
+	none.Name = "pin-none"
+	plan, err = launchOf(t, none)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc = launchSettingsOf(t, plan.Program)
+	if _, ok := doc["env"]; ok {
+		t.Errorf("no route: env block appeared: %v", doc["env"])
+	}
+	if _, ok := doc["apiKeyHelper"]; ok {
+		t.Error("no route: apiKeyHelper appeared")
+	}
+}

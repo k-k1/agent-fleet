@@ -141,11 +141,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// No env token is injected: the interactive TUI authenticates from claude's own
 	// .credentials.json, written by `claude auth login` via the Connections flow
 	// (auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
-	program := buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m))
 	// An explicit route (ADR 0128): its credential rides this pane's environment only, and what
 	// would override it is removed from the process. No selection: the launch is exactly what it
 	// was, with no environment added and none removed.
-	var env []string
+	var env, pin []string
 	if m.Route != nil {
 		rp, err := agentImpl{}.ApplyRoute(m, *m.Route)
 		if err != nil {
@@ -169,7 +168,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			}
 		}
 		env = rp.Env
-		program = routeLaunchProgram(program, rp.Unset)
+		// What `env -u` removes is also pinned empty in the flag layer, so a settings edit made
+		// while the pane runs cannot put it back (pinnedSettings).
+		pin = rp.Unset
+	}
+	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m))
+	if m.Route != nil {
+		program = routeLaunchProgram(program, pin)
 	}
 	return agents.LaunchPlan{
 		Program: program,

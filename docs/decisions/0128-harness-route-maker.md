@@ -414,3 +414,12 @@ table from becoming a menu of models that fail on the first message, which is wh
   Settings > Connections > Agents > the OpenCode card > API keys (Anthropic preset). (4) A "credit balance" abort on an
   anthropic-api session is no longer a limit episode (no `spend_limit`, queued messages deliver); a "spend limit" text
   and every other route keep today's behaviour.
+- 2026-11-05, #3317: measured (claude 2.1.318, local server, temporary config dir): the `--settings` flag layer accepts
+  empty values and outranks the user/project/local files (a user-settings `ANTHROPIC_BASE_URL` beat the process
+  environment; an empty flag-layer value beat that; edits to user settings while a stream-json session ran changed neither
+  endpoint nor credential headers; an empty `ANTHROPIC_AUTH_TOKEN` sends no Authorization header; with no login, a
+  pinned-empty subscription launch reports "Not logged in" instead of using a user-settings key). So the launch now pins
+  everything `env -u` removes, plus `apiKeyHelper`, to empty inside the one existing `--settings` object. Not pinnable:
+  managed settings (they outrank the flag layer) and the anthropic-api key itself (never on a command line); those stay with
+  the launch refusal and the `RouteHeld` sweep, which is unchanged. Measured with a one-shot stream, not a long-lived
+  settings-watcher cycle over hours.

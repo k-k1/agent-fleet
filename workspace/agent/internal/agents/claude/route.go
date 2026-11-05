@@ -289,6 +289,41 @@ func AuthExpiredFor(m session.Meta) bool {
 	return AuthExpired()
 }
 
+// pinnedSettings merges a route's pin into the launch `--settings` JSON, in the same single
+// object (no second flag, so no flag-merging behaviour is relied on). Each name in pin becomes an
+// empty `env` entry and `apiKeyHelper` is emptied. The flag layer outranks the user, project and
+// local settings files, so an edit to one of them after the pane started cannot put a value back
+// (measured, claude 2.1.318, against a local server and a temporary config dir: a user-settings
+// ANTHROPIC_BASE_URL beat the process environment, an empty flag-layer value beat that, and
+// edits to user settings while a stream-json session ran changed neither the endpoint nor the
+// credential headers; empty values are accepted and an empty ANTHROPIC_AUTH_TOKEN sends no
+// Authorization header). Two things it cannot pin: the managed settings layer outranks the flag
+// layer, and the route's own ANTHROPIC_API_KEY must not go on the command line; both stay with
+// settingsConflict and RouteHeld. nil pin returns base untouched.
+func pinnedSettings(base string, pin []string) string {
+	if len(pin) == 0 {
+		return base
+	}
+	var doc map[string]any
+	if json.Unmarshal([]byte(base), &doc) != nil {
+		return base
+	}
+	env, _ := doc["env"].(map[string]any)
+	if env == nil {
+		env = map[string]any{}
+	}
+	for _, name := range pin {
+		env[name] = ""
+	}
+	doc["env"] = env
+	doc["apiKeyHelper"] = ""
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return base
+	}
+	return string(b)
+}
+
 // routeLaunchProgram puts the route's `env -u` in front of the CLI command.
 func routeLaunchProgram(program string, unset []string) string {
 	if len(unset) == 0 {
