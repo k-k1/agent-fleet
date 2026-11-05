@@ -20,6 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -53,7 +54,10 @@ func enterSessionGate(w http.ResponseWriter, r *http.Request, name string) (*lif
 // writeGateErr answers a gate refusal, or a step called without the lease it requires.
 func writeGateErr(w http.ResponseWriter, err error) {
 	var moved *lifegate.MovedError
+	var held *lifegate.HeldError
 	switch {
+	case errors.As(err, &held):
+		httpx.WriteErr(w, http.StatusConflict, routes.CodeSwitchBusy, held.Error())
 	case errors.As(err, &moved):
 		httpx.WriteJSON(w, http.StatusConflict, sessionMovedWire{Error: sessionMovedErr{
 			Code: errCodeSessionMoved, Message: moved.Error(), Target: moved.Target,

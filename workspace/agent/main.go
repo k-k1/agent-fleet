@@ -272,6 +272,11 @@ func serve() {
 	if n := sessionx.RecoverMoves(); n > 0 {
 		log.Printf("move: finished %d move(s) the previous process had committed", n)
 	}
+	// A route switch the previous process left half-done (ADR 0128 decision 10): rolled back or
+	// completed from its persisted step.
+	if n := sessionx.RecoverRouteSwitches(); n > 0 {
+		log.Printf("route-switch: settled %d switch(es) the previous process had left", n)
+	}
 	// The image studios: install the store, settle a binding written on one side only, and give
 	// every press the previous process left without a result one (ADR 0100 decisions 2 and 9).
 	imagegen.StartStudios()

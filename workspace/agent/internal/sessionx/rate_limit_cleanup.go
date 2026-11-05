@@ -33,6 +33,10 @@ type rateLimitScheduleCleanup struct {
 	LastErr string `json:"lastErr,omitempty"`
 	// Done: the CP confirmed; kept only while the session's episode still names the id.
 	Done bool `json:"done,omitempty"`
+	// KeepUntil (RFC3339): a confirmed id stays recorded until then even when the episode no
+	// longer names it, so a fire of that booking already in flight is still refused after a
+	// failed route switch rebooked the episode under a new id.
+	KeepUntil string `json:"keepUntil,omitempty"`
 }
 
 // rateLimitCleanups holds every pending cancellation in one file, keyed by schedule id. One file
@@ -66,17 +70,28 @@ func cancelRateLimitSchedule(name, id string) error {
 }
 
 // recordRateLimitCancel durably notes that id is to be cancelled.
-func recordRateLimitCancel(name, id string) error {
+func recordRateLimitCancel(name, id string) error { return recordRateLimitCancelKeep(name, id, 0) }
+
+// recordRateLimitCancelKeep is recordRateLimitCancel that also keeps the id on record for keep
+// beyond the episode naming it, in the same checked write: a retention written separately could
+// fail alone and leave a cancellation the sweep forgets as soon as a rollback rebooks.
+func recordRateLimitCancelKeep(name, id string, keep time.Duration) error {
 	rateLimitCleanupMu.Lock()
 	defer rateLimitCleanupMu.Unlock()
 	all, _ := rateLimitCleanups.Read(rateLimitCleanupKey)
 	if all == nil {
 		all = map[string]rateLimitScheduleCleanup{}
 	}
-	if _, ok := all[id]; ok {
+	c, ok := all[id]
+	if !ok {
+		c = rateLimitScheduleCleanup{Session: name, Since: time.Now().Format(time.RFC3339)}
+	}
+	if keep > 0 {
+		c.KeepUntil = time.Now().Add(keep).Format(time.RFC3339)
+	} else if ok {
 		return nil
 	}
-	all[id] = rateLimitScheduleCleanup{Session: name, Since: time.Now().Format(time.RFC3339)}
+	all[id] = c
 	return rateLimitCleanups.Write(rateLimitCleanupKey, all)
 }
 
@@ -120,6 +135,9 @@ func settleRateLimitCancel(all map[string]rateLimitScheduleCleanup, id string, c
 // forgetIfEpisodeLetGo drops a confirmed id once its session's episode no longer names it.
 func forgetIfEpisodeLetGo(all map[string]rateLimitScheduleCleanup, id string, c rateLimitScheduleCleanup) {
 	if st, ok := RateLimitStates.Read(c.Session); ok && st.ScheduleID == id {
+		return
+	}
+	if t, err := time.Parse(time.RFC3339, c.KeepUntil); err == nil && time.Now().Before(t) {
 		return
 	}
 	delete(all, id)

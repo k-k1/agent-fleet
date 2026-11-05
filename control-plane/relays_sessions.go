@@ -11,6 +11,10 @@ var sessionRelays = []agentRelay{
 	{route: "POST /api/sessions/{name}/move/cancel", audit: auditByName("session.move.cancel")},
 	{route: "POST /api/sessions/{name}/move/reopen", audit: auditByName("session.move.reopen")},
 	{route: "POST /api/sessions/{name}/move/deliver", audit: auditByName("session.move.deliver")},
+	// Switching a stopped subscription session to a metered route (ADR 0128 decision 10): the
+	// preview is a read, the switch spends on another bill and is audited.
+	{route: "GET /api/sessions/{name}/route-switch"},
+	{route: "POST /api/sessions/{name}/route-switch", audit: auditByName("session.route_switch")},
 	{route: "POST /api/sessions/{name}/stop", audit: auditByName("session.delete")},
 	{route: "POST /api/sessions/{name}/halt"},
 	{route: "POST /api/sessions/{name}/recreate", audit: auditByName("session.recreate")},

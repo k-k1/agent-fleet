@@ -107,9 +107,11 @@ func (agentImpl) ApplyRoute(_ session.Meta, sel agents.RouteSelection) (agents.R
 	}
 }
 
-// ResolveRoute implements agents.RouteAdapter. A session with an explicit selection ran on it:
-// the credential is fixed at process start and the selection cannot change while the session
-// exists, so the selection is the evidence. A session with none reports nothing, as before.
+// ResolveRoute implements agents.RouteAdapter. A session with an explicit selection runs on it:
+// the credential is fixed at process start and the selection changes only through the switch of
+// decision 10 (which stops the process first), so the selection in force now is the evidence for
+// a turn run now. A turn of earlier is judged by Meta.RouteAt (stampRoute). A session with none
+// reports nothing, as before.
 func (agentImpl) ResolveRoute(m session.Meta, _ agents.TurnInfo) agents.ResolvedRoute {
 	if m.Route == nil {
 		return agents.ResolvedRoute{}
@@ -332,28 +334,98 @@ func routeLaunchProgram(program string, unset []string) string {
 	return "env -u " + strings.Join(unset, " -u ") + " " + program
 }
 
+// SwitchTarget implements agents.RouteSwitcher (ADR 0128 decision 10): the metered route a
+// session on the subscription may be moved to is anthropic-api, and only a session whose route
+// is provably the subscription is offered it.
+//
+// "Provably" means an explicit anthropic-subscription selection: its launch removes every
+// override from the process and pins the settings layer, so the window that stopped it is the
+// subscription's. A session with no explicit selection (decision 2) resolves its route per turn
+// from whatever its pane inherited, and nothing the Agent can read afterwards says which: the
+// current environment, settings files and OAuth record are not the process's (an API key can
+// survive an Agent restart in the tmux environment while the Agent's own is clean, and a settings
+// key can be removed after launch). So it is refused as unproven rather than guessed; starting a
+// new session on anthropic-subscription is the way to be able to switch.
+func (agentImpl) SwitchTarget(m session.Meta) (agents.RouteSelection, *agents.RouteRefusal) {
+	if m.Route == nil {
+		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchUnproven,
+			Message: "this session has no explicit route, so it cannot be shown to run on the subscription; " +
+				"start a new session on the anthropic-subscription route to be able to switch"}
+	}
+	if m.Route.Route != RouteSubscription {
+		return agents.RouteSelection{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeSwitchNotSubscription,
+			Message: "this session runs on " + m.Route.Route + ", not on the subscription; only a stopped subscription can be switched away from"}
+	}
+	return agents.RouteSelection{Route: RouteAPI}, nil
+}
+
 // stampRoute records on each turn the route the session ran on and, where the route proves it,
 // how the call was charged. Only an explicit selection is stamped: with none, the turns stay
 // unresolved exactly as before (claude's transcript carries no login or usage-credit signal).
 // anthropic-api is metered by construction: the key is the only credential in the process. The
 // subscription route stays unresolved, because past a window usage credits can bill the same
 // login (decision 8).
+//
+// A session that switched routes (decision 10) files each turn under the selection in force at
+// the turn's own timestamp (Meta.RouteAt), never under the one it holds now; a turn whose
+// timestamp cannot be read stays unresolved.
 func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
-	if m.Route == nil {
-		return turns
+	out, _ := stampRouteChecked(m, turns)
+	return out
+}
+
+// stampRouteChecked is stampRoute that says when the route could not be resolved (ok false, and
+// no turns): the attribution is then unknown, not the old one.
+func stampRouteChecked(m session.Meta, turns []transcript.Turn) ([]transcript.Turn, bool) {
+	m, ok := withCurrentRoute(m)
+	if !ok {
+		return nil, false
 	}
-	r := agentImpl{}.ResolveRoute(m, agents.TurnInfo{})
+	if m.Route == nil && len(m.RouteSwitches) == 0 {
+		return turns, true
+	}
 	// A copy: the turn list may be a memoized one shared with other readers.
 	turns = append([]transcript.Turn(nil), turns...)
 	for i := range turns {
-		turns[i].Route = r.Route
-		if r.Route == RouteAPI {
+		var at time.Time
+		if t, err := time.Parse(time.RFC3339Nano, turns[i].TS); err == nil {
+			at = t
+		}
+		sel, ok := m.RouteAt(at)
+		if !ok || sel == nil {
+			continue
+		}
+		turns[i].Route = sel.Route
+		if sel.Route == RouteAPI {
 			turns[i].Billing = usagex.BillingMetered
 		}
 	}
-	return turns
+	return turns, true
 }
 
 // UsesAPIKey reports that the session runs on an explicit anthropic-api selection, so its
 // credential is the API key and not the OAuth login.
 func UsesAPIKey(m session.Meta) bool { return m.Route != nil && m.Route.Route == RouteAPI }
+
+// withCurrentRoute lays the route selection and its boundaries as they are on disk now over m.
+// A collector holds a meta listed before it parsed the transcript, and a switch in between would
+// file API turns under the subscription (and the source stamp would then keep the row). Called
+// AFTER the transcript is read: a meta newer than the lines is safe because each turn is placed
+// by its own timestamp, an older one is not.
+//
+// ok is false when the meta exists but cannot be read (a writer truncates it before writing):
+// a failed read proves nothing about the selection, so the caller must not attribute turns by
+// the stale m. A meta that does not exist (the session is gone) leaves m as it is.
+func withCurrentRoute(m session.Meta) (session.Meta, bool) {
+	for try := 0; try < 10; try++ {
+		if cur, ok := session.ReadMeta(m.Name); ok {
+			m.Route, m.RouteSwitches = cur.Route, cur.RouteSwitches
+			return m, true
+		}
+		if _, err := os.Stat(session.MetaPath(m.Name)); os.IsNotExist(err) {
+			return m, true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return m, false
+}

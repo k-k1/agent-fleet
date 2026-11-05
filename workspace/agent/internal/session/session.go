@@ -808,6 +808,58 @@ type Meta struct {
 	// the move primitives in sessionx and the user's explicit reopen write them.
 	Moving  string `json:"moving,omitempty"`
 	MovedTo string `json:"movedTo,omitempty"`
+	// RouteSwitches are the boundaries at which the session's route selection changed (ADR 0128
+	// decision 10), oldest first. Route is the selection after the last one. They are what lets the
+	// usage ledger file a turn under the route it ran on rather than the one the session holds when
+	// the turn is folded (decision 8), and what keeps the limit evidence of the route that was left
+	// from reading as evidence on the route entered. Written only by the switch itself, in the
+	// same write as Route.
+	RouteSwitches []RouteSwitch `json:"routeSwitches,omitempty"`
+}
+
+// RouteSwitch is one change of a session's route selection. Everything stamped at or after At
+// ran on To; everything before it ran on From (nil = the session had no explicit selection and
+// its turns stay unresolved, as they always were).
+type RouteSwitch struct {
+	At   string            `json:"at"` // RFC3339, the instant the new route's process was about to start
+	From *routes.Selection `json:"from,omitempty"`
+	To   routes.Selection  `json:"to"`
+}
+
+// RouteAt is the selection in force at t, and false when it cannot be told: the session has
+// switched and t is not a readable instant. A session that never switched answers its Route for
+// every t, exactly as before.
+func (m Meta) RouteAt(t time.Time) (*routes.Selection, bool) {
+	if len(m.RouteSwitches) == 0 {
+		return m.Route, true
+	}
+	if t.IsZero() {
+		return nil, false
+	}
+	for _, sw := range m.RouteSwitches {
+		at, err := time.Parse(time.RFC3339Nano, sw.At)
+		if err != nil {
+			return nil, false
+		}
+		if t.Before(at) {
+			return sw.From, true
+		}
+	}
+	return m.Route, true
+}
+
+// RouteSince is the instant the current selection took effect, zero for a session that never
+// switched. Evidence older than this belongs to an earlier route.
+func (m Meta) RouteSince() time.Time {
+	if len(m.RouteSwitches) == 0 {
+		return time.Time{}
+	}
+	at, err := time.Parse(time.RFC3339Nano, m.RouteSwitches[len(m.RouteSwitches)-1].At)
+	if err != nil {
+		// Unreadable boundary: treat everything as older than now, the safe side for evidence.
+		return time.Now()
+	}
+	return at
 }
 
 // WorkItemRef is the part of a work item the branch-name resolver renders from.

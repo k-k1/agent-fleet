@@ -104,3 +104,15 @@ type RouteBinder interface {
 type RouteWatcher interface {
 	RouteHeld(m session.Meta) *RouteRefusal
 }
+
+// RouteSwitcher is an optional capability of a RouteAdapter (ADR 0128 decision 10): the harness
+// declares the metered route a session on a subscription route may be moved to when the
+// subscription stops on a window. The caller has already established that there is limit
+// evidence and that waiting clears it; this answers only the harness's half.
+type RouteSwitcher interface {
+	// SwitchTarget returns the selection to move the session to (the connection may be empty: it
+	// is bound by RouteBinder once checked), or a refusal when the session's resolved route is
+	// not a subscription the harness can prove. A session with no explicit selection is offered
+	// only when the harness can show the subscription is what it runs on.
+	SwitchTarget(m session.Meta) (RouteSelection, *RouteRefusal)
+}

@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -37,6 +38,15 @@ func (agentImpl) UsageSource(m session.Meta) (agents.UsageSource, bool) {
 		files = append(files, file{p, fi.ModTime()})
 		fmt.Fprintf(&sb, "%s\x00%d\x00%d\x00", p, fi.Size(), fi.ModTime().UnixNano())
 	}
+	// Attribution is part of what the rows are made from: a switch changes it without touching
+	// the transcript, and a stamp that ignored it would keep rows filed under the old route.
+	cur, routeOK := withCurrentRoute(m)
+	if !routeOK {
+		return agents.UsageSource{}, false
+	}
+	if b, err := json.Marshal([]any{cur.Route, cur.RouteSwitches}); err == nil {
+		sb.Write(b)
+	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
 	ordered := make([]string, len(files))
 	for i, f := range files {
@@ -46,7 +56,8 @@ func (agentImpl) UsageSource(m session.Meta) (agents.UsageSource, bool) {
 		Stamp: sb.String(),
 		Turns: func() ([]transcript.Turn, bool) {
 			lines, _, ok := readConversation(ordered)
-			return stampRoute(m, CollectUsageTurns(lines)), ok
+			turns, routed := stampRouteChecked(m, CollectUsageTurns(lines))
+			return turns, ok && routed
 		},
 	}, true
 }
