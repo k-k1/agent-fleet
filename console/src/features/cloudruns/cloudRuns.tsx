@@ -30,9 +30,11 @@ function ProviderIcon({ provider }: { provider: string }) {
 
 /** CloudRunLine is one run as a single line: Settings lists it with its session, and an expanded
  *  group lists it with its time. */
-export function CloudRunLine({ run, session, time }: { run: CloudRun; session?: boolean; time?: boolean }) {
+/** `brief` leaves the identity to the group's head; the full line stays in the tooltip. */
+export function CloudRunLine({ run, session, time, brief }: { run: CloudRun; session?: boolean; time?: boolean; brief?: boolean }) {
+  const title = brief ? cloudRunParts(run).join(" · ") + "\n" + tr("cloudruns.title") : tr("cloudruns.title");
   return (
-    <div className={"cloud-run" + (failedRun(run) ? " failed" : "")} role="note" title={tr("cloudruns.title")}>
+    <div className={"cloud-run" + (failedRun(run) ? " failed" : "")} role="note" title={title}>
       <ProviderIcon provider={run.provider} />
       {time && (
         <time className="cloud-run-time" dateTime={run.startedAt}>
@@ -40,7 +42,7 @@ export function CloudRunLine({ run, session, time }: { run: CloudRun; session?: 
         </time>
       )}
       {session && <span className="cloud-run-session">{run.session || tr("cloudruns.no_session")}</span>}
-      <span className="cloud-run-text">{cloudRunParts(run).join(" · ")}</span>
+      <span className="cloud-run-text">{cloudRunParts(run, brief).join(" · ")}</span>
     </div>
   );
 }
@@ -63,7 +65,7 @@ export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; at
       </div>
     );
   }
-  const { text, failed, providers } = cloudRunSummary(runs);
+  const { text, failed, providers, oneIdentity } = cloudRunSummary(runs);
   return (
     <div className={cls + (open ? " open" : "")} {...label}>
       <button
@@ -84,7 +86,7 @@ export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; at
       {open && (
         <div className="cloud-run-list">
           {runs.map((r) => (
-            <CloudRunLine key={r.id} run={r} time />
+            <CloudRunLine key={r.id} run={r} time brief={oneIdentity} />
           ))}
         </div>
       )}

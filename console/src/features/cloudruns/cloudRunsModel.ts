@@ -63,8 +63,10 @@ const REFUSED: Record<string, MsgKey> = {
   confirm_required: "cloudruns.refused_confirm",
 };
 
-/** The parts of a run's line, in order; empty parts are left out. */
-export function cloudRunParts(r: CloudRun): string[] {
+/** The parts of a run's line, in order; empty parts are left out. `brief` leaves out the identity
+ *  (profile, account and role or project and account, region): a group whose runs all share one
+ *  names it once on its head, and repeating it on every line is the noise the group removes. */
+export function cloudRunParts(r: CloudRun, brief = false): string[] {
   const who = r.provider === "gcp" ? gcpWho(r) : [r.account, r.role].filter(Boolean).join(" / ");
   const cmd = [r.program, r.service, r.operation].filter(Boolean).join(" ");
   const end = r.refused
@@ -73,9 +75,9 @@ export function cloudRunParts(r: CloudRun): string[] {
       ? tr("cloudruns.exit", { code: r.exit })
       : "";
   return [
-    r.profile ?? "",
-    who,
-    r.region ?? "",
+    brief ? "" : r.profile ?? "",
+    brief ? "" : who,
+    brief ? "" : r.region ?? "",
     r.source ? tr("cloudruns.via", { source: r.source }) : "",
     r.signIn ? tr("cloudruns.sign_in", { name: r.signIn }) : "",
     cmd,
@@ -111,7 +113,7 @@ function identityKey(r: CloudRun): string {
 
 /** The summary line of several runs: one identity once with the count, or the profiles of
  *  several. Failures are counted apart, so a refused run is never hidden inside the count. */
-export function cloudRunSummary(runs: CloudRun[]): { text: string; failed: number; providers: string[] } {
+export function cloudRunSummary(runs: CloudRun[]): { text: string; failed: number; providers: string[]; oneIdentity: boolean } {
   const providers = [...new Set(runs.map((r) => r.provider))];
   const failed = runs.filter(failedRun).length;
   const ids = new Set(runs.map(identityKey));
@@ -124,7 +126,7 @@ export function cloudRunSummary(runs: CloudRun[]): { text: string; failed: numbe
     const profiles = [...new Set(runs.map((r) => r.profile || "?"))];
     text = profiles.join(", ");
   }
-  return { text, failed, providers };
+  return { text, failed, providers, oneIdentity: ids.size === 1 };
 }
 
 // ── Placement on tool calls ──────────────────────────────────────────────────────────────

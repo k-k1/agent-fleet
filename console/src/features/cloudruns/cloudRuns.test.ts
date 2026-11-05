@@ -31,6 +31,10 @@ describe("cloudRunParts", () => {
     // The provider is the line's brand icon, not a word in the text.
     expect(cloudRunParts(base)).toEqual(["prod-admin", "123456789012 / AdministratorAccess", "ap-northeast-1", "aws s3 ls"]);
   });
+  it("leaves the identity out of a brief line, and keeps the command and the outcome", () => {
+    expect(cloudRunParts(base, true)).toEqual(["aws s3 ls"]);
+    expect(cloudRunParts({ ...base, refused: "login_required" }, true)).toEqual(["aws s3 ls", t("cloudruns.refused_login_required")]);
+  });
   it("names a chain's source", () => {
     expect(cloudRunParts({ ...base, source: "base" })).toContain(t("cloudruns.via", { source: "base" }));
   });
