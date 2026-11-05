@@ -100,6 +100,10 @@ type awsProfileWire struct {
 	// ConfirmBeforeUse: af-aws-exec asks the member in the Console before the first use in a
 	// session, and the profile is not written to ~/.aws/config (ADR 0126 decisions 4 to 6).
 	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
+	// ModelRoute: the member marked the profile as usable by the AF route gateway for Bedrock
+	// model calls (ADR 0128 decision 11). An Agent that predates it ignores the field, and has no
+	// gateway to use it.
+	ModelRoute bool `json:"modelRoute,omitempty"`
 	// SignIn and SignInID name the shared sign-in an SSO profile is in (ADR 0125): its
 	// sso-session is af-<SignIn>. Absent for a sign-in of its own. An Agent that predates them
 	// renders af-<Name> with the copied portal: a separate login, never another member's.
@@ -237,13 +241,13 @@ func awsProfilesWire(rows []store.SSMProfile) ([]awsProfileWire, []awsProfileCon
 				ID: p.ID, Name: name, Label: p.Label, AccountID: p.AccountID, Region: p.Region,
 				Kind: store.SSMKindAssumeRole, RoleARN: p.RoleARN, SourceProfile: ssmProfileName(src.Label),
 				ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds,
-				ConfirmBeforeUse: p.ConfirmUse,
+				ConfirmBeforeUse: p.ConfirmUse, ModelRoute: p.ModelRoute,
 			})
 			continue
 		}
 		out = append(out, awsProfileWire{
 			ID: p.ID, Name: name, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
-			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, ConfirmBeforeUse: p.ConfirmUse,
+			AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, ConfirmBeforeUse: p.ConfirmUse, ModelRoute: p.ModelRoute,
 			SignIn: p.SignInName, SignInID: p.SignInID,
 		})
 	}

@@ -53,7 +53,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `route.gateway` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -363,3 +363,5 @@ event が加わっても（両端に同時に加わっても）2 つ目のター
 - アーカイブ済みセッションの印は**消さない**。アーカイブの transcript も fold が読むため、消すと最初の
   ターンから再び畳み込み、二重に数える。退役がそれらも覆う。この変更より前のビルドに戻すと、退役した
   印はターンなしに見えて、そのエージェントをもう一度畳み込む。
+
+**追記（2026-11-05）。** `feature` の行に `route.gateway` を加えた。AF のルートゲートウェイがセッションのルートのために転送したモデル呼び出し 1 回（ADR 0128 P2a）である。同じハーネスの、取り込まれた `session` の行と混ざらないよう、独立した feature にしている。

@@ -47,6 +47,11 @@ const (
 	// there is no price to attach: the cost of that answer is a share of a GPU box's hour,
 	// which is a component cost shown as such and never apportioned (ADR 0048).
 	FeatureEngineLLM = "engine.llm"
+	// FeatureRouteGateway is one model call the AF route gateway forwarded for a session's
+	// route (ADR 0128 P2a). It is written by the gateway, which sees every call, and it is a
+	// feature of its own so that a harness whose transcript is also folded into feature=session
+	// is never counted twice by one writer reading the other's rows.
+	FeatureRouteGateway = "route.gateway"
 	// FeatureUnknown is a call that carried no tag. A row is written even when a new
 	// auxiliary feature forgets to tag itself: not recording it would make the consumption
 	// invisible, which matters more than the tag being right.
@@ -88,6 +93,9 @@ const (
 	RouteOpencodeGo  = "opencode-go"  // opencode's provider "opencode-go" (the Go subscription)
 	RouteAFEngineLLM = "af-engine-llm"
 	RouteMemberLcpp  = "member-llamacpp"
+	// RouteBedrock is a call the AF route gateway forwarded to Amazon Bedrock (ADR 0128 P2a). The
+	// gateway sees every call, so its rows are metered.
+	RouteBedrock = "bedrock"
 )
 
 // Billing values: how a call was charged (ADR 0128 decision 8). Empty means "not recorded"

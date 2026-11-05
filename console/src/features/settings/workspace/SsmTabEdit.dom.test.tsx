@@ -170,6 +170,7 @@ describe("SsmTab profile Edit", () => {
           roleName: "Admin",
           region: "",
           confirmBeforeUse: false,
+          modelRoute: false,
         },
       },
     ]);
@@ -730,6 +731,7 @@ describe("SsmTab assume-role profile", () => {
           region: "",
           durationSeconds: 3600,
           confirmBeforeUse: false,
+          modelRoute: false,
         },
       },
     ]);
@@ -859,5 +861,29 @@ describe("confirm before use", () => {
     await act(async () => box2.click());
     await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
     expect(writes.at(-1)).toMatchObject({ method: "PUT", body: { confirmBeforeUse: true } });
+  });
+});
+
+// The "model route" mark (ADR 0128 decision 11): the form saves it explicitly, an edit starts from
+// the stored value, and the row says when it is on. It is its own checkbox, apart from the gate.
+describe("model route mark", () => {
+  it("is saved from the form and shown on the row", async () => {
+    profiles = [{ ...prod, modelRoute: true }, stg];
+    await mount();
+    expect(rows(0)[0].textContent).toContain(t("ssm.meta_model_route"));
+    expect(rows(0)[1].textContent).not.toContain(t("ssm.meta_model_route"));
+
+    const boxOf = () => host.querySelectorAll<HTMLInputElement>(".ssm-frm .ssm-confirm-use input[type=checkbox]")[1];
+    await click(btn(rows(0)[0], t("ssm.edit")));
+    expect(boxOf().checked).toBe(true);
+    await act(async () => boxOf().click());
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes.at(-1)).toMatchObject({ method: "PUT", body: { modelRoute: false, confirmBeforeUse: false } });
+
+    await click(btn(rows(0)[1], t("ssm.edit")));
+    expect(boxOf().checked).toBe(false);
+    await act(async () => boxOf().click());
+    await click(btn(host.querySelector<HTMLElement>(".ssm-frm")!, t("common.save")));
+    expect(writes.at(-1)).toMatchObject({ method: "PUT", body: { modelRoute: true } });
   });
 });

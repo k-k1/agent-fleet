@@ -56,7 +56,7 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 
 | Dimension | Values |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `engine.llm` / `translate.mirror` / `memory.review` / `route.gateway` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -413,3 +413,5 @@ and `total` (`foldRetiredAgent`), stamped with the newest turn.
   fold, so a dropped mark would re-fold the agent from its first turn and count it twice.
   Retirement covers them. Rolling back to a build without this change reads a retired mark as
   having no turns and would fold the agent again.
+
+**Amendment (2026-11-05).** `route.gateway` was added to the `feature` row: one model call the AF route gateway forwarded for a session's route (ADR 0128 P2a). It is its own feature so the gateway's rows are never mixed with the folded `session` rows of the same harness.
