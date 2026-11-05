@@ -71,6 +71,15 @@ describe("groupWithQueue pairs an echo with its queue entry", () => {
     expect(g.map((b) => b.text).join("\n")).toContain("ab");
   });
 
+  it("lets a later echo keep its exact entry from an earlier echo's lenient match", () => {
+    const first = { id: 1, text: "x\u200by", sinceIdx: 0, cleansInvisible: true };
+    const second = { id: 2, text: "xy", sinceIdx: 0, cleansInvisible: true };
+    const g = groupWithQueue([], [first, second], queueEntries(null, ["xy"]));
+    // "xy" pairs with the second echo, which is drawn at its queue place, ahead of the unpaired
+    // first one; the first taking it would draw "x\u200by" first.
+    expect(g.map((b) => b.text).join("\n")).toBe("xy\n\nx\u200by");
+  });
+
   it("pairs a claude echo with the exact entry before one that differs only in invisible characters", () => {
     const echo = { id: 1, text: "x\u200by", sinceIdx: 0, cleansInvisible: true };
     const g = groupWithQueue([], [echo], queueEntries(null, ["xy", "x\u200by"]));

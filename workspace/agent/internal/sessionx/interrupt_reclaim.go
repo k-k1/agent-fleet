@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -126,7 +127,7 @@ func composerEmpty(captured string) bool {
 }
 
 // restoredDraft reports that the pane's input box holds exactly prompt (whitespace aside: the
-// box wraps at the pane width and indents continuation rows). A false positive erases text
+// box wraps at the pane width and indents continuation rows; invisible characters aside, below). A false positive erases text
 // someone typed in the terminal, so a box scrolled off screen or a partial match is never taken
 // for the prompt; such a prompt is left where claude put it and the next send is refused instead
 // (strandedPrompts). A paste placeholder ("[Pasted text #N +M lines]") is deliberately not
@@ -134,8 +135,10 @@ func composerEmpty(captured string) bool {
 // window (the terminal lock does not cover direct input) would be erased.
 func restoredDraft(captured, prompt string) bool {
 	draft, _, ok := claudeBox(captured)
-	d := squashSpace(draft)
-	return ok && d != "" && d == squashSpace(prompt)
+	// claude puts back the prompt it submitted, which lacks the invisible characters it strips
+	// on submit (a zero-width space in a paste); prompt is the typed text and still has them.
+	d := squashSpace(claude.WithoutInvisible(draft))
+	return ok && d != "" && d == squashSpace(claude.WithoutInvisible(prompt))
 }
 
 // reclaimInterruptedPrompt takes a stopped prompt that claude put back into its input box out

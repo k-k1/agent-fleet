@@ -69,3 +69,34 @@ func rightToLeftScript(r rune) bool {
 		r >= 0x10800 && r <= 0x10fff || r >= 0x1e800 && r <= 0x1efff
 	return inBlock && unicode.In(r, unicode.L, unicode.M)
 }
+
+// WithoutInvisible removes every character claude 2.1.318's input stripper may remove (the set
+// console/src/lib/pastedImages.ts CLAUDE_INVISIBLE_RE carries; keep the two in step): C0/C1
+// controls but tab and line feed, soft hyphen, zero-width and bidi controls, variation selectors,
+// BOM, tag characters and the blank fillers. It drops the ones claude keeps in context (a joiner
+// inside an emoji) as well, so it is for comparing a text with claude's copy of it, never for
+// rewriting what is sent.
+func WithoutInvisible(s string) string {
+	return strings.Map(func(r rune) rune {
+		if claudeInvisible(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func claudeInvisible(r rune) bool {
+	switch {
+	case r <= 0x08, r >= 0x0b && r <= 0x1f, r >= 0x7f && r <= 0x9f:
+		return true
+	case r == 0x00ad, r == 0x034f, r == 0x061c, r == 0x115f, r == 0x1160, r == 0x17b4, r == 0x17b5,
+		r >= 0x180b && r <= 0x180f, r >= 0x200b && r <= 0x200f, r >= 0x2028 && r <= 0x202e,
+		r >= 0x2060 && r <= 0x206f, r == 0x3164, r >= 0xfe00 && r <= 0xfe0f, r == 0xfeff, r == 0xffa0,
+		r >= 0xfff0 && r <= 0xfffb:
+		return true
+	case r == 0x1107f, r >= 0x13430 && r <= 0x1343f, r == 0x16fe4, r >= 0x1bca0 && r <= 0x1bca3,
+		r >= 0x1d173 && r <= 0x1d17a, r >= 0xe0000 && r <= 0xe0fff:
+		return true
+	}
+	return false
+}

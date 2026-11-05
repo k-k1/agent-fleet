@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -762,6 +763,20 @@ func TestTypeLineAndSubmitRemembersTheTypedForm(t *testing.T) {
 	}
 	if !restoredDraft(rule+"\n❯ "+want+"\n"+rule+"\n  ⏵⏵ auto mode on\n", got) {
 		t.Fatal("the restored draft does not match the remembered submission")
+	}
+}
+
+// claude restores the prompt it submitted, without the invisible characters it strips on submit
+// (a zero-width space), while the remembered submission is the typed text that still has them.
+// The box must still be taken for the prompt, or the stop strands it and refuses the next send.
+func TestRestoredDraftIgnoresWhatClaudeStrips(t *testing.T) {
+	box := func(s string) string { return rule + "\n❯ " + s + "\n" + rule + "\n  ⏵⏵ auto mode on\n" }
+	typed := claude.ShapePrompt("a\u200b\u200eb c")
+	if !restoredDraft(box("ab c"), typed) {
+		t.Fatalf("box %q not taken for the typed %+q", "ab c", typed)
+	}
+	if restoredDraft(box("ab d"), typed) || restoredDraft(box("a b"), typed) {
+		t.Fatal("a box with other visible text was taken for the prompt")
 	}
 }
 

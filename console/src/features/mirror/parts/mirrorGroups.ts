@@ -46,18 +46,18 @@ export function groupWithQueue(
   breaks: number[] = [],
 ) {
   const queuedLeft = [...queueShown];
-  // An exact match is taken before a copy that differs only in invisible characters, as
-  // pickEcho does for the echoes.
-  const takeQueued = (text: string, cleansInvisible?: boolean) => {
-    let i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text));
-    if (i < 0 && cleansInvisible) i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text, true));
+  const takeQueued = (text: string, cleansInvisible = false) => {
+    const i = queuedLeft.findIndex((q) => sameQueuedPrompt(q.text, text, cleansInvisible));
     if (i < 0) return null;
     return queuedLeft.splice(i, 1)[0];
   };
-  const echoRows = pendingSends
-    .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
-    .map((e) => {
-      const q = takeQueued(e.text, e.cleansInvisible);
+  const shown = pendingSends.filter((e) => !echoLanded(e, turns, isNoise)); // hide at render the instant the real turn lands
+  // Every echo takes its exact copy before any takes one that differs only in invisible
+  // characters, so a lenient match never steals an entry another echo matches exactly.
+  const exact = shown.map((e) => takeQueued(e.text));
+  const echoRows = shown
+    .map((e, n) => {
+      const q = exact[n] ?? (e.cleansInvisible ? takeQueued(e.text, true) : null);
       const turn: Turn = {
         role: "user",
         text: e.text,
