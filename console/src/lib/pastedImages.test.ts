@@ -93,19 +93,23 @@ describe("splitPastedImages", () => {
 });
 
 describe("samePastedPrompt", () => {
-  it("matches the copy claude logs after dropping invisible characters and reshaping whitespace", () => {
-    // A paste copied from a chat app or a table: BOM, zero-width space, bidi mark, variation
-    // selector, NBSP, tabs and CRLF. claude removes the invisible ones; the Agent sends LF.
-    const sent = "\ufeff今の状態\t求められる確認\r\n\u00a0\r\n番号が\u200b登録済み\u200e\t両方\ufe0f";
-    const logged = "今の状態    求められる確認\n \n番号が登録済み    両方";
+  it("matches the copy claude logs after removing invisible characters", () => {
+    // A paste copied from a chat app or a table: BOM, zero-width space, bidi mark, soft hyphen,
+    // variation selector and CRLF. claude removes them (CR included); tab and NBSP stay.
+    const sent = "\ufeff今の状態\t求められる確認\r\n\u00a0\r\n番号が\u200b登録済み\u200e\t両\u00ad方\ufe0f";
+    const logged = "今の状態\t求められる確認\n\u00a0\n番号が登録済み\t両方";
     expect(samePastedPrompt(logged, sent)).toBe(true);
     expect(samePastedPrompt("番号が\u2060未登録\u{e0041}", "番号が未登録")).toBe(true);
   });
   it("still tells different visible text apart", () => {
     expect(samePastedPrompt("番号が登録済み", "番号が未登録")).toBe(false);
     expect(samePastedPrompt("a\u200bb", "a-b")).toBe(false);
-    // Whitespace is collapsed, not dropped: these are two different prompts.
+  });
+  it("keeps spaces, tabs, line breaks and indentation meaningful", () => {
     expect(samePastedPrompt("a b", "ab")).toBe(false);
+    expect(samePastedPrompt("a b", "a\nb")).toBe(false);
+    expect(samePastedPrompt("a\tb", "a    b")).toBe(false);
+    expect(samePastedPrompt("if x:\n  y", "if x:\n    y")).toBe(false);
     expect(samePastedPrompt("x = 1", "x=1")).toBe(false);
   });
 });

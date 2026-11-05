@@ -10,15 +10,17 @@ describe("echoLanded", () => {
 
   it("a pasted send resolves against claude's copy with the invisible characters removed", () => {
     const sent = "AAC と同じ規則にして\r\n\u00a0\r\n今の状態\t求められる\u200b確認";
-    const logged = "AAC と同じ規則にして\n \n今の状態    求められる確認";
+    const logged = "AAC と同じ規則にして\n\u00a0\n今の状態\t求められる確認";
     expect(echoLanded({ text: sent, sinceIdx: 10 }, [{ role: "user", text: logged, idx: 11 }], notNoise)).toBe(true);
   });
 
-  it("a turn does not land the echo of a prompt that differs from it only in spaces", () => {
-    // Two sends before the transcript moves share one sinceIdx; only "a b" has been logged.
+  it("a turn does not land the echo of a prompt that differs from it only in whitespace", () => {
+    // Sends made before the transcript moves share one sinceIdx; only "a b" has been logged.
     const turns = [{ role: "user", text: "a b", idx: 11 }];
     expect(echoLanded({ text: "a b", sinceIdx: 10 }, turns, notNoise)).toBe(true);
-    expect(echoLanded({ text: "ab", sinceIdx: 10 }, turns, notNoise)).toBe(false);
+    for (const other of ["ab", "a\nb", "a  b", " a\tb"]) {
+      expect(echoLanded({ text: other, sinceIdx: 10 }, turns, notNoise)).toBe(false);
+    }
   });
 
   it("an image studio send resolves against its turn, which still carries the studio signal line", () => {
