@@ -89,7 +89,7 @@ func answerInteraction(pi bridge.ParsedInteraction) (string, error) {
 	case "q":
 		return answerClaudeQuestion(meta, pi, en)
 	case "p":
-		return answerClaudePermission(meta, pi.Choice, en)
+		return answerClaudePermission(meta, pi.Choice, pi.Token, en)
 	case "pl":
 		return answerClaudeDecision(meta, "plan", planKeys(pi.Choice),
 			decisionFeedback(pi.Choice, en), en)
@@ -282,7 +282,7 @@ func buildClaudeSingleSelectKeys(n int, picks map[int]int) []string {
 // answerClaudePermission answers a permission prompt from a bridge button through the same
 // label-based resolution as the Console's card (permissionKeys, #3354): a fixed Down Down Enter
 // for deny wrapped onto "Yes" on a two-row menu.
-func answerClaudePermission(meta session.Meta, choice string, en bool) (string, error) {
+func answerClaudePermission(meta session.Meta, choice, expect string, en bool) (string, error) {
 	if choice != claude.PermDeny {
 		choice = claude.PermAllow
 	}
@@ -293,6 +293,11 @@ func answerClaudePermission(meta session.Meta, choice string, en bool) (string, 
 	unlock := permRespondLock(meta.Name)
 	defer unlock()
 	token := permissionToken(sid)
+	// The button names the prompt it was posted for (#3358). One without a token was posted
+	// before tokens existed and cannot say which prompt it meant, so it is refused too.
+	if expect == "" || expect != token {
+		return Fb(en, "別の確認に変わりました。Console で確かめてください", "The prompt changed — check it in the Console"), nil
+	}
 	if done, ok := permDecided.Load(meta.Name); ok && done == token {
 		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
 	}

@@ -36,7 +36,7 @@ const (
 // custom_id scheme: pipe-joined, "af" tagged, well under Discord's 100-char cap.
 //
 //	af|q|<sid>|<qi>|<oi>|<fp>   AskUserQuestion option (qi/oi = question/option index)
-//	af|p|<allow|deny>|<sid>     tool-permission decision
+//	af|p|<allow|deny>|<sid>|<tok>  tool-permission decision, bound to the prompt by tok
 //	af|pl|<approve|reject>|<sid>  plan approval decision
 //	af|op|<approve|reject>|<id>   operator destructive-action approval (P3, approval.go)
 //
@@ -85,9 +85,12 @@ func (d *discordProvider) buttonMessages(m Message) []outMsg {
 	en := d.creds.Lang == "en"
 	switch m.Kind {
 	case "permission-request":
+		if m.PermissionToken == "" {
+			return nil // unbound buttons would approve whatever prompt is current
+		}
 		return []outMsg{{components: decisionRow(
 			"p", m.SessionName, "allow", label(en, "許可", "Allow"), buttonSuccess,
-			"deny", label(en, "拒否", "Deny"), buttonDanger)}}
+			"deny", label(en, "拒否", "Deny"), buttonDanger, m.PermissionToken)}}
 	case "plan-approval":
 		return []outMsg{{components: decisionRow(
 			"pl", m.SessionName, "approve", label(en, "承認", "Approve"), buttonSuccess,
@@ -100,12 +103,13 @@ func (d *discordProvider) buttonMessages(m Message) []outMsg {
 
 // decisionRow builds a single action row of two decision buttons (allow/deny,
 // approve/reject). kind is the custom_id tag ("p" / "pl").
-func decisionRow(kind, sid, a, aLabel string, aStyle int, b, bLabel string, bStyle int) []any {
+// extra is appended to both custom ids (the permission token).
+func decisionRow(kind, sid, a, aLabel string, aStyle int, b, bLabel string, bStyle int, extra ...string) []any {
 	return []any{map[string]any{
 		"type": compActionRow,
 		"components": []any{
-			button(customID(kind, a, sid), aLabel, aStyle),
-			button(customID(kind, b, sid), bLabel, bStyle),
+			button(customID(append([]string{kind, a, sid}, extra...)...), aLabel, aStyle),
+			button(customID(append([]string{kind, b, sid}, extra...)...), bLabel, bStyle),
 		},
 	}}
 }
@@ -185,6 +189,7 @@ type ParsedInteraction struct {
 	Session  string
 	QI, OI   int    // question/option index (Kind == "q")
 	Fp       string // questions fingerprint (Kind == "q")
+	Token    string // permission token (Kind == "p"); "" for an id posted before tokens existed
 	Choice   string // "allow"/"deny" (p), "approve"/"reject" (pl / op)
 	Approval string // operator approval id (Kind == "op")
 }
@@ -207,7 +212,21 @@ func ParseCustomID(s string) (ParsedInteraction, bool) {
 			return ParsedInteraction{}, false
 		}
 		return ParsedInteraction{Kind: "q", Session: parts[2], QI: qi, OI: oi, Fp: parts[5]}, true
-	case "p", "pl":
+	case "p":
+		// af|p|<choice>|<sid>[|<tok>]: the 4-field form predates the token and parses with
+		// Token "" so the answer path can refuse it with a reply instead of dropping it.
+		if len(parts) != 4 && len(parts) != 5 {
+			return ParsedInteraction{}, false
+		}
+		pi := ParsedInteraction{Kind: "p", Session: parts[3], Choice: parts[2]}
+		if len(parts) == 5 {
+			if parts[4] == "" {
+				return ParsedInteraction{}, false
+			}
+			pi.Token = parts[4]
+		}
+		return pi, true
+	case "pl":
 		if len(parts) != 4 {
 			return ParsedInteraction{}, false
 		}

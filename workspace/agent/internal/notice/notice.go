@@ -77,9 +77,10 @@ func Put(e Event) error {
 	if q, ok := e.Payload["questions"].(json.RawMessage); ok {
 		questions = q
 	}
+	permTok, _ := e.Payload["permissionToken"].(string)
 	bridge.Enqueue(bridge.Message{Kind: e.Kind, SessionName: e.SessionName,
 		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt,
-		Body: body, Questions: questions})
+		Body: body, Questions: questions, PermissionToken: permTok})
 	return nil
 }
 

@@ -832,15 +832,72 @@
 
 /* The pool tables scroll inside their own box. Without it the table's min-content width pushes
    past the panel and the whole settings pane scrolls sideways at phone width, clipping the
-   panel's text and tiles (measured at 400px: table wider than the dialog). Cells never wrap,
-   so a workspace name is not split one token per line; a table wider than the box scrolls. */
+   panel's text and tiles (measured at 400px: table wider than the dialog). A table wider than
+   the box scrolls inside it. */
 .pool-table-scroll {
   max-width: 100%;
   overflow-x: auto;
 }
 
+/* A long workspace name wraps inside a fixed width instead of widening the row, and is never
+   cut: two members of one tenant must not render alike. The constant `af-ws-` prefix is hidden. */
+.pool-ws {
+  display: inline-block;
+  width: 16ch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pool-ws-prefix {
+  display: none;
+}
+
+/* AZ and volume size sit under their ID instead of widening the row. */
+.pool-az {
+  display: block;
+}
+
+/* Cells wrap (notes and badges drop to a second line) rather than widen the row; the workspace
+   name has a fixed width and the IDs have no break points. */
+.admin-table.pool-table th,
+.admin-table.pool-table td {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
 .pool-table td {
+  white-space: normal;
+}
+
+/* IDs, type/AZ and the action buttons never break mid-token. */
+.pool-table td.mono,
+.pool-table td.pool-actions {
   white-space: nowrap;
+}
+
+/* Template badges sit under the version, one per line. */
+.pool-table td .pool-badge {
+  display: flex;
+  width: fit-content;
+  margin: 2px 0 0;
+}
+
+/* Stacked buttons keep the pinned column narrow. */
+.pool-table .pool-actions button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+}
+
+/* Row actions stay reachable while the table scrolls sideways: pinned to the right edge. */
+.pool-table .pool-actions {
+  position: sticky;
+  right: 0;
+  /* Opaque and equal to .admin-panel's surface, or scrolled cells show through. */
+  background: var(--panel2);
+  /* A box-shadow, not a border: the table collapses borders, and a collapsed border does not
+     travel with a sticky cell. */
+  box-shadow: inset 1px 0 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.35);
 }
 
 .admin-table td {

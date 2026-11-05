@@ -70,6 +70,10 @@ type Message struct {
 	// choice. Nil for every other kind (plan-approval / permission-request use fixed
 	// allow/deny buttons that need no payload).
 	Questions json.RawMessage `json:"questions,omitempty"`
+	// PermissionToken identifies the permission prompt a "permission-request" event was
+	// raised for (sessionx permissionToken). The Allow/Deny buttons carry it so a click on a
+	// prompt that has since been replaced is refused. Empty = no buttons are posted.
+	PermissionToken string `json:"permissionToken,omitempty"`
 	// Target names the one provider a message is for (a scheduled run's chosen connection,
 	// #1560). Empty = every provider that wants the event group, as for any notification.
 	Target string `json:"target,omitempty"`

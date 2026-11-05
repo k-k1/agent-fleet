@@ -50,9 +50,12 @@ func (sp *slackProvider) buttonMessages(m Message) []slackMsg {
 	en := sp.creds.Lang == "en"
 	switch m.Kind {
 	case "permission-request":
+		if m.PermissionToken == "" {
+			return nil // unbound buttons would approve whatever prompt is current
+		}
 		return []slackMsg{{blocks: slackDecisionBlocks("p", m.SessionName,
 			"allow", label(en, "許可", "Allow"), "primary",
-			"deny", label(en, "拒否", "Deny"), "danger")}}
+			"deny", label(en, "拒否", "Deny"), "danger", m.PermissionToken)}}
 	case "plan-approval":
 		return []slackMsg{{blocks: slackDecisionBlocks("pl", m.SessionName,
 			"approve", label(en, "承認", "Approve"), "primary",
@@ -65,10 +68,10 @@ func (sp *slackProvider) buttonMessages(m Message) []slackMsg {
 
 // slackDecisionBlocks builds a single actions block of two decision buttons (allow/deny,
 // approve/reject). kind is the custom_id tag ("p" / "pl" / "op").
-func slackDecisionBlocks(kind, sid, a, aLabel, aStyle, b, bLabel, bStyle string) []any {
+func slackDecisionBlocks(kind, sid, a, aLabel, aStyle, b, bLabel, bStyle string, extra ...string) []any {
 	return []any{slackActions([]any{
-		slackButton(customID(kind, a, sid), aLabel, aStyle),
-		slackButton(customID(kind, b, sid), bLabel, bStyle),
+		slackButton(customID(append([]string{kind, a, sid}, extra...)...), aLabel, aStyle),
+		slackButton(customID(append([]string{kind, b, sid}, extra...)...), bLabel, bStyle),
 	})}
 }
 
