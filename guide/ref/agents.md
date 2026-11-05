@@ -254,8 +254,8 @@ login. A session with no route behaves as before.
   and harmless: the API key is the credential the session uses (the header reads "API Usage Billing").
 - A settings file edited while the session runs cannot move it off its route: the launch pins the
   route's overridable variables (endpoint, auth token, cloud-provider switches, `apiKeyHelper`, and the
-  other route's credentials) to empty in the CLI's own highest-precedence launch layer. Two cases
-  remain covered by stopping the session instead: a managed settings file, and a settings file that
+  other route's credentials) to empty in the highest-precedence settings layer Agent Fleet can write (the CLI's launch-flag layer). Two cases
+  remain covered by stopping the session instead: a managed settings file, (the CLI's documentation ranks it above the launch-flag layer; not measured here), and a settings file that
   sets `ANTHROPIC_API_KEY` for an anthropic-api session (the key itself is never put on a command line).
 - When the key's account runs out of credit ("Credit balance is too low") the turn fails with that
   text. The session does not show the *Spend limit* state: fund the account and send a message, and it

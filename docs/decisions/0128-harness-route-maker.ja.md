@@ -395,5 +395,5 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   stream-json セッション実行中に user 設定を書き換えても、エンドポイントも認証ヘッダも変わらない。空の `ANTHROPIC_AUTH_TOKEN` は
   Authorization ヘッダを送らない。ログイン無しで空固定のサブスクリプション起動は、user 設定のキーを使わず「Not logged in」になる）。
   そこで起動時に、`env -u` が外すものと `apiKeyHelper` を、既存の 1 つの `--settings` オブジェクトの中で空に固定する。固定できないもの:
-  managed 設定（フラグ層より優先）と anthropic-api のキー自体（コマンドラインに載せない）。これらは起動拒否と `RouteHeld` の
-  巡回に残し、そちらは変えない。測定は短い stream 1 回で、設定監視を数時間回したものではない。
+  managed 設定（CLI の文書ではフラグ層より上とされる。ここでは未測定。/etc に書く root が無い）と anthropic-api のキー自体（コマンドラインに載せない）。これらは起動拒否と `RouteHeld` の
+  巡回に残し、そちらは変えない。測定は `claude -p --input-format stream-json --output-format stream-json` で行い、Fleet が起動する対話 TUI のペインでは測っていない（未測定。設定の層の扱いは同じコードだと CLI の文書にはあるが、証拠ではない）。数時間の監視も測っていない。「Not logged in」は Fleet では起きない（`settingsConflict` が先に起動を拒否する）。ピンの優先順位を示すだけ。
