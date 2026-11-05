@@ -82,8 +82,8 @@ export function PlanPendingCard({
   );
 }
 
-/** Tool permission prompt. All three choices drive the TUI modal by key, so their order is
- *  itself meaningful. */
+/** Tool permission prompt. Each button names a choice, which the Agent maps onto the dialog's
+ *  rows; "Always allow" is drawn only when onAlwaysAllow is given, i.e. the dialog has the row. */
 export function PermissionCard({
   agentName,
   message,
@@ -96,7 +96,7 @@ export function PermissionCard({
   message: string;
   sending: boolean;
   onAllow: () => void;
-  onAlwaysAllow: () => void;
+  onAlwaysAllow?: () => void;
   onDeny: () => void;
 }) {
   return (
@@ -110,15 +110,17 @@ export function PermissionCard({
           <button type="button" className="btn primary mt-perm-btn" disabled={sending} onClick={onAllow}>
             <Icon name="check" /> {tr("mirror.allow")}
           </button>
-          <button
-            type="button"
-            className="ghost mt-perm-btn"
-            disabled={sending}
-            title={tr("mirror.auto_allow")}
-            onClick={onAlwaysAllow}
-          >
-            {tr("mirror.always_allow")}
-          </button>
+          {onAlwaysAllow && (
+            <button
+              type="button"
+              className="ghost mt-perm-btn"
+              disabled={sending}
+              title={tr("mirror.auto_allow")}
+              onClick={onAlwaysAllow}
+            >
+              {tr("mirror.always_allow")}
+            </button>
+          )}
           <button type="button" className="ghost mt-perm-btn" disabled={sending} onClick={onDeny}>
             <Icon name="close" /> {tr("mirror.deny")}
           </button>

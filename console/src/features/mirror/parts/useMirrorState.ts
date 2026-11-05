@@ -8,6 +8,7 @@ import type {
   BackgroundShell,
 } from "../../../core/api/client.ts";
 import type { Session } from "../../../types/session.ts";
+import type { PermissionChoice } from "../../../core/api/client.ts";
 import { streamReplies, type Settings } from "../../../lib/settings.ts";
 import { useLiveHold } from "../liveHold.ts";
 import { useDraft } from "../../../lib/draft.ts";
@@ -150,6 +151,9 @@ export function useMirrorState({
   const liveText = useLiveHold(liveRaw, turns, session, liveOn && stateSession === session);
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
+  // The choices the permission dialog on screen really offers, read off the pane by the Agent
+  // (#3354). null = not reported (an older Agent, or the menu not drawn yet).
+  const [pendingPermChoices, setPendingPermChoices] = useState<PermissionChoice[] | null>(null);
   // A MANAGED session's tool approval. Kept apart from pendingPerm because the two are
   // answered by different mechanisms — keystrokes into a pane versus /respond by id — and a
   // managed session has no pane for the first one.
@@ -256,7 +260,7 @@ export function useMirrorState({
     queuedPrompts, setQueuedPrompts, queuedItems, setQueuedItems, discards, setDiscards, discardNotices,
     setDiscardNotices, pendingPeers, setPendingPeers, cloudRuns, setCloudRuns, queueOpsRef, queueShown, queuedCount, discardView,
     alive, setAlive, dirGone, pending, setPending, pendingText, setPendingText, liveMode, liveOn, liveOnRef,
-    liveText, setLiveText, pendingPlan, setPendingPlan, pendingPerm, setPendingPerm, pendingApproval,
+    liveText, setLiveText, pendingPlan, setPendingPlan, pendingPerm, setPendingPerm, pendingPermChoices, setPendingPermChoices, pendingApproval,
     setPendingApproval, carried, setCarried, restoredAt, setRestoredAt, rejectedPlansRef, rejectedGen, setRejectedGen, markRejected,
     mode, setMode, lastNonPlanMode, agentCtx, setAgentCtx, suggestedTitle, setSuggestedTitle, titleActing,
     setTitleActing, managedSettingsOpen, setManagedSettingsOpen, managedSettings, setManagedSettings,

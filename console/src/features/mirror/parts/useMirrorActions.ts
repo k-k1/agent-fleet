@@ -13,8 +13,9 @@ import {
   isMemberOrigin,
   sessionRespond,
   sessionApprove,
+  sessionPermissionRespond,
 } from "../../../core/api/client.ts";
-import type { BackgroundShell, Discard, InteractionAnswer, QueueItem, TurnResult } from "../../../core/api/client.ts";
+import type { BackgroundShell, Discard, InteractionAnswer, PermissionChoice, QueueItem, TurnResult } from "../../../core/api/client.ts";
 import type { Attachment } from "../../../lib/attachDraft.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import { t as tr, tCount } from "../../../lib/i18n/index.ts";
@@ -443,6 +444,27 @@ export function useMirrorActions({
     return res.ok;
   };
 
+  // sendPermission answers a Terminal (CLI) claude permission dialog by meaning (#3354). Same
+  // shape as sendApproval: a refusal (the row is not on screen, the menu could not be read)
+  // rolls the status back and keeps the card, since the tool is still blocked.
+  const sendPermission = async (choice: PermissionChoice): Promise<boolean> => {
+    if (sending) return false;
+    if (wsDown()) return false;
+    setSending(true);
+    const prev = statusRef.current;
+    statusRef.current = "working";
+    setStatus("working");
+    const res = await sessionPermissionRespond(session, choice).catch((): TurnResult => ({ ok: false }));
+    if (!res.ok) {
+      statusRef.current = prev;
+      setStatus(prev);
+      toastSendFailure(toast, res, tr("mirror.answer_send_failed"), kind);
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+    return res.ok;
+  };
+
   // sendRespond answers a pending question by interaction id — a structured answer
   // (docs/log/27 §5): a MANAGED session's, or a Terminal one whose question carries an id
   // (opencode 2 on the shared serve). Any other tui question is answered by navigating the TUI
@@ -471,7 +493,7 @@ export function useMirrorActions({
   return {
     postInput, wsDown, postKeys, newestIdx, sendPrompt, driveInput, sendKeys, sendSeq, sendInterrupt,
     cancelQuestion, draftBusy, intoDraft, takeQueued, dropPendingPeer, stopBackgroundShell, restoreDiscard, closeDiscard,
-    sendApproval, sendRespond,
+    sendApproval, sendPermission, sendRespond,
   };
 }
 

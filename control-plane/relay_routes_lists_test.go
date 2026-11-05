@@ -107,6 +107,7 @@ var mutatingRelayAuditExempt = routeReasons(
 		"POST /api/sessions/{name}/turn",
 		"POST /api/sessions/{name}/respond",
 		"POST /api/sessions/{name}/plan-respond",
+		"POST /api/sessions/{name}/permission-respond",
 		"POST /api/sessions/{name}/carried-answer",
 		"POST /api/sessions/{name}/paste-image",
 		"POST /api/sessions/{name}/halt",

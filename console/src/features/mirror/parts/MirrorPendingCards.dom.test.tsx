@@ -21,7 +21,14 @@ const plan = new Proxy({}, { get: () => noop }) as Props["plan"];
 function render(
   kind: string,
   pending: Question[],
-  opts: { pendingText?: string; questionInline?: boolean; busy?: boolean; turnBusy?: boolean } = {},
+  opts: {
+    pendingText?: string;
+    questionInline?: boolean;
+    busy?: boolean;
+    turnBusy?: boolean;
+    pendingPerm?: string;
+    pendingPermChoices?: string[] | null;
+  } = {},
 ) {
   const actions = {
     sendKeys: vi.fn(() => Promise.resolve(true)),
@@ -29,6 +36,7 @@ function render(
     sendInterrupt: vi.fn(() => Promise.resolve()),
     cancelQuestion: vi.fn(() => Promise.resolve()),
     sendApproval: vi.fn(),
+    sendPermission: vi.fn(() => Promise.resolve(true)),
     sendRespond: vi.fn(() => Promise.resolve(true)),
   };
   const st = {
@@ -40,7 +48,8 @@ function render(
     liveMode: null,
     liveText: "",
     pendingPlan: null,
-    pendingPerm: null,
+    pendingPerm: opts.pendingPerm ?? null,
+    pendingPermChoices: opts.pendingPermChoices ?? null,
     pendingApproval: null,
     carried: null,
     setCarried: noop,
@@ -141,5 +150,35 @@ describe("MirrorPendingCards typing row", () => {
   it("stays hidden while only background work runs", () => {
     render("claude", null as unknown as Question[], { busy: true, turnBusy: false });
     expect(document.querySelector(".mirror-typing")).toBeNull();
+  });
+});
+
+// The permission card answers by meaning (#3354): no keystroke leaves the Console, and "Always
+// allow" exists only when the dialog on screen has that row.
+describe("MirrorPendingCards permission card", () => {
+  const buttons = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".mt-perm-btn"));
+
+  it("a two-row dialog (Yes / No) offers no Always allow", async () => {
+    const a = render("claude", null as unknown as Question[], { pendingPerm: "Bash · jira issue create", pendingPermChoices: ["allow", "deny"] });
+    expect(buttons()).toHaveLength(2);
+    await click(buttons()[1]);
+    expect(a.sendPermission).toHaveBeenCalledWith("deny");
+    expect(a.sendKeys).not.toHaveBeenCalled();
+  });
+
+  it("an unreported menu (older Agent) offers no Always allow either", () => {
+    render("claude", null as unknown as Question[], { pendingPerm: "Bash · ls", pendingPermChoices: null });
+    expect(buttons()).toHaveLength(2);
+  });
+
+  it("a dialog with the row sends each choice by name", async () => {
+    const a = render("claude", null as unknown as Question[], {
+      pendingPerm: "Bash · ls",
+      pendingPermChoices: ["allow", "always", "deny"],
+    });
+    expect(buttons()).toHaveLength(3);
+    for (const b of buttons()) await click(b);
+    expect(a.sendPermission.mock.calls).toEqual([["allow"], ["always"], ["deny"]]);
+    expect(a.sendKeys).not.toHaveBeenCalled();
   });
 });

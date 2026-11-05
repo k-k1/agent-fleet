@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
@@ -88,8 +89,7 @@ func answerInteraction(pi bridge.ParsedInteraction) (string, error) {
 	case "q":
 		return answerClaudeQuestion(meta, pi, en)
 	case "p":
-		return answerClaudeDecision(meta, "permission", permKeys(pi.Choice),
-			decisionFeedback(pi.Choice, en), en)
+		return answerClaudePermission(meta, pi.Choice, en)
 	case "pl":
 		return answerClaudeDecision(meta, "plan", planKeys(pi.Choice),
 			decisionFeedback(pi.Choice, en), en)
@@ -268,16 +268,28 @@ func buildClaudeSingleSelectKeys(n int, picks map[int]int) []string {
 	return append(keys, "Enter")
 }
 
-// permKeys / planKeys mirror the exact sequences MirrorView drives (the version-
-// verified option order): permission Allow = Enter, Deny = Down Down Enter; plan
-// Approve = Enter, Reject = Down Down Down Enter (the "tell what to change" option).
-func permKeys(choice string) []string {
-	if choice == "deny" {
-		return []string{"Down", "Down", "Enter"}
+// answerClaudePermission answers a permission prompt from a bridge button through the same
+// label-based resolution as the Console's card (permissionKeys, #3354): a fixed Down Down Enter
+// for deny wrapped onto "Yes" on a two-row menu.
+func answerClaudePermission(meta session.Meta, choice string, en bool) (string, error) {
+	if choice != claude.PermDeny {
+		choice = claude.PermAllow
 	}
-	return []string{"Enter"} // allow
+	sid := session.UUID(meta.Dir, meta.Name)
+	if st, _ := status.Read(sid); st.State != "permission" {
+		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
+	}
+	unlock := permRespondLock(meta.Name)
+	defer unlock()
+	keys, code := permissionKeys(meta.Name, choice)
+	if code != "" {
+		return Fb(en, "選択肢を読み取れませんでした。Console で回答してください", "Could not read the prompt's options — answer it from the Console"), nil
+	}
+	return answerClaudeDecision(meta, "permission", keys, decisionFeedback(choice, en), en)
 }
 
+// planKeys mirrors the sequence the plan card drives: Approve = Enter, Reject = Down Down Down
+// Enter (the "tell what to change" option).
 func planKeys(choice string) []string {
 	if choice == "reject" {
 		return []string{"Down", "Down", "Down", "Enter"}

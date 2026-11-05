@@ -60,6 +60,10 @@ var sessionRelays = []agentRelay{
 	// the approval dialog is open feeds the text to the modal and turns Enter into an
 	// approval, so this is the only route that delivers it safely.
 	{route: "POST /api/sessions/{name}/plan-respond"},
+	// Tool-permission answer (#3354): allow / always / deny by meaning. The Agent reads the
+	// dialog's rows off the pane and presses the matching digit, because the rows differ per
+	// prompt and keys aimed at fixed positions answered the wrong one.
+	{route: "POST /api/sessions/{name}/permission-respond"},
 	// Where that pending plan lives on disk — read by the plan card's "review in another
 	// session" launch, which puts the path (never the 12-36 KB body) in the reviewer's
 	// first prompt.

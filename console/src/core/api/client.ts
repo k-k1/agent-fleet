@@ -881,6 +881,56 @@ export const sessionApprove = (session: string, id: string, allow: boolean): Pro
     decision: allow ? "allow" : "deny",
   }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
+// --- Terminal (CLI) tool-permission answers (#3354) ---
+
+/** What the permission card offers. Named by meaning: Claude Code's menu rows differ per prompt
+ *  (two rows for an ask rule, four for Bash), so a position says nothing. */
+export type PermissionChoice = "allow" | "always" | "deny";
+const PERMISSION_CHOICES: readonly PermissionChoice[] = ["allow", "always", "deny"];
+
+/** parsePermissionChoices reads the poll's `pendingPermissionChoices`. null = not reported
+ *  (an older Agent, or a dialog not drawn yet), which the card treats as "always is not on offer". */
+export function parsePermissionChoices(v: unknown): PermissionChoice[] | null {
+  if (!Array.isArray(v)) return null;
+  return PERMISSION_CHOICES.filter((c) => v.includes(c));
+}
+
+/** samePermChoices keeps the previous array when nothing changed, so a poll does not re-render the card. */
+export function samePermChoices(prev: PermissionChoice[] | null, next: PermissionChoice[] | null): PermissionChoice[] | null {
+  if (prev === next) return prev;
+  if (!prev || !next || prev.length !== next.length || prev.some((c, i) => c !== next[i])) return next;
+  return prev;
+}
+
+// sessionPermissionRespond answers a claude TUI permission dialog. The Agent reads the dialog's
+// rows off the pane and presses the digit of the row that carries `choice`.
+//
+// Against an Agent that predates the route it falls back to keys that need no layout: Enter
+// (the cursor starts on "Yes") for allow and Escape (cancel) for deny. "always" has no such key,
+// so it fails instead. Down-based sequences are never sent: on a two-row menu Down Down wraps
+// back onto "Yes", and a deny became an approval.
+export async function sessionPermissionRespond(session: string, choice: PermissionChoice): Promise<TurnResult> {
+  const fail = (e: unknown): TurnResult => {
+    const err = e as ApiError;
+    const code = typeof err?.code === "string" ? err.code : "";
+    return { ok: false, message: errText(err) || t("err.send_failed"), ...(code ? { code } : {}) };
+  };
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/permission-respond`, "POST", { choice }).catch(
+    () => ({ error: { message: t("err.network") } }),
+  );
+  const err = r?.error as ApiError | undefined;
+  if (!err) return { ok: true };
+  const code = String(err.code || "");
+  if ((code === "http_404" || code === "http_405") && choice !== "always") {
+    const keys = choice === "deny" ? ["Escape"] : ["Enter"];
+    const r2 = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", { keys }).catch(
+      () => ({ error: { message: t("err.network") } }),
+    );
+    return r2?.error ? fail(r2.error) : { ok: true };
+  }
+  return fail(err);
+}
+
 // sessionSettings updates a MANAGED session's dynamic thread settings (docs/log/27 §9.4-3:
 // changing model / effort / mode on a running session). An empty field means "leave
 // unchanged". TUI sessions use each CLI's own in-session settings instead.

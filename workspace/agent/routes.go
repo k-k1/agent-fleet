@@ -170,6 +170,10 @@ func buildMux() *http.ServeMux {
 	// The operator's plan approval / rejection (docs/log/30): approve = Enter, reject =
 	// interrupt plus sending feedback.
 	mux.Handle("POST /sessions/{name}/plan-respond", withShareOperationIdempotency(http.HandlerFunc(sessionx.HandleSessionPlanRespond)))
+	// The mirror's tool-permission card (#3354): allow / always / deny, each pressed as the digit
+	// of the row that carries it on screen, because the menu's rows differ per prompt.
+	// control-plane/relays_sessions.go needs the same path registered.
+	mux.HandleFunc("POST /sessions/{name}/permission-respond", sessionx.HandleSessionPermissionRespond)
 	// Where the pending plan lives on disk, so the plan card's review launch can put a path
 	// in the reviewing session's first prompt (the Console holds only the plan text).
 	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.

@@ -174,6 +174,13 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
 	surfacePendingPayloads(pending, sid, state, lines)
+	// The rows the dialog really offers, read off the pane: "Always allow" is absent from some
+	// prompts, and a card that offers it anyway answers the dialog with the wrong row (#3354).
+	if _, ok := pending["pendingPermission"]; ok && alive {
+		if ch := permissionChoices(name); ch != nil {
+			pending["pendingPermissionChoices"] = ch
+		}
+	}
 	// What was on screen when the session was folded away (docs/log/75). Included only when
 	// nothing is pending.
 	surfaceCarried(pending, sid)
