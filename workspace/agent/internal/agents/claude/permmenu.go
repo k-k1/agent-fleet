@@ -1,9 +1,11 @@
 package claude
 
 import (
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Permission choices the Console's permission card and the chat bridge offer. They name what
@@ -24,6 +26,11 @@ const (
 // "Deny" (Down Down) back onto Yes.
 type PermissionMenu struct {
 	Rows []PermissionRow
+	// Body is the text the dialog draws above its question: the tool's title, description and
+	// target (the command or file), between the dialog's top rule and "Do you want to …".
+	// BodyOK is false when no such rule was found, so nothing can be said about the target.
+	Body   []string
+	BodyOK bool
 }
 
 // PermissionRow is one numbered row of the dialog.
@@ -42,6 +49,8 @@ var (
 	// permLabelRuleRe is the rule claude draws under the dialog when it runs with --name, which
 	// every Agent Fleet session does: "──── [AF:<session>] <title> ─". Measured on 2.1.318 in a
 	// live session (testdata/permmenu/bash_ask_rule_af_label.txt); a bare tmux claude has none.
+	// permTopRuleRe is the solid rule that opens the dialog.
+	permTopRuleRe   = regexp.MustCompile(`^─{20,}\s*$`)
 	permLabelRuleRe = regexp.MustCompile(`^\s*─{3,}.*─\s*$`)
 )
 
@@ -77,6 +86,7 @@ func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 	var m PermissionMenu
 	var cont []string // unnumbered lines seen since the last row, bottom-up
 	question := false
+	qIdx := -1
 	for i := f - 1; i >= 0 && !question; i-- {
 		ln := strings.TrimSpace(lines[i])
 		r := permRowRe.FindStringSubmatch(lines[i])
@@ -94,6 +104,7 @@ func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 			// the one that opens with "Do you want to".
 			if strings.HasPrefix(ln, "Do you want to ") {
 				question = true
+				qIdx = i
 			} else if ln == "" || len(cont) >= 3 {
 				return PermissionMenu{}, false
 			} else {
@@ -115,6 +126,14 @@ func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 			return PermissionMenu{}, false
 		}
 		m.Rows[i].Choice = classifyPermRow(m.Rows[i].Label)
+	}
+	// The body runs up to the nearest full-width solid rule above the question (the dashed
+	// "╌" rules inside the body are not it).
+	for j := qIdx - 1; j >= 0; j-- {
+		if permTopRuleRe.MatchString(lines[j]) {
+			m.Body, m.BodyOK = lines[j+1:qIdx], true
+			break
+		}
 	}
 	return m, true
 }
@@ -160,4 +179,83 @@ func (m PermissionMenu) Choices() []string {
 		}
 	}
 	return out
+}
+
+// TargetCheck is the outcome of comparing a pending payload's target with the dialog on screen.
+type TargetCheck int
+
+const (
+	// TargetUnchecked: the payload names no target (just a tool, or prose), so there is nothing
+	// to compare. Fail-open: the prompt token still binds the answer, and refusing here would
+	// make every prompt of such a tool unanswerable from the card.
+	TargetUnchecked TargetCheck = iota
+	// TargetMatches: the dialog shows the payload's target.
+	TargetMatches
+	// TargetDiffers: the dialog shows something else, or its body could not be read. Fail-closed:
+	// a false refusal costs a retry in the Console, a false accept answers the wrong tool.
+	TargetDiffers
+)
+
+// fileTools draw their target as a path that may be relative to the session's directory, while
+// the payload holds the absolute one.
+var fileTools = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "Read": true}
+
+// payloadTarget splits the permission payload "Tool · target" (permToolDetail) into the tool
+// and its target, with the 100-rune truncation mark removed. ok is false for anything else: a
+// bare tool name, or the prose claude's Notification hook sends.
+func payloadTarget(detail string) (tool, target string, ok bool) {
+	tool, target, found := strings.Cut(detail, " · ")
+	tool = strings.TrimSpace(tool)
+	target = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(target), "…"))
+	if !found || tool == "" || strings.ContainsAny(tool, " \t") || target == "" {
+		return "", "", false
+	}
+	return tool, target, true
+}
+
+// dense drops every whitespace rune: a terminal wraps a long command at the pane's width and
+// indents the continuation, so only the non-blank characters are comparable.
+func dense(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// CheckTarget compares the payload's target with the dialog body (#3359). The body may show
+// more than the target (a description, a "Tip:", a rewritten command such as "rtk <command>"),
+// so the target must appear inside it, not equal it.
+func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
+	tool, target, ok := payloadTarget(detail)
+	if !ok {
+		return TargetUnchecked
+	}
+	if !m.BodyOK {
+		return TargetDiffers
+	}
+	body := dense(strings.Join(m.Body, "\n"))
+	if want := dense(target); strings.Contains(body, want) {
+		return TargetMatches
+	}
+	if !fileTools[tool] || !strings.HasPrefix(target, "/") {
+		return TargetDiffers
+	}
+	// A path shown relative to the session's directory: it must be that exact relative path on a
+	// line of its own, so "y/note.txt" never passes for "note.txt" and another directory's file of
+	// the same name never passes for this one.
+	if cwd == "" {
+		return TargetDiffers
+	}
+	rel, err := filepath.Rel(cwd, target)
+	if err != nil {
+		return TargetDiffers
+	}
+	for _, ln := range m.Body {
+		if strings.TrimSpace(ln) == rel {
+			return TargetMatches
+		}
+	}
+	return TargetDiffers
 }

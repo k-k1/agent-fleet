@@ -52,10 +52,20 @@ func permissionToken(sid string) string {
 // guessed (a guessed position is how "Always allow" came to press "No" and "Deny" "Yes"), and
 // neither is deny's Escape: with the dialog already closed it would interrupt the running turn.
 // Escape is used only for a readable dialog that has no "No" row.
-func permissionKeys(name, choice string) (keys []string, code string) {
+//
+// detail is the payload's "Tool · target" line. A target that cannot be compared (the payload
+// names none) is let through, since the token still binds the answer; a target the dialog does
+// not show, or a dialog whose body cannot be read, is refused as "target_mismatch".
+func permissionKeys(name, choice, detail, cwd string) (keys []string, code string) {
 	m, ok := readPermissionMenu(name)
 	if !ok {
 		return nil, "menu_unreadable"
+	}
+	// The token binds an answer to the payload, but claude can draw the next dialog before its
+	// hook rewrites the payload (#3359). Only a dialog that shows the payload's target is the one
+	// the card or button was drawn for.
+	if m.CheckTarget(detail, cwd) == claude.TargetDiffers {
+		return nil, "target_mismatch"
 	}
 	if k, found := m.Key(choice); found {
 		return []string{k}, ""
@@ -173,7 +183,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 	st, _ := status.Read(sid)
 	// The pending-permission payload is what the card shows, and only claude's status hook
 	// writes it, so it also keeps every other kind's pane out of reach of these digits.
-	_, hasPerm := status.ReadPendingPermission(sid)
+	detail, hasPerm := status.ReadPendingPermission(sid)
 	if effectiveModal(sid, st.State) != "permission" || !hasPerm {
 		httpx.WriteErr(w, http.StatusConflict, "no_permission", "no pending permission prompt (already handled?)")
 		return
@@ -192,7 +202,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", err.Error())
 		return
 	}
-	keys, code := permissionKeys(name, req.Choice)
+	keys, code := permissionKeys(name, req.Choice, detail, meta.Dir)
 	// The hook and the terminal do not take permRespondLock, so the prompt can change while the
 	// pane is captured; the menu just read may then be the next prompt's. Re-check after the
 	// capture and send nothing on a change.
@@ -203,6 +213,9 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 	switch code {
 	case "menu_unreadable":
 		httpx.WriteErr(w, http.StatusConflict, code, "許可の選択肢を画面から読み取れませんでした。ターミナルで答えてください")
+		return
+	case "target_mismatch":
+		httpx.WriteErr(w, http.StatusConflict, code, "画面の確認がカードと別のものに変わっています。カードを確かめてからもう一度答えてください")
 		return
 	case "choice_unavailable":
 		httpx.WriteErr(w, http.StatusConflict, code, "この確認には「常に許可」の選択肢がありません")

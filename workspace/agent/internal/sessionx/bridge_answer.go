@@ -293,6 +293,7 @@ func answerClaudePermission(meta session.Meta, choice, expect string, en bool) (
 	unlock := permRespondLock(meta.Name)
 	defer unlock()
 	token := permissionToken(sid)
+	detail, _ := status.ReadPendingPermission(sid)
 	// The button names the prompt it was posted for (#3358). One without a token was posted
 	// before tokens existed and cannot say which prompt it meant, so it is refused too.
 	if expect == "" || expect != token {
@@ -301,9 +302,12 @@ func answerClaudePermission(meta session.Meta, choice, expect string, en bool) (
 	if done, ok := permDecided.Load(meta.Name); ok && done == token {
 		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
 	}
-	keys, code := permissionKeys(meta.Name, choice)
+	keys, code := permissionKeys(meta.Name, choice, detail, meta.Dir)
 	if code == "" && permissionToken(sid) != token {
 		return Fb(en, "別の確認に変わりました。Console で確かめてください", "The prompt changed — check it in the Console"), nil
+	}
+	if code == "target_mismatch" {
+		return Fb(en, "画面の確認がこのボタンのものと別でした。Console で確かめてください", "The dialog on screen is not the one this button was posted for — check it in the Console"), nil
 	}
 	if code != "" {
 		return Fb(en, "選択肢を読み取れませんでした。Console で回答してください", "Could not read the prompt's options — answer it from the Console"), nil
