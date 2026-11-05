@@ -131,3 +131,18 @@ func TestCheckTargetKeepsWhitespaceInArguments(t *testing.T) {
 		t.Errorf("joined short lines: %v", got)
 	}
 }
+
+// A real newline after a line that does not reach the pane's edge is never joined: P's one-line
+// `echo <40 a> rm -rf build` must not match Q's two-line command that deletes (review round 2).
+func TestCheckTargetDoesNotJoinHardNewlines(t *testing.T) {
+	a := strings.Repeat("a", 40)
+	m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " echo "+a+"\n rm -rf build\n")
+	for _, sep := range []string{" ", ""} {
+		if got := m.CheckTarget("Bash · echo "+a+sep+"rm -rf build", ""); got != TargetDiffers {
+			t.Errorf("sep %q: %v", sep, got)
+		}
+	}
+	if got := m.CheckTarget("Bash · echo "+a, ""); got != TargetMatches {
+		t.Errorf("first line alone: %v", got)
+	}
+}

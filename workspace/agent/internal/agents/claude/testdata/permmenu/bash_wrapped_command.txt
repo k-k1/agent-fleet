@@ -7,8 +7,8 @@
  Bash command
  Find files mentioning the token
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
- find /home/dev/repos/demo/src -type f -name '*.go' -newer /home/dev/repos/de
- mo/go.mod -exec grep -l 'permissionToken' {} + | sort | uniq
+ find /home/dev/repos/demo/src -type f -name '*.go' -newer /home/dev/repos/demo
+ /go.mod -exec grep -l 'permissionToken' {} + | sort | uniq
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
  This command requires approval
 

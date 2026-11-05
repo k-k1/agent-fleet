@@ -230,8 +230,11 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // title (file tools). A description, a diff or a "Tip:" never counts as evidence.
 //
 // Whitespace is kept: only the dialog's one-space indent is removed, and a wrapped line is
-// rejoined when every line but the last is as wide as the pane (ruleWidth), the one case where
-// the terminal, not the tool, broke the line. cwd is the session directory, for a path drawn
+// rejoined only when every line but the last reaches the pane's right edge (its indent plus its
+// columns within one column of ruleWidth). A shorter line ends in a real newline, which is never
+// joined. Residual: a real newline right after a line that happens to fill the pane exactly is
+// indistinguishable from a wrap; that needs a Q whose first command line is pane-wide and whose
+// continuation completes P's command. cwd is the session directory, for a path drawn
 // relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
 // (measured: bash_four_options.txt); the payload holds the command as it was before.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
@@ -293,6 +296,19 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	})
 }
 
+// cols is the display width of s: East Asian wide runes take two columns.
+func cols(s string) int {
+	n := 0
+	for _, r := range s {
+		n++
+		if r >= 0x1100 && (r <= 0x115F || (r >= 0x2E80 && r <= 0xA4CF) || (r >= 0xAC00 && r <= 0xD7A3) ||
+			(r >= 0xF900 && r <= 0xFAFF) || (r >= 0xFE30 && r <= 0xFE6F) || (r >= 0xFF00 && r <= 0xFF60) || (r >= 0xFFE0 && r <= 0xFFE6)) {
+			n++
+		}
+	}
+	return n
+}
+
 // matchLogicalLine tries the first line of region as it stands, then rejoined with the lines the
 // terminal wrapped it over (with no separator, or with the space the wrap swallowed). A
 // truncated target (the payload cuts at 100 runes) only has to prefix the shown line.
@@ -320,7 +336,7 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 				return TargetMatches
 			}
 			// Another line joins only when this one filled the pane.
-			if width <= 0 || len([]rune(ln)) < width/2 {
+			if width <= 0 || cols(ln)+1 < width-1 {
 				break
 			}
 		}
