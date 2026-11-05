@@ -106,6 +106,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	cursor := len(lines)
 	lo, hi := since, len(lines)
 	firstLine := -1
+	rewound := claude.RewoundPrompts(lines)
 	switch {
 	case forkPreview && since == forkPreviewCursor:
 		// The client's cursor is already parked at the sentinel, i.e. it holds the
@@ -137,6 +138,14 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		lo = max(0, hi-clampWindowLimit(r.URL.Query().Get("limit")))
 		firstLine = lo
 		reset = true
+	case since > 0 && r.URL.Query().Get("before") == "" && claude.RewoundSince(rewound, since):
+		// A prompt the client already shows was just found rewound: claude took it back on a
+		// stop and the prompt written since replaced it. An increment can only append, so the
+		// client reloads a tail window, which leaves the dead prompt out.
+		hi = len(lines)
+		lo = max(0, hi-clampWindowLimit(r.URL.Query().Get("limit")))
+		firstLine = lo
+		reset = true
 	default:
 		// Windowed reads (P1): an initial tail window, or a backward page. With neither,
 		// this is a live increment (since>0) or a legacy full load (since=0) — both are
@@ -153,7 +162,7 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			firstLine = lo
 		}
 	}
-	turns := claude.CollectTurns(lines, lo, hi)
+	turns := claude.CollectTurnsHiding(lines, lo, hi, rewound)
 	resolveUserFiles(turns)       // SendUserFile paths → browse-root-relative, per each turn's cwd
 	tagInjectedTurns(name, turns) // Source=operator/discord/… on injected user turns (docs/log/30 ②, docs/log/37 P2a)
 	mt := jsonlMtime(jpath)       // hoisted: also feeds the title-suggestion idle check below
