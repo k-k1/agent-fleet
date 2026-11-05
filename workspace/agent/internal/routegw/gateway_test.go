@@ -728,3 +728,116 @@ func TestRequestTooLargeIsRefusedBeforeAnyCredential(t *testing.T) {
 		t.Fatalf("status %d, credentials resolved %d", resp.StatusCode, n)
 	}
 }
+
+// A slow credential resolution for one profile does not hold up another profile's calls, and
+// concurrent callers of one profile share a single resolution.
+func TestSlowCredentialResolutionDoesNotBlockOtherProfiles(t *testing.T) {
+	e := newEnv(t)
+	e.settings["other"] = awsx.Profile{ID: "p2", Name: "other", AccountID: "210987654321", RoleName: "Invoke", Region: "us-west-2", ModelRoute: true,
+		StartURL: "https://example.awsapps.com/start", SSORegion: "us-east-1"}
+	a := e.issue(e.session("a", "p1", ""))
+	b := e.issue(e.session("b", "p2", ""))
+	release := make(chan struct{})
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	defer releaseAll()
+	var mu sync.Mutex
+	resolved := map[string]int{}
+	e.g.d.Credentials = func(p awsx.Profile, region string, _ map[string]awsx.Profile) (awsx.RouteCredentials, error) {
+		mu.Lock()
+		resolved[p.ID]++
+		mu.Unlock()
+		if p.ID == "p1" {
+			<-release
+		}
+		return awsx.RouteCredentials{AccessKeyID: "ASIA", SecretAccessKey: testSecret, SessionToken: "T", Region: region}, nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); e.call(a, invokePath(), `{}`) }()
+	}
+	// Wait until p1's resolution is in progress.
+	for i := 0; i < 200; i++ {
+		mu.Lock()
+		n := resolved["p1"]
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	done := make(chan int, 1)
+	go func() { resp, _ := e.call(b, invokePath(), `{}`); done <- resp.StatusCode }()
+	select {
+	case code := <-done:
+		if code != 200 {
+			t.Fatalf("other profile = %d", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("another profile's call was blocked behind a slow credential resolution")
+	}
+	releaseAll()
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if resolved["p1"] != 1 {
+		t.Fatalf("p1 resolved %d times for concurrent callers, want 1", resolved["p1"])
+	}
+}
+
+// Bedrock failing after it started answering: the caller gets what was sent, and the ledger row is
+// a failure that keeps the usage read so far.
+func TestStreamCutMidwayIsRecordedAsFailed(t *testing.T) {
+	e := newEnv(t)
+	tok := e.issue(e.session("s1", "p1", ""))
+	first := chunk(`{"type":"message_start","message":{"usage":{"input_tokens":5}}}`)
+	e.upFn = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		w.Header().Set("Content-Length", "100000") // promise more than is sent, then cut
+		_, _ = w.Write(first)
+	}
+	req, _ := http.NewRequest("POST", e.gw.URL+"/model/"+testModel+"/invoke-with-response-stream", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil {
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+	}
+	rows := e.waitRows(1)
+	if rows[0].OK || rows[0].Route != usagex.RouteBedrock || rows[0].In != 5 {
+		t.Fatalf("row = %+v", rows[0])
+	}
+}
+
+// The caller going away ends the upstream request too.
+func TestClientDisconnectCancelsTheUpstreamRequest(t *testing.T) {
+	e := newEnv(t)
+	tok := e.issue(e.session("s1", "p1", ""))
+	started, cancelled := make(chan struct{}), make(chan struct{})
+	e.upFn = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		close(started)
+		select {
+		case <-r.Context().Done():
+			close(cancelled)
+		case <-time.After(5 * time.Second):
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "POST", e.gw.URL+invokePath(), strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	<-started
+	cancel()
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the upstream request was not cancelled when the caller disconnected")
+	}
+}

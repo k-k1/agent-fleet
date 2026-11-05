@@ -54,6 +54,7 @@ type Gateway struct {
 
 	credMu sync.Mutex
 	creds  map[string]cachedCreds
+	flight map[string]*credFlight
 }
 
 type cachedCreds struct {
@@ -97,7 +98,7 @@ func New(d Deps) *Gateway {
 	if d.Client == nil {
 		d.Client = upstreamClient()
 	}
-	return &Gateway{d: d, asked: map[string]time.Time{}, creds: map[string]cachedCreds{}}
+	return &Gateway{d: d, asked: map[string]time.Time{}, creds: map[string]cachedCreds{}, flight: map[string]*credFlight{}}
 }
 
 // Registry is the gateway's token registry.
@@ -276,36 +277,68 @@ func (g *Gateway) approvalRefusal(c connection, m session.Meta) *refusal {
 // cache key is the profile's identity, so an edited profile never reads the old one's.
 func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
 	key := c.b.Identity + "|" + c.conn.region
-	g.credMu.Lock()
-	defer g.credMu.Unlock()
 	now := g.d.Now()
+	g.credMu.Lock()
 	if e, ok := g.creds[key]; ok && now.Before(e.usable) {
+		g.credMu.Unlock()
 		return e.c, nil
 	}
 	delete(g.creds, key)
+	// One resolution per key at a time, outside credMu: it starts the AWS CLI, which can be slow,
+	// and must not hold up other sessions' calls on other profiles.
+	fl, running := g.flight[key]
+	if !running {
+		fl = &credFlight{done: make(chan struct{})}
+		g.flight[key] = fl
+	}
+	g.credMu.Unlock()
+	if running {
+		<-fl.done
+		return fl.c, fl.ref
+	}
 	cr, err := g.d.Credentials(c.conn.profile, c.conn.region, c.conn.settings)
+	var ref *refusal
 	if err != nil {
 		if errors.Is(err, awsx.ErrLoginRequired) {
-			return awsx.RouteCredentials{}, &refusal{http.StatusForbidden, "route_login_required", fmt.Sprintf(
+			ref = &refusal{http.StatusForbidden, "route_login_required", fmt.Sprintf(
 				"the SSO login for profile %q is required; sign in from the Console, or run `af-aws-exec --profile %s -- true` in a terminal", c.conn.profile.Name, c.conn.profile.Name)}
+		} else {
+			ref = &refusal{http.StatusBadGateway, "route_credentials_unavailable", fmt.Sprintf(
+				"could not get credentials for profile %q: %v", c.conn.profile.Name, err)}
 		}
-		return awsx.RouteCredentials{}, &refusal{http.StatusBadGateway, "route_credentials_unavailable", fmt.Sprintf(
-			"could not get credentials for profile %q: %v", c.conn.profile.Name, err)}
+		cr = awsx.RouteCredentials{}
 	}
-	usable := now.Add(credMaxAge)
-	if !cr.Expires.IsZero() {
-		usable = cr.Expires.Add(-credReserve)
+	g.credMu.Lock()
+	if ref == nil {
+		usable := now.Add(credMaxAge)
+		if !cr.Expires.IsZero() {
+			usable = cr.Expires.Add(-credReserve)
+		}
+		if now.Before(usable) {
+			g.creds[key] = cachedCreds{c: cr, usable: usable}
+		}
 	}
-	if now.Before(usable) {
-		g.creds[key] = cachedCreds{c: cr, usable: usable}
-	}
-	return cr, nil
+	delete(g.flight, key)
+	fl.c, fl.ref = cr, ref
+	g.credMu.Unlock()
+	close(fl.done)
+	return cr, ref
+}
+
+// credFlight is one in-progress resolution that concurrent callers of the same key wait on.
+type credFlight struct {
+	done chan struct{}
+	c    awsx.RouteCredentials
+	ref  *refusal
 }
 
 // Sweep ends the tokens whose session is gone, is another incarnation or selects something else,
 // and those past their time. The per-call check already refuses all of them; this frees memory
 // and the cached credentials with them.
 func (g *Gateway) Sweep() int {
+	// keep checks existence, incarnation and selection only. A token whose profile was unmarked or
+	// edited stays in memory until its next call (which refuses and revokes it) or its 8 hours; it
+	// grants nothing meanwhile, because every call resolves the profile again.
 	n := g.d.Registry.Sweep(func(b Binding) bool {
 		m, ok := g.d.ReadMeta(b.Session)
 		return ok && awsx.Incarnation(m) == b.Incarnation && m.Route != nil && m.Route.Route == b.Route && m.Route.Connection == b.Connection

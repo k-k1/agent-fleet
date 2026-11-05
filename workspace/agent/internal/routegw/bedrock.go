@@ -99,6 +99,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The query string is dropped on purpose: none of the four operations takes one.
 	up, err := http.NewRequestWithContext(r.Context(), http.MethodPost, g.d.Endpoint(c.conn.region)+r.URL.EscapedPath(), bytes.NewReader(body))
 	if err != nil {
 		writeRefusal(w, &refusal{http.StatusBadGateway, "route_upstream_unavailable", "could not build the upstream request"})
@@ -112,7 +113,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	for k, v := range r.Header {
 		if strings.HasPrefix(strings.ToLower(k), "x-amzn-bedrock-") {
-			up.Header[k] = v
+			for _, one := range v {
+				up.Header.Add(k, one)
+			}
 		}
 	}
 	up.Header.Set("User-Agent", "agent-fleet-route-gateway")
@@ -133,6 +136,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
+	// Headers go out now, not with the first body byte: a harness sees the stream open as soon as
+	// Bedrock accepts it.
+	if fl, ok := w.(http.Flusher); ok {
+		fl.Flush()
+	}
 	obs := newUsageObserver(op)
 	copyErr := streamCopy(w, resp.Body, obs)
 	g.record(c, modelID, op, resp, obs, copyErr == nil && resp.StatusCode < 400, start)

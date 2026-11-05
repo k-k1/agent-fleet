@@ -439,3 +439,13 @@ table from becoming a menu of models that fail on the first message, which is wh
   through the route in place of `keepInMenu`; per-credential `serve` / app-server; hooks that revoke at session stop; the
   Console picker. When a harness is wired, its own transcript rows and the gateway's must not both be counted
   (the gateway's carry `feature=route.gateway`).
+- 2026-11-05, P2a review round 1 (#3349): one limit stated against decision 5. The route token is a bearer on a
+  loopback port, and a Workspace runs every session as one user, so another session of the same member that can read this
+  session's process environment can present the token while this session lives; the call is then checked against the
+  token owner's session (and its approval), and its ledger row is filed under the owner. A token cannot outlive its
+  owner (the incarnation check revokes it), and it never reaches another member. P2a accepts this for the slice because no
+  harness holds a token yet; it is **not** accepted as the final design. Before a harness is wired the slice has to
+  narrow it: an eager `RevokeSession` on session stop (the registry has it, nothing calls it yet), a shorter TTL, and a
+  caller binding (a Unix socket with peer credentials mapped to the session's process tree). Also: the gateway sends
+  response headers as soon as Bedrock answers, drops the query string (no operation takes one), and resolves
+  credentials outside its lock, one resolution per profile at a time.
