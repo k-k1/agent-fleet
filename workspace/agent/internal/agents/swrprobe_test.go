@@ -124,9 +124,13 @@ func TestSWRInvalidateTakesEffectAtOnce(t *testing.T) {
 }
 
 func TestSWRInvalidateDiscardsInFlightProbe(t *testing.T) {
+	// Each probe waits on its own channel, so which probe gets which answer is not up to
+	// the scheduler.
 	var calls atomic.Int32
-	release := make(chan step)
-	p := &SWRProbe[int]{TTL: time.Hour, ColdBudget: 5 * time.Second, Probe: gated(&calls, release)}
+	rel := []chan int{make(chan int), make(chan int)}
+	p := &SWRProbe[int]{TTL: time.Hour, ColdBudget: 5 * time.Second, Probe: func() (int, bool) {
+		return <-rel[calls.Add(1)-1], true
+	}}
 	p.Warm() // probe #1 out, started before the "login"
 	for calls.Load() == 0 {
 		time.Sleep(time.Millisecond)
@@ -137,8 +141,9 @@ func TestSWRInvalidateDiscardsInFlightProbe(t *testing.T) {
 	for calls.Load() < 2 {
 		time.Sleep(time.Millisecond)
 	}
-	release <- step{100, true} // the pre-change probe answers: must be dropped
-	release <- step{200, true}
+	rel[0] <- 100 // the pre-change probe answers first: must be dropped
+	time.Sleep(10 * time.Millisecond)
+	rel[1] <- 200
 	if v := <-got; v != 200 {
 		t.Fatalf("Get = %d, want 200 (the pre-invalidate answer 100 must be discarded)", v)
 	}

@@ -18,7 +18,7 @@ import {
 } from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { SPEND_CAP_DEFAULTS } from "../../sessions/spendBudget.ts";
-import { resetConnectionsCache, useConnections } from "../parts/useConnections.ts";
+import { useConnections } from "../parts/useConnections.ts";
 import { useSettingsTarget } from "../parts/useSettingsTarget.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
@@ -104,7 +104,6 @@ export function AgentsTab() {
       // resetImagegenAvailability follows): a stopped workspace must fall back to the static
       // guess, not keep showing rows that may no longer be true.
       setImagegenProviders(null);
-      resetConnectionsCache(); // a snapshot of an Agent that is gone must not draw on the next start
       return;
     }
     reload();

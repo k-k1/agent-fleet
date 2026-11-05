@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -97,6 +98,13 @@ func collectStatuses(ks []string, lookup func(string) (agents.ConnectionStatuser
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// A worker goroutine is outside net/http's per-request recover: a panic here would
+			// end the whole Agent. Drop that kind's entry, as a failed request would have.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("connections: %s status panicked: %v", k, r)
+				}
+			}()
 			if st := c.ConnectionStatus(in); st != nil {
 				res[i] = st
 			}

@@ -41,3 +41,22 @@ func TestCollectStatusesRunsKindsConcurrently(t *testing.T) {
 		t.Fatal("kinds were probed one after another")
 	}
 }
+
+type panicKind struct{}
+
+func (panicKind) ConnectionStatus(agents.StatusInputs) map[string]any { panic("boom") }
+
+// A panicking kind is left out; the others still answer and the process survives.
+func TestCollectStatusesSurvivesPanickingKind(t *testing.T) {
+	m := map[string]agents.ConnectionStatuser{"ok": nilOKKind{}, "bad": panicKind{}}
+	out := collectStatuses([]string{"bad", "ok"}, func(k string) (agents.ConnectionStatuser, bool) { c, ok := m[k]; return c, ok }, agents.StatusInputs{})
+	if len(out) != 1 || out["ok"] == nil {
+		t.Fatalf("out = %v, want only ok", out)
+	}
+}
+
+type nilOKKind struct{}
+
+func (nilOKKind) ConnectionStatus(agents.StatusInputs) map[string]any {
+	return map[string]any{"connected": true}
+}

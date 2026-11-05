@@ -14,6 +14,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   apiJSON: (...a: unknown[]) => apiJSONMock(...a),
   raw: vi.fn(async () => ({ ok: true })),
   errText: (e: unknown) => String(e),
+  getTenant: () => "",
+  setTenant: () => {},
 }));
 
 const { GitTab } = await import("./GitTab.tsx");
