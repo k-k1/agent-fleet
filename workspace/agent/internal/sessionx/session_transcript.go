@@ -173,17 +173,10 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// Pending question/plan/permission — built aside (not straight into resp) because the
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
+	permTok := permissionToken(sid) // taken before the payload is read (surfacePermissionPrompt)
 	surfacePendingPayloads(pending, sid, state, lines)
-	// The rows the dialog really offers, read off the pane: "Always allow" is absent from some
-	// prompts, and a card that offers it anyway answers the dialog with the wrong row (#3354).
-	if _, ok := pending["pendingPermission"]; ok && alive {
-		if ch := permissionChoices(name); ch != nil {
-			pending["pendingPermissionChoices"] = ch
-		}
-		// Which prompt the card is for; /permission-respond refuses an answer for any other.
-		if tok := permissionToken(sid); tok != "" {
-			pending["pendingPermissionId"] = tok
-		}
+	if alive {
+		surfacePermissionPrompt(pending, sid, name, permTok)
 	}
 	// What was on screen when the session was folded away (docs/log/75). Included only when
 	// nothing is pending.

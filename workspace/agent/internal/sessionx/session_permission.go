@@ -76,6 +76,30 @@ func permissionChoices(name string) []string {
 	return m.Choices()
 }
 
+// surfacePermissionPrompt adds what the card needs beside pendingPermission: the rows the dialog
+// really offers (pendingPermissionChoices, read off the pane: "Always allow" is absent from some
+// prompts) and the prompt's id (pendingPermissionId), which /permission-respond requires back.
+//
+// before is the token taken BEFORE the payload was read. The message, the choices and the id
+// must describe one prompt: if it changed between that read and the pane capture, a card could
+// show the old prompt's text with the new one's id, and its Allow would pass as a valid answer
+// for a call the member never saw. Then all of it is dropped and the next poll shows the new
+// prompt whole.
+func surfacePermissionPrompt(pending map[string]any, sid, name, before string) {
+	if _, ok := pending["pendingPermission"]; !ok {
+		return
+	}
+	if ch := permissionChoices(name); ch != nil {
+		pending["pendingPermissionChoices"] = ch
+	}
+	if tok := permissionToken(sid); tok != "" && tok == before {
+		pending["pendingPermissionId"] = tok
+		return
+	}
+	delete(pending, "pendingPermission")
+	delete(pending, "pendingPermissionChoices")
+}
+
 // permissionRespondResult is /permission-respond's success body.
 type permissionRespondResult struct {
 	Responded string `json:"responded"`
@@ -154,6 +178,13 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keys, code := permissionKeys(name, req.Choice)
+	// The hook and the terminal do not take permRespondLock, so the prompt can change while the
+	// pane is captured; the menu just read may then be the next prompt's. Re-check after the
+	// capture and send nothing on a change.
+	if code == "" && permissionToken(sid) != token {
+		httpx.WriteErr(w, http.StatusConflict, "permission_changed", "別の確認に変わりました。カードを確かめてからもう一度答えてください")
+		return
+	}
 	switch code {
 	case "menu_unreadable":
 		httpx.WriteErr(w, http.StatusConflict, code, "許可の選択肢を画面から読み取れませんでした。ターミナルで答えてください")

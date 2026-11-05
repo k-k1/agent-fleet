@@ -286,6 +286,9 @@ func answerClaudePermission(meta session.Meta, choice string, en bool) (string, 
 		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
 	}
 	keys, code := permissionKeys(meta.Name, choice)
+	if code == "" && permissionToken(sid) != token {
+		return Fb(en, "別の確認に変わりました。Console で確かめてください", "The prompt changed — check it in the Console"), nil
+	}
 	if code != "" {
 		return Fb(en, "選択肢を読み取れませんでした。Console で回答してください", "Could not read the prompt's options — answer it from the Console"), nil
 	}

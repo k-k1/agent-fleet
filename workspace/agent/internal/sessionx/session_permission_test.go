@@ -166,3 +166,88 @@ func TestPermissionRespondIsBoundToThePrompt(t *testing.T) {
 		t.Fatalf("second answer: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// changePromptDuringCapture stubs the pane capture so that, while it runs, the hook replaces
+// prompt P with prompt Q (the race the token re-checks guard, #3357 review round 2).
+func changePromptDuringCapture(t *testing.T, sid, pane string) {
+	t.Helper()
+	prev := readPermissionMenu
+	readPermissionMenu = func(string) (claude.PermissionMenu, bool) {
+		time.Sleep(10 * time.Millisecond)
+		status.WritePendingPermission(sid, "Bash · rm -rf build")
+		return claude.ParsePermissionMenu(pane)
+	}
+	t.Cleanup(func() { readPermissionMenu = prev })
+}
+
+func permissionSession(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
+	sid := session.UUID(dir, name)
+	status.Persist(sid, "permission")
+	status.WritePendingPermission(sid, "Bash · ls")
+	t.Cleanup(func() { permDecided.Delete(name) })
+	return sid
+}
+
+func postPermission(name, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/permission-respond", strings.NewReader(body))
+	req.SetPathValue("name", name)
+	rec := httptest.NewRecorder()
+	HandleSessionPermissionRespond(rec, req)
+	return rec
+}
+
+// The expect is checked again after the capture: a prompt replaced meanwhile gets no key.
+func TestPermissionRespondRechecksAfterCapture(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	pane := permFixture(t, "bash_ask_rule_two_options.txt")
+
+	// Control: an unchanged prompt is answered with the row's digit.
+	sid := permissionSession(t, "slot76")
+	stubPane(t, pane)
+	if rec := postPermission("slot76", `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("control: %d %s", rec.Code, rec.Body.String())
+	}
+	if b, _ := os.ReadFile(logPath); !strings.Contains(string(b), "send-keys -t %7 1") {
+		t.Fatalf("control sent no digit:\n%s", b)
+	}
+	_ = os.Remove(logPath)
+
+	sid = permissionSession(t, "slot77")
+	p := permissionToken(sid)
+	changePromptDuringCapture(t, sid, pane)
+	rec := postPermission("slot77", `{"choice":"allow","expect":"`+p+`"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "permission_changed") {
+		t.Fatalf("changed during capture: %d %s", rec.Code, rec.Body.String())
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("a key went out for the replaced prompt:\n%s", b)
+	}
+}
+
+// The poll never pairs one prompt's text with another's id.
+func TestSurfacePermissionPromptIsOneSnapshot(t *testing.T) {
+	withTempHome(t)
+	pane := permFixture(t, "bash_four_options.txt")
+
+	sid := permissionSession(t, "slot78")
+	stubPane(t, pane)
+	before := permissionToken(sid)
+	pending := map[string]any{"pendingPermission": "Bash · ls"}
+	surfacePermissionPrompt(pending, sid, "slot78", before)
+	if pending["pendingPermissionId"] != before || pending["pendingPermissionChoices"] == nil {
+		t.Fatalf("steady prompt: %v", pending)
+	}
+
+	sid = permissionSession(t, "slot79")
+	before = permissionToken(sid)
+	changePromptDuringCapture(t, sid, pane)
+	pending = map[string]any{"pendingPermission": "Bash · ls"}
+	surfacePermissionPrompt(pending, sid, "slot79", before)
+	if len(pending) != 0 {
+		t.Fatalf("changed prompt must be dropped whole, got %v", pending)
+	}
+}
