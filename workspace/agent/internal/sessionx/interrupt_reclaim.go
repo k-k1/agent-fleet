@@ -320,7 +320,6 @@ func lateRestoredBlocks(name, pane string) bool {
 type unprovenEntry struct {
 	pane, baseline string
 	baselineOK     bool
-	at             time.Time
 }
 
 // unprovenBoxes holds, per session, a stop on a kind that restores prompts which could not prove
@@ -331,7 +330,7 @@ type unprovenEntry struct {
 var unprovenBoxes sync.Map
 
 func armUnprovenBox(name, pane, before string) {
-	e := unprovenEntry{pane: pane, at: time.Now()}
+	e := unprovenEntry{pane: pane}
 	if draft, _, ok := claudeBox(before); ok {
 		e.baseline, e.baselineOK = squashSpace(draft), true
 	}
@@ -343,9 +342,10 @@ func armUnprovenBox(name, pane, before string) {
 // "different from before", not "non-empty", so a member's own draft that merely sat there is
 // not refused (the send was typed after it before this guard existed, and refusing it forever
 // would lock the session on a draft the member chose to keep). When the frame is unreadable
-// (the case that armed this), the lax claudeComposer read decides, and only for lateEraseTTL:
-// a misparse must not refuse every send of the session for good. An empty box, a box equal to
-// the baseline, or one no reader can find lifts the guard.
+// (the case that armed this), the lax claudeComposer read decides. The guard never expires and
+// never lifts on a read that found no box: only a box that reads empty, or equal to the
+// baseline, proves the restored prompt is not there. Trade-off: a pane that stays unreadable
+// refuses sends until the box reads empty or a new stop supersedes the mark.
 func unprovenBoxBlocks(name, pane string) bool {
 	v, ok := unprovenBoxes.Load(name)
 	if !ok {
@@ -363,8 +363,9 @@ func unprovenBoxBlocks(name, pane string) bool {
 			return lift()
 		}
 	} else {
-		draft, _, ok := claudeComposer(captured)
-		if !ok || squashSpace(draft) == "" || time.Since(e.at) > lateEraseTTL {
+		// Only a composer that reads empty proves the box empty: a failed capture or a screen
+		// with no composer on it keeps the guard.
+		if draft, _, ok := claudeComposer(captured); ok && squashSpace(draft) == "" {
 			return lift()
 		}
 	}

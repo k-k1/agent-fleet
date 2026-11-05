@@ -880,10 +880,33 @@ func TestSendRefusedWhenARestoredPromptReplacesTheDraft(t *testing.T) {
 	}
 }
 
-// A frame nobody can read must not lock the session: no composer line at all lifts the guard.
-func TestUnprovenGuardLiftsWhenNoReaderFindsABox(t *testing.T) {
-	_, _, _ = runClaudeInterrupt(t, "x", func(int) string { return "starting…\n" })
+// No reader finding a box (or a failed capture) is not proof the box is empty: the guard stays
+// and neither a transient capture failure nor the passage of time lifts it.
+func TestUnprovenGuardKeepsHoldingWhenTheBoxCannotBeRead(t *testing.T) {
+	pane := "starting…\n"
+	_, _, _ = runClaudeInterrupt(t, "x", func(int) string { return pane })
+	if code := unprovenSend(t); code != http.StatusConflict {
+		t.Fatalf("no box on screen: status = %d, want 409", code)
+	}
+	pane = ""
+	if code := unprovenSend(t); code != http.StatusConflict {
+		t.Fatalf("failed capture: status = %d, want 409", code)
+	}
+	pane = paneEmpty
 	if code := unprovenSend(t); code != http.StatusOK {
-		t.Fatalf("send status = %d, want 200", code)
+		t.Fatalf("empty box: status = %d, want 200", code)
+	}
+}
+
+// The guard has no expiry: a restored prompt in an unparsed frame is refused however late.
+func TestUnprovenGuardDoesNotExpire(t *testing.T) {
+	_, _, _ = runClaudeInterrupt(t, "x", func(esc int) string {
+		if esc == 0 {
+			return paneHookUnreadable
+		}
+		return paneUnreadableRestored
+	})
+	if code := unprovenSend(t); code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", code)
 	}
 }
