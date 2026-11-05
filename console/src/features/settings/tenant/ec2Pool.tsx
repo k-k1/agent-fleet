@@ -178,8 +178,10 @@ type Home = {
 // fixed unit would print unreadable figures like 43200.
 type TR = ReturnType<typeof useT>;
 
-/** A workspace name is `af-ws-<tenant>-<user>`: the constant prefix is hidden by CSS (it stays in
- *  the DOM text) and the rest truncates with an ellipsis; the full name is in `title`. */
+/** A workspace name is `af-ws-<tenant>-<user>`: the constant prefix is hidden by CSS and the rest
+ *  wraps inside a fixed width. It is never cut: members of one tenant (and of one mail domain)
+ *  share both ends, so any ellipsis can render two different members identically. The full name
+ *  is also in `title`. */
 function WsName({ name }: { name: string }) {
   const pre = name.startsWith("af-ws-") ? "af-ws-" : "";
   return (
@@ -462,7 +464,7 @@ export function PoolView() {
                       {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                     </td>
                     <td>{s.workspace ? fmtIdle(s.idle_minutes, tr) : "–"}</td>
-                    <td className="pool-wrap">
+                    <td>
                       {s.template_version ? <span className="mono">v{s.template_version}</span> : <span className="muted">–</span>}
                       {s.template_outdated && (
                         <span
