@@ -910,3 +910,17 @@ func TestUnprovenGuardDoesNotExpire(t *testing.T) {
 		t.Fatalf("status = %d, want 409", code)
 	}
 }
+
+// claudeComposer's last-"❯" read must not lift the guard: a multiline restored prompt whose last
+// row is an indented "❯" reads empty there.
+func TestUnprovenGuardNotLiftedByTheLaxReader(t *testing.T) {
+	_, _, _ = runClaudeInterrupt(t, "x", func(esc int) string {
+		if esc == 0 {
+			return paneHookUnreadable
+		}
+		return rule + "\n❯ restored first line\n  ❯\n"
+	})
+	if code := unprovenSend(t); code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", code)
+	}
+}

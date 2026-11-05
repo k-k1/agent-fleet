@@ -342,9 +342,10 @@ func armUnprovenBox(name, pane, before string) {
 // "different from before", not "non-empty", so a member's own draft that merely sat there is
 // not refused (the send was typed after it before this guard existed, and refusing it forever
 // would lock the session on a draft the member chose to keep). When the frame is unreadable
-// (the case that armed this), the lax claudeComposer read decides. The guard never expires and
-// never lifts on a read that found no box: only a box that reads empty, or equal to the
-// baseline, proves the restored prompt is not there. Trade-off: a pane that stays unreadable
+// (the case that armed this) the guard stays: claudeComposer's lax read picks the last "❯" row
+// and trims indentation, so it cannot prove text absent (a multiline prompt ending in an
+// indented "❯" reads empty). The guard never expires; only the strict claudeBox reading an
+// empty box, or one equal to the baseline, lifts it. Trade-off: a pane that stays unreadable
 // refuses sends until the box reads empty or a new stop supersedes the mark.
 func unprovenBoxBlocks(name, pane string) bool {
 	v, ok := unprovenBoxes.Load(name)
@@ -356,16 +357,9 @@ func unprovenBoxBlocks(name, pane string) bool {
 	if e.pane != pane {
 		return lift()
 	}
-	captured := reclaimCapture(pane)
-	if draft, _, ok := claudeBox(captured); ok {
+	if draft, _, ok := claudeBox(reclaimCapture(pane)); ok {
 		d := squashSpace(draft)
 		if d == "" || (e.baselineOK && d == e.baseline) {
-			return lift()
-		}
-	} else {
-		// Only a composer that reads empty proves the box empty: a failed capture or a screen
-		// with no composer on it keeps the guard.
-		if draft, _, ok := claudeComposer(captured); ok && squashSpace(draft) == "" {
 			return lift()
 		}
 	}
