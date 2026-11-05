@@ -15,6 +15,7 @@ import {
   sessionApprove,
   sessionPermissionRespond,
 } from "../../../core/api/client.ts";
+import { agentOf } from "../../../agents/registry.ts";
 import type { BackgroundShell, Discard, InteractionAnswer, PermissionChoice, QueueItem, TurnResult } from "../../../core/api/client.ts";
 import type { Attachment } from "../../../lib/attachDraft.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
@@ -150,7 +151,8 @@ export function useMirrorActions({
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = nextEchoId();
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
+    const echo = { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now(), cleansInvisible: agentOf(kind).caps.cleansInvisibleInput };
+    applyEchoes((p) => [...p, echo]);
     // The echo keeps the member's words; only the wire carries the studio signal, which the
     // transcript strips again before the echo is reconciled against it (composerSend).
     const res = await postInput(wire || t, op, attachments);

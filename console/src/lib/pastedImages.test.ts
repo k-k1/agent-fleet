@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildImagePrompt,
   samePastedPrompt,
+  samePromptIgnoringInvisible,
   splitCommandArgs,
   splitPastedImages,
   FILE_PROMPT,
@@ -89,6 +90,32 @@ describe("splitPastedImages", () => {
       files: [],
     });
     expect(samePastedPrompt(landed, "確認して")).toBe(true);
+  });
+});
+
+describe("samePromptIgnoringInvisible", () => {
+  it("matches the copy claude logs after removing invisible characters", () => {
+    // A paste copied from a chat app or a table: BOM, zero-width space, bidi mark, soft hyphen,
+    // variation selector and CRLF. claude removes them (CR included); tab and NBSP stay.
+    const sent = "\ufeff今の状態\t求められる確認\r\n\u00a0\r\n番号が\u200b登録済み\u200e\t両\u00ad方\ufe0f";
+    const logged = "今の状態\t求められる確認\n\u00a0\n番号が登録済み\t両方";
+    expect(samePromptIgnoringInvisible(logged, sent)).toBe(true);
+    expect(samePromptIgnoringInvisible("番号が\u2060未登録\u{e0041}", "番号が未登録")).toBe(true);
+  });
+  it("is a claude-only leniency: samePastedPrompt keeps them apart", () => {
+    expect(samePastedPrompt("番号が\u200b登録済み", "番号が登録済み")).toBe(false);
+    expect(samePastedPrompt("a\u2028b", "ab")).toBe(false);
+  });
+  it("still tells different visible text apart", () => {
+    expect(samePromptIgnoringInvisible("番号が登録済み", "番号が未登録")).toBe(false);
+    expect(samePromptIgnoringInvisible("a\u200bb", "a-b")).toBe(false);
+  });
+  it("keeps spaces, tabs, line breaks and indentation meaningful", () => {
+    expect(samePromptIgnoringInvisible("a b", "ab")).toBe(false);
+    expect(samePromptIgnoringInvisible("a b", "a\nb")).toBe(false);
+    expect(samePromptIgnoringInvisible("a\tb", "a    b")).toBe(false);
+    expect(samePromptIgnoringInvisible("if x:\n  y", "if x:\n    y")).toBe(false);
+    expect(samePromptIgnoringInvisible("x = 1", "x=1")).toBe(false);
   });
 });
 
