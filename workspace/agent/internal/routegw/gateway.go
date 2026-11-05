@@ -41,8 +41,14 @@ type Deps struct {
 	// Endpoint is the upstream base URL for a region (a test points it at a fake).
 	Endpoint func(region string) string
 	Client   *http.Client
-	// BaseURL is what a session is told to call; set by Start once the listener is known.
-	BaseURL func() string
+	// Socket is the Unix socket a session is told to call; set by Start once it listens.
+	Socket func() string
+	// Roots is the root processes of a session's running runtime (its launch pane's process),
+	// none when it is not running. A call is served only to a process in that tree, and a token
+	// is renewed only while there is one.
+	Roots func(session string) []int
+	// ProcRoot is where process parents are read (/proc; a test may point it elsewhere).
+	ProcRoot string
 }
 
 // Gateway checks and forwards model calls.
@@ -97,6 +103,12 @@ func New(d Deps) *Gateway {
 	}
 	if d.Client == nil {
 		d.Client = upstreamClient()
+	}
+	if d.Roots == nil {
+		d.Roots = func(string) []int { return nil }
+	}
+	if d.ProcRoot == "" {
+		d.ProcRoot = "/proc"
 	}
 	return &Gateway{d: d, asked: map[string]time.Time{}, creds: map[string]cachedCreds{}, flight: map[string]*credFlight{}}
 }
@@ -173,24 +185,31 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	inc := awsx.Incarnation(m)
 	b := Binding{Session: m.Name, Incarnation: inc, Route: RouteBedrock, Connection: m.Route.Connection,
 		ProfileID: c.profile.ID, Region: c.region, Identity: awsx.ProfileIdentity(c.settings, c.profile)}
-	tok, exp, err := g.d.Registry.Mint(b, MaxTTL)
-	if err != nil {
-		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
+	sock := ""
+	if g.d.Socket != nil {
+		sock = g.d.Socket()
 	}
-	base := ""
-	if g.d.BaseURL != nil {
-		base = g.d.BaseURL()
-	}
-	if base == "" {
-		g.d.Registry.Revoke(tok)
+	if sock == "" {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusServiceUnavailable, Code: routes.CodeRouteUnavailable,
 			Message: "the route gateway is not listening"}
 	}
-	return Issued{BaseURL: base, Token: tok, Expires: exp}, nil
+	tok, exp, err := g.d.Registry.Mint(b, TokenTTL)
+	if err != nil {
+		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
+	}
+	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Expires: exp}, nil
 }
 
-// Issued is what a launch gets: where to call, the bearer to call with, and when it ends.
+// SocketBaseURL is the base URL a harness is given beside the socket. The connection goes to
+// the socket whatever the URL says; the host is one that never resolves, so a harness that
+// ignored the socket would fail visibly instead of handing the bearer to whatever listens on
+// a loopback port.
+const SocketBaseURL = "http://af-route-gateway.invalid"
+
+// Issued is what a launch gets: the socket to call, the base URL to put in front of the
+// operation paths, the bearer to call with, and when it ends unless the Agent renews it.
 type Issued struct {
+	Socket  string
 	BaseURL string
 	Token   string
 	Expires time.Time
@@ -216,11 +235,19 @@ type call struct {
 
 // authorize is the check every upstream call runs, in this order, and the reason a token is
 // revoked on the spot: it is what makes "revoked when the session ends, the selection changes or
-// the connection changes" take effect on the next call, not on a timer.
-func (g *Gateway) authorize(token string) (*call, *refusal) {
+// the connection changes" take effect on the next call, not on a timer. pid is the calling
+// process as the kernel reported it (ok false: unknown).
+func (g *Gateway) authorize(token string, pid int, pidOK bool) (*call, *refusal) {
 	b, ok := g.d.Registry.Lookup(token)
 	if !ok {
 		return nil, &refusal{http.StatusUnauthorized, "route_token_invalid", "the route token is unknown, expired or revoked; restart the session"}
+	}
+	// Before anything that reads the owner's state or files an approval request on its behalf.
+	// The token is not revoked: a process that only read it must not be able to end the owner's
+	// route by presenting it.
+	if !pidOK || !inTree(g.d.ProcRoot, pid, g.d.Roots(b.Session)) {
+		return nil, &refusal{http.StatusForbidden, "route_caller_forbidden",
+			"this route token belongs to another session's process; only the session it was issued to may use it"}
 	}
 	revoke := func(status int, code, msg string) (*call, *refusal) {
 		g.d.Registry.Revoke(token)
@@ -340,16 +367,18 @@ type credFlight struct {
 }
 
 // Sweep ends the tokens whose session is gone, is another incarnation or selects something else,
-// and those past their time. The per-call check already refuses all of them; this frees memory
-// and the cached credentials with them.
-func (g *Gateway) Sweep() int {
+// and those past their time, and renews those whose session is still running. The per-call
+// check already refuses every ended one; this frees memory and the cached credentials with
+// them, and the renewal is what keeps a running session's token alive past TokenTTL.
+func (g *Gateway) Sweep() (dropped int) {
 	// keep checks existence, incarnation and selection only. A token whose profile was unmarked or
-	// edited stays in memory until its next call (which refuses and revokes it) or its 8 hours; it
-	// grants nothing meanwhile, because every call resolves the profile again.
-	n := g.d.Registry.Sweep(func(b Binding) bool {
+	// edited stays in memory until its next call (which refuses and revokes it) or its TokenTTL;
+	// it grants nothing meanwhile, because every call resolves the profile again.
+	keep := func(b Binding) bool {
 		m, ok := g.d.ReadMeta(b.Session)
 		return ok && awsx.Incarnation(m) == b.Incarnation && m.Route != nil && m.Route.Route == b.Route && m.Route.Connection == b.Connection
-	})
+	}
+	n, _ := g.d.Registry.Sweep(keep, func(b Binding) bool { return len(g.d.Roots(b.Session)) > 0 })
 	g.credMu.Lock()
 	now := g.d.Now()
 	for k, e := range g.creds {

@@ -80,7 +80,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRefusal(w, &refusal{http.StatusUnauthorized, "route_token_invalid", "a route token is required (Authorization: Bearer)"})
 		return
 	}
-	c, ref := g.authorize(token)
+	pid, pidOK := peerOf(r)
+	c, ref := g.authorize(token, pid, pidOK)
 	if ref != nil {
 		log.Printf("route gateway: refused (%s)", ref.code)
 		writeRefusal(w, ref)

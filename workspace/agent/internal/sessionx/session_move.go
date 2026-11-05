@@ -524,6 +524,7 @@ var moveTargetPresence = func(rec moveRecord) targetPresence {
 // on the working copy. Its first prompt is sent only after the meta is written, so an orphan has
 // not been told to work.
 var stopOrphanTarget = func(rec moveRecord) error {
+	endRouteTokens(rec.Target)
 	if tn := session.TmuxName(rec.Target); tmuxx.HasSession(tn) {
 		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, out)

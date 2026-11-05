@@ -170,9 +170,9 @@ var Entries = []string{
 	// The last observed usage of every agent kind (internal/usagestore, #3127). Introduced
 	// directly under AgentStateDir; it never existed under .config.
 	"usage-last.json",
-	// The route gateway's last loopback port (internal/routegw), so a running pane's base URL
-	// survives an Agent restart. Introduced directly under AgentStateDir.
-	"route-gateway.json",
+	// The route gateway's Unix socket (internal/routegw). Recreated by every Agent start and
+	// never under .config, so run() no-ops on it.
+	"route-gateway.sock",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
 	"bridge-sent",

@@ -360,8 +360,11 @@ profile for Amazon Bedrock model calls (ADR 0128). The gateway runs inside the w
 profile's short-lived credentials and forwards it, so the session that makes the calls never receives AWS credentials.
 It forwards only `invoke`, `invoke-with-response-stream`, `converse` and `converse-stream`; it cannot list models or call any
 other AWS operation. A profile that is not marked is refused as a route, with the reason in the answer to the call. A route
-token is tied to one session, to the profile as it is now and to the route the session selected: it ends with the session, when the
-selection changes, when the profile is edited, unmarked or deleted, and after 8 hours at most. A profile that is set to
+token is tied to one session, to the profile as it is now and to the route the session selected, and it is served only to
+that session's own processes (the gateway listens on a socket in the workspace and checks which process is calling; another
+session that copies the token is refused). It ends when the session is stopped, deleted, archived or recreated, when the
+selection changes, and when the profile is edited, unmarked or deleted; one that nothing ended runs out ten minutes after its
+session stops running. A profile that is set to
 "Confirm before use" is asked about in the same way as above, on the first model call of a session, and is checked again on
 every call. The mark is only your statement: AF cannot read the role's permissions, so mark a profile only when you have
 checked them. Nothing in the Console or the harnesses selects the Bedrock route yet.

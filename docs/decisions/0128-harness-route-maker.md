@@ -519,3 +519,39 @@ table from becoming a menu of models that fail on the first message, which is wh
   unconfirmed cancel of the resume booking (`bookingCancelPending`) and an unsent carry-on stay on screen until closed, because the
   session is no longer `limited` by then. All nine `route_switch_*` codes have catalogue text (`err.route_switch_*`, en/ja). Not
   measured: the band against a live window stop.
+- 2026-11-06, P2b part 1 (#3282): the route token narrowed before any harness holds one, as the P2a review note requires.
+  **Caller binding.** The gateway no longer listens on TCP. It serves a Unix socket at a fixed path
+  (`~/.local/state/agent-fleet/route-gateway.sock`, mode 0600), reads the calling process from the kernel (`SO_PEERCRED`, taken
+  at connect and not forgeable by the caller) and serves a token only to the session's launch-pane process or a descendant of
+  it (parents read from `/proc`, at most 256 steps, init never counts as a root, anything unreadable refuses). The launch pane
+  is the one whose start command carries the session's exit recorder (`tmuxx.LaunchPanePID`, moved out of claude's hook
+  check), not the active pane, so a pane the member split off is outside. Any other caller gets 403
+  `route_caller_forbidden`, checked right after the token lookup and before any approval request, credential resolution or
+  upstream call; the token is **not** revoked, so a process that only copied it cannot end the owner's route. Measured with
+  claude 2.1.318 against a stand-in server: with `CLAUDE_CODE_USE_BEDROCK=1` and `ANTHROPIC_UNIX_SOCKET`, the Bedrock model
+  calls (`invoke-with-response-stream`, bearer from `AWS_BEARER_TOKEN_BEDROCK`) arrive on the socket and the base URL's
+  host and port are never dialled (an unreachable `127.0.0.1:9` and a `.invalid` host alike); the peer credentials name the
+  claude process; without the socket variable nothing reaches the socket. So a launch is given the socket and the base URL
+  `http://af-route-gateway.invalid`, which fails visibly instead of handing the bearer to a loopback port if a harness ever
+  ignores the socket. Also seen: claude retried a 403 from the stand-in 8 times in 90 seconds, which P2b's adapter has to
+  allow for when it picks refusal statuses. opencode is not measured (P2c); if a harness can only speak TCP, the binding to
+  build is the loopback peer resolved through `/proc/net/tcp` to a socket inode and the process holding it.
+  **Lifetime.** A token lives 10 minutes (`TokenTTL`) unless renewed. The gateway's one-minute sweep renews every token whose
+  session still has its launch pane and whose meta still selects the token's route and connection; nothing in the session
+  can mint or renew, and the token string never changes, because Claude Code reads its bearer once at start. The numbers: a
+  token whose owner ended without passing an eager revoke (a crash, a pane closed from inside) dies within 10 minutes instead
+  of 8 hours; 10 minutes covers the launch, which mints before the pane exists, and up to nine missed sweeps on a loaded
+  Agent. There is no absolute ceiling any more: one would end a long session's model calls mid-turn with no way for the harness
+  to take a new bearer, while the per-call checks (caller in the tree, incarnation, selection, profile, ADR 0126's approval
+  of at most 8 hours) already bound use.
+  **Eager revoke.** `sessionx` ends a session's tokens (`Deps.EndRouteTokens` → `routegw.EndSession`; routegw sits above
+  sessionx through awsx) on every exit: halt, which every stop goes through (the stop button, stop after turn, the spend cap,
+  the route guard sweep, delete, a move and the route switch's stop); archive; recreate; the trash (`ForgetRuntime`); an orphan
+  pane's kill; a driver switch; a move's orphan target; the route switch's store and its rollback; and the session list's poll
+  when it finds a pane ended on its own. An Agent restart still ends every token (memory only).
+  **Still possible after this.** Every session runs as the same user, so a process of another session can still act
+  **through** the owner's tree: type into the owner's tmux pane, which runs what it types inside the tree; inject into an owner
+  process where the kernel's ptrace policy allows it; or have an owner process hand it a connected socket. Reading the token
+  from `/proc/<pid>/environ` alone no longer gets a call through. A pid that exits between connect and the check and is
+  reused inside the owner's tree is a theoretical race nobody outside controls. A descendant that double-forks away from the
+  pane is refused, which is the safe direction.

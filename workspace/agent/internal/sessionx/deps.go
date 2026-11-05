@@ -101,6 +101,13 @@ type Deps struct {
 	// code (errCodeLocked / TrashErr*).
 	TrashSession func(m session.Meta, stop bool) (archive, code string, err error)
 
+	// --- The route gateway (internal/routegw) ---
+	//
+	// EndRouteTokens ends a session's route tokens (route_tokens.go). routegw sits above
+	// sessionx through awsx, so it is reached through here; an unwired no-op would leave every
+	// token to its expiry, so the zero value is not allowed.
+	EndRouteTokens func(name string)
+
 	// --- Toolchains (env_toolchains.go) ---
 	ToolchainShellPrefix func() string
 
