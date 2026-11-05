@@ -1,7 +1,7 @@
 // The gates that decide whether a ticket-shaped token in prose becomes a link (#1659). The false
 // positives listed here are the reason each gate exists.
 import { describe, expect, it } from "vitest";
-import { classifyWorkItemRef, cloneHosts, ISSUE_REF_SRC, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
+import { classifyWorkItemRef, cloneHosts, ISSUE_REF_SRC, originOf, resolveWorkItemRef, WORK_ITEM_HINT_RE, workItemRefOfUrl, workItemRefInputs, type WorkItemRefContext } from "./refs.ts";
 import type { WorkItem } from "./read.ts";
 
 const row = (provider: string, key: string, extra: Partial<WorkItem> = {}): WorkItem => ({
@@ -210,5 +210,40 @@ describe("resolveWorkItemRef", () => {
   it("finds the Jira site through a cached row of the same tracker", () => {
     const items = [row("jira", "G3M-5", { url: "https://jira.example.test/browse/G3M-5" })];
     expect(resolveWorkItemRef({ provider: "jira", key: "G3M-12" }, items).item.url).toBe("https://jira.example.test/browse/G3M-12");
+  });
+});
+
+describe("workItemRefOfUrl", () => {
+  it("reads a GitHub issue or pull request page and a Bitbucket pull request page", () => {
+    expect(workItemRefOfUrl("https://github.com/octo/fleet/issues/3362", [gh("3362")])).toEqual({ provider: "github", key: "octo/fleet#3362" });
+    expect(workItemRefOfUrl("https://github.com/octo/fleet/pull/3363/", [])).toEqual({ provider: "github", key: "octo/fleet#3363", guessed: true });
+    expect(workItemRefOfUrl("https://github.com/octo/fleet/pull/3363?w=1", [])).toEqual({ provider: "github", key: "octo/fleet#3363", guessed: true });
+    expect(workItemRefOfUrl("https://bitbucket.org/team/app/pull-requests/7", [])).toEqual({ provider: "bitbucket", key: "team/app#7", guessed: true });
+  });
+
+  it("leaves a link to something more specific than the ticket, or on another host, alone", () => {
+    for (const url of [
+      "https://github.com/octo/fleet/pull/3363/files",
+      "https://github.com/octo/fleet/issues/3362#issuecomment-1",
+      "https://github.com/octo/fleet/commit/abc1234",
+      "https://github.com/octo/fleet/issues",
+      "https://github.com/octo/fleet/issues/0",
+      "https://ghe.example.test/octo/fleet/pull/3",
+      "http://github.com/octo/fleet/pull/3",
+      "https://github.com:8443/octo/fleet/pull/3",
+      "https://user@github.com/octo/fleet/pull/3",
+      "https://bitbucket.org/team/app/issues/7",
+      "not a url",
+    ]) {
+      expect(workItemRefOfUrl(url, []), url).toBeNull();
+    }
+  });
+
+  it("reads a Jira page only on a site a cached row lives on", () => {
+    const items = [row("jira", "G3M-5", { url: "https://jira.example.test/browse/G3M-5" })];
+    expect(workItemRefOfUrl("https://jira.example.test/browse/G3M-5", items)).toEqual({ provider: "jira", key: "G3M-5" });
+    expect(workItemRefOfUrl("https://jira.example.test/browse/OPS-12", items)).toEqual({ provider: "jira", key: "OPS-12", guessed: true });
+    expect(workItemRefOfUrl("https://other.example.test/browse/G3M-5", items)).toBeNull();
+    expect(workItemRefOfUrl("https://jira.example.test/browse/G3M-5", [])).toBeNull();
   });
 });

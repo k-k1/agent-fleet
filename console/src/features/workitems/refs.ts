@@ -164,6 +164,43 @@ export function classifyWorkItemRef(token: string, ctx: WorkItemRefContext, inCo
   return null;
 }
 
+// The pages that ARE one ticket. A sub-page (`/pull/N/files`), a fragment (`#issuecomment-…`) or
+// any other host points at something more specific than the modal can show, so it stays a plain
+// external link. Bitbucket issues are left out: the inbox knows only its pull requests.
+const TICKET_URL_PATHS: Record<string, { provider: "github" | "bitbucket"; re: RegExp }> = {
+  "github.com": { provider: "github", re: /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:issues|pull)\/([1-9]\d{0,9})\/?$/ },
+  "bitbucket.org": { provider: "bitbucket", re: /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull-requests\/([1-9]\d{0,9})\/?$/ },
+};
+const JIRA_BROWSE = /^\/browse\/([A-Z][A-Z0-9_]+-[1-9]\d{0,6})\/?$/;
+
+/** The ticket a full tracker URL names, or null for any other link. Unlike a bare `#N`, the URL
+ * names its repository and host itself, so no context repository is needed. A Jira URL qualifies
+ * only on a site a cached Jira row lives on: the Console knows the member's Jira site through
+ * those rows alone, and any other `/browse/` page may be someone else's tracker. Not cached =
+ * `guessed`, opened as the reference stand-in. */
+export function workItemRefOfUrl(href: string, items: WorkItem[]): WorkItemRef | null {
+  let u: URL;
+  try {
+    u = new URL(href);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" || u.port !== "" || u.username || u.password || u.hash) return null;
+  const known = Object.hasOwn(TICKET_URL_PATHS, u.hostname) ? TICKET_URL_PATHS[u.hostname] : undefined;
+  if (known) {
+    const m = u.pathname.match(known.re);
+    if (!m) return null;
+    const key = `${m[1]}#${m[2]}`;
+    return cachedRow(items, known.provider, key) ? { provider: known.provider, key } : { provider: known.provider, key, guessed: true };
+  }
+  const jira = u.pathname.match(JIRA_BROWSE);
+  if (!jira) return null;
+  const site = `${u.origin}/browse/`;
+  const onSite = items.filter((i) => i.provider === "jira" && i.url.startsWith(site));
+  if (!onSite.length) return null;
+  return onSite.some((i) => i.key === jira[1]) ? { provider: "jira", key: jira[1] } : { provider: "jira", key: jira[1], guessed: true };
+}
+
 /** The row a reference opens: the cached one when there is one, else — a guessed reference, or a
  * row that left the cache after the link was drawn — a reference-only stand-in carrying the key and a constructed tracker
  * URL. The stand-in never claims a title, a state or

@@ -444,3 +444,58 @@ describe("ticket references", () => {
     expect(jiraProjectsCalls).not.toHaveBeenCalled();
   });
 });
+
+describe("issue and pull request URLs", () => {
+  const md = "- Issue: https://github.com/octo/fleet/issues/956\n- PR: [the PR](https://github.com/octo/fleet/pull/3363)\n- files: https://github.com/octo/fleet/pull/3363/files";
+
+  it("opens the modal for a ticket's own page and leaves a sub-page external", async () => {
+    await render(md);
+    expect(links().map((a) => a.textContent)).toEqual(["https://github.com/octo/fleet/issues/956", "the PR"]);
+    // The href stays for "copy link address"; the new-tab marker goes.
+    expect(links()[1].getAttribute("href")).toBe("https://github.com/octo/fleet/pull/3363");
+    expect(links()[1].classList.contains("ext-link")).toBe(false);
+    expect(links()[1].target).toBe("");
+    expect([...host.querySelectorAll("a.ext-link")].map((a) => a.textContent)).toEqual(["https://github.com/octo/fleet/pull/3363/files"]);
+
+    await click(links()[0]);
+    let d = useWorkItemModal.getState().detail;
+    expect(d).toMatchObject({ reference: false, repoHint: "fleet" });
+    expect(d?.item.key).toBe("octo/fleet#956");
+
+    await click(links()[1]);
+    d = useWorkItemModal.getState().detail;
+    expect(d?.reference).toBe(true);
+    expect(d?.item.key).toBe("octo/fleet#3363");
+    // The page the author linked, not the stand-in's constructed /issues/ URL.
+    expect(d?.item.url).toBe("https://github.com/octo/fleet/pull/3363");
+  });
+
+  it("goes to the linked page on a Ctrl-click or a middle click", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    await render(md);
+    await click(links()[0], { ctrlKey: true });
+    expect(open).toHaveBeenLastCalledWith("https://github.com/octo/fleet/issues/956", "_blank", "noopener,noreferrer");
+    await act(async () => {
+      links()[1].dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+    });
+    expect(open).toHaveBeenLastCalledWith("https://github.com/octo/fleet/pull/3363", "_blank", "noopener,noreferrer");
+    expect(useWorkItemModal.getState().detail).toBeNull();
+    open.mockRestore();
+  });
+
+  it("needs no context repository, and survives a relink", async () => {
+    await render(md, null);
+    expect(links()).toHaveLength(2);
+    await act(async () => useWorkItemStore.setState({ payload: payload([row("github", "octo/fleet#3363", { kind: "pr" })]) }));
+    expect(links()).toHaveLength(2);
+    await click(links()[1]);
+    expect(useWorkItemModal.getState().detail).toMatchObject({ reference: false, repoHint: "" });
+  });
+
+  it("stays an external link on a surface with ticket links off", async () => {
+    await render(md, "fleet", false);
+    expect(links()).toHaveLength(0);
+    expect(host.querySelectorAll("a.ext-link")).toHaveLength(3);
+  });
+});
+

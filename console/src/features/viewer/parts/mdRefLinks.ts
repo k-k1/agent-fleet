@@ -23,6 +23,7 @@ import {
   JIRA_REF_SRC,
   originOf,
   resolveWorkItemRef,
+  workItemRefOfUrl,
   type WorkItemRef,
   type WorkItemRefContext,
 } from "../../workitems/refs.ts";
@@ -50,6 +51,8 @@ import {
 // - ticket reference (`#956`, `owner/name#956`, `PROJ-123`, only with workItemRefs): opens the
 //   work item detail modal. The gates (context repository, colour-shaped numbers, Jira projects
 //   the cache knows) live in workitems/refs.ts.
+// - ticket URL (`https://github.com/o/r/pull/N` and the like, only with workItemRefs): already an
+//   anchor, so the text walk never sees it; the same modal is wired onto it (claimWorkItemUrl).
 //
 // Code context: a fenced block (<pre>) is literal source and is never touched. INLINE
 // code (`sukbq4s` / `9219ab9` written in backticks — the common way these are mentioned)
@@ -126,6 +129,11 @@ export function linkifyRefs(
     root.querySelectorAll<HTMLAnchorElement>("a.md-workitem-link[data-guessed]").forEach((a) => {
       const text = a.textContent ?? "";
       if (!classifyWorkItemRef(text, wiCtx, !!a.parentElement?.closest("code"))) a.replaceWith(text);
+    });
+    // A full issue / pull request URL is already an anchor, which the text walk below skips.
+    root.querySelectorAll<HTMLAnchorElement>("a.ext-link[href]").forEach((a) => {
+      const ref = workItemRefOfUrl(a.getAttribute("href") ?? "", wiCtx.items);
+      if (ref) claimWorkItemUrl(a, repo, ref);
     });
   }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -222,11 +230,8 @@ function workItemRefContext(repo: string | null): WorkItemRefContext {
 const cachedWorkItems = (): WorkItem[] =>
   dedupeWorkItems(sortWorkItems(useWorkItemStore.getState().payload?.items || []));
 
-// makeWorkItemLink builds a non-navigating anchor for a ticket reference. A plain click / Enter
-// opens the work item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker,
-// the way the rail row's external link does. A ticket linked from a cached row is fixed at render;
-// a guessed one is guessed again when clicked. The row and the launch hint are always read at
-// click and hover time: the cache and the repository list may have changed since.
+// makeWorkItemLink builds a non-navigating anchor for a ticket reference. A ticket linked from a
+// cached row is fixed at render; a guessed one is guessed again when clicked.
 function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "md-ref-link md-workitem-link";
@@ -234,20 +239,47 @@ function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef)
   a.textContent = text;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
+  // A guessed link is guessed again: its row may have reached the cache. One that would not be
+  // drawn now is already text again — the linkifier re-runs whenever the cache or the clones
+  // change — so falling back to the drawn guess is only for the instant in between.
+  // A ref drawn from a cached row is never re-classified: with the same owner/name cached on
+  // both hosts, losing the drawn host's row would hand the link to the other host's ticket. A row
+  // that left the cache opens as the reference-only stand-in on the host it had.
+  wireWorkItemLink(a, repo, (ctx) => (drawn.guessed ? (classifyWorkItemRef(text, ctx) ?? drawn) : drawn));
+  return a;
+}
+
+// claimWorkItemUrl turns an external link whose URL is one ticket's page (workItemRefOfUrl) into
+// a ticket link. The href stays, so "copy link address" still copies what the author wrote; only
+// the click is taken over. It runs after wireLinks, which already made it an ext-link.
+function claimWorkItemUrl(a: HTMLAnchorElement, repo: string | null, drawn: WorkItemRef) {
+  const href = a.href;
+  a.classList.remove("ext-link");
+  a.classList.add("md-ref-link", "md-workitem-link");
+  // Marks it as claimed for the next run, and keeps it out of the `data-guessed` re-check, which
+  // judges the link TEXT and would turn a URL back into plain text.
+  a.dataset.workItemUrl = "1";
+  a.removeAttribute("target");
+  // The URL names its ticket outright, so a re-read only asks whether the row is cached now.
+  wireWorkItemLink(a, repo, (ctx) => workItemRefOfUrl(href, ctx.items) ?? drawn, href);
+}
+
+// wireWorkItemLink gives a ticket anchor its click behaviour. A plain click / Enter opens the work
+// item detail modal; Ctrl/Cmd-click and a middle click go straight to the tracker, the way the rail
+// row's external link does. The row and the launch hint are read at click and hover time: the
+// cache and the repository list may have changed since the link was drawn. `url` is the page the
+// author linked, which beats a stand-in's constructed URL (`/issues/N` for what is a pull request).
+function wireWorkItemLink(a: HTMLAnchorElement, repo: string | null, refNow: (ctx: WorkItemRefContext) => WorkItemRef, url = "") {
   const current = () => {
     const ctx = workItemRefContext(repo);
-    // A guessed link is guessed again: its row may have reached the cache. One that would not be
-    // drawn now is already text again — the linkifier re-runs whenever the cache or the clones
-    // change — so falling back to the drawn guess is only for the instant in between.
-    const ref = drawn.guessed ? (classifyWorkItemRef(text, ctx) ?? drawn) : drawn;
+    const ref = refNow(ctx);
     // Launch from the working copy this text is about only when the ticket belongs to it — same
     // path AND same host; read now, since the repository list may have arrived after the text.
     const repoHint =
       repo && ctx.origin && ref.provider === ctx.origin.provider && ref.key.startsWith(`${ctx.origin.path}#`) ? repo : "";
-    // A ref drawn from a cached row is never re-classified: with the same owner/name cached on
-    // both hosts, losing the drawn host's row would hand the link to the other host's ticket. A row
-    // that left the cache opens as the reference-only stand-in on the host it had.
-    return { ...resolveWorkItemRef(ref, ctx.items), repoHint };
+    const resolved = resolveWorkItemRef(ref, ctx.items);
+    if (url && resolved.reference) resolved.item = { ...resolved.item, url };
+    return { ...resolved, repoHint };
   };
   wireTooltip(a, () => {
     const { item, reference } = current();
@@ -256,8 +288,9 @@ function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef)
   });
   const open = (external: boolean) => {
     const { item, reference, repoHint } = current();
-    if (external && item.url) {
-      window.open(item.url, "_blank", "noopener,noreferrer");
+    const page = url || item.url;
+    if (external && page) {
+      window.open(page, "_blank", "noopener,noreferrer");
       return;
     }
     useWorkItemModal.getState().openDetail(item, { reference, repoHint });
@@ -277,7 +310,6 @@ function makeWorkItemLink(text: string, repo: string | null, drawn: WorkItemRef)
       open(e.ctrlKey || e.metaKey);
     }
   });
-  return a;
 }
 
 // makeCommitLink builds a non-navigating anchor for a bare sha. On click it verifies the
