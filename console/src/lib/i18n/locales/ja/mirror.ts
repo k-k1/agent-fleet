@@ -566,10 +566,12 @@ export const mirror = {
   "mirror.route_switch_progress": "API ルートへ切り替えています。自動再開の予約を取り消し、元のプロセスを止めて、API キーで起動し直します…",
   "mirror.route_switch_done": "API ルートに切り替えました。",
   "mirror.route_switch_carry_on": "利用上限で止まっていましたが、このセッションは API ルートに切り替わりました。止まったところから続けてください。",
-  "mirror.route_switch_carry_failed": "「続けて」のメッセージをセッションへ渡せませんでした。メッセージを送って続けてください。",
+  "mirror.route_switch_carry_failed": "Agent が「続けて」のメッセージを断ったため、何も待ち行列に入っていません。メッセージを送って続けてください。",
   "mirror.route_switch_cancel_pending": "自動再開の予約をまだ取り消せていません。取り消しは再試行され、先に実行されても無視されます。",
   "mirror.route_switch_incomplete": "切り替えが完了しませんでした: {detail}",
   "mirror.route_switch_refused": "何も変更していません: {detail}",
   "mirror.route_switch_carry_queued": "「続けて」のメッセージはセッションへ渡しましたが、入力されたかどうかは確認できません。しばらく返信が始まらなければ、メッセージを送ってください。",
   "mirror.route_switch_unknown": "切り替えへの応答が届かなかったため、切り替わったかどうかは分かりません: {detail} 再読み込みして、セッションがどの経路かを確認してから送ってください。",
+  "mirror.route_switch_carry_unknown": "「続けて」のメッセージがセッションに届いたか確認できませんでした。すでに待ち行列に入っているかもしれません。もう一度送る前に、会話にそのメッセージか返信がないか確認してください。",
+  "mirror.route_switch_carry_skipped": "「続けて」のメッセージを送る前にワークスペースを切り替えたため、送っていません。そのセッションを開いて、メッセージを送って続けてください。",
 };

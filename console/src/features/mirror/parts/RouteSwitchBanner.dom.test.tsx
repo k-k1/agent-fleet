@@ -25,6 +25,7 @@ vi.mock("../../../core/api/client.ts", async (orig) => ({
 
 const { RouteSwitchBanner, isWindowStop, safeSettingUrl, resetRouteSwitchOutcomes } = await import("./RouteSwitchBanner.tsx");
 const { t } = await import("../../../lib/i18n/index.ts");
+const { setTenant } = await import("../../../core/api/client.ts");
 const { errText } = await import("../../../core/api/client.ts");
 type Session = import("../../../types/session.ts").Session;
 type Preview = import("./RouteSwitchBanner.tsx").RouteSwitchPreview;
@@ -71,11 +72,13 @@ beforeEach(() => {
   routes = { [PREVIEW]: allowed() };
   calls.length = 0;
   resetRouteSwitchOutcomes();
+  setTenant("alpha");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
 });
 afterEach(() => {
+  setTenant("");
   act(() => root?.unmount());
   host.remove();
   root = null;
@@ -327,13 +330,58 @@ describe("RouteSwitchBanner switching", () => {
     expect(band()?.textContent).toContain(t("mirror.route_switch_done"));
   });
 
-  it("says so when the carry-on is refused", async () => {
+  it("says the Agent refused the carry-on only when it answered with an error", async () => {
     routes[SWITCH] = { session: {} };
     routes[INPUT] = { error: { code: "x" } };
     await render(src());
     await click(t("mirror.route_switch_action"));
     await click(t("mirror.route_switch_do"));
     expect(band()?.textContent).toContain(t("mirror.route_switch_carry_failed"));
+  });
+
+  it.each([
+    ["a lost response", () => Promise.reject(new Error("offline"))],
+    ["a gateway error", { error: { code: "http_502", status: 502, message: "bad gateway" } }],
+  ])("does not claim the carry-on was refused after %s: it may already be queued", async (_n, answer) => {
+    routes[SWITCH] = { session: {} };
+    routes[INPUT] = answer;
+    await render(src());
+    await click(t("mirror.route_switch_action"));
+    await click(t("mirror.route_switch_do"));
+    const text = band()?.textContent ?? "";
+    expect(text).toContain(t("mirror.route_switch_carry_unknown"));
+    expect(text).not.toContain(t("mirror.route_switch_carry_failed"));
+  });
+
+  it("does not send the carry-on into another workspace's same-named session", async () => {
+    let release!: (v: unknown) => void;
+    routes[SWITCH] = () => new Promise((r) => (release = r));
+    routes[INPUT] = { queued: "s1" };
+    await render(src());
+    await click(t("mirror.route_switch_action"));
+    await click(t("mirror.route_switch_do"));
+    setTenant("beta"); // the Console is switched while the switch is pending
+    await act(async () => release({ session: {} }));
+    await settle();
+    expect(calls.map((c) => c.method + " " + c.path)).toEqual([SWITCH]);
+    await rerender(src());
+    expect(band()?.textContent ?? "").not.toContain(t("mirror.route_switch_done")); // beta's s1 shows nothing of alpha's action
+    setTenant("alpha");
+    await rerender(src());
+    expect(band()?.textContent).toContain(t("mirror.route_switch_carry_skipped"));
+  });
+
+  it("does not show one workspace's outcome for the same-named session in another", async () => {
+    routes[SWITCH] = { session: {} };
+    routes[INPUT] = { queued: "s1" };
+    await render(src());
+    await click(t("mirror.route_switch_action"));
+    await click(t("mirror.route_switch_do"));
+    expect(band()?.textContent).toContain(t("mirror.route_switch_done"));
+    setTenant("beta");
+    routes[PREVIEW] = { allowed: false, code: "route_switch_no_limit" };
+    await rerender(src());
+    expect(band()).toBeNull();
   });
 });
 

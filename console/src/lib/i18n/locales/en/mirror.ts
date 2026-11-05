@@ -537,10 +537,12 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.route_switch_progress": "Switching to the API route: cancelling the scheduled resume, stopping the old process and starting it again on the API key…",
   "mirror.route_switch_done": "Now running on the API route.",
   "mirror.route_switch_carry_on": "You were stopped at the usage limit and this session now runs on the API route. Please carry on from where you left off.",
-  "mirror.route_switch_carry_failed": "The \"carry on\" message could not be handed to the session. Send a message to continue.",
+  "mirror.route_switch_carry_failed": "The Agent refused the \"carry on\" message, so nothing was queued. Send a message to continue.",
   "mirror.route_switch_cancel_pending": "The scheduled automatic resume could not be cancelled yet. The cancellation is retried, and if it fires first it is ignored.",
   "mirror.route_switch_incomplete": "The switch did not complete: {detail}",
   "mirror.route_switch_refused": "Nothing was changed: {detail}",
   "mirror.route_switch_carry_queued": "The \"carry on\" message was handed to the session, which does not confirm it was typed. If it does not start answering shortly, send a message yourself.",
   "mirror.route_switch_unknown": "The answer to the switch was lost, so it is not known whether it went through: {detail} Reload and check which route the session is on before sending more.",
+  "mirror.route_switch_carry_unknown": "Whether the \"carry on\" message reached the session could not be confirmed, and it may already be queued. Look for it or an answer in the conversation before sending it again.",
+  "mirror.route_switch_carry_skipped": "The workspace was changed before the \"carry on\" message could be sent, so it was not sent. Open the session and send a message to continue.",
 };

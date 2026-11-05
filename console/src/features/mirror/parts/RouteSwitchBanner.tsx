@@ -10,7 +10,8 @@
 // sent) has to stay on screen until the member closes it.
 import { useEffect, useState } from "react";
 import { create } from "zustand";
-import { api, apiJSON, errDetail, type ApiError } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, getTenant, getUser, type ApiError } from "../../../core/api/client.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, useT } from "../../../lib/i18n/index.ts";
 import { resumeClock } from "../../../lib/sessionview.ts";
@@ -61,26 +62,42 @@ const NOTHING_CHANGED = new Set([
   "route_switch_booking",
 ]);
 
+// What became of the "carry on": "queued" = the Agent accepted it (202; not proof it was typed),
+// "refused" = the Agent answered with an error (nothing was queued), "unknown" = the answer was
+// lost, so it may be queued, "skipped" = the member changed workspace first and it was not sent.
+type Carry = "queued" | "refused" | "unknown" | "skipped";
+
 type Phase =
   | { k: "idle" }
   | { k: "confirm" }
   | { k: "switching" }
-  | { k: "done"; cancelPending: boolean; carried: boolean }
+  | { k: "done"; cancelPending: boolean; carry: Carry }
   | { k: "refused"; text: string }
   | { k: "incomplete"; text: string }
   | { k: "unknown"; text: string };
 
-// One entry per session, outside React: the switch and the carry-on that follows it are the
+// Whose session this is: the same name in another workspace, or for another member, is another
+// session. Outcomes and the requests of one action are bound to it.
+const scopeOf = (name: string): string => `${getUser()}\u0000${getTenant()}\u0000${name}`;
+
+// One entry per session (see scopeOf), outside React: the switch and the carry-on that follows it are the
 // member's confirmed action and must finish when the mirror is closed or changed meanwhile, and
 // their outcome has to be there when the session is shown again.
 const useOutcomes = create<{ by: Record<string, Phase> }>(() => ({ by: {} }));
-const setPhaseOf = (name: string, p: Phase) => useOutcomes.setState((s) => ({ by: { ...s.by, [name]: p } }));
+const setPhaseOf = (scope: string, p: Phase) => useOutcomes.setState((s) => ({ by: { ...s.by, [scope]: p } }));
 // A constant: a selector that built a new object each read would never settle.
 const IDLE: Phase = { k: "idle" };
-const phaseOf = (by: Record<string, Phase>, name: string): Phase => by[name] ?? IDLE;
+const phaseOf = (by: Record<string, Phase>, scope: string): Phase => by[scope] ?? IDLE;
+
+// An /input error that says nothing about whether the Agent queued the message.
+const transportUncertain = (e: ApiError): boolean =>
+  e.code === "network" || (e.status ?? 0) >= 500 || (e.code ?? "").startsWith("http_");
 
 async function runSwitch(name: string): Promise<void> {
-  setPhaseOf(name, { k: "switching" });
+  // Captured once: every request of this action belongs to the workspace and member that
+  // confirmed it, however the Console is switched meanwhile.
+  const scope = scopeOf(name);
+  setPhaseOf(scope, { k: "switching" });
   const res = await apiJSON(`api/sessions/${encodeURIComponent(name)}/route-switch`, "POST", {}).catch(
     () => ({ error: { code: "network", message: tr("err.network") } as ApiError }),
   );
@@ -88,7 +105,7 @@ async function runSwitch(name: string): Promise<void> {
     const err = res.error as ApiError;
     const text = errDetail(err);
     setPhaseOf(
-      name,
+      scope,
       NOTHING_CHANGED.has(err.code ?? "")
         ? { k: "refused", text }
         : err.code === "route_switch_failed"
@@ -97,29 +114,49 @@ async function runSwitch(name: string): Promise<void> {
     );
     return;
   }
+  const cancelPending = !!res.bookingCancelPending;
+  // The request carries the tenant that is current when it is made (core/api/client.ts), so it
+  // is sent only while that is still this action's: otherwise it would run in another
+  // workspace's same-named session.
+  if (scopeOf(name) !== scope) {
+    setPhaseOf(scope, { k: "done", cancelPending, carry: "skipped" });
+    return;
+  }
   // The switch only relaunches the session: nothing is typed into it. The carry-on goes as the
   // member's own message, so it lands on the new route like any turn. The Agent answers 202
   // "queued": acceptance, not delivery.
   const sent = await apiJSON(`api/sessions/${encodeURIComponent(name)}/input`, "POST", {
     prompt: tr("mirror.route_switch_carry_on"),
     when_ready: true,
-  }).catch(() => null);
-  setPhaseOf(name, { k: "done", cancelPending: !!res.bookingCancelPending, carried: !!sent && !sent.error });
+  }).catch(() => ({ error: { code: "network" } as ApiError }));
+  const carry: Carry = !sent?.error ? "queued" : transportUncertain(sent.error as ApiError) ? "unknown" : "refused";
+  setPhaseOf(scope, { k: "done", cancelPending, carry });
 }
+
+const CARRY_TEXT = {
+  queued: "mirror.route_switch_carry_queued",
+  refused: "mirror.route_switch_carry_failed",
+  unknown: "mirror.route_switch_carry_unknown",
+  skipped: "mirror.route_switch_carry_skipped",
+} as const;
 
 export function RouteSwitchBanner({ session, state }: { session?: Session | null; state?: string }) {
   const name = session?.name ?? "";
   // The kind is not judged here (the Agent's preview refuses a kind with no metered route, as
   // route_switch_unsupported); a moving or moved source is not offered anything.
   const eligible = !!session && !session.moving && !session.movedTo;
-  // Keyed by the session so another session's preview never speaks for this one.
-  return eligible ? <Band key={name} session={session!} state={state} /> : null;
+  // Re-render when the workspace or the member changes; the key then starts the band afresh.
+  useTenantStore((s) => s.tenant);
+  useTenantStore((s) => s.identityRev);
+  // Keyed by the session in its workspace so another session's preview never speaks for this one.
+  return eligible ? <Band key={scopeOf(name)} session={session!} state={state} /> : null;
 }
 
 function Band({ session, state }: { session: Session; state?: string }) {
   const tr_ = useT();
   const name = session.name;
-  const phase = useOutcomes((s) => phaseOf(s.by, name));
+  const outcomeKey = scopeOf(name);
+  const phase = useOutcomes((s) => phaseOf(s.by, outcomeKey));
   // What a preview is evidence for: this limit episode on this route. It changes when the limit
   // lifts or returns, when the booked reset moves, when the route does, and each time the member
   // acts, so an answer read before any of those is never shown after it.
@@ -151,7 +188,7 @@ function Band({ session, state }: { session: Session; state?: string }) {
     };
   }, [name, watching, tick, scope]);
 
-  const setPhase = (p: Phase) => setPhaseOf(name, p);
+  const setPhase = (p: Phase) => setPhaseOf(outcomeKey, p);
   const run = () => {
     setGen((n) => n + 1);
     void runSwitch(name);
@@ -177,7 +214,7 @@ function Band({ session, state }: { session: Session; state?: string }) {
           {phase.k === "done" ? (
             <>
               {tr_("mirror.route_switch_done")}{" "}
-              {phase.carried ? tr_("mirror.route_switch_carry_queued") : tr_("mirror.route_switch_carry_failed")}
+              {tr_(CARRY_TEXT[phase.carry])}
               {phase.cancelPending && " " + tr_("mirror.route_switch_cancel_pending")}
             </>
           ) : phase.k === "incomplete" ? (
