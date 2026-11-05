@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
+import { create } from "zustand";
 import { api } from "../../../core/api/client.ts";
 import { useSettingsUI } from "../store.ts";
 import type { ConnectionsStatus } from "../../../types/session.ts";
@@ -14,9 +15,26 @@ import type { ConnectionsStatus } from "../../../types/session.ts";
 // times, and never downgrade an already-loaded snapshot to {}: stale-but-real beats
 // wrongly-empty, which flipped every card to "not connected" (「未接続」) right after a
 // successful connect.
+//
+// The last good snapshot lives in a module-level store, not in component state: reopening a
+// tab draws from it at once and the refetch replaces it in place, instead of every mount
+// starting from null and waiting out the whole GET /connections again. It is only ever
+// replaced by a real answer (or set to {} when nothing was ever loaded), never cleared by a
+// failure; resetConnectionsCache() is for when the workspace it described is gone.
+const useConnectionsCache = create<{ conns: ConnectionsStatus | null }>(() => ({ conns: null }));
+
+export function resetConnectionsCache() {
+  useConnectionsCache.setState({ conns: null });
+}
+
 export function useConnections() {
   const bumpConn = useSettingsUI((s) => s.bumpConn);
-  const [conns, setConns] = useState<ConnectionsStatus | null>(null);
+  const conns = useConnectionsCache((s) => s.conns);
+  const setConns = useCallback(
+    (v: ConnectionsStatus | ((prev: ConnectionsStatus | null) => ConnectionsStatus)) =>
+      useConnectionsCache.setState((s) => ({ conns: typeof v === "function" ? v(s.conns) : v })),
+    [],
+  );
   const seq = useRef(0);
   const reload = useCallback(() => {
     const id = ++seq.current; // a newer reload wins over an older retry chain
@@ -39,6 +57,6 @@ export function useConnections() {
     };
     attempt(2);
     bumpConn();
-  }, [bumpConn]);
+  }, [bumpConn, setConns]);
   return { conns, reload };
 }

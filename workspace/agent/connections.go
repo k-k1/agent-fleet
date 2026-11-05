@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
@@ -72,19 +73,54 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 // agentConnectionStatuses is every registered kind's GET /connections entry, keyed by kind.
 // A kind without agents.ConnectionStatuser, or whose status is nil, has no entry.
 func agentConnectionStatuses(in agents.StatusInputs) map[string]any {
-	out := map[string]any{}
-	for _, k := range kinds.All() {
+	return collectStatuses(kinds.All(), func(k string) (agents.ConnectionStatuser, bool) {
 		a, ok := agentreg.Lookup(k)
+		if !ok {
+			return nil, false
+		}
+		c, ok := a.(agents.ConnectionStatuser)
+		return c, ok
+	}, in)
+}
+
+// collectStatuses asks every kind at the same time, so the request costs the slowest kind
+// rather than the sum of the CLI-backed ones. Each kind writes its own slot; the map is
+// built after the join.
+func collectStatuses(ks []string, lookup func(string) (agents.ConnectionStatuser, bool), in agents.StatusInputs) map[string]any {
+	res := make([]any, len(ks))
+	var wg sync.WaitGroup
+	for i, k := range ks {
+		c, ok := lookup(k)
 		if !ok {
 			continue
 		}
-		if c, ok := a.(agents.ConnectionStatuser); ok {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if st := c.ConnectionStatus(in); st != nil {
-				out[k] = st
+				res[i] = st
 			}
+		}()
+	}
+	wg.Wait()
+	out := map[string]any{}
+	for i, k := range ks {
+		if res[i] != nil {
+			out[k] = res[i]
 		}
 	}
 	return out
+}
+
+// warmAgentStatuses starts every kind's slow status probe in the background at Agent start.
+func warmAgentStatuses() {
+	for _, k := range kinds.All() {
+		if a, ok := agentreg.Lookup(k); ok {
+			if w, ok := a.(agents.StatusWarmer); ok {
+				w.WarmStatus()
+			}
+		}
+	}
 }
 
 // discordStatus reports the chat-bridge Discord connection (docs/log/37 P1) — never
