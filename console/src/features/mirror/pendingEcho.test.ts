@@ -8,6 +8,12 @@ describe("echoLanded", () => {
     expect(echoLanded({ text: "確認して", sinceIdx: 10 }, [{ role: "user", text: "確認して", idx: 11 }], notNoise)).toBe(true);
   });
 
+  it("a pasted send resolves against claude's copy with the invisible characters removed", () => {
+    const sent = "AAC と同じ規則にして\r\n\u00a0\r\n今の状態\t求められる\u200b確認";
+    const logged = "AAC と同じ規則にして\n \n今の状態    求められる確認";
+    expect(echoLanded({ text: sent, sinceIdx: 10 }, [{ role: "user", text: logged, idx: 11 }], notNoise)).toBe(true);
+  });
+
   it("an image studio send resolves against its turn, which still carries the studio signal line", () => {
     const signal = "[studio v4 · draft changed → get_image_studio]";
     const turn = { role: "user", text: `1-b, 2 発光する感じ\n\n${signal}`, idx: 11 };
