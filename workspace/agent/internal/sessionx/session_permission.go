@@ -104,13 +104,15 @@ func surfacePermissionPrompt(pending map[string]any, sid, name, before string) {
 // claude's turn ("Interrupted · What should Claude do instead?") and no hook fires after it,
 // so the payload and the "permission" state would otherwise outlive the dialog: the card stays
 // up with live buttons, and the composer keeps refusing text. Measured on claude 2.1.318.
-// Only the answered prompt is retired: a newer payload (another call's prompt) is left alone.
-func settleDeniedPermission(sid, token string) {
-	if permissionToken(sid) != token {
+//
+// wasRev is the status record read BEFORE the key was sent and token the prompt answered;
+// any hook write since (a newer prompt, working, a turn end) wins and nothing is retired.
+func settleDeniedPermission(sid, wasRev, token string) {
+	at, ok := status.PendingPermissionAt(sid)
+	if !ok || strconv.FormatInt(at.UnixNano(), 36) != token {
 		return
 	}
-	status.RemovePendingPermission(sid)
-	status.Persist(sid, "idle")
+	status.RetirePermissionIf(sid, wasRev, at)
 }
 
 // permissionRespondResult is /permission-respond's success body.
@@ -212,7 +214,7 @@ func HandleSessionPermissionRespond(w http.ResponseWriter, r *http.Request) {
 	}
 	permDecided.Store(name, token)
 	if req.Choice == claude.PermDeny {
-		settleDeniedPermission(sid, token)
+		settleDeniedPermission(sid, st.Rev, token)
 	} else {
 		markSessionWorking(name)
 	}

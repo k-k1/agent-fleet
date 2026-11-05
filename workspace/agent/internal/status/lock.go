@@ -110,3 +110,36 @@ func PersistIf(sid, state string, wasRev string, existed bool) bool {
 	}
 	return true
 }
+
+// RetirePermissionIf retires a permission prompt the Agent itself answered with a deny: it
+// removes the pending-permission payload and records idle, but only while the record is still
+// the write wasRev and the payload is still the one captured at wasAt. claude fires no hook
+// after a denied tool interrupts the turn, so nothing else would retire them.
+//
+// Both checks and both writes happen under the per-sid lock. The hook persists the state
+// (under the lock, minting a new Rev) before it writes a new prompt's payload, so a newer
+// prompt, a working or a turn-end write either fails the Rev check or waits until the stale
+// payload is gone; it is never the one removed or overwritten. Like PersistIf it gives way on
+// a lock it could not take or held too long.
+func RetirePermissionIf(sid, wasRev string, wasAt time.Time) bool {
+	unlock, ok := lockSid(sid)
+	defer unlock()
+	if !ok {
+		return false
+	}
+	acquired := time.Now()
+	st, has := Read(sid)
+	if !has || st.Rev != wasRev || st.State != "permission" {
+		return false
+	}
+	if at, ok := PendingPermissionAt(sid); !ok || !at.Equal(wasAt) {
+		return false
+	}
+	afterCheck()
+	if time.Since(acquired) > lockWait/2 {
+		return false
+	}
+	RemovePendingPermission(sid)
+	persistLocked(sid, SessionStatus{State: "idle"})
+	return true
+}

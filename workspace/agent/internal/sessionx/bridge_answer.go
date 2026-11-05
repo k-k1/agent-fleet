@@ -238,19 +238,30 @@ func buildInteractionAnswers(picks map[int]int, n int) []agents.InteractionAnswe
 // on the live state (permission / plan) so a stale button click — after the prompt
 // was already handled — can't inject stray navigation keys into a live composer.
 func answerClaudeDecision(meta session.Meta, wantState string, keys []string, feedback string, en bool) (string, error) {
+	out, _, sent, err := sendClaudeDecision(meta, wantState, keys, feedback, en)
+	if sent {
+		markSessionWorking(meta.Name)
+	}
+	return out, err
+}
+
+// sendClaudeDecision is answerClaudeDecision without the optimistic working mark. sent reports
+// whether the keys went out (a nil error with sent=false is a prompt already gone, which must
+// not be recorded as answered), and rev is the status record it checked before sending.
+func sendClaudeDecision(meta session.Meta, wantState string, keys []string, feedback string, en bool) (out, rev string, sent bool, err error) {
 	sid := session.UUID(meta.Dir, meta.Name)
-	if st, _ := status.Read(sid); st.State != wantState {
-		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), nil
+	st, _ := status.Read(sid)
+	if st.State != wantState {
+		return Fb(en, "この確認はもう完了しています", "This prompt is no longer active"), "", false, nil
 	}
 	pane, err := claudePane(meta.Name)
 	if err != nil {
-		return "", err
+		return "", "", false, err
 	}
 	if err := sendNamedKeys(pane, keys); err != nil {
-		return "", err
+		return "", "", false, err
 	}
-	markSessionWorking(meta.Name)
-	return feedback, nil
+	return feedback, st.Rev, true, nil
 }
 
 // buildClaudeSingleSelectKeys reproduces console questionKeys.ts buildClaudeSeq for
@@ -292,11 +303,13 @@ func answerClaudePermission(meta session.Meta, choice string, en bool) (string, 
 	if code != "" {
 		return Fb(en, "選択肢を読み取れませんでした。Console で回答してください", "Could not read the prompt's options — answer it from the Console"), nil
 	}
-	out, err := answerClaudeDecision(meta, "permission", keys, decisionFeedback(choice, en), en)
-	if err == nil {
+	out, rev, sent, err := sendClaudeDecision(meta, "permission", keys, decisionFeedback(choice, en), en)
+	if sent {
 		permDecided.Store(meta.Name, token)
 		if choice == claude.PermDeny {
-			settleDeniedPermission(sid, token)
+			settleDeniedPermission(sid, rev, token)
+		} else {
+			markSessionWorking(meta.Name)
 		}
 	}
 	return out, err
