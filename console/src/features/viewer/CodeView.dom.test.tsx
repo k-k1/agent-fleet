@@ -124,6 +124,45 @@ describe("CodeView の読み取り専用ガード", () => {
     expect(document.activeElement).toBe(other);
   });
 
+  it("構造が壊れて作り直したときも、複数行の選択を向きごと戻す", async () => {
+    const grid = await renderLong();
+    grid.focus();
+    const from = cell(6).firstChild as Text;
+    const to = cell(4).firstChild as Text;
+    document.getSelection()!.setBaseAndExtent(from, 3, to, 5); // backwards, lines 6 -> 4
+    cell(5).dispatchEvent(new InputEvent("beforeinput", { inputType: "insertCompositionText", data: "亜", bubbles: true, cancelable: false }));
+    cell(5).closest(".cl-row")!.remove(); // the composition replaced rows 4-6 with one run of text
+    grid.insertBefore(document.createTextNode("亜"), grid.childNodes[3]);
+    await act(async () => {
+      grid.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "亜" }));
+    });
+    const fresh = host.querySelector(".codegrid") as HTMLElement;
+    expect(fresh).not.toBe(grid);
+    expect(document.activeElement).toBe(fresh);
+    const sel = document.getSelection()!;
+    expect(sel.anchorNode).toBe(cell(6).firstChild);
+    expect(sel.focusNode).toBe(cell(4).firstChild);
+    expect([sel.anchorOffset, sel.focusOffset]).toEqual([3, 5]);
+  });
+
+  it("引用符を含む highlight.js の出力でも、変わっていない行は作り直さない", async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const quoted = '<span class="hljs-string">&quot;a&quot;</span> + <span class="hljs-string">&#x27;b&#x27;</span>';
+    await act(async () => {
+      root.render(<CodeView html={`${quoted}\n${quoted}`} lines={2} lineNumbers />);
+    });
+    const grid = host.querySelector(".codegrid") as HTMLElement;
+    const untouched = cell(2).firstChild;
+    (cell(1).firstChild!.firstChild as Text).insertData(0, "亜");
+    await act(async () => {
+      grid.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "亜" }));
+    });
+    expect(cell(1).textContent).toBe(`"a" + 'b'`);
+    expect(cell(2).firstChild).toBe(untouched);
+  });
+
   it("変換中の input では戻さない（確定まで IME を壊さない）", async () => {
     const grid = await renderLong();
     await compose(grid, 5, "あ");

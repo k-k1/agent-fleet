@@ -54,12 +54,33 @@ export function applyGridSelection(grid: HTMLElement, s: GridSelection): void {
 }
 
 /**
- * Puts every row's code cell back to the HTML React rendered. Returns false when the edit
- * broke the row structure itself (a node outside the cells), which only a remount can undo.
+ * Each line's HTML as the browser serializes it back. highlight.js escapes quotes (&quot;,
+ * &#x27;) but innerHTML returns them bare, so comparing against the raw string would call every
+ * quoted line edited and rebuild it on each restore. Filled lazily; hand in a fresh array
+ * whenever the lines change.
+ */
+export type SerializedLines = (string | undefined)[];
+
+let scratch: HTMLTemplateElement | null = null;
+function serialized(cache: SerializedLines, lineHtmls: readonly string[], i: number): string {
+  let v = cache[i];
+  if (v === undefined) {
+    scratch ??= document.createElement("template");
+    scratch.innerHTML = lineHtmls[i] ?? "";
+    v = cache[i] = scratch.innerHTML;
+  }
+  return v;
+}
+
+/**
+ * Puts every row's code cell back to the HTML React rendered, touching only the cells that
+ * differ. Returns false when the edit broke the row structure itself (a node outside the
+ * cells), which only a remount can undo.
  */
 export function restoreGridRows(
   grid: HTMLElement,
   lineHtmls: readonly string[],
+  cache: SerializedLines,
   rowCount: number,
   cellsPerRow: number,
 ): boolean {
@@ -70,7 +91,7 @@ export function restoreGridRows(
     if (!(row instanceof HTMLElement) || !row.classList.contains("cl-row") || row.childNodes.length !== cellsPerRow) return false;
     const code = row.lastChild;
     if (!(code instanceof HTMLElement) || !code.classList.contains("cl-code")) return false;
-    const want = lineHtmls[i] ?? "";
+    const want = serialized(cache, lineHtmls, i);
     if (code.innerHTML !== want) code.innerHTML = want;
   }
   return true;

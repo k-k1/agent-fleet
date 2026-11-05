@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
 import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
-import { applyGridSelection, captureGridSelection, restoreGridRows, type GridSelection } from "./parts/gridRestore.ts";
+import { applyGridSelection, captureGridSelection, restoreGridRows, type GridSelection, type SerializedLines } from "./parts/gridRestore.ts";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
 // VSCode-style minimap on the right edge: a scaled-down PLAIN-TEXT mirror of the file
@@ -303,9 +303,11 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   const [restoreEpoch, setRestoreEpoch] = useState(0);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const editStartRef = useRef<GridSelection | null>(null);
-  const refocusRef = useRef(false);
-  const restoreInputs = useRef({ lineHtmls, n, cellsPerRow: showGutter ? 2 : 1 });
-  restoreInputs.current = { lineHtmls, n, cellsPerRow: showGutter ? 2 : 1 };
+  // Set when a remount is the fallback: whether to refocus, and the selection to put back.
+  const remountRef = useRef<{ start: GridSelection | null } | null>(null);
+  const serializedLines = useMemo<SerializedLines>(() => [], [lineHtmls]);
+  const restoreInputs = useRef({ lineHtmls, serializedLines, n, cellsPerRow: showGutter ? 2 : 1 });
+  restoreInputs.current = { lineHtmls, serializedLines, n, cellsPerRow: showGutter ? 2 : 1 };
   const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
   const restoreGrid = useCallback(() => {
     const grid = gridRef.current;
@@ -313,9 +315,9 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
     const start = editStartRef.current;
     editStartRef.current = null;
     const hadFocus = grid.contains(document.activeElement);
-    const { lineHtmls, n, cellsPerRow } = restoreInputs.current;
-    if (!restoreGridRows(grid, lineHtmls, n, cellsPerRow)) {
-      refocusRef.current = hadFocus;
+    const { lineHtmls, serializedLines, n, cellsPerRow } = restoreInputs.current;
+    if (!restoreGridRows(grid, lineHtmls, serializedLines, n, cellsPerRow)) {
+      remountRef.current = hadFocus ? { start } : null;
       setRestoreEpoch((k) => k + 1);
       return;
     }
@@ -339,11 +341,15 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
       if (gridRef.current === el) gridRef.current = null;
     };
   }, []);
-  // A remount replaces the element that had focus; give it back only if it was there.
+  // A remount replaces the element that had focus; give focus and the selection back only if
+  // the grid had focus when the restore ran (remountRef is null otherwise).
   useLayoutEffect(() => {
-    if (!refocusRef.current) return;
-    refocusRef.current = false;
-    gridRef.current?.focus({ preventScroll: true });
+    const pending = remountRef.current;
+    remountRef.current = null;
+    const grid = gridRef.current;
+    if (!pending || !grid) return;
+    grid.focus({ preventScroll: true });
+    if (pending.start) applyGridSelection(grid, pending.start);
   }, [restoreEpoch]);
 
   // Merges the inner ref (used for the minimap maths) and the scroll memory passed from outside
