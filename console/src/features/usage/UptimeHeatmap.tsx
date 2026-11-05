@@ -32,6 +32,7 @@ import {
   widenForTimezone,
 } from "./uptime.ts";
 import type { UptimeCell, UptimeMetric, UptimeResponse } from "./uptime.ts";
+import { RangePresets } from "../../ui/RangePresets.tsx";
 import "./uptime.css";
 
 const METRICS: [UptimeMetric, MsgKey][] = [
@@ -120,7 +121,7 @@ function useUptime(endpoint: string, tenant?: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint, tenant]);
 
-  return { range, setRange, applied, data, err, loading, apply: () => load(range) };
+  return { range, setRange, applied, data, err, loading, apply: (win?: { from: string; to: string }) => load(win ?? range) };
 }
 
 /** Hover / focus readout. Value first, label second: the reader already knows where they are and
@@ -462,13 +463,26 @@ function UptimeRangeBar({
 }: {
   range: { from: string; to: string };
   setRange: (v: { from: string; to: string }) => void;
-  onApply: () => void;
+  onApply: (win?: { from: string; to: string }) => void;
   loading: boolean;
   children?: ReactNode;
 }) {
   const tr = useT();
   return (
     <div className="usage-toolbar">
+      {/* The heatmap draws the viewer's local days, so here a month is a local month. Hourly
+          buckets are kept 92 days; last month starts at most ~62 days back, so every preset
+          is inside what the server still has. */}
+      <RangePresets
+        from={range.from}
+        to={range.to}
+        zone="local"
+        disabled={loading}
+        onPick={(r) => {
+          setRange(r);
+          onApply(r);
+        }}
+      />
       <label>
         {tr("admin.from")}
         <input
@@ -486,7 +500,7 @@ function UptimeRangeBar({
         />
       </label>
       {children}
-      <button className="primary" onClick={onApply} disabled={loading}>
+      <button className="primary" onClick={() => onApply()} disabled={loading}>
         {loading ? "…" : tr("admin.apply")}
       </button>
     </div>

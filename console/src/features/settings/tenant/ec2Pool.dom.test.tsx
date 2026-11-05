@@ -92,7 +92,24 @@ describe("the EC2 slot pool surface", () => {
     });
   });
 
-  it("counts held, running and hibernating slots and says eviction happens once the cap is reached", async () => {
+  // jsdom has no layout; these pin the markup the CSS keys on (#3384): a truncating workspace name
+// carrying its full value in title, AZ / volume size on their own line, and a pinned action column.
+it("keeps the pool rows narrow: truncating names with a title, stacked AZ, pinned actions", async () => {
+  await mount();
+  const [slots, homes] = Array.from(host!.querySelectorAll("table.pool-table"));
+  const ws = Array.from(slots.querySelectorAll("tbody .pool-ws")).map((e) => e.getAttribute("title"));
+  expect(ws).toEqual(["af-ws-acme-alice", "af-ws-acme-bob"]);
+  expect(slots.querySelector("tbody .pool-ws .pool-ws-prefix")?.textContent).toBe("af-ws-");
+  expect(slots.querySelector("tbody .pool-az")?.textContent).toBe("ap-northeast-1a");
+  // The action cell is the pinned one in every row, and the header above it too.
+  const rows = Array.from(slots.querySelectorAll("tbody tr"));
+  rows.forEach((r) => expect(r.lastElementChild?.classList.contains("pool-actions")).toBe(true));
+  expect(slots.querySelector("thead th:last-child")?.classList.contains("pool-actions")).toBe(true);
+  expect(Array.from(homes.querySelectorAll("tbody .pool-ws")).map((e) => e.getAttribute("title"))).toContain("af-ws-acme-carol");
+  expect(homes.querySelector("tbody .pool-az")?.textContent).toBe("50 GiB");
+});
+
+it("counts held, running and hibernating slots and says eviction happens once the cap is reached", async () => {
     await mount();
     expect(text()).toContain("i-hot");
     expect(text()).toContain("i-zzz");

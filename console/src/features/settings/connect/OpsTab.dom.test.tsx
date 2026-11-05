@@ -17,6 +17,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   }),
   apiJSON: vi.fn(async () => ({})),
   raw: vi.fn(async () => ({ ok: true, status: 204 })),
+  getTenant: () => "",
+  setTenant: () => {},
 }));
 vi.mock("../../../core/store/workspace.ts", () => ({
   useWorkspaceStore: (sel: (s: unknown) => unknown) => sel({ state: "running", start: async () => {} }),

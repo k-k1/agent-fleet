@@ -127,3 +127,6 @@ func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 func (agentImpl) StopContinued(_ session.Meta, sid string, marker time.Time) bool {
 	return StopContinued(sid, marker)
 }
+
+// WarmStatus is agents.StatusWarmer: the first probe runs off the caller's path.
+func (agentImpl) WarmStatus() { go Status() }

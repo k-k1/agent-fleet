@@ -206,6 +206,52 @@
   font-size: 13px;
 }
 
+/* Per-member bar lists. Each row is a subgrid of the list, so the name, tenant, bar and amount
+   columns are sized once for all rows and every bar starts at the same x. Flex rows could not
+   do this: each row sized its own name cell, so a bar began wherever that row's name ended.
+   .ur-table is opt-in because the two-column .cc-svc breakdowns share .usage-rows and keep
+   their own flex layout. Name and tenant tracks are minmax(0, max-content): they follow the
+   widest label (capped by the cell's max-width) but shrink, sharing the shortfall, when the
+   pane is narrow, so the 40px bar and the amount always fit and nothing scrolls sideways. */
+.usage-rows.ur-table {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(40px, 1fr) max-content;
+  column-gap: 10px;
+  row-gap: 7px;
+  align-items: center;
+}
+.usage-rows.ur-table.ur-with-tenant {
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content) minmax(40px, 1fr) max-content;
+}
+.ur-table > .usage-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  gap: 0 10px;
+}
+.ur-table .ur-key,
+.ur-table .ur-tenant {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ur-table .ur-key {
+  max-width: 220px;
+}
+.ur-table .ur-tenant {
+  max-width: 120px;
+}
+.ur-table .ur-bar {
+  min-width: 0;
+}
+.ur-table .ur-hrs {
+  min-width: 62px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* all-sessions overview */
 .as-search {
   flex: 1 1 200px;
@@ -832,15 +878,72 @@
 
 /* The pool tables scroll inside their own box. Without it the table's min-content width pushes
    past the panel and the whole settings pane scrolls sideways at phone width, clipping the
-   panel's text and tiles (measured at 400px: table wider than the dialog). Cells never wrap,
-   so a workspace name is not split one token per line; a table wider than the box scrolls. */
+   panel's text and tiles (measured at 400px: table wider than the dialog). A table wider than
+   the box scrolls inside it. */
 .pool-table-scroll {
   max-width: 100%;
   overflow-x: auto;
 }
 
+/* A long workspace name wraps inside a fixed width instead of widening the row, and is never
+   cut: two members of one tenant must not render alike. The constant `af-ws-` prefix is hidden. */
+.pool-ws {
+  display: inline-block;
+  width: 16ch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pool-ws-prefix {
+  display: none;
+}
+
+/* AZ and volume size sit under their ID instead of widening the row. */
+.pool-az {
+  display: block;
+}
+
+/* Cells wrap (notes and badges drop to a second line) rather than widen the row; the workspace
+   name has a fixed width and the IDs have no break points. */
+.admin-table.pool-table th,
+.admin-table.pool-table td {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
 .pool-table td {
+  white-space: normal;
+}
+
+/* IDs, type/AZ and the action buttons never break mid-token. */
+.pool-table td.mono,
+.pool-table td.pool-actions {
   white-space: nowrap;
+}
+
+/* Template badges sit under the version, one per line. */
+.pool-table td .pool-badge {
+  display: flex;
+  width: fit-content;
+  margin: 2px 0 0;
+}
+
+/* Stacked buttons keep the pinned column narrow. */
+.pool-table .pool-actions button {
+  display: block;
+  width: 100%;
+  margin: 2px 0;
+}
+
+/* Row actions stay reachable while the table scrolls sideways: pinned to the right edge. */
+.pool-table .pool-actions {
+  position: sticky;
+  right: 0;
+  /* Opaque and equal to .admin-panel's surface, or scrolled cells show through. */
+  background: var(--panel2);
+  /* A box-shadow, not a border: the table collapses borders, and a collapsed border does not
+     travel with a sticky cell. */
+  box-shadow: inset 1px 0 0 var(--border), -6px 0 6px -6px rgba(0, 0, 0, 0.35);
 }
 
 .admin-table td {

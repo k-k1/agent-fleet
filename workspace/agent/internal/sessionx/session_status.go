@@ -291,6 +291,7 @@ func RecordTurnOutcome(sid string, endedAt time.Time, reason string, run agents.
 func RecordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
 	reason := ""
+	permTok := ""
 	switch {
 	// A turn that ENDED: the marker said "working", or it is GONE. The pane-based idle
 	// heal (WireLive / liveStateOf) does status.Remove(sid) whenever the TUI *looks* like
@@ -332,6 +333,7 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 			return
 		}
 		kind = "permission-request"
+		permTok = permissionToken(sid)
 	}
 	if kind == "" {
 		return
@@ -400,6 +402,10 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 			if q, ok := status.ReadPendingQuestion(sid); ok && len(q) > 0 {
 				ev.Payload["questions"] = q
 			}
+		}
+		// The permission token binds the chat buttons to this prompt (#3358).
+		if kind == "permission-request" && permTok != "" {
+			ev.Payload["permissionToken"] = permTok
 		}
 		// answer-ready is a terminal event that fires exactly once per turn-end.
 		// notice.Put fires for every call, so a spurious second idle hook (heal wipe

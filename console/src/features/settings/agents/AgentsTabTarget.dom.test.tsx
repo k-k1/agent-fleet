@@ -20,6 +20,7 @@ vi.mock("../../../core/store/workspace.ts", () => ({
 
 const { AgentsTab } = await import("./AgentsTab.tsx");
 const { useSettingsUI } = await import("../store.ts");
+const { resetConnectionsCache } = await import("../parts/useConnections.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -53,6 +54,7 @@ afterEach(() => {
   host = null;
   api.mockReset();
   useSettingsUI.setState({ settingsTarget: null });
+  resetConnectionsCache();
 });
 
 describe("Settings > Agents target", () => {
@@ -88,6 +90,26 @@ describe("Settings > Agents target", () => {
     await flushed();
     expect(scrolled.map((s) => s.id)).toEqual(["claude"]);
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
+  });
+
+  it("draws the cards at once from the last snapshot while the refetch is still out", async () => {
+    wsState = "running";
+    const releases: Array<(v: unknown) => void> = [];
+    api.mockImplementation((path: string) =>
+      path === "api/connections" ? new Promise((r) => releases.push(r)) : Promise.resolve({}),
+    );
+    await mount();
+    await act(async () => releases.shift()!({}));
+    await flushed();
+    expect(card("claude")).not.toBeNull();
+    // Reopen: the second mount must not wait for its own GET /connections.
+    act(() => root?.unmount());
+    host?.remove();
+    await mount();
+    await flushed();
+    expect(releases.length).toBe(1); // the refetch is out and unanswered
+    expect(card("claude")).not.toBeNull();
+    expect(host!.textContent).not.toContain("Loading");
   });
 
   it("falls back quietly to the top of the section when no such card exists", async () => {

@@ -101,6 +101,11 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	t.Cleanup(func() { waitWorkItemFetchIdle(t, m.ID) })
 
 	mgr := &manager{store: st}
+	// Registered after waitWorkItemFetchIdle, so it runs first: a hub tick builds the snapshot
+	// (and refreshAsync starts the work-item fetch), and leave only cancels that build. A build
+	// still in flight when the test returns writes to the database and temp dir being removed.
+	// Subscribers are cancelled by their own later-registered cleanups, which run before this.
+	t.Cleanup(mgr.eventsHub.Wait)
 	// These tests tick every 5 ms and count Agent polls (waitPolls); the production reuse window
 	// would swallow all but the first. Sharing across subscribers is covered in agent_sessions_share_test.go.
 	mgr.sessionsShare.ttl = time.Nanosecond

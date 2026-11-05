@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, errText } from "../../core/api/client.ts";
+import { RangePresets } from "../../ui/RangePresets.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtNum } from "../../lib/intl.ts";
@@ -202,11 +203,11 @@ function useCostOne(endpoint: string) {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (win?: { from: string; to: string }) => {
     setLoading(true);
     setErr("");
     try {
-      const d = await api(endpoint + qs());
+      const d = await api(endpoint + qs(win));
       if (d?.error) {
         setErr(errText(d.error));
         setData(null);
@@ -245,13 +246,26 @@ function CostRangeBar({
   setFrom: (v: string) => void;
   to: string;
   setTo: (v: string) => void;
-  onApply: () => void;
+  /** A preset passes its own window: the from/to state has not re-rendered yet when it applies. */
+  onApply: (win?: { from: string; to: string }) => void;
   loading: boolean;
   children?: ReactNode;
 }) {
   const tr = useT();
   return (
     <div className="usage-toolbar">
+      {/* Cost Explorer days, like the usage ledger's, are UTC days. */}
+      <RangePresets
+        from={from}
+        to={to}
+        zone="utc"
+        disabled={loading}
+        onPick={(r) => {
+          setFrom(r.from);
+          setTo(r.to);
+          onApply(r);
+        }}
+      />
       <label>
         {tr("admin.from")}
         <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -261,7 +275,7 @@ function CostRangeBar({
         <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
       </label>
       {children}
-      <button className="primary" onClick={onApply} disabled={loading}>
+      <button className="primary" onClick={() => onApply()} disabled={loading}>
         {loading ? "…" : tr("admin.apply")}
       </button>
     </div>
@@ -411,11 +425,11 @@ export function CloudCostAdminView({
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (win?: { from: string; to: string }) => {
     setLoading(true);
     setErr("");
     try {
-      const d = await api("api/admin/cloud-cost" + qs({ tenant }));
+      const d = await api("api/admin/cloud-cost" + qs({ tenant, ...win }));
       if (d?.error) {
         setErr(errText(d.error));
         setData(null);
@@ -477,7 +491,7 @@ export function CloudCostAdminView({
         ) : members.length === 0 ? (
           <p className="muted">{tr("cost.no_records")}</p>
         ) : (
-          <div className="usage-rows">
+          <div className={"usage-rows ur-table" + (isSuper && !tenant ? " ur-with-tenant" : "")}>
             {members.map((m) => (
               <div key={m.membership_id} className="usage-row">
                 <span className="ur-key mono" title={m.email || ""}>
