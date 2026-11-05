@@ -436,9 +436,15 @@ func (r *routeSwitchRun) cancelBooking() error {
 		return &routeSwitchError{Status: http.StatusInternalServerError, Code: routes.CodeSwitchBooking,
 			Message: "the usage-limit resume could not be recorded as cancelled, so nothing was changed: " + err.Error()}
 	}
+	retainRateLimitCancel(r.rec.Booking, routeSwitchCancelKeep)
 	finishRateLimitCancel(r.rec.Booking)
 	return nil
 }
+
+// routeSwitchCancelKeep is how long a cancelled booking stays refusable after its episode let
+// it go: a rolled-back switch rebooks under a new id, and a fire of the old one may still be
+// waiting on the gate. Far longer than any in-flight request.
+const routeSwitchCancelKeep = 24 * time.Hour
 
 // stopOld stops the old runtime and fixes the boundary instant.
 func (r *routeSwitchRun) stopOld() error {

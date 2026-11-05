@@ -370,9 +370,19 @@ func (agentImpl) SwitchTarget(m session.Meta) (agents.RouteSelection, *agents.Ro
 // the turn's own timestamp (Meta.RouteAt), never under the one it holds now; a turn whose
 // timestamp cannot be read stays unresolved.
 func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
-	m = withCurrentRoute(m)
+	out, _ := stampRouteChecked(m, turns)
+	return out
+}
+
+// stampRouteChecked is stampRoute that says when the route could not be resolved (ok false, and
+// no turns): the attribution is then unknown, not the old one.
+func stampRouteChecked(m session.Meta, turns []transcript.Turn) ([]transcript.Turn, bool) {
+	m, ok := withCurrentRoute(m)
+	if !ok {
+		return nil, false
+	}
 	if m.Route == nil && len(m.RouteSwitches) == 0 {
-		return turns
+		return turns, true
 	}
 	// A copy: the turn list may be a memoized one shared with other readers.
 	turns = append([]transcript.Turn(nil), turns...)
@@ -390,7 +400,7 @@ func stampRoute(m session.Meta, turns []transcript.Turn) []transcript.Turn {
 			turns[i].Billing = usagex.BillingMetered
 		}
 	}
-	return turns
+	return turns, true
 }
 
 // UsesAPIKey reports that the session runs on an explicit anthropic-api selection, so its
@@ -402,9 +412,20 @@ func UsesAPIKey(m session.Meta) bool { return m.Route != nil && m.Route.Route ==
 // file API turns under the subscription (and the source stamp would then keep the row). Called
 // AFTER the transcript is read: a meta newer than the lines is safe because each turn is placed
 // by its own timestamp, an older one is not.
-func withCurrentRoute(m session.Meta) session.Meta {
-	if cur, ok := session.ReadMeta(m.Name); ok {
-		m.Route, m.RouteSwitches = cur.Route, cur.RouteSwitches
+//
+// ok is false when the meta exists but cannot be read (a writer truncates it before writing):
+// a failed read proves nothing about the selection, so the caller must not attribute turns by
+// the stale m. A meta that does not exist (the session is gone) leaves m as it is.
+func withCurrentRoute(m session.Meta) (session.Meta, bool) {
+	for try := 0; try < 10; try++ {
+		if cur, ok := session.ReadMeta(m.Name); ok {
+			m.Route, m.RouteSwitches = cur.Route, cur.RouteSwitches
+			return m, true
+		}
+		if _, err := os.Stat(session.MetaPath(m.Name)); os.IsNotExist(err) {
+			return m, true
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return m
+	return m, false
 }

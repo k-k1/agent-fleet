@@ -502,3 +502,6 @@ table from becoming a menu of models that fail on the first message, which is wh
   before boot recovery) keeps the session's input closed (`lifegate.HeldError`) until recovery settles it; the empty-selection
   switch above was withdrawn; the claude usage source lays the on-disk route and boundaries over a listed meta after reading
   the transcript and includes them in its source stamp.
+  Review round 2 (#3367): a cancelled booking stays on record for 24 h after its episode let it go (a rolled-back switch rebooks
+  under a new id, and an in-flight fire of the old one is still refused); the usage source never attributes by a meta it cannot
+  read (retries, then declines the source/stamp instead of using the listed copy).

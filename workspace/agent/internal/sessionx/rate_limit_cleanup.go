@@ -33,6 +33,10 @@ type rateLimitScheduleCleanup struct {
 	LastErr string `json:"lastErr,omitempty"`
 	// Done: the CP confirmed; kept only while the session's episode still names the id.
 	Done bool `json:"done,omitempty"`
+	// KeepUntil (RFC3339): a confirmed id stays recorded until then even when the episode no
+	// longer names it, so a fire of that booking already in flight is still refused after a
+	// failed route switch rebooked the episode under a new id.
+	KeepUntil string `json:"keepUntil,omitempty"`
 }
 
 // rateLimitCleanups holds every pending cancellation in one file, keyed by schedule id. One file
@@ -122,7 +126,24 @@ func forgetIfEpisodeLetGo(all map[string]rateLimitScheduleCleanup, id string, c 
 	if st, ok := RateLimitStates.Read(c.Session); ok && st.ScheduleID == id {
 		return
 	}
+	if t, err := time.Parse(time.RFC3339, c.KeepUntil); err == nil && time.Now().Before(t) {
+		return
+	}
 	delete(all, id)
+}
+
+// retainRateLimitCancel keeps id's cancellation on record for d beyond the episode naming it.
+func retainRateLimitCancel(id string, d time.Duration) {
+	rateLimitCleanupMu.Lock()
+	defer rateLimitCleanupMu.Unlock()
+	all, _ := rateLimitCleanups.Read(rateLimitCleanupKey)
+	c, ok := all[id]
+	if !ok {
+		return
+	}
+	c.KeepUntil = time.Now().Add(d).Format(time.RFC3339)
+	all[id] = c
+	writeRateLimitCleanups(all)
 }
 
 func writeRateLimitCleanups(all map[string]rateLimitScheduleCleanup) {

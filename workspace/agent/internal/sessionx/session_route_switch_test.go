@@ -278,6 +278,27 @@ func TestRouteSwitchRollsBackWhenTheNewRouteWillNotStart(t *testing.T) {
 	}
 }
 
+// A fire of the booking the switch cancelled that was waiting on the gate while the switch failed
+// and rolled back is refused even after the cleanup sweep has run: the episode now names the
+// rebooked sch_new, and no switch history is left to say sch_old is dead.
+func TestRouteSwitchRollbackKeepsTheOldBookingRefusedThroughCleanup(t *testing.T) {
+	e := newSwitchEnv(t, subscriptionRoute)
+	e.launchErr = []error{errors.New("tmux: no server")}
+	if _, err := e.run(); e.code(err) != routes.CodeSwitchFailed {
+		t.Fatalf("err = %v", err)
+	}
+	if st, _ := RateLimitStates.Read(e.name); st.ScheduleID != "sch_new" {
+		t.Fatalf("episode = %+v", st)
+	}
+	retryRateLimitScheduleCleanups()
+	if !refuseCancelledResume(e.name, TurnSourceSchedule, rateLimitResumePromptFor("en"), "sch_old") {
+		t.Error("the cancelled booking was accepted after the rollback and a cleanup sweep")
+	}
+	if refuseCancelledResume(e.name, TurnSourceSchedule, rateLimitResumePromptFor("en"), "sch_new") {
+		t.Error("the current booking was refused")
+	}
+}
+
 func routes0(ms []session.Meta) []string {
 	var out []string
 	for _, m := range ms {

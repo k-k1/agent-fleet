@@ -40,7 +40,10 @@ func (agentImpl) UsageSource(m session.Meta) (agents.UsageSource, bool) {
 	}
 	// Attribution is part of what the rows are made from: a switch changes it without touching
 	// the transcript, and a stamp that ignored it would keep rows filed under the old route.
-	cur := withCurrentRoute(m)
+	cur, routeOK := withCurrentRoute(m)
+	if !routeOK {
+		return agents.UsageSource{}, false
+	}
 	if b, err := json.Marshal([]any{cur.Route, cur.RouteSwitches}); err == nil {
 		sb.Write(b)
 	}
@@ -53,7 +56,8 @@ func (agentImpl) UsageSource(m session.Meta) (agents.UsageSource, bool) {
 		Stamp: sb.String(),
 		Turns: func() ([]transcript.Turn, bool) {
 			lines, _, ok := readConversation(ordered)
-			return stampRoute(m, CollectUsageTurns(lines)), ok
+			turns, routed := stampRouteChecked(m, CollectUsageTurns(lines))
+			return turns, ok && routed
 		},
 	}, true
 }

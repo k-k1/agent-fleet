@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,13 +22,18 @@ import (
 // a route switch holds the session's gate the bytes wait, and they reach the process only after
 // it is released. Without the gate they went straight to the old process mid-switch.
 func TestHandlePTY_InputWaitsForTheLifecycleGate(t *testing.T) {
-	t.Setenv("AF_TMUX_SOCKET", "af-term-gate-"+strings.ReplaceAll(t.Name(), "/", "_"))
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	// A short socket name: the path of a Unix socket has a platform length limit that a name built
+	// from the test's own name overran under the test guard.
+	t.Setenv("AF_TMUX_SOCKET", "tg")
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
 	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
 	name := "tgate1"
 	out := filepath.Join(t.TempDir(), "typed")
 	if o, err := tmuxx.Cmd("new-session", "-d", "-s", session.TmuxName(name), "cat > "+out).CombinedOutput(); err != nil {
-		t.Skipf("no tmux: %v %s", err, o)
+		t.Fatalf("starting the tmux session: %v %s", err, o)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(handlePTY))
 	defer srv.Close()

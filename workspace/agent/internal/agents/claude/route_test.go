@@ -755,3 +755,49 @@ func TestUsageSourceUsesTheRouteOnDiskNow(t *testing.T) {
 		t.Error("the source stamp ignores the route, so a row filed before the switch would be kept")
 	}
 }
+
+// A meta that is momentarily unreadable (a writer truncates before it writes) is not proof the
+// selection in the collector's older copy still holds: the source declines to answer, and a
+// later read of the restored meta is attributed correctly.
+func TestUsageSourceDoesNotAttributeByAMetaItCannotRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	m := session.Meta{Name: "ust2", Dir: filepath.Join(home, "w"), Kind: session.KindClaude, Route: sel(RouteAPI, "ANTHROPIC_API_KEY@abc")}
+	session.WriteMeta(m)
+	line := fmt.Sprintf(`{"type":"assistant","timestamp":%q,"requestId":"r1","message":{"id":"m1","model":"claude-x","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":4}}}`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	dir := filepath.Join(ConfigDir(), "projects", "-proj")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, session.UUID(m.Dir, m.Name)+".jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, ok := agentImpl{}.UsageSource(m)
+	if !ok {
+		t.Fatal("no source")
+	}
+	stale := m
+	stale.Route = sel(RouteSubscription, "") // the copy the collector listed before the switch
+	if err := os.WriteFile(session.MetaPath(m.Name), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	turns, complete := src.Turns()
+	for _, tn := range turns {
+		if tn.Role == "assistant" && tn.Route == RouteSubscription {
+			t.Fatalf("a turn was filed under the stale subscription: %+v", tn)
+		}
+	}
+	if complete {
+		t.Error("an unresolved attribution was reported as a complete read")
+	}
+	if _, ok := (agentImpl{}).UsageSource(stale); ok {
+		t.Error("a stamp was issued without being able to read the route")
+	}
+	session.WriteMeta(m)
+	if _, ok := (agentImpl{}).UsageSource(stale); !ok {
+		t.Error("no source once the meta is readable again")
+	}
+}
