@@ -100,11 +100,17 @@ export function samePastedPrompt(a: string, b: string): boolean {
   return splitPastedImages(a).text.trim() === splitPastedImages(b).text.trim();
 }
 
+// withoutClaudeInvisible removes CLAUDE_INVISIBLE_RE from a prompt: the text claude submits,
+// logs and queues for it. Only for claude's copies; other CLIs keep those characters.
+export function withoutClaudeInvisible(s: string): string {
+  return s.replace(CLAUDE_INVISIBLE_RE, "");
+}
+
 // samePromptIgnoringInvisible is samePastedPrompt that also ignores CLAUDE_INVISIBLE_RE, for a
 // prompt claude logged. Other CLIs keep those characters, so for them it would call two different
 // prompts the same.
 export function samePromptIgnoringInvisible(a: string, b: string): boolean {
-  const key = (s: string) => splitPastedImages(s).text.replace(CLAUDE_INVISIBLE_RE, "").trim();
+  const key = (s: string) => withoutClaudeInvisible(splitPastedImages(s).text).trim();
   return key(a) === key(b);
 }
 
