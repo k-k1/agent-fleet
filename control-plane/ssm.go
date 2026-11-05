@@ -62,6 +62,11 @@ type ssmProfileDTO struct {
 	// predates the field) leaves the stored value alone instead of removing the gate
 	// (decision 8); it is emitted only when true.
 	ConfirmBeforeUse *bool `json:"confirmBeforeUse,omitempty"`
+	// ModelRoute marks the profile as one the AF route gateway may use for Bedrock model calls
+	// (ADR 0128 decision 11, option C2): the member states that the profile carries only
+	// bedrock:InvokeModel*. A pointer and emitted only when true, for the same reasons as
+	// ConfirmBeforeUse.
+	ModelRoute *bool `json:"modelRoute,omitempty"`
 	// SignIn names the shared sign-in the profile is in (ADR 0125), absent for a sign-in of
 	// its own. On a write: absent keeps the profile's sign-in, "" leaves it, a name joins that
 	// sign-in or creates it from startUrl and ssoRegion. A pointer for the same reason as
@@ -94,7 +99,7 @@ func profileToDTO(p store.SSMProfile) ssmProfileDTO {
 		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt,
 		Kind: ssmKindOf(p), SourceProfileID: p.SourceProfileID, RoleARN: p.RoleARN,
 		ExternalID: p.ExternalID, SessionName: p.SessionName, DurationSeconds: p.DurationSeconds,
-		ConfirmBeforeUse: confirmPtr(p.ConfirmUse), SignIn: signInPtr(p)}
+		ConfirmBeforeUse: confirmPtr(p.ConfirmUse), ModelRoute: confirmPtr(p.ModelRoute), SignIn: signInPtr(p)}
 }
 
 // signInPtr is SignIn as the wire carries it: present only for a profile in a shared sign-in.
@@ -320,6 +325,7 @@ func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ st
 		return
 	}
 	p.ConfirmUse = in.ConfirmBeforeUse != nil && *in.ConfirmBeforeUse
+	p.ModelRoute = in.ModelRoute != nil && *in.ModelRoute
 	p.ID = store.NewID()
 	p.CreatedAt = store.NowTS()
 	if err := a.store.CreateSSMProfile(r.Context(), p); err != nil {
@@ -362,6 +368,13 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ st
 	} else {
 		p.KeepConfirmUse = true
 	}
+	// The model-route mark is the same: absent keeps it, so a Console that predates the field
+	// cannot clear it, and an explicit false is the only way off.
+	if in.ModelRoute != nil {
+		p.ModelRoute = *in.ModelRoute
+	} else {
+		p.KeepModelRoute = true
+	}
 	if err := a.store.UpdateSSMProfile(r.Context(), p); err != nil {
 		profileWriteErr(w, err)
 		return
@@ -371,6 +384,7 @@ func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ st
 		p = saved
 	} else {
 		p.ConfirmUse = p.ConfirmUse || (p.KeepConfirmUse && cur.ConfirmUse)
+		p.ModelRoute = p.ModelRoute || (p.KeepModelRoute && cur.ModelRoute)
 	}
 	writeJSON(w, http.StatusOK, profileToDTO(p))
 }

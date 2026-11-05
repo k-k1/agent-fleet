@@ -67,6 +67,7 @@ var usageCatalogProviders = map[string][]string{
 var usageRouteProviders = map[string][]string{
 	usagex.RouteOpencodeZen: {"opencode"},
 	usagex.RouteOpencodeGo:  {"opencode-go"},
+	usagex.RouteBedrock:     {"amazon-bedrock"},
 }
 
 // usageCatalogFallback is the order of primary providers to consult when the kind does not

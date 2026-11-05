@@ -95,3 +95,12 @@ paths = [
   '''console/src/lib/gcloudConfigImport\.test\.ts''',
 ]
 regexes = ['''compute/region''']
+
+[[allowlists]]
+description = """The fake secret access key of the route gateway tests, in the commit that first \
+added them (#3349): a fixed value with no account behind it, used to prove no credential leaks \
+into an answer or a log. generic-api-key reads the `testSecret = "..."` assignment. Only that \
+value, in those test files, is excluded; later commits use an af-test-fixture- value."""
+condition = "AND"
+paths = ['''workspace/agent/internal/routegw/.*_test\.go''']
+regexes = ['''SECRETKEYsecretkeySECRETKEYsecretkey0000''']

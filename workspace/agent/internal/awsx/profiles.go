@@ -71,6 +71,10 @@ type Profile struct {
 	// ConfirmBeforeUse makes af-aws-exec ask the member in the Console before the profile's
 	// first use in a session, and keeps it out of ~/.aws/config (ADR 0126 decisions 4 to 6).
 	ConfirmBeforeUse bool `json:"confirmBeforeUse,omitempty"`
+	// ModelRoute is the member's mark that the AF route gateway may use this profile for Bedrock
+	// model calls, documented to carry only bedrock:InvokeModel* (ADR 0128 decision 11, option
+	// C2). It changes nothing about how the profile is exported or run by af-aws-exec.
+	ModelRoute bool `json:"modelRoute,omitempty"`
 	// SignIn and SignInID name the shared sign-in an SSO profile is in (ADR 0125): it logs in
 	// through [sso-session af-<SignIn>], which every member shares. Empty for a sign-in of its
 	// own, af-<Name>.
