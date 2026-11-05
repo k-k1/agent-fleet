@@ -64,6 +64,15 @@ var egressEntryRe = regexp.MustCompile(`^\.?[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 // normalizeEgressEntry validates a proposed entry and returns it in the policy's own
 // normal form (lowercase, "*.x" as ".x", no trailing dot).
 func normalizeEgressEntry(raw string) (string, *apiError) {
+	if egressallow.IsTCPEntry(raw) {
+		// A TCP passthrough (ADR 0122, addendum 2026-11-05) opens non-HTTP access to one
+		// host, so it is validated by its own grammar and stored in its canonical spelling.
+		t, err := egressallow.ParseTCPEntry(raw)
+		if err != nil {
+			return "", &apiError{http.StatusBadRequest, codeEgressEntryInvalid, err.Error() + ": " + raw}
+		}
+		return t.String(), nil
+	}
 	e := strings.ToLower(strings.TrimSpace(raw))
 	e = strings.TrimPrefix(e, "*") // "*.x" -> ".x", the form newEgressPolicy stores
 	e = strings.TrimSuffix(e, ".") // a trailing FQDN dot never appears in an entry
@@ -119,6 +128,8 @@ type egressHostVerdict struct {
 // rather than warn about a restriction that does not exist in this deployment.
 func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ store.Identity, _ store.MembershipView) {
 	entries, enforce := a.effectivePolicy(r.Context())
+	// The check answers for HTTP(S) destinations; a tcp: entry is no host rule.
+	entries, _ = egressallow.SplitTCP(entries)
 	pol := newEgressPolicy(entries)
 	// Pending requests are matched with the same policy machinery, so a proposed
 	// ".example.com" correctly covers "mcp.example.com".

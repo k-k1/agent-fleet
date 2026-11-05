@@ -1,16 +1,22 @@
 // Package egressagent is the small agent on the egress gateway (ADR 0122, decision 4). It
-// connects Squid to the control plane and does two things:
+// connects Squid to the control plane and does three things:
 //
 //   - Policy. It polls GET /internal/egress/policy and writes what Squid reads: the allow
 //     file (one dstdomain entry per line) and the mode include (log-only or enforce). It
 //     reloads Squid when a file's bytes changed. When the CP is unreachable the files
 //     on disk stay as they are, so Squid keeps the last policy that worked. It also reloads
 //     once at start: a previous run may have written the files and died before its reload.
+//
 //   - Log. It reads Squid's access log from a stored offset and POSTs each line to
 //     /internal/egress as one event. The event id is the line's position (file identity
 //     and byte offset), so a resend is stored once by the CP, and the offset is committed
 //     only after a 2xx. Nothing is held only in memory: a crash re-reads from the last
 //     committed offset.
+//
+//   - TCP passthrough (ADR 0122, addendum 2026-11-05). The policy's `tcp` entries are resolved
+//     every 30 s and written to one file (tcptable.go) that `control-plane egress-relay
+//     --mode tcp` (TCPRelay) reads; the relay's own log (TCPLogFormat) is shipped with
+//     Squid's, as events that carry a port.
 //
 // Run as `control-plane egress-agent`. `control-plane egress-relay` (Relay) is its
 // companion for intercepted TLS.

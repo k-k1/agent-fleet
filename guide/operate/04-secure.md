@@ -114,6 +114,15 @@ in the Console.
    `cp.env` line (`terraform output -raw egress_archive_env`; replace the existing line rather than appending, and delete it when you turn the archive off). Without the viewer role the Control Plane
    cannot verify a day it wrote earlier and the purge stops there. Nothing in the bucket expires unless
    `egress_archive_retention_days` is set. On AWS it is the `EgressArchive` parameter of the data stack.
+   **Non-HTTP destinations (AWS egress gateway only).** SSH git and databases are not HTTP, so a host
+   entry does not cover them: they are dropped unless you add a **`tcp:<host>:<port>`** entry
+   (`tcp:git.example.com:22`, `tcp:db.example.com:1433`, or a range `tcp:db.example.com:11000-11999`
+   of at most 2048 ports; an exact host or IPv4 address; never ports 53, 80, 443, 853 or 3128). It goes
+   through the same proposal and approval, and approving it opens non-HTTP access to that host. The
+   gateway admits the addresses the host resolves to, on those ports, and records each connection by
+   address and port. In log-only an unnamed destination is passed and shown as would-block; in enforce
+   it is dropped and recorded. Before cut-over, the destination's own firewall must admit the gateway's
+   egress address. Details: `deploy/aws/ecs/README.md`, "Egress gateway".
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. Switching straight to enforce also
    kills the traffic you need (agent CLI updates, MCP endpoints), and clearing the block candidates under

@@ -762,3 +762,81 @@ forgery detected ... (local IP does not match any domain IP)".
   reverse) is in #2759.
 
 Follow-ups: #2759
+
+## Addendum (2026-11-05) — per-destination TCP passthrough on AWS (#3369)
+
+Open point 4 (2026-10-24) allowed SSH to named hosts and was not built on AWS. A survey of one
+production deployment's VPC Flow Logs found two ongoing non-HTTP needs that a switch to the
+gateway would break: SSH git (TCP 22) to a hosted Git service, and SQL Server (TCP 1433) to a
+managed database in another cloud. This addendum generalises the SSH rule to any TCP port. It
+changes the AWS gateway only; GKE and compose are out of scope, and so are UDP, ICMP and DNS (the
+DNS rule of open point 4 stands).
+
+**Decided with the maintainer, 2026-11-05.**
+
+1. **Mechanism: a userspace TCP relay, not kernel forwarding.** `ip_forward` stays 0, so "Squid
+   and the relays are the only way out" still holds and the gateway does not become a router for
+   the workspace subnets. A relay decides each connection on its original destination
+   (`SO_ORIGINAL_DST`) and writes the record at the same place, with the workspace's own source
+   address, so no SNAT is needed to attribute it. Cost: bytes are copied in userspace and the
+   relay is ours to maintain; it is a separate process from the 443 relay, so a fault in one
+   leaves the other's connections alone.
+2. **Entries.** An allowlist entry `tcp:<host>:<port>` or `tcp:<host>:<from>-<to>` (an exact DNS
+   name or an IPv4 literal; no suffix, no CIDR). The entry stays one string in the existing
+   table, so there is no schema change. Ports 80, 443 and 3128 (the recorded HTTP path) and 53
+   and 853 (DNS) are refused, and so is a range that contains one. A range covers at most 2048
+   ports. Off by default: with no `tcp:` entry nothing but HTTP(S) leaves the gateway.
+3. **Proposal.** Members propose `tcp:` entries and an administrator approves them, the flow every
+   allowlist entry already has. The approval UI will flag that the entry opens non-HTTP access
+   (Console, a later change).
+4. **Resolution.** The agent resolves each host on the gateway every 30 s (A records only; the
+   relay is IPv4-only), keeps every address seen in the last 15 minutes, and keeps the last set
+   when a lookup fails. The Go resolver exposes no TTL and no DNS library is added. The retention
+   exists because the workspace and the gateway resolve a name separately: with rotating answers,
+   the address the workspace dialled may no longer be in the gateway's latest answer (the same
+   problem the 443 relay documents for Squid's own lookup). The result is one file the relay
+   reads; the relay and the agent share nothing else.
+5. **log-only.** A connection to an address no entry names is admitted and recorded as refused
+   (`would-deny`), the way log-only treats HTTP: it records the verdict enforce would give. In
+   enforce it is dropped and recorded (`deny`). A named destination is admitted in both modes.
+6. **Record.** One line per connection, written when it is decided: time, workspace address,
+   destination address, port, verdict (`admit`, `deny`, `would-deny`, `deny-cap`) and the entry.
+   The agent ships it with the Squid log, with the same generation id and offset machinery. The
+   event's `host` is the matching entry's host (alphabetically first when several share the
+   address), or `<address>:<port>` for an unnamed one; the destination address is always recorded.
+   A connection the relay cannot record is not passed.
+
+**Always refused, in both modes**, whatever DNS says: addresses that are not global unicast IPv4
+(private ranges, 100.64.0.0/10, link-local including the metadata service, loopback, multicast),
+the VPC CIDR, this host's own addresses, and ports 53 and 853. A zone's owner controls what a
+listed name resolves to; without this fence a passthrough entry would be a way to the metadata
+service or into the VPC. The resolver keeps such answers out of the table and the relay checks
+again per connection.
+
+**Gateway.** nftables redirects workspace TCP to ports other than 80, 443 and 3128 and not
+addressed to the host itself to `:3132` (`af-cp egress-relay --mode tcp`, user `squid`).
+`GatewaySg` admits all TCP from the two workspace subnets, because a security group cannot name
+ports an organisation will add and drops without a record; nftables' input chain admits only
+3128 and redirected flows and logs the rest, so the host's own ports stay closed. The gateway's
+own egress security group is the default (all outbound), which the relay needs to dial any named
+port; nothing narrows it. UDP and ICMP are still dropped by the security group, unrecorded. The
+relay caps open connections (4096, as the 443 relay does); a connection past it is closed, logged
+by the relay and recorded as `deny-cap`. `pause.sh`'s drain also waits for the relay's log to be
+accepted by the CP; the 443 relay, the pause and resume paths are otherwise unchanged.
+
+**Deviation from the design discussed on #3369.** The port is carried on the wire as `port` but
+the CP stores it inside the event's destination (`address:port`), not in a new column: the event
+table, the daily archive and its verifier keep their shape, and the Console shows the port in the
+destination it already lists.
+
+**Before cut-over.** A destination's own firewall must admit the gateway's egress address (the
+Elastic IP, open point 7 / #2728) for the ports named. A managed database that redirects clients
+to a range needs the range named, and its firewall must admit the same range.
+
+**Not verified.** Nothing here ran on a real stack. The Go code is tested with stub resolvers and
+loopback sockets; the template is checked statically (`deploy/local/cfn-egress-gateway-test.py`).
+Not run: nftables loading the new rules, `SO_ORIGINAL_DST` through them, an SSH git clone and a
+TCP connection to a named host and port, and an unnamed host and port dropped and recorded, on a
+sandbox stack with `EgressRoute=gateway`.
+
+Follow-ups: #3369

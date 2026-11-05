@@ -318,7 +318,8 @@ SH
 )"
 
 # Drain. Squid logs a tunnel when it closes, so it is stopped (closing every connection) once no
-# workspace runs; then every byte of its log and rotated logs must be under the offset the agent
+# workspace runs; then every byte of its log and rotated logs, and of the TCP passthrough relay's
+# (af-tcp.log, written when it decides a connection, so it needs no stop), must be under the offset the agent
 # committed after the CP accepted it (state.json, by the file's user.af-egress.gen xattr). Only
 # then may the scale-in destroy the disk. A Squid that did not stop is never drained: its log is
 # not final. Idempotent: it is asked again until it answers drained.
@@ -328,14 +329,14 @@ systemctl stop squid || { echo 'af-gw-error: stopping Squid failed'; exit 0; }
 if systemctl is-active --quiet squid; then echo 'af-gw-error: Squid is still running'; exit 0; fi
 python3 - <<'PY'
 import glob, json, os
-log = '/var/log/squid/af-egress.log'
+logs = ['/var/log/squid/af-egress.log', '/var/log/squid/af-tcp.log']
 try:
     with open('/var/lib/af-egress-agent/state.json') as f:
         offsets = json.load(f).get('offsets') or {}
 except (OSError, ValueError):
     offsets = {}
 left = 0
-for p in glob.glob(log + '.*') + [log]:
+for p in [q for log in logs for q in glob.glob(log + '.*') + [log]]:
     try:
         size = os.path.getsize(p)
     except OSError:

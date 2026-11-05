@@ -419,3 +419,70 @@ func TestNormalizeEgressHostCanonicalisesIPv6(t *testing.T) {
 		}
 	}
 }
+
+// TCP passthrough entries (ADR 0122, addendum 2026-11-05): validated on the way in, kept
+// out of the HTTP allowlist the agent writes for Squid, and served in their own field.
+func TestNormalizeEgressEntryTCP(t *testing.T) {
+	got, aerr := normalizeEgressEntry(" TCP:Git.Example.com.:22 ")
+	if aerr != nil || got != "tcp:git.example.com:22" {
+		t.Fatalf("got %q, %v", got, aerr)
+	}
+	for _, bad := range []string{"tcp:git.example.com:443", "tcp:git.example.com:3128", "tcp:.example.com:22",
+		"tcp:git.example.com", "tcp:db.example.com:1000-3100", "tcp:169.254.169.254:80"} {
+		if _, aerr := normalizeEgressEntry(bad); aerr == nil || aerr.status != 400 {
+			t.Errorf("%q accepted: %v", bad, aerr)
+		}
+	}
+}
+
+func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []string{"extra.internal", "tcp:git.example.com:22", "tcp:db.example.com:11000-11999"} {
+		_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: e, State: "active", AddedAt: store.NowTS()})
+	}
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
+	r := httptest.NewRequest("GET", "/internal/egress/policy", nil)
+	r.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	eg.policy(w, r)
+	var body struct {
+		Allowlist []string `json:"allowlist"`
+		TCP       []struct {
+			Host     string `json:"host"`
+			From, To int
+		} `json:"tcp"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(body.Allowlist, "extra.internal") {
+		t.Errorf("allowlist: %v", body.Allowlist)
+	}
+	for _, e := range body.Allowlist {
+		if strings.HasPrefix(e, "tcp:") {
+			t.Errorf("tcp entry in the HTTP allowlist: %q", e)
+		}
+	}
+	if len(body.TCP) != 2 || body.TCP[0].Host != "db.example.com" || body.TCP[0].From != 11000 || body.TCP[0].To != 11999 ||
+		body.TCP[1].Host != "git.example.com" || body.TCP[1].From != 22 || body.TCP[1].To != 22 {
+		t.Errorf("tcp: %+v (body %s)", body.TCP, w.Body.String())
+	}
+
+	// With none, the body has no tcp key: the bytes an older agent was served.
+	st2, _ := store.OpenSQLite(filepath.Join(t.TempDir(), "cp2.db"))
+	defer st2.Close()
+	_ = st2.Migrate(ctx)
+	w2 := httptest.NewRecorder()
+	newEgressAPI(&manager{store: st2}, "tok", "proxy:3128", nil, nil).policy(w2, r)
+	if strings.Contains(w2.Body.String(), `"tcp"`) {
+		t.Errorf("tcp key without entries: %s", w2.Body.String())
+	}
+}

@@ -936,7 +936,7 @@ either way: only workspaces go through the gateway.
 | Per-GB cost | NAT data processing ($0.045–0.062/GB) on all workspace traffic, S3 included | none for workspace traffic (normal data transfer only; same-region S3 transfer is free) |
 | Operations | managed by AWS | an instance to run: AMI updates replace it, a replacement leaves workspaces without egress for a few minutes |
 | Availability | AWS-managed, one AZ | one instance in one AZ (an Auto Scaling group of one replaces it) |
-| Non-HTTP egress (SSH git, other ports) | works | dropped (ADR 0122 consequences) |
+| Non-HTTP egress (SSH git, other ports) | works | off by default; per named destination (`tcp:` entries, below), otherwise dropped and recorded |
 | Workspace egress address | `NatEip` | the gateway's own address, a second one to allow-list (#2728) |
 
 **How it works.** An Auto Scaling group of one AL2023 instance in `PublicSubnet0`. At boot it
@@ -946,7 +946,7 @@ the explicit proxy (`EgressProxyAddr`, `:3128`). A replacement instance attaches
 interface, so neither the route, the proxy address nor the egress address ever moves. Squid
 intercepts port 80 from the workspace subnets and serves the explicit proxy; intercepted 443 goes
 to `af-cp egress-relay`, which hands it to Squid as a CONNECT to the address the workspace
-dialled (#2759). Nothing else is forwarded (`ip_forward=0`). `af-cp egress-agent` (the CP
+dialled (#2759). Other TCP goes to `af-cp egress-relay --mode tcp` (below). Nothing is forwarded (`ip_forward=0`). `af-cp egress-agent` (the CP
 binary, copied out of the CP image) runs as user `squid`, writes Squid's allow and mode files
 from the CP's policy and ships the log to `/internal/egress` with `AF_EGRESS_TOKEN`, which the
 stack generates in Secrets Manager. The
@@ -955,6 +955,24 @@ CP gets `AF_EGRESS_PROXY_ADDR` and `AF_EGRESS_TOKEN` (30-ingress `EgressProxyAdd
 variables, with the task-role credential endpoint (`169.254.170.2`), instance metadata
 (`169.254.169.254`) and the CP's internal host in `NO_PROXY`, and the address recorder
 (#2674) runs. The token itself never reaches a workspace: it is the agent's credential.
+
+**Non-HTTP TCP (SSH git, databases; #3369).** `GatewaySg` admits all TCP from the workspace subnets
+and the decision is nftables' and the passthrough relay's. Nothing leaves except HTTP(S) until an
+administrator adds a **`tcp:` allowlist entry** (Admin Egress tab, or a member's proposal that an
+administrator approves): `tcp:git.example.com:22`, `tcp:db.example.com:1433`, or a range
+`tcp:db.example.com:11000-11999` for a service that redirects clients (at most 2048 ports; an exact
+host or an IPv4 address; never 53, 80, 443, 853 or 3128). The agent resolves the host every 30 s and
+the relay admits connections to the addresses it has resolved to in the last 15 minutes, on those
+ports. Every connection is recorded by address and port and attributed like the others
+(`GET /api/admin/egress/events`; the port is part of the destination). In **enforce** an unnamed
+destination is dropped and recorded; in **log-only** it is passed and recorded as refused, so the
+Admin tab shows what enforce would cut. The VPC, link-local (the metadata service), loopback, this
+host and ports 53 / 853 are refused in both modes. UDP and ICMP stay dropped by the security group,
+unrecorded. **Before cut-over, the destination's own firewall must admit the gateway's Elastic IP**
+(the workspace egress address) on those ports; a managed database that redirects to a port range
+needs that range admitted and named. The relay's log is `/var/log/squid/af-tcp.log` on the instance
+and `journalctl -u af-egress-relay-tcp` its service. Not run on a real stack yet (ADR 0122,
+addendum 2026-11-05).
 
 **Turning it on** (an existing stack keeps `nat-gateway` until you do this). Allocate the
 workspace address first and have it allow-listed (next paragraph), then:
@@ -1117,7 +1135,7 @@ resuming included, were verified on a test deployment only, **not yet in product
    `aws ec2 describe-instances --filters Name=tag:af-egress-gateway,Values=<network stack> Name=instance-state-name,Values=running --query 'Reservations[].Instances[].InstanceId' --output text`,
    then `aws ssm start-session --target <id>`.
 2. Boot and services: `sudo tail -50 /var/log/af-egress-gateway.log`;
-   `systemctl status squid af-egress-agent af-egress-relay af-egress-nft af-egress-install.timer`;
+   `systemctl status squid af-egress-agent af-egress-relay af-egress-relay-tcp af-egress-nft af-egress-install.timer`;
    `sudo squid -k parse` (prints the parsed configuration, fails on an error);
    `ip route show default` (the first default route is the attached interface).
 3. Policy: `sudo cat /var/lib/af-egress-agent/af-allow.txt /var/lib/af-egress-agent/af-mode.conf`

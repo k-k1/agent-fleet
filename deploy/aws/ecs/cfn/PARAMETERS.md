@@ -1087,6 +1087,15 @@ needs `ec2:ReplaceRoute` or address permissions. The price: the interface is bou
 `PublicSubnet0`'s AZ, so the group launches there only, and during a replacement the route
 blackholes until the new instance has attached it (minutes).
 
+`GatewaySg` admits all TCP (ports 0-65535) from the two workspace subnets and nothing else: 80/443
+are redirected to Squid and the 443 relay, 3128 is the explicit proxy, and every other port goes to
+`egress-relay --mode tcp`, which admits a destination an administrator named with a `tcp:` allowlist
+entry and records the rest. A security group cannot name ports an organisation adds later and drops
+without a record, so nftables' `input` chain admits only 3128 and the redirected flows. The group has
+no egress rules (all outbound), which the relay needs to dial named ports (ADR 0122, addendum
+2026-11-05; README, "Egress gateway"). The template is within 19 bytes of its size budget
+(`cfn-template-size-test.py`): put prose here, not in the template.
+
 ### Egress gateway group
 
 An Auto Scaling group of ONE: it replaces a failed instance, and the replacement attaches

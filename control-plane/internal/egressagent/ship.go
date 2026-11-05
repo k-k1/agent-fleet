@@ -122,13 +122,25 @@ func (s *shipper) pass(ctx context.Context) error {
 		return nil
 	}
 	seen := map[string]bool{}
-	for _, p := range logFiles(s.cfg.LogPath) {
-		id, err := s.shipFile(ctx, p, snap)
-		if id != "" {
-			seen[id] = true
-		}
-		if err != nil {
-			return err
+	logs := []struct {
+		path string
+		conv lineConv
+	}{{s.cfg.LogPath, squidConv(snap)}}
+	if s.cfg.TCPLogPath != "" {
+		logs = append(logs, struct {
+			path string
+			conv lineConv
+		}{s.cfg.TCPLogPath, tcpConv})
+	}
+	for _, l := range logs {
+		for _, p := range logFiles(l.path) {
+			id, err := s.shipFile(ctx, p, l.conv)
+			if id != "" {
+				seen[id] = true
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 	// Forget files that are gone (rotated past the last sibling), so the state stays small.
@@ -147,7 +159,7 @@ func (s *shipper) pass(ctx context.Context) error {
 
 // shipFile sends the complete lines of one file from its committed offset, in batches,
 // committing after each accepted batch. It returns the file's identity.
-func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (string, error) {
+func (s *shipper) shipFile(ctx context.Context, path string, conv lineConv) (string, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -187,7 +199,7 @@ func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (st
 			return id, err
 		}
 		r.Reset(f)
-		batch, next, err := readBatch(r, id, off, snap)
+		batch, next, err := readBatchWith(r, id, off, conv)
 		if err != nil {
 			return id, err
 		}
@@ -212,6 +224,28 @@ func (s *shipper) shipFile(ctx context.Context, path string, snap *snapshot) (st
 // full or no complete line is left. It returns the events and the offset just past the
 // last line consumed. An incomplete last line is not consumed: Squid is still writing it.
 func readBatch(r *bufio.Reader, ident string, off int64, snap *snapshot) ([]Event, int64, error) {
+	return readBatchWith(r, ident, off, squidConv(snap))
+}
+
+// lineConv turns one log line into an event (without its id); ok is false for a line that
+// is not in the log's format.
+type lineConv func(line string) (Event, bool)
+
+// squidConv reads Squid's af1 lines, attaching the verdict the policy snapshot gives.
+func squidConv(snap *snapshot) lineConv {
+	return func(line string) (Event, bool) {
+		l, ok := parseLine(line)
+		if !ok {
+			return Event{}, false
+		}
+		return Event{
+			At: l.at, Source: l.source, Dest: l.dest, Host: l.host,
+			Allowed: !l.denied && l.host != "" && snap.match.Allows(l.host), Count: 1,
+		}, true
+	}
+}
+
+func readBatchWith(r *bufio.Reader, ident string, off int64, conv lineConv) ([]Event, int64, error) {
 	var evs []Event
 	size := 0
 	for size < maxBatchBytes {
@@ -228,15 +262,12 @@ func readBatch(r *bufio.Reader, ident string, off int64, snap *snapshot) ([]Even
 			log.Printf("egress-agent: skipping a line longer than %d bytes at %s@%d", maxLine, ident, pos)
 			continue
 		}
-		l, ok := parseLine(strings.TrimRight(string(line.text), "\r\n"))
+		ev, ok := conv(strings.TrimRight(string(line.text), "\r\n"))
 		if !ok {
-			log.Printf("egress-agent: skipping a line not in the af1 format at %s@%d: %.200q", ident, pos, line.text)
+			log.Printf("egress-agent: skipping a line not in the af1/af2 format at %s@%d: %.200q", ident, pos, line.text)
 			continue
 		}
-		ev := Event{
-			ID: ident + "@" + strconv.FormatInt(pos, 10), At: l.at, Source: l.source, Dest: l.dest,
-			Host: l.host, Allowed: !l.denied && l.host != "" && snap.match.Allows(l.host), Count: 1,
-		}
+		ev.ID = ident + "@" + strconv.FormatInt(pos, 10)
 		b, _ := json.Marshal(ev)
 		size += len(b) + 1
 		evs = append(evs, ev)
