@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -662,5 +663,66 @@ func TestGenericMessagesEmitsChangedFiles(t *testing.T) {
 	}
 	if got.Verb != "edit" || got.Count != 1 || got.Added != 1 || got.Removed != 1 {
 		t.Errorf("row = %+v, want one edit call, +1 -1", got)
+	}
+}
+
+// A prompt claude rewound on a stop is already on the client's screen when the prompt that
+// replaces it is written. An increment only appends, so the poll that first sees the
+// replacement has to reset the client onto a window without the dead prompt (issue #3372).
+func TestRewoundPromptResetsTheMirror(t *testing.T) {
+	home := withTempHome(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	dir := t.TempDir()
+	const name = "rewound_reset"
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude, Title: "題"})
+	sid := session.UUID(dir, name)
+	jsonl := filepath.Join(home, ".claude", "projects", "p", sid+".jsonl")
+	held := []string{
+		`{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-11-05T10:00:00Z","message":{"role":"user","content":"first ok"}}`,
+		`{"type":"assistant","uuid":"r1","parentUuid":"u1","timestamp":"2026-11-05T10:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}`,
+		`{"type":"system","uuid":"s1","parentUuid":"r1","subtype":"turn_duration"}`,
+		`{"type":"user","uuid":"u2","parentUuid":"s1","timestamp":"2026-11-05T10:00:05Z","message":{"role":"user","content":"HOLD second"}}`,
+	}
+	poll := func(since int) (reset bool, users []string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/messages?since="+strconv.Itoa(since), nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		HandleSessionMessages(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Reset    bool `json:"reset"`
+			Messages []struct {
+				Role, Text string
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range body.Messages {
+			if m.Role == "user" {
+				users = append(users, m.Text)
+			}
+		}
+		return body.Reset, users
+	}
+
+	writeFile(t, jsonl, strings.Join(held, "\n")+"\n")
+	if reset, users := poll(0); reset || strings.Join(users, "|") != "first ok|HOLD second" {
+		t.Fatalf("before the replacement: reset=%v users=%q", reset, users)
+	}
+	grown := append(append([]string{}, held...),
+		`{"type":"user","uuid":"u3","parentUuid":"s1","timestamp":"2026-11-05T10:00:09Z","message":{"role":"user","content":"third ok"}}`,
+		`{"type":"assistant","uuid":"r3","parentUuid":"u3","timestamp":"2026-11-05T10:00:10Z","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}`,
+	)
+	writeFile(t, jsonl, strings.Join(grown, "\n")+"\n")
+	if reset, users := poll(len(held)); !reset || strings.Join(users, "|") != "first ok|third ok" {
+		t.Fatalf("the poll that sees the replacement: reset=%v users=%q, want a reset without the rewound prompt", reset, users)
+	}
+	// Once the client holds the replacement, polls are plain increments again.
+	if reset, users := poll(len(grown)); reset || len(users) != 0 {
+		t.Fatalf("a later poll: reset=%v users=%q", reset, users)
 	}
 }

@@ -124,7 +124,7 @@ func SubagentTurns(paths []string) ([]transcript.Turn, error) {
 	if len(copies) > 1 {
 		lines = mergeCopies(copies)
 	}
-	turns := collectTurns(lines, 0, len(lines), false, false)
+	turns := collectTurns(lines, 0, len(lines), false, false, nil)
 	for i := range turns {
 		turns[i].Sidechain = true // an agent's context is its own, never the session's fill
 	}
@@ -481,14 +481,20 @@ func MessageTextFrom(lines [][]byte, start time.Time) (string, bool) {
 // Console reconciles that from the whole-transcript CollectInteractionAnswers map, which
 // the /messages handler sends alongside these turns and patches on by qid.
 func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
-	return collectTurns(lines, lo, hi, false, true)
+	return collectTurns(lines, lo, hi, false, true, RewoundPrompts(lines))
+}
+
+// CollectTurnsHiding is CollectTurns for a caller that already holds RewoundPrompts(lines),
+// which is a pass over the whole file.
+func CollectTurnsHiding(lines [][]byte, lo, hi int, rewound map[int]int) []transcript.Turn {
+	return collectTurns(lines, lo, hi, false, true, rewound)
 }
 
 // CollectAllTurns is CollectTurns over the whole file for an export (#2183): no 1 MiB cap,
 // which would silently drop the oldest turns, and every tool call carries its result as
 // Output. The mirror never shows ordinary tool results, so only this path pays for them.
 func CollectAllTurns(lines [][]byte) []transcript.Turn {
-	return collectTurns(lines, 0, len(lines), true, false)
+	return collectTurns(lines, 0, len(lines), true, false, RewoundPrompts(lines))
 }
 
 // CollectUsageTurns is the turn list for token accounting (budget, get_session_usage, the
@@ -524,7 +530,8 @@ func CollectUsageTurns(lines [][]byte) []transcript.Turn {
 }
 
 // all attaches every tool call's result as Output; capped stops at 1 MiB of text, newest kept.
-func collectTurns(lines [][]byte, lo, hi int, all, capped bool) []transcript.Turn {
+// The prompts in rewound (RewoundPrompts) are left out.
+func collectTurns(lines [][]byte, lo, hi int, all, capped bool, rewound map[int]int) []transcript.Turn {
 	if lo < 0 {
 		lo = 0
 	}
@@ -545,6 +552,9 @@ func collectTurns(lines [][]byte, lo, hi int, all, capped bool) []transcript.Tur
 	// Walk newest→oldest so the 1 MiB cap keeps the LATEST turns (the old oldest-first cap
 	// could drop the newest of a huge transcript); reverse to chronological before return.
 	for i := hi - 1; i >= lo; i-- {
+		if _, gone := rewound[i]; gone {
+			continue
+		}
 		t, ok := parseTurn(lines[i], i) // i is the absolute line index (stable across windows)
 		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
