@@ -251,3 +251,87 @@ func TestSurfacePermissionPromptIsOneSnapshot(t *testing.T) {
 		t.Fatalf("changed prompt must be dropped whole, got %v", pending)
 	}
 }
+
+// A deny interrupts claude's turn and no hook follows it, so the answer itself retires the
+// prompt: otherwise the card stays up with live buttons after the dialog closed.
+func TestPermissionDenyRetiresThePrompt(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
+	sid := permissionSession(t, "slot80")
+	if rec := postPermission("slot80", `{"choice":"deny","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("deny: %d %s", rec.Code, rec.Body.String())
+	}
+	if b, _ := os.ReadFile(logPath); !strings.Contains(string(b), "send-keys -t %7 2") {
+		t.Fatalf("deny sent no digit:\n%s", b)
+	}
+	if _, ok := status.ReadPendingPermission(sid); ok {
+		t.Fatal("payload survived the deny")
+	}
+	if st, _ := status.Read(sid); st.State != "idle" {
+		t.Fatalf("state = %q, want idle", st.State)
+	}
+
+	// A newer prompt that arrived meanwhile is not the one denied: it stays.
+	sid = permissionSession(t, "slot81")
+	p := permissionToken(sid)
+	st, _ := status.Read(sid)
+	time.Sleep(10 * time.Millisecond)
+	status.WritePendingPermission(sid, "Bash · rm -rf build")
+	settleDeniedPermission(sid, st.Rev, p)
+	if _, ok := status.ReadPendingPermission(sid); !ok {
+		t.Fatal("a newer prompt was retired")
+	}
+	if st, _ := status.Read(sid); st.State != "permission" {
+		t.Fatalf("state = %q, want permission", st.State)
+	}
+}
+
+// A bridge deny that finds the prompt already gone sends nothing, and so records nothing: the
+// payload, the state and permDecided stay as the hook left them (#3376 review).
+func TestBridgeDenyThatSendsNothingSettlesNothing(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	sid := permissionSession(t, "slot82")
+	pane := permFixture(t, "bash_ask_rule_af_label.txt")
+	prev := readPermissionMenu
+	readPermissionMenu = func(string) (claude.PermissionMenu, bool) {
+		status.Persist(sid, "working") // the hook moved on; the payload is still the old one
+		return claude.ParsePermissionMenu(pane)
+	}
+	t.Cleanup(func() { readPermissionMenu = prev })
+	meta, _ := session.ReadMeta("slot82")
+	if _, err := answerClaudePermission(meta, claude.PermDeny, true); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
+	}
+	if _, ok := permDecided.Load("slot82"); ok {
+		t.Fatal("recorded as answered")
+	}
+	if _, ok := status.ReadPendingPermission(sid); !ok {
+		t.Fatal("payload removed")
+	}
+	if st, _ := status.Read(sid); st.State != "working" {
+		t.Fatalf("state = %q, want working", st.State)
+	}
+}
+
+// A bridge deny that is sent retires the prompt like the card's.
+func TestBridgeDenyRetiresThePrompt(t *testing.T) {
+	fakeTmux(t)
+	withTempHome(t)
+	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
+	sid := permissionSession(t, "slot83")
+	meta, _ := session.ReadMeta("slot83")
+	if _, err := answerClaudePermission(meta, claude.PermDeny, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := status.ReadPendingPermission(sid); ok {
+		t.Fatal("payload survived the deny")
+	}
+	if st, _ := status.Read(sid); st.State != "idle" {
+		t.Fatalf("state = %q, want idle", st.State)
+	}
+}
