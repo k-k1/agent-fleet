@@ -133,6 +133,19 @@ describe("CloudRunGroup", () => {
     await click(head);
     expect(head.getAttribute("aria-expanded")).toBe("true");
     expect(host.querySelectorAll(".cloud-run-list .cloud-run")).toHaveLength(3);
+    // One identity: the head names it, the lines under it do not repeat it.
+    for (const line of host.querySelectorAll(".cloud-run-list .cloud-run")) {
+      expect(line.textContent).not.toContain("123456789012");
+      expect(line.getAttribute("title")).toContain("123456789012 / Dev");
+    }
+  });
+  it("keeps each line's identity when the runs ran as different identities", async () => {
+    const runs = [run("a", "2026-10-30T12:00:01Z"), run("b", "2026-10-30T12:00:02Z", { profile: "other", account: "210987654321" })];
+    await render(<CloudRunGroup runs={runs as never} />);
+    await act(async () => (host.querySelector("button.cloud-run-head") as HTMLElement).click());
+    const lines = [...host.querySelectorAll(".cloud-run-list .cloud-run")].map((e) => e.textContent);
+    expect(lines[0]).toContain("123456789012 / Dev");
+    expect(lines[1]).toContain("210987654321 / Dev");
   });
   it("shows a refused run without opening the group", async () => {
     const runs = [run("a", "2026-10-30T12:00:01Z"), run("b", "2026-10-30T12:00:02Z", { refused: "login_required" })];
