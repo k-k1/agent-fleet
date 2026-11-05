@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -766,26 +765,27 @@ func TestTypeLineAndSubmitRemembersTheTypedForm(t *testing.T) {
 	}
 }
 
-// claude restores the prompt it submitted, without the invisible characters it strips on submit
-// (a zero-width space), while the remembered submission is the typed text that still has them.
-// The box must still be taken for the prompt, or the stop strands it and refuses the next send.
-func TestRestoredDraftIgnoresWhatClaudeStrips(t *testing.T) {
+// claude restores the prompt it submitted, without the invisible characters it strips (a
+// zero-width space), and that is the text its transcript logs; the remembered submission still
+// has them. The box is compared strictly, so it is taken for the transcript's copy, never for an
+// edited one, and with no transcript copy yet it is left (and the next send refused) rather than
+// erased on a guess (#3375).
+func TestRestoredBoxIsMatchedByClaudesOwnCopy(t *testing.T) {
 	box := func(s string) string { return rule + "\n❯ " + s + "\n" + rule + "\n  ⏵⏵ auto mode on\n" }
-	typed := claude.ShapePrompt("a\u200b\u200eb c")
-	if !restoredDraft(box("ab c"), typed) {
-		t.Fatalf("box %q not taken for the typed %+q", "ab c", typed)
+	own := "a\u200bb c"
+	if got := matchingPrompt(box("ab c"), "ab c", own); got != "ab c" {
+		t.Fatalf("matched %+q, want the transcript's copy", got)
 	}
-	if restoredDraft(box("ab d"), typed) || restoredDraft(box("a b"), typed) {
-		t.Fatal("a box with other visible text was taken for the prompt")
+	if got := matchingPrompt(box("ab c"), "", own); got != "" {
+		t.Fatalf("matched %+q with no transcript copy, want none", got)
 	}
-	// The box is erased on a match, so a joiner or variation selector the typed text lacks (the
-	// member edited the restored draft in the terminal) must not match, while one claude kept
-	// does.
-	if restoredDraft(box("👩\u200d💻"), "👩💻") || restoredDraft(box("❤\ufe0f"), "❤") {
-		t.Fatal("a box with an added joiner or selector was taken for the prompt")
-	}
-	if !restoredDraft(box("👩\u200d💻"), "👩\u200d💻\u200b") {
-		t.Fatal("a box keeping the emoji joiner was not taken for the prompt")
+	// A member's edit of the restored box (a joiner added or removed) is not the prompt.
+	for _, edited := range []string{"👩💻", "❤"} {
+		for _, logged := range []string{"👩\u200d💻", "❤\ufe0f"} {
+			if got := matchingPrompt(box(edited), logged, logged); got != "" {
+				t.Errorf("box %+q matched %+q", edited, got)
+			}
+		}
 	}
 }
 
