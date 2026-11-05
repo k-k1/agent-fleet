@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -52,37 +51,35 @@ func Status() map[string]any {
 	return m
 }
 
-var statusMu sync.Mutex
-var statusAt time.Time
-var statusVal statusResult
-
-const statusTTL = 30 * time.Second
-
-func probeStatus() statusResult {
-	statusMu.Lock()
-	defer statusMu.Unlock()
-	if !statusAt.IsZero() && time.Since(statusAt) < statusTTL {
-		return statusVal
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), "whoami", "-f", "json").Output()
-	if err != nil {
-		// Not logged in (exit 1) or a transient error. Distinguish: an empty prior value
-		// means we've never seen a login, so report logged-out; otherwise keep the last
-		// good value (stale-if-error) rather than flapping the connection chip.
-		if statusAt.IsZero() {
-			statusVal = statusResult{}
-			statusAt = time.Now()
+// statusProbe serves the status stale-while-revalidate (see cursor). whoami exits 1 when
+// signed out, indistinguishable from a transient error: the first answer records that as
+// signed out, a later failure keeps the last good value instead of flapping the chip.
+var statusProbe = &agents.SWRProbe[statusResult]{
+	TTL:              30 * time.Second,
+	ColdBudget:       12 * time.Second,
+	StoreColdFailure: true,
+	Probe: func() (statusResult, bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, bin(), "whoami", "-f", "json").Output()
+		if err != nil {
+			return statusResult{}, false
 		}
-		return statusVal
+		var wo whoamiOut
+		if json.Unmarshal([]byte(strings.TrimSpace(string(out))), &wo) != nil {
+			return statusResult{}, false
+		}
+		return statusResult{loggedIn: true, email: wo.Email}, true
+	},
+}
+
+func probeStatus() statusResult { return statusProbe.Get() }
+
+// WarmStatus starts the status probe in the background (Agent start). A no-op without the binary.
+func WarmStatus() {
+	if _, err := exec.LookPath(bin()); err == nil {
+		statusProbe.Warm()
 	}
-	var wo whoamiOut
-	if json.Unmarshal([]byte(strings.TrimSpace(string(out))), &wo) == nil {
-		statusVal = statusResult{loggedIn: true, email: wo.Email}
-		statusAt = time.Now()
-	}
-	return statusVal
 }
 
 // LoggedIn reports (cached, ~30s) whether kiro-cli has an authenticated session.
@@ -97,11 +94,7 @@ func LoggedIn() bool {
 
 // invalidateStatus drops the cached status so the next /connections poll reflects
 // a login/logout at once instead of after statusTTL.
-func invalidateStatus() {
-	statusMu.Lock()
-	statusAt = time.Time{}
-	statusMu.Unlock()
-}
+func invalidateStatus() { statusProbe.Invalidate() }
 
 // --- interactive login flow (docs/log/43 Track C) ---------------------------------
 //

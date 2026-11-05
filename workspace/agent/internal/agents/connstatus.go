@@ -17,3 +17,9 @@ type StatusInputs struct {
 	// GithubConnected is whether the github.com git connection is set (copilot rides on it).
 	GithubConnected bool
 }
+
+// StatusWarmer is an optional Agent capability: start the kind's slow status probe in the
+// background at Agent start, so the first GET /connections is not cold. It must not block.
+type StatusWarmer interface {
+	WarmStatus()
+}

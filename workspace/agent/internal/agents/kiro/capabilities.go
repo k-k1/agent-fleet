@@ -59,3 +59,6 @@ func (agentImpl) NoHeadlessChat() {}
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 	return agents.TUIInterruptEscape()
 }
+
+// WarmStatus is agents.StatusWarmer: this package's WarmStatus().
+func (agentImpl) WarmStatus() { WarmStatus() }
