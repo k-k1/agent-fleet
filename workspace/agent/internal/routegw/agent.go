@@ -46,15 +46,7 @@ func agentDeps(ensureAWSCLI func() (string, error)) Deps {
 	}
 	return Deps{
 		Settings: src.Get,
-		// The launch pane, not the active one: a pane the member split off is not what the
-		// launch started. Only Terminal sessions have one; a managed harness on a route (P2c)
-		// needs its own root here, and until then has none and is refused.
-		Roots: func(name string) []int {
-			if pid, ok := tmuxx.LaunchPanePID(name); ok {
-				return []int{pid}
-			}
-			return nil
-		},
+		Roots:    paneRoots,
 		Credentials: func(p awsx.Profile, region string, settings map[string]awsx.Profile) (awsx.RouteCredentials, error) {
 			mu.Lock()
 			res := last
@@ -83,4 +75,15 @@ func agentDeps(ensureAWSCLI func() (string, error)) Deps {
 			return awsx.ResolveCredentials(awsBin, os.Environ(), o)
 		},
 	}
+}
+
+// paneRoots is a session's runtime roots: its launch pane's process, not the active pane's (a
+// pane the member split off is not what the launch started), and none for a dead pane. Only
+// Terminal sessions have one; a managed harness on a route (P2c) needs its own root here, and
+// until then has none and is refused.
+func paneRoots(name string) []int {
+	if pid, ok := tmuxx.LaunchPanePID(name); ok {
+		return []int{pid}
+	}
+	return nil
 }

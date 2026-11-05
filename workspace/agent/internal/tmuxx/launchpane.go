@@ -14,11 +14,14 @@ import (
 // otherwise move the answer to a shell the launch never started. The launch pane is the one
 // whose start command carries session.ExitRecorder, searched across every window (-s).
 //
+// A pane whose process has ended is no answer: with remain-on-exit tmux keeps listing it, with
+// the dead process's pid (measured by review: pane_dead=1 with a pid still reported).
+//
 // TMUX is dropped from the command's environment: inside a nested tmux it names that other
 // server, and plain tmux follows it (measured: a bogus TMUX makes `tmux list-sessions` fail),
 // so the lookup would miss the session.
 func LaunchPanePID(name string) (int, bool) {
-	cmd := Cmd("list-panes", "-s", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_pid} #{pane_start_command}")
+	cmd := Cmd("list-panes", "-s", "-t", session.ExactTarget(session.TmuxName(name)), "-F", "#{pane_pid} #{pane_dead} #{pane_start_command}")
 	cmd.Env = withoutEnv(os.Environ(), "TMUX", "TMUX_PANE")
 	out, err := cmd.Output()
 	if err != nil {
@@ -27,13 +30,18 @@ func LaunchPanePID(name string) (int, bool) {
 	return LaunchPaneIn(string(out), name)
 }
 
-// LaunchPaneIn picks the launch pane's pid out of list-panes output. Exactly one match or no
-// answer: a second pane started with the same command is not something to guess between.
+// LaunchPaneIn picks the launch pane's pid out of list-panes output ("<pid> <dead> <command>"
+// per line). Exactly one match or no answer: a second pane started with the same command is not
+// something to guess between. The launch pane found dead is no answer either.
 func LaunchPaneIn(out, name string) (int, bool) {
 	marker := session.ExitRecorder(name)
 	pid := 0
 	for _, ln := range strings.Split(out, "\n") {
-		f, cmdline, ok := strings.Cut(ln, " ")
+		f, rest, ok := strings.Cut(ln, " ")
+		if !ok {
+			continue
+		}
+		dead, cmdline, ok := strings.Cut(rest, " ")
 		if !ok || !strings.Contains(cmdline, marker) {
 			continue
 		}
@@ -44,9 +52,16 @@ func LaunchPaneIn(out, name string) (int, bool) {
 		if pid != 0 {
 			return 0, false
 		}
+		if dead != "0" {
+			pid = -1 // found, and dead: still counted, so a second match stays ambiguous
+			continue
+		}
 		pid = p
 	}
-	return pid, pid > 1
+	if pid <= 1 {
+		return 0, false
+	}
+	return pid, true
 }
 
 // withoutEnv returns environ without the named variables.

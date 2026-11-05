@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Caller binding, with real processes: the kernel's peer credentials, the real /proc and a real
@@ -168,67 +170,233 @@ func TestACallerWithoutPeerCredentialsIsRefused(t *testing.T) {
 	}
 }
 
-// inTree walks parents through /proc and fails closed.
-func TestInTree(t *testing.T) {
-	root := t.TempDir()
-	write := func(pid, ppid int) {
-		dir := filepath.Join(root, strconv.Itoa(pid))
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		stat := fmt.Sprintf("%d (p %d) S %d %d %d 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", pid, pid, ppid, pid, pid)
-		if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o600); err != nil {
-			t.Fatal(err)
-		}
+// fakeProc is a /proc of stat files: pid → ppid, start ticks and state.
+type fakeProc struct {
+	t    *testing.T
+	root string
+}
+
+func newFakeProc(t *testing.T) *fakeProc { return &fakeProc{t: t, root: t.TempDir()} }
+
+func (f *fakeProc) set(pid, ppid int, start uint64, state byte) {
+	f.t.Helper()
+	dir := filepath.Join(f.root, strconv.Itoa(pid))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		f.t.Fatal(err)
 	}
-	write(100, 1)   // pane
-	write(101, 100) // claude
-	write(102, 101) // a tool
-	write(200, 1)   // another pane
-	write(300, 301) // a loop
-	write(301, 300)
-	write(400, 999) // a parent that is gone
-	write(500, 500) // its own parent
-	write(1, 0)
-	cases := []struct {
-		pid   int
-		roots []int
-		want  bool
-	}{
-		{100, []int{100}, true},
-		{102, []int{100}, true},
-		{102, []int{200}, false},
-		{200, []int{100}, false},
-		{100, []int{102}, false}, // an ancestor is not in a descendant's tree
-		{300, []int{100}, false},
-		{400, []int{100}, false},
-		{102, nil, false},
-		{500, []int{100}, false},
-		{1, []int{1}, false},
-		{102, []int{1}, false}, // init is never a root: everything descends from it
-		{0, []int{100}, false},
-	}
-	for _, c := range cases {
-		if got := inTree(root, c.pid, c.roots); got != c.want {
-			t.Errorf("inTree(%d, %v) = %v, want %v", c.pid, c.roots, got, c.want)
-		}
+	// Fields after the comm: state ppid pgrp session, then 15 more, then starttime (proc(5) 22).
+	stat := fmt.Sprintf("%d (p %d) %c %d %d %d 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %d 0 0", pid, pid, state, ppid, pid, pid, start)
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o600); err != nil {
+		f.t.Fatal(err)
 	}
 }
 
-// The real /proc: the test process is in its own tree and in its parent's, not in a child's.
+func (f *fakeProc) remove(pid int) { _ = os.RemoveAll(filepath.Join(f.root, strconv.Itoa(pid))) }
+
+// inTree walks parents through /proc and fails closed: every process on the chain, the root
+// included, must be readable, alive and started no later than its child, and the caller must
+// still be the process pinned at accept.
+func TestInTree(t *testing.T) {
+	f := newFakeProc(t)
+	f.set(1, 0, 1, 'S')
+	f.set(100, 1, 100, 'S')   // pane
+	f.set(101, 100, 101, 'S') // claude
+	f.set(102, 101, 102, 'S') // a tool
+	f.set(200, 1, 200, 'S')   // another pane
+	f.set(300, 301, 300, 'S') // a loop
+	f.set(301, 300, 301, 'S')
+	f.set(400, 999, 400, 'S') // a parent that is gone
+	f.set(500, 500, 500, 'S') // its own parent
+	f.set(600, 100, 600, 'Z') // a zombie under the pane
+	f.set(700, 600, 700, 'S') // the zombie's child (its parent has not reaped it yet)
+	f.set(800, 1, 800, 'Z')   // a zombie pane
+	f.set(801, 800, 801, 'S')
+	f.set(900, 950, 900, 'S') // its parent's pid was reused by a later process
+	f.set(950, 100, 960, 'S')
+	id := func(pid int) procID { return procID{pid: pid, start: uint64(pid)} }
+	cases := []struct {
+		name  string
+		id    procID
+		roots []int
+		want  bool
+	}{
+		{"the root itself", id(100), []int{100}, true},
+		{"a descendant", id(102), []int{100}, true},
+		{"another pane's tree", id(102), []int{200}, false},
+		{"another pane", id(200), []int{100}, false},
+		{"an ancestor", id(100), []int{102}, false},
+		{"a loop", id(300), []int{100}, false},
+		{"a parent gone", id(400), []int{100}, false},
+		{"its own parent", id(500), []int{100}, false},
+		{"no roots", id(102), nil, false},
+		{"init", id(1), []int{1}, false},
+		{"init as a root", id(102), []int{1}, false},
+		{"pid 0", procID{}, []int{100}, false},
+		{"the caller's pid reused by a later process", procID{pid: 102, start: 50}, []int{100}, false},
+		{"a zombie caller", id(600), []int{100}, false},
+		{"a zombie on the chain", id(700), []int{100}, false},
+		{"a zombie root", id(801), []int{800}, false},
+		{"a zombie root, matched directly", id(800), []int{800}, false},
+		{"a parent started after its child", id(900), []int{100}, false},
+		{"another listed root unreadable", id(102), []int{100, 4000}, true},
+	}
+	for _, c := range cases {
+		if got := inTree(f.root, c.id, c.roots); got != c.want {
+			t.Errorf("%s: inTree(%+v, %v) = %v, want %v", c.name, c.id, c.roots, got, c.want)
+		}
+	}
+	// A root that is listed but cannot be read is never matched.
+	f.remove(100)
+	if inTree(f.root, id(102), []int{100}) || inTree(f.root, procID{pid: 100, start: 100}, []int{100}) {
+		t.Error("a chain through a root that cannot be read was accepted")
+	}
+	if got := liveRoots(f.root, []int{100, 101, 800, 4000, 1}); len(got) != 1 || got[0] != 101 {
+		t.Errorf("liveRoots = %v, want [101]", got)
+	}
+}
+
+// A connection pins the process that connected. A keep-alive connection retained after its
+// connector has gone is refused, even when the same pid shows up again inside the owner's tree.
+func TestRetainedConnectionOfAGoneProcessIsRefused(t *testing.T) {
+	f := newFakeProc(t)
+	f.set(1, 0, 1, 'S')
+	f.set(100, 1, 100, 'S')  // the owner's pane
+	f.set(4242, 1, 300, 'S') // an outside process connects
+	pinned := procID{pid: 4242, start: 300}
+	if inTree(f.root, pinned, []int{100}) {
+		t.Fatal("an outside process was accepted")
+	}
+	// It hands the connection on and exits; its pid comes back under the owner's pane.
+	f.set(4242, 100, 900, 'S')
+	if inTree(f.root, pinned, []int{100}) {
+		t.Fatal("the retained connection was served as the process that now has its pid")
+	}
+	if !inTree(f.root, procID{pid: 4242, start: 900}, []int{100}) {
+		t.Fatal("the new process itself, connecting on its own, was refused")
+	}
+}
+
+// The real accept path: the kernel names the connecting process, it is pinned with its start
+// time, and once it has exited it no longer counts, whatever its pid becomes.
+func TestPeerIsPinnedAtAccept(t *testing.T) {
+	dir, err := os.MkdirTemp("", "rgwp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	ln, err := listenSocket(filepath.Join(dir, "p.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	c := startHolder(t, filepath.Join(dir, "p.sock"))
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	id, ok := peerOf(conn)
+	if !ok || id.pid != c.Process.Pid || id.start == 0 {
+		t.Fatalf("peer = %+v %v, want the holder %d with its start time", id, ok, c.Process.Pid)
+	}
+	if !inTree("/proc", id, []int{c.Process.Pid}) || !inTree("/proc", id, []int{os.Getpid()}) {
+		t.Fatal("the pinned holder is not in its own tree or its parent's")
+	}
+	if inTree("/proc", procID{pid: id.pid, start: id.start + 1}, []int{os.Getpid()}) {
+		t.Fatal("another start time for the same pid was accepted")
+	}
+	_ = c.Process.Kill()
+	_ = c.Wait()
+	if inTree("/proc", id, []int{os.Getpid()}) || live("/proc", id) {
+		t.Fatal("a connection whose process has exited still counts")
+	}
+}
+
+// startHolder starts a helper that connects to sock and holds the connection until killed.
+func startHolder(t *testing.T, sock string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHolder$", "-test.count=1")
+	cmd.Env = append(os.Environ(), holderEnv+"="+sock)
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { in.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return cmd
+}
+
+const holderEnv = "AF_ROUTEGW_TEST_HOLDER_SOCKET"
+
+func TestHelperHolder(t *testing.T) {
+	sock := os.Getenv(holderEnv)
+	if sock == "" {
+		t.Skip("helper process only")
+	}
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		os.Exit(3)
+	}
+	defer c.Close()
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+// The test process is in its own tree and in its parent's, not in a child's.
 func TestInTreeOnTheRealProc(t *testing.T) {
-	if !inTree("/proc", os.Getpid(), []int{os.Getppid()}) {
+	self, ok := readProc("/proc", os.Getpid())
+	if !ok {
+		t.Fatal("cannot read the test process")
+	}
+	me := procID{pid: os.Getpid(), start: self.StartTicks}
+	if !inTree("/proc", me, []int{os.Getppid()}) {
 		t.Fatal("the test process is not under its parent")
 	}
 	c := startCaller(t, "/nonexistent")
-	deadline := time.Now().Add(5 * time.Second)
-	for !inTree("/proc", c.pid(), []int{os.Getpid()}) {
-		if time.Now().After(deadline) {
-			t.Fatal("a child is not under the test process")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if inTree("/proc", os.Getpid(), []int{c.pid()}) {
+	if inTree("/proc", me, []int{c.pid()}) {
 		t.Fatal("the parent was taken for a child's descendant")
+	}
+}
+
+// Renewal through the real root lookup (paneRoots → tmux → /proc): a launch pane tmux reports
+// dead (remain-on-exit), or alive but with a pid that no longer runs, lets the token expire;
+// a live one keeps it.
+func TestRenewalFollowsTheRealPaneLookup(t *testing.T) {
+	gone := exec.Command(os.Args[0], "-test.run=^$")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		pid   func(*caller) int
+		dead  string
+		alive bool
+	}{
+		{"a live pane", func(c *caller) int { return c.pid() }, "0", true},
+		{"a pane tmux reports dead", func(c *caller) int { return c.pid() }, "1", false},
+		{"a pane whose pid has gone", func(*caller) int { return gone.Process.Pid }, "0", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.g.d.Roots, e.g.d.ProcRoot = paneRoots, "/proc"
+			tok := e.issue(e.session("s1", "p1", ""))
+			bin := t.TempDir()
+			panes := filepath.Join(bin, "panes")
+			line := fmt.Sprintf("%d %s claude; __af_ec=$?; %s \"$__af_ec\"\n", c.pid(startCaller(t, e.sock)), c.dead, session.ExitRecorder("s1"))
+			if err := os.WriteFile(panes, []byte(line), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\ncat \"$AF_TEST_PANES\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("AF_TMUX_SOCKET", "")
+			t.Setenv("AF_TEST_PANES", panes)
+			e.run(2 * TokenTTL)
+			if _, ok := e.g.Registry().Lookup(tok); ok != c.alive {
+				t.Fatalf("token alive after %v of sweeps = %v, want %v", 2*TokenTTL, ok, c.alive)
+			}
+		})
 	}
 }

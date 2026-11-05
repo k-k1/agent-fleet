@@ -235,9 +235,9 @@ type call struct {
 
 // authorize is the check every upstream call runs, in this order, and the reason a token is
 // revoked on the spot: it is what makes "revoked when the session ends, the selection changes or
-// the connection changes" take effect on the next call, not on a timer. pid is the calling
-// process as the kernel reported it (ok false: unknown).
-func (g *Gateway) authorize(token string, pid int, pidOK bool) (*call, *refusal) {
+// the connection changes" take effect on the next call, not on a timer. caller is the calling
+// process as pinned at accept (ok false: unknown).
+func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, *refusal) {
 	b, ok := g.d.Registry.Lookup(token)
 	if !ok {
 		return nil, &refusal{http.StatusUnauthorized, "route_token_invalid", "the route token is unknown, expired or revoked; restart the session"}
@@ -245,7 +245,7 @@ func (g *Gateway) authorize(token string, pid int, pidOK bool) (*call, *refusal)
 	// Before anything that reads the owner's state or files an approval request on its behalf.
 	// The token is not revoked: a process that only read it must not be able to end the owner's
 	// route by presenting it.
-	if !pidOK || !inTree(g.d.ProcRoot, pid, g.d.Roots(b.Session)) {
+	if !callerOK || !inTree(g.d.ProcRoot, caller, g.d.Roots(b.Session)) {
 		return nil, &refusal{http.StatusForbidden, "route_caller_forbidden",
 			"this route token belongs to another session's process; only the session it was issued to may use it"}
 	}
@@ -378,7 +378,10 @@ func (g *Gateway) Sweep() (dropped int) {
 		m, ok := g.d.ReadMeta(b.Session)
 		return ok && awsx.Incarnation(m) == b.Incarnation && m.Route != nil && m.Route.Route == b.Route && m.Route.Connection == b.Connection
 	}
-	n, _ := g.d.Registry.Sweep(keep, func(b Binding) bool { return len(g.d.Roots(b.Session)) > 0 })
+	// Renewed only while a root is a live process: tmux can keep listing a pane whose process
+	// ended (remain-on-exit), and a root that is gone must let the token expire.
+	alive := func(b Binding) bool { return len(liveRoots(g.d.ProcRoot, g.d.Roots(b.Session))) > 0 }
+	n, _ := g.d.Registry.Sweep(keep, alive)
 	g.credMu.Lock()
 	now := g.d.Now()
 	for k, e := range g.creds {

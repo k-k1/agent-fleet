@@ -552,6 +552,16 @@ table from becoming a menu of models that fail on the first message, which is wh
   **Still possible after this.** Every session runs as the same user, so a process of another session can still act
   **through** the owner's tree: type into the owner's tmux pane, which runs what it types inside the tree; inject into an owner
   process where the kernel's ptrace policy allows it; or have an owner process hand it a connected socket. Reading the token
-  from `/proc/<pid>/environ` alone no longer gets a call through. A pid that exits between connect and the check and is
-  reused inside the owner's tree is a theoretical race nobody outside controls. A descendant that double-forks away from the
+  from `/proc/<pid>/environ` alone no longer gets a call through. A pid reused after its process exited is not mistaken
+  for it (review round 1 below). A descendant that double-forks away from the
   pane is refused, which is the safe direction.
+  Review round 1 (#3389): three corrections. (1) The peer is pinned as a process, not a pid: at accept the gateway takes
+  the connector's start time, proven to be that process's through `SO_PEERPIDFD` (the pidfd still names the pid and the
+  process is still alive after the read; on a kernel before 6.5 the start time is read from the pid, and the only window
+  is the connector exiting and its pid being reused between connect and accept). Every request checks that the pinned
+  process is still alive with the same start time, before and after the walk, so a keep-alive connection retained after
+  its connector exited is refused even when that pid reappears inside the owner's tree. (2) Every process on the chain,
+  the matched root included, must be readable, not a zombie, and started no later than its child (a parent pid reused
+  by a later process cannot have). (3) tmux keeps listing a pane whose process ended when remain-on-exit is on, with the
+  old pid: the launch-pane lookup asks for `pane_dead` and a dead launch pane is no root, and renewal counts only roots
+  that are live processes, so a missed exit still ends the token within `TokenTTL`.

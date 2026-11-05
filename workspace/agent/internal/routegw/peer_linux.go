@@ -8,22 +8,29 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// peerPID reads the connecting process from the kernel. Only a Unix socket has one.
-func peerPID(c net.Conn) (int, bool) {
+// peerOf pins the connecting process: its pid from the kernel (SO_PEERCRED, taken at connect
+// and not forgeable by the caller) and its start time, read so that it provably belongs to that
+// process (peerStart). Only a Unix socket has a peer.
+func peerOf(c net.Conn) (procID, bool) {
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
-		return 0, false
+		return procID{}, false
 	}
 	raw, err := uc.SyscallConn()
 	if err != nil {
-		return 0, false
+		return procID{}, false
 	}
-	var cred *unix.Ucred
-	var cerr error
+	var id procID
+	var got bool
 	if err := raw.Control(func(fd uintptr) {
-		cred, cerr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
-	}); err != nil || cerr != nil || cred == nil {
-		return 0, false
+		cred, err := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+		if err != nil || cred == nil || cred.Pid <= 1 {
+			return
+		}
+		id.pid = int(cred.Pid)
+		id.start, got = peerStart(int(fd), id.pid)
+	}); err != nil || !got {
+		return procID{}, false
 	}
-	return int(cred.Pid), true
+	return id, true
 }
