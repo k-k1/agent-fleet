@@ -24,6 +24,9 @@ import (
 type Hub[S, T any] struct {
 	mu   sync.Mutex
 	keys map[string]*keyHub[S, T]
+	// wg counts every ticker goroutine ever started, including those whose key has already been
+	// dropped from keys (the last leave removes the key before the goroutine has exited).
+	wg sync.WaitGroup
 }
 
 // Sub is one subscriber's mailbox.
@@ -66,6 +69,7 @@ func (h *Hub[S, T]) Join(key string, src S, tick time.Duration, build func(ctx c
 			h.keys = map[string]*keyHub[S, T]{}
 		}
 		h.keys[key] = k
+		h.wg.Add(1)
 		go h.run(ctx, k)
 	}
 	k.subs[sub] = struct{}{}
@@ -104,6 +108,12 @@ func (h *Hub[S, T]) Active() int {
 	return len(h.keys)
 }
 
+// Wait blocks until every ticker goroutine the hub started has exited. leave only cancels the
+// goroutine; a build in flight keeps running (and touching whatever it uses, such as the
+// database) until it returns. A caller that tears those down must stop the subscribers first,
+// then Wait. It does not stop anything itself, so it blocks forever while a subscriber remains.
+func (h *Hub[S, T]) Wait() { h.wg.Wait() }
+
 // Done returns a channel closed once key's goroutine has exited, or nil if key has no hub.
 func (h *Hub[S, T]) Done(key string) <-chan struct{} {
 	h.mu.Lock()
@@ -115,6 +125,7 @@ func (h *Hub[S, T]) Done(key string) <-chan struct{} {
 }
 
 func (h *Hub[S, T]) run(ctx context.Context, k *keyHub[S, T]) {
+	defer h.wg.Done()
 	defer close(k.done)
 	t := time.NewTicker(k.tick)
 	defer t.Stop()
