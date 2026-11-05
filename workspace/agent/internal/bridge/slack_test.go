@@ -215,7 +215,7 @@ func TestSlackButtonsRendered(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	posts := fakeSlack(t, "xoxb-tok")
 	sp := &slackProvider{creds: secrets.SlackCreds{BotToken: "xoxb-tok", ChannelID: "C1", UserID: "U9", Receive: true}}
-	if err := sp.Send(Message{Kind: "permission-request", SessionName: "s7"}); err != nil {
+	if err := sp.Send(Message{Kind: "permission-request", SessionName: "s7", PermissionToken: "tok7"}); err != nil {
 		t.Fatal(err)
 	}
 	var cids []string
@@ -224,7 +224,7 @@ func TestSlackButtonsRendered(t *testing.T) {
 	}
 	foundAllow := false
 	for _, c := range cids {
-		if pi, ok := ParseCustomID(c); ok && pi.Kind == "p" && pi.Session == "s7" && pi.Choice == "allow" {
+		if pi, ok := ParseCustomID(c); ok && pi.Kind == "p" && pi.Session == "s7" && pi.Choice == "allow" && pi.Token == "tok7" {
 			foundAllow = true
 		}
 	}

@@ -3,8 +3,10 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +26,19 @@ func TestParseCustomIDRoundTrip(t *testing.T) {
 		pi, ok := ParseCustomID(customID(tc.kind, tc.choice, "sxyz"))
 		if !ok || pi.Kind != tc.kind || pi.Choice != tc.choice || pi.Session != "sxyz" {
 			t.Fatalf("%s/%s parse=%+v ok=%v", tc.kind, tc.choice, pi, ok)
+		}
+	}
+	// permission token: carried by the 5-field id; the 4-field id predates it and parses empty
+	pi, ok = ParseCustomID(customID("p", "allow", "sxyz", "1abc"))
+	if !ok || pi.Token != "1abc" || pi.Session != "sxyz" {
+		t.Fatalf("p token parse=%+v ok=%v", pi, ok)
+	}
+	if pi, ok = ParseCustomID("af|p|allow|sxyz"); !ok || pi.Token != "" || pi.Session != "sxyz" {
+		t.Fatalf("legacy p parse=%+v ok=%v", pi, ok)
+	}
+	for _, bad := range []string{"af|p|allow|s|", "af|p|allow|s|t|x", "af|pl|approve|s|t"} {
+		if _, ok := ParseCustomID(bad); ok {
+			t.Errorf("ParseCustomID(%q) accepted, want reject", bad)
 		}
 	}
 	// rejects: not ours / malformed / bad indices
@@ -85,12 +100,15 @@ func TestQuestionMessagesFallbacks(t *testing.T) {
 
 func TestButtonMessagesPermissionAndPlan(t *testing.T) {
 	d := &discordProvider{creds: secrets.DiscordCreds{Lang: ""}}
-	perm := d.buttonMessages(Message{Kind: "permission-request", SessionName: "sp"})
+	if got := d.buttonMessages(Message{Kind: "permission-request", SessionName: "sp"}); got != nil {
+		t.Fatalf("a permission event without a token must not get buttons, got %d", len(got))
+	}
+	perm := d.buttonMessages(Message{Kind: "permission-request", SessionName: "sp", PermissionToken: "tok1"})
 	if len(perm) != 1 {
 		t.Fatalf("permission messages=%d", len(perm))
 	}
 	cids := buttonCustomIDs(t, perm[0])
-	if len(cids) != 2 || cids[0] != customID("p", "allow", "sp") || cids[1] != customID("p", "deny", "sp") {
+	if len(cids) != 2 || cids[0] != customID("p", "allow", "sp", "tok1") || cids[1] != customID("p", "deny", "sp", "tok1") {
 		t.Fatalf("permission custom_ids=%v", cids)
 	}
 	plan := d.buttonMessages(Message{Kind: "plan-approval", SessionName: "sp"})
@@ -244,4 +262,18 @@ func buttonCustomIDs(t *testing.T, om outMsg) []string {
 		}
 	}
 	return out
+}
+
+// The longest permission custom id (a 40-char session name, the widest int64 token in base 36)
+// stays inside Discord's 100-char custom_id cap and Slack's 255-char action_id/value cap.
+func TestPermissionCustomIDFitsPlatformLimits(t *testing.T) {
+	sid := strings.Repeat("s", 40)
+	tok := strconv.FormatInt(math.MaxInt64, 36)
+	cid := customID("p", "allow", sid, tok)
+	if len(cid) > 100 {
+		t.Fatalf("custom id is %d chars, Discord caps at 100", len(cid))
+	}
+	if pi, ok := ParseCustomID(cid); !ok || pi.Session != sid || pi.Token != tok {
+		t.Fatalf("round trip lost data: %+v ok=%v", pi, ok)
+	}
 }

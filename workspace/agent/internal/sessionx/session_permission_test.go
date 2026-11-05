@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,7 +302,7 @@ func TestBridgeDenyThatSendsNothingSettlesNothing(t *testing.T) {
 	}
 	t.Cleanup(func() { readPermissionMenu = prev })
 	meta, _ := session.ReadMeta("slot82")
-	if _, err := answerClaudePermission(meta, claude.PermDeny, true); err != nil {
+	if _, err := answerClaudePermission(meta, claude.PermDeny, permissionToken(sid), true); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
@@ -325,7 +326,7 @@ func TestBridgeDenyRetiresThePrompt(t *testing.T) {
 	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
 	sid := permissionSession(t, "slot83")
 	meta, _ := session.ReadMeta("slot83")
-	if _, err := answerClaudePermission(meta, claude.PermDeny, true); err != nil {
+	if _, err := answerClaudePermission(meta, claude.PermDeny, permissionToken(sid), true); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := status.ReadPendingPermission(sid); ok {
@@ -333,5 +334,51 @@ func TestBridgeDenyRetiresThePrompt(t *testing.T) {
 	}
 	if st, _ := status.Read(sid); st.State != "idle" {
 		t.Fatalf("state = %q, want idle", st.State)
+	}
+}
+
+// A bridge button names the prompt it was posted for (#3358): a click carrying an older prompt's
+// token, or no token at all, sends nothing and leaves the current prompt open.
+func TestBridgePermissionButtonIsBoundToThePrompt(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
+	sid := permissionSession(t, "slot84")
+	meta, _ := session.ReadMeta("slot84")
+	cur := permissionToken(sid)
+	if cur == "" {
+		t.Fatal("no token for a pending prompt")
+	}
+	for name, tok := range map[string]string{"stale": cur + "x", "missing": ""} {
+		out, err := answerClaudePermission(meta, claude.PermAllow, tok, true)
+		if err != nil || !strings.Contains(out, "prompt changed") {
+			t.Fatalf("%s: out=%q err=%v, want a refusal", name, out, err)
+		}
+		if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+			t.Fatalf("%s: keys sent:\n%s", name, b)
+		}
+		if _, ok := permDecided.Load("slot84"); ok {
+			t.Fatalf("%s: recorded as answered", name)
+		}
+	}
+	if _, err := answerClaudePermission(meta, claude.PermAllow, cur, true); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(logPath); !strings.Contains(string(b), "send-keys") {
+		t.Fatal("the matching token sent nothing")
+	}
+}
+
+// The permission-request event names the prompt it was raised for, so the chat buttons can bind to it.
+func TestPermissionRequestEventCarriesTheToken(t *testing.T) {
+	withTempHome(t)
+	sid := permissionSession(t, "slot85")
+	RecordSessionNotification(sid, "working", "permission", "")
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != "permission-request" {
+		t.Fatalf("events = %+v", events)
+	}
+	if got, _ := events[0].Payload["permissionToken"].(string); got == "" || got != permissionToken(sid) {
+		t.Fatalf("payload token = %q, want %q", got, permissionToken(sid))
 	}
 }
