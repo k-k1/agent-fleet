@@ -505,3 +505,4 @@ table from becoming a menu of models that fail on the first message, which is wh
   Review round 2 (#3367): a cancelled booking stays on record for 24 h after its episode let it go (a rolled-back switch rebooks
   under a new id, and an in-flight fire of the old one is still refused); the usage source never attributes by a meta it cannot
   read (retries, then declines the source/stamp instead of using the listed copy).
+  Review round 3 (#3367): the retention is part of the one checked write that records the cancellation, not a second unchecked write.

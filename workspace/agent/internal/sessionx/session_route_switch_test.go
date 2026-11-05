@@ -299,6 +299,32 @@ func TestRouteSwitchRollbackKeepsTheOldBookingRefusedThroughCleanup(t *testing.T
 	}
 }
 
+// The retention is part of the one checked write that records the cancellation: a separate,
+// unchecked write could fail alone and leave an id the sweep forgets after a rollback.
+func TestRouteSwitchRecordsTheCancellationAndItsRetentionInOneWrite(t *testing.T) {
+	e := newSwitchEnv(t, subscriptionRoute)
+	e.dropErr = errors.New("cp unreachable") // the record stays, so it can be read back
+	if _, err := e.run(); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := rateLimitCleanups.Read(rateLimitCleanupKey)
+	c, ok := all["sch_old"]
+	if !ok || c.KeepUntil == "" {
+		t.Fatalf("recorded cancellation = %+v (present %v), want it with KeepUntil", c, ok)
+	}
+	// An id already recorded without retention gains it from the same write.
+	if err := recordRateLimitCancel("other", "sch_x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordRateLimitCancelKeep("other", "sch_x", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	all, _ = rateLimitCleanups.Read(rateLimitCleanupKey)
+	if all["sch_x"].KeepUntil == "" {
+		t.Error("an existing record did not gain the retention")
+	}
+}
+
 func routes0(ms []session.Meta) []string {
 	var out []string
 	for _, m := range ms {

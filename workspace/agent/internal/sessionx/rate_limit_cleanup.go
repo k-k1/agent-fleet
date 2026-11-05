@@ -70,17 +70,28 @@ func cancelRateLimitSchedule(name, id string) error {
 }
 
 // recordRateLimitCancel durably notes that id is to be cancelled.
-func recordRateLimitCancel(name, id string) error {
+func recordRateLimitCancel(name, id string) error { return recordRateLimitCancelKeep(name, id, 0) }
+
+// recordRateLimitCancelKeep is recordRateLimitCancel that also keeps the id on record for keep
+// beyond the episode naming it, in the same checked write: a retention written separately could
+// fail alone and leave a cancellation the sweep forgets as soon as a rollback rebooks.
+func recordRateLimitCancelKeep(name, id string, keep time.Duration) error {
 	rateLimitCleanupMu.Lock()
 	defer rateLimitCleanupMu.Unlock()
 	all, _ := rateLimitCleanups.Read(rateLimitCleanupKey)
 	if all == nil {
 		all = map[string]rateLimitScheduleCleanup{}
 	}
-	if _, ok := all[id]; ok {
+	c, ok := all[id]
+	if !ok {
+		c = rateLimitScheduleCleanup{Session: name, Since: time.Now().Format(time.RFC3339)}
+	}
+	if keep > 0 {
+		c.KeepUntil = time.Now().Add(keep).Format(time.RFC3339)
+	} else if ok {
 		return nil
 	}
-	all[id] = rateLimitScheduleCleanup{Session: name, Since: time.Now().Format(time.RFC3339)}
+	all[id] = c
 	return rateLimitCleanups.Write(rateLimitCleanupKey, all)
 }
 
@@ -130,20 +141,6 @@ func forgetIfEpisodeLetGo(all map[string]rateLimitScheduleCleanup, id string, c 
 		return
 	}
 	delete(all, id)
-}
-
-// retainRateLimitCancel keeps id's cancellation on record for d beyond the episode naming it.
-func retainRateLimitCancel(id string, d time.Duration) {
-	rateLimitCleanupMu.Lock()
-	defer rateLimitCleanupMu.Unlock()
-	all, _ := rateLimitCleanups.Read(rateLimitCleanupKey)
-	c, ok := all[id]
-	if !ok {
-		return
-	}
-	c.KeepUntil = time.Now().Add(d).Format(time.RFC3339)
-	all[id] = c
-	writeRateLimitCleanups(all)
 }
 
 func writeRateLimitCleanups(all map[string]rateLimitScheduleCleanup) {

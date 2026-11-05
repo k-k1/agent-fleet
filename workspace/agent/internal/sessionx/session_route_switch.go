@@ -432,11 +432,10 @@ func (r *routeSwitchRun) cancelBooking() error {
 	if r.rec.Booking == "" {
 		return nil
 	}
-	if err := recordRateLimitCancel(r.name, r.rec.Booking); err != nil {
+	if err := recordRateLimitCancelKeep(r.name, r.rec.Booking, routeSwitchCancelKeep); err != nil {
 		return &routeSwitchError{Status: http.StatusInternalServerError, Code: routes.CodeSwitchBooking,
 			Message: "the usage-limit resume could not be recorded as cancelled, so nothing was changed: " + err.Error()}
 	}
-	retainRateLimitCancel(r.rec.Booking, routeSwitchCancelKeep)
 	finishRateLimitCancel(r.rec.Booking)
 	return nil
 }
