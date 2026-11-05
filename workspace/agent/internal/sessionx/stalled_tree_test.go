@@ -143,6 +143,61 @@ func TestStalledTree_ChildChangeRearmsButRootOnlyChangeDoesNot(t *testing.T) {
 	}
 }
 
+func TestStalledTree_ChildLeavingAfterTheNoticeDoesNotRearm(t *testing.T) {
+	f := newStalledFixture(t)
+	f.tree()
+	f.session("kid3", "parent", "idle")
+	f.tickAt(0)
+	f.tickAt(mins(15))
+	if len(f.sent) != 1 {
+		t.Fatalf("setup: want 1 notice, got %d", len(f.sent))
+	}
+	// The parent answers "all done" and the user deletes one finished child.
+	f.state["parent"] = "working"
+	f.tickAt(mins(16))
+	f.state["parent"] = "idle"
+	f.turn["parent"] = "2026-10-20T09:17:00Z"
+	f.alive["kid3"] = false
+	for d := 17; d <= 60; d++ {
+		f.tickAt(mins(d))
+	}
+	if len(f.sent) != 1 {
+		t.Fatalf("a child leaving re-armed the notice: %d notices: %v", len(f.sent), f.sent)
+	}
+	// It comes back (resumed) and works: that is movement again.
+	f.alive["kid3"] = true
+	f.turn["kid3"] = "2026-10-20T10:01:00Z"
+	f.tickAt(mins(61))
+	f.tickAt(mins(76))
+	if len(f.sent) != 2 {
+		t.Fatalf("a child that came back and worked did not re-arm: %d notices", len(f.sent))
+	}
+}
+
+func TestStalledTree_ChildReturningUnchangedAfterLeavingRearms(t *testing.T) {
+	f := newStalledFixture(t)
+	f.tree()
+	f.session("kid3", "parent", "idle")
+	f.tickAt(0)
+	f.tickAt(mins(15))
+	if len(f.sent) != 1 {
+		t.Fatalf("setup: want 1 notice, got %d", len(f.sent))
+	}
+	f.alive["kid3"] = false
+	f.tickAt(mins(16))
+	// Back with the very signature it fired on: it was gone, so its return is still movement.
+	f.alive["kid3"] = true
+	f.tickAt(mins(17))
+	f.tickAt(mins(31))
+	if len(f.sent) != 1 {
+		t.Fatalf("re-armed episode fired early: %d", len(f.sent))
+	}
+	f.tickAt(mins(32))
+	if len(f.sent) != 2 || !strings.Contains(f.sent[1], "kid3") {
+		t.Fatalf("a child that left and came back unchanged did not re-arm: %v", f.sent)
+	}
+}
+
 func TestStalledTree_TurnBetweenTicksResetsTheClock(t *testing.T) {
 	f := newStalledFixture(t)
 	f.tree()

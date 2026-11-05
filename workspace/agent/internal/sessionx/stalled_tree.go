@@ -18,10 +18,11 @@ package sessionx
 // anything happened in between, which is also what absorbs the ~20 s lag of a polled state: the
 // notice needs stalledTreeAfter of unchanged signature, not one lucky idle reading.
 //
-// Once per quiet episode. After the nudge only a change in a member OTHER than the root re-arms
-// it: the root's own turn (the one the notice caused) always changes the root's state, and
-// counting that would nudge a parent that answered "all done" every stalledTreeAfter, one whole
-// turn each time. A parent that does act on the notice moves a child, which re-arms.
+// Once per quiet episode. After the nudge only a child that joins or changes re-arms it: the
+// root's own turn (the one the notice caused) always changes the root's state, and counting that
+// would nudge a parent that answered "all done" every stalledTreeAfter, one whole turn each time.
+// A child that leaves does not re-arm either, for the same reason: it is the parent tidying up.
+// A parent that does act on the notice moves a child, which re-arms.
 //
 // Managed (codex / opencode) parents are reached: injectSessionPrompt routes them through the
 // driver handle's Send, the same as the abort-resume nudge.
@@ -103,6 +104,10 @@ func (t stalledTree) names() map[string]bool {
 }
 
 func (t stalledTree) signature(skipRoot bool) string {
+	return strings.Join(t.sigParts(skipRoot), ";")
+}
+
+func (t stalledTree) sigParts(skipRoot bool) []string {
 	var parts []string
 	for i, m := range t.Members {
 		if skipRoot && i == 0 {
@@ -111,7 +116,20 @@ func (t stalledTree) signature(skipRoot bool) string {
 		parts = append(parts, m.sig)
 	}
 	sort.Strings(parts)
-	return strings.Join(parts, ";")
+	return parts
+}
+
+// childMoved reports whether a child of t joined or changed since the nudge, whose child
+// signatures were fired. A child that only left (stopped, deleted, archived) is not movement:
+// the parent tidying up its finished children after an "all done" would otherwise re-arm the
+// notice and get it again stalledTreeAfter later, about the same idle children.
+func (t stalledTree) childMoved(fired map[string]bool) bool {
+	for _, p := range t.sigParts(true) {
+		if !fired[p] {
+			return true
+		}
+	}
+	return false
 }
 
 // quiet reports whether every member is idle with no background work and no peer message is
@@ -132,10 +150,12 @@ func peersInFlight(members map[string]bool) bool {
 }
 
 type stalledEpisode struct {
-	sig, childSig string
-	since         time.Time // when the current signature was first seen
-	fired         bool
-	retryAt       time.Time // a failed delivery waits for this instant
+	sig string
+	// childParts are the children's signatures, the set a fired episode compares against.
+	childParts map[string]bool
+	since      time.Time // when the current signature was first seen
+	fired      bool
+	retryAt    time.Time // a failed delivery waits for this instant
 }
 
 var (
@@ -147,20 +167,25 @@ var (
 func stalledTreeStep(t stalledTree, now time.Time, after time.Duration) bool {
 	stalledMu.Lock()
 	defer stalledMu.Unlock()
-	sig, childSig := t.signature(false), t.signature(true)
+	sig := t.signature(false)
+	childParts := map[string]bool{}
+	for _, p := range t.sigParts(true) {
+		childParts[p] = true
+	}
 	ep := stalledEpisodes[t.Root]
 	switch {
 	case ep == nil:
-		ep = &stalledEpisode{sig: sig, childSig: childSig, since: now}
+		ep = &stalledEpisode{sig: sig, childParts: childParts, since: now}
 		stalledEpisodes[t.Root] = ep
 	case ep.fired:
-		if childSig != ep.childSig {
-			*ep = stalledEpisode{sig: sig, childSig: childSig, since: now}
+		if t.childMoved(ep.childParts) {
+			*ep = stalledEpisode{sig: sig, childParts: childParts, since: now}
 		} else {
-			ep.sig = sig
+			// Narrowed to the children still there, so one that leaves and comes back re-arms.
+			ep.sig, ep.childParts = sig, childParts
 		}
 	case sig != ep.sig:
-		*ep = stalledEpisode{sig: sig, childSig: childSig, since: now}
+		*ep = stalledEpisode{sig: sig, childParts: childParts, since: now}
 	}
 	if ep.fired {
 		return false
