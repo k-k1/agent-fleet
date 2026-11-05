@@ -39,16 +39,21 @@ var (
 	// permFooterRe is the dialog's footer ("Esc to cancel · Tab to amend"). It must START the
 	// line: AskUserQuestion's footer also mentions Esc, after "Enter to select".
 	permFooterRe = regexp.MustCompile(`^\s*Esc to cancel\b`)
+	// permLabelRuleRe is the rule claude draws under the dialog when it runs with --name, which
+	// every Agent Fleet session does: "──── [AF:<session>] <title> ─". Measured on 2.1.318 in a
+	// live session (testdata/permmenu/bash_ask_rule_af_label.txt); a bare tmux claude has none.
+	permLabelRuleRe = regexp.MustCompile(`^\s*─{3,}.*─\s*$`)
 )
 
 // ParsePermissionMenu reads the permission dialog at the bottom of a claude pane. It answers
-// false unless the last non-blank line is the "Esc to cancel" footer, the rows right above it
+// false unless the last non-blank line (below the session's name rule, if any) is the
+// "Esc to cancel" footer, the rows right above it
 // are numbered 1..n without a gap, and a "Do you want to" question sits above row 1: when in
 // doubt it reports no menu, because a misread menu is answered with the wrong digit.
 //
 // Anchoring on the bottom line is what keeps a dialog quoted in the transcript above (this
 // repository's own tests and comments quote them) from being read as the live one: the live
-// dialog replaces the composer, so nothing but blank lines follows its footer.
+// dialog replaces the composer, so nothing but blank lines and the name rule follow its footer.
 //
 // A label too long for the pane wraps onto unnumbered lines, and so does a long question
 // ("Do you want to make this edit to <long path>?"). Continuation lines are joined onto the
@@ -59,6 +64,12 @@ func ParsePermissionMenu(pane string) (PermissionMenu, bool) {
 	f := len(lines) - 1
 	for f >= 0 && strings.TrimSpace(lines[f]) == "" {
 		f--
+	}
+	if f >= 0 && permLabelRuleRe.MatchString(lines[f]) {
+		f--
+		for f >= 0 && strings.TrimSpace(lines[f]) == "" {
+			f--
+		}
 	}
 	if f < 0 || !permFooterRe.MatchString(lines[f]) {
 		return PermissionMenu{}, false

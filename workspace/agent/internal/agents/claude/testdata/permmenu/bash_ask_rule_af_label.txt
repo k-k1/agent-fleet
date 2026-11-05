@@ -1,0 +1,23 @@
+
+❯ [agent-fleet:spawn from=sw6vfn6] Run exactly this shell command once with the
+  Bash tool: echo live-check-3357 . Then reply with its output in one line and
+  stop. Do nothing else.
+
+  Printing live-check marker
+  ⎿  $ echo live-check-3357
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Print live-check marker
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ echo live-check-3357
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Permission rule Bash(echo:*) requires confirmation for this command.
+ /permissions to update rules
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+──────────────────────── [AF:srlzsrd] Live check #3357 permission card (probe) ─

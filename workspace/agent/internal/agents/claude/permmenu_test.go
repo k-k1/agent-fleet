@@ -28,6 +28,8 @@ func TestParsePermissionMenuMeasured(t *testing.T) {
 	}{
 		{"bash_ask_rule_two_options.txt", 2, map[string]string{PermAllow: "1", PermDeny: "2"}, []string{PermAllow, PermDeny}},
 		{"bash_four_options.txt", 4, map[string]string{PermAllow: "1", PermAlways: "2", PermDeny: "4"}, []string{PermAllow, PermAlways, PermDeny}},
+		// A live Agent Fleet session: claude runs with --name, which draws a rule under the footer.
+		{"bash_ask_rule_af_label.txt", 2, map[string]string{PermAllow: "1", PermDeny: "2"}, []string{PermAllow, PermDeny}},
 		{"write_three_options.txt", 3, map[string]string{PermAllow: "1", PermAlways: "2", PermDeny: "3"}, []string{PermAllow, PermAlways, PermDeny}},
 	}
 	for _, c := range cases {
@@ -72,8 +74,10 @@ func TestParsePermissionMenuRefusesWhatIsNotTheLiveDialog(t *testing.T) {
 		"single row":            " Do you want to proceed?\n ❯ 1. Yes\n Esc to cancel\n",
 		"no question line":      " some other screen\n ❯ 1. Yes\n   2. No\n Esc to cancel\n",
 		// AskUserQuestion's footer mentions Esc too, but not at the start of the line.
-		"question menu footer":  " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Enter to select · Esc to cancel\n",
-		"rows below the footer": " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel\n❯ \n",
+		"question menu footer": " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Enter to select · Esc to cancel\n",
+		// The name rule is skipped only directly under the footer; a composer after it is not a dialog.
+		"composer under the name rule": " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel\n──── [AF:s1] t ─\n❯ \n",
+		"rows below the footer":        " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel\n❯ \n",
 	}
 	for name, pane := range cases {
 		if m, ok := ParsePermissionMenu(pane); ok {
