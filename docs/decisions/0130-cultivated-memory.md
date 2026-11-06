@@ -7,8 +7,9 @@ English | [日本語](0130-cultivated-memory.ja.md)
   (section "Measured"); the Hermes Agent figures come from its source at `90d6b98` (2026-11-05); the
   prior-art survey is [docs/log/136](../log/136-cultivated-memory-survey.md), which marks what was read,
   what is secondary and what is inferred. Reviewed by a separate session (codex `gpt-6.1-sol`); round 1
-  had 21 findings, round 2 had 9, round 3 had 3 and a confirming round 4 had 2 minor ones; each was
-  checked against the tree and the cited sources and folded into this text.
+  had 21 findings, round 2 had 9, round 3 had 3, a confirming round 4 had 2 minor ones, and round 5, on
+  the owner's answers of 2026-11-07, had 7; each was checked against the tree and the cited sources and
+  folded into this text.
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
   release carries **the first step** of what this record calls cultivation (decision 10). Everything
   else here is a proposal.
@@ -196,7 +197,8 @@ input, and every rule of decision 6 (including no revival) applies to them.
 - Dependencies: `anchors` — paths, symbols, test names, ADR numbers, profile and branch names,
   commands, `[[links]]`. Extracted mechanically and editable.
 - Lifecycle: `status` (`active` | `quiet` | `archived`) with `status_by` (`agent`, `member`,
-  `consolidator`); `superseded_by` and `invalid_at` (Graphiti's vocabulary); and `reasons`, the list of
+  `consolidator`); `superseded_by` (a memory, or from decision 11 a document) and `invalid_at`
+  (Graphiti's vocabulary); and `reasons`, the list of
   open doubts, each `{by: lint|feedback|member, rule, note, revision}` — the rule that fired (a lint
   check id, or `stale`/`wrong`), a one-line note, and the revision it was found on. **Suspect is not a
   status**: a memory is suspect while `reasons` is not empty. Every writer's output is validated
@@ -340,12 +342,16 @@ A run per session would repeat 0117's mistake (one window, blind to other sessio
 the world) and pay a model call for the few observations one session leaves. Instead:
 
 - **When it looks**: when no session in the workspace has run a turn for 15 minutes, at most once
-  every 3 hours, so it never competes with live sessions for memory or CPU.
+  every 3 hours, so it seldom competes with live sessions for memory or CPU. When a turn starts
+  during a run, the run finishes the model call in flight and defers the rest.
 - **What it runs**: only topics that are ripe — a `wrong` or `stale` report (one is enough: it is the
   strongest signal), 3 new observations, or an observation that has waited 24 hours.
-- **How much**: a token budget per run; what does not fit waits for the next one.
+- **How much**: a token budget per run; what does not fit waits for the next one. Ripe topics are
+  taken oldest observation first, so a busy topic cannot starve a quiet one.
 
-A `wrong` report therefore gets a proposed fix the same day, and nothing waits much more than a day.
+These are targets, not guarantees: on a running workspace that goes idle, a `wrong` report gets a
+proposed fix the same day. A stopped workspace, one that is never idle, or a spent budget delays it;
+the report shows each delayed topic and the cause.
 The warning itself never waits for a run: lint's and feedback's reasons are shown at once (decision 3).
 The figures (15 minutes, 3 hours, 3 observations, 24 hours) are starting values that step 3 tunes from
 measurement.
@@ -376,14 +382,22 @@ Rules it inherits:
     with a bigger prompt.
 
   Two operations go to a larger tier, or reach the member as a plain observation: a supersede and a
-  merge of two memories, the cases Mem0's update router lost (Prior art). ACE's results do not show
-  that a small judge fails, nor that it is safe, so step 3 starts with an offline comparison before
-  anything is queued: the exported 0117 queue and the fix list from the 2026-11-06 lint run (the old
-  trunk branch, the retired profile, broken links, missing test names) are a labelled set, run through
-  the small and the larger tier; the small tier stays the default where its outcomes match. For scale
-  only, **estimated** and not measured: a classification call of about 3 k input tokens and a patch call
-  of about 2.5 k (median body 2,228 bytes), at the measured 5 creates a day plus feedback, is in the
-  order of 1–3 M input tokens a month per member.
+  merge of two memories, the cases Mem0's update router lost (Prior art). That is a conservative
+  choice, not a measured one: the study shows where a router failed, not that a larger one succeeds.
+  ACE's results do not show that a small judge fails, nor that it is safe, so step 3 starts with an
+  offline evaluation before anything is queued. A gold set is built from the exported 0117 queue and
+  the fix list from the 2026-11-06 lint run (the old trunk branch, the retired profile, broken links,
+  missing test names): for each case the member labels the right operation, the facts that must
+  survive, and whether no change is right. The raw queue and lint hits are not labels; both contain
+  wrong items. Both tiers are scored against the gold set per operation (wrong changes, lost facts,
+  missed fixes); agreement between the tiers is a secondary measure only. The small tier is the default
+  for an operation where it meets that operation's bar.
+
+  For scale only, **estimated**: a classification call takes about 3 k input tokens and a patch call
+  about 2.5 k (median body 2,228 bytes). The measured figure is about 5 creates a day. How many
+  observations arrive, how much feedback (step 2 does not exist yet) and how often a call escalates
+  are assumptions: 5 classifications and 2 patches a day come to about 0.6 M input tokens a month;
+  20 and 10, plus escalations, to about 3 M. The monthly cap is set after the offline evaluation.
 
 ### 7. Who applies what
 
@@ -394,12 +408,16 @@ Three actors, three rules:
 - **Deterministic lint** applies by itself what it can prove: reasons (step 2) and `lint-rename`.
 - **The autonomous consolidator** never publishes: every operation waits for the member, grouped by
   topic, approved per topic, not per item. There is no calendar: a topic's proposals are shown as soon
-  as its run ends (decision 6 says when runs start), and the member is notified at most once a day while any are waiting. Waiting costs
-  little because the warning does not wait: the reasons lint and feedback attach reach every agent
-  before anyone approves a fix (decision 3). A proposal is re-validated against the current revision
-  when it is approved (decision 6), and one left undecided for 14 days goes back to being an
-  observation, so the queue cannot become the backlog 0117 left. Nothing is deleted automatically;
-  history keeps everything (0022).
+  as its run ends (decision 6 says when runs start), and the member is notified at most once a day
+  while any are waiting. Waiting costs little because the warning does not wait: the reasons lint and
+  feedback attach reach every agent before anyone approves a fix (decision 3). A proposal is
+  re-validated against the current revision when it is approved (decision 6). One left undecided for
+  14 days expires, so the queue cannot become the backlog 0117 left: its approval stops working, and
+  its observations keep a record of it (the observation ids, the target revision and the evidence it
+  used). Expiry alone does not make the topic ripe again, or the same proposal would come back every
+  14 days; new evidence, a change to the target memory, or the member's explicit retry does, and the
+  new proposal is validated afresh, no-revival included. Nothing is deleted automatically; history
+  keeps everything (0022).
 
 ### 8. Independence from AF, and position
 
@@ -465,8 +483,12 @@ one member's store should end up there, and the memory should then point at it i
 it. Cursor removed its memories in favour of rules (Prior art); this is the path between the two.
 
 - **Candidates come from signals, not from a model's taste**: a `lesson`, `procedure` or `preference`
-  about the repository rather than the member, confirmed from more than one session, with no open
-  reasons, with anchors that exist on the default branch, and unchanged for some days. Lint adds the
+  about the repository rather than the member, confirmed by at least two different sessions on its
+  current revision, with no open reasons, with anchors that exist on the default branch, and
+  unchanged for some days. The `confirmed` counter cannot show that (decision 3: a count per name), so
+  promotion uses the record decision 4's "one report per session per revision" already needs —
+  session, revision, time: a session that confirmed revisions 3 and 4 counts once, and a confirmation
+  of an earlier body does not count for the current one. Lint adds the
   converse check: a memory whose claims a repository document it anchors already states is reported as
   redundant.
 - **The output is a proposed change to the repository, never a commit**: the target file and section,
@@ -475,9 +497,20 @@ it. Cursor removed its memories in favour of rules (Prior art); this is the path
   pushes or opens a pull request by itself. The text passes the body secret scan and the repository's
   own pre-commit scan, because one member's memory may name hosts or accounts a shared repository must
   not.
-- **After the merge the memory is superseded, not forgotten**: `superseded_by` takes a second target
-  form, `doc:<path>#<heading>`, checked to exist on the default branch, with the merge commit as
-  evidence. The memory leaves agents' view (decision 3) and history keeps it.
+- **After the merge the memory is superseded, not forgotten.** `superseded_by` names one of two
+  targets: a memory, with decision 6's checks unchanged, or a document — the repository's identity, a
+  normalised path, the heading, and the merge commit that was checked to contain it on the default
+  branch. A user-scope memory names the repository explicitly; a relative path alone is never
+  resolved. Under the store lock the supersede also checks that the memory is still at the revision
+  the promotion quoted; if it changed while the pull request waited, the supersede is refused and goes
+  back to the member, so merging an old text never hides a newer one. It stays a one-target change on
+  the old memory, so history and revert work as in decision 6. The memory leaves agents' view
+  (decision 3) and history keeps it.
+- **A document target is an anchor lint keeps checking**, on superseded memories too: a renamed or
+  deleted file, a vanished heading, or a reverted merge is reported to the member, who points the
+  target at the new place or reverts the supersede. The body never comes back by itself. Acceptance:
+  promote and merge, then rename the file, delete the heading, and revert the merge; each is
+  reported, and each repair works.
 - **The reverse direction is decision 5**: what the repository retires feeds the retired-term list,
   and lint marks the memories that still use it.
 
