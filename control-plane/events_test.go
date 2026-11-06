@@ -45,6 +45,16 @@ func (s *eventsStub) waitPolls(n int64, deadline time.Time) {
 	}
 }
 
+// waitFramesThenTicks blocks until n frames of stream have been written, then until the hub has
+// polled the Agent `ticks` more times, so a duplicate frame a regression would send on a later
+// tick has had real ticks to appear in. Counting ticks (not sleeping) keeps the observation
+// window from shrinking on a slow runner. Both waits are bounded (25 s each), so the caller's
+// goroutine always returns.
+func (s *eventsStub) waitFramesThenTicks(rec *syncRecorder, stream string, n int, ticks int64) {
+	rec.waitFrames(stream, n)
+	s.waitPolls(s.polls.Load()+ticks, time.Now().Add(25*time.Second))
+}
+
 // eventsTestEnv builds a sqlite-backed eventsAPI plus a stub Agent serving
 // /sessions and /notifications, and the resolved record pointing at it.
 func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
@@ -255,7 +265,7 @@ func TestEventsStreamPushesChange(t *testing.T) {
 		rec.waitFrames("sessions", 1)
 		stub.setBody(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
 	}()
-	frames, _ := runStreamUntil(t, a, res, rec, func() { rec.waitFrames("sessions", 2) })
+	frames, _ := runStreamUntil(t, a, res, rec, func() { stub.waitFramesThenTicks(rec, "sessions", 2, 3) })
 
 	if got := len(frames["sessions"]); got != 2 {
 		t.Fatalf("sessions frames = %d, want 2 (snapshot + change)", got)

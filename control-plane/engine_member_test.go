@@ -549,7 +549,7 @@ func TestEventsStreamEnginesPushesChange(t *testing.T) {
 		rec.waitFrames("engines", 1)
 		e.ctrl.noteMemberSnapshot("stopped", 0, time.Now())
 	}()
-	frames, _ := runStreamUntil(t, a, res, rec, func() { rec.waitFrames("engines", 2) })
+	frames, _ := runStreamUntil(t, a, res, rec, func() { stub.waitFramesThenTicks(rec, "engines", 2, 3) })
 	if got := len(frames["engines"]); got != 2 {
 		t.Fatalf("engines frames = %d, want 2 (snapshot + the state change)", got)
 	}
