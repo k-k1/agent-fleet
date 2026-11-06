@@ -7,8 +7,8 @@ English | [日本語](0130-cultivated-memory.ja.md)
   (section "Measured"); the Hermes Agent figures come from its source at `90d6b98` (2026-11-05); the
   prior-art survey is [docs/log/136](../log/136-cultivated-memory-survey.md), which marks what was read,
   what is secondary and what is inferred. Reviewed by a separate session (codex `gpt-6.1-sol`); round 1
-  had 21 findings, round 2 had 9 and round 3 had 3 and a confirming round 4 had 2 minor ones, each checked against the tree and the cited sources and folded into
-  this text.
+  had 21 findings, round 2 had 9, round 3 had 3 and a confirming round 4 had 2 minor ones; each was
+  checked against the tree and the cited sources and folded into this text.
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
   release carries **the first step** of what this record calls cultivation (decision 10). Everything
   else here is a proposal.
@@ -233,9 +233,9 @@ after the next lint run; (b) a change that also fixes it leaves the lint reason 
 on that revision, which clears it because the rule no longer fires. An import never takes lifecycle fields from outside.
 **Revert is the exception to "keep"**: it restores the earlier version whole — kind, anchors,
 lifecycle fields and pin — as `agent_memory_changes.go:610`–`620` already does for the body and pin,
-with the revision still increasing and the member as author; reverting a lint mark or a pin undoes it.
+with the revision still increasing and the member as author; reverting a lint reason or a pin undoes it.
 Acceptance: a test per writer (save, patch, pin, claude import, muse import, project move) that each
-field survives, and for revert that a lint mark and a pin are undone.
+field survives, and for revert that a lint reason and a pin are undone.
 
 **Visibility is one predicate, applied by every agent-facing read path.** `archived` and superseded
 memories are not returned by `memory_index`, `memory_search`, the external memory MCP (same handlers),
