@@ -376,7 +376,7 @@ function MirrorViewBody({
   // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
   // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
   // under them when it does. See blockIdentity.ts.
-  const groups = useStableBlockIds(grouped, session);
+  const groups = useStableBlockIds(grouped, session, st.logId);
 
   // replyPending: the newest user prompt has no assistant reply after it yet — i.e. the
   // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
@@ -697,6 +697,9 @@ function MirrorViewBody({
             groups={groups}
             caps={caps}
             working={busy}
+            turnWorking={st.turnBusy}
+            stale={st.stateSession !== session}
+            logId={st.logId}
             autoCollapseWork={atBottomRef.current}
             inlineCards={[...restoreNoteCards(restoredAt), ...cloudRunCards(placedRuns.loose, groups.map((g) => g.ts)), ...handoffs.map((h) => ({
               at: h.created_at,

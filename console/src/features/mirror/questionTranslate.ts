@@ -124,8 +124,8 @@ export interface QuestionTranslateView {
  * the card already reads in the reader's language (the same looksForeign test as an answer).
  * `lead` is the prose shown above the questions (the managed session's pendingText, a carried
  * interaction's text); it goes out as a second part and is displayed like a turn's prose.
- * `autoEligible` is the transcript's "arrived while the reader was watching" (TranscriptView
- * arrivedAfter): without it, opening a long session with automatic translation on would press
+ * `autoEligible` is the transcript's "the live reply or newer when the session was opened"
+ * (TranscriptView arrivedAfter): without it, opening a long session with automatic translation on would press
  * for every question in its history.
  */
 export function useQuestionTranslate(

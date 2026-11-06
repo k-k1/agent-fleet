@@ -19,8 +19,9 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
   ),
 }));
 
-import { TranscriptView } from "./TranscriptView.tsx";
+import { TranscriptView, resetWatchStarts } from "./TranscriptView.tsx";
 import { groupTurns } from "./model.ts";
+import { useStableBlockIds } from "./blockIdentity.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Turn } from "./types.ts";
 import type { TranscriptTranslateWiring } from "../useTranslate.ts";
@@ -43,6 +44,7 @@ const prose = (): HTMLElement => Array.from(host!.querySelectorAll<HTMLElement>(
 
 afterEach(() => {
   act(() => root?.unmount());
+  resetWatchStarts(); // the boundary outlives a mount on purpose; each case is a fresh page
   host?.remove();
   root = null;
   host = null;
@@ -52,6 +54,7 @@ const ENGLISH = "Done — the tests are green and the branch is pushed.";
 // A second English answer, so a test can tell the turn that arrived from the one already there:
 // the cache key is the text itself, and two turns with the same prose share one entry.
 const ENGLISH2 = "Rebased onto the base branch and pushed again; the pipeline is green.";
+const ENGLISH3 = "The release notes are drafted; I left the version bump for you to confirm.";
 const JAPANESE = "テストは全部緑で、ブランチも push 済みです。";
 
 const answer = (text: string, withTool = false): Turn[] => [
@@ -245,15 +248,21 @@ describe("the mirror's translate button", () => {
 describe("the mirror's automatic translation", () => {
   // The conversation already on screen when the reader opens the session, and the same
   // conversation one exchange later. The new answer's idx is above everything the first render
-  // held, which is what makes it "arrived while watching".
-  const HISTORY: Turn[] = answer(ENGLISH);
+  // held, which is what makes it "arrived while watching". The reply the session was opened on
+  // (the live exchange) is eligible too, so it is in the reader's language here: these cases are
+  // about the turns that come after it.
+  const HISTORY: Turn[] = [
+    ...answer(ENGLISH),
+    { role: "user", text: "続けて", idx: 3, anchorId: "u2", ts: "2026-09-13T10:01:30Z" },
+    { role: "assistant", idx: 4, anchorId: "a2", ts: "2026-09-13T10:01:40Z", parts: [{ kind: "text", text: JAPANESE }] },
+  ];
   const NEXT: Turn[] = [
     ...HISTORY,
-    { role: "user", text: "もう一度", idx: 3, anchorId: "u2", ts: "2026-09-13T10:02:00Z" },
+    { role: "user", text: "もう一度", idx: 5, anchorId: "u3", ts: "2026-09-13T10:02:00Z" },
     {
       role: "assistant",
-      idx: 4,
-      anchorId: "a2",
+      idx: 6,
+      anchorId: "a3",
       ts: "2026-09-13T10:03:00Z",
       parts: [{ kind: "text", text: ENGLISH2 }],
     },
@@ -293,9 +302,183 @@ describe("the mirror's automatic translation", () => {
     // The cost ceiling of the whole feature: without the watch boundary, opening a session with
     // a hundred foreign answers in it would be a hundred model runs, none of them asked for.
     const tx = wiring({}, true);
-    render(HISTORY, capsWith(tx));
+    const el = render(HISTORY, capsWith(tx));
     expect(tx.autoKeys).toHaveLength(0);
-    expect(prose().textContent).toBe(ENGLISH);
+    expect(el.textContent).toContain(ENGLISH);
+  });
+
+  it("presses for the reply the session was opened on, finished or not", () => {
+    // What a reader opening (or coming back to) a session comes to read is its newest reply;
+    // everything above it stays history.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const opened = [...answer(ENGLISH), ...NEXT.slice(-2)];
+    render(opened, caps, true); // opened mid-turn
+    expect(tx.calls).toHaveLength(0);
+    again(opened, caps, false);
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  it("presses for a reply that finished while the reader was on another tab", () => {
+    // A tab switch unmounts the mirror. The boundary armed when the session was first opened
+    // has to survive that, or the reply that landed meanwhile counts as history on return.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps);
+    act(() => root?.unmount());
+    // Two exchanges ran meanwhile; only the newer one is the live exchange on return.
+    const away: Turn[] = [
+      ...NEXT,
+      { role: "user", text: "さらに", idx: 7, anchorId: "u4", ts: "2026-09-13T10:04:00Z" },
+      { role: "assistant", idx: 8, anchorId: "a4", ts: "2026-09-13T10:05:00Z", parts: [{ kind: "text", text: ENGLISH3 }] },
+    ];
+    render(away, caps); // back on the tab: a fresh mount, both replies already complete
+    expect(tx.calls).toEqual([[ENGLISH2], [ENGLISH3]]);
+    // History above the boundary is still never pressed.
+    expect(tx.calls.flat()).not.toContain(ENGLISH);
+  });
+
+  it("presses once the turn is over even while background work keeps the session busy", () => {
+    // A run_in_background shell or a subagent can outlive the turn by hours. Waiting for it
+    // meant the reply never got its button, so the automatic press never fired.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps);
+    act(() =>
+      root!.render(<TranscriptView groups={groupTurns(NEXT)} caps={{ ...caps }} working turnWorking={false} />),
+    );
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  const at = (turns: Turn[], caps: TranscriptCaps, logId?: string) =>
+    act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={{ ...caps }} logId={logId} />));
+  const reply = (idx: number, text: string): Turn[] => [
+    { role: "user", text: "次", idx: idx - 1, anchorId: "u" + idx, ts: "2026-09-13T11:00:00Z" },
+    { role: "assistant", idx, anchorId: "a" + idx, ts: "2026-09-13T11:01:00Z", parts: [{ kind: "text", text }] },
+  ];
+
+  it("re-arms when the session moves to another jsonl, whatever its row numbers", () => {
+    // Rows are numbered per file. A boundary armed on the old file says nothing about the new
+    // one, even when the new one's numbers run past it: its history must not look "new".
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    act(() => {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      root.render(<TranscriptView groups={groupTurns(HISTORY)} caps={caps} logId="a.jsonl" />);
+    });
+    at([...reply(11, ENGLISH), ...reply(13, ENGLISH2)], caps, "b.jsonl");
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  it("re-arms when the newest row drops below what was seen (an Agent that names no file)", () => {
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps); // boundary below the reply at 4
+    again([...HISTORY, ...reply(1000, ENGLISH3)], caps); // the log grows: 1000 arrived, pressed
+    // A replaced file, numbered from the start again: its old answer at 4 is history; only its
+    // live reply at 8 may be pressed.
+    again([...reply(2, ENGLISH), ...reply(4, ENGLISH2.replace("green", "red")), ...reply(8, ENGLISH2)], caps);
+    expect(tx.calls).toEqual([[ENGLISH3], [ENGLISH2]]);
+  });
+
+  it("counts the rows a reply grew by, not just its block's first row", () => {
+    // One reply written as many jsonl rows is one block named after its first row. Its last row
+    // is what a replaced file has to fall below to be noticed.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const grown: Turn[] = [
+      ...HISTORY,
+      { role: "assistant", idx: 1000, anchorId: "a1000", ts: "2026-09-13T10:02:00Z", parts: [{ kind: "text", text: "そのまま続けます。" }] },
+    ];
+    render(HISTORY, caps);
+    again(grown, caps);
+    again([...reply(2, ENGLISH), ...reply(4, ENGLISH2.replace("green", "red")), ...reply(8, ENGLISH2)], caps);
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  // Through the mirror's own block identity: a range remembered from the old file overlapped a
+  // history block of the new one, which took the old (larger) id and passed the boundary.
+  const switchLogs = (oldLog: string, newLog: string, live: number) => {
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    function Mirror({ turns, log }: { turns: Turn[]; log: string }) {
+      const groups = useStableBlockIds(groupTurns(turns), "s1", log);
+      return <TranscriptView groups={groups} caps={caps} logId={log} />;
+    }
+    const ja = (idx: number): Turn => ({ role: "assistant", idx, anchorId: "j" + idx, ts: "2026-09-13T09:00:00Z", parts: [{ kind: "text", text: JAPANESE }] });
+    const oldTail = [ja(901), ja(1300)];
+    const newTail: Turn[] = [
+      { role: "assistant", idx: 301, anchorId: "n301", ts: "2026-09-13T13:00:00Z", parts: [{ kind: "text", text: ENGLISH }] },
+      // The live reply: one block from row 312 to `live` — its final answer is the newest row.
+      { role: "user", text: "次", idx: 311, anchorId: "u311", ts: "2026-09-13T13:01:00Z" },
+      { role: "assistant", idx: 312, anchorId: "n312", ts: "2026-09-13T13:02:00Z", parts: [{ kind: "tool", tool: "Bash", info: "go test", output: "ok" }] },
+      { role: "assistant", idx: live, anchorId: "n" + live, ts: "2026-09-13T13:05:00Z", parts: [{ kind: "text", text: ENGLISH2 }] },
+    ];
+    act(() => {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      root.render(<Mirror turns={oldTail} log={oldLog} />);
+    });
+    act(() => root!.render(<Mirror turns={[ja(100), ...oldTail]} log={oldLog} />)); // older page: 100..1300 is "901"
+    act(() => root!.render(<Mirror turns={newTail} log={newLog} />));
+    return tx.calls;
+  };
+
+  it("lets no block of a new jsonl inherit an id from the old one", () => {
+    // The new file runs PAST the old one's rows, so only its name gives the switch away.
+    expect(switchLogs("a.jsonl", "b.jsonl", 2000)).toEqual([[ENGLISH2]]);
+  });
+
+  it("does the same without a file name, from the newest row stepping back", () => {
+    expect(switchLogs("", "", 700)).toEqual([[ENGLISH2]]);
+  });
+
+  it("does not re-arm when a follow-up is sent while a landed prompt awaits its reply", () => {
+    // The echo folds into the landed prompt's block; judged by the echo, the prompt's row
+    // vanished, the newest row seemed to step back, and the re-armed boundary dropped below the
+    // answer above — history that then got pressed.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const waiting: Turn[] = [...answer(ENGLISH), { role: "user", text: "次", idx: 3, anchorId: "u3", ts: "2026-09-13T10:02:00Z" }];
+    render(waiting, caps);
+    again([...waiting, { role: "user", text: "それと", idx: 1e9 + 1, ts: "2026-09-13T10:02:30Z", pending: true }], caps);
+    expect(tx.calls).toHaveLength(0);
+  });
+
+  it("finds the live reply when the window has no landed prompt, only a queued one", () => {
+    // A long autonomous stretch pushes the prompt out of the tail window; a queued bubble is not
+    // a row of the transcript and must not take the live slot from the real reply.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const tail: Turn[] = [
+      { role: "assistant", idx: 500, anchorId: "a500", ts: "2026-09-13T12:00:00Z", parts: [{ kind: "text", text: ENGLISH }] },
+      { role: "user", text: "then deploy", idx: 2e9, queued: true, ts: "2026-09-13T12:01:00Z" },
+    ];
+    render(tail, caps);
+    expect(tx.calls).toEqual([[ENGLISH]]);
+    // An older page loaded on scroll-up is history, not news.
+    // (It ends with the prompt that started the stretch, as a real page does.)
+    again([...reply(101, ENGLISH2), { role: "user", text: "続けて", idx: 102, anchorId: "u102", ts: "2026-09-13T11:59:00Z" }, ...tail], caps);
+    expect(tx.calls).toEqual([[ENGLISH]]);
+  });
+
+  it("learns nothing about a session from a render of the previous one", () => {
+    // A pane switching sessions renders the outgoing transcript once under the incoming name.
+    // Arming on it would make the incoming session's own history look newer than the boundary.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const outgoing: Turn[] = [{ role: "user", text: "x", idx: 0, anchorId: "o", ts: "2026-09-13T09:00:00Z" }];
+    act(() => {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      root.render(<TranscriptView groups={groupTurns(outgoing)} caps={caps} stale />);
+    });
+    again(NEXT, caps, false);
+    expect(tx.calls).toEqual([[ENGLISH2]]); // armed on NEXT itself: only its live reply
   });
 
   it("does not press again once the reader has gone back to the original", () => {
@@ -319,11 +502,11 @@ describe("the mirror's automatic translation", () => {
     // press must be built from the same slice, or a long tool trace fails it silently.
     const withWork: Turn[] = [
       ...HISTORY,
-      { role: "user", text: "もう一度", idx: 3, anchorId: "u2", ts: "2026-09-13T10:02:00Z" },
+      { role: "user", text: "もう一度", idx: 5, anchorId: "u3", ts: "2026-09-13T10:02:00Z" },
       {
         role: "assistant",
-        idx: 4,
-        anchorId: "a2",
+        idx: 6,
+        anchorId: "a3",
         ts: "2026-09-13T10:03:00Z",
         parts: [
           { kind: "tool", tool: "Bash", info: "go test ./...", output: "ok" },
@@ -344,11 +527,11 @@ describe("the mirror's automatic translation", () => {
   it("leaves an answer the reader can already read alone", () => {
     const japanese: Turn[] = [
       ...HISTORY,
-      { role: "user", text: "もう一度", idx: 3, anchorId: "u2", ts: "2026-09-13T10:02:00Z" },
+      { role: "user", text: "もう一度", idx: 5, anchorId: "u3", ts: "2026-09-13T10:02:00Z" },
       {
         role: "assistant",
-        idx: 4,
-        anchorId: "a2",
+        idx: 6,
+        anchorId: "a3",
         ts: "2026-09-13T10:03:00Z",
         parts: [{ kind: "text", text: JAPANESE }],
       },
