@@ -187,3 +187,12 @@ func TestCheckTargetRefusesUnknownWidthWithContinuation(t *testing.T) {
 		t.Errorf("single-line combining command: %v", got)
 	}
 }
+
+// A blank next line (ASCII or ideographic space) must neither panic nor count as a word wrap.
+func TestWordWrappedBlankNext(t *testing.T) {
+	for _, next := range []string{"", " ", "\u3000", "\u3000x"} {
+		if wordWrapped(10, next, 12) {
+			t.Errorf("wordWrapped(%q) = true, want false", next)
+		}
+	}
+}

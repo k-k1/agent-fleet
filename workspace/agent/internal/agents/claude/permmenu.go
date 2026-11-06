@@ -368,6 +368,10 @@ func wordWrapped(c int, next string, width int) bool {
 	if next == "" || next[0] == ' ' || next[0] == '\t' {
 		return false
 	}
-	w, ok := cols(strings.Fields(next)[0])
+	f := strings.Fields(next)
+	if len(f) == 0 || unicode.IsSpace([]rune(next)[0]) {
+		return false
+	}
+	w, ok := cols(f[0])
 	return ok && c+1+1+w >= width
 }
