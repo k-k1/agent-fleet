@@ -31,6 +31,13 @@ func (r previewTestRuntime) Name() string                 { return "preview-test
 // Agent receives echoes back its own Authorization bearer, letting assertions
 // tell which tenant's runtime actually served it.
 func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux) {
+	mux, _ = newPreviewTenantTestEnvMgr(t, agentURL)
+	return mux
+}
+
+// newPreviewTenantTestEnvMgr is newPreviewTenantTestEnv that also returns the manager, for
+// tests that flip a setting such as previewDomain.
+func newPreviewTenantTestEnvMgr(t *testing.T, agentURL string) (mux *http.ServeMux, mgr *manager) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -70,7 +77,7 @@ func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux)
 		}
 	}
 
-	mgr := &manager{
+	mgr = &manager{
 		rts: map[string]cachedRT{
 			memDefault.ID:  {rt: previewTestRuntime{endpoint: agentURL, token: "tok-default"}, ws: store.Workspace{ID: "ws-default", TenantID: dflt.ID, MembershipID: memDefault.ID}},
 			memSecurity.ID: {rt: previewTestRuntime{endpoint: agentURL, token: "tok-security"}, ws: store.Workspace{ID: "ws-security", TenantID: sec.ID, MembershipID: memSecurity.ID}},
@@ -84,7 +91,7 @@ func newPreviewTenantTestEnv(t *testing.T, agentURL string) (mux *http.ServeMux)
 	}
 	mux = http.NewServeMux()
 	registerTerminalPreviewRoutes(mux, config{mgr: mgr})
-	return mux
+	return mux, mgr
 }
 
 // previewCookie extracts the af_pv_tenant cookie a response minted, failing the

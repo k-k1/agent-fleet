@@ -146,6 +146,9 @@ func (a browserAPI) attachmentSocket(w http.ResponseWriter, r *http.Request, res
 }
 
 func (a browserAPI) socketToAgent(w http.ResponseWriter, r *http.Request, res *resolved, agentPath string) {
+	if refuseForeignWSOrigin(w, r) {
+		return
+	}
 	if !browserRuntimeReady(w, r, res.rt) {
 		return
 	}

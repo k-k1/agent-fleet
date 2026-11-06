@@ -31,6 +31,12 @@ such as `http://127.0.0.1:3000/` in an agent's reply or a rendered document open
   too, depending on the app's own configuration), but the URL is a **sub-path** (`/preview/{port}/`), so an app
   that emits **absolute paths** like `/static/...`, or a screen that depends on the root path or a cookie path,
   will break.
+  **On a deployment with a preview domain this is the same as the preview subdomain:** the sub-path URL
+  redirects to it (nothing from your workspace is served on the Console's own address). **Without a preview
+  domain** the page is served on the Console's address inside a browser sandbox: it has no cookies or
+  storage of its own, `<script type="module">` and `fetch` calls to the app itself arrive without
+  credentials, and its own WebSocket connections are refused. Plain HTML/CSS/classic-script pages work; apps that need
+  those (Vite, Next.js) should be opened in the pane, or ask your administrator to set a preview domain.
 - **Preview subdomains**: on some deployments a URL such as
   `https://xxxxxxxx-3000.<preview domain>/` is **issued automatically every time the workspace starts**. The app
   is served **at the root**, so the sub-path problem above cannot happen, and **several ports** (3000 and 8080,
