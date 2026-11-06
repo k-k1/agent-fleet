@@ -183,7 +183,11 @@ order:
 1. **Remove member**: takes them off the roster and stops access. **Do this first**: the signed
    session cookie cannot be revoked individually, so this, effective from the next request, is
    what actually cuts access. The workspace, its home and stored credentials are kept, so a mistake
-   is undone by adding the same email address again.
+   is undone by adding the same email address again. A removed tenant admin comes back as a plain
+   member: only a super admin can grant tenant admin again, by re-inviting with that role.
+   Inviting never changes the email address of a person who already exists. An address is attached
+   only to a new person; if the user key belongs to someone in another tenant and you pass an
+   email, the invite is refused (409) and you invite by user key only.
 2. **Force-stop the workspace**: stop what is running ([02-limits.md](02-limits.md)).
 3. **Clean home**: erase everything in their home **except their logins and connections** (git
    credentials, SSH keys, the encrypted connection store, Claude and Codex logins). **This cannot be

@@ -48,6 +48,10 @@ type IdentityLink struct {
 	FallbackKey  string // sanitizeUser(email), used only when a new identity is created
 	RoleHint     string
 	EmailJoin    bool
+	// TenantSlug is the owning tenant of a tenant-defined provider ("" for an operator
+	// IdP). A tenant provider may claim an existing identity only if that identity holds
+	// no membership in another tenant, else ErrIdentityClaimed.
+	TenantSlug string
 }
 
 // LinkedProvider is one sign-in method bound to a person, as shown on their own
@@ -67,6 +71,20 @@ type IdentityStore interface {
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
+	// InviteIdentity is the admin-invite counterpart of UpsertIdentity: it finds or
+	// creates the person behind key for tenantID's roster and NEVER writes the address of
+	// an existing identity (a write guarded by a membership check cannot be made atomic
+	// against a concurrent membership insert on Postgres). A new row takes the address.
+	// When the row exists with an empty address, the caller asked for one, and the
+	// identity holds a membership outside tenantID, it returns
+	// ErrIdentityInOtherTenant instead of silently dropping the address. Emails otherwise
+	// come only from the person's own login (LinkIdentity). Does not touch last_login_at.
+	InviteIdentity(ctx context.Context, email, key, tenantID string) (Identity, error)
+	// ListEmailSetSuspects backs the one-off check for identities whose address may
+	// have been written by somebody else: it lists the multi-tenant identities that
+	// carry an address and either have no sign-in method linked or have an
+	// identity.email_* audit entry.
+	ListEmailSetSuspects(ctx context.Context) ([]EmailSuspect, error)
 	// LinkIdentity is UpsertIdentity for a login that proved an IdP subject
 	// (AUTH=oauth). The (provider, subject) pair decides who this is, so an email
 	// change keeps the same identity — and therefore the same user_key, workspace
@@ -139,6 +157,7 @@ func (s *SQL) UpsertIdentity(ctx context.Context, email, key, roleHint string) (
 	if derr != nil {
 		return Identity{}, derr
 	}
+	prevEmail := s.emailByUserKey(ctx, key)
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
 		 VALUES(?, ?, ?, 'user', 'active', ?)
@@ -161,7 +180,130 @@ func (s *SQL) UpsertIdentity(ctx context.Context, email, key, roleHint string) (
 		`SELECT id, email, user_key, role, status, COALESCE(last_login_at,'') FROM identity WHERE user_key=?`, key).
 		Scan(&id.ID, &id.Email, &id.UserKey, &id.Role, &id.Status, &last)
 	id.LastLoginAt = last.String
+	if err == nil && prevEmail != nil && *prevEmail != id.Email {
+		s.auditEmailChange(ctx, id.ID, id.UserKey, *prevEmail, id.Email, "login")
+	}
 	return id, err
+}
+
+// Audit actions for an identity's address changing after the row was created (login paths;
+// an invite never changes one).
+const (
+	auditEmailSet    = "identity.email_set"    // empty -> address
+	auditEmailChange = "identity.email_change" // address -> another address
+)
+
+// ErrIdentityInOtherTenant is returned by InviteIdentity when the invite would set the
+// address of an identity that belongs to a tenant other than the inviting one.
+var ErrIdentityInOtherTenant = errors.New("identity belongs to another tenant")
+
+// EmailSuspect is one row of ListEmailSetSuspects.
+type EmailSuspect struct {
+	UserKey, Email string
+	Tenants        []string // slugs
+	NoLogin        bool     // no sign-in method is linked
+	Audited        bool     // an identity.email_* audit entry names this identity
+}
+
+// emailByUserKey returns the stored address for key, or nil when there is no such row.
+func (s *SQL) emailByUserKey(ctx context.Context, key string) *string {
+	var e string
+	if err := s.db.QueryRowContext(ctx, `SELECT email FROM identity WHERE user_key=?`, key).Scan(&e); err != nil {
+		return nil
+	}
+	return &e
+}
+
+// auditEmailChange records an address change with the previous value; the actor is the
+// identity whose own login wrote it. Best effort: a
+// failed audit write must not fail a login.
+func (s *SQL) auditEmailChange(ctx context.Context, identityID, userKey, prev, next, via string) {
+	action := auditEmailChange
+	if prev == "" {
+		action = auditEmailSet
+	}
+	_ = s.InsertAudit(ctx, AuditLog{
+		ID: NewID(), ActorKind: "user", ActorID: identityID, Action: action, Target: userKey,
+		Detail: "previous=" + prev + "; new=" + next + "; via=" + via, At: NowTS(),
+	})
+}
+
+func (s *SQL) InviteIdentity(ctx context.Context, email, key, tenantID string) (Identity, error) {
+	key, err := s.disambiguateUserKey(ctx, email, key)
+	if err != nil {
+		return Identity{}, err
+	}
+	// ON CONFLICT DO NOTHING: an existing row is never rewritten by the insert itself.
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
+		 VALUES(?, ?, ?, 'user', 'active', ?) ON CONFLICT(user_key) DO NOTHING`,
+		NewID(), email, key, NowTS()); err != nil {
+		return Identity{}, err
+	}
+	ident, ok, err := s.GetIdentityByUserKey(ctx, key)
+	if err != nil {
+		return Identity{}, err
+	}
+	if !ok {
+		return Identity{}, sql.ErrNoRows
+	}
+	if email == "" || ident.Email != "" {
+		return ident, nil // disambiguateUserKey already diverted a different address
+	}
+	// An existing placeholder keeps its empty address. Say so when another tenant holds
+	// it, so the inviter learns the address was not applied.
+	var one int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM membership WHERE identity_id=? AND tenant_id<>? LIMIT 1`, ident.ID, tenantID).Scan(&one)
+	switch {
+	case err == nil:
+		return Identity{}, ErrIdentityInOtherTenant
+	case errors.Is(err, sql.ErrNoRows):
+		return ident, nil
+	}
+	return Identity{}, err
+}
+
+func (s *SQL) ListEmailSetSuspects(ctx context.Context) ([]EmailSuspect, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT i.user_key, i.email, t.slug,
+		   CASE WHEN EXISTS (SELECT 1 FROM identity_provider p WHERE p.identity_id=i.id) THEN 0 ELSE 1 END,
+		   CASE WHEN EXISTS (SELECT 1 FROM audit_log a WHERE a.target=i.user_key
+		        AND a.action IN ('`+auditEmailSet+`','`+auditEmailChange+`')) THEN 1 ELSE 0 END
+		 FROM identity i
+		 JOIN membership m ON m.identity_id=i.id
+		 JOIN tenant t ON t.id=m.tenant_id
+		 WHERE i.email<>'' AND i.id IN
+		   (SELECT identity_id FROM membership GROUP BY identity_id HAVING COUNT(DISTINCT tenant_id)>1)
+		 ORDER BY i.user_key, t.slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EmailSuspect
+	for rows.Next() {
+		var key, email, slug string
+		var noLogin, audited int
+		if err := rows.Scan(&key, &email, &slug, &noLogin, &audited); err != nil {
+			return nil, err
+		}
+		if n := len(out); n > 0 && out[n-1].UserKey == key {
+			out[n-1].Tenants = append(out[n-1].Tenants, slug)
+			continue
+		}
+		out = append(out, EmailSuspect{UserKey: key, Email: email, Tenants: []string{slug},
+			NoLogin: noLogin == 1, Audited: audited == 1})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	kept := out[:0]
+	for _, e := range out {
+		if e.NoLogin || e.Audited {
+			kept = append(kept, e)
+		}
+	}
+	return kept, nil
 }
 
 // DemoteSuperAdmins enforces "SUPER_ADMIN_EMAILS is the only source of truth" at
@@ -292,8 +434,28 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 			if claimed {
 				return Identity{}, false, ErrIdentityClaimed
 			}
+			if other, err := s.heldOutsideTenant(ctx, ident.ID, link.TenantSlug); err != nil {
+				return Identity{}, false, err
+			} else if other {
+				return Identity{}, false, ErrIdentityClaimed
+			}
 			identityID = ident.ID
 		default: // rule 3
+			if !link.EmailJoin {
+				// createIdentityForLogin lands on an existing invite placeholder with this key;
+				// a tenant provider must not take one that another tenant holds.
+				if fk, err := s.disambiguateUserKey(ctx, email, link.FallbackKey); err != nil {
+					return Identity{}, false, err
+				} else if ex, ok, err := s.GetIdentityByUserKey(ctx, fk); err != nil {
+					return Identity{}, false, err
+				} else if ok {
+					if other, err := s.heldOutsideTenant(ctx, ex.ID, link.TenantSlug); err != nil {
+						return Identity{}, false, err
+					} else if other {
+						return Identity{}, false, ErrIdentityClaimed
+					}
+				}
+			}
 			ident, created, err := s.createIdentityForLogin(ctx, email, link.FallbackKey, link.RoleHint)
 			if err != nil {
 				return Identity{}, false, err
@@ -584,6 +746,19 @@ func (s *SQL) DetachProvider(ctx context.Context, identityID, provider, subject 
 	return nil
 }
 
+// heldOutsideTenant reports whether the identity has a membership in a tenant other than
+// the one with this slug ("" matches no tenant, so any membership counts).
+func (s *SQL) heldOutsideTenant(ctx context.Context, identityID, slug string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM membership m JOIN tenant t ON t.id=m.tenant_id
+		 WHERE m.identity_id=? AND t.slug<>? LIMIT 1`, identityID, slug).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // identityByEmail finds the person an address already belongs to. Non-empty
 // emails are UNIQUE (idx_identity_email), so at most one row matches; the empty
 // email never does (those rows are invite-by-user_key placeholders, claimed through
@@ -639,6 +814,15 @@ func (s *SQL) touchIdentity(ctx context.Context, identityID, email, roleHint str
 	// Two shapes rather than one with NULLIF/CASE: both dialects parse these
 	// without having to infer a placeholder's type from a bare '' literal.
 	var err error
+	var prevEmail, userKey string
+	_ = s.db.QueryRowContext(ctx, `SELECT email, user_key FROM identity WHERE id=?`, identityID).Scan(&prevEmail, &userKey)
+	if email != "" && email != prevEmail {
+		defer func() {
+			if err == nil {
+				s.auditEmailChange(ctx, identityID, userKey, prevEmail, email, "login")
+			}
+		}()
+	}
 	if email == "" {
 		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=? WHERE id=?`, NowTS(), identityID)
 	} else {

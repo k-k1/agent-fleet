@@ -25,6 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/identitycheck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 	"github.com/k-k1/agent-fleet/control-plane/internal/writegate"
@@ -146,6 +147,19 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "home-dek-status" {
 		runHomeDEKStatus(os.Args[2:])
 		return
+	}
+	// Subcommand: `control-plane identity-email-check` lists multi-tenant identities whose
+	// address may not have come from the person's own login (internal/identitycheck). Read-only.
+	if len(os.Args) > 1 && os.Args[1] == "identity-email-check" {
+		st, where, err := openRewrapStore()
+		if err != nil {
+			log.Printf("identity-email-check: open the metadata store: %v", err)
+			os.Exit(2)
+		}
+		log.Printf("identity-email-check: %s", where)
+		rc := identitycheck.Print(context.Background(), st, os.Stdout)
+		st.Close()
+		os.Exit(rc)
 	}
 
 	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))

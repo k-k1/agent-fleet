@@ -180,6 +180,11 @@ membership を解決し直す。
   所属 1 件なら自動で決まり、複数で未指定は `409 tenant_selection_required`、所属していない
   テナントは `403 forbidden_tenant`。テナントのネットワーク規則が呼び出し元のアドレスを拒むと
   `403 ip_not_allowed`。
+- **招待**（`POST /api/admin/memberships`）：招待は既存の identity のメールを書き換えません
+  （メールは本人のログインから入ります）。新規 identity だけがアドレスを受け取ります。
+  別テナントに所属する既存 identity（メール空）にメール付きで招待すると
+  `409 identity_in_other_tenant` です。外したメンバーシップの再有効化は `member` に戻り、
+  `tenant_admin` を戻せるのは `role: tenant_admin` を指定した super_admin だけです。
 - **エラー形**: CP も Agent も `{"error": {"code": <文字列>, "message": <文字列>}}`。
   **契約はコードの方**で、Console は `err.<code>`（`console/src/lib/i18n/locales/*/errors.ts`）で
   訳すので、1 つ改名すれば両側にまたがるワイヤの変更になる。多くは各モジュールの `errcodes.go` に

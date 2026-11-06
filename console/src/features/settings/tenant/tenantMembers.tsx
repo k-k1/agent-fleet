@@ -15,7 +15,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 // Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
 // component renders nothing itself, so no condition is kept here.
-import { useT } from "../../../lib/i18n/index.ts";
+import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
 import { DATETIME_LOCALE_DEFAULT, TIME_LOCALE_DEFAULT, fmtDateTime, relTime } from "../../../lib/intl.ts";
@@ -728,7 +728,7 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
       onAdded();
     } else {
       const er = await r.json().catch(() => ({}));
-      toast(tr("admin.add_failed", { msg: er.error?.message || r.status }));
+      toast(tr("admin.add_failed", { msg: (er.error?.code && tMaybe("err." + er.error.code)) || er.error?.message || r.status }));
     }
   };
   return (

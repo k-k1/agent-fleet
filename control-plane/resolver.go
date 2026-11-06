@@ -68,6 +68,7 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 		ident, _, err := m.store.LinkIdentity(ctx, store.IdentityLink{
 			Provider: ref.provider, Subject: ref.subject, Email: email,
 			FallbackKey: key, RoleHint: roleHint, EmailJoin: !tenantDefined,
+			TenantSlug: tenantSlugOf(ref.provider),
 		})
 		return ident, err
 	}
@@ -526,4 +527,10 @@ func sanitizeUser(s string) string {
 		s = strings.Trim(s[:40], "-")
 	}
 	return s
+}
+
+// tenantSlugOf is the owning tenant's slug for a tenant-defined provider id, "" otherwise.
+func tenantSlugOf(providerID string) string {
+	slug, _, _ := auth.ParseTenantProviderID(providerID)
+	return slug
 }

@@ -151,7 +151,7 @@ func TestSuspendWarnsWhenItIsSomebodysOnlyMethod(t *testing.T) {
 		t.Fatalf("membership: %v", err)
 	}
 	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
-		Provider: provID, Subject: "s-only", Email: "only@sub.co.jp", FallbackKey: "only-sub-co-jp",
+		Provider: provID, Subject: "s-only", Email: "only@sub.co.jp", FallbackKey: "only-sub-co-jp", TenantSlug: "sub",
 	}); err != nil {
 		t.Fatalf("link: %v", err)
 	}
