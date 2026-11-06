@@ -158,6 +158,17 @@ declare.
   `10-data.yaml`, or a key of the operator's own) seals the CP's secrets, not the
   storage. Whoever administers the account can read every member's data.
 
+- **EFS access points are required, but a member is not yet bound to their own.** The
+  file system holding the Claude state and the kept dotfiles carries a file-system
+  policy (`10-data.yaml`) that refuses a mount without TLS, without an access point, or
+  outside a mount target; only the home task's dedicated role may mount the root, with IAM
+  authorization. Workspace volumes still mount without IAM authorization and the task role
+  is shared across memberships, so a workspace task that learns another member's access
+  point ID can mount it. Binding each task to its own access points needs a per-membership
+  role ([#3445](https://github.com/k-k1/agent-fleet/issues/3445)). The access points carry
+  no `PosixUser`, and the volume cannot be mounted `nosuid`: ECS exposes no mount options
+  for EFS volumes.
+
 - **Give each deployment its own AWS account.** The CP task role (`CpTaskRole` in
   `20-platform.yaml`) is scoped to the account, not to one deployment: its ECS
   statements name `Resource: "*"` with no condition, and the workspace parameters are

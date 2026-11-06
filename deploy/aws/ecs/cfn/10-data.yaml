@@ -161,6 +161,80 @@ Resources:
         !If [ IsProvisionedTp, !Ref EfsProvisionedThroughputMibps, !Ref "AWS::NoValue" ]
       FileSystemTags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-efs" }
+      # Access points are chosen by the client, so without a resource policy any task in the
+      # workspace SG can mount the root and read every member's CLI credentials. The client
+      # actions are named explicitly: a Deny on "*" without an access point would also refuse
+      # CreateAccessPoint, which carries none. The one principal that may mount without an
+      # access point is the home task's role (HomeOpsEfsRole): Destroy removes the access
+      # point's own root directory, which the access point cannot. Binding each member to
+      # their own access point needs IAM authorization on the workspace volumes (#3445).
+      # This policy replaces any file-system policy set by hand outside the stack.
+      FileSystemPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowMountTargetClients
+            Effect: Allow
+            Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              Bool: { "elasticfilesystem:AccessedViaMountTarget": "true" }
+          - Sid: DenyWithoutTls
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              Bool: { "aws:SecureTransport": "false" }
+          # ArnNotEquals is true when the key is absent, so an anonymous mount (IAM
+          # authorization off, which is how workspace volumes mount) is denied here.
+          - Sid: DenyWithoutAccessPoint
+            Effect: Deny
+            Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              "Null": { "elasticfilesystem:AccessPointArn": "true" }
+              ArnNotEquals: { "aws:PrincipalArn": !GetAtt HomeOpsEfsRole.Arn }
+
+  # The home task's task role (30-ingress, HomeOpsTaskDef): an IAM-authorized mount of the
+  # file-system root, the only kind of root mount FileSystemPolicy lets through. It lives
+  # here, not in 30-ingress, because the policy above names it and this stack is created
+  # first. It calls no other AWS API.
+  HomeOpsEfsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+
+  # Identity-side half of the grant (the file-system policy is the other). A separate
+  # resource: inline on the role it would make the role and the file system wait on each other.
+  HomeOpsEfsAccess:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: efs-root-mount
+      Roles: [ !Ref HomeOpsEfsRole ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Resource: !GetAtt FileSystem.Arn
 
   # Retain above only outlives a stack deletion; a file deleted or corrupted on the running
   # file system (every home on ecs, the credentials on ecs-ec2) needs a recovery point.
@@ -509,6 +583,10 @@ Outputs:
   EfsId:
     Value: !Ref FileSystem
     Export: { Name: !Sub "${AWS::StackName}-EfsId" }
+  HomeOpsEfsRoleArn:
+    Description: Task role of 30-ingress's home task; the only principal FileSystemPolicy lets mount without an access point.
+    Value: !GetAtt HomeOpsEfsRole.Arn
+    Export: { Name: !Sub "${AWS::StackName}-HomeOpsEfsRoleArn" }
   EfsBackupVaultName:
     Condition: IsRetain
     Description: AWS Backup vault holding the daily EFS recovery points (Persistence=retain).

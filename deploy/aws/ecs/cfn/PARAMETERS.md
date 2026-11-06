@@ -795,6 +795,11 @@ to remove the access point's own root directory. The confinement is in the comma
 refuses a membership id that is not one path element, refuses unless /mnt/efs is a mount, and
 only ever removes under /home/<id> and /claude-config/<id>.
 
+The mount is IAM-authorized under 10-data's HomeOpsEfsRole, the one principal the file-system
+policy lets mount without an access point (every other mount needs TLS and an access point). A
+task role and an `AuthorizationConfig: IAM: ENABLED` volume are the whole of it; the CP's
+only addition is iam:PassRole on that role, to ecs-tasks, in the grant below.
+
 ### Home task grant
 
 The CP's grant for the home task: it lives in this stack because only this stack can name the

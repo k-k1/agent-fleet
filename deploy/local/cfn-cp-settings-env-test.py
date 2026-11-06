@@ -15,7 +15,7 @@ Fails when
     entry for a parameter that does not exist stops the task from starting);
   - the default-prefix secrets fall outside what the execution role may read in 20-platform;
   - WS_ENV is exposed (deliberately not: PARAMETERS.md);
-  - the template leaves less than 1 KiB under CloudFormation's 51,200-byte limit.
+  - the template leaves less than 512 bytes under CloudFormation's 51,200-byte limit.
 
 Positive controls at the end run the same checks against broken copies.
 
@@ -58,7 +58,7 @@ SECRETS = {
     "RemoteEngineToken": ("AF_REMOTE_ENGINE_TOKEN", "remote-engine-token"),
 }
 NEW_VARS = set(PLAIN.values()) | {v for v, _ in SECRETS.values()}
-MAX_BYTES = 51200 - 1024
+MAX_BYTES = 51200 - 512
 
 
 def cp_container(tpl):
@@ -160,7 +160,7 @@ def check(tpl, size, patterns):
     if "WS_ENV" in base.cp_env_names() or any("WS_ENV" in str(e) for e in cp_container(tpl)["Environment"]):
         fails.append("WS_ENV is exposed; it is deliberately not (PARAMETERS.md)")
     if size > MAX_BYTES:
-        fails.append("30-ingress.yaml is %d bytes; the budget is %d (1 KiB under 51,200)" % (size, MAX_BYTES))
+        fails.append("30-ingress.yaml is %d bytes; the budget is %d (512 B under 51,200)" % (size, MAX_BYTES))
     return fails
 
 

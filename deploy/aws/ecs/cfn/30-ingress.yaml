@@ -701,8 +701,8 @@ Resources:
       RetentionInDays: 7
 
   # --- The home task: Recreate, Clean home and Destroy on an EFS home (ecs; #1260) ---
-  # A one-shot RunTask of `af-cp efs-home-op` (the CP cannot mount EFS). No task role: it
-  # calls no AWS API. PARAMETERS.md, "Home task (volume root)".
+  # A one-shot RunTask of `af-cp efs-home-op` (the CP cannot mount EFS). Its task role is
+  # 10-data's HomeOpsEfsRole. PARAMETERS.md, "Home task (volume root)".
   HomeOpsTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -717,12 +717,15 @@ Resources:
         OperatingSystemFamily: LINUX
       ExecutionRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
+      TaskRoleArn: !ImportValue { "Fn::Sub": "${DataStackName}-HomeOpsEfsRoleArn" }
       Volumes:
         - Name: efs
           EFSVolumeConfiguration:
             FilesystemId: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" }
             RootDirectory: /
             TransitEncryption: ENABLED
+            AuthorizationConfig:
+              IAM: ENABLED
       ContainerDefinitions:
         - Name: home-ops
           Essential: true
@@ -761,6 +764,11 @@ Resources:
             Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/af-${AWS::StackName}-home-ops:*"
             Condition:
               ArnEquals: { "ecs:cluster": !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" } }
+          - Sid: PassHomeOpsTaskRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !ImportValue { "Fn::Sub": "${DataStackName}-HomeOpsEfsRoleArn" }
+            Condition: { StringEquals: { "iam:PassedToService": ecs-tasks.amazonaws.com } }
           - Sid: TagHomeOpsTaskOnRun
             Effect: Allow
             Action: ecs:TagResource
