@@ -525,6 +525,53 @@ agy_effective_version() {
   [ -n "$v" ] || [ -e "$bin" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
   printf '%s' "$v"
 }
+# NPM_CLI_PKGS — the npm-distributed CLIs, as <cli>=<package>.
+NPM_CLI_PKGS="claude=@anthropic-ai/claude-code opencode=@opencode/cli codex=@openai/codex copilot=@github/copilot"
+# npm_clis_verify <cli...> — after an npm install into ~/.local, check that each named CLI's
+# ~/.local copy answers --version; reinstall the broken or missing ones at their versions.json
+# pin once (space permitting), record a working one ok, and record the ones that still do not
+# run as failed. npm exits 0 when an optional dependency cannot be fetched, and codex ships its
+# binary as one. Measured: a self-update that ran two minutes after @openai/codex 0.167.0 was
+# published fetched the main tarball but not codex-linux-x64. The upgrade had already removed
+# the old binary, so codex could not start, and the update was still logged as "updated".
+# A CLI with no ~/.local copy is left alone when a baked /usr/local copy takes over on PATH.
+#
+# A broken copy's link is removed before the repair. Left in place it would shadow a working
+# baked copy on PATH, and the next start's presence check would call it installed and never
+# retry; without it, lean reinstalls on the next start and baked falls back at once. Removing
+# a link needs no free space, which a retry list written to a full home would.
+npm_cli_runs() { timeout 30 "$HOME/.local/bin/$1" --version >/dev/null 2>&1; }
+npm_clis_verify() {
+  local c pair pkg pin fix="" fix_clis="" broken=""
+  for c in "$@"; do
+    if npm_cli_runs "$c"; then bi_note "$c" ok; continue; fi
+    [ ! -e "$HOME/.local/bin/$c" ] && [ ! -L "$HOME/.local/bin/$c" ] && [ -x "/usr/local/bin/$c" ] && continue
+    rm -f "$HOME/.local/bin/$c"
+    pkg=""; for pair in $NPM_CLI_PKGS; do [ "${pair%%=*}" = "$c" ] && pkg="${pair#*=}"; done
+    pin="$(vj_pin "$c")"
+    echo "[entrypoint] WARN: $c in ~/.local does not run after the npm install${pin:+; reinstalling the pin $pin}"
+    if [ -n "$pin" ]; then fix="$fix $pkg@$pin"; fix_clis="$fix_clis $c"; else broken="$broken $c"; fi
+  done
+  if [ -n "$fix" ]; then
+    # shellcheck disable=SC2086
+    if bi_room $(( $(echo $fix | wc -w) * 300 )) $fix_clis; then
+      : > "$BI_ERR" 2>/dev/null || true
+      # shellcheck disable=SC2086
+      npm install -g --prefix "$HOME/.local" $fix >/dev/null 2>>"${BI_ERR:-/dev/null}" \
+        || cat "$BI_ERR" >&2 2>/dev/null || true
+      for c in $fix_clis; do
+        if npm_cli_runs "$c"; then echo "[entrypoint] $c repaired at the pin $(vj_pin "$c")"; bi_note "$c" ok
+        else rm -f "$HOME/.local/bin/$c"; broken="$broken $c"; fi
+      done
+    fi
+    # Otherwise bi_room has recorded them (failed, or skipped when a baked copy runs).
+  fi
+  for c in $broken; do
+    echo "[entrypoint] WARN: $c does not run; removed its ~/.local link (retrying next start)"
+    bi_note "$c" failed "$(bi_reason)"
+  done
+  [ -z "$broken" ]
+}
 # Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
 # In lean, the start-time update in the CLAUDE_INSTALL block below is suppressed too, to keep
 # the pin (tracking latest is the self-update opt-in's job).
@@ -566,8 +613,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   }
   NPM_BOOT=""; NPM_BOOT_CLIS=""
   npm_want() { NPM_BOOT="$NPM_BOOT ${pkg}@${ver}"; NPM_BOOT_CLIS="$NPM_BOOT_CLIS $cli"; }
-  for pair in "claude=@anthropic-ai/claude-code" "opencode=@opencode/cli" \
-              "codex=@openai/codex" "copilot=@github/copilot"; do
+  for pair in $NPM_CLI_PKGS; do
     cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
     [ -n "$ver" ] || continue
     if cli_present "$cli"; then bi_note "$cli" skipped; fi
@@ -590,6 +636,8 @@ if [ "$LEAN_CLIS" = 1 ]; then
       if npm install -g --prefix "$HOME/.local" $NPM_BOOT >/dev/null 2>>"${BI_ERR:-/dev/null}"; then
         echo "[entrypoint] boot-install ok"
         for c in $NPM_BOOT_CLIS; do bi_note "$c" ok; done
+        # shellcheck disable=SC2086
+        npm_clis_verify $NPM_BOOT_CLIS || true
       else
         cat "$BI_ERR" >&2 2>/dev/null || true
         echo "[entrypoint] WARN: npm boot-install failed (retrying next start)"
@@ -880,14 +928,20 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   ' 2>/dev/null || echo 1)
   if [ "$NPM_NEED" = "0" ]; then
     echo "[entrypoint] agent CLIs already latest; skip"
-  elif npm install -g --prefix "$NPM_PREFIX_DIR" @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>&1; then
-    echo "[entrypoint] agent CLIs updated${NPM_PREFIX_DIR:+ (~/.local)}: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
   else
-    if [ -x /usr/local/bin/opencode ]; then
-      echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
+    : > "$BI_ERR" 2>/dev/null || true
+    if npm install -g --prefix "$NPM_PREFIX_DIR" @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>>"${BI_ERR:-/dev/null}"; then
+      echo "[entrypoint] agent CLIs updated${NPM_PREFIX_DIR:+ (~/.local)}: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1) | copilot $(copilot --version 2>/dev/null | head -1)"
     else
-      echo "[entrypoint] WARN: agent CLI update failed (kept the installed versions)"
+      cat "$BI_ERR" >&2 2>/dev/null || true
+      if [ -x /usr/local/bin/opencode ]; then
+        echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
+      else
+        echo "[entrypoint] WARN: agent CLI update failed (kept the installed versions)"
+      fi
     fi
+    # A failed install can leave a half-replaced tree, or none, so check either way.
+    npm_clis_verify claude opencode codex copilot || true
   fi
   # agy (Antigravity) follows the same opt-in to latest. It ships via Google's install.sh
   # rather than npm, and a baked copy (BAKE_AGENT_CLIS=1) is in root-owned /usr/local/bin,

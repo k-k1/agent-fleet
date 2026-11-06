@@ -188,8 +188,9 @@ func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
 
 	url := f.WaitFor(urlRe, 20*time.Second)
 	if url == "" {
+		msg := deviceStartNoURL(f.Ended(), f.Clean())
 		f.Close()
-		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "codex did not emit a device-auth URL (device code login may be disabled for this account)")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", msg)
 		return
 	}
 	// The one-time code prints on the line AFTER the URL, so wait for it separately
@@ -265,4 +266,37 @@ func ensureFolderTrusted(dir string) {
 	if os.WriteFile(tmp, []byte(sb.String()), 0o600) == nil {
 		_ = os.Rename(tmp, p)
 	}
+}
+
+// deviceStartNoURL words the error for a device-auth start that printed no URL. A codex that
+// exited is broken or refused the login, and its own output says which; blaming the account
+// setting there hid a codex that could not start at all (its npm platform binary was missing).
+// Only a codex still running with nothing to show points at the account setting.
+func deviceStartNoURL(exited bool, output string) string {
+	detail := outputTail(output, 5)
+	if exited {
+		if detail == "" {
+			return "codex exited without printing a device-auth URL"
+		}
+		return "codex exited without printing a device-auth URL: " + detail
+	}
+	msg := "codex did not emit a device-auth URL (device code login may be disabled for this account)"
+	if detail != "" {
+		msg += ": " + detail
+	}
+	return msg
+}
+
+// outputTail returns the last n non-empty lines of s, in order, joined by " / ".
+func outputTail(s string, n int) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return strings.Join(out, " / ")
 }

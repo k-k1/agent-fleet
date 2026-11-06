@@ -151,12 +151,18 @@ func (f *Flow) Close() {
 	_ = f.Cmd.Wait()
 }
 
-// WaitFor polls the flow's cleaned output until re matches or the timeout hits.
+// WaitFor polls the flow's cleaned output until re matches, the timeout hits, or the child's
+// output has ended (nothing more can arrive, so waiting out the timeout would only delay the
+// error). Ended is read before the output so the last chunk is always matched against.
 func (f *Flow) WaitFor(re *regexp.Regexp, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		ended := f.Ended()
 		if m := re.FindString(f.Clean()); m != "" {
 			return m
+		}
+		if ended {
+			return ""
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
