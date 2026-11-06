@@ -8,6 +8,7 @@
   ライブゲート（決定 14）を通るまでどれも候補である。2026-11-03 に別セッション（codex `gpt-6.1-sol`）がレビューした。
   レビューは 3 巡（指摘 17 件、7 件、0 件）で、どの指摘もツリーと照合し、本文に取り込んだ。
 - Follow-ups: #3280、#3281、#3282、#3283（P0、P1、P2、P4。P3 は #1585）
+- 参照: [0129](0129-provided-model-routes.ja.md)（提案: テナントとデプロイメントが提供するルート、予算、費用の帰属）
 - 関連: [0069](0069-image-generation-providers.ja.md)（資格情報の層・`AWSProfileRef`）/
   [0071](0071-self-hosted-inference-engines.ja.md)（エンジンのゲートウェイとそのトークン）/
   [0084](0084-engine-indicator-and-tenant-gate.ja.md)（エンジンの 4 つの関門）/
