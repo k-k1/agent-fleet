@@ -163,7 +163,7 @@ Resources:
       RuntimePlatform:
         CpuArchitecture: !Ref CpuArchitecture
         OperatingSystemFamily: LINUX
-      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" }
       # No TaskRoleArn on purpose: the engine calls no AWS API, so it gets no credentials
       # at all. Same least-privilege stance as 20-platform's policy-free WsTaskRole.
       ContainerDefinitions:

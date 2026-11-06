@@ -96,6 +96,30 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        # AmazonSSMManagedInstanceCore allows ssm:GetParameter* on every parameter, which
+        # would let anything that reaches the instance role read the CP's and every
+        # workspace's secrets. An explicit Deny wins over that Allow; the agent's own
+        # SSM channel (ssm:UpdateInstanceInformation, ssmmessages:*, ec2messages:*) does not
+        # read parameters and is untouched. The name must differ from a hand-applied
+        # af-deny-af-parameters: a same-named inline policy would be overwritten by this
+        # one and deleted with it.
+        - PolicyName: af-slot-deny-af-parameters
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DenyAfParameterReads
+                Effect: Deny
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - ssm:GetParameterHistory
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/af-cp"
+                  - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/af-cp/*"
+                  - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/af-ws"
+                  - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:parameter/af-ws/*"
 
   SlotInstanceProfile:
     Type: AWS::IAM::InstanceProfile
