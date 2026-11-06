@@ -566,6 +566,9 @@ ARG POSTGRES_SHA256_ARM64=8b042e0ea418b1927d95399207950da0734d27fe01e29503ade3bd
 ARG MYSQL_VERSION=8.4.6
 ARG MYSQL_SHA256_X64=f284b17b9e038adbe77f0dd5fb11ed30262286b23a390b8b4e367abc3574c42e
 ARG MYSQL_SHA256_ARM64=ab2c553ee4349a6bbe62325d4efcb427204e389264c4759ca32a92eae9aa2abc
+# The binaries are copied straight from the archive: the bundled install.sh of 3.1.0 ignores
+# Q_INSTALL_GLOBAL and writes to ~/.local/bin (measured: `kiro-cli: not found` right after it).
+# 3.x ships kiro-cli alone; 2.x also had kiro-cli-chat and kiro-cli-term, so those are optional.
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -576,7 +579,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "https://prod.download.cli.kiro.dev/stable/${KIRO_VERSION}/${kasset}" -o /tmp/kiro.zip; \
       echo "${sha}  /tmp/kiro.zip" | sha256sum -c -; \
       unzip -q /tmp/kiro.zip -d /tmp/kiro; \
-      Q_INSTALL_GLOBAL=1 Q_SKIP_SETUP=1 sh /tmp/kiro/kirocli/install.sh; \
+      for b in kiro-cli kiro-cli-chat kiro-cli-term; do \
+        if [ -f "/tmp/kiro/kirocli/bin/$b" ]; then install -m 0755 "/tmp/kiro/kirocli/bin/$b" "/usr/local/bin/$b"; fi; \
+      done; \
       rm -rf /tmp/kiro.zip /tmp/kiro; \
       kiro-cli --version; \
     fi
