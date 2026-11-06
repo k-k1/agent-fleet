@@ -68,6 +68,26 @@ describe("EgressView allowlist", () => {
     expect(added.querySelector("button")?.textContent).toBe(t("admin.retire"));
   });
 
+  it("marks an active row the CP will not ship, with its reason, apart from a normal one", async () => {
+    serve({
+      allowlist: [
+        { id: "a1", entry: "tcp:10.0.0.5:2222", state: "active", reason: "old", added_by: "admin", invalid_reason: "\"10.0.0.5\" is a private address" },
+        { id: "a2", entry: "tcp:203.0.113.7:2222", state: "active", reason: "fine", added_by: "admin" },
+      ],
+      defaults: [],
+      builtin: [],
+    });
+    await mount();
+    const [bad, ok] = rows();
+    expect(bad.classList.contains("adm-allow-invalid")).toBe(true);
+    expect(bad.textContent).toContain(t("admin.egress_invalid_row"));
+    expect(bad.querySelector(".egress-invalid")?.getAttribute("title")).toContain("private address");
+    expect(bad.querySelector("button")?.textContent).toBe(t("admin.retire"));
+    expect(ok.classList.contains("adm-allow-invalid")).toBe(false);
+    expect(ok.querySelector(".egress-invalid")).toBeNull();
+    expect(ok.textContent).toContain("fine");
+  });
+
   it("shows the no-entries note next to the built-in rows, and copes with builtin: null", async () => {
     serve({ allowlist: [], defaults: [], builtin: null });
     await mount();

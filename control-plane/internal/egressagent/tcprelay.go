@@ -20,30 +20,11 @@ import (
 // gateway's user data to it.
 const TCPRelayListen = ":3132"
 
-// fencedNets are destinations a passthrough never reaches, whatever DNS says. A name the
-// organisation lists can be made to resolve to anything by whoever runs its zone, and
-// without this fence that is a way to the instance metadata service or the VPC.
-var fencedNets = func() []netip.Prefix {
-	var out []netip.Prefix
-	for _, s := range []string{"100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4"} {
-		out = append(out, netip.MustParsePrefix(s))
-	}
-	return out
-}()
-
-// fencedAddr reports an address no passthrough may reach: anything that is not a global
-// unicast IPv4 address, and the private and shared ranges.
+// fencedAddr reports an address no passthrough may reach (egressallow.TCPAddrRefused). A
+// name the organisation lists can be made to resolve to anything by whoever runs its zone,
+// and without this fence that is a way to the instance metadata service or the VPC.
 func fencedAddr(a netip.Addr) bool {
-	a = a.Unmap()
-	if !a.Is4() || !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback() {
-		return true
-	}
-	for _, p := range fencedNets {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
+	return egressallow.TCPAddrRefused(a.Unmap())
 }
 
 // TCPRelay is `control-plane egress-relay --mode tcp`: it passes a workspace's TCP

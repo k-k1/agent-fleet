@@ -324,6 +324,17 @@ func (a egressAPI) stats(w http.ResponseWriter, r *http.Request, _ store.Identit
 	writeJSON(w, http.StatusOK, map[string]any{"egress": out, "days": days, "mode": mode, "enforce": mode == "enforce"})
 }
 
+// invalidTCPReason is why a stored tcp: entry fails today's grammar, or "" for anything else.
+func invalidTCPReason(entry string) string {
+	if !egressallow.IsTCPEntry(entry) {
+		return ""
+	}
+	if _, err := egressallow.ParseTCPEntry(entry); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 // allowlistList (GET /api/admin/egress/allowlist?state=) lists allowlist
 // entries, optionally filtered by state (active | proposed | retired). super_admin only.
 func (a egressAPI) allowlistList(w http.ResponseWriter, r *http.Request, _ store.Identity) {
@@ -334,10 +345,16 @@ func (a egressAPI) allowlistList(w http.ResponseWriter, r *http.Request, _ store
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, e := range rows {
-		out = append(out, map[string]any{
+		row := map[string]any{
 			"id": e.ID, "tenant_id": e.TenantID, "entry": e.Entry, "state": e.State,
 			"reason": e.Reason, "added_by": e.AddedBy, "added_at": e.AddedAt,
-		})
+		}
+		// A tcp: entry stored before its grammar tightened is never shipped to the gateway
+		// (SplitTCP drops it); say so instead of letting an active row look live.
+		if reason := invalidTCPReason(e.Entry); reason != "" {
+			row["invalid_reason"] = reason
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"allowlist": out, "defaults": defaultEgressAllowlist, "builtin": a.mgr.cpEgressHosts()})
 }
@@ -382,6 +399,21 @@ func (a egressAPI) allowlistState(w http.ResponseWriter, r *http.Request, ident 
 		return
 	}
 	id := r.PathValue("id")
+	if b.State == "active" {
+		// Activating re-checks the entry: a row stored under an older, looser grammar must not
+		// become active only to be dropped from the shipped policy.
+		e, ok, err := a.store.GetAllowlist(r.Context(), id)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if ok {
+			if reason := invalidTCPReason(e.Entry); reason != "" {
+				writeAPIErr(w, &apiError{http.StatusBadRequest, codeEgressEntryInvalid, reason + ": " + e.Entry})
+				return
+			}
+		}
+	}
 	if err := a.store.SetAllowlistState(r.Context(), id, b.State); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

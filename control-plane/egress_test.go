@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
@@ -485,4 +487,96 @@ func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
 	if strings.Contains(w2.Body.String(), `"tcp"`) {
 		t.Errorf("tcp key without entries: %s", w2.Body.String())
 	}
+}
+
+// A private tcp: entry stored before the grammar refused it is not shipped, is flagged in
+// the admin list, and cannot be activated again.
+func TestStoredPrivateTCPEntryIsFlaggedAndNotShipped(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	liveID, oldID := store.NewID(), store.NewID()
+	for _, e := range []store.AllowlistEntry{
+		{ID: liveID, Entry: "tcp:203.0.113.7:2222", State: "active", AddedAt: "2026-01-02T00:00:00Z"},
+		{ID: oldID, Entry: "tcp:10.0.0.5:2222", State: "active", AddedAt: "2026-01-01T00:00:00Z"},
+	} {
+		if err := st.AddAllowlist(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
+
+	pr := httptest.NewRequest("GET", "/internal/egress/policy", nil)
+	pr.Header.Set("Authorization", "Bearer tok")
+	pw := httptest.NewRecorder()
+	eg.policy(pw, pr)
+	if strings.Contains(pw.Body.String(), "10.0.0.5") || !strings.Contains(pw.Body.String(), "203.0.113.7") {
+		t.Errorf("policy body: %s", pw.Body.String())
+	}
+
+	lw := httptest.NewRecorder()
+	eg.allowlistList(lw, httptest.NewRequest("GET", "/api/admin/egress/allowlist", nil), store.Identity{})
+	var list struct {
+		Allowlist []map[string]any `json:"allowlist"`
+	}
+	if err := json.Unmarshal(lw.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	flagged := map[string]bool{}
+	for _, row := range list.Allowlist {
+		_, has := row["invalid_reason"]
+		flagged[row["entry"].(string)] = has
+	}
+	if len(flagged) != 2 || !flagged["tcp:10.0.0.5:2222"] || flagged["tcp:203.0.113.7:2222"] {
+		t.Errorf("invalid_reason flags: %v", flagged)
+	}
+
+	activate := func(api egressAPI, id string) int {
+		req := httptest.NewRequest("POST", "/api/admin/egress/allowlist/"+id+"/state", strings.NewReader(`{"state":"active"}`))
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		api.allowlistState(w, req, store.Identity{})
+		return w.Code
+	}
+	if err := st.SetAllowlistState(ctx, oldID, "retired"); err != nil {
+		t.Fatal(err)
+	}
+	if code := activate(eg, oldID); code != 400 {
+		t.Errorf("re-activating a private entry: status %d", code)
+	}
+	if code := activate(eg, liveID); code != 204 {
+		t.Errorf("activating a valid entry: status %d", code)
+	}
+
+	// The check is by ID, not by a bounded listing: an old row below any list limit is found.
+	for i := 0; i < 5100; i++ {
+		if err := st.AddAllowlist(ctx, store.AllowlistEntry{ID: store.NewID(), Entry: fmt.Sprintf("h%d.example.com", i),
+			State: "retired", AddedAt: "2026-06-01T00:00:00Z"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code := activate(eg, oldID); code != 400 {
+		t.Errorf("re-activating a private entry beyond 5000 newer rows: status %d", code)
+	}
+
+	// A lookup failure fails the request instead of letting the transition through.
+	failing := newEgressAPI(&manager{store: getFailsStore{st}}, "tok", "proxy:3128", nil, nil)
+	if code := activate(failing, oldID); code != 500 {
+		t.Errorf("lookup failure: status %d, want 500", code)
+	}
+	if rows, _ := st.ListAllowlist(ctx, "active", 10); len(rows) != 1 || rows[0].ID != liveID {
+		t.Errorf("active rows after the refused transitions: %+v", rows)
+	}
+}
+
+type getFailsStore struct{ store.Store }
+
+func (getFailsStore) GetAllowlist(context.Context, string) (store.AllowlistEntry, bool, error) {
+	return store.AllowlistEntry{}, false, errors.New("boom")
 }
