@@ -76,6 +76,11 @@ export interface Glider {
   active(): boolean;
   /** A glide to the end of the transcript is in flight. */
   toBottom(): boolean;
+  /** Something other than the glide moved the position farther from its target than the glide's
+   *  last frame left it — the reader, e.g. dragging the native scrollbar, which raises no
+   *  pointerdown. Scroll anchoring and late layout move a target measured from the content along
+   *  with the position, so they do not count. */
+  movedAway(): boolean;
 }
 
 /**
@@ -97,6 +102,8 @@ export function createGlider(
   let state: GlideState = { pos: 0, v: 0 };
   let written = 0;
   let last = 0;
+  // Distance to the target right after our last write (see movedAway).
+  let gap = 0;
 
   const stop = () => {
     if (frame) caf(frame);
@@ -119,6 +126,7 @@ export function createGlider(
     write(next.pos);
     written = read();
     if (next.done) return stop();
+    gap = Math.abs(t - written);
     state = { pos: next.pos, v: next.v };
     frame = raf(tick);
   };
@@ -131,11 +139,17 @@ export function createGlider(
         last = 0;
       }
       target = next;
+      const t = next();
+      gap = t === null ? 0 : Math.abs(t - read());
       bottom = toBottom;
       if (!frame) frame = raf(tick);
     },
     cancel: stop,
     active: () => target !== null,
+    movedAway: () => {
+      const t = target?.();
+      return t !== null && t !== undefined && Math.abs(t - read()) > gap + 2;
+    },
     toBottom: () => target !== null && bottom,
   };
 }

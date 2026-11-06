@@ -354,12 +354,16 @@ export function useMirrorScroll() {
     scheduleReplyTopSync();
     // A glide's own frames. Read as intent, an upward glide's first frames are still near the end
     // and would re-arm follow under the completion anchor. Wheel / touch / pointer / key cancel the
-    // glide before their scroll event lands; a native scrollbar drag dispatches no pointerdown, so
-    // an upward move we did not write — and that is not the browser clamping to a shorter body,
-    // which lands exactly on the end — is the reader too: stop the glide and judge it below.
+    // glide before their scroll event lands; a native scrollbar drag dispatches no pointerdown, so a
+    // move against the glide is the reader too: stop it and judge the move below. Against a glide to
+    // the end, that is an upward move we did not write that is not the browser clamping onto the end;
+    // against any other glide, a move that left it farther from its target (glide.movedAway).
     if (glider.active()) {
       const max = el.scrollHeight - el.clientHeight;
-      if (!(el.scrollTop < selfTopRef.current - 1 && el.scrollTop < max - 1)) return;
+      const against = glider.toBottom()
+        ? el.scrollTop < selfTopRef.current - 1 && el.scrollTop < max - 1
+        : glider.movedAway();
+      if (!against) return;
       glider.cancel();
     }
     rebasePrependAnchor(); // a move we didn't make becomes the anchor's new resting place

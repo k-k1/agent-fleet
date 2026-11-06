@@ -12,6 +12,7 @@ let api: ReturnType<typeof useMirrorScroll> | null = null;
 let height = 500;
 let top = 0;
 let scroll = 0;
+let shift = 0; // content that grew above the reply heads
 const SCROLL_HEIGHT = 2000;
 const clampScroll = (v: number) => Math.max(0, Math.min(v, SCROLL_HEIGHT - height));
 let observers: (() => void)[] = [];
@@ -42,7 +43,7 @@ function Body({ s }: { s: ReturnType<typeof useMirrorScroll> }) {
         for (const [idx, at] of [[3, 1008], [7, 1538]]) { // reply heads, this far into the content
           const reply = document.createElement("div");
           reply.setAttribute("data-turn-idx", String(idx));
-          reply.getBoundingClientRect = () => new DOMRect(0, top + at - scroll, 200, 100);
+          reply.getBoundingClientRect = () => new DOMRect(0, top + at + shift - scroll, 200, 100);
           el.appendChild(reply);
         }
         s.bodyRef.current = el;
@@ -112,6 +113,7 @@ afterEach(() => {
   height = 500;
   top = 0;
   scroll = 0;
+  shift = 0;
   observers = [];
   frames = [];
   reduceMotion = true;
@@ -277,6 +279,41 @@ describe("useMirrorScroll glide", () => {
     expect(api!.showJump).toBe(true);
     step(5);
     expect(el.scrollTop).toBe(300); // not pulled back down
+  });
+
+  it("yields to a scrollbar drag back down to the end during a glide up", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 1500;
+    api!.lastReplyIdxRef.current = 3;
+    act(() => api!.jumpToReplyTop()); // glide up to 1000
+    for (let i = 0; i < 4; i++) {
+      step();
+      act(() => api!.onBodyScroll());
+    }
+    expect(el.scrollTop).toBeLessThan(1500);
+    el.scrollTop = 1500; // the reader drags the thumb back to the end
+    act(() => api!.onBodyScroll());
+    expect(api!.atBottomRef.current).toBe(true);
+    expect(api!.showJump).toBe(false);
+    step(5);
+    expect(el.scrollTop).toBe(1500); // not pulled back up
+  });
+
+  it("does not take a move along with a glide's target for the reader", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 1300;
+    api!.atBottomRef.current = false;
+    api!.lastReplyIdxRef.current = 3;
+    act(() => api!.jumpToReplyTop()); // glide up to 1000
+    step(2);
+    act(() => api!.onBodyScroll());
+    shift = 40; // content above grew and scroll anchoring moved the view down with it
+    el.scrollTop += 40;
+    act(() => api!.onBodyScroll());
+    settle();
+    expect(el.scrollTop).toBe(1040); // still glided onto the reply head, wherever it went
   });
 
   it("shows jump-to-latest when the reader stops a completion glide after its last scroll event", () => {
