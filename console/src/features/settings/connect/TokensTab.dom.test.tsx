@@ -4,7 +4,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const api = vi.fn(async (): Promise<{ tokens: Array<Record<string, string>>; ceiling: string }> => ({ tokens: [], ceiling: "write" }));
+const api = vi.fn(async (): Promise<{ tokens: Array<Record<string, string>>; ceiling: string; max_ttl_days?: number }> => ({ tokens: [], ceiling: "write" }));
 const apiJSON = vi.fn(async (): Promise<{ token: string; endpoint?: string }> => ({ token: "" }));
 vi.mock("../../../core/api/client.ts", async (importActual) => ({
   ...(await importActual<typeof import("../../../core/api/client.ts")>()),
@@ -146,5 +146,42 @@ describe("TokensTab what-this-token-can-do section", () => {
     expect(scopeSelect().value).toBe(shown);
     sent = await issue();
     expect(sent).toMatchObject({ endpoint: "mcp", scope: shown });
+  });
+});
+
+// There is no "never expires": the options stop at the deployment's cap, and nothing is negative.
+describe("TokensTab expiry choices", () => {
+  const options = async (maxDays: number | undefined) => {
+    api.mockImplementation(async () => ({ tokens: [], ceiling: "write", max_ttl_days: maxDays }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<TokensTab />));
+    const sel = Array.from(host.querySelectorAll("select")).find((s) => Array.from(s.options).every((o) => /^\d+$/.test(o.value)))!;
+    return Array.from(sel.options).map((o) => o.value);
+  };
+
+  it("never offers a non-expiring token", async () => {
+    expect(await options(365)).toEqual(["90", "30", "365"]);
+  });
+
+  it("drops lifetimes above the deployment cap and offers the cap itself", async () => {
+    expect(await options(180)).toEqual(["90", "30", "180"]);
+    expect(await options(30)).toEqual(["30"]);
+    expect(await options(20)).toEqual(["20"]);
+  });
+
+  it("sends exactly the lifetime it shows", async () => {
+    apiJSON.mockClear();
+    api.mockImplementation(async () => ({ tokens: [], ceiling: "write", max_ttl_days: 30 }));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<TokensTab />));
+    const sel = Array.from(host.querySelectorAll("select")).find((s) => Array.from(s.options).every((o) => /^\d+$/.test(o.value)))!;
+    expect(sel.value).toBe("30");
+    const issue = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === t("tokens.issue"));
+    await act(async () => issue!.click());
+    expect(apiJSON).toHaveBeenCalledWith("api/pat", "POST", expect.objectContaining({ ttl_days: 30 }));
   });
 });

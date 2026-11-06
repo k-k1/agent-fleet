@@ -283,6 +283,12 @@ func (s *SQL) SetMembershipStatus(ctx context.Context, membershipID, status stri
 		if err := inboxMembershipInactiveTx(ctx, tx, membershipID, NowTS()); err != nil {
 			return err
 		}
+		// Credentials issued against the membership die with it. Using them already fails
+		// (resolution needs an active membership), but a token left live comes back to life
+		// if the person is re-invited.
+		if err := revokeBearersTx(ctx, tx, "membership_id", membershipID, "membership deactivated"); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

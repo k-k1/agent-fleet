@@ -53,6 +53,13 @@ type CP interface {
 
 	// --- Resolution / lifecycle (manager's methods) -----------------------------
 	RuntimeFor(ws store.Workspace, secretKey string, extraEnv ...string) runtime.Runtime
+	// PATMaxDays is the longest a PAT may live; a token with no expiry (issued before the
+	// cap) is treated as expiring that long after creation.
+	PATMaxDays() int
+	// BearerEntryAllowed reports whether the person behind a PAT / OAuth grant may still
+	// sign in (the allowlist half of offboarding). When it answers false the CP has already
+	// revoked their credentials.
+	BearerEntryAllowed(ctx context.Context, identityID string) bool
 	ResolveByMembership(ctx context.Context, identityID, membershipID string) (*Resolved, *APIError)
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error

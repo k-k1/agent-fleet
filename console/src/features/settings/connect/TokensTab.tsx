@@ -34,6 +34,8 @@ export function TokensTab() {
   const tr = useT();
   const [tokens, setTokens] = useState<PatToken[] | null>(null);
   const [ceiling, setCeiling] = useState("write");
+  // The deployment's longest token lifetime (AF_PAT_MAX_DAYS); there is no "never".
+  const [maxTtl, setMaxTtl] = useState(365);
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
   const [scope, setScope] = useState("write");
@@ -41,6 +43,14 @@ export function TokensTab() {
   const [endpoint, setEndpoint] = useState("mcp");
   const [issued, setIssued] = useState<{ token: string; endpoint?: string } | null>(null); // the once-shown secret
   const [busy, setBusy] = useState(false);
+
+  // Offered lifetimes: the usual three that fit under the deployment cap, plus the cap itself when
+  // it is none of them. The selection falls back to 90 days, or to the cap when 90 is not offered.
+  const ttlOptions = [90, 30, 365].filter((d) => d <= maxTtl);
+  if (!ttlOptions.includes(maxTtl)) ttlOptions.push(maxTtl);
+  const ttlValue = ttlOptions.includes(parseInt(ttl, 10)) ? ttl : String(ttlOptions.includes(90) ? 90 : maxTtl);
+  const ttlLabel = (d: number) =>
+    d === 90 ? tr("tokens.ttl_90") : d === 30 ? tr("tokens.ttl_30") : d === 365 ? tr("tokens.ttl_365") : tr("tokens.ttl_n", { n: d });
 
   const load = useCallback(() => {
     setErr("");
@@ -52,6 +62,7 @@ export function TokensTab() {
         }
         setTokens(res.tokens || []);
         if (res.ceiling) setCeiling(res.ceiling);
+        if (res.max_ttl_days > 0) setMaxTtl(res.max_ttl_days);
       })
       .catch(() => setErr(tr("tokens.load_failed")));
   }, [tr]);
@@ -62,7 +73,7 @@ export function TokensTab() {
     const res = await apiJSON("api/pat", "POST", {
       name: name.trim(),
       scope,
-      ttl_days: parseInt(ttl, 10),
+      ttl_days: parseInt(ttlValue, 10),
       endpoint,
     });
     setBusy(false);
@@ -190,11 +201,12 @@ export function TokensTab() {
           </select>
         </Row>
         <Row label={tr("tokens.expiry")}>
-          <select value={ttl} onChange={(e) => setTtl(e.target.value)}>
-            <option value="90">{tr("tokens.ttl_90")}</option>
-            <option value="30">{tr("tokens.ttl_30")}</option>
-            <option value="365">{tr("tokens.ttl_365")}</option>
-            <option value="-1">{tr("tokens.ttl_never")}</option>
+          <select value={ttlValue} onChange={(e) => setTtl(e.target.value)}>
+            {ttlOptions.map((d) => (
+              <option key={d} value={String(d)}>
+                {ttlLabel(d)}
+              </option>
+            ))}
           </select>
         </Row>
         <div className="ds-row">

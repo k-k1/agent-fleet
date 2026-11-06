@@ -86,6 +86,7 @@ type MCPOAuthStore interface {
 	// GetMCPOAuthAccess resolves a live access token whose grant is live, unexpired and not idle.
 	GetMCPOAuthAccess(ctx context.Context, hash string, now int64) (MCPOAuthAccess, bool, error)
 
+	CreateMCPOAuthGrantFromCode(ctx context.Context, g MCPOAuthGrant) error
 	CreateMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant) error
 	GetMCPOAuthGrant(ctx context.Context, id string) (MCPOAuthGrant, bool, error)
 	// TouchMCPOAuthGrant records use and pushes the idle deadline to now+idle, never past the
@@ -159,13 +160,28 @@ func (s *SQL) PruneMCPOAuth(ctx context.Context, now, clientsBefore, grantsBefor
 }
 
 func (s *SQL) InsertMCPOAuthToken(ctx context.Context, t MCPOAuthToken) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// A consent ticket or authorization code (no grant yet) is issued under the membership row
+	// lock, like a PAT: a deactivation that has already swept its pending rows cannot be followed
+	// by a late insert that a re-invite would then redeem.
+	if t.GrantID == "" {
+		if err := lockActiveMembershipTx(ctx, tx, t.MembershipID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO mcp_oauth_token(hash, kind, grant_id, client_id, client_name, identity_id, membership_id,
 		   redirect_uri, challenge, scope, resource, state, expires_at, used_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		t.Hash, t.Kind, t.GrantID, t.ClientID, t.ClientName, t.IdentityID, t.MembershipID,
-		t.RedirectURI, t.Challenge, t.Scope, t.Resource, t.State, t.ExpiresAt)
-	return err
+		t.RedirectURI, t.Challenge, t.Scope, t.Resource, t.State, t.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const mcpOAuthTokenCols = `hash, kind, grant_id, client_id, client_name, identity_id, membership_id,
@@ -247,6 +263,18 @@ func scanMCPOAuthGrant(row interface{ Scan(...any) error }) (MCPOAuthGrant, erro
 }
 
 func (s *SQL) CreateMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant) error {
+	return s.createMCPOAuthGrant(ctx, g, false)
+}
+
+// CreateMCPOAuthGrantFromCode is CreateMCPOAuthGrant for the code exchange: it also requires the
+// authorization code's row (g.CodeHash) to still exist. Deactivating the membership deletes the
+// pending and spent codes it approved, so an exchange that consumed its code before the
+// deactivation cannot complete after a re-invite.
+func (s *SQL) CreateMCPOAuthGrantFromCode(ctx context.Context, g MCPOAuthGrant) error {
+	return s.createMCPOAuthGrant(ctx, g, true)
+}
+
+func (s *SQL) createMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant, needCode bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -256,6 +284,18 @@ func (s *SQL) CreateMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant) error {
 	// row lock and serialize with disabling across CP instances (SQLite takes a write lock).
 	if _, err = tx.ExecContext(ctx, `UPDATE tenant SET mcp_oauth_disabled=mcp_oauth_disabled WHERE id=?`, g.TenantID); err != nil {
 		return err
+	}
+	if err = lockActiveMembershipTx(ctx, tx, g.MembershipID); err != nil {
+		return err
+	}
+	if needCode {
+		var n int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_token WHERE hash=? AND kind=?`, g.CodeHash, MCPOAuthCode).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrMembershipInactive
+		}
 	}
 	var blocked int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant WHERE id=? AND mcp_oauth_disabled<>0`, g.TenantID).Scan(&blocked); err != nil {

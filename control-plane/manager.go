@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -152,6 +153,12 @@ type manager struct {
 	// still-pending provider legitimately has no entry yet. tenantProviderIDsFor
 	// answers that half of the question instead.
 	knownProviderIDs map[string]bool
+	// patMaxDays is the longest a PAT may live (AF_PAT_MAX_DAYS); 0 selects defaultPATMaxDays.
+	patMaxDays int
+	// bearerEntryAllowed re-asks the login providers whether an identity may still enter
+	// (the allowlist half of offboarding). nil means there is nothing to re-ask: AUTH=proxy
+	// and AUTH=dev have no allowlist of their own.
+	bearerEntryAllowed func(ctx context.Context, ident store.Identity) bool
 
 	// at-rest encryption (P3-3). master32 = SHA-256 of AF_MASTER_KEY (nil in dev).
 	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).

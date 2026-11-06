@@ -122,6 +122,7 @@ export const settings = {
   "tokens.ttl_90": "90 日（既定）",
   "tokens.ttl_30": "30 日",
   "tokens.ttl_365": "365 日",
+  "tokens.ttl_n": "{n} 日（上限）",
   "tokens.ttl_never": "無期限",
   "tokens.issuing": "発行中…",
   "tokens.issue": "トークンを発行",

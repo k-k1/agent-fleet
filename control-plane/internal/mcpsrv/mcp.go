@@ -302,11 +302,23 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 		tr.rec.Reason = "pat unknown or revoked"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
-	if p.ExpiresAt != "" {
-		if exp, err := time.Parse(time.RFC3339, p.ExpiresAt); err == nil && time.Now().After(exp) {
-			tr.rec.Reason = "pat expired"
-			return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
+	expiry := p.ExpiresAt
+	if expiry == "" {
+		// Issued before tokens had a maximum lifetime. Capped from creation, not from now,
+		// so an old non-expiring token stops working at once rather than getting a fresh term.
+		if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
+			expiry = c.AddDate(0, 0, a.cp.PATMaxDays()).UTC().Format(time.RFC3339)
 		}
+	}
+	if expiry == "" {
+		// No stored expiry and no readable creation time: nothing proves the token is within its
+		// lifetime, so it is not honored.
+		tr.rec.Reason = "pat has no usable expiry"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
+	}
+	if exp, err := time.Parse(time.RFC3339, expiry); err != nil || time.Now().After(exp) {
+		tr.rec.Reason = "pat expired"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
 	}
 	// The binding is checked like an OAuth token's audience: each endpoint refuses the other's
 	// tokens, so a memory PAT never reaches the session tools and a full one never has to be
@@ -317,6 +329,10 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 	}
 	if res != a.patResource() {
 		tr.rec.Reason = "pat bound to another endpoint"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
+	if !a.cp.BearerEntryAllowed(r.Context(), p.IdentityID) {
+		tr.rec.Reason = "identity no longer allowed to sign in"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
 	_ = a.cp.Store().TouchPAT(r.Context(), p.ID) // best-effort last-used
@@ -339,6 +355,10 @@ func (a API) authOAuth(r *http.Request, tok string, tr *callTrace) (*mcpPrincipa
 	}
 	if g.Resource != a.oauth.resource {
 		tr.rec.Reason = "oauth token bound to another resource"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
+	}
+	if !a.cp.BearerEntryAllowed(r.Context(), g.IdentityID) {
+		tr.rec.Reason = "identity no longer allowed to sign in"
 		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid token"}
 	}
 	_ = a.cp.Store().TouchMCPOAuthGrant(r.Context(), g.GrantID, now.Unix(), int64(oauthIdle.Seconds())) // best-effort, like TouchPAT

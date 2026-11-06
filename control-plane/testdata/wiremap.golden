@@ -93,7 +93,7 @@ oauth_jira.go config.handleJiraOAuthStart x1 {authorize_url}
 oauth_link.go accountAPI.detachLoginMethod x1 {detached}
 oauth_link.go accountAPI.loginMethods x1 {enabled,linkable,linked}
 pat.go patAPI.create x1 {endpoint,expires_at,id,name,scope,tenant,token}
-pat.go patAPI.list x1 {ceiling,tokens}
+pat.go patAPI.list x1 {ceiling,max_ttl_days,tokens}
 pat.go patAPI.revoke x1 {ok}
 routes.go registerAuthRoutes x1 {image,runtime,version,workspace_image} cond{image,runtime,workspace_image}
 schedule.go scheduleAPI.delete x1 {deleted,id}

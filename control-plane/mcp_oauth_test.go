@@ -1360,6 +1360,11 @@ func (g *grantHold) CreateMCPOAuthGrant(ctx context.Context, gr store.MCPOAuthGr
 	return g.Store.CreateMCPOAuthGrant(ctx, gr)
 }
 
+func (g *grantHold) CreateMCPOAuthGrantFromCode(ctx context.Context, gr store.MCPOAuthGrant) error {
+	g.once.Do(g.hook)
+	return g.Store.CreateMCPOAuthGrantFromCode(ctx, gr)
+}
+
 func TestMCPOAuthReplayDuringTheFirstRedemptionLeavesNoLiveToken(t *testing.T) {
 	e := newMCPOAuthEnv(t)
 	id := e.registerClient(loopbackCB)

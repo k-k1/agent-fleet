@@ -156,10 +156,26 @@ func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (s
 		writeAPIErr(w, internalErr(err))
 		return store.Identity{}, false
 	}
+	// A tenant_admin membership counts only where the tenant would let this very request
+	// in (sign-in method, network): otherwise an office-only tenant's admin role would
+	// open the list from anywhere. When every admin tenant refuses, the first refusal is
+	// what the caller is told, because it names the remedy.
+	var refusal *apiError
 	for _, mv := range ms {
-		if mv.Role == "tenant_admin" {
-			return ident, true
+		if mv.Role != "tenant_admin" {
+			continue
 		}
+		if aerr := a.mgr.checkTenantAdminAccess(r.Context(), ident, mv.TenantID, mv.TenantSlug); aerr != nil {
+			if refusal == nil {
+				refusal = aerr
+			}
+			continue
+		}
+		return ident, true
+	}
+	if refusal != nil {
+		writeAPIErr(w, refusal)
+		return store.Identity{}, false
 	}
 	writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "tenant admin required"})
 	return store.Identity{}, false
@@ -198,6 +214,10 @@ func (a memberAuth) tenantAdminFor(w http.ResponseWriter, r *http.Request, slug 
 	}
 	if !a.mgr.tenantAdminFor(r.Context(), ident, t.ID) {
 		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "tenant admin required"})
+		return store.Identity{}, store.Tenant{}, false
+	}
+	if aerr := a.mgr.checkTenantAdminAccess(r.Context(), ident, t.ID, t.Slug); aerr != nil {
+		writeAPIErr(w, aerr)
 		return store.Identity{}, store.Tenant{}, false
 	}
 	return ident, t, true

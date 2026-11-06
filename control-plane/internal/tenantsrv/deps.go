@@ -141,6 +141,10 @@ type CP interface {
 	// TenantAdminFor gates the per-tenant admin face. It writes the 401/403 itself
 	// and returns ok=false, exactly as memberAuth does for every other feature API.
 	TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool)
+	// TenantAdminAccessOK reports whether the request would be let into the tenant by its
+	// sign-in-method and network rules (super_admin exempt): TenantAdminFor's second half, for
+	// handlers that list tenants instead of resolving one.
+	TenantAdminAccessOK(ctx context.Context, ident store.Identity, tenantID, slug string) bool
 	// ResolveMember is admin_stats.go's member lookup (membership + workspace row).
 	ResolveMember(r *http.Request, slug, key string) (mem store.Membership, ws store.Workspace, hasWS bool, aerr *APIError)
 

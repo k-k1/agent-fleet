@@ -219,20 +219,46 @@ func TestSetTenantNetworkRefusesWhenTheProxyIsNotDeclared(t *testing.T) {
 	}
 }
 
-// Clearing is the way back, and it must work from anywhere — including from outside
-// the range the tenant just locked itself into.
-func TestSetTenantNetworkAlwaysAllowsClearing(t *testing.T) {
+// Clearing the rule is the way back for an editor who is still inside the network, and it is
+// not gated on the lock-out checks that refuse a NEW rule. It is NOT open to a tenant_admin who is
+// outside the range: that caller is exactly who the rule exists to keep out, and letting them
+// clear it would void the restriction (#3450). The way back for a tenant locked out of its own
+// admin pages is the operator, who is exempt from the rule (ADR 0047 decision 4).
+func TestSetTenantNetworkClearing(t *testing.T) {
 	st, mgr, tn, _, _ := networkFixture(t)
-	if err := st.SetTenantAllowedCIDRs(context.Background(), tn.ID, "203.0.113.0/24"); err != nil {
-		t.Fatalf("set: %v", err)
+	ctx := context.Background()
+	reset := func() {
+		if err := st.SetTenantAllowedCIDRs(ctx, tn.ID, "203.0.113.0/24"); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+		mgr.tenantLogin.invalidate()
 	}
+	stored := func() string { got, _ := st.GetTenantAllowedCIDRs(ctx, tn.ID); return got }
+
+	// A tenant_admin outside the range is refused and the rule stands.
+	reset()
 	w := callNetwork(mgr, http.MethodPut, `{"allowed_cidrs":""}`, ctxWithIP("198.51.100.7", false))
-	if w.Code != http.StatusOK {
-		t.Fatalf("clearing = %d %s, want 200", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "ip_not_allowed") {
+		t.Fatalf("clearing from outside = %d %s, want 403 ip_not_allowed", w.Code, w.Body.String())
 	}
-	got, _ := st.GetTenantAllowedCIDRs(context.Background(), tn.ID)
-	if got != "" {
-		t.Errorf("stored = %q, want empty", got)
+	if stored() != "203.0.113.0/24" {
+		t.Errorf("a refused clear changed the rule: %q", stored())
+	}
+	// Inside the range, clearing works.
+	if w := callNetwork(mgr, http.MethodPut, `{"allowed_cidrs":""}`, ctxWithIP("203.0.113.9", false)); w.Code != http.StatusOK {
+		t.Fatalf("clearing from inside = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if stored() != "" {
+		t.Errorf("stored = %q, want empty", stored())
+	}
+	// The operator clears it from anywhere.
+	reset()
+	mgr.superAdmins = map[string]bool{"boss@acme.co.jp": true}
+	if w := callNetwork(mgr, http.MethodPut, `{"allowed_cidrs":""}`, ctxWithIP("198.51.100.7", false)); w.Code != http.StatusOK {
+		t.Fatalf("operator clearing from outside = %d %s, want 200", w.Code, w.Body.String())
+	}
+	if stored() != "" {
+		t.Errorf("stored = %q, want empty", stored())
 	}
 }
 
@@ -259,7 +285,12 @@ func TestTenantNetworkReportsWhatTheCPSees(t *testing.T) {
 		t.Errorf("a deployment that can name its callers must be editable: %+v", out)
 	}
 
-	// Behind an undeclared proxy the screen must say so rather than offering a control.
+	// Behind an undeclared proxy the screen must say so rather than offering a control. (The rule
+	// is cleared first: with one set, that caller would be refused before the screen is built.)
+	if err := st.SetTenantAllowedCIDRs(context.Background(), tn.ID, ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	mgr.tenantLogin.invalidate()
 	w = callNetwork(mgr, http.MethodGet, "", ctxWithIP("10.20.10.5", true))
 	out = map[string]any{}
 	_ = json.Unmarshal(w.Body.Bytes(), &out)

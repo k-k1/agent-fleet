@@ -7,7 +7,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +89,51 @@ type patAPI struct {
 
 func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
 
+// defaultPATMaxDays is the longest a PAT lives when AF_PAT_MAX_DAYS is unset; hardPATMaxDays is
+// the largest value accepted (ten years keeps every computed expiry a four-digit RFC3339 year).
+const (
+	defaultPATMaxDays = 365
+	hardPATMaxDays    = 3650
+)
+
+// parsePATMaxDays validates AF_PAT_MAX_DAYS: "" is the default, anything else must be an integer in
+// [1, hardPATMaxDays]. A typo must stop startup rather than silently become some other lifetime.
+func parsePATMaxDays(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > hardPATMaxDays {
+		return 0, fmt.Errorf("AF_PAT_MAX_DAYS=%q: want an integer from 1 to %d", raw, hardPATMaxDays)
+	}
+	return n, nil
+}
+
+// patMaxLifetimeDays is the deployment's cap on a PAT's lifetime. No token is exempt: a
+// credential that never expires outlives every offboarding step that is not an explicit revoke.
+func (m *manager) patMaxLifetimeDays() int {
+	if m.patMaxDays > 0 {
+		return min(m.patMaxDays, hardPATMaxDays)
+	}
+	return defaultPATMaxDays
+}
+
+// PATMaxDays implements mcpsrv.CP.
+func (d cpDeps) PATMaxDays() int { return d.m.patMaxLifetimeDays() }
+
+// patEffectiveExpiry is the stored expiry, or for a token issued before the cap existed
+// (no expiry) its creation time plus the cap — the same rule mcpsrv enforces on use.
+func patEffectiveExpiry(p store.PAT, maxDays int) string {
+	if p.ExpiresAt != "" {
+		return p.ExpiresAt
+	}
+	if c, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
+		return c.AddDate(0, 0, maxDays).UTC().Format(time.RFC3339)
+	}
+	return p.ExpiresAt
+}
+
 // maxActivePATs caps how many unrevoked tokens one identity may hold, so a pile of
 // throwaway issuances cannot grow the set of hashes every lookup has to compare against.
 const maxActivePATs = 20
@@ -108,17 +157,19 @@ func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident store.Identit
 	for _, p := range pats {
 		out = append(out, map[string]any{
 			"id": p.ID, "name": p.Name, "scope": p.Scope, "endpoint": p.Resource,
-			"created_at": p.CreatedAt, "expires_at": p.ExpiresAt,
+			"created_at": p.CreatedAt, "expires_at": patEffectiveExpiry(p, a.mgr.patMaxLifetimeDays()),
 			"revoked_at": p.RevokedAt, "last_used_at": p.LastUsedAt,
 			"revoked": p.RevokedAt != "",
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tokens": out, "ceiling": ceilingScope(ident.Role)})
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": out, "ceiling": ceilingScope(ident.Role),
+		"max_ttl_days": a.mgr.patMaxLifetimeDays()})
 }
 
 // create (POST /api/pat {name, scope, tenant, ttl_days, endpoint}) mints a token.
-// scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days,
-// negative = never expires, positive = that many days. endpoint is "mcp" (the
+// scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days (or the
+// deployment cap when that is lower), positive = that many days up to the cap; a negative
+// value or one above the cap is refused. endpoint is "mcp" (the
 // default, /mcp) or "memory" (/mcp/memory only, #2764). Returns the secret once.
 func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
@@ -128,7 +179,12 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		TTLDays  *int   `json:"ttl_days"`
 		Endpoint string `json:"endpoint"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// An empty body is a valid request (every field defaults); a malformed one, or a ttl_days that
+	// is not an int, must not silently become the default lifetime.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
 	switch body.Endpoint {
 	case "":
 		body.Endpoint = store.PATResourceMCP
@@ -151,6 +207,32 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
+	}
+
+	// Issuing is a use of the tenant like any other request: its sign-in method and network
+	// rules apply here too. (Using the token later on /mcp is exempt from the network rule
+	// by design — see checkTenantIP.)
+	if aerr := a.mgr.checkTenantProvider(r.Context(), mv); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if aerr := a.mgr.checkTenantIP(r.Context(), ident, mv); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+
+	maxDays := a.mgr.patMaxLifetimeDays()
+	days := 90
+	if days > maxDays {
+		days = maxDays
+	}
+	if body.TTLDays != nil && *body.TTLDays != 0 {
+		if *body.TTLDays < 0 || *body.TTLDays > maxDays {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "invalid_ttl",
+				"ttl_days must be between 1 and " + strconv.Itoa(maxDays)})
+			return
+		}
+		days = *body.TTLDays
 	}
 
 	// At the cap, tell the caller to revoke something before issuing another.
@@ -177,14 +259,7 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		ceiling = clampScope(ceiling, scopeWrite)
 	}
 	scope := clampScope(body.Scope, ceiling)
-	expires := ""
-	switch {
-	case body.TTLDays == nil || *body.TTLDays == 0:
-		expires = time.Now().UTC().AddDate(0, 0, 90).Format(time.RFC3339)
-	case *body.TTLDays > 0:
-		expires = time.Now().UTC().AddDate(0, 0, *body.TTLDays).Format(time.RFC3339)
-		// negative => never expires (expires stays "")
-	}
+	expires := time.Now().UTC().AddDate(0, 0, days).Format(time.RFC3339)
 
 	token, hash := newPATToken()
 	p := store.PAT{
