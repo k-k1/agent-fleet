@@ -103,19 +103,18 @@ af_token_for() {
 
 # af_pin <host> sets AF_PIN (curl args) or returns 1. Every hop's destination is resolved HERE, judged
 # against the same classes the Control Plane refuses (loopback, link-local incl. the cloud metadata
-# address, unspecified), and the connection is pinned to the address that was judged
+# address and link-local multicast, unspecified), and the connection is pinned to the address that was judged
 # (`--resolve`), so a second DNS answer cannot swap in another one. IPv4 only: an AAAA-only host
 # fails closed rather than being connected to unchecked.
 af_internal_ip() {
-  case "$1" in 0.*|127.*|169.254.*) return 0 ;; esac
+  case "$1" in 0.*|127.*|169.254.*|224.0.0.*) return 0 ;; esac
   return 1
 }
 af_pin() {
   AF_PIN=""
-  case "$1" in
-    *[!0-9.]*) ;; # a name
-    *) af_internal_ip "$1" && return 1; return 0 ;; # an IPv4 literal: nothing to pin
-  esac
+  # Every host goes through getent, numeric spellings included: curl also accepts `2130706433`,
+  # `0177.0.0.1` and `0` as addresses, and only the resolver's canonical answer is judged and
+  # then pinned, so what is checked is what curl connects to.
   _ips=$(getent ahostsv4 "$1" 2>/dev/null | awk '$2=="STREAM"{print $1}') || true
   [ -n "$_ips" ] || return 1
   for _ip in $_ips; do af_internal_ip "$_ip" && return 1; done

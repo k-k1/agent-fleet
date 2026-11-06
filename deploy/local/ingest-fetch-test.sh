@@ -52,6 +52,9 @@ cat > "$WORK/bin/getent" <<'STUB'
 # getent ahostsv4 <host>: answers from $AF_TEST_DNS ("host ip" lines), else a public address.
 host="$2"
 ip=$(awk -v h="$host" '$1==h {print $2}' "$AF_TEST_DNS")
+# Numeric spellings the real resolver canonicalises (checked with getent): decimal, octal, zero.
+case "$host" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) [ "$host" != 0177.0.0.1 ] && ip="$host" ;; esac
+case "$host" in 2130706433|0177.0.0.1) ip=127.0.0.1 ;; 0) ip=0.0.0.0 ;; 224.0.0.251) ip=224.0.0.251 ;; esac
 [ -n "$ip" ] || ip=93.184.216.34
 printf '%s STREAM %s\n%s DGRAM\n' "$ip" "$host" "$ip"
 STUB
@@ -159,6 +162,10 @@ printf 'evil.example 169.254.169.254\nlo.example 127.0.0.1\n' > "$WORK/dns"
 expect_refused "first hop resolving to metadata" "" https://evil.example/x
 expect_refused "first hop resolving to loopback" "" https://lo.example/x
 expect_refused "first hop ip literal" "" https://169.254.169.254/x
+expect_refused "decimal loopback" "" https://2130706433/x
+expect_refused "octal loopback" "" https://0177.0.0.1/x
+expect_refused "zero address" "" https://0/x
+expect_refused "link-local multicast" "" https://224.0.0.251/x
 printf 'https://pub.example/a https://127.0.0.1/private\n' > "$WORK/redirects"
 run "" https://pub.example/a
 [ "$RC" != 0 ] || fail "redirect to loopback literal accepted"
