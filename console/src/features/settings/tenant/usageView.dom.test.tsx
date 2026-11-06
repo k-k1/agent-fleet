@@ -61,7 +61,10 @@ describe("UsageView member list", () => {
   it("super admin with one tenant selected: tenant column off", async () => {
     api.mockResolvedValue({ from: "a", to: "b", totals });
     await mount(<UsageView tenants={tenants} isSuper={true} />);
-    const sel = host!.querySelector("select")!;
+    // The range bar also carries a preset <select>, so pick the tenant chooser by its option.
+    const sel = Array.from(host!.querySelectorAll("select")).find((s) =>
+      Array.from(s.options).some((o) => o.value === "acme"),
+    )!;
     await act(async () => {
       sel.value = "acme";
       sel.dispatchEvent(new Event("change", { bubbles: true }));
