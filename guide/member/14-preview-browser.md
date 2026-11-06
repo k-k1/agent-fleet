@@ -126,6 +126,14 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   // next.config.ts
   allowedDevOrigins: ["127.0.0.1", "*.pv.example.com"],  // the domain is in AF_PREVIEW_DOMAIN
   ```
+- **Vite HMR works on a preview subdomain with no `hmr` or `allowedHosts` setting, but the load balancer drops a
+  silent WebSocket.** Measured with Vite 8.3.6: the page connects over `wss` on 443 to
+  `<slug>-3000.<preview domain>` by itself. The load balancer closes a WebSocket that stays **silent for 60
+  seconds** (the value measured on the ecs-ec2 deployment; it is the load balancer's idle timeout, so another
+  deployment may differ); Vite's client pings every 30 seconds, so it normally stays open. If the socket is lost anyway, Vite
+  prints `server connection lost. Polling for restart...` and then **reloads the whole page, so the page state
+  is lost**. Raising `server.ws.timeout` (the ping interval, 30000 ms by default; formerly `server.hmr.timeout`) above 60000 causes it. A background tab whose timers are throttled may
+  cause it too (not tested). Keep it below the idle timeout.
 - `AF_PREVIEW_URL_3000`, `AF_PREVIEW_URL_8080` and `AF_PREVIEW_DOMAIN` are present inside the container. Pass
   them to anything that reads its own public URL from the environment, such as `NEXTAUTH_URL`.
 
