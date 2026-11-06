@@ -167,7 +167,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.egress_tcp_flag": "Approving opens non-HTTP access to {host} on port {ports} from every workspace.",
   "admin.egress_tcp_err_format": "Enter a host and a port or a range.",
   "admin.egress_tcp_err_host": "The host must be an exact DNS name (no wildcard or .suffix).",
-  "admin.egress_tcp_err_ipv4": "Use an exact host name or a public IPv4 address (not private, loopback, link-local, multicast or IPv6; the gateway relay always refuses those).",
+  "admin.egress_tcp_err_ipv4": "Use an exact host name or a public IPv4 address (not private, shared, loopback, link-local, multicast, reserved or IPv6; the gateway relay always refuses those).",
   "admin.egress_tcp_err_port": "Ports are numbers from 1 to 65535; a range is from-to.",
   "admin.egress_tcp_err_width": "A range covers at most {n} ports.",
   "admin.egress_tcp_err_refused": "Port {port} stays on the HTTP / DNS path and cannot be a passthrough destination.",

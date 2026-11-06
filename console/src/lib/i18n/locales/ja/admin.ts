@@ -163,7 +163,7 @@ export const admin = {
   "admin.egress_tcp_flag": "承認すると、すべてのワークスペースから {host} のポート {ports} への HTTP 以外のアクセスが開きます。",
   "admin.egress_tcp_err_format": "ホストと、ポートまたは範囲を入力してください。",
   "admin.egress_tcp_err_host": "ホストは完全な DNS 名にしてください（ワイルドカードや .suffix は不可）。",
-  "admin.egress_tcp_err_ipv4": "完全なホスト名か公開 IPv4 アドレスを指定してください（プライベート、ループバック、リンクローカル、マルチキャスト、IPv6 は不可。ゲートウェイのリレーが常に拒否するため）。",
+  "admin.egress_tcp_err_ipv4": "完全なホスト名か公開 IPv4 アドレスを指定してください（プライベート、共有アドレス、ループバック、リンクローカル、マルチキャスト、予約済み、IPv6 は不可。ゲートウェイのリレーが常に拒否するため）。",
   "admin.egress_tcp_err_port": "ポートは 1〜65535 の数字で、範囲は from-to で指定します。",
   "admin.egress_tcp_err_width": "範囲は最大 {n} ポートまでです。",
   "admin.egress_tcp_err_refused": "ポート {port} は HTTP / DNS の経路に残るため、パススルーの宛先にできません。",

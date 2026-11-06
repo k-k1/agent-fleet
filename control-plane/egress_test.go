@@ -486,3 +486,60 @@ func TestPolicyEndpointServesTCPEntriesSeparately(t *testing.T) {
 		t.Errorf("tcp key without entries: %s", w2.Body.String())
 	}
 }
+
+// A private tcp: entry stored before the grammar refused it is not shipped, is flagged in
+// the admin list, and cannot be activated again.
+func TestStoredPrivateTCPEntryIsFlaggedAndNotShipped(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	liveID, oldID := store.NewID(), store.NewID()
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: liveID, Entry: "tcp:203.0.113.7:2222", State: "active", AddedAt: store.NowTS()})
+	_ = st.AddAllowlist(ctx, store.AllowlistEntry{ID: oldID, Entry: "tcp:10.0.0.5:2222", State: "active", AddedAt: store.NowTS()})
+	eg := newEgressAPI(&manager{store: st}, "tok", "proxy:3128", nil, nil)
+
+	pr := httptest.NewRequest("GET", "/internal/egress/policy", nil)
+	pr.Header.Set("Authorization", "Bearer tok")
+	pw := httptest.NewRecorder()
+	eg.policy(pw, pr)
+	if strings.Contains(pw.Body.String(), "10.0.0.5") || !strings.Contains(pw.Body.String(), "203.0.113.7") {
+		t.Errorf("policy body: %s", pw.Body.String())
+	}
+
+	lw := httptest.NewRecorder()
+	eg.allowlistList(lw, httptest.NewRequest("GET", "/api/admin/egress/allowlist", nil), store.Identity{})
+	var list struct {
+		Allowlist []map[string]any `json:"allowlist"`
+	}
+	if err := json.Unmarshal(lw.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range list.Allowlist {
+		_, flagged := row["invalid_reason"]
+		if want := row["entry"] == "tcp:10.0.0.5:2222"; flagged != want {
+			t.Errorf("%v: invalid_reason present=%v, want %v", row["entry"], flagged, want)
+		}
+	}
+
+	_ = st.SetAllowlistState(ctx, oldID, "retired")
+	req := httptest.NewRequest("POST", "/api/admin/egress/allowlist/"+oldID+"/state", strings.NewReader(`{"state":"active"}`))
+	req.SetPathValue("id", oldID)
+	sw := httptest.NewRecorder()
+	eg.allowlistState(sw, req, store.Identity{})
+	if sw.Code != 400 {
+		t.Errorf("re-activating a private entry: status %d, body %s", sw.Code, sw.Body.String())
+	}
+	req = httptest.NewRequest("POST", "/x", strings.NewReader(`{"state":"active"}`))
+	req.SetPathValue("id", liveID)
+	sw = httptest.NewRecorder()
+	eg.allowlistState(sw, req, store.Identity{})
+	if sw.Code != 204 {
+		t.Errorf("activating a valid entry: status %d", sw.Code)
+	}
+}

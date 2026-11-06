@@ -63,13 +63,33 @@ func (e TCPEntry) String() string {
 // Covers reports whether port is inside the entry's range.
 func (e TCPEntry) Covers(port int) bool { return port >= e.From && port <= e.To }
 
+// tcpFencedNets are ranges that are not private in Go's sense but are never a public
+// destination: shared address space, IETF protocol assignments, benchmarking, reserved, and
+// the whole 0/8 "this network" block (Go counts only 0.0.0.0 as unspecified).
+var tcpFencedNets = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4"} {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
 // TCPAddrRefused reports an address the gateway relay refuses whatever the policy says:
-// anything that is not a global unicast IPv4 address, and the private, loopback and
-// link-local ranges. The entry check and the relay share it, so an entry the relay can never
-// connect to is not accepted as active.
+// anything that is not a global unicast IPv4 address, the private, loopback and link-local
+// ranges, and tcpFencedNets. The entry check and the relay share it, so an entry the relay
+// can never connect to is not accepted as active. It does not Unmap: an entry spelled as an
+// IPv4-mapped IPv6 literal must stay refused, so the relay unmaps what it reads off the wire
+// before asking.
 func TCPAddrRefused(a netip.Addr) bool {
-	a = a.Unmap()
-	return !a.Is4() || !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback()
+	if !a.Is4() || !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback() {
+		return true
+	}
+	for _, p := range tcpFencedNets {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseTCPEntry reads and validates a passthrough entry.

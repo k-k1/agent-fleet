@@ -39,17 +39,20 @@ function parseIPv4(s: string): number[] | null {
 }
 
 // Mirrors egressallow.TCPAddrRefused: what Go's netip says is not a global unicast address
-// (unspecified, loopback, link-local, multicast, limited broadcast) plus the RFC 1918 ranges.
-function tcpAddrRefused([a, b, c, d]: number[]): boolean {
+// (unspecified, loopback, link-local, multicast, limited broadcast), the RFC 1918 ranges, and
+// the relay's fixed fence (0/8, 100.64/10, 192.0.0/24, 198.18/15, 240/4).
+function tcpAddrRefused([a, b, c]: number[]): boolean {
   return (
-    (a === 0 && b === 0 && c === 0 && d === 0) ||
-    a === 127 ||
+    a === 0 ||
     a === 10 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
-    (a >= 224 && a <= 239) ||
-    (a === 255 && b === 255 && c === 255 && d === 255)
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0 && c === 0) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224 // multicast, reserved 240/4 and the limited broadcast
   );
 }
 
