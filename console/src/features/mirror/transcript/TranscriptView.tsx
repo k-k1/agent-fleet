@@ -186,7 +186,8 @@ const watchStart = new Map<string, { log: string; boundary: number; seen: number
  * older page loaded later, is history that is never pressed. Synthetic rows (an optimistic echo
  * at 1e9+, a queued prompt at 2e9+) are not rows of the jsonl: they take no part, including in
  * finding the live exchange, or a window whose prompt is out of view would hand the "live" slot
- * to a queued bubble and file the real reply under history.
+ * to a queued bubble and file the real reply under history. A block is judged by the real rows
+ * it holds (Group.lastRow), since groupTurns folds an echo into the landed prompt before it.
  *
  * Never armed on an empty render: an empty transcript is what a session switch looks like for a
  * paint, and arming there would fix the boundary at -1 (translate everything); nor on a `stale`
@@ -197,16 +198,17 @@ function arrivedSinceOpen(groups: Group[], session: string, logId: string, stale
   // Arming on the outgoing session's rows would store THEIR history as this session's boundary,
   // and it outlives the render: every older answer of this session above it would be pressed.
   if (stale) return () => false;
-  const rows = groups.filter((g) => typeof g.idx === "number" && !g.pending && !g.queued);
+  // The blocks that hold a row of the file. An echo or a queued prompt alone is not one; folded
+  // into a landed prompt's block it does not make that prompt any less landed.
+  const rows = groups
+    .filter((g) => typeof g.idx === "number" && typeof g.lastRow === "number")
+    .map((g) => (g.pending || g.queued ? { ...g, pending: false, queued: false } : g));
   if (rows.length) {
     // The newest ROW, not the newest block id: a block is named after its first row (and
     // useStableBlockIds pins that name), so a reply growing from row 2 to row 1000 stays "2" and
     // a later replaced file numbered 1..8 would not look like a step back.
     let max = -1;
-    for (const g of rows) {
-      const last = typeof g.endIdx === "number" ? g.endIdx : (g.idx as number);
-      if (last > max) max = last;
-    }
+    for (const g of rows) if ((g.lastRow as number) > max) max = g.lastRow as number;
     const held = watchStart.get(session);
     if (!held || held.log !== logId || max < held.seen) {
       const live = rows[liveExchangeFrom(rows)];

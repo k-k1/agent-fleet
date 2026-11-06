@@ -436,6 +436,18 @@ describe("the mirror's automatic translation", () => {
     expect(switchLogs("", "", 700)).toEqual([[ENGLISH2]]);
   });
 
+  it("does not re-arm when a follow-up is sent while a landed prompt awaits its reply", () => {
+    // The echo folds into the landed prompt's block; judged by the echo, the prompt's row
+    // vanished, the newest row seemed to step back, and the re-armed boundary dropped below the
+    // answer above — history that then got pressed.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const waiting: Turn[] = [...answer(ENGLISH), { role: "user", text: "次", idx: 3, anchorId: "u3", ts: "2026-09-13T10:02:00Z" }];
+    render(waiting, caps);
+    again([...waiting, { role: "user", text: "それと", idx: 1e9 + 1, ts: "2026-09-13T10:02:30Z", pending: true }], caps);
+    expect(tx.calls).toHaveLength(0);
+  });
+
   it("finds the live reply when the window has no landed prompt, only a queued one", () => {
     // A long autonomous stretch pushes the prompt out of the tail window; a queued bubble is not
     // a row of the transcript and must not take the live slot from the real reply.

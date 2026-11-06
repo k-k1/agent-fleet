@@ -144,6 +144,11 @@ export interface Group {
   // one from the previous render when their row ranges overlap, and the first row alone cannot
   // say that.
   endIdx?: number;
+  // The last folded turn that is a row of the jsonl — not an optimistic echo (1e9+) or a queued
+  // prompt (2e9+), which fold into a landed prompt's block. "Has the file stepped back?"
+  // (useStableBlockIds, TranscriptView's watch boundary) must see the real rows of such a block;
+  // skipping the block whole would read a sent follow-up as the file shrinking.
+  lastRow?: number;
   // The FIRST folded turn's idx as grouped, never re-stamped: `idx` above keeps the block's name
   // while a backward page extends it at the front, so only this and endIdx say which rows it
   // covers (rendered as data-turn-first / data-turn-last for a jump to a row inside the block).

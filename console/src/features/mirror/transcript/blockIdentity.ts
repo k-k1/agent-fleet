@@ -62,14 +62,11 @@ export function useStableBlockIds(groups: Group[], session: string, log = ""): G
   });
   if (held.current.session !== session || held.current.log !== log)
     held.current = { session, log, newest: -1, blocks: [] };
-  // The newest real row. An optimistic echo (1e9+) or a queued bubble (2e9+) is not a row of the
-  // file: counting one would read its disappearance as a step back and drop every held id.
+  // The newest real row (Group.lastRow). An optimistic echo (1e9+) or a queued bubble (2e9+) is
+  // not a row of the file: counting one would read its disappearance as a step back and drop
+  // every held id.
   let newest = -1;
-  for (const g of groups) {
-    if (g.pending || g.queued) continue;
-    const r = rangeOf(g);
-    if (r && r.last > newest) newest = r.last;
-  }
+  for (const g of groups) if (typeof g.lastRow === "number" && g.lastRow > newest) newest = g.lastRow;
   // An empty window is a session switch's paint, not a step back; keep the memory for it.
   if (newest >= 0 && newest < held.current.newest) held.current = { session, log, newest, blocks: [] };
   else if (newest > held.current.newest) held.current.newest = newest;

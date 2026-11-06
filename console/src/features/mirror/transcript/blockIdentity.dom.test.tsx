@@ -69,6 +69,20 @@ const states = (el: HTMLElement) =>
   });
 
 describe("a block keeps its identity across a backward page", () => {
+  it("keeps it when a follow-up is sent while a landed prompt awaits its reply", () => {
+    // groupTurns folds the echo into the landed prompt's block. Judging that block by its echo
+    // hid the prompt's real row, and the send read as the file stepping back: every held id was
+    // dropped, the reader's block re-mounted under 191 and lost the work trace they had opened.
+    const waiting = [...HELD, ask(300)];
+    render({ turns: waiting, session: "s1", working: false, atBottom: true });
+    const paged = rerender({ turns: [...OLDER, ...waiting], session: "s1", working: false, atBottom: false });
+    act(() => paged.querySelector<HTMLButtonElement>('.mirror-turn.assistant[data-turn-idx="202"] .mt-work-head')!.click());
+    expect(states(paged)).toEqual(["202:open", "211:closed"]);
+    const echo: Turn = { role: "user", idx: 1e9 + 1, ts: "2026-09-08T10:01:00Z", text: "それと", pending: true };
+    const after = rerender({ turns: [...OLDER, ...waiting, echo], session: "s1", working: false, atBottom: false });
+    expect(states(after)).toEqual(["202:open", "211:closed"]);
+  });
+
   it("keeps it when an optimistic echo comes and goes", () => {
     // An echo is numbered 1e9+ and is not a row of the file. Counting it as the newest row would
     // read its disappearance as the file stepping back and drop every id held so far.
