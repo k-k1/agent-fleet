@@ -90,6 +90,20 @@ node console/scripts/shots/capture.mjs --locale en --only overview,fleetgraph --
 
 The container is shared, so pass `--port` / `--cdp-port` that nothing else is listening on.
 
+Scenes marked `guide: true` are for the rewritten guide and the public docs site (ADR 0131). The
+default run skips them, so name them in `--only` and pass `--out`:
+
+```bash
+node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-settings,aws-badge --out <dir>
+node console/scripts/shots/capture.mjs --locale ja --theme light --only aws-toast --out <dir>
+```
+
+- `clip` crops to the union of the selectors' boxes plus `pad`: the component and the control that
+  opens it, and nothing around them. A clip that matches nothing fails the run instead of writing
+  the whole page.
+- `stubEnv` changes what `server.mjs` serves for the whole run. `aws-toast` adds a pending login
+  request, whose toast would cover every other scene, so a scene like that has to run on its own.
+
 ## Demo recordings
 
 Scripted scenarios played through the real Console, written as animated WebP to

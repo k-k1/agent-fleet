@@ -328,6 +328,56 @@ const SCENES = [
       activeId: "p0",
     },
   },
+  // ---- user guide scenes (ADR 0131) ----
+  // `guide: true` keeps a scene out of the default run, which feeds the READMEs: name it in --only
+  // and pass --out. `clip` crops to the union of the selectors' boxes plus `pad`: the component and
+  // the control that opens it, nothing around them (a whole bar is noise on a doc page).
+  {
+    name: "aws-settings",
+    guide: true,
+    clip: ".settings-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    settings: "ssm",
+    width: 1500,
+    height: 1000,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      document.querySelector(".acct-btn")?.click();
+      await new Promise((r) => setTimeout(r, 500));
+      const items = [...document.querySelectorAll(".acct-item")];
+      items.find((el) => /設定|Settings/.test(el.textContent || ""))?.click();
+    })()`,
+    settle: 2500,
+  },
+  {
+    name: "aws-badge",
+    guide: true,
+    clip: [".ws-aws-btn", ".ws-aws-pop"],
+    pad: 24,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 760,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      await new Promise((r) => setTimeout(r, 800));
+      document.querySelector(".ws-aws-btn")?.click();
+    })()`,
+    settle: 1500,
+  },
+  {
+    name: "aws-toast",
+    guide: true,
+    // The stub serves a pending login request only in a run that sets this (server.mjs).
+    stubEnv: { SHOT_AWS_LOGIN_REQUEST: "1" },
+    clip: ".ui-toast",
+    pad: 12,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 900,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    settle: 4000,
+  },
 ];
 
 // ---- minimal CDP client ------------------------------------------------------------
@@ -374,11 +424,17 @@ async function fetchJSON(url, init) {
 }
 
 // ---- run ---------------------------------------------------------------------------
-const scenes = SCENES.filter((s) => !ONLY || ONLY.split(",").includes(s.name));
+const scenes = SCENES.filter((s) => (ONLY ? ONLY.split(",").includes(s.name) : !s.guide));
+// A scene's stubEnv changes what the stub serves for the whole run, so it cannot share a run.
+if (scenes.some((s) => s.stubEnv) && scenes.length > 1) {
+  throw new Error(`run ${scenes.filter((s) => s.stubEnv).map((s) => s.name).join(", ")} on its own (--only)`);
+}
+const stubEnv = Object.assign({}, ...scenes.map((s) => s.stubEnv || {}));
 fs.mkdirSync(OUT, { recursive: true });
 
 const stub = spawn(process.execPath, [path.join(HERE, "server.mjs"), "--port", String(PORT), "--locale", LOCALE], {
   stdio: ["ignore", "inherit", "inherit"],
+  env: { ...process.env, ...stubEnv },
 });
 
 const chrome = spawn(
@@ -492,7 +548,26 @@ try {
 
     // WebP straight out of Chromium — no post-processing step, and a fifth of the PNG
     // size at a quality where the UI text stays crisp at 2x.
-    const shot = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82, captureBeyondViewport: false });
+    let clip;
+    if (scene.clip) {
+      const sels = [].concat(scene.clip);
+      const r = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const bs = ${JSON.stringify(sels)}.map((s) => document.querySelector(s)?.getBoundingClientRect()).filter(Boolean);
+          if (bs.length !== ${sels.length}) return null;
+          const x = Math.min(...bs.map((b) => b.left)), y = Math.min(...bs.map((b) => b.top));
+          return { x, y, w: Math.max(...bs.map((b) => b.right)) - x, h: Math.max(...bs.map((b) => b.bottom)) - y };
+        })()`,
+      });
+      const b = r.result?.value;
+      // Fail rather than write an uncropped page: a missing element means the scene is broken.
+      if (!b) throw new Error(`scene ${scene.name}: clip ${sels.join(", ")} matched nothing`);
+      const pad = scene.pad ?? 16;
+      const x = Math.max(0, b.x - pad), y = Math.max(0, b.y - pad);
+      clip = { x, y, width: Math.min(scene.width - x, b.w + 2 * pad), height: Math.min(scene.height - y, b.h + 2 * pad), scale: 1 };
+    }
+    const shot = await cdp.send("Page.captureScreenshot", { format: "webp", quality: 82, captureBeyondViewport: false, ...(clip ? { clip } : {}) });
     const file = path.join(OUT, `${scene.name}-${LOCALE}${THEME === "light" ? "-light" : ""}.webp`);
     fs.writeFileSync(file, Buffer.from(shot.data, "base64"));
     console.log("[shot]", path.relative(ROOT, file), `${scene.width}x${scene.height}@2x`);
