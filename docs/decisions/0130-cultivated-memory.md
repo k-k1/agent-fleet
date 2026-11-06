@@ -12,7 +12,8 @@ English | [日本語](0130-cultivated-memory.ja.md)
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
   release carries **the first step** of what this record calls cultivation (decision 10). Everything
   else here is a proposal.
-- Follow-ups: issues are filed per step when this record is accepted (`docs/CONVENTIONS.md` §10).
+- Follow-ups: #3440, #3441, #3442, #3443 (step 1: the 0117 removal, `memory_patch`, counters, lint report);
+  steps 2–4 are filed when this record is accepted.
 - Related: [0022](0022-agent-memory-management.md) (history, bundles) /
   [0108](0108-af-owned-agent-memory.md) (the store, tools, ranking, pins) /
   [0117](0117-background-memory-skill-review.md) (the review this record retires) /
