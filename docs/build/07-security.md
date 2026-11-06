@@ -603,3 +603,54 @@ from what you measured, and only then switch to enforce.
    through it (§7.8, [#1181](https://github.com/k-k1/agent-fleet/issues/1181)).
 6. The outward-facing threat model and the vulnerability reporting channel are
    [SECURITY.md](../../SECURITY.md).
+
+## 7.10 Security assessment
+
+The map a security assessment starts from. It names where to look, not what was found.
+
+**Trust boundaries to walk**
+
+- Browser → CP: §7.3, §7.3.1, §7.3.2.
+- CP routes exempt from the session gate (§7.3): intentionally public ones (login, health
+  checks, public assets) are exceptions; every other exempt route must have an
+  authentication that fits its purpose.
+- CP → Agent, and the reverse: §7.5, §7.5.1.
+- Code running in a workspace → Agent and CP: §7.1, §7.4, §7.5 (the Agent token does not
+  defend against code in the same workspace).
+- Workspace ↔ workspace and tenant ↔ tenant: §7.2. The engine boundary is §7.2.1.
+- Previews ↔ Console: §7.5.1 (same-origin path-form preview), §7.2.
+- CP → cloud: §7.1, §7.6.
+
+**Attacker positions**
+
+1. Unauthenticated.
+2. Member of another tenant.
+3. Ordinary member of the same tenant.
+4. Code running inside a workspace (prompt injection, a malicious dependency). Reading
+   the member's own secrets is a known property (§7.1), so what matters is reaching
+   beyond it: other members, the CP, the deployment.
+5. External services: IdP, git host, MCP server, webhook sender.
+
+**Lanes**
+
+One lane each for:
+
+- CP authorization;
+- login and federation;
+- Agent and CP ↔ Agent;
+- sinks (SQL, commands, paths, URLs);
+- secrets, crypto and logs;
+- Console;
+- dependencies (`govulncheck`, `npm audit`).
+
+Add one lane per deployment target, reading that target's runtime code and its IaC
+together. Finish with a cross-lane "chains" pass that combines low-severity findings and
+checks the boundary assumptions each lane relied on.
+
+**Known residual risks** are not reported again as new findings, but each is checked
+against the code: if the code is weaker than the text says, that is a finding. The
+sources are [SECURITY.md](../../SECURITY.md) ("Known residual risks"), §7.1, §7.2, §7.5
+and §7.9.
+
+**Record.** 2026-11: static review, scope all components, deployment target `ecs-ec2`
+examined in depth. Follow-ups: #3445–#3453.
