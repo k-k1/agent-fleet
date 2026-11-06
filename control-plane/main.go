@@ -140,6 +140,12 @@ func main() {
 		runHomeDEKStatus(os.Args[2:])
 		return
 	}
+	// Subcommand: `control-plane identity-email-check` lists multi-tenant identities whose
+	// address may not have come from the person's own login (email_suspects.go). Read-only.
+	if len(os.Args) > 1 && os.Args[1] == "identity-email-check" {
+		runEmailSuspects()
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envx.Or("WS_AGENT_PORT", "7700"))
 	mgr := &manager{

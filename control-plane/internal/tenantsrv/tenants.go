@@ -960,7 +960,14 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 		ident = *reinvite
 	} else {
 		var err error
-		if ident, err = a.cp.Store().UpsertIdentity(r.Context(), body.Email, key, ""); err != nil {
+		// InviteIdentity, not UpsertIdentity: an invite must never rewrite the address of
+		// a person another tenant already holds (emails come from the person's own login).
+		if ident, err = a.cp.Store().InviteIdentity(r.Context(), body.Email, key, t.ID); err != nil {
+			if errors.Is(err, store.ErrIdentityInOtherTenant) {
+				writeAPIErr(w, &APIError{http.StatusConflict, "identity_in_other_tenant",
+					"this user_key already belongs to another tenant; invite without an email"})
+				return
+			}
 			writeAPIErr(w, internalErr(err))
 			return
 		}
@@ -976,6 +983,14 @@ func (a Admin) AddMembership(w http.ResponseWriter, r *http.Request) {
 	// invite, which IS an explicit decision, does it here.
 	detail := "role=" + role
 	if mem.Status != "active" {
+		// The stored role is not restored: a removed tenant_admin comes back as the role
+		// this caller may grant (member unless a super_admin asked for tenant_admin).
+		if mem.Role != role {
+			if err := a.cp.Store().SetMembershipRole(r.Context(), mem.ID, role); err != nil {
+				writeAPIErr(w, internalErr(err))
+				return
+			}
+		}
 		if err := a.cp.Store().SetMembershipStatus(r.Context(), mem.ID, "active"); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
