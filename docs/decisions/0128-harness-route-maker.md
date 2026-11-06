@@ -617,3 +617,6 @@ table from becoming a menu of models that fail on the first message, which is wh
   allow-list (the CP snapshot), but the Agent refuses it at check, bind and launch and leaves it out of the live kind
   catalog (so the launch dialog does not offer it) unless its Agent runs with `AF_CLAUDE_BEDROCK_ROUTE=1`, which is for the
   acceptance run; lifting the gate is a change of its own, made with the evidence.
+  Review round 2 (#3400): a write cut inside a row left the day's ledger file ending in a JSON prefix, and the replayed
+  row was appended onto it, making one unreadable line. `usagex.AppendRows` now writes a newline first when the file
+  does not end in one, so the prefix is the only line the reader drops (all ledger writers benefit).

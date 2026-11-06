@@ -1161,3 +1161,33 @@ func waitFor(t *testing.T, ok func() bool) {
 	}
 	t.Fatal("condition never held")
 }
+
+// The review's case through the real ledger writer and reader: the first append is cut inside the
+// row and fails, the spool replays it with the real AppendRows, and the row is read back.
+func TestSpoolReplayAfterATruncatedLedgerWrite(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
+	seed := usagex.Record{TS: time.Now().UTC().Format(time.RFC3339), Feature: usagex.FeatureRouteGateway, Ref: "s0", Key: "route.gateway:seed"}
+	if err := usagex.AppendRows([]usagex.Record{seed}); err != nil || len(usagex.ReadRows()) != 1 {
+		t.Fatalf("positive control: %v, %d rows", err, len(usagex.ReadRows()))
+	}
+	day := filepath.Join(usagex.RawDir(), time.Now().UTC().Format("2006-01-02")+".jsonl")
+	cut := func(rows []usagex.Record) error {
+		f, err := os.OpenFile(day, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, _ = f.WriteString(`{"ts":`)
+		return errors.New("no space left on device")
+	}
+	sp := &rowSpool{dir: filepath.Join(t.TempDir(), "spool"), append: cut}
+	sp.write(usagex.Record{TS: seed.TS, Call: "c1", Feature: usagex.FeatureRouteGateway, Ref: "s1", Key: "route.gateway:c1", In: 7})
+	sp.append = usagex.AppendRows
+	if n := sp.replay(); n != 1 {
+		t.Fatalf("replay recovered %d rows", n)
+	}
+	rows := usagex.ReadRows()
+	if len(rows) != 2 || rows[1].Key != "route.gateway:c1" || rows[1].In != 7 {
+		t.Fatalf("ledger after the replay = %+v, want the seed and the recovered row", rows)
+	}
+}

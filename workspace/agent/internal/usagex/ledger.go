@@ -273,16 +273,37 @@ func AppendRows(rows []Record) error {
 		return err
 	}
 	day := time.Now().UTC().Format("2006-01-02")
-	f, err := os.OpenFile(filepath.Join(dir, day+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			return err
+		}
+	}
+	f, err := os.OpenFile(filepath.Join(dir, day+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(f)
-	for _, r := range rows {
-		if err := enc.Encode(r); err != nil {
+	// A short write (a full disk) can leave the file ending inside a row. A retry appended
+	// straight after it would join that prefix into one line that is not JSON, and the reader
+	// drops the whole line, the retried row with it. So the file is brought back to a line
+	// boundary first: the prefix stays a line of its own, which the reader skips.
+	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, fi.Size()-1); err != nil {
 			f.Close()
 			return err
 		}
+		if last[0] != '\n' {
+			if _, err := f.Write([]byte{'\n'}); err != nil {
+				f.Close()
+				return err
+			}
+		}
+	}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		f.Close()
+		return err
 	}
 	// Check the error from Close too: an append can defer the actual write, so Close is the
 	// last gate.
