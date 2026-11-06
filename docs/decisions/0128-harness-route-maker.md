@@ -9,6 +9,7 @@ English | [日本語](0128-harness-route-maker.ja.md)
   passes. Reviewed 2026-11-03 by a separate session (codex `gpt-6.1-sol`) in three rounds (17, 7 and 0 findings); every
   finding was checked against the tree and is folded into this text.
 - Follow-ups: #3280, #3281, #3282, #3283 (P0, P1, P2, P4; P3 is #1585)
+- See also: [0129](0129-provided-model-routes.md) (proposed: tenant- and deployment-provided routes, budgets, cost attribution)
 - Related: [0069](0069-image-generation-providers.md) (credential tiers, `AWSProfileRef`) /
   [0071](0071-self-hosted-inference-engines.md) (the engine gateway and its tokens) /
   [0084](0084-engine-indicator-and-tenant-gate.md) (the engine's four gates) /
