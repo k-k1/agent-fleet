@@ -95,14 +95,14 @@ var subcommands = []subcommand{
 	// and the launch programs run them on demand as well as the member from a terminal.
 	{
 		name:     "install-jdk",
-		operands: "<major>",
-		summary:  "download the latest GA Temurin for this arch into the home volume",
+		operands: "<major>|corretto-<major>",
+		summary:  "download the latest GA Temurin (or Corretto) for this arch into the home volume",
 		run:      runInstallJDK,
 	},
 	{
 		name:     "java-home",
-		operands: "<major>",
-		summary:  "print the JAVA_HOME a Temurin major resolves to (newest patch across both JDK dirs)",
+		operands: "<major>|corretto-<major>",
+		summary:  "print the JAVA_HOME a JDK resolves to (newest patch across both JDK dirs)",
 		run:      runJavaHome,
 	},
 	{

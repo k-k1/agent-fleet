@@ -616,10 +616,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/auto-sync/preview", memoryx.HandleAutoSyncPreview)
 	mux.Handle("POST /agents/memory/auto-sync", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAutoSyncAction)))
 
-	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
+	// Toolchain selection (node via nvm / java via Temurin or Corretto) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
 	mux.HandleFunc("PUT /env/toolchains", handleToolchainsPut)
-	// On-demand Temurin install (jdk_install_http.go): the picker offers majors that
+	// On-demand JDK install (jdk_install_http.go): the picker offers majors that
 	// are not on disk yet, and this is the button that actually fetches one — the only
 	// source of a JDK at all on ECS, where /usr/lib/jvm is empty.
 	mux.HandleFunc("POST /env/jdk-install", handleJDKInstall)

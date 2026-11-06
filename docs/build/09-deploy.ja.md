@@ -136,12 +136,15 @@ CP が起動しない）。手順は [`deploy/compose/README.md`](../../deploy/c
 `/usr/lib/jvm` に読み取り専用で bind-mount するのは `docker` と、rootfs モードの `native` だけ。
 ECS 系ランタイムにはこのマウントが無いので、そのディレクトリは空になり得る。ランタイムに依らない
 受け皿は home ボリューム上の `~/.local/share/agent-fleet/jvm` で、`workspace-agent install-jdk <major>`
-が Adoptium から Temurin を入れる。Console で Java 版を選ぶと、entrypoint が未導入分を入れて
+が Adoptium（`api.adoptium.net`）から Temurin を、`install-jdk corretto-<major>` が
+Amazon Corretto（`corretto.aws`）を入れる。どちらのホストも既定の egress 許可リストには無いので、
+許可リストを強制するデプロイは使う方を足す。選択値は JDK ID で、数字だけなら Temurin、
+`corretto-<major>` なら Corretto（`workspace/agent/internal/jdkvendor`）。Console で Java 版を選ぶと、entrypoint が未導入分を入れて
 `JAVA_HOME` を通す。`GET /env/toolchains` は両ディレクトリにあるもの ∪ 導入可能なもの
 （`java_available`）を示し、**未導入の版を選ぶとその場で入れるボタンが出る**（`POST /env/jdk-install`、
 その後 `GET` でポーリング）。導入後は `resolvedToolchains` が起動のたびにディレクトリを glob するので、
 再起動なしで**次のセッションから**効く。同じメジャーが両方のディレクトリにあれば新しいパッチの方を
-選ぶ（`release` ファイルの `SEMANTIC_VERSION`。同じ版なら `/usr/lib/jvm`）ので、導入済みのメジャーを
+選ぶ（`release` ファイルの `SEMANTIC_VERSION`、Corretto は `version.txt`。同じ版なら `/usr/lib/jvm`）ので、導入済みのメジャーを
 もう一度入れればそれが更新になる。toolchains の GET は `java_versions`（メジャー → 解決後の版）も返し、
 ネットワークには出ない。`GET /env/jdk-latest?major=N` が Adoptium に聞き（6 時間、失敗は 10 分キャッシュ）、
 `update_available` を返す。Console はそれが真のときに更新ボタンを出す。未導入のメジャーにも `latest`

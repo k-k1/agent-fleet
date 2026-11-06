@@ -1,6 +1,6 @@
 package main
 
-// jdk_install_http.go — the HTTP face of the on-demand Temurin installer, i.e. the
+// jdk_install_http.go — the HTTP face of the on-demand JDK installer, i.e. the
 // Console's one-button "install this JDK" in Settings → Toolchains.
 //
 // Java is the one toolchain the picker could offer without being able to deliver: the
@@ -21,12 +21,13 @@ import (
 	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jdkvendor"
 )
 
 type jdkInstall struct {
 	mu    sync.Mutex
 	state string // "" (idle) | "installing" | "done" | "error"
-	major string // the major the last/current job is for
+	major string // the JDK id (internal/jdkvendor) the last/current job is for
 	err   string
 }
 
@@ -54,14 +55,14 @@ func jdkInstallStatusOf(state, major, errMsg string) map[string]any {
 		"state":          state,
 		"major":          major,
 		"error":          errMsg,
-		"java_installed": installedJavaMajors(),
+		"java_installed": installedJavaIDs(),
 		"java_versions":  installedJavaVersions(),
 		"java_available": javaOptions(),
 	}
 }
 
 // handleJDKInstall drives the on-demand JDK install. POST /env/jdk-install {"major":"21"}
-// starts it; GET reports the state.
+// (or "corretto-21": the field carries a JDK id) starts it; GET reports the state.
 func handleJDKInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		httpx.WriteJSON(w, http.StatusOK, jdkInstallStatus())
@@ -73,9 +74,9 @@ func handleJDKInstall(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	// The major reaches a URL and a directory name, so accept only the digits the
-	// picker offers — never a free-form string.
-	if !majorOnlyRe.MatchString(req.Major) {
+	// The id reaches a URL and a directory name, so accept only the ids the picker
+	// offers — never a free-form string.
+	if _, _, ok := jdkvendor.Parse(req.Major); !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_major", "invalid JDK major version")
 		return
 	}
@@ -87,7 +88,7 @@ func handleJDKInstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !installable {
-		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_major", "Temurin "+req.Major+" is not offered by this workspace")
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_major", jdkvendor.Label(req.Major)+" is not offered by this workspace")
 		return
 	}
 	jdkInstaller.mu.Lock()

@@ -145,14 +145,19 @@ background loops documented as switchable (`AF_USAGE_SAMPLE_INTERVAL`,
 `WS_JVM_DIR` is bind-mounted read-only at `/usr/lib/jvm` on `docker` and on `native` in
 its rootfs mode; the ECS runtimes have no such mount, so that directory can be empty.
 The runtime-independent answer is `~/.local/share/agent-fleet/jvm` on the home volume,
-which `workspace-agent install-jdk <major>` fills with Temurin from Adoptium. Choosing a
+which `workspace-agent install-jdk <major>` fills with Temurin from Adoptium
+(`api.adoptium.net`) and `install-jdk corretto-<major>` with Amazon Corretto
+(`corretto.aws`); neither host is in the default egress allowlist, so a deployment that
+enforces it adds the ones it wants. A selection is a JDK id: a bare major is Temurin,
+`corretto-<major>` is Corretto (`workspace/agent/internal/jdkvendor`). Choosing a
 Java version in the Console makes the entrypoint install any missing one and put it on
 `JAVA_HOME`. `GET /env/toolchains` offers what is on disk in either directory plus what
 can be installed (`java_available`); **choosing one that is not installed offers a
 button that installs it there and then** (`POST /env/jdk-install`, then poll with
 `GET`). After installation `resolvedToolchains` globs the directories at every start,
 so it takes effect **from the next session** without a restart. A major that is in both
-directories resolves to the newer patch (the `release` file's `SEMANTIC_VERSION`; a tie
+directories resolves to the newer patch (the `release` file's `SEMANTIC_VERSION`, or
+Corretto's `version.txt`; a tie
 keeps `/usr/lib/jvm`), so installing an installed major again is an update. The
 toolchains GET also reports `java_versions` (major → resolved version) and stays offline;
 `GET /env/jdk-latest?major=N` asks Adoptium (cached 6 h, a failure 10 min) and answers
