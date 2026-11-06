@@ -57,16 +57,21 @@ export function useMirrorScroll() {
   // if the view had always been there, and the writers among them cancel a glide in flight first.
   const gliderRef = useRef<Glider | null>(null);
   if (!gliderRef.current) {
-    gliderRef.current = createGlider(
-      () => bodyRef.current?.scrollTop ?? 0,
-      (top) => {
+    gliderRef.current = createGlider({
+      read: () => bodyRef.current?.scrollTop ?? 0,
+      write: (top) => {
         const el = bodyRef.current;
         if (!el) return;
         el.scrollTop = top;
         noteSelfScroll(el);
       },
-      () => bodyRef.current?.clientHeight ?? 0,
-    );
+      viewport: () => bodyRef.current?.clientHeight ?? 0,
+      limit: () => (bodyRef.current ? bodyRef.current.scrollHeight - bodyRef.current.clientHeight : 0),
+      // onBodyScroll skipped the glide's own frames and the last one may have moved nothing (a
+      // target at the end it was already on), so judge follow and the pill from where it landed —
+      // a frame later, never in this one (see scheduleReplyTopSync).
+      landed: () => requestAnimationFrame(onBodyScroll),
+    });
   }
   const glider = gliderRef.current;
   useEffect(() => () => glider.cancel(), [glider]);
@@ -105,6 +110,9 @@ export function useMirrorScroll() {
   // The scrollTop WE last wrote. onBodyScroll compares against it to tell "content grew
   // under our own pin" (not user intent) from "the user scrolled up" — see there.
   const selfTopRef = useRef(0);
+  // The content height at that write: a later offset that moved by exactly as much as the content
+  // height changed is layout (scroll anchoring), not the reader — see onBodyScroll.
+  const selfHeightRef = useRef(0);
   // Until this ms, a geometry change is attributed to the reader's own click, not to content.
   const interactUntilRef = useRef(0);
   // Position restore (scrollMark): where to return to when this session is reopened. While
@@ -304,6 +312,7 @@ export function useMirrorScroll() {
   // not handled yet already chose its place in the new layout, so it absorbs that resize.
   const noteSelfScroll = (el: HTMLDivElement) => {
     selfTopRef.current = el.scrollTop;
+    selfHeightRef.current = el.scrollHeight;
     const box = bodyBoxRef.current;
     box.scrollTop = el.scrollTop;
     if (el.clientHeight !== box.height) {
@@ -352,22 +361,21 @@ export function useMirrorScroll() {
     if (el.clientHeight !== bodyBoxRef.current.height) return;
     bodyBoxRef.current.scrollTop = el.scrollTop;
     scheduleReplyTopSync();
-    // A glide's own frames. Read as intent, an upward glide's first frames are still near the end
-    // and would re-arm follow under the completion anchor. Wheel / touch / pointer / key cancel the
-    // glide before their scroll event lands; a native scrollbar drag dispatches no pointerdown, so a
-    // move against the glide is the reader too: stop it and judge the move below. Against a glide to
-    // the end, that is an upward move we did not write that is not the browser clamping onto the end;
-    // against any other glide, a move that left it farther from its target (glide.movedAway).
+    // During a glide, only a move against it is the reader: wheel / touch / pointer / key cancel the
+    // glide before their scroll event lands, but a native scrollbar drag dispatches no pointerdown.
+    // Everything else is ignored — read as intent, an upward glide's first frames are still near the
+    // end and would re-arm follow under the completion anchor. Not the reader:
+    //   - our own write (a glide frame, onBodyResize holding the bottom edge for a band above);
+    //   - layout: the offset moved by exactly as much as the content height changed (scroll
+    //     anchoring as content above the view grows or shrinks), wherever the target sits;
+    //   - any move that did not leave the glide farther from its target (glide.movedAway), which
+    //     includes the browser clamping onto a shorter end.
     if (glider.active()) {
-      // Our own write — a glide frame, or onBodyResize holding the bottom edge as a band above comes
-      // or goes, which moves the view but not a target measured inside the content — is never the
-      // reader, however far it leaves the glide from its target.
-      if (Math.abs(el.scrollTop - selfTopRef.current) <= 1) return;
-      const max = el.scrollHeight - el.clientHeight;
-      const against = glider.toBottom()
-        ? el.scrollTop < selfTopRef.current - 1 && el.scrollTop < max - 1
-        : glider.movedAway();
-      if (!against) return;
+      const moved = el.scrollTop - selfTopRef.current;
+      const grew = el.scrollHeight - selfHeightRef.current;
+      if (Math.abs(moved) <= 1) return;
+      if (grew !== 0 && Math.abs(moved - grew) <= 2) return;
+      if (!glider.movedAway()) return;
       glider.cancel();
     }
     rebasePrependAnchor(); // a move we didn't make becomes the anchor's new resting place

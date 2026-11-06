@@ -57,33 +57,36 @@ describe("glideStep", () => {
   });
 });
 
-function harness() {
+function harness(limit = 1e9) {
   let top = 0;
   let cb: ((t: number) => void) | null = null;
   let now = 0;
   const writes: number[] = [];
-  const g = createGlider(
-    () => top,
-    (v) => {
-      top = v;
+  let landed = 0;
+  const g = createGlider({
+    read: () => top,
+    write: (v) => {
+      top = Math.min(v, limit);
       writes.push(v);
     },
-    () => 600,
-    (f) => {
+    viewport: () => 600,
+    limit: () => limit,
+    landed: () => landed++,
+    raf: (f) => {
       cb = f;
       return 1;
     },
-    () => {
+    caf: () => {
       cb = null;
     },
-  );
+  });
   const frame = () => {
     const f = cb;
     cb = null;
     now += 16;
     f?.(now);
   };
-  return { g, frame, writes, get top() { return top; }, set top(v: number) { top = v; } };
+  return { g, frame, writes, get top() { return top; }, set top(v: number) { top = v; }, get landed() { return landed; } };
 }
 
 describe("createGlider", () => {
@@ -126,6 +129,27 @@ describe("createGlider", () => {
     gone = true;
     h.frame();
     expect(h.g.active()).toBe(false);
+  });
+});
+
+describe("createGlider limits", () => {
+  it("clamps a target past the end and lands there, saying so", () => {
+    const h = harness(500);
+    h.top = 400;
+    h.g.to(() => 788, false); // a short answer's head sits below the last possible scrollTop
+    for (let i = 0; i < 100 && h.g.active(); i++) h.frame();
+    expect(h.g.active()).toBe(false);
+    expect(h.top).toBe(500);
+    expect(Math.max(...h.writes)).toBeLessThanOrEqual(500);
+    expect(h.landed).toBe(1);
+  });
+
+  it("does not report a cancel as a landing", () => {
+    const h = harness();
+    h.g.to(() => 1000, false);
+    h.frame();
+    h.g.cancel();
+    expect(h.landed).toBe(0);
   });
 });
 

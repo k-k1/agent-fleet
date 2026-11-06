@@ -14,7 +14,8 @@ let top = 0;
 let scroll = 0;
 let shift = 0; // content that grew above the reply heads
 const SCROLL_HEIGHT = 2000;
-const clampScroll = (v: number) => Math.max(0, Math.min(v, SCROLL_HEIGHT - height));
+let contentHeight = SCROLL_HEIGHT; // the scrollHeight; content can grow or shrink under a test
+const clampScroll = (v: number) => Math.max(0, Math.min(v, contentHeight - height));
 let observers: (() => void)[] = [];
 
 function Harness() {
@@ -33,7 +34,7 @@ function Body({ s }: { s: ReturnType<typeof useMirrorScroll> }) {
       ref={(el) => {
         if (!el || s.bodyRef.current === el) return;
         Object.defineProperty(el, "clientHeight", { get: () => height, configurable: true });
-        Object.defineProperty(el, "scrollHeight", { value: SCROLL_HEIGHT, configurable: true });
+        Object.defineProperty(el, "scrollHeight", { get: () => contentHeight, configurable: true });
         Object.defineProperty(el, "scrollTop", {
           get: () => scroll,
           set: (v: number) => (scroll = clampScroll(v)),
@@ -114,6 +115,7 @@ afterEach(() => {
   top = 0;
   scroll = 0;
   shift = 0;
+  contentHeight = SCROLL_HEIGHT;
   observers = [];
   frames = [];
   reduceMotion = true;
@@ -331,6 +333,38 @@ describe("useMirrorScroll glide", () => {
     expect(el.scrollTop).toBe(1000);
   });
 
+  it("keeps following when content above shrinks under a glide to the end", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 800;
+    api!.atBottomRef.current = true;
+    newContent();
+    step(2);
+    act(() => api!.onBodyScroll());
+    contentHeight -= 100; // content above the view shrank; anchoring keeps what is on screen
+    el.scrollTop -= 100;
+    act(() => api!.onBodyScroll());
+    expect(api!.atBottomRef.current).toBe(true);
+    settle();
+    expect(el.scrollTop).toBe(contentHeight - height);
+  });
+
+  it("keeps gliding up when content between the target and the view grows", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 1300;
+    api!.atBottomRef.current = false;
+    api!.lastReplyIdxRef.current = 3;
+    act(() => api!.jumpToReplyTop()); // glide up to 1000
+    step(2);
+    act(() => api!.onBodyScroll());
+    contentHeight += 100; // an image below the reply head but above the view lands; the head stays
+    el.scrollTop += 100;
+    act(() => api!.onBodyScroll());
+    settle();
+    expect(el.scrollTop).toBe(1000);
+  });
+
   it("shows jump-to-latest when the reader stops a completion glide after its last scroll event", () => {
     reduceMotion = false;
     const el = api!.bodyRef.current!;
@@ -365,5 +399,41 @@ describe("useMirrorScroll glide", () => {
     step();
     expect(api!.atBottomRef.current).toBe(false);
     expect(api!.showJump).toBe(true);
+  });
+
+  it("re-arms follow when a completion glide lands on an end it could not pass", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    const turn = el.querySelector<HTMLElement>('[data-turn-idx="7"]')!;
+    const body = document.createElement("div");
+    body.className = "mirror-turn-body";
+    const work = document.createElement("div");
+    work.className = "mt-work";
+    const answer = document.createElement("div"); // a short final answer: its head is 1800px in
+    answer.getBoundingClientRect = () => new DOMRect(0, top + 1800 - scroll, 200, 100);
+    body.append(work, answer);
+    turn.append(body);
+    const groups = [
+      { role: "user", idx: 5, parts: [] },
+      { role: "assistant", idx: 7, parts: [] },
+    ] as unknown as Group[];
+    const follow = (busy: boolean) =>
+      act(() => api!.applyFollow({ groups, loaded: true, busy, pending: null, pendingPlan: null, pendingPerm: null }));
+    el.scrollTop = 1400;
+    api!.atBottomRef.current = true;
+    follow(true);
+    settle();
+    expect(el.scrollTop).toBe(1500);
+    follow(false); // completes: the answer's head (1788) is past the end (1500)
+    expect(api!.atBottomRef.current).toBe(false);
+    // Like a browser: a scroll event only when the offset actually changed.
+    for (let i = 0; i < 50 && frames.length; i++) {
+      const before = el.scrollTop;
+      step();
+      if (el.scrollTop !== before) act(() => api!.onBodyScroll());
+    }
+    expect(el.scrollTop).toBe(1500);
+    expect(api!.atBottomRef.current).toBe(true);
+    expect(api!.showJump).toBe(false);
   });
 });

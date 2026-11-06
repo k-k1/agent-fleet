@@ -76,26 +76,38 @@ export interface Glider {
   active(): boolean;
   /** A glide to the end of the transcript is in flight. */
   toBottom(): boolean;
-  /** Something other than the glide moved the position farther from its target than the glide's
-   *  last frame left it — the reader, e.g. dragging the native scrollbar, which raises no
-   *  pointerdown. Scroll anchoring and late layout move a target measured from the content along
-   *  with the position, so they do not count. */
+  /** The position is farther from the target than the glide's last frame left it. Something else
+   *  moved it: the reader (a native scrollbar drag raises no pointerdown) or layout. The caller
+   *  rules layout out (useMirrorScroll.onBodyScroll) — this alone cannot tell them apart. */
   movedAway(): boolean;
 }
 
+export interface GliderHost {
+  /** The element's current scrollTop. */
+  read(): number;
+  /** Put a scrollTop there (the caller routes it through noteSelfScroll). */
+  write(top: number): void;
+  /** The viewport height, for the long-distance shortcut. */
+  viewport(): number;
+  /** The largest scrollTop the element allows. Targets are clamped into [0, limit]: past it the
+   *  element stops moving while the integrator would run on, and the glide would end without any
+   *  scroll event telling the caller where it actually is. */
+  limit(): number;
+  /** Called when a glide lands on its target (not on cancel). Its last write may have moved
+   *  nothing, so no scroll event is guaranteed to follow. */
+  landed?(): void;
+  raf?(cb: (t: number) => void): number;
+  caf?(id: number): void;
+}
+
 /**
- * The frame loop around glideStep. read() is the element's current scrollTop and write() puts one
- * there (the caller routes it through noteSelfScroll). A position that moved since our last write
- * — the browser clamping to a shorter body, scroll anchoring, a band-above adjustment — is
- * adopted as the new starting point rather than fought.
+ * The frame loop around glideStep. A position that moved since our last write — the browser
+ * clamping to a shorter body, scroll anchoring, a band-above adjustment — is adopted as the new
+ * starting point rather than fought.
  */
-export function createGlider(
-  read: () => number,
-  write: (top: number) => void,
-  viewport: () => number,
-  raf: (cb: (t: number) => void) => number = (cb) => requestAnimationFrame(cb),
-  caf: (id: number) => void = (id) => cancelAnimationFrame(id),
-): Glider {
+export function createGlider(host: GliderHost): Glider {
+  const raf = host.raf ?? ((cb: (t: number) => void) => requestAnimationFrame(cb));
+  const caf = host.caf ?? ((id: number) => cancelAnimationFrame(id));
   let frame = 0;
   let target: (() => number | null) | null = null;
   let bottom = false;
@@ -104,6 +116,11 @@ export function createGlider(
   let last = 0;
   // Distance to the target right after our last write (see movedAway).
   let gap = 0;
+
+  const aim = (): number | null => {
+    const t = target?.();
+    return t === null || t === undefined ? null : Math.min(Math.max(0, t), Math.max(0, host.limit()));
+  };
 
   const stop = () => {
     if (frame) caf(frame);
@@ -116,16 +133,20 @@ export function createGlider(
   const tick = (now: number) => {
     frame = 0;
     if (!target) return;
-    const t = target();
+    const t = aim();
     if (t === null) return stop();
     const dt = last ? Math.min(MAX_DT, Math.max(0, (now - last) / 1000)) : 1 / 60;
     last = now;
-    const cur = read();
+    const cur = host.read();
     if (Math.abs(cur - written) > 1) state = { pos: cur, v: state.v };
-    const next = glideStep(state, t, dt, Math.max(1, viewport() * GLIDE_MAX_VIEWPORTS));
-    write(next.pos);
-    written = read();
-    if (next.done) return stop();
+    const next = glideStep(state, t, dt, Math.max(1, host.viewport() * GLIDE_MAX_VIEWPORTS));
+    host.write(next.pos);
+    written = host.read();
+    if (next.done) {
+      stop();
+      host.landed?.();
+      return;
+    }
     gap = Math.abs(t - written);
     state = { pos: next.pos, v: next.v };
     frame = raf(tick);
@@ -134,21 +155,21 @@ export function createGlider(
   return {
     to(next, toBottom) {
       if (!target) {
-        state = { pos: read(), v: 0 };
+        state = { pos: host.read(), v: 0 };
         written = state.pos;
         last = 0;
       }
       target = next;
-      const t = next();
-      gap = t === null ? 0 : Math.abs(t - read());
+      const t = aim();
+      gap = t === null ? 0 : Math.abs(t - host.read());
       bottom = toBottom;
       if (!frame) frame = raf(tick);
     },
     cancel: stop,
     active: () => target !== null,
     movedAway: () => {
-      const t = target?.();
-      return t !== null && t !== undefined && Math.abs(t - read()) > gap + 2;
+      const t = aim();
+      return t !== null && Math.abs(t - host.read()) > gap + 2;
     },
     toBottom: () => target !== null && bottom,
   };
