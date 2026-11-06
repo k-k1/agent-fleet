@@ -40,8 +40,12 @@ type CP interface {
 	// Master32 is the deployment master key digest (nil in dev). Only its
 	// emptiness is consulted — it decides whether headers are sealed at all.
 	Master32() []byte
-	// TokenSignMaster is the master the AF_MCP_TOKEN signing key is derived from.
+	// TokenSignMaster is the root the AF_MCP_TOKEN signing key is derived from.
 	TokenSignMaster() []byte
+	// BridgeKeyFor is signKey bound to the CURRENT bridge epoch of the membership the token
+	// names (issue #3452), so a token minted under an earlier epoch fails the tag check.
+	// ok=false when the token names no readable active membership.
+	BridgeKeyFor(ctx context.Context, signKey []byte, token string) (key []byte, ok bool)
 
 	// ServerIdentity is the build version, brand label and public origin that
 	// serverInfo reports. The brand label can change at runtime, hence the context.

@@ -66,7 +66,7 @@ func verifyMemoToken(signKey []byte, token string) (membershipID string, ok bool
 // the live store, never the token.
 func (a memoAPI) memoTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyMemoToken(memoSignKey(a.mgr.tokenSignMaster()), tok)
+	mid, ok := a.mgr.verifyBridge(r.Context(), memoSignKey(a.mgr.tokenSigningRoot()), tok, verifyMemoToken)
 	if !ok {
 		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid memo token"}
 	}

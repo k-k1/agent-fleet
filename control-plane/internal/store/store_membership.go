@@ -50,6 +50,24 @@ type MembershipStore interface {
 	// membership too: re-inviting a removed person reactivates the same id, so rotating
 	// before the re-invite is how the old token is kept dead. ok=false when no such row.
 	BumpGitTokenEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
+	// BridgeEpoch is the epoch the membership's bridge tokens (memo, schedule, MCP, docs,
+	// engine, git OAuth, AWS and GCP profiles, branch rules) are minted under (issue #3452).
+	// Only the current epoch verifies, so every bridge reads it live. ok=false when the
+	// membership is missing or inactive.
+	BridgeEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
+	// BumpBridgeEpoch advances the membership's bridge epoch by one (and the git token epoch
+	// with it), killing every token minted earlier. Works on an inactive membership too, for
+	// the reason BumpGitTokenEpoch does. ok=false when no such row.
+	BumpBridgeEpoch(ctx context.Context, membershipID string) (epoch int64, ok bool, err error)
+	// BumpAllBridgeEpochs advances the bridge and git epochs of every membership once and
+	// returns how many rows moved. The one-shot that invalidates values left in old task
+	// definition revisions and logs.
+	BumpAllBridgeEpochs(ctx context.Context) (n int64, err error)
+	// BridgeEpochStarted is the bridge epoch the membership's container was last started under
+	// (0 until a start records one) next to the current epoch. ok=false when no such row.
+	BridgeEpochStarted(ctx context.Context, membershipID string) (started, current int64, ok bool, err error)
+	// SetBridgeEpochStarted records the epoch a container start used.
+	SetBridgeEpochStarted(ctx context.Context, membershipID string, epoch int64) error
 	// IdentityIDForMembership maps a membership id back to its owning identity id —
 	// used by the internal memo-bridge flush to resolve the workspace runtime from a
 	// memo token (which carries only the membership). ok=false when it is missing.
@@ -196,6 +214,70 @@ func (s *SQL) BumpGitTokenEpoch(ctx context.Context, membershipID string) (int64
 	return epoch, true, nil
 }
 
+func (s *SQL) BridgeEpoch(ctx context.Context, membershipID string) (int64, bool, error) {
+	var epoch int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT bridge_epoch FROM membership WHERE id=? AND status='active'`, membershipID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return epoch, true, nil
+}
+
+func (s *SQL) BumpBridgeEpoch(ctx context.Context, membershipID string) (int64, bool, error) {
+	// One statement, for the reason BumpGitTokenEpoch is one.
+	var epoch int64
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE membership SET bridge_epoch = bridge_epoch + 1, git_token_epoch = git_token_epoch + 1
+		 WHERE id=? RETURNING bridge_epoch`, membershipID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return epoch, true, nil
+}
+
+func (s *SQL) BumpAllBridgeEpochs(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE membership SET bridge_epoch = bridge_epoch + 1, git_token_epoch = git_token_epoch + 1`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// CountMemberships is how many memberships BumpAllBridgeEpochs would move (every row, inactive
+// ones included).
+func (s *SQL) CountMemberships(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM membership`).Scan(&n)
+	return n, err
+}
+
+func (s *SQL) BridgeEpochStarted(ctx context.Context, membershipID string) (int64, int64, bool, error) {
+	var started, current int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT bridge_epoch_started, bridge_epoch FROM membership WHERE id=?`, membershipID).Scan(&started, &current)
+	if err == sql.ErrNoRows {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+	return started, current, true, nil
+}
+
+func (s *SQL) SetBridgeEpochStarted(ctx context.Context, membershipID string, epoch int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE membership SET bridge_epoch_started=? WHERE id=?`, epoch, membershipID)
+	return err
+}
+
 func (s *SQL) IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
@@ -276,7 +358,15 @@ func (s *SQL) SetMembershipStatus(ctx context.Context, membershipID, status stri
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE membership SET status=? WHERE id=?`, status, membershipID); err != nil {
+	// Removal and re-activation each advance both token epochs (issue #3452): a deactivated
+	// membership's tokens stop working through the live membership check, but re-activating
+	// the same id would otherwise bring the same values back. Only a real change moves them,
+	// so a repeated call is not a rotation.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE membership SET status=?,
+		   bridge_epoch = bridge_epoch + CASE WHEN status<>? THEN 1 ELSE 0 END,
+		   git_token_epoch = git_token_epoch + CASE WHEN status<>? THEN 1 ELSE 0 END
+		 WHERE id=?`, status, status, status, membershipID); err != nil {
 		return err
 	}
 	if status != "active" {

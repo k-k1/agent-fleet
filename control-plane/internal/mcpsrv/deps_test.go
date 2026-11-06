@@ -33,10 +33,13 @@ type testCP struct {
 
 var _ CP = testCP{}
 
-func (c testCP) Store() store.Store             { return c.store }
-func (c testCP) Custodian() KeyCustodian        { return c.custodian }
-func (c testCP) Master32() []byte               { return c.master32 }
-func (c testCP) TokenSignMaster() []byte        { return c.master32 }
+func (c testCP) Store() store.Store      { return c.store }
+func (c testCP) Custodian() KeyCustodian { return c.custodian }
+func (c testCP) Master32() []byte        { return c.master32 }
+func (c testCP) TokenSignMaster() []byte { return c.master32 }
+func (c testCP) BridgeKeyFor(_ context.Context, signKey []byte, _ string) ([]byte, bool) {
+	return signKey, true
+}
 func (c testCP) EvictMembershipCache(string)    { unwired("EvictMembershipCache") }
 func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
 

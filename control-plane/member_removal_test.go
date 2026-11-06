@@ -60,25 +60,31 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	master := mgr.tokenSignMaster()
-	bearer := func(tok string) func(*http.Request) {
-		return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tok) }
+	master := mgr.tokenSigningRoot()
+	// The epoch the tokens below are minted under. Removal and re-activation each advance the
+	// membership's epochs (issue #3452), so the tokens of the first phases must not come back.
+	var ep int64
+	bearer := func(tok func() string) func(*http.Request) {
+		return func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tok()) }
 	}
-	gitAuth := func(r *http.Request) { r.SetBasicAuth("x-access-token", mintGitToken(gitSignKey(master), mem.ID, 0)) }
+	k := func(key []byte) []byte { return bridgeKeyAt(key, ep) }
+	gitAuth := func(r *http.Request) { r.SetBasicAuth("x-access-token", mintGitToken(gitSignKey(master), mem.ID, ep)) }
 	families := []struct {
 		prefix string
 		auth   func(*http.Request)
 	}{
-		{"/internal/docs", bearer(mintDocsToken(docsSignKey(master), mem.ID))},
-		{"/internal/branch-rules", bearer(mintBranchRulesToken(branchRulesSignKey(master), mem.ID))},
-		{"/internal/mcp-servers", bearer(mcpsrv.MintMCPToken(mcpsrv.MCPSignKey(master), mem.ID))},
-		{"/internal/aws-profiles", bearer(mintAWSProfilesToken(awsProfilesSignKey(master), mem.ID))},
-		{"/internal/gcp-profiles", bearer(mintGCPProfilesToken(gcpProfilesSignKey(master), mem.ID))},
-		{"/internal/memos", bearer(mintMemoToken(memoSignKey(master), mem.ID))},
-		{"/internal/schedules", bearer(mintScheduleToken(scheduleSignKey(master), mem.ID))},
-		{"/internal/git-oauth/", bearer(mintGitOAuthToken(gitOAuthSignKey(master), mem.ID))},
-		{"/internal/engine/", bearer(mintEngineIssueToken(engineSignKey(master), mem.ID))},
-		{"/engine/llm/", bearer(mintEngineSessionToken(engineSignKey(master), mem.ID, "s1", "llm", time.Now().Add(time.Hour)))},
+		{"/internal/docs", bearer(func() string { return mintDocsToken(k(docsSignKey(master)), mem.ID) })},
+		{"/internal/branch-rules", bearer(func() string { return mintBranchRulesToken(k(branchRulesSignKey(master)), mem.ID) })},
+		{"/internal/mcp-servers", bearer(func() string { return mcpsrv.MintMCPToken(k(mcpsrv.MCPSignKey(master)), mem.ID) })},
+		{"/internal/aws-profiles", bearer(func() string { return mintAWSProfilesToken(k(awsProfilesSignKey(master)), mem.ID) })},
+		{"/internal/gcp-profiles", bearer(func() string { return mintGCPProfilesToken(k(gcpProfilesSignKey(master)), mem.ID) })},
+		{"/internal/memos", bearer(func() string { return mintMemoToken(k(memoSignKey(master)), mem.ID) })},
+		{"/internal/schedules", bearer(func() string { return mintScheduleToken(k(scheduleSignKey(master)), mem.ID) })},
+		{"/internal/git-oauth/", bearer(func() string { return mintGitOAuthToken(k(gitOAuthSignKey(master)), mem.ID) })},
+		{"/internal/engine/", bearer(func() string { return mintEngineIssueToken(k(engineSignKey(master)), mem.ID) })},
+		{"/engine/llm/", bearer(func() string {
+			return mintEngineSessionToken(k(engineSignKey(master)), mem.ID, "s1", "llm", time.Now().Add(time.Hour))
+		})},
 		{"/git/", gitAuth},
 	}
 	// One request per workspaceRoutes pattern, as the Agent sends it.
@@ -157,7 +163,11 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 	if err := st.SetMembershipStatus(ctx, mem.ID, "active"); err != nil {
 		t.Fatal(err)
 	}
-	phase("restored member", false)
+	// The same membership id is active again, but the tokens minted before the removal are
+	// dead: re-activation advanced the epoch. Tokens minted at the new epoch work.
+	phase("restored member, tokens from before the removal", true)
+	ep = 2 // removal and re-activation: two advances
+	phase("restored member, tokens minted after the re-activation", false)
 
 	for p := range workspaceRoutes {
 		if !covered[p] {

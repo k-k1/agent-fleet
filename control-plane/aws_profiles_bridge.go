@@ -134,7 +134,7 @@ func newAWSProfilesBridgeAPI(m *manager) awsProfilesBridgeAPI { return awsProfil
 // another member's list.
 func (a awsProfilesBridgeAPI) list(w http.ResponseWriter, r *http.Request) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyAWSProfilesToken(awsProfilesSignKey(a.mgr.tokenSignMaster()), tok)
+	mid, ok := a.mgr.verifyBridge(r.Context(), awsProfilesSignKey(a.mgr.tokenSigningRoot()), tok, verifyAWSProfilesToken)
 	if !ok {
 		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid aws profiles token"})
 		return

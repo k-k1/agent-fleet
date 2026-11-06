@@ -70,7 +70,11 @@ func VerifyMCPToken(signKey []byte, token string) (membershipID string, ok bool)
 // from the live store, never from the request.
 func (a ServerAPI) mcpTokenMembership(r *http.Request) (store.MembershipView, *APIError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := VerifyMCPToken(MCPSignKey(a.cp.TokenSignMaster()), tok)
+	key, ok := a.cp.BridgeKeyFor(r.Context(), MCPSignKey(a.cp.TokenSignMaster()), tok)
+	if !ok {
+		return store.MembershipView{}, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid mcp token"}
+	}
+	mid, ok := VerifyMCPToken(key, tok)
 	if !ok {
 		return store.MembershipView{}, &APIError{http.StatusUnauthorized, "unauthenticated", "invalid mcp token"}
 	}

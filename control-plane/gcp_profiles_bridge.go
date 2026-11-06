@@ -101,7 +101,7 @@ func newGCPProfilesBridgeAPI(m *manager) gcpProfilesBridgeAPI { return gcpProfil
 // from the token, never from the request.
 func (a gcpProfilesBridgeAPI) list(w http.ResponseWriter, r *http.Request) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyGCPProfilesToken(gcpProfilesSignKey(a.mgr.tokenSignMaster()), tok)
+	mid, ok := a.mgr.verifyBridge(r.Context(), gcpProfilesSignKey(a.mgr.tokenSigningRoot()), tok, verifyGCPProfilesToken)
 	if !ok {
 		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid gcp profiles token"})
 		return

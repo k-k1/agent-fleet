@@ -860,7 +860,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	}
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}, comfyFallback: comfyFallback}
 	if mgr != nil {
-		reg.signKey = engineSignKey(mgr.tokenSignMaster())
+		reg.signKey = engineSignKey(mgr.tokenSigningRoot())
 	}
 	cluster := firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")
 	// Taking models in (ADR 0072 decision 6). Only wired when the stack declared an ingest task

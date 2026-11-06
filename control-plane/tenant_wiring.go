@@ -86,6 +86,10 @@ func (a adminAPI) rotateGitToken(w http.ResponseWriter, r *http.Request) {
 	a.srv().RotateGitToken(w, r)
 }
 
+func (a adminAPI) rotateBridgeTokens(w http.ResponseWriter, r *http.Request) {
+	a.srv().RotateBridgeTokens(w, r)
+}
+
 func (a adminAPI) homeBackups(w http.ResponseWriter, r *http.Request) { a.srv().HomeBackups(w, r) }
 
 func (a adminAPI) deleteHomeBackups(w http.ResponseWriter, r *http.Request) {
@@ -260,6 +264,10 @@ func (d cpTenant) ResumeSchedulesHeldByRemoval(ctx context.Context, mid string) 
 
 func (d cpTenant) RotateGitToken(ctx context.Context, mid string) (int64, string, bool, error) {
 	return d.m.rotateGitToken(ctx, mid)
+}
+
+func (d cpTenant) RotateBridgeTokens(ctx context.Context, mid string) (int64, bool, error) {
+	return d.m.rotateBridgeTokens(ctx, mid)
 }
 
 func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {

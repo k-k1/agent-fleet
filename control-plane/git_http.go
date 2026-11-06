@@ -69,7 +69,7 @@ type gitServerStore interface {
 }
 
 func newGitServerAPI(m *manager, publicBaseURL string) gitServerAPI {
-	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.tokenSignMaster()), publicBaseURL, m.internalBaseURL, m.store}
+	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.tokenSigningRoot()), publicBaseURL, m.internalBaseURL, m.store}
 }
 
 // gitBackendPath is the git-http-backend CGI. Debian ships it under git-core;

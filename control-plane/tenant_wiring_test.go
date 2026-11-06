@@ -70,6 +70,7 @@ var cpTenantDelegates = map[string]string{
 	"CleanHomeByMembership":         "cleanHomeByMembership",     // ↕
 	"ResumeSchedulesHeldByRemoval":  "resumeSchedulesHeldByRemoval",
 	"RotateGitToken":                "rotateGitToken",
+	"RotateBridgeTokens":            "rotateBridgeTokens",
 	"StopRemovedMemberWorkspace":    "stopWorkspaceOfRemovedMember",
 	"CloseMembershipConnections":    "memberConns",
 	"DestroyWorkspaceByMembership":  "destroyWorkspaceByMembership", // ↕

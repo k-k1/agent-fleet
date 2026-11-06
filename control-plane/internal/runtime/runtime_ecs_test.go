@@ -646,9 +646,10 @@ func TestECSDestroyRemovesServiceAccessPointsAndSecrets(t *testing.T) {
 	if len(ff.aps) != 1 || aws.ToString(ff.aps[0].AccessPointId) != "fsap-other" {
 		t.Errorf("another membership's access point was touched, left = %d", len(ff.aps))
 	}
-	// agent-token, secret-key and secret-key-next (the home's own key, when it had one).
-	if len(fs.deletes) != 3 {
-		t.Errorf("all three SSM secrets must go, got %d", len(fs.deletes))
+	// agent-token, secret-key and secret-key-next (the home's own key, when it had one), and
+	// one parameter per credential variable the CP injects (secret_env.go).
+	if want := 3 + len(secretEnvNames); len(fs.deletes) != want {
+		t.Errorf("every SSM secret must go: want %d deletes, got %d", want, len(fs.deletes))
 	}
 	for _, want := range []string{"efs:fs-1/home/M-1", "efs:fs-1/claude-config/M-1"} {
 		found := false

@@ -339,10 +339,10 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		args = append(args, "--network", d.network)
 	}
 	args = append(args, d.hostArgs()...)
-	// AGENT_TOKEN / AF_SECRET_KEY (the DEK) passed as argv `-e` would be readable in
-	// /proc/<pid>/cmdline, so they go through a 0600 temporary --env-file instead,
+	// AGENT_TOKEN / AF_SECRET_KEY (the DEK) and the CP's credential variables (secret_env.go)
+	// passed as argv `-e` would be readable in /proc/<pid>/cmdline, so they go through a 0600 temporary --env-file instead,
 	// removed once docker run has returned.
-	if d.token != "" || len(d.keys.envPairs()) > 0 {
+	if _, creds := splitSecretEnv(d.extraEnv); d.token != "" || len(d.keys.envPairs()) > 0 || len(creds) > 0 {
 		ef, err := d.writeSecretEnvFile()
 		if err != nil {
 			return err
@@ -404,6 +404,10 @@ func (d *dockerRuntime) writeSecretEnvFile() (string, error) {
 	for _, kv := range d.keys.envPairs() {
 		b.WriteString(kv[0] + "=" + kv[1] + "\n")
 	}
+	_, creds := splitSecretEnv(d.extraEnv)
+	for _, c := range creds {
+		b.WriteString(c.Name + "=" + c.Value + "\n")
+	}
 	if _, err := f.WriteString(b.String()); err != nil {
 		f.Close()
 		os.Remove(f.Name())
@@ -464,7 +468,8 @@ func (d *dockerRuntime) envArgs() []string {
 	if d.sessionCmd != "" {
 		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
 	}
-	for _, e := range d.extraEnv {
+	plainEnv, _ := splitSecretEnv(d.extraEnv)
+	for _, e := range plainEnv {
 		args = append(args, "-e", e)
 	}
 	// Last on the line, so they win over the copies extraEnv already carries.

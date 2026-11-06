@@ -425,6 +425,25 @@ returns the result without storing the token.
   binds the result to that press instead of relying on route authentication
   ([decisions/0102](../decisions/0102-aws-login-through-the-console.md)).
 
+- The per-membership **bridge tokens** (memo, schedule, MCP, docs, engine issuing, git OAuth,
+  AWS and GCP profiles, branch rules), the internal git token and the dev IdP client secret
+  are credentials too. They reach the workspace the way `AGENT_TOKEN` does — never as a
+  task-definition `environment` entry (old revisions are never deleted, and
+  `DescribeTaskDefinition` and CloudTrail return `environment` verbatim): an SSM
+  SecureString under `/af-ws/<workspace>/` through `secrets` on `ecs` / `ecs-ec2`, the 0600
+  env file on docker, a Secret on kubernetes (`runtime/secret_env.go` lists the names).
+  Each bridge token is an HMAC of a signing key, the membership id and the membership's
+  **bridge epoch** (`membership.bridge_epoch`; epoch 0 is the key unchanged, so the upgrade
+  invalidates nothing). Removal, re-activation and an administrator's rotation
+  (`POST /api/admin/rotate-bridge-tokens`) advance the epoch, which is read live on every
+  request, so a token minted earlier fails at once; the running container then holds dead
+  tokens and the Console shows "restart required" until it is restarted. The signing keys
+  derive from a root selected by `AF_TOKEN_SIGN_VERSION` (0, the default, is the master
+  itself, as before; 1 and up are a domain-separated root, so token keys no longer share a
+  derivation root with the credential keys and can be rotated without touching a stored
+  credential). `af-cp advance-bridge-epochs --yes` advances every membership once. Operating
+  it: [guide 12](../../guide/operate/12-keys.md#rotating-the-bridge-tokens).
+
 ### 7.5.1 The member-origin mark
 
 Where a route must accept only the member's own Console request, the CP marks it

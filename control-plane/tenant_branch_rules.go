@@ -311,7 +311,7 @@ type branchRulesBridgeAPI struct{ mgr *manager }
 // from the token's membership, never from the request.
 func (a branchRulesBridgeAPI) list(w http.ResponseWriter, r *http.Request) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyBranchRulesToken(branchRulesSignKey(a.mgr.tokenSignMaster()), tok)
+	mid, ok := a.mgr.verifyBridge(r.Context(), branchRulesSignKey(a.mgr.tokenSigningRoot()), tok, verifyBranchRulesToken)
 	if !ok {
 		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid branch rules token"})
 		return

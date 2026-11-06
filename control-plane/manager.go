@@ -317,3 +317,11 @@ func (m *manager) evictMembershipCache(membershipID string) {
 	defer m.mu.Unlock()
 	delete(m.rts, membershipID)
 }
+
+// evictAllMembershipCaches drops every memoized runtime, for the same reason as
+// evictMembershipCache: their env carries tokens minted under an epoch that just moved.
+func (m *manager) evictAllMembershipCaches() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rts = map[string]cachedRT{}
+}

@@ -350,6 +350,8 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   Agent のどのルートもセッション内のコードから呼べる。人の押下でだけ始まるべき機能は、ルート認証に
   頼らず結果をその押下に結び付ける（[decisions/0102](../decisions/0102-aws-login-through-the-console.ja.md)）。
 
+- メンバーごとの**ブリッジトークン**（メモ・スケジュール・MCP・ドキュメント・エンジン発行・Git OAuth・AWS／GCP プロファイル・ブランチ規則）、内部 git トークン、開発用 IdP のクライアントシークレットも認証情報である。`AGENT_TOKEN` と同じ経路で Workspace に届き、タスク定義の `environment` には決して入れない（古いリビジョンは削除されず、`DescribeTaskDefinition` と CloudTrail は `environment` をそのまま返す）。`ecs` / `ecs-ec2` では `/af-ws/<workspace>/` 配下の SSM SecureString を `secrets` 経由で、docker では 0600 の env ファイル、kubernetes では Secret で渡す（名前の一覧は `runtime/secret_env.go`）。各ブリッジトークンは、署名鍵・membership id・membership の**ブリッジ epoch**（`membership.bridge_epoch`。epoch 0 は鍵そのままなので、アップグレードでは何も無効にならない）の HMAC。削除・再有効化・管理者のローテーション（`POST /api/admin/rotate-bridge-tokens`）で epoch が進み、リクエストごとに読み直すので、それ以前のトークンは即座に通らなくなる。動作中のコンテナは古いトークンを持ったままなので、再起動するまでコンソールに「再起動が必要」と出る。署名鍵は `AF_TOKEN_SIGN_VERSION` で選ぶルートから導出する（0＝既定は従来どおり master そのもの、1 以上は領域分離したルート。トークン鍵が認証情報鍵と導出元を共有せず、保存済みの認証情報に触れずにローテーションできる）。`af-cp advance-bridge-epochs --yes` で全 membership を一度に進める。運用は [ガイド 12](../../guide/operate/12-keys.ja.md#ブリッジトークンのローテーション) を参照。
+
 ### 7.5.1 メンバー由来の印
 
 メンバー自身の Console からの要求だけを受け付けるべきルートには、CP が印を付ける

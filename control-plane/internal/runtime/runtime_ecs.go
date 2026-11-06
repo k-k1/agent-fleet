@@ -633,7 +633,11 @@ func (e *ecsRuntime) destroySharedResources(ctx context.Context) ([]string, erro
 			return nil, fmt.Errorf("delete access point %s: %w", aws.ToString(ap.AccessPointId), err)
 		}
 	}
-	for _, suffix := range []string{"agent-token", "secret-key", "secret-key-next"} {
+	suffixes := []string{"agent-token", "secret-key", "secret-key-next"}
+	for _, n := range secretEnvNames {
+		suffixes = append(suffixes, secretEnvParamSuffix(n))
+	}
+	for _, suffix := range suffixes {
 		name := fmt.Sprintf("/af-ws/%s/%s", e.name, suffix)
 		if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{
 			Name: aws.String(name),
@@ -824,6 +828,25 @@ func (e *ecsRuntime) putSecrets(ctx context.Context) ([]ecstypes.Secret, error) 
 	if err := put("AF_SECRET_KEY_NEXT", "secret-key-next", e.keys.Next); err != nil {
 		return nil, err
 	}
+	// The CP's credential variables (secret_env.go) ride the same channel. A variable this
+	// start does not carry (the public base URL was unset, say) has its parameter dropped,
+	// so a value from an earlier start is not left behind unreferenced until Destroy.
+	_, creds := splitSecretEnv(e.extraEnv)
+	carried := map[string]bool{}
+	for _, c := range creds {
+		carried[c.Name] = true
+		if err := put(c.Name, secretEnvParamSuffix(c.Name), c.Value); err != nil {
+			return nil, err
+		}
+	}
+	for _, n := range secretEnvNames {
+		if !carried[n] {
+			name := fmt.Sprintf("/af-ws/%s/%s", e.name, secretEnvParamSuffix(n))
+			if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{Name: aws.String(name)}); err != nil && !isAWSNotFound(err) {
+				log.Printf("ecs %s: delete the unused parameter %s: %v", e.name, name, err)
+			}
+		}
+	}
 	if e.keys.Next == "" && e.keys.Key != "" {
 		// A home confirmed on its own key starts without NEXT. The parameter its migrating
 		// starts wrote would otherwise stay in SSM, unreferenced, until Destroy. It holds the
@@ -861,7 +884,8 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 	// its own (only the task does), so the container's cgroup reads memory.max "max" and the
 	// Agent would report a false disagreement on every Fargate workspace. Unknown until a real
 	// task shows where the limit lands.
-	for _, kv := range e.extraEnv {
+	plainEnv, _ := splitSecretEnv(e.extraEnv) // credentials go through `secrets`, never here
+	for _, kv := range plainEnv {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			env = append(env, ecstypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)})
 		}

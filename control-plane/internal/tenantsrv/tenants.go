@@ -628,6 +628,75 @@ func (a Admin) RotateGitToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rotateGitTokenAnswer{Rotated: body.UserKey, Tenant: t.Slug, Workspace: push})
 }
 
+// RotateBridgeTokens (POST /api/admin/rotate-bridge-tokens {tenant_slug,user_key}) replaces
+// every per-membership bridge token of one member (issue #3452): for tokens that leaked from a
+// workspace, task definition revision or log. Same gate, lookup and audit as RotateGitToken.
+// The member's running workspace holds the old tokens until it is restarted, which the
+// Console shows as "restart required".
+func (a Admin) RotateBridgeTokens(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	caller, t, ok := a.cp.TenantAdminFor(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
+	if body.UserKey == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "user_key required"})
+		return
+	}
+	ident, found, err := a.cp.Store().GetIdentityByUserKey(r.Context(), body.UserKey)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	mem, ok, err := a.cp.Store().GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in, ok := a.beginIrreversible(w, r, store.AuditLog{
+		TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.rotate_bridge_tokens", Target: ident.UserKey,
+	})
+	if !ok {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	epoch, found, err := a.cp.RotateBridgeTokens(ctx, mem.ID)
+	if err != nil {
+		refuseIrreversible(w, r, in, internalErr(err))
+		return
+	}
+	if !found {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	in.Done(ctx, fmt.Sprintf("epoch %d", epoch), http.StatusOK)
+	writeJSON(w, http.StatusOK, rotateBridgeTokensAnswer{Rotated: body.UserKey, Tenant: t.Slug, RestartRequired: true})
+}
+
+// rotateBridgeTokensAnswer is what POST /api/admin/rotate-bridge-tokens answers.
+// RestartRequired: the member's running workspace holds dead tokens until it is restarted.
+type rotateBridgeTokensAnswer struct {
+	Rotated         string `json:"rotated"`
+	Tenant          string `json:"tenant"`
+	RestartRequired bool   `json:"restart_required"`
+}
+
 // rotateGitTokenAnswer is what POST /api/admin/rotate-git-token answers. Workspace is how the
 // member's running workspace took the new token (control-plane git_token_rotate.go).
 type rotateGitTokenAnswer struct {

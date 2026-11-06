@@ -65,7 +65,7 @@ func verifyScheduleToken(signKey []byte, token string) (membershipID string, ok 
 // Tenant/role come from the live store, never the token.
 func (a scheduleAPI) scheduleTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyScheduleToken(scheduleSignKey(a.mgr.tokenSignMaster()), tok)
+	mid, ok := a.mgr.verifyBridge(r.Context(), scheduleSignKey(a.mgr.tokenSigningRoot()), tok, verifyScheduleToken)
 	if !ok {
 		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid schedule token"}
 	}

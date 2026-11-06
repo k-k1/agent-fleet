@@ -204,7 +204,8 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 	if v := memoryLimitValue(e.memCapMiB * mib); v != "" {
 		env = append(env, ecstypes.KeyValuePair{Name: aws.String(MemoryLimitEnv), Value: aws.String(v)})
 	}
-	for _, kv := range e.base.extraEnv {
+	plainEnv, _ := splitSecretEnv(e.base.extraEnv) // credentials go through `secrets`, never here
+	for _, kv := range plainEnv {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			env = append(env, ecstypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)})
 		}

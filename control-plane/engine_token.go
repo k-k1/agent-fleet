@@ -150,3 +150,22 @@ func engineTag(signKey []byte, kind, body string) string {
 	mac.Write([]byte(body))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
+
+// engineSessionMembership reads the membership id a session token names, without trusting it:
+// the tag is checked under the epoch that id has (engineGateway.verifyEngineSession).
+func engineSessionMembership(token string) (string, bool) {
+	body, ok := strings.CutPrefix(strings.TrimSpace(token), "afe_")
+	if !ok {
+		return "", false
+	}
+	dot := strings.LastIndexByte(body, '.')
+	if dot < 0 {
+		return "", false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(body[:dot])
+	if err != nil {
+		return "", false
+	}
+	mid, _, _ := strings.Cut(string(raw), "\x00")
+	return mid, mid != ""
+}

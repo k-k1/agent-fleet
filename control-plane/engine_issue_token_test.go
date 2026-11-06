@@ -105,7 +105,7 @@ func TestEngineIssueTokenMintsWhatTheGatewayAccepts(t *testing.T) {
 }
 
 // Decision 3's refusal, carried in the answer because no column can carry it: the value is
-// deterministic, so revoking it means removing the membership, and that has to be on the screen
+// deterministic per epoch, so revoking it means rotating the epoch, and that has to be on the screen
 // next to the credential rather than in a document nobody opened.
 func TestEngineIssueTokenAnswerSaysHowToRevokeIt(t *testing.T) {
 	st, _, _, a := issueTokenFixture(t)
@@ -119,8 +119,8 @@ func TestEngineIssueTokenAnswerSaysHowToRevokeIt(t *testing.T) {
 		t.Error("deterministic is not set — the machine-readable half of \"there is no revoking one copy\"")
 	}
 	revoke, _ := out["revoke"].(string)
-	if !strings.Contains(revoke, "acme/borrow-bot") || !strings.Contains(strings.ToLower(revoke), "remove the membership") {
-		t.Errorf("revoke = %q, want it to name removing THIS membership", revoke)
+	if !strings.Contains(revoke, "rotate-bridge-tokens") || !strings.Contains(strings.ToLower(revoke), "removing the membership") {
+		t.Errorf("revoke = %q, want it to name rotating the bridge tokens and removing the membership", revoke)
 	}
 	warning, _ := out["warning"].(string)
 	if !strings.Contains(warning, "used for nothing else") {
