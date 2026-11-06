@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/identitycheck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -154,7 +155,7 @@ func TestEmailSetSuspectsListsMultiTenantIdentitiesWithoutALogin(t *testing.T) {
 		t.Errorf("suspects = %+v", list)
 	}
 	var out strings.Builder
-	if rc := printEmailSuspects(ctx, st, &out); rc != 1 || !strings.Contains(out.String(), "bad-key") {
+	if rc := identitycheck.Print(ctx, st, &out); rc != 1 || !strings.Contains(out.String(), "bad-key") {
 		t.Errorf("rc=%d out=%q", rc, out.String())
 	}
 }
