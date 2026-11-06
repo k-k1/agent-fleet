@@ -100,6 +100,31 @@ describe("EnvTab Java row", () => {
     expect(present.textContent).toBe("Temurin 21");
   });
 
+  it("names each vendor in the options and installs the selected Corretto by its id", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "api/env/toolchains"
+          ? {
+              ...toolchains(["21", "corretto-21"], "corretto-17"),
+              java_available: ["17", "corretto-17", "21", "corretto-21"],
+            }
+          : {},
+      ),
+    );
+    apiJSON.mockResolvedValue({ state: "done", major: "corretto-17" });
+    await mount();
+    const opts = Array.from(document.querySelectorAll<HTMLOptionElement>(".env-java-pick option"));
+    expect(opts.find((o) => o.value === "21")!.textContent).toBe("Temurin 21");
+    expect(opts.find((o) => o.value === "corretto-21")!.textContent).toBe("Corretto 21");
+    expect(opts.find((o) => o.value === "corretto-17")!.textContent).toContain("Corretto 17");
+    const notes = Array.from(document.querySelectorAll(".ds-note"), (n) => n.textContent);
+    expect(notes.some((t) => t?.includes("Corretto 17"))).toBe(true);
+    await act(async () => {
+      javaBtn()!.click();
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/env/jdk-install", "POST", { major: "corretto-17" });
+  });
+
   it("starts the install on click, refetches the toolchains and drops the button", async () => {
     let installed = ["21"];
     api.mockImplementation((path: string) =>

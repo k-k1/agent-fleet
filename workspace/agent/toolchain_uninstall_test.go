@@ -225,7 +225,7 @@ func TestSweepOnlyTouchesTrash(t *testing.T) {
 	if err := os.MkdirAll(mine, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if majors := installedJavaMajors(); len(majors) != 0 {
+	if majors := installedJavaIDs(); len(majors) != 0 {
 		t.Fatalf("a staged tree counts as installed: %v", majors)
 	}
 	listToolchainInstalls()

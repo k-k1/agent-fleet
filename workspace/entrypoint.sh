@@ -127,14 +127,16 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   # Remove cursor's `agent` alias only when it is a symlink, so a user's own script of the
   # same name is left alone.
   if [ -L "$HOME/.local/bin/agent" ]; then rm -f "$HOME/.local/bin/agent"; fi
-  # JDK directories carry the architecture in their name (temurin-<major>-jdk-<arch>), so
+  # JDK directories carry the architecture in their name (<vendor>-<major>-jdk-<arch>), so
   # only the other architecture's ones need to go. The reinstall happens automatically in
   # this same start: the java block below looks for the selected version, `find_jh` ignores
   # other-arch directories and reports it missing, and `workspace-agent install-jdk` runs.
   # No user action is needed.
   # Only the version selected in toolchains.json comes back. Other installed but unselected
   # versions stay gone (reinstall them from the Console's toolchains if needed).
-  for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-*; do
+  # One glob per vendor in workspace/agent/internal/jdkvendor (All); a vendor missing here
+  # leaves its other-arch trees behind as dead weight (resolution already ignores them).
+  for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-* "$HOME"/.local/share/agent-fleet/jvm/corretto-*-jdk-*; do
     [ -d "$d" ] || continue
     case "$d" in *-jdk-"$af_arch_now") continue ;; esac
     rm -rf "$d" && echo "[entrypoint] arch: 削除 ${d#"$HOME"/}"
@@ -1191,8 +1193,8 @@ EOF
   echo "[entrypoint] seeded $GRADLE_PROPS"
 fi
 
-# Toolchains: node (nvm, installed into the home volume) and java (pre-baked
-# Temurin). The selection lives per-workspace in toolchains.json, chosen in the
+# Toolchains: node (nvm, installed into the home volume) and java (Temurin or
+# Corretto). The selection lives per-workspace in toolchains.json, chosen in the
 # Console. We apply it HERE so the agent — and every tmux session it spawns —
 # inherits JAVA_HOME and the selected node on PATH.
 TOOLS="$HOME/.config/agent-fleet/toolchains.json"
@@ -1216,10 +1218,10 @@ else
   echo "[entrypoint] WARN: unknown timezone '$TZ_VAL' (falling back to UTC)"
 fi
 
-# java: point JAVA_HOME at the selected Temurin. JDKs come from the deployment-
-# provided /usr/lib/jvm (baked image or local bind-mount) or the per-user home
-# volume that `install-jdk` populates — the latter being the only source on ECS,
-# where nothing is mounted at /usr/lib/jvm. Search both; if the selection is absent
+# java: point JAVA_HOME at the selected JDK ("21" is Temurin 21, "corretto-21" Corretto
+# 21). JDKs come from the deployment-provided /usr/lib/jvm (baked image or local
+# bind-mount) or the per-user home volume that `install-jdk` populates — the latter
+# being the only source on ECS, where nothing is mounted at /usr/lib/jvm. Search both; if the selection is absent
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
@@ -1231,7 +1233,7 @@ if [ -n "$JAVA_VER" ]; then
   find_jh() { /usr/local/bin/workspace-agent java-home "$JAVA_VER"; }
   JH=$(find_jh || true)
   if [ -z "$JH" ]; then
-    echo "[entrypoint] temurin-$JAVA_VER not present; installing into home volume ..."
+    echo "[entrypoint] JDK $JAVA_VER not present; installing into home volume ..."
     /usr/local/bin/workspace-agent install-jdk "$JAVA_VER" || echo "[entrypoint] WARN: install-jdk $JAVA_VER failed"
     JH=$(find_jh || true)
   fi
@@ -1240,7 +1242,7 @@ if [ -n "$JAVA_VER" ]; then
     export PATH="$JH/bin:$PATH"
     echo "[entrypoint] JAVA_HOME=$JH"
   else
-    echo "[entrypoint] WARN: temurin-$JAVA_VER-jdk unavailable"
+    echo "[entrypoint] WARN: JDK $JAVA_VER unavailable"
   fi
 fi
 

@@ -3,14 +3,14 @@ package main
 // version_lookup.go — the cache behind "what is the latest patch of this major?" for
 // Settings → Toolchains (jdk-latest, node-latest).
 //
-// The answer comes from the network (Adoptium, nodejs.org) and the Console asks on
-// every tab open, so it is cached per major: a success for latestTTL, a failure for
+// The answer comes from the network (Adoptium, corretto.aws, nodejs.org) and the Console
+// asks on every tab open, so it is cached per key (a node major, a JDK id): a success for latestTTL, a failure for
 // latestFailTTL so an offline workspace does not retry on every open. Concurrent
-// callers for one major share a single in-flight fetch. Without that, two tab opens
+// callers for one key share a single in-flight fetch. Without that, two tab opens
 // both fetched and whichever finished last won the cache: a timeout landing after a
 // success hid the update for the failure TTL.
 //
-// Callers must only ask for majors the picker offers; the keys are not otherwise
+// Callers must only ask for keys the picker offers; the keys are not otherwise
 // bounded.
 
 import (

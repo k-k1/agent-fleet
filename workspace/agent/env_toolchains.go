@@ -10,10 +10,11 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jdkvendor"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// Toolchain selection (node via nvm, java via pre-baked Temurin), stored per-
+// Toolchain selection (node via nvm, java via Temurin / Corretto), stored per-
 // workspace and applied by the entrypoint on container start. The Console reads
 // the available java versions (detected from the image) and the current choice,
 // and writes the selection. The entrypoint applies it to the agent process on
@@ -71,8 +72,8 @@ var tzNameRe = regexp.MustCompile(`^[A-Za-z0-9_+./-]{1,64}$`)
 // today, but one unquoted use would turn a free-form string into injection).
 var toolchainVerRe = regexp.MustCompile(`^(system|[0-9]{1,3}(\.[0-9]{1,4}){0,2})?$`)
 
-// Temurin JDK discovery (installed majors, installable set, JAVA_HOME resolution)
-// lives in jdk.go, which searches both /usr/lib/jvm and the per-user home volume.
+// JDK discovery (installed ids, installable set, JAVA_HOME resolution) lives in jdk.go
+// and internal/jdkvendor, which searches both /usr/lib/jvm and the per-user home volume.
 
 // nodeOptions are the versions the Console offers for nvm. "system" keeps the
 // image's base node.
@@ -194,7 +195,7 @@ func compareDotted(a, b []int) int {
 // resolvedToolchains resolves the current selection to concrete values for
 // injection into freshly-launched sessions/shells. node uses the highest installed
 // patch of the chosen major under the home nvm dir (must already be installed —
-// session launch won't run a network install); java resolves the selected Temurin
+// session launch won't run a network install); java resolves the selected JDK
 // across the search dirs (/usr/lib/jvm then the home volume); go resolves the
 // on-demand GOROOT (or the baked one when its pin matches); tz is honored only if
 // its zoneinfo exists. Empty strings mean "no override".
@@ -290,8 +291,8 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"timezone":       t.Timezone,
 		"agentUpdate":    t.AgentUpdate,
 		"java_available": javaOptions(),           // offered for selection (installed ∪ installable)
-		"java_installed": installedJavaMajors(),   // present on disk now (ready without a download)
-		"java_versions":  installedJavaVersions(), // major → the version its JAVA_HOME resolves to
+		"java_installed": installedJavaIDs(),      // present on disk now (ready without a download)
+		"java_versions":  installedJavaVersions(), // JDK id → the version its JAVA_HOME resolves to
 		"node_options":   nodeOptionsFor(t.Node),
 		// nodeOptions is a FIXED list, so — exactly like java — it offers
 		// versions that may not be on disk. Without this the Console cannot tell the two
@@ -319,7 +320,7 @@ func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_node", "invalid node version")
 		return
 	}
-	if !toolchainVerRe.MatchString(req.Java) {
+	if _, _, isID := jdkvendor.Parse(req.Java); !isID && !toolchainVerRe.MatchString(req.Java) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_java", "invalid java version")
 		return
 	}

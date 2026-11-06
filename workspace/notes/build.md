@@ -17,17 +17,20 @@ main cause of OOM trouble — this has caused real incidents. Your own limit:
   impossible here and would be the wrong version; a project without a wrapper cannot be
   bootstrapped (nothing to run `gradle wrapper` with) — commit the wrapper upstream instead.
 - **JDKs come from two places, so list both before assuming:**
-  `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk* 2>/dev/null`.
+  `ls -d /usr/lib/jvm/*-*-jdk* ~/.local/share/agent-fleet/jvm/*-*-jdk* 2>/dev/null`.
   `/usr/lib/jvm` is deployment-provided (baked or bind-mounted; Temurin 8/21/25 on most local
   deployments, but **empty on ECS**), `~/.local/share/agent-fleet/jvm` is the per-user home
   volume that survives restarts and is the only source on ECS. When a major is in both, the
-  newer patch wins (its `release` file's `SEMANTIC_VERSION`; a tie keeps `/usr/lib/jvm`), so
+  newer patch wins (Temurin's `release` `SEMANTIC_VERSION`, Corretto's `version.txt`; a tie
+  keeps `/usr/lib/jvm`), so
   re-running `install-jdk 21` is how you update one. `workspace-agent java-home 21` prints the
   directory that wins.
 - **Nothing there, or you need another major?** `workspace-agent install-jdk 21` downloads the
-  latest GA Temurin for this arch as `temurin-21-jdk-<arch>`, on every runtime. The user's
+  latest GA Temurin for this arch as `temurin-21-jdk-<arch>`, on every runtime;
+  `install-jdk corretto-21` does the same for Amazon Corretto (`corretto-21-jdk-<arch>`), and
+  `java-home corretto-21` resolves it. Both vendors' majors can be installed side by side. The user's
   terminal-free equivalent: **Settings > Toolchains** (「ツールチェーン」) — the picker lists
-  installed versions plus 8/11/17/21/25, with an **Install** button for one that isn't on disk
+  installed versions plus 8/11/17/21/25 of Temurin and Corretto each, with an **Install** button for one that isn't on disk
   (background download; sessions started after it finishes get the new `JAVA_HOME`, no restart).
   A version selected but never installed is fetched at the next container start.
 - **`JAVA_HOME` and `java` on `PATH` follow that selection** — with a version selected the

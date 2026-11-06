@@ -4,10 +4,11 @@ package main
 // in use?" for the Java row of Settings → Toolchains.
 //
 // The toolchains GET stays offline: it only reports what is on disk (java_versions).
-// Asking Adoptium is a separate call the Console makes for the selected major, so a
+// Asking the vendor (Adoptium, corretto.aws) is a separate call the Console makes for
+// the selected JDK, so a
 // workspace without egress still opens the tab instantly and simply shows no update.
-// The comparison is made here, with the same compareJDKVersions javaHomeFor uses, so
-// the Console never has to parse a JDK version.
+// The comparison is made here, with the same vendor compare javaHomeFor uses, so the
+// Console never has to parse a JDK version.
 
 import (
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jdkvendor"
 )
 
 var jdkLatestLookup = newVersionLookup(fetchJDKLatest)
@@ -40,9 +42,19 @@ func (v adoptiumVersion) semantic() string {
 	return fmt.Sprintf("%s+%d", s, v.Build)
 }
 
-// fetchJDKLatest asks Adoptium for the latest GA Temurin of a major on this
-// architecture — the same build `install-jdk` downloads.
-func fetchJDKLatest(major string) (string, error) {
+// fetchJDKLatest asks the id's vendor for its latest GA release on this architecture —
+// the same build `install-jdk` downloads. The id is the lookup's cache key, so Temurin
+// 21 and Corretto 21 are cached apart.
+func fetchJDKLatest(id string) (string, error) {
+	v, major, ok := jdkvendor.Parse(id)
+	if !ok {
+		return "", fmt.Errorf("invalid JDK %q", id)
+	}
+	return jdkOpsOf(v).latest(major)
+}
+
+// fetchTemurinLatest asks Adoptium for the latest GA Temurin of a major.
+func fetchTemurinLatest(major string) (string, error) {
 	aarch, err := adoptiumArch()
 	if err != nil {
 		return "", err
@@ -69,13 +81,15 @@ func fetchJDKLatest(major string) (string, error) {
 	return assets[0].Version.semantic(), nil
 }
 
-// handleJDKLatest is GET /env/jdk-latest?major=21: the version JAVA_HOME resolves to
-// now, the latest GA patch, and whether installing would update it. For a major that
-// is not installed, latest is what Install would download.
+// handleJDKLatest is GET /env/jdk-latest?major=<id> (21, corretto-21): the version
+// JAVA_HOME resolves to now, the latest GA patch, and whether installing would update
+// it. For an id that is not installed, latest is what Install would download. The
+// parameter keeps its name "major" because Temurin ids are majors.
 func handleJDKLatest(w http.ResponseWriter, r *http.Request) {
 	major := r.URL.Query().Get("major")
-	// The major reaches a URL and a cache key, so only the majors the picker offers.
-	if !majorOnlyRe.MatchString(major) || !isOffered(major, javaOptions()) {
+	// The id reaches a URL and a cache key, so only the ids the picker offers.
+	vendor, _, ok := jdkvendor.Parse(major)
+	if !ok || !isOffered(major, javaOptions()) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_major", "invalid JDK major version")
 		return
 	}
@@ -92,15 +106,15 @@ func handleJDKLatest(w http.ResponseWriter, r *http.Request) {
 		Major:           major,
 		Current:         current,
 		Latest:          latest,
-		UpdateAvailable: current != "" && compareJDKVersions(latest, current) > 0,
+		UpdateAvailable: current != "" && jdkOpsOf(vendor).compare(latest, current) > 0,
 	})
 }
 
-// installedJavaVersions maps each installed major to the version its JAVA_HOME
+// installedJavaVersions maps each installed JDK id to the version its JAVA_HOME
 // resolves to ("" when the tree records none), for the Console to show.
 func installedJavaVersions() map[string]string {
 	out := map[string]string{}
-	for _, m := range installedJavaMajors() {
+	for _, m := range installedJavaIDs() {
 		if jh := javaHomeFor(m); jh != "" {
 			out[m] = jdkVersion(jh)
 		}

@@ -39,6 +39,7 @@ import (
 	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jdkvendor"
 )
 
 // trashDir is where staged trees wait for deletion, under each root.
@@ -75,15 +76,21 @@ func treeBytes(dir string) int64 {
 	return b
 }
 
-// homeJDKFor is this architecture's home-volume tree of a major, or "".
-func homeJDKFor(major string) string {
-	m, _ := filepath.Glob(filepath.Join(jvmHomeRoot(), "temurin-"+major+"-jdk*"))
-	sort.Strings(m)
-	return pickArchJDK(m)
+// homeJDKFor is this architecture's home-volume tree of a JDK id, or "".
+func homeJDKFor(id string) string {
+	return archJDKIn(jvmHomeRoot(), id)
 }
 
-func systemJDKFor(major string) string {
-	m, _ := filepath.Glob(filepath.Join(jvmSystemRoot, "temurin-"+major+"-jdk*"))
+func systemJDKFor(id string) string {
+	return archJDKIn(jvmSystemRoot, id)
+}
+
+func archJDKIn(root, id string) string {
+	v, major, ok := jdkvendor.Parse(id)
+	if !ok {
+		return ""
+	}
+	m, _ := filepath.Glob(jdkvendor.TreeGlob(root, v, major))
 	sort.Strings(m)
 	return pickArchJDK(m)
 }
@@ -104,12 +111,12 @@ func listToolchainInstalls() toolchainInstallsReply {
 	sweepTrash(jvmHomeRoot())
 	sweepTrash(nvmNodeRoot())
 	sel := readToolchains()
-	selJava, selNode := selectedMajor(sel.Java), selectedMajor(sel.Node)
+	selJava, selNode := selectedJDKID(sel.Java), selectedMajor(sel.Node)
 	jdkBusy := rootBusy(jvmHomeRoot(), &jdkInstaller)
 	nodeBusy := rootBusy(nvmNodeRoot(), &nodeInstaller)
 	reply := toolchainInstallsReply{Java: []toolchainInstall{}, Node: []toolchainInstall{}}
 
-	for _, major := range installedJavaMajors() {
+	for _, major := range installedJavaIDs() {
 		resolved := javaHomeFor(major)
 		sys := systemJDKFor(major)
 		if home := homeJDKFor(major); home != "" {
@@ -165,6 +172,16 @@ func majorLess(a, b string) bool {
 
 // selectedMajor is the major a saved selection asks for: "22" for "22", "22.23" or
 // "22.23.4"; "" for none or "system".
+// selectedJDKID is the JDK id a stored java selection names: the value itself when it
+// is an id, else its major (selectedMajor), so Corretto 21 is never mistaken for
+// Temurin 21 and the reverse.
+func selectedJDKID(sel string) string {
+	if _, _, ok := jdkvendor.Parse(sel); ok {
+		return sel
+	}
+	return selectedMajor(sel)
+}
+
 func selectedMajor(sel string) string {
 	if v := parseDotted(sel); len(v) > 0 {
 		return strconv.Itoa(v[0])
@@ -368,10 +385,10 @@ func handleToolchainInstalls(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleJDKUninstall is DELETE /env/jdk/{major}: removes this architecture's home-volume
-// tree of that major.
+// tree of that JDK id (21, corretto-21).
 func handleJDKUninstall(w http.ResponseWriter, r *http.Request) {
 	major := r.PathValue("major")
-	if !majorOnlyRe.MatchString(major) {
+	if _, _, ok := jdkvendor.Parse(major); !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_major", "invalid JDK major version")
 		return
 	}
@@ -385,9 +402,9 @@ func handleJDKUninstall(w http.ResponseWriter, r *http.Request) {
 	case lerr != nil:
 		code, msg = "remove_failed", lerr.Error()
 	case home == "":
-		code, msg = "not_installed", "Temurin "+major+" is not installed in the home volume"
-	case selectedMajor(readToolchains().Java) == major && !independentJDK(systemJDKFor(major), home):
-		code, msg = "selected", "Temurin "+major+" is the selected JDK; select another one first"
+		code, msg = "not_installed", jdkvendor.Label(major)+" is not installed in the home volume"
+	case selectedJDKID(readToolchains().Java) == major && !independentJDK(systemJDKFor(major), home):
+		code, msg = "selected", jdkvendor.Label(major)+" is the selected JDK; select another one first"
 	case !free || jdkInstaller.state == "installing":
 		code, msg = "installing", "a JDK is being installed; try again when it has finished"
 	default:

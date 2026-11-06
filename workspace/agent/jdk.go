@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/jdkvendor"
 )
 
 // JDK provisioning (docs/09-deploy portability). JDKs come from two sources,
@@ -19,9 +21,10 @@ import (
 //     local Docker default) bind-mounted read-only from the host's shared JDK dir
 //     (WS_JVM_DIR). On ECS nothing is mounted here, so it is empty.
 //  2. ~/.local/share/agent-fleet/jvm — the per-user home volume. `install-jdk`
-//     downloads Temurin here; it persists across restarts (local volume / ECS EFS)
-//     and is the ONLY JDK source on ECS. Named temurin-<major>-jdk-<goarch> to
-//     mirror the /usr/lib/jvm layout so one discovery path finds both.
+//     downloads Temurin or Corretto here; it persists across restarts (local volume /
+//     ECS EFS) and is the ONLY JDK source on ECS. Named <vendor>-<major>-jdk-<goarch>
+//     to mirror the /usr/lib/jvm layout so one discovery path finds both
+//     (internal/jdkvendor).
 //
 // This keeps the "JDK at /usr/lib/jvm" story true where a deployment provides it,
 // while giving every runtime (incl. ECS) a common, writable place to add JDKs on
@@ -42,18 +45,25 @@ func jvmSearchDirs() []string {
 	return []string{jvmSystemRoot, jvmHomeRoot()}
 }
 
-// installableJava are the Temurin majors install-jdk can fetch on demand (Adoptium
-// GA). Offered in the Console picker in addition to whatever is already on disk, so
-// a member can select a version that isn't present yet — the entrypoint downloads
-// it into the home volume on the next launch (the only path on ECS).
-var installableJava = []string{"8", "11", "17", "21", "25"}
-
-var javaMajorRe = regexp.MustCompile(`^temurin-(\d+)-jdk`)
+// installableJava are the JDK ids install-jdk can fetch on demand: every vendor's
+// jdkvendor.InstallableMajors. Offered in the Console picker in addition to whatever is
+// already on disk, so a member can select a version that isn't present yet — the
+// entrypoint downloads it into the home volume on the next launch (the only path on
+// ECS).
+var installableJava = func() []string {
+	var out []string
+	for _, v := range jdkvendor.All {
+		for _, m := range jdkvendor.InstallableMajors {
+			out = append(out, jdkvendor.ID(v, m))
+		}
+	}
+	return out
+}()
 
 // jdkArchSuffixes are the architecture tokens a JDK directory can be named with.
 // Both sources use the same two: the Debian packages under /usr/lib/jvm are
 // temurin-<major>-jdk-<dpkg arch> and installJDK writes
-// temurin-<major>-jdk-<runtime.GOARCH> — amd64 / arm64 in both vocabularies.
+// <vendor>-<major>-jdk-<runtime.GOARCH> — amd64 / arm64 in both vocabularies.
 var jdkArchSuffixes = []string{"amd64", "arm64"}
 
 // foreignArchJDK reports whether a JDK directory name carries an architecture
@@ -76,11 +86,11 @@ func foreignArchJDK(name string) bool {
 	return false
 }
 
-// installedJavaMajors returns the sorted-ascending unique Temurin majors actually
+// installedJavaIDs returns the sorted unique JDK ids (internal/jdkvendor) actually
 // present across the search dirs AND runnable here — a wrong-architecture tree is
 // not "installed" for our purposes, because reporting it as present is what hides
 // the Console's Install button for a JDK that cannot run.
-func installedJavaMajors() []string {
+func installedJavaIDs() []string {
 	seen := map[string]bool{}
 	for _, dir := range jvmSearchDirs() {
 		entries, err := os.ReadDir(dir)
@@ -91,42 +101,49 @@ func installedJavaMajors() []string {
 			if foreignArchJDK(e.Name()) {
 				continue
 			}
-			if m := javaMajorRe.FindStringSubmatch(e.Name()); m != nil {
-				seen[m[1]] = true
+			if id := jdkvendor.IDOfTree(e.Name()); id != "" {
+				seen[id] = true
 			}
 		}
 	}
-	return sortMajors(seen)
+	return sortJDKIDs(seen)
 }
 
-// javaOptions merges installed majors with the installable set (deduped, sorted) —
+// javaOptions merges installed ids with the installable set (deduped, sorted) —
 // the list the Console offers for selection.
 func javaOptions() []string {
 	seen := map[string]bool{}
-	for _, v := range installedJavaMajors() {
+	for _, v := range installedJavaIDs() {
 		seen[v] = true
 	}
 	for _, v := range installableJava {
 		seen[v] = true
 	}
-	return sortMajors(seen)
+	return sortJDKIDs(seen)
 }
 
-func sortMajors(seen map[string]bool) []string {
+// sortJDKIDs orders ids by major, then by vendor in jdkvendor.All order, so the picker
+// lists "21" (Temurin) right before "corretto-21".
+func sortJDKIDs(seen map[string]bool) []string {
 	out := make([]string, 0, len(seen))
 	for v := range seen {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		a, _ := strconv.Atoi(out[i])
-		b, _ := strconv.Atoi(out[j])
-		return a < b
+		vi, mi, _ := jdkvendor.Parse(out[i])
+		vj, mj, _ := jdkvendor.Parse(out[j])
+		a, _ := strconv.Atoi(mi)
+		b, _ := strconv.Atoi(mj)
+		if a != b {
+			return a < b
+		}
+		return jdkvendor.Rank(vi) < jdkvendor.Rank(vj)
 	})
 	return out
 }
 
-// javaHomeFor resolves a major to a concrete JAVA_HOME across the search dirs, or ""
-// when that major is not installed anywhere FOR THIS ARCHITECTURE.
+// javaHomeFor resolves a JDK id to a concrete JAVA_HOME across the search dirs, or ""
+// when it is not installed anywhere FOR THIS ARCHITECTURE (or is not an id).
 //
 // Priority order decides, except that a candidate whose recorded version is newer
 // than the current pick replaces it. Without that, `install-jdk 21` lands the latest
@@ -135,34 +152,76 @@ func sortMajors(seen map[string]bool) []string {
 // the priority order, so a hand-placed tree never displaces a known one by accident.
 //
 // Do not go back to "glob, sort, take the first". Both sources name their
-// directories temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so on
+// directories <vendor>-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so on
 // an arm64 workspace holding a home that was filled on x86 the sorted-first entry
 // is always the unusable one (docs/log/70 §70.5.1).
 //
 // The entrypoint resolves its own JAVA_HOME through `workspace-agent java-home`, so
 // this is the one place the rule lives.
-func javaHomeFor(major string) string {
+func javaHomeFor(id string) string {
+	vendor, major, ok := jdkvendor.Parse(id)
+	if !ok {
+		return ""
+	}
 	best, bestVer := "", ""
 	for _, dir := range jvmSearchDirs() {
-		m, _ := filepath.Glob(filepath.Join(dir, "temurin-"+major+"-jdk*"))
+		m, _ := filepath.Glob(jdkvendor.TreeGlob(dir, vendor, major))
 		sort.Strings(m)
 		hit := pickArchJDK(m)
 		if hit == "" {
 			continue
 		}
-		v := jdkVersion(hit)
-		if best == "" || (bestVer != "" && v != "" && compareJDKVersions(v, bestVer) > 0) {
+		v := jdkOpsOf(vendor).version(hit)
+		if best == "" || (bestVer != "" && v != "" && jdkOpsOf(vendor).compare(v, bestVer) > 0) {
 			best, bestVer = hit, v
 		}
 	}
 	return best
 }
 
-// jdkVersion returns the SEMANTIC_VERSION a JDK tree records in its release file
-// ("21.0.11+10", "8.0.492+9"), or "" when the file or the key is missing.
+// jdkOps is the vendor-specific behaviour the resolver and installer need. Temurin's
+// half (release-file SEMANTIC_VERSION, Adoptium's assets API) stays in package main
+// because the resolver was built on it; Corretto's lives in internal/jdkvendor.
+type jdkOps struct {
+	url     func(major, arch string) string
+	latest  func(major string) (string, error)
+	version func(home string) string
+	compare func(a, b string) int
+}
+
+func jdkOpsOf(v *jdkvendor.Vendor) jdkOps {
+	if v == jdkvendor.Corretto {
+		return jdkOps{
+			url: jdkvendor.CorrettoURL,
+			latest: func(major string) (string, error) {
+				arch, err := adoptiumArch()
+				if err != nil {
+					return "", err
+				}
+				return jdkvendor.CorrettoLatest(major, arch)
+			},
+			version: jdkvendor.CorrettoTreeVersion,
+			compare: jdkvendor.CompareCorretto,
+		}
+	}
+	return jdkOps{url: jdkvendor.TemurinURL, latest: fetchTemurinLatest, version: semanticJDKVersion, compare: compareJDKVersions}
+}
+
+// jdkVersion returns the version a JDK tree records, in its vendor's own scheme, or ""
+// when it records none. The vendor comes from the tree's directory name; a name that
+// belongs to no vendor is read as a Temurin release file.
+func jdkVersion(home string) string {
+	if v, _, ok := jdkvendor.Parse(jdkvendor.IDOfTree(filepath.Base(home))); ok {
+		return jdkOpsOf(v).version(home)
+	}
+	return semanticJDKVersion(home)
+}
+
+// semanticJDKVersion returns the SEMANTIC_VERSION a Temurin tree records in its release
+// file ("21.0.11+10", "8.0.492+9"), or "" when the file or the key is missing.
 // SEMANTIC_VERSION rather than JAVA_VERSION because the latter is "1.8.0_492" on 8 and
 // carries no build number on any major.
-func jdkVersion(home string) string {
+func semanticJDKVersion(home string) string {
 	b, err := os.ReadFile(filepath.Join(home, "release"))
 	if err != nil {
 		return ""
@@ -239,7 +298,8 @@ func pickArchJDK(matches []string) string {
 	return neutral
 }
 
-// adoptiumArch maps the container's GOARCH to the Adoptium API arch token.
+// adoptiumArch maps the container's GOARCH to the Adoptium API arch token, which is
+// also the token corretto.aws file names use.
 func adoptiumArch() (string, error) {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -253,11 +313,11 @@ func adoptiumArch() (string, error) {
 
 var majorOnlyRe = regexp.MustCompile(`^\d+$`)
 
-// runInstallJDK is the `workspace-agent install-jdk <major>` subcommand — a thin CLI
+// runInstallJDK is the `workspace-agent install-jdk <id>` subcommand — a thin CLI
 // face over installJDK (which the Console's one-button install shares, jdk_install_http.go).
 func runInstallJDK(args []string) {
-	if len(args) < 1 || !majorOnlyRe.MatchString(args[0]) {
-		fmt.Fprintln(os.Stderr, "usage: workspace-agent install-jdk <major>   (e.g. 21)")
+	if _, _, ok := jdkvendor.Parse(firstArg(args)); !ok {
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent install-jdk <major>|corretto-<major>   (e.g. 21, corretto-21)")
 		os.Exit(2)
 	}
 	if _, err := installJDK(args[0]); err != nil {
@@ -266,14 +326,16 @@ func runInstallJDK(args []string) {
 	}
 }
 
-// installJDK downloads the latest GA Temurin JDK for the given major into the
-// per-user home dir as temurin-<major>-jdk-<goarch>, replacing any existing dir for
-// that major, and returns where it landed. Keyed by major only, so re-running just
-// updates that major to the latest patch — multiple patches of the same major never
-// accumulate. Progress goes to stderr, which is the agent log for the HTTP caller.
-func installJDK(major string) (string, error) {
-	if !majorOnlyRe.MatchString(major) {
-		return "", fmt.Errorf("invalid major %q", major)
+// installJDK downloads the latest GA JDK of an id's vendor and major into the per-user
+// home dir as <vendor>-<major>-jdk-<goarch>, replacing any existing dir for that id,
+// and returns where it landed. Keyed by vendor and major only, so re-running just
+// updates it to the latest patch — multiple patches of the same major never
+// accumulate, while Temurin 21 and Corretto 21 live side by side. Progress goes to
+// stderr, which is the agent log for the HTTP caller.
+func installJDK(id string) (string, error) {
+	vendor, major, ok := jdkvendor.Parse(id)
+	if !ok {
+		return "", fmt.Errorf("invalid JDK %q", id)
 	}
 	aarch, err := adoptiumArch()
 	if err != nil {
@@ -296,14 +358,14 @@ func installJDK(major string) (string, error) {
 	tgzPath := tgz.Name()
 	tgz.Close()
 	defer os.Remove(tgzPath)
-	staging, err := os.MkdirTemp(root, ".install-"+major+"-")
+	staging, err := os.MkdirTemp(root, ".install-"+id+"-")
 	if err != nil {
 		return "", err
 	}
 	defer os.RemoveAll(staging)
 
-	url := fmt.Sprintf("https://api.adoptium.net/v3/binary/latest/%s/ga/linux/%s/jdk/hotspot/normal/eclipse", major, aarch)
-	fmt.Fprintf(os.Stderr, "[install-jdk] downloading Temurin %s (%s) ...\n", major, aarch)
+	url := jdkOpsOf(vendor).url(major, aarch)
+	fmt.Fprintf(os.Stderr, "[install-jdk] downloading %s (%s) ...\n", jdkvendor.Label(id), aarch)
 	// curl follows the API redirect to the release tarball (--proto-redir =https refuses a
 	// downgrade redirect to http). tar --strip-components=1
 	// drops the jdk-<ver>/ top-level dir so bin/, lib/ land directly under staging.
@@ -317,7 +379,7 @@ func installJDK(major string) (string, error) {
 		return "", fmt.Errorf("extracted tree has no bin/java")
 	}
 
-	dest := filepath.Join(root, "temurin-"+major+"-jdk-"+runtime.GOARCH)
+	dest := filepath.Join(root, vendor.Dir+"-"+major+"-jdk-"+runtime.GOARCH)
 	if err := os.RemoveAll(dest); err != nil {
 		return "", err
 	}
@@ -329,13 +391,13 @@ func installJDK(major string) (string, error) {
 	return dest, nil
 }
 
-// runJavaHome is `workspace-agent java-home <major>`: print the JAVA_HOME the major
+// runJavaHome is `workspace-agent java-home <id>`: print the JAVA_HOME the id
 // resolves to (javaHomeFor), exit 1 when it is not installed for this architecture.
 // The entrypoint uses it so the container-start JAVA_HOME and the per-session one
 // cannot disagree.
 func runJavaHome(args []string) {
-	if len(args) < 1 || !majorOnlyRe.MatchString(args[0]) {
-		fmt.Fprintln(os.Stderr, "usage: workspace-agent java-home <major>   (e.g. 21)")
+	if _, _, ok := jdkvendor.Parse(firstArg(args)); !ok {
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent java-home <major>|corretto-<major>   (e.g. 21, corretto-21)")
 		os.Exit(2)
 	}
 	jh := javaHomeFor(args[0])
@@ -349,4 +411,11 @@ func runCmd(name string, args ...string) error {
 	c := exec.Command(name, args...)
 	c.Stderr = os.Stderr
 	return c.Run()
+}
+
+func firstArg(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }

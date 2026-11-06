@@ -630,7 +630,10 @@ Timezone, Node.js / Java / Go versions, the table of effective tool versions (a 
 skipped because the home disk was full shows "upgrade skipped: home disk full, old version in use" and keeps working at the
 installed version), **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
-The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`).
+The Java picker offers both Eclipse Temurin and Amazon Corretto for each major ("Temurin 21",
+"Corretto 21"); the two can be installed side by side.
+The Java and Node.js rows show the exact version in use (for example `21.0.11+10`, `v22.23.4`;
+Corretto shows its own numbering, such as `21.0.13.0.11`).
 When a newer patch of that version is out, an **Update to …** button downloads it into your home volume;
 sessions started afterwards use it, with no Stop → Start. For a Java or Node.js version that is
 not installed yet, the button names the version it will install (for example

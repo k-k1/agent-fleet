@@ -13,9 +13,10 @@ import { pinDrift } from "../../../lib/pinDrift.ts";
 import { relTime } from "../../../lib/intl.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
 import { watcherHealth, type CLIRelease } from "../cliRelease.ts";
+import { jdkLabel, jdkVendor } from "./jdkLabel.ts";
 
 // EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
-// go, and java (a pre-baked Temurin JDK), plus the read-only bundled-tool versions and
+// go, and java (a Temurin or Corretto JDK), plus the read-only bundled-tool versions and
 // the agent-CLI self-update opt-in. Reads/writes via the Agent, so the workspace must
 // be running. Changes apply to sessions/shells started AFTER the change (the Agent
 // injects the selection at launch); already-running ones and the agent process itself
@@ -485,7 +486,7 @@ function JavaRow({
     // done or failed.
     if (res.major && res.major !== selected) {
       setInstalling("");
-      toast(tr("env.java_install_busy", { v: res.major }));
+      toast(tr("env.java_install_busy", { v: jdkLabel(res.major) }));
       return;
     }
     // An API failure carries {error: {code, message}}; the installer's own failure is
@@ -540,7 +541,7 @@ function JavaRow({
               <option value="">{tr("env.unselected")}</option>
               {javaOpts.map((v) => (
                 <option key={v} value={v}>
-                  {installed.includes(v) ? `Temurin ${v}` : tr("env.java_opt_absent", { v })}
+                  {installed.includes(v) ? jdkLabel(v) : tr("env.java_opt_absent", { v: jdkLabel(v) })}
                 </option>
               ))}
             </select>
@@ -562,9 +563,11 @@ function JavaRow({
           </span>
         )}
       </Row>
-      {needsInstall && <p className="muted ds-note">{tr("env.java_install_note", { v: selected })}</p>}
+      {needsInstall && <p className="muted ds-note">{tr("env.java_install_note", { v: jdkLabel(selected) })}</p>}
       {!needsInstall && newerPatch && (
-        <p className="muted ds-note">{tr("env.java_update_note", { cur: current, v: newerPatch })}</p>
+        <p className="muted ds-note">
+          {tr("env.java_update_note", { name: jdkVendor(selected), cur: current, v: newerPatch })}
+        </p>
       )}
     </>
   );
@@ -748,7 +751,7 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
   if (!running || !list || list.java.length + list.node.length === 0) return null;
 
   const remove = async (kind: "jdk" | "node", e: ToolchainInstall) => {
-    const name = kind === "jdk" ? `Temurin ${e.major}` : `Node.js v${e.major}`;
+    const name = kind === "jdk" ? jdkLabel(e.major) : `Node.js v${e.major}`;
     const ok = await askConfirm({
       title: tr("env.uninstall_title", { name }),
       body: tr(kind === "jdk" ? "env.uninstall_body_jdk" : "env.uninstall_body_node", {
@@ -781,7 +784,7 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
 
   const row = (kind: "jdk" | "node", e: ToolchainInstall) => (
     <tr key={kind + e.major + e.source}>
-      <td>{kind === "jdk" ? `Temurin ${e.major}` : `Node.js v${e.major}`}</td>
+      <td>{kind === "jdk" ? jdkLabel(e.major) : `Node.js v${e.major}`}</td>
       <td>
         {e.version}
         {e.in_use && <span className="muted"> {tr("env.installed_in_use")}</span>}
