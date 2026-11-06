@@ -611,11 +611,14 @@ The map a security assessment starts from. It names where to look, not what was 
 **Trust boundaries to walk**
 
 - Browser → CP: §7.3, §7.3.1, §7.3.2.
-- CP routes exempt from the session gate: each one needs its own authentication (§7.3).
+- CP routes exempt from the session gate (§7.3): intentionally public ones (login, health
+  checks, public assets) are exceptions; every other exempt route must have an
+  authentication that fits its purpose.
 - CP → Agent, and the reverse: §7.5, §7.5.1.
-- Code running in a workspace → Agent and CP (§7.1, §7.4).
-- Workspace ↔ workspace and tenant ↔ tenant: §7.2, §7.2.1.
-- Previews ↔ Console: §7.2.
+- Code running in a workspace → Agent and CP: §7.1, §7.4, §7.5 (the Agent token does not
+  defend against code in the same workspace).
+- Workspace ↔ workspace and tenant ↔ tenant: §7.2. The engine boundary is §7.2.1.
+- Previews ↔ Console: §7.5.1 (same-origin path-form preview), §7.2.
 - CP → cloud: §7.1, §7.6.
 
 **Attacker positions**
