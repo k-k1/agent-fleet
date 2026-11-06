@@ -1233,8 +1233,9 @@ func opencodeErrText(name, msg, ref string) string {
 // D-5); the isolated home's permissions.allow re-opens exactly the chat contract:
 // the knowledge dirs, URL reads, and `mcp(<server>/*)` for each granted server (rule
 // syntax reverse-engineered from the binary and live-verified 2026-07-20), and
-// permissions.deny hard-denies commands and writes (agyChatDenyRules —
-// on agy ≥1.2 a soft-deny kills the whole turn). No --dangerously-skip-permissions.
+// permissions.deny hard-denies commands, writes and reads outside the knowledge
+// dirs (agyChatDenyRules, agyChatReadDenyRules — on agy ≥1.2 a soft-deny kills the
+// whole turn). No --dangerously-skip-permissions.
 // No usage events, so the context gauge stays empty (Context = nil).
 type agyChat struct{}
 
@@ -1359,7 +1360,14 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 		}
 	}
 	reconcileChatCreds(agy.TokenPath(), filepath.Join(cliDir, "antigravity-oauth-token"))
-	perms := map[string]any{"allow": agyChatAllowRules(c), "deny": agyChatDenyRules}
+	// agy's own state dir stays outside the fence: it spills a large MCP result to
+	// brain/<conv>/.system_generated/steps/<n>/output.txt and has the model read it
+	// (measured — fencing it lost the af tool results). The token inside it is fenced
+	// by name; wd is the private, empty cwd.
+	token := filepath.Join(cliDir, "antigravity-oauth-token")
+	deny := append(slices.Clone(agyChatDenyRules), "read_file("+token+")")
+	deny = append(deny, agyChatReadDenyRules(append(c.knowledgeDirs(), cliDir, wd))...)
+	perms := map[string]any{"allow": agyChatAllowRules(c), "deny": deny}
 	settings := map[string]any{
 		"enableTelemetry":   false,
 		"trustedWorkspaces": []string{wd},
@@ -1387,7 +1395,7 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 // chatToolLimits), and `mcp(<server>/*)` per granted server. Rule syntax verified
 // live (mcp(af) and bare tool names do NOT match — agy drops them from settings.json;
 // docs/log/32 §headlessChat). Anything else a turn reaches for is either hard-denied
-// (agyChatDenyRules) or, outside the knowledge dirs, soft-denied by print mode.
+// (agyChatDenyRules, agyChatReadDenyRules) or soft-denied by print mode.
 func agyChatAllowRules(c *ChatConversation) []string {
 	var allow []string
 	for _, d := range c.knowledgeDirs() {
@@ -1413,6 +1421,78 @@ func agyChatAllowRules(c *ChatConversation) []string {
 // (measured: /tmp and $HOME). Targets: command takes `*`, write_file a directory
 // prefix.
 var agyChatDenyRules = []string{"command(*)", "write_file(/)"}
+
+// agyChatReadDenyRules hard-denies reads everywhere except the open dirs (the
+// knowledge dirs, which the allow list grants, plus agy's own state the caller
+// leaves to agy's built-in policy). With
+// commands denied the model cannot list or grep, so it guesses paths and wanders
+// outside them (measured: /var/lib/af/claude/CLAUDE.md), and an unmatched read is a
+// soft-deny that ends the turn like a command does. `read_file(/)` cannot express
+// "everything else": deny beats allow, so it denies the knowledge dirs too (measured).
+// Instead every existing entry beside the path to an open dir is denied, at each
+// level from / down; a rule covers its subtree and matches whole path components
+// (measured: denying `…/share/agent` leaves `…/share/agent-fleet/docs` readable).
+// Entries that do not exist yet need no rule: a missing path fails the stat before
+// the permission check. Built per turn, so the listing is current.
+func agyChatReadDenyRules(open []string) []string {
+	clean := make([]string, 0, len(open))
+	for _, d := range open {
+		if filepath.IsAbs(d) {
+			clean = append(clean, filepath.Clean(d))
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	within := func(p, dir string) bool {
+		return p == dir || dir == "/" || strings.HasPrefix(p, dir+"/")
+	}
+	// onPath: p is an open dir, or an ancestor of one.
+	onPath := func(p string) bool {
+		for _, d := range clean {
+			if within(d, p) {
+				return true
+			}
+		}
+		return false
+	}
+	underOpen := func(p string) bool {
+		for _, d := range clean {
+			if within(p, d) {
+				return true
+			}
+		}
+		return false
+	}
+	ancestors := map[string]bool{}
+	for _, d := range clean {
+		for a := filepath.Dir(d); ; a = filepath.Dir(a) {
+			if !underOpen(a) {
+				ancestors[a] = true
+			}
+			if a == "/" {
+				break
+			}
+		}
+	}
+	var deny []string
+	for _, a := range slices.Sorted(maps.Keys(ancestors)) {
+		entries, err := os.ReadDir(a)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			p := filepath.Join(a, e.Name())
+			// A name carrying rule syntax would mis-parse; leaving it out keeps the
+			// pre-existing soft-deny for that one entry rather than a broken rule.
+			if onPath(p) || strings.ContainsAny(p, "()*?[]{},") {
+				continue
+			}
+			deny = append(deny, "read_file("+p+")")
+		}
+	}
+	return deny
+}
 
 // agyChatExe resolves the binary serving mcp-stdio/mcp-run in agy's mcp_config —
 // indirected so the live test can point it at the installed workspace-agent

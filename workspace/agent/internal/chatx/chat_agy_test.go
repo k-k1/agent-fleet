@@ -136,7 +136,13 @@ func TestAgyChatServersCarryWriteConv(t *testing.T) {
 
 func TestChatAgyHomeWritesIsolatedConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	c := &ChatConversation{ID: "00000000-0000-4000-8000-000000000002", Tools: assistants.ToolsAFRead}
+	know, secret := filepath.Join(homeDir(), "kb"), filepath.Join(homeDir(), "secret")
+	for _, d := range []string{know, secret} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &ChatConversation{ID: "00000000-0000-4000-8000-000000000002", Tools: assistants.ToolsAFRead, Knowledge: []string{know}}
 	home, wd, err := chatAgyHome(c)
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +176,27 @@ func TestChatAgyHomeWritesIsolatedConfig(t *testing.T) {
 	}
 	if !containsString(settings.Permissions.Deny, "command(*)") {
 		t.Fatalf("deny = %v, command(*) missing", settings.Permissions.Deny)
+	}
+	// Reads outside the knowledge dir are hard-denied, the knowledge dir itself is not.
+	if !containsString(settings.Permissions.Deny, "read_file("+secret+")") || containsString(settings.Permissions.Deny, "read_file("+know+")") {
+		t.Fatalf("deny = %v, want read_file(%s) and not read_file(%s)", settings.Permissions.Deny, secret, know)
+	}
+	// agy's own state dir and the cwd stay unfenced (agy has the model read spilled MCP
+	// results from there); the token inside is fenced by name.
+	cliDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	for _, r := range settings.Permissions.Deny {
+		p := strings.TrimSuffix(strings.TrimPrefix(r, "read_file("), ")")
+		for _, open := range []string{cliDir, wd} {
+			if open == p || strings.HasPrefix(open, p+"/") {
+				t.Fatalf("deny rule %q fences %q", r, open)
+			}
+		}
+	}
+	if !containsString(settings.Permissions.Deny, "read_file("+filepath.Join(cliDir, "antigravity-oauth-token")+")") {
+		t.Fatalf("deny = %v, the OAuth token is not fenced", settings.Permissions.Deny)
+	}
+	if !containsString(settings.Permissions.Allow, "read_file("+know+")") {
+		t.Fatalf("allow = %v, read_file(%s) missing", settings.Permissions.Allow, know)
 	}
 	var mcp struct {
 		Servers map[string]json.RawMessage `json:"mcpServers"`
@@ -229,5 +256,58 @@ func TestAgyChatSendLive(t *testing.T) {
 	}
 	if c.AgyConversationID != uuid {
 		t.Fatalf("conversation id changed on resume: %q → %q", uuid, c.AgyConversationID)
+	}
+}
+
+// Every existing entry off the path to an allowed dir must be hard-denied (a soft-deny
+// ends the turn), while the allowed dirs, their contents and their ancestors stay
+// undenied (deny beats allow in agy).
+func TestAgyChatReadDenyRulesFenceTheKnowledgeDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"a/know", "a/know/sub", "a/knowx", "a/other", "b", "c/inner/kb", "c/inner/side", "odd(x)"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "a", "file.md"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	know := filepath.Join(root, "a", "know")
+	kb := filepath.Join(root, "c", "inner", "kb")
+	deny := agyChatReadDenyRules([]string{know, kb + "/", "relative/ignored"})
+
+	for _, want := range []string{"a/knowx", "a/other", "a/file.md", "b", "c/inner/side"} {
+		if r := "read_file(" + filepath.Join(root, want) + ")"; !containsString(deny, r) {
+			t.Errorf("deny = %q, missing %q", deny, r)
+		}
+	}
+	for _, r := range deny {
+		p := strings.TrimSuffix(strings.TrimPrefix(r, "read_file("), ")")
+		for _, keep := range []string{know, kb} {
+			if p == keep || strings.HasPrefix(keep, p+"/") || strings.HasPrefix(p, keep+"/") {
+				t.Errorf("deny rule %q covers allowed dir %q or its ancestor", r, keep)
+			}
+		}
+		if strings.Contains(p, "odd(") {
+			t.Errorf("deny rule %q carries rule syntax in its path", r)
+		}
+	}
+	// The fence reaches all the way up: a sibling of the temp root is denied too.
+	if parent := filepath.Dir(root); parent != "/" {
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if p := filepath.Join(parent, e.Name()); p != root && !strings.ContainsAny(p, "()*?[]{},") && !containsString(deny, "read_file("+p+")") {
+				t.Errorf("deny = %q, missing sibling of the root %q", deny, p)
+			}
+		}
+	}
+	if got := agyChatReadDenyRules(nil); got != nil {
+		t.Errorf("no knowledge dirs: deny = %q, want none", got)
+	}
+	if got := agyChatReadDenyRules([]string{"/"}); got != nil {
+		t.Errorf("allowed / : deny = %q, want none", got)
 	}
 }
