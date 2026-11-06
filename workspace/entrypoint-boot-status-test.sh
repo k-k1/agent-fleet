@@ -19,7 +19,7 @@ for needle in 'AGY_NEED' 'CUR_NEED' 'RTK_NEED' 'NPM_BOOT'; do
 done
 
 cat >"$T/versions.json" <<'J'
-{"claude":"1.0.0","rtk":"1.2.3","agy":"9.9.9","agy_build":"b1","agy_sha256":"x","cursor":"2026.1.1-abc","cursor_sha256":"y"}
+{"claude":"1.0.0","codex":"0.1.0","rtk":"1.2.3","agy":"9.9.9","agy_build":"b1","agy_sha256":"x","cursor":"2026.1.1-abc","cursor_sha256":"y"}
 J
 
 cat >"$T/bin/dpkg" <<'S'
@@ -56,13 +56,26 @@ if [ -n "${STUB_INSTALL_FAIL:-}" ]; then
 fi
 exec /usr/bin/install "$@"
 S
-# npm logs its calls and installs a claude stub; STUB_NPM_FAIL fails like a full disk would.
+# npm logs its calls and installs a stub for each claude / codex package it is given;
+# STUB_NPM_FAIL fails like a full disk would. STUB_NPM_BREAK leaves codex without a working
+# binary while still exiting 0, the way a skipped optional dependency does: "once" breaks the
+# first codex install only, "always" every one.
 cat >"$T/bin/npm" <<'S'
 #!/bin/sh
-case "$*" in *"ls -g"*) echo '{}'; exit 0 ;; esac
+case "$*" in *"ls -g"*) echo '{}'; exit 0 ;; *"view "*) echo 9.9.9; exit 0 ;; esac
 echo "$*" >>"$STUB_DIR/npm.calls"
 if [ -n "${STUB_NPM_FAIL:-}" ]; then echo "npm error ENOSPC: no space left on device, write" >&2; exit 1; fi
-printf '#!/bin/sh\necho 1.0.0\n' >"$HOME/.local/bin/claude"; chmod +x "$HOME/.local/bin/claude"
+for a in "$@"; do
+  case "$a" in @anthropic-ai/claude-code@*) b=claude ;; @openai/codex@*) b=codex ;; *) continue ;; esac
+  run='echo 1.0.0'
+  if [ "$b" = codex ]; then
+    case "${STUB_NPM_BREAK:-}" in
+      always) run='exit 1' ;;
+      once) [ -e "$STUB_DIR/broke" ] || { run='exit 1'; : >"$STUB_DIR/broke"; } ;;
+    esac
+  fi
+  printf '#!/bin/sh\n%s\n' "$run" >"$HOME/.local/bin/$b"; chmod +x "$HOME/.local/bin/$b"
+done
 S
 cat >"$T/bin/df" <<'S'
 #!/bin/sh
@@ -84,7 +97,7 @@ run_block() {
     BI_DIR="${BI_DIR_OVERRIDE:-$T/bidir}" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "AF_BOOT_INSTALL_STATUS=${AF_BOOT_INSTALL_STATUS-unset}"' _ "$BLOCK" >"$T/out" 2>&1
 }
-reset() { rm -rf "$T/bidir" "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent,claude} "$T/home/.local/share" "$T/npm.calls" "$T/agent.calls" "$T/curl.calls"; }
+reset() { rm -rf "$T/bidir" "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent,claude,codex} "$T/home/.local/share" "$T/npm.calls" "$T/agent.calls" "$T/curl.calls" "$T/broke"; }
 has() { grep -q -- "$1" "$T/out"; }
 st() { grep -P "^$1\t" "$T/bidir/install.tsv" 2>/dev/null | tail -1 | tr '\t' ' '; } # st <tool> → "tool status reason"
 
@@ -209,6 +222,36 @@ BI_DIR_OVERRIDE="$T/linkdir" run_block
 [ -z "$(ls -A "$T/real")" ] || fail "a symlinked status directory was used"
 [ "$(stat -c %a "$T/real")" = 755 ] || fail "a refused symlinked directory had its target chmod'ed"
 has 'boot-install agy' || fail "a rejected status directory broke the install"
+
+# 6. npm exits 0 but leaves a CLI that cannot run (a skipped optional dependency). It is
+# reinstalled at the pin and recorded failed only when that does not help.
+ON="AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1"
+reset; run_block STUB_NPM_BREAK=once
+"$T/home/.local/bin/codex" >/dev/null || fail "boot-install, codex broken once: not repaired"
+grep -q '@openai/codex@0.1.0' "$T/npm.calls" && [ "$(grep -c codex "$T/npm.calls")" = 2 ] || fail "boot-install, codex broken once: no reinstall at the pin: $(cat "$T/npm.calls")"
+[ "$(st codex)" = "codex ok " ] || fail "boot-install, codex repaired: status is '$(st codex)'"
+reset; run_block
+rm -f "$T/npm.calls"
+# shellcheck disable=SC2086
+run_block STUB_NPM_BREAK=once $ON
+grep -q '@openai/codex@latest' "$T/npm.calls" || fail "self-update: @latest was not installed: $(cat "$T/npm.calls")"
+grep -q '@openai/codex@0.1.0' "$T/npm.calls" || fail "self-update, codex broken: no reinstall at the pin: $(cat "$T/npm.calls")"
+"$T/home/.local/bin/codex" >/dev/null || fail "self-update, codex broken once: not repaired"
+has 'codex repaired at the pin 0.1.0' || fail "self-update, codex repaired: not logged"
+st codex | grep -q failed && fail "self-update, codex repaired: recorded failed"
+"$T/home/.local/bin/claude" >/dev/null || fail "self-update: a healthy CLI was broken"
+grep -q '@anthropic-ai/claude-code@1.0.0' "$T/npm.calls" && fail "self-update: a healthy CLI was reinstalled at the pin"
+reset; run_block
+# shellcheck disable=SC2086
+run_block STUB_NPM_BREAK=always $ON
+[ "$(st codex)" = "codex failed other" ] || fail "self-update, codex stays broken: status is '$(st codex)'"
+has 'WARN: codex does not run' || fail "self-update, codex stays broken: no WARN"
+# The self-update's npm errors reach the log instead of /dev/null.
+reset; run_block
+# shellcheck disable=SC2086
+run_block STUB_NPM_FAIL=1 $ON
+has 'npm error ENOSPC' || fail "self-update failure: npm's error was discarded"
+has 'WARN: agent CLI update failed' || fail "self-update failure: no WARN"
 
 # 5. The prune runs before the installs, once.
 reset; run_block
