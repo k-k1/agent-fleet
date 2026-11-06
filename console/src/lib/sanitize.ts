@@ -136,7 +136,11 @@ const URL_STRING_FUNCS = new Set(["image-set", "-webkit-image-set", "src", "imag
  * (escapes, quoted parentheses, comments) so spelling tricks cannot hide a URL; a url() whose
  * token never terminates is dropped too.
  */
-export function scrubCssUrls(css: string): string {
+export function scrubCssUrls(input: string): string {
+  // CSS Syntax input preprocessing: CR, CRLF and FF are newlines (so `\` + FF is a line
+  // continuation inside a string) and NUL is U+FFFD. Done up front so the escape handling
+  // below sees what the browser sees; the returned text is the normalized one.
+  const css = input.replace(/\r\n?|\f/g, "\n").replace(/\0/g, "\ufffd");
   let out = "";
   let i = 0;
   let last = 0; // start of the text not yet copied to `out`
@@ -252,7 +256,7 @@ export function stripInternalMedia(root: ParentNode): void {
 // Mermaid fetches whatever resource a diagram names (image nodes, <img> in labels, CSS in
 // init directives) while it renders, before any post-pass sees the SVG. Diagram source that
 // can name a resource is therefore not rendered at all; plain diagrams never need these.
-const MERMAID_RESOURCE = /<\s*\/?\s*(?:img|image|video|audio|source|svg|link|object|embed|iframe|style)\b|\bimg\s*:|\bicon\s*:|url\s*\(|@import|\bsrc\s*=|\bhref\b|xlink|\\|%%\s*\{|\bclick\b/i;
+const MERMAID_RESOURCE = /<\s*\/?\s*(?:img|image|video|audio|source|svg|link|object|embed|iframe|style)\b|@\s*\{|\b(?:img|icon)\b["']?\s*:|url\s*\(|@import|\bsrc\s*=|\bhref\b|xlink|\\|%%\s*\{|\bclick\b/i;
 
 export function mermaidNamesResource(source: string): boolean {
   return MERMAID_RESOURCE.test(source);

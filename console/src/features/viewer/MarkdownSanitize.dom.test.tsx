@@ -139,6 +139,9 @@ describe("media from the Console's own paths", () => {
   it("does not render mermaid source that can name a resource, and still renders plain diagrams", async () => {
     mermaidRender.mockClear();
     await render("```mermaid\nflowchart LR\n A@{ img: \"/api/x\", label: \"a\" }\n```");
+    await render("```mermaid\nflowchart LR\n A@{ \"img\": \"/api/x\" }\n```");
+    await render("```mermaid\nflowchart LR\n A@{ 'img' : '/api/x' }\n```");
+    await render("```mermaid\nflowchart LR\n A@{ \"icon\": \"/api/x\" }\n```");
     await render("```mermaid\nflowchart LR\n A[<img src='/oauth2/logout'>]\n```");
     await new Promise((r) => setTimeout(r, 50));
     expect(mermaidRender).not.toHaveBeenCalled();
@@ -156,10 +159,14 @@ describe("media from the Console's own paths", () => {
       "a{background:image-set(\"/oauth2/logout\" 1x)}",
       "@import \"/login\";",
       "a{background:url( '/api/x' )}",
+      "a{background:url('/a\\\fpi/x')}",
+      "a{background:image-set('/oauth\\\f2/logout' 1x)}",
+      "a{background:url('/a\\\r\npi/x')}",
       "a{background:/* c */url(/api/x)}",
     ];
     for (const css of bad) {
       expect(scrubCssUrls(css), css).not.toMatch(/api|oauth2|login|\\61|U\\52L/i);
+      expect(scrubCssUrls(css), css).toMatch(/url\(\)|@import|^$/); // the URL was replaced, not merely re-spelled
     }
     const ok = "a{background:url(/static/x.png)} .b\\:c{color:red;content:\"url(/api/x)\"}";
     expect(scrubCssUrls(ok)).toBe(ok);
