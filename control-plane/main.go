@@ -842,7 +842,7 @@ func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 // writeGatePolicy wires internal/writegate to this package's registry and origin rule. Exemptions
 // come from the authGate registry (routes.go) so a newly exempted route is never also CSRF-checked
 // by a stale copy of the list, and no cookie-authenticated route can be exempt by omission.
-var writeGatePolicy = writegate.Policy{Exempt: isAuthExempt, SameOrigin: checkWSOrigin}
+var writeGatePolicy = writegate.Policy{Exempt: isAuthExempt, SameOrigin: checkWSOrigin, Multipart: multipartUploadRoute}
 
 // browserWriteGate refuses cross-origin cookie-authenticated writes (see internal/writegate).
 func browserWriteGate(next http.Handler) http.Handler {
@@ -853,4 +853,37 @@ func browserWriteGate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// multipartUploadRoutes are the cookie-authenticated routes that really read multipart/form-data,
+// with {} standing for one path segment: the Console's file upload, pasted images and the memory
+// bundle import. Every other /api/ write is JSON. A new upload route has to be added here, or it
+// is refused with 415.
+var multipartUploadRoutes = []string{
+	"POST /api/fs/upload",
+	"POST /api/sessions/{}/paste-image",
+	"POST /api/chat/conversations/{}/paste-image",
+	"POST /api/memos/paste-image",
+	"POST /api/agents/memory/import",
+}
+
+func multipartUploadRoute(r *http.Request) bool {
+	got := strings.Split(r.Method+" "+r.URL.Path, "/")
+	for _, pat := range multipartUploadRoutes {
+		want := strings.Split(pat, "/")
+		if len(want) != len(got) {
+			continue
+		}
+		ok := true
+		for i := range want {
+			if want[i] != "{}" && want[i] != got[i] || want[i] == "{}" && got[i] == "" {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return memberOriginHashedRoute(r)
 }

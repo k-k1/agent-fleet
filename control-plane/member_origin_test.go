@@ -647,3 +647,24 @@ func TestBrowserWriteGateExemptionsComeFromTheRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestMultipartUploadRoutes(t *testing.T) {
+	yes := []string{"/api/fs/upload", "/api/sessions/s1/paste-image", "/api/chat/conversations/c1/paste-image", "/api/memos/paste-image", "/api/agents/memory/import"}
+	for _, p := range yes {
+		r := httptest.NewRequest("POST", "https://console.test"+p, strings.NewReader("x"))
+		r.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+		if e := writeGatePolicy.Check(r); e != nil {
+			t.Errorf("upload %s refused: %v", p, e)
+		}
+	}
+	no := []string{"/api/sessions", "/api/memos", "/api/schedules/1", "/api/sessions//paste-image", "/api/fs/upload/x"}
+	for _, p := range no {
+		for _, m := range []string{"POST", "PATCH", "PUT"} {
+			r := httptest.NewRequest(m, "https://console.test"+p, strings.NewReader("x"))
+			r.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+			if e := writeGatePolicy.Check(r); e == nil || e.Status != http.StatusUnsupportedMediaType {
+				t.Errorf("%s %s: multipart not refused: %v", m, p, e)
+			}
+		}
+	}
+}

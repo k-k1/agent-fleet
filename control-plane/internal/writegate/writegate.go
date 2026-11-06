@@ -12,8 +12,8 @@
 // A caller that sends neither header is not a browser. Behind AUTH=proxy the gateway has to keep
 // Host (or PUBLIC_BASE_URL has to name the public host), as the WebSocket upgrade already requires.
 //
-// Body format: under /api/ a request that carries a body must be application/json or
-// multipart/form-data (the Console's uploads). Body-less POST/DELETE carry no Content-Type and
+// Body format: under /api/ a request that carries a body must be application/json, except
+// the explicitly listed upload routes, which take multipart/form-data. Body-less POST/DELETE carry no Content-Type and
 // pass. Handlers decode JSON without looking at Content-Type, so this is what stops a text/plain
 // no-preflight body from being parsed as JSON. Routes outside /api/ (the dev-IdP and MCP consent
 // forms, the user's own preview app) keep their own body formats.
@@ -39,6 +39,9 @@ type Policy struct {
 	Exempt func(path string) bool
 	// SameOrigin reports whether the request's Origin header names the Console's own host.
 	SameOrigin func(r *http.Request) bool
+	// Multipart reports a method+path that really reads multipart/form-data (an upload). Every
+	// other /api/ route that carries a body takes application/json only.
+	Multipart func(r *http.Request) bool
 }
 
 // Check returns nil when the request may proceed.
@@ -59,8 +62,8 @@ func (p Policy) Check(r *http.Request) *Rejection {
 	// An unknown length (chunked) counts as a body.
 	if strings.HasPrefix(r.URL.Path, "/api/") && r.ContentLength != 0 {
 		mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if err != nil || (mt != "application/json" && mt != "multipart/form-data") {
-			return &Rejection{http.StatusUnsupportedMediaType, "unsupported_media_type", "writes take application/json (or multipart/form-data for uploads)"}
+		if err != nil || !(mt == "application/json" || (mt == "multipart/form-data" && p.Multipart != nil && p.Multipart(r))) {
+			return &Rejection{http.StatusUnsupportedMediaType, "unsupported_media_type", "writes take application/json"}
 		}
 	}
 	return nil

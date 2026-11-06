@@ -18,6 +18,7 @@ func TestPolicyCheck(t *testing.T) {
 			}
 			return false
 		},
+		Multipart: func(r *http.Request) bool { return r.URL.Path == "/api/fs/upload" },
 		SameOrigin: func(r *http.Request) bool {
 			u, err := url.Parse(r.Header.Get("Origin"))
 			return err == nil && u.Host == r.Host
@@ -54,6 +55,7 @@ func TestPolicyCheck(t *testing.T) {
 		{"console JSON", "POST", "/api/sessions", `{}`, hdr{"Origin": "https://console.test", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/json"}, 204},
 		{"JSON with charset", "PUT", "/api/fs/file", `{}`, hdr{"Origin": "https://console.test", "Content-Type": "application/json; charset=utf-8"}, 204},
 		{"multipart upload", "POST", "/api/fs/upload", `x`, hdr{"Origin": "https://console.test", "Sec-Fetch-Site": "same-origin", "Content-Type": "multipart/form-data; boundary=x"}, 204},
+		{"multipart on a JSON route", "POST", "/api/sessions", `x`, hdr{"Content-Type": "multipart/form-data; boundary=x"}, 415},
 		{"bodyless POST", "POST", "/api/fs/mkdir", "", hdr{"Origin": "https://console.test", "Sec-Fetch-Site": "same-origin"}, 204},
 		{"bodyless DELETE", "DELETE", "/api/sessions/x", "", hdr{"Origin": "https://console.test", "Sec-Fetch-Site": "same-origin"}, 204},
 		{"user-initiated none", "POST", "/api/sessions", `{}`, hdr{"Sec-Fetch-Site": "none", "Content-Type": "application/json"}, 204},
