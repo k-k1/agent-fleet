@@ -273,7 +273,7 @@ func ensureFolderTrusted(dir string) {
 // setting there hid a codex that could not start at all (its npm platform binary was missing).
 // Only a codex still running with nothing to show points at the account setting.
 func deviceStartNoURL(exited bool, output string) string {
-	detail := lastLines(output, 5)
+	detail := outputTail(output, 5)
 	if exited {
 		if detail == "" {
 			return "codex exited without printing a device-auth URL"
@@ -287,8 +287,8 @@ func deviceStartNoURL(exited bool, output string) string {
 	return msg
 }
 
-// lastLines returns the last n non-empty lines of s, in order, joined by " / ".
-func lastLines(s string, n int) string {
+// outputTail returns the last n non-empty lines of s, in order, joined by " / ".
+func outputTail(s string, n int) string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
 		if l = strings.TrimSpace(l); l != "" {

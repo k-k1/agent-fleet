@@ -34,9 +34,9 @@ func TestDeviceStartNoURLRunningKeepsAccountHint(t *testing.T) {
 	}
 }
 
-func TestLastLinesKeepsOrder(t *testing.T) {
-	if got := lastLines("a\n\nb\n c \nd\n", 3); got != "b / c / d" {
-		t.Fatalf("lastLines = %q", got)
+func TestOutputTailKeepsOrder(t *testing.T) {
+	if got := outputTail("a\n\nb\n c \nd\n", 3); got != "b / c / d" {
+		t.Fatalf("outputTail = %q", got)
 	}
 }
 
