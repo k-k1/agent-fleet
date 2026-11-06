@@ -1362,11 +1362,14 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 	reconcileChatCreds(agy.TokenPath(), filepath.Join(cliDir, "antigravity-oauth-token"))
 	// agy's own state dir stays outside the fence: it spills a large MCP result to
 	// brain/<conv>/.system_generated/steps/<n>/output.txt and has the model read it
-	// (measured — fencing it lost the af tool results). The token inside it is fenced
-	// by name; wd is the private, empty cwd.
-	token := filepath.Join(cliDir, "antigravity-oauth-token")
-	deny := append(slices.Clone(agyChatDenyRules), "read_file("+token+")")
-	deny = append(deny, agyChatReadDenyRules(append(c.knowledgeDirs(), cliDir, wd))...)
+	// (measured — fencing it lost the af tool results). wd is the private, empty cwd.
+	// The token is denied by its link and by the real file: agy matches the resolved
+	// path, and only a rule on the real file wins over a knowledge dir that covers it.
+	deny := slices.Clone(agyChatDenyRules)
+	for _, t := range withResolved([]string{filepath.Join(cliDir, "antigravity-oauth-token"), agy.TokenPath()}) {
+		deny = append(deny, "read_file("+t+")")
+	}
+	deny = append(deny, agyChatReadDenyRules(withResolved(append(c.knowledgeDirs(), cliDir, wd)))...)
 	perms := map[string]any{"allow": agyChatAllowRules(c), "deny": deny}
 	settings := map[string]any{
 		"enableTelemetry":   false,
@@ -1391,14 +1394,14 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 }
 
 // agyChatAllowRules is the permissions.allow set for a chat's agy: `read_file(<dir>)`
-// per knowledge dir, `read_url(*)` (parity with claude's chat, which keeps WebFetch —
-// chatToolLimits), and `mcp(<server>/*)` per granted server. Rule syntax verified
-// live (mcp(af) and bare tool names do NOT match — agy drops them from settings.json;
-// docs/log/32 §headlessChat). Anything else a turn reaches for is either hard-denied
+// per knowledge dir and its resolved form (withResolved), `read_url(*)` (parity with
+// claude's chat, which keeps WebFetch — chatToolLimits), and `mcp(<server>/*)` per
+// granted server. Rule syntax verified live (mcp(af) and bare tool names do NOT match —
+// agy drops them from settings.json; docs/log/32 §headlessChat). Anything else a turn reaches for is either hard-denied
 // (agyChatDenyRules, agyChatReadDenyRules) or soft-denied by print mode.
 func agyChatAllowRules(c *ChatConversation) []string {
 	var allow []string
-	for _, d := range c.knowledgeDirs() {
+	for _, d := range withResolved(c.knowledgeDirs()) {
 		allow = append(allow, "read_file("+d+")")
 	}
 	allow = append(allow, "read_url(*)")
@@ -1421,6 +1424,22 @@ func agyChatAllowRules(c *ChatConversation) []string {
 // (measured: /tmp and $HOME). Targets: command takes `*`, write_file a directory
 // prefix.
 var agyChatDenyRules = []string{"command(*)", "write_file(/)"}
+
+// withResolved is paths plus the symlink-resolved form of each that differs, in order.
+// agy matches a rule against the resolved path (measured: a read through the token
+// link was checked against the real file), and on ecs-ec2 ~/.config — the builtin
+// knowledge dir's parent — is a link onto EFS, so a rule naming only the link's path
+// never matches there.
+func withResolved(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, p)
+		if r, err := filepath.EvalSymlinks(p); err == nil && filepath.Clean(r) != filepath.Clean(p) {
+			out = append(out, r)
+		}
+	}
+	return slices.Compact(out)
+}
 
 // agyChatReadDenyRules hard-denies reads everywhere except the open dirs (the
 // knowledge dirs, which the allow list grants, plus agy's own state the caller
