@@ -7,7 +7,7 @@ English | [日本語](0130-cultivated-memory.ja.md)
   (section "Measured"); the Hermes Agent figures come from its source at `90d6b98` (2026-11-05); the
   prior-art survey is [docs/log/136](../log/136-cultivated-memory-survey.md), which marks what was read,
   what is secondary and what is inferred. Reviewed by a separate session (codex `gpt-6.1-sol`); round 1
-  had 21 findings, round 2 had 9 and round 3 had 3, each checked against the tree and the cited sources and folded into
+  had 21 findings, round 2 had 9 and round 3 had 3 and a confirming round 4 had 2 minor ones, each checked against the tree and the cited sources and folded into
   this text.
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
   release carries **the first step** of what this record calls cultivation (decision 10). Everything
@@ -228,7 +228,9 @@ is cleared by its own rule: a lint reason only when lint re-checks a newer revis
 longer fires; a feedback reason by any body change (from `memory_save` or `memory_patch` alike); a
 member reason, or any reason, by the member's explicit operation. A punctuation fix therefore does
 not clear a missing path. Acceptance: a lint reason and a feedback reason together, then a body
-change, leaves only the lint reason; the next lint run on that revision clears it. An import never takes lifecycle fields from outside.
+change: (a) a change that does not fix the lint rule's cause leaves only the lint reason, and it stays
+after the next lint run; (b) a change that also fixes it leaves the lint reason until the next lint run
+on that revision, which clears it because the rule no longer fires. An import never takes lifecycle fields from outside.
 **Revert is the exception to "keep"**: it restores the earlier version whole — kind, anchors,
 lifecycle fields and pin — as `agent_memory_changes.go:610`–`620` already does for the body and pin,
 with the revision still increasing and the member as author; reverting a lint mark or a pin undoes it.
@@ -246,12 +248,14 @@ found that no system does this by default.
 The claude write-back needs more than a filter: it protects every AF file name and keeps native files
 it did not choose (`agent_memory_claude_export.go:519`, `:639`–`668`), and re-lists them in
 `MEMORY.md` (`:773`–`803`), so a copy written while a memory was eligible would reappear. One
-predicate — the write-back column above: `active`, no open reasons, not a `log` — decides three things
+predicate — the write-back column above: `active`, not superseded (no `superseded_by`), no open reasons,
+not a `log`, which includes the exclusion of step 1 — decides three things
 together: what AF selects, which copies AF wrote earlier are withdrawn, and what `MEMORY.md` lists. A
 copy AF wrote and nobody edited since is withdrawn (removed, shown in the preview) as soon as its
 memory stops being eligible, for any reason in the table; a copy edited on the native side is
 reported as a conflict for the member, and in neither case is it listed in `MEMORY.md`. Path tests:
-export, then make the memory suspect, quiet, a log, archived or superseded, then export again.
+export, then make the memory suspect, quiet, a log, archived or superseded (the last one with `status`
+still `active` and only `superseded_by` / `invalid_at` set), then export again.
 
 **Counters.** Today `.usage/<name>` is a file grown by one byte per use and counted by its size
 (`agent_memory_usage.go:5`, `:47`); reads and search hits cannot be told apart afterwards. New sidecars
