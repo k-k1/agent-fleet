@@ -287,7 +287,8 @@ func forwardedProto(r *http.Request) string {
 }
 
 // withoutQueryKey removes every "key" or "key=value" item from a raw query string without
-// re-encoding the rest.
+// re-encoding the rest. Items that are not that key, empty ones included, are kept as they
+// are, so a query without the key comes back byte for byte.
 func withoutQueryKey(raw, key string) string {
 	if raw == "" {
 		return ""
@@ -298,9 +299,7 @@ func withoutQueryKey(raw, key string) string {
 		if n, err := url.QueryUnescape(name); err == nil && n == key {
 			continue
 		}
-		if item != "" {
-			kept = append(kept, item)
-		}
+		kept = append(kept, item)
 	}
 	return strings.Join(kept, "&")
 }

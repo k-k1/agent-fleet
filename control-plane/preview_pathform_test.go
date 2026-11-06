@@ -153,6 +153,8 @@ func TestPathFormRedirectKeepsPathAndQueryVerbatim(t *testing.T) {
 		{"/%70review/%38080/a%20b", "/a%20b"},                                            // encoded fixed part and port
 		{"/preview/8080/", "/"},                                                          // root
 		{"/preview/8080/x?b=2&a=1&a=0&s=1;t=2&tenant=default", "/x?b=2&a=1&a=0&s=1;t=2"}, // order, dups, ";"
+		{"/preview/8080/x?&a=1&&b=2&", "/x?&a=1&&b=2&"},                                  // empty items, no tenant: unchanged
+		{"/preview/8080/x?&a=1&&tenant=default&&b=2&", "/x?&a=1&&&b=2&"},                 // only the tenant item goes
 	} {
 		if got, _ := next(c.target, nil); got != c.want {
 			t.Errorf("%s: next=%q, want %q", c.target, got, c.want)
