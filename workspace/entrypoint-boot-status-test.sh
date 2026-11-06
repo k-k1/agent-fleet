@@ -251,14 +251,12 @@ reset; run_block
 run_block STUB_NPM_BREAK=always $ON
 [ "$(st codex)" = "codex failed other" ] || fail "self-update, codex stays broken: status is '$(st codex)'"
 has 'WARN: codex does not run' || fail "self-update, codex stays broken: no WARN"
-# A CLI left broken is reinstalled on the next start, unattended or not, although its file is
-# present; once it runs again it is no longer listed.
-grep -qx codex "$T/home/.local/share/agent-fleet/npm-broken" || fail "codex left broken is not listed for the next start"
+# A CLI left broken loses its link, so the next start (unattended or not) reinstalls it.
+[ ! -e "$T/home/.local/bin/codex" ] || fail "codex left broken: its link was kept"
 rm -f "$T/npm.calls"; run_block
 grep -q '@openai/codex@0.1.0' "$T/npm.calls" || fail "next start: a known-broken codex was not reinstalled"
 "$T/home/.local/bin/codex" >/dev/null || fail "next start: codex still broken"
 [ "$(st codex)" = "codex ok " ] || fail "next start, codex repaired: status is '$(st codex)'"
-grep -qx codex "$T/home/.local/share/agent-fleet/npm-broken" && fail "repaired codex still listed as broken"
 rm -f "$T/npm.calls"; run_block
 grep -q codex "$T/npm.calls" 2>/dev/null && fail "a healthy codex was reinstalled again"
 # A failed self-update that removed codex outright: reinstalled at the pin (nothing is baked).
@@ -276,13 +274,34 @@ run_block STUB_NPM_BREAK=pin $ON
 reset; run_block STUB_NPM_BREAK=always STUB_NPM_SHRINK=1
 [ "$(grep -c codex "$T/npm.calls")" = 1 ] || fail "low space after install: repair still ran: $(cat "$T/npm.calls")"
 [ "$(st codex)" = "codex failed no_space" ] || fail "low space after install: status is '$(st codex)'"
-grep -qx codex "$T/home/.local/share/agent-fleet/npm-broken" || fail "low space after install: not retried next start"
+[ ! -e "$T/home/.local/bin/codex" ] || fail "low space after install: the broken link was kept"
+rm -f "$T/free" "$T/npm.calls"; run_block
+"$T/home/.local/bin/codex" >/dev/null || fail "low space after install: not reinstalled once space is back"
 # The self-update's npm errors reach the log instead of /dev/null.
 reset; run_block
 # shellcheck disable=SC2086
 run_block STUB_NPM_FAIL=1 $ON
 has 'npm error ENOSPC' || fail "self-update failure: npm's error was discarded"
 has 'WARN: agent CLI update failed' || fail "self-update failure: no WARN"
+
+# 7. Baked image (/usr/local holds working copies): a ~/.local shadow that stays broken is
+# removed so PATH falls back at once, with space or without.
+BAKED="$T/block-baked.sh"
+sed "s#/usr/local/bin#$T/ul/bin#g" "$BLOCK" >"$BAKED"
+mkdir -p "$T/ul/bin"
+for b in claude codex opencode copilot; do printf '#!/bin/sh\necho baked\n' >"$T/ul/bin/$b"; chmod +x "$T/ul/bin/$b"; done
+run_baked() { BLOCK_SAVE="$BLOCK"; BLOCK="$BAKED"; run_block "$@"; BLOCK="$BLOCK_SAVE"; }
+reset
+# shellcheck disable=SC2086
+run_baked STUB_NPM_BREAK=always $ON
+[ ! -e "$T/home/.local/bin/codex" ] || fail "baked, shadow stays broken: the shadow was kept"
+st codex | grep -q failed || fail "baked, shadow stays broken: status is '$(st codex)'"
+reset
+# shellcheck disable=SC2086
+run_baked STUB_NPM_BREAK=always STUB_NPM_SHRINK=1 $ON
+[ ! -e "$T/home/.local/bin/codex" ] || fail "baked, low space: the broken shadow was kept"
+[ "$(st codex)" = "codex skipped no_space" ] || fail "baked, low space: status is '$(st codex)'"
+reset; rm -rf "$T/ul"
 
 # 5. The prune runs before the installs, once.
 reset; run_block
