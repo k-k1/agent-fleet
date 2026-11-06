@@ -52,13 +52,17 @@ var reclaimSleep = time.Sleep
 
 // claudeBox reads claude's input box for a decision that erases text, so unlike claudeComposer
 // (which serves send confirmation and splits at any "❯" or "─") it trusts only the frame claude
-// draws: two full-width rules of one width at column 0 (the top one may carry the session's
-// title, which claude draws into it for --name: "──── [AF:x] title ─"), the first row inside
-// starting with "❯" at column 0,
-// every further row indented or blank (measured 2.1.316: continuation and wrapped rows are
-// indented two columns). Text a member typed, rules and "❯" included, can only appear inside that
-// indentation, so it is never taken for the frame. Anything else is ok=false. above is the first
-// non-blank line above the top rule, trimmed.
+// draws: two rules at column 0 (the bottom one full width; the top one either the same width or
+// carrying the session's title, which claude draws into it for --name: "──── [AF:x] title ─"), the
+// first row inside starting with "❯" at column 0, every further row indented or blank (measured
+// 2.1.316: continuation and wrapped rows are indented two columns). Text a member typed, rules and
+// "❯" included, can only appear inside that indentation, so it is never taken for the frame.
+// Anything else is ok=false. above is the first non-blank line above the top rule, trimmed.
+//
+// A titled top rule is not compared in width: the title can hold any text, and its column width
+// depends on how tmux draws wide runes, emoji and combining marks. Counting it in runes left a
+// Japanese title's box unreadable, so a stop's guard never lifted and every send was refused
+// (issue #3408); the "❯" row and the indentation rule are what keep typed text out of the frame.
 func claudeBox(captured string) (draft, above string, ok bool) {
 	lines := strings.Split(strings.TrimRight(captured, "\n"), "\n")
 	bottom := -1
@@ -75,7 +79,7 @@ func claudeBox(captured string) (draft, above string, ok bool) {
 			break
 		}
 	}
-	if top < 0 || bottom-top < 2 || ruleWidth(lines[top]) != ruleWidth(lines[bottom]) {
+	if top < 0 || bottom-top < 2 || boxRule(lines[top]) && ruleWidth(lines[top]) != ruleWidth(lines[bottom]) {
 		return "", "", false
 	}
 	rows := lines[top+1 : bottom]
@@ -108,9 +112,12 @@ func boxRule(line string) bool {
 // always started with --name: "───────────────────────── [AF:solkwlt] Live check … ─").
 func topRule(line string) bool {
 	t := strings.TrimRight(line, " ")
-	return ruleWidth(line) >= minBoxRule && strings.HasPrefix(t, "─") && strings.HasSuffix(t, "─")
+	return ruleWidth(line) >= minBoxRule && strings.HasPrefix(t, "─") && strings.HasSuffix(t, "─") &&
+		(boxRule(line) || strings.Contains(t, " "))
 }
 
+// ruleWidth counts a rule's runes; it is compared only between rules made of "─" alone, which
+// tmux draws one column per rune.
 func ruleWidth(line string) int {
 	return utf8.RuneCountInString(strings.TrimRight(line, " "))
 }
