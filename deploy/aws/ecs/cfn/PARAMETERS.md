@@ -1126,20 +1126,22 @@ Two execution roles in 20-platform, because the secrets they read have different
 
 - `ExecRole` (export `ExecRoleArn`) is the Control Plane's: `/af-cp/*` (master key, cookie
   secret, OAuth client secrets), the RDS-managed password and the egress token. The CP task
-  and the home task name it. It reads nothing under `/af-ws/*`.
+  and the home task name it.
 - `WsExecRole` (export `WsExecRoleArn`) is the workspaces': `/af-ws/*` only. The CP passes it to
-  every workspace task definition (`AF_ECS_EXEC_ROLE`); 50-tts and 60-engines name it too, and
-  60-engines attaches its Secrets Manager grants to it. It reads nothing under `/af-cp/*`.
+  every new workspace task definition (`AF_ECS_EXEC_ROLE`); 50-tts and 60-engines name it too.
+  It can never read `/af-cp/*`.
 
-The ids and the `ExecRoleArn` export of the old shared role are kept, so no stack update ever
-removes an export that is still imported. Both roles are shared by all workspaces; scoping
-`WsExecRole` per workspace (`/af-ws/<name>/*`) needs a role per workspace and is a follow-up.
+Transitional: `ExecRole` keeps `/af-ws/*`, and 60-engines attaches its Secrets Manager grants to
+both roles. Task definitions registered before the split, and the ECS services running them,
+still name `ExecRole`; a service replaces a stopped task from that definition until the CP next
+starts the workspace, so removing the grant at once would break those restarts. Removing it
+(and the second role on the 60-engines policies) is a separate change, after every workspace
+service has moved to a definition naming `WsExecRole`. Until then the CP execution role can
+still read `/af-ws/*`; the slot role no longer can.
 
-Update order matters only for tasks that START between two stack updates (secrets are resolved
-at task start; running tasks are unaffected): `update.sh` updates 20-platform first, which takes
-`/af-ws/*` off `ExecRole`, so a workspace or engine task started before 30-ingress / 60-engines
-move to `WsExecRole` fails to start. Run the stack updates back to back, and do not start
-workspaces in between.
+Scoping `WsExecRole` per workspace (`/af-ws/<name>/*`) needs a role per workspace and is a
+follow-up. The ids and the `ExecRoleArn` export are kept, so no stack update removes an export
+that is still imported, and the update order does not matter for task starts.
 
 `SlotRole` (40-ec2-pool) carries an explicit Deny of `ssm:GetParameter*` on `/af-cp` and
 `/af-ws` (inline policy `af-slot-deny-af-parameters`), because `AmazonSSMManagedInstanceCore`

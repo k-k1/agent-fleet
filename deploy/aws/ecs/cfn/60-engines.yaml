@@ -378,8 +378,10 @@ Resources:
     Type: AWS::IAM::Policy
     Properties:
       PolicyName: !Sub "af-${AWS::StackName}-exec-hf"
+      # Both roles: a task definition registered before the split still names ExecRole.
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" } ] ]
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } ] ]
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -400,8 +402,10 @@ Resources:
     Type: AWS::IAM::Policy
     Properties:
       PolicyName: !Sub "af-${AWS::StackName}-exec-civitai"
+      # Both roles: a task definition registered before the split still names ExecRole.
       Roles:
         - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" } ] ]
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } ] ]
       PolicyDocument:
         Version: "2012-10-17"
         Statement:

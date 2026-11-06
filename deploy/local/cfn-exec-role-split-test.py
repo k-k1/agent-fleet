@@ -4,8 +4,8 @@
   - 40-ec2-pool's SlotRole carries an explicit Deny of the four ssm:GetParameter* actions on
     /af-cp and /af-ws (and their children), under an inline policy name that is not the
     hand-applied `af-deny-af-parameters`;
-  - 20-platform's ExecRole (the CP's) reads nothing under /af-ws, and WsExecRole reads nothing
-    under /af-cp, and neither carries a Deny (the CP's own secret injection goes through ExecRole);
+  - WsExecRole reads /af-ws and nothing under /af-cp; ExecRole (the CP's) keeps /af-cp and, for
+    one release, /af-ws (running services still name it); neither carries a Deny (the CP's own secret injection goes through ExecRole);
   - the CP task definition keeps ExecRoleArn, AF_ECS_EXEC_ROLE and the 50-tts / 60-engines
     task definitions import WsExecRoleArn, and the CP may pass WsExecRole;
   - the ExecRoleArn export stays, so no stack update removes an export that is still imported.
@@ -90,8 +90,11 @@ def check(t):
     if "WsExecRole" not in R:
         return f + ["20-platform has no WsExecRole"]
     cp_res, ws_res = ssm_resources(R["ExecRole"]), ssm_resources(R["WsExecRole"])
-    if not cp_res or any("/af-ws" in r for r in cp_res):
-        f.append("ExecRole must read /af-cp/* and nothing under /af-ws: %r" % cp_res)
+    if not any(r.endswith("parameter/af-ws/*") for r in cp_res):
+        f.append("ExecRole must keep /af-ws/* for one release (running services still name it)")
+    for pol in ("ExecHfTokenPolicy", "ExecCivitaiTokenPolicy"):
+        if len(t["60-engines"]["Resources"][pol]["Properties"]["Roles"]) != 2:
+            f.append("%s must attach to both execution roles" % pol)
     if not any(r.endswith("parameter/af-cp/*") for r in cp_res):
         f.append("ExecRole lost /af-cp/* (the CP would not start)")
     if not any(r.endswith("parameter/af-ws/*") for r in ws_res) or any("/af-cp" in r for r in ws_res):
@@ -120,8 +123,6 @@ def check(t):
                 v = imports(r["Properties"].get("ExecutionRoleArn"))
                 if "WsExecRoleArn" not in v:
                     f.append("%s %s does not run as WsExecRole" % (name, rid))
-        if "-ExecRoleArn" in imports(tpl["Resources"]):
-            f.append("%s still imports the CP execution role" % name)
     return f
 
 
@@ -146,8 +147,9 @@ def main():
         "slot Deny drops /af-ws": lambda c: c["40-ec2-pool"]["Resources"]["SlotRole"]["Properties"][
             "Policies"][0]["PolicyDocument"]["Statement"][0].update(Resource=[
                 {"!Sub": "arn:x:ssm:*:1:parameter/af-cp"}, {"!Sub": "arn:x:ssm:*:1:parameter/af-cp/*"}]),
-        "ExecRole regains /af-ws": lambda c: ssm_stmt(c, "ExecRole")[0]["Resource"].append(
-            {"!Sub": "arn:x:ssm:r:1:parameter/af-ws/*"}),
+        "ExecRole drops /af-ws too early": lambda c: ssm_stmt(c, "ExecRole")[0]["Resource"].pop(0),
+        "engine token policy only on WsExecRole": lambda c: c["60-engines"]["Resources"][
+            "ExecHfTokenPolicy"]["Properties"]["Roles"].pop(),
         "WsExecRole gains /af-cp": lambda c: ssm_stmt(c, "WsExecRole")[0]["Resource"].append(
             {"!Sub": "arn:x:ssm:r:1:parameter/af-cp/*"}),
         "ExecRole gets a Deny": lambda c: ssm_stmt(c, "ExecRole").append(
