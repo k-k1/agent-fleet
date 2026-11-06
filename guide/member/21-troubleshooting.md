@@ -445,9 +445,9 @@ The browser pane, the lightweight preview and preview subdomains. The explanatio
   `allowedDevOrigins` with a wildcard, since the URL changes on every start ([14](14-preview-browser.md#what-the-app-has-to-get-right)
   has the exact form).
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** On a **preview
-  subdomain**, Vite 8.3.6 connected over `wss` on 443 with no `hmr` setting (measured), so do not add
+  subdomain**, Vite 8.3.6 connected over `wss` on 443 with no `hmr` setting (measured), so there is no need to add
   `server.hmr.clientPort` there. If the page reloads itself instead of updating in place, the WebSocket was
-  closed after 60 silent seconds; see [14](14-preview-browser.md#what-the-app-has-to-get-right).
+  closed after a silent stretch (60 s on the measured deployment); see [14](14-preview-browser.md#what-the-app-has-to-get-right).
 - If HMR still does not connect (not measured on the lightweight sub-path preview), the dev server may be
   **embedding its own port into the client**. Then the app needs a setting such as `server.hmr.clientPort: 443`.
 - To avoid adding configuration, or to isolate the cause, use **"Open in pane"** (browser pane): a browser
