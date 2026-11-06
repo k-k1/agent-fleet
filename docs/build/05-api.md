@@ -198,6 +198,11 @@ one with an `id` but no valid `source` or `at` is skipped. `GET /api/admin/egres
   preview and new tabs. One membership resolves automatically. Several with none specified
   is `409 tenant_selection_required`. One you do not belong to is `403 forbidden_tenant`.
   A tenant whose network rule refuses the caller's address answers `403 ip_not_allowed`.
+- **Inviting** (`POST /api/admin/memberships`): the invite never writes the email of an
+  existing identity (emails come from the person's own login). A new identity takes the address;
+  an existing one with an empty address that belongs to another tenant answers
+  `409 identity_in_other_tenant` when an email is sent. Re-activating a removed membership
+  restores `member`; only a super_admin passing `role: tenant_admin` re-grants that role.
 - **Error shape**: `{"error": {"code": <string>, "message": <string>}}` from both the CP and
   the agent. The **code is the contract**: the Console localises it as `err.<code>`
   (`console/src/lib/i18n/locales/*/errors.ts`), so renaming one is a wire change on both

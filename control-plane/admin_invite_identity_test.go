@@ -44,7 +44,7 @@ func TestInviteCannotSetEmailOfIdentityInAnotherTenant(t *testing.T) {
 	}
 }
 
-func TestInviteSetsEmailOnlyWhereNoOtherTenantHoldsTheIdentity(t *testing.T) {
+func TestInviteNeverWritesTheEmailOfAnExistingIdentity(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, _ := userKeyFixture(t)
 	adm := newAdminAPI(mgr)
@@ -53,28 +53,72 @@ func TestInviteSetsEmailOnlyWhereNoOtherTenantHoldsTheIdentity(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("new identity = %d %s", w.Code, w.Body.String())
 	}
-	// A key-only placeholder inside this tenant only may be filled.
+	if got, _, _ := st.GetIdentityByUserKey(ctx, "fresh-key"); got.Email != "fresh@acme.co.jp" {
+		t.Errorf("new identity email = %q", got.Email)
+	}
+	// A placeholder held by this tenant only still keeps its empty address: the address
+	// arrives with the person's own login.
 	if _, err := st.InviteIdentity(ctx, "", "solo-key", mustTenantID(t, st, "sales")); err != nil {
 		t.Fatal(err)
 	}
 	w = callAdmin(adm.addMembership, http.MethodPost, "/api/admin/memberships",
 		`{"tenant_slug":"sales","user_key":"solo-key","email":"solo@acme.co.jp"}`)
 	if w.Code != http.StatusOK {
-		t.Fatalf("own-tenant fill = %d %s", w.Code, w.Body.String())
+		t.Fatalf("own-tenant invite = %d %s", w.Code, w.Body.String())
 	}
-	got, _, _ := st.GetIdentityByUserKey(ctx, "solo-key")
-	if got.Email != "solo@acme.co.jp" {
-		t.Errorf("email = %q", got.Email)
+	if got, _, _ := st.GetIdentityByUserKey(ctx, "solo-key"); got.Email != "" {
+		t.Errorf("email = %q, want it left empty", got.Email)
 	}
-	logs, _ := st.ListAuditByTenant(ctx, mustTenantID(t, st, "sales"), 50)
-	var found bool
+	logs, _ := st.ListAuditByTenant(ctx, "", 100)
 	for _, a := range logs {
-		if a.Action == "identity.email_set" && a.Target == "solo-key" && strings.Contains(a.Detail, "previous=;") {
-			found = true
+		if strings.HasPrefix(a.Action, "identity.email_") && a.Target == "solo-key" {
+			t.Errorf("unchanged email produced audit entry %+v", a)
 		}
 	}
-	if !found {
-		t.Errorf("no identity.email_set audit entry in %+v", logs)
+}
+
+func TestLoginAuditsEmailSetWithTheLoggingInIdentityAsActor(t *testing.T) {
+	ctx := context.Background()
+	st, _, tn := userKeyFixture(t)
+	ph, _ := st.InviteIdentity(ctx, "", "late-acme-co-jp", tn.ID)
+	got, _, err := st.LinkIdentity(ctx, store.IdentityLink{Provider: "env", Subject: "s1",
+		Email: "late@acme.co.jp", FallbackKey: "late-acme-co-jp", EmailJoin: true})
+	if err != nil || got.ID != ph.ID {
+		t.Fatalf("link = %+v %v", got, err)
+	}
+	logs, _ := st.ListAuditByTenant(ctx, "", 100)
+	for _, a := range logs {
+		if a.Action == "identity.email_set" && a.Target == "late-acme-co-jp" {
+			if a.ActorKind != "user" || a.ActorID != ph.ID || !strings.Contains(a.Detail, "previous=;") {
+				t.Errorf("audit = %+v", a)
+			}
+			return
+		}
+	}
+	t.Errorf("no identity.email_set entry in %+v", logs)
+}
+
+func TestTenantProviderCannotClaimAnotherTenantsPlaceholder(t *testing.T) {
+	ctx := context.Background()
+	st, _, tn := userKeyFixture(t) // tenant "sales"
+	other, _ := st.CreateTenant(ctx, "legal", "Legal")
+	ph, _ := st.InviteIdentity(ctx, "", "victim-example-com", other.ID)
+	if _, err := st.EnsureMembership(ctx, ph.ID, other.ID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	link := store.IdentityLink{Provider: "t:sales:oidc", Subject: "x", Email: "victim@example.com",
+		FallbackKey: "victim-example-com", TenantSlug: "sales"}
+	if got, _, err := st.LinkIdentity(ctx, link); err == nil || got.ID == ph.ID {
+		t.Fatalf("link = %+v %v, want refusal", got, err)
+	}
+	// Its own tenant's placeholder is still claimable.
+	own, _ := st.InviteIdentity(ctx, "", "mine-example-com", tn.ID)
+	if _, err := st.EnsureMembership(ctx, own.ID, tn.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	link.Subject, link.Email, link.FallbackKey = "y", "mine@example.com", "mine-example-com"
+	if got, _, err := st.LinkIdentity(ctx, link); err != nil || got.ID != own.ID {
+		t.Fatalf("own claim = %+v %v", got, err)
 	}
 }
 

@@ -571,6 +571,7 @@ func (c config) linkAfterLogin(ctx context.Context, p auth.Principal) (bool, err
 		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm,
 		RealmClaim: p.RealmClaim, RealmSubject: p.RealmSubject, Email: p.Email,
 		FallbackKey: sanitizeUser(p.Email), RoleHint: roleHint, EmailJoin: !tenantDefined,
+		TenantSlug: tenantSlugOf(p.Provider),
 	})
 	switch {
 	case errors.Is(err, store.ErrIdentityClaimed):

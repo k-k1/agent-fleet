@@ -131,6 +131,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.tenant_slug_reserved": "That slug is a name the Control Plane uses for its own files. Choose another slug.",
   "err.tenant_slug_conflict": "That slug is already the home directory of a default-tenant member. Choose another slug.",
   "err.user_key_reserved": "This user key is a name the Control Plane uses for its own files, so it cannot be added to the default tenant.",
+  "err.identity_in_other_tenant": "This user key already belongs to a person in another tenant, so an email address cannot be attached to it. Clear the email and invite by user key only; the address is set when the person signs in.",
   "err.user_key_conflict": "This user key is already a tenant's directory, so it cannot be added to the default tenant. Ask an administrator.",
   "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
   "err.self_removal": "You can't remove your last membership; it is the way back in. Ask another administrator.",
