@@ -154,6 +154,7 @@ func inputAsync(name, body string) <-chan *httptest.ResponseRecorder {
 		req.SetPathValue("name", name)
 		rec := httptest.NewRecorder()
 		HandleSessionInput(rec, req)
+		WaitInputMirrors() // drain the typed-input mirror before the test can finish (#3410)
 		out <- rec
 	}()
 	return out
@@ -238,6 +239,7 @@ func TestDeliveryLeaseIsBorrowedByInput(t *testing.T) {
 		req.SetPathValue("name", m.Name)
 		rec := httptest.NewRecorder()
 		HandleSessionInput(rec, req)
+		WaitInputMirrors() // drain the typed-input mirror before the test can finish (#3410)
 		out <- rec
 	}()
 	if rec := recvRec(t, out, "the inner /input"); rec.Code != http.StatusOK {
