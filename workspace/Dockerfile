@@ -107,7 +107,7 @@ RUN pip install --no-cache-dir uv \
 # Not covered by cli-drift / cli-pin-bump (those rows are agent CLIs with contract gates); the
 # tracked update path is the image-vuln-scan issue, which reports any fixable npm-bundled
 # finding as remedy "bump". Take the new pin from `npm view npm@next-11 version`.
-ARG NPM_VERSION=11.21.1
+ARG NPM_VERSION=11.21.2
 RUN npm install -g "npm@${NPM_VERSION}" \
     && test "$(npm --version)" = "${NPM_VERSION}" \
     && npm cache clean --force
