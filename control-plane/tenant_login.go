@@ -118,6 +118,8 @@ func (c *tenantLoginCache) snapshot(ctx context.Context) *tenantRuleSnapshot {
 	rules, err := c.store.ListTenantLoginRules(ctx)
 	if err != nil {
 		log.Printf("tenant login rules: %v (using the previous snapshot)", err)
+		// A stale snapshot is still a failed read: an entry-gate "no" built on it is not final.
+		entryReadFaults.Add(1)
 		c.mu.Lock()
 		s := c.snap
 		c.mu.Unlock()

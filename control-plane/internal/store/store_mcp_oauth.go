@@ -160,13 +160,28 @@ func (s *SQL) PruneMCPOAuth(ctx context.Context, now, clientsBefore, grantsBefor
 }
 
 func (s *SQL) InsertMCPOAuthToken(ctx context.Context, t MCPOAuthToken) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// A consent ticket or authorization code (no grant yet) is issued under the membership row
+	// lock, like a PAT: a deactivation that has already swept its pending rows cannot be followed
+	// by a late insert that a re-invite would then redeem.
+	if t.GrantID == "" {
+		if err := lockActiveMembershipTx(ctx, tx, t.MembershipID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO mcp_oauth_token(hash, kind, grant_id, client_id, client_name, identity_id, membership_id,
 		   redirect_uri, challenge, scope, resource, state, expires_at, used_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		t.Hash, t.Kind, t.GrantID, t.ClientID, t.ClientName, t.IdentityID, t.MembershipID,
-		t.RedirectURI, t.Challenge, t.Scope, t.Resource, t.State, t.ExpiresAt)
-	return err
+		t.RedirectURI, t.Challenge, t.Scope, t.Resource, t.State, t.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 const mcpOAuthTokenCols = `hash, kind, grant_id, client_id, client_name, identity_id, membership_id,

@@ -699,3 +699,67 @@ func TestInFlightExchangeCannotCompleteAfterReinvite(t *testing.T) {
 		t.Errorf("exchange without its code row: %v", err)
 	}
 }
+
+// flakyRules fails the tenant-rules refresh while `fail` is set.
+type flakyRules struct {
+	*store.SQL
+	fail bool
+}
+
+func (f *flakyRules) ListTenantLoginRules(ctx context.Context) ([]store.TenantLoginRules, error) {
+	if f.fail {
+		return nil, errors.New("transient")
+	}
+	return f.SQL.ListTenantLoginRules(ctx)
+}
+
+func TestIdentityStillAllowedKeepsCredentialsWhenTheRulesRefreshFails(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	if err := e.mgr.store.AttachProvider(ctx, e.ident.ID, store.IdentityLink{Provider: "entra", Subject: "s1", Email: "gone@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	fr := &flakyRules{SQL: e.mgr.store.(*store.SQL)}
+	cache := newTenantLoginCache(fr)
+	e.mgr.tenantLogin = cache
+	c := config{mgr: e.mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet("")}
+	c.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra", DBAllowed: c.tenantEmailAllowed}})
+	// Positive control with a healthy read: a definitive denial.
+	if c.identityStillAllowed(ctx, e.ident) {
+		t.Fatal("a definitive denial must answer false")
+	}
+	// The snapshot is non-nil but expired, and its refresh fails: the stale rules cannot make a final "no".
+	cache.mu.Lock()
+	cache.snapExp = time.Time{}
+	cache.mu.Unlock()
+	fr.fail = true
+	if !c.identityStillAllowed(ctx, e.ident) {
+		t.Error("a failed rules refresh behind a stale snapshot revoked credentials")
+	}
+}
+
+func TestCodeAndConsentRowsAreIssuedUnderTheMembershipLock(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	mid := e.membershipID()
+	row := func(hash, grant string) store.MCPOAuthToken {
+		return store.MCPOAuthToken{Hash: hash, Kind: store.MCPOAuthCode, GrantID: grant, ClientID: "c", IdentityID: e.ident.ID,
+			MembershipID: mid, ExpiresAt: time.Now().Unix() + 100}
+	}
+	if err := e.mgr.store.InsertMCPOAuthToken(ctx, row("c-active", "")); err != nil {
+		t.Fatalf("code insert while active: %v", err)
+	}
+	if err := e.mgr.store.SetMembershipStatus(ctx, mid, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mgr.store.InsertMCPOAuthToken(ctx, row("c-late", "")); !errors.Is(err, store.ErrMembershipInactive) {
+		t.Errorf("code insert after deactivation: %v", err)
+	}
+	if err := e.mgr.store.SetMembershipStatus(ctx, mid, "active"); err != nil {
+		t.Fatal(err)
+	}
+	// The late row never landed, so it cannot be redeemed after the re-invite.
+	if _, state, _ := e.mgr.store.ConsumeMCPOAuthToken(ctx, "c-late", store.MCPOAuthCode, time.Now().Unix()); state != store.MCPOAuthSpendUnknown {
+		t.Errorf("late code after re-invite: %v, want unknown", state)
+	}
+}
