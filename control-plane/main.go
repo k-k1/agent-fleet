@@ -27,6 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/writegate"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -555,7 +556,8 @@ func main() {
 	// trusts the upstream oauth2-proxy header).
 	// Invalidation of the shared sessions read sits on the mux itself (agent_sessions_share.go).
 	invalidating := cfg.mgr.invalidatesSessionsOnWrite(mux)
-	var handler http.Handler = invalidating
+	guarded := browserWriteGate(invalidating)
+	var handler http.Handler = guarded
 	if cfg.mgr.authMode == "oauth" {
 		if provErr != nil {
 			log.Fatalf("AUTH=oauth: %v", provErr)
@@ -595,7 +597,7 @@ func main() {
 			ids = append(ids, p.ID())
 		}
 		log.Printf("login providers: %s", strings.Join(ids, ", "))
-		handler = cfg.authGate(invalidating)
+		handler = cfg.authGate(guarded)
 	} else if provErr != nil {
 		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
@@ -649,7 +651,7 @@ func main() {
 	// claim about where it is calling from (docs/log/66 §66.6) — the preview dispatcher
 	// below reads the resolved client IP for the tenant network check, so it has to
 	// sit inside it.
-	served := newPreviewHostAPI(cfg).dispatch(gzipMiddleware(etagJSON(handler)))
+	served := newPreviewHostAPI(cfg).dispatch(gzipMiddleware(etagJSON(writegate.FrameHeaders(handler))))
 	// The workspace-only listener (ADR 0106 decision 8). Unset = no second port, today's
 	// behaviour.
 	if addr := strings.TrimSpace(os.Getenv("AF_CP_INTERNAL_LISTEN")); addr != "" {
@@ -836,3 +838,19 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Unwrap lets http.NewResponseController reach the connection through this wrapper (read
 // deadlines, flushing); without it those calls answer ErrNotSupported.
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// writeGatePolicy wires internal/writegate to this package's registry and origin rule. Exemptions
+// come from the authGate registry (routes.go) so a newly exempted route is never also CSRF-checked
+// by a stale copy of the list, and no cookie-authenticated route can be exempt by omission.
+var writeGatePolicy = writegate.Policy{Exempt: isAuthExempt, SameOrigin: checkWSOrigin}
+
+// browserWriteGate refuses cross-origin cookie-authenticated writes (see internal/writegate).
+func browserWriteGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rej := writeGatePolicy.Check(r); rej != nil {
+			writeAPIErr(w, &apiError{rej.Status, rej.Code, rej.Message})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

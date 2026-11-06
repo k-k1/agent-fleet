@@ -325,6 +325,18 @@ client is served.
 
 ## Other operational controls
 
+- **Put the preview domain on a separate registrable domain.** The login cookie is `SameSite=Lax`, and a
+  sibling subdomain counts as the same site, so a page served from a preview host under the Console's own
+  domain can still send the member's cookie to the Console. The Control Plane refuses cookie-authenticated
+  writes whose `Sec-Fetch-Site` is not `same-origin` or whose `Origin` is not the Console's own host (403),
+  requires `application/json` (or `multipart/form-data` for uploads) on `/api/` bodies, and answers
+  `X-Frame-Options: DENY` plus `frame-ancestors 'self'`. Those checks are the safety net; the stronger
+  layout is `AF_PREVIEW_DOMAIN` under a different registrable domain (for example the Console at
+  `af.example.com`, previews under `*.af-preview.example.net`), where the cookie is never sent at all.
+  The cookie is named `af_session` and carries no `__Host-` prefix yet, so a `__Host-` name is not an
+  option to turn on today. Behind `AUTH=proxy`, the gateway must pass `Host` through (or `PUBLIC_BASE_URL`
+  must name the public host), the same requirement WebSocket upgrades already have, because the `Origin`
+  check compares against it.
 - **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
   empty **and nobody holds a tenant membership and no tenant has an auto-join domain**, all
   logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take effect

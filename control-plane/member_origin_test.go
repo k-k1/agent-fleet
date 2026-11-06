@@ -623,3 +623,27 @@ func TestMemberOriginUploadMaxCoversAgentCeiling(t *testing.T) {
 		t.Fatalf("memberOriginUploadMax %d is below the Agent ceiling %d + framing %d", memberOriginUploadMax, agentCeiling, agentFraming)
 	}
 }
+
+func TestBrowserWriteGateExemptionsComeFromTheRegistry(t *testing.T) {
+	t.Setenv("AF_MCP_ENABLED", "true")
+	t.Setenv("AF_MCP_OAUTH", "1")
+	cfg, _ := smokeEnvWith(t, allRouteSwitches(t)...)
+	cfg.publicBaseURL = "https://console.test"
+	cfg.mgr.publicBaseURL = "https://console.test"
+	buildMux(cfg)
+	for _, p := range []string{"/oauth2/callback", "/internal/anything", "/mcp", "/git/a/b", "/engine/k/v1/x"} {
+		r := httptest.NewRequest("POST", "https://console.test"+p, nil)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		if e := writeGatePolicy.Check(r); e != nil {
+			t.Errorf("%s refused: %v", p, e)
+		}
+	}
+	// Cookie-authenticated routes are never exempt.
+	for _, p := range []string{"/api/sessions", "/api/admin/x", "/dev-idp/consent", "/mcp-oauth/consent", "/preview/3000/x"} {
+		r := httptest.NewRequest("POST", "https://console.test"+p, nil)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		if e := writeGatePolicy.Check(r); e == nil || e.Status != http.StatusForbidden {
+			t.Errorf("%s was not refused: %v", p, e)
+		}
+	}
+}

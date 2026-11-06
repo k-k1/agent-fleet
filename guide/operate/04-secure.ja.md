@@ -269,6 +269,17 @@ Admin モーダルの**開発用ログイン**で、Control Plane の開発用 O
 
 ## その他の運用上の統制
 
+- **プレビュー用ドメインは別の登録可能ドメインに置く。** ログイン cookie は `SameSite=Lax` で、兄弟サブドメインは
+  同一サイト扱いになるため、Console と同じドメイン配下のプレビューホストから配信されたページも、メンバーの
+  cookie を付けて Console へリクエストできます。Control Plane は、cookie 認証の書き込みのうち
+  `Sec-Fetch-Site` が `same-origin` でないもの、`Origin` が Console 自身のホストでないものを 403 で拒否し、
+  `/api/` のボディに `application/json`（アップロードは `multipart/form-data`）を要求し、
+  `X-Frame-Options: DENY` と `frame-ancestors 'self'` を返します。これらは安全網です。より強い構成は、
+  `AF_PREVIEW_DOMAIN` を別の登録可能ドメインに置くこと（例: Console が `af.example.com`、プレビューが
+  `*.af-preview.example.net`）で、cookie がそもそも送られなくなります。cookie 名は `af_session` で
+  `__Host-` 接頭辞はまだ付かないため、`__Host-` 名は現時点では選べません。`AUTH=proxy` の背後では、ゲートウェイが
+  `Host` をそのまま渡す（または `PUBLIC_BASE_URL` に公開ホストを設定する）必要があります。`Origin` の照合先が
+  それだからで、WebSocket の接続と同じ条件です。
 - **サインイン許可リストは fail-closed。** `AF_OAUTH_ALLOWED_*` の 3 系統がすべて空で、**かつ
   membership を持つ人も自動参加ドメインも無い**場合、全サインインを拒否します。`_EMAILS_FILE` は
   サインインごとに再読込されるので、**追加は CP 再起動なしで反映**されます（削除も同様）。判定は

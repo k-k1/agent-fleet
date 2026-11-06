@@ -25,10 +25,30 @@ self.addEventListener("fetch", (event) => {
   // Match the share action regardless of the mount prefix (a path-stripping proxy may
   // serve the app under e.g. /agent-fleet/). Only the share POST is intercepted.
   if (req.method === "POST" && new URL(req.url).pathname.endsWith("/share-target")) {
-    event.respondWith(handleShare(req));
+    event.respondWith(isCrossSite(req) ? Promise.resolve(Response.redirect(self.registration.scope, 303)) : handleShare(req));
   }
   // Everything else: no respondWith → default network handling.
 });
+
+// isCrossSite: a share is handed over by the OS share sheet (no referrer, Fetch Metadata
+// "none") or by the app itself. A page that auto-submits a form to share-target is neither.
+// Sec-Fetch-Site / Origin are not guaranteed to be readable on a service worker request, so the
+// referrer is the fallback; no signal at all is treated as the OS share sheet. A refused share
+// stashes nothing and lands on the app home.
+function isCrossSite(req) {
+  const site = req.headers.get("Sec-Fetch-Site");
+  if (site && site !== "same-origin" && site !== "none") return true;
+  const origin = req.headers.get("Origin");
+  if (origin && origin !== self.location.origin) return true;
+  if (req.referrer && req.referrer !== "about:client") {
+    try {
+      if (new URL(req.referrer).origin !== self.location.origin) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
 
 async function handleShare(req) {
   // scope root, with trailing slash — where the app lives; redirect back here.
