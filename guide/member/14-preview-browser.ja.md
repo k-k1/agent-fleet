@@ -119,6 +119,13 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → 8080 番（例: Spring B
   // next.config.ts
   allowedDevOrigins: ["127.0.0.1", "*.pv.example.com"],  // ドメインは AF_PREVIEW_DOMAIN
   ```
+- **Vite の HMR は、プレビュー用サブドメインでは `hmr` も `allowedHosts` も設定せずに動きますが、ロードバランサーは
+  無通信の WebSocket を切ります。** Vite 8.3.6 で実測しました。ページは `<slug>-3000.<プレビュー用ドメイン>` へ
+  443 の `wss` で自動的に繋がります。ロードバランサーは **60 秒間無通信**の WebSocket を閉じますが、Vite の
+  クライアントは 30 秒ごとに ping を送るので、ふつうは開いたままです。それでも切れると、Vite は
+  `server connection lost. Polling for restart...` と出したあと**ページ全体を再読み込みし、ページの状態が
+  失われます**。`pingInterval` を 60 秒より大きくすると起きます。タイマーが間引かれるバックグラウンドの
+  タブでも起きる可能性があります（未検証）。ping の間隔は 60 秒未満にしてください。
 - コンテナの中には `AF_PREVIEW_URL_3000` / `AF_PREVIEW_URL_8080` / `AF_PREVIEW_DOMAIN` が入っています。
   `NEXTAUTH_URL` のように「自分の公開 URL」を環境変数から読むアプリは、これを渡してください。
 
