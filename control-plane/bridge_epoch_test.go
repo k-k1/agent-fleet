@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
@@ -337,28 +340,55 @@ func TestAdminIssuedEngineTokenWorksAfterRotationAndReactivation(t *testing.T) {
 	}
 }
 
-// A session token is signed under the epoch the issuing token verified under. A rotation while
-// the request body is read must leave the minted token dead, not current.
+// rotatingBody advances the epoch on the first Read, i.e. after the issuing token authenticated
+// and while issueSessionToken reads its request body.
+type rotatingBody struct {
+	io.Reader
+	before func()
+	done   bool
+}
+
+func (b *rotatingBody) Read(p []byte) (int, error) {
+	if !b.done {
+		b.done = true
+		b.before()
+	}
+	return b.Reader.Read(p)
+}
+
+func (b *rotatingBody) Close() error { return nil }
+
+// issueSessionToken signs the session token under the epoch the issuing token verified under. A
+// rotation while the body is read must leave the token dead (or the request refused), never
+// buy a token that verifies under the new epoch with a credential that was just revoked.
 func TestEngineSessionMintAcrossARotationIsDead(t *testing.T) {
-	ctx := context.Background()
-	st, mgr, reg, a := issueTokenFixture(t)
-	mem := issueTokenMember(t, st, "acme", "borrow-bot", "member")
-	g := engineGateway{mgr: mgr, reg: reg}
-	rec, out := callIssueToken(a, `{"tenant_slug":"acme","user_key":"borrow-bot"}`)
-	if rec.Code != 200 {
-		t.Fatal(rec.Body.String())
+	g, mids := engineTenantGateFixture(t)
+	mid := mids["allowed"]
+	issuing := mintEngineIssueToken(g.reg.signKey, mid)
+	req := httptest.NewRequest(http.MethodPost, "/internal/engine/token", nil)
+	req.Header.Set("Authorization", "Bearer "+issuing)
+	req.Body = &rotatingBody{
+		Reader: strings.NewReader(`{"session":"s1","key":"llm"}`),
+		before: func() {
+			if _, _, err := g.mgr.rotateBridgeTokens(context.Background(), mid); err != nil {
+				t.Fatal(err)
+			}
+		},
 	}
-	req := httptest.NewRequest("POST", "/internal/engine/token", nil)
-	req.Header.Set("Authorization", "Bearer "+out["token"].(string))
-	_, epoch, aerr := g.issuerMembership(req) // authenticated at this epoch
-	if aerr != nil {
-		t.Fatalf("issuer refused: %v", aerr)
+	rec := httptest.NewRecorder()
+	g.issueSessionToken(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		return
 	}
-	if _, _, err := mgr.rotateBridgeTokens(ctx, mem.ID); err != nil { // ...rotated while the body is read
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	tok := mintEngineSessionToken(bridgeKeyAt(reg.signKey, epoch), mem.ID, "s1", "llm", timeNowPlus())
-	if _, ok := g.verifyEngineSession(ctx, tok, timeNow()); ok {
-		t.Fatal("a session token minted from a revoked issuing token verifies under the new epoch")
+	tok, _ := out["token"].(string)
+	if _, ok := g.verifyEngineSession(context.Background(), tok, time.Now()); ok {
+		t.Fatal("a revoked issuing token bought a session token that verifies under the new epoch")
 	}
 }
