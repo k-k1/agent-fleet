@@ -119,6 +119,19 @@ informed choice — not undisclosed bugs.
   [01 Choosing the egress route on AWS](guide/operate/01-choose.md#choosing-the-egress-route-on-aws),
   [07 §7.8](docs/build/07-security.md#78-egress-control-)).
 
+- **Without a preview domain, the path-form preview runs a workspace app on the Console
+  origin.** `/preview/{port}/…` is the only preview form where no `AF_PREVIEW_DOMAIN` is
+  configured (the `docker` default). The CP confines what it relays with
+  `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-downloads`
+  (no `allow-same-origin`, so the page gets an opaque origin and cannot call the CP API
+  with the member's cookies), strips `Set-Cookie`, `Service-Worker-Allowed` and
+  `Clear-Site-Data` from those responses, and refuses a cross-origin WebSocket handshake.
+  That is a mitigation, not a boundary: it depends on the browser honouring the sandbox,
+  and it breaks apps that need a same-origin page (module scripts, cookies, storage).
+  Set `AF_PREVIEW_DOMAIN`: the path form is then not served at all and redirects to the
+  per-workspace subdomain ([07 §7.5.1](docs/build/07-security.md#751-the-member-origin-mark),
+  [ADR 0062](docs/decisions/0062-preview-subdomain.md) decision 7).
+
 ### `docker` and `native`
 
 - **`docker.sock` access = host access.** On `docker` the CP drives the host Docker

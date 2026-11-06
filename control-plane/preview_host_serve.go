@@ -540,6 +540,9 @@ type previewRelayOptions struct {
 	proto      string
 	prefix     string // X-Forwarded-Prefix (path mode only; empty in host mode)
 	public     bool   // public mode: add X-Robots-Tag
+	// sandbox marks the path form, which answers on the Console origin: the response is
+	// confined by sandboxPathFormResponse. The host form never sets it.
+	sandbox bool
 	// allowOrigin is the sibling preview origin the response may be read by, or ""
 	// (the default: the CP adds no CORS at all and the app's own headers stand).
 	allowOrigin string
@@ -619,6 +622,9 @@ func relayPreview(w http.ResponseWriter, r *http.Request, rt runtime.Runtime, o 
 				resp.Header.Del("Access-Control-Allow-Origin")
 				resp.Header.Del("Access-Control-Allow-Credentials")
 				writePreviewCORS(resp.Header, o.allowOrigin)
+			}
+			if o.sandbox {
+				sandboxPathFormResponse(resp.Header)
 			}
 			if o.public {
 				// A publicly served screen turning up in search results is an

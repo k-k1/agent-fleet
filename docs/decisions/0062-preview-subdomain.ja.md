@@ -261,3 +261,12 @@ slug は起動ごとに変わる（決定 3）ので、**生 URL を貼る運用
   通らない。ループバック URL への遷移が失敗したら Agent がそのポートを 1 回だけ調べ（`internal/portprobe`、時間制限付きの
   `HEAD /` 1 本）、`preview_not_http` / `preview_tls` のときは状態 `target-unreachable` はそのままに `reason` を添える。
   分類器は `internal/portprobe` に移し、`/proxy/{port}` の挙動は変えていない。
+- 2026-11-07: 決定 7 はパス形式にも及ぶようにした（#3447）。決定 1 はパスのルートを残したが、`PreviewDomain` を
+  設定してもそのルートに届き、Workspace の内容が Console のオリジンで動いていた。ドメインがある場合、
+  `/preview/{port}/…` は配らない：GET/HEAD は、ポート・残りのパス・クエリを `next`、テナント指定とともに
+  `/preview-open-own` へ 302 で返し、他のメソッドは 405。ドメインが無い場合はルートを残し、中継するすべての
+  応答に 2 本目の `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-downloads`
+  （`allow-same-origin` なし）を付け、`Set-Cookie`・`Service-Worker-Allowed`・`Clear-Site-Data` を落とす。
+  外部の `Origin` からの WebSocket アップグレードは identity の解決より前に断る。代償：sandbox 下のページは
+  opaque origin なので、Cookie・ストレージ・資格情報付きの同一オリジン要求が要るアプリはプレビュー用ドメインを使う。
+  ホスト形式と `/preview-open*` は変えていない。

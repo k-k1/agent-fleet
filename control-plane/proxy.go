@@ -295,10 +295,25 @@ func checkWSOrigin(r *http.Request) bool {
 		(wsAllowedOriginHost != "" && strings.EqualFold(u.Host, wsAllowedOriginHost))
 }
 
+// refuseForeignWSOrigin answers 403 and reports true when a browser handshake comes from an
+// origin checkWSOrigin does not allow. Call it first thing in a WebSocket handler:
+// upgrader.Upgrade runs the same check, but only after the handler has dialled the Agent and
+// recorded presence, so a refused cross-site handshake would already have had its effects.
+func refuseForeignWSOrigin(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Origin") == "" || checkWSOrigin(r) {
+		return false
+	}
+	http.Error(w, "websocket: origin not allowed", http.StatusForbidden)
+	return true
+}
+
 // terminal bridges the browser terminal WS to the Agent's /ws/pty,
 // relaying frames in both directions while preserving message types
 // (binary = PTY output, text = input/resize control).
 func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if refuseForeignWSOrigin(w, r) {
+		return
+	}
 	rt := res.rt
 	// P3-9: an attached terminal keeps the workspace warm and pins its session
 	// (tier 1 won't halt a session someone is watching).

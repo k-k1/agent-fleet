@@ -441,7 +441,20 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
 - **No signing for another page.** Before signing, the CP requires `application/json`, `Sec-Fetch-Site:
   same-origin` when sent, and an `Origin` of the Console's own host when sent, so a same-site preview app
   cannot have the browser make a signed member write. An app in the path-form preview runs on the
-  Console's origin and is not covered (decisions/0062 decision 7).
+  Console's origin and is not covered by this check; what limits it is below.
+- **The path-form preview (`/preview/{port}/…`).** With `AF_PREVIEW_DOMAIN` set the CP does not serve it:
+  a GET or HEAD is redirected (302) to `/preview-open-own`, the owner-only entry of the subdomain form (other methods get 405), so
+  workspace content never answers on the Console origin (decisions/0062 decision 7, note of 2026-11-07). Without
+  a domain it remains, and `relayPreview` confines the response (`sandboxPathFormResponse`): a second
+  `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-downloads` — no
+  `allow-same-origin`, so the page has an opaque origin and cannot read the CP API with the member's cookies —
+  and `Set-Cookie`, `Service-Worker-Allowed` and `Clear-Site-Data` are dropped. A WebSocket upgrade whose
+  `Origin` is not the Console's host is refused with 403 before identity resolution or any workspace
+  side effect (`gatePathForm`); the terminal and browser sockets run the same check first thing instead of
+  after dialling the Agent. A sandboxed page sends `Origin: null`, so its own sockets are refused too.
+  **Cost**: the page has no cookies or storage of its own, module scripts and `fetch` to its own origin go
+  cross-origin without credentials — apps that need those (Vite, Next.js) should use a preview domain.
+  Residual: `SECURITY.md` "Known residual risks".
 - **Fails closed**: a workspace started without the keys (an older start, or `AF_MEMBER_ORIGIN_KEY_VERSION=0`)
   answers 503 on these routes; no mark, or only `AGENT_TOKEN` / `X-AF-Relay`, is 403.
 - **Rotation**: a workspace starts with the current and the next key, so raising

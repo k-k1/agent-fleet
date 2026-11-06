@@ -297,3 +297,12 @@ it goes stale as a 404 — the least legible failure there is**.
   domain included — that is not a valid preview host answers the same bare `404` as an unknown slug, before the
   mux. Both tests share one normalisation (`previewHostLabel`: port, trailing dot, case), so they cannot disagree.
   The slug format, the handshake and the proxy are unchanged.
+- 2026-11-07: decision 7 now holds for the path form as well (#3447). Decision 1 kept the path route; it
+  stayed reachable when a `PreviewDomain` was set and ran workspace content on the Console origin. With a
+  domain, `/preview/{port}/…` is no longer served: a GET/HEAD is redirected (302) to `/preview-open-own` with
+  the port, the remaining path and query as `next`, and the tenant selection; other methods get 405. Without a
+  domain the route stays, and every relayed response carries a second `Content-Security-Policy: sandbox
+  allow-scripts allow-forms allow-popups allow-downloads` (no `allow-same-origin`) and loses `Set-Cookie`,
+  `Service-Worker-Allowed` and `Clear-Site-Data`; a WebSocket upgrade from a foreign `Origin` is refused before
+  identity resolution. Trade-off: a sandboxed page is an opaque origin, so apps that need cookies, storage or
+  credentialed same-origin requests must use a preview domain. The host form and `/preview-open*` are unchanged.

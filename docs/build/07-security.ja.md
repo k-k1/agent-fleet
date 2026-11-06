@@ -373,7 +373,20 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 - **別のページのためには署名しない。** 署名の前に CP は `application/json`、送られていれば `Sec-Fetch-Site:
   same-origin`、送られていれば Console 自身のホストの `Origin` を求めるので、same-site のプレビューアプリが
   ブラウザーに署名付きのメンバー書き込みをさせることはできない。パス形式のプレビューのアプリは Console の
-  オリジンで動くので対象外（decisions/0062 決定 7）。
+  オリジンで動くのでこの検査の対象外で、制限は次の項目が担う。
+- **パス形式のプレビュー（`/preview/{port}/…`）。** `AF_PREVIEW_DOMAIN` があると CP はこれを配らない。
+  GET/HEAD をサブドメイン形式の持ち主専用の入口 `/preview-open-own` へ 302 で返し（他のメソッドは 405）、Workspace の
+  内容が Console のオリジンで応答することはない（decisions/0062 決定 7、2026-11-07 の追記）。ドメインが
+  無い構成では残り、`relayPreview` が応答を閉じ込める（`sandboxPathFormResponse`）：2 本目の
+  `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-downloads`（`allow-same-origin`
+  なし。ページは opaque origin になり、メンバーの Cookie で CP API を読めない）を足し、`Set-Cookie`・
+  `Service-Worker-Allowed`・`Clear-Site-Data` を落とす。`Origin` が Console のホストでない WebSocket
+  アップグレードは、identity の解決や Workspace への副作用より前に 403 で断る（`gatePathForm`）。ターミナルと
+  ブラウザーのソケットも、Agent へ接続した後ではなく先頭で同じ検査をする。sandbox 下のページは
+  `Origin: null` を送るので、そのページ自身のソケットも断られる。
+  **代償**：ページは自前の Cookie もストレージも持てず、module スクリプトや自オリジンへの `fetch` は
+  資格情報なしのクロスオリジンになる。これらが要るアプリ（Vite、Next.js）はプレビュー用ドメインを使う。
+  残る危険は `SECURITY.md` の「Known residual risks」。
 - **閉じる側に倒れる**：鍵なしで起動した Workspace（古い起動、または `AF_MEMBER_ORIGIN_KEY_VERSION=0`）は
   これらのルートで 503。印がない、または `AGENT_TOKEN` / `X-AF-Relay` だけなら 403。
 - **ローテーション**：Workspace は現在と次の鍵を持って起動するので、`AF_MEMBER_ORIGIN_KEY_VERSION` を 1 つ

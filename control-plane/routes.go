@@ -833,7 +833,7 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 	pv := newPreviewAPI(cfg.mgr, cfg.publicBaseURL)
 	mux.HandleFunc("GET /ws/terminal", proxy.withResolved(proxy.terminal))
 	mux.HandleFunc("/preview/{port}", pv.redirect)
-	mux.HandleFunc("/preview/{port}/{rest...}", pv.withPreviewResolved(pv.proxy))
+	mux.HandleFunc("/preview/{port}/{rest...}", pv.gatePathForm(pv.withPreviewResolved(pv.proxy)))
 	// Console-origin half of the preview-subdomain handshake (docs/log/81 §6). It lives
 	// HERE, on the authenticated origin, precisely so an unauthenticated visitor meets
 	// the normal login before any token exists.

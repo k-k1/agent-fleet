@@ -128,7 +128,97 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		proto:          forwardedProto(r),
 		prefix:         a.externalPrefix() + "/preview/" + port,
 		identityHeader: a.mgr.emailHeader,
+		sandbox:        true,
 	})
+}
+
+// gatePathForm fronts the /preview/{port}/... route, before any identity resolution or
+// workspace side effect.
+//
+// With a PreviewDomain the path form is not served at all: workspace content on the Console
+// origin runs with the member's cookies, which the subdomain form exists to prevent
+// (ADR 0062 decision 7), so the request is bounced to the owner-only subdomain entry.
+//
+// Without one the form stays (docker default), sandboxed by relayPreview, and a WebSocket
+// upgrade from a page that is not the Console is refused here: a relayed page must not be
+// able to open a credentialed socket to its own workspace.
+func (a previewAPI) gatePathForm(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if a.mgr != nil && a.mgr.previewDomain != "" {
+			a.redirectToSubdomain(w, r)
+			return
+		}
+		if isWebSocketUpgrade(r) && refuseForeignWSOrigin(w, r) {
+			return
+		}
+		next(w, r)
+	}
+}
+
+// redirectToSubdomain sends a path-form request to the subdomain form through the
+// owner-only entry (previewOwnOpenPath), which authenticates, grants an unlisted port and
+// runs the handshake. The path-form route resolves the caller's own workspace, which is
+// exactly what that entry does, so no link that worked before loses its target.
+func (a previewAPI) redirectToSubdomain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "this preview is served on its own host; open it from the Console", http.StatusMethodNotAllowed)
+		return
+	}
+	portStr := r.PathValue("port")
+	if n, err := strconv.Atoi(portStr); err != nil || n < 1 || n > 65535 {
+		http.Error(w, "bad preview port", http.StatusBadRequest)
+		return
+	}
+	if unsafeRelayPath(r.PathValue("rest")) {
+		http.Error(w, "bad preview path", http.StatusBadRequest)
+		return
+	}
+	// The remainder is cut off by segment position, not by comparing against the decoded
+	// port: the mux also matches an encoded "preview" or port, and an encoded reserved
+	// character in a file name must stay encoded.
+	segs := strings.SplitN(r.URL.EscapedPath(), "/", 4) // "", "preview", "{port}", rest
+	next := "/"
+	if len(segs) == 4 {
+		next += segs[3]
+	}
+	// The app's query string is passed on as it came (order, duplicates, ";" and all: an app
+	// may sign it); only our own tenant selector is taken out.
+	if rq := withoutQueryKey(r.URL.RawQuery, "tenant"); rq != "" {
+		next += "?" + rq
+	}
+	// The same precedence as every other route (header, query, cookie).
+	tenant, _ := previewTenantSel(r)
+	q := url.Values{}
+	q.Set("port", portStr)
+	q.Set("next", next)
+	if tenant != "" {
+		q.Set("tenant", tenant)
+	}
+	http.Redirect(w, r, a.externalPrefix()+previewOwnOpenPath+"?"+q.Encode(), http.StatusFound)
+}
+
+// isWebSocketUpgrade reports whether r asks for a WebSocket handshake.
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") &&
+		strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade")
+}
+
+// pathFormSandboxCSP is added to every relayed path-form response. Without allow-same-origin
+// the document gets an opaque origin, so it cannot read the Console's API with the member's
+// cookies, register a service worker, or touch the Console's storage.
+const pathFormSandboxCSP = "sandbox allow-scripts allow-forms allow-popups allow-downloads"
+
+// sandboxPathFormResponse confines an app response that is about to be served on the
+// Console origin. The CSP is added next to, not over, the app's own: with several policies
+// every one is enforced, so the app can only get stricter. Set-Cookie is dropped whole
+// (stripAppLoginCookies keeps the app's own cookies for the subdomain form, where they land
+// on the app's own origin); Service-Worker-Allowed and Clear-Site-Data would reach the
+// Console's origin-wide state.
+func sandboxPathFormResponse(h http.Header) {
+	h.Add("Content-Security-Policy", pathFormSandboxCSP)
+	h.Del("Set-Cookie")
+	h.Del("Service-Worker-Allowed")
+	h.Del("Clear-Site-Data")
 }
 
 // sensitiveBrowserCookie reports whether a cookie carries a login the previewed
@@ -194,4 +284,22 @@ func forwardedProto(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+// withoutQueryKey removes every "key" or "key=value" item from a raw query string without
+// re-encoding the rest. Items that are not that key, empty ones included, are kept as they
+// are, so a query without the key comes back byte for byte.
+func withoutQueryKey(raw, key string) string {
+	if raw == "" {
+		return ""
+	}
+	var kept []string
+	for _, item := range strings.Split(raw, "&") {
+		name, _, _ := strings.Cut(item, "=")
+		if n, err := url.QueryUnescape(name); err == nil && n == key {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return strings.Join(kept, "&")
 }
