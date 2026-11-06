@@ -112,7 +112,8 @@ func boxRule(line string) bool {
 // always started with --name: "───────────────────────── [AF:solkwlt] Live check … ─").
 func topRule(line string) bool {
 	t := strings.TrimRight(line, " ")
-	return boxRule(line) || strings.HasPrefix(t, "─") && strings.HasSuffix(t, "─") && strings.Contains(t, " ")
+	return ruleWidth(line) >= minBoxRule && strings.HasPrefix(t, "─") && strings.HasSuffix(t, "─") &&
+		(boxRule(line) || strings.Contains(t, " "))
 }
 
 // ruleWidth counts a rule's runes; it is compared only between rules made of "─" alone, which

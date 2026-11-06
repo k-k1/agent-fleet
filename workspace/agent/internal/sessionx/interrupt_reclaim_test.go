@@ -338,7 +338,7 @@ func TestClaudeBox(t *testing.T) {
 	}
 	// A titled top rule is not measured against the bottom one: how wide tmux draws a title's
 	// emoji or combining marks is not this reader's to guess.
-	for _, title := range []string{"─── 日e\u0301 " + strings.Repeat("─", 72), "─── ❤️ 👩‍💻 review ─"} {
+	for _, title := range []string{"─── 日e\u0301 " + strings.Repeat("─", 72), "──── [AF:s36kevd] ❤️ 👩‍💻 review ─"} {
 		if draft, _, ok = claudeBox(title + "\n❯ \n" + strings.Repeat("─", 80) + "\n"); !ok || squashSpace(draft) != "" {
 			t.Fatalf("title %q: draft = %q, ok = %v", title, draft, ok)
 		}
@@ -352,6 +352,7 @@ func TestClaudeBox(t *testing.T) {
 		// A title only ever sits in the top rule.
 		"titled bottom": titledRule + "\n❯ a\n" + titledRule + "\n",
 		"short bottom":  titledRule + "\n❯ a\n" + strings.Repeat("─", minBoxRule-1) + "\n",
+		"short title":   "─ x ─\n❯ a\n" + rule + "\n",
 	} {
 		if _, _, ok := claudeBox(pane); ok {
 			t.Errorf("%s: read as a box", name)
