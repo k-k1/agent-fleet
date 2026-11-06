@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,23 +77,79 @@ var loadAPIKey = func() (string, error) {
 	return strings.TrimSpace(s.Opencode[apiKeyConnection]), nil
 }
 
-// routeUnset are the variables that would route a claude process somewhere other than the
-// selected route, removed from the pane for both routes. The credential variables of the other
-// route are added per route below.
-var routeUnset = []string{
-	"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+// routeOverrides is every variable the CLI reads to choose its model provider, its endpoint or
+// its credential, taken from the CLI's own lists (claude 2.1.318: the provider switches and their
+// scoping, the credentials, the base URLs, the auth skips) plus the Unix socket it sends Anthropic
+// API calls to. Every explicit route removes all of them from the pane and pins them empty in the
+// flag layer except the ones it sets itself (overridesExcept), and refuses a settings file that
+// sets any of them (settingsConflict). A partial list is a bypass: CLAUDE_CODE_USE_MANTLE=1 and
+// ANTHROPIC_BEDROCK_MANTLE_BASE_URL inherited by a bedrock pane sent the gateway bearer to that
+// URL over TCP, past ANTHROPIC_UNIX_SOCKET (measured by review on 2.1.318). When the pinned CLI
+// is bumped, its lists are compared again (TestRouteOverridesCoverTheCLIsLists).
+var routeOverrides = []string{
+	// Provider switches, and the settings that scope a provider.
+	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+	"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_GATEWAY",
+	"ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_VERTEX_PROJECT_ID", "ANTHROPIC_AWS_WORKSPACE_ID",
+	"ANTHROPIC_GOOGLE_CLOUD_PROJECT", "ANTHROPIC_GOOGLE_CLOUD_LOCATION", "ANTHROPIC_GOOGLE_CLOUD_WORKSPACE_ID", "CLOUD_ML_REGION",
+	// Credentials, including the ones passed by file descriptor.
+	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "AWS_BEARER_TOKEN_BEDROCK",
+	"ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_AWS_API_KEY",
+	"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_GATEWAY_TOKEN_FILE_DESCRIPTOR", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+	// Endpoints.
+	"ANTHROPIC_BASE_URL", "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_BEDROCK_MANTLE_BASE_URL", "ANTHROPIC_AWS_BASE_URL",
+	"ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_GOOGLE_CLOUD_BASE_URL", "ANTHROPIC_FOUNDRY_BASE_URL",
+	"AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "AWS_ENDPOINT_URL_BEDROCK", "AWS_ENDPOINT_URL", "ANTHROPIC_UNIX_SOCKET",
+	// Provider auth skips.
+	"CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH", "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+	"CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH", "CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH", "CLAUDE_CODE_SKIP_MANTLE_AUTH",
+}
+
+// overridesExcept is routeOverrides without the names a route sets itself.
+func overridesExcept(own ...string) []string {
+	out := make([]string, 0, len(routeOverrides))
+	for _, n := range routeOverrides {
+		if !slices.Contains(own, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // Routes implements agents.RouteAdapter.
 func (agentImpl) Routes() []string { return []string{RouteAPI, RouteBedrock, RouteSubscription} }
+
+// bedrockGateEnv opens the bedrock route on this Agent. ADR 0128 decision 14 ships a harness ×
+// route row only after live turns and negative controls have been recorded, and the bedrock row
+// has not had them: until then it is declared (stored selections and the Control Plane's
+// snapshot know it) but refused at every check, bind and launch, and not offered in the launch
+// dialog, unless the Workspace's Agent runs with AF_CLAUDE_BEDROCK_ROUTE=1 for the acceptance
+// run. Lifting the gate is a change of its own, made with the evidence.
+const bedrockGateEnv = "AF_CLAUDE_BEDROCK_ROUTE"
+
+func bedrockOpen() bool { return os.Getenv(bedrockGateEnv) == "1" }
+
+func bedrockGated() *agents.RouteRefusal {
+	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
+		Message: "the bedrock route has not passed its live acceptance yet (ADR 0128 decision 14) and is off on this workspace; it is opened for the acceptance run with " + bedrockGateEnv + "=1 on the workspace's Agent"}
+}
+
+// OfferedRoutes implements agents.RouteOfferer: bedrock only while its gate is open.
+func (a agentImpl) OfferedRoutes() []string {
+	var out []string
+	for _, r := range a.Routes() {
+		if r != RouteBedrock || bedrockOpen() {
+			out = append(out, r)
+		}
+	}
+	return out
+}
 
 // ApplyRoute implements agents.RouteAdapter.
 func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.RoutePlan, error) {
 	if ref := checkRouteSelection(sel); ref != nil {
 		return agents.RoutePlan{}, ref
 	}
-	unset := append([]string(nil), routeUnset...)
 	switch sel.Route {
 	case RouteBedrock:
 		return bedrockPlan(m)
@@ -104,12 +161,9 @@ func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.R
 		if _, fp := splitConnection(sel.Connection); fp != "" && fp != keyFingerprint(key) {
 			return agents.RoutePlan{}, keyReplaced()
 		}
-		// The login of the other route must not shadow the key.
-		unset = append(unset, "CLAUDE_CODE_OAUTH_TOKEN")
-		return agents.RoutePlan{Env: []string{"ANTHROPIC_API_KEY=" + key}, Unset: unset}, nil
+		return agents.RoutePlan{Env: []string{"ANTHROPIC_API_KEY=" + key}, Unset: overridesExcept("ANTHROPIC_API_KEY")}, nil
 	default: // RouteSubscription: the OAuth login in claude's own credentials file
-		unset = append(unset, "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
-		return agents.RoutePlan{Unset: unset}, nil
+		return agents.RoutePlan{Unset: overridesExcept()}, nil
 	}
 }
 
@@ -141,6 +195,9 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model 
 			return keyReplaced()
 		}
 	case RouteBedrock:
+		if !bedrockOpen() {
+			return bedrockGated()
+		}
 		gw := agents.CurrentRouteGateway()
 		if gw == nil {
 			return noGateway()
@@ -159,6 +216,17 @@ func (agentImpl) CheckRoute(_ context.Context, sel agents.RouteSelection, model 
 // read once, here, and a fingerprint already on the selection is checked against THAT read, so a
 // key replaced between the check and the binding is refused instead of being bound silently.
 func (agentImpl) BindRoute(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
+	if sel.Route == RouteBedrock {
+		if !bedrockOpen() {
+			return sel, bedrockGated()
+		}
+		// The gateway binds it to the profile's identity and region as they are now.
+		gw := agents.CurrentRouteGateway()
+		if gw == nil {
+			return sel, noGateway()
+		}
+		return gw.Bind(sel)
+	}
 	if sel.Route != RouteAPI {
 		return sel, nil
 	}
@@ -220,6 +288,9 @@ func checkRouteSelection(sel agents.RouteSelection) *agents.RouteRefusal {
 // edited later cannot change them. The bearer is environment only: it never goes on a command
 // line, and a settings file that sets it is refused (settingsConflict).
 func bedrockPlan(m session.Meta) (agents.RoutePlan, error) {
+	if !bedrockOpen() {
+		return agents.RoutePlan{}, bedrockGated()
+	}
 	gw := agents.CurrentRouteGateway()
 	if gw == nil {
 		return agents.RoutePlan{}, noGateway()
@@ -234,13 +305,9 @@ func bedrockPlan(m session.Meta) (agents.RoutePlan, error) {
 		"ANTHROPIC_UNIX_SOCKET=" + g.Socket,
 		"AWS_REGION=" + g.Region,
 	}
-	unset := []string{
-		"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
-		"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
-	}
 	return agents.RoutePlan{
 		Env:      append([]string{"AWS_BEARER_TOKEN_BEDROCK=" + g.Token}, values...),
-		Unset:    unset,
+		Unset:    overridesExcept("CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_UNIX_SOCKET", "AWS_BEARER_TOKEN_BEDROCK"),
 		Settings: values,
 	}, nil
 }
@@ -259,16 +326,10 @@ func keyReplaced() *agents.RouteRefusal {
 // project, local, managed), over the process environment, and `env -u` cannot remove them. A
 // route whose credential or endpoint they would override cannot be honoured, so the launch is
 // refused with the file named instead of running on whatever they say.
-var settingsConflictEnv = []string{
-	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
-	"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
-}
-
-// settingsConflictBedrock is what the bedrock route adds: the bearer, which cannot be pinned
-// because it never goes on a command line, and the two settings that make the CLI fetch AWS
-// credentials of its own (a command it runs), which would put it on another identity.
-var settingsConflictBedrock = []string{"AWS_BEARER_TOKEN_BEDROCK", "CLAUDE_CODE_SKIP_BEDROCK_AUTH"}
-
+// Every route refuses all of routeOverrides there, its own names included: a file that sets one
+// of them either fights the route's own value or, in the managed layer, outranks the flag-layer
+// pin. The bedrock route also refuses the two settings that make the CLI fetch AWS credentials of
+// its own (a command it runs), which would put it on another identity.
 var settingsConflictBedrockKeys = []string{"awsAuthRefresh", "awsCredentialExport"}
 
 // managedSettingsDir is where the organisation's managed settings live; a var for tests.
@@ -305,10 +366,9 @@ func projectSettingFiles(m session.Meta) []string {
 // fetch AWS credentials). A file that is absent or not valid JSON overrides nothing the Agent can
 // see, so it is skipped.
 func settingsConflict(route string, files []string) *agents.RouteRefusal {
-	names := settingsConflictEnv
+	names := routeOverrides
 	var keys []string
 	if route == RouteBedrock {
-		names = append(append([]string(nil), names...), settingsConflictBedrock...)
 		keys = settingsConflictBedrockKeys
 	}
 	for _, f := range files {

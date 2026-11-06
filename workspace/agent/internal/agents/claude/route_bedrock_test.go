@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -35,6 +37,14 @@ func (f *fakeGateway) Issue(m session.Meta) (agents.RouteGrant, *agents.RouteRef
 		Token: testBearer, Region: "eu-west-1"}, nil
 }
 
+func (f *fakeGateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
+	if f.refuse != nil {
+		return sel, f.refuse
+	}
+	sel.Connection += "#00112233aabbccdd"
+	return sel, nil
+}
+
 func (f *fakeGateway) CheckRoute(_ context.Context, sel agents.RouteSelection, _ string) *agents.RouteRefusal {
 	f.checked = append(f.checked, sel)
 	return f.refuse
@@ -42,6 +52,7 @@ func (f *fakeGateway) CheckRoute(_ context.Context, sel agents.RouteSelection, _
 
 func withGateway(t *testing.T, g agents.RouteGateway) {
 	t.Helper()
+	t.Setenv(bedrockGateEnv, "1") // the release gate has its own test
 	prev := agents.CurrentRouteGateway()
 	agents.SetRouteGateway(g)
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })
@@ -173,11 +184,11 @@ func TestBedrockSettingsConflicts(t *testing.T) {
 		if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, ""); ref == nil || ref.Code != routes.CodeRouteSettings {
 			t.Errorf("%s: CheckRoute = %v", body, ref)
 		}
-		if strings.Contains(body, "BEDROCK") && !strings.Contains(body, "USE_BEDROCK") || strings.Contains(body, "aws") {
-			api := session.Meta{Kind: session.KindClaude, Name: "api-sc", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
-			if _, err := launchOf(t, api); err != nil {
-				t.Errorf("%s: refused the anthropic-api route too: %v", body, err)
-			}
+		// The env names concern every route; the AWS credential commands only bedrock.
+		api := session.Meta{Kind: session.KindClaude, Name: "api-sc", Dir: t.TempDir(), Route: sel(RouteAPI, "")}
+		_, apiErr := launchOf(t, api)
+		if strings.Contains(body, `"aws`) != (apiErr == nil) {
+			t.Errorf("%s: anthropic-api launch err = %v", body, apiErr)
 		}
 	}
 }
@@ -205,5 +216,145 @@ func TestBedrockIsItsOwnCredentialAndMetered(t *testing.T) {
 	}
 	if _, ref := (agentImpl{}).SwitchTarget(m); ref == nil {
 		t.Error("a bedrock session was offered a switch")
+	}
+}
+
+// routeOverridesFrom is the CLI version routeOverrides was taken from.
+const routeOverridesFrom = "2.1.318"
+
+// The list was read off the pinned CLI's own lists of provider switches, credentials, base URLs
+// and auth skips. A bump of the pin has to look again: run `strings` on the new binary and
+// compare its arrays naming CLAUDE_CODE_USE_*, *_BASE_URL, *_API_KEY / *_AUTH_TOKEN and
+// CLAUDE_CODE_SKIP_*_AUTH with routeOverrides, then update routeOverridesFrom.
+func TestRouteOverridesCoverTheCLIsLists(t *testing.T) {
+	df, err := os.ReadFile("../../../../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^ARG CLAUDE_CODE_VERSION=(\S+)`).FindSubmatch(df)
+	if m == nil {
+		t.Fatal("workspace/Dockerfile no longer has `ARG CLAUDE_CODE_VERSION=`")
+	}
+	if string(m[1]) != routeOverridesFrom {
+		t.Errorf("claude is pinned at %s but routeOverrides was read off %s: re-derive it from the new CLI (see this test's comment)", m[1], routeOverridesFrom)
+	}
+	for _, n := range []string{
+		"CLAUDE_CODE_USE_MANTLE", "ANTHROPIC_BEDROCK_MANTLE_BASE_URL", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "ANTHROPIC_AWS_BASE_URL",
+		"ANTHROPIC_AWS_API_KEY", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_SKIP_MANTLE_AUTH",
+		"AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "ANTHROPIC_UNIX_SOCKET", "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+	} {
+		if !slices.Contains(routeOverrides, n) {
+			t.Errorf("%s is missing from routeOverrides", n)
+		}
+	}
+}
+
+// Every route removes and pins empty every provider, endpoint and credential variable except the
+// ones it sets itself, so nothing the pane inherits (CLAUDE_CODE_USE_MANTLE with a Mantle base
+// URL, an ANTHROPIC_UNIX_SOCKET of someone else's) can move its calls or its bearer elsewhere.
+func TestEveryRouteRemovesAndPinsEveryOtherSelector(t *testing.T) {
+	isolateSlot(t)
+	isolateClaudeConfig(t)
+	withGateway(t, &fakeGateway{})
+	withAPIKey(t, "sk-ant-api03-test-0123456789abcdef", nil)
+	own := map[string][]string{
+		RouteBedrock:      {"CLAUDE_CODE_USE_BEDROCK", "ANTHROPIC_BEDROCK_BASE_URL", "ANTHROPIC_UNIX_SOCKET", "AWS_BEARER_TOKEN_BEDROCK"},
+		RouteAPI:          {"ANTHROPIC_API_KEY"},
+		RouteSubscription: nil,
+	}
+	for route, mine := range own {
+		m := bedrockMeta(t, "sel-"+route)
+		if route != RouteBedrock {
+			m.Route = sel(route, "")
+		}
+		plan, err := launchOf(t, m)
+		if err != nil {
+			t.Fatalf("%s: %v", route, err)
+		}
+		_, env := func() (map[string]any, map[string]any) {
+			doc := launchSettingsOf(t, plan.Program)
+			e, _ := doc["env"].(map[string]any)
+			return doc, e
+		}()
+		for _, n := range routeOverrides {
+			if slices.Contains(mine, n) {
+				if strings.Contains(plan.Program, "-u "+n+" ") {
+					t.Errorf("%s: its own %s is removed", route, n)
+				}
+				continue
+			}
+			if !strings.Contains(plan.Program, "-u "+n+" ") {
+				t.Errorf("%s: %s is not removed from the pane", route, n)
+			}
+			if v, ok := env[n]; !ok || v != "" {
+				t.Errorf("%s: %s is not pinned empty in the flag layer (%v)", route, n, v)
+			}
+		}
+	}
+	// A settings file that selects Mantle refuses every route.
+	cfg := isolateClaudeConfig(t)
+	writeFile(t, filepath.Join(cfg, "settings.json"), `{"env":{"CLAUDE_CODE_USE_MANTLE":"1"}}`)
+	for route := range own {
+		m := bedrockMeta(t, "selset-"+route)
+		if route != RouteBedrock {
+			m.Route = sel(route, "")
+		}
+		var ref *agents.RouteRefusal
+		if _, err := launchOf(t, m); !errors.As(err, &ref) || ref.Code != routes.CodeRouteSettings {
+			t.Errorf("%s with a Mantle settings file: %v", route, err)
+		}
+	}
+}
+
+// The stored form of a bedrock selection is the gateway's binding; without a gateway nothing is
+// stored, and a gateway's refusal (an edited profile under a bound fork) is passed on.
+func TestBedrockBindRouteIsTheGateways(t *testing.T) {
+	withGateway(t, &fakeGateway{})
+	got, ref := agentImpl{}.BindRoute(*sel(RouteBedrock, "p1@"))
+	if ref != nil || got.Connection != "p1@#00112233aabbccdd" {
+		t.Fatalf("BindRoute = %+v %v", got, ref)
+	}
+	changed := &agents.RouteRefusal{Status: http.StatusConflict, Code: "route_connection_changed", Message: "changed"}
+	withGateway(t, &fakeGateway{refuse: changed})
+	if _, ref := (agentImpl{}).BindRoute(*sel(RouteBedrock, "p1@eu-west-1#00112233aabbccdd")); ref != changed {
+		t.Fatalf("a changed binding = %v", ref)
+	}
+	withGateway(t, nil)
+	if _, ref := (agentImpl{}).BindRoute(*sel(RouteBedrock, "p1@")); ref == nil {
+		t.Fatal("bound without a gateway")
+	}
+}
+
+// Until decision 14's acceptance run, the bedrock route is declared but closed: refused at check,
+// bind and launch, and not offered; AF_CLAUDE_BEDROCK_ROUTE=1 opens it.
+func TestBedrockReleaseGate(t *testing.T) {
+	isolateSlot(t)
+	isolateClaudeConfig(t)
+	withGateway(t, &fakeGateway{})
+	t.Setenv(bedrockGateEnv, "")
+	m := bedrockMeta(t, "gate-1")
+	m.Route.Connection += "#00112233aabbccdd"
+	gated := func(what string, ref *agents.RouteRefusal) {
+		t.Helper()
+		if ref == nil || !strings.Contains(ref.Message, bedrockGateEnv) {
+			t.Errorf("%s with the gate closed = %v", what, ref)
+		}
+	}
+	gated("CheckRoute", agentImpl{}.CheckRoute(context.Background(), *m.Route, ""))
+	_, ref := agentImpl{}.BindRoute(*m.Route)
+	gated("BindRoute", ref)
+	_, err := launchOf(t, m)
+	var lref *agents.RouteRefusal
+	errors.As(err, &lref)
+	gated("the launch", lref)
+	if slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) || !slices.Contains(agentImpl{}.Routes(), RouteBedrock) {
+		t.Errorf("closed: offered %v, declared %v", agentImpl{}.OfferedRoutes(), agentImpl{}.Routes())
+	}
+	t.Setenv(bedrockGateEnv, "1")
+	if !slices.Contains(agentImpl{}.OfferedRoutes(), RouteBedrock) {
+		t.Error("open, but not offered")
+	}
+	if ref := (agentImpl{}).CheckRoute(context.Background(), *m.Route, ""); ref != nil {
+		t.Errorf("open: CheckRoute = %v", ref)
 	}
 }

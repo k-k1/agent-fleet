@@ -163,6 +163,7 @@ func TestScheduleRouteStoreRoundTrip(t *testing.T) {
 // without a route sends exactly as before, whatever the target's selection.
 func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
 	sel := &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY@0123456789abcdef"}
+	bed := &agentroutes.Selection{Route: "bedrock", Connection: "p1@us-east-1#00112233aabbccdd"}
 	for name, tc := range map[string]struct {
 		target  sessionWire
 		route   string
@@ -178,6 +179,13 @@ func TestFireReuseRefusesATargetOnAnotherRoute(t *testing.T) {
 		"bound, another instance":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: sel}, "anthropic-api", "ANTHROPIC_API_KEY@fedcba9876543210", true},
 		"bound, target bare":         {sessionWire{Name: "t", Alive: true, State: "idle", Route: &agentroutes.Selection{Route: "anthropic-api", Connection: "ANTHROPIC_API_KEY"}}, "anthropic-api", "ANTHROPIC_API_KEY@0123456789abcdef", true},
 		"no route on the schedule":   {sessionWire{Name: "t", Alive: true, State: "idle"}, "", "", false},
+		// A bedrock session stores its connection bound to the profile's identity.
+		"bedrock, profile and region": {sessionWire{Name: "t", Alive: true, State: "idle", Route: bed}, "bedrock", "p1@us-east-1", false},
+		"bedrock, profile's own":      {sessionWire{Name: "t", Alive: true, State: "idle", Route: bed}, "bedrock", "p1@", false},
+		"bedrock, the same binding":   {sessionWire{Name: "t", Alive: true, State: "idle", Route: bed}, "bedrock", "p1@us-east-1#00112233aabbccdd", false},
+		"bedrock, another binding":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: bed}, "bedrock", "p1@us-east-1#ffffffffffffffff", true},
+		"bedrock, another region":     {sessionWire{Name: "t", Alive: true, State: "idle", Route: bed}, "bedrock", "p1@eu-west-1", true},
+		"bedrock, another profile":    {sessionWire{Name: "t", Alive: true, State: "idle", Route: bed}, "bedrock", "p2@", true},
 	} {
 		a := &fakeAgent{sessions: []sessionWire{tc.target}}
 		sch := store.Schedule{ID: "sch_rt", SessionMode: "reuse", ReuseTarget: "t", Prompt: "go", Route: tc.route, RouteConnection: tc.conn}

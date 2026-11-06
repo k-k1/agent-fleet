@@ -190,9 +190,12 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 	if u.Known {
 		measured = usagex.MeasuredExact
 	}
+	call := chatx.RandUUID()
 	row := usagex.Record{
-		TS:      g.d.Now().UTC().Format(time.RFC3339),
-		Call:    chatx.RandUUID(),
+		TS:   g.d.Now().UTC().Format(time.RFC3339),
+		Call: call,
+		// The row's accounting identity: a replay from the spool is counted once (spool.go).
+		Key:     usagex.FeatureRouteGateway + ":" + call,
 		Feature: usagex.FeatureRouteGateway,
 		Trigger: usagex.TriggerUser,
 		Kind:    c.meta.Kind,
@@ -204,9 +207,7 @@ func (g *Gateway) record(c *call, modelID, op string, resp *http.Response, obs *
 		MS:    int(g.d.Now().Sub(start) / time.Millisecond),
 		OK:    ok, Measured: measured,
 	}
-	if err := g.d.Append([]usagex.Record{row}); err != nil {
-		log.Printf("route gateway: ledger: %v", err)
-	}
+	g.spool.write(row)
 }
 
 // wireStatus maps a refusal's status to what goes out (writeRefusal).

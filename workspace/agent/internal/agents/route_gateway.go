@@ -25,6 +25,8 @@ type RouteGrant struct {
 type RouteGateway interface {
 	// Issue mints the bearer for m's stored selection, after every check a call repeats.
 	Issue(m session.Meta) (RouteGrant, *RouteRefusal)
+	// Bind is the stored form of an accepted selection, bound to the connection's identity.
+	Bind(sel RouteSelection) (RouteSelection, *RouteRefusal)
 	// CheckRoute is the live half of decision 12 for a selection the gateway serves.
 	CheckRoute(ctx context.Context, sel RouteSelection, model string) *RouteRefusal
 }

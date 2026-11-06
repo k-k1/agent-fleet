@@ -63,6 +63,14 @@ type ResolvedRoute struct {
 	Connection string
 }
 
+// RouteOfferer is an optional capability of a RouteAdapter: the routes offered for a new session
+// now, a subset of Routes. A route can be declared (so a stored selection and the Control Plane's
+// snapshot know it) while it is not yet offered, because it has not passed its live acceptance
+// (ADR 0128 decision 14); the live kind catalog lists only the offered ones.
+type RouteOfferer interface {
+	OfferedRoutes() []string
+}
+
 // RouteChecker is the live half of the validation (ADR 0128 decision 12), an optional
 // capability of a RouteAdapter. It runs after the wake, before anything starts, and again at a
 // fork: what the static list cannot know. The model has already been resolved against the

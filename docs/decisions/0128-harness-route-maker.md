@@ -597,3 +597,23 @@ table from becoming a menu of models that fail on the first message, which is wh
   as a model route, then the marked profiles and an optional region, and sends `route: {route, connection}`. Not measured:
   real Bedrock (SigV4 acceptance, the real event stream and its usage fields), a real SSO login on this path, the
   confirmation card end to end, and decision 14's live turns and negative controls.
+  Review round 1 (#3400): four corrections. (1) **Every provider selector is removed and pinned.** The pinned CLI
+  reads more than the five switches the launch removed: `CLAUDE_CODE_USE_MANTLE` with `ANTHROPIC_BEDROCK_MANTLE_BASE_URL`,
+  inherited by a bedrock pane, moved its calls to Mantle's `/v1/messages` with the gateway bearer, and the review saw
+  them leave over TCP past the socket. Every explicit route now removes and pins empty `routeOverrides`, the union of
+  the CLI's own lists (provider switches and their scoping, credentials including the file-descriptor ones, base URLs
+  and `AWS_ENDPOINT_URL*`, auth skips, and `ANTHROPIC_UNIX_SOCKET`) minus what the route sets itself, and refuses a
+  settings file that sets any of them; a test fails when the Dockerfile's claude pin moves, so a bump re-derives the
+  list. Re-measured with the review's probe: the same inherited Mantle variables now leave the call on the Bedrock
+  invoke API over the socket. (2) **The connection is bound for life.** A create binds the selection to the profile's
+  identity and the resolved region, `<profile id>@<region>#<fingerprint>` (`routes.BindAWSConnection`, through the
+  gateway's `Bind`); the gateway refuses a bound selection whose profile has changed (`route_connection_changed`) at every
+  check, issue and call, and issues only for a bound one, so an edit of the profile between a stop and a resume, a fork,
+  a recreate or an Agent restart is refused instead of minting a token for another account. A reuse schedule naming the
+  profile (and region, or none) still matches the session it was bound from. (3) **A refused ledger append is not
+  lost.** Every gateway row carries a Key; it is written to a spool file before the append and removed after it, and
+  the sweep replays the spool (also after a restart); the aggregation counts one row per Key, so a replay of a row that
+  did reach the ledger counts once. (4) **The row is gated until decision 14.** `bedrock` stays in the declared
+  allow-list (the CP snapshot), but the Agent refuses it at check, bind and launch and leaves it out of the live kind
+  catalog (so the launch dialog does not offer it) unless its Agent runs with `AF_CLAUDE_BEDROCK_ROUTE=1`, which is for the
+  acceptance run; lifting the gate is a change of its own, made with the evidence.

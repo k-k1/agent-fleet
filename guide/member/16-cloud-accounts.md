@@ -367,9 +367,10 @@ selection changes, and when the profile is edited, unmarked or deleted; one that
 session stops running. A profile that is set to
 "Confirm before use" is asked about in the same way as above when the session starts, and is checked again on every model
 call: until you allow it, each call fails at once with the reason. The mark is only your statement: AF cannot read the
-role's permissions, so mark a profile only when you have checked them. A claude session uses the route when you choose
+role's permissions, so mark a profile only when you have checked them. A claude session will use the route when you choose
 **Amazon Bedrock** under **Model route** in the launch dialog (see [the claude routes](../ref/agents.md#claude-the-api-key-route));
-the option appears only when at least one of your profiles is marked.
+the option appears only when at least one of your profiles is marked, and only once the route has passed its live
+acceptance (until then, only on a workspace whose operator enabled it for that run).
 
 **A read-only lookup with `aws --profile`.** `af-aws-exec` stays the way to run deployments, writes, build tools,
 SDK programs and scripts: it checks the account (`--account`), hands short-lived credentials to tools whose SDK cannot

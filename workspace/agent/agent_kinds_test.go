@@ -170,3 +170,24 @@ func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 		}
 	}
 }
+
+// A route declared but not yet offered (claude's bedrock, before decision 14's acceptance run) is
+// left out of the live catalog, so the launch dialog does not offer it; opening its gate adds it.
+func TestKindCatalogOffersOnlyReleasedRoutes(t *testing.T) {
+	claudeRoutes := func() []string {
+		for _, e := range buildKindCatalog(true).Kinds {
+			if e.Kind == "claude" {
+				return e.Routes
+			}
+		}
+		return nil
+	}
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
+	if got := claudeRoutes(); slices.Contains(got, "bedrock") || !slices.Contains(got, "anthropic-api") {
+		t.Errorf("gate closed: live routes %v", got)
+	}
+	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
+	if got := claudeRoutes(); !slices.Contains(got, "bedrock") {
+		t.Errorf("gate open: live routes %v", got)
+	}
+}

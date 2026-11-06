@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -85,5 +86,24 @@ func TestDropGatewayCountedUsesTheSelectionForUnstampedRows(t *testing.T) {
 	plain := session.Meta{Name: "p02", Kind: session.KindClaude}
 	if got := dropGatewayCounted(plain, recs); len(got) != 2 {
 		t.Fatalf("no selection: kept %d of 2", len(got))
+	}
+}
+
+// A gateway row replayed from its spool (routegw spool.go) carries the same Key as the copy that
+// may already be in the ledger, and the aggregation counts it once.
+func TestReplayedGatewayRowsCountOnce(t *testing.T) {
+	idx := usageDedupIndex{}
+	row := usagex.Record{TS: "2026-11-06T09:00:00Z", Feature: usagex.FeatureRouteGateway, Ref: "bed01", Key: "route.gateway:c1", In: 11}
+	at, _ := time.Parse(time.RFC3339, row.TS)
+	if !idx.accept(row, at) {
+		t.Fatal("the first copy was dropped")
+	}
+	if idx.accept(row, at.Add(time.Minute)) {
+		t.Fatal("a replayed copy was counted again")
+	}
+	other := row
+	other.Key = "route.gateway:c2"
+	if !idx.accept(other, at) {
+		t.Fatal("another call was dropped")
 	}
 }
