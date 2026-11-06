@@ -164,7 +164,17 @@ func serveOnSocket(t *testing.T, g *Gateway) string {
 	}
 	srv := newServer(g)
 	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() { _ = srv.Close() })
+	// Shutdown, not Close: a handler goes on after the caller has read the whole answer (the
+	// ledger row and its spool file are written then), and Close returns without waiting for it.
+	// This cleanup is registered after the spool's TempDir, so it runs before that is removed.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Errorf("the gateway's handlers did not finish: %v", err)
+			_ = srv.Close()
+		}
+	})
 	return path
 }
 
