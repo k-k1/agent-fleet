@@ -89,10 +89,13 @@ in the Console.
    approval)" in the Admin panel). Entries are a **host** or a **`.suffix.example.com`**, with an optional
    reason, and are **retired** when no longer needed; with no added entries only the product's built-in
    allowances apply. They include the download hosts of the Workspace's own installers (JDK,
-   Node.js, Go, gcloud, MySQL, Postgres, the Kiro and muse CLIs, Chromium), so Settings >
-   Toolchains keeps working under enforce. One host is left to you: `storage.googleapis.com`,
-   which the on-demand Chromium install on x64 downloads from. It is a general-purpose
-   storage endpoint anyone can upload to, so add it only if workspaces install Chromium on x64. This deployment's own Control Plane host (the public URL, and the internal
+   Node.js, Go, gcloud, MySQL, Postgres, Chromium) and of the agent CLIs it installs and updates
+   at start (Claude, Cursor, Kiro, muse, Antigravity), so Settings > Toolchains and the boot
+   installs keep working under enforce. One host is left to you: `storage.googleapis.com`. The
+   Antigravity CLI downloads from it on both architectures, at its first install and at every
+   update, and so does the on-demand Chromium install on x64. It is a general-purpose storage
+   endpoint anyone can upload to, so add it when workspaces use Antigravity or install Chromium
+   on x64. This deployment's own Control Plane host (the public URL, and the internal
    URL where one is set) is always allowed and listed as **Built-in**: workspaces reach the
    Control Plane through the egress path, so it cannot be retired, and enforce does not cut them
    off from a Control Plane served on ports 80/443 under a name of its own. The entry is a whole

@@ -13,10 +13,11 @@ import (
 // which checks the same list against the default egress allowlist.
 const installerEgressHostsPath = "testdata/installer-egress-hosts.txt"
 
-// installerSourceGlobs are the files that hold installer download URLs. A new installer
-// file outside these globs escapes the check, so name it install_*.go.
+// installerSourceGlobs are the files that hold installer download URLs, the entrypoint's
+// boot installs and agent CLI updates included. A new installer file outside these globs
+// escapes the check, so name it install_*.go.
 var installerSourceGlobs = []string{
-	"install_*.go", "node_install.go", "jdk*.go", "internal/jdkvendor/*.go",
+	"install_*.go", "node_install.go", "jdk*.go", "internal/jdkvendor/*.go", "../entrypoint.sh",
 }
 
 var httpsHostRe = regexp.MustCompile(`https://([a-z0-9][a-z0-9.-]*[a-z0-9])`)
@@ -41,14 +42,18 @@ func readInstallerEgressHosts(t *testing.T) []installerEgressHost {
 			continue
 		}
 		h := installerEgressHost{redirect: strings.Contains(comment, "redirect")}
-		h.host, h.admin = strings.CutPrefix(entry, "!")
+		// A "~" host only has to be named by a source, like any other listed host; the
+		// control-plane test is the one that skips it.
+		h.admin = entry[0] == '!'
+		h.host = strings.TrimLeft(entry, "!~")
 		out = append(out, h)
 	}
 	return out
 }
 
 // installerSourceHosts is every https:// host literal in the installer sources, comments
-// included: a URL quoted in a comment is still one the code is about to fetch.
+// included: a URL quoted in a comment is usually one the code is about to fetch, and the
+// few that are not are "~" lines.
 func installerSourceHosts(t *testing.T) map[string][]string {
 	t.Helper()
 	hosts := map[string][]string{}
@@ -56,6 +61,9 @@ func installerSourceHosts(t *testing.T) map[string][]string {
 		files, err := filepath.Glob(g)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(files) == 0 {
+			t.Fatalf("%s matches no file; the scan would miss that installer", g)
 		}
 		for _, f := range files {
 			if strings.HasSuffix(f, "_test.go") {

@@ -27,6 +27,9 @@ func TestDefaultEgressAllowlistAdmitsInstallers(t *testing.T) {
 			continue
 		}
 		n++
+		if strings.HasPrefix(entry, "~") {
+			continue // named by an installer source, never fetched
+		}
 		if host, admin := strings.CutPrefix(entry, "!"); admin {
 			if p.Allows(host) {
 				t.Errorf("%s is left to the admin but the default allowlist admits it, so no admin can block it", host)
