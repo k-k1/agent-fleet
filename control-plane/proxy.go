@@ -315,8 +315,8 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 		return
 	}
 	rt := res.rt
-	// P3-9: an attached terminal keeps the workspace warm and pins its session
-	// (tier 1 won't halt a session someone is watching).
+	// P3-9: an attached terminal keeps the workspace warm and spares its session from
+	// tier 1, both only while someone keeps typing (presenceGrace).
 	session := r.URL.Query().Get("session")
 	// Presence counts "a human is touching it", not "a socket exists" (docs/log/75 P3).
 	// noteInput is called only when the browser→agent relay below sees a keystroke frame.

@@ -382,8 +382,10 @@ defaults in [Limits and defaults](../ref/limits.md#set-by-the-deployment);
 Admin UI: a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
 whole deployment). A tenant's values are the four fields under **Idle auto-stop** in its limits
 (**Session halt after**, **Halt when awaiting a decision**, **Max hold by background work**,
-**Workspace stop after**); an empty field follows the deployment default. This is effective for
-saving resources. For the meaning of the env vars, see
+**Workspace stop after**); an empty field follows the deployment default. A session whose terminal
+is open in the Console is spared from the halt only while someone has typed into that session's
+terminal within the presence grace; a tab left open without typing does not pin it. This is
+effective for saving resources. For the meaning of the env vars, see
 `deploy/compose/.env.example`; for how it works, see
 `docs/build/09-deploy.md` §9.4.
 
