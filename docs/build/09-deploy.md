@@ -148,8 +148,9 @@ its rootfs mode; the ECS runtimes have no such mount, so that directory can be e
 The runtime-independent answer is `~/.local/share/agent-fleet/jvm` on the home volume,
 which `workspace-agent install-jdk <major>` fills with Temurin from Adoptium
 (`api.adoptium.net`) and `install-jdk corretto-<major>` with Amazon Corretto
-(`corretto.aws`); neither host is in the default egress allowlist, so a deployment that
-enforces it adds the ones it wants. A selection is a JDK id: a bare major is Temurin,
+(`corretto.aws`); both hosts are in the default egress allowlist with every other
+installer download host (`workspace/agent/testdata/installer-egress-hosts.txt`, checked
+against `defaultEgressAllowlist` from both modules). A selection is a JDK id: a bare major is Temurin,
 `corretto-<major>` is Corretto (`workspace/agent/internal/jdkvendor`). Choosing a
 Java version in the Console makes the entrypoint install any missing one and put it on
 `JAVA_HOME`. `GET /env/toolchains` offers what is on disk in either directory plus what
