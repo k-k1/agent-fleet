@@ -195,3 +195,43 @@ func TestKiroInstallGETReportsPinDrift(t *testing.T) {
 		t.Fatalf("GET payload = %v, want installed with no update", got)
 	}
 }
+
+func TestPlaceKiroCompanions(t *testing.T) {
+	write := func(dir, name string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+
+	t.Run("2.x archive places both", func(t *testing.T) {
+		src, dst := t.TempDir(), t.TempDir()
+		write(src, "kiro-cli-chat")
+		write(src, "kiro-cli-term")
+		if err := placeKiroCompanions(src, dst); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range []string{"kiro-cli-chat", "kiro-cli-term"} {
+			if !exists(filepath.Join(dst, n)) {
+				t.Errorf("%s not placed", n)
+			}
+		}
+	})
+	t.Run("3.x archive without companions drops 2.x leftovers", func(t *testing.T) {
+		src, dst := t.TempDir(), t.TempDir()
+		write(dst, "kiro-cli-chat")
+		write(dst, "kiro-cli-term")
+		if err := placeKiroCompanions(src, dst); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range []string{"kiro-cli-chat", "kiro-cli-term"} {
+			if exists(filepath.Join(dst, n)) {
+				t.Errorf("stale %s kept", n)
+			}
+		}
+	})
+}

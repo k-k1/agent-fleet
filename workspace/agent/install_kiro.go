@@ -44,7 +44,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -299,9 +301,9 @@ func installKiro(quiet bool) error {
 	// copy of the extracted binaries rather than two.
 	_ = os.Remove(zipPath)
 
-	// The zip lays out kirocli/bin/{kiro-cli,kiro-cli-chat,kiro-cli-term,q,qchat}. We
-	// place the same 3 binaries the bundled install.sh does (the q/qchat shims are not
-	// used by AF). Move — not copy — them into ~/.local/bin so there is no transient
+	// The 2.x zip lays out kirocli/bin/{kiro-cli,kiro-cli-chat,kiro-cli-term,q,qchat}; the
+	// 3.x zip holds kiro-cli alone (measured on 3.1.0). We place the binaries the
+	// bundled install.sh does (the q/qchat shims are not used by AF). Move — not copy — them into ~/.local/bin so there is no transient
 	// double of the 855MB payload and each placement is an atomic same-filesystem rename.
 	srcBin := filepath.Join(extract, "kirocli", "bin")
 	stagedKiro := filepath.Join(srcBin, "kiro-cli")
@@ -330,12 +332,8 @@ func installKiro(quiet bool) error {
 	// entry, so a kiro session running the old binary keeps its inode and is unaffected
 	// (no ETXTBSY, unlike writing in place). Peak disk on the home volume is the old
 	// install plus the freshly extracted one until these renames free the old inodes.
-	for _, name := range []string{"kiro-cli-chat", "kiro-cli-term"} {
-		src := filepath.Join(srcBin, name)
-		_ = os.Chmod(src, 0o755)
-		if err := os.Rename(src, filepath.Join(binDir, name)); err != nil {
-			return fmt.Errorf("place %s: %w", name, err)
-		}
+	if err := placeKiroCompanions(srcBin, binDir); err != nil {
+		return err
 	}
 	installed := filepath.Join(binDir, "kiro-cli")
 	if err := os.Rename(stagedKiro, installed); err != nil {
@@ -407,4 +405,23 @@ func kiroSettingsPinned() bool {
 		}
 	}
 	return true
+}
+
+// placeKiroCompanions moves kiro-cli-chat and kiro-cli-term from the extracted archive
+// into binDir. A 3.x archive holds kiro-cli alone, so a missing companion is not an
+// error; a leftover from a 2.x install is removed so it is not mistaken for part of the
+// new version.
+func placeKiroCompanions(srcBin, binDir string) error {
+	for _, name := range []string{"kiro-cli-chat", "kiro-cli-term"} {
+		src := filepath.Join(srcBin, name)
+		if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
+			_ = os.Remove(filepath.Join(binDir, name))
+			continue
+		}
+		_ = os.Chmod(src, 0o755)
+		if err := os.Rename(src, filepath.Join(binDir, name)); err != nil {
+			return fmt.Errorf("place %s: %w", name, err)
+		}
+	}
+	return nil
 }
