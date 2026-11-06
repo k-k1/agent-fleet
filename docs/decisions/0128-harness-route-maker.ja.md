@@ -566,3 +566,9 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   レビュー第 2 巡（#3400）: 行の途中で切れた書き込みで、その日の台帳ファイルが JSON の断片で終わり、再送した行がその後ろに
   つながって読めない 1 行になっていた。`usagex.AppendRows` は、ファイルが改行で終わっていなければ先に改行を書くので、
   読み手が捨てるのはその断片の行だけになる（台帳に書くものすべてに効く）。
+- 2026-11-06、bedrock 閉鎖の素通し（#3282）: Agent は `AF_CLAUDE_BEDROCK_ROUTE=1` で動いているときだけ claude の `bedrock`
+  ルートを開く（決定 14）が、ECS のワークスペースタスクが受け取る環境変数はテンプレートの環境と `workspaceExtraEnv` だけで、
+  ECS での受け入れ確認にはこれを設定する手段がなかった。`AF_WS_CLAUDE_BEDROCK_ROUTE=1` で起動した Control Plane は、
+  すべてのワークスペース起動に `AF_CLAUDE_BEDROCK_ROUTE=1` を足す（`1` ちょうどだけで、それ以外の値は何も足さない）。
+  `AF_WS_WORKLOAD_AWS` と同じ方式で、docker・ECS EC2/Fargate・Kubernetes・native に次の起動で届く。受け入れ確認の実施専用の
+  スイッチで、既定はオフ。閉鎖を解くのは、証拠を添えた別の変更のまま。Agent の拒否メッセージは CP 側の変数名を示す。

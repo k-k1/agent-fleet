@@ -620,3 +620,10 @@ table from becoming a menu of models that fail on the first message, which is wh
   Review round 2 (#3400): a write cut inside a row left the day's ledger file ending in a JSON prefix, and the replayed
   row was appended onto it, making one unreadable line. `usagex.AppendRows` now writes a newline first when the file
   does not end in one, so the prefix is the only line the reader drops (all ledger writers benefit).
+- 2026-11-06, bedrock gate pass-through (#3282): the Agent opens the claude `bedrock` route only when it runs with
+  `AF_CLAUDE_BEDROCK_ROUTE=1` (decision 14), but on ECS the only env a workspace task receives is the template env plus
+  `workspaceExtraEnv`, so the acceptance run there had no way to set it. A Control Plane started with
+  `AF_WS_CLAUDE_BEDROCK_ROUTE=1` now adds `AF_CLAUDE_BEDROCK_ROUTE=1` to every workspace start (exactly `1`; any other value
+  adds nothing), the same way as `AF_WS_WORKLOAD_AWS`; it reaches docker, ECS EC2/Fargate, Kubernetes and native at the
+  next Start. It is a switch for the acceptance run only and is off by default; lifting the gate stays a separate change
+  made with the evidence. The Agent's refusal text names the CP-side variable.

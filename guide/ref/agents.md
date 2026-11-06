@@ -260,7 +260,7 @@ login. A session with no route behaves as before.
 - **amazon bedrock.** A third route runs claude on Amazon Bedrock with one of your Settings > AWS profiles/SSM
   profiles marked as a model route ([cloud accounts](../member/16-cloud-accounts.md)). **It is not offered yet**: it waits
   for its live acceptance run, and until then a workspace offers it only when its operator has set
-  `AF_CLAUDE_BEDROCK_ROUTE=1` for that run. Where it is offered, pick **Amazon Bedrock** under
+  `AF_CLAUDE_BEDROCK_ROUTE=1` for that run (on a Control Plane that is `AF_WS_CLAUDE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace already running needs Stop → Start). Where it is offered, pick **Amazon Bedrock** under
   **Model route**, then the profile; the region is optional (empty uses the profile's own). The session never
   receives AWS credentials: the workspace's route gateway signs each model call, and the session holds only a
   bearer that works from its own processes and ends with it. The CLI's header reads "Amazon Bedrock". A refused

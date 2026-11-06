@@ -563,6 +563,14 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	if os.Getenv("AF_WS_WORKLOAD_AWS") == "1" {
 		env = append(env, "AF_WS_WORKLOAD_AWS=1")
 	}
+	// The claude bedrock route is gated off in the Agent until its live acceptance (ADR 0128
+	// decision 14); the Agent opens it only when it runs with AF_CLAUDE_BEDROCK_ROUTE=1. Like
+	// the opt-in above, nothing but this function reaches an ECS task, so the acceptance run's
+	// switch travels from the CP. Exactly "1": any other value leaves the gate shut. Lifting
+	// the gate is a separate change; this switch is not a release setting.
+	if os.Getenv("AF_WS_CLAUDE_BEDROCK_ROUTE") == "1" {
+		env = append(env, "AF_CLAUDE_BEDROCK_ROUTE=1")
+	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
 	// clone/push authenticate transparently. Deterministic per epoch, so re-injection

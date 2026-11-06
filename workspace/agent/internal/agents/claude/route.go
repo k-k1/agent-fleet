@@ -131,7 +131,7 @@ func bedrockOpen() bool { return os.Getenv(bedrockGateEnv) == "1" }
 
 func bedrockGated() *agents.RouteRefusal {
 	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
-		Message: "the bedrock route has not passed its live acceptance yet (ADR 0128 decision 14) and is off on this workspace; it is opened for the acceptance run with " + bedrockGateEnv + "=1 on the workspace's Agent"}
+		Message: "the bedrock route has not passed its live acceptance yet (ADR 0128 decision 14) and is off on this workspace; it is opened for the acceptance run with " + bedrockGateEnv + "=1 on the workspace's Agent (a Control Plane started with AF_WS_CLAUDE_BEDROCK_ROUTE=1 sets it at the workspace's next Start; a running workspace needs Stop → Start)"}
 }
 
 // OfferedRoutes implements agents.RouteOfferer: bedrock only while its gate is open.
