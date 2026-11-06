@@ -92,13 +92,18 @@ type engineIngestCivitai struct {
 // anybody retyping it.
 type engineResolved struct {
 	DownloadURL string
-	SHA256      string
-	Bytes       int64
-	License     string
-	LicenseName string
-	LicenseURL  string
-	BaseModel   string
-	Gated       bool
+	// CredentialFor names the service whose deployment-wide token the fetch task may send:
+	// "hf", "civitai", or empty. Set ONLY by the hf and civitai resolvers; a plain url never
+	// carries one, so an admin-chosen host cannot receive the operator's token. The fetch
+	// script still checks the host (and every redirect hop) against its own allowlist.
+	CredentialFor string
+	SHA256        string
+	Bytes         int64
+	License       string
+	LicenseName   string
+	LicenseURL    string
+	BaseModel     string
+	Gated         bool
 	// LoginRequired is Civitai's answer to "may anybody download this", and it is a DIFFERENT
 	// fact from Gated: gating is a repository's terms, which an operator's token satisfies,
 	// while this is a per-uploader switch with no token to satisfy it here at all (ADR 0072 P2
@@ -229,8 +234,8 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 		return engineResolveCivitai(ctx, *src.Civitai)
 	case strings.TrimSpace(src.URL) != "":
 		u := strings.TrimSpace(src.URL)
-		if !strings.HasPrefix(u, "https://") {
-			return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "the url must be https"}
+		if aerr := engineIngestCheckDirectURL(u); aerr != nil {
+			return engineResolved{}, aerr
 		}
 		// ⚠️ Not optional here, unlike on the two APIs that publish one. Nothing else in this
 		// path can tell a truncated download from a complete one.
@@ -245,6 +250,31 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 		}, nil
 	}
 	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
+}
+
+// engineIngestCheckDirectURL refuses a plain url the fetch task must never be pointed at: not
+// https, carrying userinfo, or naming a destination that resolves to loopback / link-local
+// (cloud metadata) / unspecified — the same rule the egress proxy applies (internalEgressDest).
+// The resolve step itself fetches nothing from a plain url; this is the one place the
+// destination is judged before a task is launched.
+func engineIngestCheckDirectURL(raw string) *apiError {
+	bad := func(msg string) *apiError {
+		return &apiError{http.StatusBadRequest, errCodeIngestBadSource, msg}
+	}
+	if !strings.HasPrefix(strings.ToLower(raw), "https://") {
+		return bad("the url must be https")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return bad("the url is not valid")
+	}
+	if u.User != nil {
+		return bad("the url must not carry a user name or password")
+	}
+	if internalEgressDest(u.Hostname()) {
+		return bad("the url points at an internal address")
+	}
+	return nil
 }
 
 func engineHFArtifactIdentity(repo, file, revision, sha256 string) string {
@@ -409,6 +439,7 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	if out.LicenseURL == "" {
 		out.LicenseURL = engineIngestBase + "/" + repo
 	}
+	out.CredentialFor = "hf"
 	out.DownloadURL = engineIngestBase + "/" + repo + "/resolve/" + url.PathEscape(rev) + "/" + file
 	// A repository may list a file with no LFS pointer (a small config, or a plain upload). The
 	// download would still work; the verification would not, and that is the half that matters.
@@ -606,6 +637,7 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 		preview, thumb := engineCivitaiPreviewPair(images)
 		return engineResolved{
 			DownloadURL:   f.DownloadURL,
+			CredentialFor: "civitai",
 			SHA256:        hash,
 			Bytes:         int64(f.SizeKB * 1024),
 			LoginRequired: !engineCivitaiAnonymous(ctx, f.DownloadURL),
@@ -1105,6 +1137,8 @@ func engineIngestOverrides(req engineIngestRequest) []ecstypes.ContainerOverride
 	return []ecstypes.ContainerOverride{
 		{Name: aws.String("fetch"), Environment: engineIngestEnv(map[string]string{
 			"URL": req.Resolved.DownloadURL, "SHA256": req.Resolved.SHA256,
+			// Empty for a plain url: the script then sends no Authorization at all.
+			"CREDENTIAL_FOR": req.Resolved.CredentialFor,
 		})},
 		{Name: aws.String("upload"), Environment: engineIngestEnv(map[string]string{
 			"KEY": req.S3Key,
