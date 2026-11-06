@@ -257,6 +257,20 @@ login. A session with no route behaves as before.
   other route's credentials) to empty in the highest-precedence settings layer Agent Fleet can write (the CLI's launch-flag layer). Two cases
   remain covered by stopping the session instead: a managed settings file (the CLI's documentation ranks it above the launch-flag layer; not measured here), and a settings file that
   sets `ANTHROPIC_API_KEY` for an anthropic-api session (the key itself is never put on a command line).
+- **amazon bedrock.** A third route runs claude on Amazon Bedrock with one of your Settings > AWS profiles/SSM
+  profiles marked as a model route ([cloud accounts](../member/16-cloud-accounts.md)). **It is not offered yet**: it waits
+  for its live acceptance run, and until then a workspace offers it only when its operator has set
+  `AF_CLAUDE_BEDROCK_ROUTE=1` for that run. Where it is offered, pick **Amazon Bedrock** under
+  **Model route**, then the profile; the region is optional (empty uses the profile's own). The session never
+  receives AWS credentials: the workspace's route gateway signs each model call, and the session holds only a
+  bearer that works from its own processes and ends with it. The CLI's header reads "Amazon Bedrock". A refused
+  call (profile unmarked, edited or deleted, confirmation not yet given, SSO sign-in needed) fails at once with the
+  reason, shown under "AWS authentication failed" or "API Error: 503"; it is not retried. A settings file that sets
+  `AWS_BEARER_TOKEN_BEDROCK`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH`, `awsAuthRefresh` or `awsCredentialExport` refuses the
+  launch, and so does one that sets any other provider switch, endpoint or credential of the CLI. The session is bound
+  to the profile as it was when the session was created: if you edit the profile's account, role, sign-in or region
+  afterwards, starting the session again is refused; start a new one. Usage is recorded once per model call, by the
+  gateway, as Amazon Bedrock, metered.
 - When the key's account runs out of credit ("Credit balance is too low") the turn fails with that
   text. The session does not show the *Spend limit* state: fund the account and send a message, and it
   is delivered. A claude.ai organisation spend limit still stops the session as before.

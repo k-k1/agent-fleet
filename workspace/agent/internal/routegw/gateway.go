@@ -2,9 +2,12 @@ package routegw
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/awsx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -38,6 +42,8 @@ type Deps struct {
 	Credentials func(p awsx.Profile, region string, settings map[string]awsx.Profile) (awsx.RouteCredentials, error)
 	// Append writes ledger rows.
 	Append func([]usagex.Record) error
+	// SpoolDir keeps the rows Append refused until a sweep gets them in (spool.go).
+	SpoolDir string
 	// Endpoint is the upstream base URL for a region (a test points it at a fake).
 	Endpoint func(region string) string
 	Client   *http.Client
@@ -57,6 +63,8 @@ type Gateway struct {
 
 	askMu sync.Mutex
 	asked map[string]time.Time // session|profile id → last time a request was filed
+
+	spool *rowSpool
 
 	credMu sync.Mutex
 	creds  map[string]cachedCreds
@@ -98,6 +106,9 @@ func New(d Deps) *Gateway {
 	if d.Append == nil {
 		d.Append = usagex.AppendRows
 	}
+	if d.SpoolDir == "" {
+		d.SpoolDir = filepath.Join(paths.AgentStateDir(), "route-gateway-spool")
+	}
 	if d.Endpoint == nil {
 		d.Endpoint = bedrockEndpoint
 	}
@@ -110,7 +121,8 @@ func New(d Deps) *Gateway {
 	if d.ProcRoot == "" {
 		d.ProcRoot = "/proc"
 	}
-	return &Gateway{d: d, asked: map[string]time.Time{}, creds: map[string]cachedCreds{}, flight: map[string]*credFlight{}}
+	return &Gateway{d: d, asked: map[string]time.Time{}, creds: map[string]cachedCreds{}, flight: map[string]*credFlight{},
+		spool: &rowSpool{dir: d.SpoolDir, append: d.Append}}
 }
 
 // Registry is the gateway's token registry.
@@ -142,7 +154,7 @@ func (g *Gateway) resolve(sel *routes.Selection) (connection, *refusal) {
 	if sel == nil || sel.Route != RouteBedrock {
 		return connection{}, &refusal{http.StatusUnauthorized, routes.CodeBadRoute, "the session does not select the bedrock route"}
 	}
-	id, region, ok := routes.ParseAWSConnection(sel.Connection)
+	id, region, bound, ok := routes.ParseBoundAWSConnection(sel.Connection)
 	if !ok {
 		return connection{}, &refusal{http.StatusUnauthorized, routes.CodeRouteUnavailable, "the session's route connection is not an AWS profile reference"}
 	}
@@ -169,7 +181,33 @@ func (g *Gateway) resolve(sel *routes.Selection) (connection, *refusal) {
 		return connection{}, &refusal{http.StatusForbidden, routes.CodeRouteUnavailable, fmt.Sprintf(
 			"no usable AWS region for profile %q (%q); set the profile's default region in Settings", p.Name, region)}
 	}
-	return connection{profile: p, region: region, settings: settings}, nil
+	c := connection{profile: p, region: region, settings: settings}
+	if bound != "" && bound != c.fingerprint() {
+		return connection{}, &refusal{http.StatusConflict, "route_connection_changed", fmt.Sprintf(
+			"profile %q changed in Settings since this session was started on it (account, role, sign-in or region); "+
+				"a session never moves to another account. Start a new session on the profile as it is now", p.Name)}
+	}
+	return c, nil
+}
+
+// fingerprint identifies the profile's identity and the region the calls go to, without
+// revealing either: what a stored selection is bound to (routes.BindAWSConnection).
+func (c connection) fingerprint() string {
+	h := sha256.Sum256([]byte(awsx.ProfileIdentity(c.settings, c.profile) + "\x00" + c.region))
+	return hex.EncodeToString(h[:])[:16]
+}
+
+// Bind is agents.RouteGateway's: the stored form of an accepted selection, bound to the profile's
+// identity and the region as they are now (an empty region becomes the profile's own). A
+// selection already bound is accepted only while its binding still holds, so a session forked or
+// recreated from one keeps the account it started on.
+func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
+	c, ref := g.resolve(&sel)
+	if ref != nil {
+		return sel, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
+	}
+	sel.Connection = routes.BindAWSConnection(c.profile.ID, c.region, c.fingerprint())
+	return sel, nil
 }
 
 // Issue mints the token a session's launch hands to its harness, after the same checks every
@@ -181,6 +219,17 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	c, ref := g.resolve(m.Route)
 	if ref != nil {
 		return Issued{}, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
+	}
+	// Only a bound selection is issued for: an unbound one would follow the profile's current
+	// identity at every launch, so an edit in Settings would move the session to another account.
+	if _, _, fp, ok := routes.ParseBoundAWSConnection(selConnection(m)); !ok || fp == "" {
+		return Issued{}, &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
+			Message: "this session's bedrock connection is not bound to a profile identity; start a new session on the bedrock route"}
+	}
+	// A profile that asks before use (ADR 0126) is asked now, at the launch, so the card is
+	// waiting when the first model call comes; that call is still refused until it is allowed.
+	if !g.d.Held(c.settings, c.profile.Name, m, g.d.Now()) {
+		_ = g.approvalRefusal(c, m)
 	}
 	inc := awsx.Incarnation(m)
 	b := Binding{Session: m.Name, Incarnation: inc, Route: RouteBedrock, Connection: m.Route.Connection,
@@ -197,7 +246,7 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	if err != nil {
 		return Issued{}, &agents.RouteRefusal{Status: http.StatusInternalServerError, Code: routes.CodeRouteUnavailable, Message: err.Error()}
 	}
-	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Expires: exp}, nil
+	return Issued{Socket: sock, BaseURL: SocketBaseURL, Token: tok, Region: c.region, Expires: exp}, nil
 }
 
 // SocketBaseURL is the base URL a harness is given beside the socket. The connection goes to
@@ -206,14 +255,17 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 // a loopback port.
 const SocketBaseURL = "http://af-route-gateway.invalid"
 
-// Issued is what a launch gets: the socket to call, the base URL to put in front of the
-// operation paths, the bearer to call with, and when it ends unless the Agent renews it.
-type Issued struct {
-	Socket  string
-	BaseURL string
-	Token   string
-	Expires time.Time
+func selConnection(m session.Meta) string {
+	if m.Route == nil {
+		return ""
+	}
+	return m.Route.Connection
 }
+
+// Issued is what a launch gets (agents.RouteGrant).
+type Issued = agents.RouteGrant
+
+var _ agents.RouteGateway = (*Gateway)(nil)
 
 // CheckRoute is agents.RouteChecker for the bedrock route: the live half of ADR 0128 decision 12
 // for a selection, before anything starts. The model is not checked here: Bedrock's model list
@@ -382,6 +434,7 @@ func (g *Gateway) Sweep() (dropped int) {
 	// ended (remain-on-exit), and a root that is gone must let the token expire.
 	alive := func(b Binding) bool { return len(liveRoots(g.d.ProcRoot, g.d.Roots(b.Session))) > 0 }
 	n, _ := g.d.Registry.Sweep(keep, alive)
+	g.spool.replay()
 	g.credMu.Lock()
 	now := g.d.Now()
 	for k, e := range g.creds {

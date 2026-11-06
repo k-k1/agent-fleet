@@ -25,7 +25,12 @@ let tree: Record<string, string[]> = {};
 // Empty by default so tests that don't care about lcpp's model picker see the ordinary
 // "nothing fetched yet" shape; docs/log/109's own tests set this per case.
 let lcppModels: { id: string; label: string }[] = [];
+// The member's Settings AWS profiles (GET api/ssm/profiles), for the bedrock route's picker.
+let ssmProfiles: unknown[] = [];
 const apiMock = vi.fn(async (url: string) => {
+  if (url.includes("api/ssm/profiles")) {
+    return ssmProfiles;
+  }
   if (url.includes("fs/tree")) {
     const path = decodeURIComponent(new URLSearchParams(url.split("?")[1]).get("path") || "");
     return { entries: (tree[path] || []).map((name) => ({ name, type: "dir" })) };
@@ -634,5 +639,91 @@ describe("LaunchModal model route picker (ADR 0128)", () => {
     expect(routeSelect()).toBeUndefined();
     await click(byText("Claude"));
     expect(must(routeSelect(), "the route picker").value).toBe("");
+  });
+});
+
+// The bedrock route (ADR 0128 P2b): offered only when the member has a Settings AWS profile marked
+// as a model route, and it goes out with the profile and the region as `<id>@<region>`.
+describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
+  const catalog = parseKindCatalog({
+    kinds: [{ kind: "claude", managedOnly: false, managedDefault: false, mcpClient: "yes", routes: ["anthropic-api", "anthropic-subscription", "bedrock"] }],
+  });
+  const routeSelect = () =>
+    [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "anthropic-api"));
+  const profileSelect = () =>
+    [...document.querySelectorAll<HTMLSelectElement>("select")].find((s) => [...s.options].some((o) => o.value === "p-marked"));
+  const regionInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Region"]');
+  const choose = async (sel: HTMLSelectElement, value: string) =>
+    act(async () => {
+      sel.value = value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  afterEach(() => {
+    ssmProfiles = [];
+    act(() => setKindCatalog(null));
+  });
+
+  it("is not offered without a marked profile", async () => {
+    ssmProfiles = [{ id: "p-plain", label: "Plain", region: "us-east-1" }];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    const sel = must(routeSelect(), "the route picker");
+    expect([...sel.options].map((o) => o.value)).toEqual(["", "anthropic-api", "anthropic-subscription"]);
+  });
+
+  it("offers marked profiles only and sends <id>@<region>", async () => {
+    ssmProfiles = [
+      { id: "p-plain", label: "Plain", region: "us-east-1" },
+      { id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true },
+    ];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    const sel = must(routeSelect(), "the route picker");
+    expect([...sel.options].map((o) => o.value)).toContain("bedrock");
+    await choose(sel, "bedrock");
+    const prof = must(profileSelect(), "the profile picker");
+    expect([...prof.options].map((o) => o.value)).toEqual(["p-marked"]);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBe("bedrock");
+    expect(launchedWith().routeConnection).toBe("p-marked@");
+  });
+
+  it("sends a region override, and refuses to start on one that is not a region", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    const region = must(regionInput(), "the region field");
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(region, "not a region");
+      region.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(region, "us-west-2");
+      region.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().routeConnection).toBe("p-marked@us-west-2");
+  });
+
+  it("sends no connection for a route that takes none", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await expand("More");
+    await settle();
+    await choose(must(routeSelect(), "the route picker"), "anthropic-api");
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().route).toBe("anthropic-api");
+    expect(launchedWith().routeConnection).toBeUndefined();
   });
 });

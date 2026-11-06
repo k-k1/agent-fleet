@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -94,6 +95,7 @@ func Start(d Deps) (stop func(), err error) {
 	def.mu.Lock()
 	def.g, def.sock = g, path
 	def.mu.Unlock()
+	agents.SetRouteGateway(g)
 	done := make(chan struct{})
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -114,6 +116,7 @@ func Start(d Deps) (stop func(), err error) {
 	}()
 	return func() {
 		close(done)
+		agents.SetRouteGateway(nil)
 		def.mu.Lock()
 		def.g, def.sock = nil, ""
 		def.mu.Unlock()

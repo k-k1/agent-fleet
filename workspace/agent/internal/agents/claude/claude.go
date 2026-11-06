@@ -144,14 +144,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// An explicit route (ADR 0128): its credential rides this pane's environment only, and what
 	// would override it is removed from the process. No selection: the launch is exactly what it
 	// was, with no environment added and none removed.
-	var env, pin []string
+	var env, pin, unset []string
 	if m.Route != nil {
 		rp, err := agentImpl{}.ApplyRoute(m, *m.Route)
 		if err != nil {
 			return agents.LaunchPlan{}, err
 		}
 		// The CLI's own settings files can override the route after it starts (route.go).
-		if ref := settingsConflict(append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
+		if ref := settingsConflict(m.Route.Route, append(userSettingFiles(), projectSettingFiles(m)...)); ref != nil {
 			return agents.LaunchPlan{}, ref
 		}
 		// The CLI asks before it uses an ANTHROPIC_API_KEY from the environment, with No
@@ -169,12 +169,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		}
 		env = rp.Env
 		// What `env -u` removes is also pinned empty in the flag layer, so a settings edit made
-		// while the pane runs cannot put it back (pinnedSettings).
-		pin = rp.Unset
+		// while the pane runs cannot put it back (pinnedSettings), and the route's own non-secret
+		// values are pinned to themselves.
+		unset = rp.Unset
+		pin = append(append([]string(nil), rp.Unset...), rp.Settings...)
 	}
 	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m))
 	if m.Route != nil {
-		program = routeLaunchProgram(program, pin)
+		program = routeLaunchProgram(program, unset)
 	}
 	return agents.LaunchPlan{
 		Program: program,

@@ -621,6 +621,37 @@ func foldSessionUsageMode(m session.Meta, st *usageFoldState, includeTrailing, f
 	return n + sub, dirty, err
 }
 
+// dropGatewayCounted removes the transcript rows of calls the AF route gateway has already
+// written to the ledger (ADR 0128 decision 8). The gateway forwards every model call of a route it
+// serves and writes one `route.gateway` row per call, with the counts Bedrock returned, including
+// calls the harness's transcript does not show (titles, compaction, subagents); the harness's
+// transcript records the same calls again (measured: claude on bedrock writes `usage` for every
+// turn). So one call is counted once, by the gateway, and the transcript's rows are dropped.
+// The watermark still advances past them, so they are never offered again.
+//
+// A row's route is the one its turn was stamped with; a subagent transcript is not stamped, so its
+// rows take the session's selection at their own time.
+func dropGatewayCounted(m session.Meta, recs []usagex.Record) []usagex.Record {
+	out := recs[:0:0]
+	for _, r := range recs {
+		route := r.Route
+		if route == "" {
+			at, _ := time.Parse(time.RFC3339Nano, r.TS)
+			if sel, ok := m.RouteAt(at); ok && sel != nil {
+				route = sel.Route
+			}
+		}
+		if gatewayCounted(route) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// gatewayCounted reports that the route's calls are written to the ledger by the route gateway.
+func gatewayCounted(route string) bool { return route == usagex.RouteBedrock }
+
 // foldUsageSource is the seam the tests use to count transcript parses and to write between the
 // stamp and the parse.
 var foldUsageSource = sessionx.UsageSourceOf
@@ -681,6 +712,7 @@ func foldSubagentUsage(m session.Meta, st *usageFoldState, srcs []sessionx.Subag
 			next, out = foldAgentTurns(m, mark, src, turns)
 		}
 		retireAgentMark(&next, src)
+		out = dropGatewayCounted(m, out)
 		if len(out) == 0 {
 			st.Subagents[key] = next
 			dirty = true
@@ -894,6 +926,7 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	for _, r := range fresh {
 		out = append(out, usageRecordsOf(m, r)...)
 	}
+	out = dropGatewayCounted(m, out)
 	// If the rows could not be written, do not advance the watermark. The same turns come
 	// back as a delta on the next pass, so what was missed is always recovered once the
 	// write works again (a partially written batch is dropped by the aggregation side's

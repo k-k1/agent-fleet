@@ -77,3 +77,26 @@ func TestAWSConnectionRoundTripAndRefusals(t *testing.T) {
 		}
 	}
 }
+
+// The stored form carries the identity it was bound to; anything else after the region is refused.
+func TestBoundAWSConnection(t *testing.T) {
+	c := BindAWSConnection("0123abcd", "us-east-1", "00112233aabbccdd")
+	if c != "0123abcd@us-east-1#00112233aabbccdd" {
+		t.Fatalf("BindAWSConnection = %q", c)
+	}
+	if id, region, fp, ok := ParseBoundAWSConnection(c); !ok || id != "0123abcd" || region != "us-east-1" || fp != "00112233aabbccdd" {
+		t.Fatalf("ParseBoundAWSConnection = %q %q %q %v", id, region, fp, ok)
+	}
+	if id, region, ok := ParseAWSConnection(c); !ok || id != "0123abcd" || region != "us-east-1" {
+		t.Fatalf("ParseAWSConnection of a bound form = %q %q %v", id, region, ok)
+	}
+	if _, _, fp, ok := ParseBoundAWSConnection("0123abcd@us-east-1"); !ok || fp != "" {
+		t.Fatalf("unbound: %q %v", fp, ok)
+	}
+	for _, bad := range []string{"0123abcd@us-east-1#", "0123abcd@us-east-1#XYZ", "0123abcd@us-east-1#00112233AABBCCDD",
+		"0123abcd@us-east-1#00112233aabbccdd#00112233aabbccdd", "0123abcd#00112233aabbccdd"} {
+		if _, _, _, ok := ParseBoundAWSConnection(bad); ok {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}

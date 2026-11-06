@@ -64,7 +64,7 @@ func (agentImpl) TerminalTraits() agents.TerminalTraits {
 	return agents.TerminalTraits{
 		AuthExpired:       AuthExpired,
 		AuthExpiredFor:    AuthExpiredFor,
-		OwnCredential:     UsesAPIKey,
+		OwnCredential:     OwnsCredential,
 		UsageLimitMenu:    tmuxx.AtRateLimitModal,
 		AgentsViewActive:  tmuxx.AgentsViewActive,
 		LeaveAgentsView:   tmuxx.LeaveAgentsView,

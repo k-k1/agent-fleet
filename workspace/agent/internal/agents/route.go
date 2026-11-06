@@ -40,6 +40,11 @@ type RoutePlan struct {
 	// environment or the tmux server carries lists them here: the credential of the OTHER route
 	// is the case that matters.
 	Unset []string
+	// Settings are KEY=VALUE pairs, none of them secret, that the harness also pins in its own
+	// settings layer, so a settings file edited while the session runs cannot change them. A
+	// route whose variables the harness reads from its settings needs this beside Unset, which
+	// pins names to empty.
+	Settings []string
 	// Args are extra program arguments.
 	Args []string
 	// Daemon names the shared runtime the session must run on when the route needs a daemon of
@@ -56,6 +61,14 @@ type TurnInfo struct {
 type ResolvedRoute struct {
 	Route      string
 	Connection string
+}
+
+// RouteOfferer is an optional capability of a RouteAdapter: the routes offered for a new session
+// now, a subset of Routes. A route can be declared (so a stored selection and the Control Plane's
+// snapshot know it) while it is not yet offered, because it has not passed its live acceptance
+// (ADR 0128 decision 14); the live kind catalog lists only the offered ones.
+type RouteOfferer interface {
+	OfferedRoutes() []string
 }
 
 // RouteChecker is the live half of the validation (ADR 0128 decision 12), an optional

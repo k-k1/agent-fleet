@@ -604,6 +604,16 @@ func reuseRouteMismatch(sch store.Schedule, cur *sessionWire) error {
 		// another's. A bare slot name means "the member's connection in that slot" and is
 		// compared by slot.
 		have := cur.Route.Connection
+		// An AWS-profile connection is stored bound to the profile's identity
+		// ("<id>@<region>#<fingerprint>", ADR 0128 P2b): a schedule naming the profile and region,
+		// or the profile with an empty region (its own), matches the session it was bound from.
+		if base, _, bound := strings.Cut(have, "#"); bound && !strings.Contains(conn, "#") {
+			have = base
+			if strings.HasSuffix(conn, "@") {
+				have, _, _ = strings.Cut(base, "@")
+				have += "@"
+			}
+		}
 		if strings.Contains(conn, "@") {
 			if conn != have {
 				return fmt.Errorf("schedule route %q: the session %s runs on connection %q, not %q", want["route"], cur.Name, have, conn)

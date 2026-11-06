@@ -173,6 +173,9 @@ var Entries = []string{
 	// The route gateway's Unix socket (internal/routegw). Recreated by every Agent start and
 	// never under .config, so run() no-ops on it.
 	"route-gateway.sock",
+	// The gateway's ledger rows the ledger refused, kept until a sweep appends them
+	// (internal/routegw spool.go). Never under .config.
+	"route-gateway-spool",
 	// Chat bridge: the outbound queue and the per-provider binding ledgers.
 	"bridge-queue",
 	"bridge-sent",

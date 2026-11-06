@@ -22,6 +22,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindRoutes, useKindCatalogVersion } from "../../agents/kindCatalog.ts";
+import { bedrockConnection, regionOk, useModelRouteProfiles } from "./bedrockProfiles.ts";
 import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
@@ -68,6 +69,9 @@ export interface LaunchOpts {
   /** Explicit model route id (ADR 0128), or "" / undefined for the kind's own default, which
    *  sends nothing. Only kinds that declare routes offer one. */
   route?: string;
+  /** The selection's connection reference, sent with the route only when the route needs one
+   *  (bedrock: `<profile id>@<region>`). */
+  routeConnection?: string;
   startMode: "normal" | "plan";
   /** Whether to launch with permission prompts skipped (docs/log/76). undefined = follow the
    *  default (nothing is sent to the server). Selectable only for kinds with
@@ -251,6 +255,9 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // The explicit model route (ADR 0128). "" = the kind's default resolution, which is what a
   // launch has always used and sends no field. Reset on a kind switch: a route belongs to one kind.
   const [route, setRoute] = useState("");
+  // The bedrock route's profile and region override ("" = the profile's own region).
+  const [bedrockProfile, setBedrockProfile] = useState("");
+  const [bedrockRegion, setBedrockRegion] = useState("");
   // Driver (docs/log/27 P2/P3): a kind that supports managed defaults to managed (§9.2).
   // CLI (TUI) is an explicit user choice — it costs one TUI process' memory per session.
   // null = untouched: the driver follows the kind's default, which can change under an open dialog
@@ -364,7 +371,13 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   const hasPermChoice = agentOf(kind).caps.permissionChoice;
   // Routes the kind declares, and only for a Terminal launch: claude has no managed driver, so a
   // managed launch could never honour one.
-  const routeOptions = driver === "managed" ? [] : kindRoutes(kind);
+  // bedrock is offered only when the member has a profile marked as a model route: without one
+  // the Agent would refuse the launch, and an option that can only fail is not offered.
+  const declaredRoutes = driver === "managed" ? [] : kindRoutes(kind);
+  const modelRouteProfiles = useModelRouteProfiles(declaredRoutes.includes("bedrock"));
+  const routeOptions = declaredRoutes.filter((r) => r !== "bedrock" || (modelRouteProfiles?.length ?? 0) > 0);
+  const bedrockPick = modelRouteProfiles?.find((p) => p.id === bedrockProfile) ?? modelRouteProfiles?.[0];
+  const bedrockBlocked = route === "bedrock" && routeOptions.includes("bedrock") && !regionOk(bedrockRegion);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -611,6 +624,8 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
       model: hasModel ? model : "",
       effort: hasEffort ? effort : "",
       route: routeOptions.includes(route) ? route : undefined,
+      routeConnection:
+        route === "bedrock" && routeOptions.includes(route) && bedrockPick ? bedrockConnection(bedrockPick.id, bedrockRegion) : undefined,
       startMode: hasStartMode ? startMode : "normal",
       skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
@@ -647,7 +662,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading;
+  const canLaunch = !!kinds.length && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked;
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -708,7 +723,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
         </div>
 
         {/* An API-key launch does not run on the OAuth login, so its expiry is not this launch's problem. */}
-        <ClaudeExpiredHint kind={kind} expired={claudeExpired && route !== "anthropic-api"} />
+        <ClaudeExpiredHint kind={kind} expired={claudeExpired && route !== "anthropic-api" && route !== "bedrock"} />
 
         {hasModel && (
           <div className="ui-field">
@@ -1106,6 +1121,30 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
                 ))}
               </select>
               <span className="ui-field-hint">{tr("launch.route_hint")}</span>
+            </div>
+          )}
+
+          {route === "bedrock" && routeOptions.includes("bedrock") && bedrockPick && (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.bedrock_profile")}</span>
+              <select value={bedrockPick.id} onChange={(e) => setBedrockProfile(e.target.value)}>
+                {modelRouteProfiles!.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.region ? `${p.label} (${p.region})` : p.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={bedrockRegion}
+                placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
+                aria-label={tr("launch.field.bedrock_region")}
+                aria-invalid={bedrockBlocked || undefined}
+                onChange={(e) => setBedrockRegion(e.target.value)}
+              />
+              <span className="ui-field-hint">
+                {bedrockBlocked ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}
+              </span>
             </div>
           )}
 

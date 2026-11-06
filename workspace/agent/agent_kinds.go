@@ -80,7 +80,9 @@ func buildKindCatalog(live bool) kindCatalogWire {
 		e.InstructionsReason = instrUnsupportedOf(k)
 		if live {
 			e.InstructionDelivery = instrDeliveryOf(k)
-			if ra, ok := sessionx.AgentOf(k).(agents.RouteAdapter); ok {
+			if ro, ok := sessionx.AgentOf(k).(agents.RouteOfferer); ok {
+				e.Routes = slices.Sorted(slices.Values(ro.OfferedRoutes()))
+			} else if ra, ok := sessionx.AgentOf(k).(agents.RouteAdapter); ok {
 				e.Routes = slices.Sorted(slices.Values(ra.Routes()))
 			}
 		}

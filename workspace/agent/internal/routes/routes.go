@@ -195,14 +195,47 @@ func AWSConnection(profileID, region string) string {
 	return strings.TrimSpace(profileID) + "@" + strings.TrimSpace(region)
 }
 
-// ParseAWSConnection splits an AWSConnection. ok is false for anything that is not one: a
-// missing id, a second separator, or characters outside what a row id and a region use.
+// ParseAWSConnection splits an AWSConnection, bound or not. ok is false for anything that is not
+// one: a missing id, a second separator, characters outside what a row id and a region use, or a
+// binding that is not a fingerprint.
 func ParseAWSConnection(conn string) (profileID, region string, ok bool) {
-	id, region, found := strings.Cut(conn, "@")
-	if !found || id == "" || !awsConnPart(id) || !awsConnPart(region) {
-		return "", "", false
+	profileID, region, _, ok = ParseBoundAWSConnection(conn)
+	return profileID, region, ok
+}
+
+// BindAWSConnection is the STORED form of an AWS connection: the profile and the region resolved
+// when the session was created, and fp, the fingerprint of the profile's identity (account, role,
+// sign-in, region) at that moment, "<profile id>@<region>#<fp>". A session keeps it for life, so
+// an edit of the profile in Settings is refused at the next start instead of moving the session
+// to another account (decision 3); the plain form only says which row to use. No secret.
+func BindAWSConnection(profileID, region, fp string) string {
+	return AWSConnection(profileID, region) + "#" + fp
+}
+
+// ParseBoundAWSConnection is ParseAWSConnection that also returns the binding ("" when unbound).
+func ParseBoundAWSConnection(conn string) (profileID, region, fp string, ok bool) {
+	base, fp, bound := strings.Cut(conn, "#")
+	if bound && !awsFingerprint(fp) {
+		return "", "", "", false
 	}
-	return id, region, true
+	id, region, found := strings.Cut(base, "@")
+	if !found || id == "" || !awsConnPart(id) || !awsConnPart(region) {
+		return "", "", "", false
+	}
+	return id, region, fp, true
+}
+
+// awsFingerprint is a binding: 16 lower-case hex digits.
+func awsFingerprint(s string) bool {
+	if len(s) != 16 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func awsConnPart(s string) bool {

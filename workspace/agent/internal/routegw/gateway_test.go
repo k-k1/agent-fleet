@@ -57,6 +57,10 @@ type env struct {
 	upReqs []*http.Request
 	upBody [][]byte
 	upFn   func(w http.ResponseWriter, r *http.Request)
+	// appendErr makes the ledger refuse rows; appendWrites makes a refused append still write
+	// (a partial write).
+	appendErr    error
+	appendWrites bool
 	// roots is each session's runtime roots; a session gets the test process itself, the
 	// caller of every e.call, unless a test says otherwise.
 	roots  map[string][]int
@@ -120,7 +124,16 @@ func newEnv(t *testing.T) *env {
 			}
 			return awsx.RouteCredentials{AccessKeyID: "ASIATESTKEY", SecretAccessKey: testSecret, SessionToken: "SESSIONTOKEN", Region: region, Expires: e.credExp}, nil
 		},
-		Append:   func(r []usagex.Record) error { e.mu.Lock(); e.rows = append(e.rows, r...); e.mu.Unlock(); return nil },
+		Append: func(r []usagex.Record) error {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			if e.appendErr != nil && !e.appendWrites {
+				return e.appendErr
+			}
+			e.rows = append(e.rows, r...)
+			return e.appendErr
+		},
+		SpoolDir: filepath.Join(t.TempDir(), "spool"),
 		Endpoint: func(string) string { return e.up.URL },
 		Roots: func(n string) []int {
 			e.mu.Lock()
@@ -151,7 +164,17 @@ func serveOnSocket(t *testing.T, g *Gateway) string {
 	}
 	srv := newServer(g)
 	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() { _ = srv.Close() })
+	// Shutdown, not Close: a handler goes on after the caller has read the whole answer (the
+	// ledger row and its spool file are written then), and Close returns without waiting for it.
+	// This cleanup is registered after the spool's TempDir, so it runs before that is removed.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Errorf("the gateway's handlers did not finish: %v", err)
+			_ = srv.Close()
+		}
+	})
 	return path
 }
 
@@ -163,10 +186,15 @@ func socketClient(path string) *http.Client {
 	}}}
 }
 
-// session registers a session on the bedrock route and returns its meta.
+// session registers a session on the bedrock route, its selection bound the way a create binds
+// it, and returns its meta.
 func (e *env) session(name, profileID, region string) session.Meta {
+	sel := routes.Selection{Route: RouteBedrock, Connection: routes.AWSConnection(profileID, region)}
+	if bound, ref := e.g.Bind(sel); ref == nil {
+		sel = bound
+	}
 	m := session.Meta{Name: name, Dir: "/work/" + name, CreatedAt: "2026-11-05T08:00:00Z", Kind: session.KindClaude,
-		Route: &routes.Selection{Route: RouteBedrock, Connection: routes.AWSConnection(profileID, region)}}
+		Route: &sel}
 	e.mu.Lock()
 	e.metas[name] = m
 	if _, ok := e.roots[name]; !ok {
@@ -530,8 +558,8 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 			p := e.settings["bedrock-invoke"]
 			p.ModelRoute = false
 			e.settings["bedrock-invoke"] = p
-		}, 403, routes.CodeRouteForbidden},
-		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 403, routes.CodeRouteForbidden},
+		}, 401, routes.CodeRouteForbidden},
+		"deleted": {func(e *env) { delete(e.settings, "bedrock-invoke") }, 401, routes.CodeRouteForbidden},
 		"repointed (role edited)": {func(e *env) {
 			p := e.settings["bedrock-invoke"]
 			p.RoleName = "Admin"
@@ -541,7 +569,7 @@ func TestTokenDiesWhenTheConnectionChangesOrIsRevoked(t *testing.T) {
 			p := e.settings["bedrock-invoke"]
 			p.ID = "p2"
 			e.settings["bedrock-invoke"] = p
-		}, 403, routes.CodeRouteForbidden},
+		}, 401, routes.CodeRouteForbidden},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -666,7 +694,7 @@ func TestApprovalIsCheckedOnEveryCall(t *testing.T) {
 	e.held = false // the grant ended, or the member removed it
 	e.mu.Unlock()
 	resp, body := e.call(tok, invokePath(), `{}`)
-	if resp.StatusCode != 403 || codeOf(t, body) != "route_confirmation_required" {
+	if resp.StatusCode != 401 || codeOf(t, body) != "route_confirmation_required" {
 		t.Fatalf("without approval = %d %s", resp.StatusCode, body)
 	}
 	if e.upstreamCalls() != 1 {
@@ -787,7 +815,7 @@ func TestLoginRequiredIsRefusedVisibly(t *testing.T) {
 	e.credErr = fmt.Errorf("%w for profile: expired", awsx.ErrLoginRequired)
 	tok := e.issue(e.session("s1", "p1", ""))
 	resp, body := e.call(tok, invokePath(), `{}`)
-	if resp.StatusCode != 403 || codeOf(t, body) != "route_login_required" || !strings.Contains(body, "bedrock-invoke") {
+	if resp.StatusCode != 401 || codeOf(t, body) != "route_login_required" || !strings.Contains(body, "bedrock-invoke") {
 		t.Fatalf("login required = %d %s", resp.StatusCode, body)
 	}
 	if e.upstreamCalls() != 0 {
@@ -957,5 +985,219 @@ func TestClientDisconnectCancelsTheUpstreamRequest(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("the upstream request was not cancelled when the caller disconnected")
+	}
+}
+
+// Every refusal of the gateway's own goes out once and fails visibly in Claude Code: 401 for what
+// waiting does not clear, 503 for what it may, both with x-should-retry: false (writeRefusal).
+func TestRefusalsAreSentAsNotRetried(t *testing.T) {
+	e := newEnv(t)
+	tok := e.issue(e.session("s1", "p1", ""))
+	check := func(name string, want int, resp *http.Response) {
+		t.Helper()
+		if resp.StatusCode != want || resp.Header.Get("X-Should-Retry") != "false" {
+			t.Errorf("%s: %d x-should-retry=%q, want %d and false", name, resp.StatusCode, resp.Header.Get("X-Should-Retry"), want)
+		}
+	}
+	resp, _ := e.call("afrt_unknown", invokePath(), `{}`)
+	check("unknown token", 401, resp)
+	e.mu.Lock()
+	e.held = false
+	e.mu.Unlock()
+	resp, _ = e.call(tok, invokePath(), `{}`)
+	check("confirmation required", 401, resp)
+	e.mu.Lock()
+	e.held, e.settingsOK = true, false
+	e.mu.Unlock()
+	resp, _ = e.call(tok, invokePath(), `{}`)
+	check("settings unreadable", 503, resp)
+	e.mu.Lock()
+	e.settingsOK, e.credErr = true, errors.New("sts unreachable")
+	e.mu.Unlock()
+	resp, _ = e.call(tok, invokePath(), `{}`)
+	check("credentials unavailable", 503, resp)
+	// An upstream answer is forwarded as Bedrock sent it.
+	e.mu.Lock()
+	e.credErr = nil
+	e.upFn = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(403) }
+	e.mu.Unlock()
+	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 403 || resp.Header.Get("X-Should-Retry") != "" {
+		t.Errorf("upstream 403 = %d %q, want it forwarded untouched", resp.StatusCode, resp.Header.Get("X-Should-Retry"))
+	}
+}
+
+// A profile that asks before use is asked at the launch, and the launch still gets its bearer:
+// the calls are what wait for the member's press.
+func TestIssueAsksForConfirmationEarly(t *testing.T) {
+	e := newEnv(t)
+	e.mu.Lock()
+	e.held = false
+	e.mu.Unlock()
+	tok := e.issue(e.session("s1", "p1", ""))
+	if asked, _ := e.counts(); asked != 1 {
+		t.Fatalf("asked %d times at issue, want 1", asked)
+	}
+	if resp, body := e.call(tok, invokePath(), `{}`); resp.StatusCode != 401 || codeOf(t, body) != "route_confirmation_required" {
+		t.Fatalf("a call before the press = %d %s", resp.StatusCode, body)
+	}
+	e.mu.Lock()
+	e.held = true
+	e.mu.Unlock()
+	if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+		t.Fatalf("after the press = %d", resp.StatusCode)
+	}
+}
+
+// A selection is bound to the profile's identity and region when the session is created
+// (routes.BindAWSConnection), and kept for life: an edit of the profile in Settings refuses every
+// later issue (a resume, a recreate, a fork, an Agent restart) and the check of a forked or
+// recreated selection, instead of minting a token for another account.
+func TestReissueKeepsTheOriginalConnection(t *testing.T) {
+	for name, edit := range map[string]func(p *awsx.Profile){
+		"account":        func(p *awsx.Profile) { p.AccountID = "210987654321" },
+		"role":           func(p *awsx.Profile) { p.RoleName = "Admin" },
+		"default region": func(p *awsx.Profile) { p.Region = "eu-west-1" },
+		"sign-in portal": func(p *awsx.Profile) { p.StartURL = "https://other.awsapps.com/start" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			m := e.session("s1", "p1", "")
+			if _, _, fp, _ := routes.ParseBoundAWSConnection(m.Route.Connection); fp == "" || !strings.HasPrefix(m.Route.Connection, "p1@us-east-1#") {
+				t.Fatalf("stored selection %q is not bound with the resolved region", m.Route.Connection)
+			}
+			e.issue(m)
+			// Stopped, the profile edited, then started again (or the Agent restarted: a new
+			// gateway, no tokens, the same stored selection).
+			e.mu.Lock()
+			p := e.settings["bedrock-invoke"]
+			edit(&p)
+			e.settings["bedrock-invoke"] = p
+			e.mu.Unlock()
+			for _, g := range []*Gateway{e.g, New(e.g.d)} {
+				if _, ref := g.Issue(m); ref == nil || ref.Code != "route_connection_changed" {
+					t.Fatalf("re-issue after the edit = %+v", ref)
+				}
+				if ref := g.CheckRoute(context.Background(), *m.Route, ""); ref == nil || ref.Code != "route_connection_changed" {
+					t.Fatalf("the check of a fork or recreate = %+v", ref)
+				}
+				if _, ref := g.Bind(*m.Route); ref == nil {
+					t.Fatal("a bound selection was re-bound to the edited profile")
+				}
+			}
+		})
+	}
+}
+
+// Only a bound selection gets a token; binding resolves an empty region to the profile's own.
+func TestIssueNeedsABoundSelection(t *testing.T) {
+	e := newEnv(t)
+	m := session.Meta{Name: "u1", Dir: "/w", CreatedAt: "x", Kind: session.KindClaude,
+		Route: &routes.Selection{Route: RouteBedrock, Connection: "p1@"}}
+	e.mu.Lock()
+	e.metas["u1"] = m
+	e.roots["u1"] = []int{os.Getpid()}
+	e.mu.Unlock()
+	if _, ref := e.g.Issue(m); ref == nil || !strings.Contains(ref.Message, "not bound") {
+		t.Fatalf("unbound issue = %+v", ref)
+	}
+	bound, ref := e.g.Bind(*m.Route)
+	if ref != nil || !strings.HasPrefix(bound.Connection, "p1@us-east-1#") {
+		t.Fatalf("Bind = %+v %v", bound, ref)
+	}
+	again, _ := e.g.Bind(bound)
+	if again.Connection != bound.Connection {
+		t.Fatalf("binding a bound selection changed it: %q -> %q", bound.Connection, again.Connection)
+	}
+}
+
+// A row the ledger refuses is not lost: it is spooled, replayed by the sweep (also by a new
+// gateway after an Agent restart) and counted once, by its Key, even when the refused append had
+// written it after all.
+func TestLedgerRowsSurviveARefusedAppend(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
+			e := newEnv(t)
+			tok := e.issue(e.session("s1", "p1", ""))
+			e.mu.Lock()
+			e.appendErr, e.appendWrites = errors.New("no space left on device"), partial
+			e.mu.Unlock()
+			if resp, _ := e.call(tok, invokePath(), `{}`); resp.StatusCode != 200 {
+				t.Fatalf("the call failed with the ledger: %d", resp.StatusCode)
+			}
+			waitFor(t, func() bool {
+				ents, _ := os.ReadDir(e.g.d.SpoolDir)
+				return len(ents) == 1
+			})
+			e.g.Sweep() // still refused: kept
+			if ents, _ := os.ReadDir(e.g.d.SpoolDir); len(ents) != 1 {
+				t.Fatalf("spool after a refused replay = %d files", len(ents))
+			}
+			e.mu.Lock()
+			e.appendErr = nil
+			e.mu.Unlock()
+			New(e.g.d).Sweep() // an Agent restart: a new gateway over the same spool
+			if ents, _ := os.ReadDir(e.g.d.SpoolDir); len(ents) != 0 {
+				t.Fatalf("spool after the replay = %d files", len(ents))
+			}
+			e.g.Sweep()
+			e.mu.Lock()
+			rows := append([]usagex.Record(nil), e.rows...)
+			e.mu.Unlock()
+			keys := map[string]int{}
+			for _, r := range rows {
+				if r.Key == "" || r.Feature != usagex.FeatureRouteGateway {
+					t.Fatalf("row without a Key: %+v", r)
+				}
+				keys[r.Key]++
+			}
+			want := 1
+			if partial {
+				want = 3 // the call, the refused replay and the good one each wrote it; counted once per Key
+			}
+			if len(keys) != 1 || len(rows) != want {
+				t.Fatalf("rows = %d with %d keys, want %d rows of one key", len(rows), len(keys), want)
+			}
+		})
+	}
+}
+
+func waitFor(t *testing.T, ok func() bool) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if ok() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition never held")
+}
+
+// The review's case through the real ledger writer and reader: the first append is cut inside the
+// row and fails, the spool replays it with the real AppendRows, and the row is read back.
+func TestSpoolReplayAfterATruncatedLedgerWrite(t *testing.T) {
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
+	seed := usagex.Record{TS: time.Now().UTC().Format(time.RFC3339), Feature: usagex.FeatureRouteGateway, Ref: "s0", Key: "route.gateway:seed"}
+	if err := usagex.AppendRows([]usagex.Record{seed}); err != nil || len(usagex.ReadRows()) != 1 {
+		t.Fatalf("positive control: %v, %d rows", err, len(usagex.ReadRows()))
+	}
+	day := filepath.Join(usagex.RawDir(), time.Now().UTC().Format("2006-01-02")+".jsonl")
+	cut := func(rows []usagex.Record) error {
+		f, err := os.OpenFile(day, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, _ = f.WriteString(`{"ts":`)
+		return errors.New("no space left on device")
+	}
+	sp := &rowSpool{dir: filepath.Join(t.TempDir(), "spool"), append: cut}
+	sp.write(usagex.Record{TS: seed.TS, Call: "c1", Feature: usagex.FeatureRouteGateway, Ref: "s1", Key: "route.gateway:c1", In: 7})
+	sp.append = usagex.AppendRows
+	if n := sp.replay(); n != 1 {
+		t.Fatalf("replay recovered %d rows", n)
+	}
+	rows := usagex.ReadRows()
+	if len(rows) != 2 || rows[1].Key != "route.gateway:c1" || rows[1].In != 7 {
+		t.Fatalf("ledger after the replay = %+v, want the seed and the recovered row", rows)
 	}
 }
