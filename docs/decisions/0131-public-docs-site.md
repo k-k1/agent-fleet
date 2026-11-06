@@ -4,8 +4,8 @@ English | [日本語](0131-public-docs-site.ja.md)
 
 - Status: **proposed** (2026-11-07). A pilot exists; nothing is merged. The pilot's code and draft pages are on the
   `docs/public-docs-site-pilot` branch of `k-k1/agent-fleet-site`. Everything below marked *(pilot)* was built and
-  looked at there: the site was rendered from `v0.41.0` and checked with headless Chromium. Follow-ups: (issue to be
-  filed).
+  looked at there: the site was rendered from `v0.41.0` and checked with headless Chromium.
+  Follow-ups: #3463 (shots stub fix: #3464).
 - Related: [0064](0064-docs-three-audiences.md) (the three reader shelves, `guide/` is what ships) /
   [0063](0063-document-preview.md) (the Console's document viewer)
 
