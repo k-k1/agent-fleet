@@ -3,6 +3,14 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.41.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.41.0) — 2026-11-06
+
+ターミナル（CLI）の claude セッションを Anthropic API キーで動かせるようになり、サブスクリプションの
+利用枠で止まったセッションは、リセットを待たずにそちらで続けられます。セッションは自分のプルリクエストの
+CI の失敗とレビューの指摘を知らされるようになり、AWS の egress ゲートウェイは指定した宛先への SSH git と
+データベースの通信を通せるようになり、ecs-ec2 のスロットはスタックをデプロイしなくても Amazon の AMI
+更新に追従します。
+
 ## [0.40.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.40.0) — 2026-11-03
 
 セッションは、同梱の `confluence` CLI で既存の Jira 接続のまま Confluence を使えるようになり、

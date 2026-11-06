@@ -13,6 +13,35 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.41.0](0.41.0.md) — 2026-11-06
+
+**CLI pins** — Claude Code 2.1.318, Codex 0.167.0, Copilot 1.0.106, Antigravity 1.5.2, Kiro 3.1.0
+
+**New / Improved**
+
+- **[claude]** Terminal claude sessions can run on the Anthropic API key (**Model route** in the launch dialog), billed per use ([#3281](https://github.com/k-k1/agent-fleet/issues/3281), [#3344](https://github.com/k-k1/agent-fleet/issues/3344), [#3317](https://github.com/k-k1/agent-fleet/issues/3317))
+- **[claude]** **Continue on the API route** for a subscription-route session stopped at its usage window; one-way, after a cost confirm ([#3283](https://github.com/k-k1/agent-fleet/issues/3283))
+- **[sessions]** **Tell sessions about their PR's feedback** (off by default): CI failures and requested changes are told to the PR's session, which is started if stopped ([#3129](https://github.com/k-k1/agent-fleet/issues/3129))
+- **[egress]** AWS egress gateway passes non-HTTP TCP (SSH git, databases) to destinations named as **TCP port** entries; needs `00-network` deployed ([#3369](https://github.com/k-k1/agent-fleet/issues/3369), [#3399](https://github.com/k-k1/agent-fleet/issues/3399))
+- **[toolchains]** Amazon Corretto JDKs beside Temurin ([#3411](https://github.com/k-k1/agent-fleet/issues/3411))
+- **[ecs-ec2]** The Control Plane follows Amazon's ECS-optimized AMI itself; outdated slots replaced at next start, reason shown in Slots ([#3318](https://github.com/k-k1/agent-fleet/issues/3318))
+- **[mirror]** Cloud command runs fold into their tool call, repeats collapsed; `af-gcloud-exec` runs recorded ([#3329](https://github.com/k-k1/agent-fleet/issues/3329))
+- **[console]** This month / Last month / Last 30 days presets on Running time, Cloud cost and the uptime heatmap ([#3383](https://github.com/k-k1/agent-fleet/issues/3383))
+- **[work items]** Issue and PR URLs open the work item modal ([#3365](https://github.com/k-k1/agent-fleet/issues/3365))
+- **[egress]** Toolchains and agent CLI download hosts allowed by default under enforce (`storage.googleapis.com` still opt-in) ([#3432](https://github.com/k-k1/agent-fleet/issues/3432))
+- **[settings]** Settings › Agents opens faster; the repository poll pauses while the Console is unattended ([#3385](https://github.com/k-k1/agent-fleet/issues/3385), [#3333](https://github.com/k-k1/agent-fleet/issues/3333))
+
+**Fixed**
+
+- **[mirror]** The permission card could answer the wrong option (Always allow denied, Deny approved); answers matched to the dialog on screen, chat bridge too ([#3354](https://github.com/k-k1/agent-fleet/issues/3354), [#3359](https://github.com/k-k1/agent-fleet/issues/3359), [#3358](https://github.com/k-k1/agent-fleet/issues/3358))
+- **[mirror]** Stopping a Terminal claude session still left the prompt behind in more cases (first prompt, paste, wide-character title, bidi control) ([#3345](https://github.com/k-k1/agent-fleet/issues/3345), [#3302](https://github.com/k-k1/agent-fleet/issues/3302), [#3372](https://github.com/k-k1/agent-fleet/issues/3372), [#3373](https://github.com/k-k1/agent-fleet/issues/3373), [#3375](https://github.com/k-k1/agent-fleet/issues/3375), [#3408](https://github.com/k-k1/agent-fleet/issues/3408))
+- **[sessions]** Stopping a Terminal codex or opencode session could let its turn or a queued instruction run unseen ([#2607](https://github.com/k-k1/agent-fleet/issues/2607))
+- **[agents]** A CLI self-update could leave codex or copilot unable to run; reinstalled at the next start ([#3416](https://github.com/k-k1/agent-fleet/issues/3416))
+- **[mirror]** A long paste stuck at Pending, a nested claude's conversation in the mirror, Translate refusing some long turns ([#3362](https://github.com/k-k1/agent-fleet/issues/3362), [#3355](https://github.com/k-k1/agent-fleet/issues/3355), [#3332](https://github.com/k-k1/agent-fleet/issues/3332))
+- **[terminal]** Opening a terminal tab typed `0;276;0c` into shell and SSM sessions ([#3337](https://github.com/k-k1/agent-fleet/issues/3337))
+- **[assistant]** agy assistant chat ended the turn on a read outside its knowledge folders ([#3412](https://github.com/k-k1/agent-fleet/issues/3412))
+- **[console]** Backspace/Delete edited a file in View mode; misaligned per-member bars; EC2 pool tables overflowed; stalled-tree notice repeated ([#3381](https://github.com/k-k1/agent-fleet/issues/3381), [#3382](https://github.com/k-k1/agent-fleet/issues/3382), [#3384](https://github.com/k-k1/agent-fleet/issues/3384), [#3351](https://github.com/k-k1/agent-fleet/issues/3351))
+
 ## [0.40.0](0.40.0.md) — 2026-11-03
 
 **CLI pins** — Claude Code 2.1.317; Confluence CLI 2.31.0 added

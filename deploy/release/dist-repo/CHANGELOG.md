@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.41.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.41.0) — 2026-11-06
+
+A Terminal (CLI) claude session can run on an Anthropic API key, and one that stops at its
+subscription usage window can carry on there instead of waiting. Sessions can be told about their
+pull request's CI failures and review feedback, the AWS egress gateway can pass SSH git and
+database traffic to named destinations, and ecs-ec2 slots follow Amazon's AMI updates without a
+stack deploy.
+
 ## [0.40.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.40.0) — 2026-11-03
 
 Sessions can use Confluence through a bundled `confluence` CLI on the existing Jira connection, and
