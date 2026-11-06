@@ -1,0 +1,20 @@
+
+❯ do the thing
+
+● running
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Find files mentioning the token
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ find /home/dev/repos/demo/src -type f -name '*.go' -newer /home/dev/repos/demo
+ /go.mod -exec grep -l 'permissionToken' {} + | sort | uniq
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+
+ Esc to cancel · Tab to amend

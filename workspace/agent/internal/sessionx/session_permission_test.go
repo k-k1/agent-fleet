@@ -64,7 +64,7 @@ func TestPermissionKeysByLabel(t *testing.T) {
 	for _, c := range cases {
 		stubPane(t, permFixture(t, c.file))
 		for choice, w := range c.want {
-			keys, code := permissionKeys("s", choice)
+			keys, code := permissionKeys("s", choice, "", "")
 			if !reflect.DeepEqual(keys, w.keys) || code != w.code {
 				t.Errorf("%s %s: keys=%v code=%q, want %v %q", c.file, choice, keys, code, w.keys, w.code)
 			}
@@ -77,7 +77,7 @@ func TestPermissionKeysByLabel(t *testing.T) {
 func TestPermissionKeysUnreadableMenu(t *testing.T) {
 	stubPane(t, "❯ \n  ⏸ manual mode on\n")
 	for _, c := range []string{claude.PermAllow, claude.PermAlways, claude.PermDeny} {
-		if keys, code := permissionKeys("s", c); keys != nil || code != "menu_unreadable" {
+		if keys, code := permissionKeys("s", c, "", ""); keys != nil || code != "menu_unreadable" {
 			t.Errorf("%s: %v %q", c, keys, code)
 		}
 	}
@@ -138,7 +138,7 @@ func TestPermissionRespondIsBoundToThePrompt(t *testing.T) {
 	session.WriteMeta(session.Meta{Name: "slot75", Dir: dir, Kind: session.KindClaude})
 	sid := session.UUID(dir, "slot75")
 	status.Persist(sid, "permission")
-	status.WritePendingPermission(sid, "Bash · ls")
+	status.WritePendingPermission(sid, "Bash · echo live-check-3357")
 	p := permissionToken(sid)
 	if p == "" {
 		t.Fatal("no token for a pending prompt")
@@ -187,7 +187,7 @@ func permissionSession(t *testing.T, name string) string {
 	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
 	sid := session.UUID(dir, name)
 	status.Persist(sid, "permission")
-	status.WritePendingPermission(sid, "Bash · ls")
+	status.WritePendingPermission(sid, "Bash · echo live-check-3357")
 	t.Cleanup(func() { permDecided.Delete(name) })
 	return sid
 }
@@ -204,7 +204,7 @@ func postPermission(name, body string) *httptest.ResponseRecorder {
 func TestPermissionRespondRechecksAfterCapture(t *testing.T) {
 	logPath := fakeTmux(t)
 	withTempHome(t)
-	pane := permFixture(t, "bash_ask_rule_two_options.txt")
+	pane := permFixture(t, "bash_ask_rule_af_label.txt")
 
 	// Control: an unchanged prompt is answered with the row's digit.
 	sid := permissionSession(t, "slot76")
@@ -380,5 +380,107 @@ func TestPermissionRequestEventCarriesTheToken(t *testing.T) {
 	}
 	if got, _ := events[0].Payload["permissionToken"].(string); got == "" || got != permissionToken(sid) {
 		t.Fatalf("payload token = %q, want %q", got, permissionToken(sid))
+	}
+}
+
+// The pane can already show prompt Q while the payload (and so the token) still names P, for the
+// hook's latency (#3359). An answer that passes both token checks is refused when the dialog's
+// target is not the payload's, from the card and from a chat button alike.
+func TestPermissionAnswerIsBoundToTheDialogOnScreen(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	// The pane shows `echo live-check-3357`; the payload still names the previous prompt.
+	stubPane(t, permFixture(t, "bash_ask_rule_af_label.txt"))
+	sid := permissionSession(t, "slot86")
+	status.WritePendingPermission(sid, "Bash · rm -rf build")
+	tok := permissionToken(sid)
+	meta, _ := session.ReadMeta("slot86")
+
+	rec := postPermission("slot86", `{"choice":"allow","expect":"`+tok+`"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Fatalf("card: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range []string{claude.PermAllow, claude.PermDeny} {
+		out, err := answerClaudePermission(meta, c, tok, true)
+		if err != nil || !strings.Contains(out, "not the one this button") {
+			t.Fatalf("button %s: out=%q err=%v", c, out, err)
+		}
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent for a dialog the card was not drawn for:\n%s", b)
+	}
+	if _, ok := permDecided.Load("slot86"); ok {
+		t.Fatal("recorded as answered")
+	}
+	// A payload that names no target is not compared: the token is all there is to bind to.
+	status.WritePendingPermission(sid, "Claude needs your permission")
+	if rec := postPermission("slot86", `{"choice":"allow","expect":"`+permissionToken(sid)+`"}`); rec.Code != http.StatusOK {
+		t.Fatalf("untargeted payload: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The same hard-newline case through the card and the bridge button (review round 2).
+func TestPermissionAnswerRefusesJoinedHardNewline(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	a := strings.Repeat("a", 40)
+	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " echo "+a+"\n rm -rf build\n", 1)
+	stubPane(t, pane)
+	sid := permissionSession(t, "slot87")
+	status.WritePendingPermission(sid, "Bash · echo "+a+" rm -rf build")
+	tok := permissionToken(sid)
+	meta, _ := session.ReadMeta("slot87")
+	if rec := postPermission("slot87", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Fatalf("card: %d %s", rec.Code, rec.Body.String())
+	}
+	if out, err := answerClaudePermission(meta, claude.PermAllow, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+		t.Fatalf("button: %q %v", out, err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
+	}
+}
+
+// Round 3 through the card and the bridge button: a wrapped Q whose first physical line equals P.
+func TestPermissionAnswerRefusesWrappedSuffix(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	first := "echo " + strings.Repeat("a", 73)
+	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n", 1)
+	stubPane(t, pane)
+	sid := permissionSession(t, "slot88")
+	status.WritePendingPermission(sid, "Bash · "+first)
+	tok := permissionToken(sid)
+	meta, _ := session.ReadMeta("slot88")
+	if rec := postPermission("slot88", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Fatalf("card: %d %s", rec.Code, rec.Body.String())
+	}
+	if out, err := answerClaudePermission(meta, claude.PermAllow, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+		t.Fatalf("button: %q %v", out, err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
+	}
+}
+
+// Round 4 through the card and the bridge button: an unknown-width first line with a continuation.
+func TestPermissionAnswerRefusesUnknownWidthContinuation(t *testing.T) {
+	logPath := fakeTmux(t)
+	withTempHome(t)
+	first := "echo " + strings.Repeat("a", 73) + "\u0301"
+	pane := strings.Replace(permFixture(t, "bash_ask_rule_af_label.txt"), " echo live-check-3357\n", " "+first+"\n && rm -rf build\n", 1)
+	stubPane(t, pane)
+	sid := permissionSession(t, "slot89")
+	status.WritePendingPermission(sid, "Bash · "+first)
+	tok := permissionToken(sid)
+	meta, _ := session.ReadMeta("slot89")
+	if rec := postPermission("slot89", `{"choice":"allow","expect":"`+tok+`"}`); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "target_mismatch") {
+		t.Fatalf("card: %d %s", rec.Code, rec.Body.String())
+	}
+	if out, err := answerClaudePermission(meta, claude.PermAllow, tok, true); err != nil || !strings.Contains(out, "not the one this button") {
+		t.Fatalf("button: %q %v", out, err)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
+		t.Fatalf("keys sent:\n%s", b)
 	}
 }
