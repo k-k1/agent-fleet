@@ -284,6 +284,25 @@ func (m *manager) checkTenantIP(ctx context.Context, ident store.Identity, mv st
 		"tenant " + mv.TenantSlug + " restricts which networks may be used; this one is not allowed"}
 }
 
+// checkTenantAdminAccess applies the tenant's sign-in method and network rules to an
+// ADMIN request for tenant t, the same two checks the normal request path runs.
+//
+// super_admin is exempt from both: the operator administers every tenant deployment-wide,
+// and must always be able to undo a tenant that locked itself out (a super_admin session is
+// never tenant-defined, see upsertIdentity). Everyone else gets exactly resolveFull's answer,
+// so a tenant-defined IdP session administers only its own tenant and an office-only tenant
+// is not administrable from elsewhere.
+func (m *manager) checkTenantAdminAccess(ctx context.Context, ident store.Identity, tenantID, slug string) *apiError {
+	if ident.Role == "super_admin" {
+		return nil
+	}
+	mv := store.MembershipView{TenantID: tenantID, TenantSlug: slug}
+	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
+		return aerr
+	}
+	return m.checkTenantIP(ctx, ident, mv)
+}
+
 // resolveFull maps a request's identity + selected tenant to its runtime and
 // records, creating the workspace on first use. tenantSel is the X-AF-Tenant
 // value (slug or tenant id); empty means "default selection".

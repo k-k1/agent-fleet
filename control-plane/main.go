@@ -531,6 +531,11 @@ func main() {
 	// that is fatal below. Must run before buildMux — it captures cfg by value.
 	provs, provErr := buildLoginProviders(cfg)
 	cfg.setProviders(provs)
+	if mgr.authMode == "oauth" {
+		recheck := cfg
+		mgr.bearerEntryAllowed = recheck.identityStillAllowed
+	}
+	mgr.patMaxDays, _ = strconv.Atoi(os.Getenv("AF_PAT_MAX_DAYS"))
 	// The admin API validates a tenant's allowed_providers against this set, so a
 	// rule can't name an IdP the deployment doesn't have (docs/log/61 §61.9.4).
 	mgr.knownProviderIDs = map[string]bool{}

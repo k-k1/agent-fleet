@@ -34,6 +34,8 @@ export function TokensTab() {
   const tr = useT();
   const [tokens, setTokens] = useState<PatToken[] | null>(null);
   const [ceiling, setCeiling] = useState("write");
+  // The deployment's longest token lifetime (AF_PAT_MAX_DAYS); there is no "never".
+  const [maxTtl, setMaxTtl] = useState(365);
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
   const [scope, setScope] = useState("write");
@@ -52,6 +54,7 @@ export function TokensTab() {
         }
         setTokens(res.tokens || []);
         if (res.ceiling) setCeiling(res.ceiling);
+        if (res.max_ttl_days > 0) setMaxTtl(res.max_ttl_days);
       })
       .catch(() => setErr(tr("tokens.load_failed")));
   }, [tr]);
@@ -62,7 +65,7 @@ export function TokensTab() {
     const res = await apiJSON("api/pat", "POST", {
       name: name.trim(),
       scope,
-      ttl_days: parseInt(ttl, 10),
+      ttl_days: Math.min(parseInt(ttl, 10), maxTtl),
       endpoint,
     });
     setBusy(false);
@@ -193,8 +196,7 @@ export function TokensTab() {
           <select value={ttl} onChange={(e) => setTtl(e.target.value)}>
             <option value="90">{tr("tokens.ttl_90")}</option>
             <option value="30">{tr("tokens.ttl_30")}</option>
-            <option value="365">{tr("tokens.ttl_365")}</option>
-            <option value="-1">{tr("tokens.ttl_never")}</option>
+            {maxTtl >= 365 && <option value="365">{tr("tokens.ttl_365")}</option>}
           </select>
         </Row>
         <div className="ds-row">

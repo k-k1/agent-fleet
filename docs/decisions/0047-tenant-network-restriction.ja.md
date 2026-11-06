@@ -95,3 +95,11 @@ ALB の私有アドレス `10.20.10.5` を「これが私の IP か」と思っ�
   `deploy/compose/.env.example` に Caddy 構成での 1 を案内
 - **実機で確かめること**: ALB の後ろで CP が本物のグローバル IP を見ていること
   （これが全ての前提で、机上では確かめられない）
+
+## 追記 2026-11-07（#3450）
+
+ネットワーク規則は、管理系のゲート（`tenantAdminFor`、`anyTenantAdminFor`、`ingestAdminFor`）と
+PAT の発行にも、リクエスト解決と同じ `checkTenantProvider` / `checkTenantIP` で掛かるようになった。
+super_admin は引き続き対象外。決定 4 への影響が 1 つある: 許可範囲の外にいる tenant_admin は、規則を
+クリアできなくなった（その人こそ規則が締め出す相手のため）。自テナントの管理画面から締め出された
+テナントの戻り道は運用者。`/mcp` での PAT の利用は変わらない（決定 3）。

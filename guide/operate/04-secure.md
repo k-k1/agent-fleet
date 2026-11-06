@@ -420,6 +420,22 @@ default). What actually shuts the door is the per-request re-check above. So:
 > stops them getting a *new* session; the one already in their browser keeps working until you
 > also remove them from the allowlist or from the tenant.
 
+**API tokens go with it.** Personal access tokens and MCP OAuth connections are not sessions, so
+the per-request check above never sees them. They are cut off separately:
+
+- **Removing the membership revokes** every PAT and MCP OAuth connection issued against it, in the
+  same step. Re-inviting the person does not bring them back.
+- **Taking someone off the allowlist** is noticed on the token's next use: the CP asks the
+  sign-in methods that person used whether they are still admitted, and if none is, it revokes
+  all of their PATs and connections and answers 401. A check that cannot be made (the GitHub
+  adapter after a restart) does not revoke.
+- **Every PAT expires.** There is no "never": the longest lifetime is `AF_PAT_MAX_DAYS` (default
+  365). A token issued before this limit existed with no expiry is treated as expiring that long
+  after it was created, so an old one stops working at once.
+
+Using a PAT on `/mcp` is still exempt from a tenant's allowed networks, because workspaces call it
+from outside the office (`docs/build/07-security.md` §7.3.2); revoking is what cuts it off.
+
 Take the steps in this order; the first one is what revokes access, the rest are cleanup:
 
 1. **Remove the membership** (or take them off the allowlist).

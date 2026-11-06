@@ -231,6 +231,35 @@ func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) (bool,
 	return true, ""
 }
 
+// identityStillAllowed is sessionAllowed for someone who presents no session — a PAT or an MCP
+// OAuth grant. The identity is asked of every provider it signed in with, the way a session is
+// asked of its own, and passes if any still admits it. Nothing to ask (no linked provider, none
+// still configured) or "cannot verify right now" (ErrNeedsReauth) passes: this must not revoke on
+// what it could not check.
+func (c config) identityStillAllowed(ctx context.Context, ident store.Identity) bool {
+	links, err := c.mgr.store.ListLinkedProviders(ctx, ident.ID)
+	if err != nil || len(links) == 0 {
+		return true
+	}
+	asked := false
+	for _, l := range links {
+		p := c.providerFor(ctx, l.Provider)
+		if p == nil {
+			continue
+		}
+		asked = true
+		email := l.Email
+		if email == "" {
+			email = ident.Email
+		}
+		ok, err := p.Allowed(ctx, auth.Principal{Provider: l.Provider, Subject: l.Subject, Email: email, Verified: true})
+		if ok || errors.Is(err, auth.ErrNeedsReauth) {
+			return true
+		}
+	}
+	return !asked
+}
+
 // --- carrying the IdP subject downstream (docs/log/61 §61.5) -------------------
 
 // loginRef is the (provider, subject) the current session was minted with. It

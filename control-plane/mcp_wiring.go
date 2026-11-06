@@ -78,6 +78,26 @@ func (d cpDeps) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug stri
 	return memberAuth{d.m}.tenantAdminFor(w, r, slug)
 }
 
+// BearerEntryAllowed is the per-use allowlist re-check for PATs and OAuth grants. A store error
+// answers true: a hiccup must not revoke working credentials, and the next call asks again.
+func (d cpDeps) BearerEntryAllowed(ctx context.Context, identityID string) bool {
+	if d.m.bearerEntryAllowed == nil {
+		return true
+	}
+	ident, ok, err := d.m.store.GetIdentityByID(ctx, identityID)
+	if err != nil {
+		return true
+	}
+	if !ok {
+		return false
+	}
+	if d.m.bearerEntryAllowed(ctx, ident) {
+		return true
+	}
+	_ = d.m.store.RevokeBearersByIdentity(ctx, identityID, "no longer allowed to sign in")
+	return false
+}
+
 // ResolveByMembership converts the CP's per-request resolution to the two fields
 // mcpsrv reads. A nil *resolved must stay nil on the far side — returning an empty
 // Resolved would hand the tools a zero runtime instead of the error.

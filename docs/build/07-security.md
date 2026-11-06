@@ -372,6 +372,14 @@ data from a place they should not**.
 - **The surfaces a workspace calls are exempt** — `/mcp`, `/git/`, `/engine/` and
   `/internal/`. Their source is the user's own workspace, which says nothing about where
   the person is. Including them would block every call from your own workspace.
+- **The rule also binds the places a session acts on a tenant without resolving a
+  workspace** (#3450): PAT issuance (`POST /api/pat`), `tenantAdminFor`,
+  `anyTenantAdminFor` and `ingestAdminFor` run the same provider and network checks as
+  request resolution (`checkTenantAdminAccess`). super_admin is exempt, as it is from the
+  network rule everywhere; `ingestAdminFor` is bound to the selected tenant (`X-AF-Tenant`)
+  instead of scanning every membership for a grant. *Using* a PAT on `/mcp` stays exempt, as
+  above; what bounds it is revocation (membership deactivation, an allowlist removal noticed
+  on the token's next use) and the `AF_PAT_MAX_DAYS` lifetime cap.
 - **The workspace listener reads no forwarding header at all** (`AF_CP_INTERNAL_LISTEN`,
   [09 §9.3](09-deploy.md)). Its client is the connection's own address whatever the hop
   count says, and it removes the identity header and every forwarded-for/-host/-proto

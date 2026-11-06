@@ -27,7 +27,7 @@ next instruction". Issue the token for this in **⚙ Settings → Outside access
    - The endpoint is **/mcp** (sessions, memory and admin tools; the default) or **/mcp/memory** (Agent Fleet
      memory only). A token works only at the endpoint it was issued for; the token list shows which.
    - Scopes are **read (view only)** / **write (drive sessions; the default)** / **admin:dangerous (elevated / admin)**. You cannot pick a scope beyond your own permissions. If all you want is to drive sessions remotely, write is enough.
-   - Expiry is 90 days (default) / 30 days / 365 days / no expiry.
+   - Expiry is 90 days (default) / 30 days / 365 days. There is no "no expiry" (the operator can lower the maximum).
 2. On issue you'll see **"Token issued (you can't see it again once you close this)."**: **the token is shown
    only this once**. Save it with "Copy token".
 3. The same screen also shows a **`.mcp.json`** template for your local Claude Code. Copy it with

@@ -104,3 +104,12 @@ expressed solely by **whether the tenant wrote one CIDR line**.
   setup in `deploy/compose/.env.example`
 - **To confirm on real hardware**: that the CP, behind the ALB, sees the genuine global IP (this is
   the premise for all of it, and cannot be confirmed on paper).
+
+## Note 2026-11-07 (#3450)
+
+The network rule now also binds the admin gates (`tenantAdminFor`, `anyTenantAdminFor`,
+`ingestAdminFor`) and PAT issuance, through the same `checkTenantProvider` / `checkTenantIP` as request
+resolution. super_admin stays exempt. One consequence for Decision 4: clearing the rule is no
+longer possible for a tenant_admin who is outside the allowed range, because that caller is who the rule is
+meant to keep out. The way back for a tenant locked out of its own admin pages is the operator.
+Using a PAT on `/mcp` is unchanged (Decision 3).

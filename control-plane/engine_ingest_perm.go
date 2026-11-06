@@ -71,17 +71,24 @@ func (a engineAdminAPI) ingestAdminFor(w http.ResponseWriter, r *http.Request) (
 		writeAPIErr(w, internalErr(err))
 		return engineIngestGrant{}, false
 	}
-	for _, mv := range ms {
-		if mv.Role != "tenant_admin" {
-			continue
+	// The grant belongs to the SELECTED tenant (X-AF-Tenant, as on every other request), not
+	// to whichever of the caller's tenants happens to have one: scanning all memberships let
+	// a session that one tenant's rules refuse start an ingest on the strength of another.
+	if len(ms) > 0 {
+		mv, aerr := selectMembership(ms, r.Header.Get("X-AF-Tenant"))
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return engineIngestGrant{}, false
 		}
-		t, err := a.mgr.store.GetTenant(r.Context(), mv.TenantID)
-		if err != nil {
-			// One unreadable tenant must not decide the answer for the others.
-			continue
-		}
-		if parseLimits(t.Limits).AllowEngineIngest {
-			return engineIngestGrant{ident: ident, tenantID: t.ID}, true
+		if mv.Role == "tenant_admin" {
+			t, err := a.mgr.store.GetTenant(r.Context(), mv.TenantID)
+			if err == nil && parseLimits(t.Limits).AllowEngineIngest {
+				if aerr := a.mgr.checkTenantAdminAccess(r.Context(), ident, mv.TenantID, mv.TenantSlug); aerr != nil {
+					writeAPIErr(w, aerr)
+					return engineIngestGrant{}, false
+				}
+				return engineIngestGrant{ident: ident, tenantID: t.ID}, true
+			}
 		}
 	}
 	// The refusal names the grant rather than the role, because "super_admin required" would

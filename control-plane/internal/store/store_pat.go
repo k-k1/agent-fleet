@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // PAT is a Personal Access Token (docs/decisions/0006, P3-6). It authenticates
@@ -30,6 +31,9 @@ type PATStore interface {
 	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
+	// RevokeBearersByIdentity ends every live PAT and MCP OAuth grant of one person (the
+	// offboarding revoke for someone who may no longer sign in).
+	RevokeBearersByIdentity(ctx context.Context, identityID, reason string) error
 }
 
 // --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
@@ -95,4 +99,35 @@ func (s *SQL) RevokePAT(ctx context.Context, id, identityID string) error {
 func (s *SQL) TouchPAT(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, NowTS(), id)
 	return err
+}
+
+// revokeBearersTx revokes the live PATs and MCP OAuth grants selected by column (identity_id
+// or membership_id) = id, and deletes the grants' tokens. It is a transaction step so that
+// deactivating a membership cannot leave its credentials alive after a crash.
+func revokeBearersTx(ctx context.Context, tx *sqlTx, column, id, reason string) error {
+	now := NowTS()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE pat SET revoked_at=? WHERE `+column+`=? AND revoked_at IS NULL`, now, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM mcp_oauth_token WHERE grant_id IN (SELECT id FROM mcp_oauth_grant WHERE `+column+`=? AND revoked_at=0)`, id); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx,
+		`UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE `+column+`=? AND revoked_at=0`,
+		time.Now().Unix(), reason, id)
+	return err
+}
+
+func (s *SQL) RevokeBearersByIdentity(ctx context.Context, identityID, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := revokeBearersTx(ctx, tx, "identity_id", identityID, reason); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
