@@ -212,7 +212,8 @@ func (r *connRegistry) noteInput(wsID, session string) {
 	now := time.Now()
 	r.lastInput[wsID] = now
 	r.lastSeen[wsID] = now
-	if session != "" {
+	// Only while attached: a frame relayed after doneConn must not leave a clock behind.
+	if session != "" && r.attached[wsID][session] > 0 {
 		r.stampSessionInputLocked(wsID, session, now)
 	}
 	r.mu.Unlock()

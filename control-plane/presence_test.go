@@ -174,8 +174,22 @@ func TestWatchingSessionIsPerSession(t *testing.T) {
 		t.Error("an unnamed shell's keystroke pins a session")
 	}
 	// Detaching the last terminal of a session drops its clock: a re-attach starts fresh.
+	// Two terminals on one session: detaching one keeps the clock.
+	r.addConn(ws, "busy", true)
+	r.doneConn(ws, "busy", true)
+	r.mu.Lock()
+	_, kept := r.sessInput[ws]["busy"]
+	r.mu.Unlock()
+	if !kept {
+		t.Error("detaching one of two terminals dropped the session's keystroke clock")
+	}
 	r.doneConn(ws, "idle", true)
-	if _, ok := r.sessInput[ws]["idle"]; ok {
+	// A keystroke frame relayed after the detach must not bring the clock back.
+	r.noteInput(ws, "idle")
+	r.mu.Lock()
+	_, left := r.sessInput[ws]["idle"]
+	r.mu.Unlock()
+	if left {
 		t.Error("a detached session's keystroke clock was left behind")
 	}
 }
