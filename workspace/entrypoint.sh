@@ -134,6 +134,8 @@ if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_ar
   # No user action is needed.
   # Only the version selected in toolchains.json comes back. Other installed but unselected
   # versions stay gone (reinstall them from the Console's toolchains if needed).
+  # One glob per vendor in workspace/agent/internal/jdkvendor (All); a vendor missing here
+  # leaves its other-arch trees behind as dead weight (resolution already ignores them).
   for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-* "$HOME"/.local/share/agent-fleet/jvm/corretto-*-jdk-*; do
     [ -d "$d" ] || continue
     case "$d" in *-jdk-"$af_arch_now") continue ;; esac

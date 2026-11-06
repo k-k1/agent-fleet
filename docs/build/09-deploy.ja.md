@@ -145,8 +145,8 @@ Amazon Corretto（`corretto.aws`）を入れる。どちらのホストも既定
 その後 `GET` でポーリング）。導入後は `resolvedToolchains` が起動のたびにディレクトリを glob するので、
 再起動なしで**次のセッションから**効く。同じメジャーが両方のディレクトリにあれば新しいパッチの方を
 選ぶ（`release` ファイルの `SEMANTIC_VERSION`、Corretto は `version.txt`。同じ版なら `/usr/lib/jvm`）ので、導入済みのメジャーを
-もう一度入れればそれが更新になる。toolchains の GET は `java_versions`（メジャー → 解決後の版）も返し、
-ネットワークには出ない。`GET /env/jdk-latest?major=N` が Adoptium に聞き（6 時間、失敗は 10 分キャッシュ）、
+もう一度入れればそれが更新になる。toolchains の GET は `java_versions`（JDK ID → 解決後の版）も返し、
+ネットワークには出ない。`GET /env/jdk-latest?major=<id>` がベンダー（Adoptium、または corretto.aws のリダイレクト）に聞き（6 時間、失敗は 10 分キャッシュ）、
 `update_available` を返す。Console はそれが真のときに更新ボタンを出す。未導入のメジャーにも `latest`
 （インストールで入る版）を返し、Console はそれをボタンに出す。`GET /env/node-latest?major=N` は Node.js 版
 （nodejs.org の index から。版は nvm と同じく `v` 付き）。どちらもピッカーが出すメジャーしか受け付けない

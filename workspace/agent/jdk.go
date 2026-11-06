@@ -63,7 +63,7 @@ var installableJava = func() []string {
 // jdkArchSuffixes are the architecture tokens a JDK directory can be named with.
 // Both sources use the same two: the Debian packages under /usr/lib/jvm are
 // temurin-<major>-jdk-<dpkg arch> and installJDK writes
-// temurin-<major>-jdk-<runtime.GOARCH> — amd64 / arm64 in both vocabularies.
+// <vendor>-<major>-jdk-<runtime.GOARCH> — amd64 / arm64 in both vocabularies.
 var jdkArchSuffixes = []string{"amd64", "arm64"}
 
 // foreignArchJDK reports whether a JDK directory name carries an architecture

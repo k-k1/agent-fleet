@@ -1,6 +1,8 @@
 package jdkvendor
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,5 +89,42 @@ func TestCorrettoTreeVersion(t *testing.T) {
 	}
 	if got := CorrettoTreeVersion(dir); got != "" {
 		t.Fatalf("unparsable version.txt: %q", got)
+	}
+}
+
+// Every answer that is not a redirect naming a version is an error, never a version: a
+// wrong "latest" would offer an update that installs something else.
+func TestCorrettoLatestAnswers(t *testing.T) {
+	var status int
+	var location string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if location != "" {
+			w.Header().Set("Location", location)
+		}
+		w.WriteHeader(status)
+	}))
+	defer srv.Close()
+	prev := CorrettoBaseURL
+	CorrettoBaseURL = srv.URL
+	t.Cleanup(func() { CorrettoBaseURL = prev })
+
+	for _, c := range []struct {
+		label    string
+		status   int
+		location string
+		want     string
+	}{
+		{"relative redirect", http.StatusFound, "/downloads/resources/21.0.13.0.11/amazon-corretto-21.0.13.0.11-linux-x64.tar.gz", "21.0.13.0.11"},
+		{"absolute redirect", http.StatusMovedPermanently, "https://cdn.example/downloads/resources/8.512.09.1/amazon-corretto-8.512.09.1-linux-x64.tar.gz", "8.512.09.1"},
+		{"no redirect", http.StatusOK, "", ""},
+		{"redirect without Location", http.StatusFound, "", ""},
+		{"redirect elsewhere", http.StatusFound, "https://cdn.example/amazon-corretto-21-linux-x64.tar.gz", ""},
+		{"not found", http.StatusNotFound, "", ""},
+	} {
+		status, location = c.status, c.location
+		got, err := CorrettoLatest("21", "x64")
+		if got != c.want || (c.want == "") != (err != nil) {
+			t.Errorf("%s: CorrettoLatest = %q, %v; want %q", c.label, got, err, c.want)
+		}
 	}
 }

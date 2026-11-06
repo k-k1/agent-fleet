@@ -159,8 +159,8 @@ so it takes effect **from the next session** without a restart. A major that is 
 directories resolves to the newer patch (the `release` file's `SEMANTIC_VERSION`, or
 Corretto's `version.txt`; a tie
 keeps `/usr/lib/jvm`), so installing an installed major again is an update. The
-toolchains GET also reports `java_versions` (major → resolved version) and stays offline;
-`GET /env/jdk-latest?major=N` asks Adoptium (cached 6 h, a failure 10 min) and answers
+toolchains GET also reports `java_versions` (JDK id → resolved version) and stays offline;
+`GET /env/jdk-latest?major=<id>` asks the vendor (Adoptium, or the corretto.aws redirect) (cached 6 h, a failure 10 min) and answers
 `update_available`, which is when the Console offers the update button. For a major that
 is not installed it still answers `latest`, the version Install would fetch, and the
 Console names it on the button. `GET /env/node-latest?major=N` is the Node.js twin
