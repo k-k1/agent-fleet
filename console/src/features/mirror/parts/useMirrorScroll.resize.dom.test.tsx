@@ -316,6 +316,21 @@ describe("useMirrorScroll glide", () => {
     expect(el.scrollTop).toBe(1040); // still glided onto the reply head, wherever it went
   });
 
+  it("keeps gliding when a band above appears mid-glide and the view is held for it", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 1300;
+    api!.atBottomRef.current = false;
+    api!.lastReplyIdxRef.current = 3;
+    act(() => api!.jumpToReplyTop()); // glide up to 1000
+    step(2);
+    act(() => api!.onBodyScroll());
+    resize(460, true); // the title band: onBodyResize moves the view 40px down to hold the bottom edge
+    act(() => api!.onBodyScroll()); // that write's own scroll event
+    settle();
+    expect(el.scrollTop).toBe(1000);
+  });
+
   it("shows jump-to-latest when the reader stops a completion glide after its last scroll event", () => {
     reduceMotion = false;
     const el = api!.bodyRef.current!;

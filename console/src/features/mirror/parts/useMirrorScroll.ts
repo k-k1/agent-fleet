@@ -359,6 +359,10 @@ export function useMirrorScroll() {
     // the end, that is an upward move we did not write that is not the browser clamping onto the end;
     // against any other glide, a move that left it farther from its target (glide.movedAway).
     if (glider.active()) {
+      // Our own write — a glide frame, or onBodyResize holding the bottom edge as a band above comes
+      // or goes, which moves the view but not a target measured inside the content — is never the
+      // reader, however far it leaves the glide from its target.
+      if (Math.abs(el.scrollTop - selfTopRef.current) <= 1) return;
       const max = el.scrollHeight - el.clientHeight;
       const against = glider.toBottom()
         ? el.scrollTop < selfTopRef.current - 1 && el.scrollTop < max - 1
