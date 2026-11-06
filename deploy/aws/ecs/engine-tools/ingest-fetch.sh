@@ -9,9 +9,11 @@
 #   URL           what to fetch                              (required unless MODE is set)
 #   SHA256        the expected digest                        (optional, and warned about when absent)
 #   MODE          "delete" or "move" skip this step entirely (optional)
+#   CREDENTIAL_FOR "hf" or "civitai" when the Control Plane resolved the source from that
+#                 service; empty for a plain url, which is fetched with no Authorization at all
 #   HF_TOKEN      injected from Secrets Manager; "-" is the sentinel for "no token registered"
 #   CIVITAI_TOKEN the same, for a Civitai account (engine_civitai_token.go). Only one of the two
-#                 is ever sent, chosen by the URL's own host: a foreign Bearer token offered to
+#                 is ever sent, chosen by CREDENTIAL_FOR and only to that service's own exact hostnames: a foreign Bearer token offered to
 #                 the other service is not "harmless" — a value it does not recognise is not
 #                 guaranteed to be read as anonymous.
 
@@ -50,25 +52,109 @@ set -e
 [ "$MODE" = move ] && { echo "ingest: move mode, nothing to fetch"; exit 0; }
 [ -n "$URL" ] || { echo "ingest: URL is required"; exit 2; }
 start=$(date +%s)
-set --
-case "$URL" in
-  https://huggingface.co/*|https://*.huggingface.co/*)
-    if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != - ]; then
-      set -- -H "Authorization: Bearer $HF_TOKEN"
-    fi
-    ;;
-  https://civitai.com/*|https://*.civitai.com/*)
-    if [ -n "$CIVITAI_TOKEN" ] && [ "$CIVITAI_TOKEN" != - ]; then
-      set -- -H "Authorization: Bearer $CIVITAI_TOKEN"
-    fi
-    ;;
-esac
-curl -fsSL "$@" -o /scratch/blob "$URL"
-size=$(stat -c %s /scratch/blob)
+# Overridable only so deploy/local/ingest-fetch-test.sh can run without the task's /scratch.
+SCRATCH="${AF_FETCH_SCRATCH:-/scratch}"
+
+# --- which hosts may receive a token ------------------------------------------------------
+#
+# A token is sent only when the Control Plane marked this fetch as coming from that service
+# (CREDENTIAL_FOR=hf|civitai, set by the hf / civitai resolvers and never for a plain url) AND
+# the hop's hostname is on that service's list, compared exactly. The list of hosts we may
+# CREDENTIAL is deliberately separate from the hosts we may DOWNLOAD from: a redirect may land on
+# any https host (a CDN or object store whose name this script cannot know), and gets no token.
+# Matching the whole URL with a `case` glob is what this replaces: `*` also matches `/`, so a
+# path that merely contained `huggingface.co/` on another host matched.
+af_cred_hosts() { # af_cred_hosts <service> -> exact hostnames, one per line
+  case "$1" in
+    hf) echo huggingface.co ;;
+    civitai) printf '%s\n' civitai.com www.civitai.com ;;
+  esac
+}
+
+# af_parse_url <url> sets AF_HOST and AF_PATH, or returns 1: https only, no userinfo, no port
+# (default 443), a plain DNS-style hostname.
+af_parse_url() {
+  case "$1" in
+    https://*|HTTPS://*) ;;
+    *) return 1 ;;
+  esac
+  _rest="${1#*://}"
+  _auth="${_rest%%[/?#]*}"
+  AF_PATH="${_rest#"$_auth"}"
+  case "$_auth" in
+    ""|*[!A-Za-z0-9.-]*) return 1 ;; # rejects '@' (userinfo), ':' (port, IPv6), '[' and the like
+  esac
+  AF_HOST=$(printf '%s' "$_auth" | tr 'A-Z' 'a-z')
+}
+
+# af_token_for <service> <host> prints the token when both the service is known and the host is
+# one of its credential hosts; prints nothing otherwise.
+af_token_for() {
+  case "$1" in
+    hf) _tok="$HF_TOKEN" ;;
+    civitai) _tok="$CIVITAI_TOKEN" ;;
+    *) return 0 ;;
+  esac
+  [ -n "$_tok" ] && [ "$_tok" != - ] || return 0
+  for _h in $(af_cred_hosts "$1"); do
+    if [ "$_h" = "$2" ]; then printf '%s' "$_tok"; return 0; fi
+  done
+}
+
+# af_pin <host> sets AF_PIN (curl args) or returns 1. Every hop's destination is resolved HERE, judged
+# against the same classes the Control Plane refuses (loopback, link-local incl. the cloud metadata
+# address and link-local multicast, unspecified), and the connection is pinned to the address that was judged
+# (`--resolve`), so a second DNS answer cannot swap in another one. IPv4 only: an AAAA-only host
+# fails closed rather than being connected to unchecked.
+af_internal_ip() {
+  case "$1" in 0.*|127.*|169.254.*|224.0.0.*) return 0 ;; esac
+  return 1
+}
+af_pin() {
+  AF_PIN=""
+  # Every host goes through getent, numeric spellings included: curl also accepts `2130706433`,
+  # `0177.0.0.1` and `0` as addresses, and only the resolver's canonical answer is judged and
+  # then pinned, so what is checked is what curl connects to.
+  _ips=$(getent ahostsv4 "$1" 2>/dev/null | awk '$2=="STREAM"{print $1}') || true
+  [ -n "$_ips" ] || return 1
+  for _ip in $_ips; do af_internal_ip "$_ip" && return 1; done
+  AF_PIN="--resolve $1:443:$(echo "$_ips" | head -n 1)"
+}
+
+# Redirects are followed here, not by `curl -L`: the host is re-judged at every hop and the
+# Authorization header is built per hop, so it can never outlive a change of host.
+# `--location-trusted` must never be used. The next hop comes from curl's own %{redirect_url},
+# which resolves protocol-relative, path-relative and query-relative Locations per RFC 3986 and
+# is then judged like the first URL.
+af_parse_url "$URL" || { echo "ingest: refusing url: it must be https with a plain hostname, no user info and no port"; exit 2; }
+cur="$URL"
+hops=0
+while :; do
+  af_parse_url "$cur" || { echo "ingest: refusing redirect target: not an https url with a plain hostname"; exit 1; }
+  af_pin "$AF_HOST" || { echo "ingest: refusing $AF_HOST: unresolvable or an internal address"; exit 1; }
+  tok=$(af_token_for "${CREDENTIAL_FOR:-}" "$AF_HOST")
+  set --
+  [ -z "$tok" ] || set -- -H "Authorization: Bearer $tok"
+  # shellcheck disable=SC2086 # AF_PIN is two words by construction
+  out=$(curl -sS --proto '=https' $AF_PIN "$@" -o "$SCRATCH/blob" -w '%{http_code} %{redirect_url}' "$cur") \
+    || { echo "ingest: fetch failed"; exit 1; }
+  code="${out%% *}"
+  case "$code" in
+    2??) break ;;
+    301|302|303|307|308)
+      hops=$((hops + 1))
+      [ "$hops" -le 10 ] || { echo "ingest: too many redirects"; exit 1; }
+      cur="${out#* }"
+      [ -n "$cur" ] && [ "$cur" != "$out" ] || { echo "ingest: redirect without a usable Location"; exit 1; }
+      ;;
+    *) echo "ingest: HTTP $code"; exit 1 ;;
+  esac
+done
+size=$(stat -c %s "$SCRATCH/blob")
 secs=$(( $(date +%s) - start ))
 echo "ingest: fetched $size bytes in ${secs}s"
 if [ -n "$SHA256" ]; then
-  got=$(sha256sum /scratch/blob | cut -d" " -f1)
+  got=$(sha256sum "$SCRATCH/blob" | cut -d" " -f1)
   [ "$got" = "$SHA256" ] || { echo "ingest: sha256 mismatch: got $got want $SHA256"; exit 1; }
   echo "ingest: sha256 ok $got"
 else

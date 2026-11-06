@@ -1774,8 +1774,16 @@ accounts on unrelated services, and clearing one must never touch the other.
 
 `ExecCivitaiTokenPolicy` mirrors `ExecHfTokenPolicy`, scoped to `CivitaiTokenSecret` alone. The
 `fetch` container's `Secrets` block carries both — `HF_TOKEN` and `CIVITAI_TOKEN` — and the
-script picks between them by the download URL's own host (`ingest-fetch.sh`), never sending a
-Hugging Face token to Civitai or the other way round.
+script picks between them by the `CREDENTIAL_FOR` value the Control Plane sets (`hf` / `civitai`,
+empty for a plain url), never sending a Hugging Face token to Civitai or the other way round. A
+token is attached only when the hop's hostname equals one of that service's own hostnames exactly
+(`huggingface.co`; `civitai.com`, `www.civitai.com`), and redirects are followed hop by hop so the
+header is dropped as soon as the host changes. A plain url is fetched with no token at all.
+
+The script also resolves each hop itself, refuses loopback / link-local / unspecified addresses and pins the connection to the address it checked (`getent` is required in the image).
+
+Operator step: on a deployment where ingest by plain url was enabled before this behaviour, rotate
+the Hugging Face and Civitai tokens (the previous script could attach them by URL pattern).
 
 A Civitai download that fails with 401 means no token reached the task; 403 means one did and
 this deployment's Civitai account still cannot have the file — an uploader-restricted asset, or

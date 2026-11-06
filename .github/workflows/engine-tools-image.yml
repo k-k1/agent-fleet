@@ -68,6 +68,7 @@ jobs:
           set -euo pipefail
           for f in deploy/aws/ecs/engine-tools/*.sh; do sh -n "$f"; done
           deploy/local/engine-sidecar-test.sh
+          deploy/local/ingest-fetch-test.sh
 
       - name: set up buildx
         uses: docker/setup-buildx-action@v4

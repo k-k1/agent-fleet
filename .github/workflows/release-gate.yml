@@ -419,6 +419,9 @@ jobs:
       - name: engine fetch sidecar (real script, stub aws)
         run: deploy/local/engine-sidecar-test.sh
 
+      - name: engine ingest fetch token routing (real script, stub curl)
+        run: deploy/local/ingest-fetch-test.sh
+
   # Gate (i) (P4 — docs/log/35 §35.7.4): verifies the dist publish set. Lightweight
   # job, no docker: shellcheck + stub run of publish-dist.sh/install.sh (fake gh /
   # file:// layout) + real chromium CDN download check (the measuring point of

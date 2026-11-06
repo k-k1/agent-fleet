@@ -369,6 +369,8 @@ jobs:
         run: ./deploy/local/gke-pause-stub-test.sh
       - name: engine fetch sidecar (real script, stub aws)
         run: ./deploy/local/engine-sidecar-test.sh
+      - name: engine ingest fetch token routing (real script, stub curl)
+        run: ./deploy/local/ingest-fetch-test.sh
       # CloudFormation replaces every non-ASCII codepoint in a template with `?`, server-side
       # and silently -- so a warning sign in a parameter Description reaches operators as `?`,
       # and one inside a Mappings shell block reaches the engine log the same way. Nothing
