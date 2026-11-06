@@ -349,6 +349,56 @@ describe("the mirror's automatic translation", () => {
     expect(tx.calls).toEqual([[ENGLISH2]]);
   });
 
+  const at = (turns: Turn[], caps: TranscriptCaps, logId?: string) =>
+    act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={{ ...caps }} logId={logId} />));
+  const reply = (idx: number, text: string): Turn[] => [
+    { role: "user", text: "次", idx: idx - 1, anchorId: "u" + idx, ts: "2026-09-13T11:00:00Z" },
+    { role: "assistant", idx, anchorId: "a" + idx, ts: "2026-09-13T11:01:00Z", parts: [{ kind: "text", text }] },
+  ];
+
+  it("re-arms when the session moves to another jsonl, whatever its row numbers", () => {
+    // Rows are numbered per file. A boundary armed on the old file says nothing about the new
+    // one, even when the new one's numbers run past it: its history must not look "new".
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    act(() => {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      root.render(<TranscriptView groups={groupTurns(HISTORY)} caps={caps} logId="a.jsonl" />);
+    });
+    at([...reply(11, ENGLISH), ...reply(13, ENGLISH2)], caps, "b.jsonl");
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  it("re-arms when the newest row drops below what was seen (an Agent that names no file)", () => {
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    render(HISTORY, caps); // boundary below the reply at 4
+    again([...HISTORY, ...reply(1000, ENGLISH3)], caps); // the log grows: 1000 arrived, pressed
+    // A replaced file, numbered from the start again: its old answer at 4 is history; only its
+    // live reply at 8 may be pressed.
+    again([...reply(2, ENGLISH), ...reply(4, ENGLISH2.replace("green", "red")), ...reply(8, ENGLISH2)], caps);
+    expect(tx.calls).toEqual([[ENGLISH3], [ENGLISH2]]);
+  });
+
+  it("finds the live reply when the window has no landed prompt, only a queued one", () => {
+    // A long autonomous stretch pushes the prompt out of the tail window; a queued bubble is not
+    // a row of the transcript and must not take the live slot from the real reply.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const tail: Turn[] = [
+      { role: "assistant", idx: 500, anchorId: "a500", ts: "2026-09-13T12:00:00Z", parts: [{ kind: "text", text: ENGLISH }] },
+      { role: "user", text: "then deploy", idx: 2e9, queued: true, ts: "2026-09-13T12:01:00Z" },
+    ];
+    render(tail, caps);
+    expect(tx.calls).toEqual([[ENGLISH]]);
+    // An older page loaded on scroll-up is history, not news.
+    // (It ends with the prompt that started the stretch, as a real page does.)
+    again([...reply(101, ENGLISH2), { role: "user", text: "続けて", idx: 102, anchorId: "u102", ts: "2026-09-13T11:59:00Z" }, ...tail], caps);
+    expect(tx.calls).toEqual([[ENGLISH]]);
+  });
+
   it("learns nothing about a session from a render of the previous one", () => {
     // A pane switching sessions renders the outgoing transcript once under the incoming name.
     // Arming on it would make the incoming session's own history look newer than the boundary.

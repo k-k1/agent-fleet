@@ -55,7 +55,7 @@ export function useTranscriptPoll({
     setCompactProg, setRetry, setStatus, setBgBusy, setBgBusyReason, setBgShells, setFinalizing, finalizingRef, wasWorkingRef,
     setTasks, setFiles, setQueuedPrompts, setQueuedItems, setDiscards, setDiscardNotices, setPendingPeers, setCloudRuns,
     queueOpsRef, setAlive, setPending, setPendingText, liveOnRef, setLiveText, setPendingPlan, setPendingPerm, setPendingPermChoices, setPendingPermId,
-    setPendingApproval, setCarried, setRestoredAt, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
+    setPendingApproval, setCarried, setRestoredAt, setLogId, rejectedPlansRef, setMode, lastNonPlanMode, setAgentCtx,
     setSuggestedTitle, setTitleActing, setManagedSettingsOpen, setManagedSettings, setPasting, setLightbox,
     setHistIdx, cursorRef, firstLineRef, setHasMore, setLoadingOlder, loadingOlderRef, diagRef, statusRef,
     bgBusyRef, lastPayloadRef, unchangedRef, lastPollAtRef, aggSigRef, tickRef,
@@ -81,6 +81,7 @@ export function useTranscriptPoll({
     unchangedRef.current = 0;
     aggSigRef.current = ""; // the aggregates belong to the session being left
     setTurns([]);
+    setLogId("");
     setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
     pendingSendsRef.current = echoStore.get(session) ?? [];
     rejectedPlansRef.current = new Set(); // optimistic reject marks belong to the old session
@@ -183,6 +184,7 @@ export function useTranscriptPoll({
             lastPayloadRef.current = payload;
             unchangedRef.current = 0;
             if (typeof d.cursor === "number") cursorRef.current = d.cursor;
+            setLogId(typeof d.jsonlPath === "string" ? d.jsonlPath : "");
             // reset: the server's jsonl shrank or was replaced (compaction, or a
             // different <sid>.jsonl became live), so our line cursor was stale and it
             // re-sent from the top — replace, don't append. Otherwise append new turns.

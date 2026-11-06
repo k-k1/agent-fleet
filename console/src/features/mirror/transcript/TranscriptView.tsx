@@ -44,6 +44,12 @@ export interface TranscriptViewProps {
    */
   stale?: boolean;
   /**
+   * Which jsonl `groups` were read from (the mirror's poll `jsonlPath`). Row numbers restart in
+   * a new file, so automatic translation's watch boundary is re-armed when this changes. Absent
+   * = unknown; a drop of the newest row below anything seen before is then the only signal.
+   */
+  logId?: string;
+  /**
    * Fold completed work even for the live exchange. The mirror passes its "am I pinned to
    * the bottom" flag: someone who scrolled up to read a streaming tool trace shouldn't have
    * it yanked closed when the turn completes. Read once, when a turn's work trace first
@@ -65,6 +71,7 @@ export function TranscriptView({
   working = false,
   turnWorking = working,
   stale = false,
+  logId = "",
   autoCollapseWork = false,
   inlineCards = [],
 }: TranscriptViewProps) {
@@ -95,7 +102,7 @@ export function TranscriptView({
   // stretch — see liveExchangeFrom, which is what keeps "no prompt in sight" from meaning "all of
   // this is live".
   const liveFrom = liveExchangeFrom(groups);
-  const arrivedAfter = arrivedSinceOpen(groups, caps.session || "", liveFrom, stale);
+  const arrivedAfter = arrivedSinceOpen(groups, caps.session || "", logId, stale);
   for (let i = 0; i < groups.length; i++) {
     for (const c of cards) if (c.insertAt === i) els.push(c.node);
     const g = groups[i];
@@ -155,7 +162,12 @@ export function TranscriptView({
 // that finished while the reader looked at another tab — or was still streaming when they came
 // back — was never translated. useTranslate's autoFired is what keeps a turn from being pressed
 // twice; this only decides which turns may be pressed at all.
-const watchStart = new Map<string, number>();
+//
+// `log` and `seen` are what tell a boundary that no longer applies: rows are numbered per jsonl,
+// so one armed on another file — or one the newest row has since dropped below (a replaced or
+// truncated file, from an Agent that does not name it) — would make that file's history newer
+// than the boundary, and every older answer in it would be pressed.
+const watchStart = new Map<string, { log: string; boundary: number; seen: number }>();
 
 /**
  * "Did this turn land after the session was opened?" — the boundary that bounds automatic
@@ -169,33 +181,37 @@ const watchStart = new Map<string, number>();
  * answer in the whole history.
  *
  * The boundary is armed once per session and tab, on the first non-empty render, just below the
- * live exchange (the reply after the last landed prompt): that one reply is what a reader
- * opening the session comes to read, so it is eligible — still streaming or already finished —
- * and everything above it is history that is never pressed. Synthetic rows (an optimistic echo
- * at 1e9+, a queued prompt at 2e9+) are not rows of the jsonl and never count.
+ * live exchange's first block: that reply is what a reader opening the session comes to read, so
+ * it is eligible — still streaming or already finished — and everything above it, including any
+ * older page loaded later, is history that is never pressed. Synthetic rows (an optimistic echo
+ * at 1e9+, a queued prompt at 2e9+) are not rows of the jsonl: they take no part, including in
+ * finding the live exchange, or a window whose prompt is out of view would hand the "live" slot
+ * to a queued bubble and file the real reply under history.
  *
  * Never armed on an empty render: an empty transcript is what a session switch looks like for a
  * paint, and arming there would fix the boundary at -1 (translate everything); nor on a `stale`
- * one. If the rows on screen later drop BELOW the boundary, they are not the ones it was armed
- * on — the jsonl was replaced (compaction, a new <sid>.jsonl) — so it re-arms rather than staying
- * at a number that would silently translate nothing for the rest of the session.
+ * one. It re-arms when the rows come from another jsonl (`logId`), or when the newest row drops
+ * below the newest one seen under this boundary.
  */
-function arrivedSinceOpen(groups: Group[], session: string, liveFrom: number, stale: boolean): (g: Group) => boolean {
+function arrivedSinceOpen(groups: Group[], session: string, logId: string, stale: boolean): (g: Group) => boolean {
   // Arming on the outgoing session's rows would store THEIR history as this session's boundary,
   // and it outlives the render: every older answer of this session above it would be pressed.
   if (stale) return () => false;
-  let max = -1;
-  let history = -1;
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
-    if (typeof g.idx !== "number" || g.pending || g.queued) continue;
-    if (g.idx > max) max = g.idx;
-    if (i < liveFrom && g.idx > history) history = g.idx;
+  const rows = groups.filter((g) => typeof g.idx === "number" && !g.pending && !g.queued);
+  if (rows.length) {
+    let max = -1;
+    for (const g of rows) if ((g.idx as number) > max) max = g.idx as number;
+    const held = watchStart.get(session);
+    if (!held || held.log !== logId || max < held.seen) {
+      const live = rows[liveExchangeFrom(rows)];
+      // No reply yet (the prompt is the newest row): whatever comes next is above `max`.
+      const boundary = live ? (live.idx as number) - 1 : max;
+      watchStart.set(session, { log: logId, boundary, seen: max });
+    } else if (max > held.seen) {
+      held.seen = max;
+    }
   }
-  const held = watchStart.get(session);
-  // `max >= 0`: a window holding nothing but echoes is as empty as no window at all.
-  if (max >= 0 && (held === undefined || max < held)) watchStart.set(session, history);
-  const boundary = watchStart.get(session);
+  const boundary = watchStart.get(session)?.boundary;
   return (g: Group) => boundary !== undefined && typeof g.idx === "number" && g.idx > boundary;
 }
 

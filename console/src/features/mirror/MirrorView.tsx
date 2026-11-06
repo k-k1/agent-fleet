@@ -699,6 +699,7 @@ function MirrorViewBody({
             working={busy}
             turnWorking={st.turnBusy}
             stale={st.stateSession !== session}
+            logId={st.logId}
             autoCollapseWork={atBottomRef.current}
             inlineCards={[...restoreNoteCards(restoredAt), ...cloudRunCards(placedRuns.loose, groups.map((g) => g.ts)), ...handoffs.map((h) => ({
               at: h.created_at,
