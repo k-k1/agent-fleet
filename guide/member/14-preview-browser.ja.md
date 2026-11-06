@@ -124,7 +124,7 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → 8080 番（例: Spring B
   443 の `wss` で自動的に繋がります。ロードバランサーは **60 秒間無通信**の WebSocket を閉じますが（ecs-ec2 の環境で実測した値で、ロードバランサーのアイドルタイムアウトです。別の環境では違うことがあります）、Vite の
   クライアントは 30 秒ごとに ping を送るので、ふつうは開いたままです。それでも切れると、Vite は
   `server connection lost. Polling for restart...` と出したあと**ページ全体を再読み込みし、ページの状態が
-  失われます**。`server.hmr.timeout`（ping の間隔、既定 30000 ms）を 60000 より大きくすると起きます。タイマーが間引かれるバックグラウンドの
+  失われます**。`server.ws.timeout`（ping の間隔、既定 30000 ms。旧名は `server.hmr.timeout`）を 60000 より大きくすると起きます。タイマーが間引かれるバックグラウンドの
   タブでも起きる可能性があります（未検証）。アイドルタイムアウトより短くしてください。
 - コンテナの中には `AF_PREVIEW_URL_3000` / `AF_PREVIEW_URL_8080` / `AF_PREVIEW_DOMAIN` が入っています。
   `NEXTAUTH_URL` のように「自分の公開 URL」を環境変数から読むアプリは、これを渡してください。

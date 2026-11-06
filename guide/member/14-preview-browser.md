@@ -132,7 +132,7 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   seconds** (the value measured on the ecs-ec2 deployment; it is the load balancer's idle timeout, so another
   deployment may differ); Vite's client pings every 30 seconds, so it normally stays open. If the socket is lost anyway, Vite
   prints `server connection lost. Polling for restart...` and then **reloads the whole page, so the page state
-  is lost**. Raising `server.hmr.timeout` (the ping interval, 30000 ms by default) above 60000 causes it. A background tab whose timers are throttled may
+  is lost**. Raising `server.ws.timeout` (the ping interval, 30000 ms by default; formerly `server.hmr.timeout`) above 60000 causes it. A background tab whose timers are throttled may
   cause it too (not tested). Keep it below the idle timeout.
 - `AF_PREVIEW_URL_3000`, `AF_PREVIEW_URL_8080` and `AF_PREVIEW_DOMAIN` are present inside the container. Pass
   them to anything that reads its own public URL from the environment, such as `NEXTAUTH_URL`.
