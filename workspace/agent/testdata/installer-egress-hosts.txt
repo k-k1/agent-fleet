@@ -1,0 +1,46 @@
+# Every host the Agent's own installers download from (install_*.go, node_install.go,
+# jdk*.go, internal/jdkvendor), redirect hops included. Settings > Toolchains and the
+# boot-time installs run them, so on an enforcing egress gateway a host missing from the
+# Control Plane's default allowlist breaks a product button with nothing pointing at the
+# cause.
+#
+# Two tests read this file, one per Go module:
+#   workspace/agent  installer_egress_hosts_test.go: every https:// host in those sources
+#                    is listed here; a listed host found in none of them must say
+#                    "redirect" in its comment.
+#   control-plane    egress_installer_hosts_test.go: defaultEgressAllowlist admits every
+#                    plain line and does NOT admit any "!" line.
+#
+# A "!" line is a host the product needs but deliberately leaves to the admin: a
+# general-purpose storage endpoint anyone can upload to, which a builtin entry would stop
+# the admin from blocking. The operator guide's egress section names these.
+#
+# Format: one host per line, optional "!" prefix, optional "# comment".
+
+# JDK
+api.adoptium.net
+github.com                          # redirect: Adoptium binary link -> GitHub release
+release-assets.githubusercontent.com # redirect: GitHub release -> asset storage
+corretto.aws
+
+# Node.js, Go, gcloud
+nodejs.org
+go.dev
+dl.google.com                       # gcloud archive; also the redirect target of go.dev/dl
+
+# databases
+cdn.mysql.com
+repo1.maven.org                     # embedded Postgres (zonky)
+deb.debian.org                      # Postgres client packages
+
+# agent CLIs
+prod.download.cli.kiro.dev
+lookaside.facebook.com              # muse CLI artifacts
+awscli.amazonaws.com
+s3.amazonaws.com                    # session-manager-plugin
+
+# Chromium and its fonts
+cdn.playwright.dev
+playwright.download.prss.microsoft.com
+!storage.googleapis.com             # x64 Chrome for Testing; cdn.playwright.dev redirects here too
+raw.githubusercontent.com           # Noto CJK font

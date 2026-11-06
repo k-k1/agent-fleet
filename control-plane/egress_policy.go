@@ -33,6 +33,14 @@ var defaultEgressAllowlist = []string{
 	// where the AWS MCP Server lives (aws-mcp.<region>.api.aws — docs/log/25 §AWS MCP);
 	// without it that builtin integration dies the day a deployment flips to enforce.
 	".amazonaws.com", ".api.aws",
+	// The Workspace Agent's own installers (Settings > Toolchains, install-*): exact hosts,
+	// kept in step with workspace/agent/testdata/installer-egress-hosts.txt by
+	// egress_installer_hosts_test.go. General-purpose upload endpoints (storage.googleapis.com)
+	// stay out: a builtin entry could not be retired by an admin who needs it closed.
+	"api.adoptium.net", "corretto.aws", "nodejs.org", "dl.google.com",
+	"cdn.mysql.com", "repo1.maven.org",
+	"prod.download.cli.kiro.dev", "lookaside.facebook.com",
+	"cdn.playwright.dev", "playwright.download.prss.microsoft.com",
 }
 
 // newEgressPolicy builds a policy from a list of entries (blank lines and "#"

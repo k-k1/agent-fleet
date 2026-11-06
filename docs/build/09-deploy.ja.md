@@ -138,8 +138,9 @@ CP が起動しない）。手順は [`deploy/compose/README.md`](../../deploy/c
 ECS 系ランタイムにはこのマウントが無いので、そのディレクトリは空になり得る。ランタイムに依らない
 受け皿は home ボリューム上の `~/.local/share/agent-fleet/jvm` で、`workspace-agent install-jdk <major>`
 が Adoptium（`api.adoptium.net`）から Temurin を、`install-jdk corretto-<major>` が
-Amazon Corretto（`corretto.aws`）を入れる。どちらのホストも既定の egress 許可リストには無いので、
-許可リストを強制するデプロイは使う方を足す。選択値は JDK ID で、数字だけなら Temurin、
+Amazon Corretto（`corretto.aws`）を入れる。どちらのホストも、ほかのインストーラのダウンロード元と一緒に
+既定の egress 許可リストに入っている（`workspace/agent/testdata/installer-egress-hosts.txt` を両モジュールの
+テストが `defaultEgressAllowlist` と突き合わせる）。選択値は JDK ID で、数字だけなら Temurin、
 `corretto-<major>` なら Corretto（`workspace/agent/internal/jdkvendor`）。Console で Java 版を選ぶと、entrypoint が未導入分を入れて
 `JAVA_HOME` を通す。`GET /env/toolchains` は両ディレクトリにあるもの ∪ 導入可能なもの
 （`java_available`）を示し、**未導入の版を選ぶとその場で入れるボタンが出る**（`POST /env/jdk-install`、
