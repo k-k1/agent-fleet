@@ -204,7 +204,7 @@ func (a *mcpOAuthAPI) exchangeCode(w http.ResponseWriter, r *http.Request, clien
 		mcpTokenErr(w, http.StatusInternalServerError, "server_error", "audit unavailable")
 		return
 	}
-	if err := a.mgr.store.CreateMCPOAuthGrant(ctx, g); err != nil {
+	if err := a.mgr.store.CreateMCPOAuthGrantFromCode(ctx, g); err != nil {
 		if errors.Is(err, store.ErrMCPOAuthDisabled) {
 			if auditErr := a.audit(ctx, g.TenantID, g.IdentityID, "mcp.oauth.grant", g.ID, "refused reason=tenant-disabled"); auditErr != nil {
 				log.Printf("mcp oauth: audit refusal: %v", auditErr)

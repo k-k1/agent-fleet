@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -467,7 +468,7 @@ func TestIdentityStillAllowedOnlyJudgesWhatItCanVerify(t *testing.T) {
 	}
 	mk := func(file string) config {
 		c := config{mgr: e.mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet(""), allowEmailsFile: file}
-		c.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra", DeployAllowed: func(string) bool { return false }}})
+		c.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra", DeployAllowed: c.emailAllowed}})
 		return c
 	}
 	// Positive control: a definitive denial (nobody lists the address, the roster has no row for it).
@@ -589,26 +590,112 @@ func TestCredentialsCannotBeIssuedAgainstAnInactiveMembership(t *testing.T) {
 	}
 }
 
-func TestConditionalRevokeSparesCredentialsMintedAfterTheJudgment(t *testing.T) {
+func TestBearerSetRevokeSparesCredentialsMintedAfterTheSnapshot(t *testing.T) {
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
-	mk := func(id string, created time.Time) {
+	mk := func(id string) {
 		_, h := newPATToken()
+		// Everything is created in the same second on purpose: the set, not the clock, decides.
 		if err := e.mgr.store.CreatePAT(ctx, store.PAT{ID: id, IdentityID: e.ident.ID, MembershipID: e.membershipID(), Scope: "read", Name: id,
-			CreatedAt: created.UTC().Format(time.RFC3339), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, h); err != nil {
+			CreatedAt: store.NowTS(), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, h); err != nil {
 			t.Fatal(err)
 		}
 	}
-	judged := time.Now().Add(-time.Minute)
-	mk("before", judged.Add(-time.Hour))
-	mk("after", judged.Add(time.Second))
-	if err := e.mgr.store.RevokeBearersByIdentity(ctx, e.ident.ID, "test", judged.Unix()); err != nil {
+	mk("before")
+	set, err := e.mgr.store.LiveBearersOfIdentity(ctx, e.ident.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk("after")
+	if err := e.mgr.store.RevokeBearerSet(ctx, e.ident.ID, "test", set); err != nil {
 		t.Fatal(err)
 	}
 	pats, _ := e.mgr.store.ListPATsByIdentity(ctx, e.ident.ID)
+	if len(pats) != 2 {
+		t.Fatalf("pats: %+v", pats)
+	}
 	for _, p := range pats {
 		if (p.ID == "before") != (p.RevokedAt != "") {
 			t.Errorf("%s: revoked_at=%q", p.ID, p.RevokedAt)
 		}
+	}
+}
+
+// flakyRoster fails the roster lookup after `okCalls` successful ones.
+type flakyRoster struct {
+	*store.SQL
+	okCalls int
+}
+
+func (f *flakyRoster) EmailHasActiveMembership(ctx context.Context, email string) (bool, error) {
+	if f.okCalls <= 0 {
+		return false, errors.New("transient")
+	}
+	f.okCalls--
+	return f.SQL.EmailHasActiveMembership(ctx, email)
+}
+
+func TestIdentityStillAllowedKeepsCredentialsWhenTheJudgmentsOwnReadFails(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	if err := e.mgr.store.AttachProvider(ctx, e.ident.ID, store.IdentityLink{Provider: "entra", Subject: "s1", Email: "gone@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	st := e.mgr.store.(*store.SQL)
+	mk := func(okCalls int) config {
+		e.mgr.tenantLogin = newTenantLoginCache(&flakyRoster{SQL: st, okCalls: okCalls})
+		c := config{mgr: e.mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet("")}
+		c.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra", DBAllowed: c.tenantEmailAllowed}})
+		return c
+	}
+	// Positive control: the roster answers "no" for real, so this is a definitive denial.
+	if mk(100).identityStillAllowed(ctx, e.ident) {
+		t.Fatal("a definitive denial must answer false")
+	}
+	// The verdict's own roster read fails: no final "no".
+	if !mk(0).identityStillAllowed(ctx, e.ident) {
+		t.Error("a failed roster read inside the judgment revoked credentials")
+	}
+}
+
+func TestPendingCodesDieWithTheMembership(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	client := e.registerClient(loopbackCB)
+	verifier, challenge := pkcePair()
+	ticket := e.ticketFrom(e.authorize(e.authQuery(client, loopbackCB, challenge)))
+	mid := e.membershipID()
+	lq := locationQuery(t, e.consent(ticket, url.Values{"membership": {mid}, "scope": {"read"}}))
+	code := lq.Get("code")
+	if code == "" {
+		t.Fatalf("no code: %v", lq)
+	}
+	if err := e.mgr.store.SetMembershipStatus(ctx, mid, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mgr.store.SetMembershipStatus(ctx, mid, "active"); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.post(mcpOAuthToken, url.Values{"grant_type": {"authorization_code"}, "client_id": {client},
+		"code": {code}, "redirect_uri": {loopbackCB}, "code_verifier": {verifier}, "resource": {testResource}})
+	if rec.Code == http.StatusOK {
+		t.Fatalf("a code approved before the deactivation was exchanged after the re-invite: %s", rec.Body)
+	}
+	// Positive control: a fresh authorization in the new active period still works.
+	if tk := e.connect(client, loopbackCB, "read"); tk.Access == "" {
+		t.Error("fresh connect after re-invite failed")
+	}
+}
+
+func TestInFlightExchangeCannotCompleteAfterReinvite(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	mid := e.membershipID()
+	g := store.MCPOAuthGrant{ID: "g-inflight", ClientID: "c", IdentityID: e.ident.ID, MembershipID: mid, TenantID: e.tenA.ID,
+		Scope: "read", Resource: "r", CodeHash: "gone-code", CreatedAt: time.Now().Unix(),
+		IdleExpiresAt: time.Now().Unix() + 100, AbsExpiresAt: time.Now().Unix() + 100}
+	// The code row was deleted by a deactivation that finished before this exchange got to the insert.
+	if err := e.mgr.store.CreateMCPOAuthGrantFromCode(ctx, g); !errors.Is(err, store.ErrMembershipInactive) {
+		t.Errorf("exchange without its code row: %v", err)
 	}
 }

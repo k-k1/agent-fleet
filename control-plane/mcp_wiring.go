@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -92,12 +91,16 @@ func (d cpDeps) BearerEntryAllowed(ctx context.Context, identityID string) bool 
 	if !ok {
 		return false
 	}
-	// Anything minted after this instant was not part of the judgment (see RevokeBearersByIdentity).
-	began := time.Now().Unix()
+	// The snapshot is taken before the judgment: only what existed then is revoked, so a
+	// credential minted while the provider was being asked survives (see LiveBearersOfIdentity).
+	set, err := d.m.store.LiveBearersOfIdentity(ctx, identityID)
+	if err != nil {
+		return true
+	}
 	if d.m.bearerEntryAllowed(ctx, ident) {
 		return true
 	}
-	_ = d.m.store.RevokeBearersByIdentity(ctx, identityID, "no longer allowed to sign in", began)
+	_ = d.m.store.RevokeBearerSet(ctx, identityID, "no longer allowed to sign in", set)
 	return false
 }
 

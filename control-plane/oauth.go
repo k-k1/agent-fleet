@@ -236,7 +236,8 @@ func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) (bool,
 // with says no, and the inputs behind that (allowlist file, roster lookup) were readable. The caller
 // revokes permanently on false, so anything uncertain — a provider that cannot say (GitHub after a
 // restart or during an outage), an unreadable allowlist file, a failed roster lookup, a provider
-// that offers no verdict — answers true.
+// that offers no verdict — answers true. "Unreadable" is judged on the reads the verdict itself
+// made (entryReadFaults), not on a separate probe that a later read could contradict.
 func (c config) identityStillAllowed(ctx context.Context, ident store.Identity) bool {
 	links, err := c.mgr.store.ListLinkedProviders(ctx, ident.ID)
 	if err != nil || len(links) == 0 {
@@ -252,36 +253,15 @@ func (c config) identityStillAllowed(ctx context.Context, ident store.Identity) 
 		if email == "" {
 			email = ident.Email
 		}
-		if !c.entryInputsReadable(ctx, email) {
+		faults := entryReadFaults.Load()
+		v := p.EntryVerdict(ctx, auth.Principal{Provider: l.Provider, Subject: l.Subject, Email: email, Verified: true})
+		if v != auth.EntryDenied || entryReadFaults.Load() != faults {
+			// Not a definitive "no": either undecided, or a read behind the "no" failed.
 			return true
 		}
-		switch p.EntryVerdict(ctx, auth.Principal{Provider: l.Provider, Subject: l.Subject, Email: email, Verified: true}) {
-		case auth.EntryDenied:
-			denied = true
-		default:
-			return true
-		}
+		denied = true
 	}
 	return !denied
-}
-
-// entryInputsReadable reports whether the two sources emailAllowed / tenantEmailAllowed read can
-// be trusted right now. Their bool answers fold "unreadable" into "no".
-func (c config) entryInputsReadable(ctx context.Context, email string) bool {
-	if c.allowEmailsFile != "" {
-		if _, err := os.ReadFile(c.allowEmailsFile); err != nil {
-			return false
-		}
-	}
-	if c.mgr.tenantLogin != nil {
-		if c.mgr.tenantLogin.snapshot(ctx) == nil {
-			return false
-		}
-		if _, err := c.mgr.store.EmailHasActiveMembership(ctx, strings.ToLower(strings.TrimSpace(email))); err != nil {
-			return false
-		}
-	}
-	return true
 }
 
 // --- carrying the IdP subject downstream (docs/log/61 §61.5) -------------------
@@ -349,19 +329,22 @@ func (c config) emailAllowed(email string) bool {
 		return true
 	}
 	if c.allowEmailsFile != "" {
-		if b, err := os.ReadFile(c.allowEmailsFile); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
-				line = strings.ToLower(strings.TrimSpace(line))
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				if strings.HasPrefix(line, "@") {
-					if line[1:] == domain {
-						return true
-					}
-				} else if line == email {
+		b, err := os.ReadFile(c.allowEmailsFile)
+		if err != nil {
+			entryReadFaults.Add(1)
+			return false
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.ToLower(strings.TrimSpace(line))
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "@") {
+				if line[1:] == domain {
 					return true
 				}
+			} else if line == email {
+				return true
 			}
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
@@ -35,6 +36,13 @@ import (
 // called directly on internal/auth (the alias_auth.go layer was reclaimed).
 
 // tenantLoginStore is the narrow store view this cache needs.
+// entryReadFaults counts reads behind the entry gate that failed and were answered as "no" (the
+// allowlist file, the tenant rules snapshot, the roster lookup). The gate's bool cannot say so
+// itself; identityStillAllowed compares the count around its own judgment and, if it moved, does
+// not treat a "no" as final. A fault from an unrelated concurrent call can move it too, which only
+// ever errs toward keeping credentials.
+var entryReadFaults atomic.Int64
+
 type tenantLoginStore interface {
 	ListTenantLoginRules(ctx context.Context) ([]store.TenantLoginRules, error)
 	EmailHasActiveMembership(ctx context.Context, email string) (bool, error)
@@ -185,10 +193,11 @@ func (c *tenantLoginCache) entryAllowed(ctx context.Context, email string) bool 
 	if at < 0 {
 		return false
 	}
-	if snap := c.snapshot(ctx); snap != nil {
-		if _, ok := snap.autoJoin[email[at+1:]]; ok {
-			return true
-		}
+	snap := c.snapshot(ctx)
+	if snap == nil {
+		entryReadFaults.Add(1)
+	} else if _, ok := snap.autoJoin[email[at+1:]]; ok {
+		return true
 	}
 	return c.hasMembership(ctx, email)
 }
@@ -208,6 +217,7 @@ func (c *tenantLoginCache) hasMembership(ctx context.Context, email string) bool
 	if err != nil {
 		// Do not cache an error as a denial: the next request re-asks.
 		log.Printf("tenant login: membership lookup for %s: %v", email, err)
+		entryReadFaults.Add(1)
 		return false
 	}
 	c.mu.Lock()

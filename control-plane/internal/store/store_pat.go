@@ -25,6 +25,9 @@ const (
 	PATResourceMemory = "memory" // /mcp/memory: the external memory tools only
 )
 
+// BearerSet is a snapshot of credential ids (PAT ids and MCP OAuth grant ids).
+type BearerSet struct{ PATs, Grants []string }
+
 // PATStore holds Personal Access Tokens for the MCP endpoint (docs/decisions/0006, P3-6).
 type PATStore interface {
 	CreatePAT(ctx context.Context, p PAT, tokenHash string) error
@@ -32,9 +35,12 @@ type PATStore interface {
 	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
-	// RevokeBearersByIdentity ends every live PAT and MCP OAuth grant of one person (the
-	// offboarding revoke for someone who may no longer sign in).
-	RevokeBearersByIdentity(ctx context.Context, identityID, reason string, before int64) error
+	// LiveBearersOfIdentity lists the ids of one person's live PATs and MCP OAuth grants, and
+	// RevokeBearerSet ends exactly those. Judging "may no longer sign in" takes the first before
+	// it asks and revokes the second after, so a credential minted in between is not in the set
+	// and survives, however close in time it was created.
+	LiveBearersOfIdentity(ctx context.Context, identityID string) (BearerSet, error)
+	RevokeBearerSet(ctx context.Context, identityID, reason string, set BearerSet) error
 }
 
 // --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
@@ -160,35 +166,64 @@ func revokeBearersTx(ctx context.Context, tx *sqlTx, column, id, reason string) 
 		`DELETE FROM mcp_oauth_token WHERE grant_id IN (SELECT id FROM mcp_oauth_grant WHERE `+column+`=? AND revoked_at=0)`, id); err != nil {
 		return err
 	}
+	// Authorization codes and consent tickets approved before this point belong to no grant yet
+	// (grant_id is empty), so the grant sweep above cannot reach them; left alone they would
+	// still mint a fresh grant after a re-invite. Spent ones go too: an exchange that already
+	// consumed its code finds the row gone when it creates the grant (CreateMCPOAuthGrantFromCode).
+	if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE `+column+`=? AND grant_id=''`, id); err != nil {
+		return err
+	}
 	_, err := tx.ExecContext(ctx,
 		`UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE `+column+`=? AND revoked_at=0`,
 		time.Now().Unix(), reason, id)
 	return err
 }
 
-// RevokeBearersByIdentity revokes the person's credentials issued up to and including second `before` (Unix
-// seconds). The caller passes the moment its allowed/denied judgment began: a token or
-// grant minted after that was never part of the judgment, so a re-login that completed in between
-// keeps what it just got, and the next use re-judges.
-func (s *SQL) RevokeBearersByIdentity(ctx context.Context, identityID, reason string, before int64) error {
+func (s *SQL) LiveBearersOfIdentity(ctx context.Context, identityID string) (BearerSet, error) {
+	var set BearerSet
+	collect := func(q string, dst *[]string) error {
+		rows, err := s.db.QueryContext(ctx, q, identityID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			*dst = append(*dst, id)
+		}
+		return rows.Err()
+	}
+	if err := collect(`SELECT id FROM pat WHERE identity_id=? AND revoked_at IS NULL`, &set.PATs); err != nil {
+		return BearerSet{}, err
+	}
+	if err := collect(`SELECT id FROM mcp_oauth_grant WHERE identity_id=? AND revoked_at=0`, &set.Grants); err != nil {
+		return BearerSet{}, err
+	}
+	return set, nil
+}
+
+func (s *SQL) RevokeBearerSet(ctx context.Context, identityID, reason string, set BearerSet) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	cut := time.Unix(before, 0).UTC().Format(time.RFC3339)
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE pat SET revoked_at=? WHERE identity_id=? AND revoked_at IS NULL AND created_at <= ?`, NowTS(), identityID, cut); err != nil {
-		return err
+	for _, id := range set.PATs {
+		if _, err := tx.ExecContext(ctx, `UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`, NowTS(), id, identityID); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM mcp_oauth_token WHERE grant_id IN (SELECT id FROM mcp_oauth_grant WHERE identity_id=? AND revoked_at=0 AND created_at <= ?)`, identityID, before); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE identity_id=? AND revoked_at=0 AND created_at <= ?`,
-		time.Now().Unix(), reason, identityID, before); err != nil {
-		return err
+	for _, id := range set.Grants {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE grant_id=?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? AND identity_id=? AND revoked_at=0`,
+			time.Now().Unix(), reason, id, identityID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
