@@ -69,6 +69,17 @@ const states = (el: HTMLElement) =>
   });
 
 describe("a block keeps its identity across a backward page", () => {
+  it("keeps it when an optimistic echo comes and goes", () => {
+    // An echo is numbered 1e9+ and is not a row of the file. Counting it as the newest row would
+    // read its disappearance as the file stepping back and drop every id held so far.
+    render({ turns: HELD, session: "s1", working: false, atBottom: true });
+    rerender({ turns: [...OLDER, ...HELD], session: "s1", working: false, atBottom: false });
+    const echo: Turn = { role: "user", idx: 1e9 + 1, ts: "2026-09-08T10:01:00Z", text: "続けて", pending: true };
+    rerender({ turns: [...OLDER, ...HELD, echo], session: "s1", working: false, atBottom: false });
+    const after = rerender({ turns: [...OLDER, ...HELD], session: "s1", working: false, atBottom: false });
+    expect(states(after)).toEqual(["202:closed", "211:closed"]);
+  });
+
   it("keeps the idx the reader's block was rendered under", () => {
     const el = render({ turns: HELD, session: "s1", working: false, atBottom: true });
     expect(states(el)).toEqual(["202:closed", "211:closed"]);

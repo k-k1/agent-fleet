@@ -47,11 +47,32 @@ const rangeOf = (g: Group): Block | null =>
  * case), so no consumer sees a new `groups` identity for free.
  *
  * `session` resets the memory: a pane keeps this component across a session switch (the mirror is
- * not remounted, only its props change) and row numbers restart per session.
+ * not remounted, only its props change) and row numbers restart per session. So does `log` (the
+ * jsonl the rows were read from, "" when unknown), and so does the newest row stepping back below
+ * the newest one remembered: row numbers restart per FILE too, and a range remembered from the old
+ * file would hand an unrelated block of the new one an old id — larger than anything in the new
+ * file, so automatic translation's watch boundary (TranscriptView) took that history for news.
  */
-export function useStableBlockIds(groups: Group[], session: string): Group[] {
-  const held = useRef<{ session: string; blocks: Block[] }>({ session: "", blocks: [] });
-  if (held.current.session !== session) held.current = { session, blocks: [] };
+export function useStableBlockIds(groups: Group[], session: string, log = ""): Group[] {
+  const held = useRef<{ session: string; log: string; newest: number; blocks: Block[] }>({
+    session: "",
+    log: "",
+    newest: -1,
+    blocks: [],
+  });
+  if (held.current.session !== session || held.current.log !== log)
+    held.current = { session, log, newest: -1, blocks: [] };
+  // The newest real row. An optimistic echo (1e9+) or a queued bubble (2e9+) is not a row of the
+  // file: counting one would read its disappearance as a step back and drop every held id.
+  let newest = -1;
+  for (const g of groups) {
+    if (g.pending || g.queued) continue;
+    const r = rangeOf(g);
+    if (r && r.last > newest) newest = r.last;
+  }
+  // An empty window is a session switch's paint, not a step back; keep the memory for it.
+  if (newest >= 0 && newest < held.current.newest) held.current = { session, log, newest, blocks: [] };
+  else if (newest > held.current.newest) held.current.newest = newest;
 
   const prev = held.current.blocks;
   const blocks: Block[] = [];

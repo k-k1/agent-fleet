@@ -21,6 +21,7 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
 
 import { TranscriptView, resetWatchStarts } from "./TranscriptView.tsx";
 import { groupTurns } from "./model.ts";
+import { useStableBlockIds } from "./blockIdentity.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Turn } from "./types.ts";
 import type { TranscriptTranslateWiring } from "../useTranslate.ts";
@@ -395,6 +396,44 @@ describe("the mirror's automatic translation", () => {
     again(grown, caps);
     again([...reply(2, ENGLISH), ...reply(4, ENGLISH2.replace("green", "red")), ...reply(8, ENGLISH2)], caps);
     expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
+  // Through the mirror's own block identity: a range remembered from the old file overlapped a
+  // history block of the new one, which took the old (larger) id and passed the boundary.
+  const switchLogs = (oldLog: string, newLog: string, live: number) => {
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    function Mirror({ turns, log }: { turns: Turn[]; log: string }) {
+      const groups = useStableBlockIds(groupTurns(turns), "s1", log);
+      return <TranscriptView groups={groups} caps={caps} logId={log} />;
+    }
+    const ja = (idx: number): Turn => ({ role: "assistant", idx, anchorId: "j" + idx, ts: "2026-09-13T09:00:00Z", parts: [{ kind: "text", text: JAPANESE }] });
+    const oldTail = [ja(901), ja(1300)];
+    const newTail: Turn[] = [
+      { role: "assistant", idx: 301, anchorId: "n301", ts: "2026-09-13T13:00:00Z", parts: [{ kind: "text", text: ENGLISH }] },
+      // The live reply: one block from row 312 to `live` — its final answer is the newest row.
+      { role: "user", text: "次", idx: 311, anchorId: "u311", ts: "2026-09-13T13:01:00Z" },
+      { role: "assistant", idx: 312, anchorId: "n312", ts: "2026-09-13T13:02:00Z", parts: [{ kind: "tool", tool: "Bash", info: "go test", output: "ok" }] },
+      { role: "assistant", idx: live, anchorId: "n" + live, ts: "2026-09-13T13:05:00Z", parts: [{ kind: "text", text: ENGLISH2 }] },
+    ];
+    act(() => {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      root.render(<Mirror turns={oldTail} log={oldLog} />);
+    });
+    act(() => root!.render(<Mirror turns={[ja(100), ...oldTail]} log={oldLog} />)); // older page: 100..1300 is "901"
+    act(() => root!.render(<Mirror turns={newTail} log={newLog} />));
+    return tx.calls;
+  };
+
+  it("lets no block of a new jsonl inherit an id from the old one", () => {
+    // The new file runs PAST the old one's rows, so only its name gives the switch away.
+    expect(switchLogs("a.jsonl", "b.jsonl", 2000)).toEqual([[ENGLISH2]]);
+  });
+
+  it("does the same without a file name, from the newest row stepping back", () => {
+    expect(switchLogs("", "", 700)).toEqual([[ENGLISH2]]);
   });
 
   it("finds the live reply when the window has no landed prompt, only a queued one", () => {
