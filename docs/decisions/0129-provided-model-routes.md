@@ -8,7 +8,8 @@ English | [日本語](0129-provided-model-routes.ja.md)
   this record is measured: what Amazon Bedrock accepts, how it bills and attributes cost, and its quotas come from AWS's
   documentation as fetched on 2026-11-06 (listed under Sources). What opencode and codex send comes from their
   documentation and `--help` (opencode v2.2.5, codex-cli 0.167.0). No AWS call was made. Each statement of that kind is
-  marked *(docs)* or *(unmeasured)* where it carries a decision.
+  marked *(docs)* or *(unmeasured)* where it carries a decision. Reviewed by a separate session (codex `gpt-6.1-sol`);
+  round 1's ten findings were checked against the tree and the cited pages and are folded into this text.
 - Related: [0128](0128-harness-route-maker.md) (harness × route, the A2 gateway, the switch; decisions 3, 4, 5, 7, 10,
   11, 12, 14) / [0084](0084-engine-indicator-and-tenant-gate.md) (the engine's tenant gate and its four places) /
   [0048](0048-member-cloud-cost.md) (actual AWS cost from cost allocation tags, no apportionment) /
@@ -66,16 +67,17 @@ What the tree already says, and what constrains the design:
   session's own transcript at list price.
 - **ADR 0048 does not apportion shared cost** (decision 4): a figure that is divided per head stops being actual spend.
 
-What AWS documents *(docs, fetched 2026-11-06; not measured)*:
+What AWS documents *(docs, fetched 2026-11-06; not measured)*, linked at each claim:
 
 - **API support by model.** On Bedrock, the Anthropic Claude models support Invoke and Converse, and most of the recent
   ones the Anthropic Messages API as well; none supports Chat Completions or Responses. The OpenAI GPT models support
   Chat Completions and Responses, most of them Converse, some Invoke; `gpt-oss` supports all four, but Responses only on
-  the `bedrock-mantle` endpoint, not on `bedrock-runtime`. (Bedrock "API compatibility" page.)
-- **Responses on `bedrock-runtime`** is served at `https://bedrock-runtime.<region>.amazonaws.com/openai/v1`, requires a
+  the `bedrock-mantle` endpoint, not on `bedrock-runtime` ([API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html)).
+- **Responses on `bedrock-runtime`** ([Responses API](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-responses-api.html)) is served at `https://bedrock-runtime.<region>.amazonaws.com/openai/v1`, requires a
   system inference profile id (`us.openai.…`, `global.openai.…`) for the closed-weight GPT models, stores responses for
   30 days unless `store` is false, and **rejects application inference profiles with a 400**.
-- **Cost attribution mechanisms.** *IAM principal attribution* (caller identity, plus principal and session tags,
+- **Cost attribution mechanisms** ([Track usage and costs](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-management.html)). *IAM principal attribution*
+  ([page](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-iam-principal-tracking.html); caller identity, plus principal and session tags,
   in Cost Explorer and CUR 2.0) works on every inference API on both endpoints. *Application inference profiles* work
   with InvokeModel and Converse on `bedrock-runtime` only; Responses rejects them with a 400. (The pages disagree about
   Chat Completions: the comparison table lists it as supported, the profile page says it rejects them too.) *Projects*
@@ -83,8 +85,10 @@ What AWS documents *(docs, fetched 2026-11-06; not measured)*:
   The cost-tracking page has a section for exactly this case: behind an LLM gateway the
   gateway's role is the caller, and "for per-user dollars … have the gateway assume its Amazon Bedrock role per user
   or tenant, using a per-user `RoleSessionName` or session tags", caching the credentials.
-- **Application inference profiles** are one per model; the quota "Inference profiles per account" is 1,000 per Region,
-  adjustable; and AWS's own scaling note recommends tagging at team level rather than per user, and IAM principal
+- **Application inference profiles** are one per model
+  ([cost management](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-application-inference-profiles.html),
+  [creating one](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html)); the quota "Inference profiles per account" is 1,000 per Region,
+  adjustable ([endpoints and quotas](https://docs.aws.amazon.com/general/latest/gr/bedrock.html)); and AWS's own scaling note recommends tagging at team level rather than per user, and IAM principal
   attribution for per-user cost.
 - Cost allocation tags are activated from the payer account, are not retroactive, appear only after the principal has
   made a call, and take up to 24 hours to appear; cost data takes up to 24 hours as well.
@@ -107,6 +111,15 @@ ids of their own**: `bedrock` stays the member's, and `bedrock-tenant` and `bedr
 "who pays" in every rollup without a new key field, and keeps decision 3's rule that a session never moves between
 connections without a visible stop.
 
+**A provided source is bound for life, as #3400 bound the member's profile.** Every source registration has a
+persistent id and a **payer fingerprint** over what decides who pays and where the calls go: the role ARN, the
+external id's version, and the Region set. A create binds the session's selection to `<source id>#<fingerprint>`
+(the shape of `routes.BindAWSConnection`); the CP route token and the CP's credential cache key both carry it. An edit
+that changes the fingerprint refuses every bound session at its next mint and its next call
+(`route_connection_changed`) instead of moving its bill on a resume, fork, recreate or Agent restart, and drops the
+cached credentials of the old fingerprint at the edit. A change of the model allow-list or the budget does not change
+who pays, so it applies to bound sessions at their next call without changing the fingerprint.
+
 ### D1. The three credential sources
 
 - **D1a. Store a secret for every source** (an access key or a Bedrock long-term API key in the CP's encrypted store).
@@ -120,10 +133,20 @@ connections without a visible stop.
     ARN and the allowed Regions); the runtime declares whether the source exists, as it declares a cost surface in ADR
     0048 decision 9. docker, native and a Kubernetes cluster whose CP has no AWS identity have no deployment source.
   - `tenant`: a **cross-account role** in the tenant's AWS account, trusting the deployment's CP role with an
-    **external id that AF generates per tenant** (AWS's standard shape for third-party access). The CP stores the role ARN,
-    the Region and the external id; none is a secret. The CP role needs `sts:AssumeRole` on such roles, which widens its
-    IAM; the stack limits it to a role path (for example `role/af-model-route/*`) and the operator enables the whole
-    feature, so a deployment that does not want CP-side cross-account access never grants it.
+    **external id that the CP generates per tenant** (AWS's
+    [third-party access](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html)
+    shape). The CP stores the role ARN, the Region and the external id; none is a secret. The CP role needs
+    `sts:AssumeRole` on such roles, which widens its IAM; the stack limits it to a role path (for example
+    `role/af-model-route/*`) and the operator enables the whole feature, so a deployment that does not want CP-side
+    cross-account access never grants it.
+    - **Generating an id does not prove the role requires it.** Tenant A could otherwise register tenant B's role, if
+      B trusts the CP role without a condition, and make the CP spend B's money. So a connection is **activated only
+      after three probes by the CP**: AssumeRole succeeds with this tenant's id, and fails both with no id and with a
+      wrong id (a random one of the same shape, which also stands in for another tenant's). A connection that fails any
+      probe stays inactive, with the failed probe named. The same probes run again whenever the ARN changes.
+    - The external id is the CP's: no API, Console form or import accepts one from a caller. A tenant_admin can only ask
+      the CP to rotate it, which issues a new id, bumps its version (and so the fingerprint, decision 1), and leaves the
+      connection inactive until the probes pass against the role's updated trust policy.
   - `member`: unchanged (ADR 0128 C2): the member's marked profile, held by the Agent in the workspace.
   - A tenant whose deployment's CP has no AWS identity could register a Bedrock long-term API key instead (D1a's shape,
     tenant source only). That is open question 1, not part of the recommendation.
@@ -156,20 +179,45 @@ an order of magnitude, and the budget alone does not say which one the tenant me
     the Agent's upstream differs (`member`: sign locally; `tenant`/`deployment`: forward). ADR 0128's caller binding,
     eager revoke and 10-minute renewable token are kept as they are.
   - **What the CP route token is.** Minted by the CP for the Agent, never for the session, on the Agent's own CP
-    credential (the engine's `/internal/engine/token` pattern, `engine_gateway.go:227`), bound to the membership, the
-    workspace, the session's name and incarnation, the route and the source; short-lived (10 minutes, renewed by the
-    Agent's sweep while the session's launch pane lives, as in P2b); revoked by the Agent's `EndRouteTokens` path at every
-    session exit and by the CP on the events below. The member can, in principle, extract it from the Agent. That is
-    accepted, because everything that protects the payer is enforced at the CP: the source's grant, the model
-    allow-list, the budget and the attribution are all checked there and filed under that member. A member who
-    extracts the token can spend only their own budget, which they could spend through a session anyway.
-  - **Every call, at the CP, in order:** the token; the membership is live; the tenant's grant for the source (D3); the
-    member's grant and budget (D4); the model is on the source's allow-list; the source is still registered and
-    unchanged. Then the call is admitted against the budget (D4), credentials are taken from the cache, the request is
-    signed and the response is streamed with a flush per read, as the engine gateway already does.
-  - **Revocation** is at the CP and takes effect on the next call: a tenant gate turned off, a grant or budget removed,
-    a source deleted or edited. A member removal also cuts streams in flight, through the same connection tracking the
-    engine gateway uses (`g.mgr.memberConns.track`, `engine_gateway.go:497`).
+    credential (the engine's `/internal/engine/token` pattern, `engine_gateway.go:227`), signed by the CP and bound to
+    the membership, the session's name and incarnation, the route and the bound source (`<source id>#<fingerprint>`,
+    decision 1); short-lived (10 minutes, renewed by the Agent's sweep while the session's launch pane lives, as in P2b).
+    The member can, in principle, extract it, or the Agent's issuer credential, and call the CP directly. That is
+    accepted only because **the CP is the boundary and trusts nothing the caller says** (next bullet); Agent-side checks
+    protect nothing against such a caller.
+  - **The CP's signing contract.** The CP gateway is a gateway for a few model operations, never a generic SigV4 or STS
+    deputy; the tenant's role may be broader than it should be, and the CP's own rules are what narrow it.
+    - **Identity comes from the CP's own records.** The membership comes from the verified token; the tenant and the
+      workspace from the CP database for that membership; the budget keys, the `RoleSessionName` and the session tags from
+      those. No header, query parameter or body field the caller sends is read as identity.
+    - **The CP builds the upstream request.** The host and Region come from the source registration; the role ARN and the
+      external id from the CP database. A caller-supplied URL, Region, role, external id or tag is refused, not ignored.
+      Of the caller's headers only `content-type`, `accept` and a named list of Bedrock request headers pass (the list
+      is written per operation when it is built); the caller's `Authorization` never does.
+    - **Operations and models are checked at the CP, not only at the Agent.** Only `POST` on
+      `/model/<id>/{invoke,invoke-with-response-stream,converse,converse-stream}` and, from Q7, `/openai/v1/responses`.
+      The model id is taken from the path (URL-decoded once) or, for Responses, from the body, and must equal an entry of
+      the source's model allow-list verbatim. Allow-list entries are foundation-model and system inference profile ids
+      (`us.anthropic.…`, `global.openai.…`); any ARN is refused, so an application inference profile in some other
+      account or a model outside the list cannot be reached by naming its ARN.
+    - **A session policy narrows every assumed session.** AssumeRole passes an inline session policy that allows only
+      `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the allow-listed models' resources, so even a
+      broad tenant role yields credentials that can do nothing else (the effective permission is the intersection).
+    - **Tags attribute; they never authorize.** The session tags exist for billing (D5); no AF decision reads them back.
+    - **The CP never returns credentials** or any upstream header that carries them, and logs none.
+  - **Every call, at the CP, in order:** the token's signature and expiry; the membership is live; the tenant's grant
+    for the source (D3); the member's grant; the bound source still exists with the same fingerprint and is active; the
+    operation and model pass the contract above; then budget admission (D4). Only then are credentials taken from the
+    cache (keyed by source id, fingerprint and membership), the request signed, and the response streamed with a flush
+    per read, as the engine gateway already does.
+  - **Two kinds of revocation.** *Trusted* revocation is the CP's own and holds at the next call whatever the Agent does:
+    a tenant gate turned off, a grant or budget removed, a source deleted, deactivated or re-fingerprinted, a membership
+    removed (which also cuts streams in flight, through the connection tracking the engine gateway uses,
+    `g.mgr.memberConns.track`, `engine_gateway.go:497`). *Lifecycle* revocation (a session ended, its incarnation changed)
+    is requested by the Agent, which the member controls: the session name and incarnation in the token are the Agent's
+    assertions, as they are in the engine precedent, where the issuer proves the membership and not the session. So
+    per-session attribution and the isolation of one member's sessions from each other are best effort, as in ADR 0128;
+    **the CP boundary is the member's grant and budget, nothing finer.**
   - **Latency** *(unmeasured)*: one more hop than the member route (Agent → CP → Bedrock instead of Agent → Bedrock).
     Where the operator sets `AF_CP_INTERNAL_URL` (ADR 0106 decision 8), the CP passes it to every workspace start
     (`control-plane/workspace_lifecycle.go:647`) and the hop stays inside the deployment's network; otherwise it goes
@@ -177,7 +225,9 @@ an order of magnitude, and the budget alone does not say which one the tenant me
   - **Streaming.** The public load balancer's idle timeout is 60 seconds (`deploy/aws/ecs/cfn/30-ingress.yaml:501`). A
     stream that sends nothing for 60 seconds through it is cut. Whether Bedrock streams can be silent that long, during
     long extended thinking for example, is *unmeasured*. The Agent therefore uses the internal address wherever one is
-    injected, and a deployment that only has the public path either raises that timeout or is documented as such.
+    injected, and **a deployment whose only path to the CP is the public load balancer does not offer provided routes**
+    until its own acceptance run has held a silent stream past that timeout (by raising it, or by measuring that
+    Bedrock streams are never silent that long); it is not left to documentation.
   - **CP capacity** *(unmeasured)*: each in-flight call holds one goroutine and two connections in the CP; the bytes are
     tokens, so bandwidth is small. A CP restart or deploy cuts every in-flight stream; the route gateway therefore stops
     admitting calls on shutdown and lets admitted ones finish up to a deadline, and a cut stream settles at its
@@ -201,21 +251,26 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
 | Who | `deployment` | `tenant` |
 |---|---|---|
 | operator | enables the source for the deployment (stack parameter: role, Regions, model allow-list) | enables tenant connections for the deployment (the CP's cross-account permission) |
-| super_admin | grants it per tenant, with a **monthly ceiling** for that tenant | — |
-| tenant_admin | sets the per-member budget (a tenant default and per-member overrides) and "Every member" / "Granted members only", as for engine access | registers the connection and its model allow-list; then the same budget and grant as for `deployment` |
+| super_admin | grants it per tenant, with a **monthly ceiling** for that tenant | grants **"may register a tenant connection"** per tenant; sets no ceiling, because the tenant's own account pays |
+| tenant_admin | sets the per-member budget (a tenant default and per-member overrides) and "Every member" / "Granted members only", as for engine access | registers and activates the connection (D1's probes) and its model allow-list; may set a tenant-wide monthly ceiling of its own (empty = none); then the same budgets and grant as for `deployment` |
 | member | picks it at launch or in the switch offer (D6) | the same |
 
-- **The grant is a new capability that spends money, so it is off by default:** a plain `bool` with zero = false, the
+- **Each grant is a new capability, so it is off by default:** a plain `bool` with zero = false, the
   `AllowEngineIngest` precedent, not ADR 0084 decision 7's `*bool` whose nil means "allowed" (that one guards a capability
-  that already existed). An upgrade enables nothing.
-- **No budget, no use.** A member may use a provided route only when the tenant's grant is on and their effective budget
-  is above zero. A ceiling that is empty while the grant is on is refused at save time, the same rule as ADR 0128 B3's
-  cap that cannot be empty.
+  that already existed). An upgrade enables nothing. The tenant source has a super_admin grant even though the tenant
+  pays, because the CP assumes roles in another account on the tenant's behalf and carries its traffic.
+- **No budget, no use.** A member may use a provided route only when the super_admin's grant for that source is on, the
+  source is active, and the member's effective budget is above zero. A `deployment` ceiling that is empty while the
+  grant is on is refused at save time, the same rule as ADR 0128 B3's cap that cannot be empty.
+- **ADR 0128 decision 12 still comes first.** On every create path (the Console, REST, MCP `create_session`, and
+  schedules for a new, a reused and a rotated session) the CP refuses a selection naming a provided route the member
+  cannot use — grant off, source missing, inactive or re-fingerprinted, budget zero — **before waking the Workspace**,
+  as it already refuses an unknown route. The checks below are later backstops, not replacements.
 - **The four places of ADR 0084 decision 8 apply**, with the CP as the gate: (1) the Agent's live kind catalog lists a
   provided route only when the CP's grant answer says the member may use it, so the launch dialog never offers what will
   be refused; (2) the CP refuses to mint a CP route token; (3) the CP gateway refuses each call; (4) the Console is told on
-  the events stream when a grant or a budget changes. 1 is the gate; 2 and 3 cover the window in which a stale answer is
-  held.
+  the events stream when a grant or a budget changes. 1 is the gate (with the pre-wake refusal above); 2 and 3 cover the
+  window in which a stale answer is held.
 - Grants, ceilings, budgets and connection changes write audit rows (ADR 0084 found the limits endpoint wrote none).
 - ADR 0128 decision 12 already says permission is use, not ownership, for a tenant connection, and leaves open whether a
   tenant administrator may allow or deny routes (its open question 2). This answers it for provided routes: yes, through
@@ -229,26 +284,57 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
   question 5 for provided routes: the budget counts the real-time estimate, and the actual cost is shown beside it, never
   folded into it.
 - **Period: the calendar month in UTC**, the day boundary Cost Explorer reports in. The Console shows the reset in the
-  viewer's local time.
-- **Levels:** the tenant's monthly ceiling (super_admin, `deployment` only) and the member's monthly budget (tenant_admin).
-  Both are checked; the tighter wins. The sum of member budgets may exceed the ceiling, which then acts as the pool.
+  viewer's local time. **A call belongs to the month it was admitted in**: the admission month and the price table's
+  version are frozen on the call's reservation, and a settlement that arrives after midnight on the 1st goes to that
+  original month, never to the new month's bucket.
+- **Levels:** the tenant's monthly ceiling (super_admin for `deployment`; the tenant_admin's optional one for `tenant`)
+  and the member's monthly budget (tenant_admin). Both are checked; the tighter wins. The sum of member budgets may
+  exceed the ceiling, which then acts as the pool.
 - **Pre-call admission, post-call settlement** *(recommended)*. Post-call accounting alone lets every call that starts
   under budget run, so the overshoot grows with concurrency and with the size of each call. Instead:
-  - At admission the CP **reserves** a conservative price for the call: the input estimated from the request's size
-    (an upper bound, not a tokenizer), plus the request's own `max_tokens` (or the model's maximum when the request names
-    none) at the output price. A call is admitted only while `spent + reserved < budget` at both levels.
-  - At the end the reservation is replaced by the price of the usage Bedrock reported (the headers for `invoke`, the
-    `metadata` event or the invocation metrics for streams, as `routegw/usage.go` reads them). A call that ends with no
-    usage (cut, failed mid-stream) settles **at its reservation, never at 0**.
-  - **Overshoot bound with streaming:** a call is never cut for budget reasons once admitted, because cutting a stream
-    loses tokens that are billed anyway and breaks the harness's turn. So a member's final spend is at most the budget
-    plus the reservation of the last call admitted (the reservation is an upper bound of that call's price, so the
-    calls admitted before it cannot overshoot). A per-member cap on concurrent calls (a deployment default, *value
-    unmeasured*) bounds how much is reserved at once. If a measurement shows the input estimate can fall below the real
-    count, the bound gains that error and the estimate is changed.
-  - A reservation can be large (a request that allows a long output on an Opus-class model). Near the end of a budget the
-    member is refused before the remaining amount reaches zero; the message says so ("the next call could cost up to
-    $X").
+  - **The reservation is a proven upper bound, not an estimate**, computed and enforced by the CP per model and API:
+    - *Output:* the request's own cap — `max_tokens` for an Anthropic invoke body, `inferenceConfig.maxTokens` for
+      Converse, `max_output_tokens` for Responses — which must be present and no larger than the model's maximum output
+      in the CP's model-limits table. A request without a cap, or above the maximum, is refused (whether every harness
+      always sends one is part of each harness's gate).
+    - *Input:* the model's hard context window from the same table. The request's size is not a bound: images,
+      documents and cached prefixes are not tokenized in proportion to bytes, and an arbitrary caller controls the JSON.
+    - *Rates:* every billed category at the most expensive rate that can apply — input at the cache-write rate, which
+      exceeds plain input (`usage_price.go:54-66` already prices it at 1.25× when the source states none), long-context
+      tiers where a model has them, output at its highest tier.
+    - A model without a price and limits row, or a request carrying a price-affecting option the table does not cover
+      (a service tier, for example), is **refused, never priced at zero**. The model allow-lists (D1) can only name
+      models that have both rows.
+    - The consequence is stated, not hidden: on a large-context, high-price model one reservation is a large share of a
+      small budget, so few calls run at once near the end of a month. A tighter input bound may replace the context
+      window only when it is proven for that API (for example, a body whose every input is plain text the CP can count
+      exactly); a sampled ratio never can.
+  - **Full-fit admission.** A call is admitted only while `spent + reserved_in_flight + this_reservation ≤ budget` at
+    the member level and at the tenant level, and the member's in-flight count is below its cap (a deployment default,
+    *value unmeasured*). Because the candidate is counted and the reservation bounds its price, **no admitted call can
+    take the spend past the budget**: the only overshoot left is a defect in the price or limits table, which is logged
+    as one when a settlement exceeds its reservation (and is then settled as reported). Near the end of a budget the
+    member is refused while some amount remains; the message says so ("the next call could cost up to $X").
+  - **Admission is one transaction, durable before dispatch.** One database transaction in the CP's store updates the
+    member's and the tenant's period rows and the member's in-flight count, and inserts the call's reservation row
+    (call id, membership, tenant, bound source, model, API, admission month, price version, reserved amount, state
+    `in_flight`, admission time, the CP instance). The condition is in the write itself (a conditional update, or a
+    row lock on Postgres; SQLite's single writer on a one-CP deployment), so two requests, or two CPs during a rollout,
+    that read the same sums cannot both pass. Nothing is sent to Bedrock until that transaction has committed.
+  - **Settlement is exactly once.** One transaction moves the row from `in_flight` to `settled` and replaces the
+    reservation in the admission month's buckets by the final amount; it is conditional on the row still being
+    `in_flight`, so a duplicate settlement (a retry, a replay, a second CP) changes nothing.
+  - **The final amount is the priced usage only when complete terminal totals are proven**: the whole non-stream body,
+    the invocation metrics of a stream's closing event, Converse's `metadata` event. Anything less — an Anthropic stream
+    cut after `message_start` and some `message_delta`s, a failed stream, no usage at all — settles **at the
+    reservation**. `routegw.usageObserver` today returns `Known=true` from `message_start` / `message_delta` alone
+    (`workspace/agent/internal/routegw/usage.go:236`); that may stand for the ledger's estimate row, and never for
+    settlement.
+  - **Orphans settle conservatively.** The CP bounds each upstream call with a deadline. A sweep settles at its
+    reservation every `in_flight` row whose CP instance is gone or whose deadline has passed, because Bedrock may still
+    be running a call whose CP has died. A reservation is never released to zero.
+  - A call is never cut for budget reasons once admitted: cutting a stream loses tokens that are billed anyway and breaks
+    the harness's turn, and full-fit admission makes it unnecessary.
 - **When it runs out:** the CP answers with a refusal of the gateway's own — **503 with `x-should-retry: false`**, the
   status P2b part 2 measured Claude Code to show once with the gateway's message instead of retrying (ADR 0128 note of
   2026-11-06) — naming the budget, the amount used, the level that ran out and the reset date. The Agent records a limit
@@ -281,9 +367,10 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
   - *(Unmeasured)* whether the existing activation of `af-membership` and `af-tenant` as resource tags also covers them as
     **IAM principal** tags (the billing console filters cost allocation tags by type "IAM principal", which suggests a
     separate entry), and whether 0048's `ce:GetCostAndUsage` grouping by tag returns principal-tag cost under the same
-    key. AWS documents CUR 2.0 columns with an `iamPrincipal/` prefix and Cost Explorer grouping by principal tags. The
-    phase that shows cloud cost starts by measuring this, and activates the keys as early as possible, because ADR
-    0048 measured that activation has no backfill.
+    key. AWS documents CUR 2.0 columns with an `iamPrincipal/` prefix and Cost Explorer grouping by principal tags. Q1's
+    acceptance calls are the first tagged ones, which lets AWS discover the keys, and the keys are activated before Q2's
+    release, because ADR 0048 measured that a key must be seen before it can be activated and that activation has no
+    backfill.
   - **Where it shows.** The `deployment` source's cost is in the deployment's account, where 0048's CP already reads Cost
     Explorer: the member detail gets a line "model calls on the deployment's Bedrock", beside, never inside, "cost tied
     directly to your workspace". The `tenant` source's cost is in the tenant's own account, which AF does not read: AF
@@ -298,7 +385,7 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
     as its model id; Responses rejects them, so codex could not use them at all *(docs)*; and AWS's own scaling note
     recommends principal attribution for per-user cost instead.
   - *Per tenant:* not needed for attribution, since the `af-tenant` session tag already cuts by tenant. It stays an
-    option for a tenant that wants profile-level CloudWatch metrics (open question 6).
+    option for a tenant that wants profile-level CloudWatch metrics (open question 5).
   - *Per-request metadata:* reaches invocation logs only *(docs)*; the ledger already records each call. Not used.
 
 ### H. Harnesses, wires and models on a provided route
@@ -309,20 +396,33 @@ does not change what a harness speaks. Each row still ships only after decision 
 | Harness | What it speaks to the gateway | Upstream Bedrock API | Models that make sense | Translation |
 |---|---|---|---|---|
 | claude | Bedrock InvokeModel (`invoke-with-response-stream`) on `ANTHROPIC_BEDROCK_BASE_URL` over `ANTHROPIC_UNIX_SOCKET`, bearer from `AWS_BEARER_TOKEN_BEDROCK` (measured against a stand-in, ADR 0128 P2b part 2) | `bedrock-runtime` invoke, as today | Anthropic models only (the CLI's own) | none |
-| opencode | its own `amazon-bedrock` provider: `AWS_BEARER_TOKEN_BEDROCK` takes precedence over every AWS credential method, `endpoint` (an alias of `baseURL`) points it elsewhere, and a model id may be an inference profile ARN *(docs)*. Whether it calls Converse or Invoke, and whether it can use a Unix socket, is *unmeasured* | Converse / ConverseStream (already on the gateway's allow-list), if that is what it sends | anything Converse serves: Claude, the GPT models with Converse, `gpt-oss`, others | none |
-| codex | a custom `model_providers.<id>` with `base_url` at the gateway, `wire_api = "responses"` (documented as "the only supported value"), and the bearer from `env_key` or `auth.command` (a command that prints a bearer, refreshed every 5 minutes by default) *(docs)*. Unix socket support is *unmeasured* | Responses on `bedrock-runtime` (`/openai/v1/responses`); the gateway's allow-list gains that one `POST` | the OpenAI GPT models with Responses on `bedrock-runtime` (named by system profile, `us.openai.…` / `global.openai.…`); **not Claude**, which has no Responses API on Bedrock; **not `gpt-oss`** there, whose Responses API is on `bedrock-mantle` only *(docs)* | none (below) |
+| opencode | its own `amazon-bedrock` provider. Its [providers page](https://opencode.ai/docs/providers/) (fetched 2026-11-06, not pinned to v2.2.5) says `AWS_BEARER_TOKEN_BEDROCK` takes precedence over the other AWS credential methods, that an `endpoint` option is an alias of `baseURL`, and that a model id may be an inference profile ARN; none of that is measured on the installed version, and a second read of the current docs did not find the alias or the precedence. Whether it calls Converse or Invoke, and whether it can use a Unix socket, is *unmeasured* | Converse / ConverseStream (already on the gateway's allow-list), if that is what it sends | anything Converse serves: Claude, the GPT models with Converse, `gpt-oss`, others | none |
+| codex | a custom `model_providers.<id>` with `base_url` at the gateway, `wire_api = "responses"` (documented as "the only supported value"), and the bearer from `env_key` or `auth.command` (a command that prints a bearer, refreshed every 5 minutes by default), per the [configuration reference](https://developers.openai.com/codex/config-reference) *(docs)*. Unix socket support is *unmeasured* | Responses on `bedrock-runtime` (`/openai/v1/responses`); the gateway's allow-list gains that one `POST` | the OpenAI GPT models with Responses on `bedrock-runtime` (named by system profile, `us.openai.…` / `global.openai.…`); **not Claude**, which has no Responses API on Bedrock; **not `gpt-oss`** there, whose Responses API is on `bedrock-mantle` only ([API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html), *docs*) | none (below) |
 
 - **No protocol translation in the gateway** *(recommended)*. Translating codex's Responses into Converse would make
   codex drive Claude, but the surface is large (tool calls, reasoning items, streaming event shapes, stored state),
   every codex release can move it, and codex's prompts and tools are tuned for OpenAI models; a member who wants Claude
   on Bedrock has claude and opencode. Each harness gets the models its own wire reaches, and the launch dialog offers
   only those.
-- **codex's built-in `amazon-bedrock` provider** (`model_providers.amazon-bedrock.aws.profile` / `.region`, *docs*)
-  resolves AWS credentials inside the session, so it is not used: on a provided route there is no AWS credential in the
-  workspace to give it.
-- **Responses stores state by default.** On Bedrock a response is kept for 30 days unless `store` is false *(docs)*.
-  Whether codex sends `store: false` is *unmeasured*; until it is, the gateway allows only `POST /openai/v1/responses`,
-  and whether the gateway should force `store: false` for provided routes is open question 7.
+- **codex's built-in `amazon-bedrock` provider** is documented with an AWS profile and a Region
+  (`model_providers.amazon-bedrock.aws.profile` / `.region`, *docs*); it may also accept `AWS_BEARER_TOKEN_BEDROCK`.
+  It is not rejected: what is unproven is whether its endpoint can be pointed at the gateway. The custom provider is the
+  documented way to set a `base_url`, so it is the plan; the built-in one replaces it only if a measurement shows an
+  endpoint override and a bearer that work with the gateway.
+- **Stored Responses state is closed before Q7, at the CP.** On Bedrock a response is kept for 30 days unless `store` is
+  false, and `previous_response_id` reads the stored context through an ordinary `POST`, scoped by the account's
+  Project; `bedrock-runtime` has only the default Project
+  ([Responses API](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-responses-api.html), *docs*). Under a
+  shared route role, a response id from another member or tenant could therefore reuse their context, and a tiny body
+  could pull in a huge hidden context and defeat D4's bound. So on provided routes the CP **forces `store: false`** on
+  every Responses request and **refuses `previous_response_id`, `conversation` and any other reference to stored
+  state**; the request parser fails closed on top-level fields it does not know, so a field added later is refused
+  until it is reviewed. If codex turns out to need stored state, codex on provided routes waits for a CP-owned registry
+  of which member and source owns each response id, with the whole chained context counted in the reservation; that
+  is not designed here.
+- **Responses streams are a different format.** `routegw`'s usage parser reads AWS event streams; Responses streams are
+  server-sent events. Q7 builds and gates the parser for their terminal usage, and the refusal statuses codex retries or
+  shows at once (measured, as P2b part 2 measured claude's).
 - **Caller binding for a harness on TCP.** If opencode or codex cannot use a Unix socket, the binding is the one ADR
   0128's P2b note names: the loopback peer resolved through `/proc/net/tcp` to a socket inode and the process holding it.
 - **Managed execution.** ADR 0128 decision 5's rule stands: a shared opencode `serve` or codex app-server carries one
@@ -349,10 +449,10 @@ does not change what a harness speaks. Each row still ships only after decision 
   gate, the step record, the booking cancellation, stop, store, resume, rollback, crash recovery); only the target is
   the subscription. The ledger files each turn under the route in force at its own timestamp (`Meta.RouteAt`).
 - **Caveats the offer states:**
-  - *The prompt cache does not carry over.* Bedrock and Anthropic caches are separate, so the first turn after each switch
-    pays cache creation on the whole context: on the payer's route going out, and against the subscription's window
-    coming back. The ledger records the real figures; the cost is stated as "may cost more", not as a number, until it is
-    measured per route pair (ADR 0128 decision 10).
+  - *Cache sharing is not guaranteed.* Bedrock and Anthropic caches are separate, so the first turn after a switch may
+    start from a cold prefix and pay cache creation on part or all of the context, which can cost more than plain
+    input. Coming back, the original route's cache may still be warm or may have expired. The ledger records the real
+    figures; the offer says "may cost more", not a number, until it is measured per route pair (ADR 0128 decision 10).
   - *Features differ.* The model id changes (`--model opus` became `us.anthropic.claude-opus-5-5` on Bedrock, measured in
     P2b part 2), a model may not be offered in the source's Regions or on its allow-list, and features of Anthropic's own
     API (server-side tools, beta headers, the context window offered) may differ on Bedrock *(unmeasured; the list is
@@ -366,13 +466,14 @@ Each row needs the decision 14 gate for every harness × route row it opens, on 
 
 | Phase | Content | Gate |
 |---|---|---|
-| Q0 | Catalogue ids `bedrock-tenant` / `bedrock-deployment`; the CP's spend table and grant/budget model; no behaviour change | Existing `bedrock` rows and the rollup unchanged; a provided row and a member row of one model stay apart in the rollup |
-| Q1 | CP route gateway (G3) with the `deployment` source; Agent forwarding; super_admin grant and ceiling; tenant_admin budgets; admission and settlement; session-tagged AssumeRole; claude, Terminal | A live claude turn through the CP on real Bedrock; added time to first token measured; budget 0 → visible 503 and no fallback; grant turned off → next call refused; member removed → stream cut; N concurrent calls at the budget edge stay within the stated bound; CP restart drains or fails visibly |
-| Q2 | Budget visibility (launch dialog, mirror, member detail, usage page); cloud cost line from principal tags; estimate beside actual | Principal tags activated and visible in Cost Explorer (≥ 24 h after the first call); one test member's day compared, estimate against actual, with the difference stated, not tuned away |
-| Q3 | D6: the target list, the return (R1, R2) | A live window stop → switch to a provided route → reset → return, automatic and manual; a budget exhausted on the borrowed route stops visibly; a forced failure on the return rolls back |
-| Q4 | The `tenant` source: cross-account role with external id; Tenant settings > Connections; its model allow-list | AssumeRole into a test account; a wrong external id and a deleted role both refuse visibly; an edited connection refuses the bound session instead of moving it |
-| Q5 | opencode on provided routes (after ADR 0128 P2c): its wire measured, TCP binding if needed; Terminal, then Managed | Decision 14 per execution method; the Converse usage read; a negative control per source |
-| Q6 | codex on provided routes: Responses wire, OpenAI-family models only; `store` behaviour measured | Decision 14 per execution method; a Claude model id refused at launch, not on the first message |
+| Q0 | Catalogue ids `bedrock-tenant` / `bedrock-deployment`; the CP's spend, reservation and grant/budget model; source ids and fingerprints; the model price-and-limits table; no behaviour change | Existing `bedrock` rows and the rollup unchanged; a provided row and a member row of one model stay apart in the rollup |
+| Q1 | **Acceptance only, behind a switch like `AF_WS_CLAUDE_BEDROCK_ROUTE`; not released.** CP route gateway (G3) with the `deployment` source and its signing contract; Agent forwarding; super_admin grant and ceiling; tenant_admin budgets; admission and settlement; session-tagged AssumeRole with its session policy; pre-wake refusal on every create path; claude, Terminal | A live claude turn through the CP on real Bedrock; added time to first token measured. **Budget:** two CPs racing at the budget edge never admit past it; a CP killed between admission and settlement leaves a reservation the sweep settles, never zero; a call admitted at 23:59:59 UTC settles into its own month; a duplicated settlement changes nothing; a cut stream settles at its reservation; an unpriced model and a missing output cap are refused. **Contract:** a forged or expired token, identity headers, caller tags, Region, URL or role, an ARN model id, a model outside the list (path and body), another operation — each refused, nothing signed. **Revocation:** budget 0 → visible 503, no fallback; grant off → next call refused; member removed → stream cut. These first tagged calls let AWS discover the principal tags |
+| Q2 | **Release.** The minimum visibility (remaining budget in the launch dialog and the switch offer; the exhaustion message; the tenant_admin's member view); the principal tags activated; the CP path held | The tags activated in the payer account before release (ADR 0048: no backfill, and a key must be seen before it can be activated); a silent stream held past the load balancer's idle timeout, or the deployment's provided routes stay off (D2); CP capacity at the deployment's expected concurrent streams, with a deploy drained or failing visibly |
+| Q3 | Richer reporting: the mirror, the usage page, the cloud cost line from principal tags, estimate beside actual | Principal-tag cost visible in Cost Explorer (≥ 24 h after a call); one test member's day compared, estimate against actual, with the difference stated, not tuned away |
+| Q4 | D6: the target list, the return (R1, R2) | A live window stop → switch to a provided route → reset → return, automatic and manual; a budget exhausted on the borrowed route stops visibly; a forced failure on the return rolls back |
+| Q5 | The `tenant` source: super_admin grant; cross-account role with the CP's external id and D1's activation probes; Tenant settings > Connections; its model allow-list and optional ceiling | Activation refused when AssumeRole succeeds without an id or with a wrong one (a role that trusts the CP without the condition); refused when it fails with the right one; an id supplied by a caller is not accepted; a deleted role refuses visibly; an edited ARN or rotated id refuses the bound session instead of moving it |
+| Q6 | opencode on provided routes (after ADR 0128 P2c): its wire measured, TCP binding if needed; Terminal, then Managed | Decision 14 per execution method; the Converse usage read; a negative control per source |
+| Q7 | codex on provided routes: Responses wire, OpenAI-family models only; `store: false` forced and stored references refused; Responses SSE usage parser | Decision 14 per execution method; a Claude model id refused at launch, not on the first message; another member's response id and a chained `previous_response_id` refused; terminal usage read from a real stream; codex's handling of the gateway's refusal statuses measured |
 
 Q1 depends on ADR 0128's claude `bedrock` row passing its own live gate, since it uses the same adapter and socket.
 
@@ -386,8 +487,10 @@ Q1 depends on ADR 0128's claude `bedrock` row passing its own live gate, since i
 - **Splitting the cost of a shared role per head from the ledger**: an estimate presented as actual spend (ADR 0048
   decision 4).
 - **Protocol translation in the gateway** to let codex drive Claude: H.
-- **Cutting a stream when the budget runs out mid-call**: billed tokens are lost and the turn breaks; the reservation
-  bounds the overshoot instead (D4).
+- **Cutting a stream when the budget runs out mid-call**: billed tokens are lost and the turn breaks; full-fit
+  admission against a proven upper bound makes it unnecessary (D4).
+- **A reservation from the request's size, or from a sampled ratio**: not an upper bound against a caller who controls
+  the JSON, images, documents or cache writes (D4).
 - **Falling back to a provided route when a member's own credential fails, or to another provided route when one runs
   out**: a silent move of the bill (ADR 0128 decision 3).
 
@@ -397,14 +500,12 @@ Q1 depends on ADR 0128's claude `bedrock` row passing its own live gate, since i
    role (D1), accepting that billing cannot tell its members apart.
 2. The default per-member budget when a tenant is first granted the source: zero (nobody until a tenant_admin acts) or
    a tenant default chosen at grant time.
-3. The per-member concurrent-call cap and the input estimate's ratio (D4), both to be set from Q1's measurements.
-4. Whether a deployment with only the public load balancer path raises its idle timeout or does not offer provided
-   routes (D2).
-5. Whether the existing tag activations cover IAM principal tags, and whether Cost Explorer groups them under the same
-   key (D5); measured at the start of Q2.
-6. Per-tenant application inference profiles for tenants that want profile-level metrics (D5).
-7. Whether the gateway forces `store: false` on Responses for provided routes (H).
-8. Currencies other than USD: ADR 0048 decision 6 shows what AWS returns; budgets are in USD until a deployment needs
+3. The per-member concurrent-call cap (D4), set from Q1's measurements, and which APIs can prove an input bound
+   tighter than the context window.
+4. Whether the existing tag activations cover IAM principal tags, and whether Cost Explorer groups them under the same
+   key (D5); the activation is checked before Q2's release, the grouping in Q3.
+5. Per-tenant application inference profiles for tenants that want profile-level metrics (D5).
+6. Currencies other than USD: ADR 0048 decision 6 shows what AWS returns; budgets are in USD until a deployment needs
    otherwise.
 
 ## Consequences
@@ -422,10 +523,18 @@ Q1 depends on ADR 0128's claude `bedrock` row passing its own live gate, since i
 
 ## Sources checked (2026-11-06)
 
-AWS documentation, Amazon Bedrock User Guide: "API compatibility"; "Responses API"; "Track usage and costs in Amazon
-Bedrock"; "IAM principal attribution"; "Application inference profiles" (cost management); "Set up a model invocation
-resource using inference profiles"; "Create an application inference profile". AWS General Reference: "Amazon Bedrock
-endpoints and quotas" (the "Inference profiles per account" row). opencode documentation: "Providers", Amazon Bedrock
-section. Codex documentation: "Configuration reference" (`model_providers`, `wire_api`, `auth`,
-`model_providers.amazon-bedrock.aws`). Local CLIs: `codex --help`, `codex exec --help` (0.167.0); `opencode --version`
-(v2.2.5); `claude --version` (2.1.318). None of these was exercised against AWS.
+None of these was exercised against AWS; each is also linked at the claim it supports.
+
+- Amazon Bedrock User Guide: [API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html);
+  [Responses API](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-responses-api.html); [Track usage and costs](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-management.html);
+  [IAM principal attribution](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-iam-principal-tracking.html);
+  [Application inference profiles (cost)](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-application-inference-profiles.html);
+  [Inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html); [Create an application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html).
+- AWS General Reference: [Amazon Bedrock endpoints and quotas](https://docs.aws.amazon.com/general/latest/gr/bedrock.html)
+  (the "Inference profiles per account" row).
+- IAM User Guide: [Access to AWS accounts owned by third parties](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html)
+  (the external id).
+- opencode: [Providers](https://opencode.ai/docs/providers/), Amazon Bedrock section (not pinned to the installed v2.2.5).
+- Codex: [Configuration reference](https://developers.openai.com/codex/config-reference) (`model_providers`, `wire_api`,
+  `auth`, `model_providers.amazon-bedrock.aws`).
+- Local CLIs: `codex --help`, `codex exec --help` (0.167.0); `opencode --version` (v2.2.5); `claude --version` (2.1.318).
