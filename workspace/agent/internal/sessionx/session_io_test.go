@@ -55,6 +55,7 @@ esac
 	req.SetPathValue("name", name)
 	rec := httptest.NewRecorder()
 	HandleSessionInput(rec, req)
+	WaitInputMirrors() // see postInput
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -279,6 +280,11 @@ func postInput(t *testing.T, name, body string) *httptest.ResponseRecorder {
 	req.SetPathValue("name", name)
 	rec := httptest.NewRecorder()
 	HandleSessionInput(rec, req)
+	// A typed (Console) input starts a detached chat-mirror goroutine that reads the
+	// secrets store under $HOME. It must finish before the test's temp dirs are removed,
+	// or TempDir cleanup fails with "directory not empty" (flaky; #3410). Waiting here
+	// covers every caller, including tests that never go through withTempHome.
+	WaitInputMirrors()
 	return rec
 }
 
