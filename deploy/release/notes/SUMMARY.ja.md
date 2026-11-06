@@ -12,6 +12,35 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.41.0](0.41.0.ja.md) — 2026-11-06
+
+**CLI ピン** — Claude Code 2.1.318 / Codex 0.167.0 / Copilot 1.0.106 / Antigravity 1.5.2 / Kiro 3.1.0
+
+**New / Improved**
+
+- **[claude]** ターミナルの claude セッションを Anthropic API キーで実行（起動ダイアログの **モデルのルート**）、従量課金 ([#3281](https://github.com/k-k1/agent-fleet/issues/3281), [#3344](https://github.com/k-k1/agent-fleet/issues/3344), [#3317](https://github.com/k-k1/agent-fleet/issues/3317))
+- **[claude]** サブスクリプションのルートで利用枠に止まったセッションに **API ルートで続ける**。費用の確認つき・一方向 ([#3283](https://github.com/k-k1/agent-fleet/issues/3283))
+- **[セッション]** **PR へのフィードバックをセッションに伝える**（既定オフ）。CI の失敗と修正依頼を PR のセッションへ伝え、止まっていれば起動 ([#3129](https://github.com/k-k1/agent-fleet/issues/3129))
+- **[egress]** AWS の egress ゲートウェイが **TCP ポート** のエントリで指定した宛先へ HTTP 以外の TCP（SSH git・DB）を通す。`00-network` のデプロイが必要 ([#3369](https://github.com/k-k1/agent-fleet/issues/3369), [#3399](https://github.com/k-k1/agent-fleet/issues/3399))
+- **[ツールチェーン]** Temurin と並んで Amazon Corretto の JDK ([#3411](https://github.com/k-k1/agent-fleet/issues/3411))
+- **[ecs-ec2]** Control Plane が Amazon の ECS 最適化 AMI に自分で追従。古いスロットは次の起動で置き換え、理由をスロットに表示 ([#3318](https://github.com/k-k1/agent-fleet/issues/3318))
+- **[ミラー]** クラウドコマンドの実行行をツール呼び出しの中にたたみ、繰り返しをまとめる。`af-gcloud-exec` の実行も記録 ([#3329](https://github.com/k-k1/agent-fleet/issues/3329))
+- **[console]** 稼働時間・クラウド費用・稼働のヒートマップに 今月 / 先月 / 直近30日 のプリセット ([#3383](https://github.com/k-k1/agent-fleet/issues/3383))
+- **[ワークアイテム]** Issue と PR の URL をワークアイテムのモーダルで開く ([#3365](https://github.com/k-k1/agent-fleet/issues/3365))
+- **[egress]** enforce でもツールチェーンとエージェント CLI のダウンロード元を既定で許可（`storage.googleapis.com` は引き続き任意） ([#3432](https://github.com/k-k1/agent-fleet/issues/3432))
+- **[設定]** 設定 › エージェント の表示を高速化、Console を放置している間はリポジトリの取得を停止 ([#3385](https://github.com/k-k1/agent-fleet/issues/3385), [#3333](https://github.com/k-k1/agent-fleet/issues/3333))
+
+**Fixed**
+
+- **[ミラー]** 許可カードが違う選択肢を答えることがあった（常に許可が拒否に、拒否が許可に）。画面のダイアログに照らして答える。チャットブリッジも ([#3354](https://github.com/k-k1/agent-fleet/issues/3354), [#3359](https://github.com/k-k1/agent-fleet/issues/3359), [#3358](https://github.com/k-k1/agent-fleet/issues/3358))
+- **[ミラー]** ターミナルの claude を止めるとプロンプトが残る残りのケース（最初のプロンプト・貼り付け・全角タイトル・双方向制御文字） ([#3345](https://github.com/k-k1/agent-fleet/issues/3345), [#3302](https://github.com/k-k1/agent-fleet/issues/3302), [#3372](https://github.com/k-k1/agent-fleet/issues/3372), [#3373](https://github.com/k-k1/agent-fleet/issues/3373), [#3375](https://github.com/k-k1/agent-fleet/issues/3375), [#3408](https://github.com/k-k1/agent-fleet/issues/3408))
+- **[セッション]** ターミナルの codex・opencode を止めても、ターンやキューの指示が見えないまま進むことがあった ([#2607](https://github.com/k-k1/agent-fleet/issues/2607))
+- **[エージェント]** CLI の自動更新で codex・copilot が動かなくなることがあった。次の起動で入れ直す ([#3416](https://github.com/k-k1/agent-fleet/issues/3416))
+- **[ミラー]** 長い貼り付けが反映待ちのまま、入れ子の claude の会話がミラーに出る、長いターンの翻訳が断られる ([#3362](https://github.com/k-k1/agent-fleet/issues/3362), [#3355](https://github.com/k-k1/agent-fleet/issues/3355), [#3332](https://github.com/k-k1/agent-fleet/issues/3332))
+- **[ターミナル]** ターミナルのタブを開くとシェルと SSM のセッションに `0;276;0c` が入力された ([#3337](https://github.com/k-k1/agent-fleet/issues/3337))
+- **[アシスタント]** agy のアシスタントチャットがナレッジのフォルダ外を読むとターンが終わった ([#3412](https://github.com/k-k1/agent-fleet/issues/3412))
+- **[console]** 表示モードで Backspace/Delete が効いた、メンバーごとのバーのずれ、EC2 プールの表のはみ出し、停滞の通知の再表示 ([#3381](https://github.com/k-k1/agent-fleet/issues/3381), [#3382](https://github.com/k-k1/agent-fleet/issues/3382), [#3384](https://github.com/k-k1/agent-fleet/issues/3384), [#3351](https://github.com/k-k1/agent-fleet/issues/3351))
+
 ## [0.40.0](0.40.0.ja.md) — 2026-11-03
 
 **CLI ピン** — Claude Code 2.1.317 / Confluence CLI 2.31.0 を追加
