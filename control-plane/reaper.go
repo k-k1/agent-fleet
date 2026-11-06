@@ -59,6 +59,10 @@ type connRegistry struct {
 	attached  map[string]map[string]int // workspaceID -> session name -> attached terminals
 	lastSeen  map[string]time.Time      // workspaceID -> last request activity
 	lastInput map[string]time.Time      // workspaceID -> last TERMINAL keystroke
+	// sessInput is lastInput per attached session, for tier 1. Kept apart from the
+	// workspace-wide clock so typing into one session's terminal does not spare
+	// another session whose pane was left open untouched.
+	sessInput map[string]map[string]time.Time // workspaceID -> session -> last keystroke
 }
 
 const (
@@ -76,7 +80,9 @@ const (
 // billing policy — after 30 minutes without a keystroke nobody is at the
 // keyboard. How long until a stop actually happens is still ws_idle_timeout
 // (per-tenant); this value only keeps a permanently open socket from stopping
-// that clock. 0 disables it (any socket counts as presence).
+// that clock. Tier 1 applies the same bound per session: an attached terminal
+// spares its session from the halt only within this grace (watchingSession).
+// 0 disables it (any socket counts as presence, attached means watched).
 var presenceGrace = 30 * time.Minute
 
 var errWorkspaceStopping = errors.New("workspace idle stop is in progress")
@@ -95,6 +101,7 @@ func newConnRegistry() *connRegistry {
 		attached:  map[string]map[string]int{},
 		lastSeen:  map[string]time.Time{},
 		lastInput: map[string]time.Time{},
+		sessInput: map[string]map[string]time.Time{},
 	}
 }
 
@@ -131,6 +138,9 @@ func (r *connRegistry) addConn(wsID, session string, attention bool) {
 			r.attached[wsID] = map[string]int{}
 		}
 		r.attached[wsID][session]++
+		if attention {
+			r.stampSessionInputLocked(wsID, session, time.Now())
+		}
 	}
 	r.mu.Unlock()
 }
@@ -162,6 +172,12 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 		}
 		if r.attached[wsID][session] == 0 {
 			delete(r.attached[wsID], session)
+			if r.sessInput[wsID] != nil {
+				delete(r.sessInput[wsID], session)
+				if len(r.sessInput[wsID]) == 0 {
+					delete(r.sessInput, wsID)
+				}
+			}
 		}
 		if len(r.attached[wsID]) == 0 {
 			delete(r.attached, wsID)
@@ -185,7 +201,10 @@ func (r *connRegistry) snapshot(wsID string) (conns int, lastSeen time.Time, ok 
 // actually there. Pings and resizes deliberately do NOT come through here: a
 // background tab sends both, and counting them would restore exactly the "an
 // open socket warms the workspace forever" behaviour this exists to remove.
-func (r *connRegistry) noteInput(wsID string) {
+//
+// session is the terminal's session ("" for a shell with no session name), so tier 1
+// can tell which session the human is at.
+func (r *connRegistry) noteInput(wsID, session string) {
 	if r == nil || wsID == "" {
 		return
 	}
@@ -193,7 +212,17 @@ func (r *connRegistry) noteInput(wsID string) {
 	now := time.Now()
 	r.lastInput[wsID] = now
 	r.lastSeen[wsID] = now
+	if session != "" {
+		r.stampSessionInputLocked(wsID, session, now)
+	}
 	r.mu.Unlock()
+}
+
+func (r *connRegistry) stampSessionInputLocked(wsID, session string, now time.Time) {
+	if r.sessInput[wsID] == nil {
+		r.sessInput[wsID] = map[string]time.Time{}
+	}
+	r.sessInput[wsID][session] = now
 }
 
 // watched reports whether someone is present at this workspace right now.
@@ -235,8 +264,9 @@ func (r *connRegistry) attentionFresh(wsID string, grace time.Duration, now time
 }
 
 // watchingSession reports whether tier 1 must leave this session alone because someone
-// is at its terminal: it is attached AND a keystroke reached any terminal of the
-// workspace within grace — the same bound tier 2 applies to presence.
+// is at its terminal: it is attached AND a keystroke reached one of ITS terminals within
+// grace — the bound tier 2 applies to presence, kept per session so that typing in one
+// session does not spare another left open untouched.
 //
 // Attachment alone is not enough: a Console tab left open with terminal panes keeps
 // them attached for days, and the sessions were never folded (#3460; on a production
@@ -254,7 +284,7 @@ func (r *connRegistry) watchingSession(wsID, session string, grace time.Duration
 	if grace <= 0 {
 		return true
 	}
-	li, ok := r.lastInput[wsID]
+	li, ok := r.sessInput[wsID][session]
 	return ok && now.Sub(li) < grace
 }
 
@@ -370,7 +400,7 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 			<-done
 			rel()
 		}, func() {
-			m.conns.noteInput(wsID)
+			m.conns.noteInput(wsID, session)
 			select {
 			case pending <- struct{}{}:
 			default: // a write is already queued — the keystroke does not wait

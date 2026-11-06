@@ -34,7 +34,7 @@ func TestConnRegistryWatched(t *testing.T) {
 		t.Error("a terminal with no keystrokes stays present = one forgotten tab warms the workspace forever")
 	}
 	// Typing again brings presence back.
-	r.noteInput(ws)
+	r.noteInput(ws, "s1")
 	if !r.watched(ws, grace, time.Now().Add(time.Minute)) {
 		t.Error("still absent after typing again")
 	}
@@ -134,7 +134,7 @@ func TestWatchingSessionNeedsKeystrokes(t *testing.T) {
 	if r.watchingSession(ws, "s1", grace, now.Add(31*time.Minute)) {
 		t.Error("an attached terminal with no keystrokes pins its session forever")
 	}
-	r.noteInput(ws)
+	r.noteInput(ws, "s1")
 	if !r.watchingSession(ws, "s1", grace, time.Now().Add(time.Minute)) {
 		t.Error("typing again does not protect the session")
 	}
@@ -144,5 +144,38 @@ func TestWatchingSessionNeedsKeystrokes(t *testing.T) {
 	r.doneConn(ws, "s1", true)
 	if r.watchingSession(ws, "s1", 0, now) {
 		t.Error("a detached session still counts as watched")
+	}
+}
+
+// TestWatchingSessionIsPerSession: typing into one session's terminal must not spare
+// another session of the same workspace whose pane was left open untouched, or a single
+// active session keeps every forgotten pane pinned (#3460 review).
+func TestWatchingSessionIsPerSession(t *testing.T) {
+	const ws = "ws1"
+	grace := 30 * time.Minute
+	r := newConnRegistry()
+	r.addConn(ws, "idle", true)
+	r.addConn(ws, "busy", true)
+	later := time.Now().Add(40 * time.Minute)
+	// Only "busy" is typed into, and only after "idle"'s grace ran out.
+	r.mu.Lock()
+	r.sessInput[ws]["busy"] = later
+	r.lastInput[ws] = later
+	r.mu.Unlock()
+	if !r.watchingSession(ws, "busy", grace, later.Add(time.Minute)) {
+		t.Error("the session being typed into is not protected")
+	}
+	if r.watchingSession(ws, "idle", grace, later.Add(time.Minute)) {
+		t.Error("typing into another session pins an untouched pane")
+	}
+	// A shell with no session name protects nobody in tier 1.
+	r.noteInput(ws, "")
+	if r.watchingSession(ws, "idle", grace, time.Now().Add(31*time.Minute)) {
+		t.Error("an unnamed shell's keystroke pins a session")
+	}
+	// Detaching the last terminal of a session drops its clock: a re-attach starts fresh.
+	r.doneConn(ws, "idle", true)
+	if _, ok := r.sessInput[ws]["idle"]; ok {
+		t.Error("a detached session's keystroke clock was left behind")
 	}
 }
