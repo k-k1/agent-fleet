@@ -32,6 +32,8 @@ func TestParseTCPEntry(t *testing.T) {
 		"tcp:db.example.com:53", "tcp:db.example.com:853", // refused ports
 		"tcp:db.example.com:400-500",                                                       // a range that contains 443
 		"tcp:127.0.0.1:22", "tcp:169.254.169.254:80", "tcp:0.0.0.0:22", "tcp:224.0.0.1:22", // never usable
+		"tcp:10.0.0.5:2222", "tcp:172.16.0.1:22", "tcp:192.168.1.1:22", // private: the relay always refuses
+		"tcp:255.255.255.255:22", "tcp:[::ffff:10.0.0.5]:22",
 		"tcp:2001:db8::5:22", "tcp:[2001:db8::5]:22", // IPv6: the relay is IPv4-only
 		"tcp:a..example.com:22",
 	}
@@ -39,6 +41,25 @@ func TestParseTCPEntry(t *testing.T) {
 		if e, err := ParseTCPEntry(in); err == nil {
 			t.Errorf("%q accepted as %q", in, e.String())
 		}
+	}
+}
+
+func TestParseTCPEntryPrivateMessage(t *testing.T) {
+	_, err := ParseTCPEntry("tcp:10.0.0.5:2222")
+	if err == nil || !strings.Contains(err.Error(), "private or not publicly routable") {
+		t.Errorf("error should say the address is private or not routable: %v", err)
+	}
+	if _, err := ParseTCPEntry("tcp:203.0.113.7:2222"); err != nil {
+		t.Errorf("public control refused: %v", err)
+	}
+}
+
+// A private entry stored before the check existed is left out of the shipped policy
+// instead of being sent to a relay that can never connect to it.
+func TestSplitTCPSkipsStoredPrivateEntry(t *testing.T) {
+	_, tcp := SplitTCP([]string{"tcp:10.0.0.5:2222", "tcp:203.0.113.7:2222"})
+	if len(tcp) != 1 || tcp[0].Host != "203.0.113.7" {
+		t.Errorf("tcp entries: %+v", tcp)
 	}
 }
 

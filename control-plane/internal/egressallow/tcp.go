@@ -63,6 +63,15 @@ func (e TCPEntry) String() string {
 // Covers reports whether port is inside the entry's range.
 func (e TCPEntry) Covers(port int) bool { return port >= e.From && port <= e.To }
 
+// TCPAddrRefused reports an address the gateway relay refuses whatever the policy says:
+// anything that is not a global unicast IPv4 address, and the private, loopback and
+// link-local ranges. The entry check and the relay share it, so an entry the relay can never
+// connect to is not accepted as active.
+func TCPAddrRefused(a netip.Addr) bool {
+	a = a.Unmap()
+	return !a.Is4() || !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback()
+}
+
 // ParseTCPEntry reads and validates a passthrough entry.
 func ParseTCPEntry(s string) (TCPEntry, error) {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -79,8 +88,8 @@ func ParseTCPEntry(s string) (TCPEntry, error) {
 	if a, err := netip.ParseAddr(host); err == nil {
 		// Only IPv4: the relay is IPv4-only, and an entry that could never match is the
 		// silent failure the entry grammar exists to prevent.
-		if !a.Is4() || a.IsUnspecified() || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsMulticast() {
-			return TCPEntry{}, fmt.Errorf("%q is not a usable IPv4 destination", host)
+		if TCPAddrRefused(a) {
+			return TCPEntry{}, fmt.Errorf("%q is a private or not publicly routable IPv4 address, which the gateway relay always refuses", host)
 		}
 	} else if !tcpHostRe.MatchString(host) || strings.Contains(host, "..") || len(host) > 253 {
 		return TCPEntry{}, fmt.Errorf("%q is not an exact host name or IPv4 address", host)

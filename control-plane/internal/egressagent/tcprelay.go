@@ -35,7 +35,7 @@ var fencedNets = func() []netip.Prefix {
 // unicast IPv4 address, and the private and shared ranges.
 func fencedAddr(a netip.Addr) bool {
 	a = a.Unmap()
-	if !a.Is4() || !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback() {
+	if egressallow.TCPAddrRefused(a) {
 		return true
 	}
 	for _, p := range fencedNets {

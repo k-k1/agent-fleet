@@ -15,7 +15,7 @@ export const TCP_REFUSED_PORTS = [53, 80, 443, 853, 3128];
 export type TcpProblem =
   | "format" // not host + ports
   | "host" // not an exact host name
-  | "ipv4" // an address that can never be a destination, or IPv6
+  | "ipv4" // a private or non-routable address (the relay always refuses it), or IPv6
   | "port" // not a number, or outside 1-65535, or reversed
   | "width" // a range wider than MAX_TCP_RANGE
   | "refused"; // contains a refused port
@@ -36,6 +36,21 @@ function parseIPv4(s: string): number[] | null {
     out.push(Number(p));
   }
   return out;
+}
+
+// Mirrors egressallow.TCPAddrRefused: what Go's netip says is not a global unicast address
+// (unspecified, loopback, link-local, multicast, limited broadcast) plus the RFC 1918 ranges.
+function tcpAddrRefused([a, b, c, d]: number[]): boolean {
+  return (
+    (a === 0 && b === 0 && c === 0 && d === 0) ||
+    a === 127 ||
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a >= 224 && a <= 239) ||
+    (a === 255 && b === 255 && c === 255 && d === 255)
+  );
 }
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -63,7 +78,7 @@ export function parseTcpParts(hostText: string, portText: string): TcpParsed {
   if (!host || !ports) return { ok: false, problem: "format" };
   const ip = parseIPv4(host);
   if (ip) {
-    if (ip[0] === 0 || ip[0] === 127 || (ip[0] === 169 && ip[1] === 254) || ip[0] >= 224 && ip[0] <= 239) {
+    if (tcpAddrRefused(ip)) {
       return { ok: false, problem: "ipv4" };
     }
   } else if (host.includes(":")) {
