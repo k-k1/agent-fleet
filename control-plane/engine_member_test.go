@@ -545,11 +545,14 @@ func TestEventsStreamEnginesPushesChange(t *testing.T) {
 	a.engines = &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 
 	rec := &syncRecorder{}
-	go func() {
-		rec.waitFrames("engines", 1)
+	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) {
+		waitFramesCtx(ctx, rec, "engines", 1)
 		e.ctrl.noteMemberSnapshot("stopped", 0, time.Now())
-	}()
-	frames, _ := runStreamUntil(t, a, res, rec, func() { stub.waitFramesThenTicks(rec, "engines", 2, 3) })
+		waitFramesCtx(ctx, rec, "engines", 2)
+		// Two flips: the second frame proves the tick that carried the first, engines included
+		// (engines is emitted last in a tick), was fully processed.
+		stub.waitSubscriberTicks(ctx, rec, 1, 2)
+	})
 	if got := len(frames["engines"]); got != 2 {
 		t.Fatalf("engines frames = %d, want 2 (snapshot + the state change)", got)
 	}

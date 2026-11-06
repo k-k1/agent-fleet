@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -45,14 +46,33 @@ func (s *eventsStub) waitPolls(n int64, deadline time.Time) {
 	}
 }
 
-// waitFramesThenTicks blocks until n frames of stream have been written, then until the hub has
-// polled the Agent `ticks` more times, so a duplicate frame a regression would send on a later
-// tick has had real ticks to appear in. Counting ticks (not sleeping) keeps the observation
-// window from shrinking on a slow runner. Both waits are bounded (25 s each), so the caller's
-// goroutine always returns.
-func (s *eventsStub) waitFramesThenTicks(rec *syncRecorder, stream string, n int, ticks int64) {
-	rec.waitFrames(stream, n)
-	s.waitPolls(s.polls.Load()+ticks, time.Now().Add(25*time.Second))
+// waitPollsCtx is waitPolls that also returns when ctx ends.
+func (s *eventsStub) waitPollsCtx(ctx context.Context, n int64) {
+	for s.polls.Load() < n && ctx.Err() == nil {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitFramesCtx blocks until n frames of stream are in rec, or ctx ends.
+func waitFramesCtx(ctx context.Context, rec *syncRecorder, stream string, n int) {
+	for len(rec.frames()[stream]) < n && ctx.Err() == nil {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitSubscriberTicks makes the subscriber itself prove it has processed ticks after the
+// frame the caller waited for. The hub polls ahead of the subscriber, so a poll count says
+// nothing about what the subscriber has handled; a frame does. Each flip changes the
+// /sessions body to a value never served before and waits for the matching "sessions"
+// frame, which only the subscriber can write. Ticks are processed in order, so when flip
+// N+1's frame is in, every stream of the tick that carried flip N has been emitted — a
+// duplicate sent by a regression on those ticks is already in rec. `have` is how many
+// sessions frames rec holds when the call starts.
+func (s *eventsStub) waitSubscriberTicks(ctx context.Context, rec *syncRecorder, have, flips int) {
+	for i := 1; i <= flips && ctx.Err() == nil; i++ {
+		s.setBody(fmt.Sprintf(`{"sessions":[{"name":"sentinel-%d","kind":"claude","alive":true}]}`, i))
+		waitFramesCtx(ctx, rec, "sessions", have+i)
+	}
 }
 
 // eventsTestEnv builds a sqlite-backed eventsAPI plus a stub Agent serving
@@ -176,7 +196,7 @@ func runStream(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls
 // nothing about what the subscriber has sent.
 func runStreamWith(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls int64, rec *syncRecorder) (map[string][]json.RawMessage, string) {
 	t.Helper()
-	return runStreamUntil(t, a, res, rec, func() { stub.waitPolls(polls, time.Now().Add(25*time.Second)) })
+	return runStreamUntil(t, a, res, rec, func(ctx context.Context) { stub.waitPollsCtx(ctx, polls) })
 }
 
 // runStreamUntil is the common body: it cancels the request once wait returns. A test that
@@ -184,15 +204,21 @@ func runStreamWith(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, p
 // count, because a count of ticks is a bet on speed: under -race a slow tick pushes the
 // change out of a fixed window. wait is bounded by its own deadline, and the absolute 30 s
 // context stays as insurance; the frame-count assertion after the call is what fails.
-func runStreamUntil(t *testing.T, a eventsAPI, res *resolved, rec *syncRecorder, wait func()) (map[string][]json.RawMessage, string) {
+func runStreamUntil(t *testing.T, a eventsAPI, res *resolved, rec *syncRecorder, wait func(ctx context.Context)) (map[string][]json.RawMessage, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	done := make(chan struct{})
+	// Joined below, so no wait outlives the test; wait must return when ctx ends.
+	defer func() { cancel(); <-done }()
 	go func() {
-		wait()
+		defer close(done)
+		wait(ctx)
 		// The hub's tick runs ahead of the subscriber, which still owes the per-member parts
 		// of the snapshot that poll belongs to. Closing at once would cancel it half-way.
-		time.Sleep(100 * time.Millisecond)
+		if ctx.Err() == nil {
+			time.Sleep(100 * time.Millisecond)
+		}
 		cancel()
 	}()
 	r := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
@@ -258,17 +284,19 @@ func TestEventsStreamPushesChange(t *testing.T) {
 	stub := newEventsStub(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
 	a, res := eventsTestEnv(t, stub)
 
-	// Apply the change only after the snapshot has gone out — counted in polls, not
-	// milliseconds.
+	// Apply the change only after the snapshot has gone out, and close the stream only after
+	// the subscriber has handled later ticks. Everything waits on frames, never on time.
 	rec := &syncRecorder{}
-	go func() {
-		rec.waitFrames("sessions", 1)
+	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) {
+		waitFramesCtx(ctx, rec, "sessions", 1)
 		stub.setBody(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
-	}()
-	frames, _ := runStreamUntil(t, a, res, rec, func() { stub.waitFramesThenTicks(rec, "sessions", 2, 3) })
+		waitFramesCtx(ctx, rec, "sessions", 2)
+		stub.waitSubscriberTicks(ctx, rec, 2, 1)
+	})
 
-	if got := len(frames["sessions"]); got != 2 {
-		t.Fatalf("sessions frames = %d, want 2 (snapshot + change)", got)
+	// snapshot + the change + the sentinel flip waitSubscriberTicks used to see the subscriber tick.
+	if got := len(frames["sessions"]); got != 3 {
+		t.Fatalf("sessions frames = %d, want 3 (snapshot + change + sentinel)", got)
 	}
 	if got := len(frames["workspace"]); got != 1 {
 		t.Errorf("workspace frames = %d, want 1 (unchanged stream stays silent)", got)
