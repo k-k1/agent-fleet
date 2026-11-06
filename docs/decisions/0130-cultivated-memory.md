@@ -7,7 +7,7 @@ English | [日本語](0130-cultivated-memory.ja.md)
   (section "Measured"); the Hermes Agent figures come from its source at `90d6b98` (2026-11-05); the
   prior-art survey is [docs/log/136](../log/136-cultivated-memory-survey.md), which marks what was read,
   what is secondary and what is inferred. Reviewed by a separate session (codex `gpt-6.1-sol`); round 1
-  had 21 findings and round 2 had 9, each checked against the tree and the cited sources and folded into
+  had 21 findings, round 2 had 9 and round 3 had 3, each checked against the tree and the cited sources and folded into
   this text.
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
   release carries **the first step** of what this record calls cultivation (decision 10). Everything
@@ -190,31 +190,45 @@ input, and every rule of decision 6 (including no revival) applies to them.
   history, never in the described part of the index, and keeps a summary plus a pointer.
 - Dependencies: `anchors` — paths, symbols, test names, ADR numbers, profile and branch names,
   commands, `[[links]]`. Extracted mechanically and editable.
-- Lifecycle: `status` (`active` | `suspect` | `quiet` | `archived`), `status_reason` (one line),
-  `status_by` (`agent`, `lint`, `feedback`, `member`, `consolidator`), `superseded_by` and
-  `invalid_at` (Graphiti's vocabulary). Every writer's output is validated against this one schema.
+- Lifecycle: `status` (`active` | `quiet` | `archived`) with `status_by` (`agent`, `member`,
+  `consolidator`); `superseded_by` and `invalid_at` (Graphiti's vocabulary); and `reasons`, the list of
+  open doubts, each `{by: lint|feedback|member, rule, note, revision}` — the rule that fired (a lint
+  check id, or `stale`/`wrong`), a one-line note, and the revision it was found on. **Suspect is not a
+  status**: a memory is suspect while `reasons` is not empty. Every writer's output is validated
+  against this one schema.
 
-How each status is seen by agents (the member's routes see everything):
+What an agent sees is decided in this order, each step independent of the ones after it (the member's
+routes see everything):
+
+1. **Archived or superseded excludes**, whatever the kind or pin: no index line, no search hit, a stub
+   from `memory_read`, nothing injected or written back.
+2. **Open reasons are always shown**: every line, hit, read and injection of a suspect memory carries
+   its reasons, and a suspect memory is not written back to claude.
+3. **Placement**: a `log` kind is placed like `quiet` whatever its status; `quiet` is not in the
+   described index, but is in the names-only tail, search and read.
+4. **Pin last**: a pin lifts an `active` memory into the described part; it does not lift `quiet` or
+   a `log` (so "log is never in the described part" holds) and never undoes step 1.
 
 | | described index | names-only tail | `memory_search` | `memory_read` by name | lcpp injection | claude write-back |
 |---|---|---|---|---|---|---|
 | `active` | yes (ranked as today) | when it does not fit | yes | full | yes | yes |
-| `suspect` | yes, reason prefixed | when it does not fit | yes, reason prefixed | full, reason prefixed | yes, reason prefixed | no |
-| `quiet` | no | yes | yes | full | no | no |
-| `archived` or superseded | no | no | no | stub only | no | no, and earlier copies are withdrawn (below) |
+| `active` with open reasons | yes, reasons prefixed | when it does not fit | yes, reasons prefixed | full, reasons prefixed | yes, reasons prefixed | no |
+| `quiet`, or any `log` | no | yes | yes | full (reasons prefixed if any) | no | no |
+| `archived` or superseded | no | no | no | stub only | no | no |
 
-A pin outranks `quiet` (a pinned memory stays in the described part) but not `archived`. A `log` kind
-is treated as `quiet` whatever its status.
+Acceptance on every path: an archived log, a suspect log, a pinned log, a superseded log, and a pinned
+quiet memory.
 
 **Who may set what, and what every writer keeps.** A save, patch, pin or import that does not name a
 field keeps its current value; this is a contract of `agentMemSave` (`agent_memory.go:1080` today keeps
 only created, source, hash and pin) and of the claude and muse imports (`agent_memory_claude_import.go:487`,
 `:781` rebuild the entry). An agent may set `kind` and `anchors`. Lifecycle fields are set only by
-lint, feedback, the consolidator through the approval gate, or the member. A `suspect` keeps the
-origin of each reason: a lint reason is cleared only when lint re-checks the new revision and finds it
-gone; a feedback reason is cleared by a body change (`status_by: agent`, from `memory_save` or
-`memory_patch` alike); the member can clear either with an explicit operation. A punctuation fix
-therefore does not clear a missing path. An import never takes lifecycle fields from outside.
+lint, feedback, the consolidator through the approval gate, or the member. Each entry of `reasons`
+is cleared by its own rule: a lint reason only when lint re-checks a newer revision and the rule no
+longer fires; a feedback reason by any body change (from `memory_save` or `memory_patch` alike); a
+member reason, or any reason, by the member's explicit operation. A punctuation fix therefore does
+not clear a missing path. Acceptance: a lint reason and a feedback reason together, then a body
+change, leaves only the lint reason; the next lint run on that revision clears it. An import never takes lifecycle fields from outside.
 **Revert is the exception to "keep"**: it restores the earlier version whole — kind, anchors,
 lifecycle fields and pin — as `agent_memory_changes.go:610`–`620` already does for the body and pin,
 with the revision still increasing and the member as author; reverting a lint mark or a pin undoes it.
@@ -224,18 +238,20 @@ field survives, and for revert that a lint mark and a pin are undone.
 **Visibility is one predicate, applied by every agent-facing read path.** `archived` and superseded
 memories are not returned by `memory_index`, `memory_search`, the external memory MCP (same handlers),
 lcpp's per-turn injection, or the claude write-back (`agent_memory_claude_export.go:504` loads the whole
-scope). `memory_read` by name returns a stub — name, status, `superseded_by`, reason — and not the
+scope). `memory_read` by name returns a stub — name, status, `superseded_by`, reasons — and not the
 body, so an old name or a `[[link]]` cannot bring the text back as current. The member's routes (list,
 history, diff, restore, bundle export) see everything. A test per path, because the revocation study
 found that no system does this by default.
 
 The claude write-back needs more than a filter: it protects every AF file name and keeps native files
 it did not choose (`agent_memory_claude_export.go:519`, `:639`–`668`), and re-lists them in
-`MEMORY.md` (`:773`–`803`), so a copy written while a memory was active would reappear. A copy AF wrote
-and nobody edited since is withdrawn (removed, shown in the preview) once its memory is archived or
-superseded, and never listed in `MEMORY.md`; a copy edited on the native side is reported as a
-conflict for the member and is not listed either. Path test: export, archive or supersede, export
-again.
+`MEMORY.md` (`:773`–`803`), so a copy written while a memory was eligible would reappear. One
+predicate — the write-back column above: `active`, no open reasons, not a `log` — decides three things
+together: what AF selects, which copies AF wrote earlier are withdrawn, and what `MEMORY.md` lists. A
+copy AF wrote and nobody edited since is withdrawn (removed, shown in the preview) as soon as its
+memory stops being eligible, for any reason in the table; a copy edited on the native side is
+reported as a conflict for the member, and in neither case is it listed in `MEMORY.md`. Path tests:
+export, then make the memory suspect, quiet, a log, archived or superseded, then export again.
 
 **Counters.** Today `.usage/<name>` is a file grown by one byte per use and counted by its size
 (`agent_memory_usage.go:5`, `:47`); reads and search hits cannot be told apart afterwards. New sidecars
@@ -263,10 +279,10 @@ description ranking of `memory_search`), with "prefer memory_patch on X". It doe
 
 **`memory_feedback(scope, name, revision, verdict: confirmed|stale|wrong, note)`** (step 2). The
 revision is the one the reader relied on. When it is the current one, `confirmed` adds a confirmation
-and sets the time of the last confirmation; `stale` or `wrong` sets `suspect` with the note as reason.
+and sets the time of the last confirmation; `stale` or `wrong` adds a feedback entry to `reasons`, with the note.
 When it is older, the report is kept as an observation only and changes neither status nor
 confirmation, so a report on revision 3 cannot mark a fixed revision 4. The note is secret-scanned
-like a body. One report per session per revision counts. `confirmed` never clears a `suspect`; how
+like a body. One report per session per revision counts. `confirmed` never clears a reason; how
 each reason is cleared is in decision 3. As in Copilot Memory, only a confirmation renews a
 memory; being retrieved does not. The guidance asks only for the negative case.
 
@@ -281,9 +297,9 @@ or changes any working copy. A project without git, an orphaned project and the 
 link, term and size checks only. Output: a read-only report in Settings → Agent memory and
 `af-memory lint`. Nothing is written.
 
-**Step 2 — status marks.** With stored anchors, lint marks hits `suspect` with a reason. It records the
+**Step 2 — reasons.** With stored anchors, lint adds an entry to `reasons` for each hit. It records the
 revision it checked, and applies under the store lock with a compare-and-swap on that revision; a memory
-changed since is re-checked, never marked from the old text. A status change is a published change, one
+changed since is re-checked, never marked from the old text. Adding or clearing a reason is a published change, one
 commit authored `lint`, and it **increments the revision**, so an agent holding an older revision is
 refused and re-reads (the 0108 decision 4 rule), instead of silently erasing the mark. Revert works as
 for any change. "Exists but changed" needs a baseline (a commit or a fingerprint per anchor, as drift
@@ -300,7 +316,7 @@ outside AF it takes a lock file in the store. Two processes never write the same
 ### 6. Consolidation (step 3): inbox → topic → delta patches
 
 Not in the next release; recorded so step 1 does not block it. Observations (the exported 0117 queue;
-`stale`/`wrong` notes; later an `observe` tool) are grouped by topic cluster with the `suspect`
+`stale`/`wrong` notes; later an `observe` tool) are grouped by topic cluster with the suspect
 memories of that cluster. A model classifies each observation against the cluster as add / patch /
 supersede / no-op from snippets; a model writes **delta patches** (decision 4's form), never a whole
 rewrite. The same lesson twice becomes one rule; narrow cases fold into an umbrella memory.
@@ -331,7 +347,7 @@ Three actors, three rules:
 
 - **Interactive agents** keep 0108 decision 8: `memory_save`, `memory_patch` and `memory_forget` publish
   at once and are found and undone afterwards in the change list.
-- **Deterministic lint** applies by itself what it can prove: status marks (step 2) and `lint-rename`.
+- **Deterministic lint** applies by itself what it can prove: reasons (step 2) and `lint-rename`.
 - **The autonomous consolidator** never publishes: every operation waits for the member, grouped by
   topic, approved per topic, not per item. Nothing is deleted automatically; history keeps everything
   (0022).
@@ -380,7 +396,7 @@ sent per run against the bytes of the store.
 5. Guidance: "patch rather than save when the memory exists".
 
 **Step 2**: `kind` / `anchors` / lifecycle fields with their preservation tests, visibility on every
-read path, `memory_feedback`, lint writes `suspect`, `lint-rename`. **Step 3**: consolidation (decision 6).
+read path, `memory_feedback`, lint writes `reasons`, `lint-rename`. **Step 3**: consolidation (decision 6).
 **Step 4**: promotion of verified procedures to skills (agentskills.io format), approval-gated.
 
 **Not decided here: an always-loaded project brief** (Hermes' capped memory). 0108 decision 5 limits
