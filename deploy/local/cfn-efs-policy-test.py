@@ -110,9 +110,11 @@ def cond_holds(cond, ctx):
     return True
 
 
-def allowed(policy, action, ctx):
-    """Explicit deny wins; otherwise one Allow is needed."""
-    verdict = False
+def allowed(policy, action, ctx, identity_allow=False):
+    """Explicit deny wins; otherwise one Allow, from the file-system policy or (when the
+    caller's identity policy grants the action, as for IAM-authorized principals) from the
+    identity side: EFS needs only one of the two (iam-access-control-nfs-efs)."""
+    verdict = identity_allow
     for st in policy["Statement"]:
         princ = as_list(st["Principal"]["AWS"])
         who = ctx.get("aws:PrincipalArn")
@@ -154,11 +156,14 @@ def check(data, ingress):
         ("home task root mount (IAM role, no access point)", mount(ap=False, role=ROLE), True),
         ("another role's root mount", mount(ap=False, role=OTHER), False),
         ("home task root mount without TLS", mount(ap=False, tls=False, role=ROLE), False),
+        ("identity-allowed role, TLS, no access point (KNOWN LIMIT: no explicit Deny)",
+         mount(ap=False, role=OTHER), True, True),
+        ("identity-allowed role without TLS", mount(ap=False, tls=False, role=OTHER), False, True),
     ]
-    for what, ctx, want in cases:
+    for what, ctx, want, *ident in cases:
         for action in sorted(CLIENT):
             try:
-                got = allowed(pol, action, ctx)
+                got = allowed(pol, action, ctx, bool(ident and ident[0]))
             except UnsupportedKey as e:
                 return fails + ["condition key %s is not enforced by EFS for NFS clients" % e]
             if got != want:

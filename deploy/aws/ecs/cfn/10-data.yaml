@@ -221,9 +221,8 @@ Resources:
   # Identity-side half of the grant (the file-system policy is the other). A separate
   # resource: inline on the role it would make the role and the file system wait on each other.
   HomeOpsEfsAccess:
-    Type: AWS::IAM::Policy
+    Type: AWS::IAM::ManagedPolicy
     Properties:
-      PolicyName: efs-root-mount
       Roles: [ !Ref HomeOpsEfsRole ]
       PolicyDocument:
         Version: "2012-10-17"

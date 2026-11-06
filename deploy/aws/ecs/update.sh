@@ -239,12 +239,18 @@ af_efs_backup_check "$DATA_STACK" "$PROFILE" "$REGION"
 
 # The home task's role is 10-data's (HomeOpsEfsRole), and this script does not deploy 10-data. A
 # data stack from before the EFS file-system policy has no such export, and 30-ingress would fail
-# on its import after 20-platform had already moved. Read-only; stops before anything runs.
+# on its import after 20-platform had already moved. Read-only, and fail-closed: an unreadable
+# ingress stack (no data stack name) or data stack stops here too, before anything runs.
 # Order, the window and recovery: cfn/PARAMETERS.md, "Home task (volume root)".
-if [ -n "$DATA_STACK" ] && [ -z "$(af_stack_output "$DATA_STACK" HomeOpsEfsRoleArn)" ]; then
-  echo "ERROR: $DATA_STACK has no HomeOpsEfsRoleArn output - it predates the EFS file-system policy." >&2
-  echo "       Update it from this release's cfn/10-data.yaml first (same parameters), then run this" >&2
-  echo "       script again straight away: until 30-ingress follows, Recreate / Clean home / Destroy fail." >&2
+if [ -z "$DATA_STACK" ]; then
+  echo "ERROR: could not read $STACK to find its data stack; nothing was changed. Fix access and run again." >&2
+  exit 1
+fi
+if [ -z "$(af_stack_output "$DATA_STACK" HomeOpsEfsRoleArn)" ]; then
+  echo "ERROR: $DATA_STACK has no readable HomeOpsEfsRoleArn output - it predates the EFS file-system" >&2
+  echo "       policy, or could not be read. If it predates it, update it from this release's" >&2
+  echo "       cfn/10-data.yaml first (same parameters), then run this script again straight away:" >&2
+  echo "       until 30-ingress follows, Recreate / Clean home / Destroy fail. Nothing was changed." >&2
   exit 1
 fi
 # The same verdict goes to the Console: the ingress stack carries it to the Control Plane as

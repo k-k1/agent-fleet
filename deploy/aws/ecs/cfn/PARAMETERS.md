@@ -814,9 +814,10 @@ A file-system policy applied by hand is replaced by the template's on the 10-dat
 
 The CP's grant for the home task: it lives in this stack because only this stack can name the
 family. RunTask is fenced to that family (any revision: a stack update deregisters the old one,
-and the CP runs the family by name) in this deployment's cluster. The task's roles need no new
-PassRole: it names only the execution role, which PassTaskRoles in 20-platform already lets the
-CP pass to ecs-tasks. ListTasks and DescribeTasks are EcsDrive's, unscoped there already. The
+and the CP runs the family by name) in this deployment's cluster. The execution role needs no new
+PassRole (PassTaskRoles in 20-platform already lets the CP pass it to ecs-tasks); the task role,
+10-data's HomeOpsEfsRole, is passed by its own statement here: that role only, to ecs-tasks only.
+ListTasks and DescribeTasks are EcsDrive's, unscoped there already. The
 task's cost tags (af-membership, af-role, af-tenant) are authorized as ecs:TagResource on the new
 task: only as part of a RunTask (ecs:CreateAction), so no task that exists can be retagged, only
 in this cluster, and only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace
