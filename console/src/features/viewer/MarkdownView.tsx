@@ -3,7 +3,7 @@ import hljs from "highlight.js/lib/common";
 import { dirName, slug } from "../../lib/filemeta.ts";
 // marked: the app's own instance, not the package singleton (see lib/markdown.ts).
 import { marked, repairFullwidthTables, splitYamlFrontMatter } from "../../lib/markdown.ts";
-import { sanitizeMarkdownHtml } from "../../lib/sanitize.ts";
+import { mermaidNamesResource, sanitizeMarkdownHtml, stripInternalMedia } from "../../lib/sanitize.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
@@ -335,6 +335,7 @@ export function MarkdownView({
         });
         blocks.forEach(async (code) => {
           const src = code.textContent || "";
+          if (mermaidNamesResource(src)) return; // stays as source, nothing is fetched
           const id = "mmd-" + ++mermaidSeq;
           try {
             const { svg } = await mermaid.render(id, src);
@@ -342,6 +343,7 @@ export function MarkdownView({
             const wrap = document.createElement("div");
             wrap.className = "mermaid-diagram";
             wrap.innerHTML = svg;
+            stripInternalMedia(wrap);
             code.parentElement.replaceWith(wrap);
           } catch {
             // leave the source block in place on a render error

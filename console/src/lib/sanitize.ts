@@ -55,9 +55,10 @@ const FETCH_ATTRS_ANCHOR_SAFE = new Set(["href", "xlink:href"]); // only fetches
 
 export interface SanitizeOptions {
   /**
-   * The caller rewrites relative / root-relative media URLs to repo files afterwards
-   * (wireImages), so those are repo paths here and only absolute URLs are checked. Off for
-   * a document nothing rewrites (streaming): every URL then resolves against the Console.
+   * The caller rewrites relative / root-relative <img src> to repo files afterwards
+   * (wireImages), so those are repo paths here and only absolute ones are checked. Applies to
+   * <img src> alone. Off for a document nothing rewrites (streaming): every URL resolves
+   * against the Console.
    */
   repoRelative?: boolean;
 }
@@ -75,7 +76,9 @@ function instance() {
     const value = data.attrValue;
     const urls = name === "srcset" ? srcsetUrls(value) : [value.trim()];
     const bad = urls.some((u) => {
-      if (current.repoRelative && !isExternalUrl(u)) return false;
+      // Only <img src> is rewritten to a repo file afterwards (wireImages); every other
+      // fetching attribute keeps its URL as written and must be judged as such.
+      if (current.repoRelative && name === "src" && node.nodeName.toLowerCase() === "img" && !isExternalUrl(u)) return false;
       return isInternalMediaUrl(u);
     });
     if (bad) data.keepAttr = false;
@@ -93,11 +96,137 @@ export function sanitizeMarkdownHtml(html: string, opts: SanitizeOptions = {}): 
   }
 }
 
-const CSS_URL = /url\(\s*(['"]?)([^)'"]*)\1\s*\)/gi;
+const hex = /[0-9a-fA-F]/;
 
-/** Replaces each `url(...)` in a CSS text that points at a blocked Console path with `url()`. */
+// CSS escape at css[i] === "\\": returns the decoded text and the index after it.
+function cssEscape(css: string, i: number): [string, number] {
+  const c = css[i + 1];
+  if (c === undefined) return ["", i + 1];
+  if (hex.test(c)) {
+    let j = i + 1;
+    while (j < css.length && j < i + 7 && hex.test(css[j]!)) j++;
+    const cp = parseInt(css.slice(i + 1, j), 16);
+    if (/\s/.test(css[j] ?? "")) j++;
+    return [cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : "\ufffd", j];
+  }
+  if (c === "\n") return ["", i + 2]; // line continuation inside a string
+  return [c, i + 2];
+}
+
+// A CSS string token starting at the quote css[i]; value is decoded.
+function cssString(css: string, i: number): { value: string; end: number } {
+  const q = css[i];
+  let v = "";
+  let j = i + 1;
+  while (j < css.length && css[j] !== q) {
+    if (css[j] === "\\") {
+      const [d, n] = cssEscape(css, j);
+      v += d;
+      j = n;
+    } else v += css[j++];
+  }
+  return { value: v, end: Math.min(j + 1, css.length) };
+}
+
+const URL_STRING_FUNCS = new Set(["image-set", "-webkit-image-set", "src", "image"]);
+
+/**
+ * Replaces every url() / image-set() string / @import string in a CSS text whose decoded
+ * URL points at a blocked Console path with `url()`. Tokenizes the way a browser does
+ * (escapes, quoted parentheses, comments) so spelling tricks cannot hide a URL; a url() whose
+ * token never terminates is dropped too.
+ */
 export function scrubCssUrls(css: string): string {
-  return css.replace(CSS_URL, (m, _q, u: string) => (isInternalMediaUrl(u.trim()) ? "url()" : m));
+  let out = "";
+  let i = 0;
+  let last = 0; // start of the text not yet copied to `out`
+  const stack: string[] = []; // function names of the open parentheses
+  let atImport = false;
+  const cut = (from: number, to: number) => {
+    out += css.slice(last, from) + "url()";
+    last = to;
+    i = to;
+  };
+  while (i < css.length) {
+    const ch = css[i]!;
+    if (ch === "/" && css[i + 1] === "*") {
+      const e = css.indexOf("*/", i + 2);
+      i = e < 0 ? css.length : e + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const { value, end } = cssString(css, i);
+      const top = stack[stack.length - 1] ?? "";
+      if ((atImport && stack.length === 0) || URL_STRING_FUNCS.has(top)) {
+        if (isInternalMediaUrl(value.trim())) {
+          cut(i, end);
+          continue;
+        }
+      }
+      i = end;
+      continue;
+    }
+    if (ch === "@") {
+      let j = i + 1;
+      let name = "";
+      while (j < css.length && /[\w-\\]/.test(css[j]!)) {
+        if (css[j] === "\\") {
+          const [d, n] = cssEscape(css, j);
+          name += d;
+          j = n;
+        } else name += css[j++];
+      }
+      atImport = name.toLowerCase() === "import";
+      i = j;
+      continue;
+    }
+    if (/[\w-\\]/.test(ch) || ch.charCodeAt(0) > 127) {
+      const start = i;
+      let name = "";
+      while (i < css.length && (/[\w-\\]/.test(css[i]!) || css.charCodeAt(i) > 127)) {
+        if (css[i] === "\\") {
+          const [d, n] = cssEscape(css, i);
+          name += d;
+          i = n;
+        } else name += css[i++];
+      }
+      if (css[i] !== "(") continue;
+      const fn = name.toLowerCase();
+      if (fn === "url") {
+        let j = i + 1;
+        while (j < css.length && /\s/.test(css[j]!)) j++;
+        let value: string;
+        let end: number;
+        if (css[j] === '"' || css[j] === "'") {
+          ({ value, end } = cssString(css, j));
+          while (end < css.length && /\s/.test(css[end]!)) end++;
+          if (css[end] === ")") end++;
+        } else {
+          value = "";
+          end = j;
+          while (end < css.length && css[end] !== ")") {
+            if (css[end] === "\\") {
+              const [d, n] = cssEscape(css, end);
+              value += d;
+              end = n;
+            } else value += css[end++];
+          }
+          if (end < css.length) end++;
+        }
+        if (isInternalMediaUrl(value.trim())) cut(start, end);
+        else i = end;
+        continue;
+      }
+      stack.push(fn);
+      i++;
+      continue;
+    }
+    if (ch === "(") stack.push("");
+    else if (ch === ")") stack.pop();
+    else if (ch === ";" || ch === "{") atImport = false;
+    i++;
+  }
+  return out + css.slice(last);
 }
 
 /**
@@ -105,14 +234,26 @@ export function scrubCssUrls(css: string): string {
  * own HTML): drops media URLs and inline CSS url()s that resolve to blocked Console paths.
  */
 export function stripInternalMedia(root: ParentNode): void {
-  root.querySelectorAll<HTMLElement>("[src], [srcset], [poster], [style]").forEach((el) => {
-    for (const name of ["src", "poster"]) {
+  root.querySelectorAll<Element>("[src], [srcset], [poster], [style], image, style").forEach((el) => {
+    const attrs = ["src", "poster"];
+    if (el.localName === "image") attrs.push("href", "xlink:href");
+    for (const name of attrs) {
       const v = el.getAttribute(name);
       if (v && isInternalMediaUrl(v.trim())) el.removeAttribute(name);
     }
     const set = el.getAttribute("srcset");
     if (set && srcsetUrls(set).some(isInternalMediaUrl)) el.removeAttribute("srcset");
     const style = el.getAttribute("style");
-    if (style && /url\(/i.test(style)) el.setAttribute("style", scrubCssUrls(style));
+    if (style && /url|image|\\|@/i.test(style)) el.setAttribute("style", scrubCssUrls(style));
+    if (el.localName === "style" && el.textContent) el.textContent = scrubCssUrls(el.textContent);
   });
+}
+
+// Mermaid fetches whatever resource a diagram names (image nodes, <img> in labels, CSS in
+// init directives) while it renders, before any post-pass sees the SVG. Diagram source that
+// can name a resource is therefore not rendered at all; plain diagrams never need these.
+const MERMAID_RESOURCE = /<\s*\/?\s*(?:img|image|video|audio|source|svg|link|object|embed|iframe|style)\b|\bimg\s*:|\bicon\s*:|url\s*\(|@import|\bsrc\s*=|\bhref\b|xlink|\\|%%\s*\{|\bclick\b/i;
+
+export function mermaidNamesResource(source: string): boolean {
+  return MERMAID_RESOURCE.test(source);
 }
