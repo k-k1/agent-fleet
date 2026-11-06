@@ -527,6 +527,25 @@ agy_effective_version() {
 }
 # NPM_CLI_PKGS — the npm-distributed CLIs, as <cli>=<package>.
 NPM_CLI_PKGS="claude=@anthropic-ai/claude-code opencode=@opencode/cli codex=@openai/codex copilot=@github/copilot"
+# bi_ok_if_failed <tool> — record ok only over an earlier failed line of this start, so a CLI
+# that was merely present keeps its "skipped".
+bi_ok_if_failed() {
+  [ "$(grep -P "^$1\t" "$BI_STATUS" 2>/dev/null | tail -1 | cut -f2)" = failed ] && bi_note "$1" ok
+  return 0
+}
+# npm_clis_verify_present — npm_clis_verify for the npm CLIs that have a ~/.local copy, on every
+# start, not only after an install: a copy broken by an earlier start (or with its version
+# already current, so no install runs) is otherwise never looked at again. Measured: four
+# --version calls take about 0.3 s.
+npm_clis_verify_present() {
+  local pair c list=""
+  for pair in $NPM_CLI_PKGS; do
+    c="${pair%%=*}"
+    if [ -e "$HOME/.local/bin/$c" ] || [ -L "$HOME/.local/bin/$c" ]; then list="$list $c"; fi
+  done
+  # shellcheck disable=SC2086
+  [ -z "$list" ] || npm_clis_verify $list
+}
 # npm_clis_verify <cli...> — after an npm install into ~/.local, check that each named CLI's
 # ~/.local copy answers --version; reinstall the broken or missing ones at their versions.json
 # pin once (space permitting), record a working one ok, and record the ones that still do not
@@ -544,7 +563,7 @@ npm_cli_runs() { timeout 30 "$HOME/.local/bin/$1" --version >/dev/null 2>&1; }
 npm_clis_verify() {
   local c pair pkg pin fix="" fix_clis="" broken=""
   for c in "$@"; do
-    if npm_cli_runs "$c"; then bi_note "$c" ok; continue; fi
+    if npm_cli_runs "$c"; then bi_ok_if_failed "$c"; continue; fi
     [ ! -e "$HOME/.local/bin/$c" ] && [ ! -L "$HOME/.local/bin/$c" ] && [ -x "/usr/local/bin/$c" ] && continue
     rm -f "$HOME/.local/bin/$c"
     pkg=""; for pair in $NPM_CLI_PKGS; do [ "${pair%%=*}" = "$c" ] && pkg="${pair#*=}"; done
@@ -648,6 +667,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   else
     echo "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)"
   fi
+  npm_clis_verify_present || true
   # rtk: the pinned GitHub Releases build of the Apache-2.0 edition (rtk-oss), checksum-verified
   # (same path and assets as the Dockerfile bake, which says why oss).
   RTK_NEED=0
@@ -928,6 +948,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   ' 2>/dev/null || echo 1)
   if [ "$NPM_NEED" = "0" ]; then
     echo "[entrypoint] agent CLIs already latest; skip"
+    npm_clis_verify_present || true
   else
     : > "$BI_ERR" 2>/dev/null || true
     if npm install -g --prefix "$NPM_PREFIX_DIR" @anthropic-ai/claude-code@latest @opencode/cli@latest @openai/codex@latest @github/copilot@latest >/dev/null 2>>"${BI_ERR:-/dev/null}"; then
