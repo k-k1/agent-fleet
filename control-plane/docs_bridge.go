@@ -85,7 +85,7 @@ func newDocsAPI(m *manager) docsAPI { return docsAPI{mgr: m} }
 // and resolves the live membership (revoked → 401).
 func (a docsAPI) docsTokenMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyDocsToken(docsSignKey(a.mgr.tokenSignMaster()), tok)
+	mid, ok := a.mgr.verifyBridge(r.Context(), docsSignKey(a.mgr.tokenSigningRoot()), tok, verifyDocsToken)
 	if !ok {
 		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid docs token"}
 	}

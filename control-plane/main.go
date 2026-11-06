@@ -134,6 +134,12 @@ func main() {
 		runRewrapKeys(os.Args[2:])
 		return
 	}
+	// Subcommand: `control-plane advance-bridge-epochs [--yes]` invalidates every bridge token
+	// once (bridge_epoch_cmd.go).
+	if len(os.Args) > 1 && os.Args[1] == "advance-bridge-epochs" {
+		runAdvanceBridgeEpochs(os.Args[2:])
+		return
+	}
 	// Subcommand: `control-plane home-dek-status` counts the homes on their own credential-store
 	// key (home_dek_status.go). Read-only.
 	if len(os.Args) > 1 && os.Args[1] == "home-dek-status" {

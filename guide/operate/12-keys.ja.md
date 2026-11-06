@@ -201,3 +201,11 @@ source_of_truth: "パラメータは `deploy/aws/ecs/README.md` と `deploy/aws/
   いなければ何も失いません。ホームの鍵を無視して導いた鍵を使い続けます。
 - **代替経路は無い。** KMS がホームの鍵を封じられない・開けないときは、ワークスペースは起動しません。
   導いた鍵だけで起動することはありません。
+
+## ブリッジトークンのローテーション
+
+メンバーごとのブリッジトークン、内部 git トークン、開発用 IdP のクライアントシークレットは、Workspace が Control Plane を呼ぶための認証情報です。SSM SecureString（ECS）、0600 の env ファイル（docker）、Secret（kubernetes）で渡し、タスク定義の `environment` には入れません。ブリッジトークンには membership の **epoch** が入り、現在の epoch のものだけが通ります。
+
+- **特定のメンバー。** `POST /api/admin/rotate-bridge-tokens`（`{"tenant_slug", "user_key"}`、テナント管理者）でそのメンバーの epoch を進めます。動作中の Workspace は再起動するまで古いトークンを持ち、コンソールに「再起動が必要」と出ます。メンバーの削除と、同じ membership の再有効化でも進みます。
+- **全員を一度に。** トークンを `environment` から出したリリースへ上げたあとも、古いタスク定義のリビジョン、CloudTrail、ログには、それ以前のトークンが残っている可能性があります。すべての Workspace がそのリリースになったら、Control Plane のデータベースに対して `af-cp advance-bridge-epochs`（件数の確認だけ）、続けて `af-cp advance-bridge-epochs --yes` を実行します（ECS では `rewrap-keys` と同じ単発タスク）。動作中のすべての Workspace のトークンが即座に無効になるので、静かな時間帯に再起動します（「再起動が必要」のバッジが対象を示します）。アップグレードだけでは何も無効になりません。epoch 0 は、どの Workspace も既に持っているトークンそのものです。
+- **署名鍵。** `AF_TOKEN_SIGN_VERSION` が、トークン鍵の導出元のルートを選びます。未設定または `0` は従来どおりデプロイの master です。`1` 以上は専用のルートを導出するので、トークン鍵が保存済みの認証情報を封じる鍵と分離され、数字を上げると保存済みの認証情報に触れずにすべてのトークンが無効になります。変更のたびに、全 Workspace の再起動が必要です。

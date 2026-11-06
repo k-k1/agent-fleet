@@ -13,6 +13,8 @@ audit.go
 aws_profiles_bridge.go
 brand.go
 brand_admin.go
+bridge_epoch.go
+bridge_epoch_cmd.go
 browser.go
 claude_audit.go
 cli_release_watch.go

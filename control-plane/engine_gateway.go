@@ -260,7 +260,14 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	exp := time.Now().Add(engineSessionTokenTTL)
-	tok := mintEngineSessionToken(g.reg.signKey, mv.MembershipID, strings.TrimSpace(req.Session), key, exp)
+	// Bound to the membership's current bridge epoch (issue #3452): a rotation or a removal
+	// kills the session tokens a model may still hold, not only the issuing token.
+	epoch, ok := g.mgr.bridgeEpoch(r.Context(), mv.MembershipID)
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"})
+		return
+	}
+	tok := mintEngineSessionToken(bridgeKeyAt(g.reg.signKey, epoch), mv.MembershipID, strings.TrimSpace(req.Session), key, exp)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      tok,
 		"expires_at": exp.UTC().Format(time.RFC3339),
@@ -416,7 +423,7 @@ func engineForbiddenErr(role string) *apiError {
 
 func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := verifyEngineIssueToken(g.reg.signKey, tok)
+	mid, ok := g.mgr.verifyBridge(r.Context(), g.reg.signKey, tok, verifyEngineIssueToken)
 	if !ok {
 		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid engine token"}
 	}
@@ -477,7 +484,7 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	claims, ok := verifyEngineSessionToken(g.reg.signKey, tok, time.Now())
+	claims, ok := g.verifyEngineSession(r.Context(), tok, time.Now())
 	if !ok || claims.Key != key {
 		// One message for "not a token", "expired" and "a token for the other engine": the
 		// caller can do nothing different about any of them, and saying which is a probing
@@ -624,7 +631,7 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	claims, ok := verifyEngineSessionToken(g.reg.signKey, tok, time.Now())
+	claims, ok := g.verifyEngineSession(r.Context(), tok, time.Now())
 	if !ok || claims.Key != key {
 		// Same one-message-out, reason-in-the-log split as serve() (:482) and for the same
 		// reason: the caller can do nothing different about any of "not a token", "expired" or
@@ -1782,4 +1789,21 @@ func engineLoadedModels(ctx context.Context, eng *engineRuntimeState) []string {
 		}
 	}
 	return out
+}
+
+// verifyEngineSession verifies a session token under its membership's current bridge epoch.
+func (g engineGateway) verifyEngineSession(ctx context.Context, tok string, now time.Time) (engineSessionClaims, bool) {
+	mid, ok := engineSessionMembership(tok)
+	if !ok {
+		return engineSessionClaims{}, false
+	}
+	epoch, ok := g.mgr.bridgeEpoch(ctx, mid)
+	if !ok {
+		return engineSessionClaims{}, false
+	}
+	claims, ok := verifyEngineSessionToken(bridgeKeyAt(g.reg.signKey, epoch), tok, now)
+	if !ok || claims.MembershipID != mid {
+		return engineSessionClaims{}, false
+	}
+	return claims, true
 }

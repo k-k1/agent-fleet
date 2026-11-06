@@ -41,8 +41,9 @@ func TestGitTokenEpochBumpAndRead(t *testing.T) {
 			if _, ok, err := st.GitTokenEpoch(ctx, mem.ID); err != nil || ok {
 				t.Fatalf("inactive membership read ok=%v err=%v, want not found", ok, err)
 			}
-			if e, ok, err := st.BumpGitTokenEpoch(ctx, mem.ID); err != nil || !ok || e != 3 {
-				t.Fatalf("bump of an inactive membership = %d ok=%v err=%v, want 3", e, ok, err)
+			// Removal itself advanced the epoch (3, issue #3452), so this bump lands on 4.
+			if e, ok, err := st.BumpGitTokenEpoch(ctx, mem.ID); err != nil || !ok || e != 4 {
+				t.Fatalf("bump of an inactive membership = %d ok=%v err=%v, want 4", e, ok, err)
 			}
 			if _, ok, err := st.BumpGitTokenEpoch(ctx, "no-such-membership"); err != nil || ok {
 				t.Fatalf("bump of a missing membership ok=%v err=%v, want not found", ok, err)

@@ -239,3 +239,28 @@ together with `CustodianKmsKeyArn`; only the Control Plane task definition chang
   one.
 - **No fallback.** If KMS cannot seal or open a home's key, the workspace does not start. It is
   never started on the derived key alone.
+
+## Rotating the bridge tokens
+
+The per-membership bridge tokens, the internal git token and the dev IdP client secret are
+credentials a workspace uses to call the Control Plane. They reach a workspace as SSM
+SecureStrings (ECS), a 0600 env file (docker) or a Secret (kubernetes), never as plain
+task-definition `environment`. Each bridge token carries the membership's **epoch**, and only the
+current epoch verifies.
+
+- **One member.** `POST /api/admin/rotate-bridge-tokens` (`{"tenant_slug", "user_key"}`, tenant
+  admin) advances that member's epoch. Their running workspace keeps the old tokens until it is
+  restarted, and the Console shows "restart required" on it. Removing a member and re-activating
+  the same membership advance it too.
+- **Everyone, once.** After upgrading to the release that moves the tokens out of
+  `environment`, old task-definition revisions, CloudTrail and logs may still hold tokens minted
+  before it. Once every workspace is on that release, run `af-cp advance-bridge-epochs` (a count
+  only) and then `af-cp advance-bridge-epochs --yes` against the Control Plane's database (on ECS,
+  as the same one-off task as `rewrap-keys`). The tokens in every running workspace die at once, so
+  restart them (the "restart required" badge lists them) in a quiet window. Nothing is invalidated
+  by the upgrade itself: epoch 0 is the token every workspace already holds.
+- **The signing keys.** `AF_TOKEN_SIGN_VERSION` selects the root the token keys derive from.
+  Unset or `0` is the deployment master, as before. `1` and up derive a root of their own, so the
+  token keys are separate from the keys that seal stored credentials, and raising the number
+  invalidates every token without touching a stored credential. Every change needs a restart of
+  every workspace afterwards.

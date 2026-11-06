@@ -187,5 +187,5 @@ func (a engineAdminAPI) issuingSignKey() []byte {
 	if a.reg != nil && len(a.reg.signKey) > 0 {
 		return a.reg.signKey
 	}
-	return engineSignKey(a.mgr.tokenSignMaster())
+	return engineSignKey(a.mgr.tokenSigningRoot())
 }

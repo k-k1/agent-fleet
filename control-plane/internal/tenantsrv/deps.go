@@ -101,6 +101,11 @@ type CP interface {
 	// push is the outcome of that push (updated | not_running | disabled | pending |
 	// failed). found=false when there is no such membership.
 	RotateGitToken(ctx context.Context, membershipID string) (epoch int64, push string, found bool, err error)
+	// RotateBridgeTokens advances the membership's bridge token epoch (and its git epoch),
+	// which kills the memo, schedule, MCP, docs, engine, OAuth, profile and branch-rule
+	// tokens at once (issue #3452). The running workspace holds dead tokens until it is
+	// restarted. found=false when there is no such membership.
+	RotateBridgeTokens(ctx context.Context, membershipID string) (epoch int64, found bool, err error)
 	EvictTenantCache(tenantID string)
 	// PushEngineCatalogChanged tells the tenant's running workspaces at once that its
 	// engine catalogue view moved (ADR 0084 decision 9) — the tenant-scoped counterpart

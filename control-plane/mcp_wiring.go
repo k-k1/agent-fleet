@@ -22,11 +22,14 @@ type cpDeps struct{ m *manager }
 
 var _ mcpsrv.CP = cpDeps{}
 
-func (d cpDeps) Store() store.Store               { return d.m.store }
-func (d cpDeps) CallLog() *mcpsrv.CallLog         { return &d.m.mcpCalls }
-func (d cpDeps) Custodian() mcpsrv.KeyCustodian   { return d.m.custodian }
-func (d cpDeps) Master32() []byte                 { return d.m.master32 }
-func (d cpDeps) TokenSignMaster() []byte          { return d.m.tokenSignMaster() }
+func (d cpDeps) Store() store.Store             { return d.m.store }
+func (d cpDeps) CallLog() *mcpsrv.CallLog       { return &d.m.mcpCalls }
+func (d cpDeps) Custodian() mcpsrv.KeyCustodian { return d.m.custodian }
+func (d cpDeps) Master32() []byte               { return d.m.master32 }
+func (d cpDeps) TokenSignMaster() []byte        { return d.m.tokenSigningRoot() }
+func (d cpDeps) BridgeKeyFor(ctx context.Context, signKey []byte, token string) ([]byte, bool) {
+	return d.m.bridgeKeyFor(ctx, signKey, token)
+}
 func (d cpDeps) EvictMembershipCache(mid string)  { d.m.evictMembershipCache(mid) }
 func (d cpDeps) TenantSel(r *http.Request) string { return tenantSel(r) }
 func (d cpDeps) ScopeRank(scope string) int       { return scopeRank(scope) }

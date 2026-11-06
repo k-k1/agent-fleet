@@ -92,7 +92,7 @@ func newGitOAuthBridgeAPI(m *manager) gitOAuthBridgeAPI { return gitOAuthBridgeA
 func (a gitOAuthBridgeAPI) withGitOAuthToken(h func(http.ResponseWriter, *http.Request, store.MembershipView)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		mid, ok := verifyGitOAuthToken(gitOAuthSignKey(a.mgr.tokenSignMaster()), tok)
+		mid, ok := a.mgr.verifyBridge(r.Context(), gitOAuthSignKey(a.mgr.tokenSigningRoot()), tok, verifyGitOAuthToken)
 		if !ok {
 			writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid git oauth token"})
 			return

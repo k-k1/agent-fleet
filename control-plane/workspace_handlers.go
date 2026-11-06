@@ -225,10 +225,12 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state
 	}
 	// Backend drift: the container is running older code than a fresh start would
 	// use (workspace_stale.go). The Console turns this into the WS-bar "restart required"
-	// badge and into the extra line of the update toast. Only meaningful while running —
+	// badge and into the extra line of the update toast. Bridge tokens rotated since the
+	// container started (bridge_epoch.go) count as drift too: the running container holds dead
+	// tokens until it is restarted. Only meaningful while running —
 	// a stopped workspace picks up the new image on its next start anyway — and only
 	// emitted when true, so the payload keeps its usual shape.
-	if m["state"] == "running" && workspaceStale(ctx, rt) {
+	if m["state"] == "running" && (workspaceStale(ctx, rt) || a.mgr.bridgeTokensStale(ctx, res.ws.MembershipID)) {
 		m["stale"] = true
 	}
 	// The runtime says running but the Agent has not answered for minutes and a probe
@@ -650,6 +652,10 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// The credential-store keys are resolved here, for this start, and a failure fails it.
 	// The runtime handed in may be a memo built long ago, holding keys a since-disabled KMS
 	// key would no longer open; starting it would defeat the fail-closed rule in dek.go.
+	// The bridge epoch this start's tokens are minted under (issue #3452), read BEFORE the env
+	// is built: a rotation in between leaves the marker older than the env, which at worst asks
+	// for one unneeded restart, never hides a needed one.
+	startEpoch, startEpochOK := a.mgr.bridgeEpoch(ctx, res.ws.MembershipID)
 	keys, home, err := a.mgr.resolveStartKeys(ctx, res.ws, res.ident.UserKey)
 	if err != nil {
 		return internalErr(fmt.Errorf("credential-store keys for ws %s: %w", res.ws.ID, err))
@@ -696,6 +702,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	}
 	if home != nil {
 		go a.mgr.watchHomeDEK(rt, *home, homeStart)
+	}
+	if startEpochOK {
+		if err := a.mgr.store.SetBridgeEpochStarted(ctx, res.ws.MembershipID, startEpoch); err != nil {
+			log.Printf("record bridge epoch (ws=%s): %v", res.ws.ID, err)
+		}
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState

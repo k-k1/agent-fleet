@@ -52,7 +52,7 @@ func (m *manager) currentGitToken(ctx context.Context, membershipID string) (str
 	if !ok {
 		return "", 0, errGitTokenNoMembership
 	}
-	return mintGitToken(gitSignKey(m.tokenSignMaster()), membershipID, epoch), epoch, nil
+	return mintGitToken(gitSignKey(m.tokenSigningRoot()), membershipID, epoch), epoch, nil
 }
 
 // gitEpochOfEnv is the epoch of the internal git token env actually carries, for the memo.

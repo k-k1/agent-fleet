@@ -597,24 +597,35 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 	// in-container fleet operator can read/write the memo queue over the public
 	// hairpin (memo_bridge.go). Deterministic token → idempotent re-injection. Requires
 	// PUBLIC_BASE_URL (else the bridge is unreachable, so we inject nothing).
+	// The tokens below are minted under the membership's current bridge epoch (issue #3452).
+	// When the epoch cannot be read nothing is injected, as for the git token: a token minted
+	// under a guessed epoch would replace a working one in the Agent with one that fails.
+	root := m.tokenSigningRoot()
+	bridgeEpoch, epochOK := int64(0), false
 	if m.publicBaseURL != "" && ws.MembershipID != "" {
+		if bridgeEpoch, epochOK = m.bridgeEpoch(ctx, ws.MembershipID); !epochOK {
+			log.Printf("bridge tokens for ws %s not injected: epoch unreadable or membership inactive", ws.ID)
+		}
+	}
+	at := func(k []byte) []byte { return bridgeKeyAt(k, bridgeEpoch) }
+	if m.publicBaseURL != "" && ws.MembershipID != "" && epochOK {
 		env = append(env,
 			"AF_CP_BASE_URL="+m.publicBaseURL,
-			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_MEMO_TOKEN="+mintMemoToken(at(memoSignKey(root)), ws.MembershipID),
 			// Schedule bridge (docs/log/38 P3): separate per-membership token so the
 			// operator MCP can drive /internal/schedules over the same hairpin. A
 			// distinct credential from the memo token — a leak is scoped to schedules.
-			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_SCHEDULE_TOKEN="+mintScheduleToken(at(scheduleSignKey(root)), ws.MembershipID),
 			// MCP registry bridge (docs/log/48 P4): the agent polls /internal/mcp-servers for
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
-			"AF_MCP_TOKEN="+mcpsrv.MintMCPToken(mcpsrv.MCPSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_MCP_TOKEN="+mcpsrv.MintMCPToken(at(mcpsrv.MCPSignKey(root)), ws.MembershipID),
 			// Docs bridge (docs/build/04 §4.9): the agent pulls its role-scoped docs subset
 			// when nothing was bind-mounted — i.e. on ECS, where no host path exists to
 			// mount. Its own credential for the same reason as the others; a leak reads
 			// this member's docs subset and nothing else.
-			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_DOCS_TOKEN="+mintDocsToken(at(docsSignKey(root)), ws.MembershipID),
 			// Self-hosted inference engines (ADR 0071 decision 4): the ISSUING credential
 			// only. All it can do is buy a session-scoped token from /internal/engine/token,
 			// and that second token is the one a session's model can read out of its own
@@ -622,23 +633,23 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// transcript can reach. Injected whether or not this deployment runs an engine:
 			// the routes are simply absent when it does not, which the agent reads as "no
 			// engines" without needing a second signal.
-			"AF_ENGINE_ISSUE_TOKEN="+mintEngineIssueToken(engineSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_ENGINE_ISSUE_TOKEN="+mintEngineIssueToken(at(engineSignKey(root)), ws.MembershipID),
 			// Git OAuth refresh bridge (docs/log/71 §71.8): the agent posts its Bitbucket
 			// refresh token here so the CP can add the TENANT's client secret, which
 			// therefore never reaches the container. Its own credential for the same
 			// reason as the others; a leak refreshes this member's git token and
 			// nothing else.
-			"AF_GIT_OAUTH_TOKEN="+mintGitOAuthToken(gitOAuthSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_GIT_OAUTH_TOKEN="+mintGitOAuthToken(at(gitOAuthSignKey(root)), ws.MembershipID),
 			// AWS profiles bridge (issue #998): the agent pulls the member's SSO profiles
 			// into ~/.aws/config. Its own credential; a leak reads that non-secret list
 			// and nothing else.
-			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(awsProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_AWS_PROFILES_TOKEN="+mintAWSProfilesToken(at(awsProfilesSignKey(root)), ws.MembershipID),
 			// Google Cloud profiles bridge (ADR 0107 decision 1): the same pull for Settings →
 			// Google Cloud, under a token of its own so neither bridge opens the other's list.
-			"AF_GCP_PROFILES_TOKEN="+mintGCPProfilesToken(gcpProfilesSignKey(m.tokenSignMaster()), ws.MembershipID),
+			"AF_GCP_PROFILES_TOKEN="+mintGCPProfilesToken(at(gcpProfilesSignKey(root)), ws.MembershipID),
 			// Branch rules bridge (ADR 0103 decision 10): the agent polls its tenant's branch
 			// naming rules. Its own credential; a leak reads those rules and nothing else.
-			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(branchRulesSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_BRANCH_RULES_TOKEN="+mintBranchRulesToken(at(branchRulesSignKey(root)), ws.MembershipID))
 		// Where the workspace reaches the CP by an internal address (ADR 0106 decision 8),
 		// the Agent sends its requests there and keeps AF_CP_BASE_URL for links a person
 		// opens. Only alongside the public base: the bridge tokens above are what make it
