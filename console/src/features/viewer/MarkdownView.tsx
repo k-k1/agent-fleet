@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, slug } from "../../lib/filemeta.ts";
 // marked: the app's own instance, not the package singleton (see lib/markdown.ts).
 import { marked, repairFullwidthTables, splitYamlFrontMatter } from "../../lib/markdown.ts";
+import { mermaidNamesResource, sanitizeMarkdownHtml, stripInternalMedia } from "../../lib/sanitize.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
@@ -175,7 +175,7 @@ export function MarkdownView({
     // document is at least readable here, and mark what was repaired below.
     const repair = repairFullwidthTables(body);
     const rawHtml = marked.parse(repair?.body ?? body, { gfm: true, breaks }) as string;
-    el.innerHTML = DOMPurify.sanitize(rawHtml);
+    el.innerHTML = sanitizeMarkdownHtml(rawHtml, { repoRelative: !streaming });
     if (frontMatter) renderFrontMatter(el, frontMatter.attributes, frontMatter.lenient);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
@@ -335,6 +335,7 @@ export function MarkdownView({
         });
         blocks.forEach(async (code) => {
           const src = code.textContent || "";
+          if (mermaidNamesResource(src)) return; // stays as source, nothing is fetched
           const id = "mmd-" + ++mermaidSeq;
           try {
             const { svg } = await mermaid.render(id, src);
@@ -342,6 +343,7 @@ export function MarkdownView({
             const wrap = document.createElement("div");
             wrap.className = "mermaid-diagram";
             wrap.innerHTML = svg;
+            stripInternalMedia(wrap);
             code.parentElement.replaceWith(wrap);
           } catch {
             // leave the source block in place on a render error
