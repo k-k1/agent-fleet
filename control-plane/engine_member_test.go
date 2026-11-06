@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -545,13 +546,17 @@ func TestEventsStreamEnginesPushesChange(t *testing.T) {
 	a.engines = &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
 
 	rec := &syncRecorder{}
-	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) {
-		waitFramesCtx(ctx, rec, "engines", 1)
+	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) error {
+		if !waitFramesCtx(ctx, rec, "engines", 1) {
+			return errors.New("no engines snapshot frame")
+		}
 		e.ctrl.noteMemberSnapshot("stopped", 0, time.Now())
-		waitFramesCtx(ctx, rec, "engines", 2)
+		if !waitFramesCtx(ctx, rec, "engines", 2) {
+			return errors.New("the engines change frame never arrived")
+		}
 		// Two flips: the second frame proves the tick that carried the first, engines included
 		// (engines is emitted last in a tick), was fully processed.
-		stub.waitSubscriberTicks(ctx, rec, 1, 2)
+		return stub.waitSubscriberTicks(ctx, rec, 1, 2)
 	})
 	if got := len(frames["engines"]); got != 2 {
 		t.Fatalf("engines frames = %d, want 2 (snapshot + the state change)", got)

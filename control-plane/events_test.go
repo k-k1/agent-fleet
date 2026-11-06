@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -53,26 +54,40 @@ func (s *eventsStub) waitPollsCtx(ctx context.Context, n int64) {
 	}
 }
 
-// waitFramesCtx blocks until n frames of stream are in rec, or ctx ends.
-func waitFramesCtx(ctx context.Context, rec *syncRecorder, stream string, n int) {
-	for len(rec.frames()[stream]) < n && ctx.Err() == nil {
+// waitFramesCtx blocks until n frames of stream are in rec. It reports false when ctx ended first,
+// so a caller can fail instead of asserting on a stream that stopped making progress.
+func waitFramesCtx(ctx context.Context, rec *syncRecorder, stream string, n int) bool {
+	for len(rec.frames()[stream]) < n {
+		if ctx.Err() != nil {
+			return false
+		}
 		time.Sleep(time.Millisecond)
 	}
+	return true
 }
 
 // waitSubscriberTicks makes the subscriber itself prove it has processed ticks after the
 // frame the caller waited for. The hub polls ahead of the subscriber, so a poll count says
 // nothing about what the subscriber has handled; a frame does. Each flip changes the
 // /sessions body to a value never served before and waits for the matching "sessions"
-// frame, which only the subscriber can write. Ticks are processed in order, so when flip
-// N+1's frame is in, every stream of the tick that carried flip N has been emitted — a
-// duplicate sent by a regression on those ticks is already in rec. `have` is how many
-// sessions frames rec holds when the call starts.
-func (s *eventsStub) waitSubscriberTicks(ctx context.Context, rec *syncRecorder, have, flips int) {
-	for i := 1; i <= flips && ctx.Err() == nil; i++ {
-		s.setBody(fmt.Sprintf(`{"sessions":[{"name":"sentinel-%d","kind":"claude","alive":true}]}`, i))
-		waitFramesCtx(ctx, rec, "sessions", have+i)
+// frame, which only the subscriber can write, and checks that frame carries the flip's own
+// value (a duplicate of an earlier frame is not mistaken for it). Ticks are processed in
+// order, so when flip N+1's frame is in, every stream of the tick that carried flip N has
+// been emitted — a duplicate sent by a regression on those ticks is already in rec. `have`
+// is how many sessions frames rec holds when the call starts. A non-nil error means the
+// subscriber stopped making progress before ctx ended.
+func (s *eventsStub) waitSubscriberTicks(ctx context.Context, rec *syncRecorder, have, flips int) error {
+	for i := 1; i <= flips; i++ {
+		name := fmt.Sprintf("sentinel-%d", i)
+		s.setBody(fmt.Sprintf(`{"sessions":[{"name":%q,"kind":"claude","alive":true}]}`, name))
+		if !waitFramesCtx(ctx, rec, "sessions", have+i) {
+			return fmt.Errorf("sessions frame for %s never arrived: the subscriber stopped processing ticks", name)
+		}
+		if got := string(rec.frames()["sessions"][have+i-1]); !strings.Contains(got, name) {
+			return fmt.Errorf("sessions frame #%d = %s, want it to carry %s (an unexpected extra frame?)", have+i, got, name)
+		}
 	}
+	return nil
 }
 
 // eventsTestEnv builds a sqlite-backed eventsAPI plus a stub Agent serving
@@ -196,7 +211,7 @@ func runStream(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls
 // nothing about what the subscriber has sent.
 func runStreamWith(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls int64, rec *syncRecorder) (map[string][]json.RawMessage, string) {
 	t.Helper()
-	return runStreamUntil(t, a, res, rec, func(ctx context.Context) { stub.waitPollsCtx(ctx, polls) })
+	return runStreamUntil(t, a, res, rec, func(ctx context.Context) error { stub.waitPollsCtx(ctx, polls); return nil })
 }
 
 // runStreamUntil is the common body: it cancels the request once wait returns. A test that
@@ -204,16 +219,17 @@ func runStreamWith(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, p
 // count, because a count of ticks is a bet on speed: under -race a slow tick pushes the
 // change out of a fixed window. wait is bounded by its own deadline, and the absolute 30 s
 // context stays as insurance; the frame-count assertion after the call is what fails.
-func runStreamUntil(t *testing.T, a eventsAPI, res *resolved, rec *syncRecorder, wait func(ctx context.Context)) (map[string][]json.RawMessage, string) {
+func runStreamUntil(t *testing.T, a eventsAPI, res *resolved, rec *syncRecorder, wait func(ctx context.Context) error) (map[string][]json.RawMessage, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	// Joined below, so no wait outlives the test; wait must return when ctx ends.
 	defer func() { cancel(); <-done }()
+	var waitErr error
 	go func() {
 		defer close(done)
-		wait(ctx)
+		waitErr = wait(ctx)
 		// The hub's tick runs ahead of the subscriber, which still owes the per-member parts
 		// of the snapshot that poll belongs to. Closing at once would cancel it half-way.
 		if ctx.Err() == nil {
@@ -223,6 +239,11 @@ func runStreamUntil(t *testing.T, a eventsAPI, res *resolved, rec *syncRecorder,
 	}()
 	r := httptest.NewRequest("GET", "/api/events", nil).WithContext(ctx)
 	a.stream(rec, r, res)
+	cancel()
+	<-done
+	if waitErr != nil {
+		t.Fatal(waitErr)
+	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
 		t.Fatalf("Content-Type = %q", ct)
 	}
@@ -287,11 +308,15 @@ func TestEventsStreamPushesChange(t *testing.T) {
 	// Apply the change only after the snapshot has gone out, and close the stream only after
 	// the subscriber has handled later ticks. Everything waits on frames, never on time.
 	rec := &syncRecorder{}
-	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) {
-		waitFramesCtx(ctx, rec, "sessions", 1)
+	frames, _ := runStreamUntil(t, a, res, rec, func(ctx context.Context) error {
+		if !waitFramesCtx(ctx, rec, "sessions", 1) {
+			return errors.New("no sessions snapshot frame")
+		}
 		stub.setBody(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
-		waitFramesCtx(ctx, rec, "sessions", 2)
-		stub.waitSubscriberTicks(ctx, rec, 2, 1)
+		if !waitFramesCtx(ctx, rec, "sessions", 2) {
+			return errors.New("the sessions change frame never arrived")
+		}
+		return stub.waitSubscriberTicks(ctx, rec, 2, 1)
 	})
 
 	// snapshot + the change + the sentinel flip waitSubscriberTicks used to see the subscriber tick.
