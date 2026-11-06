@@ -343,7 +343,7 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 				// told, and stopping here would leave the continuation unchecked.
 				return TargetDiffers
 			}
-			if ok && width > 0 && c+1 >= width-1 && k+1 < len(lines) {
+			if ok && width > 0 && k+1 < len(lines) && (c+1 >= width-1 || wordWrapped(c, lines[k+1], width)) {
 				continue
 			}
 			if truncated {
@@ -357,4 +357,17 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 		}
 	}
 	return TargetDiffers
+}
+
+// wordWrapped reports whether a line of c columns ended short of the pane's edge because the
+// next word did not fit, which is how Claude Code's renderer breaks a line at a space (measured
+// on a narrow pane: "cp js.txt" / "queue.txt;"). A next line that starts with whitespace is a
+// real indent, never a wrap. The join is still compared in full against the payload, so the
+// wider test only costs the residual already described on CheckTarget.
+func wordWrapped(c int, next string, width int) bool {
+	if next == "" || next[0] == ' ' || next[0] == '\t' {
+		return false
+	}
+	w, ok := cols(strings.Fields(next)[0])
+	return ok && c+1+1+w >= width
 }

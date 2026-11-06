@@ -36,6 +36,8 @@ func TestCheckTarget(t *testing.T) {
 		{"rewritten command still contains it", "bash_four_options.txt", `Bash · jira issue create -p ABC -t Task -s "テスト 日本語" --no-input || true`, "", TargetMatches},
 		{"wrapped command", "bash_wrapped_command.txt", "Bash · " + long[:100] + "…", "", TargetMatches},
 		{"wrapped, other command", "bash_wrapped_command.txt", "Bash · find /tmp -name x", "", TargetDiffers},
+		{"word-wrapped on a narrow pane", "bash_word_wrapped_command.txt", "Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt", "", TargetMatches},
+		{"word-wrapped, other command", "bash_word_wrapped_command.txt", "Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt", "", TargetDiffers},
 		{"multi-line: first line", "bash_multiline_command.txt", "Bash · cat > note.txt <<'EOF'", "", TargetMatches},
 		{"multi-line: other", "bash_multiline_command.txt", "Bash · cat > other.txt <<'EOF'", "", TargetDiffers},
 		{"new file, relative", "write_three_options.txt", "Write · /home/dev/repos/demo/note.txt", "/home/dev/repos/demo", TargetMatches},
