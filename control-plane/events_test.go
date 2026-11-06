@@ -166,10 +166,20 @@ func runStream(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls
 // nothing about what the subscriber has sent.
 func runStreamWith(t *testing.T, a eventsAPI, res *resolved, stub *eventsStub, polls int64, rec *syncRecorder) (map[string][]json.RawMessage, string) {
 	t.Helper()
+	return runStreamUntil(t, a, res, rec, func() { stub.waitPolls(polls, time.Now().Add(25*time.Second)) })
+}
+
+// runStreamUntil is the common body: it cancels the request once wait returns. A test that
+// expects a state-change frame passes a wait on that frame (rec.waitFrames) instead of a poll
+// count, because a count of ticks is a bet on speed: under -race a slow tick pushes the
+// change out of a fixed window. wait is bounded by its own deadline, and the absolute 30 s
+// context stays as insurance; the frame-count assertion after the call is what fails.
+func runStreamUntil(t *testing.T, a eventsAPI, res *resolved, rec *syncRecorder, wait func()) (map[string][]json.RawMessage, string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	go func() {
-		stub.waitPolls(polls, time.Now().Add(25*time.Second))
+		wait()
 		// The hub's tick runs ahead of the subscriber, which still owes the per-member parts
 		// of the snapshot that poll belongs to. Closing at once would cancel it half-way.
 		time.Sleep(100 * time.Millisecond)
@@ -245,7 +255,7 @@ func TestEventsStreamPushesChange(t *testing.T) {
 		rec.waitFrames("sessions", 1)
 		stub.setBody(`{"sessions":[{"name":"s1","kind":"claude","alive":false}]}`)
 	}()
-	frames, _ := runStreamWith(t, a, res, stub, 6, rec)
+	frames, _ := runStreamUntil(t, a, res, rec, func() { rec.waitFrames("sessions", 2) })
 
 	if got := len(frames["sessions"]); got != 2 {
 		t.Fatalf("sessions frames = %d, want 2 (snapshot + change)", got)
