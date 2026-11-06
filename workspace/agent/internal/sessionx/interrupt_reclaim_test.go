@@ -336,6 +336,11 @@ func TestClaudeBox(t *testing.T) {
 	if draft, _, ok = claudeBox(paneWideTitledEmpty); !ok || squashSpace(draft) != "" {
 		t.Fatalf("wide title: draft = %q, ok = %v", draft, ok)
 	}
+	// "e" + U+0301 is one column: tmux keeps the combining mark in the "e" cell. 3+1+2+1+1+72 = 80.
+	combining := "─── 日e\u0301 " + strings.Repeat("─", 72)
+	if draft, _, ok = claudeBox(combining + "\n❯ \n" + strings.Repeat("─", 80) + "\n"); !ok || squashSpace(draft) != "" {
+		t.Fatalf("combining mark in the title: draft = %q, ok = %v", draft, ok)
+	}
 	for name, pane := range map[string]string{
 		// A row of the draft that starts at column 0 is not claude's layout.
 		"unindented row": rule + "\n❯ a\nb\n" + rule + "\n",

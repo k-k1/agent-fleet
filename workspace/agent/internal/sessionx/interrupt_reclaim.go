@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/text/width"
 
@@ -114,13 +115,16 @@ func topRule(line string) bool {
 
 // ruleWidth is the line's width in terminal columns. A title in the top rule can hold wide runes
 // (a Japanese session title), and counting runes made that rule shorter than the bottom one, so the
-// box never read and a stop's guard never lifted (issue #3408). Only East Asian Wide and Fullwidth
-// runes take two columns: "─" itself is Ambiguous and tmux draws it one column wide.
+// box never read and a stop's guard never lifted (issue #3408). East Asian Wide and Fullwidth
+// runes take two columns; "─" itself is Ambiguous and tmux draws it one column wide. Combining
+// marks, variation selectors and format characters (ZWJ) take none: tmux keeps them in the cell
+// of the rune before, as wcwidth says.
 func ruleWidth(line string) int {
 	n := 0
 	for _, r := range strings.TrimRight(line, " ") {
-		switch width.LookupRune(r).Kind() {
-		case width.EastAsianWide, width.EastAsianFullwidth:
+		switch {
+		case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
+		case width.LookupRune(r).Kind() == width.EastAsianWide, width.LookupRune(r).Kind() == width.EastAsianFullwidth:
 			n += 2
 		default:
 			n++
