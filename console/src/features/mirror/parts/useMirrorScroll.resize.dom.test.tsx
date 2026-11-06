@@ -6,6 +6,7 @@ import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useMirrorScroll } from "./useMirrorScroll.ts";
 import { clearMarks } from "../scrollMark.ts";
+import type { Group } from "../transcript/types.ts";
 
 let api: ReturnType<typeof useMirrorScroll> | null = null;
 let height = 500;
@@ -251,5 +252,66 @@ describe("useMirrorScroll glide", () => {
     expect(el.scrollTop).toBe(1500 - 500 * 1.5);
     settle();
     expect(el.scrollTop).toBe(1500);
+  });
+
+  it("lands the opening at the end at once, glide or no glide", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    act(() => {
+      api!.resetForSession("another");
+      api!.applyFollow({ groups: [], loaded: true, busy: false, pending: null, pendingPlan: null, pendingPerm: null });
+    });
+    expect(el.scrollTop).toBe(1500); // before any frame
+  });
+
+  it("yields to a scrollbar drag, which raises no pointerdown", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 800;
+    api!.atBottomRef.current = true;
+    newContent();
+    step(2);
+    el.scrollTop = 300; // the reader drags the thumb up
+    act(() => api!.onBodyScroll());
+    expect(api!.atBottomRef.current).toBe(false);
+    expect(api!.showJump).toBe(true);
+    step(5);
+    expect(el.scrollTop).toBe(300); // not pulled back down
+  });
+
+  it("shows jump-to-latest when the reader stops a completion glide after its last scroll event", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    const turn = el.querySelector<HTMLElement>('[data-turn-idx="3"]')!;
+    const body = document.createElement("div");
+    body.className = "mirror-turn-body";
+    const work = document.createElement("div");
+    work.className = "mt-work";
+    const answer = document.createElement("div");
+    answer.getBoundingClientRect = () => new DOMRect(0, top + 1100 - scroll, 200, 100);
+    body.append(work, answer);
+    turn.append(body);
+    const groups = [
+      { role: "user", idx: 1, parts: [] },
+      { role: "assistant", idx: 3, parts: [] },
+    ] as unknown as Group[];
+    const follow = (busy: boolean) =>
+      act(() => api!.applyFollow({ groups, loaded: true, busy, pending: null, pendingPlan: null, pendingPerm: null }));
+    el.scrollTop = 1500;
+    api!.atBottomRef.current = true;
+    follow(true); // the reply streams at the end
+    settle();
+    follow(false); // it completes: glide up to the answer (1088)
+    expect(api!.atBottomRef.current).toBe(false);
+    for (let i = 0; i < 8; i++) {
+      step();
+      act(() => api!.onBodyScroll());
+    }
+    expect(SCROLL_HEIGHT - height - el.scrollTop).toBeGreaterThan(80); // out of the follow zone
+    expect(api!.showJump).toBe(false); // every scroll event so far was the glide's own
+    act(() => api!.noteInteraction()); // a click in the transcript stops it
+    step();
+    expect(api!.atBottomRef.current).toBe(false);
+    expect(api!.showJump).toBe(true);
   });
 });

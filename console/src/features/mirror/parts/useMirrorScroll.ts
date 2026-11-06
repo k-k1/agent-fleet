@@ -311,6 +311,15 @@ export function useMirrorScroll() {
       box.top = el.getBoundingClientRect().top;
     }
   };
+  // The reader's hand outranks a glide. onBodyScroll skipped the glide's frames, and their last
+  // scroll event may already have been delivered, so the follow state and the jump pill are judged
+  // again from where the glide stopped — a frame later, never in this event (see scheduleReplyTopSync
+  // on DOM changes in the same frame as a pin).
+  const stopGlideForReader = () => {
+    if (!glider.active()) return;
+    glider.cancel();
+    requestAnimationFrame(onBodyScroll);
+  };
   // Arm the "the reader caused this reflow" window. A pointer or keyboard interaction inside
   // the transcript can toggle a disclosure (work progress / thinking / tool run), switch code
   // wrapping, or open a plan comment box — all of which grow the content under a reader who
@@ -318,7 +327,7 @@ export function useMirrorScroll() {
   // the keyboard path (Enter/Space on a <summary>) arm it before the reflow lands. A fold
   // that WE change (foldWork on completion) is content, not interaction, and is followed.
   const noteInteraction = () => {
-    glider.cancel(); // the reader's hand outranks a glide too
+    stopGlideForReader();
     inputSeqRef.current++;
     interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
     endRestoreOnInput(); // the reader touched it — their hand outranks the position restore
@@ -344,9 +353,15 @@ export function useMirrorScroll() {
     bodyBoxRef.current.scrollTop = el.scrollTop;
     scheduleReplyTopSync();
     // A glide's own frames. Read as intent, an upward glide's first frames are still near the end
-    // and would re-arm follow under the completion anchor. Reader input cancels the glide before its
-    // scroll event lands (wheel / touch / pointer / key capture), so this never swallows the reader.
-    if (glider.active()) return;
+    // and would re-arm follow under the completion anchor. Wheel / touch / pointer / key cancel the
+    // glide before their scroll event lands; a native scrollbar drag dispatches no pointerdown, so
+    // an upward move we did not write — and that is not the browser clamping to a shorter body,
+    // which lands exactly on the end — is the reader too: stop the glide and judge it below.
+    if (glider.active()) {
+      const max = el.scrollHeight - el.clientHeight;
+      if (!(el.scrollTop < selfTopRef.current - 1 && el.scrollTop < max - 1)) return;
+      glider.cancel();
+    }
     rebasePrependAnchor(); // a move we didn't make becomes the anchor's new resting place
     const movedUp = el.scrollTop < selfTopRef.current - 1;
     if (atBottomRef.current && !movedUp) {
@@ -402,7 +417,7 @@ export function useMirrorScroll() {
   };
 
   const endRestoreOnInput = () => {
-    glider.cancel();
+    stopGlideForReader();
     inputSeqRef.current++;
     if (restoringRef.current) endRestore();
   };
@@ -511,9 +526,9 @@ export function useMirrorScroll() {
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
-    // Glides once the session has settled; the first landing is instant (see gliderRef).
-    const toBottom = () => {
-      pinBottom(el, didInitRef.current);
+    // smooth: a move caused by new content. The first landing passes false (see gliderRef).
+    const toBottom = (smooth = true) => {
+      pinBottom(el, smooth && didInitRef.current);
       atBottomRef.current = true; // authoritative now (don't wait for the async scroll event)
     };
 
@@ -562,7 +577,7 @@ export function useMirrorScroll() {
         }
         restoreMarkRef.current = null;
       }
-      toBottom();
+      toBottom(false); // didInitRef is already set above, so say "instant" explicitly
       return;
     }
 
