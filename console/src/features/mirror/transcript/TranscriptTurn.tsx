@@ -48,12 +48,16 @@ function TranscriptTurnImpl({
   caps,
   foldWork,
   defaultWorkOpen,
+  settled = foldWork,
   autoTranslate = false,
 }: {
   turn: Group;
   caps: TranscriptCaps;
   foldWork: boolean;
   defaultWorkOpen: boolean;
+  /** The turn's own run is over — `foldWork` without the background work that keeps a live
+   *  exchange unfolded (TranscriptView turnWorking). What translation waits for. */
+  settled?: boolean;
   autoTranslate?: boolean;
 }) {
   // This component is memoised on its props, so a region format / time zone change (which alters
@@ -165,7 +169,13 @@ function TranscriptTurnImpl({
   const fromSession = fromPeer || fromSpawn || fromMcp;
   const envelope = fromSession && !turn.bash && !turn.cmd ? splitSessionEnvelope(turn.text || "") : null;
   const tx = isUser ? (envelope?.body.trim() ? caps.translate : undefined) : caps.translate;
-  const txTexts = !tx ? [] : envelope ? [envelope.body] : translatableTexts({ parts: visibleParts });
+  // A reply that is over while background work keeps its trace unfolded is translated from its
+  // final answer — the slice that will stay visible once it folds — rather than from the whole
+  // inline trace: that keeps the key (and so the translation on screen) the same across the
+  // fold, and keeps the intermediate replies out of the request as §97.9 requires.
+  const txSplit = split ?? (!isUser && settled ? workSplit(turn.parts) : null);
+  const txParts = txSplit ? turn.parts.slice(txSplit.at) : turn.parts;
+  const txTexts = !tx ? [] : envelope ? [envelope.body] : translatableTexts({ parts: txParts });
   const txKey = tx ? turnTranslateKey(txTexts) : "";
   const txShown = !!txKey && !!tx?.shown(txKey);
   const translatedOf = (p: Part): string | undefined =>
@@ -180,9 +190,9 @@ function TranscriptTurnImpl({
     !!txKey &&
     !turn.pending &&
     // A user turn is whole the moment it lands; only an answer can still be streaming.
-    (isUser || foldWork) &&
+    (isUser || settled) &&
     (txShown || !!tx.get(txTexts[0]) || looksForeign(txTexts.join("\n\n"), tx.lang));
-  // The press the reader did not make (docs/log/97 §97.12). `foldWork` — already part of the
+  // The press the reader did not make (docs/log/97 §97.12). `settled` — already part of the
   // condition above — is false exactly while the live exchange is streaming, so "the turn just
   // finished" needs no clock and no completion event of its own, and a turn still being appended
   // to is never sent. Which turns are eligible at all is the caller's answer (autoTranslate):
@@ -323,7 +333,7 @@ function TranscriptTurnImpl({
           answer={item.p.answer}
           declined={item.p.declined}
           translate={caps.translate}
-          autoTranslate={autoTranslate && foldWork}
+          autoTranslate={autoTranslate && settled}
         />
       ) : item.p.kind === "plan" ? (
         // A historical plan — show the outcome, open in a pane when this view can (the
@@ -681,8 +691,8 @@ function TranscriptTurnImpl({
           </button>
         )}
         {/* Read this answer in my language (docs/log/97). Offered only when there is something
-            to gain: the turn has prose, it is not still streaming (foldWork is false exactly for
-            the live exchange while the session works), and either the prose does not look like
+            to gain: the turn has prose, it is not still streaming (settled is false exactly for
+            the live exchange while its turn runs), and either the prose does not look like
             the reader's language or a translation is already held — flipping back and forth must
             stay possible once it exists. Pressing to show a held translation costs nothing.
             The condition itself is txOffered, above: the automatic press is this same press. */}
