@@ -1025,12 +1025,11 @@ func efsVolume(name, fsID, apID string) ecstypes.Volume {
 			TransitEncryption: ecstypes.EFSTransitEncryptionEnabled,
 			AuthorizationConfig: &ecstypes.EFSAuthorizationConfig{
 				AccessPointId: aws.String(apID),
-				// IAM auth off: the workspace task role is least-privilege (no EFS
-				// perms, frozen spec §20b.7.9). The access point's posix uid/gid +
-				// root-dir and the EFS mount-target SG (2049 from the ws SG only)
-				// provide isolation. NOTE: task roles are shared across memberships,
-				// so per-membership EFS isolation via IAM would need a per-membership
-				// task role — a P3-8 (dedicated isolation) follow-up, not this milestone.
+				// IAM auth off: the workspace task role has no EFS grant, so the mount is
+				// anonymous and the file-system policy (10-data) admits it only because it
+				// names an access point and uses TLS. Task roles are shared across
+				// memberships, so this does not stop a task naming another member's access
+				// point; that needs IAM authorization with a per-membership role (#3455).
 				Iam: ecstypes.EFSAuthorizationConfigIAMDisabled,
 			},
 		},

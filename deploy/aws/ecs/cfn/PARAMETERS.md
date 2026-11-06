@@ -795,13 +795,29 @@ to remove the access point's own root directory. The confinement is in the comma
 refuses a membership id that is not one path element, refuses unless /mnt/efs is a mount, and
 only ever removes under /home/<id> and /claude-config/<id>.
 
+The mount is IAM-authorized under 10-data's HomeOpsEfsRole, the one principal the file-system
+policy lets mount without an access point (every other mount needs TLS and an access point). A
+task role and an `AuthorizationConfig: IAM: ENABLED` volume are the whole of it; the CP's
+only addition is iam:PassRole on that role, to ecs-tasks, in the grant below.
+
+**Upgrade order: 10-data, then 30-ingress.** `update.sh` does not deploy 10-data, so update the
+data stack from the release's `cfn/10-data.yaml` with its current parameters first, then run
+`update.sh` at once; `update.sh` stops before touching anything when the data stack lacks the
+`HomeOpsEfsRoleArn` output. Between the two, the old home task (no IAM, no access point) is
+refused, so Recreate, Clean home and Destroy fail; running workspaces, Start and Stop are
+unaffected (they mount with an access point and TLS). A failed home operation leaves its marker
+in place and is run again by the CP's reconciler or by retrying once 30-ingress has moved.
+Rolling 10-data back removes the policy and the export, so roll 30-ingress back first.
+A file-system policy applied by hand is replaced by the template's on the 10-data update.
+
 ### Home task grant
 
 The CP's grant for the home task: it lives in this stack because only this stack can name the
 family. RunTask is fenced to that family (any revision: a stack update deregisters the old one,
-and the CP runs the family by name) in this deployment's cluster. The task's roles need no new
-PassRole: it names only the execution role, which PassTaskRoles in 20-platform already lets the
-CP pass to ecs-tasks. ListTasks and DescribeTasks are EcsDrive's, unscoped there already. The
+and the CP runs the family by name) in this deployment's cluster. The execution role needs no new
+PassRole (PassTaskRoles in 20-platform already lets the CP pass it to ecs-tasks); the task role,
+10-data's HomeOpsEfsRole, is passed by its own statement here: that role only, to ecs-tasks only.
+ListTasks and DescribeTasks are EcsDrive's, unscoped there already. The
 task's cost tags (af-membership, af-role, af-tenant) are authorized as ecs:TagResource on the new
 task: only as part of a RunTask (ecs:CreateAction), so no task that exists can be retagged, only
 in this cluster, and only the keys EcsTagServiceOnCreate (20-platform) allows on a workspace

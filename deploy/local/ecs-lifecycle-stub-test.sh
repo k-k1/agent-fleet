@@ -207,6 +207,9 @@ case "$args" in
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
+  # 10-data's HomeOpsEfsRoleArn (EFS file-system policy). STUB_NO_HOME_ROLE=1 = a data stack older than it.
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='HomeOpsEfsRoleArn']"*)
+    [ "${STUB_NO_HOME_ROLE:-0}" = 1 ] || echo "arn:aws:iam::111122223333:role/t-data-HomeOpsEfsRole-X" ;;
   # 00-network's workspace subnets (#2716). Unset = a network stack older than them.
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='WorkspaceSubnets']"*)
     [ "${STUB_WS_SUBNETS_FAIL:-0}" = 1 ] && { echo "An error occurred (Throttling)" >&2; exit 254; }
@@ -353,6 +356,7 @@ case "$args" in
   *"Outputs[?OutputKey=='RdsRestopFunction']"*) echo "${STUB_RESTOP:-}" ;;
   *"ParameterKey=='Fqdn'"*) echo "af.example.test" ;;
   *"ParameterKey=='NetworkStackName'"*) echo "t-network" ;;
+  *"--profile p4"*"ParameterKey=='DataStackName'"*) if [ "${STUB_INGRESS_UNREADABLE:-0}" = 1 ]; then echo "An error occurred (Throttling)" >&2; exit 254; fi; echo "t-data" ;;
   *"--profile p5"*"ParameterKey=='DataStackName'"*) echo "t-data-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ;;
   *"ParameterKey=='DataStackName'"*) echo "t-data" ;;
   *"ParameterKey=='PlatformStackName'"*) echo "t-platform" ;;
@@ -1128,6 +1132,17 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
+
+echo "== case 3h-home: update.sh stops before anything runs when 10-data lacks HomeOpsEfsRoleArn or cannot be found =="
+for knob in STUB_NO_HOME_ROLE STUB_INGRESS_UNREADABLE; do
+  : > "$LOG"
+  if env "$knob=1" VERSION=9.9.9-dev-test STUB_ECR_HAS=1 \
+    "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3hh" 2>&1; then
+    cat "$WORK/out3hh"; fail "update.sh went on with $knob=1"
+  fi
+  grep -q "Nothing was changed\|nothing was changed" "$WORK/out3hh" || { cat "$WORK/out3hh"; fail "$knob: no diagnosis"; }
+  hasnt "cloudformation deploy"   # 20-platform and 30-ingress untouched
+done
 
 echo "== case 3h-ws: update.sh and standup.sh hand 00-network's workspace subnets to 30-ingress (#2716) =="
 # A fact of the network stack, passed on every run; a network stack without the output passes
