@@ -9,7 +9,8 @@ English | [日本語](0129-provided-model-routes.ja.md)
   documentation as fetched on 2026-11-06 (listed under Sources). What opencode and codex send comes from their
   documentation and `--help` (opencode v2.2.5, codex-cli 0.167.0). No AWS call was made. Each statement of that kind is
   marked *(docs)* or *(unmeasured)* where it carries a decision. Reviewed by a separate session (codex `gpt-6.1-sol`);
-  round 1's ten findings were checked against the tree and the cited pages and are folded into this text.
+  rounds 1 and 2 (ten and four findings, plus a nit) were checked against the tree and the cited pages and are folded
+  into this text.
 - Related: [0128](0128-harness-route-maker.md) (harness × route, the A2 gateway, the switch; decisions 3, 4, 5, 7, 10,
   11, 12, 14) / [0084](0084-engine-indicator-and-tenant-gate.md) (the engine's tenant gate and its four places) /
   [0048](0048-member-cloud-cost.md) (actual AWS cost from cost allocation tags, no apportionment) /
@@ -118,7 +119,10 @@ external id's version, and the Region set. A create binds the session's selectio
 that changes the fingerprint refuses every bound session at its next mint and its next call
 (`route_connection_changed`) instead of moving its bill on a resume, fork, recreate or Agent restart, and drops the
 cached credentials of the old fingerprint at the edit. A change of the model allow-list or the budget does not change
-who pays, so it applies to bound sessions at their next call without changing the fingerprint.
+who pays, so it applies to bound sessions at their next call without changing the fingerprint. The allow-list has a
+**policy version** of its own, which the credential cache is also keyed by (D2's session policy is built from it), so
+a model added to the list is reachable at the next call instead of being denied by cached credentials until they
+expire.
 
 ### D1. The three credential sources
 
@@ -127,9 +131,9 @@ who pays, so it applies to bound sessions at their next call without changing th
   becomes the custodian of a standing secret the tenant has to rotate.
 - **D1b. Store no secret where an identity exists** *(recommended)*:
   - `deployment`: the CP's own identity (the ECS task role `CpTaskRole`, `deploy/aws/ecs/cfn/20-platform.yaml:213`; IRSA
-    on EKS) assumes a **route role** in the deployment's account that the stack defines with
-    `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` only, and whose trust policy allows the CP role
-    `sts:AssumeRole` and `sts:TagSession`. Nothing is stored. The operator turns it on with a stack parameter (the role
+    on EKS) assumes a **route role** in the deployment's account that the stack defines with the least-privilege
+    closure of D2's session policy and nothing else, and whose trust policy allows the CP role `sts:AssumeRole` and
+    `sts:TagSession`. Nothing is stored. The operator turns it on with a stack parameter (the role
     ARN and the allowed Regions); the runtime declares whether the source exists, as it declares a cost surface in ADR
     0048 decision 9. docker, native and a Kubernetes cluster whose CP has no AWS identity have no deployment source.
   - `tenant`: a **cross-account role** in the tenant's AWS account, trusting the deployment's CP role with an
@@ -142,8 +146,9 @@ who pays, so it applies to bound sessions at their next call without changing th
     - **Generating an id does not prove the role requires it.** Tenant A could otherwise register tenant B's role, if
       B trusts the CP role without a condition, and make the CP spend B's money. So a connection is **activated only
       after three probes by the CP**: AssumeRole succeeds with this tenant's id, and fails both with no id and with a
-      wrong id (a random one of the same shape, which also stands in for another tenant's). A connection that fails any
-      probe stays inactive, with the failed probe named. The same probes run again whenever the ARN changes.
+      wrong id (a random one of the same shape, which also stands in for another tenant's). One minimal model call under
+      D2's session policy then shows the role holds the permissions the route needs. A connection that fails any probe
+      stays inactive, with the failed probe named. The same probes run again whenever the ARN changes.
     - The external id is the CP's: no API, Console form or import accepts one from a caller. A tenant_admin can only ask
       the CP to rotate it, which issues a new id, bumps its version (and so the fingerprint, decision 1), and leaves the
       connection inactive until the probes pass against the role's updated trust policy.
@@ -164,9 +169,11 @@ an order of magnitude, and the budget alone does not say which one the tenant me
   provided sources. The member can read what runs as the member: the Agent's memory and environment are the same UID's,
   and the budget check would be code inside the member's container. The #3389 limits are about the member's own
   sessions; here they would expose the tenant's or the deployment's account.
-- **G2. A CP gateway the harness calls directly**, with a CP-minted bearer in the pane. Rejected: the bearer is back in
-  a process environment with no caller binding (what #3389 removed), and each harness needs a second configuration
-  shape (a remote HTTPS base URL instead of the socket) that differs by source.
+- **G2. A CP gateway the harness calls directly**, with a CP-minted bearer in the pane. Not weaker for the payer: G3
+  accepts that the Agent's issuer can be extracted, so the payer's protection is the CP's grant and budget either way.
+  Rejected for what it loses on the member's side: each harness needs a second configuration shape (a remote HTTPS
+  base URL instead of the socket) that differs by source, and the bearer sits in a process environment with no caller
+  binding, so the best-effort separation of one member's sessions from each other (what #3389 built) is gone.
 - **G3. A CP gateway, with the Agent forwarding** *(recommended)*:
 
   ```
@@ -200,15 +207,30 @@ an order of magnitude, and the budget alone does not say which one the tenant me
       the source's model allow-list verbatim. Allow-list entries are foundation-model and system inference profile ids
       (`us.anthropic.…`, `global.openai.…`); any ARN is refused, so an application inference profile in some other
       account or a model outside the list cannot be reached by naming its ARN.
-    - **A session policy narrows every assumed session.** AssumeRole passes an inline session policy that allows only
-      `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the allow-listed models' resources, so even a
-      broad tenant role yields credentials that can do nothing else (the effective permission is the intersection).
+    - **A session policy narrows every assumed session** to the **least-privilege closure** of the allow-list, built
+      per API and model from AWS's prerequisites
+      ([inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html), [inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html), *docs*):
+      - a foundation model called in its own Region: `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream` on
+        that `foundation-model` ARN;
+      - a system inference profile: the same two actions on the `inference-profile` ARN **and** on the foundation model
+        in every destination Region of that profile (AWS: "you must also specify the foundation model in each Region
+        associated with it"), the latter conditioned on `bedrock:InferenceProfileArn` so the models are reachable only
+        through the profile; and `bedrock:GetInferenceProfile` on the profile where the prerequisites name it;
+      - Responses on `bedrock-runtime` (Q7): additionally `bedrock:InvokeModel` on the account's **default Project**,
+        which the Responses page requires beside the inference target; **never** `bedrock:GetInvoke`,
+        `bedrock:CancelInvoke` or `bedrock:DeleteInvoke`, the stored-state powers H closes.
+      The effective permission is the intersection of the session policy and the role's own policy, so **both** must
+      grant this closure: the deployment's route role is defined with exactly it, and a tenant's role must hold at least
+      it (D1's activation makes one model call). The CP's identity needs `sts:AssumeRole` **and** `sts:TagSession` on the
+      route role, same-account or cross-account, and the role's trust policy must allow both. The exact minimal set is
+      confirmed at the live gate, **run with these intended policies, never with the deployer's own permissions**. The
+      policy is rebuilt when the allow-list's policy version changes (decision 1).
     - **Tags attribute; they never authorize.** The session tags exist for billing (D5); no AF decision reads them back.
     - **The CP never returns credentials** or any upstream header that carries them, and logs none.
   - **Every call, at the CP, in order:** the token's signature and expiry; the membership is live; the tenant's grant
     for the source (D3); the member's grant; the bound source still exists with the same fingerprint and is active; the
     operation and model pass the contract above; then budget admission (D4). Only then are credentials taken from the
-    cache (keyed by source id, fingerprint and membership), the request signed, and the response streamed with a flush
+    cache (keyed by source id, fingerprint, allow-list policy version and membership), the request signed, and the response streamed with a flush
     per read, as the engine gateway already does.
   - **Two kinds of revocation.** *Trusted* revocation is the CP's own and holds at the next call whatever the Agent does:
     a tenant gate turned off, a grant or budget removed, a source deleted, deactivated or re-fingerprinted, a membership
@@ -225,9 +247,15 @@ an order of magnitude, and the budget alone does not say which one the tenant me
   - **Streaming.** The public load balancer's idle timeout is 60 seconds (`deploy/aws/ecs/cfn/30-ingress.yaml:501`). A
     stream that sends nothing for 60 seconds through it is cut. Whether Bedrock streams can be silent that long, during
     long extended thinking for example, is *unmeasured*. The Agent therefore uses the internal address wherever one is
-    injected, and **a deployment whose only path to the CP is the public load balancer does not offer provided routes**
-    until its own acceptance run has held a silent stream past that timeout (by raising it, or by measuring that
-    Bedrock streams are never silent that long); it is not left to documentation.
+    injected. **The release requirement is structural, not statistical**: a deployment offers provided routes only when
+    every hop between the Agent and the CP has an idle timeout longer than the CP's enforced upstream deadline (D4), so
+    no silence the CP allows can outlast the path. It is tested with a stand-in upstream that deliberately stays silent
+    until just before that deadline: the stream completes (pass) or is cut (fail). Ordinary live streams are no evidence
+    of an upper bound on silence, and a sample of them never stands in for this test. A heartbeat is acceptable only
+    where the wire defines one the harness provably ignores (an SSE comment line for Responses, if Q7 measures codex
+    ignoring it); none is injected into AWS event streams. A deployment that meets neither (the reference stack's
+    60-second public path with a longer deadline) **does not offer provided routes**; the combination is refused, not
+    documented.
   - **CP capacity** *(unmeasured)*: each in-flight call holds one goroutine and two connections in the CP; the bytes are
     tokens, so bandwidth is small. A CP restart or deploy cuts every in-flight stream; the route gateway therefore stops
     admitting calls on shutdown and lets admitted ones finish up to a deadline, and a cut stream settles at its
@@ -330,7 +358,8 @@ The gates follow ADR 0084: the super_admin decides per tenant, the tenant_admin 
     reservation**. `routegw.usageObserver` today returns `Known=true` from `message_start` / `message_delta` alone
     (`workspace/agent/internal/routegw/usage.go:236`); that may stand for the ledger's estimate row, and never for
     settlement.
-  - **Orphans settle conservatively.** The CP bounds each upstream call with a deadline. A sweep settles at its
+  - **Orphans settle conservatively.** The CP bounds each upstream call with a deadline (a deployment setting, the same
+    one D2's path test is held against). A sweep settles at its
     reservation every `in_flight` row whose CP instance is gone or whose deadline has passed, because Bedrock may still
     be running a call whose CP has died. A reservation is never released to zero.
   - A call is never cut for budget reasons once admitted: cutting a stream loses tokens that are billed anyway and breaks
@@ -396,7 +425,7 @@ does not change what a harness speaks. Each row still ships only after decision 
 | Harness | What it speaks to the gateway | Upstream Bedrock API | Models that make sense | Translation |
 |---|---|---|---|---|
 | claude | Bedrock InvokeModel (`invoke-with-response-stream`) on `ANTHROPIC_BEDROCK_BASE_URL` over `ANTHROPIC_UNIX_SOCKET`, bearer from `AWS_BEARER_TOKEN_BEDROCK` (measured against a stand-in, ADR 0128 P2b part 2) | `bedrock-runtime` invoke, as today | Anthropic models only (the CLI's own) | none |
-| opencode | its own `amazon-bedrock` provider. Its [providers page](https://opencode.ai/docs/providers/) (fetched 2026-11-06, not pinned to v2.2.5) says `AWS_BEARER_TOKEN_BEDROCK` takes precedence over the other AWS credential methods, that an `endpoint` option is an alias of `baseURL`, and that a model id may be an inference profile ARN; none of that is measured on the installed version, and a second read of the current docs did not find the alias or the precedence. Whether it calls Converse or Invoke, and whether it can use a Unix socket, is *unmeasured* | Converse / ConverseStream (already on the gateway's allow-list), if that is what it sends | anything Converse serves: Claude, the GPT models with Converse, `gpt-oss`, others | none |
+| opencode | its own `amazon-bedrock` provider. The [v2 providers page](https://dev.opencode.ai/v2/docs/providers/), the one for the installed v2 line (v2.2.5), documents the default AWS credential chain, `AWS_BEARER_TOKEN_BEDROCK` for Bedrock API keys, and `providers.<id>.settings.baseURL` for a private endpoint; it states no precedence between credential sources, and says a Region alone does not activate the provider. The stronger claims (a bearer that outranks every other method, `endpoint` as an alias of `baseURL`, inference profile ARNs as model ids) are on the [v1 providers page](https://opencode.ai/docs/providers/) only, so they are not assumed for v2. On the installed pin, which API it calls (Converse or Invoke), whether a bearer alone activates it, whether `baseURL` takes the gateway, and whether it can use a Unix socket are all *unmeasured* until Q6 | Converse / ConverseStream (already on the gateway's allow-list), if that is what it sends | anything Converse serves: Claude, the GPT models with Converse, `gpt-oss`, others | none |
 | codex | a custom `model_providers.<id>` with `base_url` at the gateway, `wire_api = "responses"` (documented as "the only supported value"), and the bearer from `env_key` or `auth.command` (a command that prints a bearer, refreshed every 5 minutes by default), per the [configuration reference](https://developers.openai.com/codex/config-reference) *(docs)*. Unix socket support is *unmeasured* | Responses on `bedrock-runtime` (`/openai/v1/responses`); the gateway's allow-list gains that one `POST` | the OpenAI GPT models with Responses on `bedrock-runtime` (named by system profile, `us.openai.…` / `global.openai.…`); **not Claude**, which has no Responses API on Bedrock; **not `gpt-oss`** there, whose Responses API is on `bedrock-mantle` only ([API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html), *docs*) | none (below) |
 
 - **No protocol translation in the gateway** *(recommended)*. Translating codex's Responses into Converse would make
@@ -467,11 +496,11 @@ Each row needs the decision 14 gate for every harness × route row it opens, on 
 | Phase | Content | Gate |
 |---|---|---|
 | Q0 | Catalogue ids `bedrock-tenant` / `bedrock-deployment`; the CP's spend, reservation and grant/budget model; source ids and fingerprints; the model price-and-limits table; no behaviour change | Existing `bedrock` rows and the rollup unchanged; a provided row and a member row of one model stay apart in the rollup |
-| Q1 | **Acceptance only, behind a switch like `AF_WS_CLAUDE_BEDROCK_ROUTE`; not released.** CP route gateway (G3) with the `deployment` source and its signing contract; Agent forwarding; super_admin grant and ceiling; tenant_admin budgets; admission and settlement; session-tagged AssumeRole with its session policy; pre-wake refusal on every create path; claude, Terminal | A live claude turn through the CP on real Bedrock; added time to first token measured. **Budget:** two CPs racing at the budget edge never admit past it; a CP killed between admission and settlement leaves a reservation the sweep settles, never zero; a call admitted at 23:59:59 UTC settles into its own month; a duplicated settlement changes nothing; a cut stream settles at its reservation; an unpriced model and a missing output cap are refused. **Contract:** a forged or expired token, identity headers, caller tags, Region, URL or role, an ARN model id, a model outside the list (path and body), another operation — each refused, nothing signed. **Revocation:** budget 0 → visible 503, no fallback; grant off → next call refused; member removed → stream cut. These first tagged calls let AWS discover the principal tags |
-| Q2 | **Release.** The minimum visibility (remaining budget in the launch dialog and the switch offer; the exhaustion message; the tenant_admin's member view); the principal tags activated; the CP path held | The tags activated in the payer account before release (ADR 0048: no backfill, and a key must be seen before it can be activated); a silent stream held past the load balancer's idle timeout, or the deployment's provided routes stay off (D2); CP capacity at the deployment's expected concurrent streams, with a deploy drained or failing visibly |
+| Q1 | **Acceptance only, behind a switch like `AF_WS_CLAUDE_BEDROCK_ROUTE`; not released.** CP route gateway (G3) with the `deployment` source and its signing contract; Agent forwarding; super_admin grant and ceiling; tenant_admin budgets; admission and settlement; session-tagged AssumeRole with its session policy; pre-wake refusal on every create path; claude, Terminal | A live claude turn through the CP on real Bedrock, under the intended route role and session policy (not the deployer's permissions); a model added to the allow-list callable at the next call; added time to first token measured. **Budget:** two CPs racing at the budget edge never admit past it; a CP killed between admission and settlement leaves a reservation the sweep settles, never zero; a call admitted at 23:59:59 UTC settles into its own month; a duplicated settlement changes nothing; a cut stream settles at its reservation; an unpriced model and a missing output cap are refused. **Contract:** a forged or expired token, identity headers, caller tags, Region, URL or role, an ARN model id, a model outside the list (path and body), another operation — each refused, nothing signed. **Revocation:** budget 0 → visible 503, no fallback; grant off → next call refused; member removed → stream cut. These first tagged calls let AWS discover the principal tags |
+| Q2 | **Release.** The minimum visibility (remaining budget in the launch dialog and the switch offer; the exhaustion message; the tenant_admin's member view); the principal tags activated; the CP path held | The tags activated in the payer account before release (ADR 0048: no backfill, and a key must be seen before it can be activated); every Agent→CP hop's idle timeout above the upstream deadline, proven by a stand-in upstream silent until just before the deadline (pass: completes; fail: cut), else the deployment's provided routes stay off (D2); CP capacity at the deployment's expected concurrent streams, with a deploy drained or failing visibly |
 | Q3 | Richer reporting: the mirror, the usage page, the cloud cost line from principal tags, estimate beside actual | Principal-tag cost visible in Cost Explorer (≥ 24 h after a call); one test member's day compared, estimate against actual, with the difference stated, not tuned away |
 | Q4 | D6: the target list, the return (R1, R2) | A live window stop → switch to a provided route → reset → return, automatic and manual; a budget exhausted on the borrowed route stops visibly; a forced failure on the return rolls back |
-| Q5 | The `tenant` source: super_admin grant; cross-account role with the CP's external id and D1's activation probes; Tenant settings > Connections; its model allow-list and optional ceiling | Activation refused when AssumeRole succeeds without an id or with a wrong one (a role that trusts the CP without the condition); refused when it fails with the right one; an id supplied by a caller is not accepted; a deleted role refuses visibly; an edited ARN or rotated id refuses the bound session instead of moving it |
+| Q5 | The `tenant` source: super_admin grant; cross-account role with the CP's external id and D1's activation probes; Tenant settings > Connections; its model allow-list and optional ceiling | Activation refused when AssumeRole succeeds without an id or with a wrong one, and when the probing model call is denied (a role that trusts the CP without the condition); refused when it fails with the right one; an id supplied by a caller is not accepted; a deleted role refuses visibly; an edited ARN or rotated id refuses the bound session instead of moving it |
 | Q6 | opencode on provided routes (after ADR 0128 P2c): its wire measured, TCP binding if needed; Terminal, then Managed | Decision 14 per execution method; the Converse usage read; a negative control per source |
 | Q7 | codex on provided routes: Responses wire, OpenAI-family models only; `store: false` forced and stored references refused; Responses SSE usage parser | Decision 14 per execution method; a Claude model id refused at launch, not on the first message; another member's response id and a chained `previous_response_id` refused; terminal usage read from a real stream; codex's handling of the gateway's refusal statuses measured |
 
@@ -529,12 +558,14 @@ None of these was exercised against AWS; each is also linked at the claim it sup
   [Responses API](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-responses-api.html); [Track usage and costs](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-management.html);
   [IAM principal attribution](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-iam-principal-tracking.html);
   [Application inference profiles (cost)](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-application-inference-profiles.html);
-  [Inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html); [Create an application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html).
+  [Inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html); [Create an application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html);
+  [Prerequisites for running model inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html); [Prerequisites for inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html).
 - AWS General Reference: [Amazon Bedrock endpoints and quotas](https://docs.aws.amazon.com/general/latest/gr/bedrock.html)
   (the "Inference profiles per account" row).
 - IAM User Guide: [Access to AWS accounts owned by third parties](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html)
   (the external id).
-- opencode: [Providers](https://opencode.ai/docs/providers/), Amazon Bedrock section (not pinned to the installed v2.2.5).
+- opencode: [v2 Providers](https://dev.opencode.ai/v2/docs/providers/) (the installed v2 line) and
+  [v1 Providers](https://opencode.ai/docs/providers/), Amazon Bedrock sections.
 - Codex: [Configuration reference](https://developers.openai.com/codex/config-reference) (`model_providers`, `wire_api`,
   `auth`, `model_providers.amazon-bedrock.aws`).
 - Local CLIs: `codex --help`, `codex exec --help` (0.167.0); `opencode --version` (v2.2.5); `claude --version` (2.1.318).

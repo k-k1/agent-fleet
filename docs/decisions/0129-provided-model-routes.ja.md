@@ -8,8 +8,8 @@
   Amazon Bedrock が何を受け付けるか、どう課金し費用を帰属させるか、そのクォータは、2026-11-06 に取得した AWS のドキュメ
   ントによる（出典の節に挙げる）。opencode と codex が何を送るかは、それぞれのドキュメントと `--help`（opencode v2.2.5、
   codex-cli 0.167.0）による。AWS の呼び出しは一度もしていない。その種の記述のうち決定を左右するものには *（ドキュメント）*
-  か *（未計測）* を付けた。別セッション（codex `gpt-6.1-sol`）がレビューした。1 巡目の指摘 10 件はツリーと引用先のページに
-  照らして確かめ、本文に取り込んだ。
+  か *（未計測）* を付けた。別セッション（codex `gpt-6.1-sol`）がレビューした。1 巡目と 2 巡目の指摘（10 件と 4 件、ほかに
+  細かい点 1 件）はツリーと引用先のページに照らして確かめ、本文に取り込んだ。
 - 関連: [0128](0128-harness-route-maker.ja.md)（ハーネス × ルート、A2 ゲートウェイ、切替。決定 3、4、5、7、10、11、12、14）/
   [0084](0084-engine-indicator-and-tenant-gate.ja.md)（エンジンのテナント関門とその 4 か所）/
   [0048](0048-member-cloud-cost.ja.md)（コスト配分タグからの AWS 実費、按分なし）/
@@ -114,7 +114,9 @@ fingerprint** を持たせる。作成時に、セッションの選択を `<sou
 CP ルートトークンと CP の資格情報キャッシュのキーはどちらもそれを持つ。fingerprint を変える編集は、縛られたすべてのセッ
 ションを次の発行と次の呼び出しで拒否し（`route_connection_changed`）、再開、フォーク、作り直し、Agent の再起動で請求を
 移すことはしない。古い fingerprint のキャッシュ済み資格情報は編集の時点で捨てる。モデルの許可リストや予算の変更は誰が
-払うかを変えないので、fingerprint を変えずに、縛られたセッションの次の呼び出しから効く。
+払うかを変えないので、fingerprint を変えずに、縛られたセッションの次の呼び出しから効く。許可リストには別に**ポリシーの版**
+があり、資格情報のキャッシュはそれでもキーを分ける（D2 のセッションポリシーはそこから作る）。許可リストに足したモデルは、
+キャッシュ済みの資格情報が期限切れになるまで拒否され続けるのではなく、次の呼び出しから届く。
 
 ### D1. 資格情報の 3 つの出どころ
 
@@ -123,9 +125,8 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
   ない常設の秘密の保管者になる。
 - **D1b. ID があるところでは秘密を保管しない** *（推奨）*:
   - `deployment`: CP 自身の ID（ECS のタスクロール `CpTaskRole`、`deploy/aws/ecs/cfn/20-platform.yaml:213`。EKS では IRSA）
-    が、デプロイメントのアカウントにある**ルートロール**を引き受ける。ルートロールはスタックが `bedrock:InvokeModel` と
-    `bedrock:InvokeModelWithResponseStream` だけで定義し、その信頼ポリシーは CP のロールに `sts:AssumeRole` と
-    `sts:TagSession` を許す。何も保管しない。運用者はスタックのパラメータ（ロールの ARN と許すリージョン）で有効にし、出ど
+    が、デプロイメントのアカウントにある**ルートロール**を引き受ける。ルートロールはスタックが D2 のセッションポリシーの
+    最小権限の閉包だけで定義し、その信頼ポリシーは CP のロールに `sts:AssumeRole` と `sts:TagSession` を許す。何も保管しない。運用者はスタックのパラメータ（ロールの ARN と許すリージョン）で有効にし、出ど
     ころがあるかどうかはランタイムが宣言する。ADR 0048 決定 9 で費用の画面の有無を宣言するのと同じである。docker、native、
     CP が AWS の ID を持たない Kubernetes クラスタには、デプロイメントの出どころはない。
   - `tenant`: テナントの AWS アカウントにある**クロスアカウントのロール**で、デプロイメントの CP のロールを、**CP がテナント
@@ -137,7 +138,8 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
     - **ID を生成しても、ロールがそれを要求している証明にはならない。** そうでなければ、テナント A は、条件なしに CP のロール
       を信頼しているテナント B のロールを登録し、CP に B のお金を使わせられる。そこで接続は **CP による 3 つの試しを通ってから
       有効になる**。このテナントの ID では AssumeRole が成功し、ID なしと、誤った ID（同じ形の乱数で、ほかのテナントの ID の
-      代わりも兼ねる）では失敗すること。どれかに外れた接続は無効のままで、外れた試しを名指す。ARN が変わるたびに同じ試しを
+      代わりも兼ねる）では失敗すること。続いて D2 のセッションポリシーの下で最小のモデル呼び出しを 1 回行い、ロールがルートに
+      要る権限を持つことを示す。どれかに外れた接続は無効のままで、外れた試しを名指す。ARN が変わるたびに同じ試しを
       やり直す。
     - 外部 ID は CP のものである。呼び出し側から受け取る API、Console のフォーム、インポートはない。tenant_admin にできるのは
       CP に回転を頼むことだけで、CP は新しい ID を発行し、その版を上げ（したがって fingerprint も変わる。決定 1）、ロールの
@@ -159,9 +161,11 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
   には退ける。メンバーとして動くものはメンバーが読める。Agent のメモリと環境は同じ UID のもので、予算の確認はメンバーのコン
   テナの中のコードになる。#3389 の限界はメンバー自身のセッションどうしの話だが、ここではテナントやデプロイメントのアカウン
   トをさらすことになる。
-- **G2. ハーネスが直接呼ぶ CP のゲートウェイ**で、CP が発行したベアラをペインに置く。退ける。ベアラが呼び出し元の束縛のない
-  プロセス環境に戻り（#3389 が取り除いたもの）、ハーネスごとに出どころで変わる 2 つ目の設定の形（ソケットの代わりに遠隔の
-  HTTPS ベース URL）が要る。
+- **G2. ハーネスが直接呼ぶ CP のゲートウェイ**で、CP が発行したベアラをペインに置く。払う側にとって弱いわけではない。G3 も
+  Agent の発行用の資格情報が取り出されうることを受け入れているので、払う側を守るのはどちらでも CP の許可と予算である。退ける
+  のは、メンバーの側で失うもののためである。ハーネスごとに出どころで変わる 2 つ目の設定の形（ソケットの代わりに遠隔の HTTPS
+  ベース URL）が要り、ベアラが呼び出し元の束縛のないプロセス環境に置かれるので、1 人のメンバーのセッションどうしの最善の
+  努力の隔離（#3389 が作ったもの）がなくなる。
 - **G3. CP のゲートウェイを、Agent が中継する** *（推奨）*:
 
   ```
@@ -194,16 +198,31 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
       モデルの許可リストの項目と文字どおり一致しなければならない。許可リストの項目は基盤モデルとシステム推論プロファイルの
       id（`us.anthropic.…`、`global.openai.…`）で、ARN はすべて拒否する。ほかのアカウントのアプリケーション推論プロファイルや
       リストの外のモデルに、ARN を名指して届くことはない。
-    - **セッションポリシーが、引き受けたどのセッションも狭める。** AssumeRole は、許可リストのモデルのリソースに対する
-      `bedrock:InvokeModel` と `bedrock:InvokeModelWithResponseStream` だけを許すインラインのセッションポリシーを渡す。広い
-      テナントのロールからでも、ほかに何もできない資格情報しか得られない（実効の権限は両者の共通部分になる）。
+    - **セッションポリシーが、引き受けたどのセッションも**、許可リストの**最小権限の閉包**に狭める。AWS の前提条件
+      （[推論](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html)、[推論プロファイル](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html)、*ドキュメント*）から、
+      API とモデルごとに作る:
+      - 自分のリージョンで呼ぶ基盤モデル: その `foundation-model` の ARN に対する `bedrock:InvokeModel` /
+        `bedrock:InvokeModelWithResponseStream`。
+      - システム推論プロファイル: 同じ 2 つのアクションを、`inference-profile` の ARN **と**、そのプロファイルのすべての宛先
+        リージョンの基盤モデルに（AWS: 「関連付けられた各リージョンの基盤モデルも指定しなければならない」）。後者は
+        `bedrock:InferenceProfileArn` を条件にして、基盤モデルにはプロファイル経由でしか届かないようにする。前提条件が名指す
+        所では、プロファイルに対する `bedrock:GetInferenceProfile` も。
+      - `bedrock-runtime` の Responses（Q7）: さらに、Responses のページが推論の対象に加えて求める、アカウントの**既定の
+        Project** に対する `bedrock:InvokeModel`。H が閉じる保存された状態の権限 `bedrock:GetInvoke`、`bedrock:CancelInvoke`、
+        `bedrock:DeleteInvoke` は**決して**含めない。
+      実効の権限はセッションポリシーとロール自身のポリシーの共通部分なので、**両方が**この閉包を許さなければならない。デプロ
+      イメントのルートロールはちょうどこれで定義し、テナントのロールは少なくともこれを持たなければならない（D1 の有効化で
+      モデルを 1 回呼ぶ）。CP の ID には、同じアカウントでもクロスアカウントでも、ルートロールへの `sts:AssumeRole` **と**
+      `sts:TagSession` が要り、ロールの信頼ポリシーは両方を許さなければならない。正確な最小の集合はライブの関門で確かめ、
+      それは**意図したこれらのポリシーで行い、デプロイする人自身の権限では決して行わない**。許可リストのポリシーの版が変わる
+      とポリシーを作り直す（決定 1）。
     - **タグは帰属のためで、認可には決して使わない。** セッションタグは請求のためにある（D5）。AF の判断がそれを読み返す
       ことはない。
     - **CP は資格情報を決して返さず**、それを運ぶ上流のヘッダも返さず、記録にも残さない。
   - **CP での、呼び出しごとの確認の順序:** トークンの署名と期限。メンバーシップが生きていること。その出どころについての
     テナントの許可（D3）。メンバーの許可。縛られた出どころがまだあり、同じ fingerprint で有効であること。操作とモデルが上の
     取り決めを通ること。そのうえで予算の受け入れ（D4）。それからはじめて資格情報をキャッシュ（キーは出どころの id、
-    fingerprint、メンバーシップ）から取り、リクエストに署名し、応答を読み取るたびにフラッシュして流す。エンジンのゲート
+    fingerprint、許可リストのポリシーの版、メンバーシップ）から取り、リクエストに署名し、応答を読み取るたびにフラッシュして流す。エンジンのゲート
     ウェイがすでにしていることと同じである。
   - **2 種類の失効。** *信頼できる*失効は CP 自身のもので、Agent が何をしようと次の呼び出しで効く。テナントの関門が切られた、
     許可や予算が外された、出どころが消された・無効にされた・fingerprint が変わった、メンバーシップが削除された（これは、
@@ -218,10 +237,14 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
     のベースを通る。関門では、最初のトークンまでに増える時間を測る。
   - **ストリーミング。** 公開ロードバランサのアイドルタイムアウトは 60 秒である（`deploy/aws/ecs/cfn/30-ingress.yaml:501`）。
     そこを通るストリームが 60 秒何も送らなければ切られる。Bedrock のストリームがそれほど長く黙ることがあるか（たとえば長い
-    拡張思考の間）は *未計測* である。そこで Agent は内部アドレスが渡されている所では必ずそれを使い、**CP への経路が公開
-    ロードバランサしかないデプロイメントは提供ルートを差し出さない**。差し出すのは、そのデプロイメント自身の受け入れ試験で、
-    黙ったストリームがそのタイムアウトを越えて保たれてから（タイムアウトを上げるか、Bedrock のストリームがそれほど長く黙らな
-    いと測るか）である。文書に書いて済ませはしない。
+    拡張思考の間）は *未計測* である。そこで Agent は内部アドレスが渡されている所では必ずそれを使う。**リリースの条件は統計
+    ではなく構造で決める**。デプロイメントが提供ルートを差し出すのは、Agent と CP の間のどのホップのアイドルタイムアウトも、
+    CP が強制する上流の期限（D4）より長いときだけで、CP が許すどんな沈黙も経路より長くは続かない。試験には、期限の直前まで
+    わざと黙る代役の上流を使い、ストリームが最後まで届けば合格、切られれば不合格とする。普通のライブのストリームは沈黙の上限
+    の証拠にならず、その抜き取りでこの試験に替えることは決してない。ハートビートを認めるのは、ハーネスが無視すると証明できる
+    ものを通信の形式が定めている所だけである（Responses の SSE のコメント行。Q7 で codex がそれを無視すると測れた場合）。AWS
+    のイベントストリームには何も差し込まない。どちらも満たさないデプロイメント（参照スタックの 60 秒の公開の経路と、それより
+    長い期限）は**提供ルートを差し出さない**。その組み合わせは文書に書くのではなく、拒否する。
   - **CP の容量** *（未計測）*: 流れている呼び出し 1 つにつき、CP の中で goroutine 1 つと接続 2 つを使う。流れるのはトークン
     なので帯域は小さい。CP の再起動やデプロイは流れているストリームをすべて切るので、ルートゲートウェイは停止時に新しい呼び
     出しの受け入れをやめ、受け入れ済みのものは期限まで終わらせ、切れたストリームはその予約額で精算する（D4）。メンバーごと
@@ -314,7 +337,8 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
     `message_start` といくつかの `message_delta` の後で切れた Anthropic のストリーム、失敗したストリーム、使用量がまったく
     ないもの — は**予約額で精算する**。`routegw.usageObserver` は今、`message_start` / `message_delta` だけから `Known=true`
     を返す（`workspace/agent/internal/routegw/usage.go:236`）。台帳の推定の行にはそれでもよいが、精算には決して使わない。
-  - **宙に浮いた呼び出しは控えめに精算する。** CP は上流の呼び出しごとに期限を設ける。CP のインスタンスがなくなったか期限を
+  - **宙に浮いた呼び出しは控えめに精算する。** CP は上流の呼び出しごとに期限を設ける（デプロイメントの設定で、D2 の経路の
+    試験が照らすのと同じもの）。CP のインスタンスがなくなったか期限を
     過ぎた `in_flight` の行は、掃除が予約額で精算する。CP が死んでも Bedrock がまだその呼び出しを走らせているかもしれないから
     である。予約を 0 に戻すことは決してない。
   - いったん受け入れた呼び出しは、予算を理由に切らない。ストリームを切っても、どのみち課金されるトークンが失われ、ハーネス
@@ -374,7 +398,7 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
 | ハーネス | ゲートウェイに話すもの | 上流の Bedrock API | 意味のあるモデル | 変換 |
 |---|---|---|---|---|
 | claude | `ANTHROPIC_UNIX_SOCKET` 越しの `ANTHROPIC_BEDROCK_BASE_URL` への Bedrock InvokeModel（`invoke-with-response-stream`）、ベアラは `AWS_BEARER_TOKEN_BEDROCK` から（代役を相手に測った。ADR 0128 P2b part 2） | 今と同じ `bedrock-runtime` の invoke | Anthropic のモデルだけ（CLI 自身のもの） | なし |
-| opencode | 自前の `amazon-bedrock` プロバイダ。その[プロバイダのページ](https://opencode.ai/docs/providers/)（2026-11-06 取得。v2.2.5 には固定されていない）は、`AWS_BEARER_TOKEN_BEDROCK` がほかの AWS の資格情報の方法より優先されること、`endpoint` オプションが `baseURL` の別名であること、モデル id に推論プロファイルの ARN も使えることを書いている。どれも入っている版では測っておらず、今のドキュメントを読み直しても別名と優先順位は見つからなかった。Converse と Invoke のどちらを呼ぶか、Unix ソケットを使えるかは *未計測* | それを送るのであれば Converse / ConverseStream（ゲートウェイの許可リストにすでにある） | Converse が提供するもの全般: Claude、Converse 対応の GPT モデル、`gpt-oss`、ほか | なし |
+| opencode | 自前の `amazon-bedrock` プロバイダ。入っている v2 系（v2.2.5）向けの [v2 のプロバイダのページ](https://dev.opencode.ai/v2/docs/providers/)は、AWS の既定の資格情報チェーン、Bedrock API キー用の `AWS_BEARER_TOKEN_BEDROCK`、プライベートなエンドポイント用の `providers.<id>.settings.baseURL` を文書にしている。資格情報の出どころの間の優先順位は書いておらず、リージョンだけではプロバイダが有効にならないと書いている。より強い記述（ベアラがほかのどの方法よりも優先される、`endpoint` が `baseURL` の別名である、モデル id に推論プロファイルの ARN を使える）は [v1 のプロバイダのページ](https://opencode.ai/docs/providers/)にしかないので、v2 では前提にしない。入っている版で、どの API を呼ぶか（Converse か Invoke か）、ベアラだけで有効になるか、`baseURL` がゲートウェイを受け付けるか、Unix ソケットを使えるかは、どれも Q6 まで *未計測* | それを送るのであれば Converse / ConverseStream（ゲートウェイの許可リストにすでにある） | Converse が提供するもの全般: Claude、Converse 対応の GPT モデル、`gpt-oss`、ほか | なし |
 | codex | `base_url` をゲートウェイに向けたカスタムの `model_providers.<id>`、`wire_api = "responses"`（「唯一サポートされる値」と文書化）、ベアラは `env_key` か `auth.command`（ベアラを出力するコマンドで、既定では 5 分ごとに更新）から。[設定リファレンス](https://developers.openai.com/codex/config-reference)による *（ドキュメント）*。Unix ソケットへの対応は *未計測* | `bedrock-runtime` の Responses（`/openai/v1/responses`）。ゲートウェイの許可リストにその `POST` 1 つを足す | `bedrock-runtime` で Responses に対応する OpenAI の GPT モデル（システムプロファイル `us.openai.…` / `global.openai.…` で名指す）。Bedrock に Responses API がない **Claude は不可**。そこでの **`gpt-oss` も不可**で、その Responses API は `bedrock-mantle` だけにある（[API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html)、*ドキュメント*） | なし（下記） |
 
 - **ゲートウェイでプロトコルを変換しない** *（推奨）*。codex の Responses を Converse に変換すれば codex で Claude を動かせ
@@ -439,11 +463,11 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
 | 段階 | 内容 | 関門 |
 |---|---|---|
 | Q0 | カタログの id `bedrock-tenant` / `bedrock-deployment`。CP の支出・予約・許可・予算のモデル。出どころの id と fingerprint。モデルの価格と上限の表。ふるまいは変えない | 既存の `bedrock` の行とロールアップが変わらない。同じモデルの提供の行とメンバーの行がロールアップで分かれたままである |
-| Q1 | **受け入れ試験のみ。`AF_WS_CLAUDE_BEDROCK_ROUTE` のようなスイッチの後ろに置き、リリースしない。** `deployment` の出どころでの CP ルートゲートウェイ（G3）とその署名の取り決め。Agent の中継。super_admin の許可と上限額。tenant_admin の予算。受け入れと精算。セッションポリシー付き・セッションタグ付きの AssumeRole。どの作成の経路でも起こす前に拒否すること。claude、ターミナル | 本物の Bedrock で CP を通る claude のライブのターン。最初のトークンまでに増える時間を測る。**予算:** 予算の縁で競う 2 つの CP が予算を越えて受け入れない。受け入れと精算の間で殺した CP は、掃除が精算する予約を残し、0 にはならない。UTC の 23:59:59 に受け入れた呼び出しは自分の月に精算される。重複した精算は何も変えない。切れたストリームは予約額で精算される。値段のないモデルと出力の上限のないリクエストは拒否される。**取り決め:** 偽造や期限切れのトークン、ID のヘッダ、呼び出し側のタグ・リージョン・URL・ロール、ARN のモデル id、リストの外のモデル（パスと本文）、ほかの操作 — どれも拒否され、何も署名されない。**失効:** 予算 0 → 目に見える 503 でフォールバックなし。許可を切る → 次の呼び出しが拒否される。メンバーの削除 → ストリームが切れる。この最初のタグ付きの呼び出しで、AWS がプリンシパルタグを見つけられるようになる |
-| Q2 | **リリース。** 最低限の見える化（起動ダイアログと切替の提案での残りの予算、尽きたときのメッセージ、tenant_admin のメンバーの画面）。プリンシパルタグの有効化。CP の経路が保たれること | リリースの前に支払いアカウントでタグを有効化する（ADR 0048: 遡及はなく、キーは見つかってからでないと有効化できない）。黙ったストリームがロードバランサのアイドルタイムアウトを越えて保たれる。さもなければそのデプロイメントの提供ルートは off のまま（D2）。そのデプロイメントが見込む同時ストリーム数での CP の容量。デプロイは流し終えるか、目に見えて失敗する |
+| Q1 | **受け入れ試験のみ。`AF_WS_CLAUDE_BEDROCK_ROUTE` のようなスイッチの後ろに置き、リリースしない。** `deployment` の出どころでの CP ルートゲートウェイ（G3）とその署名の取り決め。Agent の中継。super_admin の許可と上限額。tenant_admin の予算。受け入れと精算。セッションポリシー付き・セッションタグ付きの AssumeRole。どの作成の経路でも起こす前に拒否すること。claude、ターミナル | 意図したルートロールとセッションポリシーの下で（デプロイする人の権限ではなく）、本物の Bedrock で CP を通る claude のライブのターン。許可リストに足したモデルが次の呼び出しで呼べる。最初のトークンまでに増える時間を測る。**予算:** 予算の縁で競う 2 つの CP が予算を越えて受け入れない。受け入れと精算の間で殺した CP は、掃除が精算する予約を残し、0 にはならない。UTC の 23:59:59 に受け入れた呼び出しは自分の月に精算される。重複した精算は何も変えない。切れたストリームは予約額で精算される。値段のないモデルと出力の上限のないリクエストは拒否される。**取り決め:** 偽造や期限切れのトークン、ID のヘッダ、呼び出し側のタグ・リージョン・URL・ロール、ARN のモデル id、リストの外のモデル（パスと本文）、ほかの操作 — どれも拒否され、何も署名されない。**失効:** 予算 0 → 目に見える 503 でフォールバックなし。許可を切る → 次の呼び出しが拒否される。メンバーの削除 → ストリームが切れる。この最初のタグ付きの呼び出しで、AWS がプリンシパルタグを見つけられるようになる |
+| Q2 | **リリース。** 最低限の見える化（起動ダイアログと切替の提案での残りの予算、尽きたときのメッセージ、tenant_admin のメンバーの画面）。プリンシパルタグの有効化。CP の経路が保たれること | リリースの前に支払いアカウントでタグを有効化する（ADR 0048: 遡及はなく、キーは見つかってからでないと有効化できない）。Agent→CP のどのホップのアイドルタイムアウトも上流の期限より長いことを、期限の直前まで黙る代役の上流で示す（合格: 最後まで届く、不合格: 切られる）。さもなければそのデプロイメントの提供ルートは off のまま（D2）。そのデプロイメントが見込む同時ストリーム数での CP の容量。デプロイは流し終えるか、目に見えて失敗する |
 | Q3 | より豊かな報告: ミラー、使用量のページ、プリンシパルタグからのクラウド費用の行、推定と実費を並べる | プリンシパルタグの費用が Cost Explorer に見える（呼び出しから 24 時間以上後）。試験用メンバーの 1 日を推定と実費で比べ、差を消すように調整せず、そのまま述べる |
 | Q4 | D6: 切替先のリスト、戻り（R1、R2） | ライブのウィンドウの停止 → 提供ルートへの切替 → リセット → 自動と手動の戻り。借りたルートで予算が尽きると目に見えて止まる。戻りでの強制した失敗が巻き戻る |
-| Q5 | `tenant` の出どころ: super_admin の許可。CP の外部 ID と D1 の有効化の試しを伴うクロスアカウントのロール。テナント設定 > 接続。そのモデルの許可リストと任意の上限額 | ID なしや誤った ID で AssumeRole が成功する（条件なしに CP を信頼する）ロールでは有効化が拒否される。正しい ID で失敗するときも拒否される。呼び出し側が渡した ID は受け付けない。消されたロールは目に見えて拒否される。編集された ARN や回転した ID は、縛られたセッションを移すのではなく拒否する |
+| Q5 | `tenant` の出どころ: super_admin の許可。CP の外部 ID と D1 の有効化の試しを伴うクロスアカウントのロール。テナント設定 > 接続。そのモデルの許可リストと任意の上限額 | ID なしや誤った ID で AssumeRole が成功する（条件なしに CP を信頼する）ロールでは有効化が拒否される。試しのモデル呼び出しが拒否されたときも拒否される。正しい ID で失敗するときも拒否される。呼び出し側が渡した ID は受け付けない。消されたロールは目に見えて拒否される。編集された ARN や回転した ID は、縛られたセッションを移すのではなく拒否する |
 | Q6 | 提供ルートでの opencode（ADR 0128 P2c の後）: その通信を測り、必要なら TCP の束縛。ターミナル、次にマネージド | 実行方式ごとの決定 14。Converse の使用量が読める。出どころごとの陰性対照 |
 | Q7 | 提供ルートでの codex: Responses の通信、OpenAI 系のモデルだけ。`store: false` の強制と、保存された参照の拒否。Responses の SSE の使用量の解析 | 実行方式ごとの決定 14。Claude のモデル id が、最初のメッセージではなく起動時に拒否される。ほかのメンバーの応答 id と、連鎖した `previous_response_id` が拒否される。本物のストリームから終わりの使用量が読める。ゲートウェイの拒否のステータスを codex がどう扱うかを測る |
 
@@ -498,12 +522,14 @@ Q1 は、同じアダプタとソケットを使うので、ADR 0128 の claude 
   [Responses API](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-responses-api.html)、[Track usage and costs](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-management.html)、
   [IAM principal attribution](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-iam-principal-tracking.html)、
   [Application inference profiles（費用）](https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-application-inference-profiles.html)、
-  [Inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html)、[Create an application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html)。
+  [Inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html)、[Create an application inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html)、
+  [Prerequisites for running model inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html)、[Prerequisites for inference profiles](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-prereq.html)。
 - AWS General Reference: [Amazon Bedrock endpoints and quotas](https://docs.aws.amazon.com/general/latest/gr/bedrock.html)
   （「Inference profiles per account」の行）。
 - IAM User Guide: [Access to AWS accounts owned by third parties](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html)
   （外部 ID）。
-- opencode: [Providers](https://opencode.ai/docs/providers/) の Amazon Bedrock の節（入っている v2.2.5 には固定されていない）。
+- opencode: [v2 Providers](https://dev.opencode.ai/v2/docs/providers/)（入っている v2 系）と
+  [v1 Providers](https://opencode.ai/docs/providers/) の Amazon Bedrock の節。
 - Codex: [Configuration reference](https://developers.openai.com/codex/config-reference)（`model_providers`、`wire_api`、
   `auth`、`model_providers.amazon-bedrock.aws`）。
 - 手元の CLI: `codex --help`、`codex exec --help`（0.167.0）、`opencode --version`（v2.2.5）、`claude --version`（2.1.318）。
