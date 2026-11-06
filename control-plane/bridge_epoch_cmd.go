@@ -31,7 +31,12 @@ func runAdvanceBridgeEpochs(args []string) {
 	defer st.Close()
 	log.Printf("advance-bridge-epochs: %s", where)
 	if !*yes {
-		fmt.Println("dry run: pass --yes to advance every membership's bridge and git token epoch once")
+		n, err := st.CountMemberships(context.Background())
+		if err != nil {
+			log.Printf("advance-bridge-epochs: %v", err)
+			os.Exit(2)
+		}
+		fmt.Printf("dry run: %d memberships would move; pass --yes to advance their bridge and git token epoch once\n", n)
 		return
 	}
 	n, err := st.BumpAllBridgeEpochs(context.Background())

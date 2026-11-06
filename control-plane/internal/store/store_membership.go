@@ -251,6 +251,14 @@ func (s *SQL) BumpAllBridgeEpochs(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
+// CountMemberships is how many memberships BumpAllBridgeEpochs would move (every row, inactive
+// ones included).
+func (s *SQL) CountMemberships(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM membership`).Scan(&n)
+	return n, err
+}
+
 func (s *SQL) BridgeEpochStarted(ctx context.Context, membershipID string) (int64, int64, bool, error) {
 	var started, current int64
 	err := s.db.QueryRowContext(ctx,

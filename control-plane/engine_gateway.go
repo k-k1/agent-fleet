@@ -225,7 +225,7 @@ func registerEngineRoutes(mux *http.ServeMux, cfg config) *engineRegistry {
 // (the same membership's engine access), so a wrong name costs a mislabelled usage row, not
 // access to anything. Verifying it would mean a CP→Agent round trip on every session launch.
 func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request) {
-	mv, aerr := g.issuerMembership(r)
+	mv, epoch, aerr := g.issuerMembership(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -260,13 +260,9 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	exp := time.Now().Add(engineSessionTokenTTL)
-	// Bound to the membership's current bridge epoch (issue #3452): a rotation or a removal
-	// kills the session tokens a model may still hold, not only the issuing token.
-	epoch, ok := g.mgr.bridgeEpoch(r.Context(), mv.MembershipID)
-	if !ok {
-		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "membership not active"})
-		return
-	}
+	// Bound to the epoch the issuing token verified under (issue #3452), not to one read now:
+	// a rotation while the body was read leaves this token dead on arrival instead of buying a
+	// current one with a revoked credential.
 	tok := mintEngineSessionToken(bridgeKeyAt(g.reg.signKey, epoch), mv.MembershipID, strings.TrimSpace(req.Session), key, exp)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":      tok,
@@ -281,7 +277,7 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 // never touches the engines themselves — the whole point is that the launch menu can be
 // drawn while every engine is asleep.
 func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
-	mv, aerr := g.issuerMembership(r)
+	mv, _, aerr := g.issuerMembership(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -421,13 +417,17 @@ func engineForbiddenErr(role string) *apiError {
 	return &apiError{http.StatusForbidden, "engine_forbidden", "this tenant is not allowed to use the " + role + " engine"}
 }
 
-func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {
+func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, int64, *apiError) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	mid, ok := g.mgr.verifyBridge(r.Context(), g.reg.signKey, tok, verifyEngineIssueToken)
+	// The epoch the token verified under is returned with the membership: a session token
+	// minted from it must be signed under that same epoch, never one read again later (a
+	// rotation in between would otherwise turn a revoked credential into a current one).
+	mid, epoch, ok := g.mgr.verifyBridgeAt(r.Context(), g.reg.signKey, tok, verifyEngineIssueToken)
 	if !ok {
-		return store.MembershipView{}, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid engine token"}
+		return store.MembershipView{}, 0, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid engine token"}
 	}
-	return g.liveMembership(r.Context(), mid)
+	mv, aerr := g.liveMembership(r.Context(), mid)
+	return mv, epoch, aerr
 }
 
 // liveMembership resolves the membership from the store rather than from the token, so a

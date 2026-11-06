@@ -88,6 +88,9 @@ func TestBumpAllBridgeEpochsAndStartedMarker(t *testing.T) {
 				t.Fatal(err)
 			}
 			n, err := st.BumpAllBridgeEpochs(ctx)
+			if c, err := st.CountMemberships(ctx); err != nil || c != n {
+				t.Errorf("CountMemberships = %d (%v), want what the bump moved: %d", c, err, n)
+			}
 			if err != nil || n < 2 {
 				t.Fatalf("BumpAll moved %d rows err=%v, want at least both memberships (inactive included)", n, err)
 			}

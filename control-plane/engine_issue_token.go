@@ -121,8 +121,16 @@ func (a engineAdminAPI) postIssueToken(w http.ResponseWriter, r *http.Request, i
 	if hasWS {
 		warning += engineIssueTokenPersonWarning
 	}
+	// Minted under the membership's current bridge epoch (issue #3452), the one the gateway
+	// verifies under. Failing closed: a token minted under a guessed epoch would answer 401.
+	epoch, epochOK := a.mgr.bridgeEpoch(r.Context(), mem.ID)
+	if !epochOK {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeMembershipInactive,
+			"the membership's token epoch could not be read — nothing was issued. Try again."})
+		return
+	}
 	view := engineIssueTokenView{
-		Token:         mintEngineIssueToken(a.issuingSignKey(), mem.ID),
+		Token:         mintEngineIssueToken(bridgeKeyAt(a.issuingSignKey(), epoch), mem.ID),
 		MembershipID:  mem.ID,
 		TenantSlug:    mv.TenantSlug,
 		UserKey:       key,
@@ -131,9 +139,9 @@ func (a engineAdminAPI) postIssueToken(w http.ResponseWriter, r *http.Request, i
 		Opens:         engineIssueTokenOpens,
 		Deterministic: true,
 		HasWorkspace:  hasWS,
-		Revoke: "Remove the membership " + mv.TenantSlug + "/" + key + ": it is refused on the next request. " +
-			"There is no way to invalidate this one token on its own — the only alternative is rotating the signing master, " +
-			"which also invalidates every git, memo and schedule token in this deployment.",
+		Revoke: "Rotate this member's bridge tokens (POST /api/admin/rotate-bridge-tokens) and fetch the token again: " +
+			"the earlier one is refused on the next request. Removing the membership also refuses it, and so does " +
+			"re-activating it. The signing version (AF_TOKEN_SIGN_VERSION) or `af-cp advance-bridge-epochs --yes` retire every token in the deployment.",
 		Warning: warning,
 	}
 	// Showing a credential is an act somebody has to be able to answer for later. The token

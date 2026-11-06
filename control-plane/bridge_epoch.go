@@ -25,6 +25,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -33,17 +34,26 @@ import (
 
 const tokenSignVersionEnv = "AF_TOKEN_SIGN_VERSION"
 
-// tokenSignVersion reads AF_TOKEN_SIGN_VERSION. Unset or malformed means 0, the legacy root:
-// failing closed to a different root would silently kill every token of a deployment that
-// mistyped the value, so a malformed value is logged and ignored instead.
-func tokenSignVersion() int {
+// checkTokenSignVersion validates AF_TOKEN_SIGN_VERSION. Unset is 0, the legacy root. A value
+// that is set but not a non-negative integer is an error, and main refuses to start on it: the
+// obvious fallback (0) would kill every token of a deployment running version 1 or later and
+// bring back the tokens of the same epoch under version 0.
+func checkTokenSignVersion() error {
 	raw := strings.TrimSpace(os.Getenv(tokenSignVersionEnv))
 	if raw == "" {
-		return 0
+		return nil
 	}
-	v, err := strconv.Atoi(raw)
+	if v, err := strconv.Atoi(raw); err != nil || v < 0 {
+		return fmt.Errorf("%s=%q is not a non-negative integer", tokenSignVersionEnv, raw)
+	}
+	return nil
+}
+
+// tokenSignVersion reads AF_TOKEN_SIGN_VERSION. checkTokenSignVersion has already refused a
+// malformed value at startup, so the 0 returned for one is reached only by a test.
+func tokenSignVersion() int {
+	v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(tokenSignVersionEnv)))
 	if err != nil || v < 0 {
-		log.Printf("%s=%q is not a signing version; using 0", tokenSignVersionEnv, raw)
 		return 0
 	}
 	return v
@@ -132,16 +142,26 @@ func (m *manager) bridgeKeyFor(ctx context.Context, signKey []byte, token string
 // The epoch is read live on every request, for the reason the role is: a rotation has to take
 // effect on the very next call.
 func (m *manager) verifyBridge(ctx context.Context, signKey []byte, token string, verify func(signKey []byte, token string) (string, bool)) (string, bool) {
-	key, ok := m.bridgeKeyFor(ctx, signKey, token)
+	mid, _, ok := m.verifyBridgeAt(ctx, signKey, token, verify)
+	return mid, ok
+}
+
+// verifyBridgeAt is verifyBridge that also returns the epoch the token verified under, for a
+// caller that signs something on the strength of the verification (engine session tokens).
+func (m *manager) verifyBridgeAt(ctx context.Context, signKey []byte, token string, verify func(signKey []byte, token string) (string, bool)) (string, int64, bool) {
+	mid, ok := bridgeTokenMembership(token)
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
-	mid, _ := bridgeTokenMembership(token)
-	got, ok := verify(key, token)
+	epoch, ok := m.bridgeEpoch(ctx, mid)
+	if !ok {
+		return "", 0, false
+	}
+	got, ok := verify(bridgeKeyAt(signKey, epoch), token)
 	if !ok || got != mid {
-		return "", false
+		return "", 0, false
 	}
-	return got, true
+	return got, epoch, true
 }
 
 // rotateBridgeTokens advances one membership's bridge and git epochs. The runtime memo carries

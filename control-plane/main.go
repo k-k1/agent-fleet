@@ -177,6 +177,9 @@ func main() {
 	// Deployment master key for at-rest credential encryption (A3). Per-user
 	// subkeys are derived from its SHA-256 and injected as AF_SECRET_KEY. Unset
 	// => no encryption (dev: Agent stores secrets as plaintext JSON).
+	if err := checkTokenSignVersion(); err != nil {
+		log.Fatalf("token signing version: %v", err)
+	}
 	if mk := os.Getenv("AF_MASTER_KEY"); mk != "" {
 		mgr.master32 = masterDigest(mk)
 	}

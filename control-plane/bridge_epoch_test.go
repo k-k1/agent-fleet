@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -208,9 +209,20 @@ func TestTokenSigningVersion(t *testing.T) {
 	if tokenSignVersion() != 2 {
 		t.Fatal("AF_TOKEN_SIGN_VERSION=2 not read")
 	}
-	t.Setenv(tokenSignVersionEnv, "banana")
-	if tokenSignVersion() != 0 {
-		t.Fatal("a malformed version must fall back to 0, not to a root that kills every token")
+	if err := checkTokenSignVersion(); err != nil {
+		t.Fatalf("a valid version was refused: %v", err)
+	}
+	// A malformed or negative value refuses startup: falling back to 0 would kill every token of
+	// a deployment on version 1+ and revive the version-0 tokens of the same epoch.
+	for _, bad := range []string{"banana", "-1", "1.5"} {
+		t.Setenv(tokenSignVersionEnv, bad)
+		if checkTokenSignVersion() == nil {
+			t.Errorf("AF_TOKEN_SIGN_VERSION=%q was accepted", bad)
+		}
+	}
+	t.Setenv(tokenSignVersionEnv, "")
+	if err := checkTokenSignVersion(); err != nil || tokenSignVersion() != 0 {
+		t.Fatalf("unset must stay the legacy version 0: %v", err)
 	}
 }
 
@@ -274,3 +286,79 @@ func TestEngineSessionTokenDiesWithTheEpoch(t *testing.T) {
 
 func timeNow() time.Time     { return time.Now() }
 func timeNowPlus() time.Time { return time.Now().Add(time.Hour) }
+
+// The admin route that hands out a borrowed engine token must keep working after the epoch has
+// moved: it mints under the current epoch, and the gateway accepts what it minted.
+func TestAdminIssuedEngineTokenWorksAfterRotationAndReactivation(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, reg, a := issueTokenFixture(t)
+	mem := issueTokenMember(t, st, "acme", "borrow-bot", "member")
+	g := engineGateway{mgr: mgr, reg: reg}
+	fetch := func() string {
+		t.Helper()
+		rec, out := callIssueToken(a, `{"tenant_slug":"acme","user_key":"borrow-bot"}`)
+		if rec.Code != 200 {
+			t.Fatalf("issue-token = %d %s", rec.Code, rec.Body.String())
+		}
+		tok, _ := out["token"].(string)
+		return tok
+	}
+	accepted := func(tok string) bool {
+		req := httptest.NewRequest("POST", "/internal/engine/token", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		_, _, aerr := g.issuerMembership(req)
+		return aerr == nil
+	}
+	first := fetch()
+	if !accepted(first) {
+		t.Fatal("a freshly issued token is refused")
+	}
+	if _, _, err := mgr.rotateBridgeTokens(ctx, mem.ID); err != nil {
+		t.Fatal(err)
+	}
+	if accepted(first) {
+		t.Fatal("the token of the earlier epoch still works after a rotation")
+	}
+	second := fetch()
+	if !accepted(second) {
+		t.Fatal("a token fetched again after a rotation is refused: the admin route minted under epoch 0")
+	}
+	if err := st.SetMembershipStatus(ctx, mem.ID, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetMembershipStatus(ctx, mem.ID, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if accepted(second) {
+		t.Fatal("a token of the epoch before the removal came back with the re-activation")
+	}
+	if !accepted(fetch()) {
+		t.Fatal("a token fetched after the re-activation is refused")
+	}
+}
+
+// A session token is signed under the epoch the issuing token verified under. A rotation while
+// the request body is read must leave the minted token dead, not current.
+func TestEngineSessionMintAcrossARotationIsDead(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, reg, a := issueTokenFixture(t)
+	mem := issueTokenMember(t, st, "acme", "borrow-bot", "member")
+	g := engineGateway{mgr: mgr, reg: reg}
+	rec, out := callIssueToken(a, `{"tenant_slug":"acme","user_key":"borrow-bot"}`)
+	if rec.Code != 200 {
+		t.Fatal(rec.Body.String())
+	}
+	req := httptest.NewRequest("POST", "/internal/engine/token", nil)
+	req.Header.Set("Authorization", "Bearer "+out["token"].(string))
+	_, epoch, aerr := g.issuerMembership(req) // authenticated at this epoch
+	if aerr != nil {
+		t.Fatalf("issuer refused: %v", aerr)
+	}
+	if _, _, err := mgr.rotateBridgeTokens(ctx, mem.ID); err != nil { // ...rotated while the body is read
+		t.Fatal(err)
+	}
+	tok := mintEngineSessionToken(bridgeKeyAt(reg.signKey, epoch), mem.ID, "s1", "llm", timeNowPlus())
+	if _, ok := g.verifyEngineSession(ctx, tok, timeNow()); ok {
+		t.Fatal("a session token minted from a revoked issuing token verifies under the new epoch")
+	}
+}
