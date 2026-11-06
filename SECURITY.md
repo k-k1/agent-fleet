@@ -162,7 +162,10 @@ declare.
   file system holding the Claude state and the kept dotfiles carries a file-system
   policy (`10-data.yaml`) that refuses a mount without TLS, without an access point, or
   outside a mount target; only the home task's dedicated role may mount the root, with IAM
-  authorization. Workspace volumes still mount without IAM authorization and the task role
+  authorization. The policy is an allow-list, so it binds anonymous (workspace) mounts; an
+  IAM principal of the same account whose own policy grants the EFS client actions is not
+  stopped by it, which stays inside the account trust boundary above (no template role has
+  such a grant). Workspace volumes still mount without IAM authorization and the task role
   is shared across memberships, so a workspace task that learns another member's access
   point ID can mount it. Binding each task to its own access points needs a per-membership
   role ([#3455](https://github.com/k-k1/agent-fleet/issues/3455)). On `ecs-ec2` the access

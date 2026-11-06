@@ -169,6 +169,11 @@ Resources:
       # AccessedViaMountTarget are). The only mount without an access point is the home
       # task's role (HomeOpsEfsRole), which Destroy needs: the access point cannot remove its
       # own root directory. Binding each member to their own access point is #3455.
+      # Limit: EFS admits an action on an Allow from the identity OR this policy, so a same-account
+      # role whose identity policy grants the client actions can still mount without an access
+      # point (no template role has such a grant). An explicit Deny would close that, but its
+      # exception for the home task needs a key EFS may not enforce, or a root access point whose
+      # ARN would make this policy and the access point depend on each other (#3455).
       # This policy replaces any file-system policy set by hand outside the stack.
       FileSystemPolicy:
         Version: "2012-10-17"
