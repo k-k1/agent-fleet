@@ -394,6 +394,7 @@ func serve() {
 	afdb.StartIdleLoop()
 
 	log.Printf("workspace-agent %s listening on %s", buildVersion, addr)
+	warmAgentStatuses()
 	if err := http.Serve(ln, httpx.LogRequests(httpx.Gzip(httpx.RequireToken(mux)))); err != nil {
 		log.Fatal(err)
 	}

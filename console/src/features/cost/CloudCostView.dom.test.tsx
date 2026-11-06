@@ -142,6 +142,50 @@ describe("CloudCostAdminView", () => {
     expect(text()).toContain("割り振っていません");
   });
 
+  // The modifier and the cells must agree: a grid with a tenant track but rows without the tenant
+  // cell (or the reverse) shifts every cell one column and the bars stop lining up.
+  const gridMatchesRows = () => {
+    const list = host!.querySelector(".usage-rows.ur-table")!;
+    const withTenant = list.classList.contains("ur-with-tenant");
+    const rows = Array.from(list.querySelectorAll(":scope > .usage-row"));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.children.length).toBe(withTenant ? 4 : 3);
+    return withTenant;
+  };
+  const members = [
+    { membership_id: "M-1", user_key: "alice", email: "a@x.com", tenant: "acme", unblended_micro: 2_000_000 },
+    { membership_id: "M-2", user_key: "bob", email: "b@x.com", tenant: "", unblended_micro: 1_000_000 },
+  ];
+
+  it("super admin, all tenants: tenant column on, and an empty tenant value keeps its cell", async () => {
+    api.mockResolvedValue({ members, attributed_micro: 3_000_000, meta: meta() });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    expect(gridMatchesRows()).toBe(true);
+  });
+
+  it("super admin with one tenant selected: tenant column off", async () => {
+    api.mockResolvedValue({ members, attributed_micro: 3_000_000, meta: meta() });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    // The range bar also carries a preset <select>, so pick the tenant chooser by its option.
+    const sel = Array.from(host!.querySelectorAll("select")).find((s) =>
+      Array.from(s.options).some((o) => o.value === "acme"),
+    )!;
+    await act(async () => {
+      sel.value = "acme";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(gridMatchesRows()).toBe(false);
+  });
+
+  it("tenant admin: tenant column off", async () => {
+    api.mockResolvedValue({ members, attributed_micro: 3_000_000, meta: meta() });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={false} />);
+    expect(gridMatchesRows()).toBe(false);
+  });
+
   it("draws no shared card when the tenant admin's response carries no shared costs", async () => {
     // The screen never decides who sees what: it just does not draw what the server did not return.
     api.mockResolvedValue({

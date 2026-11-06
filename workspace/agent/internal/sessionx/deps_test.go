@@ -188,6 +188,9 @@ func testDeps() Deps {
 			return "", "", nil
 		},
 		MCPConvID: func() string { unreached("MCPConvID"); return "" },
+
+		// Reached by every lifecycle exit; route_tokens_test.go reads what it recorded.
+		EndRouteTokens: recordRouteTokenEnd,
 		RunOperatorTurn: func(conv, text, source string) (string, error) {
 			unreached("RunOperatorTurn")
 			return "", nil

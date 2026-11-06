@@ -470,6 +470,9 @@ func (r *routeSwitchRun) store() error {
 		cur.RouteSwitches = append(cur.RouteSwitches, session.RouteSwitch{At: r.rec.At, From: r.rec.From.Clone(), To: r.rec.To})
 		return true
 	})
+	// Whatever was written, the old selection's tokens end here: the halt above already ended
+	// them when the session was running, and a stopped session may still hold one.
+	endRouteTokens(r.name)
 	if err != nil {
 		return fmt.Errorf("storing the new route: %w", err)
 	}
@@ -579,7 +582,7 @@ func rollbackRouteSwitch(name string, rec routeSwitchRecord) (relaunch, rollback
 				return nil, fmt.Errorf("stopping the new runtime: %w", err)
 			}
 		}
-		if _, wrote, err := updateSessionMetaChecked(name, func(c *session.Meta) bool {
+		_, wrote, err := updateSessionMetaChecked(name, func(c *session.Meta) bool {
 			kept := c.RouteSwitches[:0:0]
 			for _, sw := range c.RouteSwitches {
 				if sw.At != rec.At {
@@ -589,7 +592,10 @@ func rollbackRouteSwitch(name string, rec routeSwitchRecord) (relaunch, rollback
 			c.RouteSwitches = kept
 			c.Route = rec.From.Clone()
 			return true
-		}); err != nil || !wrote {
+		})
+		// The new selection's tokens end with it; the old route's relaunch below mints its own.
+		endRouteTokens(name)
+		if err != nil || !wrote {
 			if err == nil {
 				err = errors.New("the session is gone or changed")
 			}

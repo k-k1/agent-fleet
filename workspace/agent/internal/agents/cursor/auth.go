@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -34,7 +33,7 @@ type statusOut struct {
 // Status is the `cursor` field of GET /connections. supported=false hides the kind
 // in the Console (the registry's available gate — the same wiring as copilot/agy): no binary
 // = an old image. connected is the real login state (status --format json). The probe is
-// cached for ~30s so that a connections poll does not spawn a child process every time.
+// served stale-while-revalidate (30s TTL) so that a connections poll neither spawns a child process every time nor waits for one.
 func Status() map[string]any {
 	if _, err := exec.LookPath(bin()); err != nil {
 		return map[string]any{"connected": false, "supported": false, "reason": "not_installed"}
@@ -48,32 +47,34 @@ func Status() map[string]any {
 	return m
 }
 
-var statusMu sync.Mutex
-var statusAt time.Time
-var statusVal statusOut
+// statusProbe serves the status stale-while-revalidate: a /connections poll never waits on
+// the CLI (~4s measured) except for the first answer. A failed probe keeps the previous answer.
+var statusProbe = &agents.SWRProbe[statusOut]{
+	TTL:        30 * time.Second,
+	ColdBudget: 12 * time.Second, // above the exec timeout below: the cold caller sees the real answer
+	Probe: func() (statusOut, bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := probeCmd(ctx, disableAutoUpdateFlag, "status", "--format", "json").Output()
+		if err != nil {
+			return statusOut{}, false
+		}
+		var st statusOut
+		if json.Unmarshal([]byte(strings.TrimSpace(string(out))), &st) != nil {
+			return statusOut{}, false
+		}
+		return st, true
+	},
+}
 
-const statusTTL = 30 * time.Second
+func probeStatus() statusOut { return statusProbe.Get() }
 
-func probeStatus() statusOut {
-	statusMu.Lock()
-	defer statusMu.Unlock()
-	if !statusAt.IsZero() && time.Since(statusAt) < statusTTL {
-		return statusVal
+// WarmStatus starts the status probe in the background (Agent start), so the first
+// /connections after boot is not cold. A no-op without the binary.
+func WarmStatus() {
+	if _, err := exec.LookPath(bin()); err == nil {
+		statusProbe.Warm()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := probeCmd(ctx, disableAutoUpdateFlag, "status", "--format", "json").Output()
-	if err != nil {
-		// stale-if-error: a transient failure must not drop the connection state (keep the
-		// previous value).
-		return statusVal
-	}
-	var st statusOut
-	if json.Unmarshal([]byte(strings.TrimSpace(string(out))), &st) == nil {
-		statusVal = st
-		statusAt = time.Now()
-	}
-	return statusVal
 }
 
 // LoggedIn reports (cached, ~30s) whether cursor-agent has an authenticated
@@ -89,11 +90,7 @@ func LoggedIn() bool {
 
 // invalidateStatus drops the cached status so the next /connections poll reflects
 // a login/logout at once instead of after statusTTL.
-func invalidateStatus() {
-	statusMu.Lock()
-	statusAt = time.Time{}
-	statusMu.Unlock()
-}
+func invalidateStatus() { statusProbe.Invalidate() }
 
 // --- interactive login flow (docs/log/40 Track C) ---------------------------------
 //

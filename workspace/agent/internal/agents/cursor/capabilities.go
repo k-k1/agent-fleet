@@ -60,3 +60,6 @@ func (agentImpl) UsageMeasured() string { return usagex.MeasuredNone }
 func (agentImpl) TUIInterrupt(func() bool) agents.TUIInterruptTraits {
 	return agents.TUIInterruptCtrlC()
 }
+
+// WarmStatus is agents.StatusWarmer: this package's WarmStatus().
+func (agentImpl) WarmStatus() { WarmStatus() }

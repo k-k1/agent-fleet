@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,10 +13,15 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// The real listener: loopback only, its own port, a token that works through it, and nothing
-// left behind once stopped.
-func TestStartServesOnLoopbackAndStops(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+// The real listener: a Unix socket at SocketPath, this user's only, a token that works through
+// it from the owner's process, no TCP port, and nothing left behind once stopped.
+func TestStartServesOnAUnixSocketAndStops(t *testing.T) {
+	home, err := os.MkdirTemp("", "rgwh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(home)
+	t.Setenv("HOME", home)
 	e := newEnv(t)
 	stop, err := Start(Deps{
 		Now:         e.g.d.Now,
@@ -25,6 +31,7 @@ func TestStartServesOnLoopbackAndStops(t *testing.T) {
 		Credentials: e.g.d.Credentials,
 		Append:      func([]usagex.Record) error { return nil },
 		Endpoint:    e.g.d.Endpoint,
+		Roots:       e.g.d.Roots,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,13 +45,17 @@ func TestStartServesOnLoopbackAndStops(t *testing.T) {
 	if ref != nil {
 		t.Fatalf("Issue: %+v", ref)
 	}
-	host, _, _ := strings.Cut(strings.TrimPrefix(is.BaseURL, "http://"), ":")
-	if host != "127.0.0.1" || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
-		t.Fatalf("base URL %q is not loopback", is.BaseURL)
+	if is.Socket != SocketPath() || is.BaseURL != SocketBaseURL {
+		t.Fatalf("issued %q %q", is.Socket, is.BaseURL)
 	}
+	fi, err := os.Stat(is.Socket)
+	if err != nil || fi.Mode()&os.ModeSocket == 0 || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("socket %v %v", fi, err)
+	}
+	c := socketClient(is.Socket)
 	req, _ := http.NewRequest("POST", is.BaseURL+invokePath(), strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+is.Token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,35 +64,52 @@ func TestStartServesOnLoopbackAndStops(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("through the real listener = %d", resp.StatusCode)
 	}
-	// The same listener refuses a call with no token, so a session that finds the port gets nothing.
-	if resp, _ := http.Post(is.BaseURL+invokePath(), "application/json", strings.NewReader(`{}`)); resp.StatusCode != 401 {
+	// The same listener refuses a call with no token.
+	if resp, _ := c.Post(is.BaseURL+invokePath(), "application/json", strings.NewReader(`{}`)); resp.StatusCode != 401 {
 		t.Fatalf("without a token = %d", resp.StatusCode)
 	}
+	// Ending the session at once, through the package entry the lifecycle exits call.
+	if n := EndSession("s1"); n != 1 {
+		t.Fatalf("EndSession ended %d", n)
+	}
+	req, _ = http.NewRequest("POST", is.BaseURL+invokePath(), strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+is.Token)
+	if resp, err := c.Do(req); err != nil || resp.StatusCode != 401 {
+		t.Fatalf("after EndSession = %v %v", resp, err)
+	}
 	stop()
-	if Default() != nil {
+	if Default() != nil || EndSession("s1") != 0 {
 		t.Fatal("Default is set after stop")
 	}
-	if _, err := net.DialTimeout("tcp", strings.TrimPrefix(is.BaseURL, "http://"), 500*time.Millisecond); err == nil {
-		t.Fatal("the port still accepts connections after stop")
+	if _, err := os.Lstat(is.Socket); err == nil {
+		t.Fatal("the socket is left behind after stop")
 	}
-	// Restarting prefers the port it had, so a running pane's base URL survives an Agent restart,
-	// while the tokens (memory only) do not.
-	stop2, err := Start(Deps{Settings: e.g.d.Settings})
+	// A stale socket from an Agent that died is replaced; a file that is not a socket is not ours.
+	ln, err := net.Listen("unix", SocketPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stop2()
-	if got := baseURL(); got != is.BaseURL {
-		t.Logf("port moved (%s -> %s): acceptable only when the old one was taken", is.BaseURL, got)
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.Close()
+	stop2, err := Start(Deps{Settings: e.g.d.Settings})
+	if err != nil {
+		t.Fatalf("a stale socket blocked the start: %v", err)
 	}
 	if _, ok := Default().Registry().Lookup(is.Token); ok {
 		t.Fatal("a token survived an Agent restart")
+	}
+	stop2()
+	if err := os.WriteFile(SocketPath(), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(Deps{Settings: e.g.d.Settings}); err == nil {
+		t.Fatal("a regular file at the socket path was removed")
 	}
 }
 
 func TestIssueRefusesWhileNotListening(t *testing.T) {
 	e := newEnv(t)
-	e.g.d.BaseURL = func() string { return "" }
+	e.g.d.Socket = func() string { return "" }
 	_, ref := e.g.Issue(e.session("s1", "p1", ""))
 	if ref == nil || e.g.Registry().Len() != 0 {
 		t.Fatalf("Issue without a listener = %+v, tokens held %d", ref, e.g.Registry().Len())

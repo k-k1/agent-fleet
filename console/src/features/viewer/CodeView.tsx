@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
 import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
+import { applyGridSelection, captureGridSelection, restoreGridRows, type GridSelection, type SerializedLines } from "./parts/gridRestore.ts";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
 // VSCode-style minimap on the right edge: a scaled-down PLAIN-TEXT mirror of the file
@@ -283,12 +284,73 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   }, [html, targetLine]);
 
   // The code area is contentEditable so it gets a real, keyboard-movable caret (arrow
-  // keys, Home/End, Shift-select, Ctrl+A, copy) for reading — but it must stay strictly
-  // read-only, so every mutation path is blocked: beforeinput covers typing/delete/IME,
-  // and paste/cut/drop are cancelled explicitly. Caret movement, selection and copy don't
-  // fire these, so they pass through. The line-number gutter is a contentEditable=false
-  // island so the caret never lands on a number.
+  // keys, Home/End, Shift-select, Ctrl+A, copy) for reading — but it must stay read-only.
+  // The native beforeinput is cancelled, which stops typing, Enter, Backspace/Delete and
+  // history edits; paste/cut/drop are cancelled explicitly. Caret movement, selection and
+  // copy don't fire these, so they pass through. The line-number gutter is a
+  // contentEditable=false island so the caret never lands on a number.
+  //
+  // beforeinput must be a native listener: React's onBeforeInput is synthesized from
+  // textInput/keypress and only fires for inserted characters, so Backspace and Delete
+  // went through it and edited the DOM.
+  //
+  // IME composition cannot be cancelled (insertCompositionText is not cancelable per the
+  // Input Events spec; measured: a composed "あ" lands in the grid and stays after commit).
+  // The first uncancellable beforeinput records where the caret was; once the composition
+  // ends (or on an input outside one) the rows are put back in place and that caret or
+  // selection is restored. Restoring in place keeps the focused element, so focus is never
+  // moved; only a structural edit falls back to remounting the grid.
+  const [restoreEpoch, setRestoreEpoch] = useState(0);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const editStartRef = useRef<GridSelection | null>(null);
+  // Set when a remount is the fallback: whether to refocus, and the selection to put back.
+  const remountRef = useRef<{ start: GridSelection | null } | null>(null);
+  const serializedLines = useMemo<SerializedLines>(() => [], [lineHtmls]);
+  const restoreInputs = useRef({ lineHtmls, serializedLines, n, cellsPerRow: showGutter ? 2 : 1 });
+  restoreInputs.current = { lineHtmls, serializedLines, n, cellsPerRow: showGutter ? 2 : 1 };
   const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
+  const restoreGrid = useCallback(() => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const start = editStartRef.current;
+    editStartRef.current = null;
+    const hadFocus = grid.contains(document.activeElement);
+    const { lineHtmls, serializedLines, n, cellsPerRow } = restoreInputs.current;
+    if (!restoreGridRows(grid, lineHtmls, serializedLines, n, cellsPerRow)) {
+      remountRef.current = hadFocus ? { start } : null;
+      setRestoreEpoch((k) => k + 1);
+      return;
+    }
+    if (start && hadFocus) applyGridSelection(grid, start);
+  }, []);
+  const onGridInput = useCallback(
+    (e: SyntheticEvent) => {
+      if (!(e.nativeEvent as InputEvent).isComposing) restoreGrid();
+    },
+    [restoreGrid],
+  );
+  const attachGrid = useCallback((el: HTMLDivElement) => {
+    gridRef.current = el;
+    const block = (e: Event) => {
+      if (e.cancelable) e.preventDefault();
+      else if (!editStartRef.current) editStartRef.current = captureGridSelection(el);
+    };
+    el.addEventListener("beforeinput", block);
+    return () => {
+      el.removeEventListener("beforeinput", block);
+      if (gridRef.current === el) gridRef.current = null;
+    };
+  }, []);
+  // A remount replaces the element that had focus; give focus and the selection back only if
+  // the grid had focus when the restore ran (remountRef is null otherwise).
+  useLayoutEffect(() => {
+    const pending = remountRef.current;
+    remountRef.current = null;
+    const grid = gridRef.current;
+    if (!pending || !grid) return;
+    grid.focus({ preventScroll: true });
+    if (pending.start) applyGridSelection(grid, pending.start);
+  }, [restoreEpoch]);
 
   // Merges the inner ref (used for the minimap maths) and the scroll memory passed from outside
   // into one ref. The memory side returns a React 19 ref cleanup, so that is folded in too.
@@ -316,7 +378,10 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
           role="textbox"
           aria-readonly="true"
           aria-multiline="true"
-          onBeforeInput={preventEdit}
+          ref={attachGrid}
+          key={restoreEpoch}
+          onInput={onGridInput}
+          onCompositionEnd={restoreGrid}
           onPaste={preventEdit}
           onCut={preventEdit}
           onDrop={preventEdit}
