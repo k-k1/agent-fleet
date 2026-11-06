@@ -5,7 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
+
+	"golang.org/x/text/width"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -111,8 +112,21 @@ func topRule(line string) bool {
 	return ruleWidth(line) >= minBoxRule && strings.HasPrefix(t, "─") && strings.HasSuffix(t, "─")
 }
 
+// ruleWidth is the line's width in terminal columns. A title in the top rule can hold wide runes
+// (a Japanese session title), and counting runes made that rule shorter than the bottom one, so the
+// box never read and a stop's guard never lifted (issue #3408). Only East Asian Wide and Fullwidth
+// runes take two columns: "─" itself is Ambiguous and tmux draws it one column wide.
 func ruleWidth(line string) int {
-	return utf8.RuneCountInString(strings.TrimRight(line, " "))
+	n := 0
+	for _, r := range strings.TrimRight(line, " ") {
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
 }
 
 const minBoxRule = 20

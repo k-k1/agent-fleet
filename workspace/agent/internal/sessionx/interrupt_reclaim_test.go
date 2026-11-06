@@ -313,6 +313,17 @@ var paneTitled = strings.Repeat(" ", 60) + "Esc again to clear\n" + titledRule +
 
 var titledRule = strings.Repeat("─", 25) + " [AF:solkwlt] Live check #3290 (stop restores prompt) ─"
 
+// A Japanese title drawn into the top rule (captured from claude in a Fleet session, 80 columns,
+// issue #3408): 59 runes, 80 columns, like the 80-rune bottom rule.
+var wideTitledRule = "──── [AF:s36kevd] af-sandbox / acrt 配備担当（他セッションの依頼で配備・確認） ─"
+
+var paneWideTitledEmpty = "※ recap: 次の依頼を始める前の段階です。\n  (disable recaps in /config)\n\n" + wideTitledRule +
+	"\n❯ \n" + strings.Repeat("─", 80) + "\n\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+
+// An AskUserQuestion modal: no input box on screen, so a stop cannot prove the box empty.
+var paneQuestionModal = "☐ sandbox 後始末\n\nsandbox をこの後どうする？\n\n❯ 1. 今すぐ pause する\n  2. 起動したまま待機する\n" +
+	"  3. Type something.\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n"
+
 func TestClaudeBox(t *testing.T) {
 	draft, above, ok := claudeBox(paneCaptured)
 	if !ok || squashSpace(draft) != "SLOW一行目二行目" || above != clearHint {
@@ -321,6 +332,9 @@ func TestClaudeBox(t *testing.T) {
 	draft, above, ok = claudeBox(paneTitled)
 	if !ok || squashSpace(draft) != "1から20までの素数を全部挙げて理由も説明して" || above != clearHint {
 		t.Fatalf("titled: draft = %q, above = %q, ok = %v", draft, above, ok)
+	}
+	if draft, _, ok = claudeBox(paneWideTitledEmpty); !ok || squashSpace(draft) != "" {
+		t.Fatalf("wide title: draft = %q, ok = %v", draft, ok)
 	}
 	for name, pane := range map[string]string{
 		// A row of the draft that starts at column 0 is not claude's layout.
@@ -331,6 +345,8 @@ func TestClaudeBox(t *testing.T) {
 		// A title only ever sits in the top rule, and both rules have one width.
 		"titled bottom":    titledRule + "\n❯ a\n" + titledRule + "\n",
 		"titled, narrower": titledRule + "\n❯ a\n" + strings.Repeat("─", 79) + "\n",
+		// Measured in columns, the wide title's rule is 80 wide: a 59-rune bottom rule is not its pair.
+		"wide title, rune-equal bottom": wideTitledRule + "\n❯ a\n" + strings.Repeat("─", 59) + "\n",
 	} {
 		if _, _, ok := claudeBox(pane); ok {
 			t.Errorf("%s: read as a box", name)
@@ -969,5 +985,20 @@ func TestUnprovenGuardNotLiftedByTheLaxReader(t *testing.T) {
 	})
 	if code := unprovenSend(t); code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", code)
+	}
+}
+
+// Cancelling a question card is a stop sent while the modal hides the box, so it arms the
+// unproven-box guard. Under a wide-character title the empty box that follows must still lift it;
+// read in runes it never did, and every send after the cancel was refused (issue #3408).
+func TestSendAllowedAfterAStopOnAQuestionUnderAWideTitle(t *testing.T) {
+	pane := paneQuestionModal
+	_, _, _ = runClaudeInterrupt(t, "x", func(int) string { return pane })
+	if _, armed := unprovenBoxes.Load("turn_reclaim"); !armed {
+		t.Fatal("a stop on the question modal must arm the guard")
+	}
+	pane = paneWideTitledEmpty
+	if code := unprovenSend(t); code != http.StatusOK {
+		t.Fatalf("send status = %d, want 200", code)
 	}
 }
