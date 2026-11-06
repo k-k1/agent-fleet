@@ -5,40 +5,62 @@ English | [日本語](0130-cultivated-memory.ja.md)
 - Status: **draft for the owner's review** (2026-11-06). Nothing is built. Every `file:line` was read on
   `58501ccb0`. The store figures were measured read-only on one development workspace on 2026-11-06
   (section "Measured"); the Hermes Agent figures come from its source at `90d6b98` (2026-11-05); the
-  prior-art survey is section "Prior art" and is marked where it was not verified.
+  prior-art survey is [docs/log/136](../log/136-cultivated-memory-survey.md), which marks what was read,
+  what is secondary and what is inferred. Reviewed by a separate session (codex `gpt-6.1-sol`); round 1
+  had 21 findings, each checked against the tree and the cited papers and folded into this text.
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
-  release carries **the first step** of what this record calls cultivation. Everything else here is a
-  proposal.
+  release carries **the first step** of what this record calls cultivation (decision 10). Everything
+  else here is a proposal.
+- Follow-ups: issues are filed per step when this record is accepted (`docs/CONVENTIONS.md` §10).
 - Related: [0022](0022-agent-memory-management.md) (history, bundles) /
   [0108](0108-af-owned-agent-memory.md) (the store, tools, ranking, pins) /
   [0117](0117-background-memory-skill-review.md) (the review this record retires) /
-  [docs/log/134](../log/134-background-review-p0-measurement.md), [135](../log/135-background-review-index-size.md), [136](../log/136-cultivated-memory-survey.md) (measurements and prior-art survey)
-- Supersedes: 0117 decisions 1–3 (trigger, input, helper turn) and the member-facing parts of 4 and 6.
-  0117's run record, deny-all backend contract, `review` author, run id and "revert this run" are kept
-  for reuse (decision 7).
+  [0029](0029-usage-accounting.md) (the ledger enum) /
+  [0042](0042-user-instructions.md) (user instructions, which agents never write) /
+  [docs/log/134](../log/134-background-review-p0-measurement.md), [135](../log/135-background-review-index-size.md), [136](../log/136-cultivated-memory-survey.md)
+- What this record changes in earlier records, per decision (each gets a dated note when this record is
+  accepted, and only then):
+
+  | Earlier decision | Here |
+  |---|---|
+  | 0117 decisions 1, 2, 3 (trigger, input, helper turn) | superseded: removed (decision 2) |
+  | 0117 decision 4 (the model proposes, AF applies) | kept as the rule for the consolidator (decision 6) |
+  | 0117 decision 5 (history, run revert, rejected hashes, no revival) | kept; run revert moves to the change list, rejected hashes travel with the exported queue (decision 2), no-revival binds the consolidator (decision 6) |
+  | 0117 decision 6 (`off`/`propose`/`auto`) | superseded: the setting is removed; decision 7 replaces it |
+  | 0117 decisions 7–9 (skills, failure modes, phases) | superseded; skills are a later step (decision 10) |
+  | 0108 decision 3 (format) | amended: new optional frontmatter (decision 3) |
+  | 0108 decision 4 (tools) | amended: `memory_patch`, later `memory_feedback` (decision 4) |
+  | 0108 decision 5 and the 2026-10-08 note (ranking by `uses`) | amended: split counters, read-side visibility (decision 3) |
+  | 0108 decision 8 (agents publish at once, reviewed after) | unchanged for agents (decision 7) |
 
 ## Context
 
-0108 gave every agent kind one store and five tools. Agents write to it: over the four weeks to
-2026-11-06, about 5 creates a day and 1 forget in about 200 writes. Nothing makes the store better as
-it grows; it only gets bigger, and the world it describes moves under it.
+0108 gave every agent kind one store and five tools. Agents write to it: of the last 300 published
+changes (2026-10-10 to 11-06), agents made 122 creates, 82 updates and 1 forget. Nothing makes the store
+better as it grows; it only gets bigger, and the world it describes moves under it.
 
 ### Measured (2026-11-06, read-only)
 
 One project plus the user scope, 568 memories, 1.72 MB of bodies. Bodies were read through the
-Console's member routes, which count no use (`agent_memory_member.go`, search "counts no use");
-a sweep through `memory_read` would have added a use to every memory
-(`agent_memory.go:803`, `agent_memory_search.go:102`) and skewed the ranking it was judging.
+Console's member routes, which count no use (`agent_memory_member.go:6`); a sweep through
+`memory_read` would have added a use to every memory (`agent_memory.go:803`,
+`agent_memory_search.go:102`) and skewed the ranking it was judging.
 
-| Check, no LLM | Memories | Note |
+| Check, no LLM (measured with a throwaway script) | Memories | Note |
 |---|---|---|
 | `[[link]]` to a memory that does not exist | 7 | 9 of 1,669 links |
 | body > 4,096 bytes (`agent_memory.go:79`; recall shows only the head) | 100 | 33 > 8 KiB, largest 45 KB |
 | retired terms (retired AWS profiles, the old trunk branch) | 48 | of 78 hit lines: 13 already say "retired", 18 are commands |
-| repo path, `Test*` name or ADR number that does not exist | 63 | 12-sample spot check: about half real moves/deletions |
+| repo path, `Test*` name or ADR number that does not exist | 63 | 12-sample spot check: about half are real moves or deletions |
 | near-duplicate bodies (5-gram containment ≥ 0.4) | 8 | 3 pairs; literal duplication is rare |
 | any of the above, plus log-shaped and cold | 219 (39 %) | 1.02 MB |
-| facts changed (links, retired terms, paths) | 111 (20 %) | the hit lines ±1 are 0.11 MB, 6 % of the store |
+| facts changed (links, retired terms, paths) | 111 (20 %) | the hit lines ±1 plus descriptions are 0.11 MB |
+
+The last row's 0.11 MB is the size of the extracted snippets, 6 % of the store's body bytes. It is not
+the input of any model call: a consolidation prompt also carries instructions, the topic and whole
+bodies to patch, so the real reduction is something step 3 has to measure (decision 9). For scale only:
+reading every body once is roughly 570 k tokens **estimated** from bytes at about 3 bytes per token for
+this mixed Japanese/English text, not counted with a tokenizer.
 
 The signals a curator would want are not there:
 
@@ -50,211 +72,315 @@ The signals a curator would want are not there:
 
 ### Why 0117's review did not work
 
-Its mode is `off`; 25 proposals from 2026-10-19..20 (13 runs, 5 sessions) sat in the queue
-unanswered for 17 days; 1 of the last 300 published changes is authored `review`. All 25 are
-`create`; 11 have an existing memory with a near-identical name; one says in its own body that it
+Its mode is `off`; on the measured workspace 25 proposals from 2026-10-19..20 (13 runs, 5 sessions) sat
+in the queue unanswered for 17 days; 1 of the last 300 published changes is authored `review`. All 25
+are `create`; 11 have an existing memory with a near-identical name; one says in its own body that it
 contradicts `develop-trunk-ci` and is still a `create`. The causes are structural:
 
-1. The helper may only update a memory it was shown (`memreview/prompt.go:18`) and is shown at most
-   five, chosen by keyword overlap (`memreview/limits.go:20`). A near-duplicate outside the five can
-   only be answered with `create`.
-2. `update` replaces the whole body (`prompt.go:26`). Rewriting a long memory is expensive and
-   risky, so creating wins.
-3. The input is one session window (`loop.go:39`, 30 turns). Staleness caused by a change in the
-   world, and duplication across sessions, are invisible from inside one window.
-4. Every proposal costs one human decision. 0117's Consequences named the queue nobody reads; that
-   is what happened.
+1. The helper may only update a memory it was shown (`memreview/prompt.go:18`), at most five chosen by
+   keyword overlap (`memreview/limits.go:20`), and of those only one whose whole body fit in
+   `BodyChars` = 2,000 characters (`input.go:229`); an update of any longer memory is refused
+   (`ops.go:153`). The store's median body is about 2.2 KB, so for half the store the only move left
+   was a new name.
+2. `update` replaces the whole body (`prompt.go:26`), so even where it is allowed it is the expensive
+   and risky choice.
+3. A run is started by 30 transcript turns or 3 user prompts (`loop.go:39`) and reads that session's
+   window, split at `WindowChars` = 40,000 (`limits.go:13`). Staleness caused by a change in the world,
+   and duplication across sessions, are invisible from inside one window.
+4. Every proposal costs one human decision. 0117's Consequences named the queue nobody reads; that is
+   what happened.
 5. Agents already save in the turn. The review mostly re-proposed the same moments, smaller.
 
 ## Prior art
 
-Surveyed 2026-11-06; the long form, with sources and read/secondary/inferred marks, is
-[docs/log/136](../log/136-cultivated-memory-survey.md). What each one contributes here:
+Surveyed 2026-11-06; sources and read/secondary/inferred marks in
+[docs/log/136](../log/136-cultivated-memory-survey.md). What each contributes here:
 
-- **ACE (Agentic Context Engineering, ICLR'26)** — the evidence against full rewrites: a monolithic
-  rewrite collapsed an 18,282-token playbook to 122 tokens and fell below the no-adaptation
-  baseline (66.7 → 57.1 vs 63.7). Entries carry helpful/harmful counters; deltas are merged by
-  non-LLM logic. Its caveat: without ground-truth signals a weak reflector pollutes the playbook.
-- **Mem0 v2** went ADD-only (no update, no delete) because overwrites lost information; an
-  independent study then measured a 30–90 point drop in deletion precision. Both extremes fail;
-  supersede-with-history plus local patches is the middle.
+- **ACE (Agentic Context Engineering, ICLR'26)** — the case against whole rewrites, from an AppWorld
+  case study of an earlier method (Dynamic Cheatsheet): one rewrite shrank the context from 18,282 to
+  122 tokens and accuracy fell from 66.7 to 57.1, below the 63.7 of no adaptation. ACE itself keeps
+  itemised entries with helpful/harmful counters and merges deltas with non-LLM logic. Its finance
+  results fall from 81.9 to 77.1 when the reflector has no ground-truth labels; it stays above the base
+  model with a much weaker reflector except under adversarial updates every iteration, and its authors
+  still say it relies on a reasonably strong reflector.
+- **Mem0** — its own documentation describes v2's extraction as ADD-only. An independent study
+  (arXiv 2606.15903) compared the same v2.0.2 with its LLM update router on (`infer=True`) and off on an
+  adversarial suite, with DeepSeek-V3 rather than Mem0's tuned default model: the router lost 31–92
+  points on the supersession categories (for example 82 % → 0 % on paraphrased supersession) while it
+  gained on identifier ones. A model asked to update or delete freely did badly at exactly the case
+  this record cares about.
 - **Zep / Graphiti** — bi-temporal facts (`valid_at`/`invalid_at`, `created_at`/`expired_at`); a
   contradicted fact is closed, not deleted. Several LLM calls per write and a graph database.
 - **GitHub Copilot Memory** — the closest analogue: repository facts carry code citations and are
-  validated against the current branch just before use (an LLM judgment); expiry (default 90 days)
-  is renewed **only by a validated use, not by retrieval**.
+  validated against the current branch just before use (an LLM judgment); expiry (default 90 days) is
+  renewed **only by a validated use, not by retrieval**.
 - **"Revoked but Still Authoritative" (arXiv 2609.08258)** — none of five memory systems excluded a
   revoked fact from retrieval by default; revoked facts often outranked their replacement.
-- **Codex memories** — per-session extraction after idle, then one locked consolidation agent
-  writing a bounded diff. Its open bugs (#48679 truncated summary, #57091 links to missing paths)
-  show consolidator output needs deterministic validation before it is stored.
+- **Codex memories** — per-session extraction after idle, then one locked consolidation agent writing a
+  bounded diff. Its open bugs (#48679 truncated summary, #57091 links to missing paths) show the
+  consolidator's output needs deterministic validation before it is stored.
 - **fiberplane/drift** (MIT) — deterministic doc→code anchors with AST fingerprints in a lockfile,
-  checked in CI for the files a diff touches. Prior art for anchors, for documentation only.
-- **Letta sleep-time agents, LangMem background reflection, Claude Code auto memory and
-  `/doctor prompt-audit`, Supermemory versions, Basic Memory (Markdown + MCP, AGPL-3.0),
-  agentskills.io SKILL.md** — the same pieces in other shapes; Cursor removed its memories in favour
-  of rules, which says durable knowledge drifts toward reviewed text.
+  checked in CI for what a diff touches. Prior art for anchors, for documentation.
+- **Hermes Agent**, read at `90d6b98`: a hard character cap on the always-loaded memory (2,200 chars)
+  that forces "consolidate + add" in one batch on overflow; `patch` by substring; a forked reviewer
+  every 10 user turns whose additions apply and whose patches/removals are staged for a human; skills
+  with usage sidecars and an idle-time curator (active → stale 14 d → archived 30 d, never deleted). Its
+  own issues: a prompt that pushes the reviewer to write every pass, pruning by direct use that broke
+  indirectly referenced skills, an unattended run that deleted memory, and full conversation replay
+  per review (up to 600 k tokens).
+- **Honcho** (Plastic Labs, AGPL-3.0, v3.5.0 2026-10-30) models **people, not projects**: per
+  (observer, observed) pair a background worker derives explicit, deductive and inductive
+  "conclusions" from messages, and a periodic "dream" (≥ 50 new conclusions and ≥ 8 h since the last)
+  merges duplicates and deletes conclusions a newer fact replaced. Postgres + pgvector, managed or
+  self-hosted, a small hosted model by default; the docs read describe no review or edit of
+  conclusions by a person. In Hermes it is a `MemoryProvider` plugin.
+- **Letta sleep-time agents, LangMem, Claude Code auto memory and `/doctor prompt-audit`,
+  Supermemory, Basic Memory (Markdown + MCP, AGPL-3.0), agentskills.io** — the same pieces in other
+  shapes. Cursor removed its memories in favour of rules.
 
-Not found anywhere: a no-LLM lint that combines code anchors, a retired-term list and links for
-agent memory; revision-checked delta patches with several concurrent writers; per-kind lifetimes;
-a portable memory-entry file spec. Those are what this record would add; the rest is adopted.
-
-Hermes Agent, read at `90d6b98`: a hard character cap on the always-loaded memory (2,200 chars)
-that forces "consolidate + add" in one batch on overflow; `patch` by substring; a forked reviewer
-every 10 user turns whose additions apply and whose patches/removals are staged for a human;
-skills with usage sidecars and an idle-time curator (active → stale 14 d → archived 30 d, never
-deleted). Its own issues: a prompt that pushes the reviewer to write every pass, pruning by direct
-use that broke indirectly referenced skills, an unattended run that deleted memory, and full
-conversation replay per review (up to 600 k tokens).
+Within the products and versions this survey covered, none was found that combines code anchors, a
+retired-term list and links in a no-LLM check of agent memory, applies revision-checked delta patches
+from several concurrent writers, gives knowledge kinds different lifetimes, or publishes a file spec
+for memory entries. That is a statement about this survey's reach, not a proof of absence.
 
 ## Decision
 
 ### 1. What "growing" means
 
 The store grows when it becomes more **accurate** (a stale entry is caught and fixed soon after the
-world changes), **denser** (one lesson is one rule; the count may fall), **more abstract**
-(incidents become rules and verified procedures; the incident becomes history) and **better
-placed** (the right entry reaches the head of the session that needs it, and what is not needed
-falls out of view). Count of entries is not a goal. Each is measured (decision 9).
+world changes), **denser** (one lesson is one rule; the count may fall), **more abstract** (incidents
+become rules and verified procedures; the incident becomes history) and **better placed** (the right
+entry reaches the session that needs it, and what is not needed falls out of view). The number of
+entries is not a goal. Decision 9 says how each is observed.
 
 ### 2. Remove 0117's review in the next release
 
-- The `memoryReview` setting, the "Review now" item in the session menu, the proposals list in
-  Settings → Agent memory, the review switch, the notification, and the loop are removed.
-  The Agent ignores a stored `memoryReview` value.
-- The 25 pending proposals are not deleted: they are exported once to a file under the store's
-  work directory and become the first input of decision 5 when it exists. Rejected hashes are
-  dropped.
-- The `memory.review` ledger value stays in the enum (0029 is append-only and old rows carry it).
-- Kept as internal code, not member-facing: the run record and recovery, the deny-all backend
-  contract, the `review` author kind and run-id trailer, "revert this run". Decision 7 reuses them.
-- 0117 gets a dated note "superseded by 0130 for decisions 1–3".
+Removed, each with its tests:
 
-### 3. Knowledge carries its kind, status and anchors
+| Surface | What happens |
+|---|---|
+| ui-prefs `memoryReview` and `memoryReviewAuto` | ignored on read and dropped on the next save; the Agent's member-origin check, switch sync and wake for them (`workspace/agent/ui_prefs.go:263`, `:312`, `:340`, `:366`) go; the Console prefs registry and `equivalence.golden.json` lose both keys |
+| the loop, "Review now", `POST /agents/memory-review/run` | removed from the Agent and from the CP relays (`control-plane/relays_memory.go:42` onward) |
+| the proposals list, approve/reject routes and their audit (`control-plane/proxy.go:127`) | removed after the export below has succeeded |
+| the review switch and the AI-assist row for `memory.review` (`workspace/agent/ai_assist.go`, `console/src/lib/aiAssistFeatures.ts`) | removed |
+| the pending-count notification | no longer raised; an existing one links to the change list |
+| `memory.review` in the ledger | kept in the enum and the Console catalogue: 0029 is append-only and past rows carry it |
+| "revert this run" (`console/src/features/settings/memory/memoryChanges.tsx:253`, `/agents/memory-review/runs/revert`) | kept, moved out of the review queue module into the change list, still behind the member-origin mark; past runs stay revertible |
+| guide/member/18 and 20, `guide/ref` mentions, contract tests | updated in the same change |
 
-Frontmatter gains three optional fields; a memory without them behaves as today.
+**The pending queue is exported, not dropped.** A one-time, versioned, idempotent migration on every
+workspace writes each pending proposal — with its id, scope, project, base revision, operation, body,
+reason, evidence and run id — plus the rejected-hash list to a file under the store's work directory,
+fsyncs it, and only then deletes the queue. A restart re-runs it and finds it done. The run recovery
+of 0117 never re-dispatches an old run after the migration, and no notification is raised for it.
+An exported proposal is an **observation**, never an approval: when decision 6 exists it reads them as
+input, and every rule of decision 6 (including no revival) applies to them.
 
-- `kind`: `preference` | `lesson` | `procedure` | `state` | `log` — how it goes stale, beside 0108's
-  `type` (who it is about). Proposed lifetimes: preference and lesson do not expire; procedure is
-  checked when its anchors move; state expires after N days unless re-verified; log is history, is
-  never shown in the described part of the index, and keeps a summary plus a pointer.
-- `status`: `active` | `suspect` | `quiet` | `archived`. `suspect` is shown with the memory to the
-  reader ("may be stale: <why>"); `quiet` leaves the described index but stays searchable;
-  `archived` leaves search too. Nothing is deleted by this; `forget` stays as it is.
-- `anchors`: what the memory depends on — repository paths, symbols, test names, ADR numbers,
-  profile and branch names, commands, `[[links]]`. Extracted mechanically on save and editable.
-- `superseded_by` / `invalid_at` (Graphiti's vocabulary): set when a newer memory replaces this one.
+### 3. Schema: kind, lifecycle, anchors; visibility; counters
 
-`archived` and superseded memories are excluded by the read paths themselves (`memory_index`,
-`memory_search`, the guidance block), with a test per path, not by asking the reader to filter: the
-revocation study above found that no system does this by default.
+**Frontmatter, all optional** — a memory without them behaves as today:
 
-Runtime counters move into the existing `.usage` sidecar with separate fields: `reads`, `hits`,
-`confirmed`, `stale_reports`, `last_read`, `verified_at`. They are not published, like today.
+- Classification: `kind` — `preference` | `lesson` | `procedure` | `state` | `log`, how it goes stale,
+  beside 0108's `type` (who it is about). Proposed lifetimes: preference and lesson do not expire;
+  procedure is checked when its anchors move; state expires after N days unless re-verified; log is
+  history, never in the described part of the index, and keeps a summary plus a pointer.
+- Dependencies: `anchors` — paths, symbols, test names, ADR numbers, profile and branch names,
+  commands, `[[links]]`. Extracted mechanically and editable.
+- Lifecycle: `status` (`active` | `suspect` | `quiet` | `archived`), `status_reason` (one line),
+  `status_by` (`lint`, `feedback`, `member`, `consolidator`), `superseded_by` and `invalid_at`
+  (Graphiti's vocabulary).
 
-### 4. Cheap writes: patch and feedback (tools)
+**Who may set what, and what every writer keeps.** A save, patch, pin or revert that does not name a
+field keeps its current value; this is a contract of `agentMemSave` (`agent_memory.go:1080` today keeps
+only created, source, hash and pin) and of the claude and muse imports (`agent_memory_claude_import.go:487`,
+`:781` rebuild the entry). An agent may set `kind` and `anchors`. Lifecycle fields are set only by
+lint, feedback, the consolidator through the approval gate, or the member; an agent's save cannot
+clear `suspect` except by changing the body (which records the change and returns the memory to
+`active` with `status_by: agent`). An import never takes lifecycle fields from outside. Acceptance:
+a test per writer (save, patch, pin, revert, claude import, muse import, project move) that each field
+survives.
 
-- `memory_patch(name, scope, revision, edits: [{old, new}])`: substring replacement with the
-  revision check of 0108 decision 4; each `old` must match exactly once. Same scan, same commit,
-  same author rules as `memory_save`. Fixing one line no longer re-sends 8 KB.
-- `memory_feedback(name, verdict: confirmed|stale|wrong, note)`: the reader says what happened when
-  it relied on a memory. `confirmed` sets `verified_at`; `stale`/`wrong` sets `suspect` with the note.
-  The guidance asks only for the negative case; a read with no report is not counted as
-  confirmation. As in Copilot Memory, only a confirmation renews a memory; being retrieved does not.
-- `memory_save` of a new name returns the closest existing names when they are near (the name and
-  description ranking of `memory_search`), with "prefer memory_patch on X". It does not refuse.
+**Visibility is one predicate, applied by every agent-facing read path.** `archived` and superseded
+memories are not returned by `memory_index`, `memory_search`, the external memory MCP (same handlers),
+lcpp's per-turn injection, or the claude write-back (`agent_memory_claude_export.go:504` loads the whole
+scope). `memory_read` by name returns a stub — name, status, `superseded_by`, reason — and not the
+body, so an old name or a `[[link]]` cannot bring the text back as current. `suspect` memories are
+returned with their reason prefixed. The member's routes (list, history, diff, restore, bundle export)
+see everything. A test per path, because the revocation study found that no system does this by
+default.
+
+**Counters.** Today `.usage/<name>` is a file grown by one byte per use and counted by its size
+(`agent_memory_usage.go:5`, `:47`); reads and search hits cannot be told apart afterwards. New sidecars
+beside it use the same append-a-byte method, so concurrent writers still lose nothing:
+`.usage/<name>.reads`, `.usage/<name>.hits`, `.usage/<name>.confirmed`, `.usage/<name>.stale`. The time
+of the last read is the `.reads` file's mtime, which is touched even past the cap. The legacy file keeps
+counting for one release and the ranking keeps using it; the switch to `reads` comes with a release of
+data. Forget and re-create clear all of a name's sidecars, a project move moves them, a restore starts
+them at zero — as today.
+
+### 4. Cheap writes: patch now, feedback in step 2 (tools)
+
+**`memory_patch(scope, name, revision, edits: [{old, new}], description?)`.** Edits apply to the body
+only; `description` optionally replaces the description; frontmatter is never touched. Every `old` is
+non-empty and matches exactly once in the current body, and the matches do not overlap; all edits are
+matched against the same original and applied together. All succeed or nothing is written: one
+revision, one commit, the same secret scan, author rules and history as `memory_save`. A missing
+memory or revision 0 is refused — patch never creates. Fixing one line no longer re-sends 8 KB.
+
+**`memory_save` of a new name** returns the closest existing names when they are near (the name and
+description ranking of `memory_search`), with "prefer memory_patch on X". It does not refuse.
+
+**`memory_feedback(scope, name, revision, verdict: confirmed|stale|wrong, note)`** (step 2). The
+revision is the one the reader relied on. When it is the current one, `confirmed` adds a confirmation
+and sets the time of the last confirmation; `stale` or `wrong` sets `suspect` with the note as reason.
+When it is older, the report is kept as an observation only and changes neither status nor
+confirmation, so a report on revision 3 cannot mark a fixed revision 4. The note is secret-scanned
+like a body. One report per session per revision counts. `confirmed` never clears a `suspect` set by
+lint; only a body change or the member does. As in Copilot Memory, only a confirmation renews a
+memory; being retrieved does not. The guidance asks only for the negative case.
 
 ### 5. Invalidation without an LLM: lint
 
-A deterministic pass compares each memory's anchors with the world and marks hits `suspect` with a
-reason. Inputs: the repository at the project's default branch (paths, symbols, tests, ADRs; a git
-rename is a deterministic fix and is proposed as a mechanical patch), a member-maintained list of
-retired terms per project, missing `[[link]]` targets, body size, and the expiry of `state`. It
-runs on demand, after a pull that moves the default branch, and when the retired-term list changes.
-It writes only `status` and the reason (no body change), each as one published change authored
-`lint`, so the change list and revert cover it. Output is also a read-only report.
+**Step 1 — report only.** Anchors do not exist yet, so lint extracts them on the fly from each body
+(paths, `Test*` and code-shaped symbols, ADR numbers, `[[links]]`) and checks existence only: a path
+or symbol missing from the project's default branch, a link to no memory, a term from the
+member-maintained retired-term list, a body over 4,096 bytes. It reads the repository by ref
+(`git ls-tree` / `git grep` on `origin/<default>` in the project's git-common-dir) and never checks out
+or changes any working copy. A project without git, an orphaned project and the user scope get the
+link, term and size checks only. Output: a read-only report in Settings → Agent memory and
+`af-memory lint`. Nothing is written.
 
-### 6. Consolidation (later step): inbox → topic → delta patches
+**Step 2 — status marks.** With stored anchors, lint marks hits `suspect` with a reason. It records the
+revision it checked, and applies under the store lock with a compare-and-swap on that revision; a memory
+changed since is re-checked, never marked from the old text. A status change is a published change, one
+commit authored `lint`, and it **increments the revision**, so an agent holding an older revision is
+refused and re-reads (the 0108 decision 4 rule), instead of silently erasing the mark. Revert works as
+for any change. "Exists but changed" needs a baseline (a commit or a fingerprint per anchor, as drift
+does); that is recorded with the anchors and is what step 2 adds.
 
-Out of scope for the next release; recorded so the first step does not block it.
-Observations (the 25 exported proposals; `stale`/`wrong` feedback notes; later an `observe` tool)
-are grouped by topic cluster with the `suspect` memories of that cluster. A small model classifies
-each observation against the cluster as add / patch / supersede / no-op from snippets; a stronger
-model writes **delta patches**, never a full rewrite. Same lesson twice becomes one rule; narrow
-cases fold into an umbrella memory. Approval is per topic per week, not per item. Reuses 0117's
-plumbing (decision 2). The model's output is validated deterministically before it is queued —
-size, `[[links]]` and paths that exist, frontmatter schema, the patch applies — because the Codex
-consolidator's bugs are exactly those. The judge is not made too weak: ACE reports that a weak
-reflector degrades the result, so anchors and feedback carry as much of the judgment as possible.
+A deterministic rename (a git rename of an anchored path) is its own operation, `lint-rename`: it
+replaces only that path in the body, carries the commit as evidence, uses the same compare-and-swap,
+and is revertible. It applies by itself (decision 7).
 
-### 7. What applies by itself and what waits
+**One writer.** `agentMemMu` is an in-process mutex (`agent_memory.go:98`). Inside AF every engine write
+goes through the Agent's store; a standalone engine run against an AF store calls the Agent's API, and
+outside AF it takes a lock file in the store. Two processes never write the same store directly.
 
-Applies by itself: lint's status marks, mechanical renames with git evidence, counter updates,
-feedback's `suspect`. Waits for the member, grouped by topic: any change of a claim, supersede,
-archive, promotion of a lesson to the brief or of a procedure to a skill. Nothing is deleted
-automatically; history keeps everything (0022).
+### 6. Consolidation (step 3): inbox → topic → delta patches
 
-### 8. Independence from AF
+Not in the next release; recorded so step 1 does not block it. Observations (the exported 0117 queue;
+`stale`/`wrong` notes; later an `observe` tool) are grouped by topic cluster with the `suspect`
+memories of that cluster. A model classifies each observation against the cluster as add / patch /
+supersede / no-op from snippets; a model writes **delta patches** (decision 4's form), never a whole
+rewrite. The same lesson twice becomes one rule; narrow cases fold into an umbrella memory.
+
+Rules it inherits:
+
+- **No revival** (0117 decision 5): a create on a name that was forgotten or ever existed is refused,
+  checked inside the store lock when queued and again when approved. `agentMemSave` alone would allow
+  it; today only the review sets `noRevival` (`agent_memory_review_publish.go:126`).
+- **Supersede** names a target that exists in the same project or the user scope, never forms a cycle,
+  and publishes both sides in one commit or neither.
+- **Deterministic validation before queueing**: size, every `[[link]]` and path exists, frontmatter
+  schema, the patch applies to the current revision — the Codex consolidator's bugs are exactly these.
+- **The model that judges is not chosen to be weak**: anchors and feedback carry as much of the
+  judgment as possible. ACE's results do not show that a small judge fails, nor that it is safe; step 3
+  measures it.
+
+### 7. Who applies what
+
+Three actors, three rules:
+
+- **Interactive agents** keep 0108 decision 8: `memory_save`, `memory_patch` and `memory_forget` publish
+  at once and are found and undone afterwards in the change list.
+- **Deterministic lint** applies by itself what it can prove: status marks (step 2) and `lint-rename`.
+- **The autonomous consolidator** never publishes: every operation waits for the member, grouped by
+  topic, approved per topic, not per item. Nothing is deleted automatically; history keeps everything
+  (0022).
+
+### 8. Independence from AF, and position
 
 The format (decision 3) is written as a versioned spec. The engine — lint, patch, feedback
-bookkeeping, later consolidation — has no import of AF packages and takes the model call as a
-plug-in (a one-shot CLI command or an API). AF is one adapter (scopes, scheduler, ledger, Console
-approval, auth); an MCP server mode is another. **Where the engine lives is open question 1.**
+bookkeeping, later consolidation — imports no AF package and takes the model call as a plug-in (a
+one-shot CLI command or an API). AF is one adapter (scopes, scheduler, ledger, Console approval, auth);
+an MCP server mode is another. **Where the engine lives is open question 1.**
 
-### 9. Measures
+Position against nearby work:
 
-Per project, shown on the lint report: entries flagged by lint and how long they stay flagged;
-`stale`/`wrong` reports per 100 reads; share of active entries verified in the last 30 days; bytes
-of the described index; member decisions per week; tokens per week spent on memory upkeep.
+- **Hermes Agent is a harness, not a memory engine.** Its learning loop runs inside its own runtime; its
+  files are portable but the loop is not, and it serves one agent for one user without history or a
+  revision check. AF could drive Hermes as a kind, and this engine could be offered to Hermes through
+  its `MemoryProvider` interface, which also tests the independence above.
+- **Honcho is a model of people.** It overlaps only with the `preference` kind. If a member wants it, it
+  plugs in as a provider for that kind, opt-in, and its output is read as evidence like any memory —
+  never as an order and never written into the store unreviewed. It sends conversations to a service
+  for reasoning (the concern 0117 decision 2 met with redaction), a wrong inference about a person
+  silently shapes every later session, and its dream deletes superseded conclusions where this record
+  keeps them.
+- **The closer competitor is memory built into the CLIs** (Claude Code auto memory, Copilot Memory,
+  Codex memories). What this record offers that they do not: one store read by every kind, checked
+  against the repository, with history and revert.
 
-### 10. The next release (step 1)
+### 9. Measures (proposed, none measured yet)
 
-1. Decision 2 (removal of 0117's review, export of the pending queue).
-2. Decision 3's counters split (`reads` / `hits` / `last_read`) — the ranking switches from
-   `uses` to `reads` once a release of data exists.
-3. `memory_patch` (decision 4).
-4. Lint as a read-only report in Settings → Agent memory and `af-memory lint`, with the retired-term
-   list (decision 5) — **report only**; writing `suspect` comes in step 2.
-5. Guidance text: "patch rather than save when a memory exists", "report a memory that misled you"
-   (the latter only once `memory_feedback` lands).
+Per project, on the lint report: entries flagged and how long they stay flagged; `stale`/`wrong` reports
+per 100 reads; share of active entries confirmed in the last 30 days; bytes of the described index;
+member decisions per week; tokens per week spent on upkeep; and, from step 3, the model input actually
+sent per run against the bytes of the store.
 
-Step 2: `kind`/`status`/`anchors`, `memory_feedback`, lint writes `suspect`, `suspect` shown on read.
-Step 3: consolidation (decision 6). Step 4: brief and skills promotion. Each step ships on its own.
+### 10. Steps
+
+**Step 1, the next release** — each item ships alone; none needs a later step:
+
+1. Decision 2: removal, the queue export, run revert in the change list.
+2. Decision 3's new counter sidecars, beside the legacy one; ranking unchanged.
+3. `memory_patch` (decision 4), with the preservation contract of decision 3 for the fields that exist
+   today.
+4. Lint, report only (decision 5, step 1), with the retired-term list.
+5. Guidance: "patch rather than save when the memory exists".
+
+**Step 2**: `kind` / `anchors` / lifecycle fields with their preservation tests, visibility on every
+read path, `memory_feedback`, lint writes `suspect`, `lint-rename`. **Step 3**: consolidation (decision 6).
+**Step 4**: promotion of verified procedures to skills (agentskills.io format), approval-gated.
+
+**Not decided here: an always-loaded project brief** (Hermes' capped memory). 0108 decision 5 limits
+what the 0042 distributor writes to fixed guidance, the distributor is user-wide, and 0042 decision 8
+forbids agents to write user instructions; a brief would have to be a separate per-project advisory
+artifact with its own writer and approval. It needs its own record.
 
 ## Rejected
 
 - **Keep 0117 and widen its input** (more bodies, the whole index): the trigger is still one session
-  window, the output still a full rewrite, and the cost per run grows with the store.
-- **An LLM pass over the whole store on a schedule**: 570 k tokens per sweep for this store, most of
-  it on memories nothing has changed; lint narrows it to 6 % of the bytes.
-- **Decay by inactivity alone** (forget what is not read): `uses` is not a usage signal yet, rare
-  but critical procedures are exactly the unread ones, and Hermes' curator broke indirectly
-  referenced skills this way.
-- **Auto-forget**: history keeps everything, but a forgotten memory silently leaves every session's
-  view; the member decides.
-- **Adopt an existing engine.** Basic Memory is closest (Markdown is the truth, MCP) but has no
-  lifecycle, anchors, revisions or feedback, and AGPL-3.0 constrains embedding; Graphiti needs a
-  graph database and several LLM calls per write; Mem0 is ADD-only and vector-bound; Letta's memory
-  belongs to its harness. Each would drop most of decisions 3–5 and 8. Their semantics are adopted
-  instead (Prior art).
-- **Hard cap on the whole store**: the store holds history-shaped entries legitimately; the cap
-  belongs to the always-loaded brief (step 4), as in Hermes.
+  window, the output still a whole rewrite, and the cost per run grows with the store.
+- **An LLM pass over the whole store on a schedule**: about 570 k tokens per sweep (estimated, see
+  Measured), most of it on memories nothing has changed.
+- **Decay by inactivity alone**: `uses` is not a usage signal yet, rare but critical procedures are
+  exactly the unread ones, and Hermes' curator broke indirectly referenced skills this way.
+- **Auto-forget**: a forgotten memory silently leaves every session's view; the member decides.
+- **Adopt an existing engine.** Basic Memory is closest (Markdown is the truth, MCP) but has no lifecycle,
+  anchors, revisions or feedback, and AGPL-3.0 constrains embedding; Graphiti needs a graph database and
+  several LLM calls per write; Mem0 is ADD-only and vector-bound; Letta's memory belongs to its harness;
+  Honcho models people and is AGPL-3.0. Each would drop most of decisions 3–5 and 8. Their semantics are
+  adopted instead.
+- **Hard cap on the whole store**: the store holds history-shaped entries legitimately; a cap belongs to
+  an always-loaded brief, which is not decided here.
 
 ## Consequences
 
-- The member loses a queue they did not use and gets a report they can act on in bulk.
-- Agents get two cheaper tools; the guidance grows by two lines.
-- Frontmatter grows by three optional fields; claude export and imports must carry or drop them.
-- Lint needs the project's default branch checked out somewhere it can read; a project without a
-  repository gets only the link, size, retired-term and expiry checks.
+- The member loses a queue they did not use and gets a report they can act on in bulk; past review runs
+  stay revertible from the change list.
+- Agents get one cheaper tool now and one more in step 2; the guidance grows by one line now.
+- Every writer and both imports gain a preservation contract and tests for frontmatter they do not set.
+- Every agent-facing read path gains a visibility check and a test.
+- Lint reads each project's default branch by ref; a project without a repository gets fewer checks.
 
 ## Open questions for the owner
 
 1. **Where the engine lives.** (a) A separate Go module in this repository with an import ban on AF
-   packages, split out with history (`git subtree split`) once a second consumer exists; (b) a new
-   repository from the start, AF pinning it like its other tools. Trade-offs are in the cover note.
-2. Whether step 1 includes `memory_feedback` (cheap, but needs `status` to mean anything).
-3. The retired-term list: member-edited only, or also proposed from a commit/ADR that retires
+   packages, split out with history (`git subtree split`) once a second consumer exists or the format
+   reaches v1; (b) a new repository from the start (for example the spec and lint first), AF pinning it
+   like its other tools. Step 1 is AF-side either way.
+2. The retired-term list: member-edited only, or also proposed from a commit or ADR that retires
    something.
-4. The approval unit for step 3: per topic per week, or a single weekly digest.
-5. The model and monthly token budget for step 3.
+3. The approval unit for step 3: per topic per week, or a single weekly digest.
+4. The model and monthly token budget for step 3.

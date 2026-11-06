@@ -13,7 +13,7 @@ already): capped MEMORY.md, background review fork and a skills curator.
 
 | System | Store / format | Update model | Staleness / contradiction | Human gate | LLM cost | Portability | License · activity | Coding-agent fit |
 |---|---|---|---|---|---|---|---|---|
-| **Mem0 v2** (OSS + platform) | Vector DB + entity links | **ADD-only** since v2.0.0 (2026-04-16). The old ADD/UPDATE/DELETE/NOOP pass was dropped [R] | No invalidation. Recency is resolved at retrieval time from `created_at`; optional expiry [R] | None | 1 call per `add()` [R] | DB-bound | Apache-2.0 · 68k★ · daily commits; mem0ai 2.2.1 released 2026-09-25 [R] | Generic chat memory. OpenMemory MCP was deprecated and removed on 2026-07-29 [S] |
+| **Mem0 v2** (OSS + platform) | Vector DB + entity links | **ADD-only** since v2.0.0 (2026-04-16). The old ADD/UPDATE/DELETE/NOOP pass was dropped from the default extraction [R]; an `infer=True` mode with an LLM update router still exists in v2.0.2 (arXiv 2606.15903) [R] | No invalidation. Recency is resolved at retrieval time from `created_at`; optional expiry [R] | None | 1 call per `add()` [R] | DB-bound | Apache-2.0 · 68k★ · daily commits; mem0ai 2.2.1 released 2026-09-25 [R] | Generic chat memory. OpenMemory MCP was deprecated and removed on 2026-07-29 [S] |
 | **Zep / Graphiti** | Temporal KG in a graph DB (Neo4j/FalkorDB/Kuzu…) [I] | Episode → extract → dedup → edge resolution [R] | **Bi-temporal edges**: `valid_at`/`invalid_at` (world time) and `created_at`/`expired_at` (system time). Contradicted edges are closed, never deleted [R] | None | Many calls per episode (extraction, dedup, per-edge resolution); MinHash/LSH fast path [S]. Issues report $0.80 for 40 chats and 626 s for one sentence [S] | DB-bound | Apache-2.0 · 33k★ · active | Generic. Its validity model is the best one to borrow |
 | **Letta / Letta Code** | Memory blocks (DB). Letta Code: **MemFS, all context tracked in git** [R] | Agent self-edits (`memory_insert/replace/rethink`); **sleep-time agent** consolidates asynchronously [R/S] | LLM-judged during "dreaming" | None | One background agent run every N turns | Server-bound; Letta Code memory is in git | Apache-2.0 · 25k★ (letta) / 3.8k★ (letta-code) · active | Letta Code is a coding harness; its memory is tied to the harness |
 | **LangMem** | LangGraph BaseStore (KV + vectors) | Memory manager LLM upserts and consolidates; `ReflectionExecutor` debounces work into the background [R] | LLM resolves contradictions while consolidating | None | 1+ call per reflection | Library, store-pluggable | MIT · 1.7k★ · active | Generic; tied to LangGraph |
@@ -32,6 +32,7 @@ already): capped MEMORY.md, background review fork and a skills curator.
 | **Cline Memory Bank / Aider** | 6 fixed markdown files (`activeContext`, `progress`, …) / CONVENTIONS.md [R] | "update memory bank" means a **full rewrite review** [R] | None | Human-driven | Full read each time | Files in repo | Apache-2.0 | A prompt pattern, not an engine |
 | **Coding-agent OSS** (agentmemory, claude-mem, projectmem, ai-memory, Beads, memsearch) | Mixed: git-backed md (ai-memory), Dolt (Beads), md+Milvus (memsearch) [S] | Hook-based auto-capture; projectmem records failed attempts ("do NOT retry") [S] | Mostly none | None | Low/none (ai-memory: no LLM by default) [S] | Files/git | MIT etc.; young | High, but thin on curation |
 | **Doc-drift tools** (fiberplane/drift, Swimm, repowise, docdrift) | `drift.lock`: TOML bindings doc→file[#Symbol] with an **AST fingerprint (tree-sitter, XxHash3)** [R] | Re-link after review | **Deterministic**: fingerprint mismatch or missing file → stale; `--changed` limits the check to docs a diff touches [R]. Swimm does patented auto-sync of tokens [S] | CI gate | None | Files | drift MIT; Swimm proprietary | **Direct prior art for anchors** |
+| **Honcho** (Plastic Labs) | Postgres + pgvector; per (observer, observed) peer collections; conclusions, representations, peer cards, summaries [R] | Background "deriver" queue extracts explicit → deductive → inductive conclusions; periodic "dream" consolidates [R] | Dream merges duplicates and deletes superseded conclusions (≥ 50 new conclusions and ≥ 8 h) [R docs] | None described in the docs read [R] | Several LLM calls per message batch; defaults to a small OpenAI model, any tool-calling provider [R] | DB-bound; managed or self-hosted | **AGPL-3.0** · ~8k★ · v3.5.0 (2026-10-30) [R] | Models people, not project knowledge; complements the `preference` kind |
 
 ## 2. Design elements vs prior art
 
@@ -46,7 +47,7 @@ already): capped MEMORY.md, background review fork and a skills curator.
   - Copilot warns that validation is a judgment, so a memory is "not a rule that will always be followed" [R].
   - drift falls back to raw-content hashing outside its six languages, so formatting-only edits count as changes [R].
   - A changed anchor does not mean a wrong entry [I]. Route anchor hits to "suspect, needs judge" rather than auto-retire, except for hard misses (file or symbol gone, retired term present).
-- No one found matches a *retired-term list* against memory text.
+- Not found in the products surveyed here: a *retired-term list* matched against memory text.
 
 **(2) Observation inbox + idle consolidation.**
 - Prior art:
@@ -62,16 +63,16 @@ already): capped MEMORY.md, background review fork and a skills curator.
 
 **(3) Delta patches.**
 - ACE is the canonical evidence.
-  - Monolithic rewrites cause **context collapse**: 18,282 tokens became 122, and accuracy fell from 66.7 to 57.1, below the 63.7 no-adaptation baseline [R].
+  - Monolithic rewrites cause **context collapse**: in ACE's AppWorld case study of an earlier method (Dynamic Cheatsheet), one rewrite shrank the context from 18,282 tokens to 122 and accuracy fell from 66.7 to 57.1, below the 63.7 no-adaptation baseline [R, §2 of the v3 HTML].
   - ACE's deltas are merged by non-LLM logic [R].
 - Other prior art:
   - The Anthropic memory tool's `str_replace` (old→new) and Letta's `memory_replace` are the same primitive at the protocol level.
   - Community ACE builds use ADD/PATCH/INCR/DEPRECATE ops [S].
 - Counter-evidence from Mem0:
   - Mem0 abandoned UPDATE/DELETE because "overwrites sometimes erased key information… deletes removed information that would be relevant later" [S, Mem0 blog].
-  - Going ADD-only then **lost 30–90 points on deletion precision** in an independent study (arXiv 2606.15903) [S].
-  - So both extremes fail. Supersede-with-history (Graphiti, Supermemory) plus localized patches is the middle path.
-- Revision-checked (compare-and-swap) patches: Codex relies on a global lock instead. No other system I found uses CAS [I].
+  - An independent study (arXiv 2606.15903, §6 and Appendix P) compared the **same** Mem0 v2.0.2 with its LLM ADD/UPDATE/DELETE router on (`infer=True`) and off (`infer=False`, ADD-only) on a 385-case adversarial suite, with DeepSeek-V3 instead of Mem0's tuned default (gpt-4o-mini) and a json-repair pass of the authors' own. With the router on it scored 43.6 % against 68.3 %: it collapsed on the supersession categories (prefix collision 31 → 0 %, paraphrased supersession 82 → 0 %, temporal qualifier 100 → 8 %, recursive supersession 92 → 10 %) and gained on identifier ones (47 → 100 %, 55 → 100 %). It is not a before/after measurement of Mem0's move to ADD-only, and the authors call the `infer=True` number an approximation [R].
+  - So neither a free-hand LLM updater nor ADD-only handles supersession. Supersede-with-history (Graphiti, Supermemory) plus localized patches is the middle path.
+- Revision-checked (compare-and-swap) patches: Codex relies on a global lock instead. None of the other products surveyed here was seen to use CAS [I].
 
 **(4) Reader feedback.**
 - Prior art:
@@ -79,12 +80,15 @@ already): capped MEMORY.md, background review fork and a skills curator.
   - Copilot's up/down votes on validation. **Only a validated use extends a memory's life; retrieval alone does not** [R]. This is directly adoptable.
   - Cognee's feedback-weighted edges [R/S].
   - MemoryBank's recall reinforcement [R]. Its flaw for us: a merely *retrieved* memory gets strengthened, which entrenches stale entries [I].
-- ACE's limitation: it relies on "a reasonably strong Reflector", and without ground-truth signals the context gets "polluted by spurious or misleading signals". The finance average fell from 81.9 to 77.1 [R].
+- ACE's limitations, kept apart because they are different evidence [R, Table 2, §4.6, §5]:
+  - **Without ground-truth labels** for the Reflector, the finance offline average is 77.1 instead of 81.9 (base 69.1). The Reflector model is the same in both rows.
+  - **With a much weaker Reflector** ACE stays above the base model, except under fully adversarial updates every iteration.
+  - The authors still say it "relies on a reasonably strong Reflector" and that a weak one can leave the context noisy or harmful.
 
 **(5) Knowledge kinds with lifetimes.**
 - Copilot separates repo facts (configurable expiry) from user preferences (fixed default) and refuses to store task-specific or short-lived instructions [R].
 - LangMem has semantic/episodic/procedural types [R]. Supermemory has `isStatic` vs `forgetAfter` [R]. In Cline, `activeContext` churns and `projectbrief` is stable [R].
-- Nobody has a full preference/lesson/procedure/state/log taxonomy with per-kind policies [I].
+- Not found in the products surveyed here: a full preference/lesson/procedure/state/log taxonomy with per-kind policies [I].
 
 **(6) Lifecycle; never delete.**
 - Prior art:
@@ -102,14 +106,14 @@ already): capped MEMORY.md, background review fork and a skills curator.
   - Graphiti runs deterministic MinHash/LSH first and falls back to an LLM [S].
   - The Letta community recommends Haiku for the sleep-time agent [S].
   - Codex makes the consolidation model configurable [S].
-- No system found explicitly splits a cheap snippet-judge from a strong patch-writer. ACE's caveat about Reflector strength argues for keeping the *judge of correctness* reasonably strong, or anchor-assisted [I].
+- Not found in the products surveyed here: an explicit split between a cheap snippet-judge and a strong patch-writer. ACE's results neither show that a small judge fails nor that it is safe; keep the judgment anchor-assisted and measure it [I].
 
 **(8) Platform-independent engine.**
-- agentskills.io is the only real cross-vendor *file spec* (SKILL.md with name/description frontmatter, three-tier progressive disclosure, a `skills-ref validate` validator) [R].
+- Of the specs surveyed here, agentskills.io is the only cross-vendor *file spec* (SKILL.md with name/description frontmatter, three-tier progressive disclosure, a `skills-ref validate` validator) [R].
 - The Anthropic memory tool defines a *protocol* but no file schema [R].
 - Basic Memory proves "Markdown is the truth, the DB is a projection" over MCP [R].
 - Letta Code and agentmemory put memory in git [R/S].
-- No memory-entry file spec carries lifecycle, anchors and kinds [I].
+- Not found in the products surveyed here: a memory-entry file spec that carries lifecycle, anchors and kinds [I].
 
 **Skills from experience:**
 - Voyager verified skills before adding them [R].
@@ -119,7 +123,7 @@ already): capped MEMORY.md, background review fork and a skills curator.
 
 ## 3. Gaps (originality candidates) vs. adopt
 
-**Little or no prior art (candidates for originality):**
+**Not found within this survey's reach (candidates for originality; a statement about the products and versions covered, not a proof of absence):**
 - Deterministic anchor invalidation **for agent memory entries** (rather than docs) that combines file paths, symbols, profile names, links and a **retired-term list** into one lint driven by repo diffs. drift and Copilot each cover half.
 - Revision-checked (CAS) delta patches on Markdown entries in a multi-writer, multi-agent setting.
 - A per-kind lifetime policy across preference/lesson/procedure/state/log, with an active→quiet→archived lifecycle and **retrieval-side enforcement** tested against the revocation failure.
@@ -144,7 +148,7 @@ already): capped MEMORY.md, background review fork and a skills curator.
 - **ACE** is a research playbook, not a store.
 - **Copilot, Claude Code, Codex and Devin** are closed or host-bound.
 
-**Verdict [I]:** no OSS project can serve as the engine without discarding most of (1), (3), (4), (6) and (8). Build the engine, a small spec + CLI/library + MCP server over git-versioned Markdown. Import the semantics listed in §3. Treat drift and the agentskills validator as optional external tools. Benchmark against the Memora/MemStrata stale-fact protocols and the 2609.08258 revocation test.
+**Verdict [I], within this survey's reach:** no OSS project surveyed here can serve as the engine without discarding most of (1), (3), (4), (6) and (8). Build the engine, a small spec + CLI/library + MCP server over git-versioned Markdown. Import the semantics listed in §3. Treat drift and the agentskills validator as optional external tools. Benchmark against the Memora/MemStrata stale-fact protocols and the 2609.08258 revocation test.
 
 ## 5. Sources (accessed 2026-11-06)
 
@@ -160,6 +164,7 @@ already): capped MEMORY.md, background review fork and a skills curator.
 - Basic Memory: https://github.com/basicmachines-co/basic-memory · https://akitaonrails.com/en/2026/05/23/i-built-memory-system-for-coding-agents-ai-memory/
 - Copilot Memory: https://docs.github.com/en/copilot/concepts/agents/copilot-memory · https://github.blog/changelog/2026-01-15-agentic-memory-for-github-copilot-is-in-public-preview/ · https://github.blog/changelog/2026-03-04-copilot-memory-now-on-by-default-for-pro-and-pro-users-in-public-preview/
 - Claude Code: https://code.claude.com/docs/en/memory · auto-dream (secondary): https://wmedia.es/en/tips/claude-code-auto-dream-memory-consolidation · Memory tool: https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool
+- Honcho: https://github.com/plastic-labs/honcho · https://honcho.dev/docs/v3/documentation/features/advanced/dreaming · https://docs.honcho.dev/v2/documentation/core-concepts/architecture
 - Codex: https://github.com/openai/codex/issues/48679 · https://github.com/openai/codex/issues/57091 · https://github.com/openai/codex/pull/43813 · https://codex.danielvaughan.com/2026/04/18/codex-built-in-memory-system-deep-dive/
 - ChatGPT memory FAQ: https://help.openai.com/en/articles/8590148-memory-in-chatgpt-remembering-what-you-chat-about
 - Cursor: https://forum.cursor.com/t/are-my-memories-gone/144057 · Windsurf: https://docs.windsurf.com/plugins/cascade/memories · Devin: https://docs.devin.ai/product-guides/knowledge · Cline: https://docs.cline.bot/best-practices/memory-bank
