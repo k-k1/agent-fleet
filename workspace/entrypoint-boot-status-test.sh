@@ -63,7 +63,12 @@ S
 # makes an @latest install remove codex and fail; STUB_NPM_SHRINK leaves 50 MiB free after it.
 cat >"$T/bin/npm" <<'S'
 #!/bin/sh
-case "$*" in *"ls -g"*) echo '{}'; exit 0 ;; *"view "*) echo 9.9.9; exit 0 ;; esac
+case "$*" in
+  *"ls -g"*) if [ -n "${STUB_NPM_LATEST:-}" ]; then
+      echo '{"dependencies":{"@anthropic-ai/claude-code":{"version":"9.9.9"},"@opencode/cli":{"version":"9.9.9"},"@openai/codex":{"version":"9.9.9"},"@github/copilot":{"version":"9.9.9"}}}'
+    else echo '{}'; fi; exit 0 ;;
+  *"view "*) echo 9.9.9; exit 0 ;;
+esac
 echo "$*" >>"$STUB_DIR/npm.calls"
 if [ -n "${STUB_NPM_FAIL:-}" ]; then echo "npm error ENOSPC: no space left on device, write" >&2; exit 1; fi
 [ -z "${STUB_NPM_SHRINK:-}" ] || echo 50 >"$STUB_DIR/free"
@@ -301,7 +306,43 @@ reset
 run_baked STUB_NPM_BREAK=always STUB_NPM_SHRINK=1 $ON
 [ ! -e "$T/home/.local/bin/codex" ] || fail "baked, low space: the broken shadow was kept"
 [ "$(st codex)" = "codex skipped no_space" ] || fail "baked, low space: status is '$(st codex)'"
+# A shadow broken by an earlier start while its version is already latest: the self-update
+# installs nothing, and the shadow is still checked and dropped.
+reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+# shellcheck disable=SC2086
+run_baked STUB_NPM_LATEST=1 STUB_NPM_BREAK=always $ON
+has 'already latest; skip' || fail "baked, already latest: the update was not skipped"
+[ ! -e "$T/home/.local/bin/codex" ] || fail "baked, already latest: a broken shadow was kept"
+# The same broken shadow on a start where the self-update does not run at all: unattended, or
+# home nearly full. It is still dropped so the baked copy takes over.
+for mode in "AF_AGENT_SELF_UPDATE_SKIP=1" "STUB_FREE_MB=100 AF_AGENT_SELF_UPDATE_SKIP=0 AF_AGENT_SELF_UPDATE_ALLOWED=1 AF_AGENT_SELF_UPDATE=1"; do
+  reset; printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+  # shellcheck disable=SC2086
+  run_baked STUB_NPM_BREAK=always $mode
+  [ ! -e "$T/home/.local/bin/codex" ] || fail "baked, no update ($mode): a broken shadow was kept"
+done
+# A self-update that installed a working @latest records ok, in baked and in lean.
+reset
+# shellcheck disable=SC2086
+run_baked $ON
+[ "$(st codex)" = "codex ok " ] || fail "baked, self-update installed: codex is '$(st codex)'"
 reset; rm -rf "$T/ul"
+
+# 8. A CLI broken by an earlier start, with nothing to install on this one (present, unattended
+# start, so no repin): it is still checked and reinstalled at the pin. Healthy ones stay skipped.
+reset; run_block
+printf '#!/bin/sh\nexit 1\n' >"$T/home/.local/bin/codex"; chmod +x "$T/home/.local/bin/codex"
+rm -f "$T/npm.calls"; run_block
+has 'already present in ~/.local (skip)' || fail "present + broken: something was installed first"
+grep -q '@openai/codex@0.1.0' "$T/npm.calls" 2>/dev/null || fail "present + broken: codex was not reinstalled: $(cat "$T/npm.calls" 2>/dev/null)"
+"$T/home/.local/bin/codex" >/dev/null || fail "present + broken: codex still broken"
+[ "$(st claude)" = "claude skipped " ] || fail "present + broken: healthy claude is '$(st claude)'"
+[ "$(st codex)" = "codex ok " ] || fail "present + broken: repaired codex is '$(st codex)'"
+rm -f "$T/npm.calls"; run_block
+[ ! -e "$T/npm.calls" ] || fail "all healthy: npm was run: $(cat "$T/npm.calls")"
+# shellcheck disable=SC2086
+run_block $ON
+[ "$(st codex)" = "codex ok " ] || fail "lean, self-update installed: codex is '$(st codex)'"
 
 # 5. The prune runs before the installs, once.
 reset; run_block
