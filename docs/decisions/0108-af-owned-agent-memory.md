@@ -988,3 +988,15 @@ clone has this remote, a project has no clone left) still go through a preview o
 unread directory, a git-ignored one included, still makes the answer incomplete. A clone cloned into such a directory
 is found only as a session's directory. The identity of a working copy now takes one `git rev-parse` for its three
 paths instead of three, which was the larger cost per clone once the stores were skipped.
+
+## Note (2026-11-07): [0130](0130-cultivated-memory.md) amends decisions 3, 4 and 5
+
+- Decision 3 (format): new optional frontmatter — `kind`, `anchors`, `status`, `superseded_by`,
+  `invalid_at`, `reasons` — that every writer and import keeps when it does not name it (#3495).
+- Decision 4 (tools): `memory_patch` for revision-checked `{old, new}` edits (#3441); later
+  `memory_feedback` (#3496).
+- Decision 5 and the 2026-10-08 note (ranking by `uses`): `uses` counts search hits as well as reads,
+  so it is split into separate read and hit counters (#3442); the ranking keeps the legacy counter for
+  one release. Archived and superseded memories leave every agent-facing read path (#3495).
+- Decision 8 (agents publish at once, reviewed after) is unchanged for agents. The background review
+  this record's decision 8 anticipated (0117) is removed; 0130's consolidator queues for the member.

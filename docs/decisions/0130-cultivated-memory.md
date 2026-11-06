@@ -2,7 +2,7 @@
 
 English | [日本語](0130-cultivated-memory.ja.md)
 
-- Status: **draft for the owner's review** (2026-11-06). Nothing is built. Every `file:line` was read on
+- Status: **accepted** (2026-11-07; proposed 2026-11-06). Nothing is built. Every `file:line` was read on
   `58501ccb0`. The store figures were measured read-only on one development workspace on 2026-11-06
   (section "Measured"); the Hermes Agent figures come from its source at `90d6b98` (2026-11-05); the
   prior-art survey is [docs/log/136](../log/136-cultivated-memory-survey.md), which marks what was read,
@@ -11,22 +11,21 @@ English | [日本語](0130-cultivated-memory.ja.md)
   the owner's answers of 2026-11-07, had 7; each was checked against the tree and the cited sources and
   folded into this text.
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
-  release carries **the first step** of what this record calls cultivation (decision 10). Everything
-  else here is a proposal.
+  release carries **the first step** of what this record calls cultivation (decision 10).
 - Answered by the owner on 2026-11-07: the engine is a separate Go module in this repository (decision 8);
   approval follows no weekly calendar (decision 7); the consolidator is built for a small model tier
   (decision 6); and knowledge that proves itself in a member's memory is proposed to the project's
-  documents (decision 11, new). The last three are written here as proposals for the owner to confirm.
+  documents (decision 11). The record was accepted as a whole the same day, after a fifth and a sixth
+  review round.
 - Follow-ups: #3440, #3441, #3442, #3443 (step 1: the 0117 removal, `memory_patch`, counters, lint report);
-  steps 2–4 are filed when this record is accepted.
+  #3495, #3496 (step 2: schema and visibility; feedback and lint reasons); #3497 (step 3); #3498 (step 4)
 - Related: [0022](0022-agent-memory-management.md) (history, bundles) /
   [0108](0108-af-owned-agent-memory.md) (the store, tools, ranking, pins) /
   [0117](0117-background-memory-skill-review.md) (the review this record retires) /
   [0029](0029-usage-accounting.md) (the ledger enum) /
   [0042](0042-user-instructions.md) (user instructions, which agents never write) /
   [docs/log/134](../log/134-background-review-p0-measurement.md), [135](../log/135-background-review-index-size.md), [136](../log/136-cultivated-memory-survey.md)
-- What this record changes in earlier records, per decision (each gets a dated note when this record is
-  accepted, and only then):
+- What this record changes in earlier records, per decision (each carries a dated note of 2026-11-07):
 
   | Earlier decision | Here |
   |---|---|
