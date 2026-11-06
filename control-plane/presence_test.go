@@ -110,3 +110,39 @@ func TestIsTerminalInputCountsOnlyKeystrokes(t *testing.T) {
 		}
 	}
 }
+
+// TestWatchingSessionNeedsKeystrokes pins tier 1's "someone is at this session's
+// terminal" to the same keystroke bound as tier 2's presence (#3460). If attachment alone
+// counted, a Console tab left open with terminal panes would keep its sessions from ever
+// being halted.
+func TestWatchingSessionNeedsKeystrokes(t *testing.T) {
+	const ws = "ws1"
+	grace := 30 * time.Minute
+	now := time.Now()
+
+	r := newConnRegistry()
+	if r.watchingSession(ws, "s1", grace, now) {
+		t.Error("an unattached session counts as watched")
+	}
+	r.addConn(ws, "s1", true)
+	if !r.watchingSession(ws, "s1", grace, now) {
+		t.Error("a terminal just opened does not protect its session")
+	}
+	if r.watchingSession(ws, "s2", grace, now) {
+		t.Error("another session of the workspace counts as watched")
+	}
+	if r.watchingSession(ws, "s1", grace, now.Add(31*time.Minute)) {
+		t.Error("an attached terminal with no keystrokes pins its session forever")
+	}
+	r.noteInput(ws)
+	if !r.watchingSession(ws, "s1", grace, time.Now().Add(time.Minute)) {
+		t.Error("typing again does not protect the session")
+	}
+	if !r.watchingSession(ws, "s1", 0, now.Add(10*time.Hour)) {
+		t.Error("grace 0 (disabled) does not restore attached-means-watched")
+	}
+	r.doneConn(ws, "s1", true)
+	if r.watchingSession(ws, "s1", 0, now) {
+		t.Error("a detached session still counts as watched")
+	}
+}

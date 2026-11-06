@@ -111,7 +111,8 @@ func (r *connRegistry) touch(wsID string) {
 
 // addConn/doneConn bracket a long-lived connection. session may be "" (preview /
 // a fresh shell with no session name); a non-empty session also marks
-// that specific session as terminal-attached so tier 1 won't halt it.
+// that specific session as terminal-attached, which spares it from tier 1 while
+// keystrokes keep arriving (watchingSession).
 func (r *connRegistry) addConn(wsID, session string, attention bool) {
 	if r == nil || wsID == "" {
 		return
@@ -233,13 +234,28 @@ func (r *connRegistry) attentionFresh(wsID string, grace time.Duration, now time
 	return ok && now.Sub(li) < grace
 }
 
-func (r *connRegistry) isAttached(wsID, session string) bool {
+// watchingSession reports whether tier 1 must leave this session alone because someone
+// is at its terminal: it is attached AND a keystroke reached any terminal of the
+// workspace within grace — the same bound tier 2 applies to presence.
+//
+// Attachment alone is not enough: a Console tab left open with terminal panes keeps
+// them attached for days, and the sessions were never folded (#3460; on a production
+// deployment two idle sessions sat unhalted for two days until a CP restart cleared
+// this registry). grace <= 0 restores "attached means watched".
+func (r *connRegistry) watchingSession(wsID, session string, grace time.Duration, now time.Time) bool {
 	if r == nil {
 		return false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.attached[wsID] != nil && r.attached[wsID][session] > 0
+	if r.attached[wsID] == nil || r.attached[wsID][session] == 0 {
+		return false
+	}
+	if grace <= 0 {
+		return true
+	}
+	li, ok := r.lastInput[wsID]
+	return ok && now.Sub(li) < grace
 }
 
 // touchWorkspace mirrors request activity both locally and into a single
@@ -597,8 +613,8 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 		}
 		key := ws.ID + "|" + s.Name
 		live[key] = true
-		if rp.mgr.conns.isAttached(ws.ID, s.Name) {
-			delete(rp.idleSince, key) // someone is watching it
+		if rp.mgr.conns.watchingSession(ws.ID, s.Name, presenceGrace, now) {
+			delete(rp.idleSince, key) // someone is at its terminal
 			continue
 		}
 		since, ok := rp.idleSince[key]
