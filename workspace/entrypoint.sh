@@ -526,37 +526,56 @@ agy_effective_version() {
 # NPM_CLI_PKGS — the npm-distributed CLIs, as <cli>=<package>.
 NPM_CLI_PKGS="claude=@anthropic-ai/claude-code opencode=@opencode/cli codex=@openai/codex copilot=@github/copilot"
 # npm_clis_verify <cli...> — after an npm install into ~/.local, check that each named CLI's
-# ~/.local copy still answers --version; reinstall the broken ones at their versions.json pin
-# once, and record the ones that still do not run as failed. npm exits 0 when an optional
-# dependency cannot be fetched, and codex ships its binary as one. Measured: a self-update that
-# ran two minutes after @openai/codex 0.167.0 was published fetched the main tarball but not
-# codex-linux-x64. The upgrade had already removed the old binary, so codex could not start,
-# and the update was still logged as "updated". A CLI with no ~/.local copy is skipped:
-# a baked /usr/local copy is the image's, not this install's.
+# ~/.local copy answers --version; reinstall the broken or missing ones at their versions.json
+# pin once (space permitting), record a working one ok, and record the ones that still do not
+# run as failed. npm exits 0 when an optional dependency cannot be fetched, and codex ships its
+# binary as one. Measured: a self-update that ran two minutes after @openai/codex 0.167.0 was
+# published fetched the main tarball but not codex-linux-x64. The upgrade had already removed
+# the old binary, so codex could not start, and the update was still logged as "updated".
+# A CLI with no ~/.local copy is left alone when a baked /usr/local copy takes over on PATH.
+# A CLI still broken is listed in NPM_BROKEN, which the next start's boot-install reinstalls:
+# its broken file is present, so the presence check alone would call it installed forever.
+NPM_BROKEN="$HOME/.local/share/agent-fleet/npm-broken"
 npm_cli_runs() { timeout 30 "$HOME/.local/bin/$1" --version >/dev/null 2>&1; }
+npm_broken_has() { grep -qx "$1" "$NPM_BROKEN" 2>/dev/null; }
+npm_broken_mark() {
+  npm_broken_has "$1" && return 0
+  mkdir -p "${NPM_BROKEN%/*}" 2>/dev/null && echo "$1" >> "$NPM_BROKEN" 2>/dev/null || true
+}
+npm_cli_ok() {
+  bi_note "$1" ok
+  if npm_broken_has "$1"; then sed -i "/^$1\$/d" "$NPM_BROKEN" 2>/dev/null || true; fi
+}
 npm_clis_verify() {
   local c pair pkg pin fix="" fix_clis="" broken=""
   for c in "$@"; do
-    [ -e "$HOME/.local/bin/$c" ] || continue
-    npm_cli_runs "$c" && continue
+    if npm_cli_runs "$c"; then npm_cli_ok "$c"; continue; fi
+    [ ! -e "$HOME/.local/bin/$c" ] && [ -x "/usr/local/bin/$c" ] && continue
     pkg=""; for pair in $NPM_CLI_PKGS; do [ "${pair%%=*}" = "$c" ] && pkg="${pair#*=}"; done
     pin="$(vj_pin "$c")"
     echo "[entrypoint] WARN: $c in ~/.local does not run after the npm install${pin:+; reinstalling the pin $pin}"
     if [ -n "$pin" ]; then fix="$fix $pkg@$pin"; fix_clis="$fix_clis $c"; else broken="$broken $c"; fi
   done
   if [ -n "$fix" ]; then
-    : > "$BI_ERR" 2>/dev/null || true
     # shellcheck disable=SC2086
-    npm install -g --prefix "$HOME/.local" $fix >/dev/null 2>>"${BI_ERR:-/dev/null}" \
-      || cat "$BI_ERR" >&2 2>/dev/null || true
-    for c in $fix_clis; do
-      if npm_cli_runs "$c"; then echo "[entrypoint] $c repaired at the pin $(vj_pin "$c")"
-      else broken="$broken $c"; fi
-    done
+    if bi_room $(( $(echo $fix | wc -w) * 300 )) $fix_clis; then
+      : > "$BI_ERR" 2>/dev/null || true
+      # shellcheck disable=SC2086
+      npm install -g --prefix "$HOME/.local" $fix >/dev/null 2>>"${BI_ERR:-/dev/null}" \
+        || cat "$BI_ERR" >&2 2>/dev/null || true
+      for c in $fix_clis; do
+        if npm_cli_runs "$c"; then echo "[entrypoint] $c repaired at the pin $(vj_pin "$c")"; npm_cli_ok "$c"
+        else broken="$broken $c"; fi
+      done
+    else
+      # bi_room has recorded them (failed or skipped no_space); retry on the next start.
+      for c in $fix_clis; do npm_broken_mark "$c"; done
+    fi
   fi
   for c in $broken; do
-    echo "[entrypoint] WARN: $c does not run (retrying next start)"
+    echo "[entrypoint] WARN: $c does not run (reinstalling next start)"
     bi_note "$c" failed "$(bi_reason)"
+    npm_broken_mark "$c"
   done
   [ -z "$broken" ]
 }
@@ -605,7 +624,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
     cli="${pair%%=*}"; pkg="${pair#*=}"; ver="$(vj_pin "$cli")"
     [ -n "$ver" ] || continue
     if cli_present "$cli"; then bi_note "$cli" skipped; fi
-    if ! cli_present "$cli"; then
+    if ! cli_present "$cli" || npm_broken_has "$cli"; then
       npm_want
     elif [ "$REPIN" = 1 ] && [ -e "$HOME/.local/bin/$cli" ]; then
       # Move a drifted copy back to the pin. Installs npm does not manage (no version) are left alone.
@@ -928,7 +947,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
         echo "[entrypoint] WARN: agent CLI update failed (kept the installed versions)"
       fi
     fi
-    # A failed install can leave a half-replaced tree too, so check either way.
+    # A failed install can leave a half-replaced tree, or none, so check either way.
     npm_clis_verify claude opencode codex copilot || true
   fi
   # agy (Antigravity) follows the same opt-in to latest. It ships via Google's install.sh

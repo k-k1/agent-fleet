@@ -59,18 +59,22 @@ S
 # npm logs its calls and installs a stub for each claude / codex package it is given;
 # STUB_NPM_FAIL fails like a full disk would. STUB_NPM_BREAK leaves codex without a working
 # binary while still exiting 0, the way a skipped optional dependency does: "once" breaks the
-# first codex install only, "always" every one.
+# first codex install only, "always" every one, "pin" every one but @latest. STUB_NPM_RMFAIL
+# makes an @latest install remove codex and fail; STUB_NPM_SHRINK leaves 50 MiB free after it.
 cat >"$T/bin/npm" <<'S'
 #!/bin/sh
 case "$*" in *"ls -g"*) echo '{}'; exit 0 ;; *"view "*) echo 9.9.9; exit 0 ;; esac
 echo "$*" >>"$STUB_DIR/npm.calls"
 if [ -n "${STUB_NPM_FAIL:-}" ]; then echo "npm error ENOSPC: no space left on device, write" >&2; exit 1; fi
+[ -z "${STUB_NPM_SHRINK:-}" ] || echo 50 >"$STUB_DIR/free"
+case "$*" in *@latest*) if [ -n "${STUB_NPM_RMFAIL:-}" ]; then rm -f "$HOME/.local/bin/codex"; echo "npm error ENOENT" >&2; exit 1; fi ;; esac
 for a in "$@"; do
   case "$a" in @anthropic-ai/claude-code@*) b=claude ;; @openai/codex@*) b=codex ;; *) continue ;; esac
   run='echo 1.0.0'
   if [ "$b" = codex ]; then
     case "${STUB_NPM_BREAK:-}" in
       always) run='exit 1' ;;
+      pin) case "$a" in *@latest) ;; *) run='exit 1' ;; esac ;;
       once) [ -e "$STUB_DIR/broke" ] || { run='exit 1'; : >"$STUB_DIR/broke"; } ;;
     esac
   fi
@@ -80,7 +84,8 @@ S
 cat >"$T/bin/df" <<'S'
 #!/bin/sh
 echo "Filesystem 1M-blocks Used Available Capacity Mounted on"
-echo "/dev/x 10000 1 ${STUB_FREE_MB:-9000} 1% /home"
+free="$(cat "$STUB_DIR/free" 2>/dev/null)"
+echo "/dev/x 10000 1 ${free:-${STUB_FREE_MB:-9000}} 1% /home"
 S
 # workspace-agent: only the prune subcommand is used; it logs when it ran.
 cat >"$T/bin/workspace-agent" <<'S'
@@ -97,7 +102,7 @@ run_block() {
     BI_DIR="${BI_DIR_OVERRIDE:-$T/bidir}" AF_AGENT_SELF_UPDATE_SKIP=1 "$@" \
     bash -c 'set -e; export PATH="$HOME/.local/bin:$PATH"; source "$1"; echo "AF_BOOT_INSTALL_STATUS=${AF_BOOT_INSTALL_STATUS-unset}"' _ "$BLOCK" >"$T/out" 2>&1
 }
-reset() { rm -rf "$T/bidir" "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent,claude,codex} "$T/home/.local/share" "$T/npm.calls" "$T/agent.calls" "$T/curl.calls" "$T/broke"; }
+reset() { rm -rf "$T/bidir" "$T/home/.local/bin/"{agy,.agy.version,rtk,cursor-agent,claude,codex} "$T/home/.local/share" "$T/npm.calls" "$T/agent.calls" "$T/curl.calls" "$T/broke" "$T/free"; }
 has() { grep -q -- "$1" "$T/out"; }
 st() { grep -P "^$1\t" "$T/bidir/install.tsv" 2>/dev/null | tail -1 | tr '\t' ' '; } # st <tool> → "tool status reason"
 
@@ -246,6 +251,32 @@ reset; run_block
 run_block STUB_NPM_BREAK=always $ON
 [ "$(st codex)" = "codex failed other" ] || fail "self-update, codex stays broken: status is '$(st codex)'"
 has 'WARN: codex does not run' || fail "self-update, codex stays broken: no WARN"
+# A CLI left broken is reinstalled on the next start, unattended or not, although its file is
+# present; once it runs again it is no longer listed.
+grep -qx codex "$T/home/.local/share/agent-fleet/npm-broken" || fail "codex left broken is not listed for the next start"
+rm -f "$T/npm.calls"; run_block
+grep -q '@openai/codex@0.1.0' "$T/npm.calls" || fail "next start: a known-broken codex was not reinstalled"
+"$T/home/.local/bin/codex" >/dev/null || fail "next start: codex still broken"
+[ "$(st codex)" = "codex ok " ] || fail "next start, codex repaired: status is '$(st codex)'"
+grep -qx codex "$T/home/.local/share/agent-fleet/npm-broken" && fail "repaired codex still listed as broken"
+rm -f "$T/npm.calls"; run_block
+grep -q codex "$T/npm.calls" 2>/dev/null && fail "a healthy codex was reinstalled again"
+# A failed self-update that removed codex outright: reinstalled at the pin (nothing is baked).
+reset; run_block
+# shellcheck disable=SC2086
+run_block STUB_NPM_RMFAIL=1 $ON
+"$T/home/.local/bin/codex" >/dev/null || fail "self-update removed codex: not reinstalled"
+# The pin is broken but @latest works in the same start: the later ok wins over the failed.
+reset
+# shellcheck disable=SC2086
+run_block STUB_NPM_BREAK=pin $ON
+"$T/home/.local/bin/codex" >/dev/null || fail "pin broken, latest fine: codex does not run"
+[ "$(st codex)" = "codex ok " ] || fail "pin broken, latest fine: status is '$(st codex)'"
+# The repair download honours the free-space check made after the first install.
+reset; run_block STUB_NPM_BREAK=always STUB_NPM_SHRINK=1
+[ "$(grep -c codex "$T/npm.calls")" = 1 ] || fail "low space after install: repair still ran: $(cat "$T/npm.calls")"
+[ "$(st codex)" = "codex failed no_space" ] || fail "low space after install: status is '$(st codex)'"
+grep -qx codex "$T/home/.local/share/agent-fleet/npm-broken" || fail "low space after install: not retried next start"
 # The self-update's npm errors reach the log instead of /dev/null.
 reset; run_block
 # shellcheck disable=SC2086
