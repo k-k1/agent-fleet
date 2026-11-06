@@ -5130,6 +5130,8 @@ The fetch script no longer chooses a token from the shape of the download URL. T
 Hugging Face and Civitai set `CREDENTIAL_FOR` (`hf` / `civitai`) on the fetch container; a plain
 url sets none and is fetched anonymously. The token is attached only to a hop whose hostname equals
 a credential host exactly, redirects are followed by the script itself (never `curl -L`), and a
-plain url is refused at resolve time when it is not https, carries userinfo, or points at an
-internal address. Decisions above are unchanged. No `CONTRACT` bump: the variable is optional. The protection needs the rebuilt
+plain url is refused at resolve time when it is not https, carries userinfo, or resolves to an
+internal address (an early check only). The fetch script repeats the destination check on every
+hop, resolving the host itself and pinning the connection to the address it judged; it refuses
+loopback, link-local and unspecified IPv4 addresses, and fails closed on a host with no IPv4 answer. Decisions above are unchanged. No `CONTRACT` bump: the variable is optional. The protection needs the rebuilt
 engine-tools image; a new image under an old Control Plane gets no marker and sends no token.

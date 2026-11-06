@@ -1780,6 +1780,8 @@ token is attached only when the hop's hostname equals one of that service's own 
 (`huggingface.co`; `civitai.com`, `www.civitai.com`), and redirects are followed hop by hop so the
 header is dropped as soon as the host changes. A plain url is fetched with no token at all.
 
+The script also resolves each hop itself, refuses loopback / link-local / unspecified addresses and pins the connection to the address it checked (`getent` is required in the image).
+
 Operator step: on a deployment where ingest by plain url was enabled before this behaviour, rotate
 the Hugging Face and Civitai tokens (the previous script could attach them by URL pattern).
 

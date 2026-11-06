@@ -101,30 +101,52 @@ af_token_for() {
   done
 }
 
+# af_pin <host> sets AF_PIN (curl args) or returns 1. Every hop's destination is resolved HERE, judged
+# against the same classes the Control Plane refuses (loopback, link-local incl. the cloud metadata
+# address, unspecified), and the connection is pinned to the address that was judged
+# (`--resolve`), so a second DNS answer cannot swap in another one. IPv4 only: an AAAA-only host
+# fails closed rather than being connected to unchecked.
+af_internal_ip() {
+  case "$1" in 0.*|127.*|169.254.*) return 0 ;; esac
+  return 1
+}
+af_pin() {
+  AF_PIN=""
+  case "$1" in
+    *[!0-9.]*) ;; # a name
+    *) af_internal_ip "$1" && return 1; return 0 ;; # an IPv4 literal: nothing to pin
+  esac
+  _ips=$(getent ahostsv4 "$1" 2>/dev/null | awk '$2=="STREAM"{print $1}') || true
+  [ -n "$_ips" ] || return 1
+  for _ip in $_ips; do af_internal_ip "$_ip" && return 1; done
+  AF_PIN="--resolve $1:443:$(echo "$_ips" | head -n 1)"
+}
+
 # Redirects are followed here, not by `curl -L`: the host is re-judged at every hop and the
 # Authorization header is built per hop, so it can never outlive a change of host.
-# `--location-trusted` must never be used.
+# `--location-trusted` must never be used. The next hop comes from curl's own %{redirect_url},
+# which resolves protocol-relative, path-relative and query-relative Locations per RFC 3986 and
+# is then judged like the first URL.
 af_parse_url "$URL" || { echo "ingest: refusing url: it must be https with a plain hostname, no user info and no port"; exit 2; }
 cur="$URL"
 hops=0
 while :; do
   af_parse_url "$cur" || { echo "ingest: refusing redirect target: not an https url with a plain hostname"; exit 1; }
+  af_pin "$AF_HOST" || { echo "ingest: refusing $AF_HOST: unresolvable or an internal address"; exit 1; }
   tok=$(af_token_for "${CREDENTIAL_FOR:-}" "$AF_HOST")
   set --
   [ -z "$tok" ] || set -- -H "Authorization: Bearer $tok"
-  code=$(curl -sS --proto '=https' "$@" -D "$SCRATCH/hdr" -o "$SCRATCH/blob" -w '%{http_code}' "$cur") \
+  # shellcheck disable=SC2086 # AF_PIN is two words by construction
+  out=$(curl -sS --proto '=https' $AF_PIN "$@" -o "$SCRATCH/blob" -w '%{http_code} %{redirect_url}' "$cur") \
     || { echo "ingest: fetch failed"; exit 1; }
+  code="${out%% *}"
   case "$code" in
     2??) break ;;
     301|302|303|307|308)
       hops=$((hops + 1))
       [ "$hops" -le 10 ] || { echo "ingest: too many redirects"; exit 1; }
-      loc=$(grep -i '^location:' "$SCRATCH/hdr" | tail -n 1 | sed 's/^[^:]*:[[:space:]]*//' | tr -d '\r')
-      [ -n "$loc" ] || { echo "ingest: redirect without a Location"; exit 1; }
-      case "$loc" in
-        /*) cur="https://$AF_HOST$loc" ;;
-        *) cur="$loc" ;;
-      esac
+      cur="${out#* }"
+      [ -n "$cur" ] && [ "$cur" != "$out" ] || { echo "ingest: redirect without a usable Location"; exit 1; }
       ;;
     *) echo "ingest: HTTP $code"; exit 1 ;;
   esac

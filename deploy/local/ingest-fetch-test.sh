@@ -14,13 +14,16 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 mkdir -p "$WORK/bin" "$WORK/scratch"
 cat > "$WORK/bin/curl" <<'STUB'
 #!/bin/sh
-# usage seen: curl -sS --proto =https [-H "Authorization: ..."] -D HDR -o OUT -w CODE URL
-auth=no; hdr=; out=; url=
+# usage seen: curl -sS --proto =https [--resolve H:443:IP] [-H "Authorization: ..."] -o OUT -w FMT URL
+# Prints "<code> <redirect_url>" like the real %{http_code} %{redirect_url}; the redirect target
+# is resolved against the request URL the way curl does (RFC 3986), which was checked against
+# a real curl for the forms below.
+auth=no; out=; url=; pin=none
 while [ $# -gt 0 ]; do
   case "$1" in
     -H) case "$2" in Authorization:*) auth=yes ;; esac; shift 2 ;;
-    -D) hdr="$2"; shift 2 ;;
     -o) out="$2"; shift 2 ;;
+    --resolve) pin="${2##*:}"; shift 2 ;;
     -w|--proto) shift 2 ;;
     -L|--location|--location-trusted) echo "stub curl: -L must not be used" >&2; exit 99 ;;
     -*) shift ;;
@@ -28,25 +31,40 @@ while [ $# -gt 0 ]; do
   esac
 done
 echo "$url auth=$auth" >> "$AF_TEST_LOG"
-# $AF_TEST_REDIRECTS: lines "<from-url> <location>"
+echo "$url pin=$pin" >> "$AF_TEST_PINS"
 loc=$(awk -v u="$url" '$1==u {print $2}' "$AF_TEST_REDIRECTS")
-: > "$hdr"
-if [ -n "$loc" ]; then
-  printf 'HTTP/2 302\r\nLocation: %s\r\n\r\n' "$loc" > "$hdr"
-  : > "$out"; printf 302
-else
-  printf 'weights' > "$out"; printf 200
-fi
+if [ -z "$loc" ]; then printf 'weights' > "$out"; printf '200 '; exit 0; fi
+: > "$out"
+scheme="${url%%://*}"; rest="${url#*://}"; host="${rest%%/*}"; path="/${rest#*/}"; path="${path%%\?*}"
+case "$loc" in
+  *://*) abs="$loc" ;;
+  //*) abs="$scheme:$loc" ;;
+  /*) abs="$scheme://$host$loc" ;;
+  \?*) abs="$scheme://$host$path$loc" ;;
+  *) dir="${path%/*}"
+     while :; do case "$loc" in ../*) loc="${loc#../}"; dir="${dir%/*}" ;; *) break ;; esac; done
+     abs="$scheme://$host$dir/$loc" ;;
+esac
+printf '302 %s' "$abs"
 STUB
+cat > "$WORK/bin/getent" <<'STUB'
+#!/bin/sh
+# getent ahostsv4 <host>: answers from $AF_TEST_DNS ("host ip" lines), else a public address.
+host="$2"
+ip=$(awk -v h="$host" '$1==h {print $2}' "$AF_TEST_DNS")
+[ -n "$ip" ] || ip=93.184.216.34
+printf '%s STREAM %s\n%s DGRAM\n' "$ip" "$host" "$ip"
+STUB
+chmod +x "$WORK/bin/getent"
 chmod +x "$WORK/bin/curl"
 export PATH="$WORK/bin:$PATH"
-export AF_FETCH_SCRATCH="$WORK/scratch" AF_TEST_LOG="$WORK/log" AF_TEST_REDIRECTS="$WORK/redirects"
+export AF_FETCH_SCRATCH="$WORK/scratch" AF_TEST_LOG="$WORK/log" AF_TEST_REDIRECTS="$WORK/redirects" AF_TEST_PINS="$WORK/pins" AF_TEST_DNS="$WORK/dns"
 export ENGINE_TOOLS_CONTRACT="$(cat "$TOOLS/CONTRACT")"
 export HF_TOKEN=hf-secret CIVITAI_TOKEN=cv-secret
 
 # run <credential-for> <url> -> sets RC; $WORK/log holds one line per request
 run() {
-  : > "$WORK/log"
+  : > "$WORK/log"; : > "$WORK/pins"
   CREDENTIAL_FOR="$1" URL="$2" SHA256= sh "$TOOLS/ingest-fetch.sh" > "$WORK/out" 2>&1
   RC=$?
 }
@@ -64,7 +82,7 @@ expect_refused() {
   [ ! -s "$WORK/log" ] || fail "$1: a request was made: $(cat "$WORK/log")"
 }
 
-: > "$WORK/redirects"
+: > "$WORK/redirects"; : > "$WORK/dns"
 echo "== the token goes to the service's own host when the fetch is marked =="
 expect_auth "hf exact host" hf https://huggingface.co/a/b/resolve/main/m.gguf yes
 expect_auth "civitai exact host" civitai https://civitai.com/api/download/models/1 yes
@@ -121,5 +139,36 @@ R
 run hf https://huggingface.co/a/m.gguf
 [ "$RC" != 0 ] || fail "userinfo redirect accepted"
 [ "$(wc -l < "$WORK/log")" = 1 ] || fail "userinfo redirect was followed: $(cat "$WORK/log")"
+
+echo "== relative Locations resolve per RFC 3986 and are judged like any other target =="
+rel() { # rel <location> <expected next url> <expected auth for the next request>
+  printf 'https://huggingface.co/a/b/m.gguf %s\n' "$1" > "$WORK/redirects"
+  run hf https://huggingface.co/a/b/m.gguf
+  [ "$RC" = 0 ] || fail "relative $1: exited $RC: $(cat "$WORK/out")"
+  [ "$(sed -n 2p "$WORK/log")" = "$2 auth=$3" ] || fail "relative $1: $(cat "$WORK/log")"
+}
+rel '//cdn.example/blob' 'https://cdn.example/blob' no
+rel 'next.gguf' 'https://huggingface.co/a/b/next.gguf' yes
+rel '../next.gguf' 'https://huggingface.co/a/next.gguf' yes
+rel '?download=1' 'https://huggingface.co/a/b/m.gguf?download=1' yes
+rel '/abs/p' 'https://huggingface.co/abs/p' yes
+
+echo "== internal destinations are refused on every hop, and the connection is pinned =="
+printf 'evil.example 169.254.169.254\nlo.example 127.0.0.1\n' > "$WORK/dns"
+: > "$WORK/redirects"
+expect_refused "first hop resolving to metadata" "" https://evil.example/x
+expect_refused "first hop resolving to loopback" "" https://lo.example/x
+expect_refused "first hop ip literal" "" https://169.254.169.254/x
+printf 'https://pub.example/a https://127.0.0.1/private\n' > "$WORK/redirects"
+run "" https://pub.example/a
+[ "$RC" != 0 ] || fail "redirect to loopback literal accepted"
+[ "$(wc -l < "$WORK/log")" = 1 ] || fail "redirect to loopback literal was followed: $(cat "$WORK/log")"
+printf 'https://pub.example/a https://evil.example/private\n' > "$WORK/redirects"
+run "" https://pub.example/a
+[ "$RC" != 0 ] || fail "redirect to a name resolving to metadata accepted"
+[ "$(wc -l < "$WORK/log")" = 1 ] || fail "redirect to metadata name was followed: $(cat "$WORK/log")"
+: > "$WORK/redirects"
+run "" https://pub.example/a
+grep -q "pin=93.184.216.34" "$WORK/pins" || fail "the connection was not pinned to the judged address: $(cat "$WORK/pins")"
 
 echo "ingest-fetch token routing: ok"

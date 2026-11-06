@@ -33,7 +33,7 @@ LABEL org.opencontainers.image.source="https://github.com/k-k1/agent-fleet" \
 RUN dnf install -y jq tar gzip \
  && dnf clean all \
  && rm -rf /var/cache/dnf \
- && jq --version && curl --version | head -1 && sha256sum --version | head -1
+ && getent hosts localhost >/dev/null && jq --version && curl --version | head -1 && sha256sum --version | head -1
 
 WORKDIR /opt/af
 # CONTRACT first and on its own layer: it is one line, it changes on a different schedule from
