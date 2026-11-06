@@ -12,6 +12,10 @@ English | [日本語](0130-cultivated-memory.ja.md)
 - Decided by the owner on 2026-11-06: ADR 0117's review is **removed in the next release**, and the next
   release carries **the first step** of what this record calls cultivation (decision 10). Everything
   else here is a proposal.
+- Answered by the owner on 2026-11-07: the engine is a separate Go module in this repository (decision 8);
+  approval follows no weekly calendar (decision 7); the consolidator is built for a small model tier
+  (decision 6); and knowledge that proves itself in a member's memory is proposed to the project's
+  documents (decision 11, new). The last three are written here as proposals for the owner to confirm.
 - Follow-ups: #3440, #3441, #3442, #3443 (step 1: the 0117 removal, `memory_patch`, counters, lint report);
   steps 2–4 are filed when this record is accepted.
 - Related: [0022](0022-agent-memory-management.md) (history, bundles) /
@@ -302,6 +306,11 @@ or changes any working copy. A project without git, an orphaned project and the 
 link, term and size checks only. Output: a read-only report in Settings → Agent memory and
 `af-memory lint`. Nothing is written.
 
+The retired-term list is edited by the member. The report also proposes additions it can read from
+the repository — an ADR whose status became superseded, a branch the default moved away from, a
+removed configuration key — and each waits for the member to accept it; a proposed term never enters
+the list by itself, because a word retired in one place is often still right in another.
+
 **Step 2 — reasons.** With stored anchors, lint adds an entry to `reasons` for each hit. It records the
 revision it checked, and applies under the store lock with a compare-and-swap on that revision; a memory
 changed since is re-checked, never marked from the old text. Adding or clearing a reason is a published change, one
@@ -342,9 +351,24 @@ Rules it inherits:
   change spanning several memories in one commit would need its own record.
 - **Deterministic validation before queueing**: size, every `[[link]]` and path exists, frontmatter
   schema, the patch applies to the current revision — the Codex consolidator's bugs are exactly these.
-- **The model that judges is not chosen to be weak**: anchors and feedback carry as much of the
-  judgment as possible. ACE's results do not show that a small judge fails, nor that it is safe; step 3
-  measures it.
+- **A small model tier by default, measured before it is trusted** (the owner's target, 2026-11-07: a
+  Haiku or GPT Luna class model). The work is cut so the model only takes bounded, checkable steps:
+  - grouping into topics is deterministic (names, anchors, links, the ranking of `memory_search`);
+  - a classification call sees one observation and the snippets of at most a few memories of its
+    topic, and answers add / patch / supersede / no-op in a fixed JSON schema;
+  - a patch call sees one body and returns `{old, new}` edits (decision 4), never a body;
+  - every output goes through the validation above; a patch that does not apply is dropped, not retried
+    with a bigger prompt.
+
+  Two operations go to a larger tier, or reach the member as a plain observation: a supersede and a
+  merge of two memories, the cases Mem0's update router lost (Prior art). ACE's results do not show
+  that a small judge fails, nor that it is safe, so step 3 starts with an offline comparison before
+  anything is queued: the exported 0117 queue and the fix list from the 2026-11-06 lint run (the old
+  trunk branch, the retired profile, broken links, missing test names) are a labelled set, run through
+  the small and the larger tier; the small tier stays the default where its outcomes match. For scale
+  only, **estimated** and not measured: a classification call of about 3 k input tokens and a patch call
+  of about 2.5 k (median body 2,228 bytes), at the measured 5 creates a day plus feedback, is in the
+  order of 1–3 M input tokens a month per member.
 
 ### 7. Who applies what
 
@@ -354,15 +378,23 @@ Three actors, three rules:
   at once and are found and undone afterwards in the change list.
 - **Deterministic lint** applies by itself what it can prove: reasons (step 2) and `lint-rename`.
 - **The autonomous consolidator** never publishes: every operation waits for the member, grouped by
-  topic, approved per topic, not per item. Nothing is deleted automatically; history keeps everything
-  (0022).
+  topic, approved per topic, not per item. There is no calendar: a topic's proposals are shown as soon
+  as its run ends, and the member is notified at most once a day while any are waiting. Waiting costs
+  little because the warning does not wait: the reasons lint and feedback attach reach every agent
+  before anyone approves a fix (decision 3). A proposal is re-validated against the current revision
+  when it is approved (decision 6), and one left undecided for 14 days goes back to being an
+  observation, so the queue cannot become the backlog 0117 left. Nothing is deleted automatically;
+  history keeps everything (0022).
 
 ### 8. Independence from AF, and position
 
 The format (decision 3) is written as a versioned spec. The engine — lint, patch, feedback
 bookkeeping, later consolidation — imports no AF package and takes the model call as a plug-in (a
 one-shot CLI command or an API). AF is one adapter (scopes, scheduler, ledger, Console approval, auth);
-an MCP server mode is another. **Where the engine lives is open question 1.**
+an MCP server mode is another. **The engine lives in this repository as a separate Go module**
+(owner, 2026-11-07): its own `go.mod`, a test that fails on any import of an AF package, and a
+`git subtree split` into its own repository, with history, once a second consumer exists or the format
+reaches v1.
 
 Position against nearby work:
 
@@ -402,12 +434,40 @@ sent per run against the bytes of the store.
 
 **Step 2**: `kind` / `anchors` / lifecycle fields with their preservation tests, visibility on every
 read path, `memory_feedback`, lint writes `reasons`, `lint-rename`. **Step 3**: consolidation (decision 6).
-**Step 4**: promotion of verified procedures to skills (agentskills.io format), approval-gated.
+**Step 4**: promotion, approval-gated: verified procedures to skills (agentskills.io format), and
+repository knowledge to the project's documents (decision 11).
 
 **Not decided here: an always-loaded project brief** (Hermes' capped memory). 0108 decision 5 limits
 what the 0042 distributor writes to fixed guidance, the distributor is user-wide, and 0042 decision 8
 forbids agents to write user instructions; a brief would have to be a separate per-project advisory
 artifact with its own writer and approval. It needs its own record.
+
+### 11. From the member's memory to the project's documents (proposal, step 4)
+
+A memory belongs to one member; the project's documents (`AGENTS.md`, `CLAUDE.md`, `docs/`, the guide)
+are read by every member and every agent and reviewed like code. Knowledge that has proven itself in
+one member's store should end up there, and the memory should then point at it instead of repeating
+it. Cursor removed its memories in favour of rules (Prior art); this is the path between the two.
+
+- **Candidates come from signals, not from a model's taste**: a `lesson`, `procedure` or `preference`
+  about the repository rather than the member, confirmed from more than one session, with no open
+  reasons, with anchors that exist on the default branch, and unchanged for some days. Lint adds the
+  converse check: a memory whose claims a repository document it anchors already states is reported as
+  redundant.
+- **The output is a proposed change to the repository, never a commit**: the target file and section,
+  the text in the repository's language and conventions, and the memories it came from. The member
+  opens it as a pull request, or asks a session to; the repository's own review is the gate. AF never
+  pushes or opens a pull request by itself. The text passes the body secret scan and the repository's
+  own pre-commit scan, because one member's memory may name hosts or accounts a shared repository must
+  not.
+- **After the merge the memory is superseded, not forgotten**: `superseded_by` takes a second target
+  form, `doc:<path>#<heading>`, checked to exist on the default branch, with the merge commit as
+  evidence. The memory leaves agents' view (decision 3) and history keeps it.
+- **The reverse direction is decision 5**: what the repository retires feeds the retired-term list,
+  and lint marks the memories that still use it.
+
+Its first useful form needs confirmations (step 2) and topic grouping (step 3); it is not in the next
+release.
 
 ## Rejected
 
@@ -436,13 +496,15 @@ artifact with its own writer and approval. It needs its own record.
 - Every agent-facing read path gains a visibility check and a test.
 - Lint reads each project's default branch by ref; a project without a repository gets fewer checks.
 
-## Open questions for the owner
+## Owner's answers (2026-11-07)
 
-1. **Where the engine lives.** (a) A separate Go module in this repository with an import ban on AF
-   packages, split out with history (`git subtree split`) once a second consumer exists or the format
-   reaches v1; (b) a new repository from the start (for example the spec and lint first), AF pinning it
-   like its other tools. Step 1 is AF-side either way.
-2. The retired-term list: member-edited only, or also proposed from a commit or ADR that retires
-   something.
-3. The approval unit for step 3: per topic per week, or a single weekly digest.
-4. The model and monthly token budget for step 3.
+1. **Where the engine lives**: (a), a separate Go module in this repository, split out with history once
+   a second consumer exists or the format reaches v1 (decision 8).
+2. **The retired-term list**: member-edited, with additions proposed from the repository (decision 5).
+   The owner widened the question: what proves itself in a member's memory is proposed to the project's
+   documents (decision 11).
+3. **The approval unit**: per topic, without a weekly calendar; at most one notification a day, and
+   undecided proposals return to observations after 14 days (decision 7).
+4. **The model**: a Haiku / GPT Luna class model by default, with supersede and merge escalated, gated
+   by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
+   comparison has a measured cost.
