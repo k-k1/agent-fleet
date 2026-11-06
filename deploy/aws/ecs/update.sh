@@ -236,6 +236,17 @@ echo "      5. $STACK (30-ingress, ImageTag=$VERSION)"
 # deployment's data stack).
 DATA_STACK="$(af_efs_backup_data_stack "$STACK")" || DATA_STACK=""
 af_efs_backup_check "$DATA_STACK" "$PROFILE" "$REGION"
+
+# The home task's role is 10-data's (HomeOpsEfsRole), and this script does not deploy 10-data. A
+# data stack from before the EFS file-system policy has no such export, and 30-ingress would fail
+# on its import after 20-platform had already moved. Read-only; stops before anything runs.
+# Order, the window and recovery: cfn/PARAMETERS.md, "Home task (volume root)".
+if [ -n "$DATA_STACK" ] && [ -z "$(af_stack_output "$DATA_STACK" HomeOpsEfsRoleArn)" ]; then
+  echo "ERROR: $DATA_STACK has no HomeOpsEfsRoleArn output - it predates the EFS file-system policy." >&2
+  echo "       Update it from this release's cfn/10-data.yaml first (same parameters), then run this" >&2
+  echo "       script again straight away: until 30-ingress follows, Recreate / Clean home / Destroy fail." >&2
+  exit 1
+fi
 # The same verdict goes to the Console: the ingress stack carries it to the Control Plane as
 # EfsBackup, so an operator who never reads this output still sees the warning. Empty = unknown,
 # in which case the parameter is not passed at all.

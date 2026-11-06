@@ -162,19 +162,30 @@ Resources:
       FileSystemTags:
         - { Key: Name, Value: !Sub "af-${AWS::StackName}-efs" }
       # Access points are chosen by the client, so without a resource policy any task in the
-      # workspace SG can mount the root and read every member's CLI credentials. The client
-      # actions are named explicitly: a Deny on "*" without an access point would also refuse
-      # CreateAccessPoint, which carries none. The one principal that may mount without an
-      # access point is the home task's role (HomeOpsEfsRole): Destroy removes the access
-      # point's own root directory, which the access point cannot. Binding each member to
-      # their own access point needs IAM authorization on the workspace volumes (#3445).
+      # workspace SG can mount the root and read every member's CLI credentials. Allow-list
+      # shape: with a policy present, a mount that no Allow matches is refused, so "no access
+      # point" needs no Deny, and a Deny would need a principal exception on a key EFS may
+      # not enforce for NFS clients (only SecureTransport, SourceIp, AccessPointArn and
+      # AccessedViaMountTarget are). The only mount without an access point is the home
+      # task's role (HomeOpsEfsRole), which Destroy needs: the access point cannot remove its
+      # own root directory. Binding each member to their own access point is #3455.
       # This policy replaces any file-system policy set by hand outside the stack.
       FileSystemPolicy:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowMountTargetClients
+          - Sid: AllowAccessPointClients
             Effect: Allow
             Principal: { AWS: "*" }
+            Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:ClientRootAccess
+            Condition:
+              Bool: { "elasticfilesystem:AccessedViaMountTarget": "true" }
+              "Null": { "elasticfilesystem:AccessPointArn": "false" }
+          - Sid: AllowHomeOpsRole
+            Effect: Allow
+            Principal: { AWS: !GetAtt HomeOpsEfsRole.Arn }
             Action:
               - elasticfilesystem:ClientMount
               - elasticfilesystem:ClientWrite
@@ -190,21 +201,9 @@ Resources:
               - elasticfilesystem:ClientRootAccess
             Condition:
               Bool: { "aws:SecureTransport": "false" }
-          # ArnNotEquals is true when the key is absent, so an anonymous mount (IAM
-          # authorization off, which is how workspace volumes mount) is denied here.
-          - Sid: DenyWithoutAccessPoint
-            Effect: Deny
-            Principal: { AWS: "*" }
-            Action:
-              - elasticfilesystem:ClientMount
-              - elasticfilesystem:ClientWrite
-              - elasticfilesystem:ClientRootAccess
-            Condition:
-              "Null": { "elasticfilesystem:AccessPointArn": "true" }
-              ArnNotEquals: { "aws:PrincipalArn": !GetAtt HomeOpsEfsRole.Arn }
 
   # The home task's task role (30-ingress, HomeOpsTaskDef): an IAM-authorized mount of the
-  # file-system root, the only kind of root mount FileSystemPolicy lets through. It lives
+  # file-system root, the only root mount FileSystemPolicy names. It lives
   # here, not in 30-ingress, because the policy above names it and this stack is created
   # first. It calls no other AWS API.
   HomeOpsEfsRole:

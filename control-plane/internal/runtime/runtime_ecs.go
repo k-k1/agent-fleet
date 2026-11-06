@@ -1005,7 +1005,7 @@ func efsVolume(name, fsID, apID string) ecstypes.Volume {
 				// anonymous and the file-system policy (10-data) admits it only because it
 				// names an access point and uses TLS. Task roles are shared across
 				// memberships, so this does not stop a task naming another member's access
-				// point; that needs IAM authorization with a per-membership role (#3445).
+				// point; that needs IAM authorization with a per-membership role (#3455).
 				Iam: ecstypes.EFSAuthorizationConfigIAMDisabled,
 			},
 		},

@@ -12,7 +12,7 @@ that must stay possible without an access point is the home task's (Recreate, Cl
 Destroy run `efs-home-op` against the root), which needs an IAM-authorized mount by a dedicated
 role that the policy names.
 
-This evaluates the policy statements (Allow / Deny, Bool, Null, ArnNotEquals) for the mounts
+This evaluates the policy statements (Allow / Deny, Bool, Null) for the mounts
 that matter and fails when
 
   - an anonymous mount without an access point, one without TLS, or one that does not come
@@ -41,6 +41,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CFN = os.path.join(ROOT, "deploy", "aws", "ecs", "cfn")
 ROLE = "arn:aws:iam::111122223333:role/home-ops"
 OTHER = "arn:aws:iam::111122223333:role/ws-task"
+EFS_KEYS = {"aws:SecureTransport", "aws:SourceIp", "elasticfilesystem:AccessPointArn",
+            "elasticfilesystem:AccessedViaMountTarget"}
 CLIENT = {"elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite",
           "elasticfilesystem:ClientRootAccess"}
 
@@ -69,6 +71,10 @@ def load(name):
         return yaml.load(f, Loader=CfnLoader)
 
 
+class UnsupportedKey(Exception):
+    pass
+
+
 def as_list(x):
     return x if isinstance(x, list) else [x]
 
@@ -85,18 +91,18 @@ def resolve(x):
 
 
 def cond_holds(cond, ctx):
-    """AWS condition semantics for the operators the policy uses; an absent key is false
-    for a positive operator and true for a negated one (Null reads the key's presence)."""
+    """AWS condition semantics for Bool and Null, over only the four condition keys EFS
+    enforces for NFS clients; any other key is a failure, not a pass (#3474 review)."""
     for op, kv in cond.items():
         for key, want in kv.items():
             want = [str(w).lower() if isinstance(w, bool) else str(w) for w in as_list(want)]
+            if key not in EFS_KEYS:
+                raise UnsupportedKey(key)
             have = ctx.get(key)
             if op == "Bool":
                 ok = have is not None and str(have).lower() in want
             elif op == "Null":
                 ok = (have is None) == (want[0] == "true")
-            elif op == "ArnNotEquals":
-                ok = have is None or have not in want
             else:
                 raise SystemExit("cfn-efs-policy-test: unhandled condition operator %s" % op)
             if not ok:
@@ -151,7 +157,10 @@ def check(data, ingress):
     ]
     for what, ctx, want in cases:
         for action in sorted(CLIENT):
-            got = allowed(pol, action, ctx)
+            try:
+                got = allowed(pol, action, ctx)
+            except UnsupportedKey as e:
+                return fails + ["condition key %s is not enforced by EFS for NFS clients" % e]
             if got != want:
                 fails.append("%s: %s allowed=%s, want %s" % (what, action, got, want))
     for st in pol["Statement"]:
@@ -216,11 +225,16 @@ def main():
     controls = {
         "policy removed": lambda d, i: d["Resources"]["FileSystem"]["Properties"].pop("FileSystemPolicy"),
         "TLS deny removed": drop("DenyWithoutTls"),
-        "access point deny removed": drop("DenyWithoutAccessPoint"),
-        "mount target condition removed": lambda d, i: stmt(d, "AllowMountTargetClients").pop("Condition"),
-        "exception for every principal": lambda d, i: stmt(d, "DenyWithoutAccessPoint")["Condition"]
-        .pop("ArnNotEquals"),
-        "deny on every action": lambda d, i: stmt(d, "DenyWithoutAccessPoint").__setitem__(
+        "home role allow removed": drop("AllowHomeOpsRole"),
+        "access point condition removed": lambda d, i: stmt(d, "AllowAccessPointClients")["Condition"]
+        .pop("Null"),
+        "mount target condition removed": lambda d, i: stmt(d, "AllowAccessPointClients")["Condition"]
+        .pop("Bool"),
+        "root mount open to every principal": lambda d, i: stmt(d, "AllowHomeOpsRole")["Principal"]
+        .__setitem__("AWS", "*"),
+        "key EFS does not enforce": lambda d, i: stmt(d, "AllowAccessPointClients")["Condition"]
+        .__setitem__("StringEquals", {"aws:PrincipalArn": ROLE}),
+        "deny on every action": lambda d, i: stmt(d, "DenyWithoutTls").__setitem__(
             "Action", ["elasticfilesystem:*"]),
         "home task without a role": lambda d, i: i["Resources"]["HomeOpsTaskDef"]["Properties"].pop("TaskRoleArn"),
         "home task without IAM": lambda d, i: i["Resources"]["HomeOpsTaskDef"]["Properties"]["Volumes"][0][

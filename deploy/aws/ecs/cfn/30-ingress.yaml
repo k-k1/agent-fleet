@@ -691,8 +691,7 @@ Resources:
       AlarmActions: [ !Ref CpAlarmTopic ]
       OKActions: [ !Ref CpAlarmTopic ]
 
-  # Workspace tasks (created by the CP at runtime) log here - the CP passes this
-  # group name to each task definition via AF_ECS_LOG_GROUP.
+  # Workspace tasks log here (the CP passes the name as AF_ECS_LOG_GROUP).
   WsLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Delete
@@ -818,10 +817,8 @@ Resources:
       NetworkMode: awsvpc
       Cpu: !Ref CpCpu
       Memory: !Ref CpMemory
-      # Declared, not inferred (docs/log/72): Fargate applies its X86_64 default at task
-      # start, so an omitted value is nowhere in the definition, and stating it makes a
-      # CpArch switch a new revision rather than a no-op. EC2 has no such default
-      # (docs/log/70 sec.70.8). The ECS enum's spelling, not CpArch's (see CpArm).
+      # Declared, not inferred: an omitted value is nowhere in the definition, so a CpArch
+      # switch would be no new revision (docs/log/72, 70.8). The ECS enum's spelling (CpArm).
       RuntimePlatform:
         CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
         OperatingSystemFamily: LINUX
@@ -854,13 +851,11 @@ Resources:
             - !If [ UseKmsCustodian, { Name: AF_KMS_KEY_ID, Value: !Ref CustodianKmsKeyArn }, !Ref "AWS::NoValue" ]
             - !If [ UseWorkspaceDek, { Name: AF_WORKSPACE_DEK, Value: random }, !Ref "AWS::NoValue" ]
             - { Name: AF_DB_USER, Value: afadmin }
-            # Where the CP re-reads the RDS password (rotated every 7 days; `secrets` below is
-            # resolved once at task start, ADR 0065). Environment, NOT Secrets: an ARN is no
-            # credential, and `secrets` would be another start-time snapshot.
+            # Where the CP re-reads the RDS password (rotated every 7 days, ADR 0065).
+            # Environment, NOT Secrets: `secrets` is resolved once, at task start.
             - Name: AF_DB_PASSWORD_SECRET_ARN
               Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
-            # The JSON field inside the RDS-managed secret - the same `password` the
-            # `:password::` suffix picks out below.
+            # The JSON field inside the RDS-managed secret.
             - { Name: AF_DB_PASSWORD_SECRET_KEY, Value: password }
             # !! Exactly one proxy (this ALB) sits in front of the CP, and the CP cannot tell:
             # tenant source-network rules are matched on the client address this derives

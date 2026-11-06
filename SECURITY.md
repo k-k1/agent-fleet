@@ -165,9 +165,9 @@ declare.
   authorization. Workspace volumes still mount without IAM authorization and the task role
   is shared across memberships, so a workspace task that learns another member's access
   point ID can mount it. Binding each task to its own access points needs a per-membership
-  role ([#3445](https://github.com/k-k1/agent-fleet/issues/3445)). The access points carry
-  no `PosixUser`, and the volume cannot be mounted `nosuid`: ECS exposes no mount options
-  for EFS volumes.
+  role ([#3455](https://github.com/k-k1/agent-fleet/issues/3455)). On `ecs-ec2` the access
+  points also carry no `PosixUser`, and neither target can mount the volume `nosuid`: ECS
+  exposes no mount options for EFS volumes.
 
 - **Give each deployment its own AWS account.** The CP task role (`CpTaskRole` in
   `20-platform.yaml`) is scoped to the account, not to one deployment: its ECS
