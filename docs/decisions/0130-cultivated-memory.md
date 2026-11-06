@@ -335,6 +335,21 @@ memories of that cluster. A model classifies each observation against the cluste
 supersede / no-op from snippets; a model writes **delta patches** (decision 4's form), never a whole
 rewrite. The same lesson twice becomes one rule; narrow cases fold into an umbrella memory.
 
+**When it runs: when the workspace is idle, on topics that are ripe — not at the end of a session.**
+A run per session would repeat 0117's mistake (one window, blind to other sessions and to changes in
+the world) and pay a model call for the few observations one session leaves. Instead:
+
+- **When it looks**: when no session in the workspace has run a turn for 15 minutes, at most once
+  every 3 hours, so it never competes with live sessions for memory or CPU.
+- **What it runs**: only topics that are ripe — a `wrong` or `stale` report (one is enough: it is the
+  strongest signal), 3 new observations, or an observation that has waited 24 hours.
+- **How much**: a token budget per run; what does not fit waits for the next one.
+
+A `wrong` report therefore gets a proposed fix the same day, and nothing waits much more than a day.
+The warning itself never waits for a run: lint's and feedback's reasons are shown at once (decision 3).
+The figures (15 minutes, 3 hours, 3 observations, 24 hours) are starting values that step 3 tunes from
+measurement.
+
 Rules it inherits:
 
 - **No revival** (0117 decision 5): a create on a name that was forgotten or ever existed is refused,
@@ -379,7 +394,7 @@ Three actors, three rules:
 - **Deterministic lint** applies by itself what it can prove: reasons (step 2) and `lint-rename`.
 - **The autonomous consolidator** never publishes: every operation waits for the member, grouped by
   topic, approved per topic, not per item. There is no calendar: a topic's proposals are shown as soon
-  as its run ends, and the member is notified at most once a day while any are waiting. Waiting costs
+  as its run ends (decision 6 says when runs start), and the member is notified at most once a day while any are waiting. Waiting costs
   little because the warning does not wait: the reasons lint and feedback attach reach every agent
   before anyone approves a fix (decision 3). A proposal is re-validated against the current revision
   when it is approved (decision 6), and one left undecided for 14 days goes back to being an
