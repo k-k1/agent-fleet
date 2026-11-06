@@ -180,3 +180,31 @@ func TestWorkspaceEnvCarriesTheWorkloadAWSOptIn(t *testing.T) {
 		t.Error("AF_WS_WORKLOAD_AWS=1 on the CP does not reach the workspace")
 	}
 }
+
+// The Agent's bedrock gate (ADR 0128 decision 14) opens only with AF_CLAUDE_BEDROCK_ROUTE=1 in
+// its own environment, and on ECS nothing but workspaceExtraEnv reaches the task: without this
+// the acceptance run on ECS cannot open the route. Only the exact value "1" opens it.
+func TestWorkspaceEnvCarriesTheBedrockGate(t *testing.T) {
+	_, mgr, mv := bridgeEnv(t)
+	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
+	has := func() bool {
+		for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
+			if strings.HasPrefix(kv, "AF_CLAUDE_BEDROCK_ROUTE=") {
+				if kv != "AF_CLAUDE_BEDROCK_ROUTE=1" {
+					t.Errorf("unexpected value %q", kv)
+				}
+				return true
+			}
+		}
+		return false
+	}
+	for _, c := range []struct {
+		set  string
+		want bool
+	}{{"", false}, {"1", true}, {"true", false}, {"0", false}, {" 1", false}} {
+		t.Setenv("AF_WS_CLAUDE_BEDROCK_ROUTE", c.set)
+		if got := has(); got != c.want {
+			t.Errorf("AF_WS_CLAUDE_BEDROCK_ROUTE=%q: injected = %v, want %v", c.set, got, c.want)
+		}
+	}
+}
