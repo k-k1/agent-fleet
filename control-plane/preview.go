@@ -173,22 +173,21 @@ func (a previewAPI) redirectToSubdomain(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "bad preview path", http.StatusBadRequest)
 		return
 	}
-	// The escaped path, so an encoded "?" or "#" in a file name survives the round trip.
-	next := "/" + strings.TrimPrefix(r.URL.EscapedPath(), "/preview/"+portStr+"/")
-	app := r.URL.Query()
-	tenant := app.Get("tenant")
-	app.Del("tenant")
-	if tenant == "" {
-		tenant = tenantSel(r)
-		if tenant == "" {
-			if c, err := r.Cookie(previewTenantCookie); err == nil {
-				tenant = c.Value
-			}
-		}
+	// The remainder is cut off by segment position, not by comparing against the decoded
+	// port: the mux also matches an encoded "preview" or port, and an encoded reserved
+	// character in a file name must stay encoded.
+	segs := strings.SplitN(r.URL.EscapedPath(), "/", 4) // "", "preview", "{port}", rest
+	next := "/"
+	if len(segs) == 4 {
+		next += segs[3]
 	}
-	if q := app.Encode(); q != "" {
-		next += "?" + q
+	// The app's query string is passed on as it came (order, duplicates, ";" and all: an app
+	// may sign it); only our own tenant selector is taken out.
+	if rq := withoutQueryKey(r.URL.RawQuery, "tenant"); rq != "" {
+		next += "?" + rq
 	}
+	// The same precedence as every other route (header, query, cookie).
+	tenant, _ := previewTenantSel(r)
 	q := url.Values{}
 	q.Set("port", portStr)
 	q.Set("next", next)
@@ -285,4 +284,23 @@ func forwardedProto(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+// withoutQueryKey removes every "key" or "key=value" item from a raw query string without
+// re-encoding the rest.
+func withoutQueryKey(raw, key string) string {
+	if raw == "" {
+		return ""
+	}
+	var kept []string
+	for _, item := range strings.Split(raw, "&") {
+		name, _, _ := strings.Cut(item, "=")
+		if n, err := url.QueryUnescape(name); err == nil && n == key {
+			continue
+		}
+		if item != "" {
+			kept = append(kept, item)
+		}
+	}
+	return strings.Join(kept, "&")
 }

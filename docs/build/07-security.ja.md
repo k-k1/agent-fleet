@@ -375,7 +375,7 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   ブラウザーに署名付きのメンバー書き込みをさせることはできない。パス形式のプレビューのアプリは Console の
   オリジンで動くのでこの検査の対象外で、制限は次の項目が担う。
 - **パス形式のプレビュー（`/preview/{port}/…`）。** `AF_PREVIEW_DOMAIN` があると CP はこれを配らない。
-  すべてのリクエストをサブドメイン形式の持ち主専用の入口 `/preview-open-own` へ 302 で返し、Workspace の
+  GET/HEAD をサブドメイン形式の持ち主専用の入口 `/preview-open-own` へ 302 で返し（他のメソッドは 405）、Workspace の
   内容が Console のオリジンで応答することはない（decisions/0062 決定 7、2026-11-07 の追記）。ドメインが
   無い構成では残り、`relayPreview` が応答を閉じ込める（`sandboxPathFormResponse`）：2 本目の
   `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-downloads`（`allow-same-origin`

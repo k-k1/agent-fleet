@@ -31,7 +31,7 @@ func TestPathFormRedirectsWhenPreviewDomainSet(t *testing.T) {
 	if q.Get("port") != "8080" || q.Get("tenant") != "security" {
 		t.Fatalf("Location query=%v", q)
 	}
-	if got := q.Get("next"); got != "/app/index.html?a=1&b=x+y" {
+	if got := q.Get("next"); got != "/app/index.html?a=1&b=x%20y" {
 		t.Fatalf("next=%q", got)
 	}
 	if hit {
@@ -125,5 +125,41 @@ func TestPathFormWebSocketOriginRefused(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code == http.StatusForbidden || !hit {
 		t.Fatalf("same-origin handshake: status=%d hit=%v", rec.Code, hit)
+	}
+}
+
+func TestPathFormRedirectKeepsPathAndQueryVerbatim(t *testing.T) {
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer agent.Close()
+	mux, mgr := newPreviewTenantTestEnvMgr(t, agent.URL)
+	mgr.previewDomain = "preview.example.test"
+
+	next := func(target string, hdr map[string]string) (string, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound {
+			t.Fatalf("%s: status=%d", target, rec.Code)
+		}
+		loc, _ := url.Parse(rec.Header().Get("Location"))
+		return loc.Query().Get("next"), loc.Query().Get("tenant")
+	}
+	for _, c := range []struct{ target, want string }{
+		{"/preview/8080/a%3Fb%23c/d%2Fe.txt", "/a%3Fb%23c/d%2Fe.txt"},                    // reserved chars stay encoded
+		{"/%70review/%38080/a%20b", "/a%20b"},                                            // encoded fixed part and port
+		{"/preview/8080/", "/"},                                                          // root
+		{"/preview/8080/x?b=2&a=1&a=0&s=1;t=2&tenant=default", "/x?b=2&a=1&a=0&s=1;t=2"}, // order, dups, ";"
+	} {
+		if got, _ := next(c.target, nil); got != c.want {
+			t.Errorf("%s: next=%q, want %q", c.target, got, c.want)
+		}
+	}
+	// The header outranks a stale ?tenant=, as everywhere else.
+	if _, tn := next("/preview/8080/?tenant=default", map[string]string{"X-AF-Tenant": "security"}); tn != "security" {
+		t.Errorf("tenant=%q, want the header's", tn)
 	}
 }

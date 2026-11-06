@@ -443,7 +443,7 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
   cannot have the browser make a signed member write. An app in the path-form preview runs on the
   Console's origin and is not covered by this check; what limits it is below.
 - **The path-form preview (`/preview/{port}/…`).** With `AF_PREVIEW_DOMAIN` set the CP does not serve it:
-  every request is redirected (302) to `/preview-open-own`, the owner-only entry of the subdomain form, so
+  a GET or HEAD is redirected (302) to `/preview-open-own`, the owner-only entry of the subdomain form (other methods get 405), so
   workspace content never answers on the Console origin (decisions/0062 decision 7, note of 2026-11-07). Without
   a domain it remains, and `relayPreview` confines the response (`sandboxPathFormResponse`): a second
   `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-downloads` — no
