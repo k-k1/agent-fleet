@@ -68,7 +68,24 @@ const resize = (h: number, fromTop: boolean) => {
   });
 };
 
+// Frames for the glide (glide.ts), run by hand. Only the "glide" block below steps them; the rest
+// asks for reduced motion, which keeps every automatic move the instant pin it asserts on.
+let frames: FrameRequestCallback[] = [];
+let reduceMotion = true;
+let clock = 0;
+const step = (n = 1) => {
+  for (let i = 0; i < n; i++) {
+    const due = frames;
+    frames = [];
+    clock += 16;
+    act(() => due.forEach((cb) => cb(clock)));
+  }
+};
+
 beforeEach(() => {
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  vi.stubGlobal("matchMedia", (q: string) => ({ matches: reduceMotion && q.includes("reduce") }));
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -95,6 +112,8 @@ afterEach(() => {
   top = 0;
   scroll = 0;
   observers = [];
+  frames = [];
+  reduceMotion = true;
 });
 
 describe("useMirrorScroll body resize", () => {
@@ -167,5 +186,70 @@ describe("useMirrorScroll body resize", () => {
     top = 40; // and the layout above changed meanwhile
     resize(500, false);
     expect(el.scrollTop).toBe(300);
+  });
+});
+
+describe("useMirrorScroll glide", () => {
+  // Lets every queued frame run, delivering each frame's scroll event the way a browser does.
+  const settle = () => {
+    for (let i = 0; i < 200 && frames.length; i++) {
+      step();
+      act(() => api!.onBodyScroll());
+    }
+  };
+
+  it("glides up to the reply top without its first frames re-arming follow", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = SCROLL_HEIGHT - height; // following, at the end: 1500
+    api!.lastReplyIdxRef.current = 3;
+    act(() => api!.jumpToReplyTop()); // 1500 → 1000
+    expect(el.scrollTop).toBe(1500); // nothing moves until the first frame
+    step();
+    expect(el.scrollTop).toBeLessThan(1500);
+    expect(el.scrollTop).toBeGreaterThan(1450); // accelerating from rest, still within the follow zone
+    settle();
+    expect(el.scrollTop).toBe(1000);
+    expect(api!.atBottomRef.current).toBe(false);
+  });
+
+  const newContent = () =>
+    act(() => api!.applyFollow({ groups: [], loaded: true, busy: false, pending: null, pendingPlan: null, pendingPerm: null }));
+
+  it("chases the end while following, and a wheel stops it where it is", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 800;
+    api!.atBottomRef.current = true;
+    newContent(); // a poll brought more: glide to the end
+    step(3);
+    const mid = el.scrollTop;
+    expect(mid).toBeGreaterThan(800);
+    expect(mid).toBeLessThan(1500);
+    act(() => api!.endRestoreOnInput()); // the reader's wheel
+    step(3);
+    expect(el.scrollTop).toBe(mid);
+  });
+
+  it("pins late layout under a view at the end at once", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 800;
+    api!.atBottomRef.current = true;
+    act(() => observers.forEach((cb) => cb())); // an image landing, no new content
+    expect(el.scrollTop).toBe(1500);
+    expect(frames).toHaveLength(1); // only the reply-top pill's sync, no glide
+  });
+
+  it("keeps a glide far behind the end within reach before the frame is painted", () => {
+    reduceMotion = false;
+    const el = api!.bodyRef.current!;
+    el.scrollTop = 0;
+    api!.atBottomRef.current = true;
+    newContent(); // glide queued, its first frame not run yet
+    act(() => observers.forEach((cb) => cb())); // the content's late layout lands first
+    expect(el.scrollTop).toBe(1500 - 500 * 1.5);
+    settle();
+    expect(el.scrollTop).toBe(1500);
   });
 });

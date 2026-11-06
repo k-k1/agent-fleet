@@ -80,6 +80,10 @@ node console/scripts/mirror-scroll/check.mjs --runs 5 --scenario mermaid
 
 Exit status is the check.
 
+`--smooth off` seeds the mirror's smooth automatic scroll (#3418) off; the default is the
+setting's own default, on. A change to `useMirrorScroll` or `glide.ts` runs the harness both ways:
+on exercises the glide's frames against late layout, off the instant pin.
+
 ## Why this is not a unit test
 
 The failure is a layout-timing one, so jsdom cannot see it. The transcript's turn bodies

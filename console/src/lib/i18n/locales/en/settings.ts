@@ -86,6 +86,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "display.markdown": "Markdown",
   "display.markdown_wrap": "Wrap code blocks",
   "display.session_mirror": "Session chat",
+  "display.smooth_scroll": "Smooth automatic scrolling",
   "display.send_key": "Send key",
   "display.send_note_enter": "Enter sends, Shift+Enter for a newline. Applies to every multi-line input, including the session and assistant chats.",
   "display.send_note_mod": "Ctrl+Enter (⌘+Enter) sends, Enter for a newline. For phones. Applies to every multi-line input, including the session and assistant chats.",

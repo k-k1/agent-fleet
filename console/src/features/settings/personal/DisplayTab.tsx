@@ -193,6 +193,9 @@ export function DisplayTab() {
         <Row label={tr("display.font_size")}>
           <Stepper value={s.chatSize} onChange={(v) => setSetting("chatSize", v)} />
         </Row>
+        <Row label={tr("display.smooth_scroll")}>
+          <OnOff value={s.mirrorSmoothScroll} onChange={(v) => setSetting("mirrorSmoothScroll", v)} />
+        </Row>
       </section>
 
       <section className="ds-group">

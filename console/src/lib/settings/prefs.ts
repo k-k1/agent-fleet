@@ -108,6 +108,10 @@ const PREFS = {
   // (features/viewer/MarkdownView.tsx); the per-block override it makes is not persisted.
   // Default true — wrapping usually reads better than horizontal scrolling.
   markdownCodeWrap: synced(true),
+  // Glide the session mirror's automatic scrolling (tail follow, the completion anchor, the
+  // jump pills) instead of jumping (Settings > Display > Session chat, #3418). Default on; the
+  // OS's reduced-motion preference turns it off regardless (features/mirror/glide.ts).
+  mirrorSmoothScroll: synced(true),
   iconSet: synced("vscode"),
   theme: deviceLocal("dark"),
   /** Main-area layout profile. Stored only on this device; each profile's

@@ -4,6 +4,8 @@ import {
 } from "../scrollMark.ts";
 import type { Group } from "../transcript/types.ts";
 import { workSplit } from "../mirrorParts.ts";
+import { createGlider, glideAllowed, GLIDE_MAX_VIEWPORTS, type Glider } from "../glide.ts";
+import { getSettings } from "../../../lib/settings.ts";
 
 // The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
 // the end. Above it, following stops and the jump-to-latest button appears. Narrower than
@@ -49,6 +51,49 @@ export function useMirrorScroll() {
   const mirrorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
+  // The smooth automatic scroll (glide.ts). Only moves caused by the conversation glide — new content
+  // under a following view, the completion anchor and the two pills. Landing on open, late layout of
+  // what is already there, the position restore and the prepend hold stay instant: those must look as
+  // if the view had always been there, and the writers among them cancel a glide in flight first.
+  const gliderRef = useRef<Glider | null>(null);
+  if (!gliderRef.current) {
+    gliderRef.current = createGlider(
+      () => bodyRef.current?.scrollTop ?? 0,
+      (top) => {
+        const el = bodyRef.current;
+        if (!el) return;
+        el.scrollTop = top;
+        noteSelfScroll(el);
+      },
+      () => bodyRef.current?.clientHeight ?? 0,
+    );
+  }
+  const glider = gliderRef.current;
+  useEffect(() => () => glider.cancel(), [glider]);
+  // Move to the end of the transcript: a glide when allowed, else the instant pin. A glide to the
+  // bottom re-reads the end every frame, so calling this again while one is in flight only keeps it.
+  const pinBottom = (el: HTMLDivElement, smooth: boolean) => {
+    if (smooth && glideAllowed(getSettings().mirrorSmoothScroll)) {
+      glider.to(() => el.scrollHeight - el.clientHeight, true);
+      return;
+    }
+    glider.cancel();
+    el.scrollTop = el.scrollHeight;
+    noteSelfScroll(el);
+  };
+  // Move to a place other than the end (the completion anchor, reply top). target is re-read every
+  // frame because late layout keeps moving it.
+  const moveTo = (el: HTMLDivElement, target: () => number | null) => {
+    if (glideAllowed(getSettings().mirrorSmoothScroll)) {
+      glider.to(target, false);
+      return;
+    }
+    glider.cancel();
+    const top = target();
+    if (top === null) return;
+    el.scrollTop = top;
+    noteSelfScroll(el);
+  };
   // The body's box and offset as of the last resize the observer handled (or, for scrollTop, the
   // last scroll at that size), so a band above can be told from a resize below — see onBodyResize.
   const bodyBoxRef = useRef({ height: 0, top: 0, scrollTop: 0 });
@@ -134,6 +179,7 @@ export function useMirrorScroll() {
   // Moves this mirror to mark (an explicit jump). false when the turn is not mounted.
   const jumpTo = (mark: ScrollMark): boolean => {
     restoreMarkRef.current = mark;
+    glider.cancel();
     if (!didInitRef.current) return true; // the first settle restores it
     const el = bodyRef.current;
     if (el && applyMark(el, mark)) {
@@ -213,6 +259,7 @@ export function useMirrorScroll() {
     if (restoringRef.current) {
       const mark = restoreMarkRef.current;
       if (mark && !atBottomRef.current && applyMark(el, mark)) {
+        glider.cancel();
         noteSelfScroll(el);
         return;
       }
@@ -230,9 +277,25 @@ export function useMirrorScroll() {
       return;
     }
     if (Date.now() < interactUntilRef.current) return; // the reader's own click grew it
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
-    el.scrollTop = el.scrollHeight;
-    noteSelfScroll(el);
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // Only a glide that new content started (applyFollow, a pill, a send) keeps chasing here; late
+    // layout under a view already at the end is pinned at once, as with the setting off. Gliding
+    // through it showed the reader nothing and, on open, left the view far up the transcript for a
+    // frame — this observer runs after that frame's glide tick — where the paging sentinel fired
+    // (measured: mirror-scroll's readup loaded an older page during the opening, 2/2).
+    if (glider.toBottom()) {
+      // Keep the frame about to be painted within a glide's reach of the end.
+      const reach = el.clientHeight * GLIDE_MAX_VIEWPORTS;
+      if (gap > reach) {
+        el.scrollTop = el.scrollHeight - el.clientHeight - reach;
+        noteSelfScroll(el);
+      }
+      // Re-asserting rather than trusting it restarts the frame loop should it ever have stopped.
+      pinBottom(el, true);
+      return;
+    }
+    if (gap < 1) return;
+    pinBottom(el, false);
   };
   // Every offset we write goes through here. The scroll event for it may not have been delivered
   // when a band above goes in the same task, and the clamp that follows must be undone from THIS
@@ -255,6 +318,7 @@ export function useMirrorScroll() {
   // the keyboard path (Enter/Space on a <summary>) arm it before the reflow lands. A fold
   // that WE change (foldWork on completion) is content, not interaction, and is followed.
   const noteInteraction = () => {
+    glider.cancel(); // the reader's hand outranks a glide too
     inputSeqRef.current++;
     interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
     endRestoreOnInput(); // the reader touched it — their hand outranks the position restore
@@ -279,6 +343,10 @@ export function useMirrorScroll() {
     if (el.clientHeight !== bodyBoxRef.current.height) return;
     bodyBoxRef.current.scrollTop = el.scrollTop;
     scheduleReplyTopSync();
+    // A glide's own frames. Read as intent, an upward glide's first frames are still near the end
+    // and would re-arm follow under the completion anchor. Reader input cancels the glide before its
+    // scroll event lands (wheel / touch / pointer / key capture), so this never swallows the reader.
+    if (glider.active()) return;
     rebasePrependAnchor(); // a move we didn't make becomes the anchor's new resting place
     const movedUp = el.scrollTop < selfTopRef.current - 1;
     if (atBottomRef.current && !movedUp) {
@@ -334,6 +402,7 @@ export function useMirrorScroll() {
   };
 
   const endRestoreOnInput = () => {
+    glider.cancel();
     inputSeqRef.current++;
     if (restoringRef.current) endRestore();
   };
@@ -344,8 +413,7 @@ export function useMirrorScroll() {
     if (!el) return;
     endRestore(); // the end was chosen explicitly — drop the restore anchor
     prependAnchorRef.current = null; // …and the paging anchor with it
-    el.scrollTop = el.scrollHeight;
-    noteSelfScroll(el);
+    pinBottom(el, true);
     atBottomRef.current = true;
     setShowJump(false);
     syncReplyTop();
@@ -362,12 +430,10 @@ export function useMirrorScroll() {
     const el = bodyRef.current;
     const idx = lastReplyIdxRef.current;
     if (!el || idx === undefined) return;
-    const top = scrollTopForTurn(el, idx, REPLY_TOP_PAD);
-    if (top === null) return;
+    if (scrollTopForTurn(el, idx, REPLY_TOP_PAD) === null) return;
     endRestore();
     prependAnchorRef.current = null; // an explicit destination replaces the paging anchor
-    el.scrollTop = top;
-    noteSelfScroll(el);
+    moveTo(el, () => scrollTopForTurn(el, idx, REPLY_TOP_PAD));
     // We left the end, so follow goes off — otherwise the next poll drags us back down.
     atBottomRef.current = false;
     setShowJump(true);
@@ -445,9 +511,9 @@ export function useMirrorScroll() {
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
+    // Glides once the session has settled; the first landing is instant (see gliderRef).
     const toBottom = () => {
-      el.scrollTop = el.scrollHeight;
-      noteSelfScroll(el);
+      pinBottom(el, didInitRef.current);
       atBottomRef.current = true; // authoritative now (don't wait for the async scroll event)
     };
 
@@ -485,6 +551,7 @@ export function useMirrorScroll() {
         // the anchor's turn is not in the tail window, give the restore up and fall back to the
         // end, which is readable from anyway.
         const mark = restoreMarkRef.current;
+        glider.cancel();
         if (mark && !mark.atBottom && applyMark(el, mark)) {
           noteSelfScroll(el);
           atBottomRef.current = false; // not at the end: follow is off and jump-to-latest appears
@@ -539,9 +606,12 @@ export function useMirrorScroll() {
         const answer = work?.nextElementSibling as HTMLElement | null;
         if (work && answer) {
           answerAnchoredRef.current = replyIdx;
-          const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
-          el.scrollTop = Math.max(0, top);
-          noteSelfScroll(el);
+          // Measured afresh each frame of a glide: late layout above the answer moves it.
+          moveTo(el, () =>
+            answer.isConnected
+              ? Math.max(0, el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12)
+              : null,
+          );
           atBottomRef.current = false; // parked at the answer top — leave the user here (and stop the RO re-pin)
         } else if (body && !work) {
           answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
@@ -564,6 +634,7 @@ export function useMirrorScroll() {
   // Reset on a session switch, run inside MirrorView's layout effect in that effect's order.
   const resetForSession = (session: string) => {
     sessionRef.current = session;
+    glider.cancel(); // a glide belongs to the outgoing session's layout
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     // The old scroller can be reused for another session (pane D&D / opening a row
     // in the current mirror). Clear its physical offset in the same pre-paint phase;
@@ -622,6 +693,7 @@ export function useMirrorScroll() {
       return false;
     }
     if (Math.abs(top - el.scrollTop) >= 1) {
+      glider.cancel();
       el.scrollTop = top;
       noteSelfScroll(el);
     }

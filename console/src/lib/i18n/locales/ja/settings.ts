@@ -83,6 +83,7 @@ export const settings = {
   "display.markdown": "Markdown 表示",
   "display.markdown_wrap": "コードブロックを折り返す",
   "display.session_mirror": "セッションのチャット",
+  "display.smooth_scroll": "自動スクロールをなめらかにする",
   "display.send_key": "送信キー",
   "display.send_note_enter": "Enter で送信し、Shift+Enter で改行します。セッション・アシスタントのチャットなど、複数行の入力欄に共通です。",
   "display.send_note_mod": "Ctrl+Enter（⌘+Enter）で送信し、Enter で改行します。スマホでの利用に向いています。セッション・アシスタントのチャットなど、複数行の入力欄に共通です。",

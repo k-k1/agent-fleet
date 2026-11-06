@@ -25,6 +25,8 @@ const CDP_PORT = Number(arg("cdp-port", 9251));
 const RUNS = Number(arg("runs", 3));
 const ONLY = arg("scenario", "");
 const CPU = Number(arg("cpu", 4)); // main-thread throttling (see setCPUThrottlingRate below)
+// The mirror's smooth automatic scroll (#3418, default on). Run both: "off" is the instant pin.
+const SMOOTH = arg("smooth", "on") !== "off";
 const BASE = `http://127.0.0.1:${PORT}/`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -859,13 +861,16 @@ async function runScenario(sc, chrome) {
       // Tabbed default the Console reads `….tabs` instead, ignores the seed and opens empty.
       await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
         source: `try {
-          localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark","paneLayout":"split"}');
+          localStorage.setItem("af-display-settings", '{"locale":"ja","theme":"dark","paneLayout":"split","mirrorSmoothScroll":${SMOOTH}}');
           localStorage.setItem("af-tenant", "demo");
           localStorage.setItem("af.layout2.demo@example.com.demo", ${JSON.stringify(JSON.stringify(layout(sc.from || null)))});
         } catch (e) {}`,
       });
       await cdp.send("Page.navigate", { url: BASE });
       await sleep(5000); // boot + first poll round
+      // A cold first boot under the CPU throttle can take longer than that to list the sessions,
+      // and every mode starts by clicking a row: wait for the list instead of failing on it.
+      for (let i = 0; i < 30 && !(await cdp.ev(`!!document.querySelector(".sess-row .sess-btn")`)); i++) await sleep(500);
 
       const r =
         sc.mode === "restore" ? await runRestore(cdp)
