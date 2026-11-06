@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, slug } from "../../lib/filemeta.ts";
 // marked: the app's own instance, not the package singleton (see lib/markdown.ts).
 import { marked, repairFullwidthTables, splitYamlFrontMatter } from "../../lib/markdown.ts";
+import { sanitizeMarkdownHtml } from "../../lib/sanitize.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
@@ -175,7 +175,7 @@ export function MarkdownView({
     // document is at least readable here, and mark what was repaired below.
     const repair = repairFullwidthTables(body);
     const rawHtml = marked.parse(repair?.body ?? body, { gfm: true, breaks }) as string;
-    el.innerHTML = DOMPurify.sanitize(rawHtml);
+    el.innerHTML = sanitizeMarkdownHtml(rawHtml, { repoRelative: !streaming });
     if (frontMatter) renderFrontMatter(el, frontMatter.attributes, frontMatter.lenient);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)

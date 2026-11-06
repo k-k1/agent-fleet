@@ -1,5 +1,6 @@
 // Wiring for the rendered <a> / <img>: external URLs, in-page anchors, repo-relative links.
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget } from "../../../lib/filemeta.ts";
+import { isInternalMediaUrl } from "../../../lib/sanitize.ts";
 import { api, downloadURL } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
 import { browserAttachmentIdFromLink } from "../../../layout/browserAttachmentAction.ts";
@@ -19,13 +20,14 @@ function resolveRelPath(ref: string, basePath: string): string {
 // wireImages rewrites relative <img src> to the file-download endpoint so repo-local
 // images (including Japanese filenames) actually load; browser-relative srcs would
 // otherwise 404 against the console origin. Scheme / protocol-relative / data: URLs
-// are left as-is.
+// are left as-is (the sanitizer already dropped absolute URLs into the Console's own API).
 export function wireImages(el: HTMLElement, basePath: string) {
   el.querySelectorAll<HTMLImageElement>("img[src]").forEach((img) => {
     const src = img.getAttribute("src") || "";
     if (!src || src.startsWith("#") || isExternalUrl(src)) return;
     const target = resolveRelPath(src, basePath);
     if (target) img.setAttribute("src", downloadURL(target));
+    else if (isInternalMediaUrl(src)) img.removeAttribute("src");
   });
 }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
+import { scrubCssUrls, stripInternalMedia } from "../../lib/sanitize.ts";
 
 // Custom Marp themes live as CSS files (each with a `/* @theme name */` header) in
 // ../marp-themes and are registered with the renderer so decks can select them via
@@ -110,7 +111,8 @@ export function MarpView({ source }: { source?: string }) {
           return;
         }
         if (!alive) return;
-        shadow.innerHTML = `<style>${STAGE_CSS}</style><style>${out.css}</style><div class="deck">${out.html}</div>`;
+        shadow.innerHTML = `<style>${STAGE_CSS}</style><style>${scrubCssUrls(out.css)}</style><div class="deck">${out.html}</div>`;
+        stripInternalMedia(shadow);
         const slides = [...shadow.querySelectorAll<HTMLElement>(".marpit > svg[data-marpit-svg], .marpit > section")];
         // Auto-fit while every slide is still visible (before the display effect
         // hides the non-current ones, which would zero out their measurements).

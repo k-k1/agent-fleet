@@ -602,6 +602,15 @@ export const marked = new Marked({
   hooks: {
     processAllTokens: neutralizeStrayFormattingTags,
   },
+  renderer: {
+    // GFM task-list item. The stock output is a disabled <input type=checkbox>, and the
+    // sanitizer forbids <input> (lib/sanitize.ts), so the box is emitted as an inert element
+    // that keeps the checkbox semantics for assistive tech. It is styled through classes.
+    checkbox({ checked }) {
+      const state = checked ? "true" : "false";
+      return `<span class="md-task-box${checked ? " is-checked" : ""}" role="checkbox" aria-checked="${state}" aria-disabled="true">${checked ? "\u2611" : "\u2610"}</span> `;
+    },
+  },
   tokenizer: {
     def(src) {
       // Marked's own rule decides whether this is a definition and where it ends;

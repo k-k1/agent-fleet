@@ -130,3 +130,12 @@
   height: auto;
 }
 
+
+/* GFM task-list box: an inert span (the sanitizer forbids <input>). */
+.markdown .md-task-box {
+  display: inline-block;
+  margin-right: 0.25em;
+  color: var(--muted);
+  user-select: none;
+}
+.markdown .md-task-box.is-checked { color: var(--accent); }
