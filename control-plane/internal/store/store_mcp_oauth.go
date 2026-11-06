@@ -257,6 +257,9 @@ func (s *SQL) CreateMCPOAuthGrant(ctx context.Context, g MCPOAuthGrant) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE tenant SET mcp_oauth_disabled=mcp_oauth_disabled WHERE id=?`, g.TenantID); err != nil {
 		return err
 	}
+	if err = lockActiveMembershipTx(ctx, tx, g.MembershipID); err != nil {
+		return err
+	}
 	var blocked int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tenant WHERE id=? AND mcp_oauth_disabled<>0`, g.TenantID).Scan(&blocked); err != nil {
 		return err

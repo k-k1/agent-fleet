@@ -440,6 +440,45 @@ func (p *GitHubProvider) Allowed(ctx context.Context, pr Principal) (bool, error
 	return member, nil
 }
 
+// EntryVerdict is Allowed with the outcomes kept apart: only the email gate, or an organization
+// answer GitHub itself gave, is a denial. A restart, a stale snapshot, a missing token or an
+// unreachable API is EntryUnknown.
+func (p *GitHubProvider) EntryVerdict(ctx context.Context, pr Principal) EntryVerdict {
+	if !p.emailAllowed(ctx, pr.Email) {
+		return EntryDenied
+	}
+	if pr.Subject == "" {
+		return EntryUnknown
+	}
+	p.mu.Lock()
+	e := p.cache[pr.Subject]
+	var snapshot githubMembership
+	if e != nil {
+		snapshot = *e
+	}
+	p.mu.Unlock()
+	verdict := func(ok bool) EntryVerdict {
+		if ok {
+			return EntryAllowed
+		}
+		return EntryDenied
+	}
+	switch {
+	case e == nil:
+		return EntryUnknown
+	case time.Since(snapshot.at) < p.TTL:
+		return verdict(snapshot.ok)
+	case snapshot.token == "":
+		return EntryUnknown
+	}
+	member, err := p.memberOfAnyOrg(ctx, snapshot.token)
+	if err != nil {
+		return EntryUnknown
+	}
+	p.Remember(pr.Subject, "", member)
+	return verdict(member)
+}
+
 // --- construction from the environment --------------------------------------
 
 // NewGitHubProvider builds the adapter from GITHUB_OAUTH_* / AF_GITHUB_*, or

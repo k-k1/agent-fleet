@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -86,14 +89,32 @@ type patAPI struct {
 
 func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
 
-// defaultPATMaxDays is the longest a PAT lives when AF_PAT_MAX_DAYS is unset.
-const defaultPATMaxDays = 365
+// defaultPATMaxDays is the longest a PAT lives when AF_PAT_MAX_DAYS is unset; hardPATMaxDays is
+// the largest value accepted (ten years keeps every computed expiry a four-digit RFC3339 year).
+const (
+	defaultPATMaxDays = 365
+	hardPATMaxDays    = 3650
+)
+
+// parsePATMaxDays validates AF_PAT_MAX_DAYS: "" is the default, anything else must be an integer in
+// [1, hardPATMaxDays]. A typo must stop startup rather than silently become some other lifetime.
+func parsePATMaxDays(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > hardPATMaxDays {
+		return 0, fmt.Errorf("AF_PAT_MAX_DAYS=%q: want an integer from 1 to %d", raw, hardPATMaxDays)
+	}
+	return n, nil
+}
 
 // patMaxLifetimeDays is the deployment's cap on a PAT's lifetime. No token is exempt: a
 // credential that never expires outlives every offboarding step that is not an explicit revoke.
 func (m *manager) patMaxLifetimeDays() int {
 	if m.patMaxDays > 0 {
-		return m.patMaxDays
+		return min(m.patMaxDays, hardPATMaxDays)
 	}
 	return defaultPATMaxDays
 }
@@ -158,7 +179,12 @@ func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident store.Ident
 		TTLDays  *int   `json:"ttl_days"`
 		Endpoint string `json:"endpoint"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// An empty body is a valid request (every field defaults); a malformed one, or a ttl_days that
+	// is not an int, must not silently become the default lifetime.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
 	switch body.Endpoint {
 	case "":
 		body.Endpoint = store.PATResourceMCP

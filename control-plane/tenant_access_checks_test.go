@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -427,5 +429,186 @@ func TestLegacyNonExpiringPATIsCappedFromCreation(t *testing.T) {
 	}
 	if rec := e.mcpCall(old, "tools/list"); rec.Code != 401 {
 		t.Errorf("non-expiring token older than the cap: %d, want 401", rec.Code)
+	}
+}
+
+// --- review round 1 ----------------------------------------------------------------
+
+func TestListTenantsOmitsTenantsThatRefuseTheRequest(t *testing.T) {
+	f := newAccessFixture(t)
+	adm := newAdminAPI(f.mgr)
+	slugs := func(r *http.Request, who store.Identity) string {
+		w := httptest.NewRecorder()
+		adm.listTenants(w, r, who)
+		if w.Code != 200 {
+			t.Fatalf("list: %d %s", w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	// Positive control: from the office with the right method both rows come back.
+	in := slugs(f.req("GET", "/t", "", "boss@example.com", "", "entra", inOffice), f.boss)
+	if !strings.Contains(in, `"slug":"acme"`) || !strings.Contains(in, `"slug":"beta"`) {
+		t.Fatalf("allowed request lost a row: %s", in)
+	}
+	out := slugs(f.req("GET", "/t", "", "boss@example.com", "", "entra", elsewhere), f.boss)
+	if strings.Contains(out, `"slug":"acme"`) || !strings.Contains(out, `"slug":"beta"`) {
+		t.Errorf("refused tenant listed (or open tenant dropped): %s", out)
+	}
+	if got := slugs(f.req("GET", "/t", "", "root@example.com", "", "google", elsewhere), f.root); !strings.Contains(got, `"slug":"acme"`) {
+		t.Errorf("super_admin lost a row: %s", got)
+	}
+}
+
+func TestIdentityStillAllowedOnlyJudgesWhatItCanVerify(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	if err := e.mgr.store.AttachProvider(ctx, e.ident.ID, store.IdentityLink{Provider: "entra", Subject: "s1", Email: "dev@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(file string) config {
+		c := config{mgr: e.mgr, allowEmails: envx.EmailSet(""), allowDomains: envx.DomainSet(""), allowEmailsFile: file}
+		c.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra", DeployAllowed: func(string) bool { return false }}})
+		return c
+	}
+	// Positive control: a definitive denial (nobody lists the address, the roster has no row for it).
+	if mk("").identityStillAllowed(ctx, e.ident) {
+		t.Fatal("a definitive denial must answer false")
+	}
+	// An allowlist file that cannot be read is "could not tell", not "no".
+	if !mk(filepath.Join(t.TempDir(), "missing.txt")).identityStillAllowed(ctx, e.ident) {
+		t.Error("an unreadable allowlist file revoked credentials")
+	}
+	// A provider that offers no verdict is not judged.
+	c := mk("")
+	c.setProviders([]auth.LoginProvider{noVerdictProvider{id: "entra"}})
+	if !c.identityStillAllowed(ctx, e.ident) {
+		t.Error("a provider with no verdict revoked credentials")
+	}
+}
+
+type noVerdictProvider struct{ id string }
+
+func (p noVerdictProvider) ID() string          { return p.id }
+func (p noVerdictProvider) Label(string) string { return p.id }
+func (p noVerdictProvider) AuthorizeURL(context.Context, string, string) (string, error) {
+	return "", nil
+}
+func (p noVerdictProvider) Exchange(context.Context, string, string) (auth.Principal, error) {
+	return auth.Principal{}, nil
+}
+func (p noVerdictProvider) Allowed(context.Context, auth.Principal) (bool, error) { return false, nil }
+
+func TestGitHubEntryVerdictKeepsUnknownApartFromDenied(t *testing.T) {
+	p := &auth.GitHubProvider{ProviderID: "github", DeployAllowed: func(e string) bool { return e == "ok@example.com" }, DeployHasList: true,
+		TTL: time.Minute, Grace: time.Minute}
+	ctx := context.Background()
+	if v := p.EntryVerdict(ctx, auth.Principal{Email: "no@example.com", Subject: "1"}); v != auth.EntryDenied {
+		t.Errorf("email gate = %v, want denied", v)
+	}
+	// Nothing cached (restart / other replica): the org gate cannot be judged.
+	if v := p.EntryVerdict(ctx, auth.Principal{Email: "ok@example.com", Subject: "1"}); v != auth.EntryUnknown {
+		t.Errorf("no snapshot = %v, want unknown", v)
+	}
+	// A fresh snapshot is GitHub's own answer, either way.
+	p.Remember("2", "tok", true)
+	if v := p.EntryVerdict(ctx, auth.Principal{Email: "ok@example.com", Subject: "2"}); v != auth.EntryAllowed {
+		t.Errorf("fresh member = %v, want allowed", v)
+	}
+	p.Remember("3", "tok", false)
+	if v := p.EntryVerdict(ctx, auth.Principal{Email: "ok@example.com", Subject: "3"}); v != auth.EntryDenied {
+		t.Errorf("fresh non-member = %v, want denied", v)
+	}
+}
+
+func TestBadPATRequestBodiesAreRefused(t *testing.T) {
+	f := newAccessFixture(t)
+	api := newPATAPI(f.mgr)
+	mint := func(body string) int {
+		w := httptest.NewRecorder()
+		api.create(w, f.req("POST", "/api/pat", body, "boss@example.com", "beta", "entra", inOffice), f.boss)
+		return w.Code
+	}
+	for _, body := range []string{`{"ttl_days":99999999999999999999}`, `{"ttl_days":"30"}`, `{"name":`} {
+		if c := mint(body); c != 400 {
+			t.Errorf("%s: %d, want 400", body, c)
+		}
+	}
+	if c := mint(``); c != 200 {
+		t.Errorf("empty body: %d, want 200", c)
+	}
+}
+
+func TestParsePATMaxDays(t *testing.T) {
+	for raw, want := range map[string]int{"": 0, "30": 30, " 365 ": 365, "3650": 3650} {
+		if got, err := parsePATMaxDays(raw); err != nil || got != want {
+			t.Errorf("%q = %d, %v; want %d", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"0", "-1", "abc", "3651", "99999999999999999999", "1.5"} {
+		if _, err := parsePATMaxDays(raw); err == nil {
+			t.Errorf("%q accepted", raw)
+		}
+	}
+}
+
+func TestPATWithAnUnreadableExpiryIsNotHonored(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	tok, h := newPATToken()
+	if err := e.mgr.store.CreatePAT(context.Background(), store.PAT{ID: "bad", IdentityID: e.ident.ID, MembershipID: e.membershipID(),
+		Scope: "read", Name: "bad", CreatedAt: store.NowTS(), ExpiresAt: "not-a-date"}, h); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.mcpCall(tok, "tools/list"); rec.Code != 401 {
+		t.Errorf("unparsable expiry: %d, want 401", rec.Code)
+	}
+}
+
+func TestCredentialsCannotBeIssuedAgainstAnInactiveMembership(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	mid := e.membershipID()
+	if err := e.mgr.store.SetMembershipStatus(ctx, mid, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	_, h := newPATToken()
+	err := e.mgr.store.CreatePAT(ctx, store.PAT{ID: "late", IdentityID: e.ident.ID, MembershipID: mid, Scope: "read", Name: "late", CreatedAt: store.NowTS()}, h)
+	if !errors.Is(err, store.ErrMembershipInactive) {
+		t.Errorf("PAT insert on an inactive membership: %v", err)
+	}
+	err = e.mgr.store.CreateMCPOAuthGrant(ctx, store.MCPOAuthGrant{ID: "g-late", ClientID: "c", IdentityID: e.ident.ID, MembershipID: mid,
+		TenantID: e.tenA.ID, Scope: "read", Resource: "r", CreatedAt: time.Now().Unix(), IdleExpiresAt: time.Now().Unix() + 100, AbsExpiresAt: time.Now().Unix() + 100})
+	if !errors.Is(err, store.ErrMembershipInactive) {
+		t.Errorf("grant insert on an inactive membership: %v", err)
+	}
+	// Positive control: once active again, issuing works.
+	if err := e.mgr.store.SetMembershipStatus(ctx, mid, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.mgr.store.CreatePAT(ctx, store.PAT{ID: "ok", IdentityID: e.ident.ID, MembershipID: mid, Scope: "read", Name: "ok", CreatedAt: store.NowTS()}, h); err != nil {
+		t.Errorf("PAT insert on an active membership: %v", err)
+	}
+}
+
+func TestConditionalRevokeSparesCredentialsMintedAfterTheJudgment(t *testing.T) {
+	e := newMCPOAuthEnv(t)
+	ctx := context.Background()
+	mk := func(id string, created time.Time) {
+		_, h := newPATToken()
+		if err := e.mgr.store.CreatePAT(ctx, store.PAT{ID: id, IdentityID: e.ident.ID, MembershipID: e.membershipID(), Scope: "read", Name: id,
+			CreatedAt: created.UTC().Format(time.RFC3339), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	judged := time.Now().Add(-time.Minute)
+	mk("before", judged.Add(-time.Hour))
+	mk("after", judged.Add(time.Second))
+	if err := e.mgr.store.RevokeBearersByIdentity(ctx, e.ident.ID, "test", judged.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	pats, _ := e.mgr.store.ListPATsByIdentity(ctx, e.ident.ID)
+	for _, p := range pats {
+		if (p.ID == "before") != (p.RevokedAt != "") {
+			t.Errorf("%s: revoked_at=%q", p.ID, p.RevokedAt)
+		}
 	}
 }

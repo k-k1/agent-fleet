@@ -124,6 +124,11 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			if m.Role != "tenant_admin" {
 				continue
 			}
+			// A row the tenant's own sign-in / network rules would refuse this request for is not
+			// listed: the row carries the tenant's settings, member and running counts.
+			if !a.cp.TenantAdminAccessOK(r.Context(), ident, m.TenantID, m.TenantSlug) {
+				continue
+			}
 			if t, err := a.cp.Store().GetTenant(r.Context(), m.TenantID); err == nil {
 				tenants = append(tenants, t)
 			}

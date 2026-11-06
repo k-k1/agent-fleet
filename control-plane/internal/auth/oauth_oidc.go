@@ -459,6 +459,14 @@ func (p *OIDCProvider) Allowed(ctx context.Context, pr Principal) (bool, error) 
 	return p.DBAllowed != nil && p.DBAllowed(ctx, email), nil
 }
 
+// EntryVerdict: the OIDC gate is the email axis alone, so its answer is definitive.
+func (p *OIDCProvider) EntryVerdict(ctx context.Context, pr Principal) EntryVerdict {
+	if ok, _ := p.Allowed(ctx, pr); ok {
+		return EntryAllowed
+	}
+	return EntryDenied
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v = strings.TrimSpace(v); v != "" {

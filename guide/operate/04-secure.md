@@ -427,10 +427,10 @@ the per-request check above never sees them. They are cut off separately:
   same step. Re-inviting the person does not bring them back.
 - **Taking someone off the allowlist** is noticed on the token's next use: the CP asks the
   sign-in methods that person used whether they are still admitted, and if none is, it revokes
-  all of their PATs and connections and answers 401. A check that cannot be made (the GitHub
-  adapter after a restart) does not revoke.
+  all of their PATs and connections and answers 401. Only a definitive refusal revokes: a check that cannot be made (the GitHub
+  adapter after a restart or during an outage, an unreadable allowlist file) does not.
 - **Every PAT expires.** There is no "never": the longest lifetime is `AF_PAT_MAX_DAYS` (default
-  365). A token issued before this limit existed with no expiry is treated as expiring that long
+  365, 1 to 3650; any other value stops the CP at startup). A token issued before this limit existed with no expiry is treated as expiring that long
   after it was created, so an old one stops working at once.
 
 Using a PAT on `/mcp` is still exempt from a tenant's allowed networks, because workspaces call it

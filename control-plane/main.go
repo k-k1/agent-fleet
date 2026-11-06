@@ -535,7 +535,11 @@ func main() {
 		recheck := cfg
 		mgr.bearerEntryAllowed = recheck.identityStillAllowed
 	}
-	mgr.patMaxDays, _ = strconv.Atoi(os.Getenv("AF_PAT_MAX_DAYS"))
+	patMax, patErr := parsePATMaxDays(os.Getenv("AF_PAT_MAX_DAYS"))
+	if patErr != nil {
+		log.Fatalf("control-plane: %v", patErr)
+	}
+	mgr.patMaxDays = patMax
 	// The admin API validates a tenant's allowed_providers against this set, so a
 	// rule can't name an IdP the deployment doesn't have (docs/log/61 §61.9.4).
 	mgr.knownProviderIDs = map[string]bool{}

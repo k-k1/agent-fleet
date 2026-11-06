@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
@@ -91,10 +92,12 @@ func (d cpDeps) BearerEntryAllowed(ctx context.Context, identityID string) bool 
 	if !ok {
 		return false
 	}
+	// Anything minted after this instant was not part of the judgment (see RevokeBearersByIdentity).
+	began := time.Now().Unix()
 	if d.m.bearerEntryAllowed(ctx, ident) {
 		return true
 	}
-	_ = d.m.store.RevokeBearersByIdentity(ctx, identityID, "no longer allowed to sign in")
+	_ = d.m.store.RevokeBearersByIdentity(ctx, identityID, "no longer allowed to sign in", began)
 	return false
 }
 

@@ -330,6 +330,10 @@ func (d cpTenant) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug st
 	return memberAuth{d.m}.tenantAdminFor(w, r, slug)
 }
 
+func (d cpTenant) TenantAdminAccessOK(ctx context.Context, ident store.Identity, tenantID, slug string) bool {
+	return d.m.checkTenantAdminAccess(ctx, ident, tenantID, slug) == nil
+}
+
 func (d cpTenant) ResolveMember(r *http.Request, slug, key string) (store.Membership, store.Workspace, bool, *tenantsrv.APIError) {
 	mem, ws, hasWS, aerr := adminAPI{memberAuth{d.m}}.resolveMember(r, slug, key)
 	return mem, ws, hasWS, tenantAPIError(aerr)

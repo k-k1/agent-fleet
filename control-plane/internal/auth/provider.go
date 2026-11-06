@@ -60,6 +60,24 @@ type LoginProvider interface {
 	Allowed(ctx context.Context, p Principal) (bool, error)
 }
 
+// EntryVerdict is a judgment about whether somebody may still enter, with "could not tell" kept
+// apart from "no". Allowed's bool folds the two together (a GitHub outage past its grace window
+// answers false), which is fine for turning one request away and wrong for revoking credentials.
+type EntryVerdict int
+
+const (
+	EntryUnknown EntryVerdict = iota // could not be checked: judge nothing
+	EntryAllowed
+	EntryDenied // a definitive refusal
+)
+
+// EntryVerdictor is implemented by the built-in providers. Callers must have established that
+// the inputs behind the email axis (allowlist file, roster lookup) are readable; the verdict only
+// speaks for the provider's own checks.
+type EntryVerdictor interface {
+	EntryVerdict(ctx context.Context, p Principal) EntryVerdict
+}
+
 // ProviderIssuer is implemented by the built-in provider types so the admin list
 // can name the identity source without widening the LoginProvider interface —
 // which every test fake would then have to grow a method for.

@@ -310,11 +310,15 @@ func (a API) authMCP(r *http.Request, tr *callTrace) (*mcpPrincipal, *APIError) 
 			expiry = c.AddDate(0, 0, a.cp.PATMaxDays()).UTC().Format(time.RFC3339)
 		}
 	}
-	if expiry != "" {
-		if exp, err := time.Parse(time.RFC3339, expiry); err == nil && time.Now().After(exp) {
-			tr.rec.Reason = "pat expired"
-			return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
-		}
+	if expiry == "" {
+		// No stored expiry and no readable creation time: nothing proves the token is within its
+		// lifetime, so it is not honored.
+		tr.rec.Reason = "pat has no usable expiry"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
+	}
+	if exp, err := time.Parse(time.RFC3339, expiry); err != nil || time.Now().After(exp) {
+		tr.rec.Reason = "pat expired"
+		return nil, &APIError{http.StatusUnauthorized, "unauthenticated", "token expired"}
 	}
 	// The binding is checked like an OAuth token's audience: each endpoint refuses the other's
 	// tokens, so a memory PAT never reaches the session tools and a full one never has to be

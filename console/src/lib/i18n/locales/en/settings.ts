@@ -125,6 +125,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "tokens.ttl_90": "90 days (default)",
   "tokens.ttl_30": "30 days",
   "tokens.ttl_365": "365 days",
+  "tokens.ttl_n": "{n} days (maximum)",
   "tokens.ttl_never": "No expiry",
   "tokens.issuing": "Issuing…",
   "tokens.issue": "Issue token",
