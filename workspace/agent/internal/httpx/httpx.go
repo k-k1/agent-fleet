@@ -56,12 +56,28 @@ func WriteErr(w http.ResponseWriter, status int, code, msg string) {
 
 // DecodeJSON parses the request body into v; on failure it writes the shared
 // 400 bad_request response and returns false — the caller just returns.
+//
+// A body labelled with a non-JSON Content-Type (text/plain, a form type, ...) is refused with 415:
+// those are the types a page can send cross-site without a preflight, and the decoder would
+// otherwise parse them as JSON. A request with no Content-Type passes: the Control Plane
+// enforces application/json on browser writes before relaying (its own gate), and local callers
+// of the token-gated Agent API are not browsers.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if !jsonContentTypeOK(r) {
+		WriteErr(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "request body must be application/json")
+		return false
+	}
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		WriteErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return false
 	}
 	return true
+}
+
+// jsonContentTypeOK is false only for a request that declares a Content-Type other than JSON.
+func jsonContentTypeOK(r *http.Request) bool {
+	ct := r.Header.Get("Content-Type")
+	return ct == "" || isJSONContentType(ct)
 }
 
 // StrictJSONError is the stable application error produced by DecodeStrictJSON.

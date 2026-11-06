@@ -623,3 +623,48 @@ func TestMemberOriginUploadMaxCoversAgentCeiling(t *testing.T) {
 		t.Fatalf("memberOriginUploadMax %d is below the Agent ceiling %d + framing %d", memberOriginUploadMax, agentCeiling, agentFraming)
 	}
 }
+
+func TestBrowserWriteGateExemptionsComeFromTheRegistry(t *testing.T) {
+	t.Setenv("AF_MCP_ENABLED", "true")
+	t.Setenv("AF_MCP_OAUTH", "1")
+	cfg, _ := smokeEnvWith(t, allRouteSwitches(t)...)
+	cfg.publicBaseURL = "https://console.test"
+	cfg.mgr.publicBaseURL = "https://console.test"
+	buildMux(cfg)
+	for _, p := range []string{"/oauth2/callback", "/internal/anything", "/mcp", "/git/a/b", "/engine/k/v1/x"} {
+		r := httptest.NewRequest("POST", "https://console.test"+p, nil)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		if e := writeGatePolicy.Check(r); e != nil {
+			t.Errorf("%s refused: %v", p, e)
+		}
+	}
+	// Cookie-authenticated routes are never exempt.
+	for _, p := range []string{"/api/sessions", "/api/admin/x", "/dev-idp/consent", "/mcp-oauth/consent", "/preview/3000/x"} {
+		r := httptest.NewRequest("POST", "https://console.test"+p, nil)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		if e := writeGatePolicy.Check(r); e == nil || e.Status != http.StatusForbidden {
+			t.Errorf("%s was not refused: %v", p, e)
+		}
+	}
+}
+
+func TestMultipartUploadRoutes(t *testing.T) {
+	yes := []string{"/api/fs/upload", "/api/sessions/s1/paste-image", "/api/chat/conversations/c1/paste-image", "/api/memos/paste-image", "/api/agents/memory/import"}
+	for _, p := range yes {
+		r := httptest.NewRequest("POST", "https://console.test"+p, strings.NewReader("x"))
+		r.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+		if e := writeGatePolicy.Check(r); e != nil {
+			t.Errorf("upload %s refused: %v", p, e)
+		}
+	}
+	no := []string{"/api/sessions", "/api/memos", "/api/schedules/1", "/api/sessions//paste-image", "/api/fs/upload/x"}
+	for _, p := range no {
+		for _, m := range []string{"POST", "PATCH", "PUT"} {
+			r := httptest.NewRequest(m, "https://console.test"+p, strings.NewReader("x"))
+			r.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+			if e := writeGatePolicy.Check(r); e == nil || e.Status != http.StatusUnsupportedMediaType {
+				t.Errorf("%s %s: multipart not refused: %v", m, p, e)
+			}
+		}
+	}
+}
