@@ -382,6 +382,21 @@ describe("the mirror's automatic translation", () => {
     expect(tx.calls).toEqual([[ENGLISH3], [ENGLISH2]]);
   });
 
+  it("counts the rows a reply grew by, not just its block's first row", () => {
+    // One reply written as many jsonl rows is one block named after its first row. Its last row
+    // is what a replaced file has to fall below to be noticed.
+    const tx = wiring({}, true);
+    const caps = capsWith(tx);
+    const grown: Turn[] = [
+      ...HISTORY,
+      { role: "assistant", idx: 1000, anchorId: "a1000", ts: "2026-09-13T10:02:00Z", parts: [{ kind: "text", text: "そのまま続けます。" }] },
+    ];
+    render(HISTORY, caps);
+    again(grown, caps);
+    again([...reply(2, ENGLISH), ...reply(4, ENGLISH2.replace("green", "red")), ...reply(8, ENGLISH2)], caps);
+    expect(tx.calls).toEqual([[ENGLISH2]]);
+  });
+
   it("finds the live reply when the window has no landed prompt, only a queued one", () => {
     // A long autonomous stretch pushes the prompt out of the tail window; a queued bubble is not
     // a row of the transcript and must not take the live slot from the real reply.

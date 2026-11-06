@@ -199,12 +199,18 @@ function arrivedSinceOpen(groups: Group[], session: string, logId: string, stale
   if (stale) return () => false;
   const rows = groups.filter((g) => typeof g.idx === "number" && !g.pending && !g.queued);
   if (rows.length) {
+    // The newest ROW, not the newest block id: a block is named after its first row (and
+    // useStableBlockIds pins that name), so a reply growing from row 2 to row 1000 stays "2" and
+    // a later replaced file numbered 1..8 would not look like a step back.
     let max = -1;
-    for (const g of rows) if ((g.idx as number) > max) max = g.idx as number;
+    for (const g of rows) {
+      const last = typeof g.endIdx === "number" ? g.endIdx : (g.idx as number);
+      if (last > max) max = last;
+    }
     const held = watchStart.get(session);
     if (!held || held.log !== logId || max < held.seen) {
       const live = rows[liveExchangeFrom(rows)];
-      // No reply yet (the prompt is the newest row): whatever comes next is above `max`.
+      // No reply yet (the prompt is the newest block): whatever comes next is above `max`.
       const boundary = live ? (live.idx as number) - 1 : max;
       watchStart.set(session, { log: logId, boundary, seen: max });
     } else if (max > held.seen) {
