@@ -256,9 +256,13 @@ export function EgressView() {
           <p className="muted">{tr("admin.egress_no_entries")}</p>
         ) : (
           active.map((e: any) => (
-            <div key={e.id} className="adm-allow-row">
+            <div key={e.id} className={"adm-allow-row" + (e.invalid_reason ? " adm-allow-invalid" : "")}>
               <EntryName entry={e.entry} />
-              <span className="as-repo muted" title={e.reason}>{e.reason}</span>
+              {e.invalid_reason ? (
+                <span className="as-repo form-err egress-invalid" title={e.invalid_reason}>{tr("admin.egress_invalid_row")}</span>
+              ) : (
+                <span className="as-repo muted" title={e.reason}>{e.reason}</span>
+              )}
               <span className="muted" title={e.added_by}>{e.added_by}</span>
               <span className="allow-acts">
                 <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>{tr("admin.retire")}</button>

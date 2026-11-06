@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 )
 
 // EgressStat is one destination host with its would-allow / would-block hit counts
@@ -30,6 +32,8 @@ type EgressStore interface {
 	RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error
 	ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error)
 	ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error)
+	// GetAllowlist returns one row by ID; ok is false when there is none.
+	GetAllowlist(ctx context.Context, id string) (e AllowlistEntry, ok bool, err error)
 	AddAllowlist(ctx context.Context, e AllowlistEntry) error
 	SetAllowlistState(ctx context.Context, id, state string) error
 	EffectiveAllowlist(ctx context.Context) ([]string, error)
@@ -111,6 +115,17 @@ func (s *SQL) ListAllowlist(ctx context.Context, state string, limit int) ([]All
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQL) GetAllowlist(ctx context.Context, id string) (AllowlistEntry, bool, error) {
+	var e AllowlistEntry
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, entry, state, reason, added_by, added_at FROM egress_allowlist WHERE id=?`, id).
+		Scan(&e.ID, &e.TenantID, &e.Entry, &e.State, &e.Reason, &e.AddedBy, &e.AddedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AllowlistEntry{}, false, nil
+	}
+	return e, err == nil, err
 }
 
 func (s *SQL) AddAllowlist(ctx context.Context, e AllowlistEntry) error {

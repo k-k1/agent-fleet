@@ -402,15 +402,15 @@ func (a egressAPI) allowlistState(w http.ResponseWriter, r *http.Request, ident 
 	if b.State == "active" {
 		// Activating re-checks the entry: a row stored under an older, looser grammar must not
 		// become active only to be dropped from the shipped policy.
-		if rows, err := a.store.ListAllowlist(r.Context(), "", 5000); err == nil {
-			for _, e := range rows {
-				if e.ID == id {
-					if reason := invalidTCPReason(e.Entry); reason != "" {
-						writeAPIErr(w, &apiError{http.StatusBadRequest, codeEgressEntryInvalid, reason + ": " + e.Entry})
-						return
-					}
-					break
-				}
+		e, ok, err := a.store.GetAllowlist(r.Context(), id)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if ok {
+			if reason := invalidTCPReason(e.Entry); reason != "" {
+				writeAPIErr(w, &apiError{http.StatusBadRequest, codeEgressEntryInvalid, reason + ": " + e.Entry})
+				return
 			}
 		}
 	}
