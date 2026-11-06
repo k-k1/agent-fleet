@@ -158,7 +158,9 @@ Resources:
       ServiceConnectDefaults:
         Namespace: !GetAtt Namespace.Arn
 
-  # --- IAM: shared execution role (ECR pull + logs + SSM SecureString read) ---
+  # --- IAM: Control Plane execution role (ECR pull + logs + the CP's own secrets) ---
+  # /af-cp/* only; workspace tasks run as WsExecRole. Id and export keep their names so no
+  # stack update removes an export that is still imported. PARAMETERS.md, "Execution roles".
   ExecRole:
     Type: AWS::IAM::Role
     Properties:
@@ -176,13 +178,10 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Injects AGENT_TOKEN / AF_SECRET_KEY into workspace tasks via
-              # `secrets: valueFrom` (frozen spec sec.20b.7.5). aws/ssm managed key
-              # needs no explicit kms grant.
+              # CP master key, cookie secret and OAuth client secrets (`secrets: valueFrom`).
               - Effect: Allow
                 Action: [ ssm:GetParameters ]
                 Resource:
-                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/*"
               # Reads the RDS-managed master password (Secrets Manager) to inject
               # AF_DB_PASSWORD into the CP task (P3-7 stage 3a). RDS-managed secrets are
@@ -195,6 +194,30 @@ Resources:
               - Effect: Allow
                 Action: [ secretsmanager:GetSecretValue ]
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:af-*-egress-token-*"
+
+  # --- IAM: workspace execution role (ECR pull + logs + /af-ws/* SecureString read) ---
+  # Named by AF_ECS_EXEC_ROLE and the engine / TTS tasks. Never /af-cp/*: that is the split.
+  WsExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-ws-exec"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ssm-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ ssm:GetParameters ]
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
 
   # --- IAM: workspace task role - Agent needs NO AWS APIs (least privilege) ---
   WsTaskRole:
@@ -344,15 +367,8 @@ Resources:
               # - attach it to a slot of its own and read or rewrite it there, and stop,
               # terminate or delete anything EC2 holds.
               #
-              # Each action is authorized once per resource it names, and EVERY one must be
-              # allowed: AttachVolume / DetachVolume name the instance and the volume,
-              # CreateSnapshot the source volume and the new snapshot, CreateVolume the new
-              # volume and, when restoring, the source snapshot. The create statements below
-              # are one action and one resource type each on purpose: if AWS presented the
-              # request's tags when it evaluates the source too (the Service Authorization
-              # Reference does not list aws:RequestTag there, so it probably does not), a
-              # CreateVolume statement that also listed snapshot/* would let any snapshot in
-              # the account be restored into this pool. One type each holds either way.
+              # Multi-resource actions need every resource allowed; the create statements
+              # are one action and one resource type each. PARAMETERS.md, "EC2 pool fence".
               #
               # Every resource the CP mutates is found through af-pool, or through
               # af-membership, which only ever lands together with af-pool; the inventory is
@@ -688,6 +704,7 @@ Resources:
                 Action: iam:PassRole
                 Resource:
                   - !GetAtt ExecRole.Arn
+                  - !GetAtt WsExecRole.Arn
                   - !GetAtt WsTaskRole.Arn
                 Condition:
                   StringEquals:
@@ -823,6 +840,9 @@ Outputs:
   ExecRoleArn:
     Value: !GetAtt ExecRole.Arn
     Export: { Name: !Sub "${AWS::StackName}-ExecRoleArn" }
+  WsExecRoleArn:
+    Value: !GetAtt WsExecRole.Arn
+    Export: { Name: !Sub "${AWS::StackName}-WsExecRoleArn" }
   WsTaskRoleArn:
     Value: !GetAtt WsTaskRole.Arn
     Export: { Name: !Sub "${AWS::StackName}-WsTaskRoleArn" }

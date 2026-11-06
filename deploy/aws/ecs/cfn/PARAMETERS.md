@@ -1119,3 +1119,42 @@ never a parameter or an output: only its ARN travels (30-ingress `EgressTokenSec
 execution role reads `af-*-egress-token-*`, 20-platform). A deleted secret keeps its name for its
 recovery window, so a name that repeated on gateway → nat-gateway → gateway would fail the second
 create; the interface id makes it new each time the gateway is created.
+
+## Execution roles
+
+Two execution roles in 20-platform, because the secrets they read have different owners.
+
+- `ExecRole` (export `ExecRoleArn`) is the Control Plane's: `/af-cp/*` (master key, cookie
+  secret, OAuth client secrets), the RDS-managed password and the egress token. The CP task
+  and the home task name it. It reads nothing under `/af-ws/*`.
+- `WsExecRole` (export `WsExecRoleArn`) is the workspaces': `/af-ws/*` only. The CP passes it to
+  every workspace task definition (`AF_ECS_EXEC_ROLE`); 50-tts and 60-engines name it too, and
+  60-engines attaches its Secrets Manager grants to it. It reads nothing under `/af-cp/*`.
+
+The ids and the `ExecRoleArn` export of the old shared role are kept, so no stack update ever
+removes an export that is still imported. Both roles are shared by all workspaces; scoping
+`WsExecRole` per workspace (`/af-ws/<name>/*`) needs a role per workspace and is a follow-up.
+
+Update order matters only for tasks that START between two stack updates (secrets are resolved
+at task start; running tasks are unaffected): `update.sh` updates 20-platform first, which takes
+`/af-ws/*` off `ExecRole`, so a workspace or engine task started before 30-ingress / 60-engines
+move to `WsExecRole` fails to start. Run the stack updates back to back, and do not start
+workspaces in between.
+
+`SlotRole` (40-ec2-pool) carries an explicit Deny of `ssm:GetParameter*` on `/af-cp` and
+`/af-ws` (inline policy `af-slot-deny-af-parameters`), because `AmazonSSMManagedInstanceCore`
+allows parameter reads everywhere. A hand-applied inline policy named `af-deny-af-parameters` is
+not touched by the template and can be removed by hand once the template update has landed.
+
+## EC2 pool fence
+
+Each action is authorized once per resource it names, and EVERY one must be
+allowed: AttachVolume / DetachVolume name the instance and the volume,
+CreateSnapshot the source volume and the new snapshot, CreateVolume the new
+volume and, when restoring, the source snapshot. The create statements
+are one action and one resource type each on purpose: if AWS presented the
+request's tags when it evaluates the source too (the Service Authorization
+Reference does not list aws:RequestTag there, so it probably does not), a
+CreateVolume statement that also listed snapshot/* would let any snapshot in
+the account be restored into this pool. One type each holds either way.
+

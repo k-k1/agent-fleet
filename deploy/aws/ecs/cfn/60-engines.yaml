@@ -379,7 +379,7 @@ Resources:
     Properties:
       PolicyName: !Sub "af-${AWS::StackName}-exec-hf"
       Roles:
-        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } ] ]
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" } ] ]
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -401,7 +401,7 @@ Resources:
     Properties:
       PolicyName: !Sub "af-${AWS::StackName}-exec-civitai"
       Roles:
-        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } ] ]
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" } ] ]
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -624,7 +624,7 @@ Resources:
       Cpu: !Ref IngestCpu
       Memory: !Ref IngestMemory
       EphemeralStorage: { SizeInGiB: !Ref IngestDiskGiB }
-      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" }
       TaskRoleArn: !GetAtt IngestTaskRole.Arn
       Volumes: [ { Name: scratch } ]
       ContainerDefinitions:
@@ -692,7 +692,7 @@ Resources:
       # !! No task-level Memory ON PURPOSE - PARAMETERS, "ImageTaskMemory" (the same trap: a task
       # limit sits in a cgroup the engine cannot see). The reservations below are for placement
       # only; the engine's real ceiling is the box the Control Plane bought.
-      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
         # !! ANONYMOUS on purpose - PARAMETERS, "The model volume".
@@ -816,7 +816,7 @@ Resources:
       # a cgroup ComfyUI cannot see, so it budgets RAM from the box and is OOM-killed loading
       # anything above ~10 GB (measured 7 times, 2026-09-17/18). The reservations below are for
       # placement only; the engine's real ceiling is the box the Control Plane bought.
-      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
         - Name: models
