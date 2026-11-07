@@ -516,6 +516,10 @@ jobs:
           cache-dependency-path: console/package-lock.json
       - name: npm ci
         run: npm ci
+      # Shipped (non-dev) dependencies only; a new high-severity advisory fails here rather
+      # than at review time.
+      - name: npm audit (production, high)
+        run: npm audit --omit=dev --audit-level=high
       - name: typecheck
         run: npm run typecheck
       # rules-of-hooks only (oxlint, since typescript-eslint cannot load TypeScript 7). A hook
