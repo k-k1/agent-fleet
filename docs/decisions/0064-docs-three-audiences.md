@@ -3,6 +3,7 @@
 English | [日本語](0064-docs-three-audiences.ja.md)
 
 - Status: **accepted** (2026-09-01).
+  Amended by [0132](0132-site-only-guide.md) (proposed): `guide/` is read on the site and no longer shipped.
 - Related: [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (also a case
   where behaviour is decided by what is visible from inside a container)
 

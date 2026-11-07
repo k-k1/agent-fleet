@@ -3,6 +3,7 @@
 [English](0064-docs-three-audiences.md) | 日本語
 
 - 状態: **採用**（2026-09-01）。
+  [0132](0132-site-only-guide.ja.md)（提案）で改める: `guide/` はサイトで読み、コンテナには配らない。
 - 関連: [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.ja.md)（同じく
   「コンテナの中から何が見えるか」で挙動が決まる系）
 

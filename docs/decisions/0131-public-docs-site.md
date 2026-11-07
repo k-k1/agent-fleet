@@ -7,6 +7,7 @@ English | [日本語](0131-public-docs-site.ja.md)
   request #14 (branch `docs/3463-page-map`). Everything below marked *(pilot)* was built and
   looked at there: the site was rendered from `v0.41.0` and checked with headless Chromium.
   Follow-ups: #3463 (shots stub fix: #3464).
+  Amended by [0132](0132-site-only-guide.md) (proposed): the shipped copy goes; the site is the only place to read.
 - Related: [0064](0064-docs-three-audiences.md) (the three reader shelves, `guide/` is what ships) /
   [0063](0063-document-preview.md) (the Console's document viewer)
 
