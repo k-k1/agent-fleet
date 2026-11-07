@@ -33,7 +33,7 @@ regexes = [
   '''0123456789abcdef0123456789abcdef0123456789abcdef(0123456789abcdef)?''',
   # control-plane/claude_audit_test.go (d6e23f3a5): a made-up curl -u user:password fixture that the
   # audit import must NOT record; not a credential.
-  '''me:hunter2''',
+  '''me:(hunter2|" \+ tok \+ ")''',
 ]
 
 [[allowlists]]
