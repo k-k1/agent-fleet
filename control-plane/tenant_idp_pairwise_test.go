@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -25,8 +26,13 @@ import (
 func stubIssuer(t *testing.T, subjectTypes ...string) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
+	// Tenant providers refuse non-public addresses and plain http; aim the probe at this
+	// loopback TLS stub for the duration of the test.
+	prev := auth.NewTenantHTTPClient
+	auth.NewTenantHTTPClient = func(time.Duration) *http.Client { return srv.Client() }
+	t.Cleanup(func() { auth.NewTenantHTTPClient = prev })
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"issuer":                                srv.URL,
@@ -117,7 +123,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 	// Discovery being unreachable is NOT a refusal. The issuer may simply not be
 	// reachable from the CP right now (it is fetched lazily everywhere else for the
 	// same reason), and a network blip must not stop somebody saving a form.
-	dead := "http://127.0.0.1:1/unreachable"
+	dead := "https://127.0.0.1:1/unreachable"
 	seedTenantIdP(t, st, tn.ID, "ghost", "ghost.example", "active")
 	if err := st.CreateTenantIdP(ctx, store.TenantIdP{
 		ID: store.NewID(), TenantID: tn.ID, Name: "dead1", Issuer: dead, ClientID: "c",

@@ -617,9 +617,9 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 		return &apiError{http.StatusBadRequest, "tenant_idp_kind_invalid",
 			"kind must be " + auth.TenantIdPKindOIDC + " or " + auth.TenantIdPKindGitHub}
 	}
-	if !auth.ValidIssuerURL(b.Issuer) {
+	if !auth.ValidTenantIssuerURL(b.Issuer) {
 		return &apiError{http.StatusBadRequest, "tenant_idp_issuer_invalid",
-			"issuer must be the IdP's https issuer URL (http is accepted only for loopback)"}
+			"issuer must be the IdP's https issuer URL"}
 	}
 	// Decision 7, on the DB side: a multi-tenant Entra endpoint accepts every Microsoft
 	// account in the world, and a personal account can rewrite its own email — so the

@@ -265,6 +265,17 @@ Cognito / GitLab が設定だけで載る（`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID
 - **id token の署名検証は行わない**（意図どおり）。認可コードフロー・client secret 付き・
   トークンエンドポイントから TLS 直受けのため。テナント id はそのペイロードから読む。
   **フロントチャネルの経路を足すなら JWKS 検証が必須**。JWT ライブラリ依存はゼロ。
+- **テナント定義 provider の issuer はテナント側の第三者**なので、CP は discovery 文書が
+  指す先を信用しない。issuer は `https` 必須（loopback の `http` は env 設定の provider だけ）。
+  テナント provider の issuer への通信（discovery・token・userinfo）は、dial 時に非公開宛先を
+  拒否し（`egressallow.AddrRefused`、§7.8 と同じレンジ）、リダイレクトを辿らないクライアントで行う。
+  authorization・token・userinfo の各 endpoint は `https` で、issuer の登録可能ドメイン
+  （Public Suffix 考慮）上にあること。issuer と endpoint でドメインが分かれる IdP ファミリー
+  （Google の `googleapis.com`、Cognito の `amazoncognito.com`）だけを例外として組み込む。
+  それ以外はサインインが失敗してログに残る。規則より前に作られて違反する行は削除も書き換えもしない：
+  保存・承認済みのまま、https でない issuer はボタンが隠れて警告ログ、issuer のサイト外の endpoint は
+  サインインが理由付きのログと共に失敗する。行（または IdP の discovery 文書）を直せば戻る。
+  env 設定の provider は変更なし。
 
 **GitHub だけは専用アダプタ**（OIDC ではない）。許可は**独立した 2 つの門の AND**:
 

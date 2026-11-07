@@ -310,6 +310,20 @@ need no edit.
   over TLS. The tenant id is read from its payload. **If a front-channel path is ever
   added, JWKS verification becomes mandatory.** There is no JWT library dependency at
   all.
+- **A tenant-defined provider's issuer is a tenant-side party**, so the CP does not trust
+  where its discovery document points. The issuer must be `https` (the loopback `http`
+  carve-out is for env-configured providers only). Every request to a tenant provider's
+  issuer, discovery and token and userinfo alike, goes through a client that refuses
+  non-public destinations at dial time (`egressallow.AddrRefused`, the same ranges as §7.8)
+  and never follows a redirect. The authorization, token and userinfo endpoints must be
+  `https` and on the issuer's registrable domain (public-suffix aware), with two built-in
+  exceptions for IdP families that split the two (Google's `googleapis.com`, Cognito's
+  `amazoncognito.com`); anything else fails the sign-in and is logged. A tenant row that
+  predates the rules and fails them is not deleted or rewritten: it stays stored and
+  approved, a non-https issuer hides its button with a logged warning, and an endpoint
+  outside the issuer's site fails the sign-in with a logged reason; editing the row (or the
+  IdP's discovery document) fixes it.
+  Env-configured providers are unchanged.
 
 **GitHub is a separate adapter** — it is not OIDC. Permission is **the AND of two
 independent gates**:

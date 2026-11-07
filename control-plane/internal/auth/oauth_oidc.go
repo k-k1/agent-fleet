@@ -6,15 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 )
 
 // Generic OIDC login client (docs/log/61 §61.6 + ADR0043 decision 1). One implementation
@@ -60,7 +65,17 @@ var ErrNotAllowed = errors.New("principal not allowed")
 
 // oidcHTTPClient bounds every IdP call: an unresponsive IdP must not pin a CP
 // request goroutine (http.DefaultClient has no timeout).
-var oidcHTTPClient = &http.Client{Timeout: 20 * time.Second}
+const oidcClientTimeout = 20 * time.Second
+
+// NewTenantHTTPClient builds the client a tenant-defined provider (and the save-time
+// issuer probe) reaches its issuer with: public addresses only, no redirects (see
+// egressallow.NewPublicOnlyClient). It is a variable only so tests can aim a provider at a
+// local stub; nothing else assigns it.
+var NewTenantHTTPClient = func(timeout time.Duration) *http.Client {
+	return egressallow.NewPublicOnlyClient(timeout)
+}
+
+var oidcHTTPClient = &http.Client{Timeout: oidcClientTimeout}
 
 type Endpoints struct {
 	Issuer    string `json:"issuer"`
@@ -118,6 +133,12 @@ type OIDCProvider struct {
 	DBAllowed     func(ctx context.Context, email string) bool
 
 	HTTPClient *http.Client
+	// PinEndpointHosts makes discovery refuse an authorization / token / userinfo endpoint
+	// that is not https or whose host is outside the issuer's site (endpointHostAllowed).
+	// Set for tenant-defined providers only: their issuer is a tenant-side party, and the
+	// CP posts that tenant's client secret to whatever the discovery document names.
+	// Env-configured providers are the operator's own and keep their endpoints as given.
+	PinEndpointHosts bool
 
 	mu    sync.Mutex
 	ep    Endpoints
@@ -203,8 +224,80 @@ func (p *OIDCProvider) endpoints(ctx context.Context) (Endpoints, error) {
 		!strings.Contains(ep.Issuer, "{tenantid}") {
 		return Endpoints{}, fmt.Errorf("discovery %s: issuer mismatch (got %q)", du, ep.Issuer)
 	}
+	if p.PinEndpointHosts {
+		if err := checkEndpointHosts(p.Issuer, ep); err != nil {
+			return Endpoints{}, fmt.Errorf("discovery %s: %w", du, err)
+		}
+	}
 	p.ep, p.epExp = ep, time.Now().Add(oidcDiscoveryTTL)
 	return ep, nil
+}
+
+// endpointHostFamilies lists the IdP families whose endpoints legitimately live on a
+// different site than their issuer: Google's token and userinfo endpoints are on
+// googleapis.com, and a Cognito user pool's issuer is on amazonaws.com while its hosted
+// endpoints are on amazoncognito.com. Each pair is (issuer host suffix, endpoint host suffix).
+var endpointHostFamilies = [][2]string{
+	{"google.com", "googleapis.com"},
+	{"amazonaws.com", "amazoncognito.com"},
+}
+
+// hostInDomain reports host == domain or a subdomain of it.
+func hostInDomain(host, domain string) bool {
+	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+// endpointHostAllowed reports whether an endpoint host belongs with the issuer's host: the
+// same registrable domain (public-suffix aware, so two tenants of a shared hosting domain
+// are different sites), or a pair in endpointHostFamilies.
+func endpointHostAllowed(issuerHost, endpointHost string) bool {
+	issuerHost, endpointHost = strings.ToLower(issuerHost), strings.ToLower(endpointHost)
+	if issuerHost == "" || endpointHost == "" {
+		return false
+	}
+	if _, err := netip.ParseAddr(issuerHost); err == nil {
+		return issuerHost == endpointHost // an IP literal has no registrable domain
+	}
+	if _, err := netip.ParseAddr(endpointHost); err == nil {
+		return false
+	}
+	if a, err := publicsuffix.EffectiveTLDPlusOne(issuerHost); err == nil {
+		if b, err := publicsuffix.EffectiveTLDPlusOne(endpointHost); err == nil && a == b {
+			return true
+		}
+	} else if issuerHost == endpointHost {
+		return true // a bare suffix has no registrable domain: exact match only
+	}
+	for _, f := range endpointHostFamilies {
+		if hostInDomain(issuerHost, f[0]) && hostInDomain(endpointHost, f[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkEndpointHosts applies endpointHostAllowed, and https, to the three endpoints a login
+// uses. An empty userinfo endpoint is fine (the id_token carries the claims).
+func checkEndpointHosts(issuer string, ep Endpoints) error {
+	iu, err := url.Parse(issuer)
+	if err != nil {
+		return fmt.Errorf("issuer %q is not a URL", issuer)
+	}
+	for _, e := range []struct{ name, raw string }{
+		{"authorization_endpoint", ep.Authorize}, {"token_endpoint", ep.Token}, {"userinfo_endpoint", ep.Userinfo},
+	} {
+		if e.raw == "" {
+			continue
+		}
+		u, err := url.Parse(e.raw)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+			return fmt.Errorf("%s is not an https URL", e.name)
+		}
+		if !endpointHostAllowed(iu.Hostname(), u.Hostname()) {
+			return fmt.Errorf("%s host %q is outside the issuer's domain", e.name, u.Hostname())
+		}
+	}
+	return nil
 }
 
 // --- authorize -------------------------------------------------------------
@@ -535,6 +628,14 @@ func ValidProviderID(id string) bool {
 	return true
 }
 
+// ValidTenantIssuerURL is ValidIssuerURL without the loopback carve-out: a tenant-defined
+// issuer must be https. The carve-out exists for a developer's local IdP, which is the
+// operator's own (env) configuration; a tenant row that names loopback names the CP host.
+func ValidTenantIssuerURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && u.Scheme == "https" && u.Hostname() != ""
+}
+
 // ValidIssuerURL requires an https issuer, with the customary loopback carve-out
 // so a developer can point at a local Keycloak/Dex over http.
 func ValidIssuerURL(s string) bool {
@@ -700,7 +801,9 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 // app registration a different `sub` for the same person (docs/log/61 §61.17.4 (b)).
 // Read from discovery, never guessed from the hostname.
 func IssuerUsesPairwiseSubjects(ctx context.Context, issuer string) (bool, error) {
-	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer}
+	// The issuer is what a tenant administrator typed, so the probe is held to the same
+	// public-only, no-redirect client as a tenant provider's own discovery.
+	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer, HTTPClient: NewTenantHTTPClient(5 * time.Second), PinEndpointHosts: true}
 	ep, err := probe.endpoints(ctx)
 	if err != nil {
 		return false, err
