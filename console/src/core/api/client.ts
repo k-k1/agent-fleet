@@ -175,6 +175,9 @@ const BILINGUAL_MESSAGE_CODES = new Set([
   "stop_in_progress",
   "stopped_prompt_in_box",
   "terminal_busy",
+  // The invite refusals whose English message only repeats the catalogue line.
+  "identity_in_other_tenant",
+  "identity_bound_to_other_tenant",
 ]);
 
 // errDetail appends the server's raw message to errText's wording. A generic code such as
