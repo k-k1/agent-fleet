@@ -766,3 +766,80 @@ func TestIdleTimeoutDefaultsAndOverrides(t *testing.T) {
 		}
 	})
 }
+
+// failingSessionInputStore makes the shared per-session lookup fail, as a DB outage would.
+type failingSessionInputStore struct{ store.Store }
+
+func (failingSessionInputStore) SessionHasRecentInput(context.Context, string, string, string) (bool, error) {
+	return false, errors.New("db down")
+}
+
+// Tier 1 on replica B must not halt a session whose terminal (and keystrokes) live on
+// replica A. Two managers with separate connRegistries share one store, so a pass here
+// cannot come from a shared in-memory registry.
+func TestReaperTier1SparesSessionTypedAtOnAnotherReplica(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		typeOnA   bool // a terminal is attached on A and a keystroke arrives
+		breakLook bool // the shared lookup errors
+		wantHalt  bool
+	}{
+		{name: "typing on another replica", typeOnA: true},
+		{name: "nobody anywhere", wantHalt: true},
+		{name: "shared lookup fails", breakLook: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, ws, managerB := reaperLifecycleFixture(t)
+			managerA := &manager{store: st, conns: newConnRegistry()}
+			if tc.typeOnA {
+				release, noteInput, err := managerA.trackWorkspaceTerminal(context.Background(), ws.ID, "s")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer release()
+				noteInput()
+			}
+			if tc.breakLook {
+				managerB.store = failingSessionInputStore{Store: st}
+			}
+			var halts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/sessions/s/halt" {
+					halts.Add(1)
+					return
+				}
+				_, _ = w.Write([]byte(`{"sessions":[{"name":"s","kind":"claude","alive":true,"state":"idle"}]}`))
+			}))
+			defer srv.Close()
+			managerB.rtFactory = stubFactory{rt: &limitSweepRuntime{endpoint: srv.URL}}
+			rp := &reaper{mgr: managerB, idleSince: map[string]time.Time{ws.ID + "|s": time.Now().Add(-2 * time.Hour)}}
+			rp.sweepWorkspace(context.Background(), ws, tierClocks{sessionOn: true, session: time.Hour}, map[string]bool{})
+			if got := halts.Load() == 1; got != tc.wantHalt {
+				t.Fatalf("halted=%v (%d posts), want %v", got, halts.Load(), tc.wantHalt)
+			}
+			if !tc.wantHalt && !tc.breakLook {
+				if _, ok := rp.idleSince[ws.ID+"|s"]; ok {
+					t.Fatal("idle clock was not restarted after remote input")
+				}
+			}
+		})
+	}
+}
+
+func TestSessionInputWatermarkIsMonotonic(t *testing.T) {
+	st, ws, _ := reaperLifecycleFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := st.RecordSessionInput(ctx, ws.ID, "s", leaseTS(now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordSessionInput(ctx, ws.ID, "s", leaseTS(now.Add(-time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := st.SessionHasRecentInput(ctx, ws.ID, "s", leaseTS(now.Add(-time.Minute))); err != nil || !ok {
+		t.Fatalf("older report lowered the stamp: ok=%v err=%v", ok, err)
+	}
+	if ok, _ := st.SessionHasRecentInput(ctx, ws.ID, "other", leaseTS(now.Add(-time.Minute))); ok {
+		t.Fatal("stamp leaked to another session")
+	}
+}

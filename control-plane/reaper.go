@@ -380,6 +380,9 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 	pending := make(chan struct{}, 1)
 	stop := make(chan struct{})
 	done := make(chan struct{})
+	// Attaching counts as presence (addConn stamps it in memory); publish it too.
+	m.publishSessionInput(wsID, session)
+	lastPublished := time.Now()
 	go func() {
 		defer close(done)
 		for {
@@ -387,6 +390,14 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 			case <-stop:
 				return
 			case <-pending:
+				// Tier 1 on another replica reads this per-session stamp before
+				// halting (sessionInputElsewhere). Throttled to the heartbeat so a
+				// typing burst is not one DB write per keystroke; the stamp may lag a
+				// keystroke by that long, which the 30-minute grace absorbs.
+				if time.Since(lastPublished) >= workspacePresenceHeartbeat {
+					lastPublished = time.Now()
+					m.publishSessionInput(wsID, session)
+				}
 				// The shared watermark (last_seen_at). force=false coalesces it
 				// to once per 5s, so most rounds return after a lock and a map
 				// lookup.
@@ -407,6 +418,21 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 			default: // a write is already queued — the keystroke does not wait
 			}
 		}, nil
+}
+
+// publishSessionInput writes the shared per-session input stamp that tier 1 on other
+// replicas consults. Best effort: a failed write only means a remote reaper may judge the
+// session unwatched until the next keystroke publishes again. Sessionless shells have no
+// tier-1 subject.
+func (m *manager) publishSessionInput(wsID, session string) {
+	if session == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := m.store.RecordSessionInput(ctx, wsID, session, leaseTS(time.Now().UTC())); err != nil {
+		log.Printf("presence: publish session input %s/%s: %v", wsID, session, err)
+	}
 }
 
 func (m *manager) trackPresence(ctx context.Context, wsID, session string, attention bool) (func(), error) {
@@ -654,6 +680,19 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 			continue
 		}
 		if now.Sub(since) >= to {
+			// The terminal may be held by another replica, whose connRegistry this
+			// one cannot see: ask the shared stamp before the irreversible halt.
+			// A failed lookup keeps the session running — halting on "don't know"
+			// is what interrupts a user who is typing.
+			remote, err := rp.sessionInputElsewhere(ctx, ws.ID, s.Name)
+			if err != nil {
+				log.Printf("idle-stop: shared session input %s/%s: %v (not halting)", ws.ContainerName, s.Name, err)
+				continue
+			}
+			if remote {
+				delete(rp.idleSince, key) // restart the idle clock
+				continue
+			}
 			rp.haltSession(ctx, rt, ws, s.Name)
 			delete(rp.idleSince, key)
 		}
@@ -703,6 +742,21 @@ func (rp *reaper) idleBase(seen bool, lastSeen time.Time, dbLastActive string) t
 		base = dbTS
 	}
 	return base
+}
+
+// sessionInputElsewhere reports whether any replica published terminal input for the
+// session within presenceGrace — the cross-replica half of watchingSession. The cutoff
+// uses this replica's clock like tier 2's does; replica skew is negligible against the
+// grace. With the grace disabled ("attached means watched") attachment is replica-local
+// and cannot be shared, so this answers false.
+func (rp *reaper) sessionInputElsewhere(ctx context.Context, wsID, session string) (bool, error) {
+	if presenceGrace <= 0 {
+		return false, nil
+	}
+	cutoff := leaseTS(time.Now().UTC().Add(-presenceGrace))
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return rp.mgr.store.SessionHasRecentInput(ctx, wsID, session, cutoff)
 }
 
 // haltSession halts one idle claude session (Agent POST /sessions/{name}/halt).

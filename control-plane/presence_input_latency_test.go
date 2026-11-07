@@ -32,6 +32,10 @@ func (s *slowActivityStore) RecordWorkspaceActivity(context.Context, string, str
 	return true, nil
 }
 
+func (s *slowActivityStore) RecordSessionInput(context.Context, string, string, string) error {
+	return nil
+}
+
 func TestTerminalNoteInputDoesNotBlockOnTheStore(t *testing.T) {
 	const wsID = "ws-latency"
 	st := &slowActivityStore{delay: 300 * time.Millisecond}
