@@ -101,6 +101,24 @@ func TestTCPPeerRefusesWhatItCannotProve(t *testing.T) {
 	}
 }
 
+// The holder's pid is reused between its fd table and its start time being read (the old
+// process exited, a new one took the pid): the old socket must not be lent to the new process.
+func TestTCPPeerRefusesAHolderReplacedDuringTheScan(t *testing.T) {
+	root := fakeProcTCP(t, rowClient, "", map[int][]string{4242: {"777001"}})
+	if _, ok := tcpPeer(root, gwAddr, clientAddr); !ok {
+		t.Fatal("positive control: the unchanged holder is attributed")
+	}
+	prev := afterFDScan
+	afterFDScan = func(pid int) {
+		stat := strconv.Itoa(pid) + " (child) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 9000 0 0"
+		_ = os.WriteFile(filepath.Join(root, strconv.Itoa(pid), "stat"), []byte(stat), 0o644)
+	}
+	t.Cleanup(func() { afterFDScan = prev })
+	if id, ok := tcpPeer(root, gwAddr, clientAddr); ok {
+		t.Fatalf("attributed to %+v across a pid reuse", id)
+	}
+}
+
 // serveOnLoopback serves g on a loopback port the way Start does and returns its base URL.
 func serveOnLoopback(t *testing.T, g *Gateway) string {
 	t.Helper()

@@ -684,3 +684,15 @@ table from becoming a menu of models that fail on the first message, which is wh
   the TUI's own model picker behaves when a member tries to leave the provider, and whether OpenAI models on
   `amazon-bedrock` use `converse-stream` or `responses` for a turn (the gateway refuses `responses` with a 404 that
   names the four operations). ADR 0129's H row and Q6 can take this wire and binding as measured for a stand-in.
+  Review round 1 (#3593): four corrections. (1) More of a config file outranks the inline pin than `enabled_providers`
+  (re-measured on 2.2.6 against two stand-ins): a per-model endpoint under the provider
+  (`providers.amazon-bedrock.models.<id>.settings.baseURL`, v1 `provider.amazon-bedrock.models.<id>.options.baseURL`) sent
+  that model's calls with the bearer to its own URL past the inline provider `baseURL`, and a `provider.use` allow rule in
+  `policies` or `experimental.policies` brought every other provider back beside the inline `enabled_providers` (an inline
+  deny rule did not take it away). A global or project file with any `amazon-bedrock` entry under `providers`/`provider`,
+  or a policy rule whose action is a provider action, a wildcard or missing, now refuses the route like `enabled_providers`.
+  (2) The pane's `XDG_CONFIG_HOME` is set to the directory those checks read, so a value inherited from the tmux server
+  cannot point opencode at unchecked files. (3) The TCP holder is pinned as a process: its start time is read before its fd
+  table and again after, and must agree, so a pid reused by a new process in the owner's tree in between cannot take the old
+  socket's evidence. (4) The Console hides the route's models whenever that route is not the chosen one (Managed, no marked
+  profile, profiles loading), not only when the route is offered on that launch.

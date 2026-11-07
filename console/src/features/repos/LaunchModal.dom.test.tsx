@@ -774,6 +774,42 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
     act(() => setKindCatalog(null));
   });
 
+  it("never offers the route's models without a marked profile", async () => {
+    ssmProfiles = [];
+    await act(async () => setKindCatalog(catalog));
+    await render(["opencode"]);
+    await expand("More");
+    await settle();
+    expect(routeSelect()).toBeUndefined();
+    const plain = await listed();
+    expect(plain.some((t) => t.includes("big-pickle"))).toBe(true);
+    expect(plain.some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+  });
+
+  it("never offers the route's models on a Managed launch", async () => {
+    // A kind that can run Managed: the default launch is Managed, where no route is offered.
+    await act(async () =>
+      setKindCatalog(parseKindCatalog({ kinds: [{ kind: "opencode", managedOnly: false, managedDefault: true, mcpClient: "yes", routes: ["bedrock"] }] })),
+    );
+    await render(["opencode"]);
+    await expand("More");
+    await settle();
+    expect(routeSelect()).toBeUndefined();
+    expect((await listed()).some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+    // Terminal, bedrock chosen: offered; back to Managed: gone again.
+    await click(byText("Terminal (CLI)"));
+    await settle();
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await settle();
+    expect((await listed()).some((t) => t.includes("amazon-bedrock/"))).toBe(true);
+    await click(byText("Managed"));
+    await settle();
+    expect(routeSelect()).toBeUndefined();
+    const managed = await listed();
+    expect(managed.some((t) => t.includes("amazon-bedrock/"))).toBe(false);
+    expect(managed.some((t) => t.includes("big-pickle"))).toBe(true);
+  });
+
   it("offers the route's models only on the route, and needs one to start", async () => {
     await act(async () => setKindCatalog(catalog));
     await render(["opencode"]);

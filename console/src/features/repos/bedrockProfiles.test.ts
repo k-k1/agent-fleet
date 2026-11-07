@@ -39,11 +39,10 @@ describe("bedrockProfiles", () => {
   it("narrows opencode's models to the chosen route", () => {
     const ids = ["", "opencode/big-pickle", "amazon-bedrock/anthropic.claude-sonnet-4-6", "amazon-bedrock/"];
     // bedrock chosen: its models only, and not opencode's default ("").
-    expect(ids.filter(routeModelFilter("opencode", "bedrock", ["bedrock"])!)).toEqual(["amazon-bedrock/anthropic.claude-sonnet-4-6"]);
-    // offered but not chosen: everything but the route's models.
-    expect(ids.filter(routeModelFilter("opencode", "", ["bedrock"])!)).toEqual(["", "opencode/big-pickle"]);
-    // not offered (gate shut, no marked profile, a Managed launch), or another kind: no narrowing.
-    expect(routeModelFilter("opencode", "", [])).toBeUndefined();
-    expect(routeModelFilter("claude", "bedrock", ["bedrock"])).toBeUndefined();
+    expect(ids.filter(routeModelFilter("opencode", "bedrock")!)).toEqual(["amazon-bedrock/anthropic.claude-sonnet-4-6"]);
+    // not chosen, whatever the reason (none picked, not offered, Managed, loading): never the route's models.
+    expect(ids.filter(routeModelFilter("opencode", "")!)).toEqual(["", "opencode/big-pickle"]);
+    // a kind with no route-only models: no narrowing.
+    expect(routeModelFilter("claude", "bedrock")).toBeUndefined();
   });
 });

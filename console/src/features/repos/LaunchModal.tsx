@@ -382,7 +382,7 @@ function LaunchForm({ repo, branch, path, kinds, claudeExpired = false, settling
   // model the route cannot run is dropped when the route changes, and such a route does not
   // launch until one of its own is picked: the Agent would refuse the kind's default.
   const chosenRoute = routeOptions.includes(route) ? route : "";
-  const modelFilter = useMemo(() => routeModelFilter(kind, chosenRoute, routeOptions), [kind, chosenRoute, routeOptions.join(",")]);
+  const modelFilter = useMemo(() => routeModelFilter(kind, chosenRoute), [kind, chosenRoute]);
   const routeModelBlocked = !!modelFilter && !!chosenRoute && !modelFilter(model);
   useEffect(() => {
     if (modelFilter && model && !modelFilter(model)) {

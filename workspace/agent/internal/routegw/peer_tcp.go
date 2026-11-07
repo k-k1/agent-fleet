@@ -44,15 +44,7 @@ func tcpPeer(procRoot string, local, remote *net.TCPAddr) (procID, bool) {
 	if inode == "" {
 		return procID{}, false
 	}
-	pid, ok := socketHolder(procRoot, inode)
-	if !ok {
-		return procID{}, false
-	}
-	info, ok := readProc(procRoot, pid)
-	if !ok {
-		return procID{}, false
-	}
-	return procID{pid: pid, start: info.StartTicks}, true
+	return socketHolder(procRoot, inode)
 }
 
 // findTCPSocket finds the established socket whose local address is local and whose remote
@@ -114,32 +106,58 @@ func sameAddr(a, b *net.TCPAddr) bool { return a.Port == b.Port && a.IP.Equal(b.
 
 // socketHolder is the one process that holds socket inode open, reading every process's fd
 // table under procRoot. Zero holders or more than one refuse.
-func socketHolder(procRoot, inode string) (int, bool) {
+//
+// The holder is pinned as a process, not a pid: its start time is read before its fd table and
+// again after, and both reads must agree. A process that exited after its fd table was read, and
+// whose pid a later process (say, a new child in the owner's tree) took, would otherwise lend the
+// old socket's evidence to the new process's start time.
+func socketHolder(procRoot, inode string) (procID, bool) {
 	want := "socket:[" + inode + "]"
 	ents, err := os.ReadDir(procRoot)
 	if err != nil {
-		return 0, false
+		return procID{}, false
 	}
-	holder := 0
+	var holder procID
 	for _, e := range ents {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid <= 1 {
 			continue
 		}
-		fdDir := filepath.Join(procRoot, e.Name(), "fd")
-		fds, err := os.ReadDir(fdDir)
-		if err != nil {
-			continue // another user's process, or gone: neither can hold this user's socket here
+		before, ok := readProc(procRoot, pid)
+		if !ok {
+			continue
 		}
-		for _, fd := range fds {
-			if l, err := os.Readlink(filepath.Join(fdDir, fd.Name())); err == nil && l == want {
-				if holder != 0 && holder != pid {
-					return 0, false
-				}
-				holder = pid
-				break
-			}
+		if !holdsSocket(filepath.Join(procRoot, e.Name(), "fd"), want) {
+			continue
+		}
+		afterFDScan(pid)
+		after, ok := readProc(procRoot, pid)
+		if !ok || after.StartTicks != before.StartTicks {
+			return procID{}, false
+		}
+		if holder.pid != 0 && holder.pid != pid {
+			return procID{}, false
+		}
+		holder = procID{pid: pid, start: before.StartTicks}
+	}
+	return holder, holder.pid != 0
+}
+
+// afterFDScan runs between reading a holder's fd table and re-reading its start time; a test
+// replaces the process there.
+var afterFDScan = func(int) {}
+
+// holdsSocket reports whether the fd table at fdDir has want open. An unreadable table (another
+// user's process, or one that is gone) cannot hold this user's socket here.
+func holdsSocket(fdDir, want string) bool {
+	fds, err := os.ReadDir(fdDir)
+	if err != nil {
+		return false
+	}
+	for _, fd := range fds {
+		if l, err := os.Readlink(filepath.Join(fdDir, fd.Name())); err == nil && l == want {
+			return true
 		}
 	}
-	return holder, holder != 0
+	return false
 }

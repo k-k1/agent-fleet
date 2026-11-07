@@ -240,6 +240,11 @@ func TestBedrockLaunchIsAPrivateServerPinnedToTheGateway(t *testing.T) {
 	if v, _ := envHas(plan.Env, "AWS_REGION"); v != "eu-west-1" {
 		t.Fatalf("region = %q", v)
 	}
+	// The config root opencode reads is the one the conflict check reads, whatever the tmux
+	// server's environment carries.
+	if v, _ := envHas(plan.Env, "XDG_CONFIG_HOME"); v != filepath.Dir(paths.OpencodeConfigDir()) {
+		t.Fatalf("XDG_CONFIG_HOME = %q, want %q", v, filepath.Dir(paths.OpencodeConfigDir()))
+	}
 	if v, _ := envHas(plan.Env, "AF_SESSION_SID"); v != session.UUID(m.Dir, m.Name) {
 		t.Fatalf("AF_SESSION_SID = %q", v)
 	}
@@ -383,5 +388,41 @@ func TestBedrockRouteModelsFollowTheRoutesAvailability(t *testing.T) {
 	}
 	if v, _ := envHas(env, "AWS_BEARER_TOKEN_BEDROCK"); v == "" || strings.HasPrefix(v, "afrt_") {
 		t.Errorf("listing bearer = %q, want a placeholder", v)
+	}
+}
+
+// What else in a config file outranks the inline pin (measured on 2.2.6 by review): a per-model
+// endpoint under the amazon-bedrock provider sent the bearer past the gateway, and a provider.use
+// policy brought other providers back. Each refuses the route; unrelated settings do not.
+func TestBedrockRouteRefusesConfigThatOutranksThePin(t *testing.T) {
+	refused := map[string]string{
+		"v2 per-model endpoint": `{"providers":{"amazon-bedrock":{"models":{"anthropic.claude-sonnet-4-6":{"settings":{"baseURL":"http://elsewhere"}}}}}}`,
+		"v1 per-model endpoint": `{"provider":{"amazon-bedrock":{"models":{"x":{"options":{"baseURL":"http://elsewhere"}}}}}}`,
+		"provider settings":     `{"providers":{"amazon-bedrock":{"settings":{"apiKey":"k"}}}}`,
+		"policies allow-all":    `{"policies":[{"action":"provider.use","resource":"*","effect":"allow"}]}`,
+		"experimental policies": `{"experimental":{"policies":[{"action":"provider.use","resource":"*","effect":"allow"}]}}`,
+		"wildcard action":       `{"policies":[{"action":"*","resource":"*","effect":"allow"}]}`,
+		"action not a string":   `{"policies":[{"resource":"*","effect":"allow"}]}`,
+		"unparsable, names it":  `{"providers": {"amazon-bedrock": broken`,
+	}
+	for name, body := range refused {
+		f := filepath.Join(t.TempDir(), "opencode.json")
+		_ = os.WriteFile(f, []byte(body), 0o644)
+		if ref := configConflict([]string{f}); ref == nil || ref.Code != routes.CodeRouteSettings {
+			t.Errorf("%s: not refused (%+v)", name, ref)
+		}
+	}
+	allowed := map[string]string{
+		"another provider":     `{"provider":{"llamacpp":{"options":{"baseURL":"http://engine"}}}}`,
+		"unrelated policy":     `{"policies":[{"action":"tool.bash","resource":"*","effect":"deny"}]}`,
+		"mcp and instructions": `{"mcp":{"af":{"type":"local"}},"instructions":["AGENTS.md"]}`,
+		"empty policies":       `{"policies":[]}`,
+	}
+	for name, body := range allowed {
+		f := filepath.Join(t.TempDir(), "opencode.json")
+		_ = os.WriteFile(f, []byte(body), 0o644)
+		if ref := configConflict([]string{f}); ref != nil {
+			t.Errorf("%s: refused: %+v", name, ref)
+		}
 	}
 }

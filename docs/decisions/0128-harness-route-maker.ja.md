@@ -624,3 +624,14 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   ほかのセッションのプロセスに対する呼び出し元の束縛、利用者がプロバイダの外へ出ようとしたときの TUI 自身のモデル選択の挙動、
   `amazon-bedrock` の OpenAI モデルがターンで `converse-stream` と `responses` のどちらを使うか（ゲートウェイは `responses` を、4 つの
   操作を示す 404 で拒否する）。ADR 0129 の H 行と Q6 は、この経路と束縛をスタンドイン相手の実測として使える。
+  レビュー 1 巡目（#3593）: 4 点を直した。(1) インラインの固定を上書きする設定ファイルの項目は `enabled_providers` だけではなかった
+  （2.2.6 で 2 本のスタンドイン相手に再実測）。プロバイダ配下のモデル別の接続先（`providers.amazon-bedrock.models.<id>.settings.baseURL`、
+  v1 では `provider.amazon-bedrock.models.<id>.options.baseURL`）は、インラインのプロバイダの `baseURL` を越えて、そのモデルの呼び出しを
+  ベアラー付きで自分の URL へ送った。`policies` または `experimental.policies` の `provider.use` の許可規則は、インラインの
+  `enabled_providers` の横でほかのプロバイダをすべて戻した（インラインの拒否規則では戻らなかった）。`providers`/`provider` の下に
+  `amazon-bedrock` の項目を持つ、または action がプロバイダの操作・ワイルドカード・欠落の規則を持つグローバルやプロジェクトの
+  ファイルは、`enabled_providers` と同じくルートを拒否する。(2) ペインの `XDG_CONFIG_HOME` を、それらの検査が読むディレクトリに
+  固定した。tmux サーバから受け継いだ値で、検査していないファイルを opencode に読ませることはできない。(3) TCP の持ち主はプロセスと
+  して固定する。fd の表を読む前と後に開始時刻を読み、一致しなければならない。その間に owner の木の新しいプロセスが pid を再利用しても、
+  古いソケットの証拠を引き継げない。(4) Console は、そのルートが選ばれていないとき（マネージド、印付きプロファイルなし、
+  プロファイル読み込み中）は常にルートのモデルを隠す。その起動でルートが提示されているときに限らない。

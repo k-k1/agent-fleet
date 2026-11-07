@@ -235,7 +235,10 @@ func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.R
 		return agents.RoutePlan{}, err
 	}
 	return agents.RoutePlan{
-		Env:      []string{"AWS_BEARER_TOKEN_BEDROCK=" + g.Token, "AWS_REGION=" + g.Region},
+		// XDG_CONFIG_HOME is pinned to the directory configConflict reads: a value inherited from
+		// the tmux server's environment would make opencode read config files nobody checked.
+		Env: []string{"AWS_BEARER_TOKEN_BEDROCK=" + g.Token, "AWS_REGION=" + g.Region,
+			"XDG_CONFIG_HOME=" + filepath.Dir(paths.OpencodeConfigDir())},
 		Unset:    routeUnset,
 		Settings: []string{routeConfigKey + "=" + string(cfg)},
 	}, nil
@@ -313,30 +316,89 @@ func projectConfigFiles(m session.Meta) []string {
 	return out
 }
 
-// configConflict refuses a route whose pin a config file would override: measured on 2.2.6, a
-// file's `enabled_providers` wins over the inline one, so a file that sets it can put the pane on
-// another provider. A file that cannot be parsed even as JSONC is judged by whether the key
-// appears in it at all.
+// configConflict refuses a route whose pin a config file would override. Measured on 2.2.6, a
+// file wins over the inline config for three things that take a bedrock pane off the gateway or
+// onto another provider:
+//   - `enabled_providers`: a file's list replaces the inline one;
+//   - `policies` / `experimental.policies` with a `provider.use` rule: an allow-all there
+//     brought every other provider back beside the inline enabled_providers (and an inline deny
+//     did not take it away again);
+//   - any `amazon-bedrock` entry under `providers` / `provider`: a per-model `settings.baseURL`
+//     (v1: `options.baseURL`) there sent that model's calls, with the bearer, to its own URL
+//     instead of the gateway, although the inline config pins the provider's baseURL.
+//
+// A file is refused for any of them rather than parsed for whether the value is harmless: what
+// opencode merges below the provider (models, variants, options) is not a contract. A file that
+// cannot be parsed even as JSONC is judged by whether one of the keys appears in it at all.
 func configConflict(files []string) *agents.RouteRefusal {
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
+		hit := ""
 		var top map[string]json.RawMessage
-		hit := false
 		if json.Unmarshal(stripJSONC(b), &top) == nil {
-			v, ok := top["enabled_providers"]
-			hit = ok && string(v) != "null"
+			hit = conflictIn(top)
 		} else {
-			hit = strings.Contains(string(b), `"enabled_providers"`)
+			for _, k := range []string{`"enabled_providers"`, `"policies"`, `"` + bedrockProvider + `"`} {
+				if strings.Contains(string(b), k) {
+					hit = strings.Trim(k, `"`)
+					break
+				}
+			}
 		}
-		if hit {
+		if hit != "" {
 			return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteSettings,
-				Message: f + " sets enabled_providers, which opencode applies over the session's bedrock route; remove it, or start the session without an explicit route"}
+				Message: f + " sets " + hit + ", which opencode applies over the session's bedrock route; remove it, or start the session without an explicit route"}
 		}
 	}
 	return nil
+}
+
+// conflictIn names the first key of a parsed config file that would override the route's pin.
+func conflictIn(top map[string]json.RawMessage) string {
+	set := func(v json.RawMessage) bool { return len(v) > 0 && string(v) != "null" }
+	if v, ok := top["enabled_providers"]; ok && set(v) {
+		return "enabled_providers"
+	}
+	for _, key := range []string{"providers", "provider"} {
+		var provs map[string]json.RawMessage
+		if v, ok := top[key]; ok && json.Unmarshal(v, &provs) == nil {
+			if pv, ok := provs[bedrockProvider]; ok && set(pv) {
+				return key + "." + bedrockProvider
+			}
+		}
+	}
+	if v, ok := top["policies"]; ok && providerPolicy(v) {
+		return "policies (provider.use)"
+	}
+	var exp map[string]json.RawMessage
+	if v, ok := top["experimental"]; ok && json.Unmarshal(v, &exp) == nil {
+		if pv, ok := exp["policies"]; ok && providerPolicy(pv) {
+			return "experimental.policies (provider.use)"
+		}
+	}
+	return ""
+}
+
+// providerPolicy reports whether a policies list has a rule that can reach provider.use: its
+// action names a provider action, is a wildcard, or is missing or not a string (fail closed).
+func providerPolicy(v json.RawMessage) bool {
+	var rules []map[string]json.RawMessage
+	if json.Unmarshal(v, &rules) != nil {
+		return len(v) > 0 && string(v) != "null" && string(v) != "[]"
+	}
+	for _, r := range rules {
+		var action string
+		if json.Unmarshal(r["action"], &action) != nil {
+			return true
+		}
+		if strings.Contains(action, "*") || strings.HasPrefix(action, "provider") {
+			return true
+		}
+	}
+	return false
 }
 
 // stripJSONC turns JSONC into JSON: line and block comments, and a comma followed only by
