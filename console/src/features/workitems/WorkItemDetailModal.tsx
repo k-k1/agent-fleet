@@ -525,6 +525,8 @@ export function WorkItemDetailModal({
             rather than one more row in the facts list below. */}
         {stateText && (
           <div className="wi-dstatebar">
+            {/* Out of the facts list the value would be read with no name; this restores it. */}
+            <span className="wi-vh">{tr("wi.detail_state")}</span>
             <span className={`wi-dstate tone-${badge.tone}`}>
               <Icon name={badge.icon} />
               <span>{stateText}</span>

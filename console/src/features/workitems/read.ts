@@ -438,7 +438,8 @@ export type StateBadgeTone = "green" | "amber" | "blue" | "grey" | "purple" | "r
  *   Jira issue                       Jira's status categories: To Do grey, In Progress blue,
  *                                    Done green — Jira users read those, not GitHub's purple
  * `d` is the live read when there is one. Without it only the cached kind and state are known, so
- * a finished pull request stays grey: it may be merged, and red would claim it was not. */
+ * a finished pull request or GitHub issue stays grey: merged / not planned cannot be told apart,
+ * and a colour would claim one of them. A state no adapter recognised is grey too. */
 export function stateBadge(
   item: Pick<WorkItem, "kind" | "state" | "provider">,
   d?: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason" | "provider"> | null,
@@ -448,10 +449,12 @@ export function stateBadge(
   const provider = d?.provider || item.provider;
   if (kind === "pr") {
     if (d?.merged) return { tone: "purple", icon: "git-merge" };
-    if (st === "done") return { tone: d ? "red" : "grey", icon: "git-pull-request-closed" };
+    // The closed glyph reads as "closed without merging", so a cached row keeps the plain one.
+    if (st === "done") return d ? { tone: "red", icon: "git-pull-request-closed" } : { tone: "grey", icon: "git-pull-request" };
     // A draft normalises to in_progress (both adapters), so a cached in_progress row is a draft too.
     if (d?.draft || st === "in_progress") return { tone: "grey", icon: "git-pull-request-draft" };
-    return { tone: "green", icon: "git-pull-request" };
+    if (st === "open") return { tone: "green", icon: "git-pull-request" };
+    return { tone: "grey", icon: "git-pull-request" };
   }
   if (provider === "jira") {
     if (st === "done") return { tone: "green", icon: "issue-closed" };
@@ -459,8 +462,11 @@ export function stateBadge(
     return { tone: "grey", icon: "issues" };
   }
   if (st === "done") {
-    // An unread close reason must not be dressed up as "not planned".
-    if (d?.stateReason === "not_planned") return { tone: "grey", icon: "circle-slash" };
+    // Only a live read carries the close reason; a cached row may be "not planned", so it is
+    // neither purple nor the slash.
+    // A live read without a reason is "completed", as detailStateLabel words it.
+    if (!d) return { tone: "grey", icon: "issue-closed" };
+    if (d.stateReason === "not_planned") return { tone: "grey", icon: "circle-slash" };
     return { tone: "purple", icon: "issue-closed" };
   }
   if (st === "open" || st === "in_progress") return { tone: "green", icon: "issues" };

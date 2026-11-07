@@ -337,6 +337,16 @@
   display: flex;
   margin: 2px 0 2px;
 }
+/* Read by screen readers, not drawn: the State name in front of the pill. */
+.wi-vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .wi-dstate {
   display: inline-flex;
   align-items: center;

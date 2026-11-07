@@ -1859,6 +1859,8 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       expect(modal.querySelector(".wi-dot")?.className).toContain("tone-merged");
       expect(modal.querySelector(".wi-dstate")?.className).toContain("tone-purple");
       expect(modal.querySelector(".wi-dstate")?.textContent).toBe(t("wi.detail_merge_merged"));
+      // The State name is still announced in front of the pill.
+      expect(modal.querySelector(".wi-dstatebar")?.textContent).toBe(t("wi.detail_state") + t("wi.detail_merge_merged"));
       expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref", { name: "GitHub" }));
       expect(modal.querySelector(".wi-dref")).toBeNull();
     });

@@ -723,8 +723,17 @@ describe("stateBadge", () => {
     expect(tone(jira, { ...live, kind: "issue", state: "done", provider: "jira", stateReason: "not_planned" })).toBe("green");
   });
   it("does not claim closed-unmerged from a cached row that cannot tell merged apart", () => {
-    expect(tone({ ...gh, state: "done" })).toBe("grey");
-    expect(stateBadge({ ...gh, state: "done" }).icon).toBe("git-pull-request-closed");
+    expect(stateBadge({ ...gh, state: "done" })).toEqual({ tone: "grey", icon: "git-pull-request" });
+  });
+  it("does not claim completed for a cached GitHub issue, whose close reason is unread", () => {
+    expect(tone({ ...gh, kind: "issue", state: "done" })).toBe("grey");
+    // Live, a missing reason is worded "completed", and the colour agrees with the words.
+    expect(tone({ ...gh, kind: "issue", state: "done" }, { ...live, kind: "issue", state: "done" })).toBe("purple");
+  });
+  it("shows a state no adapter recognised as neutral, not open", () => {
+    expect(tone({ ...gh, state: "other" })).toBe("grey");
+    expect(tone(gh, { ...live, state: "other" })).toBe("grey");
+    expect(tone({ ...gh, kind: "issue", state: "other" })).toBe("grey");
   });
 });
 
