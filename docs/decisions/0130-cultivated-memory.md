@@ -556,18 +556,28 @@ release.
    by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
    comparison has a measured cost.
 
-**Note (2026-11-08, #3440): decision 2 is built.** The review loop, "Review now", the proposals list, approve
-and reject routes, the review switch and the AI-assist row, the ui-prefs keys and the count notification are
-gone; `POST /agents/memory-review/runs/revert` stays, behind the member-origin mark, and its button lives in
-the change list. A stored `memoryReview` / `memoryReviewAuto` is ignored on read and dropped by the Agent on
-the next ui-prefs save, whichever Console sent it; an older Console calling a removed route gets a 404 (the
-Control Plane no longer relays it; the Agent's mux would 404 too). The export is `af-memory.work/review-queue-export-v1.json` under the Claude config directory
-(`workspace/agent/internal/memreview/export.go`): written with fsync and rename, then the whole review state
-directory (queue, rejected hashes, run records, watermarks, counter) is removed, so nothing can re-dispatch an
-old run. It is written on every workspace that has a review state directory, also when the queue is empty,
-and never on one that has none. A stop between the write and the removal leaves a valid export that the next
-start does not rewrite. Queue files that cannot be parsed are counted in `unreadable`. Unqueued replies that
-only an open run record held were never visible to the member and are dropped with it. The `memoryx` review
-publish and forget-hook code stays in place for now (decision 6 and `memory_patch` decide what remains of
-it); the Agent no longer installs the forget hook. The deny-all one-shot (`chatx/chat_denyall.go`) stays on
-the same terms, with no production caller until the decision 6 consolidation needs it.
+## Notes
+
+- **2026-11-08 — decision 3 "Counters" built (#3442).** `.usage-v2/reads/<name>` and `.usage-v2/hits/<name>`
+  are written beside the legacy `.usage/<name>`; `confirmed/` and `stale/` are in the layout (cleared with the
+  rest) but nothing appends to them until `memory_feedback`. A reads file's mtime is touched past the cap.
+  Forget, re-create and a restore clear every counter of the name. A project move clears the source and
+  the destination, exactly as it does the legacy file, rather than carrying counts over. Purge and bundles
+  need no change: purge rewrites history and leaves live memories (and so their counters) alone, and
+  bundles carry only the git history, never the sidecars.
+
+- **2026-11-08 — decision 2 built (#3440).** The review loop, "Review now", the proposals list, approve
+  and reject routes, the review switch and the AI-assist row, the ui-prefs keys and the count notification are
+  gone; `POST /agents/memory-review/runs/revert` stays, behind the member-origin mark, and its button lives in
+  the change list. A stored `memoryReview` / `memoryReviewAuto` is ignored on read and dropped by the Agent on
+  the next ui-prefs save, whichever Console sent it; an older Console calling a removed route gets a 404 (the
+  Control Plane no longer relays it; the Agent's mux would 404 too). The export is `af-memory.work/review-queue-export-v1.json` under the Claude config directory
+  (`workspace/agent/internal/memreview/export.go`): written with fsync and rename, then the whole review state
+  directory (queue, rejected hashes, run records, watermarks, counter) is removed, so nothing can re-dispatch an
+  old run. It is written on every workspace that has a review state directory, also when the queue is empty,
+  and never on one that has none. A stop between the write and the removal leaves a valid export that the next
+  start does not rewrite. Queue files that cannot be parsed are counted in `unreadable`. Unqueued replies that
+  only an open run record held were never visible to the member and are dropped with it. The `memoryx` review
+  publish and forget-hook code stays in place for now (decision 6 and `memory_patch` decide what remains of
+  it); the Agent no longer installs the forget hook. The deny-all one-shot (`chatx/chat_denyall.go`) stays on
+  the same terms, with no production caller until the decision 6 consolidation needs it.

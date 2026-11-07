@@ -800,7 +800,7 @@ func agentMemRead(c agentMemCaller, scope, name string) (agentMemEntry, error) {
 		}
 		// Counted under the read lock: a forget or re-create (write lock) cannot slip between the
 		// read and the count and leave this use on a newer memory.
-		agentMemRecordUses(c, l.Entry)
+		agentMemRecordUses(c, agentMemCounterReads, l.Entry)
 		return l.Entry, nil
 	}
 	if scope != "" {

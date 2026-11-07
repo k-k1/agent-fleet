@@ -604,12 +604,15 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
             <code>read:account</code> <code>read:workspace:bitbucket</code> <code>read:repository:bitbucket</code>
             {tr("git.bb_token_hint_read")} <code>write:repository:bitbucket</code>
             {tr("git.bb_token_hint_write")}
-            {/* Not added to the required set: the PR read scope is needed only by the work-item
-                rail, so calling a clone-only user's connection "incomplete" would be a lie
-                (docs/log/80 §80.19.3). */}
+            {/* Not added to the required set: the PR and pipeline scopes serve bkt and the
+                work-item rail, so calling a clone-only user's connection "incomplete" would be a
+                lie (docs/log/80 §80.19.3). */}
             <br />
-            <code>read:pullrequest:bitbucket</code>
+            <code>read:pullrequest:bitbucket</code> <code>write:pullrequest:bitbucket</code>{" "}
+            <code>read:pipeline:bitbucket</code>
             {tr("git.bb_token_hint_pr")}
+            <code>write:pipeline:bitbucket</code>
+            {tr("git.bb_token_hint_pr_end")}
           </Hint>
         </div>
       ) : (

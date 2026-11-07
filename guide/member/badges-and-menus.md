@@ -132,7 +132,7 @@ connection. Not this deployment's engine."** together with the model the last ch
 
 - **The AWS and Google Cloud badges** in the WS bar (the AWS mark, the Google mark): your Settings profiles'
   logins. What the name, count and colours mean and what the list offers are in
-  [16](16-cloud-accounts.md#the-aws-badge-in-the-ws-bar) (AWS) and
+  [AWS profiles reference](../ref/aws-profiles.md#aws-badge) (AWS) and
   [16](16-cloud-accounts.md#the-google-cloud-badge-in-the-ws-bar) (Google Cloud).
 - **Restart needed**, beside the workspace power button in the WS bar: the workspace is still running the
   pre-update backend. Clicking it offers **Restart now**, which stops running sessions (resumable); it goes away

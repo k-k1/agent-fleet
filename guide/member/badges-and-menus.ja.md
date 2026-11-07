@@ -121,7 +121,7 @@ PR を開きます。origin が github.com か bitbucket.org の作業コピー�
 ## その他のバッジ
 
 - WS バーの **AWS バッジと Google Cloud バッジ**（AWS のマーク、Google のマーク）：設定のプロファイルのログイン状態です。
-  名前・数・色の意味と、押すと出る一覧の中身は [16](16-cloud-accounts.ja.md#ws-バーの-aws-バッジ)（AWS）と
+  名前・数・色の意味と、押すと出る一覧の中身は [AWS プロファイルの仕様](../ref/aws-profiles.ja.md#aws-バッジ)（AWS）と
   [16](16-cloud-accounts.ja.md#ws-バーの-google-cloud-バッジ)（Google Cloud）にあります。
 - **要再起動**（WS バーの電源ボタンの隣）：ワークスペースがまだ更新前のバックエンドで動いています。押すと
   **今すぐ再起動**が出て、実行中のセッションは停止します（あとで再開できます）。ワークスペースが最新になると

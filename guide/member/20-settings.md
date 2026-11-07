@@ -689,7 +689,7 @@ your **AWS profiles/SSM** registrations, your **Google Cloud** profiles, and you
 - If the current AWS profiles cannot be read, nothing AWS-related is added (otherwise everything would be
   created a second time); try again.
 - **Coming from your own machine's `~/.aws/config` rather than another Agent Fleet?** The AWS profiles/SSM tab
-  reads that file directly (the link is on this tab too). → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-awsconfig)
+  reads that file directly (the link is on this tab too). → [Use AWS SSO](../user/integrations/aws-sso.md#import-from-your-own-awsconfig)
 - **Google Cloud profiles from your own gcloud configurations?** The Google Cloud tab reads
   `~/.config/gcloud/configurations/config_<name>` files directly. → [16 Cloud accounts](16-cloud-accounts.md#importing-profiles-from-gcloud-configurations)
 

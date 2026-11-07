@@ -7,3 +7,8 @@
 # Both are English pages relative to guide/; the Japanese page (X.ja.md) follows its row.
 # `page.md#anchor` on the left is a section that moved out of a page that still exists.
 # Point at the final page: a row's new path must not be redirected again.
+member/16-cloud-accounts.md#importing-profiles-from-awsconfig	user/integrations/aws-sso.md#import-from-your-own-awsconfig
+member/16-cloud-accounts.md#exporting-profiles-as-awsconfig	user/integrations/aws-sso.md#use-the-same-profiles-on-your-own-computer
+member/16-cloud-accounts.md#shared-sign-ins-one-login-for-several-profiles	user/integrations/aws-sso.md#use-several-profiles-with-one-login
+member/16-cloud-accounts.md#profile-type-assume-a-role-from-another-profile	user/integrations/aws-sso.md#use-a-role-in-another-account
+member/16-cloud-accounts.md#the-aws-badge-in-the-ws-bar	ref/aws-profiles.md#aws-badge
