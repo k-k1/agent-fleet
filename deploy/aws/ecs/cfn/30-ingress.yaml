@@ -25,7 +25,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: [ "", "off", present, missing ]
-    Description: Daily EFS backup state of the data stack, set by update.sh/standup.sh (PARAMETERS.md).
+    Description: EFS backup state of the data stack, set by update.sh (PARAMETERS.md).
   CustodianKmsKeyArn:
     Type: String
     Default: ""
@@ -34,7 +34,7 @@ Parameters:
   WorkspaceDekRandom:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: on = AF_WORKSPACE_DEK=random; needs CustodianKmsKeyArn.
   ImageTag:
     Type: String
@@ -43,7 +43,7 @@ Parameters:
   WsTaskCpu:
     Type: String
     Default: "1024"
-    Description: "Default Fargate CPU units for a workspace task (1024 = 1 vCPU). PARAMETERS.md."
+    Description: "Default workspace task CPU units (1024 = 1 vCPU). PARAMETERS.md."
   WsTaskMemory:
     Type: String
     Default: "2048"
@@ -51,11 +51,11 @@ Parameters:
   WsDiskGiB:
     Type: String
     Default: "50"
-    Description: "Default per-workspace working disk in GiB (0 = Fargate's 20). PARAMETERS.md."
+    Description: "Default workspace disk in GiB (0 = 20). PARAMETERS.md."
   WsRuntime:
     Type: String
     Default: ecs
-    AllowedValues: [ ecs, ecs-ec2 ]
+    AllowedValues: [ecs, ecs-ec2]
     Description: "ecs = Fargate (default); ecs-ec2 = EC2 slot pool, needs 40-ec2-pool. PARAMETERS.md."
   WorkspaceSubnets:
     Type: String
@@ -75,6 +75,11 @@ Parameters:
     Default: ""
     AllowedPattern: "^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$"
     Description: 10-data's EgressArchiveBucket output, set like WorkspaceSubnets. Empty = archive off. PARAMETERS.md.
+  EgressEventRetentionDays:
+    Type: String
+    Default: ""
+    AllowedPattern: "^([0-9]{1,5})?$"
+    Description: "AF_EGRESS_EVENT_RETENTION_DAYS; empty = default. PARAMETERS.md"
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""
@@ -84,7 +89,7 @@ Parameters:
   Ec2SlotTypes:
     Type: String
     Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
-    Description: "Slot sizes/classes the pool may run (instanceType:memoryMiB[:vcpu] or id|label|arch|ladder). PARAMETERS.md."
+    Description: "Slot sizes/classes the pool may run. PARAMETERS.md."
   Ec2SlotAmiArm64:
     Type: String
     Default: ""
@@ -98,7 +103,7 @@ Parameters:
   Ec2MaxSlots:
     Type: String
     Default: "8"
-    Description: "Hard cap on pool instances = concurrently running workspaces. PARAMETERS.md."
+    Description: "Hard cap on pool instances (= running workspaces). PARAMETERS.md."
   Ec2HostReserveMb:
     Type: String
     Default: auto
@@ -110,7 +115,7 @@ Parameters:
   Ec2SlotTerminateAfterSec:
     Type: String
     Default: "0"
-    Description: "Idle seconds (clock of Ec2SlotSleepSec) before the slot root is deleted; 0 = never. PARAMETERS.md."
+    Description: "Idle seconds before the slot root is deleted; 0 = never. PARAMETERS.md."
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
@@ -121,8 +126,7 @@ Parameters:
     Description: "Default size of a user's persistent home volume (gp3). PARAMETERS.md."
   # --- Scheduled execution (docs/log/38) ------------------------------------
   # !! EMPTY means "keep the product default" for all four; the defaults live in the CP
-  # (control-plane/main.go). Copying them here would freeze this deployment on whatever they
-  # were the day the stack was written.
+  # (control-plane/main.go), not here.
   SchedulerInterval:
     Type: String
     Default: ""
@@ -130,7 +134,7 @@ Parameters:
   ScheduleWakeTimeout:
     Type: String
     Default: ""
-    Description: "How long one schedule fire waits for the woken Agent (Go duration, default 300s). PARAMETERS.md."
+    Description: "Wait for the woken Agent per fire (default 300s). PARAMETERS.md."
   ScheduleSettle:
     Type: String
     Default: ""
@@ -138,7 +142,7 @@ Parameters:
   ScheduleJitter:
     Type: String
     Default: ""
-    Description: "Deterministic spread on CRON fires (Go duration, default 2m; 0 = exact). PARAMETERS.md."
+    Description: "Spread on CRON fires (default 2m; 0 = exact). PARAMETERS.md."
 
   # --- WAF (optional, OFF by default) ---------------------------------------
   # !! ONLY rate limiting and IP reputation, never the signature rule sets: PARAMETERS.md, "WAF".
@@ -149,8 +153,12 @@ Parameters:
   WafIpReputation:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: "on = AWS managed IP reputation list; needs WafRateLimitPer5Min > 0."
+  AlbAccessLogBucket:
+    Type: String
+    Default: ""
+    Description: "S3 bucket for ALB access logs (empty = off). PARAMETERS.md."
   Fqdn:
     Type: String
     Description: >-
@@ -164,11 +172,11 @@ Parameters:
   PreviewDomain:
     Type: String
     Default: ""
-    Description: "Preview parent domain: SIBLING of Fqdn, inside a zone you own, or ACM stalls. Empty = off. PARAMETERS.md."
+    Description: "Preview parent domain, a SIBLING of Fqdn. Empty = off. PARAMETERS.md."
   PreviewHostedZoneId:
     Type: String
     Default: ""
-    Description: "Hosted zone of PreviewDomain when not the Console's. Empty = HostedZoneId. PARAMETERS.md."
+    Description: "Hosted zone of PreviewDomain if not HostedZoneId. PARAMETERS.md."
   CpPort:
     Type: Number
     Default: 8099
@@ -181,12 +189,12 @@ Parameters:
   CpArch:
     Type: String
     Default: x86_64
-    AllowedValues: [ x86_64, arm64 ]
+    AllowedValues: [x86_64, arm64]
     Description: "Architecture of the CP's Fargate task; arm64 needs an arm64 ImageTag. PARAMETERS.md."
   SsmPrefix:
     Type: String
     Default: /af-cp
-    Description: "SSM SecureString prefix of the CP secrets (cookie-secret, master-key, IdP and engine secrets). PARAMETERS.md."
+    Description: "SSM SecureString prefix of the CP secrets. PARAMETERS.md."
   GoogleClientId:
     Type: String
     Default: ""
@@ -208,7 +216,7 @@ Parameters:
   OidcTrust:
     Type: String
     Default: issuer
-    AllowedValues: [ issuer, email_verified ]
+    AllowedValues: [issuer, email_verified]
     Description: "AF_OIDC_<ID>_TRUST: issuer (pinned tenant) or email_verified. PARAMETERS.md."
   OidcAllowedTids:
     Type: String
@@ -250,15 +258,15 @@ Parameters:
   AfProvision:
     Type: String
     Default: invite
-    AllowedValues: [ invite, auto ]
+    AllowedValues: [invite, auto]
     Description: >-
       AF_PROVISION - what a sign-in with no tenant membership gets: invite = waits for
       an admin, auto = the default tenant. PARAMETERS.md.
   AuthMode:
     Type: String
     Default: oauth
-    AllowedValues: [ oauth, dev ]
-    Description: "oauth = CP-native login; dev = NO login, sandbox only. PARAMETERS.md."
+    AllowedValues: [oauth]
+    Description: "oauth = CP-native login (dev is refused behind https). PARAMETERS.md."
   TtsEcsService:
     Type: String
     Default: ""
@@ -274,12 +282,12 @@ Parameters:
   CivitaiRed:
     Type: String
     Default: "0"
-    AllowedValues: [ "0", "1" ]
+    AllowedValues: ["0", "1"]
     Description: "AF_ENGINE_CIVITAI_RED: 1 offers the Civitai Red source. PARAMETERS.md."
   BrandColor:
     Type: String
     Default: ""
-    AllowedValues: [ "", teal, blue, violet, magenta, red, orange, green, slate ]
+    AllowedValues: ["", teal, blue, violet, magenta, red, orange, green, slate]
     Description: "AF_BRAND_COLOR, favicon/PWA colour."
   BrandLabel:
     Type: String
@@ -293,12 +301,12 @@ Parameters:
   McpEnabled:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: on = AF_MCP_ENABLED=true, serving /mcp (PAT sign-in). PARAMETERS.md.
   McpOAuth:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: on = AF_MCP_OAUTH=1, OAuth sign-in for /mcp clients; needs McpEnabled=on.
   McpOAuthTrustedHosts:
     Type: String
@@ -308,6 +316,11 @@ Parameters:
     Type: String
     Default: ""
     Description: AF_SESSION_TTL, how long a sign-in cookie lives (Go duration, e.g. 72h). Empty = 168h.
+  CookiePurposeKeys:
+    Type: String
+    Default: ""
+    AllowedValues: ["", "0", "1"]
+    Description: AF_COOKIE_PURPOSE_KEYS. Empty or 0 = off; 1 only after every task runs this release. PARAMETERS.md.
   GithubAllowedEmails:
     Type: String
     Default: ""
@@ -387,94 +400,94 @@ Parameters:
   GithubLoginSecret:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: "on = AF_GITHUB_LOGIN_CLIENT_SECRET from SSM github-login-client-secret. PARAMETERS.md"
   ComfyApiKey:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: "on = AF_COMFY_API_KEY from SSM comfy-api-key. PARAMETERS.md"
   RemoteEngineToken:
     Type: String
     Default: "off"
-    AllowedValues: [ "off", "on" ]
+    AllowedValues: ["off", "on"]
     Description: "on = AF_REMOTE_ENGINE_TOKEN from SSM remote-engine-token. PARAMETERS.md"
 
 Rules:
   McpOAuthNeedsMcp:
-    RuleCondition: !Equals [ !Ref McpOAuth, "on" ]
+    RuleCondition: !Equals [!Ref McpOAuth, "on"]
     Assertions:
-      - Assert: !Equals [ !Ref McpEnabled, "on" ]
+      - Assert: !Equals [!Ref McpEnabled, "on"]
         AssertDescription: McpOAuth=on needs McpEnabled=on.
   # The CP refuses the flag without kms (dek.go). Execute-time guard: see PARAMETERS.md.
   WorkspaceDekNeedsKmsCustodian:
-    RuleCondition: !Equals [ !Ref WorkspaceDekRandom, "on" ]
+    RuleCondition: !Equals [!Ref WorkspaceDekRandom, "on"]
     Assertions:
-      - Assert: !Not [ !Equals [ !Ref CustodianKmsKeyArn, "" ] ]
+      - Assert: !Not [!Equals [!Ref CustodianKmsKeyArn, ""]]
         AssertDescription: WorkspaceDekRandom=on needs CustodianKmsKeyArn (AF_KEY_CUSTODIAN=kms).
 
 Conditions:
-  HasWorkspaceSubnets: !Not [ !Equals [ !Ref WorkspaceSubnets, "" ] ]
-  HasEgressGw: !Not [ !Equals [ !Ref EgressTokenSecretArn, "" ] ]
-  HasEgressArchive: !Not [ !Equals [ !Ref EgressArchiveBucket, "" ] ]
+  HasWorkspaceSubnets: !Not [!Equals [!Ref WorkspaceSubnets, ""]]
+  HasEgressGw: !Not [!Equals [!Ref EgressTokenSecretArn, ""]]
+  HasEgressArchive: !Not [!Equals [!Ref EgressArchiveBucket, ""]]
+  HasEgressEventRetention: !Not [!Equals [!Ref EgressEventRetentionDays, ""]]
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
   # parameter that doesn't exist stops the task from starting - so wire each one in
   # only when that IdP is actually configured.
-  HasGoogle: !Not [ !Equals [ !Ref GoogleClientId, "" ] ]
-  HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
-  # The org list, not the client id - historically GITHUB_OAUTH_CLIENT_ID also drove
-  # the Console's git-connect device flow, which many deployments set without wanting a
-  # login. That flow reads the tenant's own app since docs/log/71, but the switch stays the
-  # org list: it is the thing that authorizes the sign-in.
-  HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
-  GithubLegacySecret: !And [ !Condition HasGithub, !Not [ !Condition GithubLoginSecretOn ] ]
+  HasGoogle: !Not [!Equals [!Ref GoogleClientId, ""]]
+  HasOidc: !Not [!Equals [!Ref OidcProviderId, ""]]
+  # The org list, not the client id: GITHUB_OAUTH_CLIENT_ID also drove the git-connect
+  # device flow, which many deployments set without wanting a login (docs/log/71).
+  HasGithub: !Not [!Equals [!Ref GithubAllowedOrgs, ""]]
+  GithubLegacySecret: !And [!Condition HasGithub, !Not [!Condition GithubLoginSecretOn]]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
-  HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
+  HasPreviewDomain: !Not [!Equals [!Ref PreviewDomain, ""]]
   # Set when the preview name lives in another zone (a sibling needs its own delegated
   # zone). Empty = the Console's zone, as before.
-  HasPreviewZone: !Not [ !Equals [ !Ref PreviewHostedZoneId, "" ] ]
+  HasPreviewZone: !Not [!Equals [!Ref PreviewHostedZoneId, ""]]
   # Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
   # parameter means "whatever the CP's own default is" rather than a copy frozen here.
-  HasSchedulerInterval: !Not [ !Equals [ !Ref SchedulerInterval, "" ] ]
-  HasScheduleWakeTimeout: !Not [ !Equals [ !Ref ScheduleWakeTimeout, "" ] ]
-  HasScheduleSettle: !Not [ !Equals [ !Ref ScheduleSettle, "" ] ]
-  HasScheduleJitter: !Not [ !Equals [ !Ref ScheduleJitter, "" ] ]
+  HasSchedulerInterval: !Not [!Equals [!Ref SchedulerInterval, ""]]
+  HasScheduleWakeTimeout: !Not [!Equals [!Ref ScheduleWakeTimeout, ""]]
+  HasScheduleSettle: !Not [!Equals [!Ref ScheduleSettle, ""]]
+  HasScheduleJitter: !Not [!Equals [!Ref ScheduleJitter, ""]]
   # Speech (ADR 0070): passed only when 50-tts was deployed; a URL alone is somebody else's engine.
-  HasTtsEcsService: !Not [ !Equals [ !Ref TtsEcsService, "" ] ]
-  HasVoicevoxUrl: !Not [ !Equals [ !Ref VoicevoxUrl, "" ] ]
+  HasTtsEcsService: !Not [!Equals [!Ref TtsEcsService, ""]]
+  HasVoicevoxUrl: !Not [!Equals [!Ref VoicevoxUrl, ""]]
   # Self-hosted inference engines (ADR 0071). One parameter, so one condition.
-  HasEnginesSsmParam: !Not [ !Equals [ !Ref EnginesSsmParam, "" ] ]
+  HasEnginesSsmParam: !Not [!Equals [!Ref EnginesSsmParam, ""]]
   # CpArch keeps the operator's spelling (arm64); ECS stores the case verbatim, so it is
   # turned here, never in AllowedValues (that would reject every captured value). TaskDef below.
-  CpArm: !Equals [ !Ref CpArch, arm64 ]
-  UseKmsCustodian: !Not [ !Equals [ !Ref CustodianKmsKeyArn, "" ] ]
-  UseWorkspaceDek: !And [ !Condition UseKmsCustodian, !Equals [ !Ref WorkspaceDekRandom, "on" ] ]
-  McpOn: !Equals [ !Ref McpEnabled, "on" ]
-  McpOAuthOn: !Equals [ !Ref McpOAuth, "on" ]
-  HasMcpTrustedHosts: !Not [ !Equals [ !Ref McpOAuthTrustedHosts, "" ] ]
-  HasSessionIdleTimeout: !Not [ !Equals [ !Ref SessionIdleTimeout, "" ] ]
-  HasInteractionIdleTimeout: !Not [ !Equals [ !Ref InteractionIdleTimeout, "" ] ]
-  HasWsIdleTimeout: !Not [ !Equals [ !Ref WsIdleTimeout, "" ] ]
-  HasPresenceIdleTimeout: !Not [ !Equals [ !Ref PresenceIdleTimeout, "" ] ]
-  HasBackgroundHoldMax: !Not [ !Equals [ !Ref BackgroundHoldMax, "" ] ]
-  HasWorkspaceStartDeadline: !Not [ !Equals [ !Ref WorkspaceStartDeadline, "" ] ]
-  HasUsageSampleInterval: !Not [ !Equals [ !Ref UsageSampleInterval, "" ] ]
-  HasAgentSilentStopAfter: !Not [ !Equals [ !Ref AgentSilentStopAfter, "" ] ]
-  HasGithubLoginClientId: !Not [ !Equals [ !Ref GithubLoginClientId, "" ] ]
-  HasGithubLabelJa: !Not [ !Equals [ !Ref GithubLabelJa, "" ] ]
-  HasGithubLabelEn: !Not [ !Equals [ !Ref GithubLabelEn, "" ] ]
-  HasGithubMembershipTtl: !Not [ !Equals [ !Ref GithubMembershipTtl, "" ] ]
-  HasGithubMembershipGrace: !Not [ !Equals [ !Ref GithubMembershipGrace, "" ] ]
-  HasLlmUrl: !Not [ !Equals [ !Ref LlmUrl, "" ] ]
-  HasComfyUrl: !Not [ !Equals [ !Ref ComfyUrl, "" ] ]
-  HasRemoteEngineUrl: !Not [ !Equals [ !Ref RemoteEngineUrl, "" ] ]
-  HasRemoteEngineKeys: !Not [ !Equals [ !Ref RemoteEngineKeys, "" ] ]
-  GithubLoginSecretOn: !Equals [ !Ref GithubLoginSecret, "on" ]
-  ComfyApiKeyOn: !Equals [ !Ref ComfyApiKey, "on" ]
-  RemoteEngineTokenOn: !Equals [ !Ref RemoteEngineToken, "on" ]
-  HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
-  HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
-  HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
+  CpArm: !Equals [!Ref CpArch, arm64]
+  UseKmsCustodian: !Not [!Equals [!Ref CustodianKmsKeyArn, ""]]
+  UseWorkspaceDek: !And [!Condition UseKmsCustodian, !Equals [!Ref WorkspaceDekRandom, "on"]]
+  McpOn: !Equals [!Ref McpEnabled, "on"]
+  McpOAuthOn: !Equals [!Ref McpOAuth, "on"]
+  HasMcpTrustedHosts: !Not [!Equals [!Ref McpOAuthTrustedHosts, ""]]
+  HasSessionIdleTimeout: !Not [!Equals [!Ref SessionIdleTimeout, ""]]
+  HasInteractionIdleTimeout: !Not [!Equals [!Ref InteractionIdleTimeout, ""]]
+  HasWsIdleTimeout: !Not [!Equals [!Ref WsIdleTimeout, ""]]
+  HasPresenceIdleTimeout: !Not [!Equals [!Ref PresenceIdleTimeout, ""]]
+  HasBackgroundHoldMax: !Not [!Equals [!Ref BackgroundHoldMax, ""]]
+  HasWorkspaceStartDeadline: !Not [!Equals [!Ref WorkspaceStartDeadline, ""]]
+  HasUsageSampleInterval: !Not [!Equals [!Ref UsageSampleInterval, ""]]
+  HasAgentSilentStopAfter: !Not [!Equals [!Ref AgentSilentStopAfter, ""]]
+  HasGithubLoginClientId: !Not [!Equals [!Ref GithubLoginClientId, ""]]
+  HasGithubLabelJa: !Not [!Equals [!Ref GithubLabelJa, ""]]
+  HasGithubLabelEn: !Not [!Equals [!Ref GithubLabelEn, ""]]
+  HasGithubMembershipTtl: !Not [!Equals [!Ref GithubMembershipTtl, ""]]
+  HasGithubMembershipGrace: !Not [!Equals [!Ref GithubMembershipGrace, ""]]
+  HasLlmUrl: !Not [!Equals [!Ref LlmUrl, ""]]
+  HasComfyUrl: !Not [!Equals [!Ref ComfyUrl, ""]]
+  HasRemoteEngineUrl: !Not [!Equals [!Ref RemoteEngineUrl, ""]]
+  HasRemoteEngineKeys: !Not [!Equals [!Ref RemoteEngineKeys, ""]]
+  GithubLoginSecretOn: !Equals [!Ref GithubLoginSecret, "on"]
+  ComfyApiKeyOn: !Equals [!Ref ComfyApiKey, "on"]
+  RemoteEngineTokenOn: !Equals [!Ref RemoteEngineToken, "on"]
+  HasCpAlarms: !Not [!Equals [!Ref CpAlarmEmail, ""]]
+  HasAlbLogs: !Not [!Equals [!Ref AlbAccessLogBucket, ""]]
+  HasWaf: !Not [!Equals [!Ref WafRateLimitPer5Min, 0]]
+  HasWafReputation: !And [!Condition HasWaf, !Equals [!Ref WafIpReputation, "on"]]
 
 Resources:
   Cert:
@@ -492,13 +505,19 @@ Resources:
       Name: !Sub "af-${AWS::StackName}"
       Scheme: internet-facing
       Type: application
-      Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PublicSubnets" } ]
+      Subnets: !Split [",", !ImportValue {"Fn::Sub": "${NetworkStackName}-PublicSubnets"}]
       SecurityGroups:
         - Fn::ImportValue: !Sub "${NetworkStackName}-AlbSgId"
       # Spelled out at the AWS default (60s): the hard ceiling on every CP request. Raise it
       # only for a NEW long-poll, never to let a handler block longer (docs/log/62 sec.62.5).
       LoadBalancerAttributes:
-        - { Key: idle_timeout.timeout_seconds, Value: "60" }
+        - {Key: idle_timeout.timeout_seconds, Value: "60"}
+        - {Key: routing.http.drop_invalid_header_fields.enabled, Value: "true"}
+        - {Key: access_logs.s3.enabled, Value: !If [HasAlbLogs, "true", "false"]}
+        - Fn::If:
+            - HasAlbLogs
+            - {Key: access_logs.s3.bucket, Value: !Ref AlbAccessLogBucket}
+            - !Ref AWS::NoValue
 
   # --- WAF (only when WafRateLimitPer5Min > 0) --------------------------------
   WebAcl:
@@ -507,7 +526,7 @@ Resources:
     Properties:
       Name: !Sub "af-${AWS::StackName}"
       Scope: REGIONAL
-      DefaultAction: { Allow: {} }
+      DefaultAction: {Allow: {}}
       VisibilityConfig:
         SampledRequestsEnabled: true
         CloudWatchMetricsEnabled: true
@@ -517,7 +536,7 @@ Resources:
         # the API from a flood, and it decides on the SOURCE rather than the body.
         - Name: rate-limit
           Priority: 0
-          Action: { Block: {} }
+          Action: {Block: {}}
           Statement:
             RateBasedStatement:
               Limit: !Ref WafRateLimitPer5Min
@@ -530,7 +549,7 @@ Resources:
           - HasWafReputation
           - Name: ip-reputation
             Priority: 1
-            OverrideAction: { None: {} }
+            OverrideAction: {None: {}}
             Statement:
               ManagedRuleGroupStatement:
                 VendorName: AWS
@@ -558,9 +577,9 @@ Resources:
       TargetType: ip                     # Fargate awsvpc = register by ENI IP
       HealthCheckPath: /healthz          # CP serves this unauthenticated
       HealthCheckProtocol: HTTP
-      Matcher: { HttpCode: "200" }
+      Matcher: {HttpCode: "200"}
       TargetGroupAttributes:
-        - { Key: deregistration_delay.timeout_seconds, Value: "30" }
+        - {Key: deregistration_delay.timeout_seconds, Value: "30"}
 
   Listener443:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -588,7 +607,7 @@ Resources:
           # The zone the validation record `_xxx.{PreviewDomain}` is written into. The
           # `*.` is stripped, so what is needed is the zone containing PreviewDomain
           # itself, not the Console's zone.
-          HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
+          HostedZoneId: !If [HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId]
 
   PreviewListenerCert:
     Type: AWS::ElasticLoadBalancingV2::ListenerCertificate
@@ -603,7 +622,7 @@ Resources:
     Type: AWS::Route53::RecordSet
     Condition: HasPreviewDomain
     Properties:
-      HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
+      HostedZoneId: !If [HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId]
       Name: !Sub "*.${PreviewDomain}"
       Type: A
       AliasTarget:
@@ -618,7 +637,7 @@ Resources:
       Protocol: HTTP
       DefaultActions:
         - Type: redirect
-          RedirectConfig: { Protocol: HTTPS, Port: "443", StatusCode: HTTP_301 }
+          RedirectConfig: {Protocol: HTTPS, Port: "443", StatusCode: HTTP_301}
 
   LogGroup:
     Type: AWS::Logs::LogGroup
@@ -636,7 +655,7 @@ Resources:
       Type: String
       Value: !Sub
         - "AF_EGRESS_IMAGE=${R}:${ImageTag}\nAF_EGRESS_CP_URL=https://${Fqdn}\n"
-        - R: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+        - R: !ImportValue {"Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri"}
 
   # --- "the Control Plane cannot reach its database", made visible (README, "Alarms") ---
   # The marker is control-plane/store_postgres_secret.go's logDBUnavailable: change both or neither.
@@ -662,10 +681,8 @@ Resources:
         - Protocol: email
           Endpoint: !Ref CpAlarmEmail
 
-  # One breach is enough. The CP rate-limits this line to one a minute, so a single
-  # datapoint already means "for a whole minute, connections were failing" - not a
-  # blip. Waiting for a second period would only add five minutes to an outage in
-  # which the product returns 500 to everybody.
+  # One breach is enough: the CP rate-limits this line to one a minute, so a single
+  # datapoint already means a whole minute of failing connections.
   CpDbUnavailableAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: HasCpAlarms
@@ -688,8 +705,8 @@ Resources:
       EvaluationPeriods: 1
       DatapointsToAlarm: 1
       TreatMissingData: notBreaching
-      AlarmActions: [ !Ref CpAlarmTopic ]
-      OKActions: [ !Ref CpAlarmTopic ]
+      AlarmActions: [!Ref CpAlarmTopic]
+      OKActions: [!Ref CpAlarmTopic]
 
   # Workspace tasks log here (the CP passes the name as AF_ECS_LOG_GROUP).
   WsLogGroup:
@@ -706,21 +723,21 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub "af-${AWS::StackName}-home-ops"
-      RequiresCompatibilities: [ FARGATE ]
+      RequiresCompatibilities: [FARGATE]
       NetworkMode: awsvpc
       Cpu: "256"
       Memory: "512"
       # The CP image, so the CP's architecture (see TaskDef below).
       RuntimePlatform:
-        CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
+        CpuArchitecture: !If [CpArm, ARM64, X86_64]
         OperatingSystemFamily: LINUX
       ExecutionRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
-      TaskRoleArn: !ImportValue { "Fn::Sub": "${DataStackName}-HomeOpsEfsRoleArn" }
+      TaskRoleArn: !ImportValue {"Fn::Sub": "${DataStackName}-HomeOpsEfsRoleArn"}
       Volumes:
         - Name: efs
           EFSVolumeConfiguration:
-            FilesystemId: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" }
+            FilesystemId: !ImportValue {"Fn::Sub": "${DataStackName}-EfsId"}
             RootDirectory: /
             TransitEncryption: ENABLED
             AuthorizationConfig:
@@ -730,15 +747,15 @@ Resources:
           Essential: true
           Image: !Sub
             - "${Uri}:${Tag}"
-            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+            - Uri: !ImportValue {"Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri"}
               Tag: !Ref ImageTag
           User: "0"
-          Command: [ efs-home-op ]
+          Command: [efs-home-op]
           # Placeholders; the CP overrides both on every RunTask. Empty is refused (exit 2).
           Environment:
-            - { Name: AF_HOME_OP, Value: "" }
-            - { Name: AF_HOME_MEMBERSHIP, Value: "" }
-          MountPoints: [ { SourceVolume: efs, ContainerPath: /mnt/efs } ]
+            - {Name: AF_HOME_OP, Value: ""}
+            - {Name: AF_HOME_MEMBERSHIP, Value: ""}
+          MountPoints: [{SourceVolume: efs, ContainerPath: /mnt/efs}]
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -753,34 +770,34 @@ Resources:
     Properties:
       ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-home-ops-${AWS::Region}"
       Roles:
-        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+        - !Select [1, !Split ["/", !ImportValue {"Fn::Sub": "${PlatformStackName}-CpTaskRoleArn"}]]
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Sid: RunHomeOpsTask
             Effect: Allow
-            Action: [ ecs:RunTask ]
+            Action: [ecs:RunTask]
             Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/af-${AWS::StackName}-home-ops:*"
             Condition:
-              ArnEquals: { "ecs:cluster": !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" } }
+              ArnEquals: {"ecs:cluster": !ImportValue {"Fn::Sub": "${PlatformStackName}-ClusterArn"}}
           - Sid: PassHomeOpsTaskRole
             Effect: Allow
             Action: iam:PassRole
-            Resource: !ImportValue { "Fn::Sub": "${DataStackName}-HomeOpsEfsRoleArn" }
-            Condition: { StringEquals: { "iam:PassedToService": ecs-tasks.amazonaws.com } }
+            Resource: !ImportValue {"Fn::Sub": "${DataStackName}-HomeOpsEfsRoleArn"}
+            Condition: {StringEquals: {"iam:PassedToService": ecs-tasks.amazonaws.com}}
           - Sid: TagHomeOpsTaskOnRun
             Effect: Allow
             Action: ecs:TagResource
             Resource: !Sub
               - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${ClusterName}/*"
-              - ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+              - ClusterName: !ImportValue {"Fn::Sub": "${PlatformStackName}-ClusterName"}
             Condition:
               StringEquals:
                 ecs:CreateAction: RunTask
               "Null":
                 aws:TagKeys: "false"
               ForAllValues:StringEquals:
-                aws:TagKeys: [ af-membership, af-role, af-tenant ]
+                aws:TagKeys: [af-membership, af-role, af-tenant]
 
   # The kms key custodian's grant (ADR 0005): this key, its two calls, its encryption
   # context only. deploy/local/cfn-cp-kms-scope-test.py.
@@ -790,13 +807,13 @@ Resources:
     Properties:
       ManagedPolicyName: !Sub "af-${AWS::StackName}-cp-custodian-kms-${AWS::Region}"
       Roles:
-        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+        - !Select [1, !Split ["/", !ImportValue {"Fn::Sub": "${PlatformStackName}-CpTaskRoleArn"}]]
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Sid: CustodianDataKeys
             Effect: Allow
-            Action: [ kms:GenerateDataKey, kms:Decrypt ]
+            Action: [kms:GenerateDataKey, kms:Decrypt]
             Resource: !Ref CustodianKmsKeyArn
             Condition:
               StringEquals:
@@ -804,23 +821,23 @@ Resources:
               "Null":
                 kms:EncryptionContext:af:key_ref: "false"
               ForAllValues:StringEquals:
-                kms:EncryptionContextKeys: [ af:purpose, af:key_ref ]
+                kms:EncryptionContextKeys: [af:purpose, af:key_ref]
 
   TaskDef:
     Type: AWS::ECS::TaskDefinition
     # AF_ECS_HOME_TASK names the family as a string, which CloudFormation does not order by:
     # without this a fresh CP could offer Recreate before the family or its grant exists.
-    DependsOn: [ HomeOpsTaskDef, CpHomeOpsManagedPolicy ]
+    DependsOn: [HomeOpsTaskDef, CpHomeOpsManagedPolicy]
     Properties:
       Family: !Sub "af-${AWS::StackName}-cp"
-      RequiresCompatibilities: [ FARGATE ]
+      RequiresCompatibilities: [FARGATE]
       NetworkMode: awsvpc
       Cpu: !Ref CpCpu
       Memory: !Ref CpMemory
       # Declared, not inferred: an omitted value is nowhere in the definition, so a CpArch
       # switch would be no new revision (docs/log/72, 70.8). The ECS enum's spelling (CpArm).
       RuntimePlatform:
-        CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
+        CpuArchitecture: !If [CpArm, ARM64, X86_64]
         OperatingSystemFamily: LINUX
       ExecutionRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
@@ -831,7 +848,7 @@ Resources:
           Essential: true
           Image: !Sub
             - "${Uri}:${Tag}"
-            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+            - Uri: !ImportValue {"Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri"}
               Tag: !Ref ImageTag
           PortMappings:
             - ContainerPort: !Ref CpPort
@@ -839,146 +856,144 @@ Resources:
             # ECS/awsvpc: the ALB reaches the task over its ENI, so CP must bind
             # non-loopback (the CpSg restricts 8099 ingress to the ALB SG - the
             # network isolation the compose loopback bind gives on a single box).
-            - { Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}" }
-            - { Name: WS_DATA, Value: /tmp }   # unused for state now (store = RDS/Postgres, below)
+            - {Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}"}
+            - {Name: WS_DATA, Value: /tmp}   # unused for state now (store = RDS/Postgres, below)
             # MetadataStore = RDS Postgres (P3-7 stage 3a): survives CP task replacement.
             # The CP composes the DSN from these parts; the password arrives as a
             # secret (below) so it never sits in a plaintext URL/env.
-            - { Name: AF_DB_HOST, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbEndpoint" } }
-            - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
-            - { Name: AF_DB_NAME, Value: agentfleet }
-            - { Name: AF_KEY_CUSTODIAN, Value: !If [ UseKmsCustodian, kms, local ] }
-            - !If [ UseKmsCustodian, { Name: AF_KMS_KEY_ID, Value: !Ref CustodianKmsKeyArn }, !Ref "AWS::NoValue" ]
-            - !If [ UseWorkspaceDek, { Name: AF_WORKSPACE_DEK, Value: random }, !Ref "AWS::NoValue" ]
-            - { Name: AF_DB_USER, Value: afadmin }
+            - {Name: AF_DB_HOST, Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbEndpoint"}}
+            - {Name: AF_DB_PORT, Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbPort"}}
+            - {Name: AF_DB_NAME, Value: agentfleet}
+            - {Name: AF_KEY_CUSTODIAN, Value: !If [UseKmsCustodian, kms, local]}
+            - !If [UseKmsCustodian, {Name: AF_KMS_KEY_ID, Value: !Ref CustodianKmsKeyArn}, !Ref "AWS::NoValue"]
+            - !If [UseWorkspaceDek, {Name: AF_WORKSPACE_DEK, Value: random}, !Ref "AWS::NoValue"]
+            - {Name: AF_DB_USER, Value: afadmin}
             # Where the CP re-reads the RDS password (rotated every 7 days, ADR 0065).
             # Environment, NOT Secrets: `secrets` is resolved once, at task start.
             - Name: AF_DB_PASSWORD_SECRET_ARN
-              Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
+              Value: !ImportValue {"Fn::Sub": "${DataStackName}-DbSecretArn"}
             # The JSON field inside the RDS-managed secret.
-            - { Name: AF_DB_PASSWORD_SECRET_KEY, Value: password }
+            - {Name: AF_DB_PASSWORD_SECRET_KEY, Value: password}
             # !! Exactly one proxy (this ALB) sits in front of the CP, and the CP cannot tell:
             # tenant source-network rules are matched on the client address this derives
             # (docs/log/66, ADR 0047 decision 2), so a wrong value matches no one or everyone.
-            - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
-            - { Name: AUTH, Value: !Ref AuthMode }
-            - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
-            - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
+            - {Name: AF_TRUSTED_PROXY_HOPS, Value: "1"}
+            - {Name: AUTH, Value: !Ref AuthMode}
+            - {Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}"}
+            - {Name: PUBLIC_DOMAIN, Value: !Ref Fqdn}
             # docs/81: parent domain for the preview subdomains. Empty and the CP registers
             # no host-mode routing at all (only the existing path mode remains).
-            - { Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain }
+            - {Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain}
             # Per-deployment favicon colour and app-name label (control-plane/brand.go).
-            - { Name: AF_BRAND_COLOR, Value: !Ref BrandColor }
-            - { Name: AF_BRAND_LABEL, Value: !Ref BrandLabel }
-            - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
-            - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
-            - { Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains }
-            - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
-            - { Name: AF_PROVISION, Value: !Ref AfProvision }
+            - {Name: AF_BRAND_COLOR, Value: !Ref BrandColor}
+            - {Name: AF_BRAND_LABEL, Value: !Ref BrandLabel}
+            - {Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId}
+            - {Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails}
+            - {Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains}
+            - {Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails}
+            - {Name: AF_PROVISION, Value: !Ref AfProvision}
             # Generic OIDC IdP (docs/log/61). The redirect URI stays the single
             # https://<Fqdn>/oauth2/callback whether or not this is enabled.
-            - { Name: AF_OIDC_PROVIDERS, Value: !Ref OidcProviderId }
-            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ISSUER", Value: !Ref OidcIssuer }, !Ref "AWS::NoValue" ]
-            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_CLIENT_ID", Value: !Ref OidcClientId }, !Ref "AWS::NoValue" ]
-            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_TRUST", Value: !Ref OidcTrust }, !Ref "AWS::NoValue" ]
-            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
-            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
-            - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
+            - {Name: AF_OIDC_PROVIDERS, Value: !Ref OidcProviderId}
+            - !If [HasOidc, {Name: !Sub "AF_OIDC_${OidcProviderId}_ISSUER", Value: !Ref OidcIssuer}, !Ref "AWS::NoValue"]
+            - !If [HasOidc, {Name: !Sub "AF_OIDC_${OidcProviderId}_CLIENT_ID", Value: !Ref OidcClientId}, !Ref "AWS::NoValue"]
+            - !If [HasOidc, {Name: !Sub "AF_OIDC_${OidcProviderId}_TRUST", Value: !Ref OidcTrust}, !Ref "AWS::NoValue"]
+            - !If [HasOidc, {Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids}, !Ref "AWS::NoValue"]
+            - !If [HasOidc, {Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa}, !Ref "AWS::NoValue"]
+            - !If [HasOidc, {Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn}, !Ref "AWS::NoValue"]
             # GitHub sign-in (docs/log/61 sec.61.7).
-            - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
-            - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
-            - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
-            - { Name: AF_SESSION_TTL, Value: !Ref SessionTtl }
-            - { Name: AF_GITHUB_ALLOWED_EMAILS, Value: !Ref GithubAllowedEmails }
-            - { Name: AF_KMS_DATA_KEY_CACHE_TTL, Value: !Ref KmsDataKeyCacheTtl }
-            - !If [ McpOn, { Name: AF_MCP_ENABLED, Value: "true" }, !Ref "AWS::NoValue" ]
-            - !If [ McpOAuthOn, { Name: AF_MCP_OAUTH, Value: "1" }, !Ref "AWS::NoValue" ]
-            - !If [ HasMcpTrustedHosts, { Name: AF_MCP_OAUTH_TRUSTED_HOSTS, Value: !Ref McpOAuthTrustedHosts }, !Ref "AWS::NoValue" ]
-            - !If [ HasSessionIdleTimeout, { Name: AF_SESSION_IDLE_TIMEOUT, Value: !Ref SessionIdleTimeout }, !Ref "AWS::NoValue" ]
-            - !If [ HasInteractionIdleTimeout, { Name: AF_INTERACTION_IDLE_TIMEOUT, Value: !Ref InteractionIdleTimeout }, !Ref "AWS::NoValue" ]
-            - !If [ HasWsIdleTimeout, { Name: AF_WS_IDLE_TIMEOUT, Value: !Ref WsIdleTimeout }, !Ref "AWS::NoValue" ]
-            - !If [ HasPresenceIdleTimeout, { Name: AF_PRESENCE_IDLE_TIMEOUT, Value: !Ref PresenceIdleTimeout }, !Ref "AWS::NoValue" ]
-            - !If [ HasBackgroundHoldMax, { Name: AF_BACKGROUND_HOLD_MAX, Value: !Ref BackgroundHoldMax }, !Ref "AWS::NoValue" ]
-            - !If [ HasWorkspaceStartDeadline, { Name: AF_WORKSPACE_START_DEADLINE, Value: !Ref WorkspaceStartDeadline }, !Ref "AWS::NoValue" ]
-            - !If [ HasUsageSampleInterval, { Name: AF_USAGE_SAMPLE_INTERVAL, Value: !Ref UsageSampleInterval }, !Ref "AWS::NoValue" ]
-            - !If [ HasAgentSilentStopAfter, { Name: AF_AGENT_SILENT_STOP_AFTER, Value: !Ref AgentSilentStopAfter }, !Ref "AWS::NoValue" ]
-            - !If [ HasGithubLoginClientId, { Name: AF_GITHUB_LOGIN_CLIENT_ID, Value: !Ref GithubLoginClientId }, !Ref "AWS::NoValue" ]
-            - !If [ HasGithubLabelJa, { Name: AF_GITHUB_LABEL_JA, Value: !Ref GithubLabelJa }, !Ref "AWS::NoValue" ]
-            - !If [ HasGithubLabelEn, { Name: AF_GITHUB_LABEL_EN, Value: !Ref GithubLabelEn }, !Ref "AWS::NoValue" ]
-            - !If [ HasGithubMembershipTtl, { Name: AF_GITHUB_MEMBERSHIP_TTL, Value: !Ref GithubMembershipTtl }, !Ref "AWS::NoValue" ]
-            - !If [ HasGithubMembershipGrace, { Name: AF_GITHUB_MEMBERSHIP_GRACE, Value: !Ref GithubMembershipGrace }, !Ref "AWS::NoValue" ]
-            - !If [ HasLlmUrl, { Name: AF_LLM_URL, Value: !Ref LlmUrl }, !Ref "AWS::NoValue" ]
-            - !If [ HasComfyUrl, { Name: AF_COMFY_URL, Value: !Ref ComfyUrl }, !Ref "AWS::NoValue" ]
-            - !If [ HasRemoteEngineUrl, { Name: AF_REMOTE_ENGINE_URL, Value: !Ref RemoteEngineUrl }, !Ref "AWS::NoValue" ]
-            - !If [ HasRemoteEngineKeys, { Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys }, !Ref "AWS::NoValue" ]
+            - {Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId}
+            - {Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs}
+            - {Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains}
+            - {Name: AF_SESSION_TTL, Value: !Ref SessionTtl}
+            - {Name: AF_COOKIE_PURPOSE_KEYS, Value: !Ref CookiePurposeKeys}
+            - {Name: AF_GITHUB_ALLOWED_EMAILS, Value: !Ref GithubAllowedEmails}
+            - {Name: AF_KMS_DATA_KEY_CACHE_TTL, Value: !Ref KmsDataKeyCacheTtl}
+            - !If [McpOn, {Name: AF_MCP_ENABLED, Value: "true"}, !Ref "AWS::NoValue"]
+            - !If [McpOAuthOn, {Name: AF_MCP_OAUTH, Value: "1"}, !Ref "AWS::NoValue"]
+            - !If [HasMcpTrustedHosts, {Name: AF_MCP_OAUTH_TRUSTED_HOSTS, Value: !Ref McpOAuthTrustedHosts}, !Ref "AWS::NoValue"]
+            - !If [HasSessionIdleTimeout, {Name: AF_SESSION_IDLE_TIMEOUT, Value: !Ref SessionIdleTimeout}, !Ref "AWS::NoValue"]
+            - !If [HasInteractionIdleTimeout, {Name: AF_INTERACTION_IDLE_TIMEOUT, Value: !Ref InteractionIdleTimeout}, !Ref "AWS::NoValue"]
+            - !If [HasWsIdleTimeout, {Name: AF_WS_IDLE_TIMEOUT, Value: !Ref WsIdleTimeout}, !Ref "AWS::NoValue"]
+            - !If [HasPresenceIdleTimeout, {Name: AF_PRESENCE_IDLE_TIMEOUT, Value: !Ref PresenceIdleTimeout}, !Ref "AWS::NoValue"]
+            - !If [HasBackgroundHoldMax, {Name: AF_BACKGROUND_HOLD_MAX, Value: !Ref BackgroundHoldMax}, !Ref "AWS::NoValue"]
+            - !If [HasWorkspaceStartDeadline, {Name: AF_WORKSPACE_START_DEADLINE, Value: !Ref WorkspaceStartDeadline}, !Ref "AWS::NoValue"]
+            - !If [HasUsageSampleInterval, {Name: AF_USAGE_SAMPLE_INTERVAL, Value: !Ref UsageSampleInterval}, !Ref "AWS::NoValue"]
+            - !If [HasAgentSilentStopAfter, {Name: AF_AGENT_SILENT_STOP_AFTER, Value: !Ref AgentSilentStopAfter}, !Ref "AWS::NoValue"]
+            - !If [HasGithubLoginClientId, {Name: AF_GITHUB_LOGIN_CLIENT_ID, Value: !Ref GithubLoginClientId}, !Ref "AWS::NoValue"]
+            - !If [HasGithubLabelJa, {Name: AF_GITHUB_LABEL_JA, Value: !Ref GithubLabelJa}, !Ref "AWS::NoValue"]
+            - !If [HasGithubLabelEn, {Name: AF_GITHUB_LABEL_EN, Value: !Ref GithubLabelEn}, !Ref "AWS::NoValue"]
+            - !If [HasGithubMembershipTtl, {Name: AF_GITHUB_MEMBERSHIP_TTL, Value: !Ref GithubMembershipTtl}, !Ref "AWS::NoValue"]
+            - !If [HasGithubMembershipGrace, {Name: AF_GITHUB_MEMBERSHIP_GRACE, Value: !Ref GithubMembershipGrace}, !Ref "AWS::NoValue"]
+            - !If [HasLlmUrl, {Name: AF_LLM_URL, Value: !Ref LlmUrl}, !Ref "AWS::NoValue"]
+            - !If [HasComfyUrl, {Name: AF_COMFY_URL, Value: !Ref ComfyUrl}, !Ref "AWS::NoValue"]
+            - !If [HasRemoteEngineUrl, {Name: AF_REMOTE_ENGINE_URL, Value: !Ref RemoteEngineUrl}, !Ref "AWS::NoValue"]
+            - !If [HasRemoteEngineKeys, {Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys}, !Ref "AWS::NoValue"]
             # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID: git OAuth apps are
-            # per-tenant rows (docs/log/71); the Bitbucket callback derives from PUBLIC_BASE_URL.
-            # AF_RUNTIME: PARAMETERS.md, `WsRuntime`. The AF_ECS_* below are shared by both
-            # (AF_ECS_WORKSPACE_SUBNETS: `WorkspaceSubnets`).
-            - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
-            - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
-            - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
-            - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
-            - !If [ HasWorkspaceSubnets, { Name: AF_ECS_WORKSPACE_SUBNETS, Value: !Ref WorkspaceSubnets }, !Ref "AWS::NoValue" ]
-            - !If [ HasEgressGw, { Name: AF_EGRESS_PROXY_ADDR, Value: !Ref EgressProxyAddr }, !Ref "AWS::NoValue" ]
-            - !If [ HasEgressArchive, { Name: AF_EGRESS_ARCHIVE_URL, Value: !Sub "s3://${EgressArchiveBucket}" }, !Ref "AWS::NoValue" ]
-            - { Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-WsSgId" } }
-            - { Name: AF_EFS_BACKUP, Value: !Ref EfsBackup }
-            - { Name: AF_ECS_EFS_ID, Value: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" } }
-            - { Name: AF_ECS_NAMESPACE_ARN, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceArn" } }
-            - { Name: AF_ECS_EXEC_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsExecRoleArn" } }
-            - { Name: AF_ECS_TASK_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsTaskRoleArn" } }
-            - { Name: AF_ECS_LOG_GROUP, Value: !Ref WsLogGroup }
-            - { Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu }
-            - { Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory }
-            - { Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB }
+            # per-tenant rows (docs/log/71). AF_RUNTIME and AF_ECS_*: PARAMETERS.md.
+            - {Name: AF_RUNTIME, Value: !Ref WsRuntime}
+            - {Name: AF_ECS_REGION, Value: !Ref "AWS::Region"}
+            - {Name: AF_ECS_CLUSTER, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-ClusterName"}}
+            - {Name: AF_ECS_SUBNETS, Value: !ImportValue {"Fn::Sub": "${NetworkStackName}-PrivateSubnets"}}
+            - !If [HasWorkspaceSubnets, {Name: AF_ECS_WORKSPACE_SUBNETS, Value: !Ref WorkspaceSubnets}, !Ref "AWS::NoValue"]
+            - !If [HasEgressGw, {Name: AF_EGRESS_PROXY_ADDR, Value: !Ref EgressProxyAddr}, !Ref "AWS::NoValue"]
+            - !If [HasEgressArchive, {Name: AF_EGRESS_ARCHIVE_URL, Value: !Sub "s3://${EgressArchiveBucket}"}, !Ref "AWS::NoValue"]
+            - !If [HasEgressEventRetention, {Name: AF_EGRESS_EVENT_RETENTION_DAYS, Value: !Ref EgressEventRetentionDays}, !Ref "AWS::NoValue"]
+            - {Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue {"Fn::Sub": "${NetworkStackName}-WsSgId"}}
+            - {Name: AF_EFS_BACKUP, Value: !Ref EfsBackup}
+            - {Name: AF_ECS_EFS_ID, Value: !ImportValue {"Fn::Sub": "${DataStackName}-EfsId"}}
+            - {Name: AF_ECS_NAMESPACE_ARN, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-NamespaceArn"}}
+            - {Name: AF_ECS_EXEC_ROLE, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-WsExecRoleArn"}}
+            - {Name: AF_ECS_TASK_ROLE, Value: !ImportValue {"Fn::Sub": "${PlatformStackName}-WsTaskRoleArn"}}
+            - {Name: AF_ECS_LOG_GROUP, Value: !Ref WsLogGroup}
+            - {Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu}
+            - {Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory}
+            - {Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB}
             # The home task above, by FAMILY: a revision would go inactive at the next update.
-            - { Name: AF_ECS_HOME_TASK, Value: !Sub "af-${AWS::StackName}-home-ops" }
+            - {Name: AF_ECS_HOME_TASK, Value: !Sub "af-${AWS::StackName}-home-ops"}
             # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
-            - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
-            - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }
-            - { Name: AF_ECS_EC2_AMI_ARM64, Value: !Ref Ec2SlotAmiArm64 }
-            - { Name: AF_ECS_EC2_DEFAULT_SLOT_CLASS, Value: !Ref Ec2DefaultSlotClass }
-            - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
-            - { Name: AF_ECS_EC2_HOST_RESERVE_MB, Value: !Ref Ec2HostReserveMb }
-            - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
-            - { Name: AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC, Value: !Ref Ec2SlotTerminateAfterSec }
-            - { Name: AF_ECS_EC2_HIBERNATE_AFTER_SEC, Value: !Ref Ec2HibernateAfterSec }
-            - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }
+            - {Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate}
+            - {Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes}
+            - {Name: AF_ECS_EC2_AMI_ARM64, Value: !Ref Ec2SlotAmiArm64}
+            - {Name: AF_ECS_EC2_DEFAULT_SLOT_CLASS, Value: !Ref Ec2DefaultSlotClass}
+            - {Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots}
+            - {Name: AF_ECS_EC2_HOST_RESERVE_MB, Value: !Ref Ec2HostReserveMb}
+            - {Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec}
+            - {Name: AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC, Value: !Ref Ec2SlotTerminateAfterSec}
+            - {Name: AF_ECS_EC2_HIBERNATE_AFTER_SEC, Value: !Ref Ec2HibernateAfterSec}
+            - {Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB}
             # --- Scheduled execution (docs/log/38). Unset = the CP's own default. ---
-            - !If [ HasSchedulerInterval, { Name: AF_SCHEDULER_INTERVAL, Value: !Ref SchedulerInterval }, !Ref "AWS::NoValue" ]
-            - !If [ HasScheduleWakeTimeout, { Name: AF_SCHEDULE_WAKE_TIMEOUT, Value: !Ref ScheduleWakeTimeout }, !Ref "AWS::NoValue" ]
-            - !If [ HasScheduleSettle, { Name: AF_SCHEDULE_SETTLE, Value: !Ref ScheduleSettle }, !Ref "AWS::NoValue" ]
-            - !If [ HasScheduleJitter, { Name: AF_SCHEDULE_JITTER, Value: !Ref ScheduleJitter }, !Ref "AWS::NoValue" ]
+            - !If [HasSchedulerInterval, {Name: AF_SCHEDULER_INTERVAL, Value: !Ref SchedulerInterval}, !Ref "AWS::NoValue"]
+            - !If [HasScheduleWakeTimeout, {Name: AF_SCHEDULE_WAKE_TIMEOUT, Value: !Ref ScheduleWakeTimeout}, !Ref "AWS::NoValue"]
+            - !If [HasScheduleSettle, {Name: AF_SCHEDULE_SETTLE, Value: !Ref ScheduleSettle}, !Ref "AWS::NoValue"]
+            - !If [HasScheduleJitter, {Name: AF_SCHEDULE_JITTER, Value: !Ref ScheduleJitter}, !Ref "AWS::NoValue"]
             # --- Speech: the VOICEVOX engine of 50-tts (ADR 0070). Unset = Polly only. ---
             # AF_TTS_ECS_CLUSTER / _REGION are deliberately absent: tts_ecs.go falls back to
             # AF_ECS_CLUSTER and AF_ECS_REGION above, and the engine is in the same cluster.
-            - !If [ HasTtsEcsService, { Name: AF_TTS_ECS_SERVICE, Value: !Ref TtsEcsService }, !Ref "AWS::NoValue" ]
-            - !If [ HasVoicevoxUrl, { Name: AF_VOICEVOX_URL, Value: !Ref VoicevoxUrl }, !Ref "AWS::NoValue" ]
+            - !If [HasTtsEcsService, {Name: AF_TTS_ECS_SERVICE, Value: !Ref TtsEcsService}, !Ref "AWS::NoValue"]
+            - !If [HasVoicevoxUrl, {Name: AF_VOICEVOX_URL, Value: !Ref VoicevoxUrl}, !Ref "AWS::NoValue"]
             # --- Self-hosted inference engines: the table 60-engines wrote (ADR 0071).
             # Unset = no engines, and the /engine/* gateway answers 404. Cluster and region
             # ride on AF_ECS_* above, as they do for the speech engine.
-            - !If [ HasEnginesSsmParam, { Name: AF_ENGINES_SSM_PARAM, Value: !Ref EnginesSsmParam }, !Ref "AWS::NoValue" ]
+            - !If [HasEnginesSsmParam, {Name: AF_ENGINES_SSM_PARAM, Value: !Ref EnginesSsmParam}, !Ref "AWS::NoValue"]
             # Unconditional, unlike the table above: this parameter has no empty state to
             # condition on -- "0" IS the answer, and it is the one that hides the NSFW
             # search source. PARAMETERS.md.
-            - { Name: AF_ENGINE_CIVITAI_RED, Value: !Ref CivitaiRed }
-            # Start returns as soon as the service is at desiredCount 1; the Agent
-            # readiness poll runs in the background for the log line only, on the
-            # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,
-            # so it is deliberately longer than the ALB idle timeout above.
+            - {Name: AF_ENGINE_CIVITAI_RED, Value: !Ref CivitaiRed}
+            # Start returns at desiredCount 1; the Agent readiness poll only feeds a log
+            # line (AF_ECS_START_TIMEOUT_SEC, default 300s), so it may exceed the ALB idle timeout.
             - Name: AF_ECS_WORKSPACE_IMAGE
               Value: !Sub
                 - "${Uri}:${Tag}"
-                - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrWorkspaceUri" }
+                - Uri: !ImportValue {"Fn::Sub": "${PlatformStackName}-EcrWorkspaceUri"}
                   Tag: !Ref ImageTag
           Secrets:
             # RDS-managed master password (Secrets Manager JSON -> the `password` key).
             - Name: AF_DB_PASSWORD
               ValueFrom: !Sub
                 - "${Arn}:password::"
-                - Arn: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
-            - !If [ HasEgressGw, { Name: AF_EGRESS_TOKEN, ValueFrom: !Ref EgressTokenSecretArn }, !Ref "AWS::NoValue" ]
+                - Arn: !ImportValue {"Fn::Sub": "${DataStackName}-DbSecretArn"}
+            - !If [HasEgressGw, {Name: AF_EGRESS_TOKEN, ValueFrom: !Ref EgressTokenSecretArn}, !Ref "AWS::NoValue"]
             - !If
               - HasGoogle
               - Name: GOOGLE_OAUTH_CLIENT_SECRET
@@ -1025,7 +1040,7 @@ Resources:
     DependsOn: Listener443
     Properties:
       ServiceName: !Sub "af-${AWS::StackName}-cp"
-      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      Cluster: !ImportValue {"Fn::Sub": "${PlatformStackName}-ClusterArn"}
       TaskDefinition: !Ref TaskDef
       DesiredCount: 1
       LaunchType: FARGATE
@@ -1033,7 +1048,7 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
-          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          Subnets: !Split [",", !ImportValue {"Fn::Sub": "${NetworkStackName}-PrivateSubnets"}]
           SecurityGroups:
             - Fn::ImportValue: !Sub "${NetworkStackName}-CpSgId"
       LoadBalancers:
@@ -1044,7 +1059,7 @@ Resources:
       # <service>.<namespace> once the stage-2 adapter creates them.
       ServiceConnectConfiguration:
         Enabled: true
-        Namespace: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceArn" }
+        Namespace: !ImportValue {"Fn::Sub": "${PlatformStackName}-NamespaceArn"}
 
   DnsRecord:
     Type: AWS::Route53::RecordSet

@@ -53,6 +53,8 @@ type config struct {
 	cookieSecret       []byte        // HMAC key for the signed session cookie
 	cookieSecure       bool          // Secure flag (true behind https Funnel)
 	sessionTTL         time.Duration // session cookie lifetime
+	legacyCookieUntil  time.Time     // with cookiePurposeKeys on: end of the window unlabelled cookies still verify
+	cookiePurposeKeys  bool          // AF_COOKIE_PURPOSE_KEYS: issue per-purpose labelled cookies (oauth.go)
 	allowEmails        map[string]bool
 	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
@@ -157,7 +159,7 @@ func main() {
 			os.Exit(2)
 		}
 		log.Printf("identity-email-check: %s", where)
-		rc := identitycheck.Print(context.Background(), st, os.Stdout)
+		rc := identitycheck.Print(context.Background(), st, os.Stdout, sanitizeUser)
 		st.Close()
 		os.Exit(rc)
 	}
@@ -170,11 +172,12 @@ func main() {
 		agentHost:   envx.Or("WS_AGENT_HOST", "127.0.0.1"),
 		memory:      envx.Or("WS_MEMORY", "1g"),
 		memMaxBytes: mustMemBytes(os.Getenv("AF_MAX_WORKSPACE_MEM")), // 0 = no extra hard ceiling
+		cpuMaxUnits: envx.Ceiling("AF_MAX_WORKSPACE_CPU", defaultMaxWorkspaceCPUUnits),
+		diskMaxGB:   envx.Ceiling("AF_MAX_WORKSPACE_DISK_GB", defaultMaxWorkspaceDiskGB),
 
 		sessionCmd:  os.Getenv("WS_SESSION_CMD"),        // empty => claude
 		extraEnv:    envx.SplitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		portBase:    portBase,
-		authMode:    envx.Or("AUTH", "dev"), // dev (fixed id) | proxy (oauth2-proxy header) | oauth (CP-native Google)
 		devUser:     envx.Or("DEV_USER", "dev"),
 		emailHeader: envx.Or("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
 		// P3-2: provisioning policy + deployment super-admins.
@@ -182,6 +185,12 @@ func main() {
 		superAdmins:   envx.EmailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
+	}
+	// dev (fixed id, no auth) | proxy (oauth2-proxy header) | oauth (CP-native login); no default (#3485).
+	var authErr error
+	if mgr.authMode, authErr = auth.ResolveMode(os.Getenv("AUTH"), envx.Or("AF_RUNTIME", "local"),
+		os.Getenv(auth.AllowInsecureDevAuthEnv), os.Getenv("PUBLIC_BASE_URL")); authErr != nil {
+		log.Fatalf("auth mode: %v", authErr)
 	}
 	// GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
 	// (docs/log/71 §71.5). The GitHub device flow moved into the CP, where the app can be
@@ -222,6 +231,13 @@ func main() {
 	if mgr.plaintextSecrets() {
 		log.Printf(plaintextSecretsLog, mgr.authMode)
 	}
+	mgr.weakMasterKey, mgr.weakCookieSecret = weakKeyChecks(mgr.authMode, os.Getenv("AF_MASTER_KEY"), os.Getenv("AF_COOKIE_SECRET"))
+	if mgr.weakMasterKey {
+		log.Printf(weakMasterKeyLog, mgr.authMode)
+	}
+	if mgr.weakCookieSecret {
+		log.Printf(weakCookieSecretLog, mgr.authMode)
+	}
 
 	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the
 	// tenant/user/workspace records. Migrate, ensure the default tenant, then
@@ -255,6 +271,12 @@ func main() {
 	}
 	reconcileSSMSignIns(ctx, st)
 	mgr.store = st
+	if len(mgr.master32) > 0 && mgr.custodian != nil {
+		mgr.plaintextSealed.init(st)
+		if n := mgr.plaintextSealed.count(); n > 0 {
+			log.Printf(plaintextSealedLog, n)
+		}
+	}
 	mgr.tenantLogin = newTenantLoginCache(st)
 	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built
 	// below, this set is read from the database on demand, so approving a subsidiary's
@@ -308,11 +330,19 @@ func main() {
 	}
 	mgr.rtFactory = rtFactory
 	mgr.nativeRuntime = rtProfile == "native" || rtProfile == "wsl"
+	if mgr.authDevInsecure() {
+		log.Print(authDevLog)
+	}
 	if mgr.efsBackupMissing = efsBackupMissing(rtProfile, os.Getenv("AF_EFS_BACKUP")); mgr.efsBackupMissing {
 		log.Print(efsBackupMissingLog)
 	}
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
+	if envBool("AF_COOKIE_PURPOSE_KEYS", false) {
+		log.Print("cookies: per-purpose keys on (AF_COOKIE_PURPOSE_KEYS)")
+	} else {
+		log.Print("cookies: single-key format; set AF_COOKIE_PURPOSE_KEYS=1 once every replica runs this version (guide/operate/04-secure.md)")
+	}
 	// Internal git provider: the clone host workspaces authenticate against is the
 	// public base's host (Caddy TLS terminus). Recorded on the manager so each
 	// workspace start injects a token for it (docs/reference/internal-git-provider).
@@ -344,6 +374,8 @@ func main() {
 		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
 		cookieSecure:       strings.HasPrefix(publicBaseURL, "https"),
 		sessionTTL:         envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour),
+		cookiePurposeKeys:  envBool("AF_COOKIE_PURPOSE_KEYS", false),
+		legacyCookieUntil:  time.Now().Add(max(envx.DurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour), previewSessionTTL)),
 		allowEmails:        envx.EmailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
 		allowDomains:       envx.DomainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
 		allowEmailsFile:    os.Getenv("AF_OAUTH_ALLOWED_EMAILS_FILE"),
@@ -502,8 +534,9 @@ func main() {
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
 	// session, so it's opt-in; enable per deployment once validated.
 	if iv := envx.DurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
-		go newClaudeAuditor(mgr, iv).run(context.Background())
-		log.Printf("claude-audit: sweeping transcripts every %s", iv)
+		full := os.Getenv("AF_CLAUDE_AUDIT_BASH_FULL") == "1"
+		go newClaudeAuditor(mgr, iv, full).run(context.Background())
+		log.Printf("claude-audit: sweeping transcripts every %s (bash command lines: %s)", iv, map[bool]string{false: "program name only", true: "masked first line"}[full])
 	}
 
 	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune
@@ -781,7 +814,8 @@ func logRequests(next http.Handler) http.Handler {
 // secretQueryKeys are query parameters that carry a credential wherever they appear: an
 // authorization code, a state, a client secret or a token. An app on a preview host receives
 // its OAuth callback (?code=…&state=…) on a path nobody here can predict, so the redaction is by
-// parameter name and not only by path.
+// parameter name and not only by path. The Agent keeps the same list (httpx.secretQueryKeys);
+// both are compared with scripts/fixtures/secret-query-keys.txt by their tests.
 var secretQueryKeys = map[string]bool{
 	"code": true, "state": true, "client_secret": true, "client_assertion": true,
 	"access_token": true, "id_token": true, "refresh_token": true, "token": true, "t": true,
@@ -789,17 +823,20 @@ var secretQueryKeys = map[string]bool{
 }
 
 // loggedURI is the request URI as the access log may record it. The whole query goes on an
-// OAuth or dev-IdP path; elsewhere only the credential-bearing parameters.
+// OAuth or dev-IdP path; elsewhere only the credential-bearing parameters. The path is
+// always the escaped form: a decoded path can carry control characters that split one log
+// entry into several, and this runs before authentication.
 func loggedURI(u *url.URL) string {
 	if u.RawQuery == "" {
 		return u.RequestURI()
 	}
+	ep := u.EscapedPath()
 	if strings.Contains(u.Path, "oauth") || u.Path == devIdPPath || strings.HasPrefix(u.Path, devIdPPath+"/") {
-		return u.Path + "?<redacted>"
+		return ep + "?<redacted>"
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-		return u.Path + "?<redacted>"
+		return ep + "?<redacted>"
 	}
 	hit := false
 	for k := range q {
@@ -808,10 +845,21 @@ func loggedURI(u *url.URL) string {
 			hit = true
 		}
 	}
+	// The preview entry routes carry the previewed app's own query inside "next"
+	// (redirectToSubdomain moves it there), so the top-level names above do not see it.
+	if u.Path == previewOwnOpenPath || u.Path == previewOpenPath {
+		// Every value, not the first: a repeated "next" must not smuggle one past the check.
+		for i, nx := range q["next"] {
+			if j := strings.Index(nx, "?"); j >= 0 {
+				q["next"][i] = nx[:j] + "?<redacted>"
+				hit = true
+			}
+		}
+	}
 	if !hit {
 		return u.RequestURI()
 	}
-	return u.Path + "?" + q.Encode()
+	return ep + "?" + q.Encode()
 }
 
 // statusWriter captures the response status for the access log.

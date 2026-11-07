@@ -4,17 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/egressallow"
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 )
 
 // egress-proxy subcommand (docs/log/20 M2): a small HTTP forward proxy the workspace
@@ -39,6 +43,10 @@ type proxyPolicy struct {
 type egressProxy struct {
 	cur   atomic.Pointer[proxyPolicy]
 	batch *egressBatcher
+	// dial and rt are nil in production. A test that needs a resolver of its own sets them,
+	// built on newEgressDialer so egressallow.ProxyDialControl is still the thing under test.
+	dial *net.Dialer
+	rt   *http.Transport
 }
 
 func runEgressProxy() {
@@ -137,23 +145,69 @@ func (p *egressProxy) decide(host string) bool {
 	return allowed || !pol.enforce
 }
 
-// internalEgressDest reports whether the destination resolves to an address no
-// workspace has a legitimate reason to reach THROUGH the proxy: loopback (the
-// proxy host itself), link-local (incl. the 169.254.169.254 cloud metadata
-// service), or unspecified. Denied even in log-only mode — log-only exists to
-// curate the public allowlist, not to expose the proxy host's own services.
+// internalEgressDest is a look-ahead for callers that judge a destination without
+// connecting (engine_ingest): true when any address the name resolves to is refused. It is
+// advisory; a connection that matters is checked by egressallow.ProxyDialControl at dial time.
 func internalEgressDest(host string) bool {
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return false // unresolvable: let the dial fail on its own
 	}
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if a, ok := netip.AddrFromSlice(ip); ok && egressallow.ProxyAddrRefused(a) {
 			return true
 		}
 	}
 	return false
 }
+
+// newEgressDialer builds the dialer the CONNECT path and the plain-HTTP transport share.
+func newEgressDialer() *net.Dialer {
+	return &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second, Control: egressallow.ProxyDialControl}
+}
+
+// newEgressTransport is the plain-HTTP upstream. Proxy is nil so the proxy's own
+// environment never chains it onward, and the dial goes through egressallow.ProxyDialControl.
+func newEgressTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 nil,
+		DialContext:           newEgressDialer().DialContext,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+}
+
+// upstreamFailed answers a failed upstream connect: 403 when egressallow.ProxyDialControl refused the
+// address, 502 otherwise.
+func upstreamFailed(w http.ResponseWriter, err error, msg string) {
+	if errors.Is(err, egressallow.ErrRefusedAddr) {
+		http.Error(w, egressallow.ErrRefusedAddr.Error(), http.StatusForbidden)
+		return
+	}
+	http.Error(w, msg, http.StatusBadGateway)
+}
+
+// dialer and transport return the test seam when set, else the process-wide default.
+func (p *egressProxy) dialer() *net.Dialer {
+	if p.dial != nil {
+		return p.dial
+	}
+	return defaultEgressDialer
+}
+
+func (p *egressProxy) transport() *http.Transport {
+	if p.rt != nil {
+		return p.rt
+	}
+	return defaultEgressTransport
+}
+
+var (
+	defaultEgressDialer    = newEgressDialer()
+	defaultEgressTransport = newEgressTransport()
+)
 
 // handleConnect tunnels an HTTPS CONNECT after the allow/log decision.
 func (p *egressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -161,13 +215,9 @@ func (p *egressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress blocked by policy", http.StatusForbidden)
 		return
 	}
-	if internalEgressDest(hostOnly(r.Host)) {
-		http.Error(w, "egress to an internal address is not allowed", http.StatusForbidden)
-		return
-	}
-	dst, err := net.DialTimeout("tcp", r.Host, 15*time.Second)
+	dst, err := p.dialer().DialContext(r.Context(), "tcp", r.Host)
 	if err != nil {
-		http.Error(w, "upstream dial failed", http.StatusBadGateway)
+		upstreamFailed(w, err, "upstream dial failed")
 		return
 	}
 	hj, ok := w.(http.Hijacker)
@@ -193,10 +243,6 @@ func (p *egressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress blocked by policy", http.StatusForbidden)
 		return
 	}
-	if internalEgressDest(hostOnly(r.Host)) {
-		http.Error(w, "egress to an internal address is not allowed", http.StatusForbidden)
-		return
-	}
 	r.RequestURI = ""
 	if r.URL.Scheme == "" {
 		r.URL.Scheme = "http"
@@ -204,9 +250,9 @@ func (p *egressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Host == "" {
 		r.URL.Host = r.Host
 	}
-	resp, err := http.DefaultTransport.RoundTrip(r)
+	resp, err := p.transport().RoundTrip(r)
 	if err != nil {
-		http.Error(w, "upstream error", http.StatusBadGateway)
+		upstreamFailed(w, err, "upstream error")
 		return
 	}
 	defer resp.Body.Close()

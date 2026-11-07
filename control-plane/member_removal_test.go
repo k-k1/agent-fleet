@@ -616,7 +616,7 @@ func TestSchedulerPauseRacingARestore(t *testing.T) {
 
 // hostPreviewCookie mints the af_pv cookie the handshake would have set for membershipID.
 func hostPreviewCookie(e *previewHostEnv, slug string, port int, membershipID string) *http.Cookie {
-	v := newPreviewHostAPI(e.cfg).sign(previewClaims{Slug: slug, Port: port, MembershipID: membershipID,
+	v := newPreviewHostAPI(e.cfg).sign(cookiePurposePreview, previewClaims{Slug: slug, Port: port, MembershipID: membershipID,
 		Exp: time.Now().Add(time.Hour).Unix()})
 	return &http.Cookie{Name: previewAuthCookie, Value: v}
 }

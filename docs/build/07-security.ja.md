@@ -177,6 +177,18 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
   [guide/ref/limits](../../guide/ref/limits.ja.md)。
 - **監査はしない**（通常の読み取りはしない、`proxy.go`）。一括の書き出しを監査すべきかは未決
   （decisions/0111 の状態行）。
+- **ハードリンクの検査は zip だけ。** 通常のファイル読み取り（`/fs/file`・`/fs/download`・
+  `/fs/imagesize`・サムネイルの先読み）はシンボリックリンクと通常ファイル以外を断るが、
+  `st_nlink > 1` は断**らない**: ハードリンクは作業ツリーでは普通にあり（パッケージマネージャのストア、
+  git オブジェクト）、断ると通常の閲覧が壊れる。拒否リストのファイルへのリンクは、同じ uid で動くコードなら
+  そのファイルを直接読めるので防御の上積みにしかならない。一括の書き出しだけ厳しい規則を保つのは、
+  人がファイルを 1 つずつ指名せずにフォルダ配下をすべて読む唯一の経路だから。
+- **変更系は拒否エントリの祖先も断る。** 名前変更（両端）・削除・mkdir・新規ファイル・アップロードは、
+  拒否エントリ・その子孫・**それを含むフォルダ**（`.config`・`.local`・`.local/share`・閲覧ルート）に
+  403 を返す。書かれたパスと、シンボリックリンク解決後のパスの両方で判定する（`fsWriteRefused`）。
+  アップロードと画像生成の `out_dir` はリンクになっている送り先フォルダも断る。アップロードは
+  `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` で開いたディレクトリ fd 経由で書き、生成した画像とそのサイドカーも
+  同じ: フォルダはジョブを積んだ時のパスを信用せず、画像を保存する時点で開く。
 
 ## 7.3 L1 Console 認証（AUTH 3 モード）
 
@@ -188,6 +200,11 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
 | `oauth` | **CP 自身が OIDC クライアント**（§7.3.1）。`/login`・`/login/{slug}`・`/oauth2/{login,callback,logout,link}` を CP が所有し、成功で署名 cookie（HMAC-SHA256・`AF_COOKIE_SECRET`・HttpOnly・SameSite=Lax・公開 URL が HTTPS なら Secure・TTL `AF_SESSION_TTL` 既定 168h）を発行。compose と AWS のテンプレートが設定するのはこれ | セルフホスト本命。エッジで HTTPS 前提 |
 | `proxy` | 上流ゲートウェイの email ヘッダ（`AUTH_EMAIL_HEADER`・既定 `X-Forwarded-Email`）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。ヘッダは消さないので、CP にはそのゲートウェイ経由でしか届かないこと | oauth2-proxy など既存ゲートの流用。**SAML IdP の正式な答えもこれ** — ブリッジする（[decisions/0043](../decisions/0043-login-idp.ja.md)）。AWS のテンプレートには無い |
 | `dev` | 固定ユーザー（`DEV_USER`・既定 `dev`）で、デプロイ管理者になる | ローカル開発のみ。**`AUTH` 未設定時の既定**。`native` はこれを要求する |
+
+**プロバイダ接続のコールバック**: Jira / Bitbucket の OAuth コールバック（`/api/oauth/{jira,bitbucket}/callback`）は
+ゲートの内側にある。開始時に開始者の identity と membership を記録し、コールバックは、セッションがその identity で、
+membership が有効で、そのテナントのログイン方式・接続元ルールを現在のセッションが満たすときだけコードを交換する。
+トークンはその membership の Workspace に入る。それ以外はエラー表示で何も保存しないので、本人としてサインインし直して接続し直す。
 
 **authGate の要点**（`oauth` モード）:
 
@@ -248,6 +265,39 @@ Cognito / GitLab が設定だけで載る（`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID
 - **id token の署名検証は行わない**（意図どおり）。認可コードフロー・client secret 付き・
   トークンエンドポイントから TLS 直受けのため。テナント id はそのペイロードから読む。
   **フロントチャネルの経路を足すなら JWKS 検証が必須**。JWT ライブラリ依存はゼロ。
+- **テナント定義 provider の issuer はテナント側の第三者**なので、CP は discovery 文書が
+  指す先を信用しない。issuer は `https` 必須（loopback の `http` は env 設定の provider だけ）。
+  テナント provider の issuer への通信（discovery・token・userinfo）は、dial 時に非公開宛先を
+  拒否し（`egressallow.AddrRefused`：gateway relay の広い範囲で private を含む。§7.8 の forward proxy が拒否する
+  loopback・link-local・未指定より広い）、リダイレクトを辿らないクライアントで行う。
+  authorization・token・userinfo の各 endpoint は `https` で、issuer の登録可能ドメイン
+  （Public Suffix 考慮）上にあること。issuer と endpoint でドメインが分かれる IdP ファミリー
+  （Google の `googleapis.com`、Cognito 既定の `amazoncognito.com`、Microsoft の userinfo 用
+  `graph.microsoft.com` とソブリンクラウドの相当ドメイン）を例外として組み込む。独自ドメインの
+  Cognito など endpoint が別の場所にある IdP は、運用者が `AF_TENANT_IDP_ENDPOINT_DOMAINS`
+  （CSV）にそのドメインを列挙して承認する。判断はテナントのフォームではなくデプロイ設定に置き、
+  スキーマ変更は要らない。それ以外はサインインが失敗してログに残る。保存時の pairwise 確認は
+  discovery の 1 項目を読むだけで endpoint を呼ばないため、endpoint の固定は掛けない。規則より前に作られて違反する行は削除も書き換えもしない：
+  保存・承認済みのまま、https でない issuer はボタンが隠れて警告ログ、issuer のサイト外の endpoint は
+  サインインが理由付きのログと共に失敗する。行（または IdP の discovery 文書）を直せば戻る。
+  env 設定の provider は変更なし。
+- **テナント行が申告したドメインは、デプロイ自身のものと突き合わせて表示する。** テナント間の
+  「1 ドメイン 1 テナント」検査に加え、承認画面（レジスタ、および super_admin が見るときのテナント
+  一覧）で、申告ドメインのうち `AF_OAUTH_ALLOWED_DOMAINS`・許可ファイルの `@domain` 行・env
+  provider 自身のドメイン一覧・`SUPER_ADMIN_EMAILS` のアドレスのドメインに含まれるものを、
+  どれに当たるかとともに示す。拒否ではなく警告で、保存せず読むたびに再計算する（行を変えなくても
+  デプロイ側の一覧は変わるため）。ゲートは super_admin の承認であり、共有ドメイン上の子会社が自前の
+  IdP を使うことは正当にありうる。同じ重なりは、保存と承認のときにテナントを持たないデプロイ全体の別の監査行として残す（読めるのは super_admin だけ）。テナント管理者には
+  デプロイのログインドメインが漏れるため見せない。
+- **認可コードフローは、開始したブラウザに結び付ける。** サインインごとに PKCE verifier
+  （RFC 7636、S256）と、OIDC で `openid` スコープがあるときは nonce を作り、どちらも署名済み
+  state cookie に持つ。authorize 要求に `code_challenge` と `nonce`、token 要求に `code_verifier`
+  を載せ、ID token に `nonce` があれば照合する（IdP が返さなくても拒否はしない）。コードが
+  別のブラウザに漏れても、そこでは引き換えられない。Google・env の OIDC・GitHub・テナント
+  定義の provider のすべてに適用する。`code_challenge` を拒否する IdP は provider ごとに
+  `AF_OIDC_<ID>_PKCE=off`（GitHub は `AF_GITHUB_PKCE=off`）で外せる。テナント行には外す手段は
+  ない。CP 更新時に進行中だったサインインの state cookie には verifier が無く、期限切れと同じ
+  「session」エラーでログイン画面に戻す。アカウント連携フローは対象外。
 
 **GitHub だけは専用アダプタ**（OIDC ではない）。許可は**独立した 2 つの門の AND**:
 
@@ -355,10 +405,25 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 ### 7.5.1 メンバー由来の印
 
 メンバー自身の Console からの要求だけを受け付けるべきルートには、CP が印を付ける
-（[decisions/0113](../decisions/0113-member-origin-mark.ja.md)）。現在はメンバー専用のメモリ書き込み
-`entries/pin`・`entries/revert`（忘れさせるも含む）・`entries/member-save`・`entries/project-move`（作業コピーを失った
-プロジェクトのメモリの移動、[decisions/0108](../decisions/0108-af-owned-agent-memory.ja.md) の 2026-10-14 の注）・
-`entries/purge`（履歴の消去、#1982）が対象。
+（[decisions/0113](../decisions/0113-member-origin-mark.ja.md)）。手書きの一覧はずれるので、この章はルートを
+列挙しない。正はコードで、3 か所ある。
+
+- `control-plane/relays*.go` の `sign` 付きのリレー行。
+- CP のハンドラが直接署名するもの（リレー経路以外の `memberOriginSign`：作業項目のコメントとマージ、
+  セッション引き継ぎの push）。
+- Agent 側では、`workspace/agent/routes.go` で `memberorigin.Require` の内側に登録されたルートと、
+  `PUT /env/ui-prefs` の条件付き検査（`ui_prefs.go`。メンバーの判断であるスイッチを入れる書き込みのときだけ印を求める）。
+
+両方のモジュールが突き合わせる、チェックイン済みの一覧は
+`workspace/agent/internal/memberorigin/signed_routes.txt` ひとつ
+（`control-plane` の `TestSignedRoutesMatchRelayRows`、`workspace/agent` の
+`TestSignedRoutesMatchRequireRegistrations`。2 つのモジュールは互いを import できないので、同じファイルをそれぞれが
+検査する）。片側だけ署名するルートがあれば、どちらかのテストが落ちる。
+
+**新しいルートに印が要るとき**：その操作がメンバー自身の判断で、セッションにやらせてはいけないとき。どのセッションも
+リレーと同じ `AGENT_TOKEN` を持つため。典型は、メンバーのメモリへの書き込み、メンバーの名前で成果を公開する操作、
+会話を外へ送るスイッチ。`sign` 付きのリレー行を足し（またはハンドラで署名し）、Agent のルートを
+`memberorigin.Require` で包み、一覧に 1 行足す。
 
 - **非対称にするのは、Agent がセッションに対して秘密を守れないから**（同じ uid、§7.2）。CP はトークン署名
   マスターから導出した Ed25519 鍵で署名し、Agent は公開鍵だけを持って起動する（`AF_MEMBER_ORIGIN_KEYS` と
@@ -372,10 +437,24 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 - **CP はブラウザが送った `X-AF-Member-Origin` をすべての中継（REST・SSE・プレビュー）で捨て**、列挙した
   ルートだけを、呼び手自身の Workspace に対してだけ署名する。REST と SSE ではすべての Cookie とゲートウェイの
   identity ヘッダーも捨てるので、メンバーのログイン Cookie は Workspace に届かない。
+- **中継するリクエストヘッダーは許可リスト**（`control-plane/internal/relayhdr`）で、拒否リストではない。
+  コンテンツネゴシエーション、条件付き・範囲リクエスト、WebSocket のハンドシェイク・Fetch Metadata・Client Hints（`Sec-WebSocket-*`・`Sec-Fetch-*`・`Sec-CH-*`）、
+  `X-Forwarded-Host` / `-Proto` / `-Prefix`、フレームワーク用の少数のヘッダー（`Next-*`・`Hx-*`・`Turbo-*`・
+  CSRF トークン）だけが Agent とプレビューのアプリに届き、前段のゲートウェイが足したもの（アクセストークン・
+  グループ・OIDC のヘッダーなど）は捨てる。捨てたヘッダーの名前（値は出さない）をプロセスごとに 1 回ログに出し
+  （`relay: dropped request header`）、アプリが必要とする名前は `AF_RELAY_EXTRA_HEADERS`（カンマ区切り、
+  末尾 `*` で接頭辞）で足せる。
 - **別のページのためには署名しない。** 署名の前に CP は `application/json`、送られていれば `Sec-Fetch-Site:
   same-origin`、送られていれば Console 自身のホストの `Origin` を求めるので、same-site のプレビューアプリが
-  ブラウザーに署名付きのメンバー書き込みをさせることはできない。パス形式のプレビューのアプリは Console の
+  ブラウザーに署名付きのメンバー書き込みをさせることはできない。JSON を受ける署名ハンドラーはどれもこの検査
+  （`memberOriginRequestCheck`）を自分で行い、`POST /api/session-handoff-offers`（先にプッシュする段）も
+  含むので、この保証はグローバルな書き込みゲートやその除外に依存しない（multipart のアップロードのルートは別形で、`multipart/form-data` と、プリフライトを
+  強いるカスタムヘッダー `X-AF-Console` を求め、`Sec-Fetch-Site` / `Origin` の検査は同じ）。パス形式のプレビューのアプリは Console の
   オリジンで動くのでこの検査の対象外で、制限は次の項目が担う。
+- **セッションの引き継ぎには Console でのメンバー操作が要る。** Console の「別のエージェントへ引き継ぐ…」は
+  オペレーターのチャットを開き、最初の依頼文は入力欄に入れるだけにする。元セッションの出力を読み
+  `create_session` に至りうるそのターンは、メンバーが送信を押したときに送られる。依頼文中の
+  「`create_session` の前に確認する」はモデルへのお願いで、同意の関門ではない。
 - **パス形式のプレビュー（`/preview/{port}/…`）。** `AF_PREVIEW_DOMAIN` があると CP はこれを配らない。
   GET/HEAD をサブドメイン形式の持ち主専用の入口 `/preview-open-own` へ 302 で返し（他のメソッドは 405）、Workspace の
   内容が Console のオリジンで応答することはない（decisions/0062 決定 7、2026-11-07 の追記）。ドメインが
@@ -393,9 +472,18 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   これらのルートで 503。印がない、または `AGENT_TOKEN` / `X-AF-Relay` だけなら 403。
 - **ローテーション**：Workspace は現在と次の鍵を持って起動するので、`AF_MEMBER_ORIGIN_KEY_VERSION` を 1 つ
   上げても直前の版で起動した Workspace はそのまま使える。再起動前に 2 回目を上げると使えない。
-- **限界**：署名するのはこの 3 ルートだけで、claude と muse の取り込みはまだ署名なしで作者をメンバーと記録
-  する（#2014）。印が決めるのは Agent のルートで、ストアのファイルではない（セッションは今も直接書ける）。強さは
-  CP のメンバー認証と同じ（`AUTH=dev` では何も足さない）。侵害された CP は対象外。
+- **限界**：
+  - **意図して署名していないメンバーの操作。** claude と muse のメモリ取り込みは、印なしで作者をメンバーと記録する
+    （#2014）。AWS の使用前確認の承認（`POST /aws-confirm/{id}/approve`）も署名していない。止めるのは不注意や
+    気づかない利用であり、突破しようとするセッションではない
+    （[decisions/0126](../decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.ja.md) の決めたこと 6、
+    `SECURITY.md` の「Known residual risks」）。
+  - **印が守るのはルートで、ファイルではない。** セッションは Agent の uid が書けるファイルを何でも書けるので、
+    ストアのファイルやほかの状態ファイルは対象外。`~/.config/agent-fleet/ui-prefs.json` がその一例で、
+    `PUT /env/ui-prefs` の印はルートを守るだけであり、ファイルを直接書き換えるセッションは止められない。
+    今このルートが守るスイッチはバックグラウンドのメモリレビュー（廃止は #3440）と Muse Code の contributor モード。
+    印が防ぐのはセッションがルートを使うことで、ファイルへの書き込みではない。
+  - 強さは CP のメンバー認証と同じ（`AUTH=dev` では何も足さない）。侵害された CP は対象外。
 
 ## 7.6 シークレット管理と封筒暗号
 
@@ -404,12 +492,18 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 
 | シークレット | 保管 | 露出範囲 |
 |-------------|------|----------|
-| git 資格情報とプロバイダのキー（GitHub・Bitbucket・Jira・opencode のプロバイダ・MCP の秘密など） | Workspace home の**暗号化ストア** `~/.config/agent-fleet/secrets.enc`（AES-256-GCM・0600） | 当該ユーザーのみ。git は資格情報ヘルパ（`workspace-agent cred`）が都度復号して stdout に出したものを読み、他のキーは必要なプロセスへ注入する。**平文ファイルを作らない** |
+| git 資格情報とプロバイダのキー（GitHub・Bitbucket・Jira・opencode のプロバイダなど） | Workspace home の**暗号化ストア** `~/.config/agent-fleet/secrets.enc`（AES-256-GCM・0600） | 当該ユーザーのみ。git は資格情報ヘルパ（`workspace-agent cred`）が都度復号して stdout に出したものを読み、他のキーは必要なプロセスへ注入する。**平文ファイルを作らない** |
+| メンバーの MCP サーバーの秘密（ヘッダと環境変数の値） | 暗号化ストア、**および各エージェント CLI 自身の設定ファイルへ平文（0600）で home 内に**（`workspace/agent/internal/mcpreg/materialize*.go`。CLI が読む必要があるため） | 当該ユーザーのみ。これらの設定ファイルは home のバックアップとスナップショットに入り、Workspace の DEK を捨てても消えない。MCP の秘密の保管は #1056 |
 | エージェント自身の資格情報ファイル | エージェントの設定ディレクトリ（home 外・ブラウザの範囲外、§7.2） | 当該ユーザーのみ |
 | システム秘密——ログインの client secret・マスター鍵（`AF_MASTER_KEY`）・cookie secret | git 管理外の env ファイル。AWS では `/af-cp/` 配下の SSM SecureString（DB パスワードは RDS 管理の secret） | CP のみ。**マスター鍵はデータ領域の外で保管し、バックアップに含めない**＝失えば crypto-shred |
 | テナントの秘密——テナント IdP や git OAuth アプリの client secret、MCP サーバーの資格情報 | DB（テナント鍵で封印） | CP のみ。UI へは返さない |
 | GitHub でサインイン中の人の access token | **プロセス内メモリのみ** | CP のみ。再起動で消え、その人は再ログインを求められる |
 | PAT | DB に SHA-256 ハッシュのみ | 平文は発行時 1 回だけ表示 |
+
+テナントの MCP サーバーのヘッダー値は、入力した宛先に結び付く。保存済みサーバーの URL が別のホストまたは
+ポートに変わるとき、または https から平文 http に下がるとき、マスクされた（`***`）値は保存行から補われず `mcp_header_secret_reenter` で拒否する
+（Console はフォーム上でその行を空にする）。編集の監査行には変更前後の URL を残す。client secret は
+同様に issuer と client id に結び付く。
 
 ⚠️ **`AF_MASTER_KEY` が無いと保管庫は平文になる。** マスター鍵が無ければ DEK も無く、agent は同じ
 保管庫を暗号化せずに `secrets.json` として書く。`AUTH=dev` ではそれが意図どおり。それ以外の `AUTH` では
@@ -441,11 +535,37 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   導いた鍵のまま）。ホームは Agent の報告で確認され、その後は導いた鍵を受け取らない。
   Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04・2026-10-10 追記）。
 
+### 7.6.1 master 鍵から導く鍵
+
+方針: master 鍵から導く**新しい**鍵は、専用のラベル（`af-<用途>/v<N>`）を `info` にした HKDF-SHA256（RFC 5869）で master から導き、同じ変更でこの一覧に加えます。鍵を用途をまたいで使い回さず、master のダイジェストそのものを鍵にしません。下の HMAC による導出は方針より前からあるもので、変えると守っているものが無効になるため、そのままにします。`AF_COOKIE_SECRET` は別の秘密で、用途ごとの cookie 鍵は `oauth.go`（`cookiePurpose`）にあります。
+
+| ラベル | 用途 |
+|---|---|
+| `af-kek:<keyRef>` | per-tenant KEK of the local custodian (`custodian.go`) |
+| `<userKey>` (no label) | legacy per-member DEK (`dek.go`, `legacyDEK`) |
+| `af-token-signing-root/v<N>` | token signing root at `AF_TOKEN_SIGN_VERSION` >= 1 (`bridge_epoch.go`); the master itself at version 0 |
+| `af-git-token-sign/v1` | git HTTP token (`git_http.go`) |
+| `af-git-oauth-token-sign/v1` | Git OAuth bridge token (`git_oauth_bridge.go`) |
+| `af-memo-token-sign/v1` | memo token (`memo_bridge.go`) |
+| `af-schedule-token-sign/v1` | schedule token (`schedule_bridge.go`) |
+| `af-mcp-token-sign/v1` | MCP token (`internal/mcpsrv/mcp_server_bridge.go`) |
+| `af-docs-token-sign/v1` | docs token (`docs_bridge.go`) |
+| `af-engine-token-sign/v1` | engine token (`engine_token.go`) |
+| `af-aws-profiles-token-sign/v1` | AWS profiles token (`aws_profiles_bridge.go`) |
+| `af-gcp-profiles-token-sign/v1` | GCP profiles token (`gcp_profiles_bridge.go`) |
+| `af-branch-rules-token-sign/v1` | branch rules token (`tenant_branch_rules.go`) |
+| `af-member-origin-sign/v<N>` | member-origin Ed25519 seed (`member_origin.go`) |
+
 ## 7.7 監査
 
 - 器は監査ログ（`audit_log`・[06](06-data.ja.md)）。actor の種類は user / admin / mcp / system、
   それに Claude 自身のツール呼び出しを転写から取り込むオプトイン（`AF_CLAUDE_AUDIT_INTERVAL`・
   既定オフ）の `claude`。
+  `Bash` 呼び出しの対象はプログラム名（`go test` のような素直なサブコマンドまで）だけで、引数は
+  記録しない（コマンドラインには資格情報が載るため）。`AF_CLAUDE_AUDIT_BASH_FULL=1` を設定すると
+  コマンドの 1 行目を記録するが、秘密らしい値（`NAME=value`、`Authorization` / `Bearer`、
+  `--token` / `--password` 系のフラグ、URL 内のパスワード、既知のトークン接頭辞）は `***` に
+  置き換える。マスクはベストエフォートなので、全行が要らないならオフのままにする。
 - **記録するのは変更・破壊操作だけ**で、読み取りの例外が 1 つ: メンバーのメモリを環境の外へ
   持ち出す唯一の経路 `GET /api/agents/memory/export`（対象は形式）。**ターミナルの生ストリームは
   保存しない**（秘密が混ざる）。proxy 層は対象を URL から取るが、`PUT /api/fs/file` だけは検証済みの
@@ -454,11 +574,19 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   記録し、**役割は呼び出し時に live で解決**）。
 - **取り消せない管理操作は依頼を先に記録する**（`store.BeginIrreversible`）: ホームのクリーン、
   ホームのバックアップ削除、ワークスペースの破棄、メンバーシップの除外と削除、テナントの削除、
+  メンバーシップの役割変更（`membership.role`・detail は `from=<旧> to=<新>`）、
   プールのスロット終了、エンジンのモデルの purge、テナントのサインイン方法（IdP）の削除、
   内蔵 git のリポジトリの削除と改名は、実行前に `<action>.requested` を書き、
   **書けなければ `503 audit_unavailable` で断る**。終わったら `<action>` に結果と応答したステータスを
   書く。結果の書き込みの失敗はログに出して返さない（操作は済んでおり、依頼の行が誰の依頼かを残す）。
   それ以外の監査の書き込みは、これまでどおり事後のベストエフォート。
+- 事後に記録する管理操作には `tenant.create`・`member.limits`・`tenant.slot_class`・`workspace.stop`
+  がある。PAT の失効は、トークンのメンバーシップのテナント（`pat.create` と同じテナント）の下に
+  `pat.revoke` として記録し、そのテナントの管理者に見える。identity がサインインできなくなったときの
+  自動失効は、失効した PAT（`pat.revoke`）と MCP OAuth の grant（`mcp.oauth.grant`）を 1 件ずつ、
+  actor の種類 `system`・理由を detail にして、失効と同じトランザクションで書く。
+  `TestAdminWriteRoutesAreClassified` はルート登録を構文木から読み、ハンドラがその action を持つ監査呼び出しに
+  到達しない admin の書き込みルートを（コメント付きの除外がない限り）落とす。
 - 読み取り: `GET /api/admin/audit` と Console。テナントと役割で絞る。
 
 ## 7.8 egress 統制 🚧
@@ -466,8 +594,15 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 実装済み:
 
 - **forward proxy**。同じバイナリのサブコマンド（`egress-proxy`・`AF_EGRESS_LISTEN` 既定 `:3128`）。
-  CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。loopback・link-local（クラウドの
-  メタデータのアドレスを含む）・未指定アドレスは、どのモードでも検査して拒否する設計である。
+  CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。内部宛先は log-only を含む
+  どのモードでも拒否する。検査は dial 自体に掛けた `net.Dialer.Control` フックで行い（CONNECT 経路と、
+  平文 HTTP 用の専用 transport が共用する）、名前を別に引き直した結果ではなく実際に接続する
+  アドレスを判定する。拒否するのは loopback（proxy ホスト自身）・link-local（クラウドの
+  メタデータのアドレスを含む）・未指定アドレスで、IPv4-mapped IPv6 アドレスは対応する IPv4
+  アドレスとして判定する（`egressallow.ProxyAddrRefused`）。private（RFC 1918・ユニークローカル）は
+  意図的に拒否しない：Workspace は proxy 経由で社内 Git・MCP・クラスタ内サービスへ届く。AWS gateway
+  relay とテナント定義 OIDC の issuer（§7.3.1）はより広い範囲（`egressallow.AddrRefused`：private・
+  共有アドレス空間などの非公開レンジ）を拒否する。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
   報告は at-least-once：proxy は 10 秒ごとに送信し（タイムアウト 10 秒・固定間隔・バックオフ

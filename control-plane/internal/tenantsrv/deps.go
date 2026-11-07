@@ -29,9 +29,11 @@ package tenantsrv
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/netip"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/errref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -94,6 +96,9 @@ type CP interface {
 	StartCleanHomeByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	StartDestroyWorkspaceByMembership(ctx context.Context, membershipID string, audit store.HomeOpAudit) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
+	// WorkspaceCeilings are the deployment's hard ceilings for a per-workspace CPU request
+	// (Fargate units) and working disk (GiB); 0 = none. SetUserLimit rejects above them.
+	WorkspaceCeilings() (cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)
 	// RotateGitToken bumps the membership's internal git token epoch, which kills the
@@ -244,7 +249,7 @@ type APIError struct {
 }
 
 func internalErr(err error) *APIError {
-	return &APIError{Status: http.StatusInternalServerError, Code: "internal", Message: err.Error()}
+	return &APIError{Status: http.StatusInternalServerError, Code: "internal", Message: errref.Message(errref.Log(err))}
 }
 
 // writeJSON / writeAPIErr mirror httpapi.go, exactly as internal/mcpsrv does. They
@@ -260,6 +265,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeAPIErr(w http.ResponseWriter, e *APIError) {
+	// A 5xx body may carry only a fixed message; the log keeps the status and code so the
+	// operator sees what was answered (internalErr logs the cause under the same ref).
+	if e.Status >= 500 {
+		log.Printf("api error %d %s: %q", e.Status, e.Code, e.Message)
+	}
 	writeJSON(w, e.Status, map[string]any{
 		"error": map[string]string{"code": e.Code, "message": e.Message},
 	})

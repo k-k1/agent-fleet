@@ -56,7 +56,7 @@ func (a Admin) TenantSlotClass(w http.ResponseWriter, r *http.Request) {
 // SetTenantSlotClass (PUT /api/admin/tenants/{slug}/slot-class {slot_class}).
 // "" clears it, i.e. back to the deployment default.
 func (a Admin) SetTenantSlotClass(w http.ResponseWriter, r *http.Request) {
-	_, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
+	caller, t, ok := a.cp.TenantAdminFor(w, r, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -84,6 +84,7 @@ func (a Admin) SetTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	prev := lim.SlotClass
 	lim.SlotClass = want
 	// Read-modify-write of the WHOLE blob: the tenant's quotas live in the same JSON
 	// and must survive a tenant_admin changing only the class. The encode happens on
@@ -97,6 +98,7 @@ func (a Admin) SetTenantSlotClass(w http.ResponseWriter, r *http.Request) {
 	// tenant has to go — otherwise the change reaches only members whose cache happened
 	// to be cold.
 	a.cp.EvictTenantCache(t.ID)
+	a.auditAdmin(r, t.ID, caller.ID, "tenant.slot_class", t.Slug, "from="+prev+" to="+want)
 	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "slot_class": want})
 }
 

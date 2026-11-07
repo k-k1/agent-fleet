@@ -143,7 +143,7 @@ func (s *SQL) SyncWorkspaceNotice(ctx context.Context, ws Workspace, kind string
 		}
 		for _, nt := range notes {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
-				VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, nt.EventID, nt.MembershipID,
+				VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(membership_id, event_id) DO NOTHING`, nt.EventID, nt.MembershipID,
 				nt.Kind, nt.TargetType, nt.TargetID, nt.TargetKind, nt.DisplayName, nt.Payload, nt.CreatedAt, nt.SeenAt); err != nil {
 				return err
 			}

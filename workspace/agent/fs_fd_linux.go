@@ -252,7 +252,9 @@ func mapFDOpenError(err error, operation string) *fsAPIError {
 }
 
 // openFDFile fixes the trusted root and resolved parent directory as fds, then
-// opens the final regular file without following any symlink component.
+// opens the final regular file without following any symlink component. O_NONBLOCK
+// keeps a FIFO swapped in after the lstat from blocking the open; the fstat below
+// then refuses it as not regular. Hard links are NOT refused here (docs/build/07-security.md 7.2.2).
 func openFDFile(path fdReadPath) (*openedFDFile, *fsAPIError) {
 	if path.browseRoot && isDenied(path.relative) {
 		return nil, fsErr(403, errCodeFSDenied, "file path is denied")
@@ -285,7 +287,7 @@ func openFDFile(path fdReadPath) (*openedFDFile, *fsAPIError) {
 		return nil, fsErr(404, errCodeFSNotFile, "target is not a regular file")
 	}
 
-	fileFD, err := openat2NoSymlinks(parentFD, base, unix.O_RDONLY|unix.O_NOFOLLOW)
+	fileFD, err := openat2NoSymlinks(parentFD, base, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK)
 	if err != nil {
 		out.close()
 		return nil, mapFDOpenError(err, "open target")
@@ -467,4 +469,110 @@ func atomicReplace(opened *openedFDFile, content []byte, mode uint32, ops fsAtom
 		}
 	}
 	return atomicWriteResult{renamed: true}
+}
+
+// uploadDir is a destination folder held as an fd, opened beneath the browse root with no
+// symlink anywhere on the way. Every name written through it lands in the folder the
+// denylist was judged against; a path string re-resolved per file could be pointed elsewhere
+// in between.
+type uploadDir struct {
+	rootFD int
+	dirFD  int
+}
+
+// openUploadDir opens rel (browse-root-relative, "" for the root itself) as a directory fd.
+// A symlinked component yields ELOOP, which the caller reports as a refusal. With create, a
+// missing folder is made one component at a time with mkdirat on the fd of its parent, so no
+// path string is ever re-resolved and a parent swapped for a link yields ELOOP before anything
+// is created.
+func openUploadDir(rel string, create bool) (*uploadDir, error) {
+	root, err := absoluteTrustedRoot(browseRoot())
+	if err != nil {
+		return nil, err
+	}
+	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	rel = strings.Trim(rel, "/")
+	if !create || rel == "" {
+		dirFD, err := openat2NoSymlinks(rootFD, rel, unix.O_RDONLY|unix.O_DIRECTORY)
+		if err != nil {
+			_ = unix.Close(rootFD)
+			return nil, err
+		}
+		return &uploadDir{rootFD: rootFD, dirFD: dirFD}, nil
+	}
+	cur, owned := rootFD, false
+	for _, comp := range strings.Split(rel, "/") {
+		next, err := openat2NoSymlinks(cur, comp, unix.O_RDONLY|unix.O_DIRECTORY)
+		if errors.Is(err, unix.ENOENT) {
+			if merr := unix.Mkdirat(cur, comp, 0o700); merr != nil && !errors.Is(merr, unix.EEXIST) {
+				err = merr
+			} else {
+				next, err = openat2NoSymlinks(cur, comp, unix.O_RDONLY|unix.O_DIRECTORY)
+			}
+		}
+		if owned {
+			_ = unix.Close(cur)
+		}
+		if err != nil {
+			_ = unix.Close(rootFD)
+			return nil, err
+		}
+		cur, owned = next, true
+	}
+	return &uploadDir{rootFD: rootFD, dirFD: cur}, nil
+}
+
+func (d *uploadDir) close() {
+	_ = unix.Close(d.dirFD)
+	_ = unix.Close(d.rootFD)
+}
+
+// exists reports whether name is present in the folder, without following a symlink.
+func (d *uploadDir) exists(name string) bool {
+	var st unix.Stat_t
+	return unix.Fstatat(d.dirFD, name, &st, unix.AT_SYMLINK_NOFOLLOW) == nil
+}
+
+// closeTemp is a seam so a test can make the close of a finished temp file fail.
+var closeTemp = func(f *os.File) error { return f.Close() }
+
+var errUploadTooLarge = errors.New("upload exceeds the size cap")
+var errUploadExists = errors.New("destination exists")
+
+// store copies src (at most max bytes) into a temp file in the folder and renames it to name.
+// Without overwrite the rename refuses to replace anything (RENAME_NOREPLACE), so a file that
+// appeared after the caller's existence check is reported as errUploadExists, not clobbered.
+func (d *uploadDir) store(name string, src io.Reader, max int64, overwrite bool) error {
+	tmp, tmpName, err := createTempAt(d.dirFD)
+	if err != nil {
+		return err
+	}
+	n, err := io.Copy(tmp, io.LimitReader(src, max+1))
+	// A copy failure wins; otherwise a failed close (a delayed write error) is a failed store.
+	if cerr := closeTemp(tmp); err == nil {
+		err = cerr
+	}
+	if err == nil && n > max {
+		err = errUploadTooLarge
+	}
+	if err != nil {
+		_ = unix.Unlinkat(d.dirFD, tmpName, 0)
+		return err
+	}
+	if overwrite {
+		err = unix.Renameat(d.dirFD, tmpName, d.dirFD, name)
+	} else {
+		err = unix.Renameat2(d.dirFD, tmpName, d.dirFD, name, unix.RENAME_NOREPLACE)
+	}
+	if err != nil {
+		_ = unix.Unlinkat(d.dirFD, tmpName, 0)
+		if errors.Is(err, unix.EEXIST) {
+			return errUploadExists
+		}
+		return err
+	}
+	return nil
 }

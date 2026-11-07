@@ -19,8 +19,18 @@ export const admin = {
   "admin.forbidden": "権限がありません（super_admin のみ）。",
   "admin.deploy_warn_plaintext_secrets":
     "この配備にはマスターキー（AF_MASTER_KEY）がありません。メンバーが保存した認証情報（git のトークン・Claude のトークン・API キー・MCP やチャット連携の接続情報）は、各ホームに暗号化されずに置かれています。Control Plane の環境変数にキーを設定して再起動し、既存のワークスペースをすべて停止してから起動し直してください（動いたままのものはまだ鍵を持ちません）。そのあとでメンバーが保存していた認証情報をつなぎ直します。暗号化されていない古いファイルは削除するまで各ホームとバックアップに残るので、削除してその認証情報をローテーションしてください。",
+  "admin.deploy_warn_weak_master_key":
+    "AF_MASTER_KEY が 32 バイト未満（または同じパターンの繰り返し）です。封じられたすべての値とメンバーごとの資格情報ストアの鍵がここから導かれるため、選んだ値の強さが上限になります。`head -c 32 /dev/urandom | base64` で新しく生成してください。ただし先に段取りを: 稼働中の配備で変えると、古い値で封じたものが読めなくなります（「保存時の鍵」の章を参照）。後のリリースでは、この値での起動を拒否します。",
+  "admin.deploy_warn_weak_cookie_secret":
+    "AF_COOKIE_SECRET が 32 バイト未満（または同じパターンの繰り返し）です。セッション・サインイン・プレビューの cookie がこの値で署名されます。`head -c 32 /dev/urandom | base64` で新しく生成して設定し、Control Plane を再起動してください。全員が一度サインインし直します。後のリリースでは、この値での起動を拒否します。",
+  "admin.deploy_warn_plaintext_sealed":
+    "マスターキーは設定されていますが、それより前に書かれた保存値（サインイン・Git OAuth のクライアントシークレット、MCP のヘッダー、エンジンのトークン、ハンドオフ、受信箱のメッセージ）が、まだ暗号化されていません。配備のデータベースに対して `af-cp rewrap-keys --seal-plaintext` を実行し、それらの秘密を発行元でもローテーションしてください（データベースとバックアップから読める状態だったため）。実行の数分後にこの通知は消えます。",
+  "admin.deploy_warn_auth_dev":
+    "この配備は AUTH=dev（AF_ALLOW_INSECURE_DEV_AUTH=1）で動いています。サインインはなく、すべてのリクエストが固定の super_admin として扱われます。この Control Plane に届く人は誰でも、すべてのワークスペースを操作できます。自分だけが届くマシンでのみ使い、共有するなら AUTH=oauth か AUTH=proxy にして再起動してください。",
   "admin.deploy_warn_efs_backup_missing":
     "この配備はメンバーのデータを EFS に保持（Persistence=retain）していますが、データスタックに日次の EFS バックアップがありません。バックアップのボールトとプランは 0.26.0 で加わったもので、他のスタックを更新しても作られません。ホームと Claude の状態は、削除や破損から守られていません。EfsBackup* の 4 リソースだけを追加する変更セットでデータスタックを更新し（ECS 配備手順書の EFS バックアップの節を参照）、そのあと update.sh を実行し直すとこの通知は消えます。",
+  "admin.deploy_warn_mcp_oauth_reg_cap":
+    "MCP OAuth の動的クライアント登録が、直近 24 時間に配備全体の上限に達しました。空きを作るため、未使用の登録を古いものから削除しています（接続のあるクライアントは削除されません）。登録にはサインインが要らないため、大量登録されているか、配備が上限を超えて成長したかのどちらかです。アクセスログで送信元を確認してください。未使用の登録は 24 時間でも失効します。",
   "admin.mode_sessions": "セッション",
   "admin.mode_usage": "稼働時間",
   "admin.mode_audit": "監査",
@@ -110,6 +120,7 @@ export const admin = {
   "admin.mcp_oauth_secret_hint":
     "confidential クライアントのときだけ入力します。シークレットは暗号化して保存され、Agent Fleet のコントロールプレーンの外には出ません。トークンの要求はコントロールプレーンが行うので、コントロールプレーンから認可サーバーに到達できる必要があります。public クライアントなら空のままにしてください。",
   "admin.mcp_oauth_secret_drop": "保存したシークレットを削除する",
+  "admin.mcp_headers_host_moved": "URL が別のホストを指しているため、保存済みのヘッダー値を消しました。新しいホスト向けの値を入力し直してください。",
   "admin.mcp_oauth_secret_reenter": "issuer かクライアント ID を変えたので、保存したシークレットは使えません。シークレットを入力し直すか、削除して public クライアントにしてください。",
   "admin.mcp_oauth_note":
     "資格情報は配布しません。各メンバーが「設定 > 接続 > MCP サーバー（セッションで使う）」から自分のアカウントでサインインし、サインインした人のセッションにだけこのサーバーが届きます。",
@@ -633,6 +644,9 @@ export const admin = {
     "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
     "ワークスペース・home・保存済みの認証情報は残ります。",
   "admin.idp_register": "テナント定義のサインイン方法",
+  "admin.idp_domain_overlap": "このサインイン方式が申告したドメインは、デプロイ自体のログインドメインと重なっています。承認前に確認してください:",
+  "admin.idp_overlap_login_domains": "デプロイのログイン許可",
+  "admin.idp_overlap_super_admin": "デプロイ管理者のドメイン",
   "admin.idp_pending_count": "承認待ち {n} 件",
   "admin.idp_register_none": "テナントが定義したサインイン方法はまだありません。",
   "admin.idp_register_hint":
@@ -940,8 +954,9 @@ export const admin = {
   "clean.reason_hint.cache_partial": "件数が多いため上限まで点検した分だけが対象です。削除後にもう一度点検すると残りが出ます。元に戻せません",
   "admin.mode_mcp_trusted": "MCP ログイン許可ホスト",
   "admin.mcptrust_title": "信頼する MCP クライアントのホスト",
-  "admin.mcptrust_note": "この環境の /mcp に MCP クライアントが OAuth で接続するとき、サインイン後のリダイレクトを受け取れるホスト、およびクライアントメタデータを配信できるホストです。ホスト名の完全一致のみ（スキーム・ポート・パス・ワイルドカードは不可）で、ループバックのクライアントは常に許可されます。別の Agent Fleet 環境からこの環境の /mcp にサインインさせたいときは、そのホストをここに追加してください。変更は次のリクエストから反映され、再起動は不要です。",
-  "admin.mcptrust_hosts": "ホスト（1 行に 1 つ）",
+  "admin.mcptrust_note": "この環境の /mcp に MCP クライアントが OAuth で接続するとき、サインイン後のリダイレクトを受け取れるホスト、およびクライアントメタデータを配信できるホストです。1 行に 1 つ、ホスト名の完全一致（そのホストのどのパスも許可）か、https://example.com/oauth/callback のような https の URL プレフィックス（そのパスとその下のパスだけを許可）を書きます。ポート・クエリ・ワイルドカードは不可です。ホスト名だけだとそのホストの全パスを信頼し、第三者が管理するパスも含まれるため、URL プレフィックスを推奨します。ループバックのクライアントは常に許可されます。別の Agent Fleet 環境からこの環境の /mcp にサインインさせたいときは、そのホストをここに追加してください。変更は次のリクエストから反映され、再起動は不要です。",
+  "admin.mcptrust_hosts": "ホストまたは URL プレフィックス（1 行に 1 つ）",
+  "admin.mcptrust_host_only_warn": "次の項目はホストの全パスを信頼するため、そのホストのどこかのパスを管理できる人が、登録したクライアントを受け入れさせられます: {hosts}。クライアントのコールバックパスが分かる場合は、URL プレフィックス（https://host/path）に置き換えてください。",
   "admin.mcptrust_source_admin": "適用中: ここで保存した一覧。",
   "admin.mcptrust_source_env": "適用中: Control Plane の環境変数 AF_MCP_OAUTH_TRUSTED_HOSTS（ここには何も保存されていません）。",
   "admin.mcptrust_source_default": "適用中: 組み込みの既定値（ここには何も保存されておらず、AF_MCP_OAUTH_TRUSTED_HOSTS も未設定です）。",

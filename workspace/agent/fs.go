@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path"
@@ -15,8 +14,11 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/filemeta"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -160,6 +162,53 @@ func isDenied(rel string) bool {
 	return false
 }
 
+// isDeniedOrAncestor extends isDenied to the folders that CONTAIN a denied entry (".config",
+// ".local", ".local/share", and the browse root itself). Reads keep isDenied: listing ".config"
+// is fine, its denied child simply does not appear. Writes need the wider rule, because moving or
+// removing an ancestor carries the denied entry with it, out from under the denylist.
+func isDeniedOrAncestor(rel string) bool {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	if rel == "" || rel == "." || isDenied(rel) {
+		return true
+	}
+	for d := range fsDeny {
+		if strings.HasPrefix(d, rel+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// fsWriteRefused is the extra gate every mutating handler applies after the ordinary path checks:
+// neither the spelled path nor the path AFTER symlink resolution may be a denied entry, its
+// descendant or its ancestor. The resolved form is what stops an alias (alias -> .local) from
+// reaching an ancestor that the spelled path does not name.
+//
+// allowRoot admits a destination folder that IS the browse root, but only when it is spelled that
+// way (rel == ""). A symlinked folder that merely resolves to the root is refused: the caller
+// would judge the files written there by names that no longer say where they land.
+func fsWriteRefused(full, rel string, allowRoot bool) bool {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	if rel == "" && !allowRoot {
+		return true
+	}
+	if rel != "" && isDeniedOrAncestor(rel) {
+		return true
+	}
+	resolved, ok := pathguard.ResolveUnder(full, browseRoot())
+	if !ok {
+		return true
+	}
+	resolved = filepath.ToSlash(resolved)
+	if resolved == "." {
+		return !(allowRoot && rel == "")
+	}
+	return isDeniedOrAncestor(resolved)
+}
+
+// writeRefusedMsg is the 403 the Console already renders for a refused mutation.
+const writeRefusedMsg = "this path is protected and cannot be changed"
+
 // safeBrowsePath resolves a query path to an absolute file the browser may serve, plus a
 // display path. Two forms are accepted:
 //   - browse-root-relative (no leading slash): the form the Console's file tree and FileView
@@ -237,6 +286,45 @@ func safeWritableBrowsePath(p string) (full, rel string, ok bool) {
 	}
 	return safeBrowsePath(p)
 }
+
+// safeWritableResolvedBrowsePath is the gate for a folder something will WRITE into on its own
+// (imagegen's out_dir): the writable path rules plus the checks the upload route applies — the
+// path as it resolves through symlinks stays inside the browse root, and neither spelling is a
+// denied entry, its descendant or its ancestor. A folder that does not exist yet is judged by
+// its nearest existing parent.
+func safeWritableResolvedBrowsePath(p string) (full, rel string, ok bool) {
+	full, rel, ok = safeWritableBrowsePath(p)
+	if !ok || !fsResolvedOK(full) || fsWriteRefused(full, rel, true) {
+		return "", "", false
+	}
+	// No symlink on the way: the folder is later written through an fd opened without following
+	// one, so a link that merely points at an ordinary folder is refused here as well.
+	if resolved, rok := pathguard.ResolveUnder(full, browseRoot()); !rok || filepath.ToSlash(resolved) != strings.Trim(filepath.ToSlash(rel), "/") {
+		return "", "", false
+	}
+	return full, rel, true
+}
+
+// openOutDirSink is imagegen.BrowseOpenDir: the gate again, then the folder as an fd.
+func openOutDirSink(rel string) (imagegen.DirSink, error) {
+	_, rel, ok := safeWritableResolvedBrowsePath(rel)
+	if !ok || rel == "" {
+		return nil, errors.New("out_dir is not a folder this workspace may write to")
+	}
+	d, err := openUploadDir(rel, true)
+	if err != nil {
+		return nil, errors.New("out_dir is not a folder this workspace may write to")
+	}
+	return outDirSink{d}, nil
+}
+
+type outDirSink struct{ d *uploadDir }
+
+func (s outDirSink) WriteFile(name string, data []byte) error {
+	return s.d.store(name, bytes.NewReader(data), int64(len(data)), true)
+}
+
+func (s outDirSink) Close() error { s.d.close(); return nil }
 
 type fsEntry struct {
 	Name string `json:"name"`
@@ -344,8 +432,8 @@ func peekDir(full, rel string, mod time.Time) peekResult {
 	for _, e := range ents {
 		// filemeta is the single axis for "is this an image" (decision 3), and it also leaves
 		// out imagegen's half-written ".image-*" temporaries, which carry no extension.
-		if e.IsDir() || filemeta.ImageContentType(e.Name()) == "" {
-			continue
+		if !e.Type().IsRegular() || filemeta.ImageContentType(e.Name()) == "" {
+			continue // a link or special file is never counted or offered as a cover
 		}
 		if isDenied(filepath.Join(rel, e.Name())) {
 			continue
@@ -513,19 +601,28 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
-	switch fi, err := os.Stat(dirFull); {
-	case err == nil && !fi.IsDir():
-		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
-		return
-	case errors.Is(err, fs.ErrNotExist):
-		if err := os.MkdirAll(dirFull, 0o700); err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", "could not create "+dirRel)
-			return
-		}
-	case err != nil:
-		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+	if fsWriteRefused(dirFull, dirRel, true) {
+		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
+	// Opened (and, when missing, created component by component) through fds with no symlink on
+	// the way, so a folder that is or became a link is refused before anything is created or
+	// written in a place the denylist was not judged against.
+	dir, err := openUploadDir(dirRel, true)
+	if err != nil {
+		switch {
+		case errors.Is(err, unix.ELOOP) || errors.Is(err, unix.EXDEV):
+			httpx.WriteErr(w, http.StatusForbidden, "denied", "symlinked destination folders are not allowed")
+		case errors.Is(err, unix.ENOTDIR):
+			httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+		case errors.Is(err, unix.EACCES), errors.Is(err, unix.EPERM), errors.Is(err, unix.EROFS):
+			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", "could not create "+dirRel)
+		default:
+			httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+		}
+		return
+	}
+	defer dir.close()
 	overwrite := r.URL.Query().Get("overwrite") == "1"
 	max := maxUploadBytes()
 	mr, err := r.MultipartReader()
@@ -552,37 +649,26 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid filename")
 			return
 		}
-		if isDenied(filepath.Join(dirRel, name)) {
+		if isDeniedOrAncestor(filepath.Join(dirRel, name)) {
 			httpx.WriteErr(w, http.StatusForbidden, "denied", "destination not allowed")
 			return
 		}
-		destFull := filepath.Join(dirFull, name)
-		if _, err := os.Stat(destFull); err == nil && !overwrite {
+		if !overwrite && dir.exists(name) {
 			conflicts = append(conflicts, name)
 			continue
 		}
-		tmp, err := os.CreateTemp(dirFull, ".upload-*")
-		if err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		switch err := dir.store(name, part, max, overwrite); {
+		case err == nil:
+			written = append(written, name)
+		case errors.Is(err, errUploadExists):
+			conflicts = append(conflicts, name)
+		case errors.Is(err, errUploadTooLarge):
+			httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds AF_UPLOAD_MAX")
+			return
+		default:
+			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
 			return
 		}
-		n, err := io.Copy(tmp, io.LimitReader(part, max+1))
-		_ = tmp.Close()
-		if err != nil || n > max {
-			_ = os.Remove(tmp.Name())
-			if n > max {
-				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds AF_UPLOAD_MAX")
-			} else {
-				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
-			}
-			return
-		}
-		if err := os.Rename(tmp.Name(), destFull); err != nil {
-			_ = os.Remove(tmp.Name())
-			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
-			return
-		}
-		written = append(written, name)
 	}
 	if len(conflicts) > 0 && !overwrite {
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
@@ -597,6 +683,10 @@ func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if fsWriteRefused(full, rel, false) {
+		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
 	if _, err := os.Stat(full); err == nil {
@@ -615,6 +705,10 @@ func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if fsWriteRefused(full, rel, false) {
+		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
 	f, err := os.OpenFile(full, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
@@ -640,6 +734,10 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
+	if fsWriteRefused(srcFull, srcRel, false) || fsWriteRefused(dstFull, dstRel, false) {
+		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
+		return
+	}
 	if _, err := os.Stat(srcFull); err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such path: "+srcRel)
 		return
@@ -661,6 +759,10 @@ func handleFSDelete(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" || !fsResolvedOK(full) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if fsWriteRefused(full, rel, false) {
+		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
 	if _, err := os.Stat(full); err != nil {

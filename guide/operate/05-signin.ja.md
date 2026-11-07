@@ -21,7 +21,7 @@ source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプト�
 
 ## 0. はじめる前に
 
-- **OAuth/OIDC のフローは Control Plane 自身が実行します**（`AUTH=oauth`・既定）。有効にする
+- **OAuth/OIDC のフローは Control Plane 自身が実行します**（`AUTH=oauth`・推奨。`AUTH` に既定値はなく、必ず設定します）。有効にする
   IdP ごとに、client secret を持つ**機密クライアント**が必要です。
 - **複数を同時に有効にできます。** サインイン画面には有効な方式の数だけボタンが出ます。順番は
   Google が先頭、次に列挙した順の OIDC provider、GitHub が最後です。
@@ -179,6 +179,9 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
   `AF_OIDC_ENTRA_PROMPT`（既定 `select_account`。`none` にするとパラメータ自体を送らないので、
   受け付けない IdP に使えます）。`AF_OIDC_ENTRA_ALLOWED_EMAILS` / `_ALLOWED_DOMAINS` はこの
   provider だけの許可リストで、設定すると配備共通の許可リストに**足すのではなく置き換えます**。
+- PKCE はすべての provider で有効です。`code_challenge` / `code_verifier` を受け付けない IdP には
+  `AF_OIDC_ENTRA_PKCE=off`（GitHub は `AF_GITHUB_PKCE=off`）で送信をやめられます。既定が安全側
+  なので、更新後に認可の段階でサインインが失敗する場合だけ設定してください。
 
 CP は `<issuer>/.well-known/openid-configuration` を、このボタンで最初にサインインされた
 ときに読みます（24 時間キャッシュします）。したがって issuer の誤りは起動時には出ず、最初に

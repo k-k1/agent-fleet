@@ -228,14 +228,23 @@ func LogRequests(next http.Handler) http.Handler {
 //
 // The key after "sessions-idempotency" is replaced the same way: a handoff launch's key
 // carries the recipient's take token (issue #2040).
+//
+// The query of a preview relay request (/proxy/{port}/…) belongs to the app being previewed
+// (OAuth callbacks, reset links) and is never logged. Elsewhere the parameters named in
+// secretQueryKeys are redacted by name.
 func LogURI(u *url.URL) string {
 	p := u.EscapedPath()
 	segs := strings.Split(p, "/")
+	// Classify by the decoded path (the mux matches on it: /pr%6fxy/ reaches the preview
+	// relay) and print the escaped one.
+	dsegs := strings.Split(u.Path, "/")
 	login := false
-	for i, s := range segs {
+	for _, s := range dsegs {
 		if s == "aws-login" || s == "gcp-login" {
 			login = true
 		}
+	}
+	for i, s := range segs {
 		if (s == "attempts" || s == "sessions-idempotency") && i+1 < len(segs) && segs[i+1] != "" {
 			sum := sha256.Sum256([]byte(segs[i+1]))
 			segs[i+1] = "ref:" + hex.EncodeToString(sum[:4])
@@ -246,7 +255,40 @@ func LogURI(u *url.URL) string {
 		if login {
 			return p + "?…"
 		}
-		return p + "?" + u.RawQuery
+		if len(dsegs) > 1 && dsegs[1] == "proxy" {
+			return p + "?<redacted>"
+		}
+		return p + "?" + redactQuery(u.RawQuery)
 	}
 	return p
+}
+
+// secretQueryKeys are query parameters that carry a credential wherever they appear.
+// The control plane keeps the same list (secretQueryKeys in control-plane/main.go); the
+// two modules cannot import each other, so both tests compare their list with
+// scripts/fixtures/secret-query-keys.txt.
+var secretQueryKeys = map[string]bool{
+	"code": true, "state": true, "client_secret": true, "client_assertion": true,
+	"access_token": true, "id_token": true, "refresh_token": true, "token": true, "t": true,
+	"code_verifier": true, "session_state": true,
+}
+
+// redactQuery masks the value of every credential-named parameter. A query that does not
+// parse is dropped whole: when in doubt, redact.
+func redactQuery(raw string) string {
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return "<redacted>"
+	}
+	hit := false
+	for k := range q {
+		if secretQueryKeys[strings.ToLower(k)] {
+			q.Set(k, "<redacted>")
+			hit = true
+		}
+	}
+	if !hit {
+		return raw
+	}
+	return q.Encode()
 }

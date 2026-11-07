@@ -1857,7 +1857,10 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       expect(workItemDetail).toHaveBeenCalledWith({ provider: "github", key: "acme/web#7", kind: "" });
       expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("Crash on save");
       expect(modal.querySelector(".wi-dot")?.className).toContain("tone-merged");
-      expect(modal.textContent).toContain(t("wi.detail_merge_merged"));
+      expect(modal.querySelector(".wi-dstate")?.className).toContain("tone-purple");
+      expect(modal.querySelector(".wi-dstate")?.textContent).toBe(t("wi.detail_merge_merged"));
+      // The State name is still announced in front of the pill.
+      expect(modal.querySelector(".wi-dstatebar")?.textContent).toBe(t("wi.detail_state") + t("wi.detail_merge_merged"));
       expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref", { name: "GitHub" }));
       expect(modal.querySelector(".wi-dref")).toBeNull();
     });
@@ -1875,14 +1878,17 @@ describe("WorkItemModalHost — opened from a ticket link outside the rail (#165
       expect(workItemDetail).toHaveBeenCalledWith({ provider: "jira", key: "PROJ-12", kind: "" });
       expect(modal.querySelector(".wi-dtitle")?.textContent).toBe("Fix login");
       expect(modal.textContent).toContain(t("wi.detail_live_fresh_ref", { name: "Jira" }));
-      expect(modal.textContent).toContain(t("wi.state_done"));
+      expect(modal.querySelector(".wi-dstate")?.textContent).toBe(t("wi.state_done"));
+      expect(modal.querySelector(".wi-dstate")?.className).toContain("tone-green");
       expect(modal.textContent).not.toContain(t("wi.state_closed_completed"));
     });
 
     it("tells a closed pull request from a merged one", async () => {
       workItemDetail.mockResolvedValue(live({ kind: "pr", merged: false }));
       const modal = await openRef();
-      expect(modal.querySelector(".wi-dfacts dd")?.textContent).toBe(t("wi.state_closed"));
+      const pill = modal.querySelector(".wi-dstate");
+      expect(pill?.textContent).toBe(t("wi.state_closed"));
+      expect(pill?.className).toContain("tone-red");
       expect(modal.querySelector(".wi-dot")?.className).not.toContain("tone-merged");
     });
 

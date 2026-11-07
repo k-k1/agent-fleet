@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/errref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -34,6 +35,9 @@ type manager struct {
 	// mcpOAuthServed: the /mcp authorization server is on (set once at route registration),
 	// which authGate reads to answer 404 instead of a login redirect while it is off.
 	mcpOAuthServed atomic.Bool
+	// mcpOAuthCapHitAt is when (unix seconds, 0 = never) a registration last met the client cap,
+	// by evicting an unused one or being refused. This replica only; deploymentWarnings reads it.
+	mcpOAuthCapHitAt atomic.Int64
 	// mcpCalls: recent /mcp calls per PAT / grant, this replica only (mcpsrv/mcp_calls.go).
 	mcpCalls mcpsrv.CallLog
 
@@ -95,6 +99,13 @@ type manager struct {
 	// master_key_guard.go) and only ever true on an ECS runtime.
 	efsBackupMissing bool
 
+	// weakMasterKey / weakCookieSecret are set at boot by weakKeyChecks (master_key_guard.go).
+	weakMasterKey, weakCookieSecret bool
+
+	// plaintextSealed counts sealed values stored unsealed (empty key_ref) while a master key
+	// is configured; see plaintext_sealed.go.
+	plaintextSealed plaintextSealedState
+
 	// template fields shared by every runtime
 	image    string
 	dataRoot string
@@ -112,6 +123,12 @@ type manager struct {
 	// per-user mem_limit on top of the per-tenant cap so no single workspace can be
 	// sized past what the shared host can bear. See resolveWorkspaceMemBytes.
 	memMaxBytes int64
+	// cpuMaxUnits and diskMaxGB are the deployment-wide ceilings for a per-workspace CPU
+	// request (Fargate units, 1024 = 1 vCPU) and working disk (GiB), the same shape as
+	// memMaxBytes: 0 = no ceiling, which is what a manager built without them has. main.go
+	// fills them from AF_MAX_WORKSPACE_CPU / AF_MAX_WORKSPACE_DISK_GB.
+	cpuMaxUnits int
+	diskMaxGB   int
 	sessionCmd  string
 	extraEnv    []string
 	// egressProxyEnv is the part of extraEnv that AF_EGRESS_PROXY_ADDR generated.
@@ -225,7 +242,7 @@ type apiError struct {
 }
 
 func internalErr(err error) *apiError {
-	return &apiError{status: http.StatusInternalServerError, code: "internal", message: err.Error()}
+	return &apiError{status: http.StatusInternalServerError, code: "internal", message: errref.Message(errref.Log(err))}
 }
 
 // membershipErr is internalErr for an EnsureMembership failure, except the store's
@@ -325,3 +342,20 @@ func (m *manager) evictAllMembershipCaches() {
 	defer m.mu.Unlock()
 	m.rts = map[string]cachedRT{}
 }
+
+// Defaults for the CPU and disk ceilings, the counterparts of AF_MAX_WORKSPACE_MEM. Without
+// them a tenant administrator could save any number, and on ecs-ec2 a disk increase grows the
+// member's home volume at once and cannot be undone.
+//
+// They sit above everything the standard configurations can use, so no value valid before is
+// rejected or clamped:
+//   - CPU 16384 units (16 vCPU) is the largest Fargate tier, twice the largest standard
+//     ecs-ec2 slot (2xlarge, 8 vCPU = 8192 units) and above the 2XL console preset.
+//   - Disk 1024 GiB is over Fargate's 200 GiB ephemeral limit (where managed EBS starts) and
+//     six times the largest console preset (160 GiB).
+//
+// An operator whose declared slots or disks are larger raises the ceiling; 0 switches it off.
+const (
+	defaultMaxWorkspaceCPUUnits = 16384
+	defaultMaxWorkspaceDiskGB   = 1024
+)

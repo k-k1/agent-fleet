@@ -201,6 +201,20 @@ attacker would try it:
   cannot leak it. The limits are in [guide/ref/limits](../../guide/ref/limits.md).
 - **Not audited** (ordinary reads are not, `proxy.go`); whether a bulk export should be is open
   (decisions/0111, Status line).
+- **The hard-link check is zip-only.** The ordinary file reads (`/fs/file`, `/fs/download`,
+  `/fs/imagesize`, the thumbnail warm-up) refuse symlinks and non-regular files but do **not**
+  refuse `st_nlink > 1`: hard links are routine in a working tree (package-manager stores, git
+  objects), so refusing them would break normal viewing, and a link to a denied file takes same-uid
+  code that could read that file directly anyway. The bulk export keeps the stricter rule because
+  it is the one route that reads everything beneath a folder without a person naming each file.
+- **Mutations refuse ancestors of denied entries.** Rename (both ends), delete, mkdir, new file and
+  upload answer 403 for a denied entry, its descendants **and the folders that contain one**
+  (`.config`, `.local`, `.local/share`, the browse root), judged on the spelled path and again on
+  the path after symlink resolution (`fsWriteRefused`). Uploads and the image generator's
+  `out_dir` additionally refuse a symlinked destination folder. Uploads are written through a
+  directory fd opened with `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`, and so are generated pictures and
+  their sidecars: the folder is opened when the picture is stored, not trusted from the path
+  judged when the job was queued.
 
 ## 7.3 L1 Console authentication — three modes
 
@@ -211,7 +225,14 @@ Selected by `AUTH`. All three sanitise the resolved email into the identity key
 |---|---|---|
 | `oauth` | **The CP is itself an OIDC client** (§7.3.1). It owns `/login`, `/login/{slug}` and `/oauth2/{login,callback,logout,link}`, and on success issues a signed cookie (HMAC-SHA256 with `AF_COOKIE_SECRET`, HttpOnly, SameSite=Lax, Secure when the public URL is HTTPS, `AF_SESSION_TTL`, default 168 h). What the compose and AWS templates set | self-hosting. Assumes HTTPS at the edge |
 | `proxy` | Trust an upstream gateway's email header (`AUTH_EMAIL_HEADER`, default `X-Forwarded-Email`). **A missing header is a 401 — there is no fallback.** The header is not stripped, so the CP must be reachable only through that gateway | an existing gate such as oauth2-proxy. **This is also the answer for a SAML IdP**: bridge it ([decisions/0043](../decisions/0043-login-idp.md)). The AWS template does not offer it |
-| `dev` | A fixed user (`DEV_USER`, default `dev`), who is a deployment administrator | local development only, and **the default when `AUTH` is unset**. `native` requires it |
+| `dev` | A fixed user (`DEV_USER`, default `dev`), who is a deployment administrator | local development only. **There is no default**: an unset `AUTH` is refused outside `native`/`wsl` (which require `dev` and take it when unset), and `AUTH=dev` there needs `AF_ALLOW_INSECURE_DEV_AUTH=1`, logs a `WARNING` and lists `auth_dev` in `deployment_warnings` (`internal/auth/authmode.go`, `master_key_guard.go`). It is refused whenever `PUBLIC_BASE_URL` is https (#3485) |
+
+**Provider connection callbacks.** The Jira and Bitbucket OAuth callbacks (`/api/oauth/{jira,bitbucket}/callback`)
+sit behind the gate. Each flow records the starting identity and membership, and the callback
+exchanges the code only when the session is that identity, the membership is still active and
+its tenant's sign-in method and network rules admit the current session; the tokens go to that
+membership's workspace. Anything else shows an error and stores nothing, so the member signs in
+as themselves and connects again.
 
 **The auth gate**, in `oauth` mode:
 
@@ -289,6 +310,48 @@ need no edit.
   over TLS. The tenant id is read from its payload. **If a front-channel path is ever
   added, JWKS verification becomes mandatory.** There is no JWT library dependency at
   all.
+- **A tenant-defined provider's issuer is a tenant-side party**, so the CP does not trust
+  where its discovery document points. The issuer must be `https` (the loopback `http`
+  carve-out is for env-configured providers only). Every request to a tenant provider's
+  issuer, discovery and token and userinfo alike, goes through a client that refuses
+  non-public destinations at dial time (`egressallow.AddrRefused`: the gateway relay's wide set, private ranges included, which is
+  wider than the forward proxy's loopback / link-local / unspecified in §7.8)
+  and never follows a redirect. The authorization, token and userinfo endpoints must be
+  `https` and on the issuer's registrable domain (public-suffix aware), with built-in
+  exceptions for IdP families that split the two (Google's `googleapis.com`, Cognito's
+  default `amazoncognito.com`, Microsoft's `graph.microsoft.com` for userinfo and its
+  sovereign-cloud equivalents). An IdP whose endpoints live elsewhere, such as a Cognito pool
+  behind its own domain, is admitted by the operator listing that domain in
+  `AF_TENANT_IDP_ENDPOINT_DOMAINS` (CSV); the decision stays in deployment configuration
+  rather than a tenant form, which needs no schema change. Anything else fails the sign-in
+  and is logged. The save-time pairwise probe reads one discovery field and calls no endpoint,
+  so it is not subject to the endpoint pin. A tenant row that
+  predates the rules and fails them is not deleted or rewritten: it stays stored and
+  approved, a non-https issuer hides its button with a logged warning, and an endpoint
+  outside the issuer's site fails the sign-in with a logged reason; editing the row (or the
+  IdP's discovery document) fixes it.
+  Env-configured providers are unchanged.
+- **A tenant row's claimed domains are shown against the deployment's own.** Besides the
+  one-domain-one-tenant check among tenants, the approval views (the register, and the
+  tenant's list when the caller is a super_admin) list each claimed domain that is also in
+  `AF_OAUTH_ALLOWED_DOMAINS`, an `@domain` line of the allowlist file, an env provider's own
+  domain list, or the domain of a `SUPER_ADMIN_EMAILS` address, and say which. It is a
+  warning, not a refusal, and is recomputed on every read rather than stored (the
+  deployment's lists change without the row changing): approval by a super_admin is the
+  gate, and a deployment may legitimately let a subsidiary on a shared domain use its own
+  IdP. The same overlap is written as a separate deployment-wide audit row (no tenant) at save and at approval, so only a super_admin reads it. A
+  tenant administrator is not shown it, since it would reveal the deployment's login domains.
+- **The authorization-code flow is bound to the browser that started it.** Each sign-in
+  carries a PKCE verifier (RFC 7636, S256) and, for OIDC with the `openid` scope, a nonce,
+  both kept in the signed state cookie; the authorize request sends `code_challenge` and
+  `nonce`, the token request sends `code_verifier`, and the ID token's `nonce` is compared
+  when it carries one (an IdP that does not echo it is not refused). A code that leaks to
+  another browser therefore cannot be redeemed there. It applies to Google, env OIDC,
+  GitHub and tenant-defined providers alike. An IdP that rejects `code_challenge` is opted
+  out per provider with `AF_OIDC_<ID>_PKCE=off` (GitHub: `AF_GITHUB_PKCE=off`); tenant rows
+  have no opt-out. A sign-in that was in flight when the CP was updated has a state cookie
+  without a verifier and is sent back to the login page with the "session" error, like an
+  expired one. The account-link flow is not covered.
 
 **GitHub is a separate adapter** — it is not OIDC. Permission is **the AND of two
 independent gates**:
@@ -447,10 +510,26 @@ returns the result without storing the token.
 ### 7.5.1 The member-origin mark
 
 Where a route must accept only the member's own Console request, the CP marks it
-([decisions/0113](../decisions/0113-member-origin-mark.md)). Today that is the member-only memory writes:
-`entries/pin`, `entries/revert` (which also forgets), `entries/member-save`, `entries/project-move` (moving the
-memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-agent-memory.md) note of 2026-10-14) and
-`entries/purge` (the history purge, #1982).
+([decisions/0113](../decisions/0113-member-origin-mark.md)). This chapter does not list the routes, because a
+hand-kept list drifts. The source of truth is the code, in three places:
+
+- the relay rows with `sign` in `control-plane/relays*.go`;
+- the CP handlers that sign directly (`memberOriginSign` outside the relay path: work-item comment and merge,
+  session handoff push);
+- on the Agent, the routes registered behind `memberorigin.Require` in `workspace/agent/routes.go`, plus the
+  conditional check on `PUT /env/ui-prefs` (`ui_prefs.go`), which asks for the mark only when a write turns a
+  member-decision switch on.
+
+`workspace/agent/internal/memberorigin/signed_routes.txt` is the one checked-in list both modules are tested
+against (`TestSignedRoutesMatchRelayRows` in `control-plane`, `TestSignedRoutesMatchRequireRegistrations` in
+`workspace/agent`; the modules cannot import each other, so each checks the same file). A route signed on one
+side only fails one of the two tests.
+
+**When a new route needs the mark**: when the action is the member's own decision and a session must not be
+able to take it, because every session holds the same `AGENT_TOKEN` the relay uses. Typical cases are writes
+to the member's memory, anything that publishes the member's work under their name, and switches that send
+their conversations elsewhere. Add the relay row with `sign` (or sign in the handler), wrap the Agent route in
+`memberorigin.Require`, and add the line to the list.
 
 - **Asymmetric, because the Agent cannot keep a secret from its sessions** (same uid, §7.2). The CP signs
   with an Ed25519 key derived from the token-signing master; the Agent is started with the public keys only
@@ -465,10 +544,24 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
 - **The CP drops any `X-AF-Member-Origin` the browser sent** on every relay (REST, SSE and the preview
   relay), signs only the listed routes, and only for the caller's own workspace. REST and SSE also drop every
   cookie and the gateway identity headers, so the member's login cookie never reaches the workspace.
+- **Relayed request headers are an allow-list** (`control-plane/internal/relayhdr`), not a denylist: content
+  negotiation, conditional and range headers, the WebSocket handshake, Fetch Metadata and Client Hints (`Sec-WebSocket-*`, `Sec-Fetch-*`, `Sec-CH-*`), `X-Forwarded-Host` /
+  `-Proto` / `-Prefix`, and a few framework headers (`Next-*`, `Hx-*`, `Turbo-*`, CSRF tokens) reach the Agent
+  and a previewed app; anything else a front gateway adds (access-token, group and OIDC headers, for
+  example) is dropped. The name (never the value) of each dropped header is logged once per process
+  (`relay: dropped request header`), and `AF_RELAY_EXTRA_HEADERS` (comma-separated names, a trailing `*`
+  for a prefix) adds names an app needs.
 - **No signing for another page.** Before signing, the CP requires `application/json`, `Sec-Fetch-Site:
   same-origin` when sent, and an `Origin` of the Console's own host when sent, so a same-site preview app
-  cannot have the browser make a signed member write. An app in the path-form preview runs on the
+  cannot have the browser make a signed member write. Every signing handler that takes JSON runs this check itself
+  (`memberOriginRequestCheck`), including `POST /api/session-handoff-offers` (its push-first step), so the
+  guarantee does not depend on the global write gate or its exemptions. (The multipart upload route has its own variant: `multipart/form-data` plus the
+  `X-AF-Console` custom header, which forces a preflight, and the same `Sec-Fetch-Site` / `Origin` checks.) An app in the path-form preview runs on the
   Console's origin and is not covered by this check; what limits it is below.
+- **A session handoff needs a member action in the Console.** The Console's "Hand off to another agent…"
+  opens an operator chat whose first prompt is only put in the composer; the turn (which reads the source
+  session's output and may lead to `create_session`) is sent when the member presses Send. The prompt's
+  "ask before `create_session`" is a request to the model, not the consent gate.
 - **The path-form preview (`/preview/{port}/…`).** With `AF_PREVIEW_DOMAIN` set the CP does not serve it:
   a GET or HEAD is redirected (302) to `/preview-open-own`, the owner-only entry of the subdomain form (other methods get 405), so
   workspace content never answers on the Console origin (decisions/0062 decision 7, note of 2026-11-07). Without
@@ -487,10 +580,20 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
 - **Rotation**: a workspace starts with the current and the next key, so raising
   `AF_MEMBER_ORIGIN_KEY_VERSION` by one keeps workspaces started under the previous version working; a
   second raise before they restart does not.
-- **Limits**: only these three routes are signed; the claude and muse imports still record the member as
-  author unsigned (#2014). The mark governs the Agent's routes, not the store's files, which a session can still write
-  directly; it is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP
-  is out of scope.
+- **Limits**:
+  - **Knowingly unsigned member actions.** The claude and muse memory imports still record the member as author
+    without the mark (#2014). The AWS confirm-before-use approval (`POST /aws-confirm/{id}/approve`) is not
+    signed either: it stops accidental and unnoticed use, not a session that sets out to get past it
+    ([decisions/0126](../decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.md) decision 6,
+    `SECURITY.md` "Known residual risks").
+  - **The mark protects routes, not files.** A session can write any file the Agent's uid can, so the
+    store's files and other state files are not covered. `~/.config/agent-fleet/ui-prefs.json` is one: the
+    mark on `PUT /env/ui-prefs` guards the route, and a session that edits the file directly is not stopped
+    by it. The switches the route guards today are the background memory review (removal tracked in #3440)
+    and Muse Code's contributor mode; for those, the mark keeps a session from using the route, not from
+    writing the file.
+  - It is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP is out of
+    scope.
 
 ## 7.6 Secrets and envelope encryption
 
@@ -499,16 +602,23 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 
 | Secret | Stored | Exposure |
 |---|---|---|
-| Git credentials and provider keys (GitHub, Bitbucket, Jira, opencode providers, MCP secrets, …) | **the encrypted store** `~/.config/agent-fleet/secrets.enc` (AES-256-GCM, 0600) in the workspace home | that user only. Git reads it through the credential helper (`workspace-agent cred`), which decrypts on demand and writes to stdout; other keys are injected into the process that needs them. **No plaintext file is created** |
+| Git credentials and provider keys (GitHub, Bitbucket, Jira, opencode providers, …) | **the encrypted store** `~/.config/agent-fleet/secrets.enc` (AES-256-GCM, 0600) in the workspace home | that user only. Git reads it through the credential helper (`workspace-agent cred`), which decrypts on demand and writes to stdout; other keys are injected into the process that needs them. **No plaintext file is created** |
+| A member's MCP server secrets (header and environment values) | the encrypted store, **and in plaintext (0600) in each agent CLI's own config file in the home** (`workspace/agent/internal/mcpreg/materialize*.go`), because the CLI has to read them | that user only. Those config files are in home backups and snapshots, and shredding the workspace DEK does not remove them. Secret storage for MCP is #1056 |
 | The agent's own credentials file | the agent's config directory, outside the home and outside the browser's reach (§7.2) | that user only |
 | System secrets — login client secrets, the master key (`AF_MASTER_KEY`), the cookie secret | environment files kept out of git; on AWS, SSM SecureStrings under `/af-cp/` (the database password is RDS's managed secret) | the CP only. **The master key is stored outside the data area and never included in a backup** — losing it is a crypto-shred |
 | Tenant secrets — a tenant IdP's or git OAuth app's client secret, MCP server credentials | the database, sealed with the tenant key | the CP only; never returned to the UI |
 | A signed-in GitHub user's access token | **process memory only** | the CP only; lost on restart, and that person is asked to sign in again |
 | Personal access tokens | only a SHA-256 hash, in the database | shown in plaintext exactly once, at issue |
 
+A tenant MCP server's header values stay with the destination they were entered for: when the
+URL of a stored server moves to a different host or port, or from https down to plain http, a masked (`***`) value is refused with
+`mcp_header_secret_reenter` instead of being filled in from the stored row (the Console blanks
+those rows in the form), and the audit line of the edit records the old and the new URL. A
+client secret is bound the same way to its issuer and client id.
+
 ⚠️ **Without `AF_MASTER_KEY` the store is plaintext.** No master key means no DEK, and the
 agent then writes the same store as `secrets.json`, unencrypted. That is the intent under
-`AUTH=dev`. Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and
+`AUTH=dev` (which is itself opt-in outside native, above). Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and
 lists `plaintext_secrets` in `deployment_warnings` on a super_admin's `GET /api/admin/tenants`,
 which the Console's admin modal shows as a banner (`master_key_guard.go`). It warns rather
 than refuses so that a deployment already running without a key is not stopped by an upgrade:
@@ -544,11 +654,38 @@ credentials as exposed and rotate them.
   home is confirmed from the Agent's report and then no longer receives the derived key. Vault is 📋
   ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 and 2026-10-10 addenda).
 
+### 7.6.1 Keys derived from the master key
+
+Policy: a **new** key derived from the master key is derived with HKDF-SHA256 (RFC 5869) from the master, with a label of its own (`af-<purpose>/v<N>`) as the `info` input, and is added to this list in the same change. Never reuse a key across purposes and never use the master digest itself as a key. The HMAC derivations below predate the policy and stay as they are, because changing one invalidates what it protects. `AF_COOKIE_SECRET` is a separate secret; its per-purpose cookie keys are described in `oauth.go` (`cookiePurpose`).
+
+| Label | Key for |
+|---|---|
+| `af-kek:<keyRef>` | per-tenant KEK of the local custodian (`custodian.go`) |
+| `<userKey>` (no label) | legacy per-member DEK (`dek.go`, `legacyDEK`) |
+| `af-token-signing-root/v<N>` | token signing root at `AF_TOKEN_SIGN_VERSION` >= 1 (`bridge_epoch.go`); the master itself at version 0 |
+| `af-git-token-sign/v1` | git HTTP token (`git_http.go`) |
+| `af-git-oauth-token-sign/v1` | Git OAuth bridge token (`git_oauth_bridge.go`) |
+| `af-memo-token-sign/v1` | memo token (`memo_bridge.go`) |
+| `af-schedule-token-sign/v1` | schedule token (`schedule_bridge.go`) |
+| `af-mcp-token-sign/v1` | MCP token (`internal/mcpsrv/mcp_server_bridge.go`) |
+| `af-docs-token-sign/v1` | docs token (`docs_bridge.go`) |
+| `af-engine-token-sign/v1` | engine token (`engine_token.go`) |
+| `af-aws-profiles-token-sign/v1` | AWS profiles token (`aws_profiles_bridge.go`) |
+| `af-gcp-profiles-token-sign/v1` | GCP profiles token (`gcp_profiles_bridge.go`) |
+| `af-branch-rules-token-sign/v1` | branch rules token (`tenant_branch_rules.go`) |
+| `af-member-origin-sign/v<N>` | member-origin Ed25519 seed (`member_origin.go`) |
+
 ## 7.7 Audit
 
 - The store is the audit log (`audit_log`, [06](06-data.md)), with an actor kind of
   user, admin, MCP or system — and `claude` for the opt-in import of Claude's own tool
   calls from its transcripts (`AF_CLAUDE_AUDIT_INTERVAL`, off by default).
+  For a `Bash` call the target is only the program name (plus a plain subcommand such as
+  `go test`), never its arguments, because command lines carry credentials.
+  `AF_CLAUDE_AUDIT_BASH_FULL=1` records the first line of the command instead, with
+  secret-looking values (`NAME=value`, `Authorization` / `Bearer`, `--token` / `--password`
+  style flags, URL passwords, known token prefixes) replaced by `***`. The masking is best
+  effort; leave the setting off unless the full line is needed.
 - **Only mutating and destructive operations are recorded**, with one read as the
   exception: `GET /api/agents/memory/export`, the one path that carries a member's
   memory out of the environment (the target is the format). **The raw terminal stream is
@@ -559,12 +696,22 @@ credentials as exposed and rotate them.
   (which record the token's id, with **the role resolved live at call time**).
 - **Irreversible admin actions record the request first** (`store.BeginIrreversible`):
   clean home, home-backup deletion, workspace destroy, membership remove and delete, tenant
-  delete, pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
+  delete, membership role change (`membership.role`, with `from=<old> to=<new>`),
+  pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
   internal-git repository delete and rename write `<action>.requested` before acting
   and **refuse with `503 audit_unavailable` when that write fails**, then `<action>` with the
   outcome and the answered status. A failed outcome write is logged, not returned: the action
   has happened and the request row still names who asked. Every other audit write stays
   best-effort after the fact.
+- Admin writes recorded after the fact include `tenant.create`, `member.limits`,
+  `tenant.slot_class` and `workspace.stop`. A PAT revocation is `pat.revoke` under the
+  tenant of the token's membership (the tenant `pat.create` used), so that tenant's
+  administrators see it. When an identity may no longer sign in, the automatic revocation
+  writes one row per revoked PAT (`pat.revoke`) or MCP OAuth grant (`mcp.oauth.grant`) with
+  actor kind `system` and the reason as detail, in the same transaction as the revocation.
+  `TestAdminWriteRoutesAreClassified` reads the route registrations from the syntax tree and fails
+  for an admin write route whose handler reaches no audit call carrying its action, unless it
+  has a commented exemption.
 - Read through `GET /api/admin/audit` and the Console, scoped by tenant and role.
 
 ## 7.8 Egress control 🚧
@@ -573,9 +720,16 @@ Implemented:
 
 - **A forward proxy**, run as a subcommand of the same binary (`egress-proxy`,
   `AF_EGRESS_LISTEN`, default `:3128`). It decides by the host name of the CONNECT or
-  HTTP request and **does not decrypt TLS**. It is designed to check for loopback,
-  link-local (the cloud metadata address included) and unspecified destinations and
-  refuse them in every mode.
+  HTTP request and **does not decrypt TLS**. It refuses internal destinations in every
+  mode, including log-only. The check is a `net.Dialer.Control` hook on the dial itself (the
+  CONNECT path and a dedicated plain-HTTP transport share it), so it judges the address
+  that is actually connected, not a separate lookup of the name. The refused ranges are
+  loopback (the proxy host itself), link-local (the cloud metadata address included) and
+  unspecified, with an IPv4-mapped IPv6 address judged as the IPv4 address it names
+  (`egressallow.ProxyAddrRefused`). Private ranges (RFC 1918, unique-local) are deliberately
+  not refused: workspaces reach internal Git, MCP and cluster services through the proxy.
+  The AWS gateway relay refuses the wider set (`egressallow.AddrRefused`: private, shared
+  address space and the other non-public ranges), and so do tenant-defined OIDC issuers (§7.3.1).
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
   Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed

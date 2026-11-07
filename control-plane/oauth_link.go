@@ -100,7 +100,7 @@ func (c config) handleOAuthLink(w http.ResponseWriter, r *http.Request) {
 		// the session that proved it. Both are re-checked at the callback.
 		Link: ident.ID, LEmail: claims.Email, LProv: claims.provider(), LSub: claims.Sub,
 	})
-	c.setCookie(w, stateCookie, c.signCookie(b), 600)
+	c.setCookie(w, stateCookie, c.signCookie(cookiePurposeState, b), 600)
 	au, err := p.AuthorizeURL(r.Context(), nonce, c.oauthRedirectURI())
 	if err != nil {
 		log.Printf("oauth: link %s authorize: %v", p.ID(), err)
@@ -219,7 +219,7 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		c.writeLinkResult(w, r, linkErrTaken, p.Label(auth.PreferredUILang(r)), next)
 		return
 	case err != nil:
-		log.Printf("oauth: link attach %s/%s: %v", pr.Provider, pr.Subject, err)
+		log.Printf("oauth: link attach %s/%q: %v", pr.Provider, pr.Subject, err)
 		c.writeLinkResult(w, r, linkErrFailed, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}

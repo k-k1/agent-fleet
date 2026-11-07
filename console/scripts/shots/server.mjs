@@ -161,7 +161,9 @@ const exact = {
   }),
   "/api/agents/rtk/gain": () => fx.rtkGain(),
   "/api/stats": () => fx.stats(),
-  "/api/ssm/hosts": () => ({ hosts: [] }),
+  // Settings > AWS profiles/SSM reads these three as bare arrays (SsmTab.tsx reload()); an object
+  // renders "unexpected response" in the tab.
+  "/api/ssm/hosts": () => [],
   // Settings > Skills (#2792): one kind with every scope group, so the tab renders all its
   // headings (the heading-spacing check walks them, #2813).
   "/api/skills/catalog": () => ({
@@ -198,7 +200,38 @@ const exact = {
     const content = bodies[q.get("path") || ""];
     return content === undefined ? { error: { code: "not_found", message: "no such skill file" } } : { content };
   },
-  "/api/ssm/profiles": () => ({ profiles: [] }),
+  // Fictional profiles for the user guide's AWS pages (ADR 0131). `name` is the workspace profile
+  // name; without it the row's Log in button is disabled (SsmTab.tsx loginOff).
+  "/api/ssm/profiles": () => [
+    { id: "p1", name: "Production", label: "Production", startUrl: "https://d-1234567890.awsapps.com/start", ssoRegion: "ap-northeast-1", accountId: "111111111111", roleName: "Deployer", region: "ap-northeast-1", kind: "sso", createdAt: "2026-10-01T00:00:00Z", confirmBeforeUse: true },
+    { id: "p2", name: "Staging", label: "Staging", startUrl: "https://d-1234567890.awsapps.com/start", ssoRegion: "ap-northeast-1", accountId: "222222222222", roleName: "Developer", region: "ap-northeast-1", kind: "sso", createdAt: "2026-10-01T00:00:00Z" },
+    { id: "p3", name: "Sandbox", label: "Sandbox", startUrl: "https://d-1234567890.awsapps.com/start", ssoRegion: "ap-northeast-1", accountId: "333333333333", roleName: "Developer", region: "us-east-1", kind: "sso", createdAt: "2026-10-01T00:00:00Z" },
+  ],
+  "/api/ssm/sign-ins": () => [],
+  // The WS bar's AWS badge and the Settings rows read their login state from here.
+  "/api/aws-login/profiles": () => ({
+    profiles: [
+      { name: "Production", label: "Production", accountId: "111111111111", roleName: "Deployer", state: "none", expiresAt: "", expiring: false },
+      { name: "Staging", label: "Staging", accountId: "222222222222", roleName: "Developer", state: "signed_in", expiresAt: "", expiring: false },
+      { name: "Sandbox", label: "Sandbox", accountId: "333333333333", roleName: "Developer", state: "renew", expiresAt: "", expiring: false },
+    ],
+    signIns: [],
+    expiring: [],
+  }),
+  // A pending login request draws a sticky toast over every scene, so it is served only to a run
+  // that asks for it (capture.mjs passes SHOT_AWS_LOGIN_REQUEST for the aws-toast scene alone).
+  "/api/aws-login": () =>
+    process.env.SHOT_AWS_LOGIN_REQUEST
+      ? {
+          requests: [
+            {
+              id: "0123456789abcdef01234567", profile: "Production", label: "Production", accountId: "111111111111", roleName: "Deployer",
+              waiters: [{ session: "sk4rq2f", command: "npx cdk deploy" }],
+              firstAt: new Date().toISOString(), lastAt: new Date().toISOString(), expiresInSec: 840,
+            },
+          ],
+        }
+      : { requests: [] },
   // MCP registry (docs/log/48). One row per origin so the settings tab shows all three
   // editability states (user = full CRUD, tenant = disable-only, builtin = code).
   // Secret values arrive masked, exactly as the agent sends them.

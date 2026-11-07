@@ -8,7 +8,11 @@ import { coarsePointer } from "../../lib/device.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import type { BrowserOutbound, BrowserSnapshot } from "./protocol.ts";
 import { BrowserInputBridge, clipboardShortcut, heldButton, modifiersOf, mouseButton, remotePoint, wheelPixels } from "./protocol.ts";
+import { isHumanEvent } from "./interaction.ts";
 import { BrowserTouchGestures } from "./touch.ts";
+
+/** Minimum gap between interaction reports; far below the 30 minute presence grace. */
+const INTERACTION_REPORT_MS = 5_000;
 
 export interface BrowserSurfaceController {
   mount(canvas: HTMLCanvasElement): void;
@@ -112,6 +116,20 @@ export function BrowserSurface({
   }), []);
   useEffect(() => () => gestures.dispose(), [gestures]);
 
+  // Tells the Control Plane a person is at the pane, so a foreground tab left on an
+  // unlocked screen stops holding the Workspace awake after the presence grace. Only
+  // trusted (user-generated) events count — a script-dispatched event is not a person —
+  // and mousemove alone never does. Throttled well inside the grace.
+  const lastInteraction = useRef(0);
+  const reportInteraction = (event: { isTrusted: boolean }) => {
+    if (!isHumanEvent(event)) return;
+    const now = Date.now();
+    if (now - lastInteraction.current < INTERACTION_REPORT_MS) return;
+    lastInteraction.current = now;
+    controller.sendInput({ type: "interaction" });
+  };
+  const interactionRef = useRef(reportInteraction);
+  interactionRef.current = reportInteraction;
   // React registers `wheel` on the ROOT container with {passive: true} (measured
   // in react-dom 19), so preventDefault() inside an onWheel prop is a silent
   // no-op: the wheel reached the remote page AND scrolled the Console's own
@@ -121,6 +139,7 @@ export function BrowserSurface({
   const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
   useEffect(() => {
     wheelRef.current = (event: WheelEvent) => {
+      interactionRef.current(event);
       if (!inputEnabled) return;
       event.preventDefault();
       const rect = canvasRef.current?.getBoundingClientRect();
@@ -212,6 +231,7 @@ export function BrowserSurface({
   };
 
   const onPointer = (event: RPointerEvent<HTMLCanvasElement>, kind: "move" | "down" | "up" | "cancel") => {
+    if (kind === "down") reportInteraction(event.nativeEvent);
     // Touch is recognised (swipe = scroll, tap = click, long press = drag, two
     // fingers = zoom) rather than forwarded as a mouse — see touch.ts. It runs
     // BEFORE the inputEnabled gate because pinch zoom is the viewer's own
@@ -254,6 +274,7 @@ export function BrowserSurface({
   };
 
   const onKeyDown = (event: RKeyboardEvent<HTMLInputElement>) => {
+    reportInteraction(event.nativeEvent);
     // Clipboard shortcuts are handled HERE, never forwarded: the remote Chromium
     // runs in the container, so its clipboard is not the user's. Ctrl/Cmd+C asks
     // the page for its selection and writes it to the user's clipboard; Ctrl+V
@@ -308,6 +329,7 @@ export function BrowserSurface({
         }}
         onPaste={(event) => {
           event.preventDefault();
+          reportInteraction(event.nativeEvent);
           if (!inputEnabled) return;
           const text = event.clipboardData.getData("text/plain");
           if (text) controller.sendInput({ type: "text", text });

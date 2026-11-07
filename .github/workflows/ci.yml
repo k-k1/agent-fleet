@@ -418,6 +418,10 @@ jobs:
       # held against the templates here.
       - name: Egress gateway routes, SGs, IAM, token and Squid configuration (ECS templates)
         run: python3 ./deploy/local/cfn-egress-gateway-test.py
+      # An attribute left out of LoadBalancerAttributes keeps its current value, so the ALB
+      # access-log switch must state "false" when AlbAccessLogBucket is emptied (#3507).
+      - name: ALB attributes for AlbAccessLogBucket empty / set (30-ingress)
+        run: python3 ./deploy/local/cfn-alb-attributes-test.py
       # pause.sh deletes the NAT gateway through 00-network's NatEnabled and re-stops a long-paused
       # database through 10-data's Lambda; a gateway outside its condition, or a Lambda that stops
       # an instance pause.sh did not tag, only shows on a real deployment.
@@ -516,6 +520,10 @@ jobs:
           cache-dependency-path: console/package-lock.json
       - name: npm ci
         run: npm ci
+      # Shipped (non-dev) dependencies only; a new high-severity advisory fails here rather
+      # than at review time.
+      - name: npm audit (production, high)
+        run: npm audit --omit=dev --audit-level=high
       - name: typecheck
         run: npm run typecheck
       # rules-of-hooks only (oxlint, since typescript-eslint cannot load TypeScript 7). A hook

@@ -172,13 +172,13 @@ func TestMemberHomeWipeFailureInTheBackgroundReachesThePayload(t *testing.T) {
 		t.Errorf("a failed wipe went on to start the workspace: %q", got)
 	}
 	payload := api.workspacePayload(context.Background(), res, rt.State(context.Background()))
-	if payload["state"] != "stopped" || !strings.Contains(fmt.Sprint(payload["homeWipeFailed"]), "exit 1") {
+	if payload["state"] != "stopped" || !strings.Contains(fmt.Sprint(payload["homeWipeFailed"]), "internal error (ref: ") {
 		t.Errorf("payload = %v, want stopped with the failure", payload)
 	}
 	// A CP restarted in between (a deploy) still says why: a new manager over the same
 	// store, nothing carried in memory (#1537).
 	restarted := newWorkspaceAPI(&manager{store: mgr.store, conns: newConnRegistry()}, false)
-	if got := restarted.workspacePayload(context.Background(), res, "stopped")["homeWipeFailed"]; !strings.Contains(fmt.Sprint(got), "exit 1") {
+	if got := restarted.workspacePayload(context.Background(), res, "stopped")["homeWipeFailed"]; !strings.Contains(fmt.Sprint(got), "internal error (ref: ") {
 		t.Errorf("after a restart homeWipeFailed = %v, want the failure", got)
 	}
 	// The tenant admins see the same record.

@@ -160,16 +160,12 @@ func (t *engineCivitaiTokens) stage(ctx context.Context) *apiError {
 
 // plaintext unseals the stored token.
 func (t *engineCivitaiTokens) plaintext(ctx context.Context) (string, *apiError) {
-	enc, err := t.settings.GetSetting(ctx, engineCivitaiTokenSetting)
+	enc, ref, err := readSettingPair(ctx, t.settings, engineCivitaiTokenSetting, engineCivitaiTokenRefSetting)
 	if err != nil {
 		return "", &apiError{http.StatusInternalServerError, errCodeCivitaiTokenStoreFailed, err.Error()}
 	}
 	if strings.TrimSpace(enc) == "" {
 		return "", nil
-	}
-	ref, err := t.settings.GetSetting(ctx, engineCivitaiTokenRefSetting)
-	if err != nil {
-		return "", &apiError{http.StatusInternalServerError, errCodeCivitaiTokenStoreFailed, err.Error()}
 	}
 	tok, err := t.sealer.openTenantSecret(ctx, enc, ref)
 	if err != nil {

@@ -62,6 +62,8 @@ func newMCPClientAgent(t *testing.T) *mcpClientAgent {
 			_, _ = w.Write([]byte(a.callbackBody))
 		case r.Method == http.MethodDelete:
 			_, _ = w.Write([]byte(a.disconnectBody))
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/connections/"):
+			_, _ = w.Write([]byte(`{}`)) // the Jira / Bitbucket token save
 		default:
 			http.NotFound(w, r)
 		}
@@ -143,7 +145,7 @@ func newMCPClientFixture(t *testing.T) *mcpClientFixture {
 		})
 		return &mcpClientMember{
 			ident: ident, mem: mem, agent: agent, email: email, sub: sub,
-			session: &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)},
+			session: &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)},
 		}
 	}
 	f.alice = mk("alice@acme.co.jp", "g-alice")
@@ -654,7 +656,7 @@ func TestMCPClientOAuthCallbackRechecksTheSessionIsStillAllowed(t *testing.T) {
 	b, _ := json.Marshal(sessionClaims{
 		Email: f.alice.email, Exp: time.Now().Add(time.Hour).Unix(), Prov: "retired-idp", Sub: f.alice.sub,
 	})
-	gone := &http.Cookie{Name: sessionCookie, Value: f.cfg.signCookie(b)}
+	gone := &http.Cookie{Name: sessionCookie, Value: f.cfg.signCookie(cookiePurposeSession, b)}
 	loc := mcpClientLocation(t, f.callback(t, gone, "code=c&state="+state))
 	if loc.Query().Get("reason") != "session" {
 		t.Errorf("Location = %s", loc)

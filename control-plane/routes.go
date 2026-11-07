@@ -4,11 +4,14 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -94,9 +97,20 @@ func exemptPrefix(prefixes ...string) {
 	}
 }
 
-// isAuthExempt reports whether p is reachable without a session (consumed by
+// isAuthExempt reports whether the request path p is reachable without a session (consumed by
 // authGate, oauth_google.go). The set is declared next to each route group below.
+//
+// p is the ESCAPED path (r.URL.EscapedPath()), the representation ServeMux routes by. It is
+// reduced to the path the mux would reach — cleaned, each segment decoded on its own — and a
+// segment that decodes to something containing "/" is never exempt: the mux keeps it inside one
+// segment, so a prefix test on the decoded path would exempt a request the mux sends elsewhere.
 func isAuthExempt(p string) bool {
+	p, ok := canonicalRoutePath(p)
+	return ok && isCanonicalExempt(p)
+}
+
+// isCanonicalExempt is isAuthExempt for a path already reduced by canonicalRoutePath.
+func isCanonicalExempt(p string) bool {
 	authExemptMu.Lock()
 	defer authExemptMu.Unlock()
 	if authExemptExact[p] {
@@ -108,6 +122,30 @@ func isAuthExempt(p string) bool {
 		}
 	}
 	return false
+}
+
+// canonicalRoutePath maps an escaped request path to the plain path the exemption registry is
+// written in, in the order ServeMux works: the ESCAPED path is cleaned first, then each segment
+// is decoded on its own. It returns false for an invalid escape, for an encoded "/" inside a
+// segment, and for a dot segment that only appears after decoding ("%2e%2e"): the mux does not
+// fold those, so no exempt route can be assumed to be what it reaches.
+func canonicalRoutePath(escaped string) (string, bool) {
+	if escaped == "" {
+		return "/", true
+	}
+	clean := path.Clean(escaped)
+	if strings.HasSuffix(escaped, "/") && clean != "/" {
+		clean += "/"
+	}
+	segs := strings.Split(clean, "/")
+	for i, raw := range segs {
+		seg, err := url.PathUnescape(raw)
+		if err != nil || strings.Contains(seg, "/") || seg == "." || seg == ".." {
+			return "", false
+		}
+		segs[i] = seg
+	}
+	return strings.Join(segs, "/"), true
 }
 
 // --- Per-feature route registration --------------------------------------------
@@ -251,6 +289,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (decision 30). The queue is deployment-wide.
 	idp := newTenantIdPAPI(cfg.mgr, cfg.providers)
+	idp.deployDomains = newDeploymentDomains(cfg)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/idp", idp.list)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp", idp.upsert)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/idp/{id}", idp.upsert)
@@ -852,18 +891,29 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 // old bookmarks — and any stale post-login next=/agent-fleet/… — would 404.
 // Redirect /agent-fleet[/…] -> /… (auth-exempt, so it fires before login and
 // the dead prefix never reaches next=).
+// stripLegacyPrefix removes the first path segment when it decodes to
+// "agent-fleet" and keeps the rest escaped as received. The mux matches on the
+// decoded segment, so a percent-encoded spelling of the prefix reaches the
+// handler too; trimming a literal prefix would leave it in place and redirect
+// to the same URL forever.
+func stripLegacyPrefix(escaped string) string {
+	rest := strings.TrimPrefix(escaped, "/")
+	seg, tail, _ := strings.Cut(rest, "/")
+	if d, err := url.PathUnescape(seg); err == nil && d == "agent-fleet" {
+		return "/" + tail
+	}
+	return escaped
+}
+
 func registerLegacyRedirect(mux *http.ServeMux) {
 	exemptExact("/agent-fleet")
 	exemptPrefix("/agent-fleet/")
 	legacyRedirect := func(w http.ResponseWriter, r *http.Request) {
-		dest := strings.TrimPrefix(r.URL.Path, "/agent-fleet")
-		if !strings.HasPrefix(dest, "/") {
-			dest = "/" + dest
-		}
+		dest := stripLegacyPrefix(r.URL.EscapedPath())
 		if r.URL.RawQuery != "" {
 			dest += "?" + r.URL.RawQuery
 		}
-		http.Redirect(w, r, dest, http.StatusFound)
+		http.Redirect(w, r, localredirect.Safe(dest), http.StatusFound)
 	}
 	mux.HandleFunc("/agent-fleet", legacyRedirect)
 	mux.HandleFunc("/agent-fleet/", legacyRedirect)

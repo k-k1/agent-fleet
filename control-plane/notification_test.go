@@ -95,3 +95,17 @@ func TestUsageObservationCreatesOneResetNotification(t *testing.T) {
 		t.Fatalf("rows=%+v err=%v", rows, err)
 	}
 }
+
+func TestAgentNotificationRowNamespacesTheEventID(t *testing.T) {
+	in := agentNotification{ID: "usage:M1:claude:5h:2026-01-01T00:00:00Z", Kind: "answer-ready", SessionName: "s1", SessionKind: "claude"}
+	n := agentNotificationRow(in, "M2")
+	if n.EventID != "agent:"+in.ID || n.MembershipID != "M2" || n.TargetID != "s1" {
+		t.Fatalf("row = %+v", n)
+	}
+	// An id the Control Plane builds for another member can never equal a prefixed Agent id.
+	for _, cp := range []string{"usage:M1:claude:5h:x", "sched-failed-S-x", "start-deadline:W:L", "agent-silent-stop:W:L"} {
+		if agentNotificationRow(agentNotification{ID: cp}, "M2").EventID == cp {
+			t.Errorf("agent id %q stored unprefixed", cp)
+		}
+	}
+}

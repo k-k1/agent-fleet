@@ -33,6 +33,7 @@ type stubIdP struct {
 	omitIDToken    bool // token response carries only an access_token
 	tokenError     string
 	tokenHits      int
+	tokenForm      url.Values // the last token request's form
 	userinfoHits   int
 }
 
@@ -52,6 +53,8 @@ func newStubIdP(t *testing.T, s *stubIdP) *stubIdP {
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		s.tokenHits++
+		_ = r.ParseForm()
+		s.tokenForm = r.PostForm
 		if s.tokenError != "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": s.tokenError})
 			return
@@ -266,7 +269,7 @@ func TestGoogleTrustEmailVerified(t *testing.T) {
 			if ck == nil {
 				t.Fatal("no session cookie")
 			}
-			payload, ok := cfg.verifyCookie(ck.Value)
+			payload, ok := cfg.verifyCookie(cookiePurposeSession, ck.Value)
 			if !ok {
 				t.Fatal("session cookie does not verify")
 			}
@@ -371,7 +374,7 @@ func TestCallbackRejectsStateForUnconfiguredProvider(t *testing.T) {
 	// A validly signed state naming a provider this deployment doesn't have (it
 	// was removed from AF_OIDC_PROVIDERS, say).
 	b, _ := json.Marshal(oauthState{Nonce: "nonce123", Next: "/", Exp: time.Now().Add(time.Minute).Unix(), Prov: "gone"})
-	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}
+	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(cookiePurposeState, b)}
 	if got := loginErrorOf(t, callback(t, cfg, st, "code", "nonce123")); got != "provider" {
 		t.Fatalf("error = %q, want provider", got)
 	}
@@ -401,15 +404,19 @@ func TestCallbackRejectsBadState(t *testing.T) {
 }
 
 // A state cookie minted by the previous version carries no provider id; it must
-// resolve to the deployment's first button rather than 500 or dead-end.
+// resolve to the deployment's first button rather than 500 or dead-end. The provider here
+// takes no part in PKCE or nonce (opted out, no openid scope), which is what such a cookie
+// can satisfy; the same cookie against a PKCE provider is TestCallbackWithoutVerifierFailsCleanly.
 func TestCallbackAcceptsPreP0StateCookie(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{
 		idTokenClaims:  map[string]any{"sub": "g1", "email": "yamada@acme.co.jp", "email_verified": true},
 		userinfoClaims: map[string]any{"sub": "g1", "email": "yamada@acme.co.jp", "email_verified": true},
 	})
-	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
+	p := stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified)
+	p.NoPKCE, p.Scope = true, "email"
+	cfg := oauthTestConfig(t, p)
 	b, _ := json.Marshal(map[string]any{"n": "nonce123", "x": "/", "e": time.Now().Add(time.Minute).Unix()})
-	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}
+	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(cookiePurposeState, b)}
 	w := callback(t, cfg, st, "code", "nonce123")
 	if ck := sessionCookieOf(t, w); ck == nil {
 		t.Fatalf("no session issued (error=%q)", loginErrorOf(t, w))
@@ -445,7 +452,7 @@ func TestLegacySessionCookieKeepsWorkingAndIsStillRechecked(t *testing.T) {
 	}))
 	legacy := func(email string) *http.Cookie {
 		b, _ := json.Marshal(map[string]any{"email": email, "exp": time.Now().Add(time.Hour).Unix()})
-		return &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
+		return &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)}
 	}
 	r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 	r.AddCookie(legacy("yamada@acme.co.jp"))
@@ -482,7 +489,7 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 	call := func() int {
 		b, _ := json.Marshal(sessionClaims{Email: "yamada@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(), Prov: auth.GoogleProviderID, Sub: "s"})
 		r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
-		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)})
 		w := httptest.NewRecorder()
 		gate.ServeHTTP(w, r)
 		return w.Code

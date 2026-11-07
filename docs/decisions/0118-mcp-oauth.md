@@ -325,3 +325,21 @@ and a revoke button.
   `[agent-fleet:mcp …]`, records the same "Via MCP" badge source, and refuses a prompt starting
   with `[agent-fleet:`. A shell / ssm session takes no `initial_prompt` over MCP, as it takes no
   `send_to_session`. No decision above changes. Guide: `guide/member/19-outside-access.md`.
+
+- 2026-11-07, #3486: decision 3's premise that whoever controls a path on a trusted host is that
+  host's owner does not hold on large multi-purpose hosts, and dynamic client registration needs no
+  authentication. The trusted list now accepts URL prefixes (`https://host/path`) beside bare
+  hosts. A prefix admits its own path and the segments below it, compared on the parsed URL (no
+  encoded characters, dot or empty segments, port or userinfo); a bare host still means any path, so
+  saved lists need no migration, and the admin screen warns about bare hosts. The built-in default
+  pins `claude.ai` to its documented callback path; `claude.com` and `chatgpt.com` stay host-only
+  (ChatGPT's redirect carries a per-connection id when the stable one is not used). A CIMD document
+  or a recorded grant host is checked at host level only, since only the host is known there; the
+  full redirect URI is checked at registration, authorize and code exchange. The consent page now
+  shows the full redirect URI and whether the client came from DCR or CIMD, and the
+  `mcp.oauth.grant` audit row records `via` and `redirect_path`. A registration with no grant
+  expires after 24 hours instead of 30 days, and at the 2,000 cap the oldest grant-less
+  registration is evicted instead of refusing (a client with a grant is never evicted; if all have
+  one, registration is refused as before); hitting the cap raises a deployment warning for 24 hours
+  on that replica. The registration rate limit counts an IPv6 source by its /64. Decisions 1-7
+  otherwise stand.

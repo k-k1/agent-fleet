@@ -32,12 +32,16 @@ func (s *slowActivityStore) RecordWorkspaceActivity(context.Context, string, str
 	return true, nil
 }
 
+func (s *slowActivityStore) RecordSessionInput(context.Context, string, string, string) error {
+	return nil
+}
+
 func TestTerminalNoteInputDoesNotBlockOnTheStore(t *testing.T) {
 	const wsID = "ws-latency"
 	st := &slowActivityStore{delay: 300 * time.Millisecond}
 	m := &manager{conns: newConnRegistry(), store: st}
 
-	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), wsID, "s1")
+	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), wsID, "s1", false)
 	if err != nil {
 		t.Fatalf("trackWorkspaceTerminal: %v", err)
 	}

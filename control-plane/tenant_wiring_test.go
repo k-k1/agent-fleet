@@ -78,6 +78,7 @@ var cpTenantDelegates = map[string]string{
 	"DeleteHomeBackupsByMembership": "deleteHomeBackupsByMembership",
 	"ResizeHomeByMembership":        "resizeHomeByMembership",
 	"ResolveWorkspaceSize":          "resolveWorkspaceSize",
+	"WorkspaceCeilings":             "cpuMaxUnits",
 	"ResolveSlotClass":              "resolveSlotClass",
 	"PoolBudget":                    "poolBudget",
 	"PoolStatus":                    "poolStatus",

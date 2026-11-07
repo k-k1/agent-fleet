@@ -185,10 +185,36 @@ CP_ARCH="${CP_ARCH_ARG:-$(p30 CpArch)}"; : "${CP_ARCH:=x86_64}"
 case "$CP_ARCH" in x86_64|arm64) ;; *) echo "--cp-arch takes x86_64|arm64 (got '$CP_ARCH')" >&2; exit 2 ;; esac
 
 have_ssm() { "${AWS[@]}" ssm get-parameter --name "$1" --query 'Parameter.Name' --output text >/dev/null 2>&1; }
-# Never read the value (no --with-decryption). All that is needed is whether it exists,
-# and there is no reason at all to put a secret through this process's output or logs.
+# have_ssm never reads a value. The two keys are the exception, and only for their length:
+# key_too_short decrypts into a shell variable, tests it and prints nothing about it (no value,
+# no length, no digest). Nothing may echo it or run under `set -x` while it is held.
+key_too_short() {
+  local v n
+  { set +x; } 2>/dev/null
+  v="$("${AWS[@]}" ssm get-parameter --name "$1" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null)" || return 2
+  v="${v//[[:space:]]/}"
+  if [ $(( ${#v} % 2 )) -eq 0 ] && [[ "$v" =~ ^[0-9a-fA-F]+$ ]]; then
+    n=$(( ${#v} / 2 ))                       # hex: one byte per two digits
+  elif [[ "$v" =~ ^[A-Za-z0-9+/_-]+=*$ ]]; then
+    v="${v%%=*}"; n=$(( ${#v} * 3 / 4 ))     # base64 (std or url, padded or not)
+  else
+    n=$(( ${#v} * 3 / 4 ))                   # raw string: 43 characters count as 32 bytes
+  fi
+  v=""
+  [ "$n" -lt 32 ]
+}
+# The same rule the Control Plane applies at start-up (control-plane/internal/keycheck), minus
+# its repeated-byte check. This release only warns there; so does this, and it does not fail.
 for s in cookie-secret master-key; do
-  have_ssm "$SSM_PREFIX/$s" || say_missing "no SSM $SSM_PREFIX/$s (README §30-ingress stand-up, step 2)"
+  if ! have_ssm "$SSM_PREFIX/$s"; then
+    say_missing "no SSM $SSM_PREFIX/$s (README §30-ingress stand-up, step 2)"
+    continue
+  fi
+  key_too_short "$SSM_PREFIX/$s" && rc=0 || rc=$?
+  case "$rc" in
+    0) echo "    ⚠ SSM $SSM_PREFIX/$s is shorter than 32 bytes of key material: generate a new one (guide/operate/04-secure.md, \"The deployment keys\")" ;;
+    2) echo "    ⚠ SSM $SSM_PREFIX/$s could not be read to check its length (needs ssm:GetParameter and kms:Decrypt)" ;;
+  esac
 done
 [ -z "$(p30 GoogleClientId)" ] || have_ssm "$SSM_PREFIX/google-client-secret" || say_missing "no SSM $SSM_PREFIX/google-client-secret (GoogleClientId is set)"
 [ -z "$(p30 OidcClientId)" ]   || have_ssm "$SSM_PREFIX/oidc-client-secret"   || say_missing "no SSM $SSM_PREFIX/oidc-client-secret (OidcClientId is set)"

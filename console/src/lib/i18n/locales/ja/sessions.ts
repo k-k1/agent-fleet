@@ -271,6 +271,7 @@ export const sessions = {
   "sess.switch_busy": "実行中のターンがあります。完了を待つか停止してから切り替えてください",
   "sess.switch_failed": "実行方式の切り替えに失敗しました",
   "sess.handoff_failed": "引き継ぎを開始できませんでした",
+  "sess.handoff_review": "引き継ぎの依頼文を確認して、送信を押すと始まります",
 
   // === P2 アーカイブモーダル（features/sessions/ArchivedModal.tsx）===
   "arch.other": "その他",

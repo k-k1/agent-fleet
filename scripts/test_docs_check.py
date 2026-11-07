@@ -733,3 +733,61 @@ class SizeAndHeaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RedirectTests(unittest.TestCase):
+    """guide/_redirects.tsv rows are valid, and nothing still points at an old path."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.guide = self.root / "guide"
+        for rel, body in {
+            "user/files/terminal.md": "# Use the terminal\n\n## Copy and paste\n",
+            "user/files/terminal.ja.md": "# ターミナルを使う\n\n## コピーと貼り付け\n",
+            "member/README.md": "# Using\n\nSee [the terminal](08-terminal.md#copy-and-paste).\n",
+            "member/README.ja.md": "# 使う\n\n[ターミナル](../user/files/terminal.ja.md)\n",
+        }.items():
+            (self.guide / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.guide / rel).write_text(body)
+        (self.root / "control-plane").mkdir()
+        (self.root / "control-plane/hint.go").write_text('const hint = "see guide/member/08-terminal.md"\n')
+        self.addCleanup(patch.stopall)
+        patch.object(check, "ROOT", str(self.root)).start()
+        patch.object(check, "GUIDE", str(self.guide)).start()
+        patch.object(check, "DOCS", str(self.root / "docs")).start()
+        patch.object(check, "REDIRECTS", str(self.guide / "_redirects.tsv")).start()
+        patch.object(check, "REDIRECT_POINTER_ROOTS", (("control-plane", (".go",)),)).start()
+
+    def errors(self, rows):
+        (self.guide / "_redirects.tsv").write_text("# header\n" + rows)
+        check._cache.clear()
+        findings = check.Findings()
+        files = [str(p) for p in self.guide.rglob("*.md")]
+        check.check_redirects(files, findings)
+        return "\n".join(findings.errors)
+
+    def test_stale_pointers_are_reported_with_the_new_path(self):
+        out = self.errors("member/08-terminal.md\tuser/files/terminal.md\n")
+        self.assertIn("guide/member/README.md:3: link to 'member/08-terminal.md#copy-and-paste' moved to "
+                      "'user/files/terminal.md#copy-and-paste'", out)
+        self.assertIn("control-plane/hint.go:1: 'member/08-terminal.md' moved to 'user/files/terminal.md'", out)
+        self.assertNotIn("README.ja.md", out)  # it already points at the new page
+
+    def test_old_page_must_be_gone(self):
+        (self.guide / "member/08-terminal.md").write_text("# Terminal\n")
+        self.assertIn("still exists", self.errors("member/08-terminal.md\tuser/files/terminal.md\n"))
+
+    def test_new_page_and_anchor_must_exist(self):
+        self.assertIn("does not exist", self.errors("member/08-terminal.md\tuser/files/missing.md\n"))
+        self.assertIn("no heading with the id 'nope'", self.errors("member/08-terminal.md\tuser/files/terminal.md#nope\n"))
+
+    def test_no_chains_and_no_bad_rows(self):
+        self.assertIn("itself redirected", self.errors(
+            "member/08-terminal.md\tuser/files/terminal.md\nuser/files/terminal.md\tuser/files/shell.md\n"))
+        self.assertIn("two tab-separated columns", self.errors("member/08-terminal.md user/files/terminal.md\n"))
+        self.assertIn("English .md page", self.errors("member/08-terminal.ja.md\tuser/files/terminal.ja.md\n"))
+
+    def test_empty_map_is_quiet(self):
+        self.assertEqual(self.errors(""), "")

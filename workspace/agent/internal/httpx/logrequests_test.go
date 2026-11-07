@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -62,5 +64,53 @@ func TestLogRequestsRedactsIdempotencyKeys(t *testing.T) {
 	}
 	if strings.Count(out, "/sessions-idempotency/ref:") != 3 || !strings.Contains(out, "/reserve") || !strings.Contains(out, "/abandon") {
 		t.Fatalf("access log:\n%s", out)
+	}
+}
+
+func loadSecretQueryKeyFixture(t *testing.T) []string {
+	t.Helper()
+	b, err := os.ReadFile("../../../../scripts/fixtures/secret-query-keys.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Fields(string(b))
+}
+
+// The Agent redacts the same parameter names as the control plane; the shared fixture
+// is what keeps the two lists from drifting apart.
+func TestSecretQueryKeysMatchFixture(t *testing.T) {
+	want := loadSecretQueryKeyFixture(t)
+	if len(want) != len(secretQueryKeys) {
+		t.Fatalf("fixture has %d names, httpx has %d", len(want), len(secretQueryKeys))
+	}
+	for _, k := range want {
+		if !secretQueryKeys[k] {
+			t.Errorf("httpx.secretQueryKeys lacks %q", k)
+		}
+	}
+}
+
+// Credential-named parameters are redacted anywhere; a preview relay query is dropped whole.
+func TestLogURIRedactsQueries(t *testing.T) {
+	for _, k := range loadSecretQueryKeyFixture(t) {
+		u, _ := url.Parse("/sessions?x=1&" + k + "=SECRETVALUE")
+		got := LogURI(u)
+		if strings.Contains(got, "SECRETVALUE") || !strings.Contains(got, "x=1") {
+			t.Errorf("%s: %q", k, got)
+		}
+	}
+	u, _ := url.Parse("/proxy/3000/auth/callback?code=SECRETVALUE&page=2")
+	if got := LogURI(u); got != "/proxy/3000/auth/callback?<redacted>" {
+		t.Errorf("proxy: %q", got)
+	}
+	for _, raw := range []string{"/pr%6fxy/3000/cb?sig=SECRETVALUE", "/proxy%2F3000/cb?sig=SECRETVALUE"} {
+		u, _ = url.Parse(raw)
+		if got := LogURI(u); strings.Contains(got, "SECRETVALUE") {
+			t.Errorf("encoded proxy path %s: %q", raw, got)
+		}
+	}
+	u, _ = url.Parse("/sessions?all=1")
+	if got := LogURI(u); got != "/sessions?all=1" {
+		t.Errorf("plain: %q", got)
 	}
 }

@@ -71,6 +71,68 @@ from the master key, so the effective strength is equivalent to the single `AF_M
 AWS that key can be held by KMS instead ([12 Keys at rest](12-keys.md)). Details in `docs/build/07-security.md`
 §7.6.
 
+## The deployment keys: requirements and what changing them costs
+
+Two secrets protect everything else, and both are only as strong as the value you chose.
+
+| | `AF_MASTER_KEY` | `AF_COOKIE_SECRET` |
+|---|---|---|
+| What it protects | the root of every sealed value (client secrets, MCP headers, handoffs, inbox) and of the per-member credential-store keys and the tokens workspaces use to call back into the Control Plane | the signature on the session, sign-in state and preview cookies |
+| Requirement | **at least 32 random bytes**, written as hex or base64 (a raw string must be at least 43 characters). Never a passphrase. | the same |
+| Generate | `head -c 32 /dev/urandom \| base64` | `head -c 32 /dev/urandom \| base64` |
+| What changing it costs | **Do not change it on a running deployment.** Everything sealed under the old value stops opening and there is no re-keying command; see [12 Keys at rest](12-keys.md). | everybody signs in again, once (see "The emergency stop" below) |
+
+The start-up check only measures length (and rejects a value made of a few repeated bytes); it
+cannot tell a long passphrase from random bytes, which is why the value must be generated. In
+this release a value that fails the check **does not stop the Control Plane**: it logs a
+`WARNING` and the administration screen shows a banner (`weak_master_key`,
+`weak_cookie_secret` in `deployment_warnings`). A later release will refuse to start under any
+`AUTH` other than `dev`, so replace a flagged value at your next planned window. The check
+never logs the value. `deploy/aws/ecs/standup.sh` checks the stored parameters the same way and
+prints only OK or too short.
+
+### Switching to per-purpose cookie keys
+
+The Control Plane can sign the session, sign-in state and preview cookies with one key per
+purpose, so a cookie made for one purpose never verifies for another. Because a replica of the
+previous release cannot read the new format, switching is two steps and is **off by default**:
+
+1. Deploy this release to every replica. It reads both formats and still issues the old one,
+   so a rolling update signs nobody out.
+2. Once no replica of the previous release is left, set `AF_COOKIE_PURPOSE_KEYS=1` (on ECS, the `CookiePurposeKeys` parameter of the ingress stack, then update it) and restart
+   (replicas may be restarted one at a time; the two settings accept each other's cookies).
+   Cookies issued before the switch keep working for one session lifetime
+   (`AF_SESSION_TTL`, default 7 days) and then expire; sign-in states and preview tokens live
+   minutes. Until then the old format is not purpose-separated.
+
+Turning it off again is safe for this release, which reads both formats. Only rolling back to
+the previous release after step 2 signs people out, because it cannot read the new format.
+
+### Values stored before the key was set
+
+A Control Plane that had no `AF_MASTER_KEY` stored some values unencrypted (tenant sign-in and
+Git OAuth client secrets, MCP headers and client secrets, the engine tokens, handoffs, share
+proposals and inbox messages). **Setting the key later does not seal them**: they are read as
+they are. While any remain, the Control Plane logs a `WARNING` at start-up and the
+administration screen shows a banner (`plaintext_sealed`).
+
+Seal them with the Control Plane's own configuration and database, when no administrator is
+editing:
+
+```
+af-cp rewrap-keys --seal-plaintext --dry-run   # count only, change nothing
+af-cp rewrap-keys --seal-plaintext
+```
+
+It works with the local key custodian and with `AF_KEY_CUSTODIAN=kms` (it seals under the one
+configured), writes row by row, opens each sealed value again and compares it before writing,
+and exits 0 only when a final read-only pass finds nothing left. The banner clears within a few
+minutes (or at the next restart). Run it, then `af-cp rewrap-keys` as described in
+[12](12-keys.md) if you also use KMS. These values were readable in the database and its
+backups until now, so **also rotate them at their issuer** (the IdP and Git OAuth client
+secrets, the MCP tokens, the Hugging Face / Civitai / ComfyUI tokens), and delete backups you
+no longer need.
+
 ## Operating egress control
 
 There is a mechanism for controlling outbound traffic (egress) from Workspaces. It is a
@@ -129,7 +191,11 @@ in the Console.
    gateway admits the addresses the host resolves to, on those ports, and records each connection by
    address and port. In log-only an unnamed destination is passed and shown as would-block; in enforce
    it is dropped and recorded. Before cut-over, the destination's own firewall must admit the gateway's
-   egress address. Details: `deploy/aws/ecs/README.md`, "Egress gateway".
+   egress address. **A denied TCP connection looks connected at first**: the gateway accepts it,
+   reads where it was headed, and only then drops it, so `nc -z` or a bare `connect()` succeeds and
+   a later read or write can fail (EOF or a reset such as `Connection reset by peer`; on the sandbox it was a reset). Do not read "connected" as
+   "allowed"; check the Egress tab's events (or `deny` lines in `/var/log/squid/af-tcp.log` on the
+   gateway). Details: `deploy/aws/ecs/README.md`, "Egress gateway".
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. Switching straight to enforce also
    kills the traffic you need (agent CLI updates, MCP endpoints), and clearing the block candidates under
@@ -161,8 +227,10 @@ Users register **their own MCP servers** under ⚙ Settings → MCP servers (use
 an operator.
 
 - **Where secrets live.** Environment variable and header values are stored with envelope
-  encryption and handed over only when the server starts; nothing is left in a config file in the
-  clear.
+  encryption. They are also written in plaintext (file mode 0600, in the member's home) into the
+  config file of each agent CLI that uses the server, because the CLI has to read them there. Those
+  files are included in home backups and snapshots, and are not removed by discarding the workspace
+  key.
 - **Only remote (HTTP) can be distributed.** Distributing stdio would be equivalent to an admin
   running an arbitrary command in everybody's container, so it is forbidden by design (a personal
   registration may still use stdio).
@@ -189,7 +257,7 @@ working for CI and clients without OAuth.
 | Setting | Meaning |
 |---|---|
 | `AF_MCP_OAUTH=1` | turns the server on. Needs `AF_MCP_ENABLED=true` and an `https` `PUBLIC_BASE_URL`; with any of the three missing every path below answers 404 and `/mcp` keeps its bare 401, so clients fall back to asking for a token |
-| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated host names that may receive the sign-in redirect and serve client metadata. Default `claude.ai,claude.com,chatgpt.com`; `none` leaves loopback clients only. A super admin can override it at runtime ([Trusted client hosts](#trusted-client-hosts-deployment-wide-superadmin-only)) |
+| `AF_MCP_OAUTH_TRUSTED_HOSTS` | comma-separated entries that may receive the sign-in redirect and serve client metadata: host names (any path) or `https://host/path` URL prefixes. Default `https://claude.ai/api/mcp/auth_callback,claude.com,chatgpt.com`; `none` leaves loopback clients only. A super admin can override it at runtime ([Trusted client hosts](#trusted-client-hosts-deployment-wide-superadmin-only)) |
 
 - **Turning it on.** Compose / native / local: set `AF_MCP_ENABLED=true` and `AF_MCP_OAUTH=1` (exactly those
   values; `1` is not accepted for `AF_MCP_ENABLED`) and, optionally, `AF_MCP_OAUTH_TRUSTED_HOSTS` in the Control Plane's
@@ -243,8 +311,10 @@ working for CI and clients without OAuth.
 
 - **To let another Agent Fleet deployment sign in to this one's `/mcp`, add its host here** (the host name only, for example `af.example.com`).
 - **Removing a vendor works**: delete `chatgpt.com` from the list and save, and that vendor can no longer sign in. Saving an empty list trusts no hosted client at all.
-- Entries are exact host names: no `https://`, port, path or wildcard, and no IP address. A mistake is refused with a message and nothing is saved.
-- **Which list applies**: the list saved here wins; with nothing saved, the `AF_MCP_OAUTH_TRUSTED_HOSTS` environment variable; with that unset, the built-in default (`claude.ai`, `claude.com`, `chatgpt.com`). The screen says which one is in effect. **Reset to default** deletes the saved list so the other two apply again.
+- An entry is either an exact host name (`chatgpt.com`: **every path** on that host is accepted) or an `https://host/path` URL prefix (`https://claude.ai/api/mcp/auth_callback`: that path and the path segments below it, never a longer name such as `…/auth_callbackx`). No port, query, wildcard or IP address; a path with encoded characters, `.` / `..` or empty segments never matches. A mistake is refused with a message and nothing is saved. **Prefer URL prefixes.** Dynamic client registration needs no sign-in, so a bare host trusts every path on it, including paths other parties control on a large shared host; the screen warns while any bare-host entry is in force. Existing saved lists keep working unchanged (bare hosts still mean "any path").
+- **Registration cap**: the deployment holds at most 2,000 dynamic registrations. A registration that never got a connection expires after 24 hours; at the cap the oldest such registration is evicted to make room (a client with a connection is never evicted), and the Admin screen shows a warning for 24 hours after the cap was last hit (per Control Plane replica). Registrations are rate-limited to 10 per hour per source, an IPv6 source counting as its whole /64.
+- The consent page shows the full redirect URI and whether the client came from a metadata document (CIMD) or dynamic registration (DCR); the `mcp.oauth.grant` audit row records `via=cimd|dcr` and `redirect_path`.
+- **Which list applies**: the list saved here wins; with nothing saved, the `AF_MCP_OAUTH_TRUSTED_HOSTS` environment variable; with that unset, the built-in default (`https://claude.ai/api/mcp/auth_callback`, `claude.com`, `chatgpt.com`; the last two stay host-only because ChatGPT's redirect path varies per connection when its stable one is not used, and `claude.com`'s path is not documented here). The screen says which one is in effect. **Reset to default** deletes the saved list so the other two apply again.
 - A change applies from the next request, with no restart, to new sign-ins, client registration, and token requests. A connection whose redirect host (or, for a metadata-URL client, whose own host) was removed can no longer refresh its token or redeem a pending code; an access token already issued works until it expires (at most one hour). Loopback connections are not affected. Every change is audited (`mcp_oauth.trusted_hosts.set` / `.reset`, with the old and new lists).
 - **A client host that resolves to a non-public address breaks metadata-URL (CIMD) sign-in.** The Control Plane fetches the client's metadata document from the host named in `client_id`, and refuses any host whose address, as the Control Plane resolves it, is not public (loopback, private ranges, link-local, and carrier-grade NAT `100.64.0.0/10`, which is where tailnet addresses live). So when the client deployment's own name resolves to such an address from here, its sign-in stops at `authorize` with the generic refusal page, even though the host is on this list. Only dynamic client registration (DCR) works for that client: the client side offers **Retry with dynamic registration** in its unfinished-sign-in note. The check is a deliberate SSRF guard and is not configurable; fix the name resolution as seen from the Control Plane if CIMD is wanted.
 
@@ -302,6 +372,16 @@ Console pane (so a human can perform a login, say). Remote debugging is exposed 
 only**, an attachment starts in **view-only** (it rejects every input from the user) and must be
 explicitly moved to user-control before they can operate it. Not putting CDP endpoints or cookies
 into answers, logs or commits is part of the agent-side instructions as well.
+
+## `AUTH=dev` is not a default
+
+`AUTH` has no default. `AUTH=dev` means no sign-in at all: every request is a fixed `super_admin`.
+Outside the native runtime the Control Plane therefore refuses to start when `AUTH` is unset, and
+accepts `AUTH=dev` only when `AF_ALLOW_INSECURE_DEV_AUTH=1` is also set (single-machine trials
+only). It then logs a `WARNING` at start-up and shows a banner in the administration screen. It
+refuses `AUTH=dev` altogether when `PUBLIC_BASE_URL` is https. The native runtime is single-user
+by design and takes `dev` without either step. Set `AUTH=oauth` or `AUTH=proxy` for anything
+shared.
 
 ## Development sign-in (dev OIDC IdP — super_admin only)
 
@@ -369,7 +449,8 @@ client is served.
   a fault.
 - **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
-  hands it over, so no plaintext files are ever created
+  hands it over, so git and provider credentials are not written to plaintext files. The exception
+  is MCP server secrets, which are written (0600) into the agent CLIs' config files in the home
   (`docs/build/07-security.md` §7.6).
 - **Workspaces do not get the host's cloud identity.** A workspace container can reach the
   cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no

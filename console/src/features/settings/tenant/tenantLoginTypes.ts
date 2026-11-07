@@ -51,4 +51,6 @@ export interface TenantIdP {
   approved_by?: string;
   approved_at?: string;
   usable?: boolean;
+  // Sent to a super_admin only: a claimed domain the deployment itself signs people in on.
+  domain_overlaps?: { domain: string; source: "login_domains" | "super_admin" }[];
 }

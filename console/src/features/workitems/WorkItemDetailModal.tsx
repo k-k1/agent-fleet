@@ -66,6 +66,7 @@ import {
   readWorkItemDetail,
   relTime,
   reviewCounts,
+  stateBadge,
   stateLabel,
   stateTone,
   type WorkItem,
@@ -423,6 +424,7 @@ export function WorkItemDetailModal({
       : item;
   // A stand-in's own state is unread, so the dot and the State row come from the live answer.
   const stateText = d ? detailStateLabel(d) : view.state ? stateLabel(view.state) : "";
+  const badge = stateBadge(item, d);
 
   // If the review branch already has a working copy, default straight to it. Left at "new
   // worktree" (the initial default), "start" would try to check the branch out a second time —
@@ -519,6 +521,18 @@ export function WorkItemDetailModal({
               to one line, so it wraps and shows the title in full. */}
           <h3 className="wi-dtitle">{view.title || item.key}</h3>
         </div>
+        {/* The state is the first thing people look for, so it is a filled pill under the title
+            rather than one more row in the facts list below. */}
+        {stateText && (
+          <div className="wi-dstatebar">
+            {/* Out of the facts list the value would be read with no name; this restores it. */}
+            <span className="wi-vh">{tr("wi.detail_state")}</span>
+            <span className={`wi-dstate tone-${badge.tone}`}>
+              <Icon name={badge.icon} />
+              <span>{stateText}</span>
+            </span>
+          </div>
+        )}
 
         {/* A stand-in has nothing the CP holds: it is not in any saved query's results. Fetching
             it here would be a new single-item read (ADR 0061 decision 20.1), so the panel says
@@ -559,14 +573,8 @@ export function WorkItemDetailModal({
         {/* Exactly the fields the CP holds. A row with no value is not drawn; a column of
             em-dashes only adds things to read. */}
         <dl className="wi-dfacts" aria-busy={reading || undefined}>
-          {stateText ? (
-            <>
-              <dt>{tr("wi.detail_state")}</dt>
-              <dd>{stateText}</dd>
-            </>
-          ) : (
-            neutral && <PendingRow label={tr("wi.detail_state")} />
-          )}
+          {/* The state itself is the pill above; only its placeholder lives here while reading. */}
+          {!stateText && neutral && <PendingRow label={tr("wi.detail_state")} />}
           {neutral && <PendingRow label={tr("wi.detail_kind")} />}
           {kindKnown && (
             <>

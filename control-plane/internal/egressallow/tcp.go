@@ -81,7 +81,17 @@ var tcpFencedNets = func() []netip.Prefix {
 // IPv4-mapped IPv6 literal must stay refused, so the relay unmaps what it reads off the wire
 // before asking.
 func TCPAddrRefused(a netip.Addr) bool {
-	if !a.Is4() || !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback() {
+	return !a.Is4() || AddrRefused(a)
+}
+
+// AddrRefused is the address-family-neutral core of TCPAddrRefused, for a forwarder that
+// also carries IPv6 (the explicit egress proxy): an address that is not global unicast, is
+// private (RFC 1918 and IPv6 unique-local), loopback or link-local, or in tcpFencedNets.
+// An IPv4-mapped IPv6 address is judged as the IPv4 address it names, so ::ffff:127.0.0.1
+// and 127.0.0.1 get the same answer.
+func AddrRefused(a netip.Addr) bool {
+	a = a.Unmap().WithZone("")
+	if !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback() {
 		return true
 	}
 	for _, p := range tcpFencedNets {

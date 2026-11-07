@@ -313,6 +313,10 @@ type engineRuntimeState struct {
 	// the admin toggle starts the box itself because somebody is watching, and the controller's
 	// next tick agrees — and two CreateFleet calls a second apart are two GPUs.
 	startMu sync.Mutex
+	// jobs records which membership submitted each ComfyUI prompt (engine_comfy_guard.go); read
+	// through jobOwners().
+	jobsOnce sync.Once
+	jobs     *engineJobOwners
 	// offers is the state of rule 2 for the demand being served right now (ADR 0075 decision 5):
 	// which offer the strategy was last written to, when, and what every earlier one answered.
 	// Never nil, and inert for an engine that declares no offer — nothing consults it.

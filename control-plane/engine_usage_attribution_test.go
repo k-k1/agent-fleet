@@ -238,7 +238,7 @@ func TestEngineRequestIsAttributedEvenWhenTheEngineNeverAnswers(t *testing.T) {
 	tok := mintEngineSessionToken(reg.signKey, mem.ID, "s-1", "image", time.Now().Add(time.Hour))
 	call := func() *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 		r.Header.Set("Authorization", "Bearer "+tok)
 		r.SetPathValue("key", "image")
 		r.SetPathValue("path", "prompt")

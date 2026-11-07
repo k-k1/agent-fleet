@@ -1,6 +1,7 @@
 package egressallow
 
 import (
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -95,5 +96,22 @@ func TestSplitTCP(t *testing.T) {
 	}
 	if !IsTCPEntry(" TCP:x") || IsTCPEntry("tcp.example.com") || strings.Contains(strings.Join(httpE, ""), "tcp") {
 		t.Error("IsTCPEntry / split disagree")
+	}
+}
+
+func TestAddrRefusedIsFamilyNeutralCoreOfTCPAddrRefused(t *testing.T) {
+	for _, s := range []string{"127.0.0.1", "::1", "::ffff:127.0.0.1", "fd00::1", "fe80::1", "100.64.0.1", "10.0.0.1", "0.1.2.3", "224.0.0.1"} {
+		if !AddrRefused(netip.MustParseAddr(s)) {
+			t.Errorf("%s should be refused", s)
+		}
+	}
+	for _, s := range []string{"93.184.216.34", "2606:4700::1111"} {
+		if AddrRefused(netip.MustParseAddr(s)) {
+			t.Errorf("%s should be allowed", s)
+		}
+	}
+	// The gateway relay stays IPv4-only: an IPv6 address is refused there whatever it is.
+	if !TCPAddrRefused(netip.MustParseAddr("2606:4700::1111")) {
+		t.Error("TCPAddrRefused must keep refusing IPv6")
 	}
 }

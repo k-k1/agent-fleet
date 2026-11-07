@@ -70,6 +70,21 @@ func writeReplay(write func(mt int, data []byte) error, history []byte) error {
 // proxy (control-plane/proxy.go relay); changing the string here changes it there.
 const ptyCloseSessionStopped = "session stopped"
 
+// ptyClosePTYClosed is the close-frame reason when the attached PTY ended while the session
+// (if any) is still running: a plain shell that exited, or a tmux client that detached.
+// WIRE CONTRACT with term.ts, like ptyCloseSessionStopped; an old Console ignores it.
+const ptyClosePTYClosed = "pty closed"
+
+// ptyEndReason names why a live attachment's PTY reached EOF. A named session whose tmux
+// session is gone was halted (the pane must say so and offer Resume); anything else merely
+// ended. Checked after EOF, so a halt that killed the tmux server is already visible here.
+func ptyEndReason(name string) string {
+	if name != "" && !tmuxx.HasSession(session.TmuxName(name)) {
+		return ptyCloseSessionStopped
+	}
+	return ptyClosePTYClosed
+}
+
 // handlePTY bridges a browser terminal to a PTY. With ?session=<name> it
 // attaches the matching tmux session; otherwise it opens a login shell
 // (used for `claude /login` and ad-hoc commands).
@@ -203,7 +218,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 					log.Printf("pty read: %v", err)
 				}
 				writeMsg(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "pty closed"))
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ptyEndReason(name)))
 				return
 			}
 		}

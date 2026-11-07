@@ -232,6 +232,24 @@ describe("AdminTab deployment warnings", () => {
     expect(banner()?.textContent).toContain("AF_MASTER_KEY");
   });
 
+  it("shows the weak-key and plaintext-sealed warnings (#3499)", async () => {
+    respond(true, ["weak_master_key", "weak_cookie_secret", "plaintext_sealed"]);
+    await mount();
+    const banners = [...host!.querySelectorAll('.settings-content [role="alert"]')].map((b) => b.textContent);
+    expect(banners).toEqual([
+      expect.stringContaining("AF_MASTER_KEY"),
+      expect.stringContaining("AF_COOKIE_SECRET"),
+      expect.stringContaining("--seal-plaintext"),
+    ]);
+  });
+
+  it("shows the AUTH=dev warning (#3485)", async () => {
+    respond(true, ["auth_dev"]);
+    await mount();
+    const banners = [...host!.querySelectorAll('.settings-content [role="alert"]')];
+    expect(banners.map((b) => b.textContent)).toEqual([expect.stringContaining("AUTH=dev")]);
+  });
+
   it("shows the missing-EFS-backup warning, alongside any other", async () => {
     respond(true, ["efs_backup_missing"]);
     await mount();

@@ -74,7 +74,7 @@ describe("Settings > Agents target", () => {
     expect(scrolled[0].opts).toEqual({ block: "start", behavior: "auto" });
   });
 
-  it("waits for the cards: a running workspace renders them only after the connection snapshot", async () => {
+  it("draws every card with a checking chip while the snapshot is out, and holds the deep-link until the snapshot lands", async () => {
     wsState = "running";
     let release: (v: unknown) => void = () => {};
     api.mockImplementation((path: string) =>
@@ -83,13 +83,39 @@ describe("Settings > Agents target", () => {
     useSettingsUI.getState().openSettings("agents", { target: "claude" });
     await mount();
     await flushed();
-    expect(card("claude")).toBeNull();
+    expect(card("claude")).not.toBeNull();
+    expect(host!.textContent).not.toContain("Loading");
+    // Every card says "checking", none claims "not connected" while the probe is out.
+    expect(host!.querySelectorAll(".p-card").length).toBeGreaterThanOrEqual(9);
+    expect(host!.querySelectorAll(".p-status").length).toBe(host!.querySelectorAll(".p-card").length);
+    expect(Array.from(host!.querySelectorAll(".p-status")).every((e) => e.textContent === "Checking…")).toBe(true);
+    expect(host!.textContent).not.toContain("Not connected");
+    // The deep link waits: the snapshot adds login fields that change card heights.
     expect(scrolled).toEqual([]);
-    expect(useSettingsUI.getState().settingsTarget).toBe("claude"); // not consumed while loading
+    expect(useSettingsUI.getState().settingsTarget).toBe("claude");
     await act(async () => release({}));
     await flushed();
     expect(scrolled.map((s) => s.id)).toEqual(["claude"]);
     expect(useSettingsUI.getState().settingsTarget).toBeNull();
+    expect(host!.textContent).not.toContain("Checking");
+    expect(host!.textContent).toContain("Not connected");
+  });
+
+  it("a first fetch that fails every retry shows a retryable error, never 'not connected'", async () => {
+    vi.useFakeTimers();
+    try {
+      wsState = "running";
+      api.mockImplementation((path: string) =>
+        path === "api/connections" ? Promise.resolve({ error: { code: "http_502" } }) : Promise.resolve({}),
+      );
+      await mount();
+      for (let i = 0; i < 4; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1300); });
+      expect(host!.textContent).not.toContain("Not connected");
+      expect(host!.textContent).toContain("Status unknown");
+      expect(host!.textContent).toContain("Retry");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("draws the cards at once from the last snapshot while the refetch is still out", async () => {

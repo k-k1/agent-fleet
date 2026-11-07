@@ -15,6 +15,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
 
 const (
@@ -309,6 +310,9 @@ func withShareOperationIdempotency(next http.Handler) http.Handler {
 		}
 		if !shareOperationIDRe.MatchString(id) {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_operation_id", "invalid operation id")
+			return
+		}
+		if !sessionx.GuardShareRelay(w, r) {
 			return
 		}
 		record, existed, err := claimShareOperation(id)
