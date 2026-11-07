@@ -26,6 +26,7 @@ func menuFixture(t *testing.T, name string) PermissionMenu {
 // drawn relative to the session directory).
 func TestCheckTarget(t *testing.T) {
 	long := "find /home/dev/repos/demo/src -type f -name '*.go' -newer /home/dev/repos/demo/go.mod -exec grep -l 'permissionToken' {} + | sort | uniq"
+	barCmd := "cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp /dev/null js/alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel.txt; echo seen"
 	cases := []struct {
 		name, file, detail, cwd string
 		want                    TargetCheck
@@ -38,6 +39,8 @@ func TestCheckTarget(t *testing.T) {
 		{"wrapped, other command", "bash_wrapped_command.txt", "Bash · find /tmp -name x", "", TargetDiffers},
 		{"word-wrapped on a narrow pane", "bash_word_wrapped_command.txt", "Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt", "", TargetMatches},
 		{"word-wrapped, other command", "bash_word_wrapped_command.txt", "Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt", "", TargetDiffers},
+		{"left bar, wrapped continuation", "bash_bar_dangerous_rm.txt", "Bash · " + string([]rune(barCmd)[:100]) + "…", "", TargetMatches},
+		{"left bar, other command", "bash_bar_dangerous_rm.txt", "Bash · rm -rf js", "", TargetDiffers},
 		{"multi-line: first line", "bash_multiline_command.txt", "Bash · cat > note.txt <<'EOF'", "", TargetMatches},
 		{"multi-line: other", "bash_multiline_command.txt", "Bash · cat > other.txt <<'EOF'", "", TargetDiffers},
 		{"new file, relative", "write_three_options.txt", "Write · /home/dev/repos/demo/note.txt", "/home/dev/repos/demo", TargetMatches},

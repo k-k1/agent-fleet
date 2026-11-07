@@ -284,7 +284,8 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 		if i >= len(body) {
 			return TargetDiffers
 		}
-		return matchLogicalLine(between, target, truncated, m.RuleWidth, func(shown string) bool { return shown == target || shown == "rtk "+target })
+		between, width := stripCommandBar(between, m.RuleWidth)
+		return matchLogicalLine(between, target, truncated, width, func(shown string) bool { return shown == target || shown == "rtk "+target })
 	}
 	cands := []string{target}
 	if rel, err := filepath.Rel(cwd, target); cwd != "" && err == nil {
@@ -400,4 +401,37 @@ func wordWrapped(c int, next string, width int) bool {
 	}
 	w, ok := cols(f[0])
 	return ok && c+1+1+w >= width
+}
+
+// permCommandBar is the left bar ("│ ") claude 2.1.319 draws before each line of the command in
+// some dialogs (measured: the "Dangerous rm operation" one, wrapped continuation lines included).
+const permCommandBar = "\u2502 "
+
+// stripCommandBar removes that bar, and the width it takes, when every non-blank line of the
+// command region carries it. One bar is removed per line and only then, so a command whose own
+// lines start with the bar character is still compared with it. The returned width is the room
+// left for the command.
+func stripCommandBar(region []string, width int) ([]string, int) {
+	barred := false
+	for _, ln := range region {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.TrimPrefix(ln, " "), permCommandBar) {
+			return region, width
+		}
+		barred = true
+	}
+	if !barred {
+		return region, width
+	}
+	out := make([]string, len(region))
+	for i, ln := range region {
+		if rest, ok := strings.CutPrefix(strings.TrimPrefix(ln, " "), permCommandBar); ok {
+			out[i] = " " + rest
+		} else {
+			out[i] = ln
+		}
+	}
+	return out, width - len([]rune(permCommandBar))
 }
