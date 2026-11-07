@@ -64,7 +64,7 @@ func TestPermissionKeysByLabel(t *testing.T) {
 	for _, c := range cases {
 		stubPane(t, permFixture(t, c.file))
 		for choice, w := range c.want {
-			keys, code := permissionKeys("s", choice, "", "")
+			keys, code := permissionKeys("s", choice, "", "", "")
 			if !reflect.DeepEqual(keys, w.keys) || code != w.code {
 				t.Errorf("%s %s: keys=%v code=%q, want %v %q", c.file, choice, keys, code, w.keys, w.code)
 			}
@@ -77,7 +77,7 @@ func TestPermissionKeysByLabel(t *testing.T) {
 func TestPermissionKeysUnreadableMenu(t *testing.T) {
 	stubPane(t, "❯ \n  ⏸ manual mode on\n")
 	for _, c := range []string{claude.PermAllow, claude.PermAlways, claude.PermDeny} {
-		if keys, code := permissionKeys("s", c, "", ""); keys != nil || code != "menu_unreadable" {
+		if keys, code := permissionKeys("s", c, "", "", ""); keys != nil || code != "menu_unreadable" {
 			t.Errorf("%s: %v %q", c, keys, code)
 		}
 	}
@@ -187,6 +187,7 @@ func permissionSession(t *testing.T, name string) string {
 	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
 	sid := session.UUID(dir, name)
 	status.Persist(sid, "permission")
+	status.WritePendingPermissionCommand(sid, "echo live-check-3357")
 	status.WritePendingPermission(sid, "Bash · echo live-check-3357")
 	t.Cleanup(func() { permDecided.Delete(name) })
 	return sid
@@ -482,5 +483,46 @@ func TestPermissionAnswerRefusesUnknownWidthContinuation(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "send-keys") {
 		t.Fatalf("keys sent:\n%s", b)
+	}
+}
+
+// #3521: the command the hook saw travels beside the payload and is what the dialog is held to.
+func TestPermissionKeysHoldsTheDialogToTheWholeCommand(t *testing.T) {
+	stubPane(t, permFixture(t, "bash_multiline_command.txt"))
+	detail := "Bash · cat > note.txt <<'EOF'"
+	full := "cat > note.txt <<'EOF'\nhello\nEOF\nls -l note.txt"
+	if keys, code := permissionKeys("s", claude.PermAllow, detail, full, ""); code != "" || len(keys) != 1 {
+		t.Errorf("same command: keys=%v code=%q", keys, code)
+	}
+	for name, cmd := range map[string]string{
+		"first line only":     "cat > note.txt <<'EOF'",
+		"newlines as spaces":  "cat > note.txt <<'EOF' hello EOF ls -l note.txt",
+		"no command recorded": "",
+	} {
+		if keys, code := permissionKeys("s", claude.PermAllow, detail, cmd, ""); code != "target_mismatch" || keys != nil {
+			t.Errorf("%s: keys=%v code=%q", name, keys, code)
+		}
+	}
+}
+
+// The hook records the whole command beside the one-line payload, and a prompt for another tool
+// never inherits an earlier command.
+func TestPermissionPayloadCarriesTheCommand(t *testing.T) {
+	withTempHome(t)
+	sid := "sid-3521"
+	status.WriteLastTool(sid, "Bash · a")
+	status.WriteLastToolCommand(sid, "a\nb")
+	applyPendingPayloads(sid, "permission", hookInput{})
+	if c, _ := status.ReadPendingPermissionCommand(sid); c != "a\nb" {
+		t.Fatalf("command not carried: %q", c)
+	}
+	status.WriteLastTool(sid, "Edit · /x")
+	status.WriteLastToolCommand(sid, "")
+	applyPendingPayloads(sid, "permission", hookInput{})
+	if c, ok := status.ReadPendingPermissionCommand(sid); ok {
+		t.Fatalf("stale command kept: %q", c)
+	}
+	if got := bashCommand("Edit", "x"); got != "" {
+		t.Fatalf("bashCommand(Edit) = %q", got)
 	}
 }

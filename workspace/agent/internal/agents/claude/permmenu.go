@@ -233,15 +233,30 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // Whitespace is kept: only the dialog's one-space indent is removed, and a wrapped line is
 // rejoined only when the terminal broke it: the line reaches the pane's right edge (its indent
 // plus its columns within one column of ruleWidth), or the next word would not have fit. Any other
-// shorter line ends in a real newline, which is never joined. Residual: a real newline right after a line that happens to fill the pane exactly is
-// indistinguishable from a wrap; that needs a Q whose first command line is pane-wide, or ends
-// where the next word would not have fit, and whose continuation completes P's command. The
-// payload keeps no newline information, so this cannot be closed here. The prompt token binds the
-// answer to the payload only, not to the screen: if the next dialog is drawn before the hook
-// rewrites the payload (#3359) and is such a Q, the answer lands on Q (follow-up: #3521).
+// shorter line ends in a real newline, which is never joined.
+//
+// This function sees only the payload's one-line target (the command's first line, cut at 100
+// runes), so it cannot tell a real newline from a wrap, nor see lines after the first. The
+// prompt token binds an answer to the payload, not to the screen: if the next dialog is drawn
+// before the hook rewrites the payload (#3359), the answer lands on it. A Bash answer must
+// therefore go through CheckTargetCommand, which compares the dialog with the whole command.
 // cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
 // (measured: bash_four_options.txt); the payload holds the command as it was before.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
+	return m.checkTarget(detail, cwd, nil)
+}
+
+// CheckTargetCommand is CheckTarget plus, for a Bash target, the whole command the hook saw
+// (#3521). The dialog must reconstruct to exactly that text with every real newline kept, so a
+// dialog that differs from the pending command by a line break, or by lines after the first,
+// never matches. A Bash payload with no command (command == "") is refused: when in doubt the
+// answer is "no match". The dialog is read as drawn; a command the dialog shortens or reflows
+// beyond a wrap does not reconstruct and is refused too.
+func (m PermissionMenu) CheckTargetCommand(detail, cwd, command string) TargetCheck {
+	return m.checkTarget(detail, cwd, &command)
+}
+
+func (m PermissionMenu) checkTarget(detail, cwd string, command *string) TargetCheck {
 	tool, target, ok := payloadTarget(detail)
 	if !ok {
 		return TargetUnchecked
@@ -285,6 +300,14 @@ func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 			return TargetDiffers
 		}
 		between, width := stripCommandBar(between, m.RuleWidth)
+		if command != nil {
+			// The payload's target must be the start of that command, or the two were read from
+			// different prompts. The whole command is then compared in place of the first line.
+			if !strings.HasPrefix(normalizeCommand(*command), target) || !matchFullCommand(between, *command, width) {
+				return TargetDiffers
+			}
+			return TargetMatches
+		}
 		return matchLogicalLine(between, target, truncated, width, func(shown string) bool { return shown == target || shown == "rtk "+target })
 	}
 	cands := []string{target}
@@ -434,4 +457,78 @@ func stripCommandBar(region []string, width int) ([]string, int) {
 		}
 	}
 	return out, width - len([]rune(permCommandBar))
+}
+
+// normalizeCommand is a command's text as the dialog can show it: no trailing blanks on a line
+// (the dialog drops them), no leading or trailing blank lines, \n line ends.
+func normalizeCommand(s string) string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " \t\r")
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// matchFullCommand reports whether the command region of the dialog can be the whole of command.
+// Every boundary between two drawn lines is a wrap (nothing, or the swallowed space) only where
+// the terminal could have broken the line there, and is otherwise a real newline; a boundary
+// where a wrap is possible is also tried as a newline. Only an exact reconstruction matches, so
+// the one thing that stays ambiguous is a screen drawn identically for two commands, which no
+// reading of the screen can separate. The search is pruned by the command's own text.
+func matchFullCommand(region []string, command string, width int) bool {
+	var lines []string
+	for _, ln := range region {
+		lines = append(lines, strings.TrimRight(strings.TrimPrefix(ln, " "), " \t"))
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return false
+	}
+	opts := make([][]string, len(lines)-1)
+	for k := range opts {
+		c, ok := cols(lines[k])
+		if !ok {
+			return false // unknown width with more lines below: cannot say how it was broken
+		}
+		switch {
+		case width > 0 && c+1 >= width-1:
+			opts[k] = []string{"", " ", "\n"}
+		case width > 0 && wordWrapped(c, lines[k+1], width):
+			opts[k] = []string{" ", "\n"}
+		default:
+			opts[k] = []string{"\n"}
+		}
+	}
+	want := normalizeCommand(command)
+	if want == "" {
+		return false
+	}
+	wants := []string{want, "rtk " + want}
+	var try func(i int, shown string) bool
+	try = func(i int, shown string) bool {
+		viable := false
+		for _, w := range wants {
+			if strings.HasPrefix(w, shown) {
+				viable = true
+			}
+		}
+		if !viable {
+			return false
+		}
+		if i == len(lines) {
+			return strings.TrimSpace(shown) == want || strings.TrimSpace(shown) == "rtk "+want
+		}
+		for _, sep := range opts[i-1] {
+			if try(i+1, shown+sep+lines[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	return try(1, lines[0])
 }

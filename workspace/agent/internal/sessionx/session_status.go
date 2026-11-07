@@ -138,6 +138,7 @@ func RunSessionStatusHook(args []string) {
 	// it must not change the session status.
 	if state == "permtool" {
 		status.WriteLastTool(sid, h.toolDetail)
+		status.WriteLastToolCommand(sid, h.toolCommand)
 		// The same hook is how we learn WHERE this session's plan lives: claude writes the
 		// plan through its own Write tool, so the path passes through here while the plan is
 		// still pending. Nothing else carries it in time — the tool_result that spells the
@@ -477,9 +478,11 @@ type hookInput struct {
 	message    string
 	ntype      string
 	toolDetail string
-	delta      string // MessageDisplay: a streaming chunk of the assistant's text
-	source     string // SessionStart: startup | resume | clear | compact
-	toolName   string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
+	// toolCommand is a Bash call's whole command (toolDetail keeps only its first line).
+	toolCommand string
+	delta       string // MessageDisplay: a streaming chunk of the assistant's text
+	source      string // SessionStart: startup | resume | clear | compact
+	toolName    string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
 	// MessageDisplay's position of delta: which turn and assistant message it belongs to, and
 	// its flush counter within that message. message_id is a display id of claude's own; it
 	// cannot be joined to the transcript's message ids. prompt_id names the turn, and
@@ -534,22 +537,23 @@ func decodeHookStdin() hookInput {
 	}
 	_ = json.NewDecoder(os.Stdin).Decode(&in)
 	return hookInput{
-		sessionID:  in.SessionID,
-		questions:  in.ToolInput.Questions,
-		plan:       in.ToolInput.Plan,
-		message:    in.Message,
-		ntype:      in.NotificationType,
-		delta:      in.Delta,
-		promptID:   in.PromptID,
-		turnID:     in.TurnID,
-		messageID:  in.MessageID,
-		index:      in.Index,
-		final:      in.Final,
-		source:     in.Source,
-		toolName:   in.ToolName,
-		agentID:    in.AgentID,
-		filePath:   in.ToolInput.FilePath,
-		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
+		sessionID:   in.SessionID,
+		questions:   in.ToolInput.Questions,
+		plan:        in.ToolInput.Plan,
+		message:     in.Message,
+		ntype:       in.NotificationType,
+		delta:       in.Delta,
+		promptID:    in.PromptID,
+		turnID:      in.TurnID,
+		messageID:   in.MessageID,
+		index:       in.Index,
+		final:       in.Final,
+		source:      in.Source,
+		toolName:    in.ToolName,
+		agentID:     in.AgentID,
+		filePath:    in.ToolInput.FilePath,
+		toolCommand: bashCommand(in.ToolName, in.ToolInput.Command),
+		toolDetail:  permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
 
 		pushMessage:        in.ToolInput.Message,
 		pushDisabledReason: in.ToolResponse.DisabledReason,
@@ -579,13 +583,16 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	}
 	if state == "permission" {
 		message := h.message
+		command := ""
 		// Prefer the specific tool detail captured just before the prompt.
 		if detail, ok := status.ReadLastTool(sid); ok && detail != "" {
 			message = detail
+			command, _ = status.ReadLastToolCommand(sid)
 		} else if message == "" {
 			message = "Claude needs your permission"
 		}
 		status.RemoveLastTool(sid)
+		status.WritePendingPermissionCommand(sid, command)
 		status.WritePendingPermission(sid, message)
 	} else {
 		status.RemovePendingPermission(sid)
@@ -642,6 +649,14 @@ func clearsInteraction(toolName, own string) bool {
 // permission). The decision itself belongs to the status package: the display side (claude's
 // WireLive / DriveState) has to go through the same resolution and cannot import package main.
 func effectiveModal(sid, state string) string { return status.EffectiveModal(sid, state) }
+
+// bashCommand is the command of a Bash call, "" for any other tool.
+func bashCommand(tool, command string) string {
+	if tool != "Bash" {
+		return ""
+	}
+	return command
+}
 
 // permToolDetail renders "Tool · target" for the permission block (target = the file
 // or the first line of the command); just the tool name when no recognizable arg.

@@ -226,3 +226,87 @@ func TestMatchLogicalLineManyWordWraps(t *testing.T) {
 		t.Errorf("14 word-wrapped lines: got %v, want TargetMatches", got)
 	}
 }
+
+// #3521: the payload keeps only the first line, so a Q that differs from P by a line break (or
+// by lines after the first) used to match. The whole command is compared now.
+func TestCheckTargetCommandIsNewlineAware(t *testing.T) {
+	// P is `echo hi`; Q is `echo hi` + newline + `rm -rf build`. The one-line payload cannot see
+	// the second line, so the old check accepted Q for P.
+	q := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " echo hi\n rm -rf build\n")
+	if got := q.CheckTarget("Bash · echo hi", ""); got != TargetMatches {
+		t.Fatalf("fixture no longer exercises the old gap: %v", got)
+	}
+	if got := q.CheckTargetCommand("Bash · echo hi", "", "echo hi"); got != TargetDiffers {
+		t.Errorf("Q accepted for P: %v", got)
+	}
+	if got := q.CheckTargetCommand("Bash · echo hi", "", "echo hi\nrm -rf build"); got != TargetMatches {
+		t.Errorf("control, Q for Q: %v", got)
+	}
+	if got := q.CheckTargetCommand("Bash · echo hi", "", "echo hi rm -rf build"); got != TargetDiffers {
+		t.Errorf("newline read as a space: %v", got)
+	}
+	// Lines after the first are part of the identity.
+	multi := menuFixture(t, "bash_multiline_command.txt")
+	full := "cat > note.txt <<'EOF'\nhello\nEOF\nls -l note.txt"
+	if got := multi.CheckTargetCommand("Bash · cat > note.txt <<'EOF'", "", full); got != TargetMatches {
+		t.Errorf("multi-line P: %v", got)
+	}
+	if got := multi.CheckTargetCommand("Bash · cat > note.txt <<'EOF'", "", "cat > note.txt <<'EOF'"); got != TargetDiffers {
+		t.Errorf("Q has extra lines: %v", got)
+	}
+	if got := multi.CheckTargetCommand("Bash · cat > note.txt <<'EOF'", "", "cat > note.txt <<'EOF' hello EOF ls -l note.txt"); got != TargetDiffers {
+		t.Errorf("newlines joined: %v", got)
+	}
+	// No command beside a Bash payload: refuse.
+	if got := multi.CheckTargetCommand("Bash · cat > note.txt <<'EOF'", "", ""); got != TargetDiffers {
+		t.Errorf("no command: %v", got)
+	}
+}
+
+// Word-wrapped, hard-wrapped, trailing-space and rtk-prefixed commands still match.
+func TestCheckTargetCommandKeepsMatchingWraps(t *testing.T) {
+	long := "find /home/dev/repos/demo/src -type f -name '*.go' -newer /home/dev/repos/demo/go.mod -exec grep -l 'permissionToken' {} + | sort | uniq"
+	if got := menuFixture(t, "bash_wrapped_command.txt").CheckTargetCommand("Bash · "+long[:100]+"…", "", long); got != TargetMatches {
+		t.Errorf("hard wrap: %v", got)
+	}
+	ww := "cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt\nwhile [ -s queue.txt ]; do a=$(head -1 queue.txt); done"
+	m := menuFixture(t, "bash_word_wrapped_command.txt")
+	if got := m.CheckTargetCommand("Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt", "", ww); got != TargetMatches {
+		t.Errorf("word wrap: %v", got)
+	}
+	if got := m.CheckTargetCommand("Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt", "", ww+"   \n"); got != TargetMatches {
+		t.Errorf("trailing blanks: %v", got)
+	}
+	if got := m.CheckTargetCommand("Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt", "", ww+"\nrm -rf /"); got != TargetDiffers {
+		t.Errorf("extra line: %v", got)
+	}
+	rtk := menuFixture(t, "bash_four_options.txt")
+	cmd := `jira issue create -p ABC -t Task -s "テスト 日本語" --no-input || true`
+	if got := rtk.CheckTargetCommand("Bash · "+cmd, "", cmd); got != TargetMatches {
+		t.Errorf("rtk prefix: %v", got)
+	}
+	// Other tools are unaffected by the command.
+	if got := menuFixture(t, "write_three_options.txt").CheckTargetCommand("Write · /home/dev/repos/demo/note.txt", "/home/dev/repos/demo", ""); got != TargetMatches {
+		t.Errorf("file tool: %v", got)
+	}
+}
+
+// A real newline after a pane-wide line is told apart from the wrap by the command's text.
+func TestCheckTargetCommandNewlineAtPaneEdge(t *testing.T) {
+	first := "echo " + strings.Repeat("a", 73) // 78 columns: the pane edge with the indent
+	m := paneWith(t, "bash_ask_rule_af_label.txt", " echo live-check-3357\n", " "+first+"\n rm -rf build\n")
+	for _, c := range []struct {
+		cmd  string
+		want TargetCheck
+	}{
+		{first + "\nrm -rf build", TargetMatches},
+		{first + " rm -rf build", TargetMatches},
+		{first + "rm -rf build", TargetMatches},
+		{first + "\n\nrm -rf build", TargetDiffers},
+		{first + "\nrm -rf /", TargetDiffers},
+	} {
+		if got := m.CheckTargetCommand("Bash · "+first, "", c.cmd); got != c.want {
+			t.Errorf("%q: %v, want %v", c.cmd, got, c.want)
+		}
+	}
+}

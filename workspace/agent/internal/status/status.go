@@ -103,6 +103,8 @@ var (
 	planFiles        = fstore.Strings(paths.AgentStateDir, "plan-file", ".txt")
 	pendingPerms     = fstore.Strings(paths.AgentStateDir, "pending-perm", ".txt")
 	lastTools        = fstore.Strings(paths.AgentStateDir, "pending-perm", ".tool")
+	lastToolCmds     = fstore.Strings(paths.AgentStateDir, "pending-perm", ".toolcmd")
+	pendingPermCmds  = fstore.Strings(paths.AgentStateDir, "pending-perm", ".cmd")
 	pendingTexts     = fstore.Strings(paths.AgentStateDir, "pending-text", ".txt")
 	carriedFiles     = fstore.JSON[Carried](paths.AgentStateDir, "carried-interaction", ".json")
 	restoreNoteFiles = fstore.JSON[RestoreNotes](paths.AgentStateDir, "transcript-restore-notes", ".json")
@@ -452,7 +454,36 @@ func WriteLastTool(sid, detail string) {
 }
 
 func ReadLastTool(sid string) (string, bool) { return lastTools.Read(sid) }
-func RemoveLastTool(sid string)              { lastTools.Remove(sid) }
+func RemoveLastTool(sid string) {
+	lastTools.Remove(sid)
+	lastToolCmds.Remove(sid)
+}
+
+// The full command of the Bash call about to run, which the one-line detail cannot carry
+// (newlines, anything past the first line or 100 runes). Written beside the detail; "" removes
+// it, so a later call that has none never inherits an earlier call's command.
+func WriteLastToolCommand(sid, command string) {
+	if command == "" {
+		lastToolCmds.Remove(sid)
+		return
+	}
+	_ = lastToolCmds.Write(sid, command)
+}
+
+func ReadLastToolCommand(sid string) (string, bool) { return lastToolCmds.Read(sid) }
+
+// WritePendingPermissionCommand records the full command the pending permission payload stands
+// for (#3521), for the check that the dialog on screen is that command. Write it BEFORE
+// WritePendingPermission: that file's mtime is the prompt token. "" removes it.
+func WritePendingPermissionCommand(sid, command string) {
+	if command == "" {
+		pendingPermCmds.Remove(sid)
+		return
+	}
+	_ = pendingPermCmds.Write(sid, command)
+}
+
+func ReadPendingPermissionCommand(sid string) (string, bool) { return pendingPermCmds.Read(sid) }
 
 // A pending AskUserQuestion (the tool_input.questions array), kept only while the
 // session is in the question state so the Console can render and answer it.
@@ -529,4 +560,7 @@ func ReadPlanFile(sid string) (string, bool) { return planFiles.Read(sid) }
 // is blocked awaiting an allow/deny decision so the Console can approve it inline.
 func WritePendingPermission(sid, message string)      { _ = pendingPerms.Write(sid, message) }
 func ReadPendingPermission(sid string) (string, bool) { return pendingPerms.Read(sid) }
-func RemovePendingPermission(sid string)              { pendingPerms.Remove(sid) }
+func RemovePendingPermission(sid string) {
+	pendingPerms.Remove(sid)
+	pendingPermCmds.Remove(sid)
+}
