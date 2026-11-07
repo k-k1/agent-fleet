@@ -55,11 +55,15 @@ esac
 
 [ -n "$method" ] || exec "$real" "$@"
 
-export BKT_TOKEN="$tok" BKT_HOST=https://bitbucket.org BKT_AUTH_METHOD="$method"
-if [ "$method" = basic ]; then export BKT_USERNAME="$user"; else unset BKT_USERNAME; fi
+# Exports the credential; called only right before bkt is exec'd, so no other helper (mktemp,
+# awk, rm) ever has the token in its environment.
+inject() {
+  export BKT_TOKEN="$tok" BKT_HOST=https://bitbucket.org BKT_AUTH_METHOD="$method"
+  if [ "$method" = basic ]; then export BKT_USERNAME="$user"; else unset BKT_USERNAME; fi
+}
 
 # A terminal keeps bkt's own stderr (a person reads the error, and prompts and colours stay).
-[ -t 2 ] && exec "$real" "$@"
+if [ -t 2 ]; then inject; exec "$real" "$@"; fi
 
 # Bitbucket answers a missing scope with a bare 403 that names no scope, and an agent reading it
 # goes looking for another credential. With the Settings connection injected, that 403 means the
@@ -94,25 +98,29 @@ fi
 # or cancel) is forwarded, or bkt would outlive the caller and keep calling the API. The filter
 # reads a FIFO rather than sitting in a pipeline so bkt's PID is known, and it runs without the
 # token in its environment. Any setup failure falls back to plain bkt.
-command -v awk >/dev/null 2>&1 || exec "$real" "$@"
-d="$(mktemp -d 2>/dev/null)" || exec "$real" "$@"
-if ! mkfifo "$d/err" 2>/dev/null; then rm -rf "$d"; exec "$real" "$@"; fi
+command -v awk >/dev/null 2>&1 || { inject; exec "$real" "$@"; }
+d="$(mktemp -d 2>/dev/null)" || { inject; exec "$real" "$@"; }
+if ! mkfifo "$d/err" 2>/dev/null; then rm -rf "$d"; inject; exec "$real" "$@"; fi
 (
-  unset BKT_TOKEN BKT_USERNAME
   HINT="$hint" exec awk '{ print; fflush() }
     tolower($0) ~ /lack one or more required privilege scopes/ { hit = 1 }
     END { if (hit) print ENVIRON["HINT"] }' <"$d/err" >&2
 ) &
 fpid=$!
-# A background job's stdin defaults to /dev/null; <&0 keeps the caller's.
-"$real" "$@" <&0 2>"$d/err" &
+# A background job's stdin defaults to /dev/null; <&0 keeps the caller's. The subshell execs, so
+# $! is bkt's own PID.
+(inject; exec "$real" "$@") <&0 2>"$d/err" &
 pid=$!
+# A signal goes to whichever process the wrapper is waiting on: bkt while it runs, then the
+# filter. The filter ends at EOF, which a process bkt left behind holding stderr can postpone,
+# so once the caller has signalled, the filter is stopped rather than awaited.
+target=$pid
 caught=""
 for s in TERM INT HUP; do
-  # shellcheck disable=SC2064 # expand $s and $pid now
-  trap "caught=1; kill -s $s $pid 2>/dev/null" "$s"
+  # shellcheck disable=SC2064 # expand $s now, $target when the signal arrives
+  trap "caught=1; kill -s $s \"\$target\" 2>/dev/null" "$s"
 done
-# wait returns early when a trapped signal arrives; wait again for bkt's own status.
+# wait returns early when a trapped signal arrives; wait again for the process's own status.
 signalled=""
 while :; do
   caught=""
@@ -121,9 +129,12 @@ while :; do
   [ -n "$caught" ] || break
   signalled=1
 done
-# The filter ends at EOF, which a process bkt left behind holding stderr can postpone; after a
-# forwarded signal the caller wants out now, so the filter is stopped rather than awaited.
+target=$fpid
 [ -z "$signalled" ] || kill "$fpid" 2>/dev/null
-wait "$fpid"
+while :; do
+  caught=""
+  wait "$fpid"
+  [ -n "$caught" ] || break
+done
 rm -rf "$d"
 exit "$rc"

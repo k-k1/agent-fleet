@@ -236,20 +236,27 @@ grep -q 'Pipelines: Read' "$T/err" || fail "--template value taken as the subcom
 run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- --jq=.x -c work pipeline list
 grep -q 'Pipelines: Read' "$T/err" || fail "-c value taken as the subcommand"
 
-# 14. The filter runs without the token in its environment.
+# 14. Only bkt gets the token: the filter and the FIFO helpers run without it.
 reset
 printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
-cat >"$T/bin/awk" <<'STUB'
+for h in awk mktemp mkfifo rm; do
+  cat >"$T/bin/$h" <<STUB
 #!/bin/sh
-[ -z "${BKT_TOKEN-}" ] || echo leaked >"$STUB_DIR/awk.leak"
-exec /usr/bin/awk "$@"
+[ -z "\${BKT_TOKEN-}" ] || echo $h >>"\$STUB_DIR/helper.leak"
+echo $h >>"\$STUB_DIR/helper.ran"
+exec /usr/bin/$h "\$@"
 STUB
-chmod +x "$T/bin/awk"
-rm -f "$T/awk.leak"
+  chmod +x "$T/bin/$h"
+done
+/usr/bin/rm -f "$T/helper.leak" "$T/helper.ran"
 run STUB_BKT_EXIT=1 STUB_BKT_ERR="$scope403" -- pr create
-[ ! -f "$T/awk.leak" ] || fail "BKT_TOKEN visible to the stderr filter"
-grep -q 'Pull requests' "$T/err" || fail "awk stub: filter did not run"
-rm -f "$T/bin/awk"
+[ ! -f "$T/helper.leak" ] || fail "BKT_TOKEN visible to: $(tr '\n' ' ' <"$T/helper.leak")"
+for h in awk mktemp mkfifo rm; do
+  grep -qx "$h" "$T/helper.ran" 2>/dev/null || fail "helper stub $h never ran"
+done
+grep -q 'Pull requests' "$T/err" || fail "helper stubs: filter did not run"
+expect helpers TOKEN fake-oauth-tok
+/usr/bin/rm -f "$T/bin/awk" "$T/bin/mktemp" "$T/bin/mkfifo" "$T/bin/rm"
 
 # 15. stdin still reaches bkt (a background job would otherwise read /dev/null).
 reset
@@ -277,6 +284,40 @@ kill "$(cat "$T/sleep.pid")" 2>/dev/null || true
 [ "$rc" = 143 ] || fail "after SIGTERM: exit status $rc, want 143"
 bpid="$(cat "$T/bkt.pid" 2>/dev/null)"
 if [ -n "$bpid" ] && kill -0 "$bpid" 2>/dev/null; then fail "bkt outlived the wrapper"; kill "$bpid"; fi
+
+# 17. bkt exits first but leaves a child holding stderr, so the wrapper waits on the filter; a
+#     SIGTERM then stops the filter too instead of leaving it orphaned.
+reset
+printf 'username=x-token-auth\npassword=fake-oauth-tok\n' >"$T/git.out"
+cat >"$T/bin/awk" <<'STUB'
+#!/bin/sh
+echo $$ >"$STUB_DIR/awk.pid"
+exec /usr/bin/awk "$@"
+STUB
+cat >"$T/bin/bkt-orphan" <<'STUB'
+#!/bin/sh
+sleep 30 &
+echo $! >"$STUB_DIR/sleep.pid"
+echo done >"$STUB_DIR/bkt.done"
+exit 0
+STUB
+chmod +x "$T/bin/awk" "$T/bin/bkt-orphan"
+rm -f "$T/awk.pid" "$T/sleep.pid" "$T/bkt.done"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" STUB_DIR="$T" AF_BKT_REAL="$T/bin/bkt-orphan" \
+  bash "$WRAPPER" pr list >/dev/null 2>"$T/err" &
+wpid=$!
+for _ in $(seq 50); do [ -s "$T/bkt.done" ] && [ -s "$T/awk.pid" ] && break; sleep 0.1; done
+sleep 0.3
+kill -0 "$wpid" 2>/dev/null || fail "orphan: wrapper did not wait for the filter (test is void)"
+start=$SECONDS
+kill -TERM "$wpid"
+wait "$wpid"
+[ $((SECONDS - start)) -lt 10 ] || fail "orphan: SIGTERM did not end the wrapper promptly"
+apid="$(cat "$T/awk.pid" 2>/dev/null)"
+sleep 0.2
+if [ -n "$apid" ] && kill -0 "$apid" 2>/dev/null; then fail "orphan: the filter outlived the wrapper"; kill "$apid"; fi
+kill "$(cat "$T/sleep.pid")" 2>/dev/null || true
+rm -f "$T/bin/awk" "$T/bin/bkt-orphan"
 
 if [ "$fails" != 0 ]; then
   echo "bkt-auth-wrapper-test: $fails failure(s)" >&2
