@@ -63,6 +63,14 @@ type connRegistry struct {
 	// workspace-wide clock so typing into one session's terminal does not spare
 	// another session whose pane was left open untouched.
 	sessInput map[string]map[string]time.Time // workspaceID -> session -> last keystroke
+	// parkedInput / parkedSessInput hold the clocks of a workspace / session whose last
+	// terminal just detached, so an automatic reconnect (which does not stamp, see
+	// addConnOpt) can take them back. Without them a connection flap that closes the old
+	// socket before the new one attaches erases "typed a moment ago", while the opposite
+	// order (or a second tab) keeps it — protection would depend on packet timing. Only
+	// a marked reconnect consumes them; entries past presenceGrace are pruned.
+	parkedInput     map[string]time.Time
+	parkedSessInput map[string]map[string]time.Time
 }
 
 const (
@@ -102,6 +110,9 @@ func newConnRegistry() *connRegistry {
 		lastSeen:  map[string]time.Time{},
 		lastInput: map[string]time.Time{},
 		sessInput: map[string]map[string]time.Time{},
+
+		parkedInput:     map[string]time.Time{},
+		parkedSessInput: map[string]map[string]time.Time{},
 	}
 }
 
@@ -121,6 +132,15 @@ func (r *connRegistry) touch(wsID string) {
 // that specific session as terminal-attached, which spares it from tier 1 while
 // keystrokes keep arriving (watchingSession).
 func (r *connRegistry) addConn(wsID, session string, attention bool) {
+	r.addConnOpt(wsID, session, attention, true)
+}
+
+// addConnOpt is addConn with control over the one input-clock side effect. With
+// stampInput=false an attention connection still counts in wsConns/wsAttn and marks
+// the session attached, but does not stamp lastInput / sessInput: the Console's
+// automatic reconnect (see terminalAutoReconnect) is not a human arriving. Nothing
+// else about attention changes.
+func (r *connRegistry) addConnOpt(wsID, session string, attention, stampInput bool) {
 	if r == nil || wsID == "" {
 		return
 	}
@@ -130,17 +150,49 @@ func (r *connRegistry) addConn(wsID, session string, attention bool) {
 	if attention {
 		r.wsAttn[wsID]++
 		// Opening it means someone is there now — start as present rather than
-		// waiting for the first keystroke.
-		r.lastInput[wsID] = time.Now()
+		// waiting for the first keystroke. Not for an automatic reconnect.
+		if stampInput {
+			r.lastInput[wsID] = time.Now()
+		} else if p, ok := r.parkedInput[wsID]; ok {
+			if p.After(r.lastInput[wsID]) {
+				r.lastInput[wsID] = p
+			}
+			delete(r.parkedInput, wsID)
+		}
 	}
 	if session != "" {
 		if r.attached[wsID] == nil {
 			r.attached[wsID] = map[string]int{}
 		}
 		r.attached[wsID][session]++
-		if attention {
+		if attention && stampInput {
 			r.stampSessionInputLocked(wsID, session, time.Now())
+		} else if attention {
+			if p, ok := r.parkedSessInput[wsID][session]; ok {
+				if p.After(r.sessInput[wsID][session]) {
+					r.stampSessionInputLocked(wsID, session, p)
+				}
+				delete(r.parkedSessInput[wsID], session)
+			}
 		}
+	}
+	r.mu.Unlock()
+}
+
+// addAttentionConnAt registers a long-lived attention connection that is not a
+// terminal (the visible browser pane) and raises the workspace input clock to `at`
+// without moving it backwards. Unlike addConn it does not stamp "now": the pane's
+// presence is the member's last real interaction, not the act of showing it.
+func (r *connRegistry) addAttentionConnAt(wsID string, at time.Time) {
+	if r == nil || wsID == "" {
+		return
+	}
+	r.mu.Lock()
+	r.wsConns[wsID]++
+	r.wsAttn[wsID]++
+	r.lastSeen[wsID] = time.Now()
+	if at.After(r.lastInput[wsID]) {
+		r.lastInput[wsID] = at
 	}
 	r.mu.Unlock()
 }
@@ -155,6 +207,9 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 	}
 	if r.wsConns[wsID] == 0 {
 		delete(r.wsConns, wsID)
+		if li, ok := r.lastInput[wsID]; ok {
+			r.parkedInput[wsID] = li
+		}
 		delete(r.lastInput, wsID)
 	}
 	if attention {
@@ -173,6 +228,12 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 		if r.attached[wsID][session] == 0 {
 			delete(r.attached[wsID], session)
 			if r.sessInput[wsID] != nil {
+				if t, ok := r.sessInput[wsID][session]; ok {
+					if r.parkedSessInput[wsID] == nil {
+						r.parkedSessInput[wsID] = map[string]time.Time{}
+					}
+					r.parkedSessInput[wsID][session] = t
+				}
 				delete(r.sessInput[wsID], session)
 				if len(r.sessInput[wsID]) == 0 {
 					delete(r.sessInput, wsID)
@@ -183,7 +244,29 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 			delete(r.attached, wsID)
 		}
 	}
+	r.pruneParkedLocked(time.Now())
 	r.mu.Unlock()
+}
+
+// pruneParkedLocked drops parked clocks that no reconnect could still use: older than
+// presenceGrace (or all of them when the grace is disabled and nothing reads the clocks).
+func (r *connRegistry) pruneParkedLocked(now time.Time) {
+	stale := func(t time.Time) bool { return presenceGrace <= 0 || now.Sub(t) >= presenceGrace }
+	for ws, t := range r.parkedInput {
+		if stale(t) {
+			delete(r.parkedInput, ws)
+		}
+	}
+	for ws, m := range r.parkedSessInput {
+		for sess, t := range m {
+			if stale(t) {
+				delete(m, sess)
+			}
+		}
+		if len(m) == 0 {
+			delete(r.parkedSessInput, ws)
+		}
+	}
 }
 
 // snapshot returns (open conns, last-seen, ok) for a workspace.
@@ -197,7 +280,8 @@ func (r *connRegistry) snapshot(wsID string) (conns int, lastSeen time.Time, ok 
 	return r.wsConns[wsID], ls, has
 }
 
-// noteInput records a terminal keystroke — the one signal that says a human is
+// noteInput records a terminal keystroke (or a reported interaction on the visible
+// browser pane, browserViewer.noteInteraction) — the one signal that says a human is
 // actually there. Pings and resizes deliberately do NOT come through here: a
 // background tab sends both, and counting them would restore exactly the "an
 // open socket warms the workspace forever" behaviour this exists to remove.
@@ -357,7 +441,11 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 // Terminals need this because a socket only says "a connection exists", and a
 // forgotten Console tab with a terminal pane open would renew the lease forever.
 // Calling the returned noteInput on every keystroke makes the lease say "a human
-// is touching it" instead.
+// is touching it" instead. Terminal-generated replies (focus reports, DA/CPR answers,
+// colour-query responses) are not keystrokes and never reach it (isTerminalPresence),
+// and neither does the attach itself when the Console marked it an automatic
+// reconnect (autoReconnect): only a first attach, which a human opened, starts the
+// input clocks.
 //
 // noteInput sits on the keystroke relay path (proxy.go relay: onInput() → key
 // forwarding), so any time spent blocking here is added latency before that key
@@ -372,21 +460,42 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 // dropped signal is re-derived by the next keystroke or heartbeat. The in-memory
 // noteInput stays synchronous — the reaper's presence check reads it, and there
 // being immediate is the point.
-func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string) (release func(), noteInput func(), err error) {
-	rel, err := m.trackPresence(ctx, wsID, session, true)
+func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string, autoReconnect bool) (release func(), noteInput func(), err error) {
+	rel, err := m.trackPresenceOpt(ctx, wsID, session, true, !autoReconnect)
 	if err != nil {
 		return nil, nil, err
 	}
 	pending := make(chan struct{}, 1)
 	stop := make(chan struct{})
 	done := make(chan struct{})
+	// Only real keystrokes are published, never the attach itself: a Console tab left
+	// open reconnects on its own, and an attach stamp would keep refreshing the shared
+	// clock with nobody typing, so tier 1 on another replica could never halt.
 	go func() {
 		defer close(done)
+		var lastPublished time.Time
+		var trailing <-chan time.Time
 		for {
 			select {
 			case <-stop:
 				return
+			case <-trailing:
+				trailing = nil
+				lastPublished = time.Now()
+				m.publishSessionInput(wsID, session)
 			case <-pending:
+				// Tier 1 on another replica reads this per-session stamp before
+				// halting (sessionInputElsewhere). At most one write per interval,
+				// and a keystroke that lands inside it is published when the
+				// interval ends: dropping it would leave the stamp stale for good
+				// if the user then stops typing.
+				if wait := sessionInputPublishInterval - time.Since(lastPublished); wait <= 0 {
+					lastPublished = time.Now()
+					trailing = nil
+					m.publishSessionInput(wsID, session)
+				} else if trailing == nil {
+					trailing = time.After(wait)
+				}
 				// The shared watermark (last_seen_at). force=false coalesces it
 				// to once per 5s, so most rounds return after a lock and a map
 				// lookup.
@@ -409,8 +518,30 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 		}, nil
 }
 
+// sessionInputPublishInterval bounds how often one terminal writes the shared stamp.
+var sessionInputPublishInterval = workspacePresenceHeartbeat
+
+// publishSessionInput writes the shared per-session input stamp that tier 1 on other
+// replicas consults. Best effort: a failed write only means a remote reaper may judge the
+// session unwatched until the next keystroke publishes again. Sessionless shells have no
+// tier-1 subject.
+func (m *manager) publishSessionInput(wsID, session string) {
+	if session == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := m.store.RecordSessionInput(ctx, wsID, session, leaseTS(time.Now().UTC())); err != nil {
+		log.Printf("presence: publish session input %s/%s: %v", wsID, session, err)
+	}
+}
+
 func (m *manager) trackPresence(ctx context.Context, wsID, session string, attention bool) (func(), error) {
-	m.conns.addConn(wsID, session, attention)
+	return m.trackPresenceOpt(ctx, wsID, session, attention, true)
+}
+
+func (m *manager) trackPresenceOpt(ctx context.Context, wsID, session string, attention, stampInput bool) (func(), error) {
+	m.conns.addConnOpt(wsID, session, attention, stampInput)
 	if err := m.recordWorkspaceActivity(ctx, wsID, true); err != nil {
 		m.conns.doneConn(wsID, session, attention)
 		return nil, err
@@ -654,6 +785,19 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 			continue
 		}
 		if now.Sub(since) >= to {
+			// The terminal may be held by another replica, whose connRegistry this
+			// one cannot see: ask the shared stamp before the irreversible halt.
+			// A failed lookup keeps the session running — halting on "don't know"
+			// is what interrupts a user who is typing.
+			remote, err := rp.sessionInputElsewhere(ctx, ws.ID, s.Name)
+			if err != nil {
+				log.Printf("idle-stop: shared session input %s/%s: %v (not halting)", ws.ContainerName, s.Name, err)
+				continue
+			}
+			if remote {
+				delete(rp.idleSince, key) // restart the idle clock
+				continue
+			}
 			rp.haltSession(ctx, rt, ws, s.Name)
 			delete(rp.idleSince, key)
 		}
@@ -703,6 +847,21 @@ func (rp *reaper) idleBase(seen bool, lastSeen time.Time, dbLastActive string) t
 		base = dbTS
 	}
 	return base
+}
+
+// sessionInputElsewhere reports whether any replica published terminal input for the
+// session within presenceGrace — the cross-replica half of watchingSession. The cutoff
+// uses this replica's clock like tier 2's does; replica skew is negligible against the
+// grace. With the grace disabled ("attached means watched") attachment is replica-local
+// and cannot be shared, so this answers false.
+func (rp *reaper) sessionInputElsewhere(ctx context.Context, wsID, session string) (bool, error) {
+	if presenceGrace <= 0 {
+		return false, nil
+	}
+	cutoff := leaseTS(time.Now().UTC().Add(-presenceGrace))
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return rp.mgr.store.SessionHasRecentInput(ctx, wsID, session, cutoff)
 }
 
 // haltSession halts one idle claude session (Agent POST /sessions/{name}/halt).

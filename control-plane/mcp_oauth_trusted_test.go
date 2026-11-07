@@ -68,7 +68,7 @@ func TestMCPOAuthTrustedHostsPrecedenceAndReset(t *testing.T) {
 		return v
 	}
 	// Nothing saved, no env: the built-in default.
-	if v := get(); v.Source != "default" || !slices.Equal(v.Hosts, []string{"chatgpt.com", "claude.ai", "claude.com"}) {
+	if v := get(); v.Source != "default" || !slices.Equal(v.Hosts, []string{"chatgpt.com", "claude.com", "https://claude.ai/api/mcp/auth_callback"}) {
 		t.Fatalf("default view = %+v", v)
 	}
 	// Removing a default vendor works, and the saved value wins.
@@ -198,7 +198,7 @@ func TestMCPOAuthTrustedHostsAreAudited(t *testing.T) {
 	if set.ID == "" || reset.ID == "" {
 		t.Fatalf("audit rows: %+v", rows)
 	}
-	for _, want := range []string{`"old":["chatgpt.com","claude.ai","claude.com"]`, `"new":["claude.ai","mcp.corp.example"]`, `"new_source":"admin"`} {
+	for _, want := range []string{`"old":["chatgpt.com","claude.com","https://claude.ai/api/mcp/auth_callback"]`, `"new":["claude.ai","mcp.corp.example"]`, `"new_source":"admin"`} {
 		if !strings.Contains(set.Detail, want) {
 			t.Errorf("set detail %s lacks %s", set.Detail, want)
 		}

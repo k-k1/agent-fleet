@@ -19,6 +19,12 @@ export interface ConfirmOptions {
   body?: ReactNode;
   confirmLabel?: string;
   danger?: boolean;
+  // Output-triggered prompts (terminal OSC 52): focus Cancel, not the confirm button, so a
+  // keystroke already in flight (Space / Enter) cannot approve it.
+  safeFocus?: boolean;
+  // Optional second affirmative button; it resolves true after calling onSecondary.
+  secondaryLabel?: string;
+  onSecondary?: () => void;
 }
 
 type ConfirmFn = (opts: ConfirmOptions) => Promise<boolean>;
@@ -37,6 +43,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const resolver = useRef<((v: boolean) => void) | null>(null);
 
   const askConfirm = useCallback<ConfirmFn>((opts) => {
+    // A prompt raised by program output never replaces a dialog the member is already
+    // answering: the swap would keep focus on the (relabelled) confirm button and let the
+    // member's pending Enter / Space approve the program's request.
+    if (opts.safeFocus && resolver.current) return Promise.resolve(false);
     return new Promise<boolean>((resolve) => {
       resolver.current?.(false); // a prior request that never settled → false
       resolver.current = resolve;
@@ -84,10 +94,21 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <h3 className="ui-confirm-title" id={titleId}>{req.title}</h3>
               <div className="ui-confirm-body">{req.body}</div>
               <div className="ui-confirm-actions">
-                <Button variant="ghost" onClick={() => finish(false)}>
+                <Button variant="ghost" onClick={() => finish(false)} data-autofocus={req.safeFocus ? true : undefined}>
                   {tr("ui.cancel")}
                 </Button>
-                <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)} data-autofocus>
+                {req.secondaryLabel && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      req.onSecondary?.();
+                      finish(true);
+                    }}
+                  >
+                    {req.secondaryLabel}
+                  </Button>
+                )}
+                <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)} data-autofocus={req.safeFocus ? undefined : true}>
                   {req.confirmLabel || tr("ui.run")}
                 </Button>
               </div>

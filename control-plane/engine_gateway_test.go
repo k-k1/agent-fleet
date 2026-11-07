@@ -832,7 +832,7 @@ func TestEngineGatewayDoesNotPrependV1ForComfy(t *testing.T) {
 	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": st}}}
 
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	r.SetPathValue("path", "prompt")
 	g.plain(rec, r, st, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
 
@@ -880,7 +880,7 @@ func TestEngineGatewayTracksServedModelFromTheHeaderOnImageRequests(t *testing.T
 	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": st}}}
 
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	r.Header.Set("X-AF-Model", "klein-4b")
 	r.SetPathValue("path", "prompt")
 	g.plain(rec, r, st, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))

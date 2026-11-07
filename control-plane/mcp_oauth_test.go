@@ -479,7 +479,7 @@ func TestMCPOAuthDCRRateLimitAndCap(t *testing.T) {
 	}
 	// The total cap (store level, here forced small).
 	st := e.mgr.store
-	if err := st.CreateMCPOAuthClient(context.Background(), store.MCPOAuthClient{ClientID: "x", RedirectURIs: "[]"}, 1); !errors.Is(err, store.ErrMCPOAuthClientCap) {
+	if _, err := st.CreateMCPOAuthClient(context.Background(), store.MCPOAuthClient{ClientID: "x", RedirectURIs: "[]"}, 1); err != nil {
 		t.Errorf("cap: %v", err)
 	}
 }

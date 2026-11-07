@@ -690,6 +690,9 @@ func TestPendingCodesDieWithTheMembership(t *testing.T) {
 func TestInFlightExchangeCannotCompleteAfterReinvite(t *testing.T) {
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
+	if _, err := e.mgr.store.CreateMCPOAuthClient(ctx, store.MCPOAuthClient{ClientID: "c", RedirectURIs: "[]", CreatedAt: time.Now().Unix()}, 10); err != nil {
+		t.Fatal(err)
+	}
 	mid := e.membershipID()
 	g := store.MCPOAuthGrant{ID: "g-inflight", ClientID: "c", IdentityID: e.ident.ID, MembershipID: mid, TenantID: e.tenA.ID,
 		Scope: "read", Resource: "r", CodeHash: "gone-code", CreatedAt: time.Now().Unix(),
@@ -741,6 +744,9 @@ func TestIdentityStillAllowedKeepsCredentialsWhenTheRulesRefreshFails(t *testing
 func TestCodeAndConsentRowsAreIssuedUnderTheMembershipLock(t *testing.T) {
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
+	if _, err := e.mgr.store.CreateMCPOAuthClient(ctx, store.MCPOAuthClient{ClientID: "c", RedirectURIs: "[]", CreatedAt: time.Now().Unix()}, 10); err != nil {
+		t.Fatal(err)
+	}
 	mid := e.membershipID()
 	row := func(hash, grant string) store.MCPOAuthToken {
 		return store.MCPOAuthToken{Hash: hash, Kind: store.MCPOAuthCode, GrantID: grant, ClientID: "c", IdentityID: e.ident.ID,

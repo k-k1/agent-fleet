@@ -464,7 +464,7 @@ func TestEngineInFlightRisesAndFalls(t *testing.T) {
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		rec := httptest.NewRecorder()
-		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 		r.Header.Set("Authorization", "Bearer "+tok)
 		r.SetPathValue("key", "image")
 		r.SetPathValue("path", "prompt")

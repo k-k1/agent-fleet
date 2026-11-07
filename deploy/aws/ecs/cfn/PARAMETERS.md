@@ -719,10 +719,10 @@ importing a data-stack export would fail the deploy for a data stack older than 
 
 ### `AuthMode`
 
-CP auth mode. `oauth` (default) = the CP-native login (Google and/or OIDC). `dev` = fixed
-dev identity with NO login — sandbox/E2E gates only: restrict the ALB security group to your
-own IP before using it (an internet-facing ALB with dev auth hands out an authenticated
-session to anyone who reaches it).
+CP auth mode. Only `oauth` (default) = the CP-native login (Google and/or OIDC). `dev` (fixed
+identity, NO login) is no longer accepted: this stack always sets an https `PUBLIC_BASE_URL`, and
+the CP refuses `AUTH=dev` behind https (#3485). A stack still on `AuthMode=dev` must be updated
+with `AuthMode=oauth` (and the OAuth parameters of this template), otherwise the CP does not start.
 
 ## Keys at rest
 

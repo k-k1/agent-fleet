@@ -36,6 +36,8 @@ func TestCheckTarget(t *testing.T) {
 		{"rewritten command still contains it", "bash_four_options.txt", `Bash · jira issue create -p ABC -t Task -s "テスト 日本語" --no-input || true`, "", TargetMatches},
 		{"wrapped command", "bash_wrapped_command.txt", "Bash · " + long[:100] + "…", "", TargetMatches},
 		{"wrapped, other command", "bash_wrapped_command.txt", "Bash · find /tmp -name x", "", TargetDiffers},
+		{"word-wrapped on a narrow pane", "bash_word_wrapped_command.txt", "Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt; : > seen.txt", "", TargetMatches},
+		{"word-wrapped, other command", "bash_word_wrapped_command.txt", "Bash · cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt queue.txt", "", TargetDiffers},
 		{"multi-line: first line", "bash_multiline_command.txt", "Bash · cat > note.txt <<'EOF'", "", TargetMatches},
 		{"multi-line: other", "bash_multiline_command.txt", "Bash · cat > other.txt <<'EOF'", "", TargetDiffers},
 		{"new file, relative", "write_three_options.txt", "Write · /home/dev/repos/demo/note.txt", "/home/dev/repos/demo", TargetMatches},
@@ -183,5 +185,41 @@ func TestCheckTargetRefusesUnknownWidthWithContinuation(t *testing.T) {
 	m = paneWith(t, "bash_ask_rule_af_label.txt", "echo live-check-3357", first)
 	if got := m.CheckTarget("Bash · "+first, ""); got != TargetMatches {
 		t.Errorf("single-line combining command: %v", got)
+	}
+}
+
+// A blank next line (ASCII or ideographic space) must neither panic nor count as a word wrap.
+func TestWordWrappedBlankNext(t *testing.T) {
+	for _, next := range []string{"", " ", "\u3000", "\u3000x"} {
+		if wordWrapped(10, next, 12) {
+			t.Errorf("wordWrapped(%q) = true, want false", next)
+		}
+	}
+}
+
+// One command may mix a word wrap (space swallowed) and a hard wrap of a long word (no space).
+func TestMatchLogicalLineMixedWrap(t *testing.T) {
+	lines := []string{" echo abcdefghijk", " abcdefghijklmnopqr", " st"}
+	target := "echo abcdefghijk abcdefghijklmnopqrst"
+	eq := func(s string) bool { return s == target }
+	if got := matchLogicalLine(lines, target, false, 20, eq); got != TargetMatches {
+		t.Errorf("mixed wrap: got %v, want TargetMatches", got)
+	}
+	other := "echo abcdefghijk abcdefghijklmnopqrsx"
+	if got := matchLogicalLine(lines, other, false, 20, func(s string) bool { return s == other }); got != TargetDiffers {
+		t.Errorf("mixed wrap, other target: got %v, want TargetDiffers", got)
+	}
+}
+
+// Word-wrap boundaries have one separator, so a long wrapped command is not refused for length.
+func TestMatchLogicalLineManyWordWraps(t *testing.T) {
+	lines := []string{" echo abcdefghijk"}
+	target := "echo abcdefghijk"
+	for i := 0; i < 14; i++ {
+		lines = append(lines, " abcdefghijkl")
+		target += " abcdefghijkl"
+	}
+	if got := matchLogicalLine(lines, target, false, 20, func(s string) bool { return s == target }); got != TargetMatches {
+		t.Errorf("14 word-wrapped lines: got %v, want TargetMatches", got)
 	}
 }

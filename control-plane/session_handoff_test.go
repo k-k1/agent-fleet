@@ -241,3 +241,49 @@ func TestHandoffContextRouteRelaysTheAgentsVerdict(t *testing.T) {
 		t.Fatalf("unknown session: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+// The create handler signs a member-origin mark for pushFirst, so it refuses a request a page other
+// than the Console could have made before reading the body or touching the Agent. The handler is
+// called directly, so the global write gate is out of the picture.
+func TestHandoffCreateRefusesCrossOriginRequests(t *testing.T) {
+	f := newHandoffAPIFixture(t, oneSession)
+	const body = `{"sessionName":"session-1","title":"t","prompt":"p","recipientMembershipId":"x"}`
+	send := func(h map[string]string) int {
+		req := httptest.NewRequest(http.MethodPost, "https://console.example/api/session-handoff-offers", strings.NewReader(body))
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		f.api.create(rec, req, f.res)
+		return rec.Code
+	}
+	for name, c := range map[string]struct {
+		h    map[string]string
+		want int
+	}{
+		"text/plain no-cors from a preview host": {map[string]string{"Content-Type": "text/plain;charset=UTF-8",
+			"Origin": "https://p-5173.preview.example", "Sec-Fetch-Site": "same-site"}, http.StatusUnsupportedMediaType},
+		"no content type":            {map[string]string{}, http.StatusUnsupportedMediaType},
+		"JSON from a preview host":   {map[string]string{"Content-Type": "application/json", "Origin": "https://p-5173.preview.example"}, http.StatusForbidden},
+		"JSON, same-site metadata":   {map[string]string{"Content-Type": "application/json", "Sec-Fetch-Site": "same-site"}, http.StatusForbidden},
+		"JSON, cross-site metadata":  {map[string]string{"Content-Type": "application/json", "Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+		"JSON from an opaque origin": {map[string]string{"Content-Type": "application/json", "Origin": "null"}, http.StatusForbidden},
+	} {
+		if got := send(c.h); got != c.want {
+			t.Errorf("%s: %d, want %d", name, got, c.want)
+		}
+	}
+	if n := f.agentHits.get("/sessions/catalog") + f.agentHits.get("/repos"); n != 0 {
+		t.Fatalf("a refused request reached the Agent %d times", n)
+	}
+	// The Console's own request passes the check (it may fail later for other reasons).
+	req := httptest.NewRequest(http.MethodPost, "https://console.example/api/session-handoff-offers", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Origin", "https://console.example")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	f.api.create(rec, req, f.res)
+	if rec.Code == http.StatusUnsupportedMediaType || strings.Contains(rec.Body.String(), "own origin") {
+		t.Fatalf("Console request refused by the origin check: %d %s", rec.Code, rec.Body.String())
+	}
+}
