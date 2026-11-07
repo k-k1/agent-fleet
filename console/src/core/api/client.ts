@@ -1434,12 +1434,16 @@ export const fetchFleetGraph = (since: number, until: number): Promise<FleetGrap
 
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
-export function wsURL(session: string): URL {
+export function wsURL(session: string, autoReconnect = false): URL {
   const u = new URL(rel("ws/terminal"));
   u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   u.search =
     `?session=${encodeURIComponent(session)}` +
-    (selectedTenant ? `&tenant=${encodeURIComponent(selectedTenant)}` : "");
+    (selectedTenant ? `&tenant=${encodeURIComponent(selectedTenant)}` : "") +
+    // Marks a reconnect the Console made on its own, so the Control Plane does not read
+    // the new socket as a human arriving (idle-stop presence). Advisory; omitted on a
+    // first attach.
+    (autoReconnect ? "&reconnect=1" : "");
   return u;
 }
 

@@ -37,7 +37,7 @@ func TestTerminalNoteInputDoesNotBlockOnTheStore(t *testing.T) {
 	st := &slowActivityStore{delay: 300 * time.Millisecond}
 	m := &manager{conns: newConnRegistry(), store: st}
 
-	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), wsID, "s1")
+	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), wsID, "s1", false)
 	if err != nil {
 		t.Fatalf("trackWorkspaceTerminal: %v", err)
 	}
