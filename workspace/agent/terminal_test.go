@@ -195,8 +195,20 @@ func TestHandlePTY_HaltWhileAttachedClosesWithSessionStopped(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	time.Sleep(500 * time.Millisecond) // let the attach client start
-	if err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run(); err != nil {
+	// Wait (bounded) until the attach client is really on the session; a fixed sleep lets
+	// kill-session win on a loaded host and new-session -A then recreates the session.
+	target := session.ExactTarget(session.TmuxName(name))
+	attached := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if out, err := tmuxx.Cmd("list-clients", "-t", target).Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+			attached = true
+			break
+		}
+	}
+	if !attached {
+		t.Fatal("attach client never appeared on the tmux session")
+	}
+	if err := tmuxx.Cmd("kill-session", "-t", target).Run(); err != nil {
 		t.Fatalf("kill-session: %v", err)
 	}
 	ce := readCloseReason(t, conn)
