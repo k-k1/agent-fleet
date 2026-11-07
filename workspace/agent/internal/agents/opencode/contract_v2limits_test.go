@@ -212,27 +212,93 @@ func TestContractV2ModelLimits(t *testing.T) {
 	}
 }
 
-// A limit with a context and no output does not fall back to a default output any more (opencode
-// 1: 32000): opencode 2 rejects the entry, and with it every model of that provider, including a
-// valid one next to it. This is why engine.go writes both numbers or neither.
-func TestContractV2ModelLimitContextOnlyDropsTheProvider(t *testing.T) {
+// A limit with a context and no output, the shape engine.go never writes. What opencode does with
+// it changed between releases, and both answers are pinned so a move either way is seen:
+//
+//   - up to 2.2.5 opencode rejects the entry, and with it every model of that provider, including a
+//     valid one next to it (provider.no-route);
+//   - from 2.2.6 the entry is accepted: it is listed with the 32000 default output, its turns ask
+//     for an output cap clamped to the window (measured: about 12500 for a 20000 context), compaction
+//     follows the declared context, and the valid model next to it is untouched.
+//
+// Neither makes a context-only limit worth writing: on 2.2.5 it takes the whole engine down, and
+// on 2.2.6 the output cap is opencode's guess rather than the engine's.
+func TestContractV2ModelLimitContextOnly(t *testing.T) {
 	stub := newLimitsStub()
 	addr, dir := startV2Serve(t, http.HandlerFunc(stub.handler), map[string]any{
 		"ctxonly": limitsModel("ctxonly", map[string]any{"context": 20000}),
 		"valid":   limitsModel("valid", map[string]any{"context": 20000, "output": 2000}),
 	}, nil)
 	v := opencodeVersion(t)
-	if listed := listedLimits(t, addr, dir); len(listed) != 0 {
-		t.Fatalf("%s: a context-only limit left the provider listed: %v", v, listed)
+	listed := listedLimits(t, addr, dir)
+
+	if !opencodeAtLeast(t, v, 2, 2, 6) {
+		if len(listed) != 0 {
+			t.Fatalf("%s: a context-only limit left the provider listed: %v", v, listed)
+		}
+		for _, id := range []string{"ctxonly", "valid"} {
+			errs := limitsTurns(t, stub, addr, dir, id, 100)
+			if len(errs) == 0 || errs[0] != "provider.no-route" {
+				t.Fatalf("%s: %s next to a context-only limit: turn errors %v, want provider.no-route", v, id, errs)
+			}
+		}
+		if caps, _ := stub.seen("valid"); len(caps) != 0 {
+			t.Fatalf("%s: the valid model reached the provider: %v", v, caps)
+		}
+		t.Logf("%s: a context-only limit drops the whole provider (both models: provider.no-route)", v)
+		return
 	}
-	for _, id := range []string{"ctxonly", "valid"} {
-		errs := limitsTurns(t, stub, addr, dir, id, 100)
-		if len(errs) == 0 || errs[0] != "provider.no-route" {
-			t.Fatalf("%s: %s next to a context-only limit: turn errors %v, want provider.no-route", v, id, errs)
+
+	if l := listed["ctxonly"]; l["context"] != 20000 || l["output"] != 32000 {
+		t.Fatalf("%s: limit {context: 20000} is listed as %v, want context 20000 output 32000 (all: %v)", v, l, listed)
+	}
+	if l := listed["valid"]; l["context"] != 20000 || l["output"] != 2000 {
+		t.Fatalf("%s: limit {20000, 2000} next to a context-only one is listed as %v", v, l)
+	}
+	for _, c := range []struct {
+		id     string
+		maxCap float64
+	}{
+		{"ctxonly", 20000},
+		{"valid", 2000},
+	} {
+		if errs := limitsTurns(t, stub, addr, dir, c.id, 17_100); len(errs) > 0 {
+			t.Fatalf("%s: %s next to a context-only limit: turn errors %v", v, c.id, errs)
+		}
+		caps, summaries := stub.seen(c.id)
+		if len(caps) == 0 {
+			t.Fatalf("%s: %s: the stub saw no turn request", v, c.id)
+		}
+		for _, got := range caps {
+			if got <= 0 || got > c.maxCap {
+				t.Fatalf("%s: %s asked for max_tokens %v, want each in (0, %v]", v, c.id, caps, c.maxCap)
+			}
+		}
+		if summaries == 0 {
+			t.Fatalf("%s: %s at 17100 prompt tokens of a 20000 window: no compaction request", v, c.id)
+		}
+		t.Logf("%s: %s at 17100 prompt tokens: max_tokens %v, compaction requests %d", v, c.id, caps, summaries)
+	}
+}
+
+// opencodeAtLeast reports whether `opencode --version` output ("opencode v2.2.6", or a bare
+// "2.2.6") is at or past major.minor.patch. An unparseable version fails the test rather than
+// silently choosing a branch.
+func opencodeAtLeast(t *testing.T, version string, major, minor, patch int) bool {
+	t.Helper()
+	fields := strings.Fields(version)
+	if len(fields) == 0 {
+		t.Fatalf("empty opencode version")
+	}
+	core, _, _ := strings.Cut(strings.TrimPrefix(fields[len(fields)-1], "v"), "-")
+	var got [3]int
+	if n, err := fmt.Sscanf(core, "%d.%d.%d", &got[0], &got[1], &got[2]); n != 3 || err != nil {
+		t.Fatalf("cannot read a version out of %q", version)
+	}
+	for i, want := range [3]int{major, minor, patch} {
+		if got[i] != want {
+			return got[i] > want
 		}
 	}
-	if caps, _ := stub.seen("valid"); len(caps) != 0 {
-		t.Fatalf("%s: the valid model reached the provider: %v", v, caps)
-	}
-	t.Logf("%s: a context-only limit drops the whole provider (both models: provider.no-route)", v)
+	return true
 }

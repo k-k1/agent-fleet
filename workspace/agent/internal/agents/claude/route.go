@@ -78,7 +78,7 @@ var loadAPIKey = func() (string, error) {
 }
 
 // routeOverrides is every variable the CLI reads to choose its model provider, its endpoint or
-// its credential, taken from the CLI's own lists (claude 2.1.318: the provider switches and their
+// its credential, taken from the CLI's own lists (claude 2.1.319: the provider switches and their
 // scoping, the credentials, the base URLs, the auth skips) plus the Unix socket it sends Anthropic
 // API calls to. Every explicit route removes all of them from the pane and pins them empty in the
 // flag layer except the ones it sets itself (overridesExcept), and refuses a settings file that
