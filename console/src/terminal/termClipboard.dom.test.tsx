@@ -44,6 +44,7 @@ const key = (code: string, o: KeyboardEventInit = {}) =>
   new KeyboardEvent("keydown", { code, cancelable: true, ...o });
 
 afterEach(() => {
+  setSetting("termDragCopy", false);
   disposeTerm("clip");
   toasts.length = 0;
   confirms.length = 0;
@@ -392,7 +393,20 @@ describe("terminal clipboard keys", () => {
     up(term.element, { clientX: moved ? 80 : 10, ...o });
   };
 
+  it("with the drag-copy setting off (default), drag then OSC 52 prompts", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    setSetting("termDragCopy", false);
+    const term: any = mount();
+    drag(term);
+    await oscOf(term)("dragged");
+    await settle();
+    expect(confirms.length).toBe(1);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it("OSC 52 right after a drag-release is written without a prompt, once", async () => {
+    setSetting("termDragCopy", true);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const term: any = mount();
@@ -408,6 +422,7 @@ describe("terminal clipboard keys", () => {
   });
 
   it("OSC 52 without a gesture, after the window, or after a mere click still prompts", async () => {
+    setSetting("termDragCopy", true);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     // Fresh pane per case: a refused prompt starts a cooldown that would mask the next one.
@@ -433,6 +448,7 @@ describe("terminal clipboard keys", () => {
   });
 
   it("a shift-drag or a native selection leaves no prompt-free window", async () => {
+    setSetting("termDragCopy", true);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const term: any = mount();
@@ -453,6 +469,7 @@ describe("terminal clipboard keys", () => {
   });
 
   it("a release outside the pane completes its own drag; another pane's press is not borrowed", async () => {
+    setSetting("termDragCopy", true);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const a: any = mount();

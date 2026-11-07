@@ -559,11 +559,12 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   // only memory is an explicit, separate "allow for a minute" choice, per pane, in memory.
   // Text is capped and stripped of control characters before it is offered or written.
   // Ordinary selection copy (copySelection) is a user gesture and never comes through here.
-  // Member gesture: the release of a left-button drag in this pane. tmux (mouse on) turns a
+  // Opt-in (setting termDragCopy, default off). Member gesture: the release of a left-button drag in this pane. tmux (mouse on) turns a
   // plain drag into a copy-mode selection and emits OSC 52 when the button is released, so a
   // write arriving within OSC52_GESTURE_MS of that release is the member's own copy and skips
   // the prompt. Single-use: the first write consumes it, a second in the window prompts.
-  // Residual: a program that emits OSC 52 inside that window can ride the gesture. The window
+  // Residual: a program that receives mouse events can emit OSC 52 inside that window, which
+  // is why this is opt-in. The window
   // covers the websocket round trip (release report out, tmux's OSC 52 back; tmux itself
   // answers within milliseconds); copy-mode keys (Enter / y) are not treated as gestures
   // because ordinary typing would then open the same window.
@@ -596,7 +597,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
       }
       const gesture = osc52GestureAt;
       osc52GestureAt = 0; // consumed (or stale) either way
-      if (gesture && Date.now() - gesture <= OSC52_GESTURE_MS) {
+      if (getSettings().termDragCopy && gesture && Date.now() - gesture <= OSC52_GESTURE_MS) {
         write();
         return true;
       }
