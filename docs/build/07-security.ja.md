@@ -177,6 +177,18 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
   [guide/ref/limits](../../guide/ref/limits.ja.md)。
 - **監査はしない**（通常の読み取りはしない、`proxy.go`）。一括の書き出しを監査すべきかは未決
   （decisions/0111 の状態行）。
+- **ハードリンクの検査は zip だけ。** 通常のファイル読み取り（`/fs/file`・`/fs/download`・
+  `/fs/imagesize`・サムネイルの先読み）はシンボリックリンクと通常ファイル以外を断るが、
+  `st_nlink > 1` は断**らない**: ハードリンクは作業ツリーでは普通にあり（パッケージマネージャのストア、
+  git オブジェクト）、断ると通常の閲覧が壊れる。拒否リストのファイルへのリンクは、同じ uid で動くコードなら
+  そのファイルを直接読めるので防御の上積みにしかならない。一括の書き出しだけ厳しい規則を保つのは、
+  人がファイルを 1 つずつ指名せずにフォルダ配下をすべて読む唯一の経路だから。
+- **変更系は拒否エントリの祖先も断る。** 名前変更（両端）・削除・mkdir・新規ファイル・アップロードは、
+  拒否エントリ・その子孫・**それを含むフォルダ**（`.config`・`.local`・`.local/share`・閲覧ルート）に
+  403 を返す。書かれたパスと、シンボリックリンク解決後のパスの両方で判定する（`fsWriteRefused`）。
+  アップロードと画像生成の `out_dir` はリンクになっている送り先フォルダも断る。アップロードは
+  `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` で開いたディレクトリ fd 経由で書き、生成した画像とそのサイドカーも
+  同じ: フォルダはジョブを積んだ時のパスを信用せず、画像を保存する時点で開く。
 
 ## 7.3 L1 Console 認証（AUTH 3 モード）
 
@@ -188,6 +200,11 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
 | `oauth` | **CP 自身が OIDC クライアント**（§7.3.1）。`/login`・`/login/{slug}`・`/oauth2/{login,callback,logout,link}` を CP が所有し、成功で署名 cookie（HMAC-SHA256・`AF_COOKIE_SECRET`・HttpOnly・SameSite=Lax・公開 URL が HTTPS なら Secure・TTL `AF_SESSION_TTL` 既定 168h）を発行。compose と AWS のテンプレートが設定するのはこれ | セルフホスト本命。エッジで HTTPS 前提 |
 | `proxy` | 上流ゲートウェイの email ヘッダ（`AUTH_EMAIL_HEADER`・既定 `X-Forwarded-Email`）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。ヘッダは消さないので、CP にはそのゲートウェイ経由でしか届かないこと | oauth2-proxy など既存ゲートの流用。**SAML IdP の正式な答えもこれ** — ブリッジする（[decisions/0043](../decisions/0043-login-idp.ja.md)）。AWS のテンプレートには無い |
 | `dev` | 固定ユーザー（`DEV_USER`・既定 `dev`）で、デプロイ管理者になる | ローカル開発のみ。**`AUTH` 未設定時の既定**。`native` はこれを要求する |
+
+**プロバイダ接続のコールバック**: Jira / Bitbucket の OAuth コールバック（`/api/oauth/{jira,bitbucket}/callback`）は
+ゲートの内側にある。開始時に開始者の identity と membership を記録し、コールバックは、セッションがその identity で、
+membership が有効で、そのテナントのログイン方式・接続元ルールを現在のセッションが満たすときだけコードを交換する。
+トークンはその membership の Workspace に入る。それ以外はエラー表示で何も保存しないので、本人としてサインインし直して接続し直す。
 
 **authGate の要点**（`oauth` モード）:
 
@@ -374,8 +391,15 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   identity ヘッダーも捨てるので、メンバーのログイン Cookie は Workspace に届かない。
 - **別のページのためには署名しない。** 署名の前に CP は `application/json`、送られていれば `Sec-Fetch-Site:
   same-origin`、送られていれば Console 自身のホストの `Origin` を求めるので、same-site のプレビューアプリが
-  ブラウザーに署名付きのメンバー書き込みをさせることはできない。パス形式のプレビューのアプリは Console の
+  ブラウザーに署名付きのメンバー書き込みをさせることはできない。JSON を受ける署名ハンドラーはどれもこの検査
+  （`memberOriginRequestCheck`）を自分で行い、`POST /api/session-handoff-offers`（先にプッシュする段）も
+  含むので、この保証はグローバルな書き込みゲートやその除外に依存しない（multipart のアップロードのルートは別形で、`multipart/form-data` と、プリフライトを
+  強いるカスタムヘッダー `X-AF-Console` を求め、`Sec-Fetch-Site` / `Origin` の検査は同じ）。パス形式のプレビューのアプリは Console の
   オリジンで動くのでこの検査の対象外で、制限は次の項目が担う。
+- **セッションの引き継ぎには Console でのメンバー操作が要る。** Console の「別のエージェントへ引き継ぐ…」は
+  オペレーターのチャットを開き、最初の依頼文は入力欄に入れるだけにする。元セッションの出力を読み
+  `create_session` に至りうるそのターンは、メンバーが送信を押したときに送られる。依頼文中の
+  「`create_session` の前に確認する」はモデルへのお願いで、同意の関門ではない。
 - **パス形式のプレビュー（`/preview/{port}/…`）。** `AF_PREVIEW_DOMAIN` があると CP はこれを配らない。
   GET/HEAD をサブドメイン形式の持ち主専用の入口 `/preview-open-own` へ 302 で返し（他のメソッドは 405）、Workspace の
   内容が Console のオリジンで応答することはない（decisions/0062 決定 7、2026-11-07 の追記）。ドメインが

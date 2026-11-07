@@ -231,12 +231,15 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // title (file tools). A description, a diff or a "Tip:" never counts as evidence.
 //
 // Whitespace is kept: only the dialog's one-space indent is removed, and a wrapped line is
-// rejoined only when every line but the last reaches the pane's right edge (its indent plus its
-// columns within one column of ruleWidth). A shorter line ends in a real newline, which is never
-// joined. Residual: a real newline right after a line that happens to fill the pane exactly is
-// indistinguishable from a wrap; that needs a Q whose first command line is pane-wide and whose
-// continuation completes P's command. cwd is the session directory, for a path drawn
-// relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
+// rejoined only when the terminal broke it: the line reaches the pane's right edge (its indent
+// plus its columns within one column of ruleWidth), or the next word would not have fit. Any other
+// shorter line ends in a real newline, which is never joined. Residual: a real newline right after a line that happens to fill the pane exactly is
+// indistinguishable from a wrap; that needs a Q whose first command line is pane-wide, or ends
+// where the next word would not have fit, and whose continuation completes P's command. The
+// payload keeps no newline information, so this cannot be closed here. The prompt token binds the
+// answer to the payload only, not to the screen: if the next dialog is drawn before the hook
+// rewrites the payload (#3359) and is such a Q, the answer lands on Q (follow-up: #3521).
+// cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
 // (measured: bash_four_options.txt); the payload holds the command as it was before.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
 	tool, target, ok := payloadTarget(detail)
@@ -327,34 +330,74 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
 		lines = lines[1:]
 	}
-	for _, sep := range []string{"", " "} {
-		shown := ""
-		for k, ln := range lines {
-			if k > 0 {
-				shown += sep
-			}
-			shown += ln
-			// The logical line goes on while this physical line fills the pane. It is compared
-			// only once complete: an early physical line equal to P proves nothing about what
-			// the continuation adds.
-			c, ok := cols(ln)
-			if !ok && k+1 < len(lines) {
-				// Unknown width and more lines below: whether this line was wrapped cannot be
-				// told, and stopping here would leave the continuation unchecked.
-				return TargetDiffers
-			}
-			if ok && width > 0 && c+1 >= width-1 && k+1 < len(lines) {
-				continue
-			}
-			if truncated {
-				if strings.HasPrefix(shown, target) {
-					return TargetMatches
-				}
-			} else if eq(shown) {
-				return TargetMatches
-			}
+	// opts[k] are the separators that may sit between lines[k] and lines[k+1]. A line that
+	// reaches the edge was broken by the terminal (hard wrap, or the swallowed space); a line that
+	// stops short because the next word did not fit was word-wrapped, which swallows one space.
+	// Each boundary is decided on its own, so a command can mix both kinds.
+	last := len(lines) - 1
+	var opts [][]string
+	for k := 0; k < len(lines)-1; k++ {
+		c, ok := cols(lines[k])
+		if !ok {
+			// Unknown width and more lines below: whether this line was wrapped cannot be told,
+			// and stopping here would leave the continuation unchecked.
+			return TargetDiffers
+		}
+		if width > 0 && c+1 >= width-1 {
+			opts = append(opts, []string{"", " "})
+		} else if width > 0 && wordWrapped(c, lines[k+1], width) {
+			opts = append(opts, []string{" "})
+		} else {
+			last = k
 			break
 		}
 	}
+	// Only a boundary with two separators multiplies the search; word-wrap boundaries have one.
+	branching := 0
+	for _, o := range opts {
+		if len(o) > 1 {
+			branching++
+		}
+	}
+	if branching > 12 {
+		return TargetDiffers // too many ambiguous boundaries to enumerate: fail closed
+	}
+	// The logical line is compared only once complete: an early physical line equal to P proves
+	// nothing about what the continuation adds.
+	var try func(i int, shown string) bool
+	try = func(i int, shown string) bool {
+		if i > last {
+			if truncated {
+				return strings.HasPrefix(shown, target)
+			}
+			return eq(shown)
+		}
+		for _, sep := range opts[i-1] {
+			if try(i+1, shown+sep+lines[i]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(lines) > 0 && try(1, lines[0]) {
+		return TargetMatches
+	}
 	return TargetDiffers
+}
+
+// wordWrapped reports whether a line of c columns ended short of the pane's edge because the
+// next word did not fit, which is how Claude Code's renderer breaks a line at a space (measured
+// on a narrow pane: "cp js.txt" / "queue.txt;"). A next line that starts with whitespace is a
+// real indent, never a wrap. The join is still compared in full against the payload, so the
+// wider test only costs the residual already described on CheckTarget.
+func wordWrapped(c int, next string, width int) bool {
+	if next == "" || next[0] == ' ' || next[0] == '\t' {
+		return false
+	}
+	f := strings.Fields(next)
+	if len(f) == 0 || unicode.IsSpace([]rune(next)[0]) {
+		return false
+	}
+	w, ok := cols(f[0])
+	return ok && c+1+1+w >= width
 }

@@ -23,7 +23,7 @@ ADR 0043.
 
 ## 0. Before you start
 
-- **The Control Plane runs the OAuth/OIDC flow itself** (`AUTH=oauth`, the default). You need a
+- **The Control Plane runs the OAuth/OIDC flow itself** (`AUTH=oauth`, the recommended setting; `AUTH` has no default and must be set). You need a
   confidential client (one with a client secret) at every IdP you enable.
 - **You can enable several at once.** The sign-in page shows one button per enabled method:
   Google first, then the OIDC providers in the order you listed them, GitHub last.

@@ -138,7 +138,11 @@ const UnattendedStartEnv = "AF_AGENT_SELF_UPDATE_SKIP=1"
 // CP task resolves only through the Cloud Map fallback the Transport carries. The
 // default here exists so this package's own tests (httptest servers) need no wiring;
 // it must never be what a deployment uses.
-var healthzClient httpDoer = &http.Client{Timeout: 5 * time.Second}
+var healthzClient httpDoer = &http.Client{
+	Timeout: 5 * time.Second,
+	// A probe never follows a redirect: the Agent's answer is the Agent's, not another host's.
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // httpDoer is the one method the probes use, so the CP can inject its own client
 // without this package depending on how it is built.

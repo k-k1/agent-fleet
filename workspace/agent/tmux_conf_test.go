@@ -41,3 +41,16 @@ func TestShippedTmuxConfKeepsEscapeTimeLow(t *testing.T) {
 		t.Fatalf("escape-time = %d ms; want 1..50 (500 = tmux's default and half a second of Esc lag)", ms)
 	}
 }
+
+// set-clipboard must stay `external`: `on` forwards OSC 52 from any program inside a pane to the
+// member's browser clipboard.
+func TestShippedTmuxConfDoesNotForwardPaneOSC52(t *testing.T) {
+	b, err := os.ReadFile("../tmux.conf")
+	if err != nil {
+		t.Fatalf("read workspace/tmux.conf: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*set(?:-option)?\s+(?:-\w+\s+)*set-clipboard\s+(\S+)\s*$`).FindSubmatch(b)
+	if m == nil || string(m[1]) != "external" {
+		t.Fatalf("workspace/tmux.conf must set `set-clipboard external` (got %q)", m)
+	}
+}

@@ -488,8 +488,14 @@ func (a sessionHandoffAPI) pushThenRecheck(w http.ResponseWriter, r *http.Reques
 	return fresh, blocked, true
 }
 
-// create handles POST /api/session-handoff-offers.
+// create handles POST /api/session-handoff-offers. It can sign a member-origin mark (pushFirst),
+// so it runs memberOriginRequestCheck before reading anything, like the other signers; the
+// guarantee must not depend on the global write gate or its exemptions.
 func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if aerr := memberOriginRequestCheck(r); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, handoffPromptMaxBytes+handoffTitleMaxBytes+4096))
 	if err != nil {
 		writeAPIErr(w, &apiError{http.StatusRequestEntityTooLarge, "handoff_too_large", "handoff is too large"})

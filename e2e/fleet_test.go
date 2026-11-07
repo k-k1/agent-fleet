@@ -201,6 +201,8 @@ func startCP(t *testing.T, image, dataDir string, workspaces func() []string, en
 		logPath: filepath.Join(tmp, "cp.log")}
 	p.env = append(append(cpEnviron(os.Environ()),
 		"AF_RUNTIME=local",
+		"AUTH=dev", // explicit: AUTH has no default outside native (#3485); members tests override it
+		"AF_ALLOW_INSECURE_DEV_AUTH=1",
 		"AF_DB="+filepath.Join(dataDir, "e2e-cp.db"),
 		"CP_ADDR="+cpAddr,
 		"WS_IMAGE="+image,

@@ -166,7 +166,7 @@ func engineUsageFeature(key string) string { return "engine." + key }
 // live deployment: a plain client lost the row with
 // `dial tcp: lookup af-ws-… on 10.20.0.2:53: no such host`, which is precisely the failure
 // that file exists to prevent, and it is silent — a dropped usage row looks like no usage.
-var engineUsageClient = &http.Client{Timeout: 10 * time.Second, Transport: newAgentTransport()}
+var engineUsageClient = newAgentClient(10*time.Second, newAgentTransport())
 
 // engineUsageRowFor builds the row for one call, or reports that this engine's consumption is
 // not the gateway's to count.

@@ -257,8 +257,8 @@ Parameters:
   AuthMode:
     Type: String
     Default: oauth
-    AllowedValues: [ oauth, dev ]
-    Description: "oauth = CP-native login; dev = NO login, sandbox only. PARAMETERS.md."
+    AllowedValues: [ oauth ]
+    Description: "oauth = CP-native login (dev is refused behind https). PARAMETERS.md."
   TtsEcsService:
     Type: String
     Default: ""

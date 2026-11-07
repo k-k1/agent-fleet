@@ -252,6 +252,15 @@ mcp-call endpoint="/mcp" http_method="POST" status=400 latency_ms=2 principal="g
 操作を許すには明示的に user-control へ移す必要があります。CDP エンドポイントや cookie を
 回答・ログ・コミットへ出さないことは、エージェント側の指示にも書かれています。
 
+## `AUTH=dev` は既定値ではありません
+
+`AUTH` に既定値はありません。`AUTH=dev` はサインインが一切ない状態で、すべてのリクエストが固定の
+`super_admin` になります。そのため native 以外のランタイムでは、`AUTH` が未設定だと Control Plane は起動を拒否し、
+`AUTH=dev` は `AF_ALLOW_INSECURE_DEV_AUTH=1` も設定したときだけ受け付けます（自分のマシンでの試用のみ）。
+その場合も起動時に `WARNING` をログに出し、管理画面に警告の帯を出します。`PUBLIC_BASE_URL` が https のときは
+`AUTH=dev` を一切受け付けません。native ランタイムは設計上単独利用なので、どちらの手順もなく `dev` を使えます。
+共有する配備には `AUTH=oauth` か `AUTH=proxy` を設定してください。
+
 ## 開発用ログイン（開発用 OIDC IdP — super_admin のみ）
 
 Admin モーダルの**開発用ログイン**で、Control Plane の開発用 OIDC IdP（ADR 0116）を配備全体でオン・オフします。

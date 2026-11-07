@@ -65,7 +65,16 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 	// order so the capped slice is the alphabetically-first matches. -g '!.git':
 	// never descend into git internals (still shown by --hidden otherwise).
 	args := []string{"--files", "--hidden", "--sort", "path", "-g", "!.git"}
-	if rel == "" {
+	// The start as it RESOLVES (as /fs/tree does): a start reached through a link that points at
+	// the browse root or another folder lists files whose spelled paths no denylist entry
+	// matches. nil means the start is outside the browse root (scratch / docs), where no
+	// denylist applies.
+	denyBase := imagesDenyBase(full)
+	scopeRel := rel
+	if denyBase != nil {
+		scopeRel = *denyBase
+	}
+	if scopeRel == "" {
 		// Home search is intentionally the non-working-copy scope. Avoid the
 		// large package/cache trees that are useful on disk but noisy in a file
 		// picker; repos has its own explicit search scope in the Console.
@@ -101,7 +110,7 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 		if rel != "" {
 			homeRel = path.Join(rel, line)
 		}
-		if isDenied(homeRel) {
+		if isDenied(homeRel) || (denyBase != nil && isDenied(path.Join(*denyBase, line))) {
 			continue
 		}
 		results = append(results, homeRel)

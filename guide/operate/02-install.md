@@ -111,7 +111,7 @@ IdP never locks the whole company out), and the CP only refuses to start when no
 is usable.
 
 Note: for Console login authentication (L1), the CP performs the OAuth/OIDC flow itself
-(`AUTH=oauth`, the default). Companies that put an existing authentication gateway
+(`AUTH=oauth`, the recommended setting; `AUTH` has no default and must be set). Companies that put an existing authentication gateway
 (oauth2-proxy / ALB OIDC, etc.) in front can choose `AUTH=proxy` (delegating email
 identification to upstream headers). **This is also the answer for a SAML-only IdP**
 (HENNGE One / TrustLogin / CloudGate and the like): bridge it with oauth2-proxy or Keycloak.

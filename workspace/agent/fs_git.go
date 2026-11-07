@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -82,7 +84,7 @@ func emptyMarks() lineMarksWire {
 // deletions occurred. Untracked files mark every line added. Non-repo paths (or
 // clean files) return empty marks. The Console overlays these in the viewer.
 func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	_, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -100,7 +102,7 @@ func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 	}
 	// Untracked file => the whole thing is "added".
 	if st, _ := gitx.Run(dir, "status", "--porcelain", "--", inrepo); strings.HasPrefix(st, "??") {
-		n := countFileLines(full)
+		n := countFileLines(rel)
 		added := make([]int, 0, n)
 		for i := 1; i <= n; i++ {
 			added = append(added, i)
@@ -161,16 +163,45 @@ func parseDiffMarks(diff string) (added, modified, deleted []int) {
 	return
 }
 
-// countFileLines counts lines in a file (final line without a trailing newline
-// still counts). Used to mark every line of an untracked file as added.
-func countFileLines(path string) int {
-	b, err := os.ReadFile(path)
-	if err != nil || len(b) == 0 {
+// countFileLines counts the lines of a browse-relative file, for marking every line of an
+// untracked file as added (a final line without a trailing newline still counts). It opens the
+// file the way /fs/file does (no symlink, regular files only, so a FIFO or device never blocks
+// the Agent) and reads at most the /fs/file size limit through a fixed buffer: anything larger,
+// or unreadable, is 0 lines and the viewer shows no marks.
+func countFileLines(rel string) int {
+	root, err := absoluteTrustedRoot(browseRoot())
+	if err != nil {
 		return 0
 	}
-	n := strings.Count(string(b), "\n")
-	if b[len(b)-1] != '\n' {
-		n++ // last line has no trailing newline
+	opened, aerr := openFDFile(fdReadPath{root: root, relative: filepath.ToSlash(rel), display: rel, browseRoot: true})
+	if aerr != nil {
+		return 0
+	}
+	defer opened.close()
+	if fi, err := opened.file.Stat(); err != nil || fi.Size() > maxEditorFileBytes {
+		return 0
+	}
+	// The limit also bounds a file that grows after the stat.
+	r := io.LimitReader(opened.file, maxEditorFileBytes+1)
+	buf := make([]byte, 32*1024)
+	n, total := 0, 0
+	var last byte
+	for {
+		m, err := r.Read(buf)
+		if m > 0 {
+			n += bytes.Count(buf[:m], []byte{'\n'})
+			total += m
+			last = buf[m-1]
+		}
+		if err != nil {
+			break
+		}
+	}
+	if total > maxEditorFileBytes {
+		return 0
+	}
+	if total > 0 && last != '\n' {
+		n++
 	}
 	return n
 }

@@ -106,7 +106,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | 変数 | 決めるもの |
 |---|---|
 | `AF_RUNTIME` | 配備形態（[deploy-targets.md](deploy-targets.ja.md)）。不明な値は**起動時に拒否**される |
-| `AUTH` | サインインの方式。`dev`（単独）/ `oauth`（CP 内蔵）/ `proxy`（前段のゲートウェイ）|
+| `AUTH` | サインインの方式。`oauth`（CP 内蔵）/ `proxy`（前段のゲートウェイ）/ `dev`（サインインなし・単独）。**既定値はなく、未設定だと Control Plane は起動を拒否する**（native は `dev` を使う）。Docker やクラウドで `dev` を使うには `AF_ALLOW_INSECURE_DEV_AUTH=1` も必要で、`PUBLIC_BASE_URL` が https のときは拒否される |
 | `DATA_DIR` | 永続する状態がすべてここにあるため、**バックアップすべき対象** |
 | `AF_MASTER_KEY` | at-rest 暗号の根。**失うと保存済みの資格情報は復元できない** |
 | `AF_KEY_CUSTODIAN` | 保存時の鍵を誰が持つか: `local`（既定。`AF_MASTER_KEY` から導く）か `kms`（AWS KMS。`AF_KMS_KEY_ID` と組で。[operate/12](../operate/12-keys.ja.md#aws-kms-で保存時の鍵を守る)）。未知の値や不足は起動時に拒否 |
