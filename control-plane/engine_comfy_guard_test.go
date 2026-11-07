@@ -8,6 +8,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -307,5 +310,41 @@ func TestComfyJobOwnersAreBounded(t *testing.T) {
 	o.addPrompt("M", "fresh")
 	if !o.ownsPrompt("M", "fresh") {
 		t.Error("the newest entry was evicted")
+	}
+}
+
+// Every node class the Agent's workflow builders can emit is in the allow-list. The Agent is a
+// separate Go module, so this scans its sources: both literal ClassType values and the class
+// names handed to comfyRequestLatent, which builds a node from its argument.
+func TestComfyGraphClassesCoverTheAgentTemplates(t *testing.T) {
+	files, err := filepath.Glob("../workspace/agent/internal/imagegen/comfy*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no Agent workflow sources found (%v)", err)
+	}
+	re := regexp.MustCompile(`ClassType:\s*"([A-Za-z0-9_]+)"|"class_type":\s*"([A-Za-z0-9_]+)"|comfyRequestLatent\(.*, "([A-Za-z0-9_]+)"\)`)
+	seen := map[string]bool{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			for _, c := range m[1:] {
+				if c != "" {
+					seen[c] = true
+				}
+			}
+		}
+	}
+	if len(seen) < 30 || !seen["EmptySD3LatentImage"] || !seen["EmptyFlux2LatentImage"] {
+		t.Fatalf("the scan found %d classes and missed the dynamic latent ones: %v", len(seen), seen)
+	}
+	for c := range seen {
+		if !comfyGraphClasses[c] {
+			t.Errorf("the Agent emits node class %s, which the gateway would refuse", c)
+		}
 	}
 }

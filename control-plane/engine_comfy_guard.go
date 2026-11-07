@@ -227,7 +227,7 @@ var comfyGraphClasses = map[string]bool{
 	"SplitImageWithAlpha": true, "LoraLoader": true, "ImageToMask": true, "ImageScale": true,
 	"FluxGuidance": true, "Flux2Scheduler": true, "EmptyLatentImage": true, "DualCLIPLoader": true,
 	"ConditioningZeroOut": true, "CLIPSetLastLayer": true, "CFGNorm": true, "CFGGuider": true,
-	"BasicScheduler": true, "BasicGuider": true,
+	"BasicScheduler": true, "BasicGuider": true, "EmptySD3LatentImage": true, "EmptyFlux2LatentImage": true,
 }
 
 // comfyCheckSubmission validates the /prompt body and returns the body to forward: only the
