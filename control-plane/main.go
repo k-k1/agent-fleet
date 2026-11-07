@@ -510,8 +510,9 @@ func main() {
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
 	// session, so it's opt-in; enable per deployment once validated.
 	if iv := envx.DurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
-		go newClaudeAuditor(mgr, iv).run(context.Background())
-		log.Printf("claude-audit: sweeping transcripts every %s", iv)
+		full := os.Getenv("AF_CLAUDE_AUDIT_BASH_FULL") == "1"
+		go newClaudeAuditor(mgr, iv, full).run(context.Background())
+		log.Printf("claude-audit: sweeping transcripts every %s (bash command lines: %s)", iv, map[bool]string{false: "program name only", true: "masked first line"}[full])
 	}
 
 	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune

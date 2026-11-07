@@ -495,6 +495,11 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 - 器は監査ログ（`audit_log`・[06](06-data.ja.md)）。actor の種類は user / admin / mcp / system、
   それに Claude 自身のツール呼び出しを転写から取り込むオプトイン（`AF_CLAUDE_AUDIT_INTERVAL`・
   既定オフ）の `claude`。
+  `Bash` 呼び出しの対象はプログラム名（`go test` のような素直なサブコマンドまで）だけで、引数は
+  記録しない（コマンドラインには資格情報が載るため）。`AF_CLAUDE_AUDIT_BASH_FULL=1` を設定すると
+  コマンドの 1 行目を記録するが、秘密らしい値（`NAME=value`、`Authorization` / `Bearer`、
+  `--token` / `--password` 系のフラグ、URL 内のパスワード、既知のトークン接頭辞）は `***` に
+  置き換える。マスクはベストエフォートなので、全行が要らないならオフのままにする。
 - **記録するのは変更・破壊操作だけ**で、読み取りの例外が 1 つ: メンバーのメモリを環境の外へ
   持ち出す唯一の経路 `GET /api/agents/memory/export`（対象は形式）。**ターミナルの生ストリームは
   保存しない**（秘密が混ざる）。proxy 層は対象を URL から取るが、`PUT /api/fs/file` だけは検証済みの

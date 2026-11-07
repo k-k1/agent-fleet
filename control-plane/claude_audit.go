@@ -54,7 +54,7 @@ type ctResp struct {
 
 // extractClaudeAudits turns transcript turns into audit rows (pure, for testing). Only
 // assistant turns' change/exec tool_use parts count; ID/At are filled by the caller.
-func extractClaudeAudits(msgs []ctTurn, tenantID, session string) []store.AuditLog {
+func extractClaudeAudits(msgs []ctTurn, tenantID, session string, fullBash bool) []store.AuditLog {
 	var out []store.AuditLog
 	for _, t := range msgs {
 		if t.Role != "assistant" {
@@ -72,6 +72,9 @@ func extractClaudeAudits(msgs []ctTurn, tenantID, session string) []store.AuditL
 			if target == "" {
 				target = p.Info
 			}
+			if p.Tool == "Bash" {
+				target = bashAuditTarget(p.Info, fullBash)
+			}
 			out = append(out, store.AuditLog{
 				TenantID: tenantID, ActorKind: "claude", ActorID: session,
 				Action: action, Target: target, At: t.TS,
@@ -84,10 +87,13 @@ func extractClaudeAudits(msgs []ctTurn, tenantID, session string) []store.AuditL
 type claudeAuditor struct {
 	mgr      *manager
 	interval time.Duration
+	// fullBash records the (masked) first line of a Bash command instead of only the
+	// program name; set by AF_CLAUDE_AUDIT_BASH_FULL=1.
+	fullBash bool
 }
 
-func newClaudeAuditor(mgr *manager, iv time.Duration) *claudeAuditor {
-	return &claudeAuditor{mgr: mgr, interval: iv}
+func newClaudeAuditor(mgr *manager, iv time.Duration, fullBash bool) *claudeAuditor {
+	return &claudeAuditor{mgr: mgr, interval: iv, fullBash: fullBash}
 }
 
 func (a *claudeAuditor) run(ctx context.Context) {
@@ -188,7 +194,7 @@ func (a *claudeAuditor) auditSession(ctx context.Context, ws store.Workspace, rt
 	// Baseline the cursor on first sight (no retroactive audit); on a transcript reset
 	// (compaction/fork) skip this round rather than risk duplicates — just re-baseline.
 	if !firstTime && !resp.Reset {
-		for _, a0 := range extractClaudeAudits(resp.Messages, ws.TenantID, name) {
+		for _, a0 := range extractClaudeAudits(resp.Messages, ws.TenantID, name, a.fullBash) {
 			a0.ID = store.NewID()
 			if a0.At == "" {
 				a0.At = store.NowTS()

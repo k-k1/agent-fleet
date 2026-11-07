@@ -604,6 +604,12 @@ credentials as exposed and rotate them.
 - The store is the audit log (`audit_log`, [06](06-data.md)), with an actor kind of
   user, admin, MCP or system — and `claude` for the opt-in import of Claude's own tool
   calls from its transcripts (`AF_CLAUDE_AUDIT_INTERVAL`, off by default).
+  For a `Bash` call the target is only the program name (plus a plain subcommand such as
+  `go test`), never its arguments, because command lines carry credentials.
+  `AF_CLAUDE_AUDIT_BASH_FULL=1` records the first line of the command instead, with
+  secret-looking values (`NAME=value`, `Authorization` / `Bearer`, `--token` / `--password`
+  style flags, URL passwords, known token prefixes) replaced by `***`. The masking is best
+  effort; leave the setting off unless the full line is needed.
 - **Only mutating and destructive operations are recorded**, with one read as the
   exception: `GET /api/agents/memory/export`, the one path that carries a member's
   memory out of the environment (the target is the format). **The raw terminal stream is
