@@ -7,9 +7,11 @@ package main
 // without a relay row, fails this test.
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,7 +26,8 @@ func TestSignedRoutesMatchRelayRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	listedRelay := map[string]bool{}
-	var direct []string
+	type directRoute struct{ route, fn string }
+	var direct []directRoute
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -38,7 +41,10 @@ func TestSignedRoutesMatchRelayRows(t *testing.T) {
 		case "relay":
 			listedRelay[f[0]+" /api"+f[1]] = true
 		case "direct":
-			direct = append(direct, f[1])
+			if len(f) < 4 {
+				t.Fatalf("direct line %q must name the signing function in a fourth column", line)
+			}
+			direct = append(direct, directRoute{f[0] + " " + f[1], f[3]})
 		default:
 			t.Fatalf("unknown CP-SIDE %q in %q", f[2], line)
 		}
@@ -60,40 +66,94 @@ func TestSignedRoutesMatchRelayRows(t *testing.T) {
 		}
 	}
 
-	// Direct signing: every memberOriginSign call site other than the relay's own (the one in
-	// member_origin.go that signs a request by its relay row) is a CP handler signing for
-	// itself, and each must be listed. The path literal of each listed route must also appear
-	// in a CP source file next to such a call.
-	files, _ := filepath.Glob("*.go")
-	calls := 0
-	var src strings.Builder
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") || f == "member_origin.go" {
+	// Direct signing: the functions that call memberOriginSign, other than the relay path's own
+	// (manager.memberOriginMarkBuffered, which signs by relay row), are the CP handlers that sign
+	// for themselves. Each listed route must name its function, that function must be the one
+	// signing, and its body must carry the route's path literals; moving or deleting the signing
+	// call fails here whatever strings remain elsewhere.
+	signers := directSigners(t)
+	listed := map[string]bool{}
+	for _, d := range direct {
+		listed[d.fn] = true
+		lits, ok := signers[d.fn]
+		if !ok {
+			problems = append(problems, "direct route "+d.route+": "+d.fn+" does not call memberOriginSign")
 			continue
 		}
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if n := len(regexp.MustCompile(`\.memberOriginSign\(`).FindAll(b, -1)); n > 0 {
-			calls += n
-			src.Write(b)
+		for _, piece := range strings.FieldsFunc(d.route[strings.Index(d.route, " ")+1:], func(r rune) bool { return r == '{' || r == '}' }) {
+			if strings.Contains(d.route, "{"+piece+"}") {
+				continue // a placeholder name, not a literal piece
+			}
+			if !lits[piece] {
+				problems = append(problems, "direct route "+d.route+": "+d.fn+" has no string literal "+strconv.Quote(piece))
+			}
 		}
 	}
-	if calls != len(direct) {
-		problems = append(problems, "the CP has "+strconv.Itoa(calls)+" direct memberOriginSign call sites but the list carries "+strconv.Itoa(len(direct))+" direct routes")
-	}
-	for _, p := range direct {
-		lit := p
-		if i := strings.LastIndex(p, "}"); i >= 0 {
-			lit = p[i+1:]
-		}
-		if !strings.Contains(src.String(), lit) {
-			problems = append(problems, "direct route "+p+" is not named in any file that signs directly")
+	for fn := range signers {
+		if !listed[fn] {
+			problems = append(problems, fn+" calls memberOriginSign but no direct route in the list names it")
 		}
 	}
 	sort.Strings(problems)
 	for _, p := range problems {
 		t.Error(p)
 	}
+}
+
+// directSigners maps every non-test function that calls memberOriginSign (other than the relay
+// path's own) to the string literals in its body.
+func directSigners(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]map[string]bool{}
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range file.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			name := fd.Name.Name
+			if fd.Recv != nil && len(fd.Recv.List) == 1 {
+				rt := fd.Recv.List[0].Type
+				if st, ok := rt.(*ast.StarExpr); ok {
+					rt = st.X
+				}
+				if id, ok := rt.(*ast.Ident); ok {
+					name = id.Name + "." + name
+				}
+			}
+			signs := false
+			lits := map[string]bool{}
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.CallExpr:
+					if sel, ok := n.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "memberOriginSign" {
+						signs = true
+					}
+				case *ast.BasicLit:
+					if n.Kind == token.STRING {
+						if v, err := strconv.Unquote(n.Value); err == nil {
+							lits[v] = true
+						}
+					}
+				}
+				return true
+			})
+			if signs && name != "manager.memberOriginMarkBuffered" {
+				out[name] = lits
+			}
+		}
+	}
+	return out
 }

@@ -11,7 +11,8 @@
 #
 # Columns: METHOD PATH CP-SIDE [conditional]
 #   CP-SIDE      relay   a relay row with `sign` in control-plane/relays*.go (CP path = /api + PATH)
-#                direct  a CP handler that signs itself (memberOriginSign call site)
+#                direct  a CP handler that signs itself; a fourth column names the Go function
+#                        (Type.method) whose body calls memberOriginSign for this route
 #   conditional  the Agent asks for the mark only for part of what the request does
 #                (memberorigin.RequireBody), so no memberorigin.Require wraps the route
 POST /agents/memory-review/proposals/approve relay
@@ -30,7 +31,7 @@ POST /agents/memory/entries/revert relay
 POST /agents/memory/import relay
 POST /agents/memory/import/apply relay
 POST /agents/memory/snapshots relay
-POST /sessions/{name}/handoff-push direct
-POST /work-items/comment direct
-POST /work-items/merge direct
+POST /sessions/{name}/handoff-push direct sessionHandoffAPI.pushThenRecheck
+POST /work-items/comment direct workItemsAPI.comment
+POST /work-items/merge direct workItemsAPI.merge
 PUT /env/ui-prefs relay conditional

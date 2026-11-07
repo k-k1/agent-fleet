@@ -12,6 +12,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,9 +21,50 @@ import (
 
 const signedRoutesPath = "internal/memberorigin/signed_routes.txt"
 
-// conditionalMarkFiles maps a route that asks for the mark only for part of a request to the
-// file that must call memberorigin.RequireBody for it.
-var conditionalMarkFiles = map[string]string{"PUT /env/ui-prefs": "ui_prefs.go"}
+// conditionalMarkHandlers maps a route that asks for the mark only for part of a request to the
+// handler function that must call memberorigin.RequireBody for it.
+var conditionalMarkHandlers = map[string]string{"PUT /env/ui-prefs": "handlePutUIPrefs"}
+
+// funcCallsRequireBody reports whether the named top-level function of package main contains an
+// actual call to memberorigin.RequireBody. A string search would pass on a comment or on another
+// function that still mentions the name.
+func funcCallsRequireBody(t *testing.T, name string) bool {
+	t.Helper()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range file.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Recv != nil || fd.Name.Name != name || fd.Body == nil {
+				continue
+			}
+			found := false
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := c.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "RequireBody" {
+						if id, ok := sel.X.(*ast.Ident); ok && id.Name == "memberorigin" {
+							found = true
+						}
+					}
+				}
+				return !found
+			})
+			return found
+		}
+	}
+	t.Fatalf("handler %s not found in package main", name)
+	return false
+}
 
 type signedEntry struct {
 	route, cp   string
@@ -134,14 +176,13 @@ func TestSignedRoutesMatchRequireRegistrations(t *testing.T) {
 			t.Errorf("%s lists %q, which buildMux does not register", signedRoutesPath, e.route)
 		}
 		if e.conditional {
-			file, ok := conditionalMarkFiles[e.route]
+			handler, ok := conditionalMarkHandlers[e.route]
 			if !ok {
-				t.Errorf("%q is marked conditional but conditionalMarkFiles does not name its file", e.route)
+				t.Errorf("%q is marked conditional but conditionalMarkHandlers does not name its handler", e.route)
 				continue
 			}
-			src, err := os.ReadFile(file)
-			if err != nil || !strings.Contains(string(src), "memberorigin.RequireBody(") {
-				t.Errorf("%q is conditional but %s does not call memberorigin.RequireBody", e.route, file)
+			if !funcCallsRequireBody(t, handler) {
+				t.Errorf("%q is conditional but %s no longer calls memberorigin.RequireBody", e.route, handler)
 			}
 			continue
 		}
