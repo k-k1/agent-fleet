@@ -13,7 +13,7 @@ import (
 
 // shareRelayFields lists, per route, the only body fields an approved shared-session proposal
 // may carry. The Control Plane enforces the same list when the proposal is created and again
-// when it is approved (control-plane/session_share_proposal.go); this is the second check, on
+// when it is approved (control-plane/internal/shareproposal); this is the second check, on
 // the side that owns the files. Keep the two in step.
 // shareRelayMaxBody matches the Control Plane's proposal cap (32 KiB).
 const shareRelayMaxBody = 32 << 10
