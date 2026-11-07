@@ -199,7 +199,7 @@ func TestEmailSetSuspectsListsMultiTenantIdentitiesWithoutALogin(t *testing.T) {
 		t.Errorf("suspects = %+v", list)
 	}
 	var out strings.Builder
-	if rc := identitycheck.Print(ctx, st, &out); rc != 1 || !strings.Contains(out.String(), "bad-key") {
+	if rc := identitycheck.Print(ctx, st, &out, sanitizeUser); rc != 1 || !strings.Contains(out.String(), "bad-key") {
 		t.Errorf("rc=%d out=%q", rc, out.String())
 	}
 }
@@ -211,4 +211,49 @@ func mustTenantID(t *testing.T, st *store.SQL, slug string) string {
 		t.Fatalf("tenant %s: %v %v", slug, ok, err)
 	}
 	return tn.ID
+}
+
+func TestInviteRefusesAPersonWhoSignsInThroughAnotherTenantsIdP(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn := userKeyFixture(t) // "sales", caller is its admin
+	other, _ := st.CreateTenant(ctx, "legal", "Legal")
+	id, _, err := st.LinkIdentity(ctx, store.IdentityLink{Provider: "t:legal:oidc", Subject: "s",
+		Email: "p@legal.example", FallbackKey: "p-legal-example", TenantSlug: "legal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InviteMember(ctx, id.ID, other.ID, "member"); err != nil {
+		t.Fatal(err)
+	}
+	adm := newAdminAPI(mgr)
+	w := callAdmin(adm.addMembership, http.MethodPost, "/api/admin/memberships",
+		`{"tenant_slug":"sales","user_key":"p-legal-example"}`)
+	if w.Code != http.StatusConflict || apiErrCode(t, w) != "identity_bound_to_other_tenant" {
+		t.Fatalf("invite = %d %s, want 409 identity_bound_to_other_tenant", w.Code, w.Body.String())
+	}
+	if _, ok, _ := st.GetMembership(ctx, id.ID, tn.ID); ok {
+		t.Error("refused invite left a membership")
+	}
+}
+
+func TestReinviteAuditShowsThePreviousRole(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, tn := userKeyFixture(t)
+	adm := newAdminAPI(mgr)
+	gone, _ := st.UpsertIdentity(ctx, "gone@acme.co.jp", "gone-acme-co-jp", "")
+	inv, _ := st.InviteMember(ctx, gone.ID, tn.ID, "tenant_admin")
+	if err := st.SetMembershipStatus(ctx, inv.Membership.ID, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	if w := callAdmin(adm.addMembership, http.MethodPost, "/api/admin/memberships",
+		`{"tenant_slug":"sales","user_key":"gone-acme-co-jp"}`); w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	logs, _ := st.ListAuditByTenant(ctx, tn.ID, 20)
+	for _, a := range logs {
+		if a.Action == "membership.add" && strings.Contains(a.Detail, "previous role=tenant_admin") {
+			return
+		}
+	}
+	t.Errorf("no membership.add audit naming the previous role in %+v", logs)
 }

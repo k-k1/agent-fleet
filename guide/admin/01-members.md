@@ -187,7 +187,7 @@ order:
    member: only a super admin can grant tenant admin again, by re-inviting with that role.
    Inviting never changes the email address of a person who already exists. An address is attached
    only to a new person; if the user key belongs to someone in another tenant and you pass an
-   email, the invite is refused (409) and you invite by user key only.
+   email, the invite is refused (409) and you invite by user key only. Someone who signs in through **another tenant's** own sign-in method cannot be added here (409 `identity_bound_to_other_tenant`); and if a person cannot sign in through your tenant's method because another tenant still has them on its roster, that tenant removes them first (removed memberships do not count), then they sign in again.
 2. **Force-stop the workspace**: stop what is running ([02-limits.md](02-limits.md)).
 3. **Clean home**: erase everything in their home **except their logins and connections** (git
    credentials, SSH keys, the encrypted connection store, Claude and Codex logins). **This cannot be

@@ -80,10 +80,12 @@ type IdentityStore interface {
 	// ErrIdentityInOtherTenant instead of silently dropping the address. Emails otherwise
 	// come only from the person's own login (LinkIdentity). Does not touch last_login_at.
 	InviteIdentity(ctx context.Context, email, key, tenantID string) (Identity, error)
+	// InviteMember adds the identity to tenantID's roster under the identity's row lock;
+	// see its implementation for the cross-tenant rule.
+	InviteMember(ctx context.Context, identityID, tenantID, role string) (MemberInvite, error)
 	// ListEmailSetSuspects backs the one-off check for identities whose address may
-	// have been written by somebody else: it lists the multi-tenant identities that
-	// carry an address and either have no sign-in method linked or have an
-	// identity.email_* audit entry.
+	// have been written by somebody else: it lists every identity with active
+	// memberships in more than one tenant, with flags the report turns into reasons.
 	ListEmailSetSuspects(ctx context.Context) ([]EmailSuspect, error)
 	// LinkIdentity is UpsertIdentity for a login that proved an IdP subject
 	// (AUTH=oauth). The (provider, subject) pair decides who this is, so an email
@@ -197,10 +199,11 @@ const (
 // address of an identity that belongs to a tenant other than the inviting one.
 var ErrIdentityInOtherTenant = errors.New("identity belongs to another tenant")
 
-// EmailSuspect is one row of ListEmailSetSuspects.
+// EmailSuspect is one row of ListEmailSetSuspects: an identity with active memberships in
+// more than one tenant.
 type EmailSuspect struct {
 	UserKey, Email string
-	Tenants        []string // slugs
+	Tenants        []string // slugs of the active memberships
 	NoLogin        bool     // no sign-in method is linked
 	Audited        bool     // an identity.email_* audit entry names this identity
 }
@@ -271,10 +274,11 @@ func (s *SQL) ListEmailSetSuspects(ctx context.Context) ([]EmailSuspect, error) 
 		   CASE WHEN EXISTS (SELECT 1 FROM audit_log a WHERE a.target=i.user_key
 		        AND a.action IN ('`+auditEmailSet+`','`+auditEmailChange+`')) THEN 1 ELSE 0 END
 		 FROM identity i
-		 JOIN membership m ON m.identity_id=i.id
+		 JOIN membership m ON m.identity_id=i.id AND m.status='active'
 		 JOIN tenant t ON t.id=m.tenant_id
-		 WHERE i.email<>'' AND i.id IN
-		   (SELECT identity_id FROM membership GROUP BY identity_id HAVING COUNT(DISTINCT tenant_id)>1)
+		 WHERE i.id IN
+		   (SELECT identity_id FROM membership WHERE status='active'
+		    GROUP BY identity_id HAVING COUNT(DISTINCT tenant_id)>1)
 		 ORDER BY i.user_key, t.slug`)
 	if err != nil {
 		return nil, err
@@ -294,16 +298,103 @@ func (s *SQL) ListEmailSetSuspects(ctx context.Context) ([]EmailSuspect, error) 
 		out = append(out, EmailSuspect{UserKey: key, Email: email, Tenants: []string{slug},
 			NoLogin: noLogin == 1, Audited: audited == 1})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	kept := out[:0]
-	for _, e := range out {
-		if e.NoLogin || e.Audited {
-			kept = append(kept, e)
+	return out, rows.Err()
+}
+
+// InviteMember puts the identity on tenantID's roster (new membership, or a removed one
+// reactivated) in one transaction under the identity's row lock. It refuses
+// (ErrIdentityTenantBound) an identity linked to ANOTHER tenant's own sign-in provider:
+// together with LinkIdentity's guard that makes "a tenant-IdP identity holds no active
+// membership elsewhere" hold in both orders. A reactivated membership takes role, never
+// the one it had.
+func (s *SQL) InviteMember(ctx context.Context, identityID, tenantID, role string) (MemberInvite, error) {
+	var out MemberInvite
+	// Only a NEW membership is checked: an existing row keeps its home, as EnsureMembership does.
+	if _, exists, err := s.GetMembership(ctx, identityID, tenantID); err != nil {
+		return out, err
+	} else if !exists {
+		if err := s.checkDefaultMemberKeyFree(ctx, identityID, tenantID); err != nil {
+			return out, err
 		}
 	}
-	return kept, nil
+	err := s.withIdentityLock(ctx, identityID, func(tx *sqlTx) error {
+		var slug string
+		if err := tx.QueryRowContext(ctx, `SELECT slug FROM tenant WHERE id=?`, tenantID).Scan(&slug); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx,
+			`SELECT provider FROM identity_provider WHERE identity_id=? AND provider LIKE 't:%'`, identityID)
+		if err != nil {
+			return err
+		}
+		bound := false
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return err
+			}
+			if ps, ok := tenantSlugOfProvider(p); ok && ps != slug {
+				bound = true
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if bound {
+			return ErrIdentityTenantBound
+		}
+		var m Membership
+		err = tx.QueryRowContext(ctx,
+			`SELECT id, identity_id, tenant_id, role, status, created_at FROM membership
+			 WHERE identity_id=? AND tenant_id=?`, identityID, tenantID).
+			Scan(&m.ID, &m.IdentityID, &m.TenantID, &m.Role, &m.Status, &m.CreatedAt)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			m = Membership{ID: NewID(), IdentityID: identityID, TenantID: tenantID, Role: role, Status: "active", CreatedAt: NowTS()}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
+				 VALUES(?, ?, ?, ?, 'active', ?)`, m.ID, identityID, tenantID, role, m.CreatedAt); err != nil {
+				return err
+			}
+			out = MemberInvite{Membership: m}
+			return nil
+		case err != nil:
+			return err
+		}
+		out = MemberInvite{Membership: m, Existed: true, PrevStatus: m.Status, PrevRole: m.Role}
+		if m.Status != "active" { // an active member's role is not touched by an invite
+			if _, err := tx.ExecContext(ctx, `UPDATE membership SET role=?, status='active' WHERE id=?`, role, m.ID); err != nil {
+				return err
+			}
+			out.Membership.Role, out.Membership.Status = role, "active"
+		}
+		return nil
+	})
+	return out, err
+}
+
+// MemberInvite is InviteMember's answer. Existed is false for a brand-new membership;
+// PrevStatus / PrevRole describe the row as it was before the call.
+type MemberInvite struct {
+	Membership           Membership
+	Existed              bool
+	PrevStatus, PrevRole string
+}
+
+// tenantSlugOfProvider parses a tenant provider id, "t:<slug>:<name>" (auth.TenantProviderID;
+// the auth package imports this one, so the shape is repeated here).
+func tenantSlugOfProvider(id string) (string, bool) {
+	rest, ok := strings.CutPrefix(id, "t:")
+	if !ok {
+		return "", false
+	}
+	i := strings.IndexByte(rest, ':')
+	if i <= 0 || i == len(rest)-1 {
+		return "", false
+	}
+	return rest[:i], true
 }
 
 // DemoteSuperAdmins enforces "SUPER_ADMIN_EMAILS is the only source of truth" at
@@ -395,6 +486,16 @@ func (s *SQL) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, e
 // back on the very identity rule 2 was refusing to join (and identity.email is
 // UNIQUE, so a genuinely separate row cannot exist either). Refusing is the only
 // answer that is actually a refusal.
+//
+// A tenant-defined provider also never claims an identity that holds an ACTIVE membership
+// in another tenant (ErrClaimedByOtherTenant, not ErrIdentityClaimed: the remedy is the
+// other tenant removing the person, not "sign in the usual way"). The invite side is
+// InviteMember's mirror of the same rule, and both take the identity's row lock.
+//
+// Paths that do NOT enforce it, on purpose: EnsureMembership's auto-provisioning (the
+// session of a tenant provider is pinned to its own tenant at the entry gate, so it cannot
+// use another membership), AttachProvider (the person's own act on their own account) and
+// rule 1.5 (the same IdP account reached through another button).
 func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bool, error) {
 	provider, subject, email := link.Provider, link.Subject, link.Email
 	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
@@ -418,7 +519,7 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 			}
 		}
 	}
-	isNew := false
+	isNew, claim := false, false
 	if identityID == "" {
 		ident, ok, err := s.identityByEmail(ctx, email)
 		switch {
@@ -434,27 +535,45 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 			if claimed {
 				return Identity{}, false, ErrIdentityClaimed
 			}
-			if other, err := s.heldOutsideTenant(ctx, ident.ID, link.TenantSlug); err != nil {
+			if other, err := s.heldOutsideTenant(ctx, s.db, ident.ID, link.TenantSlug); err != nil {
 				return Identity{}, false, err
 			} else if other {
-				return Identity{}, false, ErrIdentityClaimed
+				return Identity{}, false, ErrClaimedByOtherTenant
 			}
-			identityID = ident.ID
+			identityID, claim = ident.ID, true
 		default: // rule 3
 			if !link.EmailJoin {
-				// createIdentityForLogin lands on an existing invite placeholder with this key;
-				// a tenant provider must not take one that another tenant holds.
-				if fk, err := s.disambiguateUserKey(ctx, email, link.FallbackKey); err != nil {
+				// A tenant provider takes or creates the row WITHOUT an address and goes through
+				// the locked guard below, so a placeholder another tenant creates or fills at any
+				// moment up to the guard is still refused. The address is written afterwards, by
+				// touchIdentity.
+				fk, err := s.disambiguateUserKey(ctx, email, link.FallbackKey)
+				if err != nil {
 					return Identity{}, false, err
-				} else if ex, ok, err := s.GetIdentityByUserKey(ctx, fk); err != nil {
-					return Identity{}, false, err
-				} else if ok {
-					if other, err := s.heldOutsideTenant(ctx, ex.ID, link.TenantSlug); err != nil {
-						return Identity{}, false, err
-					} else if other {
-						return Identity{}, false, ErrIdentityClaimed
-					}
 				}
+				res, err := s.db.ExecContext(ctx,
+					`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
+					 VALUES(?, '', ?, 'user', 'active', ?) ON CONFLICT(user_key) DO NOTHING`,
+					NewID(), fk, NowTS())
+				if err != nil {
+					return Identity{}, false, err
+				}
+				n, _ := res.RowsAffected()
+				ex, ok, err := s.GetIdentityByUserKey(ctx, fk)
+				if err != nil {
+					return Identity{}, false, err
+				}
+				if !ok {
+					return Identity{}, false, sql.ErrNoRows
+				}
+				// Early refusal; the authoritative check repeats under the row lock.
+				if other, err := s.heldOutsideTenant(ctx, s.db, ex.ID, link.TenantSlug); err != nil {
+					return Identity{}, false, err
+				} else if other {
+					return Identity{}, false, ErrClaimedByOtherTenant
+				}
+				identityID, claim, isNew = ex.ID, true, n > 0
+				break
 			}
 			ident, created, err := s.createIdentityForLogin(ctx, email, link.FallbackKey, link.RoleHint)
 			if err != nil {
@@ -470,8 +589,11 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 	// 0041 (and by the resolver path, which has no provider object to ask) carry an
 	// empty one, and rule 1.5 can only see what has been recorded.
 	now := NowTS()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
+	record := func(ex interface {
+		ExecContext(context.Context, string, ...any) (sql.Result, error)
+	}) error {
+		_, err := ex.ExecContext(ctx,
+			`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
 		                               realm_claim, realm_subject, created_at, last_login_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(provider, subject) DO UPDATE SET
@@ -480,8 +602,25 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 		   realm_claim = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_claim ELSE excluded.realm_claim END,
 		   realm_subject = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_subject ELSE excluded.realm_subject END,
 		   last_login_at = excluded.last_login_at`,
-		provider, subject, identityID, email, link.Realm,
-		link.RealmClaim, link.RealmSubject, now, now); err != nil {
+			provider, subject, identityID, email, link.Realm,
+			link.RealmClaim, link.RealmSubject, now, now)
+		return err
+	}
+	if claim {
+		// The authoritative check: under the identity's row lock, so a membership another
+		// transaction adds meanwhile either commits before this read or waits for this link.
+		err = s.withIdentityLock(ctx, identityID, func(tx *sqlTx) error {
+			if other, err := s.heldOutsideTenant(ctx, tx, identityID, link.TenantSlug); err != nil {
+				return err
+			} else if other {
+				return ErrClaimedByOtherTenant
+			}
+			return record(tx)
+		})
+	} else {
+		err = record(s.db)
+	}
+	if err != nil {
 		return Identity{}, false, err
 	}
 	if err := s.touchIdentity(ctx, identityID, email, link.RoleHint); err != nil {
@@ -496,6 +635,15 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 	}
 	return ident, isNew, nil
 }
+
+// ErrClaimedByOtherTenant is returned when a tenant-defined provider would claim an
+// identity that holds an ACTIVE membership in another tenant. The person's own tenant can
+// clear it by having the other tenant remove that membership.
+var ErrClaimedByOtherTenant = errors.New("this identity belongs to another tenant")
+
+// ErrIdentityTenantBound is returned by InviteMember when the identity is already linked to
+// another tenant's own sign-in provider: it may not join a second tenant's roster.
+var ErrIdentityTenantBound = errors.New("this identity signs in through another tenant's identity provider")
 
 // ErrIdentityClaimed is returned when a tenant-defined provider asserts an address
 // that already belongs to somebody who has signed in here. The login is refused
@@ -746,13 +894,41 @@ func (s *SQL) DetachProvider(ctx context.Context, identityID, provider, subject 
 	return nil
 }
 
-// heldOutsideTenant reports whether the identity has a membership in a tenant other than
-// the one with this slug ("" matches no tenant, so any membership counts).
-func (s *SQL) heldOutsideTenant(ctx context.Context, identityID, slug string) (bool, error) {
+// rowQuerier is what *sqlDB and *sqlTx share.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, q string, a ...any) *sql.Row
+}
+
+// withIdentityLock runs fn in a transaction that holds the identity row's lock. Postgres:
+// SELECT ... FOR UPDATE, so link and invite serialise on the person. SQLite: one
+// connection and one writer, so the transaction alone serialises.
+func (s *SQL) withIdentityLock(ctx context.Context, identityID string, fn func(tx *sqlTx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if s.dialect == "postgres" {
+		var one string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM identity WHERE id=? FOR UPDATE`, identityID).Scan(&one); err != nil {
+			return err
+		}
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// heldOutsideTenant reports whether the identity has an ACTIVE membership in a tenant
+// other than the one with this slug ("" matches no tenant, so any active membership
+// counts). A removed membership does not count: removing the person is how their own
+// tenant clears the refusal.
+func (s *SQL) heldOutsideTenant(ctx context.Context, q rowQuerier, identityID, slug string) (bool, error) {
 	var one int
-	err := s.db.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT 1 FROM membership m JOIN tenant t ON t.id=m.tenant_id
-		 WHERE m.identity_id=? AND t.slug<>? LIMIT 1`, identityID, slug).Scan(&one)
+		 WHERE m.identity_id=? AND m.status='active' AND t.slug<>? LIMIT 1`, identityID, slug).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -816,13 +992,6 @@ func (s *SQL) touchIdentity(ctx context.Context, identityID, email, roleHint str
 	var err error
 	var prevEmail, userKey string
 	_ = s.db.QueryRowContext(ctx, `SELECT email, user_key FROM identity WHERE id=?`, identityID).Scan(&prevEmail, &userKey)
-	if email != "" && email != prevEmail {
-		defer func() {
-			if err == nil {
-				s.auditEmailChange(ctx, identityID, userKey, prevEmail, email, "login")
-			}
-		}()
-	}
 	if email == "" {
 		_, err = s.db.ExecContext(ctx, `UPDATE identity SET last_login_at=? WHERE id=?`, NowTS(), identityID)
 	} else {
@@ -830,6 +999,11 @@ func (s *SQL) touchIdentity(ctx context.Context, identityID, email, roleHint str
 	}
 	if err != nil {
 		return err
+	}
+	// Audited as soon as the address is written, so a failure of the role update below
+	// cannot leave a changed address without its entry.
+	if email != "" && email != prevEmail {
+		s.auditEmailChange(ctx, identityID, userKey, prevEmail, email, "login")
 	}
 	if roleHint != "super_admin" {
 		return nil

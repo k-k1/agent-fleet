@@ -157,7 +157,7 @@ func main() {
 			os.Exit(2)
 		}
 		log.Printf("identity-email-check: %s", where)
-		rc := identitycheck.Print(context.Background(), st, os.Stdout)
+		rc := identitycheck.Print(context.Background(), st, os.Stdout, sanitizeUser)
 		st.Close()
 		os.Exit(rc)
 	}

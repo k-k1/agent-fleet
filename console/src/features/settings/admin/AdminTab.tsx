@@ -321,6 +321,11 @@ export function AdminTab() {
             {tr("admin.deploy_warn_efs_backup_missing")}
           </p>
         )}
+        {warnings.includes("mcp_oauth_reg_cap") && (
+          <p className="admin-hint warn" role="alert">
+            {tr("admin.deploy_warn_mcp_oauth_reg_cap")}
+          </p>
+        )}
         <div className="admin">{body()}</div>
       </div>
     </div>

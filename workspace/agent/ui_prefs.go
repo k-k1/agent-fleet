@@ -303,11 +303,12 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	// Turning the memory review on sends other sessions' conversations to a model provider, so it
 	// is the member's decision and not a session's: AGENT_TOKEN, which every session's shell
-	// holds, can read and write these prefs, and the review's own member-origin route would be a
-	// door beside an open window. A write that would switch the review on therefore needs the
-	// Control Plane's mark (ADR 0113), which the CP puts on every relayed prefs write.
-	// Muse Code's contributor mode is the same decision about the member's own conversations: on,
-	// the vendor may use them to improve its product.
+	// holds, can call this route, so a write that would switch the review on needs the Control
+	// Plane's mark (ADR 0113), which the CP puts on every relayed prefs write. Muse Code's
+	// contributor mode is the same decision about the member's own conversations: on, the vendor
+	// may use them to improve its product.
+	// The mark guards this route, not ui-prefs.json: a session that can write the file can set
+	// the same switches without it (07-security §7.5.1, Limits).
 	prev := uiprefs.Read()
 	if (memoryReviewNeedsMark(prev, obj) || museContributorNeedsMark(prev, obj)) && !memberorigin.RequireBody(w, r, body) {
 		return
