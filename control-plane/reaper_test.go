@@ -794,7 +794,7 @@ func TestReaperTier1SparesSessionTypedAtOnAnotherReplica(t *testing.T) {
 			st, ws, managerB := reaperLifecycleFixture(t)
 			managerA := &manager{store: st, conns: newConnRegistry()}
 			if tc.typeOnA || tc.attachOnA {
-				release, noteInput, err := managerA.trackWorkspaceTerminal(context.Background(), ws.ID, "s")
+				release, noteInput, err := managerA.trackWorkspaceTerminal(context.Background(), ws.ID, "s", false)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -877,7 +877,7 @@ func TestTerminalInputInsideThrottleIsPublishedLater(t *testing.T) {
 	defer func() { sessionInputPublishInterval = old }()
 	st, ws, _ := reaperLifecycleFixture(t)
 	m := &manager{store: st, conns: newConnRegistry()}
-	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), ws.ID, "s")
+	release, noteInput, err := m.trackWorkspaceTerminal(context.Background(), ws.ID, "s", false)
 	if err != nil {
 		t.Fatal(err)
 	}
