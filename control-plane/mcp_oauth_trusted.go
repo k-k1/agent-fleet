@@ -80,13 +80,13 @@ func (t trustedHosts) hostTrusted(host string) bool {
 // port) is covered by an entry. A bare-host entry covers every path. A prefix entry covers its
 // own path and the path segments below it, so "/cb" admits "/cb" and "/cb/x" but never
 // "/cbx". The path is compared parsed, and only when it is spelled plainly: a path with
-// non-default escapes (%2f, %2e), dot segments or empty segments is refused, because the
+// any percent-escape (%2f, %2e, %20), dot segments or empty segments is refused, because the
 // browser and this check could otherwise disagree about where a segment ends.
 func (t trustedHosts) admits(u *url.URL) bool {
 	if t[u.Host] {
 		return true
 	}
-	if u.RawPath != "" || u.Path == "" || u.Path[0] != '/' || strings.Contains(u.Path, "//") {
+	if strings.Contains(u.EscapedPath(), "%") || u.Path == "" || u.Path[0] != '/' || strings.Contains(u.Path, "//") {
 		return false
 	}
 	for _, seg := range strings.Split(u.Path, "/") {

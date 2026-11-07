@@ -39,6 +39,10 @@ func TestMCPOAuthRedirectMatchesURLPrefixOnParsedURL(t *testing.T) {
 		"https://claude.ai/api/mcp/auth%5Fcallback":            redirectRefused, // encoded characters
 		"https://claude.ai/api%2Fmcp/auth_callback":            redirectRefused,
 		"https://claude.ai/api/mcp%2fauth_callback":            redirectRefused,
+		prefixCB + "/a%20b":                                    redirectRefused, // standard escapes leave RawPath empty
+		prefixCB + "/caf%C3%A9":                                redirectRefused,
+		prefixCB + "/%41":                                      redirectRefused,
+		"https://chatgpt.com/a%20b":                            redirectHosted, // a bare host still accepts any path
 		prefixCB + "%2f..%2fx":                                 redirectRefused,
 		"https://claude.ai:443/api/mcp/auth_callback":          redirectRefused,
 		"https://claude.ai:8443/api/mcp/auth_callback":         redirectRefused,
