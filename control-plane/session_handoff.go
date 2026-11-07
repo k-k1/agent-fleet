@@ -1402,7 +1402,7 @@ func (a sessionHandoffAPI) notifyAccepted(o store.SessionHandoffOffer, _ string,
 		map[string]any{"offerId": o.ID, "sessionName": o.SourceSessionName, "acceptedSessionName": sessionName})
 }
 
-// notify inserts one notification. InsertNotification is idempotent on ON CONFLICT(event_id)
+// notify inserts one notification. InsertNotification is idempotent on ON CONFLICT(membership_id, event_id)
 // alone, which does not include the membership, so eventID must always mix in the recipient:
 // reusing one id for two notifications silently drops one of them.
 func (a sessionHandoffAPI) notify(membershipID, kind, eventID, targetType, targetID, targetKind, displayName string, payload map[string]any) {
