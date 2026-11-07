@@ -138,9 +138,11 @@ thresholds, not exact lifetimes: with the archive on, the cutoff rounds down to 
 the database keeps events up to about a day longer, and a slow purge or a failed archive write
 keeps them longer still (the CP never deletes what it did not archive). The S3 clock is the
 lifecycle rule's, measured from the object's own creation: a day object that already exists is
-verified and reused, not rewritten, so it does not restart at the database delete. With the
-defaults that is roughly 30 days in the database, then up to 365 in S3. `0` never purges, so
-nothing is archived either; with no archive, events are gone at the cutoff. The CP ignores a
+verified and reused, not rewritten, so it does not restart at the database delete. S3 expires
+an archived day 365 days (the default) after the object was created, and the deletion itself can
+lag that date; the time left after the database delete can be shorter than 365 days, since the
+object may already be older. `0` never purges, so nothing is archived either; with no archive,
+events are deleted from the cutoff on (the purger runs periodically, so not at that instant). The CP ignores a
 value that is not a number and uses 30, so a typo cannot switch deletion off.
 `EgressArchive=existing` does not manage the bucket, so `EgressArchiveRetentionDays` does not
 apply to it: its lifecycle is whatever that bucket already has.
