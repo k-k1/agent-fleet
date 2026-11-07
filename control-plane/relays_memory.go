@@ -55,6 +55,12 @@ var memoryRelays = []agentRelay{
 	{route: "GET /api/agents/memory/entries/member-read"},
 	{route: "GET /api/agents/memory/entries/member-search"},
 	{route: "GET /api/agents/memory/entries/member-latest"},
+	// The read-only lint report (ADR 0130 decision 5) and the member's retired-term list. The
+	// list shapes what the report calls retired, so its save carries the member-origin mark; it
+	// names no project or memory, so the audit row has no target.
+	{route: "GET /api/agents/memory/entries/lint"},
+	{route: "GET /api/agents/memory/entries/lint-terms"},
+	{route: "POST /api/agents/memory/entries/lint-terms", audit: auditAs("memory.lint_terms.save", nil), sign: signBody},
 	{route: "GET /api/agents/memory/entries/member-forgotten"},
 	// The member's purge of one memory's past revisions from the history (#1982); the preview
 	// only reads.

@@ -68,12 +68,12 @@ describe("ImportExportView hub", () => {
     expect(Array.from(host!.querySelectorAll(".mem-ie-group")).map((g) => [g.querySelector("h3")?.textContent, Array.from(g.querySelectorAll("h4")).map((h) => h.textContent)])).toEqual([
       [t("mem.ie_group_import"), [t("mem.ci_title"), t("mem.mi_title"), t("mem.bi_title")]],
       [t("mem.ie_group_export"), [t("mem.ce_title")]],
-      [t("mem.ie_group_maintenance"), [t("mem.pm_title")]],
+      [t("mem.ie_group_maintenance"), [t("mem.pm_title"), t("mem.lint_title")]],
     ]);
     // Every card has a description and a Start button; no wizard has been loaded yet.
-    expect(host!.querySelectorAll(".mem-ie-card")).toHaveLength(5);
-    expect(host!.querySelectorAll(".mem-ie-card p")).toHaveLength(5);
-    expect(host!.querySelectorAll(".mem-ie-card button")).toHaveLength(5);
+    expect(host!.querySelectorAll(".mem-ie-card")).toHaveLength(6);
+    expect(host!.querySelectorAll(".mem-ie-card p")).toHaveLength(6);
+    expect(host!.querySelectorAll(".mem-ie-card button")).toHaveLength(6);
     expect(api).not.toHaveBeenCalled();
   });
 
@@ -83,7 +83,7 @@ describe("ImportExportView hub", () => {
     expect(host!.querySelector(".mem-ie-card")).toBeNull();
     expect(h4s()).toEqual([t("mem.ci_title")]);
     await click(t("common.cancel"));
-    expect(host!.querySelectorAll(".mem-ie-card")).toHaveLength(5);
+    expect(host!.querySelectorAll(".mem-ie-card")).toHaveLength(6);
   });
 
   it("opens each source's own wizard", async () => {
@@ -92,6 +92,7 @@ describe("ImportExportView hub", () => {
       ["mem.mi_title", "muse-import"],
       ["mem.ce_title", "claude-export"],
       ["mem.pm_title", "entries/projects"],
+      ["mem.lint_title", "entries/lint-terms"],
     ];
     for (const [title, endpoint] of cases) {
       api.mockClear();
@@ -143,6 +144,6 @@ describe("ImportExportView hub", () => {
     expect(changed).toHaveBeenCalled();
     expect(btn(t("mem.wz_back"))).toBeTruthy();
     await click(t("mem.wz_back"));
-    expect(host!.querySelectorAll(".mem-ie-card")).toHaveLength(5);
+    expect(host!.querySelectorAll(".mem-ie-card")).toHaveLength(6);
   });
 });

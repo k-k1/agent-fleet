@@ -17,8 +17,9 @@ import { MuseImportPanel } from "../memoryMuseImport.tsx";
 import { ClaudeExportPanel } from "../memoryClaudeExport.tsx";
 import { ProjectMovePanel } from "../memoryProjectMove.tsx";
 import { BundleImportWizard } from "../memoryBundleImport.tsx";
+import { LintPanel } from "../memoryLint.tsx";
 
-type Source = "claude" | "muse" | "bundle" | "writeback" | "move";
+type Source = "claude" | "muse" | "bundle" | "writeback" | "move" | "lint";
 type Key = MsgKey;
 
 interface Card {
@@ -32,20 +33,42 @@ const IMPORTS: Card[] = [
   { source: "muse", title: "mem.mi_title", desc: "mem.ie_desc_muse" },
   { source: "bundle", title: "mem.bi_title", desc: "mem.ie_desc_bundle" },
 ];
-const EXPORTS: Card[] = [{ source: "writeback", title: "mem.ce_title", desc: "mem.ie_desc_writeback" }];
-const MAINTENANCE: Card[] = [{ source: "move", title: "mem.pm_title", desc: "mem.ie_desc_move" }];
+const EXPORTS: Card[] = [
+  { source: "writeback", title: "mem.ce_title", desc: "mem.ie_desc_writeback" },
+];
+const MAINTENANCE: Card[] = [
+  { source: "move", title: "mem.pm_title", desc: "mem.ie_desc_move" },
+  { source: "lint", title: "mem.lint_title", desc: "mem.ie_desc_lint" },
+];
 
-export function ImportExportView({ reload, onChanged }: { reload: number; onChanged: () => void }) {
+export function ImportExportView({
+  reload,
+  onChanged,
+}: {
+  reload: number;
+  onChanged: () => void;
+}) {
   const tr = useT();
   const [active, setActive] = useState<Source | null>(null);
   const close = () => setActive(null);
 
   const WIZARDS: Record<Source, ReactElement> = {
-    claude: <ClaudeImportPanel reload={reload} onChanged={onChanged} onClose={close} />,
-    muse: <MuseImportPanel reload={reload} onChanged={onChanged} onClose={close} />,
+    claude: (
+      <ClaudeImportPanel
+        reload={reload}
+        onChanged={onChanged}
+        onClose={close}
+      />
+    ),
+    muse: (
+      <MuseImportPanel reload={reload} onChanged={onChanged} onClose={close} />
+    ),
     bundle: <BundleImportWizard onChanged={onChanged} onClose={close} />,
     writeback: <ClaudeExportPanel reload={reload} onClose={close} />,
-    move: <ProjectMovePanel reload={reload} onChanged={onChanged} onClose={close} />,
+    move: (
+      <ProjectMovePanel reload={reload} onChanged={onChanged} onClose={close} />
+    ),
+    lint: <LintPanel reload={reload} onClose={close} />,
   };
   if (active) return WIZARDS[active];
 
@@ -57,7 +80,10 @@ export function ImportExportView({ reload, onChanged }: { reload: number; onChan
           <div key={c.source} className="mem-ie-card">
             <h4>{tr(c.title)}</h4>
             <p className="muted ds-hint">{tr(c.desc)}</p>
-            <Button aria-label={`${tr("mem.ie_start")}: ${tr(c.title)}`} onClick={() => setActive(c.source)}>
+            <Button
+              aria-label={`${tr("mem.ie_start")}: ${tr(c.title)}`}
+              onClick={() => setActive(c.source)}
+            >
               {tr("mem.ie_start")}
             </Button>
           </div>

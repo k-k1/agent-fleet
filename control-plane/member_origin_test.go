@@ -51,6 +51,7 @@ func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 		"POST /api/agents/memory-review/runs/revert",
 		"POST /api/agents/memory/af-import",
 		"POST /api/agents/memory/auto-sync",
+		"POST /api/agents/memory/entries/lint-terms",
 		"POST /api/agents/memory/entries/member-save",
 		"POST /api/agents/memory/entries/pin",
 		"POST /api/agents/memory/entries/project-move",

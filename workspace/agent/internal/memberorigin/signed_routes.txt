@@ -23,6 +23,7 @@ POST /agents/memory-review/run relay
 POST /agents/memory-review/runs/revert relay
 POST /agents/memory/af-import relay
 POST /agents/memory/auto-sync relay
+POST /agents/memory/entries/lint-terms relay
 POST /agents/memory/entries/member-save relay
 POST /agents/memory/entries/pin relay
 POST /agents/memory/entries/project-move relay

@@ -555,3 +555,11 @@ release.
 4. **The model**: a Haiku / GPT Luna class model by default, with supersede and merge escalated, gated
    by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
    comparison has a measured cost.
+
+## Note (2026-11-08): step 1 lint report (#3443)
+
+Decision 5, "Step 1 — report only", is built: `internal/memorylint` is the pure checks (it imports no AF package,
+and a test fails if it does), the Agent feeds it bodies, names and a by-ref repository reader, and the report
+is `af-memory lint` and Import & export → Memory lint report. The member-edited retired-term list is a file beside the
+store, outside any memory's history. Proposing retired terms from the repository (a superseded ADR, a removed key)
+is not built: it is the optional half of decision 5 (#3571).

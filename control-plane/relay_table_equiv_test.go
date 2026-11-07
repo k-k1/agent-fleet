@@ -217,6 +217,7 @@ var frozenMemberOriginRoutes = map[string]bool{
 	// provider, so a session's own AGENT_TOKEN must not be able to start it.
 	"POST /api/agents/memory-review/run":           true,
 	"POST /api/agents/memory/entries/pin":          true,
+	"POST /api/agents/memory/entries/lint-terms":   true, // added after the freeze (ADR 0130)
 	"POST /api/agents/memory/entries/revert":       true,
 	"POST /api/agents/memory/entries/member-save":  true,
 	"POST /api/agents/memory/entries/purge":        true,
@@ -403,6 +404,8 @@ func TestRelayAuditMatchesFrozenSwitch(t *testing.T) {
 var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/aws-confirm/{id}/approve": true, // ADR 0126 decision 5
 	"POST /api/aws-confirm/{id}/deny":    true,
+	// ADR 0130 decision 5: the member's retired-term list for the memory lint report.
+	"POST /api/agents/memory/entries/lint-terms": true,
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch
