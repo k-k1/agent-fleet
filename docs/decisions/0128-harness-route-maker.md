@@ -628,3 +628,54 @@ table from becoming a menu of models that fail on the first message, which is wh
   adds nothing), the same way as `AF_WS_WORKLOAD_AWS`; it reaches docker, ECS EC2/Fargate, Kubernetes and native at the
   next Start. It is a switch for the acceptance run only and is off by default; lifting the gate stays a separate change
   made with the evidence. The Agent's refusal text names the CP-side variable.
+- 2026-11-08, P2c (#3282): opencode on `bedrock`, Terminal only, through the gateway. **Measured first** (opencode 2.2.6, the
+  image's pin, run with `env -i`, its own HOME and XDG directories, `opencode run --standalone` and the interactive TUI in a
+  private tmux server; a stand-in gateway on a loopback port and on a Unix socket that answers with a real AWS event
+  stream and logs the method, path, `Authorization`, any `x-amz-*` header and the calling process; no AWS):
+  (1) the built-in `amazon-bedrock` provider sends **ConverseStream**, `POST <baseURL>/model/<id>/converse-stream`, one per
+  model call, and the stream's `metadata` event is shown as the turn's tokens; (2) `AWS_BEARER_TOKEN_BEDROCK` alone
+  activates the provider (152 `amazon-bedrock/…` models listed) and is sent as `Authorization: Bearer`; with static keys,
+  a `~/.aws/credentials` default and another profile, and `AWS_PROFILE` all present, every call still carried the bearer
+  and no `x-amz-*` header; with `providers.amazon-bedrock.settings.auth = "bearer"` and no bearer the call fails
+  ("bearer auth requires apiKey") and nothing is sent; (3) `providers.amazon-bedrock.settings.baseURL` (v2 form) and
+  `provider.amazon-bedrock.options.baseURL` (v1 form) both move the calls to the gateway; inline config
+  (`OPENCODE_CONFIG_CONTENT`) wins over the global and project files for the provider's settings (a file's `baseURL`
+  and `apiKey` were not used), but **not** for `enabled_providers`, where a global or project file's list replaced
+  the inline one; `OPENCODE_CONFIG_DIR` is read; (4) **no Unix socket**: a `unix://` base URL is refused ("protocol must
+  be http:, https: or s3:", retried until the timeout), an `http+unix://` one never reaches the socket, and no
+  setting names a socket; (5) a 401 or a 503 with `x-should-retry: false` goes out once and the turn fails at once with
+  the gateway's message (`Error: <message>`); (6) the model calls leave from the private `serve --stdio` child that
+  `--standalone` starts, whose parent is the TUI, the pane's process: inside the launch-pane tree; (7) the session title
+  is generated on `small_model`, which by default is an OpenAI model sent to `<baseURL>/responses` (or
+  `converse-stream` with `global.openai.gpt-6-luna`), then falls back to the session's model; pinning `small_model`
+  keeps it on the session's model. **Gateway**: a second listener on an ephemeral loopback port
+  (`127.0.0.1:0`). A connection there is attributed through `/proc`: the client's end is the established row of
+  `/proc/net/tcp{,6}` whose local address is the peer the gateway sees and whose remote is the gateway's own, its inode
+  must be held by exactly one process (a socket inherited across fork is refused), and that process is pinned by its
+  start time and walked up the session's launch-pane tree exactly as on the socket. A token records the transport it
+  was issued for (`IssueLoopback` for TCP, `Issue` for the socket) and is served there only. Weaker than
+  `SO_PEERCRED` in one way: the holder is read at accept, not at connect, so a client that hands its connected socket to
+  another process before the accept is attributed to that one (the same user can do as much with `SCM_RIGHTS` on the
+  socket). The allow-list needed nothing: `converse-stream` is already forwarded and its `metadata` usage already read.
+  **Adapter**: `Routes()` is `bedrock`; it is offered, checked, bound and launched only with
+  `AF_OPENCODE_BEDROCK_ROUTE=1` on the Agent (a Control Plane started with `AF_WS_OPENCODE_BEDROCK_ROUTE=1` adds it at
+  the next workspace Start), independent of claude's gate. `agents.RouteDriverChecker` (asked at create, fork,
+  recreate, move, every start and the execution-method switch) refuses it under Managed: the shared serve is in no
+  session's tree and has one environment. `agents.RouteModelOwner` lets the route, not the kind's live catalogue, check
+  the model, which must be `amazon-bedrock/<id>` (opencode's default is not on the route). The launch runs
+  `--standalone` (never af's shared serve), gives the pane the bearer and `AWS_REGION` and none of the workspace's
+  provider keys or engine token, unsets `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR` and `OPENCODE_CLI_CONFIG_CONTENT`, and
+  carries inline config on every launch (merged into a fresh session's, exported before a resume's API steps):
+  `enabled_providers: ["amazon-bedrock"]`, `small_model` = the session's model, and the provider's `baseURL` (the
+  loopback port) with `auth: "bearer"`. A global or project config file that sets `enabled_providers` refuses the
+  route at create, start and launch, and the route guard sweep stops a running session over it
+  (`route_settings_conflict`). **Ledger**: opencode writes the amazon-bedrock calls with no route of their own, so the
+  fold files them under the session's selection and leaves them to the gateway's rows (`dropGatewayCounted`, unchanged).
+  **Menu (decision 11's `keepInMenu`)**: while the route is offered (gate open, gateway running) the kind's menu also
+  lists opencode's amazon-bedrock models, read from `opencode models --standalone` with a placeholder bearer, the AWS
+  chain blinded and the same provider pin (cached 10 minutes); the Console shows them only with the route chosen and
+  hides them otherwise. `keepInMenu` and `AF_OPENCODE_SHOW_BEDROCK` are unchanged for a session with no route.
+  Not measured: real Bedrock (decision 14), the binding against another session's process in a live workspace, how
+  the TUI's own model picker behaves when a member tries to leave the provider, and whether OpenAI models on
+  `amazon-bedrock` use `converse-stream` or `responses` for a turn (the gateway refuses `responses` with a 404 that
+  names the four operations). ADR 0129's H row and Q6 can take this wire and binding as measured for a stand-in.

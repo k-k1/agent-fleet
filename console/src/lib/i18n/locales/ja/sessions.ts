@@ -567,6 +567,7 @@ export const sessions = {
   "launch.bedrock_region_placeholder": "プロファイルのリージョン",
   "launch.bedrock_region_invalid": "AWS のリージョンではありません（例: us-east-1）。空にするとプロファイル自身のリージョンを使います。",
   "launch.bedrock_hint": "設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルだけが出ます。リージョンは任意で、空ならプロファイル自身のものです。呼び出しはワークスペースのルートゲートウェイを通るので、セッションには AWS の資格情報が渡りません。",
+  "launch.bedrock_model_needed": "Amazon Bedrock のモデル（amazon-bedrock/…）を選んでください。このルートの opencode はそれしか使えません。",
   "launch.field.permissions": "権限確認",
   "launch.mode_normal": "通常",
   "launch.field.location": "場所",
