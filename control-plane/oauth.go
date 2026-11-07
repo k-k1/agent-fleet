@@ -113,15 +113,63 @@ func (c config) oauthRedirectURI() string {
 
 // --- signed cookies (HMAC-SHA256, stdlib only) -----------------------------
 
-// signCookie returns base64(payload)"."base64(HMAC(payload)).
-func (c config) signCookie(payload []byte) string {
+// cookiePurpose labels what a signed cookie is for. Each purpose signs with its own key,
+// HMAC(AF_COOKIE_SECRET, "af-cookie/v1/<purpose>"), so a value minted for one purpose never
+// verifies for another, whatever its payload says. The purposes are the whole list:
+//
+//	session        the signed-in session (af_session)
+//	state          the sign-in / account-link state (af_oauth_state)
+//	preview        the preview host cookie
+//	preview-token  the one-shot token handing a preview sign-in from the Console origin
+type cookiePurpose string
+
+const (
+	cookiePurposeSession      cookiePurpose = "session"
+	cookiePurposeState        cookiePurpose = "state"
+	cookiePurposePreview      cookiePurpose = "preview"
+	cookiePurposePreviewToken cookiePurpose = "preview-token"
+)
+
+// cookieFormatV2 prefixes the labelled format. The unlabelled one has exactly one "."
+// (base64url has none), so the two cannot be confused.
+const cookieFormatV2 = "v2."
+
+// legacyCookiePurpose says which purposes still accept the unlabelled format during the
+// transition. Only values that were already out in browsers at deploy time qualify: the
+// session and preview cookies. A sign-in state lives ten minutes and a preview token thirty
+// seconds, so a person mid-login at deploy simply starts again.
+func legacyCookiePurpose(p cookiePurpose) bool {
+	return p == cookiePurposeSession || p == cookiePurposePreview
+}
+
+func (c config) cookieKey(p cookiePurpose) []byte {
 	mac := hmac.New(sha256.New, c.cookieSecret)
+	mac.Write([]byte("af-cookie/v1/" + string(p)))
+	return mac.Sum(nil)
+}
+
+// signCookie returns "v2." base64(payload) "." base64(HMAC(purpose key, payload)).
+func (c config) signCookie(p cookiePurpose, payload []byte) string {
+	mac := hmac.New(sha256.New, c.cookieKey(p))
 	mac.Write(payload)
-	return base64.RawURLEncoding.EncodeToString(payload) + "." +
+	return cookieFormatV2 + base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (c config) verifyCookie(s string) ([]byte, bool) {
+// verifyCookie checks s for purpose p. The unlabelled format (the raw secret signs the
+// payload) is accepted only for legacyCookiePurpose purposes and only until
+// legacyCookieUntil, one session lifetime after this process started, by which time every
+// cookie the previous version issued has expired. A zero legacyCookieUntil accepts none.
+func (c config) verifyCookie(p cookiePurpose, s string) ([]byte, bool) {
+	key := c.cookieKey(p)
+	if rest, ok := strings.CutPrefix(s, cookieFormatV2); ok {
+		s = rest
+	} else {
+		if !legacyCookiePurpose(p) || !time.Now().Before(c.legacyCookieUntil) {
+			return nil, false
+		}
+		key = c.cookieSecret
+	}
 	i := strings.IndexByte(s, '.')
 	if i < 0 {
 		return nil, false
@@ -134,7 +182,7 @@ func (c config) verifyCookie(s string) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	mac := hmac.New(sha256.New, c.cookieSecret)
+	mac := hmac.New(sha256.New, key)
 	mac.Write(payload)
 	if !hmac.Equal(sig, mac.Sum(nil)) {
 		return nil, false
@@ -177,7 +225,7 @@ func (c config) issueSession(w http.ResponseWriter, p auth.Principal) {
 		Prov:  p.Provider,
 		Sub:   p.Subject,
 	})
-	c.setCookie(w, sessionCookie, c.signCookie(b), int(c.sessionTTL.Seconds()))
+	c.setCookie(w, sessionCookie, c.signCookie(cookiePurposeSession, b), int(c.sessionTTL.Seconds()))
 }
 
 // session returns the verified, unexpired claims from the session cookie.
@@ -186,7 +234,7 @@ func (c config) session(r *http.Request) (sessionClaims, bool) {
 	if err != nil {
 		return sessionClaims{}, false
 	}
-	payload, ok := c.verifyCookie(ck.Value)
+	payload, ok := c.verifyCookie(cookiePurposeSession, ck.Value)
 	if !ok {
 		return sessionClaims{}, false
 	}
@@ -440,7 +488,7 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		Nonce: nonce, Next: next, Exp: time.Now().Add(10 * time.Minute).Unix(),
 		Prov: p.ID(), Tnt: tenant,
 	})
-	c.setCookie(w, stateCookie, c.signCookie(b), 600)
+	c.setCookie(w, stateCookie, c.signCookie(cookiePurposeState, b), 600)
 
 	au, err := p.AuthorizeURL(r.Context(), nonce, c.oauthRedirectURI())
 	if err != nil {
@@ -472,7 +520,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "session", "")
 		return
 	}
-	payload, ok := c.verifyCookie(ck.Value)
+	payload, ok := c.verifyCookie(cookiePurposeState, ck.Value)
 	if !ok {
 		loginRedirect(w, r, "session", "")
 		return

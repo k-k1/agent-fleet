@@ -466,6 +466,7 @@ var rewrapSealSites = map[string]string{
 	"engine_civitai_token.go:set":               engineCivitaiTokenSetting,
 	"engine_comfy_panel.go:seal":                engineComfySetting,
 	"rewrap_keys.go:rewrapOne":                  "",
+	"plaintext_sealed.go:sealPlaintextOne":      "",
 }
 
 // rewrapSealSitesAlso lists the further targets a seal site in rewrapSealSites stores into,

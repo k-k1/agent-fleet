@@ -21,6 +21,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.forbidden": "You don't have permission (super_admin only).",
   "admin.deploy_warn_plaintext_secrets":
     "This deployment has no master key (AF_MASTER_KEY), so members' stored credentials (git tokens, the Claude token, API keys, MCP and chat connections) are kept unencrypted in their homes. Set the key in the Control Plane's environment and restart it, then stop and start every existing workspace (a running one has no key yet), and only then have members reconnect what they had stored. The old unencrypted file stays in each home and in backups until deleted, so delete it and rotate those credentials.",
+  "admin.deploy_warn_weak_master_key":
+    "AF_MASTER_KEY is shorter than 32 bytes of key material (or is a repeated pattern). Every sealed value and every member's credential-store key derives from it, so it is only as strong as the value chosen. Generate a new one with `head -c 32 /dev/urandom | base64` and plan the change first: changing it on a running deployment makes what was sealed under the old value unreadable (see the Keys at rest chapter). A later release will refuse to start with it.",
+  "admin.deploy_warn_weak_cookie_secret":
+    "AF_COOKIE_SECRET is shorter than 32 bytes of key material (or is a repeated pattern). Session, sign-in and preview cookies are signed with it. Generate a new one with `head -c 32 /dev/urandom | base64`, set it and restart the Control Plane; everyone signs in again once. A later release will refuse to start with it.",
+  "admin.deploy_warn_plaintext_sealed":
+    "A master key is set, but some stored values (sign-in and Git OAuth client secrets, MCP headers, engine tokens, handoffs, inbox messages) were written before it was and are still unencrypted. Run `af-cp rewrap-keys --seal-plaintext` against the deployment's database, and rotate those secrets at their issuer: they were readable in the database and its backups. The notice clears a few minutes after the run.",
   "admin.deploy_warn_auth_dev":
     "This deployment runs with AUTH=dev (AF_ALLOW_INSECURE_DEV_AUTH=1): there is no sign-in, and every request is a fixed super_admin. Anyone who can reach this Control Plane controls every workspace. Keep it on a machine only you can reach; for anything shared, set AUTH=oauth or AUTH=proxy and restart.",
   "admin.deploy_warn_efs_backup_missing":

@@ -81,6 +81,15 @@ func (m *manager) deploymentWarnings() []string {
 	if m.plaintextSecrets() {
 		out = append(out, deploymentWarnPlaintextSecrets)
 	}
+	if m.weakMasterKey {
+		out = append(out, deploymentWarnWeakMasterKey)
+	}
+	if m.weakCookieSecret {
+		out = append(out, deploymentWarnWeakCookieSecret)
+	}
+	if m.plaintextSealed.count() > 0 {
+		out = append(out, deploymentWarnPlaintextSealed)
+	}
 	if m.authDevInsecure() {
 		out = append(out, deploymentWarnAuthDev)
 	}

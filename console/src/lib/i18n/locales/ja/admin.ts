@@ -19,6 +19,12 @@ export const admin = {
   "admin.forbidden": "権限がありません（super_admin のみ）。",
   "admin.deploy_warn_plaintext_secrets":
     "この配備にはマスターキー（AF_MASTER_KEY）がありません。メンバーが保存した認証情報（git のトークン・Claude のトークン・API キー・MCP やチャット連携の接続情報）は、各ホームに暗号化されずに置かれています。Control Plane の環境変数にキーを設定して再起動し、既存のワークスペースをすべて停止してから起動し直してください（動いたままのものはまだ鍵を持ちません）。そのあとでメンバーが保存していた認証情報をつなぎ直します。暗号化されていない古いファイルは削除するまで各ホームとバックアップに残るので、削除してその認証情報をローテーションしてください。",
+  "admin.deploy_warn_weak_master_key":
+    "AF_MASTER_KEY が 32 バイト未満（または同じパターンの繰り返し）です。封じられたすべての値とメンバーごとの資格情報ストアの鍵がここから導かれるため、選んだ値の強さが上限になります。`head -c 32 /dev/urandom | base64` で新しく生成してください。ただし先に段取りを: 稼働中の配備で変えると、古い値で封じたものが読めなくなります（「保存時の鍵」の章を参照）。後のリリースでは、この値での起動を拒否します。",
+  "admin.deploy_warn_weak_cookie_secret":
+    "AF_COOKIE_SECRET が 32 バイト未満（または同じパターンの繰り返し）です。セッション・サインイン・プレビューの cookie がこの値で署名されます。`head -c 32 /dev/urandom | base64` で新しく生成して設定し、Control Plane を再起動してください。全員が一度サインインし直します。後のリリースでは、この値での起動を拒否します。",
+  "admin.deploy_warn_plaintext_sealed":
+    "マスターキーは設定されていますが、それより前に書かれた保存値（サインイン・Git OAuth のクライアントシークレット、MCP のヘッダー、エンジンのトークン、ハンドオフ、受信箱のメッセージ）が、まだ暗号化されていません。配備のデータベースに対して `af-cp rewrap-keys --seal-plaintext` を実行し、それらの秘密を発行元でもローテーションしてください（データベースとバックアップから読める状態だったため）。実行の数分後にこの通知は消えます。",
   "admin.deploy_warn_auth_dev":
     "この配備は AUTH=dev（AF_ALLOW_INSECURE_DEV_AUTH=1）で動いています。サインインはなく、すべてのリクエストが固定の super_admin として扱われます。この Control Plane に届く人は誰でも、すべてのワークスペースを操作できます。自分だけが届くマシンでのみ使い、共有するなら AUTH=oauth か AUTH=proxy にして再起動してください。",
   "admin.deploy_warn_efs_backup_missing":

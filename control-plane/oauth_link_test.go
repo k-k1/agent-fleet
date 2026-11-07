@@ -148,7 +148,7 @@ func seedSignedIn(t *testing.T, cfg config, st *store.SQL, email string) (store.
 	b, _ := json.Marshal(sessionClaims{
 		Email: email, Exp: time.Now().Add(time.Hour).Unix(), Prov: auth.GoogleProviderID, Sub: "g-1",
 	})
-	return ident, &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
+	return ident, &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)}
 }
 
 // startLink drives GET /oauth2/link with the session cookie set.
@@ -194,7 +194,7 @@ func linkCallback(t *testing.T, cfg config, state, session *http.Cookie, nonce s
 // have got it from the authorize URL).
 func nonceOf(t *testing.T, cfg config, state *http.Cookie) string {
 	t.Helper()
-	payload, ok := cfg.verifyCookie(state.Value)
+	payload, ok := cfg.verifyCookie(cookiePurposeState, state.Value)
 	if !ok {
 		t.Fatal("state cookie does not verify")
 	}
@@ -333,7 +333,7 @@ func TestLinkRefusesWhenTheSessionChangedMidFlow(t *testing.T) {
 		Email: "suzuki@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(),
 		Prov: auth.GoogleProviderID, Sub: "g-2",
 	})
-	other := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
+	other := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)}
 
 	w = linkCallback(t, cfg, state, other, nonceOf(t, cfg, state))
 	if !strings.Contains(w.Body.String(), "確認できませんでした") {

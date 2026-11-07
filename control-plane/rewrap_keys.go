@@ -40,6 +40,19 @@ type rewrapTarget struct {
 	ids  func(ctx context.Context) ([]string, error)
 	load func(ctx context.Context, id string) (rewrapItem, bool, error)
 	swap func(ctx context.Context, id string, item rewrapItem, sealed string) (bool, error)
+
+	// plain is how --seal-plaintext reaches the rows stored unsealed (empty key reference):
+	// nil for a place that never holds one.
+	plain *rewrapPlain
+}
+
+// rewrapPlain is one target's keyless storage: encoding is store.PlainRaw or store.PlainBase64,
+// ref names the key reference the writer would have sealed row id under, and seal writes the
+// sealed value and that reference together, only while the row still holds item.
+type rewrapPlain struct {
+	encoding string
+	ref      func(ctx context.Context, id string) (string, error)
+	seal     func(ctx context.Context, id string, item rewrapItem, sealed, ref string) (bool, error)
 }
 
 // rewrapTargets is every place the custodian seals into: the tables of store.SealedTables and
@@ -49,9 +62,21 @@ type rewrapTarget struct {
 func rewrapTargets(st *store.SQL) []rewrapTarget {
 	var out []rewrapTarget
 	for _, table := range store.SealedTables() {
+		table := table
+		var plain *rewrapPlain
+		if enc, ok := store.PlainSource(table); ok {
+			plain = &rewrapPlain{
+				encoding: enc,
+				ref:      func(ctx context.Context, id string) (string, error) { return st.PlaintextKeyRef(ctx, table, id) },
+				seal: func(ctx context.Context, id string, it rewrapItem, sealed, ref string) (bool, error) {
+					return st.SealPlaintextValue(ctx, table, id, it.sealed, sealed, ref)
+				},
+			}
+		}
 		out = append(out, rewrapTarget{
-			name: table,
-			ids:  func(ctx context.Context) ([]string, error) { return st.ListSealedIDs(ctx, table) },
+			plain: plain,
+			name:  table,
+			ids:   func(ctx context.Context) ([]string, error) { return st.ListSealedIDs(ctx, table) },
 			load: func(ctx context.Context, id string) (rewrapItem, bool, error) {
 				v, ok, err := st.GetSealedValue(ctx, table, id)
 				return rewrapItem{sealed: v.Value, keyRef: v.KeyRef}, ok, err
@@ -62,8 +87,8 @@ func rewrapTargets(st *store.SQL) []rewrapTarget {
 		})
 	}
 	out = append(out,
-		rewrapSettingPair(st, engineHfTokenSetting, engineHfTokenRefSetting),
-		rewrapSettingPair(st, engineCivitaiTokenSetting, engineCivitaiTokenRefSetting),
+		rewrapSettingPair(st, engineHfTokenSetting, engineHfTokenRefSetting, engineHfTokenKeyRef),
+		rewrapSettingPair(st, engineCivitaiTokenSetting, engineCivitaiTokenRefSetting, engineCivitaiTokenKeyRef),
 		rewrapComfyRecord(st))
 	return out
 }
@@ -79,11 +104,18 @@ func settingIDs(st *store.SQL, key string) func(context.Context) ([]string, erro
 }
 
 // rewrapSettingPair is a sealed setting whose key reference is a second setting (the engine
-// tokens).
-func rewrapSettingPair(st *store.SQL, valueKey, refKey string) rewrapTarget {
+// tokens). keyRef is the reference the setting is sealed under.
+func rewrapSettingPair(st *store.SQL, valueKey, refKey, keyRef string) rewrapTarget {
 	return rewrapTarget{
 		name: valueKey,
-		ids:  settingIDs(st, valueKey),
+		plain: &rewrapPlain{
+			encoding: store.PlainRaw,
+			ref:      func(context.Context, string) (string, error) { return keyRef, nil },
+			seal: func(ctx context.Context, _ string, it rewrapItem, sealed, ref string) (bool, error) {
+				return st.SwapSettingPair(ctx, valueKey, refKey, it.sealed, sealed, ref)
+			},
+		},
+		ids: settingIDs(st, valueKey),
 		load: func(ctx context.Context, _ string) (rewrapItem, bool, error) {
 			v, err := st.GetSetting(ctx, valueKey)
 			if err != nil || v == "" {
@@ -105,7 +137,23 @@ func rewrapSettingPair(st *store.SQL, valueKey, refKey string) rewrapTarget {
 func rewrapComfyRecord(st *store.SQL) rewrapTarget {
 	return rewrapTarget{
 		name: engineComfySetting,
-		ids:  settingIDs(st, engineComfySetting),
+		plain: &rewrapPlain{
+			encoding: store.PlainRaw,
+			ref:      func(context.Context, string) (string, error) { return engineComfyKeyRef, nil },
+			seal: func(ctx context.Context, _ string, it rewrapItem, sealed, ref string) (bool, error) {
+				var rec engineComfyRecord
+				if err := json.Unmarshal([]byte(it.raw), &rec); err != nil {
+					return false, err
+				}
+				rec.KeyEnc, rec.KeyRef = sealed, ref
+				b, err := json.Marshal(rec)
+				if err != nil {
+					return false, err
+				}
+				return st.SwapSetting(ctx, engineComfySetting, it.raw, string(b))
+			},
+		},
+		ids: settingIDs(st, engineComfySetting),
 		load: func(ctx context.Context, _ string) (rewrapItem, bool, error) {
 			raw, err := st.GetSetting(ctx, engineComfySetting)
 			if err != nil || raw == "" {
@@ -269,7 +317,7 @@ func openRewrapStore() (*store.SQL, string, error) {
 	return st, "sqlite " + path, err
 }
 
-// runRewrapKeys is `af-cp rewrap-keys [--dry-run]`. Exit 0, with or without --dry-run: the
+// runRewrapKeys is `af-cp rewrap-keys [--dry-run] [--seal-plaintext]`. Exit 0, with or without --dry-run: the
 // last read-only look found no legacy and no unreadable value. Exit 1: something was left or
 // the run stopped; running it again picks up where it left off. Exit 2: usage or configuration.
 func runRewrapKeys(args []string) {
@@ -279,9 +327,13 @@ func runRewrapKeys(args []string) {
 func rewrapKeysMain(args []string, stdout io.Writer, logf func(string, ...any)) int {
 	fs := flag.NewFlagSet("rewrap-keys", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "count the values in each format and change nothing")
+	sealPlain := fs.Bool("seal-plaintext", false, "seal the values stored unsealed (written while no master key was set) under the configured custodian, local or kms")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		fmt.Fprintln(fs.Output(), "usage: af-cp rewrap-keys [--dry-run]")
+		fmt.Fprintln(fs.Output(), "usage: af-cp rewrap-keys [--dry-run] [--seal-plaintext]")
 		return 2
+	}
+	if *sealPlain {
+		return sealPlaintextMain(*dryRun, stdout, logf)
 	}
 	if kind := envx.Or("AF_KEY_CUSTODIAN", "local"); kind != "kms" {
 		logf("rewrap-keys: AF_KEY_CUSTODIAN=%s; the command re-seals under the KMS custodian, so run it with the CP's kms configuration", kind)

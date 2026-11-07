@@ -135,7 +135,7 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		// (A preflight carries no credential, so a temporary port cannot be called
 		// cross-origin; list the port to do that.)
 		if r.URL.Path == previewAuthCallbackPath {
-			cl, ok := a.verifyClaims(r.URL.Query().Get("t"))
+			cl, ok := a.verifyClaims(cookiePurposePreviewToken, r.URL.Query().Get("t"))
 			if !ok || cl.Slug != ph.slug || cl.Port != ph.port || cl.MembershipID != ws.MembershipID {
 				previewNotFound(w)
 				return
@@ -249,7 +249,7 @@ func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph prev
 	if err != nil || c.Value == "" {
 		return "", false
 	}
-	cl, ok := a.verifyClaims(c.Value)
+	cl, ok := a.verifyClaims(cookiePurposePreview, c.Value)
 	if !ok {
 		return "", false
 	}
@@ -259,8 +259,8 @@ func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph prev
 	return cl.MembershipID, previewViewerAllowed(ctx, a.mgr, ws, st, cl.MembershipID)
 }
 
-func (a previewHostAPI) verifyClaims(s string) (previewClaims, bool) {
-	payload, ok := a.cfg.verifyCookie(s)
+func (a previewHostAPI) verifyClaims(p cookiePurpose, s string) (previewClaims, bool) {
+	payload, ok := a.cfg.verifyCookie(p, s)
 	if !ok {
 		return previewClaims{}, false
 	}
@@ -274,9 +274,9 @@ func (a previewHostAPI) verifyClaims(s string) (previewClaims, bool) {
 	return cl, true
 }
 
-func (a previewHostAPI) sign(cl previewClaims) string {
+func (a previewHostAPI) sign(p cookiePurpose, cl previewClaims) string {
 	b, _ := json.Marshal(cl)
-	return a.cfg.signCookie(b)
+	return a.cfg.signCookie(p, b)
 }
 
 // startHandshake bounces an unauthenticated preview request to the Console origin,
@@ -303,7 +303,7 @@ func (a previewHostAPI) startHandshake(w http.ResponseWriter, r *http.Request, p
 // acceptToken is the preview-origin end of the handshake: verify the one-shot token,
 // mint the host-scoped cookie, and send the browser to where it was going.
 func (a previewHostAPI) acceptToken(w http.ResponseWriter, r *http.Request, ph previewHost, st wsSettings, temp bool, ws store.Workspace) {
-	cl, ok := a.verifyClaims(r.URL.Query().Get("t"))
+	cl, ok := a.verifyClaims(cookiePurposePreviewToken, r.URL.Query().Get("t"))
 	if !ok || cl.Slug != ph.slug || cl.Port != ph.port {
 		http.Error(w, "preview sign-in expired — reload from the Console", http.StatusForbidden)
 		return
@@ -317,7 +317,7 @@ func (a previewHostAPI) acceptToken(w http.ResponseWriter, r *http.Request, ph p
 	cl.Exp = time.Now().Add(previewSessionTTL).Unix()
 	http.SetCookie(w, &http.Cookie{
 		Name:     previewAuthCookie,
-		Value:    a.sign(cl),
+		Value:    a.sign(cookiePurposePreview, cl),
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   forwardedProto(r) == "https",
@@ -451,7 +451,7 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 	// What gets baked in is the CALLER's own membership, never the owner's. A viewer's
 	// cookie says only "this person is opening this slug/port"; the permission is
 	// re-resolved on every request (decision 15).
-	tok := a.sign(previewClaims{
+	tok := a.sign(cookiePurposePreviewToken, previewClaims{
 		Slug: slug, Port: port, MembershipID: mv.MembershipID,
 		Exp: time.Now().Add(previewTokenTTL).Unix(),
 	})

@@ -98,6 +98,13 @@ type manager struct {
 	// master_key_guard.go) and only ever true on an ECS runtime.
 	efsBackupMissing bool
 
+	// weakMasterKey / weakCookieSecret are set at boot by weakKeyChecks (key_strength.go).
+	weakMasterKey, weakCookieSecret bool
+
+	// plaintextSealed counts sealed values stored unsealed (empty key_ref) while a master key
+	// is configured; see plaintext_sealed.go.
+	plaintextSealed plaintextSealedState
+
 	// template fields shared by every runtime
 	image    string
 	dataRoot string
