@@ -129,7 +129,11 @@ in the Console.
    gateway admits the addresses the host resolves to, on those ports, and records each connection by
    address and port. In log-only an unnamed destination is passed and shown as would-block; in enforce
    it is dropped and recorded. Before cut-over, the destination's own firewall must admit the gateway's
-   egress address. Details: `deploy/aws/ecs/README.md`, "Egress gateway".
+   egress address. **A denied TCP connection looks connected at first**: the gateway accepts it,
+   reads where it was headed, and only then drops it, so `nc -z` or a bare `connect()` succeeds and
+   the first read or write fails with `Connection reset by peer`. Do not read "connected" as
+   "allowed"; check the Egress tab's events (or `deny` lines in `/var/log/squid/af-tcp.log` on the
+   gateway). Details: `deploy/aws/ecs/README.md`, "Egress gateway".
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
    enforce. From then on, traffic outside the allowlist is **blocked**. Switching straight to enforce also
    kills the traffic you need (agent CLI updates, MCP endpoints), and clearing the block candidates under

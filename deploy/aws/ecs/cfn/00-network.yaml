@@ -114,7 +114,7 @@ Parameters:
     Default: t3.small
     Description: >-
       Instance type of the egress gateway (EgressRoute=gateway). Its architecture must match
-      GatewayAmiId's and the CP image's (30-ingress CpArch): the gateway runs the CP binary.
+      GatewayAmiId's, and the CP image's only if that is single-arch (README, Egress gateway).
   GatewayAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
