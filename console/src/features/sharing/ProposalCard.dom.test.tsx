@@ -68,4 +68,20 @@ describe("ProposalCard", () => {
     expect(turn.textContent).toContain("turn / steer");
     expect(turn.textContent).toContain("cm-1");
   });
+
+  it("renders a refused legacy proposal with malformed answers and still lets it be rejected", () => {
+    const onDecide = vi.fn();
+    const el = mount({
+      ...base, action: "respond", refused: "legacy",
+      payload: { id: "i", decision: "answer", answers: [null, { text: { evil: 1 } }, "str", { options: ["x"] }, { text: "ok", options: [1] }] },
+    }, onDecide);
+    expect(el.textContent).toContain("ok");
+    expect(el.textContent).toContain("evil");
+    // A refused pending proposal offers exactly one button: reject.
+    expect(el.querySelectorAll("button")).toHaveLength(1);
+    const reject = el.querySelector("button");
+    expect(reject).toBeTruthy();
+    act(() => reject!.click());
+    expect(onDecide).toHaveBeenCalledWith("p1", "reject");
+  });
 });

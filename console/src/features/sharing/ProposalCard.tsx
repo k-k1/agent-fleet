@@ -31,7 +31,15 @@ export function ProposalCard({ p, onDecide }: { p: Proposal; onDecide: (id: stri
   const d = p.payload ?? {};
   const attachments = Array.isArray(d.attachments) ? d.attachments : d.attachments == null ? [] : [d.attachments];
   const body = text(d.prompt) || text(d.feedback);
-  const answers: Answer[] = Array.isArray(d.answers) ? (d.answers as Answer[]) : [];
+  // A proposal stored before the allow-list may hold anything here: each element is checked,
+  // and one that is not a well-formed answer is shown as plain JSON text instead.
+  const answers: (Answer | string)[] = (Array.isArray(d.answers) ? d.answers : []).map((a) => {
+    const o = a as { text?: unknown; options?: unknown } | null;
+    const ok = o !== null && typeof o === "object" && !Array.isArray(o)
+      && (o.text === undefined || typeof o.text === "string")
+      && (o.options === undefined || (Array.isArray(o.options) && o.options.every((n) => typeof n === "number")));
+    return ok ? (o as Answer) : text(a);
+  });
   const choices = Array.isArray(d.choices) ? d.choices : [];
   const other = Object.keys(d).filter((k) => !KNOWN.has(k));
   const processing = p.status === "processing";
@@ -60,8 +68,12 @@ export function ProposalCard({ p, onDecide }: { p: Proposal; onDecide: (id: stri
               <ol className="share-proposal-attachments">
                 {answers.map((a, i) => (
                   <li key={i}>
-                    {a.text ? <span>{a.text}</span> : null}
-                    {Array.isArray(a.options) && a.options.length > 0 && <span> [{a.options.join(", ")}]</span>}
+                    {typeof a === "string" ? <code>{a}</code> : (
+                      <>
+                        {a.text ? <span>{a.text}</span> : null}
+                        {a.options && a.options.length > 0 && <span> [{a.options.join(", ")}]</span>}
+                      </>
+                    )}
                   </li>
                 ))}
               </ol>
