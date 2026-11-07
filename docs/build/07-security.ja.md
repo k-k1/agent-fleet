@@ -284,6 +284,15 @@ Cognito / GitLab が設定だけで載る（`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID
   デプロイ側の一覧は変わるため）。ゲートは super_admin の承認であり、共有ドメイン上の子会社が自前の
   IdP を使うことは正当にありうる。同じ重なりは保存と承認の監査行にも残す。テナント管理者には
   デプロイのログインドメインが漏れるため見せない。
+- **認可コードフローは、開始したブラウザに結び付ける。** サインインごとに PKCE verifier
+  （RFC 7636、S256）と、OIDC で `openid` スコープがあるときは nonce を作り、どちらも署名済み
+  state cookie に持つ。authorize 要求に `code_challenge` と `nonce`、token 要求に `code_verifier`
+  を載せ、ID token に `nonce` があれば照合する（IdP が返さなくても拒否はしない）。コードが
+  別のブラウザに漏れても、そこでは引き換えられない。Google・env の OIDC・GitHub・テナント
+  定義の provider のすべてに適用する。`code_challenge` を拒否する IdP は provider ごとに
+  `AF_OIDC_<ID>_PKCE=off`（GitHub は `AF_GITHUB_PKCE=off`）で外せる。テナント行には外す手段は
+  ない。CP 更新時に進行中だったサインインの state cookie には verifier が無く、期限切れと同じ
+  「session」エラーでログイン画面に戻す。アカウント連携フローは対象外。
 
 **GitHub だけは専用アダプタ**（OIDC ではない）。許可は**独立した 2 つの門の AND**:
 

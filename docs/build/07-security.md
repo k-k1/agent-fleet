@@ -334,6 +334,17 @@ need no edit.
   gate, and a deployment may legitimately let a subsidiary on a shared domain use its own
   IdP. The same overlap is written to the audit line of the save and of the approval. A
   tenant administrator is not shown it, since it would reveal the deployment's login domains.
+- **The authorization-code flow is bound to the browser that started it.** Each sign-in
+  carries a PKCE verifier (RFC 7636, S256) and, for OIDC with the `openid` scope, a nonce,
+  both kept in the signed state cookie; the authorize request sends `code_challenge` and
+  `nonce`, the token request sends `code_verifier`, and the ID token's `nonce` is compared
+  when it carries one (an IdP that does not echo it is not refused). A code that leaks to
+  another browser therefore cannot be redeemed there. It applies to Google, env OIDC,
+  GitHub and tenant-defined providers alike. An IdP that rejects `code_challenge` is opted
+  out per provider with `AF_OIDC_<ID>_PKCE=off` (GitHub: `AF_GITHUB_PKCE=off`); tenant rows
+  have no opt-out. A sign-in that was in flight when the CP was updated has a state cookie
+  without a verifier and is sent back to the login page with the "session" error, like an
+  expired one. The account-link flow is not covered.
 
 **GitHub is a separate adapter** — it is not OIDC. Permission is **the AND of two
 independent gates**:

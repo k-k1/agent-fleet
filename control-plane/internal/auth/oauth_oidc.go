@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -139,6 +140,10 @@ type OIDCProvider struct {
 	// CP posts that tenant's client secret to whatever the discovery document names.
 	// Env-configured providers are the operator's own and keep their endpoints as given.
 	PinEndpointHosts bool
+	// NoPKCE turns off the S256 code_challenge for an IdP that rejects the parameter
+	// (AF_OIDC_<ID>_PKCE=off). PKCE is on by default: it is what stops an authorization
+	// code that leaks to another browser from being redeemed there.
+	NoPKCE bool
 
 	mu    sync.Mutex
 	ep    Endpoints
@@ -302,7 +307,30 @@ func checkEndpointHosts(issuer string, ep Endpoints) error {
 
 // --- authorize -------------------------------------------------------------
 
+// NewFlow implements FlowProvider: a PKCE verifier unless the provider opted out, and a
+// nonce when the scope asks for an ID token.
+func (p *OIDCProvider) NewFlow() FlowParams {
+	var f FlowParams
+	if !p.NoPKCE {
+		f.CodeVerifier = newVerifier()
+	}
+	for _, sc := range strings.Fields(p.Scope) {
+		if sc == "openid" {
+			f.Nonce = newNonce()
+			break
+		}
+	}
+	return f
+}
+
+// AuthorizeURL is the plain authorize request, without PKCE or nonce; the login handler
+// uses AuthorizeURLFlow.
 func (p *OIDCProvider) AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error) {
+	return p.AuthorizeURLFlow(ctx, state, redirectURI, FlowParams{})
+}
+
+// AuthorizeURLFlow adds code_challenge (S256) and nonce for the parts of f that are set.
+func (p *OIDCProvider) AuthorizeURLFlow(ctx context.Context, state, redirectURI string, f FlowParams) (string, error) {
 	ep, err := p.endpoints(ctx)
 	if err != nil {
 		return "", err
@@ -319,6 +347,13 @@ func (p *OIDCProvider) AuthorizeURL(ctx context.Context, state, redirectURI stri
 	}
 	for k, vs := range p.ExtraAuth {
 		q[k] = vs
+	}
+	if f.CodeVerifier != "" {
+		q.Set("code_challenge", PKCEChallenge(f.CodeVerifier))
+		q.Set("code_challenge_method", "S256")
+	}
+	if f.Nonce != "" {
+		q.Set("nonce", f.Nonce)
 	}
 	sep := "?"
 	if strings.Contains(ep.Authorize, "?") {
@@ -354,6 +389,7 @@ type oidcClaims struct {
 	PreferredUsername string   `json:"preferred_username"`
 	UPN               string   `json:"upn"` // Entra's user Principal name
 	TID               string   `json:"tid"` // Entra tenant id (never in userinfo)
+	Nonce             string   `json:"nonce"`
 	// raw is the same payload as a plain object. AF_OIDC_<ID>_LINK_CLAIM and
 	// tenant_idp.link_claim name a claim at RUNTIME, so it cannot be a struct field
 	// — see claimString.
@@ -394,7 +430,15 @@ func decodeIDTokenClaims(idToken string) (oidcClaims, error) {
 	return c, nil
 }
 
+// Exchange is the plain code exchange, without a verifier or nonce.
 func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (Principal, error) {
+	return p.ExchangeFlow(ctx, code, redirectURI, FlowParams{})
+}
+
+// ExchangeFlow sends code_verifier when f carries one, and compares the ID token's nonce
+// with f.Nonce when the token carries a nonce at all (an IdP that does not echo one is
+// not refused: the nonce is defence in depth behind the signed state, not a requirement).
+func (p *OIDCProvider) ExchangeFlow(ctx context.Context, code, redirectURI string, f FlowParams) (Principal, error) {
 	ep, err := p.endpoints(ctx)
 	if err != nil {
 		return Principal{}, err
@@ -402,6 +446,9 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	form := url.Values{
 		"code": {code}, "client_id": {p.ClientID}, "client_secret": {p.ClientSecret},
 		"redirect_uri": {redirectURI}, "grant_type": {"authorization_code"},
+	}
+	if f.CodeVerifier != "" {
+		form.Set("code_verifier", f.CodeVerifier)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.Token, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -435,6 +482,9 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (
 		if idc, err = decodeIDTokenClaims(tok.IDToken); err != nil {
 			log.Printf("oauth: provider %s: %v (continuing with userinfo)", p.ProviderID, err)
 		}
+	}
+	if f.Nonce != "" && idc.Nonce != "" && subtle.ConstantTimeCompare([]byte(idc.Nonce), []byte(f.Nonce)) != 1 {
+		return Principal{}, ErrNonceMismatch
 	}
 	// Tenant pinning (decision 7): with ALLOWED_TIDS set, the token must name one of
 	// those tenants. A missing tid is a denial, not a pass — a personal Microsoft
@@ -611,6 +661,15 @@ func oidcEnv(id, key string) string {
 	return strings.TrimSpace(os.Getenv("AF_OIDC_" + strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_" + key))
 }
 
+// pkceOptOut reads an AF_*_PKCE value: only an explicit off / false / 0 / no disables PKCE.
+func pkceOptOut(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "false", "0", "no", "disabled":
+		return true
+	}
+	return false
+}
+
 // ValidProviderID keeps ids to what can round-trip through an env var name and a
 // URL query parameter.
 func ValidProviderID(id string) bool {
@@ -776,6 +835,9 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 		// still real — naming `email` here makes rule 1.5 an email join for every
 		// provider sharing that realm — so the guide says so in as many words.
 		p.LinkClaim = strings.ToLower(oidcEnv(id, "LINK_CLAIM"))
+		// AF_OIDC_<ID>_PKCE=off is the per-provider opt-out for an IdP that rejects
+		// code_challenge; anything else (or unset) keeps PKCE on.
+		p.NoPKCE = pkceOptOut(oidcEnv(id, "PKCE"))
 		if v := oidcEnv(id, "PROMPT"); v != "" {
 			p.Prompt = strings.TrimSpace(strings.ToLower(v))
 			if p.Prompt == "none" || p.Prompt == "-" {

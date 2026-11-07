@@ -2,6 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
 )
 
 // Package auth holds the CP-native sign-in machinery: the provider abstraction
@@ -58,6 +63,49 @@ type LoginProvider interface {
 	// request (authGate) — removing someone from the allowlist is the
 	// offboarding path and must not wait for the session cookie to expire.
 	Allowed(ctx context.Context, p Principal) (bool, error)
+}
+
+// FlowParams is the per-sign-in material that binds an authorization code to the browser
+// that asked for it: a PKCE verifier (RFC 7636, S256) and an OIDC nonce. The Control Plane
+// keeps both in the signed state cookie, so a code that leaks to another browser cannot be
+// redeemed there. Zero values mean "not used".
+type FlowParams struct {
+	CodeVerifier string
+	Nonce        string
+}
+
+// FlowProvider is implemented by the built-in providers that take part in PKCE / nonce.
+// It is an optional interface, like EntryVerdictor, so a test fake or a provider that
+// predates it keeps the plain AuthorizeURL / Exchange pair.
+type FlowProvider interface {
+	// NewFlow returns fresh FlowParams for one sign-in; its fields are empty for what the
+	// provider has opted out of (see OIDCProvider.NoPKCE).
+	NewFlow() FlowParams
+	AuthorizeURLFlow(ctx context.Context, state, redirectURI string, f FlowParams) (string, error)
+	ExchangeFlow(ctx context.Context, code, redirectURI string, f FlowParams) (Principal, error)
+}
+
+// ErrNonceMismatch is an ID token whose nonce is not the one this sign-in sent.
+var ErrNonceMismatch = errors.New("id_token nonce does not match this sign-in")
+
+// newVerifier is a 256-bit random PKCE code verifier (43 characters of base64url).
+func newVerifier() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// newNonce is a random OIDC nonce.
+func newNonce() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// PKCEChallenge is the S256 code_challenge for a verifier.
+func PKCEChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
 }
 
 // EntryVerdict is a judgment about whether somebody may still enter, with "could not tell" kept

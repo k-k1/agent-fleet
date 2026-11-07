@@ -179,6 +179,9 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
   `AF_OIDC_ENTRA_PROMPT`（既定 `select_account`。`none` にするとパラメータ自体を送らないので、
   受け付けない IdP に使えます）。`AF_OIDC_ENTRA_ALLOWED_EMAILS` / `_ALLOWED_DOMAINS` はこの
   provider だけの許可リストで、設定すると配備共通の許可リストに**足すのではなく置き換えます**。
+- PKCE はすべての provider で有効です。`code_challenge` / `code_verifier` を受け付けない IdP には
+  `AF_OIDC_ENTRA_PKCE=off`（GitHub は `AF_GITHUB_PKCE=off`）で送信をやめられます。既定が安全側
+  なので、更新後に認可の段階でサインインが失敗する場合だけ設定してください。
 
 CP は `<issuer>/.well-known/openid-configuration` を、このボタンで最初にサインインされた
 ときに読みます（24 時間キャッシュします）。したがって issuer の誤りは起動時には出ず、最初に

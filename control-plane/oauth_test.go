@@ -33,6 +33,7 @@ type stubIdP struct {
 	omitIDToken    bool // token response carries only an access_token
 	tokenError     string
 	tokenHits      int
+	tokenForm      url.Values // the last token request's form
 	userinfoHits   int
 }
 
@@ -52,6 +53,8 @@ func newStubIdP(t *testing.T, s *stubIdP) *stubIdP {
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		s.tokenHits++
+		_ = r.ParseForm()
+		s.tokenForm = r.PostForm
 		if s.tokenError != "" {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": s.tokenError})
 			return
@@ -401,13 +404,17 @@ func TestCallbackRejectsBadState(t *testing.T) {
 }
 
 // A state cookie minted by the previous version carries no provider id; it must
-// resolve to the deployment's first button rather than 500 or dead-end.
+// resolve to the deployment's first button rather than 500 or dead-end. The provider here
+// takes no part in PKCE or nonce (opted out, no openid scope), which is what such a cookie
+// can satisfy; the same cookie against a PKCE provider is TestCallbackWithoutVerifierFailsCleanly.
 func TestCallbackAcceptsPreP0StateCookie(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{
 		idTokenClaims:  map[string]any{"sub": "g1", "email": "yamada@acme.co.jp", "email_verified": true},
 		userinfoClaims: map[string]any{"sub": "g1", "email": "yamada@acme.co.jp", "email_verified": true},
 	})
-	cfg := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified))
+	p := stubProvider(auth.GoogleProviderID, idp, auth.TrustEmailVerified)
+	p.NoPKCE, p.Scope = true, "email"
+	cfg := oauthTestConfig(t, p)
 	b, _ := json.Marshal(map[string]any{"n": "nonce123", "x": "/", "e": time.Now().Add(time.Minute).Unix()})
 	st := &http.Cookie{Name: stateCookie, Value: cfg.signCookie(b)}
 	w := callback(t, cfg, st, "code", "nonce123")

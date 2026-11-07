@@ -402,6 +402,12 @@ type oauthState struct {
 	LEmail string `json:"le,omitempty"`
 	LProv  string `json:"lp,omitempty"`
 	LSub   string `json:"ls,omitempty"`
+	// Ver and ONonce are the PKCE verifier and the OIDC nonce of this sign-in
+	// (auth.FlowParams). They live in the signed state cookie, which only this browser holds,
+	// so a code that reaches another browser cannot be redeemed with them. A state without
+	// them is one minted before this existed, or for a provider that opted out.
+	Ver    string `json:"v,omitempty"`
+	ONonce string `json:"on,omitempty"`
 }
 
 // sanitizeNext keeps post-login redirects on-site; see localredirect.Safe.
@@ -426,13 +432,24 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
 	nonce := randHex(16)
+	var flow auth.FlowParams
+	fp, hasFlow := p.(auth.FlowProvider)
+	if hasFlow {
+		flow = fp.NewFlow()
+	}
 	b, _ := json.Marshal(oauthState{
 		Nonce: nonce, Next: next, Exp: time.Now().Add(10 * time.Minute).Unix(),
-		Prov: p.ID(), Tnt: tenant,
+		Prov: p.ID(), Tnt: tenant, Ver: flow.CodeVerifier, ONonce: flow.Nonce,
 	})
 	c.setCookie(w, stateCookie, c.signCookie(b), 600)
 
-	au, err := p.AuthorizeURL(r.Context(), nonce, c.oauthRedirectURI())
+	var au string
+	var err error
+	if hasFlow {
+		au, err = fp.AuthorizeURLFlow(r.Context(), nonce, c.oauthRedirectURI(), flow)
+	} else {
+		au, err = p.AuthorizeURL(r.Context(), nonce, c.oauthRedirectURI())
+	}
 	if err != nil {
 		// Discovery failed (unreachable/misconfigured issuer) — there is nowhere
 		// to send the browser, so fall back to the login page with an error.
@@ -509,7 +526,28 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pr, err := p.Exchange(r.Context(), code, c.oauthRedirectURI())
+	var pr auth.Principal
+	if fp, ok := p.(auth.FlowProvider); ok {
+		// What this provider would ask for now must be in the state it was started with.
+		// A sign-in begun before PKCE existed (or before the provider's opt-out changed)
+		// has no verifier: it is turned back to the login page like an expired state, not
+		// sent to the token endpoint to fail there.
+		want := fp.NewFlow()
+		if (want.CodeVerifier != "" && st.Ver == "") || (want.Nonce != "" && st.ONonce == "") {
+			loginRedirect(w, r, "session", tenant)
+			return
+		}
+		got := auth.FlowParams{}
+		if want.CodeVerifier != "" {
+			got.CodeVerifier = st.Ver
+		}
+		if want.Nonce != "" {
+			got.Nonce = st.ONonce
+		}
+		pr, err = fp.ExchangeFlow(r.Context(), code, c.oauthRedirectURI(), got)
+	} else {
+		pr, err = p.Exchange(r.Context(), code, c.oauthRedirectURI())
+	}
 	if err != nil {
 		log.Printf("oauth: provider %s exchange: %v", p.ID(), err)
 		if errors.Is(err, auth.ErrNotAllowed) { // e.g. a tid outside ALLOWED_TIDS
