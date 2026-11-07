@@ -77,11 +77,20 @@ func seedSubmodulesFrom(dir, store string, depth int) {
 			log.Printf("submodules %s: not seeding submodule with an unsupported name", dir)
 			continue
 		}
+		// The path reaches git as a pathspec and the filesystem below, so it is held to the
+		// same standard as the name and must be a gitlink in this very worktree.
+		if !validSubmodulePath(sm.Path) || !isGitlink(dir, sm.Path) {
+			log.Printf("submodules %s: not seeding submodule with an unsupported path", dir)
+			continue
+		}
 		src := filepath.Join(store, filepath.FromSlash(sm.Name))
 		if !withinDir(store, src) || !isGitDir(src) {
 			continue // the parent never checked this one out; there is nothing to seed from
 		}
 		sub := filepath.Join(dir, filepath.FromSlash(sm.Path))
+		if !withinDir(dir, sub) {
+			continue
+		}
 		if submodulePathEmpty(sub) { // never clone over a working tree
 			if err := seedSubmodule(dir, sm, src); err != nil {
 				log.Printf("submodules %s: seeding %s from the parent failed: %v", dir, sm.Path, err)
@@ -117,6 +126,33 @@ func validSubmoduleName(name string) bool {
 	return true
 }
 
+// validSubmodulePath reports whether path is a plain relative path with no `.`/`..` element,
+// no leading `-`, `/` or `:`, and no glob or control characters.
+func validSubmodulePath(path string) bool {
+	if path == "" || strings.ContainsAny(path[:1], "-/:") || strings.ContainsAny(path, "*?[]\\") {
+		return false
+	}
+	for _, r := range path {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	for _, el := range strings.Split(path, "/") {
+		if el == "" || el == "." || el == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// isGitlink reports whether path is a gitlink (mode 160000) in dir's index.
+func isGitlink(dir, path string) bool {
+	cmd := Cmd(dir, "ls-files", "--stage", "-z", "--", path)
+	cmd.Env = append(cmd.Env, "GIT_LITERAL_PATHSPECS=1")
+	out, err := cmd.Output()
+	return err == nil && strings.HasPrefix(string(out), "160000 ")
+}
+
 // withinDir reports whether path is strictly inside root, lexically.
 func withinDir(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
@@ -136,11 +172,16 @@ func seedSubmodule(dir string, sm submoduleSpec, src string) error {
 	//
 	// -c rather than `git config`: .git/config is shared with the parent and every sibling
 	// worktree, so writing the local path there would redirect their fetches to it too.
-	if out, err := Combined(dir,
+	//
+	// GIT_LITERAL_PATHSPECS: the path is a pathspec to git, and a glob in it would widen this
+	// file-protocol-enabled update to submodules whose urls came straight from .gitmodules.
+	cmd := Cmd(dir,
 		"-c", "protocol.file.allow=always",
 		"-c", "submodule."+sm.Name+".url="+src,
-		"submodule", "update", "--", sm.Path); err != nil {
-		return fmt.Errorf("%v: %s", err, out)
+		"submodule", "update", "--", sm.Path)
+	cmd.Env = append(cmd.Env, "GIT_LITERAL_PATHSPECS=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
 	// The clone recorded the parent's store as its origin. `git submodule sync` would fix that
 	// too, but it re-reads .gitmodules and would undo the SSH→HTTPS rewrite above, so take the
@@ -188,13 +229,16 @@ func parentModuleStore(parentDir string) string {
 // submoduleSpecs reads dir's .gitmodules. Nested submodules are absent by design: they are
 // only declared inside their parent submodule, which does not exist yet at seeding time.
 func submoduleSpecs(dir string) []submoduleSpec {
-	out, err := Run(dir, "config", "-f", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	// -z: entries are NUL-separated and key/value newline-separated, so a space inside a name
+	// cannot be mistaken for the separator.
+	cmd := Cmd(dir, "config", "-z", "-f", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	raw, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
 	var specs []submoduleSpec
-	for _, line := range strings.Split(out, "\n") {
-		key, path, ok := strings.Cut(line, " ")
+	for _, line := range strings.Split(string(raw), "\x00") {
+		key, path, ok := strings.Cut(line, "\n")
 		if !ok || strings.TrimSpace(path) == "" {
 			continue
 		}

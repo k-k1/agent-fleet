@@ -212,15 +212,9 @@ func TestSubmoduleUpdateRecursiveNeedsInit(t *testing.T) {
 }
 
 // TestSeedSubmodulesFromCycles pins that the descent terminates, and that maxSeedDepth is what
-// terminates it. The fixture is the worst case that can be built: a `path = .` entry is
-// accepted by `submodule init` (measured) and makes filepath.Join(dir, path) return dir itself,
-// so the working-copy side of the walk never moves, while a symlink makes <store>/self/modules
-// resolve back to <store>, so the store side never moves either.
-//
-// Even that cannot run forever — the store PATH still grows a segment per level, and measured,
-// without the cap this fixture unwinds at depth 41 after ~3 s, where Linux refuses the 41st
-// symlink traversal. So the assertion carrying the weight is not the timeout but that the cap
-// is what fired: falling back on the filesystem's own limits is not a bound to rely on.
+// terminates it. A `path = .` entry used to be the worst-case fixture, but validSubmodulePath
+// now refuses it before any descent, so the cap is exercised directly at its limit: it must
+// stop the walk and say so, rather than lean on the filesystem's own symlink limit.
 func TestSeedSubmodulesFromCycles(t *testing.T) {
 	git := gitTestEnv(t)
 	root := t.TempDir()
@@ -239,10 +233,8 @@ func TestSeedSubmodulesFromCycles(t *testing.T) {
 	if err := os.Symlink(store, filepath.Join(store, "self", "modules")); err != nil {
 		t.Fatal(err)
 	}
-	// Both halves of the loop have to be real or the test proves nothing.
-	if specs := submoduleSpecs(wt); len(specs) != 1 || filepath.Join(wt, specs[0].Path) != wt {
-		t.Fatalf("setup: the submodule path does not resolve back to its own working copy: %+v", specs)
-	}
+	// A path of "." is refused before any descent now, so the cap is exercised directly at the
+	// depth limit; the store loop below keeps the setup honest about what it guards against.
 	if !isGitDir(filepath.Join(store, "self", "modules", "self")) {
 		t.Fatal("setup: the store does not actually loop, so nothing recurses")
 	}
@@ -252,7 +244,7 @@ func TestSeedSubmodulesFromCycles(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	done := make(chan struct{})
-	go func() { defer close(done); seedSubmodulesFrom(wt, store, 0) }()
+	go func() { defer close(done); seedSubmodulesFrom(wt, store, maxSeedDepth) }()
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
@@ -395,6 +387,10 @@ func TestSeedSkipsMalformedSubmoduleNames(t *testing.T) {
 
 	wt := filepath.Join(root, "wt")
 	git(t, parent, "worktree", "add", "-q", wt, "-b", "feat")
+	sha := strings.TrimSpace(git(t, sub, "rev-parse", "HEAD"))
+	// Only libs/eq gets a gitlink: git's own init refuses a `..` name, so a gitlink under
+	// libs/esc would stop the run before the seeding code is reached.
+	git(t, wt, "update-index", "--add", "--cacheinfo", "160000,"+sha+",libs/eq")
 	// The branch declares the same submodule under malformed names (and a valid-looking path).
 	writeFile(t, filepath.Join(wt, ".gitmodules"), ""+
 		"[submodule \"libs/sub\"]\n\tpath = libs/sub\n\turl = "+sub+"\n"+
@@ -421,6 +417,8 @@ func TestSeedSkipsMalformedSubmoduleNames(t *testing.T) {
 	if submodulePathEmpty(filepath.Join(wt, "libs", "sub")) {
 		t.Error("the well-formed submodule next to the malformed ones was not seeded")
 	}
+	// (The argv check below is what carries this test: with no gitlink at these paths they
+	// stay empty even when the name check is removed.)
 	for _, p := range []string{"libs/eq", "libs/esc"} {
 		if !submodulePathEmpty(filepath.Join(wt, filepath.FromSlash(p))) {
 			t.Errorf("%s was seeded from a malformed submodule name", p)
@@ -430,6 +428,105 @@ func TestSeedSkipsMalformedSubmoduleNames(t *testing.T) {
 	for _, line := range strings.Split(string(argv), "\n") {
 		if strings.Contains(line, "x=y") || strings.Contains(line, "escape") {
 			t.Errorf("git was invoked with a malformed name: %q", line)
+		}
+	}
+}
+
+// rvFixture is a parent with libs/a and libs/b checked out and a worktree whose libs/b gitlink
+// was removed, so a .gitmodules entry named libs/b can carry an arbitrary path.
+func rvFixture(t *testing.T, git gitRunner, root string) (parent, wt string) {
+	t.Helper()
+	mk := func(dir, file string) string {
+		git(t, "", "init", "-q", "-b", "main", dir)
+		writeFile(t, filepath.Join(dir, file), file+"\n")
+		git(t, dir, "add", "-A")
+		git(t, dir, "commit", "-qm", "init")
+		return strings.TrimSpace(git(t, dir, "rev-parse", "HEAD"))
+	}
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	mk(a, "a.txt")
+	mk(b, "b.txt")
+	parent = filepath.Join(root, "parent")
+	mk(parent, "p.txt")
+	git(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", a, "libs/a")
+	git(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", b, "libs/b")
+	git(t, parent, "commit", "-qm", "subs")
+	wt = filepath.Join(root, "wt")
+	git(t, parent, "worktree", "add", "-q", wt, "-b", "feat")
+	git(t, wt, "rm", "-q", "--cached", "libs/b")
+	if err := os.RemoveAll(filepath.Join(wt, "libs", "b")); err != nil {
+		t.Fatal(err)
+	}
+	return parent, wt
+}
+
+// A glob in path must not widen the file-protocol-enabled update to another submodule whose
+// url came from .gitmodules.
+func TestSeedPathGlobDoesNotWidenFileProtocol(t *testing.T) {
+	git := gitTestEnv(t)
+	root := t.TempDir()
+	victim := filepath.Join(root, "victim")
+	git(t, "", "init", "-q", "-b", "main", victim)
+	writeFile(t, filepath.Join(victim, "secret.txt"), "s\n")
+	git(t, victim, "add", "-A")
+	git(t, victim, "commit", "-qm", "init")
+	vsha := strings.TrimSpace(git(t, victim, "rev-parse", "HEAD"))
+	parent, wt := rvFixture(t, git, root)
+	git(t, wt, "update-index", "--add", "--cacheinfo", "160000,"+vsha+",evil")
+	writeFile(t, filepath.Join(wt, ".gitmodules"), ""+
+		"[submodule \"libs/a\"]\n\tpath = libs/a\n\turl = "+filepath.Join(root, "a")+"\n"+
+		"[submodule \"libs/b\"]\n\tpath = *\n\turl = https://example.invalid/b.git\n"+
+		"[submodule \"evil\"]\n\tpath = evil\n\turl = "+victim+"\n")
+	seedSubmodulesFromParent(wt, parent)
+	if _, err := os.Stat(filepath.Join(wt, "evil", "secret.txt")); err == nil {
+		t.Error("a local-path url from .gitmodules was cloned under protocol.file.allow=always")
+	}
+}
+
+// A `..` path must not make the descent run init / URL rewriting in a repository outside the
+// worktree.
+func TestSeedDotDotPathLeavesOtherRepoAlone(t *testing.T) {
+	git := gitTestEnv(t)
+	root := t.TempDir()
+	other := filepath.Join(root, "other")
+	git(t, "", "init", "-q", "-b", "main", other)
+	writeFile(t, filepath.Join(other, "o.txt"), "o\n")
+	git(t, other, "add", "-A")
+	git(t, other, "commit", "-qm", "init")
+	osha := strings.TrimSpace(git(t, other, "rev-parse", "HEAD"))
+	git(t, other, "update-index", "--add", "--cacheinfo", "160000,"+osha+",dep")
+	writeFile(t, filepath.Join(other, ".gitmodules"), "[submodule \"dep\"]\n\tpath = dep\n\turl = git@github.com:someone/dep.git\n")
+	parent, wt := rvFixture(t, git, root)
+	writeFile(t, filepath.Join(wt, ".gitmodules"), ""+
+		"[submodule \"libs/a\"]\n\tpath = libs/a\n\turl = "+filepath.Join(root, "a")+"\n"+
+		"[submodule \"libs/b\"]\n\tpath = ../other\n\turl = https://example.invalid/b.git\n")
+	seedSubmodulesFromParent(wt, parent)
+	if out, _ := exec.Command("git", "-C", other, "config", "--get", "submodule.dep.url").CombinedOutput(); strings.TrimSpace(string(out)) != "" {
+		t.Errorf("a repository outside the worktree was touched: %q", out)
+	}
+}
+
+// A name containing a space must be read as git reads it, not split at the space.
+func TestSubmoduleSpecsKeepsSpaceInName(t *testing.T) {
+	git := gitTestEnv(t)
+	dir := t.TempDir()
+	git(t, "", "init", "-q", dir)
+	writeFile(t, filepath.Join(dir, ".gitmodules"), "[submodule \"libs/b.path x\"]\n\tpath = y\n\turl = u\n")
+	specs := submoduleSpecs(dir)
+	if len(specs) != 1 || specs[0].Name != "libs/b.path x" || specs[0].Path != "y" {
+		t.Errorf("submoduleSpecs = %+v, want one spec named %q with path y", specs, "libs/b.path x")
+	}
+}
+
+func TestValidSubmodulePath(t *testing.T) {
+	for _, ok := range []string{"libs/sub", "a b/c", "ü/x"} {
+		if !validSubmodulePath(ok) {
+			t.Errorf("validSubmodulePath(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", ".", "..", "../x", "a/../b", "/abs", "-x", ":(glob)x", "*", "a?b", "a[b]", "a\\b", "a\nb", "a//b"} {
+		if validSubmodulePath(bad) {
+			t.Errorf("validSubmodulePath(%q) = true, want false", bad)
 		}
 	}
 }
