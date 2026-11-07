@@ -18,7 +18,7 @@ vi.mock("../ui/confirmBridge.ts", () => ({
   },
 }));
 
-import { ensureTerm, disposeTerm, OSC52_MAX_CHARS } from "./term.ts";
+import { ensureTerm, disposeTerm, detach, OSC52_MAX_CHARS } from "./term.ts";
 import { setSetting } from "../lib/settings.ts";
 
 type KeyHandler = (e: KeyboardEvent) => boolean;
@@ -495,6 +495,25 @@ describe("terminal clipboard keys", () => {
     } finally {
       disposeTerm("clip2");
     }
+  });
+
+  it("the drag shortcut survives detach / re-attach, and dispose removes its document listeners", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    setSetting("termDragCopy", true);
+    const term: any = mount();
+    detach("clip");
+    ensureTerm("clip", term.element.parentElement); // re-attach reuses the instance
+    drag(term);
+    await oscOf(term)("after detach");
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith("after detach"));
+    expect(confirms.length).toBe(0);
+
+    const docAdd = vi.spyOn(document, "removeEventListener");
+    const winRemove = vi.spyOn(window, "removeEventListener");
+    disposeTerm("clip");
+    expect(docAdd.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining(["mouseup", "pointercancel"]));
+    expect(winRemove.mock.calls.map((c) => c[0])).toContain("blur");
   });
 
   it("OSC 52 text is stripped of control characters and capped", async () => {

@@ -1562,8 +1562,6 @@ export function detach(paneId: string) {
   if (!it) return;
   clearHeartbeat(it);
   clearConnWd(it);
-  for (const fn of it.cleanups ?? []) fn();
-  it.cleanups = [];
   if (it.ws) {
     try {
       it.ws.onclose = null; // intentional detach — don't print "[disconnected]"
@@ -1596,6 +1594,8 @@ export function disposeTerm(paneId: string) {
   if (!it) return;
   clearHeartbeat(it);
   clearConnWd(it);
+  for (const fn of it.cleanups ?? []) fn();
+  it.cleanups = [];
   if (it.ws) {
     try {
       it.ws.onclose = null;
