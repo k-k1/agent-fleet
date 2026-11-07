@@ -515,8 +515,16 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
 実装済み:
 
 - **forward proxy**。同じバイナリのサブコマンド（`egress-proxy`・`AF_EGRESS_LISTEN` 既定 `:3128`）。
-  CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。loopback・link-local（クラウドの
-  メタデータのアドレスを含む）・未指定アドレスは、どのモードでも検査して拒否する設計である。
+  CONNECT / HTTP 要求のホスト名で判定し、**TLS は復号しない**。内部宛先は log-only を含む
+  どのモードでも拒否する。検査は dial 自体に掛けた `net.Dialer.Control` フックで行い（CONNECT 経路と、
+  平文 HTTP 用の専用 transport が共用する）、名前を別に引き直した結果ではなく実際に接続する
+  アドレスを判定する。拒否するレンジは gateway relay と同じ（`egressallow.AddrRefused`）：
+  global unicast でないもの（未指定・マルチキャスト・`0.0.0.0/8` 全体）、loopback、link-local
+  （クラウドのメタデータのアドレスを含む）、private（RFC 1918 と IPv6 ユニークローカル）、
+  `100.64.0.0/10`・`192.0.0.0/24`・`198.18.0.0/15`・`240.0.0.0/4`。IPv4-mapped IPv6 アドレスは
+  対応する IPv4 アドレスとして判定する。relay は IPv4 専用で IPv6 を一律拒否し、proxy は IPv6 も
+  運ぶので同じ分類を適用する。同じネットワーク上の内部サービスなど private なホストへ届かせる
+  Workspace は `NO_PROXY` で proxy を迂回させる。
 - イベントは CP へ（`POST /internal/egress`・`AF_EGRESS_TOKEN`）送って日次集計（`egress_daily`）、
   ポリシーは `GET /internal/egress/policy` で配る。
   報告は at-least-once：proxy は 10 秒ごとに送信し（タイムアウト 10 秒・固定間隔・バックオフ

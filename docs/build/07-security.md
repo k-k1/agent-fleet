@@ -628,9 +628,17 @@ Implemented:
 
 - **A forward proxy**, run as a subcommand of the same binary (`egress-proxy`,
   `AF_EGRESS_LISTEN`, default `:3128`). It decides by the host name of the CONNECT or
-  HTTP request and **does not decrypt TLS**. It is designed to check for loopback,
-  link-local (the cloud metadata address included) and unspecified destinations and
-  refuse them in every mode.
+  HTTP request and **does not decrypt TLS**. It refuses internal destinations in every
+  mode, including log-only. The check is a `net.Dialer.Control` hook on the dial itself (the
+  CONNECT path and a dedicated plain-HTTP transport share it), so it judges the address
+  that is actually connected, not a separate lookup of the name. The refused ranges are
+  the gateway relay's (`egressallow.AddrRefused`): anything that is not global unicast
+  (unspecified, multicast, the whole `0.0.0.0/8`), loopback, link-local (the cloud metadata
+  address included), private (RFC 1918 and IPv6 unique-local), and `100.64.0.0/10`,
+  `192.0.0.0/24`, `198.18.0.0/15`, `240.0.0.0/4`; an IPv4-mapped IPv6 address is judged as
+  the IPv4 address it names. The relay is IPv4-only and refuses IPv6 outright; the proxy
+  carries IPv6 and applies the same classes to it. A workspace that reaches a private
+  host (an internal service on the same network) must bypass the proxy with `NO_PROXY`.
 - Events go to the CP (`POST /internal/egress`, `AF_EGRESS_TOKEN`) and are aggregated
   daily (`egress_daily`); the policy is served back from `GET /internal/egress/policy`.
   Reporting is at-least-once: the proxy flushes every 10 s (10 s request timeout, fixed
