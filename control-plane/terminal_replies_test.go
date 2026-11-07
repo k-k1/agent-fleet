@@ -137,3 +137,76 @@ func TestAddConnOptSkipsInputClocks(t *testing.T) {
 		t.Error("a first attach must still count as presence")
 	}
 }
+
+// A connection flap must not cost the protection of someone who typed a moment ago,
+// whichever socket closes first (#3530 review).
+func TestAutoReconnectKeepsRecentInputAcrossFlap(t *testing.T) {
+	grace := 30 * time.Minute
+	old := presenceGrace
+	presenceGrace = grace
+	defer func() { presenceGrace = old }()
+	check := func(t *testing.T, r *connRegistry, ws string, want bool) {
+		t.Helper()
+		now := time.Now()
+		if got := r.attentionFresh(ws, grace, now); got != want {
+			t.Errorf("attentionFresh = %v, want %v", got, want)
+		}
+		if got := r.watchingSession(ws, "s", grace, now); got != want {
+			t.Errorf("watchingSession = %v, want %v", got, want)
+		}
+	}
+	typed := func(r *connRegistry, ws string, ago time.Duration) {
+		r.addConn(ws, "s", true)
+		at := time.Now().Add(-ago)
+		r.mu.Lock()
+		r.lastInput[ws] = at
+		r.sessInput[ws]["s"] = at
+		r.mu.Unlock()
+	}
+
+	t.Run("old closes first", func(t *testing.T) {
+		r := newConnRegistry()
+		typed(r, "ws", time.Minute)
+		r.doneConn("ws", "s", true)
+		r.addConnOpt("ws", "s", true, false)
+		check(t, r, "ws", true)
+	})
+	t.Run("new attaches first", func(t *testing.T) {
+		r := newConnRegistry()
+		typed(r, "ws", time.Minute)
+		r.addConnOpt("ws", "s", true, false)
+		r.doneConn("ws", "s", true)
+		check(t, r, "ws", true)
+	})
+	t.Run("second tab", func(t *testing.T) {
+		r := newConnRegistry()
+		typed(r, "ws", time.Minute)
+		r.addConn("ws", "s", true) // other tab, first attach
+		r.doneConn("ws", "s", true)
+		r.addConnOpt("ws", "s", true, false)
+		check(t, r, "ws", true)
+	})
+	t.Run("grace expired", func(t *testing.T) {
+		r := newConnRegistry()
+		typed(r, "ws", grace+time.Minute)
+		r.doneConn("ws", "s", true)
+		r.addConnOpt("ws", "s", true, false)
+		check(t, r, "ws", false)
+	})
+	t.Run("unmarked reconnect does not consume the park, first attach stamps", func(t *testing.T) {
+		r := newConnRegistry()
+		typed(r, "ws", grace+time.Minute)
+		r.doneConn("ws", "s", true)
+		r.addConn("ws", "s", true)
+		check(t, r, "ws", true)
+	})
+	t.Run("expired park is pruned", func(t *testing.T) {
+		r := newConnRegistry()
+		typed(r, "ws", grace+time.Minute)
+		r.doneConn("ws", "s", true)
+		r.doneConn("other", "x", true)
+		if len(r.parkedInput) != 0 || len(r.parkedSessInput) != 0 {
+			t.Errorf("stale parked clocks survived: %v %v", r.parkedInput, r.parkedSessInput)
+		}
+	})
+}

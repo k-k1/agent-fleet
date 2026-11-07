@@ -63,6 +63,14 @@ type connRegistry struct {
 	// workspace-wide clock so typing into one session's terminal does not spare
 	// another session whose pane was left open untouched.
 	sessInput map[string]map[string]time.Time // workspaceID -> session -> last keystroke
+	// parkedInput / parkedSessInput hold the clocks of a workspace / session whose last
+	// terminal just detached, so an automatic reconnect (which does not stamp, see
+	// addConnOpt) can take them back. Without them a connection flap that closes the old
+	// socket before the new one attaches erases "typed a moment ago", while the opposite
+	// order (or a second tab) keeps it — protection would depend on packet timing. Only
+	// a marked reconnect consumes them; entries past presenceGrace are pruned.
+	parkedInput     map[string]time.Time
+	parkedSessInput map[string]map[string]time.Time
 }
 
 const (
@@ -102,6 +110,9 @@ func newConnRegistry() *connRegistry {
 		lastSeen:  map[string]time.Time{},
 		lastInput: map[string]time.Time{},
 		sessInput: map[string]map[string]time.Time{},
+
+		parkedInput:     map[string]time.Time{},
+		parkedSessInput: map[string]map[string]time.Time{},
 	}
 }
 
@@ -142,6 +153,11 @@ func (r *connRegistry) addConnOpt(wsID, session string, attention, stampInput bo
 		// waiting for the first keystroke. Not for an automatic reconnect.
 		if stampInput {
 			r.lastInput[wsID] = time.Now()
+		} else if p, ok := r.parkedInput[wsID]; ok {
+			if p.After(r.lastInput[wsID]) {
+				r.lastInput[wsID] = p
+			}
+			delete(r.parkedInput, wsID)
 		}
 	}
 	if session != "" {
@@ -151,6 +167,13 @@ func (r *connRegistry) addConnOpt(wsID, session string, attention, stampInput bo
 		r.attached[wsID][session]++
 		if attention && stampInput {
 			r.stampSessionInputLocked(wsID, session, time.Now())
+		} else if attention {
+			if p, ok := r.parkedSessInput[wsID][session]; ok {
+				if p.After(r.sessInput[wsID][session]) {
+					r.stampSessionInputLocked(wsID, session, p)
+				}
+				delete(r.parkedSessInput[wsID], session)
+			}
 		}
 	}
 	r.mu.Unlock()
@@ -166,6 +189,9 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 	}
 	if r.wsConns[wsID] == 0 {
 		delete(r.wsConns, wsID)
+		if li, ok := r.lastInput[wsID]; ok {
+			r.parkedInput[wsID] = li
+		}
 		delete(r.lastInput, wsID)
 	}
 	if attention {
@@ -184,6 +210,12 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 		if r.attached[wsID][session] == 0 {
 			delete(r.attached[wsID], session)
 			if r.sessInput[wsID] != nil {
+				if t, ok := r.sessInput[wsID][session]; ok {
+					if r.parkedSessInput[wsID] == nil {
+						r.parkedSessInput[wsID] = map[string]time.Time{}
+					}
+					r.parkedSessInput[wsID][session] = t
+				}
 				delete(r.sessInput[wsID], session)
 				if len(r.sessInput[wsID]) == 0 {
 					delete(r.sessInput, wsID)
@@ -194,7 +226,29 @@ func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 			delete(r.attached, wsID)
 		}
 	}
+	r.pruneParkedLocked(time.Now())
 	r.mu.Unlock()
+}
+
+// pruneParkedLocked drops parked clocks that no reconnect could still use: older than
+// presenceGrace (or all of them when the grace is disabled and nothing reads the clocks).
+func (r *connRegistry) pruneParkedLocked(now time.Time) {
+	stale := func(t time.Time) bool { return presenceGrace <= 0 || now.Sub(t) >= presenceGrace }
+	for ws, t := range r.parkedInput {
+		if stale(t) {
+			delete(r.parkedInput, ws)
+		}
+	}
+	for ws, m := range r.parkedSessInput {
+		for sess, t := range m {
+			if stale(t) {
+				delete(m, sess)
+			}
+		}
+		if len(m) == 0 {
+			delete(r.parkedSessInput, ws)
+		}
+	}
 }
 
 // snapshot returns (open conns, last-seen, ok) for a workspace.
