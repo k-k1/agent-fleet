@@ -66,10 +66,6 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		Kinds       []string `json:"kinds"`
 		Revision    int      `json:"revision"`
 		Budget      int      `json:"budget"`
-		Edits       []struct {
-			Old string `json:"old"`
-			New string `json:"new"`
-		} `json:"edits"`
 	}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
@@ -125,10 +121,24 @@ func mcpMemoryCall(id json.RawMessage, name string, raw json.RawMessage) []byte 
 		}
 		return mcpTextResult(id, mcpMemoryFormatSave(out))
 	case mcpToolMemoryPatch:
-		// description is relayed only when given: the Agent reads an absent field as "keep".
-		m := map[string]any{"session": owner, "scope": a.Scope, "name": a.Name, "revision": a.Revision, "edits": a.Edits}
-		if a.Description != "" {
-			m["description"] = a.Description
+		// Presence matters twice: an omitted `new` must reach the Agent as null (refused), not as "",
+		// and a given description, even "", is relayed so the Agent refuses an empty one; only an
+		// absent description means "keep".
+		var p struct {
+			Edits []struct {
+				Old string  `json:"old"`
+				New *string `json:"new"`
+			} `json:"edits"`
+			Description *string `json:"description"`
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return mcpToolErr(id, name+" の引数を読めません: "+err.Error())
+			}
+		}
+		m := map[string]any{"session": owner, "scope": a.Scope, "name": a.Name, "revision": a.Revision, "edits": p.Edits}
+		if p.Description != nil {
+			m["description"] = *p.Description
 		}
 		body, _ := json.Marshal(m)
 		out, err := agentDo(http.MethodPost, "/agents/memory/entries/patch", body)

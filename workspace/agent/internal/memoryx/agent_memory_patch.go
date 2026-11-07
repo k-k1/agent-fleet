@@ -16,10 +16,11 @@ import (
 // agentMemMaxPatchEdits bounds one patch; a rewrite that needs more is a memory_save.
 const agentMemMaxPatchEdits = 50
 
-// agentMemPatchEdit replaces the one occurrence of Old in the body with New.
+// agentMemPatchEdit replaces the one occurrence of Old in the body with New. New is a pointer
+// so that an omitted or null `new` (refused) is not confused with an explicit "" (a deletion).
 type agentMemPatchEdit struct {
-	Old string `json:"old"`
-	New string `json:"new"`
+	Old string  `json:"old"`
+	New *string `json:"new"`
 }
 
 // agentMemPatchReq is a patch. Revision is the one the caller read and must match the current
@@ -47,6 +48,9 @@ func agentMemApplyEdits(body string, edits []agentMemPatchEdit) (string, error) 
 		if ed.Old == "" {
 			return "", bad("edit %d: old must not be empty", i+1)
 		}
+		if ed.New == nil {
+			return "", bad("edit %d: new is required (use \"\" to delete the old text)", i+1)
+		}
 		first := strings.Index(body, ed.Old)
 		if first < 0 {
 			return "", bad("edit %d: old text does not occur in the body; read the memory again and copy the text exactly", i+1)
@@ -66,7 +70,7 @@ func agentMemApplyEdits(body string, edits []agentMemPatchEdit) (string, error) 
 	at := 0
 	for _, s := range spans {
 		b.WriteString(body[at:s.start])
-		b.WriteString(edits[s.edit].New)
+		b.WriteString(*edits[s.edit].New)
 		at = s.end
 	}
 	b.WriteString(body[at:])
@@ -114,7 +118,9 @@ func agentMemPatch(c agentMemCaller, req agentMemPatchReq, now time.Time) (agent
 		findings = append(findings, agentMemScanText("description", *req.Description)...)
 	}
 	for _, ed := range req.Edits {
-		findings = append(findings, agentMemScanText("body", ed.New)...)
+		if ed.New != nil {
+			findings = append(findings, agentMemScanText("body", *ed.New)...)
+		}
 	}
 	if len(findings) > 0 {
 		return agentMemWriteResult{}, &agentMemSecretErr{Findings: findings}
@@ -149,9 +155,11 @@ func agentMemPatch(c agentMemCaller, req agentMemPatchReq, now time.Time) (agent
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
-	body = strings.TrimSpace(body)
+	// The result is stored as the edits made it: only the emptiness check looks through
+	// whitespace, so an indentation the caller inserted, or one an imported body already had,
+	// survives (render still normalises the trailing newlines).
 	switch {
-	case body == "":
+	case strings.TrimSpace(body) == "":
 		return agentMemWriteResult{}, bad("the patch would leave the body empty; forget the memory instead")
 	case len(body) > agentMemMaxBody:
 		return agentMemWriteResult{}, memoryErrf(http.StatusRequestEntityTooLarge, errCodeMemoryTooLarge, "body would be larger than %d bytes", agentMemMaxBody)

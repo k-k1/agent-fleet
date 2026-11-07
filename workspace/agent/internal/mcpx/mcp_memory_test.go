@@ -230,6 +230,23 @@ func TestMemoryPatchTool(t *testing.T) {
 	if !r.IsError || strings.Contains(r.Text, key) {
 		t.Fatalf("secret patch = %+v", r)
 	}
+	// An omitted `new` is refused (not turned into a deletion); an explicit "" deletes.
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 3, "edits": []map[string]any{{"old": "Run"}}})
+	if !r.IsError || !strings.Contains(r.Text, "new is required") {
+		t.Fatalf("patch without new = %+v", r)
+	}
+	// A given empty description is refused even next to valid edits: nothing is written.
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 3, "description": "", "edits": []map[string]string{{"old": "Run", "new": "Execute"}}})
+	if !r.IsError || !strings.Contains(r.Text, "description must not be empty") {
+		t.Fatalf("empty description patch = %+v", r)
+	}
+	if r = callMemoryTool(t, "memory_read", map[string]any{"name": "go-test-cap"}); !strings.Contains(r.Text, "revision: 3") || !strings.Contains(r.Text, "Run go test") {
+		t.Fatalf("a refused patch wrote: %+v", r)
+	}
+	r = callMemoryTool(t, "memory_patch", map[string]any{"name": "go-test-cap", "revision": 3, "edits": []map[string]string{{"old": "Run ", "new": ""}}})
+	if r.IsError || !strings.Contains(r.Text, `"revision":4`) {
+		t.Fatalf("explicit empty new = %+v", r)
+	}
 	// The memory the new-name hint points at.
 	r = callMemoryTool(t, "memory_save", map[string]any{"name": "go-test-cap-limit", "description": "d", "body": "b"})
 	if r.IsError || !strings.Contains(r.Text, "prefer memory_patch on go-test-cap") {

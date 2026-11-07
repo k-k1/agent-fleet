@@ -177,8 +177,20 @@ func TestMemoryPatchProxiesToTheAgent(t *testing.T) {
 	if err := json.Unmarshal([]byte(cp.gotBody), &got); err != nil || got["description"] != "new" {
 		t.Errorf("description not relayed: %s", cp.gotBody)
 	}
+	// A given empty description is relayed (the Agent refuses it); an omitted `new` is not invented.
+	memCall(t, cp, "write", "memory_patch", map[string]any{"name": "n1", "scope": "user", "revision": 2, "description": "",
+		"edits": []map[string]any{{"old": "a"}}})
+	if err := json.Unmarshal([]byte(cp.gotBody), &got); err != nil {
+		t.Fatal(err)
+	}
+	if d, has := got["description"]; !has || d != "" {
+		t.Errorf("empty description not relayed: %s", cp.gotBody)
+	}
+	if e := got["edits"].([]any)[0].(map[string]any); e["new"] != nil || len(e) != 1 {
+		t.Errorf("an omitted new was rewritten: %s", cp.gotBody)
+	}
 	rows, err := st.ListAuditByTenant(context.Background(), cp.tenantID, 10)
-	if err != nil || len(rows) != 2 || rows[0].Action != "memory.entry.patch" {
+	if err != nil || len(rows) != 3 || rows[0].Action != "memory.entry.patch" {
 		t.Fatalf("audit rows: %+v %v", rows, err)
 	}
 }

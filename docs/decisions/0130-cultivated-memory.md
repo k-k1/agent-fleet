@@ -561,7 +561,7 @@ release.
 - **2026-11-08, `memory_patch` (decision 4, #3441).** Shipped on both memory surfaces: the af server's
   tool and the external `/mcp` tool (audited as `memory.entry.patch`). A patch matches every `old`
   against the same original body, counts a self-overlapping `old` ("aa" in "aaa") as matching more than
-  once, and trims the result like a save does. The "near name" hint of `memory_save` is a warning line
+  once, and keeps the body exactly as the edits leave it (no trim; an omitted `new` is refused, an empty one deletes). The "near name" hint of `memory_save` is a warning line
   in the save answer, not a field: name words of three characters or more found in another memory's name
   or description, at least half of them and at least two (one for a one-word name), with `memory_search`'s
   field weights; same scope, at most three names, and only for agent and external callers.

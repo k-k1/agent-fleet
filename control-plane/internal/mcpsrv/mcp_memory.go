@@ -176,8 +176,9 @@ func memoryTools() []mcpTool {
 					"project": argStr(args, "project"), "repository": argStr(args, "repository"), "scope": argStr(args, "scope"), "name": argStr(args, "name"),
 					"revision": argInt(args, "revision"), "edits": args["edits"], "client": mcpCallFrom(ctx).client,
 				}
-				// Relayed only when given: the Agent reads an absent description as "keep".
-				if d := argStr(args, "description"); d != "" {
+				// Relayed whenever the key is present, "" included, so the Agent refuses an empty
+				// description instead of the call silently keeping the old one; absent means "keep".
+				if d, ok := args["description"]; ok {
 					m["description"] = d
 				}
 				body, _ := json.Marshal(m)

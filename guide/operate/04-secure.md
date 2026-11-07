@@ -279,7 +279,7 @@ working for CI and clients without OAuth.
   and `revoke` paths through and keeps `authorize` and `consent` behind it. Under **`AUTH=proxy`** the gateway has
   to do the same: `/mcp-oauth/authorize` and `/mcp-oauth/consent` must pass **through** it (the member's identity header comes from
   there), and the other six paths plus `/mcp` and `/mcp/memory` must **bypass** it.
-- **Two resources.** `/mcp` serves every tool; `/mcp/memory` serves the six external memory tools and nothing else, for
+- **Two resources.** `/mcp` serves every tool; `/mcp/memory` serves the seven external memory tools and nothing else, for
   a claude.ai connector that claude.ai also hands to the member's Workspace sessions. Each has its own metadata
   document and 401 challenge, and each refuses the other's tokens: OAuth codes, grants and tokens are bound to the
   resource the client asked for (a refresh keeps it), and a Personal Access Token is issued for one endpoint

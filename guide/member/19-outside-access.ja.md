@@ -186,7 +186,7 @@ claude.ai は、そこで追加したコネクタをアカウントのすべて�
 セッションも含みます。そのため claude.ai のコネクタを `/mcp` につなぐと、それらのセッションにあなたのメンバー権限そのものが
 渡ってしまいます（次の節）。**`/mcp/memory`** につなぐコネクタなら、そうはなりません。
 
-- `/mcp/memory` 向けに作ったトークンや OAuth 接続が一覧・実行できるのは、メモリの 6 つのツール（`memory_projects`・
+- `/mcp/memory` 向けに作ったトークンや OAuth 接続が一覧・実行できるのは、メモリの 7 つのツール（`memory_projects`・
   `memory_index`・`memory_search`・`memory_read`・`memory_save`・`memory_patch`・`memory_forget`）だけです。`/mcp` はそれを拒否し、
   `/mcp/memory` も `/mcp` 向けのトークンや接続を拒否します。切り替えるには接続し直します。
 - ワークスペースのセッションは、組み込みの af ツールで同じメモリをすでに使えます。このコネクタがセッションに渡っても、
