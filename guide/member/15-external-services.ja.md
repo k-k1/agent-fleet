@@ -15,6 +15,15 @@ GitHub を接続していれば、セッションの `gh` はサインイン済�
 `bkt pr create`・`bkt pipeline` などに `auth login` は要りません。どちらも保存済みの接続を使い、
 git と同じ要領で更新されます。
 
+**GitHub: `gh pr edit` が失敗することがあります。** 組み込みの GitHub OAuth App のトークンの scope は
+`repo workflow` だけで、`gh pr edit` はプルリクエストを `read:org` が要り得る方法で読み込むため、自分の個人リポジトリでも
+`GraphQL: … requires one of the following scopes: ['read:org']` で失敗することがあります。メッセージのリンク先
+（トークン設定ページ）はこのトークンには当てはまりません。代わりに、`repo` だけで足りる REST API で
+編集してください:
+`gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>`（タイトルも変えるなら `-f title="…"` を追加）。
+これで `read:org` 不足のエラーは避けられます。`read:org` を持つトークンを自分で貼っていればそのエラーは出ませんが、
+`gh pr edit` はほかの理由（たとえば対象 PR のチームレビュアーにアクセスできない場合）でも失敗し得ます。
+
 - **スコープ**: `bkt` は接続に与えられた権限の範囲でしか動きません。プルリクエストと
   パイプラインには、Bitbucket の OAuth アプリに `repository`・`pullrequest:write`・`pipeline`（読み取り）・
   `account` が、パイプラインの開始・停止にはさらに `pipeline:write` が必要です。貼り付けた API トークンには
@@ -24,13 +33,6 @@ git と同じ要領で更新されます。
   テナント管理者が設定します。
   同じスコープで、Console の作業項目パネルから Bitbucket のプルリクエストへ報告コメントを投稿できます（OAuth アプリは `pullrequest:write`、API トークンは `write:pullrequest:bitbucket`）。
   Console は、接続がそのスコープを持つと分かっているときだけコメントのボタンを出します。スコープが分からない接続（この対応より前に接続した場合や、Bitbucket がスコープを返さなかった場合）は、作業項目の更新でスコープが分かるまで読み取り専用のままです。Bitbucket の課題（issue）は一覧に出さないため、コメントできるのはプルリクエストだけです。アプリにスコープを足したときは Bitbucket を再接続してください。
-- **組み込みの GitHub OAuth App では `gh pr edit` が失敗します**: トークンの scope は `repo workflow` だけで、
-  `gh pr edit` はプルリクエストを `read:org` が要る方法で読み込むため、自分の個人リポジトリでも
-  `GraphQL: … requires one of the following scopes: ['read:org']` で失敗します。メッセージのリンク先
-  （トークン設定ページ）はこのトークンには当てはまりません。代わりに、`repo` だけで足りる REST API で
-  編集してください:
-  `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>`（タイトルも変えるなら `-f title="…"` を追加）。
-  `read:org` を持つトークンを自分で貼っている場合は影響を受けません。
 - **Bitbucket Data Center**（bitbucket.org 以外のホスト）は設定画面からは接続できません。
   自分で設定してください（`bkt auth login`、または `BKT_HOST` と `BKT_TOKEN`）。設定があると
   その場合 `bkt` は、保存済みの接続を使わず、あなたの設定どおりに動きます。

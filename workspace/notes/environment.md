@@ -131,7 +131,8 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   carries `repo workflow` only, and `gh pr edit` loads the pull request over GraphQL (upstream
   cli/cli#13575). The link in the error does not apply to this token. Edit over REST, which needs
   only `repo`: `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (also
-  `-f title=…`). Put the file in `$AF_WORK_DIR`. A token the user pasted with wider scope does not hit this.
+  `-f title=…`). Put the file in `$AF_WORK_DIR`. Lacking `read:org` is avoided this way;
+  `gh pr edit` can still fail for other reasons (e.g. no access to a team reviewer, cli/cli#14317).
 - Outbound network may be restricted; an unreachable host is not necessarily an error. Do not try
   to reach other tenants' or users' data — containers are isolated.
 

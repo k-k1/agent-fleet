@@ -157,9 +157,9 @@ directory belongs to someone else.
 - `GIT_EDITOR=true` and `GIT_TERMINAL_PROMPT=0` are set: always pass `-m`/`-F`; credential
   failures fail fast. Interactive commands (`gh auth login`, `rebase -i`) are for the user's shell.
 - `gh` is pre-authenticated through a wrapper — use it freely, never run `gh auth login`. With the
-  built-in OAuth App token (`repo workflow`) `gh pr edit` fails (`read:org`): edit over REST instead,
-  `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (`notes/environment.md`). So is
-  `bkt` (Bitbucket Cloud: PRs, pipelines) for a bitbucket.org connection — use it rather than a
+  built-in OAuth App token (`repo workflow`) `gh pr edit` can fail (`read:org`): edit over REST instead,
+  `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (`notes/environment.md`).
+- `bkt` (Bitbucket Cloud: PRs, pipelines) is pre-authenticated too, for a bitbucket.org connection — use it rather than a
   Bitbucket / Atlassian MCP tool, for the reason given under Jira below, and never `bkt auth login`;
   a Data Center host is the user's own `BKT_HOST` / `BKT_TOKEN`. Other
   commands are shims too: when output looks impossible, check `type <cmd>` and re-run the real
