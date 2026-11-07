@@ -99,7 +99,7 @@ provider の数だけボタンが出て、1 つだけなら現行とまったく
 は CP のログに警告を出して無効化されるだけで（1 つの IdP の設定ミスで全社が締め出されないため）、
 CP が起動を止めるのは**有効な provider が 1 つも無いとき**だけです。
 
-補足: Console のサインイン認証（L1）は CP 自身が OAuth/OIDC を実行します（`AUTH=oauth`・既定）。
+補足: Console のサインイン認証（L1）は CP 自身が OAuth/OIDC を実行します（`AUTH=oauth`・推奨。`AUTH` に既定値はなく、必ず設定します）。
 既存の認証ゲートウェイ（oauth2-proxy / ALB OIDC など）を前段に置く社は `AUTH=proxy` を選べます
 （メール識別を前段のゲートウェイが付けるヘッダに委ねる）。**SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）の
 正式な答えもこれ**で、oauth2-proxy や Keycloak でブリッジします。仕組みは

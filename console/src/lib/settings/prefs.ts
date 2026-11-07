@@ -91,6 +91,10 @@ const PREFS = {
   /** Terminal: Ctrl+C copies when text is selected (else SIGINT) and Ctrl+V pastes, as in
    * Cloud Shell. Off keeps both keys for the PTY (^C / ^V). */
   termCtrlCV: synced(true),
+  /** Terminal: an OSC 52 clipboard write arriving right after the member's own mouse drag is
+   * written without the confirm prompt (tmux copy mode). Off (default) prompts for every write.
+   * Opt-in because a program that receives mouse events can use that moment too. */
+  termDragCopy: synced(false),
   /** CJK font: draws only the East Asian Width = Ambiguous characters (①②③ and the like)
    * with this font instead of the Latin code font (applyCjkFont / CJK_UNICODE_RANGE). One of
    * CJK_FONTS; CJK_FONT_AUTO leaves it to the OS, CJK_FONT_OFF keeps the Latin font. */

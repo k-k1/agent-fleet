@@ -41,11 +41,7 @@ const maxPreviewTempPorts = 16
 const previewListenerHeader = "X-AF-Preview-Listener"
 
 // previewListenerClient bounds the Agent call; the Agent's own probe takes up to ~2 s.
-var previewListenerClient = &http.Client{
-	Timeout:       8 * time.Second,
-	Transport:     newAgentTransport(),
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+var previewListenerClient = newAgentClient(8*time.Second, newAgentTransport())
 
 // liveGrant returns the workspace's grant for port when it was made under the CURRENT slug.
 // Whether the listener is still alive is the Agent's call, per request.

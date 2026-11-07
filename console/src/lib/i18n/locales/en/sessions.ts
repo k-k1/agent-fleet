@@ -263,6 +263,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "sess.switch_busy": "A turn is running. Wait for it to finish or stop it before switching.",
   "sess.switch_failed": "Failed to switch the execution method",
   "sess.handoff_failed": "Couldn't start the handoff",
+  "sess.handoff_review": "Review the handoff request, then press Send to start it",
 
   // === P2 archived modal (features/sessions/ArchivedModal.tsx) ===
   "arch.other": "Other",

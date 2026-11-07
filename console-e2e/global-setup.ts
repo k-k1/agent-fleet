@@ -104,6 +104,10 @@ export default async function globalSetup(): Promise<void> {
     env: {
       ...process.env,
       CP_ADDR: `127.0.0.1:${cpPort}`,
+      // AUTH has no default outside the native runtime (#3485): this harness runs the docker
+      // runtime on loopback, so it opts into the fixed dev user explicitly.
+      AUTH: "dev",
+      AF_ALLOW_INSECURE_DEV_AUTH: "1",
       WS_IMAGE: image,
       WS_DATA: dataDir,
       DEV_USER: USER,

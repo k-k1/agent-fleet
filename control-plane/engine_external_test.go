@@ -393,7 +393,7 @@ func TestEngineGatewayForwardsToAnExternalEngine(t *testing.T) {
 	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}}
 
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	r.SetPathValue("path", "prompt")
 	g.plain(rec, r, e, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
 
@@ -417,7 +417,7 @@ func TestEngineGatewayFailsAtOnceWhenAnExternalEngineIsDown(t *testing.T) {
 	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}}
 
 	rec := httptest.NewRecorder()
-	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	r.SetPathValue("path", "prompt")
 	started := time.Now()
 	g.plain(rec, r, e, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
@@ -617,7 +617,7 @@ func TestExternalEngineGoesThroughEveryHandler(t *testing.T) {
 	// And the gateway itself, end to end through the route's own handler.
 	tok := mintEngineSessionToken(reg.signKey, mem.ID, "s-1", "image", time.Now().Add(time.Hour))
 	rec = httptest.NewRecorder()
-	gr := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	gr := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	gr.Header.Set("Authorization", "Bearer "+tok)
 	gr.Header.Set("X-AF-Model", "sdxl-base-1.0")
 	gr.SetPathValue("key", "image")
@@ -633,7 +633,7 @@ func TestExternalEngineGoesThroughEveryHandler(t *testing.T) {
 	// The same route with the engine gone: a refusal, still not a panic.
 	up.Close()
 	rec = httptest.NewRecorder()
-	gr = httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	gr = httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 	gr.Header.Set("Authorization", "Bearer "+tok)
 	gr.SetPathValue("key", "image")
 	gr.SetPathValue("path", "prompt")

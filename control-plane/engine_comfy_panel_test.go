@@ -502,7 +502,7 @@ func TestComfyPanelKeyDoesNotFollowARedirectOffOrigin(t *testing.T) {
 		// The gateway's generation path.
 		g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}}
 		rec := httptest.NewRecorder()
-		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+		r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(comfyTestPrompt("")))
 		r.SetPathValue("path", "prompt")
 		g.plain(rec, r, e, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
 

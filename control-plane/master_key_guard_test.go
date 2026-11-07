@@ -103,7 +103,7 @@ func TestEfsBackupMissing(t *testing.T) {
 }
 
 func TestDeploymentWarningsEfsBackup(t *testing.T) {
-	m := &manager{authMode: "dev", efsBackupMissing: true}
+	m := &manager{authMode: "dev", nativeRuntime: true, efsBackupMissing: true}
 	got := m.deploymentWarnings()
 	if len(got) != 1 || got[0] != deploymentWarnEfsBackupMissing {
 		t.Errorf("deploymentWarnings = %v, want [%s]", got, deploymentWarnEfsBackupMissing)
@@ -111,5 +111,25 @@ func TestDeploymentWarningsEfsBackup(t *testing.T) {
 	m.efsBackupMissing = false
 	if got := m.deploymentWarnings(); len(got) != 0 {
 		t.Errorf("deploymentWarnings = %v, want none", got)
+	}
+}
+
+// AUTH=dev on a container runtime raises the auth_dev deployment warning; native does not.
+func TestAuthDevDeploymentWarning(t *testing.T) {
+	for _, c := range []struct {
+		auth   string
+		native bool
+		want   bool
+	}{
+		{"dev", false, true}, {"dev", true, false}, {"oauth", false, false}, {"proxy", false, false},
+	} {
+		m := &manager{authMode: c.auth, nativeRuntime: c.native}
+		warned := false
+		for _, w := range m.deploymentWarnings() {
+			warned = warned || w == deploymentWarnAuthDev
+		}
+		if warned != c.want {
+			t.Errorf("AUTH=%s native=%v: auth_dev warned=%v, want %v", c.auth, c.native, warned, c.want)
+		}
 	}
 }

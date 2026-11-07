@@ -19,6 +19,8 @@ export const admin = {
   "admin.forbidden": "権限がありません（super_admin のみ）。",
   "admin.deploy_warn_plaintext_secrets":
     "この配備にはマスターキー（AF_MASTER_KEY）がありません。メンバーが保存した認証情報（git のトークン・Claude のトークン・API キー・MCP やチャット連携の接続情報）は、各ホームに暗号化されずに置かれています。Control Plane の環境変数にキーを設定して再起動し、既存のワークスペースをすべて停止してから起動し直してください（動いたままのものはまだ鍵を持ちません）。そのあとでメンバーが保存していた認証情報をつなぎ直します。暗号化されていない古いファイルは削除するまで各ホームとバックアップに残るので、削除してその認証情報をローテーションしてください。",
+  "admin.deploy_warn_auth_dev":
+    "この配備は AUTH=dev（AF_ALLOW_INSECURE_DEV_AUTH=1）で動いています。サインインはなく、すべてのリクエストが固定の super_admin として扱われます。この Control Plane に届く人は誰でも、すべてのワークスペースを操作できます。自分だけが届くマシンでのみ使い、共有するなら AUTH=oauth か AUTH=proxy にして再起動してください。",
   "admin.deploy_warn_efs_backup_missing":
     "この配備はメンバーのデータを EFS に保持（Persistence=retain）していますが、データスタックに日次の EFS バックアップがありません。バックアップのボールトとプランは 0.26.0 で加わったもので、他のスタックを更新しても作られません。ホームと Claude の状態は、削除や破損から守られていません。EfsBackup* の 4 リソースだけを追加する変更セットでデータスタックを更新し（ECS 配備手順書の EFS バックアップの節を参照）、そのあと update.sh を実行し直すとこの通知は消えます。",
   "admin.mode_sessions": "セッション",

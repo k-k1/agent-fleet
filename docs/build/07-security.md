@@ -211,7 +211,14 @@ Selected by `AUTH`. All three sanitise the resolved email into the identity key
 |---|---|---|
 | `oauth` | **The CP is itself an OIDC client** (§7.3.1). It owns `/login`, `/login/{slug}` and `/oauth2/{login,callback,logout,link}`, and on success issues a signed cookie (HMAC-SHA256 with `AF_COOKIE_SECRET`, HttpOnly, SameSite=Lax, Secure when the public URL is HTTPS, `AF_SESSION_TTL`, default 168 h). What the compose and AWS templates set | self-hosting. Assumes HTTPS at the edge |
 | `proxy` | Trust an upstream gateway's email header (`AUTH_EMAIL_HEADER`, default `X-Forwarded-Email`). **A missing header is a 401 — there is no fallback.** The header is not stripped, so the CP must be reachable only through that gateway | an existing gate such as oauth2-proxy. **This is also the answer for a SAML IdP**: bridge it ([decisions/0043](../decisions/0043-login-idp.md)). The AWS template does not offer it |
-| `dev` | A fixed user (`DEV_USER`, default `dev`), who is a deployment administrator | local development only, and **the default when `AUTH` is unset**. `native` requires it |
+| `dev` | A fixed user (`DEV_USER`, default `dev`), who is a deployment administrator | local development only. **There is no default**: an unset `AUTH` is refused outside `native`/`wsl` (which require `dev` and take it when unset), and `AUTH=dev` there needs `AF_ALLOW_INSECURE_DEV_AUTH=1`, logs a `WARNING` and lists `auth_dev` in `deployment_warnings` (`internal/auth/authmode.go`, `master_key_guard.go`). It is refused whenever `PUBLIC_BASE_URL` is https (#3485) |
+
+**Provider connection callbacks.** The Jira and Bitbucket OAuth callbacks (`/api/oauth/{jira,bitbucket}/callback`)
+sit behind the gate. Each flow records the starting identity and membership, and the callback
+exchanges the code only when the session is that identity, the membership is still active and
+its tenant's sign-in method and network rules admit the current session; the tokens go to that
+membership's workspace. Anything else shows an error and stores nothing, so the member signs in
+as themselves and connects again.
 
 **The auth gate**, in `oauth` mode:
 
@@ -467,8 +474,15 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
   cookie and the gateway identity headers, so the member's login cookie never reaches the workspace.
 - **No signing for another page.** Before signing, the CP requires `application/json`, `Sec-Fetch-Site:
   same-origin` when sent, and an `Origin` of the Console's own host when sent, so a same-site preview app
-  cannot have the browser make a signed member write. An app in the path-form preview runs on the
+  cannot have the browser make a signed member write. Every signing handler that takes JSON runs this check itself
+  (`memberOriginRequestCheck`), including `POST /api/session-handoff-offers` (its push-first step), so the
+  guarantee does not depend on the global write gate or its exemptions. (The multipart upload route has its own variant: `multipart/form-data` plus the
+  `X-AF-Console` custom header, which forces a preflight, and the same `Sec-Fetch-Site` / `Origin` checks.) An app in the path-form preview runs on the
   Console's origin and is not covered by this check; what limits it is below.
+- **A session handoff needs a member action in the Console.** The Console's "Hand off to another agent…"
+  opens an operator chat whose first prompt is only put in the composer; the turn (which reads the source
+  session's output and may lead to `create_session`) is sent when the member presses Send. The prompt's
+  "ask before `create_session`" is a request to the model, not the consent gate.
 - **The path-form preview (`/preview/{port}/…`).** With `AF_PREVIEW_DOMAIN` set the CP does not serve it:
   a GET or HEAD is redirected (302) to `/preview-open-own`, the owner-only entry of the subdomain form (other methods get 405), so
   workspace content never answers on the Console origin (decisions/0062 decision 7, note of 2026-11-07). Without
@@ -508,7 +522,7 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 
 ⚠️ **Without `AF_MASTER_KEY` the store is plaintext.** No master key means no DEK, and the
 agent then writes the same store as `secrets.json`, unencrypted. That is the intent under
-`AUTH=dev`. Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and
+`AUTH=dev` (which is itself opt-in outside native, above). Under any other `AUTH` the CP starts anyway but logs a `WARNING` at start-up and
 lists `plaintext_secrets` in `deployment_warnings` on a super_admin's `GET /api/admin/tenants`,
 which the Console's admin modal shows as a banner (`master_key_guard.go`). It warns rather
 than refuses so that a deployment already running without a key is not stopped by an upgrade:
