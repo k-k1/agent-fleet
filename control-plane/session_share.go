@@ -177,6 +177,16 @@ func (a sessionShareAPI) searchRecipients(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"members": out})
 }
 
+func (a sessionShareAPI) recipientInfo(ctx context.Context, tenantID, membershipID string) store.MemberInfo {
+	rows, _ := a.mgr.store.ListMembersByTenant(ctx, tenantID)
+	for _, m := range rows {
+		if m.MembershipID == membershipID {
+			return m
+		}
+	}
+	return store.MemberInfo{}
+}
+
 func (a sessionShareAPI) recipientKey(ctx context.Context, tenantID, membershipID string) string {
 	rows, _ := a.mgr.store.ListMembersByTenant(ctx, tenantID)
 	for _, m := range rows {
@@ -824,11 +834,24 @@ func (a sessionShareAPI) propose(w http.ResponseWriter, r *http.Request, ident s
 		writeAPIErr(w, &apiError{400, "bad_proposal", "invalid proposal"})
 		return
 	}
+	if proposalSessionRefused(c.Kind) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "proposal_session_refused", "proposals are not accepted for terminal sessions"})
+		return
+	}
+	payload, perr := normalizeProposalPayload(in.Action, in.Payload)
+	if perr != nil {
+		code := "bad_proposal"
+		if errors.Is(perr, errProposalAttachments) {
+			code = "proposal_attachments_refused"
+		}
+		writeAPIErr(w, &apiError{http.StatusBadRequest, code, "invalid proposal: " + perr.Error()})
+		return
+	}
 	if err := a.mgr.store.ExpireSessionShareProposals(r.Context(), c.OwnerMembershipID, store.NowTS()); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	ct, kr, err := a.sealProposal(r.Context(), mv.TenantID, in.Payload)
+	ct, kr, err := a.sealProposal(r.Context(), mv.TenantID, payload)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -862,11 +885,31 @@ func (a sessionShareAPI) listProposals(w http.ResponseWriter, r *http.Request, _
 	}
 	out := []any{}
 	for _, p := range rows {
-		body := json.RawMessage(nil)
+		// The card shows the canonical payload, which is what approval relays. One that
+		// fails the allow-list (stored before it existed) is shown raw with refused set, so
+		// the owner sees what it holds and the card offers no approve.
+		var body json.RawMessage
+		refused := ""
 		if p.Ciphertext != "" {
 			body, _ = a.openProposal(r.Context(), p)
+			if norm, nerr := normalizeProposalPayload(p.Action, body); nerr != nil {
+				refused = nerr.Error()
+			} else {
+				body = norm
+			}
 		}
-		out = append(out, map[string]any{"id": p.ID, "sessionId": p.CatalogID, "proposerUserKey": a.recipientKey(r.Context(), mv.TenantID, p.ProposerMembershipID), "action": p.Action, "payload": body, "status": p.Status, "createdAt": p.CreatedAt, "expiresAt": p.ExpiresAt})
+		proposer := a.recipientInfo(r.Context(), mv.TenantID, p.ProposerMembershipID)
+		item := map[string]any{"id": p.ID, "sessionId": p.CatalogID, "proposerUserKey": proposer.UserKey, "proposerEmail": proposer.Email, "action": p.Action, "payload": body, "status": p.Status, "createdAt": p.CreatedAt, "expiresAt": p.ExpiresAt}
+		if cat, found, _ := a.mgr.store.GetSharedSessionCatalog(r.Context(), p.CatalogID); found {
+			item["sessionName"], item["sessionKind"], item["sessionTitle"] = cat.Name, cat.Kind, cat.Title
+			if proposalSessionRefused(cat.Kind) {
+				refused = "terminal session"
+			}
+		}
+		if refused != "" {
+			item["refused"] = refused
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, 200, map[string]any{"proposals": out})
 }
@@ -967,6 +1010,18 @@ func (a sessionShareAPI) approve(w http.ResponseWriter, r *http.Request, ident s
 	body, err := a.openProposal(r.Context(), p)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// Proposals stored before the allow-list existed may carry fields the card never showed.
+	if body, err = normalizeProposalPayload(p.Action, body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, "proposal_invalid", "the proposal carries content that cannot be relayed; reject it: " + err.Error()})
+		return
+	}
+	if cat, found, cerr := a.mgr.store.GetSharedSessionCatalog(r.Context(), p.CatalogID); cerr != nil {
+		writeAPIErr(w, internalErr(cerr))
+		return
+	} else if found && proposalSessionRefused(cat.Kind) {
+		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, "proposal_session_refused", "proposals are not accepted for terminal sessions; reject it"})
 		return
 	}
 	// Do not bind the durable claim/Agent call to the browser connection. Claiming

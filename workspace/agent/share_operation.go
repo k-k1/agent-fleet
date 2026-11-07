@@ -311,6 +311,9 @@ func withShareOperationIdempotency(next http.Handler) http.Handler {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_operation_id", "invalid operation id")
 			return
 		}
+		if !guardShareRelay(w, r) {
+			return
+		}
 		record, existed, err := claimShareOperation(id)
 		if err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "operation_ledger_failed", err.Error())
