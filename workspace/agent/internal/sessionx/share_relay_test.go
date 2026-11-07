@@ -17,6 +17,10 @@ func TestShareRelayRefusesFieldsOutsideTheAllowList(t *testing.T) {
 		{"respond extra", "/sessions/s/respond", `{"id":"i","decision":"allow","x":1}`, "share_field_refused"},
 		{"plan expect", "/sessions/s/plan-respond", `{"decision":"approve","expect_plan":"p"}`, "share_field_refused"},
 		{"plan ok", "/sessions/s/plan-respond", `{"decision":"reject","feedback":"no"}`, ""},
+		{"trailing garbage", "/sessions/s/turn", `{"op":"start","prompt":"hi","attachments":["/x"]} x`, "share_body_refused"},
+		{"second value", "/sessions/s/turn", `{"op":"start","prompt":"hi"}{"op":"start"}`, "share_body_refused"},
+		{"empty body", "/sessions/s/turn", ``, "share_body_refused"},
+		{"not an object", "/sessions/s/turn", `[]`, "share_body_refused"},
 		{"answer ok", "/sessions/s/answer-question", `{"choices":[1]}`, ""},
 	}
 	for _, c := range cases {

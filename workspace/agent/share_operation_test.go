@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,7 +24,7 @@ func TestShareOperationPersistsAndReplaysOnce(t *testing.T) {
 	}))
 	id := "0123456789abcdef0123456789abcdef"
 	invoke := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", nil)
+		req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", strings.NewReader(`{"op":"start","prompt":"p"}`))
 		req.Header.Set(shareOperationHeader, id)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -47,7 +48,7 @@ func TestShareOperationBoundsPersistedResponse(t *testing.T) {
 		_, _ = w.Write(make([]byte, shareOperationMaxBody+4096))
 	}))
 	id := "cccccccccccccccccccccccccccccccc"
-	req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", strings.NewReader(`{"op":"start","prompt":"p"}`))
 	req.Header.Set(shareOperationHeader, id)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -155,7 +156,7 @@ func TestShareOperationProcessingIsNeverRetried(t *testing.T) {
 	}
 	var calls atomic.Int32
 	h := withShareOperationIdempotency(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) }))
-	req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", nil)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", strings.NewReader(`{"op":"start","prompt":"p"}`))
 	req.Header.Set(shareOperationHeader, id)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -173,7 +174,7 @@ func TestShareOperationReplaysServerErrorAfterSideEffect(t *testing.T) {
 	}))
 	id := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for range 2 {
-		req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", nil)
+		req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", strings.NewReader(`{"op":"start","prompt":"p"}`))
 		req.Header.Set(shareOperationHeader, id)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -206,7 +207,7 @@ func TestShareOperationConcurrentClaimHasSingleExecutor(t *testing.T) {
 	for range n {
 		go func() {
 			defer wg.Done()
-			req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", nil)
+			req := httptest.NewRequest(http.MethodPost, "/sessions/s/turn", strings.NewReader(`{"op":"start","prompt":"p"}`))
 			req.Header.Set(shareOperationHeader, id)
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)

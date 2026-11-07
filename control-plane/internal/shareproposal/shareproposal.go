@@ -123,8 +123,23 @@ func Normalize(action string, payload []byte) ([]byte, error) {
 	default:
 		return nil, errors.New("unknown action")
 	}
-	return json.Marshal(v)
+	// HTML escaping would grow the body past what the caller bounded (a "<" becomes six
+	// bytes), and the Agent refuses a larger one after the proposal is already claimed.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	out := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	if len(out) > MaxBytes {
+		return nil, errors.New("proposal exceeds 32 KiB")
+	}
+	return out, nil
 }
+
+// MaxBytes bounds a canonical payload; the Agent's relay guard uses the same limit.
+const MaxBytes = 32 << 10
 
 // SessionRefused reports session kinds that never accept a proposal: shell and ssm
 // are plain terminals, where an approved "prompt" is a command typed into the owner's shell.

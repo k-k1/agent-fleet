@@ -49,4 +49,23 @@ describe("ProposalCard", () => {
     const refused = mount({ ...base, refused: "attachments are not accepted" });
     expect(refused.querySelector("button.ui-btn-primary")).toBeNull();
   });
+
+  it("shows what each of the four actions will send, including nested answers", () => {
+    const answer = mount({ ...base, action: "answer-question", payload: { choices: [2, 1] } });
+    expect(answer.textContent).toContain("2, 1");
+    act(() => root?.unmount()); host?.remove();
+    const respond = mount({
+      ...base, action: "respond",
+      payload: { id: "int-9", decision: "answer", scope: "turn", answers: [{ text: "use blue", options: [3] }, { options: [1, 2] }] },
+    });
+    for (const want of ["int-9", "answer", "turn", "use blue", "[3]", "[1, 2]"]) expect(respond.textContent).toContain(want);
+    act(() => root?.unmount()); host?.remove();
+    const plan = mount({ ...base, action: "plan-respond", payload: { decision: "reject", feedback: "split it up" } });
+    expect(plan.textContent).toContain("plan-respond / reject");
+    expect(plan.textContent).toContain("split it up");
+    act(() => root?.unmount()); host?.remove();
+    const turn = mount({ ...base, payload: { op: "steer", prompt: "go", clientMessageID: "cm-1" } });
+    expect(turn.textContent).toContain("turn / steer");
+    expect(turn.textContent).toContain("cm-1");
+  });
 });

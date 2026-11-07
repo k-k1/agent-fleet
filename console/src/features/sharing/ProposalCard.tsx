@@ -19,6 +19,8 @@ export interface Proposal {
 // "other", so a field is never relayed without being on screen.
 const KNOWN = new Set(["op", "prompt", "feedback", "attachments", "scope", "decision", "id", "clientMessageID", "choices", "answers"]);
 
+interface Answer { text?: string; options?: number[] }
+
 const text = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : JSON.stringify(v));
 
 // What approval will send to the owner's Agent: target session, action, the text, every
@@ -29,6 +31,8 @@ export function ProposalCard({ p, onDecide }: { p: Proposal; onDecide: (id: stri
   const d = p.payload ?? {};
   const attachments = Array.isArray(d.attachments) ? d.attachments : d.attachments == null ? [] : [d.attachments];
   const body = text(d.prompt) || text(d.feedback);
+  const answers: Answer[] = Array.isArray(d.answers) ? (d.answers as Answer[]) : [];
+  const choices = Array.isArray(d.choices) ? d.choices : [];
   const other = Object.keys(d).filter((k) => !KNOWN.has(k));
   const processing = p.status === "processing";
   return (
@@ -44,6 +48,24 @@ export function ProposalCard({ p, onDecide }: { p: Proposal; onDecide: (id: stri
           <>
             <dt>{tr("share.proposal_attachments")}</dt>
             <dd><ul className="share-proposal-attachments">{attachments.map((a, i) => <li key={i}><code>{text(a)}</code></li>)}</ul></dd>
+          </>
+        )}
+        {d.id != null && <><dt>{tr("share.proposal_interaction")}</dt><dd><code>{text(d.id)}</code></dd></>}
+        {d.clientMessageID != null && <><dt>{tr("share.proposal_message_id")}</dt><dd><code>{text(d.clientMessageID)}</code></dd></>}
+        {choices.length > 0 && <><dt>{tr("share.proposal_choices")}</dt><dd>{choices.map(text).join(", ")}</dd></>}
+        {answers.length > 0 && (
+          <>
+            <dt>{tr("share.proposal_answers")}</dt>
+            <dd>
+              <ol className="share-proposal-attachments">
+                {answers.map((a, i) => (
+                  <li key={i}>
+                    {a.text ? <span>{a.text}</span> : null}
+                    {Array.isArray(a.options) && a.options.length > 0 && <span> [{a.options.join(", ")}]</span>}
+                  </li>
+                ))}
+              </ol>
+            </dd>
           </>
         )}
         {other.length > 0 && <><dt>{tr("share.proposal_other")}</dt><dd>{other.join(", ")}</dd></>}

@@ -1,6 +1,9 @@
 package shareproposal
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalize(t *testing.T) {
 	ok := []struct{ action, in, want string }{
@@ -30,5 +33,20 @@ func TestNormalize(t *testing.T) {
 		if got, err := Normalize(c.action, []byte(c.in)); err == nil {
 			t.Errorf("%s %s accepted as %s", c.action, c.in, got)
 		}
+	}
+}
+
+func TestNormalizeBoundsTheCanonicalSize(t *testing.T) {
+	// "<" is one byte on the wire in and six after HTML escaping; the canonical form must not grow.
+	in := `{"op":"start","prompt":"` + strings.Repeat("<", 20000) + `"}`
+	got, err := Normalize("turn", []byte(in))
+	if err != nil || len(got) > len(in) {
+		t.Fatalf("len=%d in=%d err=%v", len(got), len(in), err)
+	}
+	// Invalid UTF-8 is replaced by a six-byte escape, so the canonical form can grow: it is
+	// checked again after normalising.
+	big := `{"op":"start","prompt":"` + strings.Repeat("\xff", 30000) + `"}`
+	if _, err := Normalize("turn", []byte(big)); err == nil {
+		t.Fatal("a payload that grows past the limit when normalised must be refused")
 	}
 }

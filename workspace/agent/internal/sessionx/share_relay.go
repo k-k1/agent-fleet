@@ -28,7 +28,9 @@ var shareRelayFields = map[string][]string{
 // refuseShareRelay reports why an approved proposal (a request carrying the share-operation
 // id header) must not reach the handler, or "" when it may. Attachments are refused outright:
 // a share has no area of files the proposer could have put there, so any path would name the
-// owner's own files. Empty or malformed bodies pass through; the handler rejects those itself.
+// owner's own files. A body that is not exactly one JSON object is refused too: the handlers
+// decode only the first value, so a guard that gave up on a parse error would let through what
+// the handler still acts on.
 func refuseShareRelay(path string, body []byte) (code, msg string) {
 	action := path[strings.LastIndex(path, "/")+1:]
 	allowed, ok := shareRelayFields[action]
@@ -36,8 +38,12 @@ func refuseShareRelay(path string, body []byte) (code, msg string) {
 		return "", ""
 	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(body, &fields) != nil {
-		return "", ""
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if dec.Decode(&fields) != nil || fields == nil || dec.More() {
+		return "share_body_refused", "the operation body must be exactly one JSON object"
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return "share_body_refused", "the operation body must be exactly one JSON object"
 	}
 	if _, has := fields["attachments"]; has {
 		return "share_attachments_refused", "attachments are not accepted on a shared-session operation"
@@ -76,7 +82,7 @@ func GuardShareRelay(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, shareRelayMaxBody+1))
-	if err != nil {
+	if err != nil || len(body) > shareRelayMaxBody {
 		httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "share_body_too_large", "operation body is too large")
 		return false
 	}
