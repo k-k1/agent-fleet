@@ -385,7 +385,7 @@ func TestFailedStartAfterAWipeIsRecordedWithTheRecordsEnd(t *testing.T) {
 		t.Fatal("the record stayed open after a failed start")
 	}
 	as, ok, err := st.GetWorkspaceAutoStopByMembership(context.Background(), ws.MembershipID)
-	if err != nil || !ok || as.Kind != autoStopHomeWipe || !strings.Contains(as.Phase, "no capacity") {
+	if err != nil || !ok || as.Kind != autoStopHomeWipe || !strings.Contains(as.Phase, "internal error (ref: ") {
 		t.Errorf("auto-stop = %+v %v %v, want the failed start's reason", as, ok, err)
 	}
 	reconcileNow(mgr)

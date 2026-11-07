@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -29,7 +30,7 @@ func TestExtractClaudeAudits(t *testing.T) {
 	if resp.Cursor != 42 || resp.Reset {
 		t.Fatalf("resp meta: cursor=%d reset=%v", resp.Cursor, resp.Reset)
 	}
-	got := extractClaudeAudits(resp.Messages, "t1", "sess1")
+	got := extractClaudeAudits(resp.Messages, "t1", "sess1", true)
 	if len(got) != 3 {
 		t.Fatalf("want 3 audits (Write/Bash/MultiEdit), got %d: %+v", len(got), got)
 	}
@@ -49,5 +50,17 @@ func TestExtractClaudeAudits(t *testing.T) {
 	// TS carried from the turn.
 	if got[0].At != "2026-07-05T10:00:01Z" {
 		t.Errorf("ts not carried: %q", got[0].At)
+	}
+}
+
+// By default a Bash audit row names only the program, never its arguments; with full lines
+// on, the line is masked.
+func TestExtractClaudeAuditsBashTarget(t *testing.T) {
+	msgs := []ctTurn{{Role: "assistant", Parts: []ctPart{{Kind: "tool", Tool: "Bash", Info: "curl -u af-test-fixture-user:af-test-fixture-pass https://x.test API_KEY=abc"}}}}
+	if got := extractClaudeAudits(msgs, "t", "s", false); len(got) != 1 || got[0].Target != "curl" {
+		t.Fatalf("default: %+v", got)
+	}
+	if got := extractClaudeAudits(msgs, "t", "s", true); len(got) != 1 || strings.Contains(got[0].Target, "abc") {
+		t.Fatalf("full: %+v", got)
 	}
 }

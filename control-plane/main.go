@@ -534,8 +534,9 @@ func main() {
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
 	// session, so it's opt-in; enable per deployment once validated.
 	if iv := envx.DurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
-		go newClaudeAuditor(mgr, iv).run(context.Background())
-		log.Printf("claude-audit: sweeping transcripts every %s", iv)
+		full := os.Getenv("AF_CLAUDE_AUDIT_BASH_FULL") == "1"
+		go newClaudeAuditor(mgr, iv, full).run(context.Background())
+		log.Printf("claude-audit: sweeping transcripts every %s (bash command lines: %s)", iv, map[bool]string{false: "program name only", true: "masked first line"}[full])
 	}
 
 	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune
@@ -813,7 +814,8 @@ func logRequests(next http.Handler) http.Handler {
 // secretQueryKeys are query parameters that carry a credential wherever they appear: an
 // authorization code, a state, a client secret or a token. An app on a preview host receives
 // its OAuth callback (?code=…&state=…) on a path nobody here can predict, so the redaction is by
-// parameter name and not only by path.
+// parameter name and not only by path. The Agent keeps the same list (httpx.secretQueryKeys);
+// both are compared with scripts/fixtures/secret-query-keys.txt by their tests.
 var secretQueryKeys = map[string]bool{
 	"code": true, "state": true, "client_secret": true, "client_assertion": true,
 	"access_token": true, "id_token": true, "refresh_token": true, "token": true, "t": true,
@@ -821,17 +823,20 @@ var secretQueryKeys = map[string]bool{
 }
 
 // loggedURI is the request URI as the access log may record it. The whole query goes on an
-// OAuth or dev-IdP path; elsewhere only the credential-bearing parameters.
+// OAuth or dev-IdP path; elsewhere only the credential-bearing parameters. The path is
+// always the escaped form: a decoded path can carry control characters that split one log
+// entry into several, and this runs before authentication.
 func loggedURI(u *url.URL) string {
 	if u.RawQuery == "" {
 		return u.RequestURI()
 	}
+	ep := u.EscapedPath()
 	if strings.Contains(u.Path, "oauth") || u.Path == devIdPPath || strings.HasPrefix(u.Path, devIdPPath+"/") {
-		return u.Path + "?<redacted>"
+		return ep + "?<redacted>"
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-		return u.Path + "?<redacted>"
+		return ep + "?<redacted>"
 	}
 	hit := false
 	for k := range q {
@@ -840,10 +845,21 @@ func loggedURI(u *url.URL) string {
 			hit = true
 		}
 	}
+	// The preview entry routes carry the previewed app's own query inside "next"
+	// (redirectToSubdomain moves it there), so the top-level names above do not see it.
+	if u.Path == previewOwnOpenPath || u.Path == previewOpenPath {
+		// Every value, not the first: a repeated "next" must not smuggle one past the check.
+		for i, nx := range q["next"] {
+			if j := strings.Index(nx, "?"); j >= 0 {
+				q["next"][i] = nx[:j] + "?<redacted>"
+				hit = true
+			}
+		}
+	}
 	if !hit {
 		return u.RequestURI()
 	}
-	return u.Path + "?" + q.Encode()
+	return ep + "?" + q.Encode()
 }
 
 // statusWriter captures the response status for the access log.

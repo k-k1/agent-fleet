@@ -162,7 +162,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		// underlying error distinguishes r.Context() cancellation (browser/ALB
 		// gave up) from a genuine transport failure (connection reset, i/o
 		// timeout) instead of collapsing both into one opaque message.
-		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, relayLogPath(r.URL.Path), relayLogErr(r.URL.Path, err), r.Context().Err())
+		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, relayLogPath(r.URL.EscapedPath()), relayLogErr(r.URL.Path, err), r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -283,7 +283,7 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	req.Header.Set("X-AF-Relay", "cp") // the same log hint rest sets
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
-		log.Printf("agent stream proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
+		log.Printf("agent stream proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.EscapedPath(), err, r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -310,7 +310,7 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 			// The status is already sent, so a stream the Agent cut short is otherwise a 200 in
 			// every log while the browser sees a missing final frame.
 			if !errors.Is(rerr, io.EOF) {
-				log.Printf("agent stream proxy: %s %s: body read: %v (ctx err=%v)", r.Method, r.URL.Path, rerr, r.Context().Err())
+				log.Printf("agent stream proxy: %s %s: body read: %v (ctx err=%v)", r.Method, r.URL.EscapedPath(), rerr, r.Context().Err())
 			}
 			return
 		}

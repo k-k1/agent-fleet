@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/errref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -241,7 +242,7 @@ type apiError struct {
 }
 
 func internalErr(err error) *apiError {
-	return &apiError{status: http.StatusInternalServerError, code: "internal", message: err.Error()}
+	return &apiError{status: http.StatusInternalServerError, code: "internal", message: errref.Message(errref.Log(err))}
 }
 
 // membershipErr is internalErr for an EnsureMembership failure, except the store's

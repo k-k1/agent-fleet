@@ -198,8 +198,8 @@ func TestIrreversibleAdminActionWritesRequestThenOutcome(t *testing.T) {
 	if req.ActorID == "" || req.ActorID != out.ActorID || req.Target != "leaver-acme-co-jp" {
 		t.Errorf("request %+v and outcome %+v do not name the same actor and target", *req, *out)
 	}
-	if out.HTTPStatus != http.StatusInternalServerError || !strings.Contains(out.Detail, "volume busy") {
-		t.Errorf("outcome = %+v, want the 500 and the runtime's reason", *out)
+	if out.HTTPStatus != http.StatusInternalServerError || !strings.Contains(out.Detail, "internal error (ref: ") {
+		t.Errorf("outcome = %+v, want the 500 and the fixed message with a ref", *out)
 	}
 }
 

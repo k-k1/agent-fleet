@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -25,6 +26,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeAPIErr(w http.ResponseWriter, e *apiError) {
+	// A 5xx body may carry only a fixed message; the log keeps the status and code so the
+	// operator sees what was answered (internalErr logs the cause under the same ref).
+	if e.status >= 500 {
+		log.Printf("api error %d %s: %q", e.status, e.code, e.message)
+	}
 	writeJSON(w, e.status, map[string]any{
 		"error": map[string]string{"code": e.code, "message": e.message},
 	})

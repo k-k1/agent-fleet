@@ -688,7 +688,7 @@ func (c config) linkAfterLogin(ctx context.Context, p auth.Principal) (bool, err
 	case err != nil:
 		// Not fatal to the login: the next request resolves the identity the usual
 		// way. Only the notice is lost.
-		log.Printf("oauth: link %s/%s: %v", p.Provider, p.Subject, err)
+		log.Printf("oauth: link %s/%q: %v", p.Provider, p.Subject, err)
 		return false, nil
 	}
 	// The single-provider deployment used to skip this function entirely, and the
