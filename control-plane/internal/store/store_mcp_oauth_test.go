@@ -142,12 +142,26 @@ func TestMCPOAuthClientCapAndPrune(t *testing.T) {
 	ctx := context.Background()
 	for name, st := range homeOpStores(t) {
 		for i, id := range []string{"c1", "c2"} {
-			if err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: id, RedirectURIs: "[]", CreatedAt: int64(100 + i)}, 2); err != nil {
-				t.Fatalf("%s: %v", name, err)
+			if ev, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: id, RedirectURIs: "[]", CreatedAt: int64(100 + i)}, 2); err != nil || ev {
+				t.Fatalf("%s: %v evicted=%v", name, err, ev)
 			}
 		}
-		if err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c3", RedirectURIs: "[]", CreatedAt: 1}, 2); !errors.Is(err, ErrMCPOAuthClientCap) {
-			t.Errorf("%s: third client over a cap of 2: %v", name, err)
+		// At the cap the oldest grant-less registration makes room instead of the call failing.
+		if ev, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c3", RedirectURIs: "[]", CreatedAt: 200}, 2); err != nil || !ev {
+			t.Fatalf("%s: third client over a cap of 2: %v evicted=%v", name, err, ev)
+		}
+		if _, ok, _ := st.GetMCPOAuthClient(ctx, "c1"); ok {
+			t.Errorf("%s: the oldest grant-less client was not evicted", name)
+		}
+		if _, ok, _ := st.GetMCPOAuthClient(ctx, "c2"); !ok {
+			t.Errorf("%s: a newer client was evicted", name)
+		}
+		// c3 stands in for c2 below: drop it so the rest of the test is unchanged.
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id='c3'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c1", RedirectURIs: "[]", CreatedAt: 100}, 2); err != nil {
+			t.Fatal(err)
 		}
 		// c1 has a grant, c2 has none: only c2 goes once both are older than the cutoff.
 		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "g", ClientID: "c1", IdentityID: "i", MembershipID: "m",
@@ -181,13 +195,21 @@ func TestMCPOAuthClientCapHoldsUnderConcurrency(t *testing.T) {
 				}
 			}
 		}
+		// One registration with a grant is immune; the other slot churns.
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "keep", RedirectURIs: "[]"}, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "kg", ClientID: "keep", IdentityID: "i", MembershipID: "m",
+			Scope: "read", Resource: "r", IdleExpiresAt: 9999, AbsExpiresAt: 9999}); err != nil {
+			t.Fatal(err)
+		}
 		var ok, capped, other atomic.Int32
 		var wg sync.WaitGroup
 		for i := 0; i < 8; i++ {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c" + string(rune('a'+i)), RedirectURIs: "[]"}, 1)
+				_, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "c" + string(rune('a'+i)), RedirectURIs: "[]", CreatedAt: int64(i)}, 2)
 				switch {
 				case err == nil:
 					ok.Add(1)
@@ -199,8 +221,29 @@ func TestMCPOAuthClientCapHoldsUnderConcurrency(t *testing.T) {
 			}(i)
 		}
 		wg.Wait()
-		if ok.Load() != 1 || capped.Load() != 7 || other.Load() != 0 {
-			t.Errorf("%s: ok=%d capped=%d other=%d, want 1/7/0", name, ok.Load(), capped.Load(), other.Load())
+		var n int
+		if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM mcp_oauth_client`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if ok.Load() != 8 || capped.Load() != 0 || other.Load() != 0 || n != 2 {
+			t.Errorf("%s: ok=%d capped=%d other=%d rows=%d, want 8/0/0/2", name, ok.Load(), capped.Load(), other.Load(), n)
+		}
+		if _, found, _ := st.GetMCPOAuthClient(ctx, "keep"); !found {
+			t.Errorf("%s: a client with a grant was evicted", name)
+		}
+		// With every registration holding a grant the cap is a refusal again.
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id<>'keep'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "g2", RedirectURIs: "[]"}, 2); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateMCPOAuthGrant(ctx, MCPOAuthGrant{ID: "kg2", ClientID: "g2", IdentityID: "i", MembershipID: "m",
+			Scope: "read", Resource: "r", IdleExpiresAt: 9999, AbsExpiresAt: 9999}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "g3", RedirectURIs: "[]"}, 2); !errors.Is(err, ErrMCPOAuthClientCap) {
+			t.Errorf("%s: all-granted cap: %v", name, err)
 		}
 	}
 }
@@ -360,6 +403,122 @@ func TestMCPOAuthOwnedRevokeRollsBackWithoutAudit(t *testing.T) {
 		got, _, err := st.GetMCPOAuthGrant(ctx, g.ID)
 		if err != nil || got.RevokedAt != 0 {
 			t.Fatalf("%s partial revocation: %+v %v", name, got, err)
+		}
+	}
+}
+
+func mcpOAuthMember(t *testing.T, st *SQL) (identity, membership, tenant string) {
+	t.Helper()
+	ctx := context.Background()
+	tn, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ident, err := st.UpsertIdentity(ctx, "", "owner", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ident.ID, m.ID, tn.ID
+}
+
+// A sign-in in progress (an unexpired consent ticket or authorization code, spent or not) keeps
+// its registration through both eviction and prune; an expired one does not.
+func TestMCPOAuthInFlightSignInKeepsItsClient(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		ident, member, _ := mcpOAuthMember(t, st)
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "afmcp-a", RedirectURIs: "[]", CreatedAt: 1}, 1); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertMCPOAuthToken(ctx, MCPOAuthToken{Hash: "code-a", Kind: MCPOAuthCode, ClientID: "afmcp-a",
+			IdentityID: ident, MembershipID: member, ExpiresAt: 2000}); err != nil {
+			t.Fatal(err)
+		}
+		// Spending the code keeps the row until it expires; that must not drop the protection.
+		if _, state, err := st.ConsumeMCPOAuthToken(ctx, "code-a", MCPOAuthCode, 1000); err != nil || state != MCPOAuthSpendOK {
+			t.Fatalf("%s: consume: %v %v", name, state, err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "afmcp-b", RedirectURIs: "[]", CreatedAt: 1000}, 1); !errors.Is(err, ErrMCPOAuthClientCap) {
+			t.Errorf("%s: a client with a live code was evicted: %v", name, err)
+		}
+		if err := st.PruneMCPOAuth(ctx, 1000, 500, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, _ := st.GetMCPOAuthClient(ctx, "afmcp-a"); !ok {
+			t.Errorf("%s: prune deleted a client with a live code", name)
+		}
+		// The code is expired: now the registration is idle again.
+		if ev, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "afmcp-b", RedirectURIs: "[]", CreatedAt: 2000}, 1); err != nil || !ev {
+			t.Errorf("%s: an idle client was not evicted: %v %v", name, ev, err)
+		}
+	}
+}
+
+// A consent ticket or grant cannot be written for a registration that was deleted.
+func TestMCPOAuthWritesRefuseADeletedClient(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		ident, member, tenant := mcpOAuthMember(t, st)
+		tok := MCPOAuthToken{Hash: "code-x", Kind: MCPOAuthCode, ClientID: "afmcp-x", IdentityID: ident, MembershipID: member, ExpiresAt: 2000}
+		if err := st.InsertMCPOAuthToken(ctx, tok); !errors.Is(err, ErrMCPOAuthClientGone) {
+			t.Fatalf("%s: token for a missing client: %v", name, err)
+		}
+		if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "afmcp-x", RedirectURIs: "[]", CreatedAt: 1}, 10); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertMCPOAuthToken(ctx, tok); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM mcp_oauth_client WHERE client_id='afmcp-x'`); err != nil {
+			t.Fatal(err)
+		}
+		g := MCPOAuthGrant{ID: "g-x", ClientID: "afmcp-x", IdentityID: ident, MembershipID: member, TenantID: tenant,
+			Scope: "read", Resource: "r", CodeHash: "code-x", IdleExpiresAt: 9999, AbsExpiresAt: 9999}
+		if err := st.CreateMCPOAuthGrantFromCode(ctx, g); !errors.Is(err, ErrMCPOAuthClientGone) {
+			t.Errorf("%s: grant for a deleted client: %v", name, err)
+		}
+	}
+}
+
+// Eviction and a consent-ticket insert for the same idle client race on every dialect: the
+// outcome is either "ticket written and the client kept" or "client evicted and the ticket
+// refused", never a ticket for a client that is gone.
+func TestMCPOAuthEvictionRacesTicketInsertSafely(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range homeOpStores(t) {
+		ident, member, _ := mcpOAuthMember(t, st)
+		for i := 0; i < 12; i++ {
+			id := "afmcp-r" + string(rune('a'+i))
+			if _, err := st.db.ExecContext(ctx, `DELETE FROM mcp_oauth_client`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: id, RedirectURIs: "[]", CreatedAt: 1}, 1); err != nil {
+				t.Fatal(err)
+			}
+			var insErr, regErr error
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				insErr = st.InsertMCPOAuthToken(ctx, MCPOAuthToken{Hash: "t" + id, Kind: MCPOAuthConsent, ClientID: id,
+					IdentityID: ident, MembershipID: member, ExpiresAt: 5000})
+			}()
+			go func() {
+				defer wg.Done()
+				_, regErr = st.CreateMCPOAuthClient(ctx, MCPOAuthClient{ClientID: "n" + id, RedirectURIs: "[]", CreatedAt: 1000}, 1)
+			}()
+			wg.Wait()
+			_, kept, _ := st.GetMCPOAuthClient(ctx, id)
+			switch {
+			case insErr == nil && kept && errors.Is(regErr, ErrMCPOAuthClientCap):
+			case errors.Is(insErr, ErrMCPOAuthClientGone) && !kept && regErr == nil:
+			default:
+				t.Fatalf("%s round %d: insert=%v register=%v kept=%v", name, i, insErr, regErr, kept)
+			}
 		}
 	}
 }

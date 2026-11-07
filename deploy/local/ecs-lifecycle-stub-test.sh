@@ -497,6 +497,9 @@ case "$args" in
   *"ssm get-parameter --name /af-ws/engine-llm-key"*) [ "${STUB_ENGINE_KEY_EXISTS:-0}" = 1 ] || exit 1 ;;
   *"ssm get-parameter --name /af-cp/github-client-secret"*) [ "${STUB_NO_GH_KEY:-0}" = 1 ] && exit 1; echo ok ;;
   *"ssm get-parameter --name /af-cp/comfy-api-key"*) [ "${STUB_NO_COMFY_KEY:-0}" = 1 ] && exit 1; echo ok ;;
+  # The two keys are read with --with-decryption for their length only (standup.sh).
+  *"ssm get-parameter --name /af-cp/master-key --with-decryption"*) echo "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" ;;
+  *"ssm get-parameter --name /af-cp/cookie-secret --with-decryption"*) echo "fake-short-cookie-value" ;;
   *"ssm get-parameter"*) echo "ok" ;;
   *"iam get-role"*) echo "ok" ;;
   *"route53 get-hosted-zone"*) echo "ok" ;;
@@ -665,6 +668,10 @@ hasnt "cloudformation deploy"
 echo "== case 3: standup order and the launch template hand-off =="
 : > "$LOG"
 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3" </dev/null
+# A too-short stored key is flagged without printing it; a long one is not (#3499).
+grep -q "cookie-secret is shorter than 32 bytes" "$WORK/out3" || fail "standup did not flag the short cookie secret"
+! grep -q "master-key is shorter" "$WORK/out3" || fail "standup flagged a 32-byte master key"
+! grep -qF -e "fake-short-cookie-value" -e "00112233445566778899aabb" "$WORK/out3" || fail "standup printed a stored key value"
 order "cloudformation deploy --stack-name t-network" "cloudformation deploy --stack-name t-data"
 order "cloudformation deploy --stack-name t-data" "cloudformation deploy --stack-name t-platform"
 # 20 creates the ECR. The image goes in after that, and before 30.

@@ -72,8 +72,10 @@ informed choice — not undisclosed bugs.
   without it. See `deploy/compose/README.md`.
 
 - **Backups are sensitive.** Members' homes (with their store: `secrets.enc`, or the
-  plaintext `secrets.json` when no master key is set) and the agent CLIs' sign-in
-  state, which is plaintext, are in the archive `deploy/compose/backup.sh` writes and,
+  plaintext `secrets.json` when no master key is set), the agent CLIs' sign-in
+  state, which is plaintext, and the CLIs' MCP config files, which hold the member's MCP
+  header and environment values in plaintext (0600; the CLI has to read them, so
+  shredding the workspace DEK does not remove them), are in the archive `deploy/compose/backup.sh` writes and,
   on AWS, in the file system's daily AWS Backup recovery points (`Persistence=retain`)
   and the `ecs-ec2` home-volume snapshots the CP takes when it hibernates or backs up a
   home. The database — wrapped DEKs, tenant secrets sealed by the custodian — is in
@@ -86,6 +88,12 @@ informed choice — not undisclosed bugs.
   every restore
   ([deploy/kubernetes/README.md](deploy/kubernetes/README.md#backups-point-in-time-recovery-and-the-restore-rehearsal)).
   Protect where they are stored.
+
+- **AWS confirm-before-use stops accidental use, not a session that sets out to get
+  past it.** The approval of a gated profile (`POST /aws-confirm/{id}/approve`) is not
+  signed as the member's, and a session can also run the AWS CLI directly. See
+  [ADR 0126](docs/decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.md)
+  decision 6 and [07 §7.5.1](docs/build/07-security.md#751-the-member-origin-mark).
 
 - **Anything running in a Workspace can read that user's own secrets.** Agents,
   their shells and every process they start (build scripts, package install hooks,

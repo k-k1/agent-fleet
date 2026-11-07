@@ -149,7 +149,7 @@ func TestPreviewTenantShareLetsAColleagueThrough(t *testing.T) {
 		t.Fatal("the Agent never saw the colleague's request")
 	}
 	// The viewer's cookie carries the viewer's own membership, not the owner's.
-	cl, ok := newPreviewHostAPI(e.cfg).verifyClaims(ck.Value)
+	cl, ok := newPreviewHostAPI(e.cfg).verifyClaims(cookiePurposePreview, ck.Value)
 	if !ok {
 		t.Fatal("viewer cookie does not verify")
 	}

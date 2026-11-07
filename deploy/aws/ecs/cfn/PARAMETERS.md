@@ -129,8 +129,25 @@ events to an object store before it purges them. The templates wire an optional 
 | 10-data | `EgressArchiveRetentionDays` | `365` | Days before S3 expires an archived day (prefix `egress/`). Only read with `EgressArchive=create`. |
 | 20-platform | `EgressArchiveBucket` | empty | The 10-data output. Non-empty adds the managed policy `CpEgressArchivePolicy` to the CP task role. |
 | 30-ingress | `EgressArchiveBucket` | empty | The same output. Non-empty sets `AF_EGRESS_ARCHIVE_URL=s3://<bucket>` on the CP. |
+| 30-ingress | `EgressEventRetentionDays` | empty | Whole days the CP keeps raw events (`AF_EGRESS_EVENT_RETENTION_DAYS`, #3403). Empty sets no variable and keeps the CP's default, 30. `0` keeps them forever. Digits only (at most 5). A plain parameter: `update.sh` never overrides it, so it survives updates. |
 
-The last two are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
+**Retention and the archive are two clocks.** `EgressEventRetentionDays` is how long a raw event
+stays in the CP's database; the purger archives each whole UTC day older than that, then deletes
+it. `EgressArchiveRetentionDays` is how long S3 keeps an archived day. Both are minimum
+thresholds, not exact lifetimes: with the archive on, the cutoff rounds down to a UTC midnight, so
+the database keeps events up to about a day longer, and a slow purge or a failed archive write
+keeps them longer still (the CP never deletes what it did not archive). The S3 clock is the
+lifecycle rule's, measured from the object's own creation: a day object that already exists is
+verified and reused, not rewritten, so it does not restart at the database delete. S3 expires
+an archived day 365 days (the default) after the object was created, and the deletion itself can
+lag that date; the time left after the database delete can be shorter than 365 days, since the
+object may already be older. `0` never purges, so nothing is archived either; with no archive,
+events are deleted from the cutoff on (the purger runs periodically, so not at that instant). The CP ignores a
+value that is not a number and uses 30, so a typo cannot switch deletion off.
+`EgressArchive=existing` does not manage the bucket, so `EgressArchiveRetentionDays` does not
+apply to it: its lifecycle is whatever that bucket already has.
+
+The two `EgressArchiveBucket` rows (20-platform and 30-ingress) are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
 output after deploying it (never the capture, so a rebuilt data stack cannot leave a stale
 name) and names it for both stacks even when empty (an omitted parameter keeps its previous
 value), and `update.sh` passes it to the 20-platform change set and to 30-ingress, and clears
@@ -511,6 +528,26 @@ Add AWS's managed IP reputation list (known scanners/botnets). Matches on the SO
 the body, so it cannot mangle legitimate agent traffic. Requires `WafRateLimitPer5Min` > 0
 (that is what creates the web ACL).
 
+### ALB header hygiene and `AlbAccessLogBucket`
+
+The ALB always runs with `routing.http.drop_invalid_header_fields.enabled` set to `true`: a
+header field the ALB considers invalid is removed and the request is still forwarded to the
+Control Plane without it (the AWS default, `false`, passes such fields through). The request is
+not rejected. Real browsers and the Agent's own clients do not send invalid fields. There is no
+parameter for it, so reverting means editing the template.
+
+`AlbAccessLogBucket` turns on ALB access logs. Empty (the default) = off: the template then states
+`access_logs.s3.enabled=false` explicitly, so clearing the parameter on a stack that had logs on
+turns them off (an attribute left out of the template keeps its current value). Give it the NAME of an S3 bucket (no `s3://`,
+no prefix) in the same region as the stack, and the logs land under `AWSLogs/<account>/`. The
+bucket is yours, not the stack's, and the ALB can only write if the bucket policy allows it:
+for a region that has an ELB account id, grant `s3:PutObject` on
+`arn:aws:s3:::<bucket>/AWSLogs/<account>/*` to that principal, and for regions from 2022 on to
+the `logdelivery.elasticloadbalancing.amazonaws.com` service principal (AWS's "Enable access
+logs for your Application Load Balancer" page has the exact statements). Without the grant, the
+stack update fails when it applies the attribute. Logs hold client IPs and request paths, so
+set a lifecycle rule on the bucket. SSE-S3 is the only bucket encryption the ALB can write to.
+
 ## Public host and preview subdomains
 
 ### `Fqdn` / `HostedZoneId`
@@ -857,21 +894,22 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
 else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
-Template-size note: the template keeps about 1.2 KB under the 51,200-byte wall (see the
+Template-size note: the template keeps about 1 KB under the 51,200-byte wall (see the
 README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
 parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
 required parameters line by line and reports every flow-style one as missing. Parameters have been paid
 for by moving prose out of the template, so the next one needs the same.
 
-### `SessionTtl` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
+### `SessionTtl` / `CookiePurposeKeys` / `GithubAllowedEmails` / `KmsDataKeyCacheTtl`
 
 Pass-throughs for CP variables the operator guide calls configurable and that had no ECS
-route. All three default to empty, and the CP treats an empty value as unset (`envx.DurationOr`,
+route. All four default to empty, and the CP treats an empty value as unset (`envx.DurationOr`,
 `envx.EmailSet`, `kmsCacheTTL`), so a stack that predates them behaves as before.
 
 | Parameter | CP variable | Empty means |
 |---|---|---|
 | `SessionTtl` | `AF_SESSION_TTL`, a Go duration (`72h`), how long the signed sign-in cookie stays valid | 168h |
+| `CookiePurposeKeys` | `AF_COOKIE_PURPOSE_KEYS`, `1` signs the session / sign-in state / preview cookies with one key per purpose. Set it only after every task runs a release that reads both formats (a rolling update has finished); see `guide/operate/04-secure.md`, "Switching to per-purpose cookie keys" | off (cookies keep the single-key format) |
 | `GithubAllowedEmails` | `AF_GITHUB_ALLOWED_EMAILS`, comma list admitted by GitHub sign-in besides the org / domain lists | nobody by email |
 | `KmsDataKeyCacheTtl` | `AF_KMS_DATA_KEY_CACHE_TTL`, a Go duration, `0s` = no cache (kms custodian only) | 5m |
 

@@ -22,8 +22,9 @@
 // and the view position (page, zoom, offset) is carried over, so it feels continuous.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import viewerAssetUrl from "../../../vendor/drawio/viewer-static.min.js?url";
-import { downloadURL, rel } from "../../core/api/client.ts";
+import { downloadURL } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { acceptedStencilNames, stencilUrl } from "./drawioStencilRelay.ts";
 import { DRAWIO_MSG, drawioFrameSrcdoc, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
 
 export interface DrawioState {
@@ -145,11 +146,13 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
         // Build the URL with rel(): a bare relative path resolves against the document URL, which
         // points somewhere else behind a proxy that strips a path such as `/agent-fleet/`, or on a
         // deep `/open/...` URL (the same trap recorded for the viewer asset in §65.7).
+        // Only names shaped like manifest keys, capped in number, whose URL stays under the
+        // stencils prefix, are fetched (drawioStencilRelay.ts). The rest are dropped without a
+        // report: a refused name is not "missing", and must not be asked for again.
+        const names = acceptedStencilNames(msg.sets);
         Promise.all(
-          msg.sets.map((name) =>
-            fetch(rel(`api/drawio/stencils/${name.split("/").map(encodeURIComponent).join("/")}`), {
-              credentials: "same-origin",
-            })
+          names.map((name) =>
+            fetch(stencilUrl(name) as string, { credentials: "same-origin" })
               .then((r) => (r.ok ? r.text() : null))
               .catch(() => null),
           ),
@@ -158,7 +161,7 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
           // Report back the names that failed, so the frame can take them off its "already asked"
           // list and request them again on the next render. Without that, a single upstream blip
           // leaves the icons missing for the rest of the pane's life.
-          const missing = msg.sets.filter((_, i) => !xmls[i]);
+          const missing = names.filter((_, i) => !xmls[i]);
           if (got.length || missing.length) post({ t: "stencils", xml: got, missing });
         });
         return;

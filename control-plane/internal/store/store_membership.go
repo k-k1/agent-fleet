@@ -75,6 +75,10 @@ type MembershipStore interface {
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error
+	// ChangeMembershipRole is SetMembershipRole that also reports the role it replaced, read
+	// under the row's write lock so the answer is the role this update actually overwrote.
+	// found=false when the membership does not exist.
+	ChangeMembershipRole(ctx context.Context, membershipID, role string) (old string, found bool, err error)
 	// SetMembershipStatus deactivates (or restores) a membership. Offboarding is a
 	// LOGICAL delete: the workspace, its home and its secrets survive, but every
 	// path that resolves a membership already requires status='active', so the
@@ -347,6 +351,33 @@ func (s *SQL) SetMembershipRole(ctx context.Context, membershipID, role string) 
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE membership SET role=? WHERE id=?`, role, membershipID)
 	return err
+}
+
+func (s *SQL) ChangeMembershipRole(ctx context.Context, membershipID, role string) (string, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer tx.Rollback()
+	// A no-op write takes the row's write lock (PostgreSQL row lock, SQLite write lock) before
+	// the read, so a concurrent change cannot slip between the read and the update.
+	res, err := tx.ExecContext(ctx, `UPDATE membership SET role=role WHERE id=?`, membershipID)
+	if err != nil {
+		return "", false, err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return "", false, err
+	} else if n == 0 {
+		return "", false, nil
+	}
+	var old string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM membership WHERE id=?`, membershipID).Scan(&old); err != nil {
+		return "", false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE membership SET role=? WHERE id=?`, role, membershipID); err != nil {
+		return "", false, err
+	}
+	return old, true, tx.Commit()
 }
 
 // SetMembershipStatus sets a membership's status. Deactivating also applies, in the same

@@ -1254,6 +1254,9 @@ const CONNECT_STALL = 3000;
 // upgrade, so the reason on an ACCEPTED-then-closed socket is the only way this
 // layer can tell "the session ended" from "the connection broke".
 const PTY_CLOSE_SESSION_STOPPED = "session stopped";
+// Reason for a live PTY that ended with the session not known to be halted (ptyClosePTYClosed
+// in the Agent). An older Agent also sends it when a halt ended the PTY, hence the wording.
+const PTY_CLOSE_PTY_CLOSED = "pty closed";
 
 // connStalled reports a socket wedged in CONNECTING past CONNECT_STALL — the
 // "black terminal right after launch" that no drop/heartbeat path catches (no close frame ever
@@ -1310,7 +1313,7 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
       // Pongs stopped: the connection is a zombie. Re-attach (closes this socket and
       // opens a fresh one, replaying the tmux screen) rather than waiting on a TCP
       // timeout that may never come.
-      if (it.session) attach(paneId, it.session);
+      if (it.session) attach(paneId, it.session, true);
       return;
     }
     // One ping in flight at a time (sendPing): a tick skipped because the socket
@@ -1357,7 +1360,7 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
 
 // attach opens a fresh WebSocket to the session's PTY for a pane, replacing any
 // current one on that pane.
-export function attach(paneId: string, session: string) {
+export function attach(paneId: string, session: string, auto = false) {
   const it = inst(paneId);
   if (!it || !it.term) return; // ensureTerm must have run (pane mounted)
   // Detach the old socket's handlers before closing it: an intentional switch
@@ -1379,7 +1382,7 @@ export function attach(paneId: string, session: string) {
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
   it.rx = false; // fresh socket: no PTY bytes yet (ensureAttached watches this)
   setSoftKeyboard(it, false); // keep the keyboard down until the PTY is live
-  const ws = new WebSocket(wsURL(session));
+  const ws = new WebSocket(wsURL(session, auto));
   it.ws = ws;
   it.connAt = Date.now();
   ws.binaryType = "arraybuffer";
@@ -1393,7 +1396,7 @@ export function attach(paneId: string, session: string) {
   it.connWd = setTimeout(() => {
     const cur = inst(paneId);
     if (cur && cur.ws === ws && ws.readyState === WebSocket.CONNECTING && cur.session) {
-      attach(paneId, cur.session);
+      attach(paneId, cur.session, true);
     }
   }, CONNECT_STALL + 500);
   ws.onopen = () => {
@@ -1450,6 +1453,11 @@ export function attach(paneId: string, session: string) {
       // broken terminal, and the user has no reason to hunt for the resume chip.
       if (ev.reason === PTY_CLOSE_SESSION_STOPPED) {
         it.term!.write("\r\n" + tr("onb.term_session_stopped") + "\r\n");
+      } else if (ev.reason === PTY_CLOSE_PTY_CLOSED) {
+        // A live PTY ended without the Agent saying the session stopped (a shell `exit`,
+        // a tmux detach, or an older Agent that sends this for a halt too). Not a drop, so
+        // no reconnect loop; just stop the pane looking frozen.
+        it.term!.write("\r\n" + tr("onb.term_pty_closed") + "\r\n");
       }
       return;
     }
@@ -1487,7 +1495,7 @@ export function reconnect(paneId: string) {
   // Leave a still-healthy socket alone — but a stalled CONNECTING is NOT healthy, so
   // it falls through to a fresh attach even though its readyState is CONNECTING.
   if (!stalled && it.ws && (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN)) return;
-  attach(paneId, it.session);
+  attach(paneId, it.session, true);
 }
 
 // ensureAttached guarantees a live PTY socket to `session` for a pane, then refits it.
@@ -1537,7 +1545,8 @@ export function ensureAttached(paneId: string, session: string) {
     forceFit(it);
     return;
   }
-  attach(paneId, session);
+  // A pane that already had a socket for this session is being revived, not opened.
+  attach(paneId, session, !!it.ws && it.session === session);
 }
 
 // reconnectSession revives any pane currently showing `name` whose PTY dropped. Used

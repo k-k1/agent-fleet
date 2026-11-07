@@ -306,6 +306,10 @@ func (d cpTenant) ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) 
 	return d.m.resolveWorkspaceSize(ctx, ws)
 }
 
+func (d cpTenant) WorkspaceCeilings() (int, int) {
+	return d.m.cpuMaxUnits, d.m.diskMaxGB
+}
+
 func (d cpTenant) ResolveSlotClass(ctx context.Context, ws store.Workspace) (string, string) {
 	return d.m.resolveSlotClass(ctx, ws)
 }

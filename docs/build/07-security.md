@@ -201,6 +201,20 @@ attacker would try it:
   cannot leak it. The limits are in [guide/ref/limits](../../guide/ref/limits.md).
 - **Not audited** (ordinary reads are not, `proxy.go`); whether a bulk export should be is open
   (decisions/0111, Status line).
+- **The hard-link check is zip-only.** The ordinary file reads (`/fs/file`, `/fs/download`,
+  `/fs/imagesize`, the thumbnail warm-up) refuse symlinks and non-regular files but do **not**
+  refuse `st_nlink > 1`: hard links are routine in a working tree (package-manager stores, git
+  objects), so refusing them would break normal viewing, and a link to a denied file takes same-uid
+  code that could read that file directly anyway. The bulk export keeps the stricter rule because
+  it is the one route that reads everything beneath a folder without a person naming each file.
+- **Mutations refuse ancestors of denied entries.** Rename (both ends), delete, mkdir, new file and
+  upload answer 403 for a denied entry, its descendants **and the folders that contain one**
+  (`.config`, `.local`, `.local/share`, the browse root), judged on the spelled path and again on
+  the path after symlink resolution (`fsWriteRefused`). Uploads and the image generator's
+  `out_dir` additionally refuse a symlinked destination folder. Uploads are written through a
+  directory fd opened with `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`, and so are generated pictures and
+  their sidecars: the folder is opened when the picture is stored, not trusted from the path
+  judged when the job was queued.
 
 ## 7.3 L1 Console authentication — three modes
 
@@ -454,10 +468,26 @@ returns the result without storing the token.
 ### 7.5.1 The member-origin mark
 
 Where a route must accept only the member's own Console request, the CP marks it
-([decisions/0113](../decisions/0113-member-origin-mark.md)). Today that is the member-only memory writes:
-`entries/pin`, `entries/revert` (which also forgets), `entries/member-save`, `entries/project-move` (moving the
-memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-agent-memory.md) note of 2026-10-14) and
-`entries/purge` (the history purge, #1982).
+([decisions/0113](../decisions/0113-member-origin-mark.md)). This chapter does not list the routes, because a
+hand-kept list drifts. The source of truth is the code, in three places:
+
+- the relay rows with `sign` in `control-plane/relays*.go`;
+- the CP handlers that sign directly (`memberOriginSign` outside the relay path: work-item comment and merge,
+  session handoff push);
+- on the Agent, the routes registered behind `memberorigin.Require` in `workspace/agent/routes.go`, plus the
+  conditional check on `PUT /env/ui-prefs` (`ui_prefs.go`), which asks for the mark only when a write turns a
+  member-decision switch on.
+
+`workspace/agent/internal/memberorigin/signed_routes.txt` is the one checked-in list both modules are tested
+against (`TestSignedRoutesMatchRelayRows` in `control-plane`, `TestSignedRoutesMatchRequireRegistrations` in
+`workspace/agent`; the modules cannot import each other, so each checks the same file). A route signed on one
+side only fails one of the two tests.
+
+**When a new route needs the mark**: when the action is the member's own decision and a session must not be
+able to take it, because every session holds the same `AGENT_TOKEN` the relay uses. Typical cases are writes
+to the member's memory, anything that publishes the member's work under their name, and switches that send
+their conversations elsewhere. Add the relay row with `sign` (or sign in the handler), wrap the Agent route in
+`memberorigin.Require`, and add the line to the list.
 
 - **Asymmetric, because the Agent cannot keep a secret from its sessions** (same uid, §7.2). The CP signs
   with an Ed25519 key derived from the token-signing master; the Agent is started with the public keys only
@@ -501,10 +531,20 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
 - **Rotation**: a workspace starts with the current and the next key, so raising
   `AF_MEMBER_ORIGIN_KEY_VERSION` by one keeps workspaces started under the previous version working; a
   second raise before they restart does not.
-- **Limits**: only these three routes are signed; the claude and muse imports still record the member as
-  author unsigned (#2014). The mark governs the Agent's routes, not the store's files, which a session can still write
-  directly; it is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP
-  is out of scope.
+- **Limits**:
+  - **Knowingly unsigned member actions.** The claude and muse memory imports still record the member as author
+    without the mark (#2014). The AWS confirm-before-use approval (`POST /aws-confirm/{id}/approve`) is not
+    signed either: it stops accidental and unnoticed use, not a session that sets out to get past it
+    ([decisions/0126](../decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.md) decision 6,
+    `SECURITY.md` "Known residual risks").
+  - **The mark protects routes, not files.** A session can write any file the Agent's uid can, so the
+    store's files and other state files are not covered. `~/.config/agent-fleet/ui-prefs.json` is one: the
+    mark on `PUT /env/ui-prefs` guards the route, and a session that edits the file directly is not stopped
+    by it. The switches the route guards today are the background memory review (removal tracked in #3440)
+    and Muse Code's contributor mode; for those, the mark keeps a session from using the route, not from
+    writing the file.
+  - It is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP is out of
+    scope.
 
 ## 7.6 Secrets and envelope encryption
 
@@ -513,7 +553,8 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 
 | Secret | Stored | Exposure |
 |---|---|---|
-| Git credentials and provider keys (GitHub, Bitbucket, Jira, opencode providers, MCP secrets, …) | **the encrypted store** `~/.config/agent-fleet/secrets.enc` (AES-256-GCM, 0600) in the workspace home | that user only. Git reads it through the credential helper (`workspace-agent cred`), which decrypts on demand and writes to stdout; other keys are injected into the process that needs them. **No plaintext file is created** |
+| Git credentials and provider keys (GitHub, Bitbucket, Jira, opencode providers, …) | **the encrypted store** `~/.config/agent-fleet/secrets.enc` (AES-256-GCM, 0600) in the workspace home | that user only. Git reads it through the credential helper (`workspace-agent cred`), which decrypts on demand and writes to stdout; other keys are injected into the process that needs them. **No plaintext file is created** |
+| A member's MCP server secrets (header and environment values) | the encrypted store, **and in plaintext (0600) in each agent CLI's own config file in the home** (`workspace/agent/internal/mcpreg/materialize*.go`), because the CLI has to read them | that user only. Those config files are in home backups and snapshots, and shredding the workspace DEK does not remove them. Secret storage for MCP is #1056 |
 | The agent's own credentials file | the agent's config directory, outside the home and outside the browser's reach (§7.2) | that user only |
 | System secrets — login client secrets, the master key (`AF_MASTER_KEY`), the cookie secret | environment files kept out of git; on AWS, SSM SecureStrings under `/af-cp/` (the database password is RDS's managed secret) | the CP only. **The master key is stored outside the data area and never included in a backup** — losing it is a crypto-shred |
 | Tenant secrets — a tenant IdP's or git OAuth app's client secret, MCP server credentials | the database, sealed with the tenant key | the CP only; never returned to the UI |
@@ -558,6 +599,27 @@ credentials as exposed and rotate them.
   home is confirmed from the Agent's report and then no longer receives the derived key. Vault is 📋
   ([decisions/0005](../decisions/0005-envelope-custodian.md), 2026-10-04 and 2026-10-10 addenda).
 
+### 7.6.1 Keys derived from the master key
+
+Policy: a **new** key derived from the master key is derived with HKDF-SHA256 (RFC 5869) from the master, with a label of its own (`af-<purpose>/v<N>`) as the `info` input, and is added to this list in the same change. Never reuse a key across purposes and never use the master digest itself as a key. The HMAC derivations below predate the policy and stay as they are, because changing one invalidates what it protects. `AF_COOKIE_SECRET` is a separate secret; its per-purpose cookie keys are described in `oauth.go` (`cookiePurpose`).
+
+| Label | Key for |
+|---|---|
+| `af-kek:<keyRef>` | per-tenant KEK of the local custodian (`custodian.go`) |
+| `<userKey>` (no label) | legacy per-member DEK (`dek.go`, `legacyDEK`) |
+| `af-token-signing-root/v<N>` | token signing root at `AF_TOKEN_SIGN_VERSION` >= 1 (`bridge_epoch.go`); the master itself at version 0 |
+| `af-git-token-sign/v1` | git HTTP token (`git_http.go`) |
+| `af-git-oauth-token-sign/v1` | Git OAuth bridge token (`git_oauth_bridge.go`) |
+| `af-memo-token-sign/v1` | memo token (`memo_bridge.go`) |
+| `af-schedule-token-sign/v1` | schedule token (`schedule_bridge.go`) |
+| `af-mcp-token-sign/v1` | MCP token (`internal/mcpsrv/mcp_server_bridge.go`) |
+| `af-docs-token-sign/v1` | docs token (`docs_bridge.go`) |
+| `af-engine-token-sign/v1` | engine token (`engine_token.go`) |
+| `af-aws-profiles-token-sign/v1` | AWS profiles token (`aws_profiles_bridge.go`) |
+| `af-gcp-profiles-token-sign/v1` | GCP profiles token (`gcp_profiles_bridge.go`) |
+| `af-branch-rules-token-sign/v1` | branch rules token (`tenant_branch_rules.go`) |
+| `af-member-origin-sign/v<N>` | member-origin Ed25519 seed (`member_origin.go`) |
+
 ## 7.7 Audit
 
 - The store is the audit log (`audit_log`, [06](06-data.md)), with an actor kind of
@@ -573,12 +635,22 @@ credentials as exposed and rotate them.
   (which record the token's id, with **the role resolved live at call time**).
 - **Irreversible admin actions record the request first** (`store.BeginIrreversible`):
   clean home, home-backup deletion, workspace destroy, membership remove and delete, tenant
-  delete, pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
+  delete, membership role change (`membership.role`, with `from=<old> to=<new>`),
+  pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
   internal-git repository delete and rename write `<action>.requested` before acting
   and **refuse with `503 audit_unavailable` when that write fails**, then `<action>` with the
   outcome and the answered status. A failed outcome write is logged, not returned: the action
   has happened and the request row still names who asked. Every other audit write stays
   best-effort after the fact.
+- Admin writes recorded after the fact include `tenant.create`, `member.limits`,
+  `tenant.slot_class` and `workspace.stop`. A PAT revocation is `pat.revoke` under the
+  tenant of the token's membership (the tenant `pat.create` used), so that tenant's
+  administrators see it. When an identity may no longer sign in, the automatic revocation
+  writes one row per revoked PAT (`pat.revoke`) or MCP OAuth grant (`mcp.oauth.grant`) with
+  actor kind `system` and the reason as detail, in the same transaction as the revocation.
+  `TestAdminWriteRoutesAreClassified` reads the route registrations from the syntax tree and fails
+  for an admin write route whose handler reaches no audit call carrying its action, unless it
+  has a commented exemption.
 - Read through `GET /api/admin/audit` and the Console, scoped by tenant and role.
 
 ## 7.8 Egress control 🚧

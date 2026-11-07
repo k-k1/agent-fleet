@@ -106,7 +106,9 @@ as git**, and it self-heals across rotation because it fetches each time.
 **Limits worth knowing:**
 
 - **Scope**: the token carries the device flow's scope. Most of `gh` works;
-  organisation-level calls may fail for want of `read:org`. There is no setting to
+  `gh pr edit` fails for want of `read:org` (it loads the PR over GraphQL, upstream
+  cli/cli#13575), on a personal repository too, and so can any call that reads a field needing `read:org`.
+  Workaround: `gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>`. There is no setting to
   widen it — a user who needs more pastes a token with more scope.
 - **GitHub Enterprise is not covered** — the wrapper injects a github.com token only.
 - **An explicit token wins**: if `GH_TOKEN` or `GITHUB_TOKEN` is already set, the

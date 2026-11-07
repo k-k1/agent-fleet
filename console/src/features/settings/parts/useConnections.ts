@@ -23,7 +23,7 @@ import type { ConnectionsStatus } from "../../../types/session.ts";
 // starting from null and waiting out the whole GET /connections again. It is only ever
 // replaced by a real answer (or set to {} when nothing was ever loaded), never cleared by a
 // failure; resetConnectionsCache() is for when the workspace it described is gone.
-const useConnectionsCache = create<{ conns: ConnectionsStatus | null }>(() => ({ conns: null }));
+const useConnectionsCache = create<{ conns: ConnectionsStatus | null; failed: boolean }>(() => ({ conns: null, failed: false }));
 
 // Request generation, at the same scope as the snapshot: the latest reload from ANY consumer
 // wins, and a reset invalidates every request still out, so a slow GET from an earlier mount
@@ -33,7 +33,7 @@ let connSeq = 0;
 
 export function resetConnectionsCache() {
   connSeq++;
-  useConnectionsCache.setState({ conns: null });
+  useConnectionsCache.setState({ conns: null, failed: false });
 }
 
 // Any path that takes the Agent away (stop, restart, recreate) clears the snapshot, whether or
@@ -51,13 +51,19 @@ useTenantStore.subscribe?.((s, prev) => {
 export function useConnections() {
   const bumpConn = useSettingsUI((s) => s.bumpConn);
   const conns = useConnectionsCache((s) => s.conns);
+  const failed = useConnectionsCache((s) => s.failed);
   const setConns = useCallback(
     (v: ConnectionsStatus | ((prev: ConnectionsStatus | null) => ConnectionsStatus)) =>
-      useConnectionsCache.setState((s) => ({ conns: typeof v === "function" ? v(s.conns) : v })),
+      useConnectionsCache.setState((s) => ({ conns: typeof v === "function" ? v(s.conns) : v, failed: false })),
     [],
   );
   const reload = useCallback(() => {
     const id = ++connSeq; // a newer reload wins over an older retry chain
+    // Nothing loaded and every retry failed: consumers still get {} (they treat it as "no
+    // data"), but `failed` tells the Agents tab this is not an answer, so it shows a retryable
+    // error instead of "not connected".
+    const giveUp = () =>
+      useConnectionsCache.setState((s) => (s.conns ? s : { conns: {}, failed: true }));
     const attempt = (retriesLeft: number) => {
       api("api/connections")
         .then((d) => {
@@ -67,16 +73,16 @@ export function useConnections() {
             return;
           }
           if (retriesLeft > 0) setTimeout(() => attempt(retriesLeft - 1), 1200);
-          else setConns((prev) => prev ?? {});
+          else giveUp();
         })
         .catch(() => {
           if (id !== connSeq) return;
           if (retriesLeft > 0) setTimeout(() => attempt(retriesLeft - 1), 1200);
-          else setConns((prev) => prev ?? {});
+          else giveUp();
         });
     };
     attempt(2);
     bumpConn();
   }, [bumpConn, setConns]);
-  return { conns, reload };
+  return { conns, reload, failed };
 }

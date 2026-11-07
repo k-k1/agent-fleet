@@ -247,7 +247,7 @@ func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 			Prov: auth.GoogleProviderID, Sub: "g-sub-1",
 		})
 		r := httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
-		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)})
 		w := httptest.NewRecorder()
 		gate.ServeHTTP(w, r)
 		if w.Code != http.StatusOK {

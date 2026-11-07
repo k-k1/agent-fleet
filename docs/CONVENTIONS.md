@@ -327,3 +327,55 @@ Terms are decided by the "Screen" column of `guide/ref/glossary.md`. This sectio
 
 Apply these rules in the PR that edits the text for another reason. A notation-only change
 ships separately for labels and for sentences.
+
+## 12. Task pages and screenshots
+
+The guide is being rewritten into short task pages for the public docs site (ADR 0131). The page map in
+`k-k1/agent-fleet-site` (`docs/research/page-map.ja.md`) says which page every section of `guide/` and of the shipped
+runbooks goes to. A page written for the new structure follows the rules below. The old chapters keep their form
+until they are rewritten.
+
+### One page, one task
+
+- **One feature per page**, even when the page is short. Do not merge small pages to save navigation.
+- **The title is what the reader wants to do**, as a verb phrase: "Use AWS SSO" (「AWS SSO を使う」), not "AWS" and
+  not a list of features.
+- **The lead** is one or two sentences on what the reader can do afterwards.
+- **How it works** (「全体像」) comes next: a two-column table, *what you do* / *what the agent does*. Agents use Agent
+  Fleet's tools, so the reader needs this split before anything else. In Japanese, write 「全体像」, not 「しくみ」.
+- Then, as far as they apply: **Set it up** (with the screen), **Use it** (including what appears on screen, such as
+  a login toast), **Use it more safely**, **When it goes wrong** (by symptom), **Related**.
+- **Leave out** preamble ("your company's…"), how secrets are handled (that is one cross-cutting page, "How
+  credentials are handled"), spec edge cases (they go to `guide/ref/`) and design reasons (they stay in
+  `docs/decisions/`).
+- **Material for contributors is not published.** A procedure that only someone changing Agent Fleet runs, such as
+  verifying a template on real infrastructure, belongs in `docs/`, even when it sits in a runbook today.
+- UI labels are quoted from the catalogues (§4, §5).
+
+### Screenshots
+
+- Take them with `console/scripts/shots/`: the real Console bundle against fictional fixtures, so they can be retaken
+  every release and never show a tenant, an address or a real account ID. Scenes for the guide are marked
+  `guide: true`.
+- Light theme.
+- **Crop to the component and the control that opens it**: a popover with its badge, a toast, a dialog. The whole bar
+  or pane around it is noise.
+
+### How a page is produced
+
+1. Agree the page's flow with the user: about ten lines of what the reader does and sees.
+2. Collect the facts from the locale catalogues, the components, the existing guide and the code.
+3. Take the screenshots.
+4. Write the Japanese page; the user reviews in Japanese.
+5. A different model fact-checks the page against the sources.
+6. The user reads it.
+7. Write English from the English catalogues, check the two languages against each other, and land both in one
+   change. English stays canonical (§5).
+
+### Moving a page
+
+A page that moves, or a section that moves out of a page, gets a row in `guide/_redirects.tsv` in the same change:
+`old<TAB>new`, both English and relative to `guide/`. The Japanese page follows its row. Then run
+`python3 scripts/docs-check.py --only redirects`. It lists every link, policy note, topic note, Go string, Console
+string and runbook that still uses the old path, with the new path to put there. Fix them in the same change. Frozen
+records (`docs/decisions/`, `docs/log/`, published release notes) keep the old path.

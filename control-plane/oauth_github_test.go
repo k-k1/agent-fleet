@@ -161,7 +161,7 @@ func TestGitHubLoginUsesTheNumericIDAndPrimaryVerifiedEmail(t *testing.T) {
 	if ck == nil {
 		t.Fatal("no session cookie")
 	}
-	payload, ok := cfg.verifyCookie(ck.Value)
+	payload, ok := cfg.verifyCookie(cookiePurposeSession, ck.Value)
 	if !ok {
 		t.Fatal("session cookie does not verify")
 	}
@@ -418,7 +418,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 		Email: "yamada@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(),
 		Prov: auth.GithubProviderID, Sub: "4242",
 	})
-	cookie := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
+	cookie := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)}
 	gate := cfg.authGate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("let the request through to the handler with nothing to decide on")
 	}))
@@ -455,7 +455,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 		Prov: auth.GithubProviderID, Sub: "4242",
 	})
 	r = httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(cookiePurposeSession, b)})
 	w = httptest.NewRecorder()
 	gate.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {

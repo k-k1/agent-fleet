@@ -177,6 +177,18 @@ VOICEVOX はこのゲートウェイの後ろではない: Console が CP に頼
   [guide/ref/limits](../../guide/ref/limits.ja.md)。
 - **監査はしない**（通常の読み取りはしない、`proxy.go`）。一括の書き出しを監査すべきかは未決
   （decisions/0111 の状態行）。
+- **ハードリンクの検査は zip だけ。** 通常のファイル読み取り（`/fs/file`・`/fs/download`・
+  `/fs/imagesize`・サムネイルの先読み）はシンボリックリンクと通常ファイル以外を断るが、
+  `st_nlink > 1` は断**らない**: ハードリンクは作業ツリーでは普通にあり（パッケージマネージャのストア、
+  git オブジェクト）、断ると通常の閲覧が壊れる。拒否リストのファイルへのリンクは、同じ uid で動くコードなら
+  そのファイルを直接読めるので防御の上積みにしかならない。一括の書き出しだけ厳しい規則を保つのは、
+  人がファイルを 1 つずつ指名せずにフォルダ配下をすべて読む唯一の経路だから。
+- **変更系は拒否エントリの祖先も断る。** 名前変更（両端）・削除・mkdir・新規ファイル・アップロードは、
+  拒否エントリ・その子孫・**それを含むフォルダ**（`.config`・`.local`・`.local/share`・閲覧ルート）に
+  403 を返す。書かれたパスと、シンボリックリンク解決後のパスの両方で判定する（`fsWriteRefused`）。
+  アップロードと画像生成の `out_dir` はリンクになっている送り先フォルダも断る。アップロードは
+  `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` で開いたディレクトリ fd 経由で書き、生成した画像とそのサイドカーも
+  同じ: フォルダはジョブを積んだ時のパスを信用せず、画像を保存する時点で開く。
 
 ## 7.3 L1 Console 認証（AUTH 3 モード）
 
@@ -360,10 +372,25 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 ### 7.5.1 メンバー由来の印
 
 メンバー自身の Console からの要求だけを受け付けるべきルートには、CP が印を付ける
-（[decisions/0113](../decisions/0113-member-origin-mark.ja.md)）。現在はメンバー専用のメモリ書き込み
-`entries/pin`・`entries/revert`（忘れさせるも含む）・`entries/member-save`・`entries/project-move`（作業コピーを失った
-プロジェクトのメモリの移動、[decisions/0108](../decisions/0108-af-owned-agent-memory.ja.md) の 2026-10-14 の注）・
-`entries/purge`（履歴の消去、#1982）が対象。
+（[decisions/0113](../decisions/0113-member-origin-mark.ja.md)）。手書きの一覧はずれるので、この章はルートを
+列挙しない。正はコードで、3 か所ある。
+
+- `control-plane/relays*.go` の `sign` 付きのリレー行。
+- CP のハンドラが直接署名するもの（リレー経路以外の `memberOriginSign`：作業項目のコメントとマージ、
+  セッション引き継ぎの push）。
+- Agent 側では、`workspace/agent/routes.go` で `memberorigin.Require` の内側に登録されたルートと、
+  `PUT /env/ui-prefs` の条件付き検査（`ui_prefs.go`。メンバーの判断であるスイッチを入れる書き込みのときだけ印を求める）。
+
+両方のモジュールが突き合わせる、チェックイン済みの一覧は
+`workspace/agent/internal/memberorigin/signed_routes.txt` ひとつ
+（`control-plane` の `TestSignedRoutesMatchRelayRows`、`workspace/agent` の
+`TestSignedRoutesMatchRequireRegistrations`。2 つのモジュールは互いを import できないので、同じファイルをそれぞれが
+検査する）。片側だけ署名するルートがあれば、どちらかのテストが落ちる。
+
+**新しいルートに印が要るとき**：その操作がメンバー自身の判断で、セッションにやらせてはいけないとき。どのセッションも
+リレーと同じ `AGENT_TOKEN` を持つため。典型は、メンバーのメモリへの書き込み、メンバーの名前で成果を公開する操作、
+会話を外へ送るスイッチ。`sign` 付きのリレー行を足し（またはハンドラで署名し）、Agent のルートを
+`memberorigin.Require` で包み、一覧に 1 行足す。
 
 - **非対称にするのは、Agent がセッションに対して秘密を守れないから**（同じ uid、§7.2）。CP はトークン署名
   マスターから導出した Ed25519 鍵で署名し、Agent は公開鍵だけを持って起動する（`AF_MEMBER_ORIGIN_KEYS` と
@@ -405,9 +432,18 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   これらのルートで 503。印がない、または `AGENT_TOKEN` / `X-AF-Relay` だけなら 403。
 - **ローテーション**：Workspace は現在と次の鍵を持って起動するので、`AF_MEMBER_ORIGIN_KEY_VERSION` を 1 つ
   上げても直前の版で起動した Workspace はそのまま使える。再起動前に 2 回目を上げると使えない。
-- **限界**：署名するのはこの 3 ルートだけで、claude と muse の取り込みはまだ署名なしで作者をメンバーと記録
-  する（#2014）。印が決めるのは Agent のルートで、ストアのファイルではない（セッションは今も直接書ける）。強さは
-  CP のメンバー認証と同じ（`AUTH=dev` では何も足さない）。侵害された CP は対象外。
+- **限界**：
+  - **意図して署名していないメンバーの操作。** claude と muse のメモリ取り込みは、印なしで作者をメンバーと記録する
+    （#2014）。AWS の使用前確認の承認（`POST /aws-confirm/{id}/approve`）も署名していない。止めるのは不注意や
+    気づかない利用であり、突破しようとするセッションではない
+    （[decisions/0126](../decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.ja.md) の決めたこと 6、
+    `SECURITY.md` の「Known residual risks」）。
+  - **印が守るのはルートで、ファイルではない。** セッションは Agent の uid が書けるファイルを何でも書けるので、
+    ストアのファイルやほかの状態ファイルは対象外。`~/.config/agent-fleet/ui-prefs.json` がその一例で、
+    `PUT /env/ui-prefs` の印はルートを守るだけであり、ファイルを直接書き換えるセッションは止められない。
+    今このルートが守るスイッチはバックグラウンドのメモリレビュー（廃止は #3440）と Muse Code の contributor モード。
+    印が防ぐのはセッションがルートを使うことで、ファイルへの書き込みではない。
+  - 強さは CP のメンバー認証と同じ（`AUTH=dev` では何も足さない）。侵害された CP は対象外。
 
 ## 7.6 シークレット管理と封筒暗号
 
@@ -416,7 +452,8 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
 
 | シークレット | 保管 | 露出範囲 |
 |-------------|------|----------|
-| git 資格情報とプロバイダのキー（GitHub・Bitbucket・Jira・opencode のプロバイダ・MCP の秘密など） | Workspace home の**暗号化ストア** `~/.config/agent-fleet/secrets.enc`（AES-256-GCM・0600） | 当該ユーザーのみ。git は資格情報ヘルパ（`workspace-agent cred`）が都度復号して stdout に出したものを読み、他のキーは必要なプロセスへ注入する。**平文ファイルを作らない** |
+| git 資格情報とプロバイダのキー（GitHub・Bitbucket・Jira・opencode のプロバイダなど） | Workspace home の**暗号化ストア** `~/.config/agent-fleet/secrets.enc`（AES-256-GCM・0600） | 当該ユーザーのみ。git は資格情報ヘルパ（`workspace-agent cred`）が都度復号して stdout に出したものを読み、他のキーは必要なプロセスへ注入する。**平文ファイルを作らない** |
+| メンバーの MCP サーバーの秘密（ヘッダと環境変数の値） | 暗号化ストア、**および各エージェント CLI 自身の設定ファイルへ平文（0600）で home 内に**（`workspace/agent/internal/mcpreg/materialize*.go`。CLI が読む必要があるため） | 当該ユーザーのみ。これらの設定ファイルは home のバックアップとスナップショットに入り、Workspace の DEK を捨てても消えない。MCP の秘密の保管は #1056 |
 | エージェント自身の資格情報ファイル | エージェントの設定ディレクトリ（home 外・ブラウザの範囲外、§7.2） | 当該ユーザーのみ |
 | システム秘密——ログインの client secret・マスター鍵（`AF_MASTER_KEY`）・cookie secret | git 管理外の env ファイル。AWS では `/af-cp/` 配下の SSM SecureString（DB パスワードは RDS 管理の secret） | CP のみ。**マスター鍵はデータ領域の外で保管し、バックアップに含めない**＝失えば crypto-shred |
 | テナントの秘密——テナント IdP や git OAuth アプリの client secret、MCP サーバーの資格情報 | DB（テナント鍵で封印） | CP のみ。UI へは返さない |
@@ -453,6 +490,27 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   導いた鍵のまま）。ホームは Agent の報告で確認され、その後は導いた鍵を受け取らない。
   Vault は 📋（[decisions/0005](../decisions/0005-envelope-custodian.ja.md) の 2026-10-04・2026-10-10 追記）。
 
+### 7.6.1 master 鍵から導く鍵
+
+方針: master 鍵から導く**新しい**鍵は、専用のラベル（`af-<用途>/v<N>`）を `info` にした HKDF-SHA256（RFC 5869）で master から導き、同じ変更でこの一覧に加えます。鍵を用途をまたいで使い回さず、master のダイジェストそのものを鍵にしません。下の HMAC による導出は方針より前からあるもので、変えると守っているものが無効になるため、そのままにします。`AF_COOKIE_SECRET` は別の秘密で、用途ごとの cookie 鍵は `oauth.go`（`cookiePurpose`）にあります。
+
+| ラベル | 用途 |
+|---|---|
+| `af-kek:<keyRef>` | per-tenant KEK of the local custodian (`custodian.go`) |
+| `<userKey>` (no label) | legacy per-member DEK (`dek.go`, `legacyDEK`) |
+| `af-token-signing-root/v<N>` | token signing root at `AF_TOKEN_SIGN_VERSION` >= 1 (`bridge_epoch.go`); the master itself at version 0 |
+| `af-git-token-sign/v1` | git HTTP token (`git_http.go`) |
+| `af-git-oauth-token-sign/v1` | Git OAuth bridge token (`git_oauth_bridge.go`) |
+| `af-memo-token-sign/v1` | memo token (`memo_bridge.go`) |
+| `af-schedule-token-sign/v1` | schedule token (`schedule_bridge.go`) |
+| `af-mcp-token-sign/v1` | MCP token (`internal/mcpsrv/mcp_server_bridge.go`) |
+| `af-docs-token-sign/v1` | docs token (`docs_bridge.go`) |
+| `af-engine-token-sign/v1` | engine token (`engine_token.go`) |
+| `af-aws-profiles-token-sign/v1` | AWS profiles token (`aws_profiles_bridge.go`) |
+| `af-gcp-profiles-token-sign/v1` | GCP profiles token (`gcp_profiles_bridge.go`) |
+| `af-branch-rules-token-sign/v1` | branch rules token (`tenant_branch_rules.go`) |
+| `af-member-origin-sign/v<N>` | member-origin Ed25519 seed (`member_origin.go`) |
+
 ## 7.7 監査
 
 - 器は監査ログ（`audit_log`・[06](06-data.ja.md)）。actor の種類は user / admin / mcp / system、
@@ -466,11 +524,19 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   記録し、**役割は呼び出し時に live で解決**）。
 - **取り消せない管理操作は依頼を先に記録する**（`store.BeginIrreversible`）: ホームのクリーン、
   ホームのバックアップ削除、ワークスペースの破棄、メンバーシップの除外と削除、テナントの削除、
+  メンバーシップの役割変更（`membership.role`・detail は `from=<旧> to=<新>`）、
   プールのスロット終了、エンジンのモデルの purge、テナントのサインイン方法（IdP）の削除、
   内蔵 git のリポジトリの削除と改名は、実行前に `<action>.requested` を書き、
   **書けなければ `503 audit_unavailable` で断る**。終わったら `<action>` に結果と応答したステータスを
   書く。結果の書き込みの失敗はログに出して返さない（操作は済んでおり、依頼の行が誰の依頼かを残す）。
   それ以外の監査の書き込みは、これまでどおり事後のベストエフォート。
+- 事後に記録する管理操作には `tenant.create`・`member.limits`・`tenant.slot_class`・`workspace.stop`
+  がある。PAT の失効は、トークンのメンバーシップのテナント（`pat.create` と同じテナント）の下に
+  `pat.revoke` として記録し、そのテナントの管理者に見える。identity がサインインできなくなったときの
+  自動失効は、失効した PAT（`pat.revoke`）と MCP OAuth の grant（`mcp.oauth.grant`）を 1 件ずつ、
+  actor の種類 `system`・理由を detail にして、失効と同じトランザクションで書く。
+  `TestAdminWriteRoutesAreClassified` はルート登録を構文木から読み、ハンドラがその action を持つ監査呼び出しに
+  到達しない admin の書き込みルートを（コメント付きの除外がない限り）落とす。
 - 読み取り: `GET /api/admin/audit` と Console。テナントと役割で絞る。
 
 ## 7.8 egress 統制 🚧

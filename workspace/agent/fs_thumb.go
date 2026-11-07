@@ -569,16 +569,39 @@ const warmThumbWorkers = 2
 // warmThumbFile fills the cache for one file, best effort. Safe to call from anywhere: it
 // opens, decodes and drops the bytes — the value is the cache entry left behind.
 func warmThumbFile(full string, edge int) {
-	f, err := os.Open(full)
-	if err != nil {
+	f, fi, ok := openThumbSource(full)
+	if !ok {
 		return
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || fi.IsDir() || inThumbCache(full) {
+	if inThumbCache(full) {
 		return
 	}
 	thumbnail(f, full, fi.Size(), fi.ModTime(), edge, modeDownscale)
+}
+
+// openThumbSource opens a picture to thumbnail through the same gate as /fs/file: the denylist,
+// no symlink on the way, regular files only. The warm-up writes derived bytes into a cache
+// outside the denylist, so a source the file API would refuse must never be decoded here.
+func openThumbSource(full string) (*os.File, os.FileInfo, bool) {
+	path, aerr := resolveFDReadPath(full)
+	if aerr != nil {
+		return nil, nil, false
+	}
+	opened, aerr := openFDFile(path)
+	if aerr != nil {
+		return nil, nil, false
+	}
+	// Keep only the file: the fds that pinned its directory are no longer needed.
+	f := opened.file
+	opened.file = nil
+	opened.close()
+	fi, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, false
+	}
+	return f, fi, true
 }
 
 // warmThumbList decodes a named set of files into the cache, on the same two workers and for
@@ -631,8 +654,8 @@ func warmThumbDir(full string, edge int) {
 	}
 	cands := make([]cand, 0, len(ents))
 	for _, e := range ents {
-		if e.IsDir() || !thumbDecodable(e.Name()) {
-			continue
+		if !e.Type().IsRegular() || !thumbDecodable(e.Name()) {
+			continue // symlinks and special files are never thumbnailed
 		}
 		fi, err := e.Info()
 		if err != nil || fi.Size() < thumbMinSourceBytes {
@@ -751,13 +774,12 @@ func warmGeneratedFile(full string) {
 // warmPreviewFile fills the `preview` entry of every distinct factor previewSteps come to for
 // this picture — one decode for a generated 832x1216, two for a 1024x1536.
 func warmPreviewFile(full string) {
-	f, err := os.Open(full)
-	if err != nil {
+	f, fi, ok := openThumbSource(full)
+	if !ok {
 		return
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || fi.IsDir() || inThumbCache(full) {
+	if inThumbCache(full) {
 		return
 	}
 	cfg, _, err := image.DecodeConfig(f)

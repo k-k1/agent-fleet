@@ -15,6 +15,7 @@ interface TrustedView {
   source: "admin" | "env" | "default";
   fallback: string[];
   fallback_source: "env" | "default";
+  host_only?: string[];
   served: boolean;
   unreadable?: boolean;
 }
@@ -101,6 +102,11 @@ export function McpTrustedHostsView() {
         </div>
         <p className="muted">{tr("admin.mcptrust_note")}</p>
         {data?.unreadable && <p className="form-err">{tr("admin.mcptrust_unreadable")}</p>}
+        {data && data.host_only && data.host_only.length > 0 && (
+          <p className="form-err" role="alert">
+            {tr("admin.mcptrust_host_only_warn", { hosts: data.host_only.join(", ") })}
+          </p>
+        )}
         {data && !data.served && <p className="form-err">{tr("admin.mcptrust_not_served")}</p>}
         <label className="brand-field">
           {tr("admin.mcptrust_hosts")}

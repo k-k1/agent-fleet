@@ -2,8 +2,9 @@
 
 English | [日本語](0131-public-docs-site.ja.md)
 
-- Status: **proposed** (2026-11-07). A pilot exists; nothing is merged. The pilot's code and draft pages are on the
-  `docs/public-docs-site-pilot` branch of `k-k1/agent-fleet-site`. Everything below marked *(pilot)* was built and
+- Status: **accepted** (2026-11-07, the day it was proposed, once the page map was agreed; see the addendum). The
+  site is not deployed yet. The pilot's code, draft pages and the page map are in `k-k1/agent-fleet-site` pull
+  request #14 (branch `docs/3463-page-map`). Everything below marked *(pilot)* was built and
   looked at there: the site was rendered from `v0.41.0` and checked with headless Chromium.
   Follow-ups: #3463 (shots stub fix: #3464).
 - Related: [0064](0064-docs-three-audiences.md) (the three reader shelves, `guide/` is what ships) /
@@ -130,3 +131,32 @@ The user agreed this model on the AWS page *(pilot)*, after one rejected draft.
 - **Site-only content written separately from `guide/`**: two sources drift, and the Console's guide stays unreadable.
 - **Converting without restructuring**: the pilot's first round rendered fine, and the user still could not find the
   point.
+
+## Addendum (2026-11-07) — accepted with the page map; the runbooks are split too
+
+**The decisions above do not change.** The user agreed the map from the current documents to the new pages and
+settled the points the record had left open.
+
+- **The page map** is `docs/research/page-map.ja.md` in `k-k1/agent-fleet-site`. It assigns every H1–H3 heading of
+  `guide/` and of the six shipped runbooks (748 headings) to one of 227 pages. Its rules are a TSV, and
+  `docs/scripts/page_map.py` fails when a heading has no rule or a rule matches no heading. The redirect map in
+  *Consequences* is derived from it.
+- **One feature per page, even when the page is small.** That gives 227 pages per language, against the estimate of
+  about 110 above. Twelve pages start from fewer than 200 words of old text; they are not merged.
+- **Oversized chapters are split further.** For example, the inference-engine section of `operate/07-engines` becomes
+  three pages: run the engines, take models in, and read their state and history. `guide/ref/agents.md` stays one
+  page, because a reference may be long.
+- **`member/lite` is spread over the task pages.** Only an entry page for readers who do not use a terminal remains.
+- **`guide/member/` becomes `guide/user/`**, the name the pilot already uses. `admin/`, `operate/` and `ref/` keep
+  their names.
+- **The runbooks are split by the same model.** They ship inside the guide (`stage-docs.sh` copies them), and the ECS
+  runbook alone was 28,773 words on one page. ECS becomes 20 pages and Kubernetes 9. The sections of the compose and
+  native runbooks that repeat a general task join that task's page under `operate/`. WSL and single EC2 stay one page
+  each. In the repository a split runbook becomes a directory whose `README.md` is the index, and `stage-docs.sh`
+  copies the directory.
+- **Material for contributors is not published.** The ECS prove-out sequence, its E2E completion gate and the
+  Kubernetes live harness verify the templates themselves; someone who only deploys never runs them. They move to
+  `docs/` when the runbooks are split. This is ADR 0064's split, applied to the runbooks: someone using Agent Fleet,
+  including whoever deploys it, against someone changing it.
+- **The writing and screenshot rules of §4, §5 and §7 now live in `docs/CONVENTIONS.md` §12.**
+

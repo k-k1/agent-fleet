@@ -15,6 +15,16 @@ Once GitHub is connected, `gh` in a session is already signed in. Once Bitbucket
 `bkt pipeline` and so on need no `auth login`. Both use your saved connection and renew it
 the way git does.
 
+**GitHub: `gh pr edit` can fail.** The built-in GitHub OAuth App token has the scopes `repo workflow`
+only, and `gh pr edit` loads the pull request in a way that can need `read:org`, so it may end with
+`GraphQL: … requires one of the following scopes: ['read:org']`, even on your own personal
+repository. The token settings page the message links to does not apply to this token. Edit the
+pull request through the REST API instead, which needs only `repo`:
+`gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -F body=@<file>` (add `-f title="…"` to change
+the title). This avoids the `read:org` error; a token you pasted with `read:org` does not hit that
+one, though `gh pr edit` can still fail for other reasons (for example, no access to a team
+reviewer on the pull request).
+
 - **Scopes**: `bkt` can do only what the connection was granted. For pull requests and
   pipelines the Bitbucket OAuth app needs `repository`, `pullrequest:write`, `pipeline` (read)
   and `account`, plus `pipeline:write` to start or stop a pipeline; a pasted API token needs the
@@ -196,6 +206,10 @@ replies.
 - **Driving from chat**: turn on **"Reply to steer"** (opt-in) and replies in the thread become input to that
   session as-is. Questions can be answered with choice buttons, plan approvals with "Approve / Reject" buttons,
   and permission requests with "Allow / Deny" buttons (button coverage varies by agent kind).
+  Replies are accepted only for the session kinds that can receive messages from other sessions: a reply to a
+  shell or SSM session is refused with a note in the thread and never typed into the terminal. Chat traffic
+  does not pass through your tenant's allowed-networks restriction (it comes from your bot, not a browser),
+  so that refusal is what keeps a chat reply from reaching a raw terminal.
 - **Fleet operator**: write in the standing thread "🛰 Fleet Operator" to talk with the
   [11 Running many sessions](11-many-sessions.md) from chat (the same conversation as the operator on the Console
   side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button

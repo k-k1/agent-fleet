@@ -1683,6 +1683,149 @@ def check_tables(files: list[str], f: Findings) -> None:
                 )
 
 
+REDIRECTS = os.path.join(GUIDE, "_redirects.tsv")
+
+# Where a path into guide/ is written outside guide/ itself. All of these are read by
+# someone who follows the path literally: the policy and topic notes by every agent, the
+# Go error text and the Console by users, the runbooks by operators. docs/decisions,
+# docs/log and the published release notes are frozen records and keep the path they
+# were written with.
+REDIRECT_POINTER_ROOTS = (
+    ("workspace/workspace-notes.md", ()),
+    ("workspace/notes", (".md",)),
+    ("workspace/agent", (".go", ".md", ".tsv")),
+    ("control-plane", (".go",)),
+    ("console/src", (".ts", ".tsx")),
+    ("deploy", (".md",)),
+    ("docs/build", (".md",)),
+)
+
+
+def load_redirects(f: Findings) -> list[tuple[int, str, str]]:
+    """Read guide/_redirects.tsv as (line number, old, new), both relative to guide/.
+
+    A row names the English page; the Japanese counterpart (`X.ja.md`) is redirected the
+    same way without a row of its own, so the two languages cannot drift apart.
+    """
+    if not os.path.exists(REDIRECTS):
+        return []
+    rows = []
+    with open(REDIRECTS, encoding="utf-8") as fh:
+        for n, line in enumerate(fh, 1):
+            line = line.rstrip("\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            cols = line.split("\t")
+            if len(cols) != 2 or not all(cols):
+                f.errors.append(f"guide/_redirects.tsv:{n}: want two tab-separated columns, old and new")
+                continue
+            rows.append((n, cols[0], cols[1]))
+    return rows
+
+
+def check_redirects(files: list[str], f: Findings) -> None:
+    """Does every moved page leave a working redirect, and does nothing still use the old path?
+
+    Pages move when the guide is rewritten into task pages (ADR 0131). An old path lives
+    on in places no link checker follows: the policy and topic notes every agent reads,
+    Go error text, Console strings, runbooks, and readers' bookmarks. The redirect map
+    keeps the bookmarks working (the docs site turns it into HTTP redirects), and this
+    check turns every other leftover into an error that names the new path, so moving a
+    page cannot silently strand a pointer.
+
+    A row is `old<TAB>new`. `old` is a page that no longer exists, or `page.md#anchor`
+    for a section that moved out of a page that still does. `new` must exist, with its
+    anchor if it has one, and must not itself be redirected (no chains).
+    """
+    rows = load_redirects(f)
+    if not rows:
+        return
+    olds = {old for _, old, _ in rows}
+    pairs = []
+    for n, old, new in rows:
+        where = f"guide/_redirects.tsv:{n}"
+        for path in (old, new):
+            if not path.split("#")[0].endswith(".md") or path.endswith(".ja.md") or ".." in path:
+                f.errors.append(f"{where}: '{path}' must be an English .md page relative to guide/")
+        if sum(o == old for _, o, _ in rows) > 1:
+            f.errors.append(f"{where}: '{old}' is redirected more than once")
+        old_page, _, old_anchor = old.partition("#")
+        new_page, _, new_anchor = new.partition("#")
+        for lang_old, lang_new in ((old_page, new_page), (counterpart(old_page), counterpart(new_page))):
+            if not old_anchor and os.path.exists(os.path.join(GUIDE, lang_old)):
+                f.errors.append(f"{where}: guide/{lang_old} still exists; a page that moved is removed")
+            target = os.path.join(GUIDE, lang_new)
+            if not os.path.exists(target):
+                f.errors.append(f"{where}: guide/{lang_new} does not exist")
+            elif new_anchor and lang_new == new_page and new_anchor not in heading_slugs(target):
+                f.errors.append(f"{where}: guide/{new_page} has no heading with the id '{new_anchor}'")
+        if new in olds or new_page in olds:
+            f.errors.append(f"{where}: '{new}' is itself redirected; point at the final page")
+        for lang_old, lang_new in ((old, new), (counterpart(old_page) + old[len(old_page):],
+                                                counterpart(new_page) + new[len(new_page):])):
+            # A path ends at a character that cannot continue it; `#` stays in, so that
+            # a page-level row does not also fire on `page.md#anchor` of a section row.
+            pairs.append((re.compile(r"(?<![A-Za-z0-9_./-])(?:guide/)?" + re.escape(lang_old)
+                                     + (r"(?![A-Za-z0-9_.-])" if old_anchor else r"(?![A-Za-z0-9_.#-])")),
+                          lang_old, lang_new))
+
+    candidates = list(files)
+    for rel_root, exts in REDIRECT_POINTER_ROOTS:
+        base = os.path.join(ROOT, rel_root)
+        if os.path.isfile(base):
+            candidates.append(base)
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            # testdata holds goldens generated from the Go text that is scanned here;
+            # regenerating them follows from fixing the source.
+            dirnames[:] = [d for d in dirnames if d not in ("node_modules", "testdata")]
+            candidates += [os.path.join(dirpath, n) for n in filenames if n.endswith(exts)]
+    # Markdown links are relative (`08-terminal.md`, `../member/08-terminal.md`), so they
+    # are resolved against the linking file and compared as guide-relative paths.
+    moved = {}
+    for _, old, new in rows:
+        old_page, _, old_anchor = old.partition("#")
+        new_page, _, new_anchor = new.partition("#")
+        moved[(old_page, old_anchor)] = new
+        moved[(counterpart(old_page), old_anchor)] = counterpart(new_page) + (f"#{new_anchor}" if new_anchor else "")
+    frozen = (os.path.join(DOCS, "decisions") + os.sep, os.path.join(DOCS, "log") + os.sep,
+              os.path.join(ROOT, "deploy", "release", "notes") + os.sep)
+    for path in sorted(set(candidates)):
+        if path.startswith(frozen) or path == REDIRECTS:
+            continue
+        body = read(path)
+        reported: set[int] = set()  # lines already reported, so a link is not reported again as text
+        if path.endswith(".md"):
+            for m in LINK_RE.finditer(body):
+                target = m.group(2)
+                if target.startswith(("http://", "https://", "mailto:", "#", "/")):
+                    continue
+                page, _, anchor = target.partition("#")
+                resolved = os.path.normpath(os.path.join(os.path.dirname(path), page))
+                if not resolved.startswith(GUIDE + os.sep):
+                    continue
+                key = os.path.relpath(resolved, GUIDE).replace(os.sep, "/")
+                new = moved.get((key, anchor))
+                if not new and moved.get((key, "")):
+                    # The whole page moved, so its headings moved with it.
+                    new = moved[(key, "")] + (f"#{anchor}" if anchor else "")
+                if new:
+                    line = body.count("\n", 0, m.start()) + 1
+                    reported.add(line)
+                    f.errors.append(f"{rel(path)}:{line}: link to '{key}{'#' + anchor if anchor else ''}' "
+                                    f"moved to '{new}' (guide/_redirects.tsv)")
+        for rx, old, new in pairs:
+            if old.split("#")[0].rsplit("/", 1)[-1] not in body:
+                continue
+            for m in rx.finditer(body):
+                line = body.count("\n", 0, m.start()) + 1
+                if line in reported:
+                    continue
+                reported.add(line)
+                f.errors.append(f"{rel(path)}:{line}: '{old}' moved to '{new}' (guide/_redirects.tsv); "
+                                "point at the new path")
+
+
 def check_emphasis(files: list[str], f: Findings) -> None:
     """Does every `**` render as bold on GitHub, rather than as raw asterisks?
 
@@ -2048,6 +2191,8 @@ def main() -> int:
         check_notes(f)
     if run("tables"):
         check_tables(files + root, f)
+    if run("redirects"):
+        check_redirects(files + root, f)
     if run("emphasis"):
         check_emphasis(files, f)
     if run("labels"):
