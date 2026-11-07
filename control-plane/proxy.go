@@ -320,7 +320,9 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	session := r.URL.Query().Get("session")
 	// Presence counts "a human is touching it", not "a socket exists" (docs/log/75 P3).
 	// noteInput is called only when the browser→agent relay below sees a keystroke frame.
-	releasePresence, noteInput, err := a.mgr.trackWorkspaceTerminal(r.Context(), res.ws.ID, session)
+	// A Console that marks its automatic reconnect does not make the new socket count as
+	// a human arriving; an unmarked (first or older-Console) attach does, as before.
+	releasePresence, noteInput, err := a.mgr.trackWorkspaceTerminal(r.Context(), res.ws.ID, session, terminalAutoReconnect(r))
 	if err != nil {
 		writeAPIErr(w, workspaceActivityAPIError(err))
 		return
@@ -381,7 +383,7 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 
 	errc := make(chan error, 2)
 	go relay(up, down, errc, nil)       // agent -> browser
-	go relay(down, up, errc, noteInput) // browser -> agent; only keystrokes count as presence
+	go relay(down, up, errc, noteInput) // browser -> agent; only keystrokes count as presence (terminal replies are relayed but not counted)
 	<-errc                              // first side to close ends the bridge
 }
 
@@ -393,6 +395,15 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 // forgotten tab keeping the workspace warm forever.
 type terminalFrame struct {
 	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
+// terminalAutoReconnect reports whether the Console marked this socket as its own
+// automatic reconnect (?reconnect=1: heartbeat zombie recovery, connect-stall retry,
+// focus recovery) rather than a pane a human just opened. The marker is advisory and
+// only ever lowers presence; an older Console never sends it.
+func terminalAutoReconnect(r *http.Request) bool {
+	return r.URL.Query().Get("reconnect") == "1"
 }
 
 func isTerminalInput(mt int, data []byte) bool {
@@ -404,6 +415,21 @@ func isTerminalInput(mt int, data []byte) bool {
 		return false
 	}
 	return f.Type == "input"
+}
+
+// isTerminalPresence is isTerminalInput minus the frames xterm.js writes by itself
+// (isAutomaticTerminalReply). The bytes are still relayed unchanged; only the presence
+// clock skips them. A frame that does not parse, or carries anything beyond recognised
+// replies, counts.
+func isTerminalPresence(mt int, data []byte) bool {
+	if mt != websocket.TextMessage {
+		return false
+	}
+	var f terminalFrame
+	if json.Unmarshal(data, &f) != nil || f.Type != "input" {
+		return false
+	}
+	return !isAutomaticTerminalReply(f.Data)
 }
 
 func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {
@@ -427,7 +453,7 @@ func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {
 			errc <- err
 			return
 		}
-		if onInput != nil && isTerminalInput(mt, data) {
+		if onInput != nil && isTerminalPresence(mt, data) {
 			onInput()
 		}
 		if err := dst.WriteMessage(mt, data); err != nil {

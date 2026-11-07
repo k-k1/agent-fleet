@@ -121,6 +121,15 @@ func (r *connRegistry) touch(wsID string) {
 // that specific session as terminal-attached, which spares it from tier 1 while
 // keystrokes keep arriving (watchingSession).
 func (r *connRegistry) addConn(wsID, session string, attention bool) {
+	r.addConnOpt(wsID, session, attention, true)
+}
+
+// addConnOpt is addConn with control over the one input-clock side effect. With
+// stampInput=false an attention connection still counts in wsConns/wsAttn and marks
+// the session attached, but does not stamp lastInput / sessInput: the Console's
+// automatic reconnect (see terminalAutoReconnect) is not a human arriving. Nothing
+// else about attention changes.
+func (r *connRegistry) addConnOpt(wsID, session string, attention, stampInput bool) {
 	if r == nil || wsID == "" {
 		return
 	}
@@ -130,15 +139,17 @@ func (r *connRegistry) addConn(wsID, session string, attention bool) {
 	if attention {
 		r.wsAttn[wsID]++
 		// Opening it means someone is there now — start as present rather than
-		// waiting for the first keystroke.
-		r.lastInput[wsID] = time.Now()
+		// waiting for the first keystroke. Not for an automatic reconnect.
+		if stampInput {
+			r.lastInput[wsID] = time.Now()
+		}
 	}
 	if session != "" {
 		if r.attached[wsID] == nil {
 			r.attached[wsID] = map[string]int{}
 		}
 		r.attached[wsID][session]++
-		if attention {
+		if attention && stampInput {
 			r.stampSessionInputLocked(wsID, session, time.Now())
 		}
 	}
@@ -357,7 +368,11 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 // Terminals need this because a socket only says "a connection exists", and a
 // forgotten Console tab with a terminal pane open would renew the lease forever.
 // Calling the returned noteInput on every keystroke makes the lease say "a human
-// is touching it" instead.
+// is touching it" instead. Terminal-generated replies (focus reports, DA/CPR answers,
+// colour-query responses) are not keystrokes and never reach it (isTerminalPresence),
+// and neither does the attach itself when the Console marked it an automatic
+// reconnect (autoReconnect): only a first attach, which a human opened, starts the
+// input clocks.
 //
 // noteInput sits on the keystroke relay path (proxy.go relay: onInput() → key
 // forwarding), so any time spent blocking here is added latency before that key
@@ -372,8 +387,8 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 // dropped signal is re-derived by the next keystroke or heartbeat. The in-memory
 // noteInput stays synchronous — the reaper's presence check reads it, and there
 // being immediate is the point.
-func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string) (release func(), noteInput func(), err error) {
-	rel, err := m.trackPresence(ctx, wsID, session, true)
+func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string, autoReconnect bool) (release func(), noteInput func(), err error) {
+	rel, err := m.trackPresenceOpt(ctx, wsID, session, true, !autoReconnect)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -410,7 +425,11 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 }
 
 func (m *manager) trackPresence(ctx context.Context, wsID, session string, attention bool) (func(), error) {
-	m.conns.addConn(wsID, session, attention)
+	return m.trackPresenceOpt(ctx, wsID, session, attention, true)
+}
+
+func (m *manager) trackPresenceOpt(ctx context.Context, wsID, session string, attention, stampInput bool) (func(), error) {
+	m.conns.addConnOpt(wsID, session, attention, stampInput)
 	if err := m.recordWorkspaceActivity(ctx, wsID, true); err != nil {
 		m.conns.doneConn(wsID, session, attention)
 		return nil, err
