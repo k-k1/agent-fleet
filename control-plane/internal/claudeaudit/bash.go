@@ -51,39 +51,50 @@ var (
 	progRE       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$`)
 )
 
-// shellWords splits like a shell would for the purpose of finding word boundaries:
-// whitespace separates, single and double quotes group. An unterminated quote swallows
-// the rest of the line (a transcript line is cut at a fixed length, so a quote can be
-// left open), which keeps what follows inside the same word.
-func shellWords(s string) []string {
-	var words []string
-	var cur strings.Builder
-	in := false
-	var q rune
-	for _, r := range s {
+// wordEnd returns the index where the shell word starting at i ends: whitespace outside
+// quotes and escapes separates words; single quotes, double quotes, backslash escapes and
+// their concatenation (a'b'"c"\ d) stay inside one word. An unterminated quote or a trailing
+// backslash swallows the rest of the line (a transcript line is cut at a fixed length), which
+// keeps whatever follows inside the same word.
+func wordEnd(s string, i int) int {
+	var q byte
+	for i < len(s) {
+		c := s[i]
 		switch {
-		case q != 0:
-			cur.WriteRune(r)
-			if r == q {
+		case q == '\'':
+			if c == '\'' {
 				q = 0
 			}
-		case r == '\'' || r == '"':
-			q = r
-			in = true
-			cur.WriteRune(r)
-		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
-			if in {
-				words = append(words, cur.String())
-				cur.Reset()
-				in = false
+		case q == '"':
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				q = 0
 			}
-		default:
-			in = true
-			cur.WriteRune(r)
+		case c == '\\':
+			i++
+		case c == '\'' || c == '"':
+			q = c
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			return i
 		}
+		i++
 	}
-	if in {
-		words = append(words, cur.String())
+	return len(s)
+}
+
+// shellWords splits s into words with wordEnd's rules.
+func shellWords(s string) []string {
+	var words []string
+	i := 0
+	for i < len(s) {
+		if c := s[i]; c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			i++
+			continue
+		}
+		e := wordEnd(s, i)
+		words = append(words, s[i:e])
+		i = e
 	}
 	return words
 }
@@ -109,9 +120,46 @@ func ProgramTarget(info string) string {
 	return prog
 }
 
-// val is one shell value: a quoted string (closing quote optional, since the line may be
-// cut) or a run of non-space characters.
-const val = `(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s"']+)`
+var (
+	assignPrefixRE = regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*=`)
+	flagPrefixRE   = regexp.MustCompile(`(?i)--?[a-z-]*(?:token|password|passwd|secret|api-?key|auth|credential)[a-z-]*(?:=|\s+)`)
+)
+
+// maskValues replaces the whole shell word after every NAME= and secret-named flag with
+// "***". The word is found with wordEnd, so quotes, escapes and quoted/unquoted runs are
+// covered, and a line cut mid-quote is masked to its end.
+func maskValues(s string) string {
+	type span struct{ from, to int }
+	var spans []span
+	for _, re := range []*regexp.Regexp{assignPrefixRE, flagPrefixRE} {
+		for _, m := range re.FindAllStringIndex(s, -1) {
+			if m[1] < len(s) {
+				spans = append(spans, span{m[1], wordEnd(s, m[1])})
+			}
+		}
+	}
+	if len(spans) == 0 {
+		return s
+	}
+	mask := make([]bool, len(s))
+	for _, sp := range spans {
+		for k := sp.from; k < sp.to; k++ {
+			mask[k] = true
+		}
+	}
+	var b strings.Builder
+	for k := 0; k < len(s); k++ {
+		if !mask[k] {
+			b.WriteByte(s[k])
+			continue
+		}
+		b.WriteString("***")
+		for k+1 < len(s) && mask[k+1] {
+			k++
+		}
+	}
+	return b.String()
+}
 
 var secretValueREs = []struct {
 	re   *regexp.Regexp
@@ -119,14 +167,13 @@ var secretValueREs = []struct {
 }{
 	{regexp.MustCompile(`(?i)(authorization:?\s*)(bearer\s+|basic\s+|token\s+)?[^\s"']+`), "${1}${2}***"},
 	{regexp.MustCompile(`(?i)\b(bearer)\s+[^\s"']+`), "${1} ***"},
-	{regexp.MustCompile(`(?i)(--?[a-z-]*(?:token|password|passwd|secret|api-?key|auth|credential)[a-z-]*)(=|\s+)` + val), "${1}${2}***"},
-	{regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)=` + val), "${1}=***"},
 	{regexp.MustCompile(`(://[^/\s:@]*):[^/\s@]+@`), "${1}:***@"},
 	{regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?)`), "***"},
 }
 
 // MaskCommandSecrets replaces secret-looking values in a command line with "***".
 func MaskCommandSecrets(s string) string {
+	s = maskValues(s)
 	for _, r := range secretValueREs {
 		s = r.re.ReplaceAllString(s, r.repl)
 	}

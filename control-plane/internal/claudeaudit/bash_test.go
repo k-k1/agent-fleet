@@ -66,3 +66,32 @@ func TestMaskCommandSecrets(t *testing.T) {
 		}
 	}
 }
+
+// Backslash escapes and concatenated quoted / unquoted runs are one shell word: neither the
+// default target nor the masked line may split a secret at an escaped space or quote.
+func TestShellEscapesAndConcatenation(t *testing.T) {
+	for _, c := range []struct{ info, def, full string }{
+		{`PASSWORD=first\ second curl https://example.test`, "curl", "PASSWORD=*** curl https://example.test"},
+		{`PASSWORD="first \" second third" curl https://example.test`, "curl", "PASSWORD=*** curl https://example.test"},
+		{`deploy --password first\ second`, "deploy", "deploy --password ***"},
+		{`deploy --password "first \" second third"`, "deploy", "deploy --password ***"},
+		{`PASSWORD='first'"second" curl https://example.test`, "curl", "PASSWORD=*** curl https://example.test"},
+		{`PASSWORD='ab'\''cd' curl https://example.test`, "curl", "PASSWORD=*** curl https://example.test"},
+		{`PASSWORD=ab\`, "", "PASSWORD=***"},
+		{`PASSWORD="first \" sec`, "", "PASSWORD=***"},
+		{`PASSWORD='ab'\''c`, "", "PASSWORD=***"},
+	} {
+		if got := ProgramTarget(c.info); got != c.def {
+			t.Errorf("ProgramTarget(%q) = %q, want %q", c.info, got, c.def)
+		}
+		got := MaskCommandSecrets(c.info)
+		if got != c.full {
+			t.Errorf("MaskCommandSecrets(%q) = %q, want %q", c.info, got, c.full)
+		}
+		for _, leak := range []string{"first", "second", "third", "ab", "cd"} {
+			if strings.Contains(got, leak) && !strings.Contains(c.full, leak) {
+				t.Errorf("%q leaked %q: %q", c.info, leak, got)
+			}
+		}
+	}
+}
