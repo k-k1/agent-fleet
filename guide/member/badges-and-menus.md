@@ -183,9 +183,7 @@ archive / delete, and recreate. **"Menu of repository {name}"** moves to the lef
 the repository the session belongs to (not shown for a session without a repository, on a phone, or while the
 workspace is stopped; if the left pane is hiding that repository, a notice says why). On a stopped session whose
 worktree has been deleted, **"Recreate working copy (worktree)…"** recreates the worktree at its original path
-so the session can resume ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)). While Agent memory has session suggestions turned on, **"Suggest memories now"**
-asks for suggestions from this conversation; it is greyed out when no agent that can run without tools is
-available ([18](18-agent-memory.md#settings)). A session that was moved carries a line under its row,
+so the session can resume ([05](05-stopping-and-tidying.md#when-you-can-and-cant-resume)). A session that was moved carries a line under its row,
 **"Moved to …"** (click to open the target) or **"Move to … unfinished"** (click to retry or cancel), and its
 menu offers **"Open the session it moved to"** and **"Resume here anyway…"**, or **"Retry or cancel the
 move…"**, instead of resume. For a session that doesn't belong to a repository, **assignment to a working

@@ -39,9 +39,9 @@ type aiAssistFeature struct {
 	enabled func() bool
 }
 
-// aiAssistFeatures is the 9 features that go through OneShotHeadless (docs/log/103 §103.2, plus
-// the memory review of ADR 0117, which runs deny-all) — the same 9 the ledger already records
-// as separate `feature` values (usagex/ledger.go). The order here is display order (§103.7's
+// aiAssistFeatures is the 8 features that go through OneShotHeadless (docs/log/103 §103.2) — the
+// ledger records each as a separate `feature` value (usagex/ledger.go), plus `memory.review`, which
+// stays in the ledger enum for past rows but is no longer a feature of the member's. The order here is display order (§103.7's
 // card list), not significant otherwise.
 var aiAssistFeatures = []aiAssistFeature{
 	{usagex.FeatureTitleSession, uiprefs.AutoTitleSuggest},
@@ -52,7 +52,6 @@ var aiAssistFeatures = []aiAssistFeature{
 	{usagex.FeatureSuggestEdit, uiprefs.EditSuggest},
 	{usagex.FeaturePlanUpdate, uiprefs.PlanUpdate},
 	{usagex.FeatureTranslate, uiprefs.MirrorTranslate},
-	{usagex.FeatureMemoryReview, uiprefs.MemoryReviewEnabled},
 }
 
 // aiAssistResolutionRow is one feature's answer. Model is deliberately absent — see the file
@@ -70,11 +69,7 @@ func handleAIAssistResolution(w http.ResponseWriter, r *http.Request) {
 	var warm []string
 	for _, f := range aiAssistFeatures {
 		row := aiAssistResolutionRow{Feature: f.id, Enabled: f.enabled(), Source: "unknown"}
-		resolve := chatx.ResolveOneShotCached
-		if f.id == usagex.FeatureMemoryReview {
-			resolve = chatx.ResolveDenyAllCached // the review runs only where tools can be denied
-		}
-		if kind, source, ok := resolve(f.id); ok {
+		if kind, source, ok := chatx.ResolveOneShotCached(f.id); ok {
 			row.Kind, row.Source = kind, source
 		} else {
 			warm = append(warm, f.id)
@@ -84,10 +79,6 @@ func handleAIAssistResolution(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"features": rows})
 	// After the response, not before: this request still answered from the cache alone.
 	for _, feature := range warm {
-		if feature == usagex.FeatureMemoryReview {
-			chatx.WarmDenyAllKind()
-			continue
-		}
 		chatx.WarmOneShotKind(feature) // starts its own goroutine, and stays waitable (tests)
 	}
 }

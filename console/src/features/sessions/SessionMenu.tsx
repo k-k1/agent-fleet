@@ -32,8 +32,6 @@ import { useSessionUI } from "./ui.ts";
 import { useSessionsStore } from "./store.ts";
 import { HandoffModal } from "./HandoffModal.tsx";
 import { exportSessionMarkdown } from "./exportMarkdown.ts";
-import { useMemoryReviewUnavailable } from "../../lib/aiAssistResolution.ts";
-import { reviewSessionNow } from "./memoryReviewNow.ts";
 import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
 import { recreatableGroup } from "./ArchivedModal.tsx";
 import { ShareCreateModal } from "../sharing/ShareCreateModal.tsx";
@@ -151,12 +149,6 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   const wsetShown = repoLess && wsets.length > 0;
   // The Agent reads the transcript, so it has to be reachable; the session itself may be stopped.
   const exportShown = agentOf(s.kind).caps.transcript && running;
-  // "Suggest memories now" (ADR 0117): only where the review can run - the Agent reachable, a
-  // transcript to read, AF memory on and a review mode chosen. The Agent checks all of it again.
-  const reviewSettings = useSettings();
-  const memoryReviewShown =
-    agentOf(s.kind).caps.transcript && running && reviewSettings.agentMemory && reviewSettings.memoryReview !== "off";
-  const reviewUnavailable = useMemoryReviewUnavailable(memoryReviewShown && open);
   // The repository menu is the row's own, opened where the row sits in the rail (#1557). No
   // rail to open it in: a pop-out has none, and on a phone the rail is a drawer only the App
   // shell can open.
@@ -335,11 +327,6 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
             onClose();
             setShareOpen(true);
           }, <Icon name="broadcast" />, tr("srow.share")),
-        memoryReviewShown &&
-          item("memory-review", () => {
-            onClose();
-            void reviewSessionNow(s.name, toast);
-          }, <Icon name="sparkle" />, tr("srow.memory_review"), reviewUnavailable ? { disabled: true, title: tr("srow.memory_review_no_backend") } : {}),
         // The three export variants stay captioned rows: a few choices do not earn a submenu, which
         // would add a click and a second roving level to a menu that is one flat list.
         exportShown && <div key="export-caption" className="ui-menu-caption">{tr("srow.export_caption")}</div>,

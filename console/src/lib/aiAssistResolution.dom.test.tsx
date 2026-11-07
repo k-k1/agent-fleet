@@ -7,14 +7,15 @@ import { createRoot, type Root } from "react-dom/client";
 const apiMock = vi.fn();
 vi.mock("../core/api/client.ts", () => ({ api: (...a: unknown[]) => apiMock(...a) }));
 
-const { useMemoryReviewUnavailable } = await import("./aiAssistResolution.ts");
+const { useAiAssistResolution } = await import("./aiAssistResolution.ts");
 
 let root: Root;
 let host: HTMLDivElement;
 let seen: boolean[] = [];
+const unavailable = (r: ReturnType<typeof useAiAssistResolution>) => r?.["title.session"]?.source === "unavailable";
 
 function Probe({ enabled }: { enabled: boolean }) {
-  const v = useMemoryReviewUnavailable(enabled);
+  const v = unavailable(useAiAssistResolution(enabled));
   seen.push(v);
   return null;
 }
@@ -33,7 +34,7 @@ afterEach(() => {
 
 const render = (enabled: boolean) => act(async () => root.render(<Probe enabled={enabled} />));
 
-describe("useMemoryReviewUnavailable", () => {
+describe("useAiAssistResolution", () => {
   it("fetches nothing while disabled", async () => {
     await render(false);
     expect(apiMock).not.toHaveBeenCalled();
@@ -41,7 +42,7 @@ describe("useMemoryReviewUnavailable", () => {
   });
 
   it("drops the answer on disable and does not reuse it when re-enabled", async () => {
-    apiMock.mockResolvedValueOnce({ features: [{ feature: "memory.review", enabled: true, source: "unavailable" }] });
+    apiMock.mockResolvedValueOnce({ features: [{ feature: "title.session", enabled: true, source: "unavailable" }] });
     await render(true);
     expect(seen.at(-1)).toBe(true);
     await render(false);

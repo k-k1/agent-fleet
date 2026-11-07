@@ -360,9 +360,9 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     };
   }
   if (n.kind === "memory-review") {
-    // A background review left proposals in the queue (ADR 0117). The subject is the workspace and
-    // the counts are all the payload carries; the proposals are read, and decided, on Settings >
-    // Agent memory > Changes > Proposed.
+    // Left by the retired background review (ADR 0117, removed by ADR 0130 decision 2); nothing
+    // raises it now, but stored ones keep rendering. The subject is the workspace and the counts are
+    // all the payload carries.
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     const queued = num(n.payload.queued);
     const pending = num(n.payload.pending) || queued;

@@ -127,7 +127,7 @@ const exact = {
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
   "/api/schedules": () => fx.schedules(LOCALE),
   // agentMemory on: the memory scene's status header reads it, and nothing else on screen changes
-  // with it (the palette gains a mode, the session menu's review entry also needs memoryReview).
+  // with it (the palette gains a mode).
   "/api/env/ui-prefs": () => ({ agentMemory: true }),
   // Agent memory (ADR 0108) for the memory scene: the list, one body, the change log.
   "/api/agents/memory/entries/list": () => fx.memoryList(LOCALE),

@@ -16,13 +16,11 @@ import {
   normalizeAgentMemory,
   normalizeClaudeCustomModels,
   normalizeExternalMemory,
-  normalizeMemoryReview,
   normalizeRegionFormat,
   normalizeBrowserTimeZone,
   normalizeTimeZone,
   type AgentLaunchDefaults,
   type ExternalMemoryMode,
-  type MemoryReviewMode,
   type StreamRepliesMode,
   type TtsCharConf,
 } from "./normalize.ts";
@@ -231,14 +229,6 @@ const PREFS = {
   // client on another machine, whose model then sees the memory text. Default "off", like the
   // Agent's own missing-key answer (uiprefs.ExternalMemory).
   externalMemory: agentDefaulted<ExternalMemoryMode>("off", { normalize: normalizeExternalMemory }), // opt-in (#1988) — memory text leaves the workspace for an outside client's model
-  // The background memory review (ADR 0117): "off" or "propose". Default "off", like the Agent's own
-  // missing-key answer (uiprefs.MemoryReview): conversation excerpts go to a model. It also needs
-  // agentMemory on. There is no control for it yet; this is the key the Agent reads.
-  memoryReview: agentDefaulted<MemoryReviewMode>("off", { normalize: normalizeMemoryReview }), // opt-in (ADR 0117) — conversation excerpts go to a model, and it spends tokens
-  // Automatic background review (ADR 0117 decision 1): the turn-end loop may claim sessions on its
-  // own. Default false, like the Agent's own missing-key answer (uiprefs.MemoryReviewAuto); the manual
-  // "Suggest memories now" needs only memoryReview.
-  memoryReviewAuto: agentDefaulted(false, { normalize: isTrue }), // opt-in (ADR 0117 decision 1) — the loop spends tokens unattended
   // Muse Code's contributor mode (#2535, Settings > Agents > Muse Code): on, Meta may use the
   // conversations to improve its product. Default false, like the Agent's own missing-key answer
   // (uiprefs.MuseContributorMode). A muse session records the value it was created with and keeps

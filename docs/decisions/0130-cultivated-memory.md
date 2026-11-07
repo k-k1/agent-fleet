@@ -555,3 +555,18 @@ release.
 4. **The model**: a Haiku / GPT Luna class model by default, with supersede and merge escalated, gated
    by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
    comparison has a measured cost.
+
+**Note (2026-11-08, #3440): decision 2 is built.** The review loop, "Review now", the proposals list, approve
+and reject routes, the review switch and the AI-assist row, the ui-prefs keys and the count notification are
+gone; `POST /agents/memory-review/runs/revert` stays, behind the member-origin mark, and its button lives in
+the change list. A stored `memoryReview` / `memoryReviewAuto` is ignored on read and dropped by the Agent on
+the next ui-prefs save, whichever Console sent it; an older Console calling a removed route gets the mux's
+404. The export is `af-memory.work/review-queue-export-v1.json` under the Claude config directory
+(`workspace/agent/internal/memreview/export.go`): written with fsync and rename, then the whole review state
+directory (queue, rejected hashes, run records, watermarks, counter) is removed, so nothing can re-dispatch an
+old run. It is written on every workspace that has a review state directory, also when the queue is empty,
+and never on one that has none. A stop between the write and the removal leaves a valid export that the next
+start does not rewrite. Queue files that cannot be parsed are counted in `unreadable`. Unqueued replies that
+only an open run record held were never visible to the member and are dropped with it. The `memoryx` review
+publish and forget-hook code stays in place for now (decision 6 and `memory_patch` decide what remains of
+it); the Agent no longer installs the forget hook.

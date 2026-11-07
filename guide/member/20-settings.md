@@ -219,8 +219,7 @@ the assistant conversation: they share an implementation, but they surface somew
 - **Agent priority**: the CLI order used for assistance, ranked separately from the assistant. The chat wants
   the strongest model; assistance runs constantly and wants the cheapest one that works. CLIs that are not
   connected or are at a usage or rate limit are skipped, and a generation that hits a limit is retried once on
-  the next CLI. Background memory review is the exception: pinned to a CLI at its limit, it waits rather than
-  moving to another.
+  the next CLI.
 - **Model for short labels** / **Model for prose**: short covers titles, branch names and reply suggestions;
   prose covers File pane edit suggestions and chat plan updates. Different needs, so different defaults.
   "Recommended" for short labels is **the model with the lowest models.dev list price** among the ones that CLI
@@ -230,8 +229,7 @@ the assistant conversation: they share an implementation, but they surface somew
   if there is none (or muse's model list cannot be read), the assistance is not generated rather than run on
   its contributor default. Muse Code's contributor mode (Settings › Agents › Muse Code) applies to these
   turns too.
-- **Features that use AI assistance**: one card per feature (8, plus **Background memory review** while memory
-  suggestions are on). Turning one off hides its button
+- **Features that use AI assistance**: one card per feature (8). Turning one off hides its button
   entirely and folds away that card's agent/model rows.
   - **Session title suggestion**: the banner that proposes a title, plus "Ask AI" in a session's rename dialog.
   - **Chat title suggestion**: "Ask AI" in the assistant's rename dialog. A chat has no banner of its own.
@@ -249,9 +247,6 @@ the assistant conversation: they share an implementation, but they surface somew
   - **Translate automatically**: presses that button for you the moment a turn finishes (off by default). Only
     answers that **arrive while you are watching that session** qualify. This is the one translation setting
     that spends without being asked.
-  - **Background memory review**: shown only while memory suggestions are on; it has no switch of its own, only
-    the agent and model the review uses. Only claude can run it today
-    ([18 Agent memory](18-agent-memory.md#settings)).
 
   Each card can also be pinned to its own agent, separate from the priority order above (default: "auto —
   priority order"). Once pinned to one agent, that card can also pick that agent's own model: left on "auto"

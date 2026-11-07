@@ -1,5 +1,5 @@
-// The background memory review's notification (ADR 0117 decision 6): counts only, worded in both
-// languages, and a click that leads to the one place the proposals are decided.
+// A notification the retired background memory review raised earlier (ADR 0117, removed by ADR 0130
+// decision 2) still renders from its stored counts and links to the change list. Nothing raises one now.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openNotificationTarget, type FleetNotification } from "./store.ts";
 import { notificationKindLabel, notificationRowSubtitle, notificationWording } from "./wording.ts";
@@ -36,13 +36,14 @@ describe("a memory-review notification", () => {
     setLocale("ja");
     const n = notification();
     const w = notificationWording(n);
-    expect(w.title).toBe("メモリの提案が 5 件、承認待ちです");
+    expect(w.title).toBe("メモリの提案が 5 件、未処理のままです");
     expect(w.body).toContain("新しい提案 2 件");
     expect(w.body).toContain("全部で 5 件");
+    expect(w.body).not.toContain("提案 で承認");
     expect(notificationRowSubtitle(n)).toBe(w.body);
     expect(notificationKindLabel("memory-review")).toBe(ja["noti.kind_memory_review"]);
     setLocale("en");
-    expect(notificationWording(n).title).toBe("5 memory suggestions are waiting for your approval");
+    expect(notificationWording(n).title).toBe("5 memory suggestions were left unreviewed");
     expect(notificationKindLabel("memory-review")).toBe(en["noti.kind_memory_review"]);
     setLocale("ja");
   });

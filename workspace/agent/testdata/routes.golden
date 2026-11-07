@@ -3,12 +3,6 @@
 # ANY = registered without a method.
 # count: 433
 GET /agents/kinds
-GET /agents/memory-review
-POST /agents/memory-review/proposals/approve
-POST /agents/memory-review/proposals/list
-POST /agents/memory-review/proposals/reject
-POST /agents/memory-review/proposals/reject-all
-POST /agents/memory-review/run
 POST /agents/memory-review/runs/revert
 POST /agents/memory/af-import
 GET /agents/memory/af-import/preview

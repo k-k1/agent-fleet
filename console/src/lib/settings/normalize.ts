@@ -158,13 +158,6 @@ export function normalizeExternalMemory(value: unknown): ExternalMemoryMode {
   return value === "read" || value === "write" ? value : "off";
 }
 
-export type MemoryReviewMode = "off" | "propose";
-
-/** Anything but "propose" is off, the Agent's own reading (uiprefs.MemoryReview). */
-export function normalizeMemoryReview(value: unknown): MemoryReviewMode {
-  return value === "propose" ? value : "off";
-}
-
 /** A region format outside REGION_FORMATS is "auto" (follow the display language). */
 export function normalizeRegionFormat(value: unknown): string {
   return typeof value === "string" && REGION_FORMATS.some((r) => r.id === value) ? value : "auto";
