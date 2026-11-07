@@ -374,8 +374,15 @@ L2（エージェントを誰として動かすか）はユーザー本人のサ
   identity ヘッダーも捨てるので、メンバーのログイン Cookie は Workspace に届かない。
 - **別のページのためには署名しない。** 署名の前に CP は `application/json`、送られていれば `Sec-Fetch-Site:
   same-origin`、送られていれば Console 自身のホストの `Origin` を求めるので、same-site のプレビューアプリが
-  ブラウザーに署名付きのメンバー書き込みをさせることはできない。パス形式のプレビューのアプリは Console の
+  ブラウザーに署名付きのメンバー書き込みをさせることはできない。JSON を受ける署名ハンドラーはどれもこの検査
+  （`memberOriginRequestCheck`）を自分で行い、`POST /api/session-handoff-offers`（先にプッシュする段）も
+  含むので、この保証はグローバルな書き込みゲートやその除外に依存しない（multipart のアップロードのルートは別形で、`multipart/form-data` と、プリフライトを
+  強いるカスタムヘッダー `X-AF-Console` を求め、`Sec-Fetch-Site` / `Origin` の検査は同じ）。パス形式のプレビューのアプリは Console の
   オリジンで動くのでこの検査の対象外で、制限は次の項目が担う。
+- **セッションの引き継ぎには Console でのメンバー操作が要る。** Console の「別のエージェントへ引き継ぐ…」は
+  オペレーターのチャットを開き、最初の依頼文は入力欄に入れるだけにする。元セッションの出力を読み
+  `create_session` に至りうるそのターンは、メンバーが送信を押したときに送られる。依頼文中の
+  「`create_session` の前に確認する」はモデルへのお願いで、同意の関門ではない。
 - **パス形式のプレビュー（`/preview/{port}/…`）。** `AF_PREVIEW_DOMAIN` があると CP はこれを配らない。
   GET/HEAD をサブドメイン形式の持ち主専用の入口 `/preview-open-own` へ 302 で返し（他のメソッドは 405）、Workspace の
   内容が Console のオリジンで応答することはない（decisions/0062 決定 7、2026-11-07 の追記）。ドメインが
