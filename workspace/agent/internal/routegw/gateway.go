@@ -34,6 +34,10 @@ type Deps struct {
 	// Settings is the member's Settings profiles as fresh as the Agent can make them; ok false
 	// means it cannot say (the CP has been unreachable too long), and the call is refused.
 	Settings func() (map[string]awsx.Profile, bool)
+	// FreshSettings is Settings from a pull that began after the call: what a create, a start and
+	// a credential resolution are checked against, so a profile edit, unmark or delete the member
+	// saved before them is enforced at once rather than after Settings' interval. Nil: Settings.
+	FreshSettings func() (map[string]awsx.Profile, bool)
 	// Held and Ask are ADR 0126's approval: Held reads a grant without waiting; Ask files the
 	// request so the member sees it.
 	Held func(settings map[string]awsx.Profile, profile string, m session.Meta, now time.Time) bool
@@ -115,6 +119,9 @@ func New(d Deps) *Gateway {
 	if d.Client == nil {
 		d.Client = upstreamClient()
 	}
+	if d.FreshSettings == nil {
+		d.FreshSettings = d.Settings
+	}
 	if d.Roots == nil {
 		d.Roots = func(string) []int { return nil }
 	}
@@ -149,8 +156,9 @@ type connection struct {
 
 // resolve is the part of the check that depends on Settings and the selection alone, shared by
 // issuing a token and by every call: the selection is this route on this connection, the profile
-// is one of the member's own, marked as a model route, and a region is known.
-func (g *Gateway) resolve(sel *routes.Selection) (connection, *refusal) {
+// is one of the member's own, marked as a model route, and a region is known. fresh reads
+// Settings through FreshSettings rather than the interval-capped Settings.
+func (g *Gateway) resolve(sel *routes.Selection, fresh bool) (connection, *refusal) {
 	if sel == nil || sel.Route != RouteBedrock {
 		return connection{}, &refusal{http.StatusUnauthorized, routes.CodeBadRoute, "the session does not select the bedrock route"}
 	}
@@ -158,7 +166,11 @@ func (g *Gateway) resolve(sel *routes.Selection) (connection, *refusal) {
 	if !ok {
 		return connection{}, &refusal{http.StatusUnauthorized, routes.CodeRouteUnavailable, "the session's route connection is not an AWS profile reference"}
 	}
-	settings, ok := g.d.Settings()
+	read := g.d.Settings
+	if fresh {
+		read = g.d.FreshSettings
+	}
+	settings, ok := read()
 	if !ok {
 		return connection{}, &refusal{http.StatusServiceUnavailable, routes.CodeRouteUnavailable,
 			"the Agent cannot read the AWS profiles in Settings right now; the route is refused until it can"}
@@ -202,7 +214,7 @@ func (c connection) fingerprint() string {
 // selection already bound is accepted only while its binding still holds, so a session forked or
 // recreated from one keeps the account it started on.
 func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
-	c, ref := g.resolve(&sel)
+	c, ref := g.resolve(&sel, true)
 	if ref != nil {
 		return sel, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
@@ -216,7 +228,7 @@ func (g *Gateway) Bind(sel agents.RouteSelection) (agents.RouteSelection, *agent
 // Agent's own launch code calls it; there is no HTTP route that mints, because the Agent's HTTP
 // token is in every session's shell.
 func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
-	c, ref := g.resolve(m.Route)
+	c, ref := g.resolve(m.Route, true)
 	if ref != nil {
 		return Issued{}, &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
@@ -271,7 +283,7 @@ var _ agents.RouteGateway = (*Gateway)(nil)
 // for a selection, before anything starts. The model is not checked here: Bedrock's model list
 // is per account and region and the gateway never calls it.
 func (g *Gateway) CheckRoute(_ context.Context, sel agents.RouteSelection, _ string) *agents.RouteRefusal {
-	if _, ref := g.resolve(&sel); ref != nil {
+	if _, ref := g.resolve(&sel, true); ref != nil {
 		return &agents.RouteRefusal{Status: ref.status, Code: ref.code, Message: ref.msg}
 	}
 	return nil
@@ -312,7 +324,9 @@ func (g *Gateway) authorize(token string, caller procID, callerOK bool) (*call, 
 	if m.Route == nil || m.Route.Route != b.Route || m.Route.Connection != b.Connection {
 		return revoke(http.StatusUnauthorized, "route_selection_changed", "the session no longer selects this route connection")
 	}
-	c, ref := g.resolve(m.Route)
+	// A call that will resolve credentials reads Settings fresh: new credentials are never had on
+	// a copy up to Settings' interval old. Calls on cached credentials keep the interval.
+	c, ref := g.resolve(m.Route, !g.credsCached(b.Identity, b.Region))
 	if ref != nil {
 		// A deleted profile, a lost mark and a bad region all end the token; only an unreadable
 		// Settings list is left for the next call to settle.
@@ -352,10 +366,22 @@ func (g *Gateway) approvalRefusal(c connection, m session.Meta) *refusal {
 	return &refusal{http.StatusForbidden, "route_confirmation_required", msg}
 }
 
+// credsCached reports whether credentials for this identity and region are cached and usable
+// now, i.e. whether a call would be served without resolving them.
+func (g *Gateway) credsCached(identity, region string) bool {
+	now := g.d.Now()
+	g.credMu.Lock()
+	defer g.credMu.Unlock()
+	e, ok := g.creds[credKey(identity, region)]
+	return ok && now.Before(e.usable)
+}
+
+func credKey(identity, region string) string { return identity + "|" + region }
+
 // credentials returns the call's credentials, from memory until shortly before they expire. The
 // cache key is the profile's identity, so an edited profile never reads the old one's.
 func (g *Gateway) credentials(c *call) (awsx.RouteCredentials, *refusal) {
-	key := c.b.Identity + "|" + c.conn.region
+	key := credKey(c.b.Identity, c.conn.region)
 	now := g.d.Now()
 	g.credMu.Lock()
 	if e, ok := g.creds[key]; ok && now.Before(e.usable) {

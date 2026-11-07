@@ -628,3 +628,17 @@ table from becoming a menu of models that fail on the first message, which is wh
   adds nothing), the same way as `AF_WS_WORKLOAD_AWS`; it reaches docker, ECS EC2/Fargate, Kubernetes and native at the
   next Start. It is a switch for the acceptance run only and is off by default; lifting the gate stays a separate change
   made with the evidence. The Agent's refusal text names the CP-side variable.
+- 2026-11-08, Settings staleness (#3425, from the #3282 live gate): the gateway checked creates, starts and calls against a
+  Settings copy pulled at most every 30 s, so an unmark served a turn 3 s later, a create 8 s later was accepted and a start
+  in the same second as a role edit was accepted. The Control Plane pushes no AWS-profile change to the Agent (the bridge
+  is pull-only, `cloudbridge.Poll` every five minutes), so the gateway now forces a pull where it matters: `CheckRoute`,
+  `Bind` and `Issue` (create, start, resume) and any call that is about to resolve credentials read Settings from a pull
+  that began after they were asked (`SettingsSource.Fresh`). Concurrent callers share that pull; one already running is
+  waited out, since it may have read Settings before the edit, so a burst costs at most two pulls. A forced pull also
+  becomes the copy every later call is checked against. **Residual window:** a call of an already running session on
+  credentials the gateway still holds is checked against a copy up to 30 s old, so it can be served up to 30 s after the
+  change unless a create, start or credential resolution pulled in between; a pull per model call was rejected because a
+  streaming harness makes many calls per turn. Fail closed as before: a failed pull never replaces the copy, a forced
+  pull that fails answers from the last copy, and nothing is served once no pull has succeeded for 15 minutes, which is
+  how long a change can go unseen while the Agent cannot reach the Control Plane. The guide (chapter 16, en and ja) states
+  both windows.

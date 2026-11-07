@@ -45,8 +45,9 @@ func agentDeps(ensureAWSCLI func() (string, error)) Deps {
 		},
 	}
 	return Deps{
-		Settings: src.Get,
-		Roots:    paneRoots,
+		Settings:      src.Get,
+		FreshSettings: src.Fresh,
+		Roots:         paneRoots,
 		Credentials: func(p awsx.Profile, region string, settings map[string]awsx.Profile) (awsx.RouteCredentials, error) {
 			mu.Lock()
 			res := last
