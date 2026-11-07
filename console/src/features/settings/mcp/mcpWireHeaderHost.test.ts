@@ -26,6 +26,12 @@ describe("tenant form URL host change", () => {
     expect(tenantHostMoved(f, "http://m.example.com/mcp")).toBe(true);
     const plain = { ...loaded(), origUrl: "http://m.example.com/mcp" };
     expect(tenantHostMoved(plain, "https://m.example.com/mcp")).toBe(false);
+    for (const o of ["http://m.example.com/mcp", "http://m.example.com:80/mcp"]) {
+      for (const n of ["https://m.example.com/mcp", "https://m.example.com:443/mcp"]) {
+        expect(tenantHostMoved({ ...loaded(), origUrl: o }, n)).toBe(false);
+      }
+    }
+    expect(tenantHostMoved({ ...loaded(), origUrl: "http://m.example.com:8080/mcp" }, "https://m.example.com:9443/mcp")).toBe(true);
   });
 
   it("blanks the masked values when the host or port changes, and only those", () => {

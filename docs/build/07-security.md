@@ -314,9 +314,10 @@ need no edit.
   where its discovery document points. The issuer must be `https` (the loopback `http`
   carve-out is for env-configured providers only). Every request to a tenant provider's
   issuer, discovery and token and userinfo alike, goes through a client that refuses
-  non-public destinations at dial time (`egressallow.AddrRefused`, the same ranges as §7.8)
+  non-public destinations at dial time (`egressallow.AddrRefused`: the gateway relay's wide set, private ranges included, which is
+  wider than the forward proxy's loopback / link-local / unspecified in §7.8)
   and never follows a redirect. The authorization, token and userinfo endpoints must be
-  `https` and on the issuer's registrable domain (public-suffix aware), with two built-in
+  `https` and on the issuer's registrable domain (public-suffix aware), with built-in
   exceptions for IdP families that split the two (Google's `googleapis.com`, Cognito's
   default `amazoncognito.com`, Microsoft's `graph.microsoft.com` for userinfo and its
   sovereign-cloud equivalents). An IdP whose endpoints live elsewhere, such as a Cognito pool

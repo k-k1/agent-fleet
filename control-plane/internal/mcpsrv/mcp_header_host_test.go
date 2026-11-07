@@ -23,6 +23,14 @@ func TestURLHostChanged(t *testing.T) {
 			t.Errorf("%s -> %s is not a host change", c[0], c[1])
 		}
 	}
+	// Every spelling of the TLS upgrade on default ports is the same destination.
+	for _, o := range []string{"http://mcp.example.com", "http://mcp.example.com:80"} {
+		for _, n := range []string{"https://mcp.example.com", "https://mcp.example.com:443"} {
+			if urlHostChanged(o, n) {
+				t.Errorf("%s -> %s is the same destination", o, n)
+			}
+		}
+	}
 	diff := [][2]string{
 		{"https://mcp.example.com", "https://mcp2.example.com"},
 		{"https://mcp.example.com", "https://mcp.example.com:8443"},

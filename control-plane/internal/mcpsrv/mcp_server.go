@@ -433,10 +433,26 @@ func urlHostChanged(oldURL, newURL string) bool {
 	if fromScheme == "https" && toScheme != "https" {
 		return true
 	}
+	// Same scheme: the effective ports must match. A scheme upgrade: only a port that is not
+	// its own scheme's default counts, so an explicit :80 or :443 reads the same as none.
 	if fromScheme == toScheme {
 		return effectivePort(o) != effectivePort(n)
 	}
-	return o.Port() != n.Port() // scheme upgraded: only an explicit, different port moves it
+	return nonDefaultPort(o) != nonDefaultPort(n)
+}
+
+func nonDefaultPort(u *url.URL) string {
+	if p := u.Port(); p != effectivePortDefault(u) {
+		return p
+	}
+	return ""
+}
+
+func effectivePortDefault(u *url.URL) string {
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 func effectivePort(u *url.URL) string {

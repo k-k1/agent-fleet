@@ -563,9 +563,11 @@ const urlMoved = (oldRaw: string, newRaw: string): boolean => {
     const n = new URL(newRaw.trim());
     if (o.hostname.toLowerCase() !== n.hostname.toLowerCase()) return true;
     if (o.protocol === "https:" && n.protocol !== "https:") return true;
+    // new URL() drops a port that is its own scheme's default, so an explicit :80 / :443 and an
+    // omitted port already read the same here; the control plane normalises the same way.
     const eff = (u: URL) => u.port || (u.protocol === "https:" ? "443" : "80");
     if (o.protocol === n.protocol) return eff(o) !== eff(n);
-    return o.port !== n.port;
+    return o.port !== n.port; // scheme upgrade: only a non-default port, on either side, counts
   } catch {
     return true;
   }

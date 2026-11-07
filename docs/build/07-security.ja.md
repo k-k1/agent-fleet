@@ -268,7 +268,8 @@ Cognito / GitLab が設定だけで載る（`AF_OIDC_PROVIDERS` ＋ `AF_OIDC_<ID
 - **テナント定義 provider の issuer はテナント側の第三者**なので、CP は discovery 文書が
   指す先を信用しない。issuer は `https` 必須（loopback の `http` は env 設定の provider だけ）。
   テナント provider の issuer への通信（discovery・token・userinfo）は、dial 時に非公開宛先を
-  拒否し（`egressallow.AddrRefused`、§7.8 と同じレンジ）、リダイレクトを辿らないクライアントで行う。
+  拒否し（`egressallow.AddrRefused`：gateway relay の広い範囲で private を含む。§7.8 の forward proxy が拒否する
+  loopback・link-local・未指定より広い）、リダイレクトを辿らないクライアントで行う。
   authorization・token・userinfo の各 endpoint は `https` で、issuer の登録可能ドメイン
   （Public Suffix 考慮）上にあること。issuer と endpoint でドメインが分かれる IdP ファミリー
   （Google の `googleapis.com`、Cognito 既定の `amazoncognito.com`、Microsoft の userinfo 用
