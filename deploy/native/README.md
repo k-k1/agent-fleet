@@ -1,4 +1,4 @@
-# Agent Fleet — native package (no Docker, single user)
+# Install the native package (no Docker, single user)
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
 Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode, Muse Code, and

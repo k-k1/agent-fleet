@@ -543,7 +543,6 @@ Agent の口（全部 CP の中継リストに 1 行ずつ）:
 | `POST /imagegen/studios/{id}/bind {session}` | セッションを結ぶ／外す（メタの `Studio` も書く） |
 | `POST /imagegen/studios/{id}/versions` | 生成ボタンが押された写し（応答に `version`） |
 | `GET /imagegen/history` | D7 |
-
 | `POST /imagegen/studios/{id}/trial` | 下書きどおりの試走（`run_image_trial` の裏。ボタンの試走も同じ口に寄せる） |
 | `GET /imagegen/knowledge?model=&family=` / `POST /imagegen/knowledge` | D14 層 2 の読み（節ごと）と「記録」への追記 |
 | `GET /imagegen/studios/{id}/draft-log?before=&limit=` / `POST /imagegen/studios/{id}/rewind {entry}` | D7 の編集履歴と巻き戻し |

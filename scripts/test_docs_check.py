@@ -731,5 +731,27 @@ class SizeAndHeaderTests(unittest.TestCase):
         self.assertIn("no source_of_truth", self.header('---\naudience: "a"\n---\n'))
 
 
+class TableTests(unittest.TestCase):
+    """A blank line between two table rows splits the table."""
+
+    def errors(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "page.md"
+            path.write_text(body)
+            findings = check.Findings()
+            with patch.object(check, "ROOT", tmp), patch.object(check, "CLOSURE_EXEMPT", {}):
+                check.check_tables([str(path)], findings)
+            return "\n".join(findings.errors)
+
+    def test_blank_line_between_rows(self):
+        self.assertIn("page.md:4: blank line inside a table", self.errors("| a |\n|---|\n| 1 |\n\n| 2 |\n"))
+
+    def test_two_tables(self):
+        self.assertEqual(self.errors("| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |\n"), "")
+
+    def test_code_fence(self):
+        self.assertEqual(self.errors("```\n| 1 |\n\n| 2 |\n```\n"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

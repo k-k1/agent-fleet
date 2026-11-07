@@ -1,4 +1,4 @@
-# Agent Fleet — on-prem deployment (Docker Compose)
+# Deploy on premises with Docker Compose
 
 Agent Fleet is a self-hosted web console for running AI coding agents (Claude Code,
 Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode, Muse Code, and
