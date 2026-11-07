@@ -67,7 +67,7 @@ func init() {
 	// not "know which folders this workspace may read and write". Re-implementing either check
 	// inside that package would be a second copy of a security decision.
 	imagegen.BrowsePath = safeBrowsePath
-	imagegen.BrowseWritablePath = safeWritableBrowsePath
+	imagegen.BrowseWritablePath = safeWritableResolvedBrowsePath
 	// The reference-image gate (ADR 0100 decision 4) reads beneath the browse root itself and
 	// refuses the same denylist the file tree does.
 	imagegen.BrowseRootDir = browseRoot

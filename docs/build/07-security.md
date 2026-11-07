@@ -201,6 +201,18 @@ attacker would try it:
   cannot leak it. The limits are in [guide/ref/limits](../../guide/ref/limits.md).
 - **Not audited** (ordinary reads are not, `proxy.go`); whether a bulk export should be is open
   (decisions/0111, Status line).
+- **The hard-link check is zip-only.** The ordinary file reads (`/fs/file`, `/fs/download`,
+  `/fs/imagesize`, the thumbnail warm-up) refuse symlinks and non-regular files but do **not**
+  refuse `st_nlink > 1`: hard links are routine in a working tree (package-manager stores, git
+  objects), so refusing them would break normal viewing, and a link to a denied file takes same-uid
+  code that could read that file directly anyway. The bulk export keeps the stricter rule because
+  it is the one route that reads everything beneath a folder without a person naming each file.
+- **Mutations refuse ancestors of denied entries.** Rename (both ends), delete, mkdir, new file and
+  upload answer 403 for a denied entry, its descendants **and the folders that contain one**
+  (`.config`, `.local`, `.local/share`, the browse root), judged on the spelled path and again on
+  the path after symlink resolution (`fsWriteRefused`). Uploads and the image generator's
+  `out_dir` additionally refuse a symlinked destination folder; uploads are written through a
+  directory fd opened with `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`.
 
 ## 7.3 L1 Console authentication — three modes
 

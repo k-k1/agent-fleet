@@ -1030,3 +1030,24 @@ func TestAnimaIsWrittenInTagsAndSentences(t *testing.T) {
 		t.Errorf("sdxl advice = %+v", sd)
 	}
 }
+
+// The gate runs again after the folder is created: a folder that only becomes unacceptable once
+// it exists (a link in its place) must not be written into.
+func TestOutDirIsJudgedAgainAfterItIsCreated(t *testing.T) {
+	withJobQueue(t)
+	root := t.TempDir()
+	calls := 0
+	oldWrite := BrowseWritablePath
+	BrowseWritablePath = func(p string) (string, string, bool) {
+		calls++
+		return filepath.Join(root, p), p, calls == 1
+	}
+	t.Cleanup(func() { BrowseWritablePath = oldWrite })
+
+	if _, _, err := resolveOutDir("pictures"); err == nil {
+		t.Fatal("a folder the gate refused after creation was accepted")
+	}
+	if calls != 2 {
+		t.Errorf("gate called %d times, want 2", calls)
+	}
+}

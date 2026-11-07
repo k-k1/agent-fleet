@@ -739,9 +739,10 @@ func intPtrOf(v any) *int64 {
 var errNoBrowseRoot = errors.New("this Agent cannot resolve browse paths")
 
 // resolveOutDir turns a caller's browse-root-relative folder into an absolute one, through the
-// SAME gate the upload route uses (fs.go's safeWritableBrowsePath: inside the browse root, not
-// under fsDeny, never an absolute path). Created on first use, because a folder named for work
-// that has not happened yet cannot be expected to exist.
+// SAME gate the upload route uses (fs.go's safeWritableResolvedBrowsePath: inside the browse root
+// after symlink resolution, not under or above fsDeny, never an absolute path). Created on first
+// use, because a folder named for work that has not happened yet cannot be expected to exist; the
+// gate runs again afterwards so the folder that now exists is the one that was judged.
 func resolveOutDir(outDir string) (full, rel string, err error) {
 	outDir = strings.TrimSpace(outDir)
 	if outDir == "" {
@@ -756,6 +757,9 @@ func resolveOutDir(outDir string) (full, rel string, err error) {
 	}
 	if err := os.MkdirAll(full, 0o700); err != nil {
 		return "", "", err
+	}
+	if _, _, ok := BrowseWritablePath(outDir); !ok {
+		return "", "", fmt.Errorf("out_dir %q is not a folder this workspace may write to", outDir)
 	}
 	return full, rel, nil
 }
