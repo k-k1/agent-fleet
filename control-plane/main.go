@@ -25,6 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/gitfsck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/identitycheck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -538,6 +539,14 @@ func main() {
 		go newClaudeAuditor(mgr, iv, full).run(context.Background())
 		log.Printf("claude-audit: sweeping transcripts every %s (bash command lines: %s)", iv, map[bool]string{false: "program name only", true: "masked first line"}[full])
 	}
+
+	// receive.fsckObjects on existing internal repositories (#3493). Background and
+	// failure-tolerant: a broken repository is logged and skipped, never fatal.
+	go func() {
+		if ok, failed := gitfsck.Backfill(context.Background(), mgr.dataRoot); ok > 0 || failed > 0 {
+			log.Printf("internal-git: fsck config checked on %d repo(s), %d failed", ok, failed)
+		}
+	}()
 
 	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune
 	// orphaned LFS objects, sequential — cheap on the shared host. Default 24h;

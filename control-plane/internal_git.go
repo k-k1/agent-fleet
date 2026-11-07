@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
+	"github.com/k-k1/agent-fleet/control-plane/internal/gitfsck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -159,6 +160,11 @@ func (a gitServerAPI) repoCreate(w http.ResponseWriter, r *http.Request, ident s
 	// only on-disk artifact; the row below is the ledger.
 	if out, err := exec.CommandContext(r.Context(), "git", "init", "--bare", "--initial-branch="+branch, dir).CombinedOutput(); err != nil {
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "init_failed", strings.TrimSpace(string(out))})
+		return
+	}
+	if err := gitfsck.Ensure(r.Context(), dir); err != nil {
+		_ = os.RemoveAll(dir) // never leave a repository that accepts unchecked pushes
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "init_failed", err.Error()})
 		return
 	}
 	g := store.GitRepo{
