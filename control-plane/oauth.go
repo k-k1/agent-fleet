@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -403,19 +404,8 @@ type oauthState struct {
 	LSub   string `json:"ls,omitempty"`
 }
 
-// sanitizeNext keeps post-login redirects on-site (no open redirect): a single
-// leading slash only. "/\" is rejected too — browsers normalize backslash to
-// slash, so "/\evil.com" would become the scheme-relative "//evil.com". The
-// parse check backstops both against any other absolute-URL form.
-func sanitizeNext(n string) string {
-	if n == "" || !strings.HasPrefix(n, "/") || strings.HasPrefix(n, "//") || strings.HasPrefix(n, "/\\") {
-		return "/"
-	}
-	if u, err := url.Parse(n); err != nil || u.Scheme != "" || u.Host != "" {
-		return "/"
-	}
-	return n
-}
+// sanitizeNext keeps post-login redirects on-site; see localredirect.Safe.
+func sanitizeNext(n string) string { return localredirect.Safe(n) }
 
 func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if !c.oauthConfigured() {
@@ -433,6 +423,11 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// button actually lives on, and the post-login hint preselects the right tenant.
 	if slug, _, ok := auth.ParseTenantProviderID(p.ID()); ok {
 		tenant = slug
+	}
+	// A hint for a tenant that does not exist is dropped rather than carried through
+	// the sign-in state into the post-login URL.
+	if tenant != "" && !c.tenantExists(r.Context(), tenant) {
+		tenant = ""
 	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
 	nonce := randHex(16)
@@ -462,6 +457,16 @@ func sanitizeTenantSlug(s string) string {
 		return ""
 	}
 	return s
+}
+
+// tenantExists reports whether slug names an existing tenant. When in doubt
+// (no store, lookup error) it answers false, so no hint is carried.
+func (c config) tenantExists(ctx context.Context, slug string) bool {
+	if c.mgr == nil || c.mgr.store == nil {
+		return false
+	}
+	_, ok, err := c.mgr.store.GetTenantBySlug(ctx, slug)
+	return err == nil && ok
 }
 
 func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -541,7 +546,8 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.issueSession(w, pr)
-	next := withTenantHint(sanitizeNext(st.Next), tenant)
+	// Checked again after the hint is added: the value sent is the value judged.
+	next := localredirect.Safe(withTenantHint(sanitizeNext(st.Next), tenant))
 	if isNew {
 		c.writeNewAccountPage(w, r, pr, next)
 		return

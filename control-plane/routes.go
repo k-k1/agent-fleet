@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -856,14 +857,14 @@ func registerLegacyRedirect(mux *http.ServeMux) {
 	exemptExact("/agent-fleet")
 	exemptPrefix("/agent-fleet/")
 	legacyRedirect := func(w http.ResponseWriter, r *http.Request) {
-		dest := strings.TrimPrefix(r.URL.Path, "/agent-fleet")
+		dest := strings.TrimPrefix(r.URL.EscapedPath(), "/agent-fleet")
 		if !strings.HasPrefix(dest, "/") {
 			dest = "/" + dest
 		}
 		if r.URL.RawQuery != "" {
 			dest += "?" + r.URL.RawQuery
 		}
-		http.Redirect(w, r, dest, http.StatusFound)
+		http.Redirect(w, r, localredirect.Safe(dest), http.StatusFound)
 	}
 	mux.HandleFunc("/agent-fleet", legacyRedirect)
 	mux.HandleFunc("/agent-fleet/", legacyRedirect)
