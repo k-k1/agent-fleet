@@ -371,3 +371,11 @@ until they are rewritten.
 6. The user reads it.
 7. Write English from the English catalogues, check the two languages against each other, and land both in one
    change. English stays canonical (§5).
+
+### Moving a page
+
+A page that moves, or a section that moves out of a page, gets a row in `guide/_redirects.tsv` in the same change:
+`old<TAB>new`, both English and relative to `guide/`. The Japanese page follows its row. Then run
+`python3 scripts/docs-check.py --only redirects`. It lists every link, policy note, topic note, Go string, Console
+string and runbook that still uses the old path, with the new path to put there. Fix them in the same change. Frozen
+records (`docs/decisions/`, `docs/log/`, published release notes) keep the old path.

@@ -1,0 +1,9 @@
+# Pages of the guide that moved, and where they went (ADR 0131). Old links keep working:
+# the docs site serves each row as an HTTP redirect, and scripts/docs-check.py fails on
+# any pointer that still uses an old path.
+#
+#   old<TAB>new
+#
+# Both are English pages relative to guide/; the Japanese page (X.ja.md) follows its row.
+# `page.md#anchor` on the left is a section that moved out of a page that still exists.
+# Point at the final page: a row's new path must not be redirected again.
