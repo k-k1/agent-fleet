@@ -158,7 +158,7 @@ func TestAgentMemorySearchTiesUsePinThenUsesThenRecency(t *testing.T) {
 	if _, err := agentMemPin(agentMemPinReq{Scope: "project", Project: c.Project.ID, Name: "a-old", Pinned: true}, now.Add(4*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	agentMemRecordUses(c, agentMemEntry{Name: "b-used", Scope: "project"})
+	agentMemRecordUses(c, agentMemCounterHits, agentMemEntry{Name: "b-used", Scope: "project"})
 	hits, _, err := agentMemSearchRanked(c, "tie", 0)
 	if err != nil {
 		t.Fatal(err)
