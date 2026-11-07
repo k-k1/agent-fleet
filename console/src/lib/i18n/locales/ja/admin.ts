@@ -698,7 +698,7 @@ export const admin = {
   "tenant.git_oauth_redirect": "プロバイダ側のアプリ登録に、このコールバック URL を設定してください:",
   "tenant.git_oauth_no_base_url": "この配備には PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先がないため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
   "tenant.git_oauth_jira_access": "アプリ作成時の Access type は Resource-level を推奨します（認可したサイト 1 つだけに権限が限られます）。Account-level はアカウント内の全サイトに恒久的な権限を渡すことになります。",
-  "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、課題管理レールに PR を出すなら Pull requests: Read も入れてください。後から足した場合、すでに接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
+  "tenant.git_oauth_bb_scopes": "Bitbucket は認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま権限になります。Account: Read と Repositories: Read/Write（clone / push 用）に加え、Pull requests: Read と Write（bkt pr create・コメント・課題管理レール）と Pipelines: Read（bkt pipeline・ビルド結果）も入れてください。パイプラインの開始・停止もするなら Pipelines: Write も要ります。後から足した場合、すでに接続済みのメンバーは接続し直しが必要です（古い権限がトークンに焼かれているため）。",
   "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、下の一覧のスコープを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません。OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
   "tenant.git_oauth_jira_sharing": "アプリの Distribution で Sharing を有効にしてください。3LO アプリは既定で「開発中」で、そのままだと作成者本人しか認可できません。他のメンバーは Atlassian の「You don't have access to this app」で止まり、af には何も返らないので無言で未接続のままになります。有効化には Vendor name・Contact link・Privacy policy URL の入力が要り、これらは認可するメンバーに見えます（個人名や私用アドレスではなく、会社名と問い合わせ窓口を入れてください）。Marketplace には載りません。",
   "tenant.git_oauth_scope_group_jira_software": "このアプリに Jira Software のスコープ（ボード・スプリント・エピック）も許可済み",

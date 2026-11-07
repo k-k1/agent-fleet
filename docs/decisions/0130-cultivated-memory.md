@@ -556,9 +556,17 @@ release.
    by an offline comparison at the start of step 3 (decision 6). The monthly token cap is set when that
    comparison has a measured cost.
 
-## Implementation notes
+## Notes
 
-- **2026-11-08, `memory_patch` (decision 4, #3441).** Shipped on both memory surfaces: the af server's
+- **2026-11-08 — decision 3 "Counters" built (#3442).** `.usage-v2/reads/<name>` and `.usage-v2/hits/<name>`
+  are written beside the legacy `.usage/<name>`; `confirmed/` and `stale/` are in the layout (cleared with the
+  rest) but nothing appends to them until `memory_feedback`. A reads file's mtime is touched past the cap.
+  Forget, re-create and a restore clear every counter of the name. A project move clears the source and
+  the destination, exactly as it does the legacy file, rather than carrying counts over. Purge and bundles
+  need no change: purge rewrites history and leaves live memories (and so their counters) alone, and
+  bundles carry only the git history, never the sidecars.
+
+- **2026-11-08 — decision 4 `memory_patch` built (#3441).** Shipped on both memory surfaces: the af server's
   tool and the external `/mcp` tool (audited as `memory.entry.patch`). A patch matches every `old`
   against the same original body, counts a self-overlapping `old` ("aa" in "aaa") as matching more than
   once, and keeps the body exactly as the edits leave it (no trim; an omitted `new` is refused, an empty one deletes). The "near name" hint of `memory_save` is a warning line
