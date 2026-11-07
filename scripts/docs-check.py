@@ -76,15 +76,15 @@ TREES = (GUIDE, DOCS)
 # Living = shelves that all the conventions apply to (header / lang / vocab / frozen /
 # anchors). Shelf names are unique across both trees, so a shelf is identified without
 # saying which tree it is in.
-LIVING = ("member", "admin", "operate", "ref", "build")
+LIVING = ("member", "user", "admin", "operate", "ref", "build")
 # Reader-facing = shelves that must not use implementation vocabulary. operate/ is
 # written for a reader at a terminal, so commands, paths and variables are fine there,
 # and ref/ is the shelf that carries the mapping table itself (screen column = Console,
 # implementation column = code); neither belongs here (CONVENTIONS §4).
-READER_FACING = ("member", "admin")
+READER_FACING = ("member", "user", "admin")
 # Shelves of the guide/ tree, i.e. what is shipped into containers. Not cut by role
 # (ADR 0064).
-GUIDE_SHELVES = ("member", "admin", "operate", "ref")
+GUIDE_SHELVES = ("member", "user", "admin", "operate", "ref")
 # Bilingual = English is authoritative (X.md), Japanese accompanies it (X.ja.md).
 # decisions/ is not LIVING (an ADR is immutable, so it carries no front matter) but it is
 # bilingual: as with the reader-based shelves, an English-only reader who cannot reach

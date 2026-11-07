@@ -93,6 +93,16 @@ To register one:
 3. Paste the **client_id** and **client_secret** here. Bitbucket calls the same two
    things Key and Secret.
 
+> **Bitbucket: tick the consumer's Permissions for what agents do.** Bitbucket puts no scope
+> in the authorization URL, so the consumer's Permissions are exactly what every member's
+> token carries. Account: Read and Repositories: Read/Write cover clone and push. For `bkt`
+> in a session, add **Pull requests: Read and Write** (`bkt pr create`, comments, the
+> work-item rail) and **Pipelines: Read** (`bkt pipeline`, build results), plus Pipelines:
+> Write to run or stop a pipeline. Without them reads still work and those commands answer
+> `403 Forbidden: Your credentials lack one or more required privilege scopes`. When you
+> add a permission later, members who are already connected reconnect Bitbucket: their
+> token keeps the old permissions.
+
 > **Jira: turn Sharing on as well.** An Atlassian 3LO app is "in development" until you
 > enable Sharing under its **Distribution**, and until then **only the person who created
 > it can authorize it**, so your own test passes and every other member is stopped by
