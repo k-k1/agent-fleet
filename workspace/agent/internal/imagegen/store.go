@@ -58,16 +58,21 @@ func ConsoleTrialDir() string { return filepath.Join(ConsoleDir(), trialDirName)
 // timestamp so a later generation never overwrites an earlier one — the user may still be
 // looking at it.
 func storeImages(sid string, images []Image) ([]StoredFile, error) {
-	return storeImagesAt(GeneratedDir(sid), images, nil)
+	return storeImagesAt(GeneratedDir(sid), images, nil, nil)
 }
 
 // storeImagesAt is the same, into a directory the caller names, with a sidecar per picture when
 // one is given (ADR 0081 decision 3). props is the resolved request, and the seed and the file
 // name of each individual picture are filled in here — the caller knows what it asked for, and
 // only this function knows what the pictures ended up being called.
-func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+//
+// sink, when non-nil, is the destination folder as a directory fd (BrowseOpenDir): the pictures
+// and sidecars are then written through it and dir only names them in the result.
+func storeImagesAt(dir string, images []Image, props *ImageProps, sink DirSink) ([]StoredFile, error) {
+	if sink == nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
 	}
 	stamp := time.Now().UnixNano()
 	out := make([]StoredFile, 0, len(images))
@@ -76,22 +81,28 @@ func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile,
 		path := filepath.Join(dir, name)
 		// tmp + rename, so a reader that is already watching the directory never sees a
 		// half-written PNG.
-		tmp, err := os.CreateTemp(dir, ".image-*")
-		if err != nil {
-			return nil, err
-		}
-		if _, err := tmp.Write(img.Bytes); err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
-			return nil, err
-		}
-		if err := tmp.Close(); err != nil {
-			os.Remove(tmp.Name())
-			return nil, err
-		}
-		if err := os.Rename(tmp.Name(), path); err != nil {
-			os.Remove(tmp.Name())
-			return nil, err
+		if sink != nil {
+			if err := sink.WriteFile(name, img.Bytes); err != nil {
+				return nil, err
+			}
+		} else {
+			tmp, err := os.CreateTemp(dir, ".image-*")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := tmp.Write(img.Bytes); err != nil {
+				tmp.Close()
+				os.Remove(tmp.Name())
+				return nil, err
+			}
+			if err := tmp.Close(); err != nil {
+				os.Remove(tmp.Name())
+				return nil, err
+			}
+			if err := os.Rename(tmp.Name(), path); err != nil {
+				os.Remove(tmp.Name())
+				return nil, err
+			}
 		}
 		out = append(out, StoredFile{
 			Path: path, Name: name, MIME: img.MIME,
@@ -112,7 +123,15 @@ func storeImagesAt(dir string, images []Image, props *ImageProps) ([]StoredFile,
 			if img.Width > 0 && img.Height > 0 {
 				one.Size = fmt.Sprintf("%dx%d", img.Width, img.Height)
 			}
-			if err := writeSidecar(path, one); err != nil {
+			if sink != nil {
+				b, err := sidecarBytes(one)
+				if err == nil {
+					err = sink.WriteFile(filepath.Base(sidecarPathFor(path)), b)
+				}
+				if err != nil {
+					return nil, err
+				}
+			} else if err := writeSidecar(path, one); err != nil {
 				return nil, err
 			}
 			if err := appendHistory(historyItemOf(path, one)); err != nil {

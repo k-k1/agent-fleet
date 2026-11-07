@@ -211,8 +211,10 @@ attacker would try it:
   upload answer 403 for a denied entry, its descendants **and the folders that contain one**
   (`.config`, `.local`, `.local/share`, the browse root), judged on the spelled path and again on
   the path after symlink resolution (`fsWriteRefused`). Uploads and the image generator's
-  `out_dir` additionally refuse a symlinked destination folder; uploads are written through a
-  directory fd opened with `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`.
+  `out_dir` additionally refuse a symlinked destination folder. Uploads are written through a
+  directory fd opened with `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`, and so are generated pictures and
+  their sidecars: the folder is opened when the picture is stored, not trusted from the path
+  judged when the job was queued.
 
 ## 7.3 L1 Console authentication — three modes
 

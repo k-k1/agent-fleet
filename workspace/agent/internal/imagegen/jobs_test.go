@@ -7,6 +7,7 @@ package imagegen
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1049,5 +1050,84 @@ func TestOutDirIsJudgedAgainAfterItIsCreated(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("gate called %d times, want 2", calls)
+	}
+}
+
+type recordingSink struct {
+	mu    sync.Mutex
+	files map[string][]byte
+}
+
+func (s *recordingSink) WriteFile(name string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.files[name] = append([]byte(nil), data...)
+	return nil
+}
+func (s *recordingSink) Close() error { return nil }
+
+func outDirSeams(t *testing.T, root string, open func(rel string) (DirSink, error)) {
+	t.Helper()
+	oldW, oldO := BrowseWritablePath, BrowseOpenDir
+	BrowseWritablePath = func(p string) (string, string, bool) { return filepath.Join(root, p), p, true }
+	BrowseOpenDir = open
+	t.Cleanup(func() {
+		stopTestJobWorkers()
+		BrowseWritablePath, BrowseOpenDir = oldW, oldO
+	})
+}
+
+// A user-chosen out_dir is written through the fd opened when the picture is STORED, not through
+// the path judged when the job was queued: the picture and its sidecar reach the sink and the
+// path on disk is never written.
+func TestOutDirPicturesAreWrittenThroughTheOpenedDirectory(t *testing.T) {
+	q := withJobQueue(t)
+	p := newGateProvider(t)
+	withStubProvider(t, p)
+	root := t.TempDir()
+	sink := &recordingSink{files: map[string][]byte{}}
+	opened := ""
+	outDirSeams(t, root, func(rel string) (DirSink, error) { opened = rel; return sink, nil })
+
+	res := enqueue(t, q, JobSpec{OutDir: "pictures/posters"})
+	<-p.begun
+	p.release <- struct{}{}
+	waitFor(t, "the job to finish", func() bool { return stateOf(q, res.Jobs[0].ID) == JobDone })
+
+	if opened != "pictures/posters" {
+		t.Errorf("opened %q, want the out_dir", opened)
+	}
+	var png, sidecar int
+	for name := range sink.files {
+		switch {
+		case strings.HasSuffix(name, sidecarExt):
+			sidecar++
+		case strings.HasSuffix(name, ".png"):
+			png++
+		}
+	}
+	if png != 1 || sidecar != 1 {
+		t.Errorf("sink got %v, want one picture and one sidecar", sink.files)
+	}
+	if ents, _ := os.ReadDir(filepath.Join(root, "pictures", "posters")); len(ents) != 0 {
+		t.Errorf("the queued path was written to directly: %v", ents)
+	}
+}
+
+// The folder changed between enqueue and store (a link in its place): the open refuses, the job
+// fails, and nothing is written at the queued path.
+func TestOutDirThatBecomesUnacceptableBeforeStoreFailsTheJob(t *testing.T) {
+	q := withJobQueue(t)
+	p := newGateProvider(t)
+	withStubProvider(t, p)
+	root := t.TempDir()
+	outDirSeams(t, root, func(string) (DirSink, error) { return nil, errors.New("symlink") })
+
+	res := enqueue(t, q, JobSpec{OutDir: "pictures"})
+	<-p.begun
+	p.release <- struct{}{}
+	waitFor(t, "the job to fail", func() bool { return stateOf(q, res.Jobs[0].ID) == JobFailed })
+	if ents, _ := os.ReadDir(filepath.Join(root, "pictures")); len(ents) != 0 {
+		t.Errorf("files were written anyway: %v", ents)
 	}
 }

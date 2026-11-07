@@ -19,6 +19,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/filemeta"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -297,8 +298,37 @@ func safeWritableResolvedBrowsePath(p string) (full, rel string, ok bool) {
 	if !ok || !fsResolvedOK(full) || fsWriteRefused(full, rel, true) {
 		return "", "", false
 	}
+	// No symlink on the way: the folder is later written through an fd opened without following
+	// one, so a link that merely points at an ordinary folder is refused here as well.
+	if resolved, rok := pathguard.ResolveUnder(full, browseRoot()); !rok || filepath.ToSlash(resolved) != strings.Trim(filepath.ToSlash(rel), "/") {
+		return "", "", false
+	}
 	return full, rel, true
 }
+
+// openOutDirSink is imagegen.BrowseOpenDir: the gate again, then the folder as an fd.
+func openOutDirSink(rel string) (imagegen.DirSink, error) {
+	full, rel, ok := safeWritableResolvedBrowsePath(rel)
+	if !ok || rel == "" {
+		return nil, errors.New("out_dir is not a folder this workspace may write to")
+	}
+	if err := os.MkdirAll(full, 0o700); err != nil {
+		return nil, err
+	}
+	d, err := openUploadDir(rel)
+	if err != nil {
+		return nil, errors.New("out_dir is not a folder this workspace may write to")
+	}
+	return outDirSink{d}, nil
+}
+
+type outDirSink struct{ d *uploadDir }
+
+func (s outDirSink) WriteFile(name string, data []byte) error {
+	return s.d.store(name, bytes.NewReader(data), int64(len(data)), true)
+}
+
+func (s outDirSink) Close() error { s.d.close(); return nil }
 
 type fsEntry struct {
 	Name string `json:"name"`

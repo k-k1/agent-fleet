@@ -68,6 +68,7 @@ func init() {
 	// inside that package would be a second copy of a security decision.
 	imagegen.BrowsePath = safeBrowsePath
 	imagegen.BrowseWritablePath = safeWritableResolvedBrowsePath
+	imagegen.BrowseOpenDir = openOutDirSink
 	// The reference-image gate (ADR 0100 decision 4) reads beneath the browse root itself and
 	// refuses the same denylist the file tree does.
 	imagegen.BrowseRootDir = browseRoot

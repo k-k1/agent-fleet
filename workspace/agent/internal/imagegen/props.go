@@ -105,11 +105,19 @@ func sidecarPathFor(imagePath string) string { return imagePath + sidecarExt }
 // the record is what the properties bar, "open in image generation" and any later X/Y grid all
 // read, so a picture without one is a picture whose settings are lost.
 func writeSidecar(imagePath string, props ImageProps) error {
-	b, err := json.MarshalIndent(props, "", "  ")
+	b, err := sidecarBytes(props)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sidecarPathFor(imagePath), append(b, '\n'), 0o600)
+	return os.WriteFile(sidecarPathFor(imagePath), b, 0o600)
+}
+
+func sidecarBytes(props ImageProps) ([]byte, error) {
+	b, err := json.MarshalIndent(props, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
 }
 
 func readSidecar(imagePath string) (ImageProps, bool) {
@@ -137,7 +145,18 @@ func readSidecar(imagePath string) (ImageProps, bool) {
 var (
 	BrowsePath         func(p string) (full, rel string, ok bool)
 	BrowseWritablePath func(p string) (full, rel string, ok bool)
+	// BrowseOpenDir opens a browse-root-relative folder for writing as a directory fd with no
+	// symlink on the way. A job writes a user-chosen out_dir through it at STORE time, not
+	// through the path string checked when the job was queued: the folder may have changed in
+	// the minutes between the two. nil means no such seam, and a job with an out_dir fails.
+	BrowseOpenDir func(rel string) (DirSink, error)
 )
+
+// DirSink writes regular files (mode 0600, temp file + rename) into one directory held as an fd.
+type DirSink interface {
+	WriteFile(name string, data []byte) error
+	Close() error
+}
 
 // HandleProps answers GET /imagegen/props?path=<browse-root-relative>.
 //

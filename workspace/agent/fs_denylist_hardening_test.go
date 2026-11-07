@@ -342,3 +342,33 @@ func TestCountFileLinesBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestOutDirSinkWritesBeneathAnOrdinaryFolderAndRefusesLinks(t *testing.T) {
+	home := hardeningHome(t)
+	sink, err := openOutDirSink("gen/new/folder")
+	if err != nil {
+		t.Fatalf("an ordinary new folder was refused: %v", err)
+	}
+	if err := sink.WriteFile("a.png", []byte("pixels")); err != nil {
+		t.Fatal(err)
+	}
+	_ = sink.Close()
+	b, err := os.ReadFile(filepath.Join(home, "gen", "new", "folder", "a.png"))
+	if err != nil || string(b) != "pixels" {
+		t.Fatalf("picture not stored: %q %v", b, err)
+	}
+	if fi, _ := os.Stat(filepath.Join(home, "gen", "new", "folder", "a.png")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v, want 0600", fi.Mode().Perm())
+	}
+
+	// The folder is replaced by a link after the job was queued: the store-time open refuses.
+	if err := os.Symlink(filepath.Join(home, "docs"), filepath.Join(home, "swapped")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openOutDirSink("swapped"); err == nil {
+		t.Error("a symlinked out_dir was opened for writing")
+	}
+	if _, _, ok := safeWritableResolvedBrowsePath("swapped/sub"); ok {
+		t.Error("a path through a link to an ordinary folder was accepted")
+	}
+}
