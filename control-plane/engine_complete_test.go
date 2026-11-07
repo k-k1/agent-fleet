@@ -491,3 +491,57 @@ func TestCompleteRouteRecordsOnlyWhatItDid(t *testing.T) {
 		t.Errorf("a press with nothing to do recorded %d rows, want the same 2", len(rows()))
 	}
 }
+
+// A move whose bytes the row does not yet declare first writes a declaration at the current key.
+// That catalogue change is recorded even when the job then fails to start, and a started move
+// records its own row naming the actor and both keys.
+func TestCompleteMoveRecordsItsDeclarationAndItsStart(t *testing.T) {
+	setup := func() *engineLedgerHarness {
+		h := newEngineLedgerHarness(t)
+		h.put("image/diffusion_models/krea2_raw.safetensors", 1)
+		h.put("image/text_encoders/qwen3vl_4b_fp8_scaled.safetensors", 1)
+		h.put("image/vae/split_files/vae/qwen_image_vae.safetensors", 1)
+		h.row(t, store.EngineModel{ID: "krea2", Kind: "checkpoint", BaseModel: "krea2",
+			Files: []store.EngineModelFile{
+				{Flag: "--diffusion-model", S3Key: "image/diffusion_models/krea2_raw.safetensors"},
+				{Flag: "--clip_l", S3Key: "image/text_encoders/qwen3vl_4b_fp8_scaled.safetensors"},
+			}})
+		return h
+	}
+	press := func(h *engineLedgerHarness) *httptest.ResponseRecorder {
+		return h.call(t, h.a.completeModel, "POST", "/api/admin/engines/image/models/krea2/complete",
+			`{}`, map[string]string{"id": "krea2"})
+	}
+	const from, to = "image/vae/split_files/vae/qwen_image_vae.safetensors", "image/vae/qwen_image_vae.safetensors"
+
+	h := setup()
+	if rec := press(h); rec.Code != http.StatusOK || len(h.ecs.run) != 1 {
+		t.Fatalf("complete = %d %s with %d tasks, want one started move", rec.Code, rec.Body.String(), len(h.ecs.run))
+	}
+	var moved, declared bool
+	for _, l := range auditRowsOf(t, h.st, "", "engine.image.model.complete") {
+		if l.ActorKind != "admin" || l.ActorID != "u1" {
+			t.Errorf("row %+v: want actor admin/u1", l)
+		}
+		moved = moved || strings.Contains(l.Target, "krea2 moving "+from+" to "+to)
+		declared = declared || strings.Contains(l.Target, "krea2 declared "+from)
+	}
+	if !moved || !declared {
+		t.Errorf("moved=%v declared=%v, want both the declaration and the move recorded", moved, declared)
+	}
+
+	h = setup()
+	h.ecs.fail = "capacity" // RunTask refuses after the declaration was written
+	if rec := press(h); rec.Code < 400 {
+		t.Fatalf("complete = %d, want the start refused", rec.Code)
+	}
+	rows := auditRowsOf(t, h.st, "", "engine.image.model.complete")
+	if len(rows) != 1 || !strings.Contains(rows[0].Target, "krea2 declared "+from) {
+		t.Errorf("rows after a failed start = %+v, want the one declaration recorded", rows)
+	}
+	for _, r := range rows {
+		if strings.Contains(r.Target, "moving") {
+			t.Errorf("row %+v: a move that never started was recorded", r)
+		}
+	}
+}

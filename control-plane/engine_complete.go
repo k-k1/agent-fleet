@@ -650,6 +650,9 @@ func (a engineAdminAPI) engineCompleteMove(ctx context.Context, r *http.Request,
 			return store.EngineIngestJob{}, refuse(http.StatusNotFound, errCodeEngineModelUnknown,
 				"no model "+id+" for engine "+role, nil, nil)
 		}
+		// Recorded here, not after the job starts: the catalogue has changed and a start failure
+		// below must not leave that change without a row.
+		a.auditFor(r, g, "engine."+role+".model.complete", id+" declared "+s.from+" (to be moved to "+s.to+")")
 	}
 	job, aerr := a.engineStartMainFileMove(ctx, g, role, id, fix)
 	if aerr != nil {
