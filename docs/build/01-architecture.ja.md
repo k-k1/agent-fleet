@@ -98,7 +98,7 @@ tmux 内または managed driver 配下の CLI エージェント + working copy
 
 | 層 | 対象 | 方式 | 保存先 |
 |----|------|------|--------|
-| **L1 Console 認証** | 誰が Console を使えるか | `AUTH=oauth`（CP 自身のログイン。Google・GitHub・任意の OIDC プロバイダ。compose と AWS のテンプレートが設定する値）/ `proxy`（外部ゲートウェイのメールヘッダを信頼）/ `dev`（固定 ID。`AUTH` 未設定時の既定で、`native` が受け付ける唯一のモード）| 署名セッション cookie（CP）|
+| **L1 Console 認証** | 誰が Console を使えるか | `AUTH=oauth`（CP 自身のログイン。Google・GitHub・任意の OIDC プロバイダ。compose と AWS のテンプレートが設定する値）/ `proxy`（外部ゲートウェイのメールヘッダを信頼）/ `dev`（固定 ID。`native` が受け付ける唯一のモードで、そこでは未設定時にこれになる。ほかでは `AUTH` に既定値は無く、必ず設定する）| 署名セッション cookie（CP）|
 | **L2 エージェント認証** | 各ユーザーのエージェントを誰として動かすか | 各自のプロバイダへのサインイン | Workspace 内: CLI 自身の設定、または `secrets.enc` |
 
 L2 はユーザー本人の作業で、Console は**状態の可視化と接続 UI** を担う。詳細: L1 = [07 §7.3](07-security.ja.md)、
