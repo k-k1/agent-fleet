@@ -1,4 +1,4 @@
-import { ConnChecking } from "../parts/providerCard.tsx";
+import { ConnChecking, type ConnPhase } from "../parts/providerCard.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
@@ -62,7 +62,7 @@ export function AgentsTab() {
   const running = wsState === "running";
   // Shared connection loader (also used by GitTab); reload() refetches + bumps global
   // listeners on connect/disconnect.
-  const { conns, reload } = useConnections();
+  const { conns, reload, failed } = useConnections();
   // Behavior settings, loaded independently so a missing/old endpoint degrades in
   // place (hides that card's toggles) instead of blanking the connect UI. claude:
   // null = loading/unavailable, object = ready. agents: null = loading, false =
@@ -269,12 +269,15 @@ export function AgentsTab() {
   // "checking…" chip (ConnChecking) rather than hiding the list or claiming "not connected".
   // They get running=false meanwhile, which is what keeps their login flows from flashing.
   const checking = running && !conns;
-  const cardsRunning = running && !checking;
+  const connFailed = running && !!conns && failed;
+  const phase: ConnPhase = checking ? "checking" : connFailed ? "failed" : "ok";
+  const cardsRunning = running && phase === "ok";
 
   // A deep-link from elsewhere (the transcript's Re-authenticate button) names the agent card to
-  // land on; the cards exist from the first render, so the target needs no snapshot.
+  // land on; scrolling waits for the snapshot because
+  // the login fields it brings in change the cards' heights and would push a late target off screen.
   const rootRef = useRef<HTMLDivElement>(null);
-  useSettingsTarget(rootRef, true);
+  useSettingsTarget(rootRef, phase !== "checking");
 
   return (
     <div className="conns" ref={rootRef}>
@@ -287,7 +290,15 @@ export function AgentsTab() {
           </Button>
         </div>
       )}
-      <ConnChecking.Provider value={checking}>
+      <ConnChecking.Provider value={phase}>
+        {connFailed && (
+          <div className="agents-ws-hint">
+            <p className="muted ds-note">{tr("conn.check_failed_note")}</p>
+            <Button icon="refresh" onClick={reload}>
+              {tr("conn.retry")}
+            </Button>
+          </div>
+        )}
           {running && <p className="muted ds-note">{tr("agents.note_apply")}</p>}
           <ClaudeCard running={cardsRunning} st={conns?.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
           <CodexCard

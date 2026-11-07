@@ -76,8 +76,8 @@ export function StreamRepliesRow({ kind }: { kind: string }) {
 // reachable, but the auth flow (Agent-proxied) waits for start.
 export function ConnPaused() {
   const tr = useT();
-  const checking = useContext(ConnChecking);
-  return <div className="p-desc muted">{checking ? tr("conn.checking_note") : tr("agents.conn_paused")}</div>;
+  const phase = useContext(ConnChecking);
+  return <div className="p-desc muted">{phase === "checking" ? tr("conn.checking_note") : phase === "failed" ? tr("conn.check_failed_note") : tr("agents.conn_paused")}</div>;
 }
 
 // tooWideForSegments decides between the segmented control and a dropdown, for the model row

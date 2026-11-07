@@ -132,7 +132,8 @@ export function ReauthButton({ onClick, disabled }: { onClick: () => void; disab
 // as children. Replaces the old flat .conn-row so every provider reads the same way.
 // True while the connection snapshot has not arrived yet: cards draw at once and show a
 // "checking…" chip instead of a connected / not-connected verdict they do not have.
-export const ConnChecking = createContext(false);
+export type ConnPhase = "ok" | "checking" | "failed";
+export const ConnChecking = createContext<ConnPhase>("ok");
 
 export function ProviderCard({
   id,
@@ -146,7 +147,7 @@ export function ProviderCard({
   children?: ReactNode;
 }) {
   const brand = badgeBrand(id);
-  const checking = useContext(ConnChecking);
+  const phase = useContext(ConnChecking);
   const tr = useT();
   return (
     <div className="p-card" data-settings-target={id}>
@@ -155,7 +156,7 @@ export function ProviderCard({
           {brand ? <Icon name={brand} /> : BADGE_SHORT[id]}
         </span>
         <span className="p-name">{name}</span>
-        {checking ? <StatusPill>{tr("conn.checking")}</StatusPill> : status}
+        {phase === "ok" ? status : <StatusPill>{tr(phase === "failed" ? "conn.check_failed" : "conn.checking")}</StatusPill>}
       </div>
       {children}
     </div>
