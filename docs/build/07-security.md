@@ -447,10 +447,26 @@ returns the result without storing the token.
 ### 7.5.1 The member-origin mark
 
 Where a route must accept only the member's own Console request, the CP marks it
-([decisions/0113](../decisions/0113-member-origin-mark.md)). Today that is the member-only memory writes:
-`entries/pin`, `entries/revert` (which also forgets), `entries/member-save`, `entries/project-move` (moving the
-memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-agent-memory.md) note of 2026-10-14) and
-`entries/purge` (the history purge, #1982).
+([decisions/0113](../decisions/0113-member-origin-mark.md)). This chapter does not list the routes, because a
+hand-kept list drifts. The source of truth is the code, in three places:
+
+- the relay rows with `sign` in `control-plane/relays*.go`;
+- the CP handlers that sign directly (`memberOriginSign` outside the relay path: work-item comment and merge,
+  session handoff push);
+- on the Agent, the routes registered behind `memberorigin.Require` in `workspace/agent/routes.go`, plus the
+  conditional check on `PUT /env/ui-prefs` (`ui_prefs.go`), which asks for the mark only when a write turns a
+  member-decision switch on.
+
+`workspace/agent/internal/memberorigin/signed_routes.txt` is the one checked-in list both modules are tested
+against (`TestSignedRoutesMatchRelayRows` in `control-plane`, `TestSignedRoutesMatchRequireRegistrations` in
+`workspace/agent`; the modules cannot import each other, so each checks the same file). A route signed on one
+side only fails one of the two tests.
+
+**When a new route needs the mark**: when the action is the member's own decision and a session must not be
+able to take it, because every session holds the same `AGENT_TOKEN` the relay uses. Typical cases are writes
+to the member's memory, anything that publishes the member's work under their name, and switches that send
+their conversations elsewhere. Add the relay row with `sign` (or sign in the handler), wrap the Agent route in
+`memberorigin.Require`, and add the line to the list.
 
 - **Asymmetric, because the Agent cannot keep a secret from its sessions** (same uid, §7.2). The CP signs
   with an Ed25519 key derived from the token-signing master; the Agent is started with the public keys only
@@ -487,10 +503,20 @@ memories of an orphaned project, [decisions/0108](../decisions/0108-af-owned-age
 - **Rotation**: a workspace starts with the current and the next key, so raising
   `AF_MEMBER_ORIGIN_KEY_VERSION` by one keeps workspaces started under the previous version working; a
   second raise before they restart does not.
-- **Limits**: only these three routes are signed; the claude and muse imports still record the member as
-  author unsigned (#2014). The mark governs the Agent's routes, not the store's files, which a session can still write
-  directly; it is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP
-  is out of scope.
+- **Limits**:
+  - **Knowingly unsigned member actions.** The claude and muse memory imports still record the member as author
+    without the mark (#2014). The AWS confirm-before-use approval (`POST /aws-confirm/{id}/approve`) is not
+    signed either: it stops accidental and unnoticed use, not a session that sets out to get past it
+    ([decisions/0126](../decisions/0126-aws-runs-in-the-mirror-and-confirm-before-use.md) decision 6,
+    `SECURITY.md` "Known residual risks").
+  - **The mark protects routes, not files.** A session can write any file the Agent's uid can, so the
+    store's files and other state files are not covered. `~/.config/agent-fleet/ui-prefs.json` is one: the
+    mark on `PUT /env/ui-prefs` guards the route, and a session that edits the file directly is not stopped
+    by it. The switches the route guards today are the background memory review (removal tracked in #3440)
+    and Muse Code's contributor mode; for those, the mark keeps a session from using the route, not from
+    writing the file.
+  - It is as strong as the CP's member authentication (nothing under `AUTH=dev`); a compromised CP is out of
+    scope.
 
 ## 7.6 Secrets and envelope encryption
 
@@ -499,7 +525,8 @@ interprets the plaintext of a member's credentials; nothing secret is logged.**
 
 | Secret | Stored | Exposure |
 |---|---|---|
-| Git credentials and provider keys (GitHub, Bitbucket, Jira, opencode providers, MCP secrets, …) | **the encrypted store** `~/.config/agent-fleet/secrets.enc` (AES-256-GCM, 0600) in the workspace home | that user only. Git reads it through the credential helper (`workspace-agent cred`), which decrypts on demand and writes to stdout; other keys are injected into the process that needs them. **No plaintext file is created** |
+| Git credentials and provider keys (GitHub, Bitbucket, Jira, opencode providers, …) | **the encrypted store** `~/.config/agent-fleet/secrets.enc` (AES-256-GCM, 0600) in the workspace home | that user only. Git reads it through the credential helper (`workspace-agent cred`), which decrypts on demand and writes to stdout; other keys are injected into the process that needs them. **No plaintext file is created** |
+| A member's MCP server secrets (header and environment values) | the encrypted store, **and in plaintext (0600) in each agent CLI's own config file in the home** (`workspace/agent/internal/mcpreg/materialize*.go`), because the CLI has to read them | that user only. Those config files are in home backups and snapshots, and shredding the workspace DEK does not remove them. Secret storage for MCP is #1056 |
 | The agent's own credentials file | the agent's config directory, outside the home and outside the browser's reach (§7.2) | that user only |
 | System secrets — login client secrets, the master key (`AF_MASTER_KEY`), the cookie secret | environment files kept out of git; on AWS, SSM SecureStrings under `/af-cp/` (the database password is RDS's managed secret) | the CP only. **The master key is stored outside the data area and never included in a backup** — losing it is a crypto-shred |
 | Tenant secrets — a tenant IdP's or git OAuth app's client secret, MCP server credentials | the database, sealed with the tenant key | the CP only; never returned to the UI |

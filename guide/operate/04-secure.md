@@ -161,8 +161,10 @@ Users register **their own MCP servers** under ⚙ Settings → MCP servers (use
 an operator.
 
 - **Where secrets live.** Environment variable and header values are stored with envelope
-  encryption and handed over only when the server starts; nothing is left in a config file in the
-  clear.
+  encryption. They are also written in plaintext (file mode 0600, in the member's home) into the
+  config file of each agent CLI that uses the server, because the CLI has to read them there. Those
+  files are included in home backups and snapshots, and are not removed by discarding the workspace
+  key.
 - **Only remote (HTTP) can be distributed.** Distributing stdio would be equivalent to an admin
   running an arbitrary command in everybody's container, so it is forbidden by design (a personal
   registration may still use stdio).
@@ -369,7 +371,8 @@ client is served.
   a fault.
 - **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
-  hands it over, so no plaintext files are ever created
+  hands it over, so git and provider credentials are not written to plaintext files. The exception
+  is MCP server secrets, which are written (0600) into the agent CLIs' config files in the home
   (`docs/build/07-security.md` §7.6).
 - **Workspaces do not get the host's cloud identity.** A workspace container can reach the
   cloud metadata endpoint (`169.254.169.254`) of the machine it runs on, and an AWS SDK with no
