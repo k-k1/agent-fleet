@@ -12,44 +12,46 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
+// refuseRedirect is the CheckRedirect of every client that talks to an Agent or the engine:
+// the CP builds those URLs itself, so a 3xx is unexpected, and following it would send the
+// request (bearer attached) to a destination chosen by code running in the workspace. The
+// 3xx is returned to the caller as an ordinary response.
+func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// newAgentClient is the one constructor for a CP→Agent (or engine) HTTP client, so a new
+// client refuses redirects by default. timeout 0 means none (the caller's context bounds it).
+// tr should be one of agent_dial.go's transports so Service Connect / Cloud Map resolution works.
+func newAgentClient(timeout time.Duration, tr http.RoundTripper) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: refuseRedirect}
+}
+
 // agentHTTPClient is the CP→Agent client for control-loop calls (scheduler,
 // reaper, session mirror / quota checks). The per-request timeout keeps a
 // stalled Agent from blocking the single scheduler/reaper goroutine forever
 // (those loops run every fire/sweep for ALL users). It is generous enough for
 // the slowest bounded Agent call (an /input confirm wait is ~30s). Streaming
 // endpoints (proxy/preview/browser) must NOT use this client.
-var agentHTTPClient = &http.Client{
-	Timeout: 2 * time.Minute,
-	// Shared transport (agent_dial.go) that falls back to Cloud Map when the Service
-	// Connect alias does not resolve. Every CP→Agent path goes through it.
-	Transport: newAnswerTransport(),
-	// Never re-follow an Agent redirect with the bearer attached — control-loop
-	// paths are CP-built, so a 3xx is unexpected and surfaces as its status code.
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+var agentHTTPClient = newAgentClient(2*time.Minute, newAnswerTransport())
 
 // agentLongCallClient is agentHTTPClient WITHOUT the client timeout, for the few
 // deliberately long synchronous Agent calls whose deadline the CALLER's context
 // carries (POST /assistant-turns: 8 min so the Agent-side operatorTurnTimeout —
 // which may pause 4 min on a bridge approval — always gives up first). The
 // 2-minute shared timeout would fake-fail those turns.
-var agentLongCallClient = &http.Client{
-	Transport:     newAnswerTransport(),
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-}
+var agentLongCallClient = newAgentClient(0, newAnswerTransport())
 
 // healthzClient bounds the /healthz probes (waitAgentHealthy): the poll loops
 // re-issue every couple of seconds, so one hung request must not stall its
 // caller — a wedged probe inside a scheduler fire would otherwise hold the
 // tick's wg.Wait forever (the same failure mode agentHTTPClient closed).
-var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAnswerTransport()}
+var healthzClient = newAgentClient(5*time.Second, newAnswerTransport())
 
 // agentStatsClient bounds the resource-gauge poll. It must be its own client: the
 // stats read sits inside the 4-second /api/events tick, so a wedged Agent would
 // otherwise hold a subscriber's tick for the shared client's 2 MINUTES — the SSE
 // stream would go silent and the Console would show stale everything. A gauge that
 // cannot be read in a few seconds is simply "not measurable this tick".
-var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAnswerTransport()}
+var agentStatsClient = newAgentClient(5*time.Second, newAnswerTransport())
 
 // agentStatsMaxBytes bounds the stats body the CP will read.
 const agentStatsMaxBytes = 64 << 10

@@ -52,7 +52,7 @@ func (a browserAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) 
 		}
 	}
 
-	if unsafeRelayPath(r.URL.Path) {
+	if _, ok := relayTargetPath(r); !ok {
 		http.Error(w, "bad browser proxy path", http.StatusBadRequest)
 		return
 	}
@@ -93,7 +93,11 @@ func copyHeader(dst, src http.Header, name string) {
 }
 
 func browserAgentHTTPURL(endpoint string, r *http.Request) (string, error) {
-	target, err := url.Parse(strings.TrimRight(endpoint, "/") + strings.TrimPrefix(r.URL.Path, "/api"))
+	suffix, ok := relayTargetPath(r)
+	if !ok {
+		return "", errors.New("unsafe browser relay path")
+	}
+	target, err := url.Parse(strings.TrimRight(endpoint, "/") + suffix)
 	if err != nil {
 		return "", err
 	}
@@ -347,6 +351,12 @@ func relayBrowserControls(src, dst *websocket.Conn, viewer *browserViewer) error
 		if err != nil {
 			return err
 		}
+		// An interaction report is for the CP alone: it bounds the viewer's presence
+		// (browserViewer.noteInteraction) and the Agent has no handler for it.
+		if browserInteraction(data, typ) {
+			viewer.noteInteraction()
+			continue
+		}
 		if err := dst.SetWriteDeadline(time.Now().Add(browserWriteTimeout)); err != nil {
 			return err
 		}
@@ -376,14 +386,38 @@ func browserVisibility(data []byte, typ int) (bool, bool) {
 	return *msg.Visible, true
 }
 
+func browserInteraction(data []byte, typ int) bool {
+	if typ != websocket.TextMessage {
+		return false
+	}
+	var msg struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(data, &msg) == nil && msg.Type == "interaction"
+}
+
 // browserViewer dynamically removes hidden sockets from the reaper's warm
 // connection count without closing the socket or attaching it to a Session.
+//
+// A visible pane is presence only within presenceGrace of the last member interaction
+// the Console reported on it (pointer down, wheel, key, paste), the same bound a
+// terminal has: a foreground tab on a screen that never locks is visible forever, so
+// visibility alone must not pin the Workspace. Interaction arrives only on the member's
+// browser socket; the Agent's own CDP / attach_chromium automation never reaches
+// noteInteraction.
 type browserViewer struct {
 	mu       sync.Mutex
 	registry *connRegistry
 	wsID     string
 	active   bool
 	closed   bool
+	// lastInteract is the newest interaction, or the first time the pane became visible
+	// on this socket (a person opened it; this also bounds an older Console that never
+	// reports interaction). Re-becoming visible after hidden does NOT refresh it: a tab
+	// switch cannot be told from an automatic re-render here, and the next real click or
+	// scroll reports itself. It is replayed into the registry on each re-show, which
+	// would otherwise forget it (doneConn clears the workspace clock).
+	lastInteract time.Time
 }
 
 func newBrowserViewer(registry *connRegistry, wsID string) *browserViewer {
@@ -398,12 +432,28 @@ func (v *browserViewer) setVisible(visible bool) {
 	}
 	v.active = visible
 	if visible {
-		// attention=false, i.e. unconditional presence: the browser pane holds this
-		// connection only while it is visible, so it cannot be left open and forgotten the
-		// way a terminal can. Visibility is itself the signal that someone is there.
-		v.registry.addConn(v.wsID, "", false)
+		if v.lastInteract.IsZero() {
+			v.lastInteract = time.Now()
+		}
+		// attention=true: presence only while the workspace input clock is fresh.
+		v.registry.addAttentionConnAt(v.wsID, v.lastInteract)
 	} else {
-		v.registry.doneConn(v.wsID, "", false)
+		v.registry.doneConn(v.wsID, "", true)
+	}
+}
+
+// noteInteraction records a member interaction on the pane. It counts as workspace
+// input only while the pane is visible and registered; a report arriving while hidden
+// is remembered and replayed on the next show.
+func (v *browserViewer) noteInteraction() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.closed {
+		return
+	}
+	v.lastInteract = time.Now()
+	if v.active {
+		v.registry.noteInput(v.wsID, "")
 	}
 }
 
@@ -416,6 +466,6 @@ func (v *browserViewer) close() {
 	v.closed = true
 	if v.active {
 		v.active = false
-		v.registry.doneConn(v.wsID, "", false)
+		v.registry.doneConn(v.wsID, "", true)
 	}
 }

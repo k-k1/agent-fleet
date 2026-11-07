@@ -315,6 +315,8 @@ The same connection signs in `gh`, and for Bitbucket Cloud `bkt`, in every sessi
 ([15](15-external-services.md#clis-that-are-already-signed-in)). If GitHub cannot renew the connection, the tab says
 "GitHub could not renew this connection: the authorization has expired or was revoked. Disconnect and connect GitHub
 again."
+Jira and Bitbucket connections finish only in the Console session of the member who started them. If the browser
+is signed in as someone else, or the session expired, nothing is saved: sign in as yourself and connect again.
 → [06 Repositories and git](06-code.md)
 
 ### Ops & monitoring

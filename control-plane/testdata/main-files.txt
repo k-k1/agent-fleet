@@ -55,6 +55,7 @@ engine_catalog.go
 engine_civitai_red.go
 engine_civitai_token.go
 engine_class.go
+engine_comfy_guard.go
 engine_comfy_panel.go
 engine_complete.go
 engine_control.go

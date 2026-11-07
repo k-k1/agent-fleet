@@ -311,9 +311,19 @@ export function AdminTab() {
             {tr("admin.deploy_warn_plaintext_secrets")}
           </p>
         )}
+        {warnings.includes("auth_dev") && (
+          <p className="admin-hint warn" role="alert">
+            {tr("admin.deploy_warn_auth_dev")}
+          </p>
+        )}
         {warnings.includes("efs_backup_missing") && (
           <p className="admin-hint warn" role="alert">
             {tr("admin.deploy_warn_efs_backup_missing")}
+          </p>
+        )}
+        {warnings.includes("mcp_oauth_reg_cap") && (
+          <p className="admin-hint warn" role="alert">
+            {tr("admin.deploy_warn_mcp_oauth_reg_cap")}
           </p>
         )}
         <div className="admin">{body()}</div>

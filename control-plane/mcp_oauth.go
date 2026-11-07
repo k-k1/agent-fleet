@@ -56,20 +56,28 @@ const (
 	mcpOAuthMemPRMPath   = "/.well-known/oauth-protected-resource" + mcpsrv.MemoryPath
 	mcpOAuthMetadataPath = "/.well-known/oauth-authorization-server" + mcpOAuthPath
 
-	mcpOAuthCodeTTL      = 60 * time.Second
-	mcpOAuthConsentTTL   = 5 * time.Minute
-	mcpOAuthAccessTTL    = time.Hour
-	mcpOAuthIdleTTL      = 30 * 24 * time.Hour
-	mcpOAuthAbsoluteTTL  = 90 * 24 * time.Hour
-	mcpOAuthClientTTL    = 30 * 24 * time.Hour // a registration with no grant is deleted after this
-	mcpOAuthMaxClients   = 2000
-	mcpOAuthRegPerHour   = 10
-	mcpOAuthMaxRedirects = 8
+	mcpOAuthCodeTTL     = 60 * time.Second
+	mcpOAuthConsentTTL  = 5 * time.Minute
+	mcpOAuthAccessTTL   = time.Hour
+	mcpOAuthIdleTTL     = 30 * 24 * time.Hour
+	mcpOAuthAbsoluteTTL = 90 * 24 * time.Hour
+	// A registration that never produced a grant is deleted after this. It is short because
+	// registration needs no authentication: the quicker unused ones expire, the less a flood of
+	// them can occupy mcpOAuthMaxClients.
+	mcpOAuthClientTTL = 24 * time.Hour
+	// Ended grants are kept this long before they are deleted.
+	mcpOAuthGrantRetention = 30 * 24 * time.Hour
+	mcpOAuthMaxClients     = 2000
+	mcpOAuthRegPerHour     = 10
+	mcpOAuthMaxRedirects   = 8
 
 	// The wire value of the one tier OAuth can never grant (pat.go's ladder).
 	mcpOAuthForbiddenScope = scopeDangerous
 
-	defaultMCPOAuthTrustedHosts = "claude.ai,claude.com,chatgpt.com"
+	// claude.ai is pinned to its documented callback path (ADR 0118). claude.com and chatgpt.com stay
+	// host-only: ChatGPT's redirect carries a per-connection id when the stable one is not used, and
+	// claude.com's path is documented nowhere in this repository.
+	defaultMCPOAuthTrustedHosts = "https://claude.ai/api/mcp/auth_callback,claude.com,chatgpt.com"
 )
 
 type mcpOAuthAPI struct {
@@ -243,14 +251,14 @@ func (a *mcpOAuthAPI) metadata(w http.ResponseWriter, _ *http.Request) {
 
 // --- redirect rule (ADR 0118 decision 3) ------------------------------------------
 
+// parseTrustedClientHosts is the lenient reader of the env var and the built-in default: an
+// entry the strict validator refuses is skipped.
 func parseTrustedClientHosts(s string) map[string]bool {
 	out := map[string]bool{}
-	for _, h := range strings.Split(s, ",") {
-		h = strings.ToLower(strings.TrimSpace(h))
-		if h == "" || h == "none" || strings.ContainsAny(h, ":/@?#\\ ") || strings.HasSuffix(h, ".") {
-			continue
+	for _, raw := range strings.Split(s, ",") {
+		if e, err := parseTrustedEntry(raw); err == nil {
+			out[e] = true
 		}
-		out[h] = true
 	}
 	return out
 }
@@ -266,7 +274,7 @@ const (
 // classifyRedirect decides whether a redirect URI may ever receive a code. It admits
 //
 //   - http://127.0.0.1, http://localhost and http://[::1] on any port (RFC 8252 §7.3), and
-//   - https on exactly a trusted-client host.
+//   - https on a trusted-client entry: a bare host (any path) or a URL prefix (that path and below).
 //
 // The match is on the canonical spelling: an upper-case host, a trailing dot, an explicit :443,
 // userinfo, a fragment or a backslash are refused rather than normalised, because every
@@ -298,7 +306,7 @@ func (a *mcpOAuthAPI) classifyRedirect(trusted trustedHosts, raw string) redirec
 		}
 		return redirectLoopback
 	case "https":
-		if u.Host != u.Hostname() || !trusted[u.Host] {
+		if u.Host != u.Hostname() || !trusted.admits(u) {
 			return redirectRefused
 		}
 		return redirectHosted
@@ -353,7 +361,7 @@ var (
 // chose.
 func (a *mcpOAuthAPI) cimdURLAllowed(trusted trustedHosts, id string) (*url.URL, bool) {
 	u, ok := parseCanonicalRedirect(id)
-	if !ok || u.Scheme != "https" || u.Host != u.Hostname() || !trusted[u.Host] ||
+	if !ok || u.Scheme != "https" || u.Host != u.Hostname() || !trusted.hostTrusted(u.Host) ||
 		u.RawQuery != "" || u.ForceQuery || len(u.Path) < 2 || path.Clean(u.Path) != u.Path {
 		return nil, false
 	}
@@ -414,7 +422,7 @@ func (a *mcpOAuthAPI) loadCIMD(ctx context.Context, trusted trustedHosts, id str
 	if _, ok := a.cimdURLAllowed(trusted, id); !ok {
 		// Nothing was fetched. Name the host only when it is the single thing wrong: a plain https
 		// host (no userinfo, no port) that is off the list.
-		if u, ok := parseCanonicalRedirect(id); ok && u.Scheme == "https" && u.Host == u.Hostname() && !trusted[u.Host] {
+		if u, ok := parseCanonicalRedirect(id); ok && u.Scheme == "https" && u.Host == u.Hostname() && !trusted.hostTrusted(u.Host) {
 			return mcpClient{}, errMCPClientHostUntrusted
 		}
 		return mcpClient{}, errMCPClientUnknown
@@ -654,9 +662,21 @@ func (l *rateLimiter) allow(key string, now time.Time) bool {
 
 func registerSource(r *http.Request) string {
 	if info := clientIPFrom(r.Context()); info.OK {
-		return info.IP.String()
+		return registerSourceKey(info.IP)
 	}
 	return "unknown"
+}
+
+// registerSourceKey is the rate-limit key of one source. An IPv6 subscriber holds a whole /64
+// (often more), so keying on the full address would hand one source 2^64 buckets of its own.
+func registerSourceKey(ip netip.Addr) string {
+	ip = ip.Unmap()
+	if ip.Is6() {
+		if p, err := ip.Prefix(64); err == nil {
+			return p.String()
+		}
+	}
+	return ip.String()
 }
 
 // mcpRegError is the RFC 7591 §3.2.2 error body.
@@ -736,13 +756,17 @@ func (a *mcpOAuthAPI) register(w http.ResponseWriter, r *http.Request) {
 		seen[u] = true
 	}
 	now := a.now()
-	if err := a.mgr.store.PruneMCPOAuth(ctx, now.Unix(), now.Add(-mcpOAuthClientTTL).Unix(), now.Add(-mcpOAuthClientTTL).Unix()); err != nil {
+	if err := a.mgr.store.PruneMCPOAuth(ctx, now.Unix(), now.Add(-mcpOAuthClientTTL).Unix(), now.Add(-mcpOAuthGrantRetention).Unix()); err != nil {
 		log.Printf("mcp oauth: prune: %v", err)
 	}
 	uris, _ := json.Marshal(req.RedirectURIs)
 	c := store.MCPOAuthClient{ClientID: "afmcp-" + strings.ToLower(devIdPRandom(18)), Name: cleanClientName(req.ClientName),
 		RedirectURIs: string(uris), CreatedAt: now.Unix()}
-	switch err := a.mgr.store.CreateMCPOAuthClient(ctx, c, mcpOAuthMaxClients); {
+	evicted, err := a.mgr.store.CreateMCPOAuthClient(ctx, c, mcpOAuthMaxClients)
+	if evicted || errors.Is(err, store.ErrMCPOAuthClientCap) {
+		a.mgr.mcpOAuthCapHitAt.Store(now.Unix())
+	}
+	switch {
 	case errors.Is(err, store.ErrMCPOAuthClientCap):
 		regError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "the registration limit is reached; try again later")
 		return

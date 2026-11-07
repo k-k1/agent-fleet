@@ -83,7 +83,7 @@ CP が起動しない）。手順は [`deploy/compose/README.md`](../../deploy/c
 |------|-----------|------|
 | **Caddy** | compose 標準 | `PUBLIC_DOMAIN` の DNS を向けるだけで Let's Encrypt 自動取得・更新（WS も透過）。CP と両方 host-net で loopback に到達。既存プロキシで前段する社は外せる（Caddyfile 代替2）|
 | **Tailscale Funnel** | local 運用の一形態 | Funnel → `127.0.0.1:8099` 直結 |
-| **ALB + ACM** | aws | TLS 終端のみ — 認証は CP に残る。`30-ingress.yaml` の `AuthMode` は `oauth`（既定）か `dev` だけを許し、テンプレートはロードバランサの OIDC を設定しない |
+| **ALB + ACM** | aws | TLS 終端のみ — 認証は CP に残る。`30-ingress.yaml` の `AuthMode` は `oauth` だけを許し（`dev` は https では拒否される。#3485）、テンプレートはロードバランサの OIDC を設定しない |
 | **グローバル外部アプリケーションロードバランサ + Certificate Manager** | GKE 上の kubernetes | GKE の Gateway コントローラが作る（クラス `gke-l7-global-external-managed`。従来型は動いている WebSocket でもバックエンドのタイムアウトで切る）。アドレス・証明書・DNS は `deploy/gcp/gke`。`AF_TRUSTED_PROXY_HOPS` は 2（`<client>, <load balancer>` を足す）。アイドルな端末が 30 秒で切られないようバックエンドのタイムアウトを上げる |
 
 - **入口を変えたら `PUBLIC_BASE_URL` を必ず合わせる** — OAuth の redirect の素であり、

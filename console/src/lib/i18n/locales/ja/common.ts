@@ -314,6 +314,10 @@ export const common = {
   "onb.resume_this_session": "このセッションを再開",
   "onb.ws_stopped": "ワークスペース停止中",
   "onb.resume": "再開",
+  "term.osc52_title": "ターミナルによるコピーを許可しますか？",
+  "term.osc52_body": "ターミナルが {count} 文字をクリップボードへコピーしようとしています。自分でコピー操作をした直後の場合だけ許可してください。",
+  "term.osc52_allow_minute": "1 分間許可",
+  "term.osc52_allow": "許可",
   "term.copied": "コピーしました",
   "term.copy_failed": "コピーに失敗しました（ブラウザがクリップボードを許可していません）",
   "term.paste_failed": "貼り付けに失敗しました（ブラウザがクリップボードを許可していません）",
@@ -329,6 +333,7 @@ export const common = {
   "onb.rtt_title":
     "端末の往復時間（中央値 {med}ms / 最大 {max}ms / 直近 {n} 回）。\n打鍵と同じ経路・同じフレームで測った、ブラウザ↔ワークスペース間の実測値です（PTY/tmux 自体は 1ms 未満なので、ほぼそのままエコーの遅れになります）。",
   "onb.term_session_stopped": "[このセッションは停止中です。右下の「再開」で再開できます]",
+  "onb.term_pty_closed": "[ターミナルが終了しました。セッションが停止している場合は、右下の「再開」で再開できます]",
   "wset.all": "すべて",
   "wset.bar_title": "作業グループで左ペインの表示を絞り込む",
   "wset.manage": "グループを管理…",

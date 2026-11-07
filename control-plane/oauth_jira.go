@@ -128,7 +128,8 @@ func (c config) handleJiraOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	state := randHex(16)
 	jiraFlows.put(state, bbState{
-		user: ident.UserKey, tenant: tenantSel(r), tenantID: mv.TenantID, created: time.Now(),
+		user: ident.UserKey, tenant: tenantSel(r), tenantID: mv.TenantID,
+		identityID: ident.ID, membershipID: mv.MembershipID, created: time.Now(),
 	})
 	au := jiraAuthorizeURL +
 		"?audience=api.atlassian.com" +
@@ -152,6 +153,12 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	st, ok := jiraFlows.take(state)
 	if !ok {
 		bbCallbackPage(w, t.stateMismatch)
+		return
+	}
+	// Same binding as the Bitbucket callback (bbCallbackBind), before the code is exchanged.
+	res, msg := c.bbCallbackBind(r, st, t)
+	if msg != "" {
+		bbCallbackPageLink(w, msg, t.backLink)
 		return
 	}
 	if code == "" {
@@ -178,11 +185,7 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken, "expires_in": tok.ExpiresIn,
 	})
-	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
-	if aerr != nil {
-		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
-		return
-	}
+	rt := res.rt
 	// The tokens are in hand, so a slow Agent costs a retry from Settings, not data. Bound
 	// the wait: agentHTTPClient alone would hold this tab for 2 minutes.
 	actx, acancel := context.WithTimeout(r.Context(), 10*time.Second)

@@ -64,6 +64,7 @@ source_of_truth: "`control-plane/internal/store/migrations/*.sql` と `migration
 | `session` | **Agent のセッション一覧のミラー**で、真実ではない。PK (`workspace_id`, `name`) と `kind`・`dir`・`repo`・`label`・`state`・`last_seen`。`carried` は畳んだときにまだ答えを待っていた質問・プラン・許可、`studio` はそのセッションが結び付いた画像スタジオ。どちらも、停止中のワークスペースの一覧がこの表だけから作られるので要る |
 | `wrapped_dek` | 封筒暗号：ワークスペースごとの DEK をテナントごとの KEK で wrap したもの＋`key_ref`・`key_version` |
 | `workspace_activity` | ワークスペースごとに 1 行：`last_seen_at` と `connected_until`。**どの CP レプリカも書く**ので、あるレプリカのアイドル停止が別のレプリカにある接続を見られる |
+| `workspace_session_input` | (ワークスペース, セッション) ごとに 1 行：最後の端末キー入力 `last_input_at`。**端末を持つレプリカが書き**（5 秒ハートビートに間引き）、どのレプリカのアイドルリーパー tier 1 もセッションを halt する前に読む |
 | `workspace_stop_intent` | アイドル停止がワークスペースを止める前に取る不可分の宣言。別のレプリカに来た新しい活動と競合しないようにする |
 
 **アクセスと監査**

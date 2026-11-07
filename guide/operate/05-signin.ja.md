@@ -21,7 +21,7 @@ source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプト�
 
 ## 0. はじめる前に
 
-- **OAuth/OIDC のフローは Control Plane 自身が実行します**（`AUTH=oauth`・既定）。有効にする
+- **OAuth/OIDC のフローは Control Plane 自身が実行します**（`AUTH=oauth`・推奨。`AUTH` に既定値はなく、必ず設定します）。有効にする
   IdP ごとに、client secret を持つ**機密クライアント**が必要です。
 - **複数を同時に有効にできます。** サインイン画面には有効な方式の数だけボタンが出ます。順番は
   Google が先頭、次に列挙した順の OIDC provider、GitHub が最後です。

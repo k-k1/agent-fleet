@@ -1,0 +1,21 @@
+
+❯ crawl
+
+● running
+
+────────────────────────────────────────────────────────
+ Bash command
+ Crawl Console JS chunks and look for the sanitizer config
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ cd $AF_WORK_DIR; mkdir -p js && rm -f js/*; cp js.txt
+ queue.txt; : > seen.txt
+ while [ -s queue.txt ]; do a=$(head -1 queue.txt); done
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+
+ Esc to cancel · Tab to amend

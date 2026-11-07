@@ -154,6 +154,10 @@ export function DisplayTab() {
           <OnOff value={s.termCtrlCV} onChange={(v) => setSetting("termCtrlCV", v)} />
         </Row>
         <p className="muted ds-note">{tr("display.term_ctrl_cv_note")}</p>
+        <Row label={tr("display.term_drag_copy")}>
+          <OnOff value={s.termDragCopy} onChange={(v) => setSetting("termDragCopy", v)} />
+        </Row>
+        <p className="muted ds-note">{tr("display.term_drag_copy_note")}</p>
       </section>
 
       <section className="ds-group">

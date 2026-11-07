@@ -33,7 +33,7 @@ const (
 // workspace to finish before answering "pending" and pushing in the background.
 var gitTokenPushLockWait = 15 * time.Second
 
-var gitTokenPushClient = &http.Client{Timeout: 10 * time.Second, Transport: newAgentTransport()}
+var gitTokenPushClient = newAgentClient(10*time.Second, newAgentTransport())
 
 var errGitTokenNoMembership = errors.New("membership not active")
 
