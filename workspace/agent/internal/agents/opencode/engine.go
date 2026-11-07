@@ -68,8 +68,9 @@ type EngineProvider struct {
 	Labels map[string]string
 }
 
-// EngineModelWindow is one model's declared context and output cap. Both or neither are
-// meaningful — see engineProviderEntry for the measurement behind that.
+// EngineModelWindow is one model's declared context and output cap. A context alone is
+// meaningful: the output cap then comes from the engine's, or is derived (engineProviderEntry
+// has the measurement behind that). An output cap without a context is ignored.
 type EngineModelWindow struct {
 	ContextTokens   int
 	MaxOutputTokens int
@@ -268,6 +269,12 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 		ctx, out := e.ContextTokens, e.MaxOutputTokens
 		if w, ok := e.Windows[id]; ok && w.ContextTokens > 0 {
 			ctx, out = w.ContextTokens, w.MaxOutputTokens
+			// A model with a window but no output cap of its own inherits the engine's known cap
+			// (the warm path in engines.go does the same), unless that cap would not fit under
+			// this model's smaller window; then it is derived.
+			if out <= 0 && e.MaxOutputTokens > 0 && e.MaxOutputTokens < ctx {
+				out = e.MaxOutputTokens
+			}
 		}
 		if out <= 0 {
 			out = derivedOutputCap(ctx)

@@ -77,7 +77,7 @@ func TestModelWindowUnknownProviderStaysZero(t *testing.T) {
 }
 
 // A model whose window nobody declared is written WITHOUT a limit (engineProviderEntry:
-// both numbers or neither), and a zero must not be reported as a window — opencode reads a
+// a limit needs a known context), and a zero must not be reported as a window — opencode reads a
 // context of 0 as "auto-compaction off", and a gauge against 0 is a division by zero.
 func TestModelWindowZeroIsNotAWindow(t *testing.T) {
 	engineTestHome(t)

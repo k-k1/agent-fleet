@@ -133,6 +133,31 @@ func TestWriteEngineProvidersDerivesTheOutputCap(t *testing.T) {
 	}
 }
 
+// A model with its own window and no output cap inherits the engine's known cap, in the same
+// shape the warm path in engines.go produces; a cap that does not fit under the window is derived.
+func TestWriteEngineProvidersInheritsTheEngineOutputCap(t *testing.T) {
+	engineTestHome(t)
+	for _, c := range []struct {
+		engineOut, wantOut float64
+	}{{512, 512}, {0, 2048}, {9000, 2048}} {
+		e := EngineProvider{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"},
+			ContextTokens: 32768, MaxOutputTokens: int(c.engineOut),
+			Windows: map[string]EngineModelWindow{"m": {ContextTokens: 8192}}}
+		if _, _, err := WriteEngineProviders([]EngineProvider{e}); err != nil {
+			t.Fatal(err)
+		}
+		root := readEngineConfig(t)
+		p, _ := root["provider"].(map[string]any)
+		entry, _ := p["llamacpp"].(map[string]any)
+		models, _ := entry["models"].(map[string]any)
+		model, _ := models["m"].(map[string]any)
+		limit, _ := model["limit"].(map[string]any)
+		if limit == nil || limit["context"] != float64(8192) || limit["output"] != c.wantOut {
+			t.Errorf("engine out %v: limit = %v, want 8192/%v", c.engineOut, limit, c.wantOut)
+		}
+	}
+}
+
 // The config is the USER's file. af owns its own provider entries and nothing else — the
 // same bargain the MCP materializer makes — so a hand-written provider and a hand-written
 // top-level member both survive, and af's own stale entry does not.
