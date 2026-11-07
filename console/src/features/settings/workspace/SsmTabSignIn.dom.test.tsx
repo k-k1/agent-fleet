@@ -162,6 +162,10 @@ describe("SsmTab shared sign-ins", () => {
     }
     expect(h.querySelectorAll("button.ssm-login")).toHaveLength(1);
     expect(h.querySelectorAll("button.ssm-logout")).toHaveLength(1);
+    // The shared sign-in's heading actions wear the same button class as a profile row's.
+    const headBtns = Array.from(h.querySelectorAll<HTMLButtonElement>(".ssm-signin-head > button"));
+    expect(headBtns.map((b) => b.textContent?.trim())).toEqual([t("ssm.login"), t("awslogin.logout"), t("ssm.edit")]);
+    for (const b of headBtns) expect(b.classList.contains("ssm-row-action")).toBe(true);
     // A profile of its own keeps today's row.
     const own = Array.from(host.querySelectorAll<HTMLElement>("li.ssm-item:not(.ssm-member):not(.ssm-signin)"));
     expect(own.map((r) => r.querySelector(".ssm-alias")?.textContent)).toEqual(["solo"]);
