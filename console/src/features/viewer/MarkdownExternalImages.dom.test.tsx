@@ -113,6 +113,25 @@ describe("restoring on click goes through the normal image rules", () => {
     expect(img.getAttribute("referrerpolicy")).toBe("no-referrer");
   });
 
+  it("keeps same-origin srcset candidates so the intended source is still selected", async () => {
+    await render(
+      [
+        '<picture><source media="(width: 0px)" srcset="https://tracker.example/unused.png"><source srcset="/local-source.png"><img src="/local-fallback.png"></picture>',
+        '<img src="https://tracker.example/a.png" srcset="/local-1x.png 1x, /local-2x.png 2x">',
+      ].join("\n\n"),
+    );
+    await clickAll();
+    const sources = [...host.querySelectorAll("source")].map((e) => e.getAttribute("srcset"));
+    expect(sources).toEqual(["https://tracker.example/unused.png", "/local-source.png"]);
+    expect(host.querySelectorAll("img")[1]?.getAttribute("srcset")).toBe("/local-1x.png 1x, /local-2x.png 2x");
+  });
+
+  it("drops the whole srcset when one candidate names a Console path", async () => {
+    await render('<img src="https://tracker.example/a.png" srcset="https://tracker.example/b.png 1x, /api/x 2x">');
+    await clickAll();
+    expect(host.innerHTML).not.toContain("/api/x");
+  });
+
   it("drops a relative src while streaming (nothing rewrites it)", async () => {
     await render('<img src="docs/x.png" srcset="https://tracker.example/a.png 1x">', { streaming: true });
     await clickAll();

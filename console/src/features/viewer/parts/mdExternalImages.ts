@@ -1,7 +1,7 @@
 // Click-to-load for images the sanitizer deferred (deferExternalMedia in lib/sanitize.ts).
 // Displaying a document must not make the browser contact the document author's host: that
 // reveals the reader's IP address and, without a referrer policy, the page they are on.
-import { EXT_ATTR_PREFIX, isExternalMediaUrl, isInternalMediaUrl } from "../../../lib/sanitize.ts";
+import { EXT_ATTR_PREFIX, isExternalMediaUrl, isInternalMediaUrl, srcsetUrls } from "../../../lib/sanitize.ts";
 import { t } from "../../../lib/i18n/index.ts";
 
 const DEFERRED = `[${EXT_ATTR_PREFIX}src], [${EXT_ATTR_PREFIX}srcset]`;
@@ -32,7 +32,7 @@ function hostsOf(node: Element): string {
 //
 // What is restored is only what the reader asked for: external URLs as written, and the
 // node's non-external <img src> through `resolveSrc` (the repo-path rule of a normal image).
-// A non-external srcset candidate is dropped, since nothing rewrites those to repo files.
+// A srcset naming a Console path is dropped whole (see restoreSrcset).
 function load(node: Element, resolveSrc: SrcResolver) {
   node.querySelectorAll("img").forEach((i) => i.setAttribute("referrerpolicy", "no-referrer"));
   if (node.localName === "img") node.setAttribute("referrerpolicy", "no-referrer");
@@ -66,12 +66,12 @@ function restoreSrc(v: string, resolveSrc: SrcResolver): string | null {
   return resolveSrc(v);
 }
 
+// Kept as written unless a candidate names the Console's own paths, then the whole attribute
+// goes (re-joining candidates would break the commas inside data: URLs). The sanitizer already
+// removed those, so this is a second line; same-origin and data: candidates are safe and must
+// stay, or the browser would pick a different candidate than the author meant.
 function restoreSrcset(v: string): string {
-  return v
-    .split(",")
-    .map((c) => c.trim())
-    .filter((c) => c && isExternalMediaUrl(c.split(/\s+/)[0] ?? ""))
-    .join(", ");
+  return srcsetUrls(v).some(isInternalMediaUrl) ? "" : v;
 }
 
 /** Maps a non-external src to the URL to load (null: drop it). */
