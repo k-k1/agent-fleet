@@ -530,3 +530,39 @@ func TestValidSubmodulePath(t *testing.T) {
 		}
 	}
 }
+
+// Two entries declaring one path: git resolves the path to the later entry, so the url override
+// aimed at the first would miss and the update would clone the later entry's .gitmodules url
+// with the file protocol open. Either order must be refused.
+func TestSeedDuplicatePathIsNotSeeded(t *testing.T) {
+	for _, evilFirst := range []bool{false, true} {
+		name := "ours-first"
+		if evilFirst {
+			name = "evil-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			git := gitTestEnv(t)
+			root := t.TempDir()
+			victim := filepath.Join(root, "victim")
+			git(t, "", "init", "-q", "-b", "main", victim)
+			writeFile(t, filepath.Join(victim, "secret.txt"), "s\n")
+			git(t, victim, "add", "-A")
+			git(t, victim, "commit", "-qm", "init")
+			vsha := strings.TrimSpace(git(t, victim, "rev-parse", "HEAD"))
+			parent, wt := rvFixture(t, git, root)
+			git(t, wt, "update-index", "--add", "--cacheinfo", "160000,"+vsha+",evil")
+			ours := "[submodule \"libs/b\"]\n\tpath = evil\n\turl = https://example.invalid/b.git\n"
+			evil := "[submodule \"evil\"]\n\tpath = evil\n\turl = " + victim + "\n"
+			base := "[submodule \"libs/a\"]\n\tpath = libs/a\n\turl = " + filepath.Join(root, "a") + "\n"
+			if evilFirst {
+				writeFile(t, filepath.Join(wt, ".gitmodules"), base+evil+ours)
+			} else {
+				writeFile(t, filepath.Join(wt, ".gitmodules"), base+ours+evil)
+			}
+			seedSubmodulesFromParent(wt, parent)
+			if _, err := os.Stat(filepath.Join(wt, "evil", "secret.txt")); err == nil {
+				t.Error("a local-path url from .gitmodules was cloned under protocol.file.allow=always")
+			}
+		})
+	}
+}

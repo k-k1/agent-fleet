@@ -70,7 +70,21 @@ func seedSubmodulesFrom(dir, store string, depth int) {
 		return
 	}
 	rewriteSubmoduleSSHURLs(dir)
-	for _, sm := range submoduleSpecs(dir) {
+	specs := submoduleSpecs(dir)
+	// git resolves a path to the LAST entry declaring it, so with two entries on one path the
+	// `-c submodule.<name>.url` override below can land on a different entry than the one
+	// checked here, leaving the update to clone a .gitmodules url with the file protocol open.
+	// An ambiguous path or name is never seeded.
+	pathCount, nameCount := map[string]int{}, map[string]int{}
+	for _, sm := range specs {
+		pathCount[sm.Path]++
+		nameCount[sm.Name]++
+	}
+	for _, sm := range specs {
+		if pathCount[sm.Path] > 1 || nameCount[sm.Name] > 1 {
+			log.Printf("submodules %s: not seeding a submodule declared more than once", dir)
+			continue
+		}
 		// The name comes from the branch's .gitmodules, i.e. from whoever can push to it.
 		// Seeding is only an optimisation, so an unusable name is left to the normal update.
 		if !validSubmoduleName(sm.Name) {
