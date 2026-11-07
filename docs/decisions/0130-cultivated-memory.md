@@ -560,8 +560,8 @@ release.
 and reject routes, the review switch and the AI-assist row, the ui-prefs keys and the count notification are
 gone; `POST /agents/memory-review/runs/revert` stays, behind the member-origin mark, and its button lives in
 the change list. A stored `memoryReview` / `memoryReviewAuto` is ignored on read and dropped by the Agent on
-the next ui-prefs save, whichever Console sent it; an older Console calling a removed route gets the mux's
-404. The export is `af-memory.work/review-queue-export-v1.json` under the Claude config directory
+the next ui-prefs save, whichever Console sent it; an older Console calling a removed route gets a 404 (the
+Control Plane no longer relays it; the Agent's mux would 404 too). The export is `af-memory.work/review-queue-export-v1.json` under the Claude config directory
 (`workspace/agent/internal/memreview/export.go`): written with fsync and rename, then the whole review state
 directory (queue, rejected hashes, run records, watermarks, counter) is removed, so nothing can re-dispatch an
 old run. It is written on every workspace that has a review state directory, also when the queue is empty,

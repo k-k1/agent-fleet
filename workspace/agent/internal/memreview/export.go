@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -131,8 +132,24 @@ func syncDirectory(dir string) error {
 
 // MigrateQueue is the migration. It is safe to call on every start: with no review state directory
 // it does nothing, and with an export already on disk it only finishes the removal.
+//
+// The whole migration runs under an exclusive lock file in the work directory: two Agents on one
+// config directory (overlapping restarts) must not interleave, or the second could read a queue the
+// first is already deleting and overwrite its complete export with a partial one.
 func MigrateQueue() error {
 	root := stateRoot()
+	if _, err := os.Stat(root); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	unlock, err := lockMigration()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Another Agent may have finished while this one waited for the lock.
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -151,6 +168,23 @@ func MigrateQueue() error {
 		return err
 	}
 	return syncDir(filepath.Dir(root))
+}
+
+// lockMigration takes the exclusive lock (flock, released by the kernel if the process dies).
+func lockMigration() (func(), error) {
+	dir := workDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, ".review-queue-export.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
 
 // exportDone reports whether a complete export of the current version is on disk.

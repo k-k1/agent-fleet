@@ -53,9 +53,8 @@ var settingsRelays = []agentRelay{
 	{route: "GET /api/env/node-install"},
 	{route: "GET /api/env/tool-versions"},
 	// Per-user UI preferences (Console display settings) — proxied to the Agent. Every write is
-	// signed, because some settings are the member's alone: turning the memory review on (ADR
-	// 0117) sends other sessions' conversations to a model provider, and a session holds the same
-	// AGENT_TOKEN the relay uses. The Agent asks for the mark only on a write that arms such a
+	// signed, because some settings are the member's alone: Muse Code's contributor mode is one,
+	// and a session holds the same AGENT_TOKEN the relay uses. The Agent asks for the mark only on a write that arms such a
 	// setting (workspace/agent/ui_prefs.go); the rest ignore it.
 	{route: "GET /api/env/ui-prefs"},
 	{route: "PUT /api/env/ui-prefs", sign: signBody},

@@ -504,10 +504,10 @@ lint とフィードバックの理由はすぐに見える（決定 3）。数�
 レビューのスイッチと AI 補助の行、ui-prefs のキー、件数の通知は削除しました。`POST /agents/memory-review/runs/revert` は
 member-origin の印を要求したまま残り、そのボタンは変更一覧にあります。保存済みの `memoryReview` / `memoryReviewAuto` は
 読み取り時に無視され、どの Console から来た場合でも、次の ui-prefs 保存で Agent が捨てます。古い Console が削除済みのルートを
-呼ぶと mux の 404 になります。書き出し先は Claude 設定ディレクトリ配下の `af-memory.work/review-queue-export-v1.json`
+呼ぶと 404 になります（Control Plane がもう中継しません。Agent の mux も 404 を返します）。書き出し先は Claude 設定ディレクトリ配下の `af-memory.work/review-queue-export-v1.json`
 （`workspace/agent/internal/memreview/export.go`）です。fsync と rename で書いたあと、レビューの状態ディレクトリ全体
 （待ち行列、却下済みの指紋、実行の記録、ウォーターマーク、カウンタ）を削除するので、古い実行が再び送られることはありません。
 レビューの状態ディレクトリがある Workspace では、待ち行列が空でも書き出し、ない Workspace では書きません。書き込みと削除の間で
 止まっても、次の起動は有効な書き出しを書き直さずに削除だけを終えます。解釈できない待ち行列のファイルは `unreadable` に数えます。
 実行の記録だけが持っていた未登録の返答は、メンバーには見えていなかったため、記録と一緒に捨てます。`memoryx` のレビュー公開・
-忘却フックのコードは当面そのまま残します（決定 6 と `memory_patch` が残す範囲を決めます）。Agent はもう忘却フックを入れません。
+忘却フックのコードは当面そのまま残します（決定 6 と `memory_patch` が残す範囲を決めます）。Agent はもう忘却フックを入れません。deny-all の one-shot（`chatx/chat_denyall.go`）も同じ扱いで、決定 6 の統合処理が必要とするまで生産の呼び出し元はありません。

@@ -250,3 +250,25 @@ func TestMigrateRunsOnceAndAStartAfterwardsChangesNothing(t *testing.T) {
 		t.Fatal("export changed")
 	}
 }
+
+// Two migrations started together (overlapping Agent restarts) end with the complete export: the
+// loser waits for the lock, finds the state gone and leaves the first export alone.
+func TestMigrateConcurrentRunsKeepTheCompleteExport(t *testing.T) {
+	setup(t)
+	seedQueue(t)
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		go func() { errs <- MigrateQueue() }()
+	}
+	for i := 0; i < 4; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if e := readExport(t); len(e.Proposals) != 2 || len(e.Rejected) != 1 {
+		t.Fatalf("export = %+v", e)
+	}
+	if exists(stateRoot()) {
+		t.Fatal("state left")
+	}
+}

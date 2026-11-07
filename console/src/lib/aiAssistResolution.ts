@@ -13,7 +13,8 @@ export interface AiAssistResolutionRow {
   feature: string;
   enabled: boolean;
   kind?: string;
-  // "unavailable": the feature could not run on its pinned agent (the Agent still answers it for pins).
+  // "unavailable" is reserved for a deny-all feature whose pinned agent cannot run it (chatx.ResolveDenyAllCached).
+  // No feature uses that today, so the Agent does not send it; the Console still words it if one returns.
   source: "pin" | "default" | "unknown" | "unavailable";
 }
 
