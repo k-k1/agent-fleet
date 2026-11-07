@@ -5135,3 +5135,16 @@ internal address (an early check only). The fetch script repeats the destination
 hop, resolving the host itself and pinning the connection to the address it judged; it refuses
 loopback, link-local and unspecified IPv4 addresses, and fails closed on a host with no IPv4 answer. Decisions above are unchanged. No `CONTRACT` bump: the variable is optional. The protection needs the rebuilt
 engine-tools image; a new image under an old Control Plane gets no marker and sends no token.
+
+### 2026-11-07 — the ComfyUI relay is an allow-list bound to the submitting membership
+
+ComfyUI has no users, so its history, queue, view and interrupt routes span every job on the
+engine. The gateway now relays a comfy engine only on the routes the image features call
+(`POST /prompt`, `POST /upload/image`, `GET /history/<id>`, `GET /view`, `GET /queue`,
+`POST /queue` with `delete`, `POST /interrupt` with a `prompt_id`), each with a fixed method;
+everything else is refused. The membership that submitted a prompt is recorded in memory when
+`/prompt` answers; history, output files, queue delete and interrupt are served only for the
+caller's own prompts, and `GET /queue` is cut down to the caller's own entries. After a Control
+Plane restart the map is empty, so earlier jobs are refused (fail closed) and new ones work.
+No super_admin exemption: the engine session token carries a membership, not the identity role.
+Decisions above are unchanged.
