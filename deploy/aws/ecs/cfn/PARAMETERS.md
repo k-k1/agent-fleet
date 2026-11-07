@@ -129,6 +129,16 @@ events to an object store before it purges them. The templates wire an optional 
 | 10-data | `EgressArchiveRetentionDays` | `365` | Days before S3 expires an archived day (prefix `egress/`). Only read with `EgressArchive=create`. |
 | 20-platform | `EgressArchiveBucket` | empty | The 10-data output. Non-empty adds the managed policy `CpEgressArchivePolicy` to the CP task role. |
 | 30-ingress | `EgressArchiveBucket` | empty | The same output. Non-empty sets `AF_EGRESS_ARCHIVE_URL=s3://<bucket>` on the CP. |
+| 30-ingress | `EgressEventRetentionDays` | empty | Whole days the CP keeps raw events (`AF_EGRESS_EVENT_RETENTION_DAYS`, #3403). Empty sets no variable and keeps the CP's default, 30. `0` keeps them forever. Digits only (at most 5). A plain parameter: `update.sh` never overrides it, so it survives updates. |
+
+**Retention and the archive are two clocks.** `EgressEventRetentionDays` is how long a raw event
+stays in the CP's database; the purger archives each whole UTC day older than that, then deletes
+it. `EgressArchiveRetentionDays` is how long S3 keeps a day after it was archived, and only starts
+counting at the archive write. So an event lives `EgressEventRetentionDays` in the database, then
+`EgressArchiveRetentionDays` in S3 (with the defaults, 30 then 365 days). Lowering the first moves
+days into the archive sooner and does not shorten the second. `0` never purges, so nothing is
+archived either. With no archive the purger deletes at the cutoff and the events are gone. The CP
+ignores a value that is not a number and uses 30, so a typo cannot switch deletion off.
 
 The last two are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
 output after deploying it (never the capture, so a rebuilt data stack cannot leave a stale
@@ -877,7 +887,7 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 
 Parameters not named in `--parameter-overrides` keep the stack's previous value, so nothing
 else moves. Unknown or new parameters on `update.sh`'s own run get the template default (off).
-Template-size note: the template keeps about 1.2 KB under the 51,200-byte wall (see the
+Template-size note: the template keeps about 1 KB under the 51,200-byte wall (see the
 README); `deploy/local/cfn-cp-settings-env-test.py` fails below 1 KiB. Write new
 parameters in block style (`Default:` on its own line): `standup.sh`'s preflight reads
 required parameters line by line and reports every flow-style one as missing. Parameters have been paid

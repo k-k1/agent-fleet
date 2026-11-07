@@ -41,6 +41,7 @@ PLAIN = {
     "WorkspaceStartDeadline": "AF_WORKSPACE_START_DEADLINE",
     "UsageSampleInterval": "AF_USAGE_SAMPLE_INTERVAL",
     "AgentSilentStopAfter": "AF_AGENT_SILENT_STOP_AFTER",
+    "EgressEventRetentionDays": "AF_EGRESS_EVENT_RETENTION_DAYS",
     "GithubLoginClientId": "AF_GITHUB_LOGIN_CLIENT_ID",
     "GithubLabelJa": "AF_GITHUB_LABEL_JA",
     "GithubLabelEn": "AF_GITHUB_LABEL_EN",
