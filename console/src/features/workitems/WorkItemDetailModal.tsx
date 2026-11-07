@@ -424,7 +424,7 @@ export function WorkItemDetailModal({
       : item;
   // A stand-in's own state is unread, so the dot and the State row come from the live answer.
   const stateText = d ? detailStateLabel(d) : view.state ? stateLabel(view.state) : "";
-  const badge = stateBadge(item.kind, view.state, d);
+  const badge = stateBadge(item, d);
 
   // If the review branch already has a working copy, default straight to it. Left at "new
   // worktree" (the initial default), "start" would try to check the branch out a second time —

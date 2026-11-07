@@ -353,21 +353,22 @@
 .wi-dstate .codicon {
   font-size: 14px;
 }
-.wi-dstate.tone-open {
+.wi-dstate.tone-green {
   background: #1f883d;
 }
-.wi-dstate.tone-progress {
+.wi-dstate.tone-amber {
   background: #9a6700;
 }
-.wi-dstate.tone-merged,
-.wi-dstate.tone-done {
+.wi-dstate.tone-blue {
+  background: #0c66e4;
+}
+.wi-dstate.tone-purple {
   background: #8250df;
 }
-.wi-dstate.tone-closed {
+.wi-dstate.tone-red {
   background: #cf222e;
 }
-.wi-dstate.tone-draft,
-.wi-dstate.tone-muted {
+.wi-dstate.tone-grey {
   background: #6e7781;
 }
 

@@ -695,22 +695,36 @@ describe("detailStateLabel (#1697)", () => {
 });
 
 describe("stateBadge", () => {
-  const base = { kind: "pr", state: "open", merged: false, draft: false, stateReason: "", provider: "github" };
-  it("gives each pull request state its own tone", () => {
-    expect(stateBadge("pr", "", { ...base, state: "done", merged: true }).tone).toBe("merged");
-    expect(stateBadge("pr", "", { ...base, state: "done" }).tone).toBe("closed");
-    expect(stateBadge("pr", "", { ...base, draft: true }).tone).toBe("draft");
-    expect(stateBadge("pr", "", base).tone).toBe("open");
+  const gh = { kind: "pr", state: "open", provider: "github" };
+  const live = { kind: "pr", state: "open", merged: false, draft: false, stateReason: "", provider: "github" };
+  const tone = (item: typeof gh, d?: typeof live) => stateBadge(item, d).tone;
+  it("gives each pull request state its own colour, on GitHub and Bitbucket alike", () => {
+    for (const provider of ["github", "bitbucket"]) {
+      const it = { ...gh, provider };
+      const d = { ...live, provider };
+      expect(tone(it, { ...d, state: "done", merged: true })).toBe("purple");
+      // GitHub closed, or Bitbucket DECLINED / SUPERSEDED: done without merged.
+      expect(tone(it, { ...d, state: "done" })).toBe("red");
+      expect(tone(it, { ...d, state: "in_progress", draft: true })).toBe("grey");
+      expect(tone(it, d)).toBe("green");
+    }
   });
-  it("tells completed from not planned for an issue, and never calls a Jira issue not planned", () => {
-    const issue = { ...base, kind: "issue", state: "done" };
-    expect(stateBadge("issue", "", { ...issue, stateReason: "completed" }).tone).toBe("done");
-    expect(stateBadge("issue", "", { ...issue, stateReason: "not_planned" }).tone).toBe("muted");
-    expect(stateBadge("issue", "", { ...issue, provider: "jira", stateReason: "not_planned" }).tone).toBe("done");
+  it("tells completed from not planned for a GitHub issue", () => {
+    const issue = { ...live, kind: "issue", state: "done" };
+    expect(tone({ ...gh, kind: "issue" }, { ...issue, stateReason: "completed" })).toBe("purple");
+    expect(tone({ ...gh, kind: "issue" }, { ...issue, stateReason: "not_planned" })).toBe("grey");
+  });
+  it("uses Jira's status-category colours for a Jira issue, live or cached", () => {
+    const jira = { kind: "issue", state: "open", provider: "jira" };
+    expect(tone(jira)).toBe("grey");
+    expect(tone({ ...jira, state: "in_progress" })).toBe("blue");
+    expect(tone({ ...jira, state: "done" })).toBe("green");
+    // Jira has no close reason; a stray one must not turn Done grey.
+    expect(tone(jira, { ...live, kind: "issue", state: "done", provider: "jira", stateReason: "not_planned" })).toBe("green");
   });
   it("does not claim closed-unmerged from a cached row that cannot tell merged apart", () => {
-    expect(stateBadge("pr", "done").tone).toBe("muted");
-    expect(stateBadge("issue", "in_progress").tone).toBe("progress");
+    expect(tone({ ...gh, state: "done" })).toBe("grey");
+    expect(stateBadge({ ...gh, state: "done" }).icon).toBe("git-pull-request-closed");
   });
 });
 

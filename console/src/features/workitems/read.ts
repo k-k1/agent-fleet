@@ -428,34 +428,43 @@ export function detailStateTone(d: Pick<WorkItemDetail, "kind" | "state" | "merg
   return d.kind === "pr" && d.merged ? "merged" : stateTone(d.state);
 }
 
-export type StateBadgeTone = "open" | "progress" | "draft" | "merged" | "closed" | "done" | "muted";
+export type StateBadgeTone = "green" | "amber" | "blue" | "grey" | "purple" | "red";
 
-/** The coloured state pill under the detail panel's title. It follows GitHub's own colours
- * (open green, draft grey, merged purple, closed-unmerged red, closed-as-completed purple) so the
- * state reads at a glance in the same language people already know from the provider.
- * `d` is the live read when there is one; without it only `kind` and the cached `state` are
- * known, so merged / draft / close reason cannot be told apart and fall back to the plain tones. */
+/** The coloured state pill under the detail panel's title, in the provider's own colour language
+ * so it reads at a glance:
+ *   GitHub / Bitbucket pull request  open green, draft grey, merged purple, closed-unmerged red
+ *                                    (Bitbucket DECLINED / SUPERSEDED included)
+ *   GitHub issue                     open green, closed as completed purple, not planned grey
+ *   Jira issue                       Jira's status categories: To Do grey, In Progress blue,
+ *                                    Done green — Jira users read those, not GitHub's purple
+ * `d` is the live read when there is one. Without it only the cached kind and state are known, so
+ * a finished pull request stays grey: it may be merged, and red would claim it was not. */
 export function stateBadge(
-  kind: string,
-  state: string,
+  item: Pick<WorkItem, "kind" | "state" | "provider">,
   d?: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason" | "provider"> | null,
 ): { tone: StateBadgeTone; icon: string } {
-  const isPR = (d ? d.kind : kind) === "pr";
-  const st = d ? d.state : state;
-  if (isPR) {
-    if (d?.merged) return { tone: "merged", icon: "git-merge" };
-    if (st === "done") return { tone: d ? "closed" : "muted", icon: "git-pull-request-closed" };
-    if (d?.draft) return { tone: "draft", icon: "git-pull-request-draft" };
-    return { tone: st === "in_progress" ? "progress" : "open", icon: "git-pull-request" };
+  const kind = d ? d.kind : item.kind;
+  const st = d ? d.state : item.state;
+  const provider = d?.provider || item.provider;
+  if (kind === "pr") {
+    if (d?.merged) return { tone: "purple", icon: "git-merge" };
+    if (st === "done") return { tone: d ? "red" : "grey", icon: "git-pull-request-closed" };
+    // A draft normalises to in_progress (both adapters), so a cached in_progress row is a draft too.
+    if (d?.draft || st === "in_progress") return { tone: "grey", icon: "git-pull-request-draft" };
+    return { tone: "green", icon: "git-pull-request" };
+  }
+  if (provider === "jira") {
+    if (st === "done") return { tone: "green", icon: "issue-closed" };
+    if (st === "in_progress") return { tone: "blue", icon: "issues" };
+    return { tone: "grey", icon: "issues" };
   }
   if (st === "done") {
-    // Jira has no close reason, and an unread one must not be dressed up as "not planned".
-    if (d && d.provider !== "jira" && d.stateReason === "not_planned") return { tone: "muted", icon: "circle-slash" };
-    return { tone: "done", icon: "issue-closed" };
+    // An unread close reason must not be dressed up as "not planned".
+    if (d?.stateReason === "not_planned") return { tone: "grey", icon: "circle-slash" };
+    return { tone: "purple", icon: "issue-closed" };
   }
-  if (st === "in_progress") return { tone: "progress", icon: "issues" };
-  if (st === "open") return { tone: "open", icon: "issues" };
-  return { tone: "muted", icon: "issues" };
+  if (st === "open" || st === "in_progress") return { tone: "green", icon: "issues" };
+  return { tone: "grey", icon: "issues" };
 }
 
 /** The reviews line: "2 approved, 1 change requested, 1 pending" as counts the caller renders.
