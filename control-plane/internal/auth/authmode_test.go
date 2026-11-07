@@ -21,6 +21,12 @@ func TestResolveMode(t *testing.T) {
 		{"dev with https", "dev", "local", "1", "https://af.example.test", "", true},
 		{"dev with https on native", "dev", "native", "", "HTTPS://af.example.test", "", true},
 		{"oauth on docker", "oauth", "local", "", "https://af.example.test", "oauth", false},
+		{"typo Oauth", "Oauth", "local", "1", "", "", true},
+		{"trailing space", "oauth ", "ecs", "1", "", "", true},
+		{"typo deev", "deev", "local", "1", "http://localhost:8080", "", true},
+		{"uppercase DEV", "DEV", "native", "", "", "", true},
+		{"blank", " ", "local", "1", "", "", true},
+		{"unknown on native", "none", "native", "", "", "", true},
 		{"proxy on ecs", "proxy", "ecs", "", "", "proxy", false},
 	} {
 		got, err := ResolveMode(c.auth, c.runtime, c.allow, c.base)

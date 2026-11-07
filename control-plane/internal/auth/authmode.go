@@ -33,8 +33,15 @@ func ResolveMode(auth, runtime, allowInsecure, publicBaseURL string) (string, er
 		}
 		auth = "dev"
 	}
-	if auth != "dev" {
+	// Exact match only: the rest of the CP compares AUTH literally ("oauth" wraps the session
+	// gate, anything but oauth/proxy resolves to the fixed dev user), so a misspelling such as
+	// "Oauth" or "oauth " would otherwise start as an open dev deployment past every check below.
+	switch auth {
+	case "oauth", "proxy":
 		return auth, nil
+	case "dev":
+	default:
+		return "", fmt.Errorf("AUTH=%q is not a known mode; use oauth, proxy or dev (exact, lowercase)", auth)
 	}
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(publicBaseURL)), "https://") {
 		return "", fmt.Errorf("AUTH=dev refused: PUBLIC_BASE_URL is https (%s), which means the Console is reachable from outside "+
