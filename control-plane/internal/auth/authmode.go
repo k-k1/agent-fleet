@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"errors"
@@ -19,26 +19,17 @@ import (
 //   - AUTH=dev is refused anywhere when PUBLIC_BASE_URL is https: an https origin means the
 //     Console is meant to be reached from outside the machine.
 
-// allowInsecureDevAuthEnv is the explicit opt-in for AUTH=dev outside the native runtimes.
-const allowInsecureDevAuthEnv = "AF_ALLOW_INSECURE_DEV_AUTH"
+// AllowInsecureDevAuthEnv is the explicit opt-in for AUTH=dev outside the native runtimes.
+const AllowInsecureDevAuthEnv = "AF_ALLOW_INSECURE_DEV_AUTH"
 
-// deploymentWarnAuthDev is the code GET /api/admin/tenants carries in deployment_warnings for
-// AUTH=dev on a container runtime; the Console renders it as admin.deploy_warn_auth_dev.
-const deploymentWarnAuthDev = "auth_dev"
-
-const authDevLog = "WARNING: AUTH=dev with " + allowInsecureDevAuthEnv + "=1: there is NO authentication and every " +
-	"request is a fixed super_admin. Anyone who can reach this Control Plane controls every workspace. " +
-	"Use it on a machine only you can reach; set AUTH=oauth or AUTH=proxy for anything shared " +
-	"(see guide/operate/04-secure.md)"
-
-// resolveAuthMode turns the AUTH environment value into the mode the Control Plane runs in, or
+// ResolveMode turns the AUTH environment value into the mode the Control Plane runs in, or
 // an error that stops it from starting. runtime is the AF_RUNTIME profile ("local" when unset).
-func resolveAuthMode(auth, runtime, allowInsecure, publicBaseURL string) (string, error) {
+func ResolveMode(auth, runtime, allowInsecure, publicBaseURL string) (string, error) {
 	native := runtime == "native" || runtime == "wsl"
 	if auth == "" {
 		if !native {
 			return "", errors.New("AUTH is not set. Set AUTH=oauth (CP-native sign-in) or AUTH=proxy " +
-				"(upstream gateway); AUTH=dev (no authentication) needs " + allowInsecureDevAuthEnv + "=1 outside the native runtime")
+				"(upstream gateway); AUTH=dev (no authentication) needs " + AllowInsecureDevAuthEnv + "=1 outside the native runtime")
 		}
 		auth = "dev"
 	}
@@ -51,13 +42,7 @@ func resolveAuthMode(auth, runtime, allowInsecure, publicBaseURL string) (string
 	}
 	if !native && allowInsecure != "1" {
 		return "", errors.New("AUTH=dev has no authentication and is refused outside the native runtime unless " +
-			allowInsecureDevAuthEnv + "=1 is set explicitly. Use AUTH=oauth or AUTH=proxy for a shared deployment")
+			AllowInsecureDevAuthEnv + "=1 is set explicitly. Use AUTH=oauth or AUTH=proxy for a shared deployment")
 	}
 	return "dev", nil
-}
-
-// authDevInsecure reports AUTH=dev on a container runtime (reachable only through the explicit
-// opt-in), the case the Console banner exists for. The native runtimes are single-user by design.
-func (m *manager) authDevInsecure() bool {
-	return m.authMode == "dev" && !m.nativeRuntime
 }

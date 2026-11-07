@@ -1,5 +1,7 @@
 package main
 
+import "github.com/k-k1/agent-fleet/control-plane/internal/auth"
+
 // A deployment that signs real people in (AUTH other than dev) but has no AF_MASTER_KEY issues
 // no DEK, and every Workspace then writes its credential store — git tokens, the Claude token,
 // API keys, MCP and chat connections — as plaintext JSON in the member's home. That is the intended dev behaviour and a
@@ -26,6 +28,21 @@ const plaintextSecretsLog = "WARNING: AUTH=%s but AF_MASTER_KEY is not set: work
 // while signing real people in.
 func (m *manager) plaintextSecrets() bool {
 	return m.authMode != "dev" && (len(m.master32) == 0 || m.custodian == nil)
+}
+
+// deploymentWarnAuthDev is the code GET /api/admin/tenants carries in deployment_warnings for
+// AUTH=dev on a container runtime; the Console renders it as admin.deploy_warn_auth_dev.
+const deploymentWarnAuthDev = "auth_dev"
+
+const authDevLog = "WARNING: AUTH=dev with " + auth.AllowInsecureDevAuthEnv + "=1: there is NO authentication and every " +
+	"request is a fixed super_admin. Anyone who can reach this Control Plane controls every workspace. " +
+	"Use it on a machine only you can reach; set AUTH=oauth or AUTH=proxy for anything shared " +
+	"(see guide/operate/04-secure.md)"
+
+// authDevInsecure reports AUTH=dev on a container runtime (reachable only through the explicit
+// opt-in), the case the Console banner exists for. The native runtimes are single-user by design.
+func (m *manager) authDevInsecure() bool {
+	return m.authMode == "dev" && !m.nativeRuntime
 }
 
 // deploymentWarnEfsBackupMissing is the code for an ECS deployment on Persistence=retain whose

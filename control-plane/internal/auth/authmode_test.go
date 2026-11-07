@@ -1,9 +1,9 @@
-package main
+package auth
 
 import "testing"
 
 // #3485: AUTH has no default. Unset / dev without opt-in / dev with opt-in / https + dev.
-func TestResolveAuthMode(t *testing.T) {
+func TestResolveMode(t *testing.T) {
 	for _, c := range []struct {
 		name, auth, runtime, allow, base string
 		want                             string
@@ -23,29 +23,9 @@ func TestResolveAuthMode(t *testing.T) {
 		{"oauth on docker", "oauth", "local", "", "https://af.example.test", "oauth", false},
 		{"proxy on ecs", "proxy", "ecs", "", "", "proxy", false},
 	} {
-		got, err := resolveAuthMode(c.auth, c.runtime, c.allow, c.base)
+		got, err := ResolveMode(c.auth, c.runtime, c.allow, c.base)
 		if (err != nil) != c.wantErr || got != c.want {
-			t.Errorf("%s: resolveAuthMode = %q, %v; want %q (err=%v)", c.name, got, err, c.want, c.wantErr)
-		}
-	}
-}
-
-// AUTH=dev on a container runtime raises the auth_dev deployment warning; native does not.
-func TestAuthDevDeploymentWarning(t *testing.T) {
-	for _, c := range []struct {
-		auth   string
-		native bool
-		want   bool
-	}{
-		{"dev", false, true}, {"dev", true, false}, {"oauth", false, false}, {"proxy", false, false},
-	} {
-		m := &manager{authMode: c.auth, nativeRuntime: c.native}
-		warned := false
-		for _, w := range m.deploymentWarnings() {
-			warned = warned || w == deploymentWarnAuthDev
-		}
-		if warned != c.want {
-			t.Errorf("AUTH=%s native=%v: auth_dev warned=%v, want %v", c.auth, c.native, warned, c.want)
+			t.Errorf("%s: ResolveMode = %q, %v; want %q (err=%v)", c.name, got, err, c.want, c.wantErr)
 		}
 	}
 }

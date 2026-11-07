@@ -184,8 +184,8 @@ func main() {
 	}
 	// dev (fixed id, no auth) | proxy (oauth2-proxy header) | oauth (CP-native login); no default (#3485).
 	var authErr error
-	if mgr.authMode, authErr = resolveAuthMode(os.Getenv("AUTH"), envx.Or("AF_RUNTIME", "local"),
-		os.Getenv(allowInsecureDevAuthEnv), os.Getenv("PUBLIC_BASE_URL")); authErr != nil {
+	if mgr.authMode, authErr = auth.ResolveMode(os.Getenv("AUTH"), envx.Or("AF_RUNTIME", "local"),
+		os.Getenv(auth.AllowInsecureDevAuthEnv), os.Getenv("PUBLIC_BASE_URL")); authErr != nil {
 		log.Fatalf("auth mode: %v", authErr)
 	}
 	// GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
