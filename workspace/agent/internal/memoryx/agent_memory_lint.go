@@ -241,7 +241,14 @@ func agentMemLintRepoFor(p *agentMemProject) (repo memorylint.Repo, ref string, 
 	if !ok {
 		return nil, "", "no origin/<default> branch in the repository"
 	}
-	return agentMemLintRepo{gitDir: common, ref: r}, strings.TrimPrefix(r, "refs/remotes/"), ""
+	// Pin the revision: a fetch by another session while the lint runs must not give the path
+	// check one tree and the symbol check another. Only the displayed ref keeps its name.
+	out, err := agentMemLintGit(ctx, common, nil, "rev-parse", "--verify", "-q", r+"^{commit}")
+	oid := strings.TrimSpace(string(out))
+	if err != nil || oid == "" {
+		return nil, "", "no origin/<default> branch in the repository"
+	}
+	return agentMemLintRepo{gitDir: common, ref: oid}, strings.TrimPrefix(r, "refs/remotes/"), ""
 }
 
 // agentMemLintWire is what the Console and `af-memory lint` read.
@@ -287,11 +294,10 @@ func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
 		why = "user scope: no repository"
 	}
 	if repo != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
-		if b, err := agentMemLintGit(ctx, repo.(agentMemLintRepo).gitDir, nil, "rev-parse", "--short=12", "refs/remotes/"+out.Ref); err == nil {
-			out.Commit = strings.TrimSpace(string(b))
+		// The commit shown is the one the checks read, because the reader is pinned to it.
+		if oid := repo.(agentMemLintRepo).ref; len(oid) >= 12 {
+			out.Commit = oid[:12]
 		}
-		cancel()
 	}
 	out.Report = memorylint.Lint(mems, memorylint.Options{RetiredTerms: terms}, repo)
 	if repo == nil {

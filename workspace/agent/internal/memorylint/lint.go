@@ -344,8 +344,10 @@ func extractSymbols(body string) []anchor {
 		t = strings.TrimSuffix(t, "()")
 		segs := strings.Split(t, ".")
 		last := segs[len(segs)-1]
-		if len(segs) > 1 && last == strings.ToLower(last) {
-			continue // x.go, package.json
+		// x.go and package.json are files: a lowercase tail with no underscore and no call.
+		// pkg.missing_func and pkg.removed() are qualified symbols and stay.
+		if len(segs) > 1 && !call && last == strings.ToLower(last) && !strings.Contains(last, "_") {
+			continue
 		}
 		if len(last) < 4 || !(call || camelRe.MatchString(last) || snakeRe.MatchString(last)) {
 			continue

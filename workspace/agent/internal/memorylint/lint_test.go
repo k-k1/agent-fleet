@@ -194,3 +194,15 @@ func TestLinesAndOrder(t *testing.T) {
 		t.Fatalf("%+v", rep.Findings)
 	}
 }
+
+// A qualified snake_case name and a call are symbols even though their tail is lowercase; a
+// file name (store.json, x.go) is not.
+func TestQualifiedSymbolsAreChecked(t *testing.T) {
+	body := "`pkg.missing_func` `pkg.removed()` `store.json` `agent_memory.go` `pkg.Exists`"
+	r := testRepo
+	r.symbols = map[string]bool{"Exists": true}
+	rep := Lint([]Memory{{"m", body}}, Options{}, r)
+	if got := subjects(rep, "m", CheckMissingSym); !sameSet(got, []string{"missing_func", "removed"}) {
+		t.Fatalf("missing-symbol = %v", got)
+	}
+}

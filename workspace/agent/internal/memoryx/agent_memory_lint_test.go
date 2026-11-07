@@ -256,3 +256,38 @@ func TestAgentMemoryLintTermsAreMemberEdited(t *testing.T) {
 		t.Fatalf("unknown project: %d", code)
 	}
 }
+
+// The repository checks read one revision: after origin/main moves, a lint of the same call reads
+// the commit it resolved first. The reader is pinned to the commit id, and the report shows it.
+func TestAgentMemoryLintReaderIsPinnedToACommit(t *testing.T) {
+	_, clone, _ := agentMemTestEnv(t)
+	agentMemLintOrigin(t, clone, map[string]string{"console/a.go": "package a\nfunc oldSym() {}\n"})
+	c := agentMemCallerT(t, "claude-main")
+	agentMemLintSaveBody(t, c, "m", "console/a.go `oldSym` console/b.go")
+	p := agentMemProjectInfo(c.Project.ID)
+	repo, ref, why := agentMemLintRepoFor(p)
+	if repo == nil {
+		t.Fatalf("no reader: %s", why)
+	}
+	if ref != "origin/main" {
+		t.Errorf("displayed ref = %q", ref)
+	}
+	r := repo.(agentMemLintRepo)
+	if len(r.ref) != 40 {
+		t.Fatalf("reader ref %q is not a full commit id", r.ref)
+	}
+	// Move origin/main to a commit with a different tree; the pinned reader must not follow.
+	agentMemLintOrigin(t, clone, map[string]string{"console/b.go": "package b\nfunc newSym() {}\n"})
+	paths, err := r.Paths()
+	if err != nil || !containsString(paths, "console/a.go") || containsString(paths, "console/b.go") {
+		t.Fatalf("pinned reader saw the moved ref: %v %v", paths, err)
+	}
+	found, err := r.FindSymbols([]string{"oldSym", "newSym"})
+	if err != nil || !found["oldSym"] || found["newSym"] {
+		t.Fatalf("symbols after the ref moved: %v %v", found, err)
+	}
+	w := agentMemLintGet(t, "scope=project&project="+c.Project.ID)
+	if len(w.Commit) != 12 {
+		t.Errorf("commit = %q", w.Commit)
+	}
+}
