@@ -223,6 +223,9 @@ func (s *SQL) RevokeBearerSet(ctx context.Context, identityID, reason string, se
 			NewID(), tenantID, action, target, "revoked reason="+reason+" identity="+identityID, NowTS())
 		return err
 	}
+	// A row is written only for the credential THIS statement revoked: under READ COMMITTED two
+	// concurrent sweeps can both read a credential as live, and only the update that changes a
+	// row may claim the revocation.
 	for _, id := range set.PATs {
 		var tenantID string
 		err := tx.QueryRowContext(ctx,
@@ -234,8 +237,14 @@ func (s *SQL) RevokeBearerSet(ctx context.Context, identityID, reason string, se
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`, NowTS(), id, identityID); err != nil {
+		res, err := tx.ExecContext(ctx, `UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`, NowTS(), id, identityID)
+		if err != nil {
 			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
 		}
 		if err := audit(tenantID, "pat.revoke", id); err != nil {
 			return err
@@ -243,22 +252,27 @@ func (s *SQL) RevokeBearerSet(ctx context.Context, identityID, reason string, se
 	}
 	for _, id := range set.Grants {
 		var tenantID string
-		live := true
 		if err := tx.QueryRowContext(ctx,
 			`SELECT tenant_id FROM mcp_oauth_grant WHERE id=? AND identity_id=? AND revoked_at=0`, id, identityID).Scan(&tenantID); errors.Is(err, sql.ErrNoRows) {
-			live = false
+			if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE grant_id=?`, id); err != nil {
+				return err
+			}
+			continue
 		} else if err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE grant_id=?`, id); err != nil {
 			return err
 		}
-		if !live {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? AND identity_id=? AND revoked_at=0`,
-			time.Now().Unix(), reason, id, identityID); err != nil {
+		res, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? AND identity_id=? AND revoked_at=0`,
+			time.Now().Unix(), reason, id, identityID)
+		if err != nil {
 			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
 		}
 		if err := audit(tenantID, "mcp.oauth.grant", id); err != nil {
 			return err

@@ -627,8 +627,9 @@ credentials as exposed and rotate them.
   administrators see it. When an identity may no longer sign in, the automatic revocation
   writes one row per revoked PAT (`pat.revoke`) or MCP OAuth grant (`mcp.oauth.grant`) with
   actor kind `system` and the reason as detail, in the same transaction as the revocation.
-  `TestAdminWriteRoutesAreClassified` fails for an admin write route that has neither an audit
-  record nor a commented exemption.
+  `TestAdminWriteRoutesAreClassified` reads the route registrations from the syntax tree and fails
+  for an admin write route whose handler reaches no audit call carrying its action, unless it
+  has a commented exemption.
 - Read through `GET /api/admin/audit` and the Console, scoped by tenant and role.
 
 ## 7.8 Egress control 🚧

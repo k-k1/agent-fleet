@@ -1862,11 +1862,18 @@ func (a Admin) SetMembershipRole(w http.ResponseWriter, r *http.Request, caller 
 	if !ok {
 		return
 	}
-	if err := a.cp.Store().SetMembershipRole(r.Context(), mem.ID, role); err != nil {
+	// from is the role the update overwrote, read under the row lock: the earlier read can be
+	// stale when another change lands in between.
+	old, found, err := a.cp.Store().ChangeMembershipRole(r.Context(), mem.ID, role)
+	if err != nil {
 		refuseIrreversible(w, r, in, internalErr(err))
 		return
 	}
-	in.Done(r.Context(), "from="+mem.Role+" to="+role, http.StatusOK)
+	if !found {
+		refuseIrreversible(w, r, in, &APIError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
+		return
+	}
+	in.Done(r.Context(), "from="+old+" to="+role, http.StatusOK)
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": body.UserKey, "tenant": t.Slug, "role": role})
 }
 

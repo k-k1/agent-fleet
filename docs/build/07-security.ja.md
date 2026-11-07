@@ -514,7 +514,8 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   `pat.revoke` として記録し、そのテナントの管理者に見える。identity がサインインできなくなったときの
   自動失効は、失効した PAT（`pat.revoke`）と MCP OAuth の grant（`mcp.oauth.grant`）を 1 件ずつ、
   actor の種類 `system`・理由を detail にして、失効と同じトランザクションで書く。
-  監査記録も、コメント付きの除外もない admin の書き込みルートは `TestAdminWriteRoutesAreClassified` が落とす。
+  `TestAdminWriteRoutesAreClassified` はルート登録を構文木から読み、ハンドラがその action を持つ監査呼び出しに
+  到達しない admin の書き込みルートを（コメント付きの除外がない限り）落とす。
 - 読み取り: `GET /api/admin/audit` と Console。テナントと役割で絞る。
 
 ## 7.8 egress 統制 🚧

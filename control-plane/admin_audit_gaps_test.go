@@ -2,13 +2,8 @@ package main
 
 import (
 	"context"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -181,11 +176,13 @@ func TestRevokeBearerSetAuditsEachRevokedCredential(t *testing.T) {
 	}
 }
 
-// adminWriteRouteAudit says, for every POST / PUT / PATCH / DELETE route under /api/admin/, which
-// audit record it leaves. marker is a string literal that must occur in non-test source, so an
-// entry cannot name an action nothing writes. exempt is the reason a route legitimately writes
-// no row. TestAdminWriteRoutesAreClassified fails for a route in the source that is missing here
-// (a new handler cannot skip the question) and for an entry whose route is gone.
+// adminWriteRouteAudit says, for every POST / PUT / PATCH / DELETE route registered under
+// /api/admin/, which audit record its handler leaves. marker is a fragment of a string literal
+// that must appear in the handler's code (the handler and what it calls, found through the AST),
+// and the handler must reach an audit call; a comment or an unrelated helper cannot satisfy it.
+// exempt is the reason a route legitimately writes no row. TestAdminWriteRoutesAreClassified
+// fails for a route that is registered and missing here (a new handler cannot skip the
+// question) and for an entry whose route is gone.
 type adminWriteRouteAudit struct {
 	marker string
 	exempt string
@@ -196,74 +193,74 @@ const (
 )
 
 var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
-	"POST /api/admin/tenants":                                     {marker: `"tenant.create"`},
-	"DELETE /api/admin/tenants/{slug}":                            {marker: `"tenant.delete"`},
-	"DELETE /api/admin/tenants/{slug}/members/{key}":              {marker: `"membership.delete"`},
-	"POST /api/admin/memberships":                                 {marker: `"membership.add"`},
-	"DELETE /api/admin/memberships":                               {marker: `"membership.remove"`},
-	"DELETE /api/admin/workspaces":                                {marker: `"workspace.destroy"`},
-	"POST /api/admin/stop-workspace":                              {marker: `"workspace.stop"`},
-	"POST /api/admin/clean-home":                                  {marker: `"workspace.clean_home"`},
-	"POST /api/admin/rotate-git-token":                            {marker: `"membership.rotate_git_token"`},
-	"POST /api/admin/rotate-bridge-tokens":                        {marker: `"membership.rotate_bridge_tokens"`},
-	"DELETE /api/admin/tenants/{slug}/members/{key}/home-backups": {marker: `"workspace.delete_backups"`},
-	"PUT /api/admin/tenants/{slug}/limits":                        {marker: `"tenant.limits"`},
-	"PUT /api/admin/tenants/{slug}/login":                         {marker: `"tenant.login_rules"`},
-	"PUT /api/admin/tenants/{slug}/network":                       {marker: `"tenant.network_rules"`},
-	"PUT /api/admin/tenants/{slug}/mcp-oauth":                     {marker: `"mcp_oauth.trusted_hosts.reset"`},
-	"PUT /api/admin/tenants/{slug}/external-memory":               {marker: `"tenant.external_memory"`},
-	"PUT /api/admin/tenants/{slug}/slot-class":                    {marker: `"tenant.slot_class"`},
-	"PUT /api/admin/tenants/{slug}/engine-access":                 {marker: `"tenant.engine_access"`},
-	"PUT /api/admin/tenants/{slug}/engine-access/members":         {marker: `"member.engine_access"`},
-	"PUT /api/admin/tenants/{slug}/branch-rules":                  {marker: `"tenant.branch_rules"`},
-	"PUT /api/admin/tenants/{slug}/member-defaults":               {marker: `"tenant.member_defaults"`},
-	"PUT /api/admin/tenants/{slug}/limit-board":                   {marker: `"limit_board.set"`},
-	"POST /api/admin/tenants/{slug}/idp":                          {marker: `"tenant_idp."`},
-	"PUT /api/admin/tenants/{slug}/idp/{id}":                      {marker: `"tenant_idp."`},
-	"DELETE /api/admin/tenants/{slug}/idp/{id}":                   {marker: `"tenant_idp.delete"`},
-	"POST /api/admin/tenants/{slug}/idp/{id}/status":              {marker: `"tenant_idp."`},
-	"PUT /api/admin/tenants/{slug}/git-oauth/{provider}":          {marker: `"tenant.git_oauth_save"`},
-	"DELETE /api/admin/tenants/{slug}/git-oauth/{provider}":       {marker: `"tenant.git_oauth_delete"`},
-	"PUT /api/admin/user-limits":                                  {marker: `"member.limits"`},
-	"PUT /api/admin/membership-role":                              {marker: `"membership.role"`},
-	"DELETE /api/admin/ec2-pool/slots/{id}":                       {marker: `"pool.slot_terminate"`},
-	"PUT /api/admin/ec2-pool/slots/{id}/replace":                  {marker: `"pool.slot_replace_reserve"`},
-	"DELETE /api/admin/ec2-pool/slots/{id}/replace":               {marker: `"pool.slot_replace_reserve"`},
-	"POST /api/admin/ec2-pool/slots/{id}/force-stop":              {marker: `"pool.slot_force_stop"`},
-	"POST /api/admin/ec2-pool/reserve-outdated":                   {marker: `"pool.slot_replace_reserve"`},
-	"POST /api/admin/egress/allowlist":                            {marker: `"egress.allow.add"`},
-	"POST /api/admin/egress/allowlist/{id}/state":                 {marker: `auditAdmin(`},
-	"PUT /api/admin/egress/mode":                                  {marker: `"egress.mode"`},
-	"POST /api/admin/mcp-servers":                                 {marker: `"mcp.upsert"`},
-	"PUT /api/admin/mcp-servers/{id}":                             {marker: `"mcp.upsert"`},
-	"DELETE /api/admin/mcp-servers/{id}":                          {marker: `"mcp.delete"`},
-	"PUT /api/admin/dev-idp":                                      {marker: `"dev_idp.set"`},
-	"PUT /api/admin/brand":                                        {marker: `"brand.set"`},
-	"DELETE /api/admin/brand":                                     {marker: `"brand.reset"`},
-	"PUT /api/admin/tts":                                          {marker: `"tts.engine"`},
-	"PUT /api/admin/tts/dict":                                     {marker: `"tts.dict"`},
-	"PUT /api/admin/engines/{key}":                                {marker: `"engine."+key+".`},
-	"PUT /api/admin/engines/{key}/idle":                           {marker: `".idle"`},
-	"PUT /api/admin/engines/{key}/class":                          {marker: `".class"`},
-	"PUT /api/admin/engines/{key}/spot":                           {marker: `".spot"`},
-	"PUT /api/admin/engines/{key}/negative":                       {marker: `".negative"`},
-	"POST /api/admin/engines/{key}/replace-box":                   {marker: `".replace_box"`},
-	"PUT /api/admin/engines/{key}/models/{id}":                    {marker: `".model"`},
-	"POST /api/admin/engines/{key}/models":                        {marker: `".model"`},
-	"DELETE /api/admin/engines/{key}/models/{id}":                 {marker: `".model"`},
-	"POST /api/admin/engines/{key}/models/{id}/meta":              {marker: `"meta "+id`},
-	"POST /api/admin/engines/{key}/objects/register":              {marker: `"register "+id+" from the bucket`},
-	"DELETE /api/admin/engines/{key}/objects":                     {marker: `".object"`},
-	"POST /api/admin/engines/{key}/ingest":                        {marker: `".ingest"`},
-	"DELETE /api/admin/engines/{key}/ingest/{id}":                 {marker: `".ingest"`},
-	"PUT /api/admin/engines/hf-token":                             {marker: `"engine.hf_token"`},
-	"DELETE /api/admin/engines/hf-token":                          {marker: `"engine.hf_token"`},
-	"PUT /api/admin/engines/civitai-token":                        {marker: `"engine.civitai_token"`},
-	"DELETE /api/admin/engines/civitai-token":                     {marker: `"engine.civitai_token"`},
-	"PUT /api/admin/engines/comfy-lan":                            {marker: `"engine.comfy_lan"`},
-	"DELETE /api/admin/engines/comfy-lan":                         {marker: `"engine.comfy_lan"`},
-	"PUT /api/admin/engines/civitai-red":                          {marker: `"engine.civitai_red"`},
-	"POST /api/admin/engines/issue-token":                         {marker: `"engine.issue_token"`},
+	"POST /api/admin/tenants":                                     {marker: `tenant.create`},
+	"DELETE /api/admin/tenants/{slug}":                            {marker: `tenant.delete`},
+	"DELETE /api/admin/tenants/{slug}/members/{key}":              {marker: `membership.delete`},
+	"POST /api/admin/memberships":                                 {marker: `membership.add`},
+	"DELETE /api/admin/memberships":                               {marker: `membership.remove`},
+	"DELETE /api/admin/workspaces":                                {marker: `workspace.destroy`},
+	"POST /api/admin/stop-workspace":                              {marker: `workspace.stop`},
+	"POST /api/admin/clean-home":                                  {marker: `workspace.clean_home`},
+	"POST /api/admin/rotate-git-token":                            {marker: `membership.rotate_git_token`},
+	"POST /api/admin/rotate-bridge-tokens":                        {marker: `membership.rotate_bridge_tokens`},
+	"DELETE /api/admin/tenants/{slug}/members/{key}/home-backups": {marker: `workspace.delete_backups`},
+	"PUT /api/admin/tenants/{slug}/limits":                        {marker: `tenant.limits`},
+	"PUT /api/admin/tenants/{slug}/login":                         {marker: `tenant.login_rules`},
+	"PUT /api/admin/tenants/{slug}/network":                       {marker: `tenant.network_rules`},
+	"PUT /api/admin/tenants/{slug}/mcp-oauth":                     {marker: `tenant.mcp_oauth`},
+	"PUT /api/admin/tenants/{slug}/external-memory":               {marker: `tenant.external_memory`},
+	"PUT /api/admin/tenants/{slug}/slot-class":                    {marker: `tenant.slot_class`},
+	"PUT /api/admin/tenants/{slug}/engine-access":                 {marker: `tenant.engine_access`},
+	"PUT /api/admin/tenants/{slug}/engine-access/members":         {marker: `member.engine_access`},
+	"PUT /api/admin/tenants/{slug}/branch-rules":                  {marker: `tenant.branch_rules`},
+	"PUT /api/admin/tenants/{slug}/member-defaults":               {marker: `tenant.member_defaults`},
+	"PUT /api/admin/tenants/{slug}/limit-board":                   {marker: `limit_board.set`},
+	"POST /api/admin/tenants/{slug}/idp":                          {marker: `tenant_idp.`},
+	"PUT /api/admin/tenants/{slug}/idp/{id}":                      {marker: `tenant_idp.`},
+	"DELETE /api/admin/tenants/{slug}/idp/{id}":                   {marker: `tenant_idp.delete`},
+	"POST /api/admin/tenants/{slug}/idp/{id}/status":              {marker: `tenant_idp.`},
+	"PUT /api/admin/tenants/{slug}/git-oauth/{provider}":          {marker: `tenant.git_oauth_save`},
+	"DELETE /api/admin/tenants/{slug}/git-oauth/{provider}":       {marker: `tenant.git_oauth_delete`},
+	"PUT /api/admin/user-limits":                                  {marker: `member.limits`},
+	"PUT /api/admin/membership-role":                              {marker: `membership.role`},
+	"DELETE /api/admin/ec2-pool/slots/{id}":                       {marker: `pool.slot_terminate`},
+	"PUT /api/admin/ec2-pool/slots/{id}/replace":                  {marker: `pool.slot_replace_reserve`},
+	"DELETE /api/admin/ec2-pool/slots/{id}/replace":               {marker: `pool.slot_replace_reserve`},
+	"POST /api/admin/ec2-pool/slots/{id}/force-stop":              {marker: `pool.slot_force_stop`},
+	"POST /api/admin/ec2-pool/reserve-outdated":                   {marker: `pool.slot_replace_reserve`},
+	"POST /api/admin/egress/allowlist":                            {marker: `egress.allow.add`},
+	"POST /api/admin/egress/allowlist/{id}/state":                 {marker: `egress.allow.`},
+	"PUT /api/admin/egress/mode":                                  {marker: `egress.mode`},
+	"POST /api/admin/mcp-servers":                                 {marker: `mcp.upsert`},
+	"PUT /api/admin/mcp-servers/{id}":                             {marker: `mcp.upsert`},
+	"DELETE /api/admin/mcp-servers/{id}":                          {marker: `mcp.delete`},
+	"PUT /api/admin/dev-idp":                                      {marker: `dev_idp.set`},
+	"PUT /api/admin/brand":                                        {marker: `brand.set`},
+	"DELETE /api/admin/brand":                                     {marker: `brand.reset`},
+	"PUT /api/admin/tts":                                          {marker: `tts.engine`},
+	"PUT /api/admin/tts/dict":                                     {marker: `tts.dict`},
+	"PUT /api/admin/engines/{key}":                                {marker: `engine.`},
+	"PUT /api/admin/engines/{key}/idle":                           {marker: `.idle`},
+	"PUT /api/admin/engines/{key}/class":                          {marker: `.class`},
+	"PUT /api/admin/engines/{key}/spot":                           {marker: `.spot`},
+	"PUT /api/admin/engines/{key}/negative":                       {marker: `.negative`},
+	"POST /api/admin/engines/{key}/replace-box":                   {marker: `.replace_box`},
+	"PUT /api/admin/engines/{key}/models/{id}":                    {marker: `.model`},
+	"POST /api/admin/engines/{key}/models":                        {marker: `.model`},
+	"DELETE /api/admin/engines/{key}/models/{id}":                 {marker: `.model`},
+	"POST /api/admin/engines/{key}/models/{id}/meta":              {marker: `meta `},
+	"POST /api/admin/engines/{key}/objects/register":              {marker: `from the bucket`},
+	"DELETE /api/admin/engines/{key}/objects":                     {marker: `.object`},
+	"POST /api/admin/engines/{key}/ingest":                        {marker: `.ingest`},
+	"DELETE /api/admin/engines/{key}/ingest/{id}":                 {marker: `.ingest`},
+	"PUT /api/admin/engines/hf-token":                             {marker: `engine.hf_token`},
+	"DELETE /api/admin/engines/hf-token":                          {marker: `engine.hf_token`},
+	"PUT /api/admin/engines/civitai-token":                        {marker: `engine.civitai_token`},
+	"DELETE /api/admin/engines/civitai-token":                     {marker: `engine.civitai_token`},
+	"PUT /api/admin/engines/comfy-lan":                            {marker: `engine.comfy_lan`},
+	"DELETE /api/admin/engines/comfy-lan":                         {marker: `engine.comfy_lan`},
+	"PUT /api/admin/engines/civitai-red":                          {marker: `engine.civitai_red`},
+	"POST /api/admin/engines/issue-token":                         {marker: `engine.issue_token`},
 	"POST /api/admin/engines/{key}/discover":                      {exempt: exReadOnly + " (asks an external ComfyUI what files it has)"},
 	"POST /api/admin/engines/{key}/ingest/resolve":                {exempt: exReadOnly},
 	"POST /api/admin/engines/{key}/ingest/files":                  {exempt: exReadOnly},
@@ -273,74 +270,36 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"POST /api/admin/engines/{key}/models/{id}/complete":          {exempt: "KNOWN GAP: moves objects and declares catalogue rows without a record (engine_complete.go); tracked in a follow-up issue"},
 }
 
-var adminWriteRouteRE = regexp.MustCompile(`HandleFunc\("((?:POST|PUT|PATCH|DELETE) /api/admin/[^"]*)"`)
+// roleRaceStore lets another change land between the handler's read of the membership and its
+// update, the way a concurrent request would.
+type roleRaceStore struct {
+	store.Store
+	inner *store.SQL
+}
 
-func TestAdminWriteRoutesAreClassified(t *testing.T) {
-	routes := map[string]bool{}
-	var sources []string
-	err := filepath.WalkDir(".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-			return nil
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		s := string(b)
-		sources = append(sources, s)
-		for _, m := range adminWriteRouteRE.FindAllStringSubmatch(s, -1) {
-			routes[m[1]] = true
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
+func (s roleRaceStore) GetMembership(ctx context.Context, identityID, tenantID string) (store.Membership, bool, error) {
+	m, ok, err := s.inner.GetMembership(ctx, identityID, tenantID)
+	if ok {
+		_ = s.inner.SetMembershipRole(ctx, m.ID, "tenant_admin")
 	}
-	// Positive control: the scan must have found the routes this issue is about.
-	for _, must := range []string{"PUT /api/admin/membership-role", "POST /api/admin/tenants", "PUT /api/admin/user-limits"} {
-		if !routes[must] {
-			t.Fatalf("route scan did not find %q: %d routes seen", must, len(routes))
-		}
+	return m, ok, err
+}
+
+// "from" is the role the update overwrote, not the one read earlier: with another promotion in
+// between, member -> member would otherwise be recorded for a tenant_admin -> member change.
+func TestSetMembershipRoleRecordsTheRoleItActuallyOverwrote(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, _, tn := destroyFixture(t, fixedRuntimeFactory{&reachableHomeRuntime{unreachableHomeRuntime: unreachableHomeRuntime{rec: &wipeRecorder{}, state: "stopped"}}})
+	boss, _, _ := st.GetIdentityByUserKey(ctx, "boss-acme-co-jp")
+	mgr.store = roleRaceStore{st, st}
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).setMembershipRole(w, adminRequest(http.MethodPut, "/api/admin/membership-role",
+		`{"tenant_slug":"sales","user_key":"leaver-acme-co-jp","role":"member"}`), boss)
+	if w.Code != http.StatusOK {
+		t.Fatalf("role change = %d %s", w.Code, w.Body.String())
 	}
-	var missing, stale, unmarked []string
-	for r := range routes {
-		if _, ok := adminWriteRouteAudits[r]; !ok {
-			missing = append(missing, r)
-		}
-	}
-	for r, a := range adminWriteRouteAudits {
-		if !routes[r] {
-			stale = append(stale, r)
-		}
-		if a.marker == "" && a.exempt == "" {
-			unmarked = append(unmarked, r)
-		}
-		if a.marker != "" {
-			found := false
-			for _, s := range sources {
-				if strings.Contains(s, a.marker) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				unmarked = append(unmarked, r+" (marker "+a.marker+" not in source)")
-			}
-		}
-	}
-	sort.Strings(missing)
-	sort.Strings(stale)
-	sort.Strings(unmarked)
-	if len(missing) > 0 {
-		t.Errorf("admin write routes with no audit classification (write an audit row and list it in adminWriteRouteAudits, or add a commented exemption): %v", missing)
-	}
-	if len(stale) > 0 {
-		t.Errorf("adminWriteRouteAudits names routes that no longer exist: %v", stale)
-	}
-	if len(unmarked) > 0 {
-		t.Errorf("entries without a verifiable audit marker or exemption reason: %v", unmarked)
+	rows := auditRowsOf(t, st, tn.ID, "membership.role")
+	if len(rows) != 1 || rows[0].Detail != "from=tenant_admin to=member" {
+		t.Errorf("membership.role rows = %+v, want one with from=tenant_admin to=member", rows)
 	}
 }
