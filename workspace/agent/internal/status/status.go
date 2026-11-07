@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -451,8 +452,62 @@ func WriteLastTool(sid, detail string) {
 	_ = lastTools.Write(sid, detail)
 }
 
-func ReadLastTool(sid string) (string, bool) { return lastTools.Read(sid) }
-func RemoveLastTool(sid string)              { lastTools.Remove(sid) }
+func ReadLastTool(sid string) (string, bool) {
+	d, _, ok := ReadLastToolCommand(sid)
+	return d, ok
+}
+func RemoveLastTool(sid string) { lastTools.Remove(sid) }
+
+// The one-line detail cannot carry a Bash command's newlines or anything past its first line
+// or 100 runes, so the whole command rides in the same record after this separator (#3521).
+// One record, one atomic write: detail and command always come from the same hook, and the
+// prompt token (the pending file's mtime) is the generation of both. A NUL cannot occur in
+// either part (it cannot be passed in a command line or a hook JSON string used here).
+const recordSep = "\x00"
+
+func splitRecord(v string) (detail, command string) {
+	detail, command, _ = strings.Cut(v, recordSep)
+	return detail, command
+}
+
+// WriteLastToolCommand records the tool about to run with its whole Bash command.
+func WriteLastToolCommand(sid, detail, command string) {
+	if detail == "" {
+		return
+	}
+	if command != "" {
+		detail += recordSep + command
+	}
+	_ = lastTools.Write(sid, detail)
+}
+
+// ReadLastToolCommand is ReadLastTool plus the command recorded with it ("" when none).
+func ReadLastToolCommand(sid string) (detail, command string, ok bool) {
+	v, ok := lastTools.Read(sid)
+	if !ok {
+		return "", "", false
+	}
+	detail, command = splitRecord(v)
+	return detail, command, true
+}
+
+// WritePendingPermissionCommand publishes the payload together with the command it stands for.
+func WritePendingPermissionCommand(sid, message, command string) {
+	if command != "" {
+		message += recordSep + command
+	}
+	_ = pendingPerms.Write(sid, message)
+}
+
+// ReadPendingPermissionCommand is ReadPendingPermission plus the command stored with it.
+func ReadPendingPermissionCommand(sid string) (detail, command string, ok bool) {
+	v, ok := pendingPerms.Read(sid)
+	if !ok {
+		return "", "", false
+	}
+	detail, command = splitRecord(v)
+	return detail, command, true
+}
 
 // A pending AskUserQuestion (the tool_input.questions array), kept only while the
 // session is in the question state so the Console can render and answer it.
@@ -527,6 +582,9 @@ func ReadPlanFile(sid string) (string, bool) { return planFiles.Read(sid) }
 
 // A pending tool-permission prompt (the Notification message), kept while the session
 // is blocked awaiting an allow/deny decision so the Console can approve it inline.
-func WritePendingPermission(sid, message string)      { _ = pendingPerms.Write(sid, message) }
-func ReadPendingPermission(sid string) (string, bool) { return pendingPerms.Read(sid) }
-func RemovePendingPermission(sid string)              { pendingPerms.Remove(sid) }
+func WritePendingPermission(sid, message string) { _ = pendingPerms.Write(sid, message) }
+func ReadPendingPermission(sid string) (string, bool) {
+	d, _, ok := ReadPendingPermissionCommand(sid)
+	return d, ok
+}
+func RemovePendingPermission(sid string) { pendingPerms.Remove(sid) }
