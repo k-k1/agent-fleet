@@ -352,3 +352,84 @@ func inodeOf(t *testing.T, path string) uint64 {
 	}
 	return st.Ino
 }
+
+func TestValidSubmoduleName(t *testing.T) {
+	for _, ok := range []string{"lib-core", "libs/big", "a.b_c/d-e", "v1.2"} {
+		if !validSubmoduleName(ok) {
+			t.Errorf("validSubmoduleName(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "-x", "/abs", "../x", "a/../b", "a/./b", "a=b", "a b", "a\tb", "a\nb", "a\x00b", "ü", "a/..", "x.url=/p"} {
+		if validSubmoduleName(bad) {
+			t.Errorf("validSubmoduleName(%q) = true, want false", bad)
+		}
+	}
+}
+
+// TestSeedSkipsMalformedSubmoduleNames puts a real git dir where a malformed name would lead
+// (inside the store for "=", beside it for "..") and records every git invocation through a
+// PATH shim: the name must neither be seeded nor reach git as a -c argument.
+func TestSeedSkipsMalformedSubmoduleNames(t *testing.T) {
+	git := gitTestEnv(t)
+	root := t.TempDir()
+	sub, parent := filepath.Join(root, "sub"), filepath.Join(root, "parent")
+	git(t, "", "init", "-q", "-b", "main", sub)
+	writeFile(t, filepath.Join(sub, "lib.txt"), "lib\n")
+	git(t, sub, "add", "-A")
+	git(t, sub, "commit", "-qm", "init")
+	git(t, "", "init", "-q", "-b", "main", parent)
+	writeFile(t, filepath.Join(parent, "p.txt"), "p\n")
+	git(t, parent, "add", "-A")
+	git(t, parent, "commit", "-qm", "init")
+	git(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "libs/sub")
+	git(t, parent, "commit", "-qm", "add submodule")
+
+	store := filepath.Join(parent, ".git", "modules")
+	src := filepath.Join(store, "libs", "sub")
+	for _, name := range []string{"x=y", "../escape"} {
+		dst := filepath.Join(store, filepath.FromSlash(name))
+		if out, err := exec.Command("cp", "-a", src, dst).CombinedOutput(); err != nil {
+			t.Fatalf("cp: %v: %s", err, out)
+		}
+	}
+
+	wt := filepath.Join(root, "wt")
+	git(t, parent, "worktree", "add", "-q", wt, "-b", "feat")
+	// The branch declares the same submodule under malformed names (and a valid-looking path).
+	writeFile(t, filepath.Join(wt, ".gitmodules"), ""+
+		"[submodule \"libs/sub\"]\n\tpath = libs/sub\n\turl = "+sub+"\n"+
+		"[submodule \"x=y\"]\n\tpath = libs/eq\n\turl = "+sub+"\n"+
+		"[submodule \"../escape\"]\n\tpath = libs/esc\n\turl = "+sub+"\n")
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logFile := filepath.Join(root, "argv.log")
+	shim := filepath.Join(root, "bin")
+	if err := os.MkdirAll(shim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(shim, "git"), "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '"+logFile+"'\nexec '"+realGit+"' \"$@\"\n")
+	if err := os.Chmod(filepath.Join(shim, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	seedSubmodulesFromParent(wt, parent)
+
+	if submodulePathEmpty(filepath.Join(wt, "libs", "sub")) {
+		t.Error("the well-formed submodule next to the malformed ones was not seeded")
+	}
+	for _, p := range []string{"libs/eq", "libs/esc"} {
+		if !submodulePathEmpty(filepath.Join(wt, filepath.FromSlash(p))) {
+			t.Errorf("%s was seeded from a malformed submodule name", p)
+		}
+	}
+	argv, _ := os.ReadFile(logFile)
+	for _, line := range strings.Split(string(argv), "\n") {
+		if strings.Contains(line, "x=y") || strings.Contains(line, "escape") {
+			t.Errorf("git was invoked with a malformed name: %q", line)
+		}
+	}
+}

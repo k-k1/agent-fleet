@@ -71,8 +71,14 @@ func seedSubmodulesFrom(dir, store string, depth int) {
 	}
 	rewriteSubmoduleSSHURLs(dir)
 	for _, sm := range submoduleSpecs(dir) {
+		// The name comes from the branch's .gitmodules, i.e. from whoever can push to it.
+		// Seeding is only an optimisation, so an unusable name is left to the normal update.
+		if !validSubmoduleName(sm.Name) {
+			log.Printf("submodules %s: not seeding submodule with an unsupported name", dir)
+			continue
+		}
 		src := filepath.Join(store, filepath.FromSlash(sm.Name))
-		if !isGitDir(src) {
+		if !withinDir(store, src) || !isGitDir(src) {
 			continue // the parent never checked this one out; there is nothing to seed from
 		}
 		sub := filepath.Join(dir, filepath.FromSlash(sm.Path))
@@ -84,6 +90,40 @@ func seedSubmodulesFrom(dir, store string, depth int) {
 		}
 		seedSubmodulesFrom(sub, filepath.Join(src, "modules"), depth+1)
 	}
+}
+
+// validSubmoduleName reports whether name is safe to use as a directory under the module store
+// and inside a `-c submodule.<name>.url=` argument. git splits a -c argument at the first `=`,
+// so a name containing one would set a different key; a `..` element would leave the store.
+// When in doubt, answer false: the normal update still handles the submodule.
+func validSubmoduleName(name string) bool {
+	if name == "" || name[0] == '-' || name[0] == '/' {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '.', c == '_', c == '/', c == '-':
+		default:
+			return false
+		}
+	}
+	for _, el := range strings.Split(name, "/") {
+		if el == ".." || el == "." {
+			return false
+		}
+	}
+	return true
+}
+
+// withinDir reports whether path is strictly inside root, lexically.
+func withinDir(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // seedSubmodule clones one submodule out of the parent's store and then points it back at its
