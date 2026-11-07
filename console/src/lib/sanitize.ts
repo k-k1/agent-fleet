@@ -60,7 +60,13 @@ export function isExternalMediaUrl(url: string): boolean {
   return u.origin !== window.location.origin;
 }
 
-function srcsetUrls(value: string): string[] {
+// SVG elements whose href is fetched as an image: <image> and the <feImage> filter primitive.
+export function isSvgImageTag(tag: string): boolean {
+  const t = tag.toLowerCase();
+  return t === "image" || t === "feimage";
+}
+
+export function srcsetUrls(value: string): string[] {
   return value
     .split(",")
     .map((c) => c.trim().split(/\s+/)[0] ?? "")
@@ -75,6 +81,26 @@ const FETCH_ATTRS_ANCHOR_SAFE = new Set(["href", "xlink:href"]); // only fetches
 // The prefix is reserved: the sanitizer drops it from author HTML, so only this module sets it.
 export const EXT_ATTR_PREFIX = "data-md-ext-";
 const DEFERRABLE = ["src", "srcset"] as const;
+
+// SVG presentation attributes whose value is CSS and may hold url(): the browser fetches
+// them on display exactly like the same property in a style attribute (which is forbidden).
+const SVG_URL_ATTRS = [
+  "fill", "stroke", "clip-path", "mask", "mask-image", "filter", "cursor",
+  "marker", "marker-start", "marker-mid", "marker-end", "shape-inside", "shape-subtract",
+];
+
+// Scrubs url() in those attributes whose target `blocked` names; a bare #fragment is a local
+// reference and always stays.
+function scrubSvgUrlAttrs(el: Element, blocked: (url: string) => boolean): void {
+  for (const name of SVG_URL_ATTRS) {
+    const v = el.getAttribute(name);
+    if (v && /url|image|\\|@/i.test(v)) {
+      el.setAttribute(name, scrubCssUrls(v, (u) => !u.startsWith("#") && blocked(u)));
+    }
+  }
+}
+
+const blockedEither = (u: string) => isInternalMediaUrl(u) || isExternalMediaUrl(u);
 
 /**
  * Keeps an external image from loading on display. <img> and the <source>s of a <picture>
@@ -99,13 +125,14 @@ export function deferExternalMedia(el: Element): void {
     }
   }
   const dropped = ["poster", "background"];
-  if (tag === "image") dropped.push("href", "xlink:href");
+  if (isSvgImageTag(tag)) dropped.push("href", "xlink:href");
   for (const name of dropped) {
     const v = el.getAttribute(name);
     if (v != null && isExternalMediaUrl(v)) el.removeAttribute(name);
   }
+  scrubSvgUrlAttrs(el, blockedEither);
   const style = el.getAttribute("style");
-  if (style && /url|image|\\|@/i.test(style)) el.setAttribute("style", scrubCssUrls(style, (u) => isInternalMediaUrl(u) || isExternalMediaUrl(u)));
+  if (style && /url|image|\\|@/i.test(style)) el.setAttribute("style", scrubCssUrls(style, blockedEither));
 }
 
 export interface SanitizeOptions {
@@ -131,7 +158,7 @@ function instance() {
       return;
     }
     if (!FETCH_ATTRS.has(name)) return;
-    if (FETCH_ATTRS_ANCHOR_SAFE.has(name) && node.nodeName.toLowerCase() !== "image") return;
+    if (FETCH_ATTRS_ANCHOR_SAFE.has(name) && !isSvgImageTag(node.nodeName)) return;
     const value = data.attrValue;
     const urls = name === "srcset" ? srcsetUrls(value) : [value.trim()];
     const bad = urls.some((u) => {
@@ -302,15 +329,16 @@ export function scrubCssUrls(input: string, blocked: (url: string) => boolean = 
  * own HTML): drops media URLs and inline CSS url()s that resolve to blocked Console paths.
  */
 export function stripInternalMedia(root: ParentNode): void {
-  root.querySelectorAll<Element>("[src], [srcset], [poster], [style], image, style").forEach((el) => {
+  root.querySelectorAll<Element>("[src], [srcset], [poster], [style], image, feImage, style, " + SVG_URL_ATTRS.map((a) => `[${a}]`).join(", ")).forEach((el) => {
     const attrs = ["src", "poster"];
-    if (el.localName === "image") attrs.push("href", "xlink:href");
+    if (isSvgImageTag(el.localName)) attrs.push("href", "xlink:href");
     for (const name of attrs) {
       const v = el.getAttribute(name);
       if (v && isInternalMediaUrl(v.trim())) el.removeAttribute(name);
     }
     const set = el.getAttribute("srcset");
     if (set && srcsetUrls(set).some(isInternalMediaUrl)) el.removeAttribute("srcset");
+    scrubSvgUrlAttrs(el, isInternalMediaUrl);
     const style = el.getAttribute("style");
     if (style && /url|image|\\|@/i.test(style)) el.setAttribute("style", scrubCssUrls(style));
     if (el.localName === "style" && el.textContent) el.textContent = scrubCssUrls(el.textContent);

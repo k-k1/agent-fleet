@@ -1,7 +1,7 @@
 // Click-to-load for images the sanitizer deferred (deferExternalMedia in lib/sanitize.ts).
 // Displaying a document must not make the browser contact the document author's host: that
 // reveals the reader's IP address and, without a referrer policy, the page they are on.
-import { EXT_ATTR_PREFIX } from "../../../lib/sanitize.ts";
+import { EXT_ATTR_PREFIX, isExternalMediaUrl, isInternalMediaUrl } from "../../../lib/sanitize.ts";
 import { t } from "../../../lib/i18n/index.ts";
 
 const DEFERRED = `[${EXT_ATTR_PREFIX}src], [${EXT_ATTR_PREFIX}srcset]`;
@@ -27,23 +27,61 @@ function hostsOf(node: Element): string {
 }
 
 // Gives the URLs back. <source>s first: an <img> starts selecting its candidate the moment
-// its src is set. The referrer policy goes on before the URL for the same reason.
-function load(node: Element) {
+// its src is set. Every <img> in the node gets the referrer policy before any URL is set,
+// including a non-external fallback <img> of a <picture> whose <source> was the external one.
+//
+// What is restored is only what the reader asked for: external URLs as written, and the
+// node's non-external <img src> through `resolveSrc` (the repo-path rule of a normal image).
+// A non-external srcset candidate is dropped, since nothing rewrites those to repo files.
+function load(node: Element, resolveSrc: SrcResolver) {
+  node.querySelectorAll("img").forEach((i) => i.setAttribute("referrerpolicy", "no-referrer"));
+  if (node.localName === "img") node.setAttribute("referrerpolicy", "no-referrer");
+  // Parts of the node that were never deferred (a fallback <img src="docs/a.png">) were
+  // detached from the document with it, so wireImages never saw them either.
+  for (const el of [node, ...node.querySelectorAll("img, source")]) {
+    const src = el.getAttribute("src");
+    if (src != null && !isExternalMediaUrl(src)) {
+      const next = resolveSrc(src);
+      if (next) el.setAttribute("src", next);
+      else el.removeAttribute("src");
+    }
+    const set = el.getAttribute("srcset");
+    if (set != null) el.setAttribute("srcset", restoreSrcset(set));
+  }
   const els = deferredIn(node);
   els.sort((a, b) => Number(a.localName === "img") - Number(b.localName === "img"));
   for (const el of els) {
-    if (el.localName === "img") el.setAttribute("referrerpolicy", "no-referrer");
     for (const name of ["srcset", "src"]) {
       const v = el.getAttribute(EXT_ATTR_PREFIX + name);
       if (v == null) continue;
       el.removeAttribute(EXT_ATTR_PREFIX + name);
-      el.setAttribute(name, v);
+      const next = name === "src" ? restoreSrc(v, resolveSrc) : restoreSrcset(v);
+      if (next) el.setAttribute(name, next);
     }
   }
 }
 
+function restoreSrc(v: string, resolveSrc: SrcResolver): string | null {
+  if (isExternalMediaUrl(v)) return v;
+  return resolveSrc(v);
+}
+
+function restoreSrcset(v: string): string {
+  return v
+    .split(",")
+    .map((c) => c.trim())
+    .filter((c) => c && isExternalMediaUrl(c.split(/\s+/)[0] ?? ""))
+    .join(", ");
+}
+
+/** Maps a non-external src to the URL to load (null: drop it). */
+export type SrcResolver = (src: string) => string | null;
+
+// Surfaces without repo files (streaming, Marp): keep what is not the Console's own API.
+const keepUnlessInternal: SrcResolver = (src) => (isInternalMediaUrl(src) ? null : src);
+
 /** Replaces each deferred <img> (or its enclosing <picture>) under `root` with a click-to-load button. */
-export function wireExternalImages(root: ParentNode): void {
+export function wireExternalImages(root: ParentNode, resolveSrc: SrcResolver = keepUnlessInternal): void {
   const seen = new Set<Element>();
   root.querySelectorAll(DEFERRED).forEach((el) => {
     const parent = el.parentElement;
@@ -58,7 +96,7 @@ export function wireExternalImages(root: ParentNode): void {
     if (alt) btn.title = alt;
     btn.addEventListener("click", (e) => {
       e.preventDefault();
-      load(target);
+      load(target, resolveSrc);
       btn.replaceWith(target);
     });
     target.replaceWith(btn);

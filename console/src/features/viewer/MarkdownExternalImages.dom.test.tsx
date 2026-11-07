@@ -7,7 +7,7 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), render: vi.fn() } }));
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
-const { sanitizeMarkdownHtml, deferExternalMedia } = await import("../../lib/sanitize.ts");
+const { sanitizeMarkdownHtml, deferExternalMedia, stripInternalMedia } = await import("../../lib/sanitize.ts");
 const { wireExternalImages } = await import("./parts/mdExternalImages.ts");
 
 let host: HTMLDivElement;
@@ -79,6 +79,86 @@ describe("external images", () => {
     expect(host.querySelector("source")?.getAttribute("srcset")).toBe("https://c.example/3.png");
     expect(host.querySelector("img")?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(host.innerHTML).not.toContain("data-md-ext");
+  });
+});
+
+describe("restoring on click goes through the normal image rules", () => {
+  const clickAll = async () => {
+    for (const b of [...host.querySelectorAll<HTMLButtonElement>("button.md-ext-img")]) await act(async () => b.click());
+  };
+  const loaded = () => [...host.querySelectorAll("img, source")].flatMap((e) => ["src", "srcset"].map((a) => e.getAttribute(a) ?? ""));
+
+  it("never GETs a Console path after the click (mixed src + external srcset, picture fallback)", async () => {
+    await render(
+      [
+        '<img src="/api/probe-mixed" srcset="https://tracker.example/a.png 0x">',
+        '<picture><source media="(width: 0px)" srcset="https://tracker.example/a.png"><img src="/api/probe-picture"></picture>',
+        '<img src="/oauth2/x" srcset="https://tracker.example/b.png 2x">',
+      ].join("\n\n"),
+    );
+    await clickAll();
+    // Every loaded URL is external or the workspace file endpoint; never the raw Console path.
+    const urls = loaded().filter(Boolean);
+    expect(urls.length).toBeGreaterThan(0);
+    for (const u of urls) expect(u.startsWith("https://tracker.example/") || u.includes("api/fs/download?path=")).toBe(true);
+    expect(host.innerHTML).not.toMatch(/\/oauth2\/|\/login/);
+  });
+
+  it("rewrites a repo-relative fallback <img> to the file endpoint and sets no-referrer on it", async () => {
+    await render('<picture><source srcset="https://tracker.example/p.png"><img src="docs/local.png"></picture>');
+    await clickAll();
+    const img = host.querySelector("img")!;
+    expect(img.getAttribute("src")).toContain("api/fs/download");
+    expect(img.getAttribute("src")).toContain("local.png");
+    expect(img.getAttribute("referrerpolicy")).toBe("no-referrer");
+  });
+
+  it("drops a relative src while streaming (nothing rewrites it)", async () => {
+    await render('<img src="docs/x.png" srcset="https://tracker.example/a.png 1x">', { streaming: true });
+    await clickAll();
+    expect(host.querySelector("img")?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(loaded().join(" ")).not.toContain("api/fs/download");
+  });
+});
+
+describe("SVG <feImage>", () => {
+  it("drops an external or internal feImage href", () => {
+    const html = sanitizeMarkdownHtml(
+      '<svg><filter><feImage href="https://tracker.example/p.png"/><feImage xlink:href="/api/x"/></filter></svg>',
+    );
+    expect(html).not.toMatch(/tracker\.example|\/api\//);
+    expect(html.toLowerCase()).toContain("feimage"); // positive control: the element itself survives
+  });
+
+  it("stripInternalMedia drops an internal feImage href", () => {
+    const r = document.createElement("div");
+    r.innerHTML = '<svg><filter><feImage href="/api/x"/></filter></svg>';
+    stripInternalMedia(r);
+    expect(r.innerHTML).not.toContain("/api/x");
+  });
+});
+
+describe("SVG presentation attributes", () => {
+  const attrs = ["fill", "stroke", "clip-path", "mask", "marker-start", "marker-mid", "marker-end", "filter", "cursor"];
+  const svg = (u: string) => `<svg><rect ${attrs.map((a) => `${a}="url(${u}#x)"`).join(" ")}/></svg>`;
+
+  it("scrubs external and Console url() in each attribute itself, keeping #fragment references", () => {
+    const html = sanitizeMarkdownHtml(svg("https://tracker.example/f.svg") + svg("/api/x") + '<svg><rect fill="url(#grad)" clip-path="url(#c)"/></svg>');
+    expect(html).not.toMatch(/tracker\.example|\/api\//);
+    const box = document.createElement("div");
+    box.innerHTML = html;
+    const rects = box.querySelectorAll("rect");
+    expect(rects).toHaveLength(3);
+    for (const a of attrs) for (const r of [rects[0]!, rects[1]!]) expect(r.getAttribute(a) ?? "", a).not.toMatch(/https?:|\/api\//);
+    expect(rects[2]!.getAttribute("fill")).toBe("url(#grad)");
+    expect(rects[2]!.getAttribute("clip-path")).toBe("url(#c)");
+  });
+
+  it("stripInternalMedia scrubs a Console url() in those attributes", () => {
+    const r = document.createElement("div");
+    r.innerHTML = svg("/api/x");
+    stripInternalMedia(r);
+    expect(r.innerHTML).not.toContain("/api/x");
   });
 });
 
