@@ -976,6 +976,35 @@ needs that range admitted and named. The relay's log is `/var/log/squid/af-tcp.l
 and `journalctl -u af-egress-relay-tcp` its service. Not run on a real stack yet (ADR 0122,
 addendum 2026-11-05).
 
+**A denied TCP flow looks connected at first.** The redirect happens before the relay decides, so
+the relay accepts the workspace's connection, reads the original destination (`SO_ORIGINAL_DST`),
+and only then refuses it by closing the socket without dialling out. The workspace's handshake
+has therefore completed: `nc -z host port` or a bare `connect()` reports success, and a later
+read or write can fail (EOF, or a reset such as `Connection reset by peer`; which one depends on
+timing and unread data, and a first small write can still succeed locally). On the sandbox it
+was a reset with 0 bytes received. The gateway makes no outbound connection. A "connected" probe
+is not evidence of "allowed". To tell, read the relay log, `af-tcp.log`: a connection whose
+decision could be recorded is a line ending `<verdict> <entry>`. `deny` is a refusal: in enforce
+any destination not named by a `tcp:` entry, and in **both** modes a fenced destination (the VPC,
+link-local, loopback, this host, ports 53 / 853 and the like) or any destination while no policy
+has been loaded yet. `would-deny` is a connection log-only passed, `deny-cap` one refused because
+the relay's connection limit was full, and `admit` an allowed one. No line is written when the
+original destination cannot be read or the log cannot be written. The Control Plane builds the
+admin events (`GET /api/admin/egress/events`, the Egress tab) from that log and receives them
+asynchronously; they are not the same lines.
+
+**The gateway's input chain.** `nft list ruleset` on the gateway shows `chain input { ...
+policy accept; }`, which does not mean the instance is open. `GatewaySg` admits all TCP from the
+workspace subnets, so the host filters itself: the `input` chain (`/etc/af-egress/nft.conf`,
+table `inet af_egress`) accepts, for packets arriving from a workspace subnet on the gateway's
+interface, only established/related traffic, flows redirected by the `prerouting` chain
+(`ct status dnat`) and TCP port 3128 (the explicit proxy). Anything else from those subnets is
+logged with the prefix `af-egress-input-drop ` (rate-limited to 10 per second; read it with
+`journalctl -k`) and dropped by the final `drop` rule. Every rule matches workspace-subnet
+sources only, so the chain's `policy accept` applies to everyone else (the instance's own
+traffic, the VPC's). The `forward` chain
+is `policy drop` and `ip_forward` is 0: nothing is routed through the gateway.
+
 **Turning it on** (an existing stack keeps `nat-gateway` until you do this). Allocate the
 workspace address first and have it allow-listed (next paragraph), then:
 
@@ -999,8 +1028,12 @@ fails and runs again 30 s later (a missing configuration fails at once; a missin
 a 30 s wait for the agent), so the gap after `update.sh` writes the configuration is about a
 minute, plus the first pull of the CP image and the CP's own start. Afterwards it runs every
 10 minutes, which is how a new CP image reaches the agent (#2758). Running workspaces get the proxy variables
-on their next Start (until then they are intercepted). `GatewayInstanceType` must match the
-CP image's architecture (30-ingress `CpArch`): the agent is the CP binary.
+on their next Start (until then they are intercepted). The agent is
+the CP binary copied out of the CP image, so the gateway pulls that image: `GatewayInstanceType`
+must always match `GatewayAmiId`'s architecture, and has to match the CP image's only when the
+image is single-arch. When the CP image is a
+multi-arch index, the gateway pulls the variant for its own architecture, so an x86_64 gateway
+ran fine next to an arm64 CP (30-ingress `CpArch`) in the #3380 sandbox run.
 
 **Back to the NAT gateway** is a maintenance window, not the same two commands in reverse: a
 running workspace keeps `HTTP(S)_PROXY` pointing at the gateway until it is restarted, and once
