@@ -103,7 +103,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
    遮断候補として表示し、enforce では落として記録します。切り替える前に、宛先側のファイアウォールが
    ゲートウェイの egress アドレスを通す必要があります。**遮断された TCP 接続も、最初は接続できたように
    見えます。** ゲートウェイは接続をいったん受け付け、宛先を読み取ってから切るため、`nc -z` や単なる
-   `connect()` は成功し、最初の読み書きで初めて `Connection reset by peer` になります。「接続できた」を
+   `connect()` は成功し、その後の読み書きが失敗することがあります（EOF、または `Connection reset by peer` などのリセット。sandbox ではリセットでした）。「接続できた」を
    「許可された」と読まないでください。判別は Egress タブのイベント（またはゲートウェイ上の
    `/var/log/squid/af-tcp.log` の `deny` 行）で行います。詳細は `deploy/aws/ecs/README.md` の
    「Egress gateway」。

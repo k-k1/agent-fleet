@@ -979,13 +979,19 @@ addendum 2026-11-05).
 **A denied TCP flow looks connected at first.** The redirect happens before the relay decides, so
 the relay accepts the workspace's connection, reads the original destination (`SO_ORIGINAL_DST`),
 and only then refuses it by closing the socket without dialling out. The workspace's handshake
-has therefore completed: `nc -z host port` or a bare `connect()` reports success, and only the
-first read or write fails (`Connection reset by peer`, 0 bytes received; the gateway makes no
-outbound connection). A "connected" probe is not evidence of "allowed". To tell, read the relay
-log: each connection is one line in `af-tcp.log` ending `<verdict> <entry>`, where `deny` is a
-refusal in enforce, `would-deny` a connection log-only passed, `deny-cap` one refused because
-the relay's connection limit was full, and `admit` an allowed one. The same lines are the admin
-events (`GET /api/admin/egress/events`, the Egress tab).
+has therefore completed: `nc -z host port` or a bare `connect()` reports success, and a later
+read or write can fail (EOF, or a reset such as `Connection reset by peer`; which one depends on
+timing and unread data, and a first small write can still succeed locally). On the sandbox it
+was a reset with 0 bytes received. The gateway makes no outbound connection. A "connected" probe
+is not evidence of "allowed". To tell, read the relay log, `af-tcp.log`: a connection whose
+decision could be recorded is a line ending `<verdict> <entry>`. `deny` is a refusal: in enforce
+any destination not named by a `tcp:` entry, and in **both** modes a fenced destination (the VPC,
+link-local, loopback, this host, ports 53 / 853 and the like) or any destination while no policy
+has been loaded yet. `would-deny` is a connection log-only passed, `deny-cap` one refused because
+the relay's connection limit was full, and `admit` an allowed one. No line is written when the
+original destination cannot be read or the log cannot be written. The Control Plane builds the
+admin events (`GET /api/admin/egress/events`, the Egress tab) from that log and receives them
+asynchronously; they are not the same lines.
 
 **The gateway's input chain.** `nft list ruleset` on the gateway shows `chain input { ...
 policy accept; }`, which does not mean the instance is open. `GatewaySg` admits all TCP from the
@@ -1024,7 +1030,8 @@ minute, plus the first pull of the CP image and the CP's own start. Afterwards i
 10 minutes, which is how a new CP image reaches the agent (#2758). Running workspaces get the proxy variables
 on their next Start (until then they are intercepted). The agent is
 the CP binary copied out of the CP image, so the gateway pulls that image: `GatewayInstanceType`
-(with `GatewayAmiId`) only has to match its architecture when the image is single-arch. When the CP image is a
+must always match `GatewayAmiId`'s architecture, and has to match the CP image's only when the
+image is single-arch. When the CP image is a
 multi-arch index, the gateway pulls the variant for its own architecture, so an x86_64 gateway
 ran fine next to an arm64 CP (30-ingress `CpArch`) in the #3380 sandbox run.
 

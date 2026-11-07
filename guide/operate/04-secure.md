@@ -131,7 +131,7 @@ in the Console.
    it is dropped and recorded. Before cut-over, the destination's own firewall must admit the gateway's
    egress address. **A denied TCP connection looks connected at first**: the gateway accepts it,
    reads where it was headed, and only then drops it, so `nc -z` or a bare `connect()` succeeds and
-   the first read or write fails with `Connection reset by peer`. Do not read "connected" as
+   a later read or write can fail (EOF or a reset such as `Connection reset by peer`; on the sandbox it was a reset). Do not read "connected" as
    "allowed"; check the Egress tab's events (or `deny` lines in `/var/log/squid/af-tcp.log` on the
    gateway). Details: `deploy/aws/ecs/README.md`, "Egress gateway".
 3. **Switch to enforce**: once the allowlist is sufficiently solid, switch the mode to
