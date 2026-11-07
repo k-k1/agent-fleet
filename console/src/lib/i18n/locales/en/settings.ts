@@ -76,6 +76,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "display.terminal": "Terminal",
   "display.term_ctrl_cv": "Ctrl+C / Ctrl+V copy and paste",
   "display.term_ctrl_cv_note": "Ctrl+C copies the selection (with nothing selected it still interrupts the program) and Ctrl+V pastes. Turn off to send both keys to the program. Ctrl+Shift+C / Ctrl+Shift+V always work.",
+  "display.term_drag_copy": "Copy without asking after a mouse drag",
+  "display.term_drag_copy_note": "Off: the terminal asks before every clipboard write requested by the program running in it, including tmux copy mode. On: a drag-release in a terminal pane copies without asking. Trade-off: a program that receives mouse events can use the moment right after a drag to replace your clipboard.",
   "display.font": "Font",
   "display.font_size": "Font size",
   "display.file_viewer": "File viewer",
