@@ -51,7 +51,7 @@ Parameters:
   WsDiskGiB:
     Type: String
     Default: "50"
-    Description: "Default workspace disk in GiB (0 = Fargate's 20). PARAMETERS.md."
+    Description: "Default workspace disk in GiB (0 = 20). PARAMETERS.md."
   WsRuntime:
     Type: String
     Default: ecs
@@ -103,7 +103,7 @@ Parameters:
   Ec2MaxSlots:
     Type: String
     Default: "8"
-    Description: "Hard cap on pool instances = concurrently running workspaces. PARAMETERS.md."
+    Description: "Hard cap on pool instances (= running workspaces). PARAMETERS.md."
   Ec2HostReserveMb:
     Type: String
     Default: auto
@@ -119,7 +119,7 @@ Parameters:
   Ec2HibernateAfterSec:
     Type: String
     Default: "0"
-    Description: "Idle seconds before a home is snapshotted; 0 = off. PARAMETERS.md."
+    Description: "Idle seconds before a home is snapshotted and its volume deleted; 0 = off. PARAMETERS.md."
   Ec2HomeGiB:
     Type: String
     Default: "50"
@@ -135,7 +135,7 @@ Parameters:
   ScheduleWakeTimeout:
     Type: String
     Default: ""
-    Description: "Wait for the woken Agent per schedule fire (default 300s). PARAMETERS.md."
+    Description: "Wait for the woken Agent per fire (default 300s). PARAMETERS.md."
   ScheduleSettle:
     Type: String
     Default: ""

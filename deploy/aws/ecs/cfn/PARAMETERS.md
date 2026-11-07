@@ -133,14 +133,19 @@ events to an object store before it purges them. The templates wire an optional 
 
 **Retention and the archive are two clocks.** `EgressEventRetentionDays` is how long a raw event
 stays in the CP's database; the purger archives each whole UTC day older than that, then deletes
-it. `EgressArchiveRetentionDays` is how long S3 keeps a day after it was archived, and only starts
-counting at the archive write. So an event lives `EgressEventRetentionDays` in the database, then
-`EgressArchiveRetentionDays` in S3 (with the defaults, 30 then 365 days). Lowering the first moves
-days into the archive sooner and does not shorten the second. `0` never purges, so nothing is
-archived either. With no archive the purger deletes at the cutoff and the events are gone. The CP
-ignores a value that is not a number and uses 30, so a typo cannot switch deletion off.
+it. `EgressArchiveRetentionDays` is how long S3 keeps an archived day. Both are minimum
+thresholds, not exact lifetimes: with the archive on, the cutoff rounds down to a UTC midnight, so
+the database keeps events up to about a day longer, and a slow purge or a failed archive write
+keeps them longer still (the CP never deletes what it did not archive). The S3 clock is the
+lifecycle rule's, measured from the object's own creation: a day object that already exists is
+verified and reused, not rewritten, so it does not restart at the database delete. With the
+defaults that is roughly 30 days in the database, then up to 365 in S3. `0` never purges, so
+nothing is archived either; with no archive, events are gone at the cutoff. The CP ignores a
+value that is not a number and uses 30, so a typo cannot switch deletion off.
+`EgressArchive=existing` does not manage the bucket, so `EgressArchiveRetentionDays` does not
+apply to it: its lifecycle is whatever that bucket already has.
 
-The last two are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
+The two `EgressArchiveBucket` rows (20-platform and 30-ingress) are derived facts, like `WorkspaceSubnets`: `standup.sh` reads the data stack's
 output after deploying it (never the capture, so a rebuilt data stack cannot leave a stale
 name) and names it for both stacks even when empty (an omitted parameter keeps its previous
 value), and `update.sh` passes it to the 20-platform change set and to 30-ingress, and clears
