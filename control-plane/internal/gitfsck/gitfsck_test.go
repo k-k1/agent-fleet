@@ -2,11 +2,13 @@ package gitfsck
 
 import (
 	"context"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 )
@@ -139,5 +141,64 @@ func TestBackfillSkipsBrokenRepo(t *testing.T) {
 	}
 	if got := fsckMust(t, filepath.Join(gitRoot, "good.git"), "", "config", "receive.fsckObjects"); got != "true" {
 		t.Errorf("good repo not configured: %q", got)
+	}
+}
+
+// A tree "a, b, a" is not caught by duplicateEntries (adjacent only); it surfaces
+// as treeNotSorted, which must stay an error. A plainly unsorted tree likewise.
+func TestInternalGitFsckRejectsBrokenTrees(t *testing.T) {
+	bare := newFsckBare(t, true)
+	w := t.TempDir()
+	fsckMust(t, w, "", "init", "--initial-branch=main")
+	blob := fsckMust(t, w, "x", "hash-object", "-w", "--stdin")
+	raw := func(names ...string) string {
+		var b []byte
+		for _, n := range names {
+			b = append(b, []byte("100644 "+n+"\x00")...)
+			sha, _ := hex.DecodeString(blob)
+			b = append(b, sha...)
+		}
+		return string(b)
+	}
+	for name, names := range map[string][]string{"dup": {"a", "b", "a"}, "unsorted": {"b", "a"}} {
+		tree := fsckMust(t, w, raw(names...), "hash-object", "-t", "tree", "-w", "--stdin", "--literally")
+		commit := fsckMust(t, w, "", "commit-tree", tree, "-m", name)
+		if out, err := fsckGit(t, w, "", "push", bare, commit+":refs/heads/"+name); err == nil {
+			t.Errorf("%s: broken tree accepted:\n%s", name, out)
+		}
+	}
+}
+
+// Ensure writes the downgrades before it turns verification on, so an interrupted
+// run never leaves a repository strict without them.
+func TestEnsureEnablesVerificationLast(t *testing.T) {
+	if last := config[len(config)-1][0]; last != "receive.fsckObjects" {
+		t.Fatalf("last key is %s, want receive.fsckObjects", last)
+	}
+}
+
+// A held config.lock that clears within the retry window must not leave the repo half set.
+func TestEnsureRetriesOnConfigLock(t *testing.T) {
+	bare := newFsckBare(t, false)
+	lock := filepath.Join(bare, "config.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(250 * time.Millisecond); os.Remove(lock) }()
+	if err := Ensure(context.Background(), bare); err != nil {
+		t.Fatal(err)
+	}
+	if got := fsckMust(t, bare, "", "config", "receive.fsckObjects"); got != "true" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBackfillReportsUnreadableTree(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, datalayout.GitDir), nil, 0o600); err != nil { // a file, not a dir
+		t.Fatal(err)
+	}
+	if ok, failed := Backfill(context.Background(), root); ok != 0 || failed != 1 {
+		t.Fatalf("ok=%d failed=%d, want 0/1", ok, failed)
 	}
 }

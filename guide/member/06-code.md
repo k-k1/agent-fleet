@@ -81,10 +81,12 @@ prototypes and in-team sharing.
 - The tab talks to the control plane directly, so **it works while the workspace is stopped**.
 - It is also a home for code that must not leave the building. Clone it like any other
   repository ("Start" → "Clone a new repository…") by pasting the URL you copied.
-- A push is **checked for malformed objects** (git's `receive.fsckObjects`). A push that carries an
-  unsafe `.gitmodules` name or path, or a tree entry named like `.git`, is rejected with the reason
-  in git's error output. Cosmetic defects that imported history often has (a bad timezone, a
-  missing space before the email) only warn, so pushing a mirrored repository still works.
+- A push is **checked for malformed objects** (git's `receive.fsckObjects`). Defects git detects are
+  rejected, for example a `.gitmodules` name containing `../` or a path that looks like an option, or
+  a tree entry named like `.git`. A short list of cosmetic legacy defects (a bad timezone, a missing
+  space before the email, and similar) only warns, so most mirrored history still pushes; anything
+  outside that list is rejected even for a mirror. If a push is refused, pass the message id git
+  prints (e.g. `badTimezone`) to your administrator.
 
 ## Launch a session from a repository row
 

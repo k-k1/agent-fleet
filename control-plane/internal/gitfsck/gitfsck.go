@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/datalayout"
 )
@@ -23,7 +24,6 @@ import (
 // gitmodulesUrl, gitmodulesUpdate, gitmodulesMissing, gitmodulesBlob,
 // gitmodulesLarge, gitmodulesSymlink, hasDot, hasDotdot, hasDotgit, fullPathname.
 var config = [][2]string{
-	{"receive.fsckObjects", "true"},
 	// Cosmetic defects that imported and mirrored history commonly carries. They
 	// cannot hurt a checkout, and rejecting them would block a push the user cannot fix
 	// without rewriting history.
@@ -37,7 +37,11 @@ var config = [][2]string{
 	{"receive.fsck.badEmail", "warn"},                // malformed email in an identity line
 	{"receive.fsck.zeroPaddedFilemode", "warn"},      // "040000" for a tree mode (git's default is already warn; pinned so a future default change stays quiet)
 	{"receive.fsck.badFilemode", "warn"},             // unusual regular-file modes from non-git tooling
-	{"receive.fsck.treeNotSorted", "warn"},           // mis-sorted tree written by a third-party library
+	// receive.fsckObjects goes last: a repository that dies between two writes must be
+	// left with the downgrades and no verification, never verification without them.
+	// treeNotSorted stays an error: a non-adjacent duplicate entry is reported only as
+	// treeNotSorted, so downgrading it would let a broken duplicate tree through.
+	{"receive.fsckObjects", "true"},
 }
 
 // Ensure sets each key in config on the bare repository
@@ -55,11 +59,32 @@ func Ensure(ctx context.Context, dir string) error {
 		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
 			return err
 		}
-		if out, err := exec.CommandContext(ctx, "git", "--git-dir", dir, "config", "--local", kv[0], kv[1]).CombinedOutput(); err != nil {
-			return &fsckConfigError{key: kv[0], err: err, out: strings.TrimSpace(string(out))}
+		if err := setConfig(ctx, dir, kv[0], kv[1]); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// setConfig retries a few times: git config fails at once when another writer
+// (a second Control Plane, a concurrent Ensure) holds config.lock.
+func setConfig(ctx context.Context, dir, key, val string) error {
+	var last error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+			}
+		}
+		out, err := exec.CommandContext(ctx, "git", "--git-dir", dir, "config", "--local", key, val).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		last = &fsckConfigError{key: key, err: err, out: strings.TrimSpace(string(out))}
+	}
+	return last
 }
 
 type fsckConfigError struct {
@@ -78,7 +103,11 @@ func Backfill(ctx context.Context, dataRoot string) (ok, failed int) {
 	root := filepath.Join(dataRoot, datalayout.GitDir)
 	tenants, err := os.ReadDir(root)
 	if err != nil {
-		return 0, 0 // no git tree yet
+		if os.IsNotExist(err) {
+			return 0, 0 // no git tree yet
+		}
+		log.Printf("internal-git: fsck config: read %s: %v", root, err)
+		return 0, 1
 	}
 	for _, td := range tenants {
 		if !td.IsDir() {
@@ -86,6 +115,8 @@ func Backfill(ctx context.Context, dataRoot string) (ok, failed int) {
 		}
 		repos, err := os.ReadDir(filepath.Join(root, td.Name()))
 		if err != nil {
+			failed++
+			log.Printf("internal-git: fsck config: read tenant dir %s: %v", td.Name(), err)
 			continue
 		}
 		for _, rd := range repos {
