@@ -569,4 +569,5 @@ and never on one that has none. A stop between the write and the removal leaves 
 start does not rewrite. Queue files that cannot be parsed are counted in `unreadable`. Unqueued replies that
 only an open run record held were never visible to the member and are dropped with it. The `memoryx` review
 publish and forget-hook code stays in place for now (decision 6 and `memory_patch` decide what remains of
-it); the Agent no longer installs the forget hook.
+it); the Agent no longer installs the forget hook. The deny-all one-shot (`chatx/chat_denyall.go`) stays on
+the same terms, with no production caller until the decision 6 consolidation needs it.
