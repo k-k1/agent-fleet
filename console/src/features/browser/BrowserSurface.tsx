@@ -116,11 +116,6 @@ export function BrowserSurface({
   }), []);
   useEffect(() => () => gestures.dispose(), [gestures]);
 
-  // React registers `wheel` on the ROOT container with {passive: true} (measured
-  // in react-dom 19), so preventDefault() inside an onWheel prop is a silent
-  // no-op: the wheel reached the remote page AND scrolled the Console's own
-  // container out from under the pane. The listener has to be a native one on
-  // the canvas with {passive: false}. Kept in a ref so the listener registered
   // Tells the Control Plane a person is at the pane, so a foreground tab left on an
   // unlocked screen stops holding the Workspace awake after the presence grace. Only
   // trusted (user-generated) events count — a script-dispatched event is not a person —
@@ -135,6 +130,11 @@ export function BrowserSurface({
   };
   const interactionRef = useRef(reportInteraction);
   interactionRef.current = reportInteraction;
+  // React registers `wheel` on the ROOT container with {passive: true} (measured
+  // in react-dom 19), so preventDefault() inside an onWheel prop is a silent
+  // no-op: the wheel reached the remote page AND scrolled the Console's own
+  // container out from under the pane. The listener has to be a native one on
+  // the canvas with {passive: false}. Kept in a ref so the listener registered
   // by the mount effect never has to be torn down and re-added on every render.
   const wheelRef = useRef<(event: WheelEvent) => void>(() => {});
   useEffect(() => {

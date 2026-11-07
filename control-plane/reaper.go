@@ -215,7 +215,8 @@ func (r *connRegistry) snapshot(wsID string) (conns int, lastSeen time.Time, ok 
 	return r.wsConns[wsID], ls, has
 }
 
-// noteInput records a terminal keystroke — the one signal that says a human is
+// noteInput records a terminal keystroke (or a reported interaction on the visible
+// browser pane, browserViewer.noteInteraction) — the one signal that says a human is
 // actually there. Pings and resizes deliberately do NOT come through here: a
 // background tab sends both, and counting them would restore exactly the "an
 // open socket warms the workspace forever" behaviour this exists to remove.

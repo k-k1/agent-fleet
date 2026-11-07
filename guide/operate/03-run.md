@@ -386,7 +386,7 @@ whole deployment). A tenant's values are the four fields under **Idle auto-stop*
 is open in the Console is spared from the halt only while someone has typed into that session's
 terminal within the presence grace; a tab left open without typing does not pin it. A visible
 browser pane follows the same rule: it counts only within the presence grace of the last click,
-scroll or key press on it (becoming visible again after a tab switch is not itself interaction), so
+scroll, key press or paste on it (becoming visible again after a tab switch is not itself interaction), so
 a foreground tab on a screen that never locks does not pin the Workspace. This is
 effective for saving resources. For the meaning of the env vars, see
 `deploy/compose/.env.example`; for how it works, see

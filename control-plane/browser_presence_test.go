@@ -71,6 +71,31 @@ func TestBrowserViewerPresenceIsBoundedByInteraction(t *testing.T) {
 		}
 	})
 
+	t.Run("re-show never moves a fresher input clock backwards", func(t *testing.T) {
+		r := newConnRegistry()
+		fresh := time.Now()
+		r.addConn(ws, "", true) // another attention connection keeps the clock alive
+		r.mu.Lock()
+		r.lastInput[ws] = fresh
+		r.mu.Unlock()
+		v := newBrowserViewer(r, ws)
+		v.setVisible(true)
+		v.mu.Lock()
+		v.lastInteract = time.Now().Add(-grace - time.Minute) // a stale viewer
+		v.mu.Unlock()
+		v.setVisible(false)
+		v.setVisible(true)
+		r.mu.Lock()
+		got := r.lastInput[ws]
+		r.mu.Unlock()
+		if got.Before(fresh) {
+			t.Fatalf("lastInput moved back to %v from %v", got, fresh)
+		}
+		if !r.watched(ws, grace, time.Now()) {
+			t.Fatal("the other connection's fresh input must keep the workspace watched")
+		}
+	})
+
 	t.Run("hidden interaction is replayed", func(t *testing.T) {
 		r := newConnRegistry()
 		v := newBrowserViewer(r, ws)
