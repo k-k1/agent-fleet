@@ -1,0 +1,17 @@
+---
+audience: "anyone running agents from the Console"
+source_of_truth: "the Console itself (when the screen and this guide disagree, the screen is right)"
+---
+
+# Find what you want to do
+
+English | [日本語](README.ja.md)
+
+Each page covers one thing you want to do. The chapters of the current guide are being rewritten into these pages.
+Anything not here yet is in the chapters of [Using Agent Fleet](../member/README.md).
+
+## Integrations
+
+| Page | What you can do |
+|---|---|
+| [Use AWS SSO](integrations/aws-sso.md) | Have agents run AWS commands with your permissions |

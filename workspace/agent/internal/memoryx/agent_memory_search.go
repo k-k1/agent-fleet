@@ -99,7 +99,7 @@ func agentMemSearchRanked(c agentMemCaller, query string, limit int) (hits []age
 	// Counted after the limit, under the read lock: a hit the caller never saw was not used, and
 	// a forget or re-create cannot slip between the search and the count.
 	for _, s := range found {
-		agentMemRecordUses(s.src.c, s.e)
+		agentMemRecordUses(s.src.c, agentMemCounterHits, s.e)
 	}
 	return hits, fallback, nil
 }

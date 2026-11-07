@@ -10,6 +10,11 @@ package memoryx
 // sidecar is runtime state, not published: it has no history and does not travel with an
 // export, so a restored store starts counting again.
 //
+// The split counters (`.usage-v2/<counter>/<name>`, same method) tell reads from search hits; the
+// legacy file keeps counting for one release and the ranking still uses it. Like it they are
+// runtime state: not published, not in a bundle, and zero after a restore. Purge rewrites history
+// only and leaves the live memory, so it leaves every counter alone as well.
+//
 // A pin is the opposite: the member's decision, published like any other change (`pinned: true`
 // in the frontmatter, one commit, op "pin"), so history shows who pinned what. It changes neither
 // the revision nor `updated`: an agent that read the memory before can still save it, and the
@@ -28,10 +33,72 @@ import (
 
 const (
 	agentMemUsageDir = ".usage"
+	// agentMemUsageV2Dir holds one directory per counter, so a name never collides with another
+	// counter's file (a name may contain `.`: `foo` and `foo.reads` are both valid names).
+	agentMemUsageV2Dir = ".usage-v2"
 	// agentMemUsageCap bounds a sidecar. Past it a use is not recorded: the ranking only needs
 	// "used a lot", and a tampered file cannot grow without bound.
 	agentMemUsageCap = 4096
 )
+
+// agentMemCounter is one split usage counter under `.usage-v2/<counter>/<name>` (ADR 0130
+// decision 3, "Counters"). Same append-a-byte method and cap as the legacy file.
+type agentMemCounter string
+
+const (
+	agentMemCounterReads agentMemCounter = "reads" // memory_read; its mtime is the last read
+	agentMemCounterHits  agentMemCounter = "hits"  // returned search hits
+	// confirmed and stale are laid out here so that forget and re-create already clear them;
+	// nothing appends to them until memory_feedback (#3496).
+	agentMemCounterConfirmed agentMemCounter = "confirmed"
+	agentMemCounterStale     agentMemCounter = "stale"
+)
+
+var agentMemCounters = []agentMemCounter{agentMemCounterReads, agentMemCounterHits, agentMemCounterConfirmed, agentMemCounterStale}
+
+func agentMemCounterRel(scopeRel string, k agentMemCounter) string {
+	return scopeRel + "/" + agentMemUsageV2Dir + "/" + string(k)
+}
+
+// agentMemRecordCounter appends one byte to a split counter. Best effort, like agentMemRecordUse.
+// touch makes the file's mtime move even past the cap: the last read time must not freeze at the
+// moment the count saturated.
+func agentMemRecordCounter(scopeRel string, k agentMemCounter, name string, touch bool) {
+	dir, err := agentMemCheckDir(agentMemCounterRel(scopeRel, k), true)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		return
+	}
+	if st.Size() >= agentMemUsageCap {
+		if touch {
+			tv := syscall.NsecToTimeval(time.Now().UnixNano())
+			_ = syscall.Futimes(int(f.Fd()), []syscall.Timeval{tv, tv})
+		}
+		return
+	}
+	_, _ = f.Write([]byte{'.'})
+}
+
+// agentMemCounterCount is the count of a split counter for one name (0 when absent).
+func agentMemCounterCount(scopeRel string, k agentMemCounter, name string) int {
+	dir, err := agentMemCheckDir(agentMemCounterRel(scopeRel, k), false)
+	if err != nil {
+		return 0
+	}
+	st, err := os.Lstat(filepath.Join(dir, name))
+	if err != nil || !st.Mode().IsRegular() {
+		return 0
+	}
+	return int(min(st.Size(), agentMemUsageCap))
+}
 
 // agentMemProjectIDRe is what agentMemProjectID can produce (and what the change list accepts).
 // Dots are fine inside a name; only "." and ".." are not a single safe path element.
@@ -62,19 +129,27 @@ func agentMemRecordUse(scopeRel, name string) {
 
 // agentMemRecordUses counts a use for each entry, resolving each one's scope directory for the
 // caller (a project entry is the caller's own project).
-func agentMemRecordUses(c agentMemCaller, es ...agentMemEntry) {
+func agentMemRecordUses(c agentMemCaller, k agentMemCounter, es ...agentMemEntry) {
 	for _, e := range es {
 		if rel, err := agentMemScopeDir(e.Scope, c); err == nil {
 			agentMemRecordUse(rel, e.Name)
+			agentMemRecordCounter(rel, k, e.Name, k == agentMemCounterReads)
 		}
 	}
 }
 
-// agentMemClearUsage forgets a memory's count, so a memory created later under the same name
-// does not inherit it.
+// agentMemClearUsage forgets a memory's counts (the legacy file and every split counter), so a
+// memory created later under the same name does not inherit them. A project move clears the
+// source and the destination through here too: counts are never carried to a new place, as with
+// the legacy file.
 func agentMemClearUsage(scopeRel, name string) {
 	if dir, err := agentMemCheckDir(scopeRel+"/"+agentMemUsageDir, false); err == nil {
 		_ = os.Remove(filepath.Join(dir, name))
+	}
+	for _, k := range agentMemCounters {
+		if dir, err := agentMemCheckDir(agentMemCounterRel(scopeRel, k), false); err == nil {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
 	}
 }
 
