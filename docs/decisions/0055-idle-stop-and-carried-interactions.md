@@ -336,3 +336,16 @@ consuming some). So a session that started `npm run dev` and went idle held its 
   predicate as the reaper (decision 11); the heatmap sampler uses it too.
 - An Agent restart restarts the period: each restart resets the bound, so repeated restarts more frequent than the bound can keep extending the hold.
 - Not done: a member-facing badge, and carrying "the background task ended by idle stop" into the session on resume.
+
+## Note (2026-11-07): tier 1 consults a shared per-session input stamp before halting (#3473)
+
+Tier 1's "someone is typing" check reads the in-memory registry of the replica running the sweep, and a terminal
+WebSocket lives on one replica, so in an HA deployment another replica's reaper could halt a session while its user
+was typing. The workspace activity watermark cannot answer this (any ingress request moves it, so it would spare every
+session), hence a per-session stamp, `workspace_session_input.last_input_at`.
+
+- The replica holding the terminal publishes it only on real keystrokes (never on attach, so auto-reconnecting idle tabs cannot refresh it), at most once per presence heartbeat, with a trailing write for a keystroke inside the interval (never one write per keystroke). Rows older than a week are dropped on write.
+- Before `haltSession`, the reaper checks it against `presenceGrace`. A recent stamp restarts the session's idle clock;
+  a failed lookup does not halt (logged). The local `watchingSession` check stays the fast path.
+- With `presenceGrace` disabled (attached means watched) attachment is replica-local, so the shared check answers
+  "not watched". Not verified on a real HA deployment.

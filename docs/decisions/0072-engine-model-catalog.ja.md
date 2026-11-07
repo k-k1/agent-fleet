@@ -4728,3 +4728,16 @@ the S3 key image/diffusion_models/anima-aesthetic-v1.1.safetensors is already re
 `an earlier ingest job recorded it — forget that job in the list to free the key`）。主語の無い
 「already recorded」は探す先が無く、手動の逃げ道（そのジョブを忘れる）は最初からあったのに
 画面のどこにも書かれていなかった。
+
+### 2026-11-07 — ComfyUI の中継は許可リスト方式で、投入したメンバーシップに結びつける
+
+ComfyUI には利用者の概念が無く、history / queue / view / interrupt はエンジン上の全ジョブに
+及ぶ。ゲートウェイは comfy エンジンについて、画像機能が実際に呼ぶルート
+（`POST /prompt`、`POST /upload/image`、`GET /history/<id>`、`GET /view`、`GET /queue`、
+`delete` 付きの `POST /queue`、`prompt_id` 付きの `POST /interrupt`）だけを固定のメソッドで
+中継し、それ以外は拒否する。`/prompt` の応答時に、投入したメンバーシップをメモリ上に記録し、
+history・出力ファイル・キュー削除・interrupt は呼び出し元自身の prompt に限って応答する。
+`GET /queue` は呼び出し元自身の行だけに絞る。Control Plane の再起動でマップは空になるため、
+再起動前のジョブは拒否され（fail closed）、新しいジョブは通常どおり動く。super_admin の
+例外は設けない（エンジンのセッショントークンが持つのはメンバーシップであり、ID の役割ではない）。
+上記の決定は変わらない。

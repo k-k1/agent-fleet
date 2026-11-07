@@ -20,7 +20,7 @@ up its prerequisites.
 
 ## 0. The big picture (what is "left out")
 
-- **Auth**: `AUTH=dev` (default). No OAuth gate, no oauth2-proxy — every request
+- **Auth**: `AUTH=dev` (run-dev.sh passes it explicitly, with `AF_ALLOW_INSECURE_DEV_AUTH=1`, since the CP has no default). No OAuth gate, no oauth2-proxy — every request
   resolves to the fixed user `dev`. No login needed.
 - **Tenants**: a single "default" tenant is auto-created internally and `dev` joins it
   automatically. You never deal with tenants in the UI (selection only appears with

@@ -328,8 +328,8 @@ export function useSessionActions(): SessionActions {
 
   const handoff = async (name: string, kind: string, note?: string) => {
     const target = kind || "claude";
-    // This prompt is unusual for an LLM prompt: openChat auto-sends it, so it renders as
-    // the user's OWN message in the operator chat (and steers the reply language in the
+    // This prompt is unusual for an LLM prompt: openChat prefills it and the member sends it, so it
+    // renders as the user's OWN message in the operator chat (and steers the reply language in the
     // default outputLanguage=auto). So it must follow the UI locale — an English user must
     // not see a Japanese paragraph as their own turn, nor get a Japanese reply.
     // i18n-exempt-start: LLM prompt (model behaviour, not display; docs/log/28 §4) — locale branch
@@ -350,14 +350,15 @@ export function useSessionActions(): SessionActions {
           (trimmed ? `\n利用者からの補足指示: ${trimmed}` : "");
     // i18n-exempt-end
     try {
-      // A dedicated operator conversation preserves any unfinished draft. openChat's auto
-      // flag fires this extraction turn as soon as ChatView loads — the assistant is called
-      // directly and comes back with a proposal; the consent
-      // gate before create_session lives in the prompt above.
+      // A dedicated operator conversation preserves any unfinished draft. The prompt is only
+      // prefilled: the turn makes the model read the source session and may lead to
+      // create_session, so it starts when the member presses Send (the prompt above still asks
+      // for confirmation before create_session, but is not the consent gate).
       const conv = await chatCreate("operator", tr("srow.handoff_title", { name }));
       if (!conv?.id) throw new Error("conversation was not created");
       autoAddToActiveWorkingSet("convs", conv.id); // docs/log/52 §1: auto-join the selected working set
-      openChat(conv.id, prompt, true);
+      openChat(conv.id, prompt);
+      toast(t("sess.handoff_review"));
     } catch {
       toast(t("sess.handoff_failed"));
     }

@@ -87,7 +87,7 @@ itself; only with `AUTH=proxy` does the ingress inject the identity header.
 |---|---|---|
 | **Caddy** | the compose default | point the DNS for `PUBLIC_DOMAIN` at it and certificates are obtained and renewed automatically, WebSockets included. Caddy and the CP both use the host network, so it reaches the CP's loopback port. A site with its own proxy can drop it (the second alternative in the `Caddyfile`) |
 | **Tailscale Funnel** | one local form | Funnel → `127.0.0.1:8099` directly |
-| **ALB + ACM** | aws | TLS only — authentication stays in the CP. `30-ingress.yaml`'s `AuthMode` allows `oauth` (the default) or `dev`; the templates configure no load-balancer OIDC |
+| **ALB + ACM** | aws | TLS only — authentication stays in the CP. `30-ingress.yaml`'s `AuthMode` allows only `oauth` (`dev` is refused behind https, #3485); the templates configure no load-balancer OIDC |
 | **Global external Application Load Balancer + Certificate Manager** | kubernetes on GKE | built by GKE's Gateway controller (class `gke-l7-global-external-managed`; the classic one closes even an active WebSocket at the backend timeout), with the address, certificate and DNS from `deploy/gcp/gke`. Two hops in `AF_TRUSTED_PROXY_HOPS`: it appends `<client>, <load balancer>`. The backend timeout is raised so an idle terminal is not cut at 30 s |
 
 - **Whenever the ingress changes, `PUBLIC_BASE_URL` must change with it** — it is what

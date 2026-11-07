@@ -13,10 +13,9 @@ export const draftTarget = (assistantId: string): OpenTarget => ({
 });
 
 // openChat opens (or focuses) the chat pane for a conversation. With a seed it also
-// stashes a one-shot first-turn prompt: auto=false prefills the composer (Phase C),
-// auto=true fires the turn automatically once ChatView loads (session handoff).
-export function openChat(conversationId: string, seed?: string, auto = false): void {
-  if (seed) setChatSeed(conversationId, seed, auto);
+// prefills the composer with a one-shot prompt; the member reviews it and presses Send.
+export function openChat(conversationId: string, seed?: string): void {
+  if (seed) setChatSeed(conversationId, seed);
   useLayoutStore.getState().openTarget(convTarget(conversationId));
 }
 

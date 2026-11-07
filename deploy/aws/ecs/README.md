@@ -2700,8 +2700,8 @@ repositories *and every image in them*. Redeploying starts from `release-ecr.sh`
   ECR/SSM are fine in a throwaway account; for least privilege see
   §Minimal IAM above.
 - The Google OAuth client used for the CP-native OAuth login is throwaway — delete it after testing.
-- **`AuthMode=dev`** (30-ingress parameter) skips login entirely for sandbox/E2E
-  gates. Before deploying with it, restrict the ALB SG (80/443) to your own IP —
-  dev auth hands an authenticated session to anyone who reaches the ALB.
+- **`AuthMode=dev`** (30-ingress parameter) no longer exists: the CP refuses `AUTH=dev`
+  behind the https URL this stack sets (#3485). A sandbox stack that used it must switch to
+  `AuthMode=oauth` (see PARAMETERS.md, `AuthMode`).
 - Naming prefix `af-` on every resource so a sandbox shared with other work stays
   greppable and safe to sweep.

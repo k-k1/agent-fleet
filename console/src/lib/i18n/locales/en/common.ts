@@ -312,6 +312,10 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "onb.resume_this_session": "Resume this session",
   "onb.ws_stopped": "Workspace stopped",
   "onb.resume": "Resume",
+  "term.osc52_title": "Allow the terminal to copy?",
+  "term.osc52_body": "The terminal wants to copy {count} characters to your clipboard. Allow only if you just copied something yourself.",
+  "term.osc52_allow_minute": "Allow for 1 minute",
+  "term.osc52_allow": "Allow",
   "term.copied": "Copied",
   "term.copy_failed": "Copy failed: the browser blocked clipboard access",
   "term.paste_failed": "Paste failed: the browser blocked clipboard access",
@@ -327,6 +331,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "onb.rtt_title":
     "Terminal round trip (median {med}ms / worst {max}ms / last {n} samples).\nMeasured over the same path and the same frames your keystrokes take, browser ↔ workspace. The PTY/tmux hop itself is under a millisecond, so this is very nearly the echo delay you feel.",
   "onb.term_session_stopped": "[this session is stopped. Use Resume at the bottom right to bring it back]",
+  "onb.term_pty_closed": "[the terminal ended. If the session stopped, use Resume at the bottom right to bring it back]",
   "wset.all": "All",
   "wset.bar_title": "Scope the left pane to a working set",
   "wset.manage": "Manage groups…",

@@ -275,6 +275,11 @@ func TestBrowserWebSocketRelayAndVisibilityTracking(t *testing.T) {
 	assertAgentInput(t, agentInputs, websocket.TextMessage, shown)
 	waitBrowserConns(t, env.mgr.conns, env.workspace.ID, 1)
 
+	// An interaction report is consumed by the CP and never forwarded: the next frame
+	// the Agent sees must be the mouse message below.
+	if err := client.WriteMessage(websocket.TextMessage, []byte(`{"type":"interaction"}`)); err != nil {
+		t.Fatalf("send interaction: %v", err)
+	}
 	mouse := []byte(`{"type":"mouse","event":"move","x":10,"y":20}`)
 	if err := client.WriteMessage(websocket.TextMessage, mouse); err != nil {
 		t.Fatalf("send mouse: %v", err)

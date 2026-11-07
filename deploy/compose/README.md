@@ -368,6 +368,7 @@ In `.env`, besides the secrets from the Quick start:
 
 ```bash
 AUTH=dev                                  # one fixed user, no IdP
+AF_ALLOW_INSECURE_DEV_AUTH=1              # required: the CP refuses AUTH=dev on Docker without it
 AF_PROVISION=auto                         # the template's `invite` leaves that user in no tenant
 PUBLIC_BASE_URL=http://127.0.0.1:8099
 AF_TRUSTED_PROXY_HOPS=0                   # no Caddy in front; the template's 1 assumes one

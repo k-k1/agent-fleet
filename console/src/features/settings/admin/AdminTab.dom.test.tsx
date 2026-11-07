@@ -232,6 +232,13 @@ describe("AdminTab deployment warnings", () => {
     expect(banner()?.textContent).toContain("AF_MASTER_KEY");
   });
 
+  it("shows the AUTH=dev warning (#3485)", async () => {
+    respond(true, ["auth_dev"]);
+    await mount();
+    const banners = [...host!.querySelectorAll('.settings-content [role="alert"]')];
+    expect(banners.map((b) => b.textContent)).toEqual([expect.stringContaining("AUTH=dev")]);
+  });
+
   it("shows the missing-EFS-backup warning, alongside any other", async () => {
     respond(true, ["efs_backup_missing"]);
     await mount();
