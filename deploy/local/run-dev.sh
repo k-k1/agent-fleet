@@ -188,6 +188,12 @@ if [ -f "$OAUTH_ENV" ]; then
 fi
 # The wsl preset is single-user only: AUTH=oauth in oauth.env is not honored.
 [ "$MODE" = wsl ] && AUTH=dev
+# AUTH has no default in the CP outside native (#3485): say it here. A local Docker run on this
+# machine is the one non-native case where dev is the intent, so the opt-in is given too (the CP
+# still warns, and refuses it when PUBLIC_BASE_URL is https).
+AUTH="${AUTH:-dev}"
+export AUTH
+[ "$AUTH" = dev ] && [ "$AF_RUNTIME" != native ] && export AF_ALLOW_INSECURE_DEV_AUTH=1
 
 # ---- preflight ---------------------------------------------------------------
 fail=0
@@ -277,7 +283,7 @@ build_console
 
 build_go_binary "$ROOT/control-plane" /tmp/af-cp "control-plane"
 
-echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=${AUTH:-dev}"
+echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=$AUTH"
 # The generic OIDC login providers (docs/log/61) are named at runtime — AF_OIDC_PROVIDERS
 # plus AF_OIDC_<ID>_* per provider — so they can't be listed one by one like the
 # fixed vars below. Forward whatever is exported, along with the GitHub adapter's
@@ -297,7 +303,8 @@ exec env \
   WS_MEMORY="$WS_MEMORY" \
   ${WS_JVM_DIR:+WS_JVM_DIR="$WS_JVM_DIR"} \
   ${AF_DOCS_DIR:+AF_DOCS_DIR="$AF_DOCS_DIR"} \
-  ${AUTH:+AUTH="$AUTH"} \
+  AUTH="$AUTH" \
+  ${AF_ALLOW_INSECURE_DEV_AUTH:+AF_ALLOW_INSECURE_DEV_AUTH="$AF_ALLOW_INSECURE_DEV_AUTH"} \
   ${DEV_USER:+DEV_USER="$DEV_USER"} \
   ${AUTH_EMAIL_HEADER:+AUTH_EMAIL_HEADER="$AUTH_EMAIL_HEADER"} \
   ${WS_SESSION_CMD:+WS_SESSION_CMD="$WS_SESSION_CMD"} \

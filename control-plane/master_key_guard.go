@@ -51,6 +51,9 @@ func (m *manager) deploymentWarnings() []string {
 	if m.plaintextSecrets() {
 		out = append(out, deploymentWarnPlaintextSecrets)
 	}
+	if m.authDevInsecure() {
+		out = append(out, deploymentWarnAuthDev)
+	}
 	if m.efsBackupMissing {
 		out = append(out, deploymentWarnEfsBackupMissing)
 	}

@@ -145,6 +145,7 @@ jobs:
           # immediate first-boot death (WS_DATA missing → sqlite open failure), so
           # we deliberately do not pre-create the directory.
           docker run -d --name cp-gate -p 8099:8099 -e CP_ADDR=:8099 -e WS_DATA=/tmp/af-data \
+            -e AUTH=dev -e AF_ALLOW_INSECURE_DEV_AUTH=1 \
             "agent-fleet/control-plane:$VERSION"
           up=0
           for i in $(seq 1 30); do

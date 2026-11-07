@@ -6,7 +6,7 @@
 # §10.2 (what each kind of change takes).
 #
 # Env is reproduced exactly as deploy/local/run-dev.sh would: oauth.env, when present,
-# supplies AUTH + secrets + CP_ADDR (without it the CP starts with AUTH=dev, as a
+# supplies AUTH + secrets + CP_ADDR (without it this script passes AUTH=dev, as a
 # plain run-dev.sh start does); the WS_* defaults below match run-dev.sh.
 #
 # Run from a shell that has the `docker` group (the launched CP shells out to
@@ -24,6 +24,10 @@ if [ -f "$OAUTH_ENV" ]; then
   # shellcheck disable=SC1090
   set -a; . "$OAUTH_ENV"; set +a   # AUTH, CP_ADDR, AF_*, *_OAUTH_*
 fi
+# AUTH has no default in the CP outside native (#3485). Without oauth.env, restart as the plain
+# local dev run: fixed dev user on this machine, opted into explicitly.
+export AUTH="${AUTH:-dev}"
+[ "$AUTH" = dev ] && export AF_ALLOW_INSECURE_DEV_AUTH=1
 export CONSOLE_DIR="$ROOT/console/dist"
 export WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 export WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
@@ -81,7 +85,7 @@ for _ in $(seq 1 50); do ss -ltn 2>/dev/null | grep -q ":${PORT} " || break; sle
 
 echo "==> starting af-cp on $CP_ADDR (log: /tmp/af-cp.log)"
 cd "$ROOT/control-plane"
-setsid env CP_ADDR="$CP_ADDR" CONSOLE_DIR="$CONSOLE_DIR" \
+setsid env AUTH="$AUTH" ${AF_ALLOW_INSECURE_DEV_AUTH:+AF_ALLOW_INSECURE_DEV_AUTH=1} CP_ADDR="$CP_ADDR" CONSOLE_DIR="$CONSOLE_DIR" \
   WS_IMAGE="$WS_IMAGE" WS_DATA="$WS_DATA" WS_MEMORY="$WS_MEMORY" WS_JVM_DIR="$WS_JVM_DIR" AF_DOCS_DIR="$AF_DOCS_DIR" \
   /tmp/af-cp >>/tmp/af-cp.log 2>&1 < /dev/null &
 disown || true
