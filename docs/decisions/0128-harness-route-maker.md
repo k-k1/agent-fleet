@@ -628,6 +628,11 @@ table from becoming a menu of models that fail on the first message, which is wh
   adds nothing), the same way as `AF_WS_WORKLOAD_AWS`; it reaches docker, ECS EC2/Fargate, Kubernetes and native at the
   next Start. It is a switch for the acceptance run only and is off by default; lifting the gate stays a separate change
   made with the evidence. The Agent's refusal text names the CP-side variable.
+- 2026-11-08, refusal statuses on the wire (#3426, #3282): the caller-binding refusal above is **401**
+  `route_caller_forbidden`, not 403. The gateway's own check still classes it as forbidden, but its authentication and connection
+  refusals go out as 401 (503 for what waiting may clear) with `x-should-retry: false`, because claude retries a 403 about seven times
+  (measured). A revoked or stopped token is 401 `route_token_invalid`; refusals about the request itself (404, 400, 413) keep their status. The decision text above is left as written;
+  `writeRefusal` / `wireStatus` in `workspace/agent/internal/routegw/bedrock.go` are the authority.
 - 2026-11-08, P2c (#3282): opencode on `bedrock`, Terminal only, through the gateway. **Measured first** (opencode 2.2.6, the
   image's pin, run with `env -i`, its own HOME and XDG directories, `opencode run --standalone` and the interactive TUI in a
   private tmux server; a stand-in gateway on a loopback port and on a Unix socket that answers with a real AWS event
