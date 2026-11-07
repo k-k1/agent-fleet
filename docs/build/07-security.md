@@ -339,7 +339,7 @@ need no edit.
   warning, not a refusal, and is recomputed on every read rather than stored (the
   deployment's lists change without the row changing): approval by a super_admin is the
   gate, and a deployment may legitimately let a subsidiary on a shared domain use its own
-  IdP. The same overlap is written to the audit line of the save and of the approval. A
+  IdP. The same overlap is written as a separate deployment-wide audit row (no tenant) at save and at approval, so only a super_admin reads it. A
   tenant administrator is not shown it, since it would reveal the deployment's login domains.
 - **The authorization-code flow is bound to the browser that started it.** Each sign-in
   carries a PKCE verifier (RFC 7636, S256) and, for OIDC with the `openid` scope, a nonce,

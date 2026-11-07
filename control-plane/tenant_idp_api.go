@@ -294,8 +294,8 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	a.mgr.tenantIdP.Invalidate()
 	a.audit(r, ident, t.ID, action, auth.TenantProviderID(t.Slug, row.Name),
 		"kind="+row.Kind+" issuer="+row.Issuer+" trust="+row.Trust+" orgs="+row.AllowedOrgs+
-			" domains="+row.AllowedDomains+" link_claim="+row.LinkClaim+" status="+row.Status+
-			overlapAuditDetail(a.overlapsFor(row.AllowedDomains)))
+			" domains="+row.AllowedDomains+" link_claim="+row.LinkClaim+" status="+row.Status)
+	a.auditOverlap(r, ident, t.Slug, action, auth.TenantProviderID(t.Slug, row.Name), row.AllowedDomains)
 	writeJSON(w, http.StatusOK, a.rowToBody(row, t.Slug, false))
 }
 
@@ -442,8 +442,10 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.mgr.tenantIdP.Invalidate()
-	a.audit(r, ident, t.ID, "tenant_idp."+status, auth.TenantProviderID(t.Slug, row.Name),
-		"issuer="+row.Issuer+overlapAuditDetail(a.overlapsFor(row.AllowedDomains)))
+	a.audit(r, ident, t.ID, "tenant_idp."+status, auth.TenantProviderID(t.Slug, row.Name), "issuer="+row.Issuer)
+	if status == "active" {
+		a.auditOverlap(r, ident, t.Slug, "tenant_idp.active", auth.TenantProviderID(t.Slug, row.Name), row.AllowedDomains)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": row.ID, "status": status})
 }
 
@@ -718,14 +720,20 @@ func (a tenantIdPAPI) overlapsFor(allowedDomains string) []domainOverlap {
 	return out
 }
 
-// overlapAuditDetail renders overlaps for an audit line ("" when none).
-func overlapAuditDetail(o []domainOverlap) string {
+// auditOverlap records a claimed-domain overlap as its own deployment-wide audit row
+// (tenant_id empty), never in the tenant-scoped row of the same action. A tenant_admin reads
+// their tenant's audit rows (REST and MCP alike) and would otherwise learn which of the domains
+// they claim are the deployment's login or super_admin domains, which the form withholds from
+// them; deployment-wide rows are listed for a super_admin only.
+func (a tenantIdPAPI) auditOverlap(r *http.Request, ident store.Identity, slug, action, target, allowedDomains string) {
+	o := a.overlapsFor(allowedDomains)
 	if len(o) == 0 {
-		return ""
+		return
 	}
 	parts := make([]string, len(o))
 	for i, v := range o {
 		parts[i] = v.Domain + ":" + v.Source
 	}
-	return " domain_overlaps=" + strings.Join(parts, ",")
+	a.audit(r, ident, "", "tenant_idp.domain_overlap", target,
+		"tenant="+slug+" action="+action+" domain_overlaps="+strings.Join(parts, ","))
 }
