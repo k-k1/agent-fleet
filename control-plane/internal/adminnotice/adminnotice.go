@@ -154,7 +154,7 @@ func notes(ws store.Workspace, kind string, members []store.MemberInfo, payload 
 	stamp := time.Now().UTC().UnixNano()
 	var out []store.Notification
 	for _, adminID := range admins {
-		// The event id carries the recipient: InsertNotification is idempotent on event_id alone.
+		// The event id carries the recipient: InsertNotification is idempotent on (membership, event_id).
 		out = append(out, store.Notification{
 			EventID:      fmt.Sprintf("%s-%s-%d-%s", kind, ws.ID, stamp, adminID),
 			MembershipID: adminID, Kind: kind,

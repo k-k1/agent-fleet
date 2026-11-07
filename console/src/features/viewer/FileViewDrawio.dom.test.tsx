@@ -9,6 +9,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests } from "../editor/dirtyRegistry.ts";
+import { MAX_STENCIL_SETS } from "./drawioStencilRelay.ts";
 
 const DIAGRAM = '<mxfile host="app.diagrams.net"><diagram id="a" name="ページ1"></diagram></mxfile>';
 const VIEWER_SRC = "/* drawio viewer source */";
@@ -257,6 +258,49 @@ describe("the protocol with the frame", () => {
     expect(back).toHaveLength(1);
     expect(back[0].xml).toEqual([]);
     expect(back[0].missing).toEqual(["aws4.xml"]);
+  });
+
+  it("fetches only names shaped like manifest keys, and never more than the cap", async () => {
+    await render();
+    spyOnFrame();
+    fetched = [];
+    // Names the frame (untrusted) might send: none of these has the shape of a manifest key.
+    const refused = ["../x.xml", "/etc/x.xml", "a//b.xml", "a/../b.xml", "x.xml?y=1", "x.xml#y", "http://h/x.xml", "x.txt", "", "%2e%2e/x.xml", "a\\b.xml"];
+    fromFrame({ t: "stencils", sets: [...refused, 42, null, "aws4.xml"] });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetched).toEqual(["/agent-fleet/api/drawio/stencils/aws4.xml"]);
+    // Refused names are neither fetched nor reported as missing (they would be asked for again).
+    const back = posts().filter((m) => m.t === "stencils");
+    expect(back).toHaveLength(1);
+    expect(back[0].missing).toEqual([]);
+
+    fetched = [];
+    const many = Array.from({ length: 500 }, (_, i) => `set${i}.xml`);
+    fromFrame({ t: "stencils", sets: many });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetched).toHaveLength(MAX_STENCIL_SETS);
+  });
+
+  it("ignores messages that do not come from its own frame", async () => {
+    await render();
+    spyOnFrame();
+    fetched = [];
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: { af: "af-drawio", t: "stencils", sets: ["aws4.xml"] }, source: window }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetched).toEqual([]);
+    expect(posts()).toEqual([]);
   });
 
   it("does not claim the diagram is broken when the viewer failed to load", async () => {

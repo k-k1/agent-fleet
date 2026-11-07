@@ -662,12 +662,22 @@ credentials as exposed and rotate them.
   (which record the token's id, with **the role resolved live at call time**).
 - **Irreversible admin actions record the request first** (`store.BeginIrreversible`):
   clean home, home-backup deletion, workspace destroy, membership remove and delete, tenant
-  delete, pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
+  delete, membership role change (`membership.role`, with `from=<old> to=<new>`),
+  pool-slot terminate, engine-model purge, tenant sign-in method (IdP) delete and
   internal-git repository delete and rename write `<action>.requested` before acting
   and **refuse with `503 audit_unavailable` when that write fails**, then `<action>` with the
   outcome and the answered status. A failed outcome write is logged, not returned: the action
   has happened and the request row still names who asked. Every other audit write stays
   best-effort after the fact.
+- Admin writes recorded after the fact include `tenant.create`, `member.limits`,
+  `tenant.slot_class` and `workspace.stop`. A PAT revocation is `pat.revoke` under the
+  tenant of the token's membership (the tenant `pat.create` used), so that tenant's
+  administrators see it. When an identity may no longer sign in, the automatic revocation
+  writes one row per revoked PAT (`pat.revoke`) or MCP OAuth grant (`mcp.oauth.grant`) with
+  actor kind `system` and the reason as detail, in the same transaction as the revocation.
+  `TestAdminWriteRoutesAreClassified` reads the route registrations from the syntax tree and fails
+  for an admin write route whose handler reaches no audit call carrying its action, unless it
+  has a commented exemption.
 - Read through `GET /api/admin/audit` and the Console, scoped by tenant and role.
 
 ## 7.8 Egress control 🚧

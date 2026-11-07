@@ -321,6 +321,12 @@ func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident store.Ident
 	if owned { // only the owner's revoke may drop a ring
 		a.mgr.mcpCalls.Forget(mcpsrv.CallKey(false, id))
 	}
-	a.auditPAT(r.Context(), "", ident.ID, "pat.revoke", id, "")
+	// Under the tenant pat.create used, so the tenant's administrators see the revocation too;
+	// a lookup failure leaves it deployment-wide rather than losing the row.
+	tenantID := ""
+	if owned {
+		tenantID, _ = a.store.PATTenantID(r.Context(), id)
+	}
+	a.auditPAT(r.Context(), tenantID, ident.ID, "pat.revoke", id, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

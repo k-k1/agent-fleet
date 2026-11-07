@@ -51,6 +51,8 @@ func TestMigrationSeriesDeclareTheSameSchema(t *testing.T) {
 var declaredSchemaExempt = map[string]string{
 	"app_user":                "sqlite だけに残る membership 導入前の表。migrateMemberships が identity/membership へ畳んで捨てる",
 	"workspace_new":           "0002 が作る過渡的な表。legacyHook が DROP workspace → RENAME workspace_new TO workspace で入れ替える",
+	"notification_new":        "0125 rebuilds notification to drop the inline UNIQUE(event_id) (SQLite cannot drop it) and renames notification_new TO notification at its end",
+	"notification":            "the same rebuild: the declared-schema reader sees the DROP TABLE but not the RENAME that brings the table back, so it reads as absent from sqlite",
 	"workspace.user_id":       "同上の入れ替えで消える旧列（membership_id に置き換わる）",
 	"workspace.membership_id": "紙の上では workspace_new 側に居るので sqlite の workspace に見えないだけ。入れ替え後は存在する",
 }

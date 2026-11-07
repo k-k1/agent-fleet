@@ -27,6 +27,10 @@ var (
 	// A plan approval / permission prompt is a DECISION menu: free text would be
 	// swallowed and its Enter would confirm the highlighted row (= approve / allow).
 	errInjectDecisionPending = errors.New("a decision is awaiting an answer; it can't be free-texted")
+	// A chat reply is typed input. For a shell / ssm session that is command execution outside
+	// the tenant's connection-source restriction, so those kinds (and unknown ones) are refused
+	// here exactly as peer messages and /mcp-input refuse them (peerTargetAllowed).
+	errInjectTargetForbidden = errors.New("this session kind cannot receive chat replies")
 )
 
 // injectSessionPrompt delivers a free-text prompt into a running session with no HTTP layer —
@@ -53,13 +57,17 @@ func injectSessionPrompt(name, prompt string, origin agents.Origin) error {
 		return err
 	}
 	defer lease.Release()
+	meta, metaOK := session.ReadMeta(name)
+	if !metaOK || !peerTargetAllowed(meta.Kind) {
+		return errInjectTargetForbidden
+	}
 	if st := promptBlocker(name); st != "" {
 		if st == "question" {
 			return errInjectQuestionPending
 		}
 		return errInjectDecisionPending
 	}
-	if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
+	if meta.DriverKind() == session.DriverManaged {
 		return injectManagedPrompt(lease, meta, prompt, origin)
 	}
 	tn := session.TmuxName(name)
@@ -143,6 +151,9 @@ func injectFailureReason(err error) string {
 	case errors.Is(err, errInjectDecisionPending):
 		return Fb(en, "⚠️ 承認/許可の判断待ちです。テキストは判断メニューに飲まれてしまうため、Console のカードから決めてください",
 			"⚠️ A plan/permission decision is pending — decide it from the Console card; free text would be swallowed by the menu")
+	case errors.Is(err, errInjectTargetForbidden):
+		return Fb(en, "⚠️ このセッションの種類にはチャットから返信できません（シェル / SSM セッションは対象外です）。Console から操作してください",
+			"⚠️ This kind of session can't take chat replies (shell / SSM sessions are excluded) — use the Console")
 	case errors.Is(err, errInjectNotRunning):
 		return Fb(en, "⚠️ セッションが停止しています。開始してから返信してください",
 			"⚠️ The session isn't running — start it, then reply")

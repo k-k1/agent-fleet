@@ -156,3 +156,13 @@ fooled (disable with `AF_WS_SCRATCH_AUTO=0`).
 - `deploy/aws/ecs/cfn/30-ingress.yaml` — the `WsDiskGiB` default from 0 to 50
 - `workspace/workspace-notes.md` — rewrite the persistence model's description for ECS (a promise to
   users)
+
+## Note (2026-11-07) — deployment ceilings for CPU and disk (#3507)
+
+Decision 1's per-user CPU and disk values were bounded only by the per-tenant caps, which default
+to unlimited, while memory also had the deployment ceiling `AF_MAX_WORKSPACE_MEM`. CPU and disk now
+have the same kind of ceiling: `AF_MAX_WORKSPACE_CPU` (default 16384 Fargate units) and
+`AF_MAX_WORKSPACE_DISK_GB` (default 1024 GiB; 0 = none). `PUT /api/admin/user-limits` refuses a value
+above them with 400, and `resolveWorkspaceSize` clamps a stored one at container start. The defaults
+sit above the largest Fargate tier, the largest standard ecs-ec2 slot and the 2XL preset, so no
+size valid with the standard configuration changes.
