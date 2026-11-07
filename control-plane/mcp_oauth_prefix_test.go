@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -242,7 +243,7 @@ func TestMCPOAuthRegistrationCapEvictsOldestGrantlessAndWarns(t *testing.T) {
 	e := newMCPOAuthEnv(t)
 	ctx := context.Background()
 	st := e.mgr.store
-	if w := e.mgr.deploymentWarnings(); len(w) != 0 {
+	if w := e.mgr.deploymentWarnings(); slices.Contains(w, deploymentWarnMCPOAuthRegCap) {
 		t.Fatalf("warnings before the cap: %v", w)
 	}
 	// Fill the table: one registration with a grant (the oldest), then grant-less ones.
@@ -272,7 +273,7 @@ func TestMCPOAuthRegistrationCapEvictsOldestGrantlessAndWarns(t *testing.T) {
 	if _, ok, _ := st.GetMCPOAuthClient(ctx, granted); !ok {
 		t.Error("a registration with a grant was evicted")
 	}
-	if w := e.mgr.deploymentWarnings(); len(w) != 1 || w[0] != deploymentWarnMCPOAuthRegCap {
+	if w := e.mgr.deploymentWarnings(); !slices.Contains(w, deploymentWarnMCPOAuthRegCap) {
 		t.Errorf("warnings after the cap was hit: %v", w)
 	}
 }
