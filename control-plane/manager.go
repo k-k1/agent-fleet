@@ -34,6 +34,9 @@ type manager struct {
 	// mcpOAuthServed: the /mcp authorization server is on (set once at route registration),
 	// which authGate reads to answer 404 instead of a login redirect while it is off.
 	mcpOAuthServed atomic.Bool
+	// mcpOAuthCapHitAt is when (unix seconds, 0 = never) a registration last met the client cap,
+	// by evicting an unused one or being refused. This replica only; deploymentWarnings reads it.
+	mcpOAuthCapHitAt atomic.Int64
 	// mcpCalls: recent /mcp calls per PAT / grant, this replica only (mcpsrv/mcp_calls.go).
 	mcpCalls mcpsrv.CallLog
 
