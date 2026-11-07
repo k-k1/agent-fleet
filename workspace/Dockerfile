@@ -410,7 +410,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.319
-ARG OPENCODE_VERSION=2.2.5
+ARG OPENCODE_VERSION=2.2.6
 ARG CODEX_VERSION=0.167.0
 ARG COPILOT_VERSION=1.0.107
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
@@ -441,10 +441,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.5.2
-ARG AGY_RELEASE_BUILD=4951595792859136
-ARG AGY_SHA256_X64=da696a8dc6122a63d5ffbdd21b02c8a62d5361fba0ed7d3bc2d2619889e62711
-ARG AGY_SHA256_ARM64=cd155ecd9bc962037423e6826ed0b61d3b16d84d350cdc9a8c14478f24f5f235
+ARG AGY_VERSION=1.5.3
+ARG AGY_RELEASE_BUILD=6604829099950080
+ARG AGY_SHA256_X64=1b4850599cce73a17f94ffb422df3bf9531531b77dbddc40c1a435e0c2c16807
+ARG AGY_SHA256_ARM64=2d50060c7b1327995e5c81ec58829c91c2564ebb9fec165d3f9f1325ec188675
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
