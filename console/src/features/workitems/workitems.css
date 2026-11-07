@@ -330,6 +330,47 @@
   overflow-wrap: anywhere;
 }
 
+/* State pill under the title. Fixed GitHub-style fills with white text rather than theme tokens:
+   the same colours must read on light and dark panels, and every fill here is >= 4.5:1 against
+   white. */
+.wi-dstatebar {
+  display: flex;
+  margin: 2px 0 2px;
+}
+.wi-dstate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #fff;
+  background: #6e7781;
+  white-space: nowrap;
+}
+.wi-dstate .codicon {
+  font-size: 14px;
+}
+.wi-dstate.tone-open {
+  background: #1f883d;
+}
+.wi-dstate.tone-progress {
+  background: #9a6700;
+}
+.wi-dstate.tone-merged,
+.wi-dstate.tone-done {
+  background: #8250df;
+}
+.wi-dstate.tone-closed {
+  background: #cf222e;
+}
+.wi-dstate.tone-draft,
+.wi-dstate.tone-muted {
+  background: #6e7781;
+}
+
 .wi-dfacts {
   display: grid;
   grid-template-columns: max-content 1fr;

@@ -428,6 +428,36 @@ export function detailStateTone(d: Pick<WorkItemDetail, "kind" | "state" | "merg
   return d.kind === "pr" && d.merged ? "merged" : stateTone(d.state);
 }
 
+export type StateBadgeTone = "open" | "progress" | "draft" | "merged" | "closed" | "done" | "muted";
+
+/** The coloured state pill under the detail panel's title. It follows GitHub's own colours
+ * (open green, draft grey, merged purple, closed-unmerged red, closed-as-completed purple) so the
+ * state reads at a glance in the same language people already know from the provider.
+ * `d` is the live read when there is one; without it only `kind` and the cached `state` are
+ * known, so merged / draft / close reason cannot be told apart and fall back to the plain tones. */
+export function stateBadge(
+  kind: string,
+  state: string,
+  d?: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason" | "provider"> | null,
+): { tone: StateBadgeTone; icon: string } {
+  const isPR = (d ? d.kind : kind) === "pr";
+  const st = d ? d.state : state;
+  if (isPR) {
+    if (d?.merged) return { tone: "merged", icon: "git-merge" };
+    if (st === "done") return { tone: d ? "closed" : "muted", icon: "git-pull-request-closed" };
+    if (d?.draft) return { tone: "draft", icon: "git-pull-request-draft" };
+    return { tone: st === "in_progress" ? "progress" : "open", icon: "git-pull-request" };
+  }
+  if (st === "done") {
+    // Jira has no close reason, and an unread one must not be dressed up as "not planned".
+    if (d && d.provider !== "jira" && d.stateReason === "not_planned") return { tone: "muted", icon: "circle-slash" };
+    return { tone: "done", icon: "issue-closed" };
+  }
+  if (st === "in_progress") return { tone: "progress", icon: "issues" };
+  if (st === "open") return { tone: "open", icon: "issues" };
+  return { tone: "muted", icon: "issues" };
+}
+
 /** The reviews line: "2 approved, 1 change requested, 1 pending" as counts the caller renders.
  * Kept here so the panel does not count in JSX. */
 export function reviewCounts(reviews: WorkItemReview[]): { approved: number; changes: number; pending: number } {

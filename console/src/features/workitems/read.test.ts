@@ -18,6 +18,7 @@ import {
   readWorkItemDetail,
   readWorkItems,
   reviewCounts,
+  stateBadge,
   railLabels,
   railWhen,
   relTime,
@@ -690,6 +691,26 @@ describe("detailStateLabel (#1697)", () => {
   it("does not call a finished Jira issue completed: Jira has no close reason", () => {
     const jira = detailStateLabel({ ...base, kind: "issue", provider: "jira" });
     expect(jira).not.toBe(detailStateLabel({ ...base, kind: "issue", provider: "github", stateReason: "completed" }));
+  });
+});
+
+describe("stateBadge", () => {
+  const base = { kind: "pr", state: "open", merged: false, draft: false, stateReason: "", provider: "github" };
+  it("gives each pull request state its own tone", () => {
+    expect(stateBadge("pr", "", { ...base, state: "done", merged: true }).tone).toBe("merged");
+    expect(stateBadge("pr", "", { ...base, state: "done" }).tone).toBe("closed");
+    expect(stateBadge("pr", "", { ...base, draft: true }).tone).toBe("draft");
+    expect(stateBadge("pr", "", base).tone).toBe("open");
+  });
+  it("tells completed from not planned for an issue, and never calls a Jira issue not planned", () => {
+    const issue = { ...base, kind: "issue", state: "done" };
+    expect(stateBadge("issue", "", { ...issue, stateReason: "completed" }).tone).toBe("done");
+    expect(stateBadge("issue", "", { ...issue, stateReason: "not_planned" }).tone).toBe("muted");
+    expect(stateBadge("issue", "", { ...issue, provider: "jira", stateReason: "not_planned" }).tone).toBe("done");
+  });
+  it("does not claim closed-unmerged from a cached row that cannot tell merged apart", () => {
+    expect(stateBadge("pr", "done").tone).toBe("muted");
+    expect(stateBadge("issue", "in_progress").tone).toBe("progress");
   });
 });
 
