@@ -567,7 +567,24 @@ func (q *jobQueue) run(j *jobRec) {
 		return
 	}
 	props := q.propsFor(j, res)
-	files, storeErr := storeImagesAt(j.dir, res.Images, &props)
+	var sink DirSink
+	var storeErr error
+	if j.outRel != "" {
+		// A user-chosen out_dir is written through an fd opened now, beneath the browse root
+		// with no symlink on the way; the path checked at enqueue is not trusted this late.
+		if BrowseOpenDir == nil {
+			storeErr = errNoBrowseRoot
+		} else if sink, storeErr = BrowseOpenDir(j.outRel); storeErr != nil {
+			sink = nil
+		}
+	}
+	var files []StoredFile
+	if storeErr == nil {
+		files, storeErr = storeImagesAt(j.dir, res.Images, &props, sink)
+		if sink != nil {
+			_ = sink.Close()
+		}
+	}
 	if storeErr != nil {
 		// A storage failure is OURS, not the provider's — the picture exists and was made.
 		q.finish(j, nil, res.Warnings, storeErr)
