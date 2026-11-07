@@ -13,7 +13,7 @@
 -- whenever the fingerprint changes.
 CREATE TABLE IF NOT EXISTS provided_route_source(
   id                  TEXT PRIMARY KEY,
-  source              TEXT NOT NULL,
+  source              TEXT NOT NULL CHECK (source IN ('tenant', 'deployment')),
   tenant_id           TEXT NOT NULL DEFAULT '',
   name                TEXT NOT NULL DEFAULT '',
   role_arn            TEXT NOT NULL,
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_provided_route_source_tenant ON provided_route_so
 -- default so nobody may spend until a tenant_admin sets one.
 CREATE TABLE IF NOT EXISTS provided_route_grant(
   tenant_id            TEXT NOT NULL,
-  source               TEXT NOT NULL,
+  source               TEXT NOT NULL CHECK (source IN ('tenant', 'deployment')),
   granted              INTEGER NOT NULL DEFAULT 0,
   ceiling_micro        INTEGER,
   members_only         INTEGER NOT NULL DEFAULT 0,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS provided_route_grant(
 CREATE TABLE IF NOT EXISTS provided_route_member(
   membership_id TEXT NOT NULL,
   tenant_id     TEXT NOT NULL,
-  source        TEXT NOT NULL,
+  source        TEXT NOT NULL CHECK (source IN ('tenant', 'deployment')),
   granted       INTEGER NOT NULL DEFAULT 0,
   budget_micro  INTEGER,
   updated_at    TEXT NOT NULL,
@@ -61,7 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_provided_route_member_tenant ON provided_route_me
 CREATE TABLE IF NOT EXISTS provided_route_period(
   tenant_id      TEXT NOT NULL,
   membership_id  TEXT NOT NULL,
-  source         TEXT NOT NULL,
+  source         TEXT NOT NULL CHECK (source IN ('tenant', 'deployment')),
   month          TEXT NOT NULL,
   spent_micro    INTEGER NOT NULL DEFAULT 0,
   reserved_micro INTEGER NOT NULL DEFAULT 0,
@@ -70,12 +70,13 @@ CREATE TABLE IF NOT EXISTS provided_route_period(
 );
 -- provided_route_call: one admitted call's reservation. binding is the bound source,
 -- "<source id>#<fingerprint>". month and price_version are frozen at admission.
--- final_micro is NULL until the row is settled, exactly once.
+-- final_micro is NULL until the row is settled, exactly once. The CHECKs repeat the Go
+-- constants (providedroutes.Source*, State*) so a stray value is refused by the database too.
 CREATE TABLE IF NOT EXISTS provided_route_call(
   call_id        TEXT PRIMARY KEY,
   membership_id  TEXT NOT NULL,
   tenant_id      TEXT NOT NULL,
-  source         TEXT NOT NULL,
+  source         TEXT NOT NULL CHECK (source IN ('tenant', 'deployment')),
   binding        TEXT NOT NULL,
   model          TEXT NOT NULL,
   api            TEXT NOT NULL,
@@ -83,7 +84,7 @@ CREATE TABLE IF NOT EXISTS provided_route_call(
   price_version  TEXT NOT NULL,
   reserved_micro INTEGER NOT NULL,
   final_micro    INTEGER,
-  state          TEXT NOT NULL,
+  state          TEXT NOT NULL CHECK (state IN ('in_flight', 'settled')),
   admitted_at    TEXT NOT NULL,
   settled_at     TEXT NOT NULL DEFAULT '',
   cp_instance    TEXT NOT NULL

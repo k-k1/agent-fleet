@@ -22,7 +22,10 @@ var (
 	// ErrProvidedRouteFingerprint: the source's payer changed since the caller read it, so what
 	// the caller proved (an activation probe) is about another payer.
 	ErrProvidedRouteFingerprint = errors.New("provided route source was re-fingerprinted")
-	ErrProvidedRouteCallExists  = errors.New("provided route call id already admitted")
+	// ErrProvidedRouteCallExists: the call id was admitted before with different contents. A
+	// retry of the same admission is not this error: it reads as admitted (Replayed).
+	ErrProvidedRouteCallExists   = errors.New("provided route call id already admitted with other contents")
+	ErrProvidedRouteCallNotFound = errors.New("provided route call not found")
 )
 
 // ProvidedRouteStore holds the provided routes' data model.
@@ -121,6 +124,7 @@ func newExternalID() string { return "af-" + randHex(16) }
 // source gets a CP-generated external id at registration.
 func (s *SQL) PutProvidedRouteSource(ctx context.Context, in ProvidedRouteSourceInput) (ProvidedRouteSource, error) {
 	in.RoleARN = strings.TrimSpace(in.RoleARN)
+	in.TenantID = strings.TrimSpace(in.TenantID)
 	in.Regions = providedroutes.NormalizeRegions(in.Regions)
 	in.AllowList = providedroutes.NormalizeAllowList(in.AllowList)
 	if (in.Source == providedroutes.SourceTenant) != (in.TenantID != "") {
@@ -452,6 +456,32 @@ const (
 type ProvidedRouteAdmission struct {
 	Admitted bool
 	Refused  string
+	// Replayed: this call id was already admitted with the same contents (a retry after a lost
+	// response). Nothing more was reserved. The caller must not count it as a second call: if
+	// the row is already settled, the call has run.
+	Replayed bool
+}
+
+// sameAdmission reports whether a stored call is the admission c asks for, so a retry of it is
+// answered as admitted instead of being refused against its own reservation. The admission time
+// is not compared: a retry may leave it to the store.
+func sameAdmission(stored, c ProvidedRouteCall) bool {
+	return stored.MembershipID == c.MembershipID && stored.TenantID == c.TenantID && stored.Source == c.Source &&
+		stored.Binding == c.Binding && stored.Model == c.Model && stored.API == c.API &&
+		stored.PriceVersion == c.PriceVersion && stored.ReservedMicro == c.ReservedMicro
+}
+
+// replayedAdmission answers a call id that is already stored: admitted when it is the same
+// admission, ErrProvidedRouteCallExists when it is not.
+func (s *SQL) replayedAdmission(ctx context.Context, c ProvidedRouteCall) (ProvidedRouteAdmission, error) {
+	stored, err := s.GetProvidedRouteCall(ctx, c.CallID)
+	if err != nil {
+		return ProvidedRouteAdmission{}, err
+	}
+	if !sameAdmission(stored, c) {
+		return ProvidedRouteAdmission{}, ErrProvidedRouteCallExists
+	}
+	return ProvidedRouteAdmission{Admitted: true, Replayed: true}, nil
 }
 
 // ProvidedRoutePeriod is one level's month.
@@ -501,6 +531,14 @@ func (s *SQL) AdmitProvidedRouteCall(ctx context.Context, c ProvidedRouteCall, l
 	}
 	c.AdmittedAt, c.Month, c.State = at.Format(time.RFC3339Nano), providedroutes.AdmissionMonth(at), providedroutes.StateInFlight
 	now := NowTS()
+	// A retry of an admission whose answer was lost must not be checked against its own
+	// reservation (it would read as refused, and the caller would never settle it). The INSERT
+	// below catches a retry racing the original.
+	if _, err := s.GetProvidedRouteCall(ctx, c.CallID); err == nil {
+		return s.replayedAdmission(ctx, c)
+	} else if !errors.Is(err, ErrProvidedRouteCallNotFound) {
+		return ProvidedRouteAdmission{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -549,7 +587,10 @@ func (s *SQL) AdmitProvidedRouteCall(ctx context.Context, c ProvidedRouteCall, l
 		c.CallID, c.MembershipID, c.TenantID, c.Source, c.Binding, c.Model, c.API, c.Month, c.PriceVersion, c.ReservedMicro,
 		c.State, c.AdmittedAt, c.CPInstance); err != nil {
 		if isUniqueViolation(err) {
-			return ProvidedRouteAdmission{}, ErrProvidedRouteCallExists
+			// The original committed between the check above and this INSERT. This transaction is
+			// rolled back, so nothing is reserved twice.
+			tx.Rollback()
+			return s.replayedAdmission(ctx, c)
 		}
 		return ProvidedRouteAdmission{}, err
 	}
@@ -563,7 +604,8 @@ func (s *SQL) AdmitProvidedRouteCall(ctx context.Context, c ProvidedRouteCall, l
 // admitted in, exactly once: the row moves from in_flight to settled only if it is still
 // in_flight, so a duplicate (a retry, a replay, a second CP) changes nothing and reports false.
 // A final amount above the reservation is a defect of the price table, logged by the caller, and
-// still settled as reported.
+// still settled as reported. An unknown call id reads like a duplicate, (false, nil): either way
+// nothing is left to settle, and GetProvidedRouteCall tells the two apart.
 func (s *SQL) SettleProvidedRouteCall(ctx context.Context, callID string, finalMicro int64) (bool, error) {
 	if finalMicro < 0 {
 		return false, fmt.Errorf("a final amount cannot be negative")
@@ -589,10 +631,16 @@ func (s *SQL) SettleProvidedRouteCall(ctx context.Context, callID string, finalM
 		return false, err
 	}
 	for _, mid := range []string{membershipID, ""} {
-		if _, err := tx.ExecContext(ctx, `UPDATE provided_route_period SET reserved_micro=reserved_micro-?, spent_micro=spent_micro+?,
+		res, err := tx.ExecContext(ctx, `UPDATE provided_route_period SET reserved_micro=reserved_micro-?, spent_micro=spent_micro+?,
 			updated_at=? WHERE tenant_id=? AND membership_id=? AND source=? AND month=?`,
-			reserved, finalMicro, now, tenantID, mid, source, month); err != nil {
+			reserved, finalMicro, now, tenantID, mid, source, month)
+		if err != nil {
 			return false, err
+		}
+		// Admission wrote both rows before the call row, so a missing one is corruption. Settling
+		// the call without it would make the amount vanish from the budget, so nothing settles.
+		if n, _ := res.RowsAffected(); n != 1 {
+			return false, fmt.Errorf("provided route call %s: no %s period row for %s", callID, source, month)
 		}
 	}
 	return true, tx.Commit()
@@ -605,6 +653,9 @@ func (s *SQL) GetProvidedRouteCall(ctx context.Context, callID string) (Provided
 		reserved_micro, final_micro, state, admitted_at, settled_at, cp_instance FROM provided_route_call WHERE call_id=?`, callID).
 		Scan(&c.CallID, &c.MembershipID, &c.TenantID, &c.Source, &c.Binding, &c.Model, &c.API, &c.Month, &c.PriceVersion,
 			&c.ReservedMicro, &final, &c.State, &c.AdmittedAt, &c.SettledAt, &c.CPInstance)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, ErrProvidedRouteCallNotFound
+	}
 	if final.Valid {
 		c.FinalMicro = &final.Int64
 	}

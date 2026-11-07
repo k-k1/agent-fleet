@@ -129,3 +129,18 @@ func sessionxRoutesOf(kind string) ([]string, bool) {
 	}
 	return nil, false
 }
+
+// The route gateway writes the row of every call on a provided route, as on the member's bedrock,
+// so the transcript's rows of those calls are dropped and each call is counted once.
+func TestProvidedRouteTranscriptRowsAreLeftToTheGateway(t *testing.T) {
+	for _, route := range []string{usagex.RouteBedrock, usagex.RouteBedrockTenant, usagex.RouteBedrockDeployment} {
+		m := session.Meta{Name: "p01", Kind: session.KindClaude, Route: &routes.Selection{Route: route}}
+		recs := []usagex.Record{{TS: "2026-11-08T09:00:00Z", Ref: "p01", Route: route}, {TS: "2026-11-08T09:00:00Z", Ref: "p01"}}
+		if got := dropGatewayCounted(m, recs); len(got) != 0 {
+			t.Errorf("%s: kept %+v, want every row left to the gateway", route, got)
+		}
+	}
+	if gatewayCounted("anthropic-api") || gatewayCounted("") {
+		t.Error("a route the gateway does not serve is gateway-counted")
+	}
+}

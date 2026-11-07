@@ -161,6 +161,7 @@ func regenerate(t *testing.T, path string) {
 	if err := json.Unmarshal(b, &cat); err != nil {
 		t.Fatal(err)
 	}
+	unknownCostFields(t, b)
 	r6 := func(x float64) float64 { return math.Round(x*1e6) / 1e6 }
 	out := table{Source: "models.dev, provider amazon-bedrock", Fetched: fi.ModTime().UTC().Format("2006-01-02")}
 	for id, row := range cat["amazon-bedrock"].Models {
@@ -201,4 +202,75 @@ func regenerate(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	t.Logf("wrote %d models", len(out.Models))
+}
+
+// knownCostFields are the cost keys the generator reads. Anything else in a row it would keep
+// (a published one-hour cache write, a service tier, a new kind of tier) could be a rate above
+// what the table bounds, so the generator stops until it is taught the field.
+var knownCostFields = map[string]bool{"input": true, "output": true, "cache_read": true, "cache_write": true,
+	"tiers": true, "context_over_200k": true}
+
+var knownTierFields = map[string]bool{"input": true, "output": true, "cache_read": true, "cache_write": true, "tier": true}
+
+func unknownCostFields(t *testing.T, b []byte) {
+	t.Helper()
+	var cat map[string]struct {
+		Models map[string]struct {
+			Cost map[string]json.RawMessage `json:"cost"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(b, &cat); err != nil {
+		t.Fatal(err)
+	}
+	for id, row := range cat["amazon-bedrock"].Models {
+		if !familyID.MatchString(id) {
+			continue
+		}
+		for k, v := range row.Cost {
+			if !knownCostFields[k] {
+				t.Fatalf("%s: cost field %q is not understood; extend the generator before using this catalogue", id, k)
+			}
+			if k != "tiers" {
+				continue
+			}
+			var tiers []map[string]json.RawMessage
+			if err := json.Unmarshal(v, &tiers); err != nil {
+				t.Fatalf("%s: tiers: %v", id, err)
+			}
+			for _, tr := range tiers {
+				for tk := range tr {
+					if !knownTierFields[tk] {
+						t.Fatalf("%s: tier field %q is not understood; extend the generator before using this catalogue", id, tk)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The generator refuses a catalogue carrying a cost field it does not read.
+func TestGeneratorRefusesUnknownCostFields(t *testing.T) {
+	ok := []byte(`{"amazon-bedrock":{"models":{"us.anthropic.x":{"cost":{"input":1,"output":2,"tiers":[{"input":2,"tier":{"type":"context","size":5}}]}}}}}`)
+	for name, cat := range map[string]string{
+		"one-hour write": `{"amazon-bedrock":{"models":{"us.anthropic.x":{"cost":{"input":1,"output":2,"cache_write_1h":9}}}}}`,
+		"tier field":     `{"amazon-bedrock":{"models":{"us.anthropic.x":{"cost":{"input":1,"output":2,"tiers":[{"input":2,"priority":3}]}}}}}`,
+	} {
+		if !fatals(func(t *testing.T) { unknownCostFields(t, []byte(cat)) }) {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if fatals(func(t *testing.T) { unknownCostFields(t, ok) }) {
+		t.Error("a known catalogue was refused")
+	}
+}
+
+// fatals runs f on a throwaway T and reports whether it called Fatal.
+func fatals(f func(t *testing.T)) bool {
+	failed := make(chan bool, 1)
+	go func() {
+		ft := &testing.T{}
+		defer func() { failed <- ft.Failed() }()
+		f(ft)
+	}()
+	return <-failed
 }

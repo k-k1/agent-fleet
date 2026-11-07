@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/providedroutes"
@@ -154,7 +153,11 @@ func TestProvidedRouteSources(t *testing.T) {
 		if l, err := st.ListProvidedRouteSources(ctx, ""); err != nil || len(l) != 1 || l[0].ID != dep.ID {
 			t.Fatalf("deployment sources = %+v %v", l, err)
 		}
-		if l, err := st.ListProvidedRouteSources(ctx, tn.ID); err != nil || len(l) != 1 || l[0].ID != ten.ID {
+		if _, err := st.PutProvidedRouteSource(ctx, ProvidedRouteSourceInput{Source: providedroutes.SourceTenant, TenantID: " " + tn.ID + " ",
+			RoleARN: prARN, Regions: []string{"us-east-1"}}); err != nil {
+			t.Fatal(err)
+		}
+		if l, err := st.ListProvidedRouteSources(ctx, tn.ID); err != nil || len(l) != 2 || (l[0].ID != ten.ID && l[1].ID != ten.ID) {
 			t.Fatalf("tenant sources = %+v %v", l, err)
 		}
 		must(st.DeleteProvidedRouteSource(ctx, ten.ID))
@@ -306,6 +309,9 @@ func TestProvidedRouteAdmissionAndSettlement(t *testing.T) {
 		if _, err := st.AdmitProvidedRouteCall(ctx, prCall("c1", tn, a, src, 1, nov), ProvidedRouteLimits{MemberBudgetMicro: 1000}); !errors.Is(err, ErrProvidedRouteCallExists) {
 			t.Fatalf("a call id admitted twice: %v", err)
 		}
+		if _, err := st.GetProvidedRouteCall(ctx, "nope"); !errors.Is(err, ErrProvidedRouteCallNotFound) {
+			t.Fatalf("an unknown call: %v, want ErrProvidedRouteCallNotFound", err)
+		}
 		if _, err := st.AdmitProvidedRouteCall(ctx, prCall("c6", tn, a, src, 0, nov), lim); err == nil {
 			t.Fatal("a zero reservation was admitted")
 		}
@@ -353,6 +359,83 @@ func TestProvidedRouteAdmissionAndSettlement(t *testing.T) {
 	})
 }
 
+// An admission retried after its answer was lost reads as admitted and reserves nothing more, even
+// when the first one filled the budget, and so do retries racing the original from two CPs. The
+// same id with other contents is refused as a different call.
+func TestProvidedRouteAdmissionReplay(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, open func() *SQL) {
+		ctx := context.Background()
+		tn, ms := limitMembers(t, st, "a")
+		src := providedRouteDeployment(t, st)
+		lim := ProvidedRouteLimits{MemberBudgetMicro: 100, TenantCeilingMicro: i64(100), MaxInFlight: 1}
+		c := prCall("r1", tn, ms[0], src, 100, "2026-11-08T12:00:00Z")
+		if got, err := st.AdmitProvidedRouteCall(ctx, c, lim); err != nil || !got.Admitted || got.Replayed {
+			t.Fatalf("first: %+v %v", got, err)
+		}
+		retry := c
+		retry.AdmittedAt = "" // a retry may leave the time to the store
+		if got, err := st.AdmitProvidedRouteCall(ctx, retry, lim); err != nil || !got.Admitted || !got.Replayed {
+			t.Fatalf("retry: %+v %v, want admitted as a replay", got, err)
+		}
+		other := c
+		other.Model = "global.anthropic.claude-sonnet-5-5"
+		if _, err := st.AdmitProvidedRouteCall(ctx, other, lim); !errors.Is(err, ErrProvidedRouteCallExists) {
+			t.Fatalf("the same id for another call: %v", err)
+		}
+		if p, _ := st.GetProvidedRoutePeriod(ctx, tn.ID, ms[0].ID, src.Source, "2026-11"); p.ReservedMicro != 100 {
+			t.Fatalf("reserved %d after retries, want 100", p.ReservedMicro)
+		}
+		if ok, err := st.SettleProvidedRouteCall(ctx, "r1", 40); err != nil || !ok {
+			t.Fatalf("the retried call does not settle: %v %v", ok, err)
+		}
+
+		// Concurrent copies of one admission from two CPs: one reserves, the rest are replays.
+		cps := []*SQL{st, open()}
+		d := prCall("r2", tn, ms[0], src, 50, "2026-11-08T12:00:00Z")
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		fresh, replays := 0, 0
+		for i := range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				got, err := cps[i%2].AdmitProvidedRouteCall(ctx, d, ProvidedRouteLimits{MemberBudgetMicro: 1000})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case got.Replayed:
+					replays++
+				case got.Admitted:
+					fresh++
+				}
+			}()
+		}
+		wg.Wait()
+		if p, _ := st.GetProvidedRoutePeriod(ctx, tn.ID, ms[0].ID, src.Source, "2026-11"); fresh != 1 || replays != 7 || p.ReservedMicro != 50 {
+			t.Fatalf("concurrent copies: %d fresh, %d replays, %d reserved; want 1, 7, 50", fresh, replays, p.ReservedMicro)
+		}
+	})
+}
+
+// The database refuses a source or a state the code does not know, beside the Go checks.
+func TestProvidedRouteSchemaChecks(t *testing.T) {
+	providedRouteStores(t, func(t *testing.T, st *SQL, _ func() *SQL) {
+		ctx := context.Background()
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO provided_route_grant(tenant_id, source, updated_at) VALUES('t', 'member', 'x')`); err == nil {
+			t.Error("a grant for source 'member' was stored")
+		}
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO provided_route_call(call_id, membership_id, tenant_id, source, binding, model, api,
+			month, price_version, reserved_micro, state, admitted_at, cp_instance)
+			VALUES('x', 'm', 't', 'deployment', 'b', 'm', 'a', '2026-11', 'v', 1, 'done', 'x', 'cp')`); err == nil {
+			t.Error("a call in state 'done' was stored")
+		}
+	})
+}
+
 // Two CPs racing at the budget edge never admit past it (D4): every admission is the conditional
 // write, so of N concurrent calls exactly limit/reservation get in. Each level is raced on its own
 // so neither condition hides behind the other.
@@ -379,7 +462,7 @@ func TestProvidedRouteAdmissionRace(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					c := prCall(fmt.Sprintf("race-%s-%d", tc.m.ID, i), tn, tc.m, src, each, "")
+					c := prCall(fmt.Sprintf("race-%s-%d", tc.m.ID, i), tn, tc.m, src, each, "2026-11-08T12:00:00Z")
 					got, err := cps[i%2].AdmitProvidedRouteCall(ctx, c, tc.lim)
 					if err != nil {
 						t.Error(err)
@@ -394,7 +477,7 @@ func TestProvidedRouteAdmissionRace(t *testing.T) {
 			}
 			wg.Wait()
 			// The tenant's month already holds the member race's 1000, so 1000 more fit under 2000.
-			p, _ := st.GetProvidedRoutePeriod(ctx, tn.ID, tc.level, src.Source, providedroutes.AdmissionMonth(time.Now()))
+			p, _ := st.GetProvidedRoutePeriod(ctx, tn.ID, tc.level, src.Source, "2026-11")
 			if want := limit / each; admitted != want || p.ReservedMicro != map[string]int64{ms[0].ID: limit, "": 2 * limit}[tc.level] {
 				t.Errorf("%s: admitted %d with %d reserved, want %d", tc.name, admitted, p.ReservedMicro, want)
 			}
