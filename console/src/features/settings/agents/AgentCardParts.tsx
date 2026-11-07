@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useContext, useState } from "react";
+import { ConnChecking } from "../parts/providerCard.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { ModelPicker } from "../../../ui/ModelPicker.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -75,7 +76,8 @@ export function StreamRepliesRow({ kind }: { kind: string }) {
 // reachable, but the auth flow (Agent-proxied) waits for start.
 export function ConnPaused() {
   const tr = useT();
-  return <div className="p-desc muted">{tr("agents.conn_paused")}</div>;
+  const phase = useContext(ConnChecking);
+  return <div className="p-desc muted">{phase === "checking" ? tr("conn.checking_note") : phase === "failed" ? tr("conn.check_failed_note") : tr("agents.conn_paused")}</div>;
 }
 
 // tooWideForSegments decides between the segmented control and a dropdown, for the model row

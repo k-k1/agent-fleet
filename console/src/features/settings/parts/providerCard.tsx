@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -130,6 +130,11 @@ export function ReauthButton({ onClick, disabled }: { onClick: () => void; disab
 // ProviderCard is the shared shell: a colored badge + name + status pill, then the
 // provider's own description / connect / flow UI (and, for agents, a settings group)
 // as children. Replaces the old flat .conn-row so every provider reads the same way.
+// True while the connection snapshot has not arrived yet: cards draw at once and show a
+// "checking…" chip instead of a connected / not-connected verdict they do not have.
+export type ConnPhase = "ok" | "checking" | "failed";
+export const ConnChecking = createContext<ConnPhase>("ok");
+
 export function ProviderCard({
   id,
   name,
@@ -142,6 +147,8 @@ export function ProviderCard({
   children?: ReactNode;
 }) {
   const brand = badgeBrand(id);
+  const phase = useContext(ConnChecking);
+  const tr = useT();
   return (
     <div className="p-card" data-settings-target={id}>
       <div className="p-head">
@@ -149,7 +156,7 @@ export function ProviderCard({
           {brand ? <Icon name={brand} /> : BADGE_SHORT[id]}
         </span>
         <span className="p-name">{name}</span>
-        {status}
+        {phase === "ok" ? status : <StatusPill>{tr(phase === "failed" ? "conn.check_failed" : "conn.checking")}</StatusPill>}
       </div>
       {children}
     </div>
