@@ -24,7 +24,7 @@ Parameters:
   EfsBackup:
     Type: String
     Default: ""
-    AllowedValues: ["", "off", present, missing]
+    AllowedValues: [ "", "off", present, missing ]
     Description: Daily EFS backup state of the data stack, set by update.sh/standup.sh (PARAMETERS.md).
   CustodianKmsKeyArn:
     Type: String
