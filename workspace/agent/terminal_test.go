@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +13,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // The app-level heartbeat is the only liveness signal that survives the CP proxy
@@ -132,5 +136,71 @@ func TestHandlePTY_StoppedSessionClosesCleanlyWithReason(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// readCloseReason drains a PTY socket and returns the close frame it ended with.
+func readCloseReason(t *testing.T, conn *websocket.Conn) *websocket.CloseError {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			ce, ok := err.(*websocket.CloseError)
+			if !ok {
+				t.Fatalf("read = %v, want a close frame", err)
+			}
+			return ce
+		}
+	}
+}
+
+// A shell that exits ends its PTY with the session (none here) not halted: the Console must be
+// told "pty closed" so the pane says it ended instead of freezing.
+func TestHandlePTY_ShellExitClosesWithPTYClosed(t *testing.T) {
+	t.Setenv("AGENT_SHELL", "sh")
+	srv := httptest.NewServer(http.HandlerFunc(handlePTY))
+	defer srv.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"input","data":"exit\n"}`))
+	ce := readCloseReason(t, conn)
+	if ce.Code != websocket.CloseNormalClosure || ce.Text != ptyClosePTYClosed {
+		t.Fatalf("close = %d %q, want %d %q", ce.Code, ce.Text, websocket.CloseNormalClosure, ptyClosePTYClosed)
+	}
+}
+
+// A session halted while its pane is attached kills the tmux session under the attach client;
+// the PTY then reaches EOF and the close must carry the same "session stopped" reason as an
+// already-stopped session, so the pane offers Resume.
+func TestHandlePTY_HaltWhileAttachedClosesWithSessionStopped(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	t.Setenv("AF_TMUX_SOCKET", "af-test-3472-"+strconv.Itoa(os.Getpid()))
+	t.Setenv("AF_TERMINAL_HISTORY_DIR", t.TempDir())
+	const name = "af-test-halt"
+	if out, err := tmuxx.Cmd("new-session", "-d", "-s", session.TmuxName(name), "sleep 60").CombinedOutput(); err != nil {
+		t.Skipf("tmux new-session: %v %s", err, out)
+	}
+	defer func() { _ = tmuxx.Cmd("kill-server").Run() }()
+
+	srv := httptest.NewServer(http.HandlerFunc(handlePTY))
+	defer srv.Close()
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"?session="+name, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	time.Sleep(500 * time.Millisecond) // let the attach client start
+	if err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(session.TmuxName(name))).Run(); err != nil {
+		t.Fatalf("kill-session: %v", err)
+	}
+	ce := readCloseReason(t, conn)
+	if ce.Code != websocket.CloseNormalClosure || ce.Text != ptyCloseSessionStopped {
+		t.Fatalf("close = %d %q, want %d %q", ce.Code, ce.Text, websocket.CloseNormalClosure, ptyCloseSessionStopped)
 	}
 }

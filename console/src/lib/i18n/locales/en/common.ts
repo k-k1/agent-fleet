@@ -331,6 +331,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "onb.rtt_title":
     "Terminal round trip (median {med}ms / worst {max}ms / last {n} samples).\nMeasured over the same path and the same frames your keystrokes take, browser ↔ workspace. The PTY/tmux hop itself is under a millisecond, so this is very nearly the echo delay you feel.",
   "onb.term_session_stopped": "[this session is stopped. Use Resume at the bottom right to bring it back]",
+  "onb.term_pty_closed": "[the terminal ended. If the session stopped, use Resume at the bottom right to bring it back]",
   "wset.all": "All",
   "wset.bar_title": "Scope the left pane to a working set",
   "wset.manage": "Manage groups…",

@@ -1209,6 +1209,9 @@ const CONNECT_STALL = 3000;
 // upgrade, so the reason on an ACCEPTED-then-closed socket is the only way this
 // layer can tell "the session ended" from "the connection broke".
 const PTY_CLOSE_SESSION_STOPPED = "session stopped";
+// Reason for a live PTY that ended with the session not known to be halted (ptyClosePTYClosed
+// in the Agent). An older Agent also sends it when a halt ended the PTY, hence the wording.
+const PTY_CLOSE_PTY_CLOSED = "pty closed";
 
 // connStalled reports a socket wedged in CONNECTING past CONNECT_STALL — the
 // "black terminal right after launch" that no drop/heartbeat path catches (no close frame ever
@@ -1405,6 +1408,11 @@ export function attach(paneId: string, session: string) {
       // broken terminal, and the user has no reason to hunt for the resume chip.
       if (ev.reason === PTY_CLOSE_SESSION_STOPPED) {
         it.term!.write("\r\n" + tr("onb.term_session_stopped") + "\r\n");
+      } else if (ev.reason === PTY_CLOSE_PTY_CLOSED) {
+        // A live PTY ended without the Agent saying the session stopped (a shell `exit`,
+        // a tmux detach, or an older Agent that sends this for a halt too). Not a drop, so
+        // no reconnect loop; just stop the pane looking frozen.
+        it.term!.write("\r\n" + tr("onb.term_pty_closed") + "\r\n");
       }
       return;
     }
