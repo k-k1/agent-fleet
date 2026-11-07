@@ -332,3 +332,147 @@ func TestAgentMemoryConsoleRemovalClearsUsage(t *testing.T) {
 		t.Fatalf("uses after restore = %d", got)
 	}
 }
+
+// foo beside foo.reads, and a 64-character name, each count, forget and re-create on their own
+// counters (ADR 0130 decision 3).
+func TestAgentMemoryUsageV2NamesDoNotCollide(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	rel := "projects/" + c.Project.ID
+	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	long := strings.Repeat("a", 64)
+	names := []string{"foo", "foo.reads", "foo.hits", long}
+	for _, n := range names {
+		agentMemSaveN(t, c, n, "project", now)
+	}
+	for _, n := range names {
+		for i := 0; i < 2; i++ {
+			if _, err := agentMemRead(c, "", n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := agentMemSearch(c, n, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, n := range names {
+		if got := agentMemCounterCount(rel, agentMemCounterReads, n); got != 2 {
+			t.Errorf("%s reads = %d, want 2", n, got)
+		}
+		if got := agentMemCounterCount(rel, agentMemCounterHits, n); got < 1 {
+			t.Errorf("%s hits = %d, want >=1", n, got)
+		}
+	}
+	// Forget and re-create clear every counter of that name only.
+	if _, err := agentMemForget(c, agentMemForgetReq{Scope: "project", Name: "foo", Revision: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentMemForget(c, agentMemForgetReq{Scope: "project", Name: long, Revision: 1}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"foo", long} {
+		for _, k := range agentMemCounters {
+			if got := agentMemCounterCount(rel, k, n); got != 0 {
+				t.Errorf("%s %s after forget = %d", n, k, got)
+			}
+		}
+	}
+	if got := agentMemCounterCount(rel, agentMemCounterReads, "foo.reads"); got != 2 {
+		t.Errorf("foo.reads reads after forgetting foo = %d, want 2", got)
+	}
+	// A stray count on a forgotten name does not survive a re-create.
+	agentMemRecordCounter(rel, agentMemCounterReads, long, true)
+	agentMemRecordCounter(rel, agentMemCounterConfirmed, long, false)
+	agentMemSaveN(t, c, long, "project", now.Add(time.Hour))
+	for _, k := range agentMemCounters {
+		if got := agentMemCounterCount(rel, k, long); got != 0 {
+			t.Errorf("%s %s after re-create = %d", long, k, got)
+		}
+	}
+}
+
+func TestAgentMemoryUsageV2ConcurrentAndCap(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	rel := "projects/" + c.Project.ID
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				agentMemRecordCounter(rel, agentMemCounterReads, "hot", true)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := agentMemCounterCount(rel, agentMemCounterReads, "hot"); got != 1000 {
+		t.Fatalf("reads = %d, want 1000", got)
+	}
+	for i := 0; i < agentMemUsageCap; i++ {
+		agentMemRecordCounter(rel, agentMemCounterReads, "hot", true)
+	}
+	if got := agentMemCounterCount(rel, agentMemCounterReads, "hot"); got < agentMemUsageCap {
+		t.Fatalf("reads = %d, want cap", got)
+	}
+	// Past the cap the count stays but the last-read time still moves.
+	dir, err := agentMemCheckDir(agentMemCounterRel(rel, agentMemCounterReads), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "hot")
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	agentMemRecordCounter(rel, agentMemCounterReads, "hot", true)
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(st.ModTime()) > time.Hour {
+		t.Fatalf("mtime %v not touched past the cap", st.ModTime())
+	}
+	// Hits do not touch.
+	agentMemRecordCounter(rel, agentMemCounterHits, "h", false)
+	hp := filepath.Join(filepath.Dir(dir), "hits", "h")
+	if err := os.Chtimes(hp, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := agentMemCounterCount(rel, agentMemCounterHits, "h"); got != 1 {
+		t.Fatalf("hits = %d", got)
+	}
+}
+
+// Restoring a forgotten memory (reverting the forget) starts every counter at zero, and the
+// legacy counter keeps counting beside the split ones.
+func TestAgentMemoryUsageV2RestoreStartsAtZero(t *testing.T) {
+	_, _, _ = agentMemTestEnv(t)
+	c := agentMemCallerT(t, "claude-main")
+	rel := "projects/" + c.Project.ID
+	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	agentMemSaveN(t, c, "gone", "project", now)
+	if _, err := agentMemRead(c, "", "gone"); err != nil {
+		t.Fatal(err)
+	}
+	if agentMemCounterCount(rel, agentMemCounterReads, "gone") != 1 || agentMemLoadUsage(rel)["gone"] != 1 {
+		t.Fatal("a read counts on both the legacy and the reads counter")
+	}
+	ch, err := agentMemListChanges(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := agentMemRevert(agentMemRevertReq{Commit: ch.Changes[0].Commit, Forget: true}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentMemRecordCounter(rel, agentMemCounterReads, "gone", true)
+	if _, err := agentMemRevert(agentMemRevertReq{Commit: res.Commit}, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range agentMemCounters {
+		if got := agentMemCounterCount(rel, k, "gone"); got != 0 {
+			t.Errorf("%s after restore = %d", k, got)
+		}
+	}
+}

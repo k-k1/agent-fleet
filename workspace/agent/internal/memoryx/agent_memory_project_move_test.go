@@ -188,9 +188,20 @@ func TestAgentMemoryMoveProject(t *testing.T) {
 		t.Fatal("the preview wrote")
 	}
 
+	for _, k := range agentMemCounters {
+		agentMemRecordCounter("projects/"+orphan, k, "a", false)
+	}
 	code, res, b := moveDo(t, orphan, to, "", "a", "b")
 	if code != http.StatusOK || len(res.Results) != 2 || res.Results[0].Result != "moved" {
 		t.Fatalf("move: %d %s", code, b)
+	}
+	// Counts are not carried over, as with the legacy file: neither side keeps a counter of "a".
+	for _, k := range agentMemCounters {
+		for _, r := range []string{orphan, to} {
+			if got := agentMemCounterCount("projects/"+r, k, "a"); got != 0 {
+				t.Errorf("%s counter of %s after move = %d", k, r, got)
+			}
+		}
 	}
 	if got := projectNames(t, to); len(got) != 2 || got["a"].Body != "b" || got["a"].AuthorSession != "claude-old" || got["a"].Revision != 1 {
 		t.Fatalf("target = %+v", got)
