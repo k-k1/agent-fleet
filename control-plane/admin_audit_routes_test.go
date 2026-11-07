@@ -19,21 +19,23 @@ import (
 // marker in the code the handler reaches. Comments and string fragments in unrelated code do
 // not count.
 
-type adminRouteProblems struct{ missing, stale, unverified []string }
+type adminRouteProblems struct{ missing, stale, unverified, unresolved []string }
 
 func (p adminRouteProblems) any() bool {
-	return len(p.missing)+len(p.stale)+len(p.unverified) > 0
+	return len(p.missing)+len(p.stale)+len(p.unverified)+len(p.unresolved) > 0
 }
 
 type auditScan struct {
-	fset   *token.FileSet
-	files  []*ast.File
-	consts map[string]string
-	byName map[string][]*ast.FuncDecl
+	fset       *token.FileSet
+	files      []*ast.File
+	constExprs map[string]ast.Expr // every package-level const initialiser, resolved lazily
+	consts     map[string]string
+	unresolved []string
+	byName     map[string][]*ast.FuncDecl
 }
 
 func newAuditScan(sources map[string]string) (*auditScan, error) {
-	sc := &auditScan{fset: token.NewFileSet(), consts: map[string]string{}, byName: map[string][]*ast.FuncDecl{}}
+	sc := &auditScan{fset: token.NewFileSet(), constExprs: map[string]ast.Expr{}, consts: map[string]string{}, byName: map[string][]*ast.FuncDecl{}}
 	names := make([]string, 0, len(sources))
 	for n := range sources {
 		names = append(names, n)
@@ -53,9 +55,7 @@ func newAuditScan(sources map[string]string) (*auditScan, error) {
 				for _, sp := range d.Specs {
 					if vs, ok := sp.(*ast.ValueSpec); ok && d.Tok == token.CONST && len(vs.Names) == len(vs.Values) {
 						for i, v := range vs.Values {
-							if str, ok := sc.evalString(v); ok {
-								sc.consts[vs.Names[i].Name] = str
-							}
+							sc.constExprs[vs.Names[i].Name] = v
 						}
 					}
 				}
@@ -65,7 +65,14 @@ func newAuditScan(sources map[string]string) (*auditScan, error) {
 	return sc, nil
 }
 
+// evalString folds a string expression of literals, constants and +. Constants are resolved
+// through their initialisers whatever the declaration order or file, with a cycle guard.
 func (sc *auditScan) evalString(e ast.Expr) (string, bool) {
+	return sc.eval(e, map[string]bool{}, nil)
+}
+
+// eval's env binds a loop variable to one of the values it ranges over.
+func (sc *auditScan) eval(e ast.Expr, visiting map[string]bool, env map[string]string) (string, bool) {
 	switch e := e.(type) {
 	case *ast.BasicLit:
 		if e.Kind == token.STRING {
@@ -73,18 +80,54 @@ func (sc *auditScan) evalString(e ast.Expr) (string, bool) {
 			return s, err == nil
 		}
 	case *ast.Ident:
-		s, ok := sc.consts[e.Name]
+		if s, ok := env[e.Name]; ok {
+			return s, true
+		}
+		if s, ok := sc.consts[e.Name]; ok {
+			return s, true
+		}
+		x, ok := sc.constExprs[e.Name]
+		if !ok || visiting[e.Name] {
+			return "", false
+		}
+		visiting[e.Name] = true
+		s, ok := sc.eval(x, visiting, nil)
+		delete(visiting, e.Name)
+		if ok {
+			sc.consts[e.Name] = s
+		}
 		return s, ok
 	case *ast.ParenExpr:
-		return sc.evalString(e.X)
+		return sc.eval(e.X, visiting, env)
 	case *ast.BinaryExpr:
 		if e.Op == token.ADD {
-			l, ok1 := sc.evalString(e.X)
-			r, ok2 := sc.evalString(e.Y)
+			l, ok1 := sc.eval(e.X, visiting, env)
+			r, ok2 := sc.eval(e.Y, visiting, env)
 			return l + r, ok1 && ok2
 		}
 	}
 	return "", false
+}
+
+// mentionsAdminAPI reports whether an expression's literals, or those of the constants it names,
+// contain "/api/admin/".
+func (sc *auditScan) mentionsAdminAPI(e ast.Expr, visiting map[string]bool) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.BasicLit:
+			if n.Kind == token.STRING {
+				found = found || strings.Contains(n.Value, "/api/admin/")
+			}
+		case *ast.Ident:
+			if x, ok := sc.constExprs[n.Name]; ok && !visiting[n.Name] {
+				visiting[n.Name] = true
+				found = found || sc.mentionsAdminAPI(x, visiting)
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 func isAdminWriteRoute(s string) bool {
@@ -176,6 +219,7 @@ func (sc *auditScan) routes() map[string]*adminRoute {
 				continue
 			}
 			var vt map[string]string
+			loops := rangeStrings(fn.Body)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok || len(call.Args) < 2 {
@@ -185,21 +229,81 @@ func (sc *auditScan) routes() map[string]*adminRoute {
 				if !ok || (sel.Sel.Name != "Handle" && sel.Sel.Name != "HandleFunc") {
 					return true
 				}
-				route, ok := sc.evalString(call.Args[0])
-				if !ok || !isAdminWriteRoute(route) {
+				routes := sc.expand(call.Args[0], loops)
+				if len(routes) == 0 {
+					// Never read past a registration that cannot be evaluated when it looks
+					// like an admin one: its route would otherwise escape the check.
+					if sc.mentionsAdminAPI(call.Args[0], map[string]bool{}) {
+						sc.unresolved = append(sc.unresolved, sc.fset.Position(call.Pos()).String())
+					}
 					return true
 				}
-				if vt == nil {
-					vt = sc.varTypes(fn)
+				for _, route := range routes {
+					if !isAdminWriteRoute(route) {
+						continue
+					}
+					if vt == nil {
+						vt = sc.varTypes(fn)
+					}
+					r := out[route]
+					if r == nil {
+						r = &adminRoute{route: route}
+						out[route] = r
+					}
+					r.handlers = append(r.handlers, sc.handlersOf(call.Args[1], vt)...)
 				}
-				r := out[route]
-				if r == nil {
-					r = &adminRoute{route: route}
-					out[route] = r
-				}
-				r.handlers = append(r.handlers, sc.handlersOf(call.Args[1], vt)...)
 				return true
 			})
+		}
+	}
+	return out
+}
+
+// rangeStrings maps a loop variable to the string literals of `for _, v := range []string{...}`.
+func rangeStrings(body *ast.BlockStmt) map[string][]string {
+	out := map[string][]string{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		rs, ok := n.(*ast.RangeStmt)
+		if !ok {
+			return true
+		}
+		v, ok := rs.Value.(*ast.Ident)
+		cl, ok2 := rs.X.(*ast.CompositeLit)
+		if !ok || !ok2 {
+			return true
+		}
+		for _, el := range cl.Elts {
+			if lit, ok := el.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+				if s, err := strconv.Unquote(lit.Value); err == nil {
+					out[v.Name] = append(out[v.Name], s)
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// expand evaluates a route expression once per value of the loop variable it uses (once when
+// it uses none). It returns nothing when the expression cannot be evaluated.
+func (sc *auditScan) expand(e ast.Expr, loops map[string][]string) []string {
+	var loopVar string
+	ast.Inspect(e, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && len(loops[id.Name]) > 0 {
+			loopVar = id.Name
+		}
+		return true
+	})
+	if loopVar == "" {
+		if s, ok := sc.evalString(e); ok {
+			return []string{s}
+		}
+		return nil
+	}
+	var out []string
+	for _, v := range loops[loopVar] {
+		if s, ok := sc.eval(e, map[string]bool{}, map[string]string{loopVar: v}); ok {
+			out = append(out, s)
 		}
 	}
 	return out
@@ -296,6 +400,7 @@ func classifyAdminRoutes(sources map[string]string, table map[string]adminWriteR
 		return p, 0, err
 	}
 	routes := sc.routes()
+	p.unresolved = sc.unresolved
 	for route, r := range routes {
 		a, ok := table[route]
 		if !ok {
@@ -358,6 +463,9 @@ func TestAdminWriteRoutesAreClassified(t *testing.T) {
 	if len(p.missing) > 0 {
 		t.Errorf("admin write routes with no audit classification (write an audit row and list it in adminWriteRouteAudits, or add a commented exemption): %v", p.missing)
 	}
+	if len(p.unresolved) > 0 {
+		t.Errorf("route registrations that mention /api/admin/ but could not be evaluated (the check cannot see their route): %v", p.unresolved)
+	}
 	if len(p.stale) > 0 {
 		t.Errorf("adminWriteRouteAudits names routes that no longer exist: %v", p.stale)
 	}
@@ -415,5 +523,32 @@ func more(mux M) {
 	p, n, _ = classifyAdminRoutes(map[string]string{"a.go": added}, table)
 	if n != 2 || len(p.missing) != 1 || p.missing[0] != "DELETE /api/admin/new-thing" {
 		t.Errorf("new Handle route: n=%d problems %+v, want it reported missing", n, p)
+	}
+
+	// A constant declared after the one that uses it, and in another file, is still resolved.
+	fwd := map[string]string{
+		"a.go": "package x\nconst route = prefix + \"things\"\nfunc addRoutes(mux M) { mux.HandleFunc(route, nothing) }\n",
+		"b.go": "package x\nconst prefix = \"PUT /api/admin/\"\n",
+	}
+	for _, order := range [][]string{{"a.go", "b.go"}, {"b.go", "a.go"}} {
+		src := map[string]string{}
+		for _, n := range order {
+			src[n] = fwd[n]
+		}
+		if p, n, _ := classifyAdminRoutes(src, nil); n != 1 || len(p.missing) != 1 || p.missing[0] != "PUT /api/admin/things" {
+			t.Errorf("forward-referenced constant route: n=%d problems %+v, want PUT /api/admin/things reported missing", n, p)
+		}
+	}
+
+	// A registration that mentions the admin API but cannot be evaluated is diagnosed, not skipped.
+	dyn := "package x\nfunc addRoutes(mux M, name string) { mux.HandleFunc(\"PUT /api/admin/\"+name, nothing) }\n"
+	if p, _, _ := classifyAdminRoutes(map[string]string{"a.go": dyn}, nil); len(p.unresolved) != 1 {
+		t.Errorf("unevaluable admin registration: problems %+v, want it diagnosed", p)
+	}
+
+	// A route registered in a loop over method names is expanded per value.
+	loop := "package x\nfunc addRoutes(mux M) {\n\tfor _, m := range []string{\"GET\", \"PUT\", \"DELETE\"} {\n\t\tmux.HandleFunc(m+\" /api/admin/loop\", nothing)\n\t}\n}\n"
+	if p, n, _ := classifyAdminRoutes(map[string]string{"a.go": loop}, nil); n != 2 || len(p.missing) != 2 {
+		t.Errorf("loop registration: n=%d problems %+v, want PUT and DELETE reported missing", n, p)
 	}
 }

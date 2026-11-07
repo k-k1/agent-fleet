@@ -207,6 +207,8 @@ var adminWriteRouteAudits = map[string]adminWriteRouteAudit{
 	"PUT /api/admin/tenants/{slug}/limits":                        {marker: `tenant.limits`},
 	"PUT /api/admin/tenants/{slug}/login":                         {marker: `tenant.login_rules`},
 	"PUT /api/admin/tenants/{slug}/network":                       {marker: `tenant.network_rules`},
+	"PUT /api/admin/mcp-oauth/trusted-hosts":                      {marker: `mcp_oauth.trusted_hosts`},
+	"DELETE /api/admin/mcp-oauth/trusted-hosts":                   {marker: `mcp_oauth.trusted_hosts`},
 	"PUT /api/admin/tenants/{slug}/mcp-oauth":                     {marker: `tenant.mcp_oauth`},
 	"PUT /api/admin/tenants/{slug}/external-memory":               {marker: `tenant.external_memory`},
 	"PUT /api/admin/tenants/{slug}/slot-class":                    {marker: `tenant.slot_class`},
