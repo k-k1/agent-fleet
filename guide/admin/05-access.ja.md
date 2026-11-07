@@ -88,6 +88,16 @@ device flow には secret が無く、トークンはメンバー自身のワー
 3. **client_id** と **client_secret** をここに貼ります。Bitbucket は同じものを
    Key / Secret と呼びます。
 
+> **Bitbucket はコンシューマの Permissions をエージェントの用途に合わせます。** Bitbucket は
+> 認可 URL にスコープを載せないので、コンシューマの Permissions がそのまま全メンバーの
+> トークンの権限になります。clone / push には Account: Read と Repositories: Read/Write。
+> セッションで `bkt` を使うなら **Pull requests: Read と Write**（`bkt pr create`・コメント・
+> 課題管理レール）と **Pipelines: Read**（`bkt pipeline`・ビルド結果）も入れ、パイプラインの
+> 開始・停止もするなら Pipelines: Write も入れます。足りないと読み取りは通るのに、それらの
+> コマンドが `403 Forbidden: Your credentials lack one or more required privilege scopes` に
+> なります。後から足した場合、接続済みのメンバーは Bitbucket を接続し直します（古い権限が
+> トークンに残るため）。
+
 > **Jira は Sharing の有効化も要ります。** Atlassian の 3LO アプリは、**Distribution** で
 > Sharing を有効にするまで「開発中」で、**作った本人しか認可できません**。自分で試すと
 > 通ってしまい、他のメンバー全員が Atlassian の *"You don't have access to this app"* で
