@@ -8,7 +8,9 @@ package envx
 // has only ever had one caller in main.go, so it stays there.
 
 import (
+	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -60,4 +62,20 @@ func SplitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// Ceiling reads an integer deployment ceiling: unset or empty is def, 0 is "no ceiling", and a
+// value that is not a non-negative integer keeps def and says so, because silently dropping a
+// ceiling an operator tried to set is the worse failure.
+func Ceiling(name string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		log.Printf("%s=%q is not a non-negative integer, using the default %d", name, raw, def)
+		return def
+	}
+	return n
 }

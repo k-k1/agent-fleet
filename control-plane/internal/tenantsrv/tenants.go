@@ -1751,6 +1751,20 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &APIError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
+	// Reject, rather than store and clamp later, what the deployment will never grant: the
+	// disk axis on ecs-ec2 grows a volume at once and cannot be shrunk, so the admin should
+	// hear "no" before the number is saved. Memory has no check here, its ceiling clamps.
+	if maxCPU, maxDisk := a.cp.WorkspaceCeilings(); (maxCPU > 0 && body.CPULimit > maxCPU) || (maxDisk > 0 && body.DiskGB > maxDisk) {
+		msg := "cpu_limit and disk_gb must not exceed the deployment ceilings"
+		switch {
+		case maxCPU > 0 && body.CPULimit > maxCPU && !(maxDisk > 0 && body.DiskGB > maxDisk):
+			msg = fmt.Sprintf("cpu_limit %d is above the deployment ceiling of %d", body.CPULimit, maxCPU)
+		case maxDisk > 0 && body.DiskGB > maxDisk && !(maxCPU > 0 && body.CPULimit > maxCPU):
+			msg = fmt.Sprintf("disk_gb %d is above the deployment ceiling of %d", body.DiskGB, maxDisk)
+		}
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "above_deployment_ceiling", msg})
+		return
+	}
 	q := store.UserQuota{
 		MaxSessions: body.MaxSessions, DiskGB: body.DiskGB,
 		MemLimit: body.MemLimit, CPULimit: body.CPULimit, SlotClass: strings.TrimSpace(body.SlotClass),
