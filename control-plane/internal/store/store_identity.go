@@ -309,8 +309,13 @@ func (s *SQL) ListEmailSetSuspects(ctx context.Context) ([]EmailSuspect, error) 
 // the one it had.
 func (s *SQL) InviteMember(ctx context.Context, identityID, tenantID, role string) (MemberInvite, error) {
 	var out MemberInvite
-	if err := s.checkDefaultMemberKeyFree(ctx, identityID, tenantID); err != nil {
+	// Only a NEW membership is checked: an existing row keeps its home, as EnsureMembership does.
+	if _, exists, err := s.GetMembership(ctx, identityID, tenantID); err != nil {
 		return out, err
+	} else if !exists {
+		if err := s.checkDefaultMemberKeyFree(ctx, identityID, tenantID); err != nil {
+			return out, err
+		}
 	}
 	err := s.withIdentityLock(ctx, identityID, func(tx *sqlTx) error {
 		var slug string
@@ -486,6 +491,11 @@ func (s *SQL) DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, e
 // in another tenant (ErrClaimedByOtherTenant, not ErrIdentityClaimed: the remedy is the
 // other tenant removing the person, not "sign in the usual way"). The invite side is
 // InviteMember's mirror of the same rule, and both take the identity's row lock.
+//
+// Paths that do NOT enforce it, on purpose: EnsureMembership's auto-provisioning (the
+// session of a tenant provider is pinned to its own tenant at the entry gate, so it cannot
+// use another membership), AttachProvider (the person's own act on their own account) and
+// rule 1.5 (the same IdP account reached through another button).
 func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bool, error) {
 	provider, subject, email := link.Provider, link.Subject, link.Email
 	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
@@ -532,29 +542,37 @@ func (s *SQL) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bo
 			}
 			identityID, claim = ident.ID, true
 		default: // rule 3
-			placeholder := false
 			if !link.EmailJoin {
-				// A tenant provider claims an existing invite placeholder with this key only if
-				// no other tenant holds it. The row is used as it is: the address is written
-				// after the guarded insert below, never before it.
+				// A tenant provider takes or creates the row WITHOUT an address and goes through
+				// the locked guard below, so a placeholder another tenant creates or fills at any
+				// moment up to the guard is still refused. The address is written afterwards, by
+				// touchIdentity.
 				fk, err := s.disambiguateUserKey(ctx, email, link.FallbackKey)
 				if err != nil {
 					return Identity{}, false, err
 				}
+				res, err := s.db.ExecContext(ctx,
+					`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
+					 VALUES(?, '', ?, 'user', 'active', ?) ON CONFLICT(user_key) DO NOTHING`,
+					NewID(), fk, NowTS())
+				if err != nil {
+					return Identity{}, false, err
+				}
+				n, _ := res.RowsAffected()
 				ex, ok, err := s.GetIdentityByUserKey(ctx, fk)
 				if err != nil {
 					return Identity{}, false, err
 				}
-				if ok {
-					if other, err := s.heldOutsideTenant(ctx, s.db, ex.ID, link.TenantSlug); err != nil {
-						return Identity{}, false, err
-					} else if other {
-						return Identity{}, false, ErrClaimedByOtherTenant
-					}
-					identityID, claim, placeholder = ex.ID, true, true
+				if !ok {
+					return Identity{}, false, sql.ErrNoRows
 				}
-			}
-			if placeholder {
+				// Early refusal; the authoritative check repeats under the row lock.
+				if other, err := s.heldOutsideTenant(ctx, s.db, ex.ID, link.TenantSlug); err != nil {
+					return Identity{}, false, err
+				} else if other {
+					return Identity{}, false, ErrClaimedByOtherTenant
+				}
+				identityID, claim, isNew = ex.ID, true, n > 0
 				break
 			}
 			ident, created, err := s.createIdentityForLogin(ctx, email, link.FallbackKey, link.RoleHint)

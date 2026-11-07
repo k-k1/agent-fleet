@@ -162,3 +162,33 @@ func TestSuspectsListsEveryMultiTenantIdentity(t *testing.T) {
 		})
 	}
 }
+
+// A tenant-IdP first login that creates the row itself still goes through the locked guard
+// and writes the address only afterwards.
+func TestTenantIdPFirstLoginCreatesTheRowAndWritesTheAddressAfterTheGuard(t *testing.T) {
+	for name, st := range guardStores(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			st.CreateTenant(ctx, "sales", "Sales")
+			legal, _ := st.CreateTenant(ctx, "legal", "Legal")
+			got, isNew, err := st.LinkIdentity(ctx, salesLink("a", "a@example.com", "a-example-com"))
+			if err != nil || !isNew || got.Email != "a@example.com" {
+				t.Fatalf("fresh link = %+v new=%v %v", got, isNew, err)
+			}
+			if _, err := st.InviteMember(ctx, got.ID, legal.ID, "member"); !errors.Is(err, ErrIdentityTenantBound) {
+				t.Fatalf("invite after link = %v", err)
+			}
+			// A placeholder legal holds by the time the link starts: refused, address untouched.
+			ph, _ := st.InviteIdentity(ctx, "", "b-example-com", legal.ID)
+			if _, err := st.InviteMember(ctx, ph.ID, legal.ID, "tenant_admin"); err != nil {
+				t.Fatal(err)
+			}
+			if _, isNew, err := st.LinkIdentity(ctx, salesLink("b", "b@example.com", "b-example-com")); !errors.Is(err, ErrClaimedByOtherTenant) || isNew {
+				t.Fatalf("link onto legal's placeholder = new=%v %v", isNew, err)
+			}
+			if x, _, _ := st.GetIdentityByUserKey(ctx, "b-example-com"); x.Email != "" {
+				t.Errorf("email written despite refusal: %q", x.Email)
+			}
+		})
+	}
+}
