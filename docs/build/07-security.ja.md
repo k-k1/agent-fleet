@@ -515,11 +515,19 @@ agent は `secrets.enc` を読み、`secrets.json` を移行しないので、�
   記録し、**役割は呼び出し時に live で解決**）。
 - **取り消せない管理操作は依頼を先に記録する**（`store.BeginIrreversible`）: ホームのクリーン、
   ホームのバックアップ削除、ワークスペースの破棄、メンバーシップの除外と削除、テナントの削除、
+  メンバーシップの役割変更（`membership.role`・detail は `from=<旧> to=<新>`）、
   プールのスロット終了、エンジンのモデルの purge、テナントのサインイン方法（IdP）の削除、
   内蔵 git のリポジトリの削除と改名は、実行前に `<action>.requested` を書き、
   **書けなければ `503 audit_unavailable` で断る**。終わったら `<action>` に結果と応答したステータスを
   書く。結果の書き込みの失敗はログに出して返さない（操作は済んでおり、依頼の行が誰の依頼かを残す）。
   それ以外の監査の書き込みは、これまでどおり事後のベストエフォート。
+- 事後に記録する管理操作には `tenant.create`・`member.limits`・`tenant.slot_class`・`workspace.stop`
+  がある。PAT の失効は、トークンのメンバーシップのテナント（`pat.create` と同じテナント）の下に
+  `pat.revoke` として記録し、そのテナントの管理者に見える。identity がサインインできなくなったときの
+  自動失効は、失効した PAT（`pat.revoke`）と MCP OAuth の grant（`mcp.oauth.grant`）を 1 件ずつ、
+  actor の種類 `system`・理由を detail にして、失効と同じトランザクションで書く。
+  `TestAdminWriteRoutesAreClassified` はルート登録を構文木から読み、ハンドラがその action を持つ監査呼び出しに
+  到達しない admin の書き込みルートを（コメント付きの除外がない限り）落とす。
 - 読み取り: `GET /api/admin/audit` と Console。テナントと役割で絞る。
 
 ## 7.8 egress 統制 🚧

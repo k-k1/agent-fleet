@@ -41,6 +41,8 @@ type PATStore interface {
 	// and survives, however close in time it was created.
 	LiveBearersOfIdentity(ctx context.Context, identityID string) (BearerSet, error)
 	RevokeBearerSet(ctx context.Context, identityID, reason string, set BearerSet) error
+	// PATTenantID names the tenant a PAT was issued in, for the audit row of its revocation.
+	PATTenantID(ctx context.Context, id string) (string, error)
 }
 
 // --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
@@ -205,25 +207,88 @@ func (s *SQL) LiveBearersOfIdentity(ctx context.Context, identityID string) (Bea
 	return set, nil
 }
 
+// RevokeBearerSet ends the credentials in set and writes one audit row per credential that
+// was actually live, under the tenant it was issued in, in the same transaction: a revocation
+// that cannot be recorded is not applied, and the next use asks again.
 func (s *SQL) RevokeBearerSet(ctx context.Context, identityID, reason string, set BearerSet) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	audit := func(tenantID, action, target string) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at, http_status)
+			 VALUES(?, ?, 'system', '', ?, ?, ?, ?, 0)`,
+			NewID(), tenantID, action, target, "revoked reason="+reason+" identity="+identityID, NowTS())
+		return err
+	}
+	// A row is written only for the credential THIS statement revoked: under READ COMMITTED two
+	// concurrent sweeps can both read a credential as live, and only the update that changes a
+	// row may claim the revocation.
 	for _, id := range set.PATs {
-		if _, err := tx.ExecContext(ctx, `UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`, NowTS(), id, identityID); err != nil {
+		var tenantID string
+		err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(m.tenant_id,'') FROM pat p LEFT JOIN membership m ON m.id=p.membership_id
+			 WHERE p.id=? AND p.identity_id=? AND p.revoked_at IS NULL`, id, identityID).Scan(&tenantID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue // already revoked, or not this identity's
+		}
+		if err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`, NowTS(), id, identityID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
+		}
+		if err := audit(tenantID, "pat.revoke", id); err != nil {
 			return err
 		}
 	}
 	for _, id := range set.Grants {
+		var tenantID string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT tenant_id FROM mcp_oauth_grant WHERE id=? AND identity_id=? AND revoked_at=0`, id, identityID).Scan(&tenantID); errors.Is(err, sql.ErrNoRows) {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE grant_id=?`, id); err != nil {
+				return err
+			}
+			continue
+		} else if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM mcp_oauth_token WHERE grant_id=?`, id); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? AND identity_id=? AND revoked_at=0`,
-			time.Now().Unix(), reason, id, identityID); err != nil {
+		res, err := tx.ExecContext(ctx, `UPDATE mcp_oauth_grant SET revoked_at=?, revoked_reason=? WHERE id=? AND identity_id=? AND revoked_at=0`,
+			time.Now().Unix(), reason, id, identityID)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
+		}
+		if err := audit(tenantID, "mcp.oauth.grant", id); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// PATTenantID is the tenant a PAT was issued in (its membership's tenant), or "" for a token
+// bound to no membership or an unknown id.
+func (s *SQL) PATTenantID(ctx context.Context, id string) (string, error) {
+	var t string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(m.tenant_id,'') FROM pat p LEFT JOIN membership m ON m.id=p.membership_id WHERE p.id=?`, id).Scan(&t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return t, err
 }

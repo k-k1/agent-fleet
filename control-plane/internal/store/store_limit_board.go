@@ -387,7 +387,7 @@ func (s *SQL) ApplyUsageObservation(ctx context.Context, membershipID, source, e
 		if fire != nil {
 			n := *fire
 			if _, err := tx.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
-				VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, n.EventID, n.MembershipID,
+				VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(membership_id, event_id) DO NOTHING`, n.EventID, n.MembershipID,
 				n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt); err != nil {
 				return false, err
 			}
