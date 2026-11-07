@@ -200,7 +200,7 @@ func (m *manager) invalidatesSessionsOnWrite(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !writeMayChangeSessions(r.URL.Path) {
+		if !writeMayChangeSessions(r.URL.EscapedPath()) {
 			next.ServeHTTP(w, r)
 			return
 		}

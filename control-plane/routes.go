@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -94,9 +96,18 @@ func exemptPrefix(prefixes ...string) {
 	}
 }
 
-// isAuthExempt reports whether p is reachable without a session (consumed by
+// isAuthExempt reports whether the request path p is reachable without a session (consumed by
 // authGate, oauth_google.go). The set is declared next to each route group below.
+//
+// p is the ESCAPED path (r.URL.EscapedPath()), the representation ServeMux routes by. It is
+// reduced to the path the mux would reach — cleaned, each segment decoded on its own — and a
+// segment that decodes to something containing "/" is never exempt: the mux keeps it inside one
+// segment, so a prefix test on the decoded path would exempt a request the mux sends elsewhere.
 func isAuthExempt(p string) bool {
+	p, ok := canonicalRoutePath(p)
+	if !ok {
+		return false
+	}
 	authExemptMu.Lock()
 	defer authExemptMu.Unlock()
 	if authExemptExact[p] {
@@ -108,6 +119,29 @@ func isAuthExempt(p string) bool {
 		}
 	}
 	return false
+}
+
+// canonicalRoutePath maps an escaped request path to the plain path the exemption registry is
+// written in, or false when the path has no such form (an invalid escape, or an encoded "/"
+// inside a segment).
+func canonicalRoutePath(escaped string) (string, bool) {
+	segs := strings.Split(escaped, "/")
+	for i, raw := range segs {
+		seg, err := url.PathUnescape(raw)
+		if err != nil || strings.Contains(seg, "/") {
+			return "", false
+		}
+		segs[i] = seg
+	}
+	p := strings.Join(segs, "/")
+	if p == "" {
+		return "/", true
+	}
+	clean := path.Clean(p)
+	if strings.HasSuffix(p, "/") && clean != "/" {
+		clean += "/"
+	}
+	return clean, true
 }
 
 // --- Per-feature route registration --------------------------------------------

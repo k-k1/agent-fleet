@@ -680,7 +680,7 @@ func (c config) authGate(next http.Handler) http.Handler {
 		// Anti-spoof: CP is the edge now, so never trust an inbound identity
 		// header — only our verified session may set it.
 		r.Header.Del(c.mgr.emailHeader)
-		if isAuthExempt(r.URL.Path) {
+		if isAuthExempt(r.URL.EscapedPath()) {
 			next.ServeHTTP(w, r)
 			return
 		}
