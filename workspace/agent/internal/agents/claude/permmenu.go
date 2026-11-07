@@ -236,8 +236,9 @@ var permDashRuleRe = regexp.MustCompile(`^\s*╌{10,}\s*$`)
 // shorter line ends in a real newline, which is never joined. Residual: a real newline right after a line that happens to fill the pane exactly is
 // indistinguishable from a wrap; that needs a Q whose first command line is pane-wide, or ends
 // where the next word would not have fit, and whose continuation completes P's command. The
-// payload keeps no newline information, so this cannot be closed here; the prompt token and the
-// pane re-check still bind the answer to the pending prompt.
+// payload keeps no newline information, so this cannot be closed here. The prompt token binds the
+// answer to the payload only, not to the screen: if the next dialog is drawn before the hook
+// rewrites the payload (#3359) and is such a Q, the answer lands on Q (follow-up: #3521).
 // cwd is the session directory, for a path drawn relative to it. The one rewrite accepted is the "rtk " prefix a command hook puts on the command
 // (measured: bash_four_options.txt); the payload holds the command as it was before.
 func (m PermissionMenu) CheckTarget(detail, cwd string) TargetCheck {
@@ -351,8 +352,15 @@ func matchLogicalLine(region []string, target string, truncated bool, width int,
 			break
 		}
 	}
-	if len(opts) > 12 {
-		return TargetDiffers // too many wrapped lines to enumerate: fail closed
+	// Only a boundary with two separators multiplies the search; word-wrap boundaries have one.
+	branching := 0
+	for _, o := range opts {
+		if len(o) > 1 {
+			branching++
+		}
+	}
+	if branching > 12 {
+		return TargetDiffers // too many ambiguous boundaries to enumerate: fail closed
 	}
 	// The logical line is compared only once complete: an early physical line equal to P proves
 	// nothing about what the continuation adds.

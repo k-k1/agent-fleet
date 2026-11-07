@@ -210,3 +210,16 @@ func TestMatchLogicalLineMixedWrap(t *testing.T) {
 		t.Errorf("mixed wrap, other target: got %v, want TargetDiffers", got)
 	}
 }
+
+// Word-wrap boundaries have one separator, so a long wrapped command is not refused for length.
+func TestMatchLogicalLineManyWordWraps(t *testing.T) {
+	lines := []string{" echo abcdefghijk"}
+	target := "echo abcdefghijk"
+	for i := 0; i < 14; i++ {
+		lines = append(lines, " abcdefghijkl")
+		target += " abcdefghijkl"
+	}
+	if got := matchLogicalLine(lines, target, false, 20, func(s string) bool { return s == target }); got != TargetMatches {
+		t.Errorf("14 word-wrapped lines: got %v, want TargetMatches", got)
+	}
+}
