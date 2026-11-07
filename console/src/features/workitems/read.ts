@@ -428,6 +428,51 @@ export function detailStateTone(d: Pick<WorkItemDetail, "kind" | "state" | "merg
   return d.kind === "pr" && d.merged ? "merged" : stateTone(d.state);
 }
 
+export type StateBadgeTone = "green" | "amber" | "blue" | "grey" | "purple" | "red";
+
+/** The coloured state pill under the detail panel's title, in the provider's own colour language
+ * so it reads at a glance:
+ *   GitHub / Bitbucket pull request  open green, draft grey, merged purple, closed-unmerged red
+ *                                    (Bitbucket DECLINED / SUPERSEDED included)
+ *   GitHub issue                     open green, closed as completed purple, not planned grey
+ *   Jira issue                       Jira's status categories: To Do grey, In Progress blue,
+ *                                    Done green — Jira users read those, not GitHub's purple
+ * `d` is the live read when there is one. Without it only the cached kind and state are known, so
+ * a finished pull request or GitHub issue stays grey: merged / not planned cannot be told apart,
+ * and a colour would claim one of them. A state no adapter recognised is grey too. */
+export function stateBadge(
+  item: Pick<WorkItem, "kind" | "state" | "provider">,
+  d?: Pick<WorkItemDetail, "kind" | "state" | "merged" | "draft" | "stateReason" | "provider"> | null,
+): { tone: StateBadgeTone; icon: string } {
+  const kind = d ? d.kind : item.kind;
+  const st = d ? d.state : item.state;
+  const provider = d?.provider || item.provider;
+  if (kind === "pr") {
+    if (d?.merged) return { tone: "purple", icon: "git-merge" };
+    // The closed glyph reads as "closed without merging", so a cached row keeps the plain one.
+    if (st === "done") return d ? { tone: "red", icon: "git-pull-request-closed" } : { tone: "grey", icon: "git-pull-request" };
+    // A draft normalises to in_progress (both adapters), so a cached in_progress row is a draft too.
+    if (d?.draft || st === "in_progress") return { tone: "grey", icon: "git-pull-request-draft" };
+    if (st === "open") return { tone: "green", icon: "git-pull-request" };
+    return { tone: "grey", icon: "git-pull-request" };
+  }
+  if (provider === "jira") {
+    if (st === "done") return { tone: "green", icon: "issue-closed" };
+    if (st === "in_progress") return { tone: "blue", icon: "issues" };
+    return { tone: "grey", icon: "issues" };
+  }
+  if (st === "done") {
+    // Only a live read carries the close reason; a cached row may be "not planned", so it is
+    // neither purple nor the slash.
+    // A live read without a reason is "completed", as detailStateLabel words it.
+    if (!d) return { tone: "grey", icon: "issue-closed" };
+    if (d.stateReason === "not_planned") return { tone: "grey", icon: "circle-slash" };
+    return { tone: "purple", icon: "issue-closed" };
+  }
+  if (st === "open" || st === "in_progress") return { tone: "green", icon: "issues" };
+  return { tone: "grey", icon: "issues" };
+}
+
 /** The reviews line: "2 approved, 1 change requested, 1 pending" as counts the caller renders.
  * Kept here so the panel does not count in JSX. */
 export function reviewCounts(reviews: WorkItemReview[]): { approved: number; changes: number; pending: number } {
